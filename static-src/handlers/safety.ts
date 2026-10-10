@@ -41,8 +41,7 @@ function headlineFor(p: SafetyStatusPayload): string {
   }
 }
 
-/** Append a short constraint list to the headline. Prefers the status's own
- *  blocked_properties; falls back to the chat's last formalized properties. */
+/** Prefers the status's own blocked_properties; falls back to the chat's last formalized properties. */
 function withConstraints(headline: string, p: SafetyStatusPayload, chatID: string): string {
   const blocked = p.blocked_properties ?? [];
   const list = blocked.length > 0 ? blocked : (activeProps.get(chatID) ?? []);

@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 )
 
 // noSubscriberLine is reportNoSubscribers' message, matched whole so a rewording fails here.
 const noSubscriberLine = `"msg":"no push subscribers; notifications are being dropped until a browser subscribes"`
 
-// newDropHub wires a runtime whose push service starts with no subscribers.
 func newDropHub(t *testing.T) (*Runtime, *recordingPush) {
 	t.Helper()
 	cs := newTestChatStore()
@@ -23,13 +23,13 @@ func newDropHub(t *testing.T) (*Runtime, *recordingPush) {
 }
 
 // One line per no-subscriber episode: per drop would bury the log, none would hide a dead pipeline.
-func TestNotifyPush_ReportsANoSubscriberDropOncePerEpisode(t *testing.T) {
+func TestNotify_ReportsANoSubscriberDropOncePerEpisode(t *testing.T) {
 	h, fp := newDropHub(t)
 	logs := captureLogs(t)
 	ctx := t.Context()
 
 	for range 3 {
-		h.coord.NotifyPush(ctx, "Permission needed", marotte.PushKindPermission, "c1")
+		h.coord.Notify(ctx, "c1", &dropAsk)
 	}
 
 	got := logs.String()
@@ -51,18 +51,18 @@ func TestNotifyPush_ReportsANoSubscriberDropOncePerEpisode(t *testing.T) {
 }
 
 // A subscriber arriving re-arms the latch.
-func TestNotifyPush_NoSubscriberLatchReArmsWhenASubscriberAppears(t *testing.T) {
+func TestNotify_NoSubscriberLatchReArmsWhenASubscriberAppears(t *testing.T) {
 	h, fp := newDropHub(t)
 	logs := captureLogs(t)
 	ctx := t.Context()
 
-	h.coord.NotifyPush(ctx, "Permission needed", marotte.PushKindPermission, "c1")
+	h.coord.Notify(ctx, "c1", &dropAsk)
 	if n := strings.Count(logs.String(), noSubscriberLine); n != 1 {
 		t.Fatalf("first episode logged %d lines, want 1; captured: %s", n, logs.String())
 	}
 
 	fp.noSubs.Store(false)
-	h.coord.NotifyPush(ctx, "Agent finished", marotte.PushKindAgentFinished, "c1")
+	h.coord.Notify(ctx, "c1", &dropFinished)
 	select {
 	case <-fp.sends:
 	case <-time.After(2 * time.Second):
@@ -70,7 +70,7 @@ func TestNotifyPush_NoSubscriberLatchReArmsWhenASubscriberAppears(t *testing.T) 
 	}
 
 	fp.noSubs.Store(true)
-	h.coord.NotifyPush(ctx, "Permission needed", marotte.PushKindPermission, "c1")
+	h.coord.Notify(ctx, "c1", &dropAsk)
 
 	got := logs.String()
 	if n := strings.Count(got, noSubscriberLine); n != 2 {
@@ -78,3 +78,8 @@ func TestNotifyPush_NoSubscriberLatchReArmsWhenASubscriberAppears(t *testing.T) 
 			" want 2; the second episode is silent unless a subscriber re-arms the latch. Captured: %s", n, got)
 	}
 }
+
+var (
+	dropAsk      = notice.Question(notice.ChatTarget("c1", "A"), "", "Permission needed")
+	dropFinished = notice.TurnFinished(notice.ChatTarget("c1", "A"), "")
+)

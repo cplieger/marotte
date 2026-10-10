@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 	"github.com/cplieger/slogx/capture"
 )
 
@@ -48,21 +49,21 @@ func TestClassifyFrame(t *testing.T) {
 		name    string
 		session string
 		marked  bool
-		want    FrameOwner
+		want    frameOwner
 	}{
-		{"no session id is the chat", "", false, OwnerChat},
-		{"the chat's own session", testParent, false, OwnerChat},
-		{"a registered step session", testStep, false, OwnerStep},
+		{"no session id is the chat", "", false, ownerChat},
+		{"the chat's own session", testParent, false, ownerChat},
+		{"a registered step session", testStep, false, ownerStep},
 		// The recovery path: with a cold registry, the frame's own _meta.kiro.workflow classifies.
-		{"an unregistered session the FRAME marks as a step", "sess_unknown", true, OwnerStep},
-		{"an unregistered, unmarked session is a subagent", testSub, false, OwnerSubagent},
+		{"an unregistered session the FRAME marks as a step", "sess_unknown", true, ownerStep},
+		{"an unregistered, unmarked session is a subagent", testSub, false, ownerSubagent},
 		// The session id is the discriminator; a marker cannot promote the parent.
-		{"the marker does not override the chat's own session", testParent, true, OwnerChat},
+		{"the marker does not override the chat's own session", testParent, true, ownerChat},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			if got := tr.ClassifyFrame(testChat, c.session, c.marked); got != c.want {
+			if got := tr.classifyFrame(testChat, c.session, c.marked); got != c.want {
 				t.Errorf("ClassifyFrame(%q, marked=%v) = %d, want %d", c.session, c.marked, got, c.want)
 			}
 		})
@@ -189,6 +190,23 @@ func TestRunStart_CarriesTheName(t *testing.T) {
 	}
 	if p.WorkflowID != "wf_1" || p.Name != "publish-pr" {
 		t.Errorf("payload = %+v, want {wf_1 publish-pr}", p)
+	}
+}
+
+func TestRunStart_AResumeCarriesKASsAttributionVerbatim(t *testing.T) {
+	t.Parallel()
+	var events []marotte.ServerEvent
+	tr := New(rolesOf(capturing(&events)))
+	const why = "Resume requested by owning parent/orchestrator; human intent not verified."
+	tr.HandleRunStart(t.Context(), testChat, notif("_kiro/workflow/run_start", map[string]any{
+		"workflowId": "wf_1", "workflowName": "publish-pr", "initiator": "user", "initiatorReason": why,
+	}))
+	p, ok := events[0].Payload.(marotte.RunStartedPayload)
+	if !ok {
+		t.Fatalf("payload type %T", events[0].Payload)
+	}
+	if p.Initiator != "user" || p.InitiatorReason != why {
+		t.Errorf("run_started attribution = (%q, %q), want (user, %q)", p.Initiator, p.InitiatorReason, why)
 	}
 }
 
@@ -530,7 +548,6 @@ func TestStepChunk_TwoIterationsDoNotShareATurn(t *testing.T) {
 	}
 }
 
-// usageStore captures the chat-usage write persistTurnSummary makes.
 type usageStore struct {
 	recStore
 	chat marotte.Chat
@@ -610,6 +627,35 @@ func TestSessionInfoUpdate_StepMeteringCountsCreditsOnly(t *testing.T) {
 	}
 }
 
+// A step turn that metered nothing still reports its duration: KAS sends promptTurnSummaries
+// as [] for it, not an absent key.
+func TestSessionInfoUpdate_StepCompletionWithNoUsageStillMetersTheRunTurn(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+		"kind":                "turn_completion",
+		"promptTurnSummaries": []any{},
+		"elapsedTime":         900.0,
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runID, nodePath = "wf_1", "wf_1/build"
+	deps := newBaseDeps()
+	deps.turns.runTurn(runID, nodePath)
+	tr := New(rolesOf(deps))
+	tr.HandleSessionInfoUpdate(t.Context(), testChat, raw, FrameAttribution{Step: true, RunID: runID, NodePath: nodePath})
+
+	var metered []runCall
+	for _, rc := range deps.runCalls {
+		if rc.kind == "meter" {
+			metered = append(metered, rc)
+		}
+	}
+	if len(metered) != 1 || metered[0].credits != 0 || metered[0].elapsedMs != 900 {
+		t.Errorf("run meter calls = %+v, want one with 0 credits over 900 ms", metered)
+	}
+}
+
 // TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped pins that a step's focus,
 // compaction and context-usage frames never reach the chat.
 func TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped(t *testing.T) {
@@ -637,7 +683,7 @@ func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
 
-	if got := tr.ClassifyFrame(testChat, "sess_build", false); got != OwnerSubagent {
+	if got := tr.classifyFrame(testChat, "sess_build", false); got != ownerSubagent {
 		t.Fatalf("before the read, sess_build classified %d, want OwnerSubagent", got)
 	}
 	tr.RecordRunSteps(json.RawMessage(`{
@@ -650,7 +696,7 @@ func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
 	}`))
 
 	for _, id := range []string{"sess_build", "sess_test"} {
-		if got := tr.ClassifyFrame(testChat, id, false); got != OwnerStep {
+		if got := tr.classifyFrame(testChat, id, false); got != ownerStep {
 			t.Errorf("after the read, %s classified %d, want OwnerStep", id, got)
 		}
 	}
@@ -842,5 +888,55 @@ func TestAgentLaunchedRun_IgnoresTheParentSessionField(t *testing.T) {
 	// The SSE events are what the client needs and they are never gated.
 	if len(events) != 2 {
 		t.Fatalf("got %d SSE events, want 2 (started + finished)", len(events))
+	}
+}
+
+// TestNodePaused_EndsTheStepsSteering pins that node_paused reaches the run registry: the paused
+// step's execution has stopped reading its steering buffer.
+func TestNodePaused_EndsTheStepsSteering(t *testing.T) {
+	deps, _, _ := depsWithStore(t, testChat)
+	New(rolesOf(deps)).RunProgressHandler(marotte.RunProgressNodePaused)(t.Context(), testChat,
+		notif("_kiro/workflow/node_paused", map[string]any{
+			"workflowId": "wf_1", "nodeId": "review", "nodePath": []string{"wf_1", "review"},
+		}))
+
+	want := runCall{kind: "node_paused", runID: "wf_1", nodePath: workflow.PathKey([]string{"wf_1", "review"})}
+	if !slices.Contains(deps.runCalls, want) {
+		t.Errorf("run calls = %+v, want %+v", deps.runCalls, want)
+	}
+}
+
+func TestNodePaused_ARetryWaitIsNotForwardedAsAPause(t *testing.T) {
+	deps, _, _ := depsWithStore(t, testChat)
+	New(rolesOf(deps)).RunProgressHandler(marotte.RunProgressNodePaused)(t.Context(), testChat,
+		notif("_kiro/workflow/node_paused", map[string]any{
+			"workflowId": "wf_1", "nodeId": "review", "nodePath": []string{"wf_1", "review"},
+			"reason": "Waiting 30s to retry after a network error.", "kind": "retry-wait",
+		}))
+
+	for _, c := range deps.runCalls {
+		if c.kind == "node_paused" {
+			t.Errorf("run calls = %+v, want no node_paused for a retry wait", deps.runCalls)
+		}
+	}
+}
+
+func TestStepsQueued_RecordsTheRevisionAndItsOutcome(t *testing.T) {
+	deps, _, _ := depsWithStore(t, testChat)
+	h := New(rolesOf(deps)).RunProgressHandler(marotte.RunProgressStepsQueued)
+	h(t.Context(), testChat, notif("_kiro/workflow/steps_queued", map[string]any{
+		"workflowId": "wf_1", "pendingSteps": []map[string]any{{"nodeId": "a"}, {"nodeId": "b"}},
+	}))
+	h(t.Context(), testChat, notif("_kiro/workflow/steps_queued", map[string]any{
+		"workflowId": "wf_1", "pendingSteps": []any{},
+		"resolution": map[string]any{"outcome": "rejected", "reason": "unknown agent"},
+	}))
+
+	want := []marotte.RunPlanUpdate{
+		{Outcome: marotte.RunPlanQueued, Pending: 2},
+		{Outcome: marotte.RunPlanRejected, Reason: "unknown agent"},
+	}
+	if !slices.Equal(deps.planUpdates, want) {
+		t.Errorf("plan updates = %+v, want %+v", deps.planUpdates, want)
 	}
 }

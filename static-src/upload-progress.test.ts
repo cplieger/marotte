@@ -71,14 +71,12 @@ class FakeXHR {
     this.listeners.set(type, list);
   }
 
-  /** Drive one of the xhr's own events (load / error / timeout / abort). */
   fire(type: string): void {
     for (const fn of this.listeners.get(type) ?? []) {
       fn(new Event(type));
     }
   }
 
-  /** Drive one `xhr.upload` progress event. */
   progress(loaded: number, total: number, lengthComputable: boolean): void {
     for (const fn of this.upload.listeners.get("progress") ?? []) {
       fn(new ProgressEvent("progress", { loaded, total, lengthComputable }));
@@ -86,7 +84,6 @@ class FakeXHR {
   }
 }
 
-/** The upload row exactly as `static/index.html` declares it. */
 function mountRow(): { bar: HTMLProgressElement; row: HTMLElement; label: HTMLElement } {
   document.body.replaceChildren();
   const row = document.createElement("div");
@@ -120,7 +117,6 @@ function fileList(...names: string[]): FileList {
   } as unknown as FileList;
 }
 
-/** Start an upload and hand back the row plus the xhr it created. */
 function start(...names: string[]): {
   bar: HTMLProgressElement;
   row: HTMLElement;

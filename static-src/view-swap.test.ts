@@ -6,7 +6,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { swapViews, markBootDone, DUR_ENTER_MS, EASE_ENTER, _resetForTest } from "./view-swap.js";
 import { loadCSS } from "./__test-helpers__/css-rules.js";
 
-/** A visible block with a real box, appended to the body. */
 function view(): HTMLElement {
   const el = document.createElement("div");
   el.style.width = "200px";

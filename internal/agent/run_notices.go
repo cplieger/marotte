@@ -60,7 +60,7 @@ func (rs *Runs) holdsNotice(chatID marotte.ChatID) bool {
 }
 
 // RunNotice consumes the chat's oldest notice: KAS drains in append order and finishes are recorded in
-// order, so the queues pair FIFO. translate.RunOriginAccess.
+// order, so the queues pair FIFO. translate.runOriginAccess.
 func (rs *Runs) RunNotice(chatID marotte.ChatID) (workflowID string, producedTs int64, ok bool) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()

@@ -26,9 +26,8 @@ const (
 	// maxFolderBytes keeps a token, which appears in nine CSP source lists, well
 	// under a proxy's header limit.
 	maxFolderBytes = 512
-	// maxHostBytes is the longest DNS name plus a port. The Host is repeated in
-	// nine CSP source lists, so an unbounded one multiplies the request's header
-	// allowance into the response.
+	// maxHostBytes is the longest DNS name plus a port. The Host is repeated in nine CSP source lists,
+	// so an unbounded one multiplies the request's header allowance into the response.
 	maxHostBytes = 253 + len(":65535")
 	maxFileBytes = 64 << 20
 	maxHTMLBytes = 8 << 20
@@ -113,17 +112,16 @@ type page struct {
 // openPage resolves the folder and file through the kernel's no-follow
 // resolution, so the folder a grant names is the folder on disk. The caller
 // closes folderFD.
-func (h *Handler) openPage(p string) (*page, []byte, error) {
+func (h *Handler) openPage(p string) (*page, error) {
 	pg, err := h.openPageFolder(p)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	head, err := h.readHead(pg)
-	if err != nil {
+	if _, err := h.readHead(pg); err != nil {
 		_ = unix.Close(pg.folderFD)
-		return nil, nil, err
+		return nil, err
 	}
-	return pg, head, nil
+	return pg, nil
 }
 
 func (h *Handler) openPageFolder(p string) (*page, error) {
@@ -157,7 +155,7 @@ func (h *Handler) openPageFolder(p string) (*page, error) {
 	return &page{folder: folder, name: path.Base(p), folderFD: folderFD}, nil
 }
 
-// readHead reads the first hintScanBytes of the page. It leaves folderFD open.
+// It leaves folderFD open.
 func (h *Handler) readHead(pg *page) ([]byte, error) {
 	fd, _, err := openRegular(pg.folderFD, pg.name)
 	if err != nil {
@@ -221,12 +219,12 @@ func (h *Handler) Grant(p string, exp time.Time) (marotte.PreviewGrant, error) {
 	if err != nil {
 		return marotte.PreviewGrant{}, err
 	}
-	base := PathPrefix + h.signer.Mint(pg.folder, exp) + "/"
+	base := PathPrefix + h.signer.mint(pg.folder, exp) + "/"
 	return marotte.PreviewGrant{
 		URL:       base + url.PathEscape(pg.name),
 		Base:      base,
 		ExpiresAt: exp.UTC(),
-		Epoch:     h.signer.Epoch(),
+		Epoch:     h.signer.currentEpoch(),
 		Hint:      extractHint(head),
 		Stamp:     stamp,
 	}, nil
@@ -260,7 +258,7 @@ func (h *Handler) handleStamp(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
-	pg, _, err := h.openPage(r.URL.Query().Get("path"))
+	pg, err := h.openPage(r.URL.Query().Get("path"))
 	if err != nil {
 		writePageError(w, err)
 		return
@@ -272,6 +270,6 @@ func (h *Handler) handleStamp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webhttp.WriteJSON(w, marotte.PreviewStamp{
-		Stamp: stamp, Entries: n, Truncated: truncated, Epoch: h.signer.Epoch(),
+		Stamp: stamp, Entries: n, Truncated: truncated, Epoch: h.signer.currentEpoch(),
 	})
 }

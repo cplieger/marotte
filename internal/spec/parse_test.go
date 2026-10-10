@@ -15,7 +15,7 @@ import (
 
 const regenerate = "node internal/spec/testdata/gen-goldens.mjs <acp-server.js>"
 
-// golden is one fixture the generator writes: the header plus Parse's answer.
+// golden is one fixture the generator writes: the header plus parse's answer.
 type golden struct {
 	Truncated       *marotte.SpecTruncated `json:"truncated"`
 	InputFile       string                 `json:"input_file"`
@@ -27,8 +27,8 @@ type golden struct {
 	CRLF            bool                   `json:"crlf"`
 }
 
-func (g golden) parsed() Parsed {
-	return Parsed{Tasks: g.Tasks, Truncated: g.Truncated, Progress: g.Progress, UnreadableLines: g.UnreadableLines}
+func (g golden) parsed() parsed {
+	return parsed{Tasks: g.Tasks, Truncated: g.Truncated, Progress: g.Progress, UnreadableLines: g.UnreadableLines}
 }
 
 func loadGoldens(t *testing.T) map[string]golden {
@@ -77,7 +77,7 @@ func asJSON(t *testing.T, v any) string {
 
 // withoutWaves drops the wave ids before an oracle comparison: KAS's task parser never reads
 // the dependency-graph section, so the goldens state no wave.
-func withoutWaves(p Parsed) Parsed {
+func withoutWaves(p parsed) parsed {
 	p.Tasks = stripWaves(p.Tasks)
 	return p
 }
@@ -108,7 +108,7 @@ func TestParse_MatchesOracleGoldens(t *testing.T) {
 			if g.KASVersion != "2.21.4" || len(g.SliceSHA256) != 64 {
 				t.Fatalf("golden %s header = version %q slice %q, want the 2.21.4 slice; run %s", name, g.KASVersion, g.SliceSHA256, regenerate)
 			}
-			got := asJSON(t, withoutWaves(Parse(readInput(t, g))))
+			got := asJSON(t, withoutWaves(parse(readInput(t, g))))
 			want := asJSON(t, g.parsed())
 			if got != want {
 				t.Errorf("Parse(%s) drifted from the oracle at %s.\nRegenerate with %s, then read the diff: a golden change is a parser change.", g.InputFile, firstDiff(got, want), regenerate)
@@ -139,7 +139,7 @@ func TestParse_NBSPIndentIsRefused(t *testing.T) {
 	}
 	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {
-			p := Parse([]byte(src))
+			p := parse([]byte(src))
 			if len(p.Tasks) != 0 {
 				t.Errorf("Parse(%q).Tasks = %d, want 0", src, len(p.Tasks))
 			}
@@ -151,7 +151,7 @@ func TestParse_LineSeparatorInTextIsNeitherTaskNorNearMiss(t *testing.T) {
 	for name, sep := range map[string]string{"u2028": "\u2028", "u2029": "\u2029"} {
 		t.Run(name, func(t *testing.T) {
 			src := "- [ ] 1 Before\n- [ ] 1.1 split" + sep + "text\n- [x] 2 After\n"
-			p := Parse([]byte(src))
+			p := parse([]byte(src))
 			if len(p.Tasks) != 2 || p.Tasks[0].Number != "1" || p.Tasks[1].Number != "2" {
 				t.Fatalf("Parse(%q) roots = %+v, want 1 and 2", src, p.Tasks)
 			}
@@ -167,7 +167,7 @@ func TestParse_LineSeparatorInTextIsNeitherTaskNorNearMiss(t *testing.T) {
 
 func TestParse_DetailEndsAtTheFirstHeading(t *testing.T) {
 	src := "- [x] 1 Last\n  - Verify: tail\n\n## Notes\n\nprose\n\n  ### indented heading\n"
-	p := Parse([]byte(src))
+	p := parse([]byte(src))
 	if len(p.Tasks) != 1 {
 		t.Fatalf("Parse(%q) = %d tasks, want 1", src, len(p.Tasks))
 	}
@@ -175,7 +175,7 @@ func TestParse_DetailEndsAtTheFirstHeading(t *testing.T) {
 		t.Errorf("Parse(%q).Tasks[0].Detail = %q, want %q", src, got, want)
 	}
 	indented := "- [ ] 1 Task\n  prose\n  ## sub\n  gone\n"
-	if got, want := Parse([]byte(indented)).Tasks[0].Detail, "prose"; got != want {
+	if got, want := parse([]byte(indented)).Tasks[0].Detail, "prose"; got != want {
 		t.Errorf("Parse(%q).Tasks[0].Detail = %q, want %q", indented, got, want)
 	}
 }
@@ -193,7 +193,7 @@ func TestParse_CountsWidenedNearMisses(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if got := Parse([]byte(c.src)).UnreadableLines; got != c.want {
+			if got := parse([]byte(c.src)).UnreadableLines; got != c.want {
 				t.Errorf("Parse(%q).UnreadableLines = %d, want %d", c.src, got, c.want)
 			}
 		})
@@ -209,7 +209,7 @@ func TestParse_CapsTheTreeAndMarksTheCutParent(t *testing.T) {
 			b.WriteString("  - [ ] child\n")
 		}
 	}
-	p := Parse([]byte(b.String()))
+	p := parse([]byte(b.String()))
 	if p.Truncated == nil || p.Truncated.Returned != maxNodes || p.Truncated.Total != 1203 {
 		t.Fatalf("Parse(cap).Truncated = %+v, want {1000 1203}", p.Truncated)
 	}
@@ -230,7 +230,7 @@ func TestParse_CapsTheTreeAndMarksTheCutParent(t *testing.T) {
 func TestParse_CRLFHashesEqualTheLFTwin(t *testing.T) {
 	lf := []byte("- [ ] 1 one\n  - detail\n- [x] 2 two\n")
 	crlf := bytes.ReplaceAll(lf, []byte("\n"), []byte("\r\n"))
-	a, b := Parse(lf), Parse(crlf)
+	a, b := parse(lf), parse(crlf)
 	if !reflect.DeepEqual(a, b) {
 		t.Errorf("Parse(crlf) = %s\nwant the LF twin %s", asJSON(t, b), asJSON(t, a))
 	}
@@ -239,7 +239,7 @@ func TestParse_CRLFHashesEqualTheLFTwin(t *testing.T) {
 func TestParse_ProgressInvariants(t *testing.T) {
 	for name, g := range loadGoldens(t) {
 		t.Run(name, func(t *testing.T) {
-			p := Parse(readInput(t, g)).Progress
+			p := parse(readInput(t, g)).Progress
 			if p.Pending+p.InProgress+p.Completed != p.Total {
 				t.Errorf("Parse(%s).Progress = %+v: pending+in_progress+completed != total", g.InputFile, p)
 			}
@@ -249,7 +249,7 @@ func TestParse_ProgressInvariants(t *testing.T) {
 		})
 	}
 	src := "- [ ] 1 root\n- [~] 1.1 queued\n- [ ]* 1.2 optional\n- [-] 1.3 going\n- [x] 1.4 done\n- [ ] 1.5 open\n"
-	got := Parse([]byte(src)).Progress
+	got := parse([]byte(src)).Progress
 	want := marotte.SpecProgress{Pending: 2, InProgress: 1, Completed: 1, Queued: 1, Total: 4}
 	if got != want {
 		t.Errorf("Parse(%q).Progress = %+v, want %+v", src, got, want)

@@ -189,7 +189,6 @@ describe("renderIgnoreChips — keyed reconcile", () => {
 // one leaves an operator with a wrong model of what they achieved, which is the same class of harm
 // as an under-enforced one.
 
-/** The section holding one save-status slot, out of the shipped index.html. */
 function sectionFor(saveStatusKey: string): Element {
   const doc = new DOMParser().parseFromString(indexHtml, "text/html");
   const section = doc

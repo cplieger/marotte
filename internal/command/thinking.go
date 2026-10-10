@@ -6,17 +6,20 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/marotte/internal/chatlock"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// CmdSetThinking records the chat's thinking choice: the effort slider's Off
+// cmdSetThinking records the chat's thinking choice: the effort slider's Off
 // stop sends enabled:false. A running session is switched in place first, so a
 // refusal is reported rather than persisted; KAS caps a high effort tier in the
-// same call. A bridgeless chat persists the choice for its next session.
-func CmdSetThinking(
+// same call. A bridgeless chat persists the choice for its next session. Serialized with
+// cmdSetEffort through configLocks.
+func cmdSetThinking(
 	ctx context.Context,
-	bridges BridgeAccess,
-	chats ChatStore,
+	bridges bridgeAccess,
+	chats chatStore,
+	configLocks *chatlock.Set,
 	cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
@@ -26,6 +29,11 @@ func CmdSetThinking(
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
+	unlock, lockErr := configLocks.Lock(ctx, cmd.ChatID)
+	if lockErr != nil {
+		return nil, StatusError(http.StatusServiceUnavailable, lockErr)
+	}
+	defer unlock()
 	choice := marotte.ThinkingOff
 	if p.Enabled {
 		choice = marotte.ThinkingOn
@@ -48,9 +56,8 @@ func CmdSetThinking(
 	return responseWith(map[string]any{"thinking": choice}), nil
 }
 
-// setThinking asserts the thinking option on a running session. The value is a
-// STRING; KAS ignores a boolean without changing anything.
-func setThinking(ctx context.Context, bridges BridgeAccess, chatID marotte.ChatID, choice string) error {
+// The value is a STRING; KAS ignores a boolean without changing anything.
+func setThinking(ctx context.Context, bridges bridgeAccess, chatID marotte.ChatID, choice string) error {
 	return applySessionConfig(ctx, bridges, chatID, "set_thinking",
 		marotte.MethodSetConfigOption, configOptionParams(marotte.ConfigOptionThinking, choice))
 }

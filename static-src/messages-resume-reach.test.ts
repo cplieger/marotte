@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Session } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
-import type { ReadingState } from "./scroll.js";
+import type { ReadingState } from "./scroll-controller.js";
 
 // The DOM registry throws on a missing element, so the hosts exist before any import resolves.
 for (const id of [
@@ -74,7 +74,7 @@ function session(id: string): Session {
 }
 
 /** Park on an empty chat, then land one turn through the store's own operations, so each append recounts. */
-function parkThenLand(body: (turnID: string) => Entry[]): string {
+function parkThenLand(body: (turnID: string) => Entry[]): void {
   const chat = `c-${String(++chatSeq)}`;
   const turnID = `t-${String(chatSeq)}`;
   store.setSessions([session(chat)]);
@@ -92,7 +92,6 @@ function parkThenLand(body: (turnID: string) => Entry[]): string {
   for (const e of body(turnID)) {
     store.appendEntry(chat, e);
   }
-  return chat;
 }
 
 /** The label after the last full pass. */

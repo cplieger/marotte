@@ -2,7 +2,7 @@ package forges
 
 // The viewer set and the cadence it holds: a client tag views while it last said
 // watching and the presence table does not judge it gone, and while one views the
-// next cycle is PRPollInterval after the last whatever the poller tracks.
+// next cycle is prPollInterval after the last whatever the poller tracks.
 
 import (
 	"context"
@@ -99,8 +99,8 @@ func TestPollerInterval_ViewerForcesTheFastCycle(t *testing.T) {
 	}
 
 	p.viewers.watch("tab-a", "", true)
-	if got := p.nextDelay(); got != PRPollInterval {
-		t.Errorf("with nothing tracked and one viewer the poller arms %v, want the active interval %v", got, PRPollInterval)
+	if got := p.nextDelay(); got != prPollInterval {
+		t.Errorf("with nothing tracked and one viewer the poller arms %v, want the active interval %v", got, prPollInterval)
 	}
 }
 

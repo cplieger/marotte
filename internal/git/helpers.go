@@ -51,10 +51,8 @@ func cmdFailure(out string, err error) string {
 	return err.Error()
 }
 
-// gitCmdWithCreds runs a git subprocess for network operations
-// (push, pull, fetch). Credentials come from the credential helper
-// marotte registers per connected forge in ~/.gitconfig, so no
-// per-call env injection is needed.
+// Credentials come from the credential helper marotte registers per connected forge in
+// ~/.gitconfig, so no per-call env injection is needed.
 func gitCmdWithCreds(ctx context.Context, timeout time.Duration, dir, _ string, args ...string) (string, error) {
 	tctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

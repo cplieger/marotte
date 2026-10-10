@@ -28,7 +28,7 @@ func terminalReference(t *testing.T, ws command.Workspace, token string) string 
 // The engine's reader writes the screen while a reference resolves (-race on a real PTY).
 func TestReadShell_ResolvesWhileThePTYWrites(t *testing.T) {
 	dir := t.TempDir()
-	sm := &ShellManager{workDir: dir}
+	sm := &shellManager{workDir: dir}
 	sm.handler = terminal.NewHandler(
 		[]string{"sh", "-c", `i=0; while [ $i -lt 3000 ]; do echo "line $i"; i=$((i+1)); if [ $((i % 100)) -eq 0 ]; then sleep 0.03; fi; done; sleep 2`},
 		terminal.WithWorkDir(dir),
@@ -66,7 +66,7 @@ func TestReadShell_ResolvesWhileThePTYWrites(t *testing.T) {
 
 // A restart swaps the handler under the mutex, so a read skipping it races (-race).
 func TestReadShell_RacesARestartSafely(t *testing.T) {
-	sm := &ShellManager{workDir: t.TempDir()}
+	sm := &shellManager{workDir: t.TempDir()}
 	sm.handler = sm.newHandler()
 	t.Cleanup(func() { retireHandler(context.Background(), sm.handler, "test") })
 	done := make(chan struct{})
@@ -89,11 +89,9 @@ func TestReadShell_RacesARestartSafely(t *testing.T) {
 }
 
 // A spent shell's final output stays readable until the next socket swaps it.
-// The child exits only once its output is on the screen: engine v6.1.0 can cancel the PTY reader
-// at exit before it drains, which would drop the output this test reads.
 func TestReadShell_KeepsTheFinalOutputOfAnExitedShell(t *testing.T) {
 	dir := t.TempDir()
-	sm := &ShellManager{workDir: dir}
+	sm := &shellManager{workDir: dir}
 	sm.handler = terminal.NewHandler(
 		[]string{"sh", "-c", "echo goodbye; while [ ! -e release ]; do sleep 0.01; done"},
 		terminal.WithWorkDir(dir),

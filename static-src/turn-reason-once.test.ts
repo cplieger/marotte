@@ -40,9 +40,8 @@ const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 
 mountChatView();
 
-/** The server's own sentence. Deliberately unlike anything else the card renders:
- *  the header carries the prompt, the footer carries a fixed outcome word, so a
- *  count over the card's text can only be counting this. */
+/** Deliberately unlike anything else the card renders: the header carries the prompt, the footer
+ *  carries a fixed outcome word, so a count over the card's text can only be counting this. */
 const REASON = "ACP bridge exited";
 
 /** The broken turn's opening message id, which IS its turn id — the key
@@ -118,7 +117,6 @@ function cancelledThenClean(): Entry[][] {
   ];
 }
 
-/** The cards of the active view, in document order. */
 function cards(): HTMLElement[] {
   const root = activeTranscriptView();
   return root === null ? [] : [...root.querySelectorAll<HTMLElement>(":scope > .turn")];
@@ -143,7 +141,6 @@ async function untilFolded(card: HTMLElement, folded: boolean): Promise<void> {
   );
 }
 
-/** Paint `turns` as `chatID`'s window and return that chat's turn cards, in order. */
 async function mount(chatID: string, turnRows: Entry[][]): Promise<HTMLElement[]> {
   const turns = new Map<string, TurnState>();
   const order: string[] = [];

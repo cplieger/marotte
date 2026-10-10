@@ -15,13 +15,11 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 )
 
-// purgeEntry is a chat's (id, header path) pair gathered during a scan.
 type purgeEntry struct {
 	name string
 	path string
 }
 
-// purgeOutcome is the per-entry result of a purge attempt.
 type purgeOutcome int
 
 const (
@@ -86,9 +84,7 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 	return res
 }
 
-// collectPurgeEntries filters a directory listing down to chat directories whose
-// name is a valid chat id; the path is the header inside, whose mtime is the age
-// fallback for a chat that cannot be read.
+// The path is the header inside, whose mtime is the age fallback for a chat that cannot be read.
 func collectPurgeEntries(entries []os.DirEntry, dir string) []purgeEntry {
 	var valid []purgeEntry
 	for _, e := range entries {
@@ -154,9 +150,8 @@ func (s *Service) purgeOne(ctx context.Context, entry purgeEntry, cutoff time.Ti
 	return purgePurged, time.Time{}
 }
 
-// purgeReferenceTime returns, from one projected read, the time a purge ages from, the session
-// chain, and whether a draft is unsent. Caller holds the per-chat mutex. Falls back to the file
-// mtime only for an unreadable chat: mtime moves for reasons that are not activity.
+// Caller holds the per-chat mutex. Falls back to the file mtime only for an unreadable chat: mtime
+// moves for reasons that are not activity.
 func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime time.Time, sessionChain []string, drafting bool) {
 	h, err := s.store.LoadRetentionHeader(marotte.ChatID(entry.name))
 	if err != nil {
@@ -168,7 +163,6 @@ func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime
 	return time.UnixMilli(h.UpdatedAt), h.SessionChain, h.Drafting
 }
 
-// logPurgeResult emits the end-of-pass summary, at Warn when any entry errored.
 func logPurgeResult(res PurgeResult, maxAge time.Duration) {
 	if res.Errors > 0 {
 		slog.Warn("chat purge: pass complete with errors",
@@ -235,9 +229,6 @@ func (p *PurgeScheduler) Stop() {
 	}
 }
 
-// Done returns a channel that is closed when the scheduler goroutine exits.
-func (p *PurgeScheduler) Done() <-chan struct{} { return p.done }
-
 // Trigger requests a purge evaluation. Safe to call from any goroutine;
 // concurrent calls collapse into a single pending evaluation.
 func (p *PurgeScheduler) Trigger() {
@@ -252,7 +243,6 @@ func (p *PurgeScheduler) Trigger() {
 	}
 }
 
-// loop is the scheduler goroutine.
 func (p *PurgeScheduler) loop(ctx context.Context) {
 	defer close(p.done)
 	var timer *time.Timer
@@ -280,9 +270,8 @@ func stopTimer(t *time.Timer) {
 	}
 }
 
-// purgeBudget bounds one pass. A pass is one projected read plus at most one
-// unlink per chat, so overrunning it means the filesystem is wedged and
-// re-evaluating beats waiting.
+// A pass is one projected read plus at most one unlink per chat, so overrunning it means the
+// filesystem is wedged and re-evaluating beats waiting.
 const purgeBudget = 5 * time.Minute
 
 // purgeAndReschedule runs one purge pass (the chat pass when retention is positive, every side pass
@@ -354,7 +343,6 @@ func mergePurgeResults(a, b PurgeResult) PurgeResult {
 	return out
 }
 
-// nextIdleWait doubles an idle wait, starting at idleBase and capped at maxWait.
 func nextIdleWait(current time.Duration) time.Duration {
 	if current <= 0 {
 		return idleBase

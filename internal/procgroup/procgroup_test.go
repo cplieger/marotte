@@ -32,7 +32,7 @@ func TestOwns(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := Owns(tc.pid, tc.pgid); got != tc.want {
+			if got := owns(tc.pid, tc.pgid); got != tc.want {
 				t.Errorf("Owns(%d, %d) = %v, want %v", tc.pid, tc.pgid, got, tc.want)
 			}
 		})

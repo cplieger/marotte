@@ -54,16 +54,16 @@ func (e *RenderError) Error() string { return e.Err.Error() }
 
 func (e *RenderError) Unwrap() error { return e.Err }
 
-// ScanError is one installed Power whose mcp.json could not be read; its servers
+// scanError is one installed Power whose mcp.json could not be read; its servers
 // are left out of the legacy block.
-type ScanError struct {
+type scanError struct {
 	Err   error
 	Power string
 }
 
-func (e *ScanError) Error() string { return "power " + e.Power + ": " + e.Err.Error() }
+func (e *scanError) Error() string { return "power " + e.Power + ": " + e.Err.Error() }
 
-func (e *ScanError) Unwrap() error { return e.Err }
+func (e *scanError) Unwrap() error { return e.Err }
 
 // PartialError is a legacy block written with the healthy Powers' servers and
 // without the servers of the Powers named in Failed.
@@ -119,25 +119,25 @@ func NewManager(catalog *Catalog, writer ServersWriter, cliPath func() string, e
 }
 
 // Catalog returns the official catalogue.
-func (m *Manager) Catalog(ctx context.Context) ([]Entry, error) { return m.catalog.Entries(ctx) }
+func (m *Manager) Catalog(ctx context.Context) ([]Entry, error) { return m.catalog.catalogEntries(ctx) }
 
-// Servers names the MCP servers a catalogue Power declares; see Catalog.Servers.
+// Servers names the MCP servers a catalogue Power declares; see Catalog.catalogServerNames.
 func (m *Manager) Servers(ctx context.Context, name string) (names []string, known bool, err error) {
-	e, ok, err := m.catalog.Revalidate(ctx, name)
+	e, ok, err := m.catalog.revalidate(ctx, name)
 	if err != nil {
 		return nil, false, err
 	}
 	if !ok {
 		return nil, false, ErrUnknownPower
 	}
-	names, known = m.catalog.Servers(ctx, &e)
+	names, known = m.catalog.catalogServerNames(ctx, &e)
 	return names, known, nil
 }
 
 // Install runs `kiro-cli powers install <name>` for a catalogue Power, then
 // renders the legacy block, which the install itself never writes.
 func (m *Manager) Install(ctx context.Context, name string, mode ModeFunc) error {
-	_, ok, err := m.catalog.Admit(ctx, name)
+	ok, err := m.catalog.admit(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -158,8 +158,7 @@ func (m *Manager) Install(ctx context.Context, name string, mode ModeFunc) error
 	return verbResult(name, m.syncLocked(ctx, mode))
 }
 
-// verbResult is a RenderError when the render failed or skipped the changed Power;
-// another Power's skipped servers are the inventory's to report, not this verb's.
+// Another Power's skipped servers are the inventory's to report, not this verb's.
 func verbResult(name string, err error) error {
 	if err == nil {
 		return nil
@@ -200,10 +199,10 @@ func (m *Manager) syncLocked(ctx context.Context, mode ModeFunc) error {
 	var dirErr error
 	if mode() == ServersActive {
 		var errs []error
-		servers, errs = LegacyServers(m.installedDir)
+		servers, errs = legacyServers(m.installedDir)
 		for _, err := range errs {
 			slog.Warn("powers: an installed power's servers were not rendered", "error", err)
-			if se, ok := errors.AsType[*ScanError](err); ok {
+			if se, ok := errors.AsType[*scanError](err); ok {
 				if !slices.Contains(failed, se.Power) {
 					failed = append(failed, se.Power)
 				}

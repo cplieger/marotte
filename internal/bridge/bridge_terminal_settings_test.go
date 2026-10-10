@@ -11,8 +11,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// startWithTimeouts runs a real Start against the fake, answering the resolver from answers in order, and returns the
-// raw request log.
 func startWithTimeouts(t *testing.T, answers ...int) string {
 	t.Helper()
 	dir := t.TempDir()

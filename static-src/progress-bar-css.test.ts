@@ -53,7 +53,6 @@ function mountUploadRow(): HTMLProgressElement {
   return bar;
 }
 
-/** The knowledge row's progress wrap as `knowledge.ts` builds it. */
 function mountKnowledgeRow(pct: number): HTMLProgressElement {
   const row = document.createElement("div");
   row.className = "list-row knowledge-row knowledge-indexing";

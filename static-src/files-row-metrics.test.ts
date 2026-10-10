@@ -83,7 +83,6 @@ function row(i: number): HTMLElement {
   return el;
 }
 
-/** A dirty file's row, with the git letter `statusBadge` inserts, in production order. */
 function letteredRow(i: number): HTMLElement {
   const el = row(i);
 

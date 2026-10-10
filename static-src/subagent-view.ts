@@ -53,7 +53,6 @@ const shown = signal<{ chatID: string; subtaskID: string }>({ chatID: "", subtas
 /** One mounted member's render lifecycle, per MEMBER: the repaint gate is a UNION over registered
  *  renders, so each must be disposed (as `run-chat-steps.ts`'s `StepRender`). */
 interface BodyRender {
-  /** The host `exec-view/`'s detail pane hands out for this member's node. */
   host: HTMLElement;
   /** The turn this member's lane was mounted from, which is half its render key. Held
    *  because the DISPOSE has to name it after the projection has moved on. */
@@ -61,8 +60,7 @@ interface BodyRender {
   /** The mounted entry shape: the incremental update is correct only while the mounted prefix is
    *  unchanged (tail growth keeps it; a rewind or refetch does not). */
   shape: readonly string[];
-  /** Whether the settled body has been sealed. Guarded because every later repaint of
-   *  a finished delegate lands here too. */
+  /** Guarded because every later repaint of a finished delegate lands here too. */
   sealed: boolean;
 }
 
@@ -110,7 +108,7 @@ export function showSubagent(chatID: string, subtaskID: string): void {
 
 /** A subagent tab's `refresh`. The page is a projection of the launching chat's
  *  blocks, so its window is the only thing that can make it current. */
-export function refreshSubagent(chatID: string, _subtaskID: string): void {
+export function refreshSubagent(chatID: string): void {
   refreshChatView(chatID);
 }
 

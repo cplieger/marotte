@@ -135,7 +135,6 @@ func readManagedSettings(path string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, managedSettingsCap))
 }
 
-// handleLoginOptions serves GET /api/login/options.
 func (h *Handler) handleLoginOptions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)

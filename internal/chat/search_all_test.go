@@ -51,7 +51,6 @@ func seedChatDir(t *testing.T, s *Store, c *marotte.Chat, entries []marotte.Entr
 	}
 }
 
-// oneTurnChat is a closed one-turn chat record.
 func oneTurnChat(id, name, body string, updatedAt int64) (*marotte.Chat, []marotte.Entry) {
 	entries, _ := chatOf(openTurn(id+"-t1", 1, prompt("m-1", "seed")).text("a1", body).
 		close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted}))
@@ -129,7 +128,7 @@ func TestSearchAll(t *testing.T) {
 	seedChatEntries(t, s, "c-aaaaaaaa", "Redis migration", "we moved the cache to redis today")
 	seedChatEntries(t, s, "c-bbbbbbbb", "Grocery list", "nothing relevant here at all")
 
-	got := s.SearchAll(t.Context(), "redis")
+	got := s.searchAll(t.Context(), "redis")
 	if len(got.Matches) != 1 {
 		t.Fatalf("SearchAll(redis) = %d matches, want 1 (%+v)", len(got.Matches), got.Matches)
 	}
@@ -166,7 +165,7 @@ func TestSearchAll_HitsCountEveryOccurrencePastTheHitCap(t *testing.T) {
 	seedMentions("c-aaaaaaaa", busier)
 	seedMentions("c-bbbbbbbb", maxSearchHits)
 
-	got := s.SearchAll(t.Context(), "needle")
+	got := s.searchAll(t.Context(), "needle")
 	if len(got.Matches) != 2 {
 		t.Fatalf("SearchAll(needle) = %d matches, want 2 (%+v)", len(got.Matches), got.Matches)
 	}
@@ -198,7 +197,7 @@ func TestSearchAll_RankingDenominatorCoversEverySearchedSpan(t *testing.T) {
 	seedChatDir(t, s, &marotte.Chat{ID: "c-aaaaaaaa", Name: "Verbose", UpdatedAt: base.Add(time.Hour).UnixMilli(), TurnCount: 1}, verboseEntries, base.Add(time.Hour))
 	seedChatDir(t, s, &marotte.Chat{ID: "c-bbbbbbbb", Name: "Terse", UpdatedAt: base.UnixMilli(), TurnCount: 1}, terseEntries, base)
 
-	got := s.SearchAll(t.Context(), "redis")
+	got := s.searchAll(t.Context(), "redis")
 	if len(got.Matches) != 2 {
 		t.Fatalf("SearchAll(redis) = %d matches, want 2 (%+v)", len(got.Matches), got.Matches)
 	}
@@ -255,7 +254,7 @@ func TestSearchAll_AnUnreadChatIsNotScanned(t *testing.T) {
 			}
 			tc.plant(t, dir)
 
-			got := s.SearchAll(t.Context(), "redis")
+			got := s.searchAll(t.Context(), "redis")
 
 			if got.Scanned != 2 {
 				t.Errorf("Scanned = %d, want 2: the unread chat is not among the chats the scan read", got.Scanned)
@@ -275,7 +274,7 @@ func TestSearchAll_TitleOnlyMatchCarriesNoBestHit(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedChatEntries(t, s, "c-aaaaaaaa", "Redis migration", "we moved the cache today")
 
-	got := s.SearchAll(t.Context(), "redis")
+	got := s.searchAll(t.Context(), "redis")
 	if len(got.Matches) != 1 {
 		t.Fatalf("SearchAll(redis) = %d matches, want 1 (%+v)", len(got.Matches), got.Matches)
 	}
@@ -293,7 +292,7 @@ func TestSearchAll_MatchedCountsPastTheResultCap(t *testing.T) {
 		seedChatDir(t, s, c, entries, base.Add(time.Duration(i)*time.Minute))
 	}
 
-	got := s.SearchAll(t.Context(), "needle")
+	got := s.searchAll(t.Context(), "needle")
 	if len(got.Matches) != maxChatResults {
 		t.Errorf("len(Matches) = %d, want %d (the cap)", len(got.Matches), maxChatResults)
 	}
@@ -318,7 +317,7 @@ func TestSearchAll_CancelledCollectionIsNotAnEmptyAnswer(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	got := s.SearchAll(ctx, "redis")
+	got := s.searchAll(ctx, "redis")
 
 	if got.Scanned != 0 {
 		t.Errorf("Scanned = %d over a scan whose walk was cancelled before it read anything, want 0", got.Scanned)
@@ -341,7 +340,7 @@ func TestSearchAll_UnlistableDirIsNotAnEmptyAnswer(t *testing.T) {
 	}
 	s.dir = notADir
 
-	got := s.SearchAll(t.Context(), "redis")
+	got := s.searchAll(t.Context(), "redis")
 
 	if len(got.Matches) != 0 || got.Scanned != 0 || got.Matched != 0 {
 		t.Errorf("SearchAll over an unlistable dir = %d matches, scanned %d, matched %d; want 0/0/0",
@@ -357,7 +356,7 @@ func TestSearchAll_EmptyQuery(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedChatEntries(t, s, "c-aaaaaaaa", "Redis", "redis")
 	for _, q := range []string{"", "   "} {
-		got := s.SearchAll(t.Context(), q)
+		got := s.searchAll(t.Context(), q)
 		if len(got.Matches) != 0 || got.Scanned != 0 {
 			t.Errorf("SearchAll(%q) = %d matches over %d scanned chats, want 0 and 0", q, len(got.Matches), got.Scanned)
 		}
@@ -375,7 +374,7 @@ func TestSearchAll_RanksTitleMatchFirst(t *testing.T) {
 	seedChatEntries(t, s, "c-bbbbbbbb", "Assorted debugging", many...)
 	seedChatEntries(t, s, "c-aaaaaaaa", "Redis migration", "moved the cache")
 
-	got := s.SearchAll(t.Context(), "redis")
+	got := s.searchAll(t.Context(), "redis")
 	if len(got.Matches) < 2 {
 		t.Fatalf("expected both chats to match, got %+v", got.Matches)
 	}
@@ -405,7 +404,7 @@ func TestSearchAll_IsAlwaysCaseInsensitive(t *testing.T) {
 			seedChatEntries(t, s, "c-aaaaaaaa", "REDIS migration", "moved the cache over")
 			seedChatEntries(t, s, "c-bbbbbbbb", "Assorted notes", "we touched Redis in passing")
 
-			got := s.SearchAll(t.Context(), tc.query)
+			got := s.searchAll(t.Context(), tc.query)
 			ids := make(map[string]bool, len(got.Matches))
 			for i := range got.Matches {
 				ids[string(got.Matches[i].ID)] = true
@@ -424,7 +423,7 @@ func TestSearchAll_IsAlwaysCaseInsensitive(t *testing.T) {
 func TestSearchAll_TakesNoCaseArgument(t *testing.T) {
 	t.Parallel()
 	s, _ := newTestStore(t)
-	var f searchAllSignature = s.SearchAll
+	var f searchAllSignature = s.searchAll
 	if got := f(t.Context(), ""); len(got.Matches) != 0 {
 		t.Errorf("empty query must return no matches, got %+v", got.Matches)
 	}
@@ -475,7 +474,7 @@ func TestSearchAll_ReadsEveryChatHoweverMany(t *testing.T) {
 		seedChatDir(t, s, c, entries, mtime)
 	}
 
-	got := s.SearchAll(t.Context(), "stalewordxyz")
+	got := s.searchAll(t.Context(), "stalewordxyz")
 
 	if got.Matched != old {
 		t.Errorf("SearchAll(stalewordxyz) over %d chats: Matched = %d, want %d (the oldest hundred)", chats, got.Matched, old)

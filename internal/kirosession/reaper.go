@@ -66,9 +66,8 @@ func New(sessionsDir, workspaceRoot string) *Reaper {
 	return &Reaper{sessionsDir: sessionsDir, workspaceRoot: root, guard: defaultGuard}
 }
 
-// belongsToWorkspace reports whether the session at sessionDir names this reaper's workspace root
-// in its own workspacePaths. A mismatch is a skip and so is DOUBT (unreadable record, empty list):
-// a wrong skip costs disk, a wrong removal another workspace's history.
+// A mismatch is a skip and so is DOUBT (unreadable record, empty list): a wrong skip costs disk, a
+// wrong removal another workspace's history.
 func (r *Reaper) belongsToWorkspace(sessionDir string) bool {
 	paths, _, ok := readSessionRecord(sessionDir)
 	if !ok {
@@ -77,8 +76,7 @@ func (r *Reaper) belongsToWorkspace(sessionDir string) bool {
 	return namesRoot(paths, r.workspaceRoot)
 }
 
-// namesRoot reports whether a decoded workspacePaths list names root. Split out so
-// the sweep's one-read path applies the same rule rather than a second copy.
+// Split out so the sweep's one-read path applies the same rule rather than a second copy.
 func namesRoot(paths []string, root string) bool {
 	for _, p := range paths {
 		if p != "" && filepath.Clean(p) == root {
@@ -198,7 +196,6 @@ func (r *Reaper) countSessions() int {
 	return n
 }
 
-// sweepSessionDirs reaps orphaned sessions/<hash>/sess_*/ directories.
 func (r *Reaper) sweepSessionDirs(referenced map[string]struct{}, cutoff time.Time) int {
 	hashDirs, err := os.ReadDir(r.sessionsDir)
 	if err != nil {
@@ -214,7 +211,6 @@ func (r *Reaper) sweepSessionDirs(referenced map[string]struct{}, cutoff time.Ti
 	return reaped
 }
 
-// sweepHashDir reaps orphaned session dirs within one per-workspace-hash dir.
 func (r *Reaper) sweepHashDir(sub string, referenced map[string]struct{}, cutoff time.Time) int {
 	sessDirs, err := os.ReadDir(sub)
 	if err != nil {
@@ -229,8 +225,6 @@ func (r *Reaper) sweepHashDir(sub string, referenced map[string]struct{}, cutoff
 	return reaped
 }
 
-// reapOrphanSessionDir removes one session dir when it is a sess_* directory,
-// unreferenced, and older than the guard. Reports whether it reaped.
 func (r *Reaper) reapOrphanSessionDir(sub string, sd os.DirEntry, referenced map[string]struct{}, cutoff time.Time) bool {
 	name := sd.Name()
 	if !sd.IsDir() || !strings.HasPrefix(name, sessionPrefix) {
@@ -278,9 +272,8 @@ const (
 	spareLiveRun
 )
 
-// spareReason answers, off ONE read of session.json, whether an aged unreferenced candidate names
-// this workspace and whether it is a workflow STEP whose run is still on disk; a step session is
-// referenced by no chat, so without the second question a sweep would reap it mid-run.
+// A step session is referenced by no chat, so without the second question a sweep would reap it
+// mid-run.
 func (r *Reaper) spareReason(sub, path string) sweepSpare {
 	paths, workflowID, ok := readSessionRecord(path)
 	// The sweep enumerates every bucket, so a session belonging to another workspace
@@ -354,9 +347,8 @@ func (r *Reaper) reapOrphanCLIFile(cliDir string, e os.DirEntry, referenced map[
 	return isV3
 }
 
-// sidecarReapable reports whether the cli/ sidecars for sessionID may be removed. A sidecar carries
-// no workspacePaths, so its session DIR answers; a sidecar with no dir anywhere is stranded (a
-// crash between removals) and stays reclaimable.
+// A sidecar carries no workspacePaths, so its session DIR answers; a sidecar with no dir anywhere
+// is stranded (a crash between removals) and stays reclaimable.
 func (r *Reaper) sidecarReapable(sessionID string) bool {
 	dirs, _ := filepath.Glob(filepath.Join(r.sessionsDir, "*", sessionID))
 	stranded := true
@@ -376,8 +368,6 @@ func (r *Reaper) sidecarReapable(sessionID string) bool {
 	return stranded
 }
 
-// removeCLISidecars removes every sessions/cli/<sessionID>.* file for a
-// session being reaped.
 func (r *Reaper) removeCLISidecars(sessionID string) {
 	sidecars, _ := filepath.Glob(filepath.Join(r.sessionsDir, "cli", sessionID+".*"))
 	for _, s := range sidecars {

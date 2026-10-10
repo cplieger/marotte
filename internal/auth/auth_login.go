@@ -17,8 +17,8 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// validateProvider rejects anything but a well-formed HTTPS URL; empty passes for the default Builder ID flow. An
-// attacker-controlled start URL would hand away the user's SSO session.
+// Empty passes for the default Builder ID flow. An attacker-controlled start URL would hand away
+// the user's SSO session.
 func validateProvider(v string) error {
 	if v == "" {
 		return nil

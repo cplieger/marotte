@@ -6,6 +6,7 @@ import notifySrc from "./notify.ts?raw";
 import wireTypesSrc from "./wire/types.gen.ts?raw";
 import domSrc from "./dom.ts?raw";
 import turnHandlerSrc from "./handlers/turn.ts?raw";
+import { noticeFor } from "./__test-helpers__/notice.js";
 
 describe("the permission notification has no off switch", () => {
   const html = indexHtml;
@@ -74,10 +75,10 @@ describe("no client code can address the removed setting", () => {
 });
 
 describe("the master switch still governs everything", () => {
-  it("notifyIfHidden gates on the master enabled flag", async () => {
+  it("notifyOffScreen gates on the master enabled flag", async () => {
     const notify = await import("./notify.js");
     expect(notify.areNotificationsEnabled()).toBe(false);
-    expect(notify.notifyIfHidden("Marotte", "Permission needed", chatTarget(""))).toBe(false);
+    expect(notify.notifyOffScreen(noticeFor(chatTarget(""), "Permission needed"))).toBe(false);
 
     notify.restoreNotifications(
       settingsPayload({

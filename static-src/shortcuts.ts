@@ -13,7 +13,7 @@ interface SheetRow {
   readonly chords: readonly (readonly string[])[];
 }
 
-export interface SheetGroup {
+interface SheetGroup {
   readonly name: string;
   readonly rows: readonly SheetRow[];
 }
@@ -46,15 +46,15 @@ const OTHER_ROWS: readonly SheetRow[] = [
   { description: "Show this list", chords: [["?"]] },
 ];
 
-/** Display label for a registered key. Single letters read as capitals because that is how a
- *  keycap is printed; the named and punctuation keys are already what a reader sees on theirs. */
+/** Single letters read as capitals because that is how a keycap is printed; the named and
+ *  punctuation keys are already what a reader sees on theirs. */
 function keyLabel(key: string): string {
   return key.length === 1 ? key.toUpperCase() : key;
 }
 
-/** The keys of one registered chord, in press order. The modifier is labelled `Ctrl` alone
- *  rather than detected: the handler accepts Ctrl OR Cmd, and the sheet says so once in its own
- *  note instead of sniffing the platform, which gets iPadOS-on-MacIntel wrong. */
+/** The modifier is labelled `Ctrl` alone rather than detected: the handler accepts Ctrl OR Cmd, and
+ *  the sheet says so once in its own note instead of sniffing the platform, which gets
+ *  iPadOS-on-MacIntel wrong. */
 function chordOf(binding: ShortcutBinding): readonly string[] {
   const keys = ["Ctrl"];
   if (binding.shift) {

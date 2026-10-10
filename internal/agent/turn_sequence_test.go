@@ -13,7 +13,6 @@ import (
 	"github.com/cplieger/sse"
 )
 
-// entriesOfBroadcasts returns the turn_close entry of every turn_closed frame in events.
 func entriesOfBroadcasts(t *testing.T, events []sse.ReplayEvent) []marotte.Entry {
 	t.Helper()
 	var out []marotte.Entry
@@ -23,7 +22,6 @@ func entriesOfBroadcasts(t *testing.T, events []sse.ReplayEvent) []marotte.Entry
 	return out
 }
 
-// closedStops returns the raw stop of every turn_closed frame broadcast so far.
 func closedStops(t *testing.T, h *Runtime) []marotte.StopReason {
 	t.Helper()
 	var out []marotte.StopReason
@@ -41,7 +39,7 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	gen := h.coord.turns.attachForward(chatID)
+	gen := h.coord.turns.attachForward(chatID).gen
 	epoch, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, epoch)
 
@@ -61,7 +59,7 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 3)
 
 	for _, n := range queued {
-		h.coord.consumeFrame(chatID, gen, n)
+		h.coord.consumeFrame(chatID, h.originOf(chatID), gen, n)
 	}
 	<-settled
 
@@ -96,7 +94,7 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	gen := h.coord.turns.attachForward(chatID)
+	gen := h.coord.turns.attachForward(chatID).gen
 	epoch, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, epoch)
 
@@ -116,7 +114,7 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 2)
 
 	for _, n := range queued {
-		h.coord.consumeFrame(chatID, gen, n)
+		h.coord.consumeFrame(chatID, h.originOf(chatID), gen, n)
 	}
 	<-settled
 
@@ -212,7 +210,7 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 	r := newTurnRegistry()
 	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
-	gen := r.attachForward(chatID)
+	gen := r.attachForward(chatID).gen
 
 	// Opened at the registry alone; the store append is not the subject.
 	lc := r.lifecycleFor(chatID)
@@ -249,13 +247,13 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	gen := h.coord.turns.attachForward(chatID)
+	gen := h.coord.turns.attachForward(chatID).gen
 	preOpen, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, preOpen)
 
 	// The auto-wake's brackets mis-bind and close the pre-open; the prompted turn's bracket is still queued.
-	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 1})
-	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 2})
+	h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 1})
+	h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 2})
 
 	var openedAfterAtSettle bool
 	settled := make(chan struct{})
@@ -267,8 +265,8 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	}()
 	waitForParkedSettle(t, h.coord.turns, chatID, preOpen, 4)
 
-	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 3})
-	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 4})
+	h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 3})
+	h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 4})
 	<-settled
 
 	if !openedAfterAtSettle {
@@ -282,5 +280,26 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	if !result.WireEnded || !result.EmittedNothing {
 		t.Errorf("the mis-bound pre-open = {wire:%v empty:%v}, want both true — the fixture is not "+
 			"reproducing the chain the fourth clause exists for", result.WireEnded, result.EmittedNothing)
+	}
+}
+
+// A chat deleted after its forward attached but before the goroutine ran forgets the lifecycle under the
+// goroutine: the exit its teardown captured must still close when the goroutine ends, or the delete waits out
+// its whole drain budget.
+func TestAttachForward_ExitClosesAfterTheLifecycleWasForgotten(t *testing.T) {
+	r := newTurnRegistry()
+	const chatID marotte.ChatID = "c1"
+	att := r.attachForward(chatID)
+	exit := r.forwardExit(chatID)
+	if exit == nil {
+		t.Fatal("forwardExit = nil right after an attach")
+	}
+	r.forget(chatID)
+
+	att.exited()
+	select {
+	case <-exit:
+	default:
+		t.Error("the captured exit stayed open after its forward ended on a forgotten lifecycle")
 	}
 }

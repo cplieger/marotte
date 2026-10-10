@@ -1,6 +1,6 @@
-// A file the server marks read-only (a KAS tool output under the sessions tree)
-// opens in the editor with no way into edit mode: no Edit control, and the Edit
-// verb does nothing if reached anyway.
+// A file the server marks read-only (a KAS tool output under the sessions tree), or one that is not
+// UTF-8 text, opens in the editor with no way into edit mode: no Edit control, a header label
+// saying why, and the Edit verb does nothing if reached anyway.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type * as Dom from "./dom.js";
 import type * as EditorOpeners from "./editor-openers.js";
@@ -61,16 +61,16 @@ vi.mock("./web-open.js", async (importOriginal) => ({
 }));
 
 const { initEditor } = await import("./editor-core.js");
-const { renderEditModeUI } = await import("./editor-ui.js");
+const { renderTextModeUI } = await import("./editor-ui.js");
 const { fileStates, freshState, setActiveFilePath } = await import("./editor-types.js");
 const { $ } = await import("./dom.js");
 
 const PATH = "/config/.kiro/sessions/cli/sess_1/tool-outputs/shell-0a1b2c3d.txt";
 
-function stage(readOnly: boolean): ReturnType<typeof freshState> {
+function stage(readOnly: boolean, utf8 = true): ReturnType<typeof freshState> {
   const state = freshState(PATH);
   state.loaded = true;
-  state.readOnly = readOnly;
+  state.facts.value = { kind: "small", binary: false, utf8, conflict: false, readOnly, size: 6 };
   state.original.value = "output";
   state.current.value = "output";
   fileStates.set(PATH, state);
@@ -90,25 +90,38 @@ beforeEach(() => {
 });
 
 describe("a read-only file in the editor", () => {
-  it("hides the Edit control", () => {
-    renderEditModeUI(stage(true));
+  it("hides the Edit control and labels the header", () => {
+    renderTextModeUI(stage(true));
     expect($.editorEditBtn.classList.contains("hidden")).toBe(true);
+    expect($.editorReadonlyLabel.textContent).toBe("KAS tool output");
+    expect($.editorReadonlyLabel.classList.contains("hidden")).toBe(false);
   });
 
-  it("an ordinary file shows it", () => {
-    renderEditModeUI(stage(false));
+  // JSON replaced the invalid bytes, so saving would write U+FFFD over them.
+  it("keeps a file that is not UTF-8 text read-only, saying so", () => {
+    const state = stage(false, false);
+    renderTextModeUI(state);
+    expect($.editorEditBtn.classList.contains("hidden")).toBe(true);
+    expect($.editorReadonlyLabel.textContent).toBe("Not UTF-8 text");
+    $.editorEditBtn.click();
+    expect(state.mode.value).toEqual({ kind: "text", editing: false });
+  });
+
+  it("an ordinary file shows it, with no label", () => {
+    renderTextModeUI(stage(false));
     expect($.editorEditBtn.classList.contains("hidden")).toBe(false);
+    expect($.editorReadonlyLabel.classList.contains("hidden")).toBe(true);
   });
 
   it("does not enter edit mode when the Edit verb is reached anyway", () => {
     const state = stage(true);
     $.editorEditBtn.click();
-    expect(state.mode.value).toEqual({ kind: "edit", editing: false });
+    expect(state.mode.value).toEqual({ kind: "text", editing: false });
   });
 
   it("an ordinary file enters edit mode on Edit", () => {
     const state = stage(false);
     $.editorEditBtn.click();
-    expect(state.mode.value).toEqual({ kind: "edit", editing: true });
+    expect(state.mode.value).toEqual({ kind: "text", editing: true });
   });
 });

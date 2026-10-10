@@ -18,8 +18,8 @@ func repoRow(name string) allRepoStatus {
 	return allRepoStatus{Repo: name, IsRepo: true, Files: []gitFile{}}
 }
 
-// seedSnapshot plants a completed scan with a chosen age. Written directly rather
-// than through publish, which stamps `now` and so cannot express an old snapshot.
+// Written directly rather than through publish, which stamps `now` and so cannot express an old
+// snapshot.
 func seedSnapshot(c *statusCache, key string, rows []allRepoStatus, at time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -34,7 +34,6 @@ func seedSnapshot(c *statusCache, key string, rows []allRepoStatus, at time.Time
 	slot.snap = &statusSnapshot{at: at, repos: rows}
 }
 
-// getStatusAll drives the handler and decodes its answer.
 func getStatusAll(t *testing.T, h *Handler, query string) statusAllResp {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/git/status-all"+query, nil)

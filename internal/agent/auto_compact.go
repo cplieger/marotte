@@ -11,9 +11,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// autoCompactPreSendBudget bounds one marotte-initiated compaction and a send's wait for
-// one. Above KAS's 300 s _kiro/session/compact bound, so it only covers a wedged bridge.
-// A var for tests.
+// Above KAS's 300 s _kiro/session/compact bound, so it only covers a wedged bridge. A var for
+// tests.
 var autoCompactPreSendBudget = 310 * time.Second
 
 // autoCompactMinEffect is the drop, in context points, a compaction must show by the next
@@ -23,7 +22,6 @@ const autoCompactMinEffect = 5.0
 // kasDefaultSummarizationPct is KAS's own summarization point, used when the session reported none.
 const kasDefaultSummarizationPct = 80.0
 
-// compactReading is everything the policy decides on, gathered at one moment.
 type compactReading struct {
 	contextPct float64
 	// sessionThreshold is the session's reported summarization point; zero when omitted.
@@ -52,7 +50,6 @@ func shouldAutoCompact(r compactReading) bool {
 	return float64(r.pct) < kasPoint
 }
 
-// autoCompactState is one chat's in-memory compaction bookkeeping.
 type autoCompactState struct {
 	// inflight closes when the running compaction returns.
 	inflight chan struct{}
@@ -65,7 +62,7 @@ type autoCompactState struct {
 	compactedSinceLastTurn bool
 }
 
-// autoCompactor drives the compaction policy; every compaction is KAS's own verb through command.Compact.
+// Every compaction is KAS's own verb through command.Compact.
 type autoCompactor struct {
 	chats    map[marotte.ChatID]*autoCompactState
 	live     func(marotte.ChatID) bool
@@ -76,7 +73,7 @@ type autoCompactor struct {
 	mu       sync.Mutex
 }
 
-func newAutoCompactor(bc *BridgeCoordinator) *autoCompactor {
+func newAutoCompactor(bc *bridgeCoordinator) *autoCompactor {
 	return &autoCompactor{
 		chats: map[marotte.ChatID]*autoCompactState{},
 		live:  bc.turns.live,
@@ -84,7 +81,7 @@ func newAutoCompactor(bc *BridgeCoordinator) *autoCompactor {
 			if !bc.bridgeLive(chatID) {
 				return nil
 			}
-			if sb := bc.Bridge(chatID); sb != nil {
+			if sb := bc.bridgeFor(chatID); sb != nil {
 				return sb.bridge
 			}
 			return nil
@@ -125,7 +122,6 @@ func (a *autoCompactor) noteTurnClosed(chatID marotte.ChatID) {
 	}
 }
 
-// forget drops the chat's state when the chat goes away.
 func (a *autoCompactor) forget(chatID marotte.ChatID) {
 	if a == nil {
 		return
@@ -228,7 +224,7 @@ func (st *autoCompactState) claimLocked(r compactReading) chan struct{} {
 }
 
 // await holds a send until the running compaction returns, bounded by autoCompactPreSendBudget.
-func (a *autoCompactor) await(ctx context.Context, chatID marotte.ChatID, running <-chan struct{}) {
+func (*autoCompactor) await(ctx context.Context, chatID marotte.ChatID, running <-chan struct{}) {
 	wait, cancel := context.WithTimeout(ctx, autoCompactPreSendBudget)
 	defer cancel()
 	select {
@@ -238,7 +234,7 @@ func (a *autoCompactor) await(ctx context.Context, chatID marotte.ChatID, runnin
 	}
 }
 
-// run performs the claimed compaction. A refusal or error changes nothing and is retried at the next trigger.
+// A refusal or error changes nothing and is retried at the next trigger.
 func (a *autoCompactor) run(ctx context.Context, chatID marotte.ChatID, st *autoCompactState, done chan struct{}, b ACPBridge, atPct float64, trigger string) {
 	callCtx, cancel := context.WithTimeout(ctx, autoCompactPreSendBudget)
 	accepted, err := a.compact(callCtx, b)

@@ -27,8 +27,8 @@ interface RuntimeState {
   readonly level: BannerLevel;
 }
 
-// Per-reason copy. Installing and retrying are expected states with nothing for the user to do, so
-// they are informational; the two dead ends are errors.
+// Installing and retrying are expected states with nothing for the user to do, so they are
+// informational; the two dead ends are errors.
 const STATES: Record<string, RuntimeState> = {
   "kiro-cli installing": {
     message:
@@ -59,7 +59,6 @@ const FALLBACK: RuntimeState = {
 
 /** Shape of /api/health's JSON envelope (both 200 and 503 bodies). */
 interface HealthBody {
-  status?: string;
   reason?: string;
 }
 
@@ -115,8 +114,8 @@ const UNREADY_POLL_MS = 10_000;
  *  10s that tab issues one /api/health every 10s for as long as it is open. */
 const UNREADY_POLL_MAX_MS = 120_000;
 
-/** The one pending re-probe. A single slot rather than a repeating interval, so a slow probe can
- *  never overlap the next one and a ready answer ends the chain by simply not re-arming. */
+/** A single slot rather than a repeating interval, so a slow probe can never overlap the next one
+ *  and a ready answer ends the chain by simply not re-arming. */
 let unreadyTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Consecutive unready answers, which is what the backoff is a function of. Reset by any ok

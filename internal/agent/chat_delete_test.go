@@ -90,7 +90,7 @@ func newDeleteRig(t *testing.T, runs json.RawMessage) (*Runtime, *testChatStore,
 	return h, cs, rig
 }
 
-// insertChatBridge inserts rather than opens, so OpenBridge's rehydrate hook does not read the inventory.
+// insertChatBridge inserts rather than opens, so openBridge's rehydrate hook does not read the inventory.
 func insertChatBridge(t *testing.T, h *Runtime, rig *deleteRig, chatID marotte.ChatID, sessionID string) *fakeBridge {
 	t.Helper()
 	br, ok := rig.factory().(*fakeBridge)
@@ -163,7 +163,7 @@ func TestDeleteForSessions_DeletesEveryOwnedRunWhateverItsStatus(t *testing.T) {
 	))
 	insertChatBridge(t, h, rig, "c1", "sess_cur")
 
-	h.runs.DeleteForSessions(t.Context(), "c1", []string{"sess_old", "sess_cur"}, runStop{})
+	h.runs.deleteForSessions(t.Context(), "c1", []string{"sess_old", "sess_cur"}, runStop{})
 
 	var got []string
 	for _, c := range rig.of(methodKiroWorkflowDelete) {
@@ -222,31 +222,6 @@ func TestDeleteChatStateByChain_ReapsWhenTheDeleteIsRefused(t *testing.T) {
 
 	if _, err := os.Stat(sessDir); err == nil {
 		t.Error("a refused session/delete left the session directory on disk: Reap is the fallback")
-	}
-}
-
-func TestDeleteChatState_ReadsTheChainAndTakesTheSamePath(t *testing.T) {
-	h, cs, rig := newDeleteRig(t, kasRuns(t,
-		map[string]any{"workflowId": "wf_1", "name": "r", "status": "completed", "parentSessionId": "sess_old"},
-	))
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "A"
-		c.RecordSession("sess_old")
-		c.RecordSession("sess_cur")
-		return true
-	}); err != nil {
-		t.Fatalf("Setup: seed the chat: %v", err)
-	}
-
-	h.DeleteChatState(t.Context(), "c1")
-
-	got := deletedSessionIDs(rig.of(marotte.MethodSessionDelete))
-	slices.Sort(got)
-	if want := []string{"sess_cur", "sess_old"}; !slices.Equal(got, want) {
-		t.Errorf("DeleteChatState sent session/delete for %v, want the record's whole chain %v", got, want)
-	}
-	if n := len(rig.of(methodKiroWorkflowDelete)); n != 1 {
-		t.Errorf("DeleteChatState sent %d workflow/delete, want 1 for the run the chain launched", n)
 	}
 }
 

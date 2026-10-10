@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -94,6 +96,30 @@ func TestResolveDigest_ChatWhoseRecordIsGoneAnswersGone(t *testing.T) {
 	}
 }
 
+// A header the store cannot stat is a fault, not a deletion: a waking device keeps the chat.
+func TestResolveDigest_ChatWhoseHeaderIsUnstattableIsNotGone(t *testing.T) {
+	h, cs, _ := newTestHub()
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "x"; return true }); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	dir := filepath.Join(cs.Dir(), "c1")
+	if err := os.Rename(dir, dir+".aside"); err != nil {
+		t.Fatalf("Setup: move the chat directory aside: %v", err)
+	}
+	// A file where the directory was: the header's stat fails with ENOTDIR, without root.
+	if err := os.WriteFile(dir, nil, 0o600); err != nil {
+		t.Fatalf("Setup: file in place of the chat directory: %v", err)
+	}
+
+	states, err := h.resolveDigest(t.Context(), []sse.Held{held(subject.KindChat, "c1")})
+	if err != nil {
+		t.Fatalf("resolveDigest: %v", err)
+	}
+	if st := stateFor(t, states, subject.KindChat, "c1"); st.Status == sse.StatusGone {
+		t.Errorf("chat with an unstattable header = %+v, want not gone", st)
+	}
+}
+
 func TestResolveDigest_LiveTurnFollowsTheTurnRegistry(t *testing.T) {
 	h, _, _ := newTestHub()
 	states, err := h.resolveDigest(t.Context(), []sse.Held{held(subject.KindLiveTurn, "t-never-opened")})
@@ -140,7 +166,7 @@ func TestResolveDigest_LiveTurnFollowsTheTurnRegistry(t *testing.T) {
 
 func TestResolveDigest_RunTurnFollowsTheRunRegistry(t *testing.T) {
 	h := newBudgetRuntime(t)
-	turn, _, err := h.runs.log.Open(t.Context(), translate.RunStep{RunID: "wf-1", NodePath: "wf-1/step", SessionID: "sess-step"}, "c1")
+	turn, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf-1", NodePath: "wf-1/step", SessionID: "sess-step"}, "c1")
 	if err != nil {
 		t.Fatalf("Open(step turn): %v", err)
 	}
@@ -153,7 +179,7 @@ func TestResolveDigest_RunTurnFollowsTheRunRegistry(t *testing.T) {
 		t.Errorf("open step turn: %+v, want current at %q", st, turnVersion(turn.ID(), 0))
 	}
 
-	if _, _, err := h.runs.log.CloseNode(t.Context(), "wf-1", "wf-1/step", "completed", ""); err != nil {
+	if _, _, err := h.runs.log.closeNode(t.Context(), "wf-1", "wf-1/step", "completed", ""); err != nil {
 		t.Fatalf("CloseNode: %v", err)
 	}
 	states, err = h.resolveDigest(t.Context(), []sse.Held{held(subject.KindRunTurn, ref)})

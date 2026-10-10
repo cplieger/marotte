@@ -50,8 +50,8 @@ function hit(over: Partial<Hit> = {}): Hit {
   };
 }
 
-/** A server reply carrying these hits. `matched` defaults to the list's own
- *  length, which is the uncut answer; a case staging a cut sets it higher. */
+/** `matched` defaults to the list's own length, which is the uncut answer; a case staging a cut sets
+ *  it higher. */
 function reply(hits: Hit[], over: Partial<SearchResult> = {}): SearchResult {
   return { matches: hits, scanned: 4, matched: hits.length, truncated: false, ...over };
 }

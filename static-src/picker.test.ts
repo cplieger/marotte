@@ -69,8 +69,7 @@ function hidden(): boolean {
   return el.classList.contains("hidden");
 }
 
-/** How many times the injected Retry has been fired. `initModelPicker` binds once for the whole
- *  file, so the counter has to outlive every case too. */
+/** `initModelPicker` binds once for the whole file, so the counter has to outlive every case too. */
 let retries = 0;
 
 /** What the next Retry-driven read LANDS, applied while that read is in flight. app.ts's handler

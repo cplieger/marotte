@@ -35,7 +35,6 @@ function pair(fg: string, bg: string): Measurement[] {
   return rows;
 }
 
-/** One declaration's value out of a rule's body, comments stripped. */
 function decl(body: string, prop: string): string {
   const m = new RegExp(`(?:^|[;{\\s])${prop}:\\s*([^;]+);`).exec(
     body.replace(/\/\*[\s\S]*?\*\//g, " "),

@@ -16,13 +16,11 @@ import (
 // The package's dependency contracts: each role interface is shaped by what its handler invokes,
 // and a handler's reach is its signature, so widening one is a diff at its declaration.
 
-// sessionScoped names the ACP session an RPC is addressed to.
 type sessionScoped interface {
 	// SessionID returns the current ACP session ID.
 	SessionID() marotte.SessionID
 }
 
-// bridgeCaller sends one request to kiro-cli and waits for its answer.
 type bridgeCaller interface {
 	// Call sends an RPC call to kiro-cli.
 	Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error)
@@ -32,9 +30,9 @@ type bridgeCaller interface {
 	CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error)
 }
 
-// sessionCaller is the commonest shape on this path: one call, addressed to
-// the bridge's own session.
-type sessionCaller interface {
+// SessionCaller is one call addressed to one session: a chat bridge's own, or a run step's on its
+// run's carrier.
+type SessionCaller interface {
 	bridgeCaller
 	sessionScoped
 }
@@ -44,7 +42,7 @@ type sessionCaller interface {
 // sending a frame and owning the turn are different rights, and the cancel
 // path sends a notification without holding the slot.
 type bridgeRPC interface {
-	sessionCaller
+	SessionCaller
 
 	// Notify sends a one-way notification to kiro-cli.
 	Notify(ctx context.Context, method string, params any) error
@@ -78,16 +76,17 @@ type promptSlot interface {
 
 // Bridge is the per-chat ACP bridge as a whole. Only a handler that owns a chat for
 // the length of a turn needs it; helpers take a narrower parameter. Exported because
-// BridgeAccess returns it and the runtime's wiring names it.
+// bridgeAccess returns it and the runtime's wiring names it.
 type Bridge interface {
 	bridgeRPC
 	promptSlot
 }
 
-// BridgeAccess provides bridge lifecycle operations needed by prompt,
+// bridgeAccess provides bridge lifecycle operations needed by prompt,
 // cancel, subagent, slash, and permission handlers.
-type BridgeAccess interface {
+type bridgeAccess interface {
 	Bridge(chatID marotte.ChatID) Bridge
+	// OpenBridge answers once the chat's log holds KAS's account of its session (sessionLoader).
 	OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (Bridge, error)
 	// BridgeLive reports a bridge for the chat that is past its spawn: the state
 	// a steer can be delivered into, where a spawning one parks it.
@@ -97,19 +96,30 @@ type BridgeAccess interface {
 	CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome)
 }
 
-// SessionClaims reports whether any chat's session chain holds sessionID, from a
+// sessionLoader opens a chat's bridge and answers nil once the chat's log holds KAS's account of
+// its session: a resumed session's replay merged, or a fresh session started. ErrChatGone is
+// terminal: the chat no longer exists. Any other error, the context's included, is retryable and
+// means the log may still lag what KAS holds.
+type sessionLoader interface {
+	LoadSession(ctx context.Context, chatID marotte.ChatID) error
+}
+
+// ErrChatGone reports a chat whose record no longer exists; a bridge open wraps it.
+var ErrChatGone = errors.New("chat not found")
+
+// sessionClaims reports whether any chat's session chain holds sessionID, from a
 // read that sees every record written before the call. complete is false when a
 // chat file that exists could not be read.
-type SessionClaims interface {
+type sessionClaims interface {
 	SessionClaimed(ctx context.Context, sessionID string) (claimed, complete bool)
 }
 
-// ChatStore is the chat store as the command handlers use it: read the header,
+// chatStore is the chat store as the command handlers use it: read the header,
 // mutate it, record a draft and its attachments, delete the chat, and the two
 // log operations a command owns, the rewind's truncate and the attachment count.
 // It excludes List, RegisterRoutes and every append but the turn_open the turn
 // registry writes. Exported because *agent.Runtime names this.
-type ChatStore interface {
+type chatStore interface {
 	// Get returns the chat header at id, or false if it does not exist.
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
 	// Mutate is the header write primitive: load, apply, save, broadcast
@@ -125,6 +135,8 @@ type ChatStore interface {
 	// prompt opened and the id KAS holds the prompt under. False when no turn's
 	// prompt carries that id.
 	RewindTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error)
+	// PromptReceipt reads what the log holds of one prompt id: opened, bound by KAS, and its words.
+	PromptReceipt(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.PromptReceipt, error)
 	// PromptAttachmentPaths is every attachment path on the log's prompts after the
 	// compaction watermark entry (the whole log when watermark is ""), in turn
 	// order: what KAS still holds, which bounds how many more images this prompt
@@ -143,13 +155,14 @@ type ChatStore interface {
 	// the list. The draft's twin, with the same no-UpdatedAt and no-op-on-
 	// missing-record contracts.
 	SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error)
-	// Delete removes the chat file and broadcasts chat_deleted. Bridge exits, model switches and
-	// restarts never delete.
-	Delete(ctx context.Context, id marotte.ChatID) error
+	// Delete removes the chat file and broadcasts chat_deleted, answering the session chain the
+	// removed record held, read atomically with the removal; a record it cannot read is kept and
+	// the error answered. Bridge exits, model switches and restarts never delete.
+	Delete(ctx context.Context, id marotte.ChatID) (sessionChain []string, err error)
 }
 
-// Broadcaster publishes a domain event to every connected client.
-type Broadcaster interface {
+// broadcaster publishes a domain event to every connected client.
+type broadcaster interface {
 	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
 
@@ -162,21 +175,18 @@ const (
 	RunStopTabClosed RunStopCause = iota
 	// RunStopRetention is the retention purge, which nobody asked for.
 	RunStopRetention
+	// RunStopChatDeleted is the user deleting the chat.
+	RunStopChatDeleted
 )
 
-// ChatTeardown ends a chat's life, in one of two ways. Ending the chat's runs is
+// chatTeardown ends a chat's life, in one of two ways. Ending the chat's runs is
 // inside both rather than a step a caller pairs with them: a run is durable state a
 // dead bridge only pauses, so it must be ended before the bridge goes.
-type ChatTeardown interface {
-	// DeleteChatState is the delete path: delete the chat's runs and its KAS
-	// sessions, and drop every in-memory trace. Resolves the session chain off
-	// the chat record, so it belongs to the record-first delete, where the
-	// teardown runs while the record still exists.
-	DeleteChatState(ctx context.Context, chatID marotte.ChatID)
-	// DeleteChatStateByChain is the delete grade for a chat whose record is
-	// already gone: the close escalation removes the record inside its
-	// commit, so the run and session deletes are driven from the session
-	// chain captured before it.
+type chatTeardown interface {
+	// DeleteChatStateByChain is the delete path: delete the chat's runs and its KAS
+	// sessions, and drop every in-memory trace. Every delete removes the record
+	// first, so a bridge opened once this runs answers ErrChatGone; the run and session
+	// deletes are driven from the session chain the removed record held.
 	DeleteChatStateByChain(ctx context.Context, chatID marotte.ChatID, sessionChain []string, cause RunStopCause)
 	// CloseChatState is the close path: cancel the chat's runs and drop the
 	// in-memory state, but leave the runs and the durable KAS session on disk
@@ -188,49 +198,73 @@ type ChatTeardown interface {
 	BeginChatTeardown(chatID marotte.ChatID, keep bool)
 }
 
-// PendingPermAccess provides the pending-permission bookkeeping handlers
+// pendingPermAccess provides the pending-permission bookkeeping handlers
 // need: an unanswered request is replayed to a reconnecting client, so
 // answering or abandoning one has to retire the entry.
-type PendingPermAccess interface {
+type pendingPermAccess interface {
 	ClearPendingPermsForChat(chatID marotte.ChatID)
 	// TakePendingPerm claims the request before its answer is sent, reporting false
-	// when another surface already answered it. settledBy travels with the claim
-	// because the winning take is broadcast to the surfaces that lost, and their card
-	// says who answered. The chat is part of the claim because a request id is unique
-	// only within one bridge: every bridge mints ids from zero.
-	TakePendingPerm(chatID marotte.ChatID, requestID int64, settledBy marotte.SettledBy) bool
+	// when another surface already answered it, its bridge ended, or it is not chatID's.
+	// settledBy travels with the claim because the delivered answer is broadcast to the
+	// surfaces that lost, and their card says who answered.
+	TakePendingPerm(chatID marotte.ChatID, requestID int64, settledBy marotte.SettledBy) (AskReply, bool)
 	// TakePendingPermissionOption retains an off-list request and reports it as
 	// pending but not offered. A successful result validates and claims in one
 	// operation, so another surface cannot answer between those steps.
-	TakePendingPermissionOption(chatID marotte.ChatID, requestID int64, optionID string, settledBy marotte.SettledBy) (pending, offered bool)
+	TakePendingPermissionOption(chatID marotte.ChatID, requestID int64, optionID string, settledBy marotte.SettledBy) (reply AskReply, pending, offered bool)
 	// PendingPermission reads an unanswered permission ask without claiming it.
 	PendingPermission(chatID marotte.ChatID, requestID int64) (marotte.PermissionNeededPayload, bool)
 }
 
-// ProfileSwitcher moves the security profile to Custom before an always answer saves a rule.
-type ProfileSwitcher interface {
+// AnswerOutcome is how a claimed ask settled under its answer.
+type AnswerOutcome uint8
+
+const (
+	// AnswerDelivered is an answer the agent received.
+	AnswerDelivered AnswerOutcome = iota
+	// AnswerWithdrawn is an ask a turn cancel, run end, KAS withdrawal or its bridge's end settled
+	// first: the answer reached nobody, and that settlement retires the card.
+	AnswerWithdrawn
+	// AnswerReopened is a write that failed on a live bridge: the ask is pending again.
+	AnswerReopened
+)
+
+// AskReply answers one claimed ask on the bridge it arrived on, never on the chat's bridge at
+// answer time: a successor would resolve an unrelated request under the same id. Respond is
+// called once and settles the ask exactly once, announced as decision_settled: a terminal
+// transition that landed during the write wins (turn cancel or run end silently, a KAS withdrawal
+// as moot, the bridge's end as ended) and is AnswerWithdrawn, as is a write refused because the
+// bridge ended; else AnswerDelivered, as the claim's settledBy. Any other failure re-offers the
+// ask as pending and is AnswerReopened with the write's error, the only outcome carrying one.
+type AskReply interface {
+	Respond(ctx context.Context, result any) (AnswerOutcome, error)
+}
+
+// profileSwitcher moves the security profile to Custom before an always answer saves a rule.
+type profileSwitcher interface {
 	// EnsureCustomProfile is a no-op on Custom; otherwise it runs Customize and returns once
 	// the user permissions file is written. Errors are securityprofile's.
 	EnsureCustomProfile(ctx context.Context) error
 }
 
-// TerminalAccess is the interrupt's process half: a turn cancel must reach
+// terminalAccess is the interrupt's process half: a turn cancel must reach
 // the turn's agent terminals or it strands them.
-type TerminalAccess interface {
+type terminalAccess interface {
 	// KillForTurn kills the terminals the chat's current turn created, and nothing else: a
-	// background command an earlier turn left running is not the cancel's to kill.
+	// background command an earlier turn left running is not the cancel's to kill. It does not
+	// unregister them; the agent's release does.
 	KillForTurn(chatID marotte.ChatID)
 }
 
-// TurnStopper records a stop on the chat's turn sequence. A cancel records it
+// turnStopper records a stop on the chat's turn sequence. A cancel records it
 // BEFORE it signals anything, so a turn opened to replace one the reader stopped
 // (the empty-turn retry) sees it whichever bridge the signal reached.
-type TurnStopper interface {
+type turnStopper interface {
 	RequestStop(chatID marotte.ChatID)
 }
 
-// ShellReader reads the built-in shell's output for a `#` terminal reference.
-type ShellReader interface {
+// shellReader reads the built-in shell's output for a `#` terminal reference.
+type shellReader interface {
 	// ReadShell returns the newest maxLines lines; ok is false while no shell
 	// process has started.
 	ReadShell(maxLines int) (out ShellText, ok bool)
@@ -253,7 +287,7 @@ type ShellText struct {
 // the built-in shell a `#` terminal reference reads.
 type Workspace struct {
 	// Terminal is the built-in shell; nil resolves a terminal reference to a reason.
-	Terminal ShellReader
+	Terminal shellReader
 	// Dir is the workspace root every relative path resolves against.
 	Dir string
 	// ConfigDir is where settings and hook files live.
@@ -264,15 +298,12 @@ type Workspace struct {
 	UploadsDir string
 }
 
-// ResolveInside confines rel to the roots an attachment path may name, refusing
-// anything that escapes all of them. The workspace leads, so a relative path
-// resolves there and an unresolvable path reports the workspace's own error.
-func (w Workspace) ResolveInside(rel string) (string, error) {
-	root, name, err := workspace.ConfineAnyAbs(w.attachmentRoots(), rel)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(root, name), nil
+// checkInside refuses an attachment path that escapes every root one may name.
+// The workspace leads, so a relative path resolves there and an unresolvable
+// path reports the workspace's own error.
+func (w Workspace) checkInside(rel string) error {
+	_, _, err := workspace.ConfineAnyAbs(w.attachmentRoots(), rel)
+	return err
 }
 
 // errAttachmentOutsideRoots wraps a confinement refusal from OpenAttachment, so a
@@ -280,11 +311,11 @@ func (w Workspace) ResolveInside(rel string) (string, error) {
 // open.
 var errAttachmentOutsideRoots = errors.New("attachment path is outside the allowed roots")
 
-// OpenAttachment opens the regular file p names under the attachment roots and
+// openAttachment opens the regular file p names under the attachment roots and
 // returns it with its descriptor's FileInfo and its absolute path. The caller
 // closes f. A refused path wraps errAttachmentOutsideRoots; a FIFO, device or
 // directory is atomicfile.ErrNotRegular, and the open never blocks on one.
-func (w Workspace) OpenAttachment(p string) (f *os.File, info os.FileInfo, abs string, err error) {
+func (w Workspace) openAttachment(p string) (f *os.File, info os.FileInfo, abs string, err error) {
 	root, name, err := workspace.ConfineAnyAbs(w.attachmentRoots(), p)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("%w: %w", errAttachmentOutsideRoots, err)
@@ -314,10 +345,10 @@ func openConfined(root, name string) (*os.File, os.FileInfo, error) {
 	return atomicfile.OpenRegularInRoot(r, name)
 }
 
-// LifecycleAccess is the process-lifetime seam: the context a turn runs under, and
+// lifecycleAccess is the process-lifetime seam: the context a turn runs under, and
 // the in-flight accounting that makes agent shutdown wait for it. Shutdown cancels
 // the first and waits on the second.
-type LifecycleAccess interface {
+type lifecycleAccess interface {
 	// TurnContext returns the context an in-flight turn runs under, plus
 	// the teardown its handler defers.
 	TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc)
@@ -343,11 +374,11 @@ const (
 	AdmissionStarting
 )
 
-// TurnAdmission is the chat's admission slot as the command handlers hold it:
+// turnAdmission is the chat's admission slot as the command handlers hold it:
 // a bare per-chat reservation decided before any turn exists, plus the read
-// that says who holds it. Separate from TurnOutcomeAccess because the steer reads
+// that says who holds it. Separate from turnOutcomeAccess because the steer reads
 // the holder and the rewind reserves the slot, and neither opens a turn.
-type TurnAdmission interface {
+type turnAdmission interface {
 	// ReserveTurnForPrompt takes the chat's admission slot for a prompt,
 	// minting no turn — a bare per-chat reservation, decided synchronously
 	// before any bridge exists. A held slot parks the caller up to wait;
@@ -371,7 +402,7 @@ type TurnAdmission interface {
 	// AdmissionHolderSource reports who holds the chat's admission: the open turn's
 	// source when one is open, else the reservation's. A non-prompt holder matters
 	// because a steer aimed into it lands somewhere the reader did not mean — a
-	// workflow step's turn reads it as the step's own input — so CmdSteer refuses
+	// workflow step's turn reads it as the step's own input — so cmdSteer refuses
 	// instead.
 	AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpenSource, bool)
 }
@@ -392,16 +423,19 @@ type TurnOpen struct {
 	Init   func(*marotte.Chat)
 	Source marotte.TurnOpenSource
 	Fence  TurnFence
+	// Awaited takes a second completion handle for a caller that awaits the turn
+	// past its runner's release; that caller releases it.
+	Awaited bool
 }
 
 // ErrTurnSuperseded is OpenTurn's refusal of a fenced open after a newer turn
 // opened, or after the chat's lifecycle was torn down.
 var ErrTurnSuperseded = errors.New("a newer turn opened since the closed one")
 
-// TurnOutcomeAccess is what a prompt handler needs to run an admitted turn's
+// turnOutcomeAccess is what a prompt handler needs to run an admitted turn's
 // lifecycle: open it, wait for its outcome, and close it — whether the engine
 // answered or the call failed.
-type TurnOutcomeAccess interface {
+type turnOutcomeAccess interface {
 	// OpenTurn appends the turn_open at admission and creates the turn's registry
 	// record in one operation: prompt is the turn's prompt (nil for a source with
 	// none) and init is the header fallback for an id no record exists for, nil for
@@ -418,6 +452,9 @@ type TurnOutcomeAccess interface {
 	// it did. A caller holding that turn's handle never receives
 	// marotte.ErrNoSuchTurn.
 	AwaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error)
+	// AwaitTurnBound blocks until KAS binds the named turn's prompt, its proof of receipt (true),
+	// or the turn finalizes unbound (false). The caller holds the turn's handle.
+	AwaitTurnBound(ctx context.Context, chatID marotte.ChatID, turnID string) (bool, error)
 	// ReleaseTurn gives up the handle OpenTurn issued, after which the
 	// finalized record may be dropped.
 	ReleaseTurn(chatID marotte.ChatID, turnID string)
@@ -444,15 +481,15 @@ type TurnOutcomeAccess interface {
 	AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string, kind marotte.FailureKind, seq uint64)
 }
 
-// PreSendCompactor is the compaction policy's before-a-send trigger. It returns
+// preSendCompactor is the compaction policy's before-a-send trigger. It returns
 // once the prompt may be sent, whatever the compaction did; it never refuses.
-type PreSendCompactor interface {
+type preSendCompactor interface {
 	PreSendCompact(ctx context.Context, chatID marotte.ChatID)
 }
 
 // SteerRecorder is what the steer commands need of the steer ledger: record that
 // THIS server sent a steer under an id before the RPC, which is the only ordering
-// that beats KAS's own notification (see CmdSteer).
+// that beats KAS's own notification (see cmdSteer).
 type SteerRecorder interface {
 	RecordUserSteer(chatID marotte.ChatID, steerID string)
 }
@@ -606,11 +643,11 @@ type SteerJobs interface {
 	NextParked(chatID marotte.ChatID, turnID string) (key, text string, ok bool)
 }
 
-// RunCutter is what a rewind needs of the run registry: which of the runs a cut
+// runCutter is what a rewind needs of the run registry: which of the runs a cut
 // launched are still live, and a cancel that returns once the run has stopped, so
 // nothing appends into the range being cut. Declared here, at the consumer;
 // *agent.Runs satisfies it.
-type RunCutter interface {
+type runCutter interface {
 	// LiveRuns filters workflowIDs to the ones still holding a lease, each with the
 	// label the reader knows it by, in the order given.
 	LiveRuns(workflowIDs []string) []LiveRunRef
@@ -627,10 +664,10 @@ type LiveRunRef struct {
 	Label string `json:"label"`
 }
 
-// EffortRecorder is what set_effort needs to leave a transcript record: one write of the
+// effortRecorder is what set_effort needs to leave a transcript record: one write of the
 // model_switched entry an effort change produces. Its own role because it reaches the chat's LOG,
-// which BridgeAccess's lifecycle job does not.
-type EffortRecorder interface {
+// which bridgeAccess's lifecycle job does not.
+type effortRecorder interface {
 	// PersistEffortChange appends the entry for a tier the session accepted. It
 	// writes nothing for an empty model or a chat no prompt has reached, and reports
 	// no error: the level is already on the chat record, so a failed append costs the
@@ -641,9 +678,9 @@ type EffortRecorder interface {
 	ThinkingDefaultOff(model string) bool
 }
 
-// ModeRecorder is what set_mode needs to leave a transcript record: one write of the mode_switched
+// modeRecorder is what set_mode needs to leave a transcript record: one write of the mode_switched
 // entry a mode change produces; a role is named for the command that needs it.
-type ModeRecorder interface {
+type modeRecorder interface {
 	// PersistModeSwitch appends the entry for a mode the chat took, and nothing on a
 	// chat no prompt has reached. It reports no error: the mode is already on the chat
 	// record, so a failed append costs the record and not the change.
@@ -658,39 +695,41 @@ var ErrRunStillLive = errors.New("the run was told to stop but has not stopped y
 // registration, and RegisterDefaults hands every handler only the roles its signature declares. A
 // plain struct no handler takes, so nothing widens as the host grows.
 type Roles struct {
-	Bridges BridgeAccess
+	Bridges bridgeAccess
+	// Loader resumes a chat whose log must reflect KAS before anything is decided from it.
+	Loader sessionLoader
 	// Chats is the chat store directly, not through a getter on a wider composite —
 	// that composite would need to carry Broadcast and the run surface too, which is
 	// how a host becomes the one thing that qualifies.
-	Chats ChatStore
+	Chats chatStore
 	// Sessions answers whether a chat already claims a KAS session, read fresh
 	// so the run purge can decide under the membership lock.
-	Sessions  SessionClaims
-	Bus       Broadcaster
-	Teardown  ChatTeardown
-	Perms     PendingPermAccess
-	Profiles  ProfileSwitcher
-	Terminals TerminalAccess
-	Stops     TurnStopper
+	Sessions  sessionClaims
+	Bus       broadcaster
+	Teardown  chatTeardown
+	Perms     pendingPermAccess
+	Profiles  profileSwitcher
+	Terminals terminalAccess
+	Stops     turnStopper
 	// Tabs is the open-tab set, and it may be nil: a build with no config
 	// dir has no store to persist an arrangement to. The coordinator
 	// answers the tab half of every operation with a 503 in that state.
 	Tabs TabSet
 	// Runs answers which chat launched a run, so a run tab opened with no
 	// parent still nests under its conversation.
-	Runs RunOwner
+	Runs runOwner
 	// RunCutter is the run registry as a rewind uses it: the live runs a cut
 	// launched, and the cancel that stops them before the cut.
-	RunCutter RunCutter
+	RunCutter runCutter
 	// Effort records the transcript entry a reader's reasoning-tier change leaves.
-	Effort EffortRecorder
+	Effort effortRecorder
 	// Modes records the transcript entry a reader's mode switch leaves.
-	Modes ModeRecorder
+	Modes modeRecorder
 	// Lifecycle is the process lifetime: the turn context and the
 	// in-flight counter a shutdown waits on.
-	Lifecycle   LifecycleAccess
-	Admission   TurnAdmission
-	TurnOutcome TurnOutcomeAccess
+	Lifecycle   lifecycleAccess
+	Admission   turnAdmission
+	TurnOutcome turnOutcomeAccess
 	// Steers records the steers this server sent, so the translate layer can
 	// tell the user's own words from a workflow reporting into the same buffer.
 	Steers SteerRecorder
@@ -702,12 +741,12 @@ type Roles struct {
 	SteerJobs  SteerJobs
 	// Status ends a chat's retained waiting_on_user claim after a command that IS
 	// the user answering.
-	Status ChatStatus
+	Status chatStatus
 	// AuthReadiness carries prompt authentication outcomes to readiness.
 	AuthReadiness *AuthReadiness
 	// Compactor runs the compaction policy before a prompt is sent. Nil sends
 	// with no pre-send check.
-	Compactor PreSendCompactor
+	Compactor preSendCompactor
 	// Renamer renames a KAS session no live bridge holds, so a closed chat's
 	// rename reaches History at once.
 	Renamer SessionRenamer
@@ -715,6 +754,8 @@ type Roles struct {
 	// with no config dir has no store to persist one to. The handler answers a
 	// 503 in that state rather than reporting an approval nothing kept.
 	SpecApprovals SpecApprovals
+	// Tangents resolves a tangent's parent and reads its summary for a merge.
+	Tangents TangentAccess
 	// Workspace is last for fieldalignment (a trailing length word stops
 	// the leading-pointer count early).
 	Workspace Workspace
@@ -723,18 +764,18 @@ type Roles struct {
 // promptRoles holds the prompt path's collaborators and is shared with shell
 // interception. It is built once at registration.
 type promptRoles struct {
-	bridges BridgeAccess
-	chats   ChatStore
+	bridges bridgeAccess
+	chats   chatStore
 	// bus is separate from chats because they are separate owners.
-	bus         Broadcaster
-	lifecycle   LifecycleAccess
-	admission   TurnAdmission
-	turnOutcome TurnOutcomeAccess
+	bus         broadcaster
+	lifecycle   lifecycleAccess
+	admission   turnAdmission
+	turnOutcome turnOutcomeAccess
 	steers      SteerRecorder
 	queue       SteerQueue
 	jobs        SteerJobs
 	followups   QueueAccess
-	compactor   PreSendCompactor
+	compactor   preSendCompactor
 	auth        *AuthReadiness
 	workspace   Workspace // last for fieldalignment, as in Roles
 }

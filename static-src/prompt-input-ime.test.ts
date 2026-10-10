@@ -46,8 +46,7 @@ vi.mock("./store.js", () => ({
   tabStatusFor: vi.fn(() => ""),
 }));
 
-// Sends, counted at the controller's own onSubmit. The send is the subject; the event was only ever
-// a proxy for it.
+// The send is the subject; the event was only ever a proxy for it.
 let submits = 0;
 
 /** Press Enter with an explicit IME state. `keyCode` is set through the init dict, because a
@@ -207,7 +206,7 @@ describe("what the guard must NOT change", () => {
 
   it("keeps ArrowUp history navigation working during a composition", () => {
     // The guard sits INSIDE the Enter branch for this reason: an early return at the top of the
-    // handler would break history navigation mid-candidate, which is not the bug being fixed.
+    // handler would break history navigation mid-candidate.
     const input = document.getElementById("prompt-input") as HTMLTextAreaElement;
     compose("compositionstart");
     const e = new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true });

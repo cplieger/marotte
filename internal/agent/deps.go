@@ -10,8 +10,7 @@ import (
 
 // The runtime's dependency contracts, declared at the consumer, each naming only what it invokes.
 
-// mcpNameSets is the MCP server-name census (*mcp.Store). ConfiguredNames is ownership;
-// EnabledNames gates the live-control routes.
+// ConfiguredNames is ownership; EnabledNames gates the live-control routes.
 type mcpNameSets interface {
 	EnabledNames(ctx context.Context) map[string]struct{}
 	ConfiguredNames(ctx context.Context) map[string]struct{}
@@ -29,9 +28,15 @@ type RouteRegistrar interface {
 	RegisterRoutes(mux *http.ServeMux)
 }
 
-// bridgeChatRecords is the chat store as the bridge lifecycle uses it. Delete is absent: only cmdDeleteChat may remove a chat.
+// Delete is absent: only cmdDeleteChat may remove a chat.
 type bridgeChatRecords interface {
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
+	// Presence is the chat-gone read (the digest's, and a failed generation's), under no per-chat
+	// mutex: Mutate holds it across an fsync.
+	Presence(id marotte.ChatID) chat.Presence
+	// PublishIfPresent publishes a ready generation under the chat's lock once its record loads, so
+	// no delete lands between the verdict and the publication.
+	PublishIfPresent(ctx context.Context, id marotte.ChatID, publish func()) chat.Presence
 	// Mutate is the header write primitive: load, apply, save, broadcast.
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
 	// Dequeue takes a queued row whose turn opened off the header; Opened reports
@@ -50,30 +55,30 @@ type bridgeChatRecords interface {
 	WriteCounters(ctx context.Context, chatID marotte.ChatID) error
 }
 
-// chatRecords is the union of bridgeChatRecords, command.ChatStore and translate.ChatRecords.
 type chatRecords interface {
 	bridgeChatRecords
 
 	List(ctx context.Context) []marotte.ChatHeader
 	// SessionClaimed is the membership coordinator's fresh chain read, passed on
-	// as command.SessionClaims.
+	// as command.sessionClaims.
 	SessionClaimed(ctx context.Context, sessionID string) (claimed, complete bool)
 	ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool)
-	// Exists is the digest's `chat` gone predicate, read under no per-chat mutex: Mutate holds it across an fsync.
-	Exists(id marotte.ChatID) bool
 	// SetDraft and SetAttachments are passed on to the command dispatcher.
 	SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error)
 	SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error)
 	// Delete removes the chat directory; only cmdDeleteChat calls it.
-	Delete(ctx context.Context, id marotte.ChatID) error
-	// Revert and the other log reads are command.ChatStore's and translate.ChatRecords'.
+	Delete(ctx context.Context, id marotte.ChatID) (sessionChain []string, err error)
+	// Revert and the other log reads are command.chatStore's and translate.chatRecords'.
 	Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error)
 	RewindTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error)
+	PromptReceipt(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.PromptReceipt, error)
 	PromptAttachmentPaths(ctx context.Context, chatID marotte.ChatID, watermark string) ([]string, error)
 	PromptTexts(ctx context.Context, id marotte.ChatID) ([]string, error)
 	EmptyCompactions(ctx context.Context, id marotte.ChatID) (int, error)
+	WaitingWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
 	DepartedName(id marotte.ChatID) (string, bool)
 	TurnCount(ctx context.Context, chatID marotte.ChatID) (uint64, bool)
+	TurnPage(ctx context.Context, chatID marotte.ChatID, turn string, from uint64) (*chat.TurnPage, error)
 	// TurnSeq is a turn's newest sealed seq: the digest's live_turn version.
 	TurnSeq(ctx context.Context, chatID marotte.ChatID, turn string) (uint64, bool)
 	// NewestRevert is the provenance a resume's projection snapshots at open.
@@ -82,11 +87,10 @@ type chatRecords interface {
 	Reconcile(ctx context.Context, chatID marotte.ChatID, swap func(l *chat.EntryLog, h chat.EntryHeader) (bool, error)) (version string, changed bool, err error)
 }
 
-// pushNotifier is the notification SEND half. *push.Service satisfies it.
 type pushNotifier interface {
 	HasSubscribers() bool
-	Send(ctx context.Context, title, body string, notifyType marotte.PushKind, subject marotte.PushSubject, chatName string)
-	// Retract drops any push about subject still held for delivery.
+	Send(ctx context.Context, n *marotte.NotificationPayload)
+	// Retract drops any ask push about subject still held for delivery.
 	Retract(subject marotte.PushSubject)
 }
 
@@ -104,13 +108,11 @@ type pushService interface {
 
 // One ACP-bridge contract at several widths; *bridge.Bridge satisfies the widest.
 
-// acpSession names the ACP session an RPC is addressed to.
 type acpSession interface {
 	SessionID() marotte.SessionID
 }
 
-// acpCaller sends a JSON-RPC request and waits for its response. Returns
-// ctx.Err() if ctx is cancelled before the response arrives.
+// Returns ctx.Err() if ctx is cancelled before the response arrives.
 type acpCaller interface {
 	Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error)
 }
@@ -120,7 +122,7 @@ type acpResponder interface {
 	Respond(ctx context.Context, id int64, result any, err error) error
 }
 
-// acpStopper kills the subprocess, closing NotifCh. At most once per bridge.
+// At most once per bridge.
 type acpStopper interface {
 	Stop()
 }
@@ -141,7 +143,7 @@ type acpSessionResponder interface {
 	acpSession
 }
 
-// acpSessionFacts is what a started or loaded session knows about itself. No mutators.
+// No mutators.
 type acpSessionFacts interface {
 	acpSession
 

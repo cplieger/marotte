@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -12,62 +13,62 @@ func TestParseSteeringFrontmatter(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
-		want Doc
+		want docEntry
 	}{
 		{
 			name: "no frontmatter defaults to always",
 			in:   "# Title\n\nBody.\n",
-			want: Doc{Inclusion: "always"},
+			want: docEntry{Inclusion: "always"},
 		},
 		{
 			name: "explicit always",
 			in:   "---\ninclusion: always\n---\nbody",
-			want: Doc{Inclusion: "always"},
+			want: docEntry{Inclusion: "always"},
 		},
 		{
 			name: "fileMatch with pattern",
 			in:   "---\ninclusion: fileMatch\nfileMatchPattern: \"internal/**/*.go\"\ndescription: Go layout\n---\n",
-			want: Doc{Inclusion: "fileMatch", FileMatch: "internal/**/*.go", Description: "Go layout"},
+			want: docEntry{Inclusion: "fileMatch", FileMatch: "internal/**/*.go", Description: "Go layout"},
 		},
 		{
 			name: "manual",
 			in:   "---\ninclusion: manual\ndescription: Incident runbook\n---\n",
-			want: Doc{Inclusion: "manual", Description: "Incident runbook"},
+			want: docEntry{Inclusion: "manual", Description: "Incident runbook"},
 		},
 		{
 			name: "unknown inclusion falls back to always",
 			in:   "---\ninclusion: bogus\n---\n",
-			want: Doc{Inclusion: "always"},
+			want: docEntry{Inclusion: "always"},
 		},
 		{
 			name: "single-quoted values",
 			in:   "---\ninclusion: 'fileMatch'\nfileMatchPattern: 'cmd/*.go'\n---\n",
-			want: Doc{Inclusion: "fileMatch", FileMatch: "cmd/*.go"},
+			want: docEntry{Inclusion: "fileMatch", FileMatch: "cmd/*.go"},
 		},
 		{
 			name: "missing closing fence falls back to always",
 			in:   "---\ninclusion: fileMatch\nbody without closing\n",
-			want: Doc{Inclusion: "always"},
+			want: docEntry{Inclusion: "always"},
 		},
 		{
 			name: "empty file",
 			in:   "",
-			want: Doc{Inclusion: "always"},
+			want: docEntry{Inclusion: "always"},
 		},
 		{
 			name: "CRLF line endings",
 			in:   "---\r\ninclusion: manual\r\ndescription: runbook\r\n---\r\nbody",
-			want: Doc{Inclusion: "manual", Description: "runbook"},
+			want: docEntry{Inclusion: "manual", Description: "runbook"},
 		},
 		{
 			name: "leading UTF-8 BOM",
 			in:   "\ufeff---\ninclusion: fileMatch\nfileMatchPattern: \"**/*.go\"\n---\n",
-			want: Doc{Inclusion: "fileMatch", FileMatch: "**/*.go"},
+			want: docEntry{Inclusion: "fileMatch", FileMatch: "**/*.go"},
 		},
 		{
 			name: "BOM and CRLF together",
 			in:   "\ufeff---\r\ninclusion: manual\r\n---\r\n",
-			want: Doc{Inclusion: "manual"},
+			want: docEntry{Inclusion: "manual"},
 		},
 	}
 	for _, tc := range tests {
@@ -125,7 +126,7 @@ func TestFindRepoDocs_ClassifiesByFrontmatter(t *testing.T) {
 	if len(docs) != 4 {
 		t.Fatalf("got %d docs, want 4", len(docs))
 	}
-	byName := map[string]Doc{}
+	byName := map[string]docEntry{}
 	for _, d := range docs {
 		byName[d.Filename] = d
 	}
@@ -174,7 +175,7 @@ func TestFindRepoDocs_CapAt20(t *testing.T) {
 // the two the same way, offering both as slash commands.
 func TestWriteRepoSteering_AutoIsOnDemandNotAlwaysLoaded(t *testing.T) {
 	var b strings.Builder
-	writeRepoSteering(&b, "myrepo", []Doc{{Filename: "auto.md", Inclusion: inclusionAuto}})
+	writeRepoSteering(&b, "myrepo", []docEntry{{Filename: "auto.md", Inclusion: inclusionAuto}})
 	out := b.String()
 	if strings.Contains(out, "Always-loaded steering") {
 		t.Errorf("an auto doc was announced as always-loaded:\n%s", out)
@@ -189,7 +190,7 @@ func TestWriteRepoSteering_AutoIsOnDemandNotAlwaysLoaded(t *testing.T) {
 func TestWriteRepoSteering_OmitsEmptyGroupHeaders(t *testing.T) {
 	t.Run("only fileMatch docs omit the Always-loaded header", func(t *testing.T) {
 		var b strings.Builder
-		writeRepoSteering(&b, "myrepo", []Doc{{Filename: "match.md", Inclusion: "fileMatch"}})
+		writeRepoSteering(&b, "myrepo", []docEntry{{Filename: "match.md", Inclusion: "fileMatch"}})
 		out := b.String()
 		if strings.Contains(out, "Always-loaded steering") {
 			t.Errorf("writeRepoSteering(only fileMatch) emitted Always-loaded header:\n%s", out)
@@ -200,7 +201,7 @@ func TestWriteRepoSteering_OmitsEmptyGroupHeaders(t *testing.T) {
 	})
 	t.Run("only always docs omit the File-match and Manual headers", func(t *testing.T) {
 		var b strings.Builder
-		writeRepoSteering(&b, "myrepo", []Doc{{Filename: "always.md", Inclusion: "always"}})
+		writeRepoSteering(&b, "myrepo", []docEntry{{Filename: "always.md", Inclusion: "always"}})
 		out := b.String()
 		if strings.Contains(out, "File-match steering") {
 			t.Errorf("writeRepoSteering(only always) emitted File-match header:\n%s", out)
@@ -220,7 +221,7 @@ func TestWriteRepoSteering_OmitsEmptyGroupHeaders(t *testing.T) {
 func TestWriteRepoSkills_HeadersAndEntryFields(t *testing.T) {
 	t.Run("fileMatch+manual: no Always header, others present, fields rendered", func(t *testing.T) {
 		var b strings.Builder
-		writeRepoSkills(&b, "myrepo", []Doc{
+		writeRepoSkills(&b, "myrepo", []docEntry{
 			{Filename: "match.md", Inclusion: "fileMatch", FileMatch: "internal/**", Description: "go layout"},
 			{Filename: "ref.md", Inclusion: "manual"},
 		})
@@ -244,7 +245,7 @@ func TestWriteRepoSkills_HeadersAndEntryFields(t *testing.T) {
 
 	t.Run("only always: no File-match/Manual headers; bare entry has no annotations", func(t *testing.T) {
 		var b strings.Builder
-		writeRepoSkills(&b, "myrepo", []Doc{{Filename: "build.md", Inclusion: "always"}})
+		writeRepoSkills(&b, "myrepo", []docEntry{{Filename: "build.md", Inclusion: "always"}})
 		out := b.String()
 		if strings.Contains(out, "File-match skills") {
 			t.Errorf("emitted File-match skills header with zero fileMatch docs:\n%s", out)
@@ -264,7 +265,6 @@ func TestWriteRepoSkills_HeadersAndEntryFields(t *testing.T) {
 	})
 }
 
-// hookDoc wraps hook-entry JSON objects in the v1 envelope.
 func hookDoc(hooks ...string) string {
 	return `{"version":"v1","hooks":[` + strings.Join(hooks, ",") + `]}`
 }
@@ -339,8 +339,8 @@ func TestFindRepoAgents_ReadableDir(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("findRepoAgents(readable dir) = %+v (len %d), want 1 agent", got, len(got))
 	}
-	if got[0].Name != "deploy" || got[0].Filename != "deploy.json" {
-		t.Errorf("findRepoAgents()[0] = %+v, want {Filename: deploy.json, Name: deploy}", got[0])
+	if got[0].Name != "deploy" {
+		t.Errorf("findRepoAgents()[0] = %+v, want {Name: deploy}", got[0])
 	}
 	if got := findRepoAgents(filepath.Join(repo, "does-not-exist")); got != nil {
 		t.Errorf("findRepoAgents(missing dir) = %+v, want nil", got)
@@ -446,7 +446,7 @@ func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 	if len(skills) != 3 {
 		t.Fatalf("findRepoSkills = %+v (len %d), want 3 skill dirs (flat .md ignored)", skills, len(skills))
 	}
-	byFile := map[string]Doc{}
+	byFile := map[string]docEntry{}
 	for _, d := range skills {
 		byFile[d.Filename] = d
 	}
@@ -489,8 +489,8 @@ func TestFindRepoSkills_CapAt20(t *testing.T) {
 }
 
 // TestFindRepoAgents_DedupsPairedFiles verifies a paired reviewer.json +
-// reviewer.md collapses to ONE agent preferring the .md, while a
-// .json-only and a .md-only agent are each listed once.
+// reviewer.md collapses to ONE agent, while a .json-only and a .md-only agent
+// are each listed once.
 func TestFindRepoAgents_DedupsPairedFiles(t *testing.T) {
 	repo := t.TempDir()
 	agentsDir := filepath.Join(repo, ".kiro", "agents")
@@ -503,17 +503,9 @@ func TestFindRepoAgents_DedupsPairedFiles(t *testing.T) {
 	if len(agents) != 3 {
 		t.Fatalf("findRepoAgents = %+v (len %d), want 3 (reviewer paired -> 1)", agents, len(agents))
 	}
-	byName := map[string]AgentEntry{}
-	for _, a := range agents {
-		byName[a.Name] = a
-	}
-	if got := byName["reviewer"].Filename; got != "reviewer.md" {
-		t.Errorf("reviewer filename = %q, want reviewer.md (prefer .md over .json)", got)
-	}
-	if got := byName["deploy"].Filename; got != "deploy.json" {
-		t.Errorf("deploy filename = %q, want deploy.json (.json-only)", got)
-	}
-	if got := byName["notes"].Filename; got != "notes.md" {
-		t.Errorf("notes filename = %q, want notes.md", got)
+	for _, name := range []string{"reviewer", "deploy", "notes"} {
+		if !slices.ContainsFunc(agents, func(a agentEntry) bool { return a.Name == name }) {
+			t.Errorf("findRepoAgents = %+v, want an agent named %q", agents, name)
+		}
 	}
 }

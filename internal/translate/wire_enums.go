@@ -6,7 +6,6 @@ import "github.com/cplieger/marotte/internal/marotte"
 // and the generated client decoder validates against a closed set, so one unknown value
 // costs the reader the card. Normalised here, the one package unmarshalling KAS frames.
 
-// knownToolKinds is the ToolKind set the wire declares.
 var knownToolKinds = map[marotte.ToolKind]struct{}{
 	marotte.ToolKindExecute:    {},
 	marotte.ToolKindShell:      {},
@@ -36,7 +35,6 @@ var knownToolStatuses = map[marotte.ToolStatus]struct{}{
 	marotte.ToolAborted:    {},
 }
 
-// knownPlanStatuses is the PlanStatus set the wire declares.
 var knownPlanStatuses = map[marotte.PlanStatus]struct{}{
 	marotte.PlanPending:    {},
 	marotte.PlanInProgress: {},
@@ -74,9 +72,8 @@ func planStatusFromWire(s marotte.PlanStatus) marotte.PlanStatus {
 	return marotte.PlanPending
 }
 
-// gate normalises the enum-typed fields a create frame carries. A create
-// describes the whole card, so an absent kind or status takes ACP's own default.
-func (w *ACPToolCallWire) gate() {
+// A create describes the whole card, so an absent kind or status takes ACP's own default.
+func (w *acpToolCallWire) gate() {
 	w.Kind = toolKindFromWire(w.Kind)
 	if w.Status == "" {
 		w.Status = marotte.ToolPending
@@ -84,17 +81,15 @@ func (w *ACPToolCallWire) gate() {
 	w.Status = toolStatusFromWire(w.Status)
 }
 
-// gate normalises the enum-typed fields an update frame carries; an absent field stays
-// absent for the fold's unchanged rule.
-func (w *ACPToolCallUpdateWire) gate() {
+// An absent field stays absent for the fold's unchanged rule.
+func (w *acpToolCallUpdateWire) gate() {
 	if w.Kind != "" {
 		w.Kind = toolKindFromWire(w.Kind)
 	}
 	w.Status = toolStatusFromWire(w.Status)
 }
 
-// gate normalises every plan row's status.
-func (w *ACPPlanWire) gate() {
+func (w *acpPlanWire) gate() {
 	for i := range w.Entries {
 		w.Entries[i].Status = planStatusFromWire(w.Entries[i].Status)
 	}

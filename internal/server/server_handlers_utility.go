@@ -10,7 +10,6 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// handleUtilityExplainError explains a tool error in plain language.
 func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return
@@ -43,8 +42,6 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: strings.TrimSpace(result)})
 }
 
-// handleUtilityResolveConflict proposes a merged version of a 3-way
-// merge conflict hunk.
 func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return

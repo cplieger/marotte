@@ -71,7 +71,7 @@ vi.mock("./bus.js", () => ({
   BUS_USER_INPUT_ANSWERED: undefined,
   BUS_ACTIVATE_CHAT: undefined,
   BUS_COMMAND_FAILED: undefined,
-  BUS_EDITOR_FILE_LOADED: undefined,
+  BUS_EDITOR_VIEW_CHANGED: undefined,
   BUS_KEYS_ESCAPE: undefined,
   BUS_PAGE_RESUMED: undefined,
   BUS_RECONCILE: undefined,
@@ -111,7 +111,6 @@ function repoStatus(name: string, path: string, status: string): GitRepoStatus {
     repo: name,
     is_repo: true,
     branch: "main",
-    remote: "origin",
     ahead: 0,
     behind: 0,
     has_dirty: true,
@@ -848,6 +847,7 @@ describe("the Hooks tab: staying current", () => {
           <button type="button" data-docs-tab="hooks"></button>
           <button type="button" data-docs-tab="workflows"></button>
         </nav>
+        <div id="docs-new-slot"></div>
         <div data-docs-panel="steering" class="docs-panel"></div>
         <div data-docs-panel="hooks" class="docs-panel hidden"></div>
         <div data-docs-panel="specs" class="docs-panel hidden"></div>

@@ -21,8 +21,7 @@ for (const id of [
 // suite in this graph uses.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
-// The click's destination. Replaced rather than spied so the real run page is never linked into
-// this file's graph.
+// Replaced rather than spied so the real run page is never linked into this file's graph.
 const openRunView = vi.hoisted(() => vi.fn());
 vi.mock("./run-view.js", () => ({
   openRunView,
@@ -103,7 +102,6 @@ function state(over: Record<string, unknown> = {}): Record<string, unknown> {
   };
 }
 
-/** Activate `chat` and let every pending run fetch land. */
 async function activate(chat: string): Promise<void> {
   setSessions([{ id: chat, name: chat, messages: [] } as never]);
   setActive(chat);

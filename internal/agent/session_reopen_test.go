@@ -87,18 +87,18 @@ func stopped(br *fakeBridge) bool {
 
 func TestReopenChatSessions_IdleChatKeepsItsProcessUntilItsNextOpen(t *testing.T) {
 	h, configDir := reopenFixture(t)
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	writeSetting(t, configDir, settings.KeySecurityProfile, "unrestricted")
 
-	h.ReopenChatSessions("test")
+	h.reopenChatSessions("test")
 
 	if h.bridge.mgr.get("c1") != first || stopped(fakeOf(first)) {
 		t.Fatal("ReopenChatSessions stopped an idle chat's process; it must wait for the chat's next open")
 	}
-	second, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	second, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the mark: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestReopenChatSessions_LeavesRunBridgesUntouched(t *testing.T) {
 		t.Fatal("Setup: insert run bridge = false")
 	}
 
-	h.ReopenChatSessions("test")
+	h.reopenChatSessions("test")
 
 	if reopen, _ := h.bridge.mgr.closeIfRetired(runChatID("wf-1"), sb); reopen {
 		t.Error("ReopenChatSessions marked a run bridge for retirement")
@@ -126,7 +126,7 @@ func TestReopenChatSessions_LeavesRunBridgesUntouched(t *testing.T) {
 
 func TestSecurityProfileChanged_ReopensOpenChats(t *testing.T) {
 	h, configDir := reopenFixture(t)
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -134,41 +134,41 @@ func TestSecurityProfileChanged_ReopensOpenChats(t *testing.T) {
 
 	h.SecurityProfileChanged(t.Context())
 
-	if second, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil || second == first {
+	if second, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || second == first {
 		t.Errorf("after a profile change the chat's next open kept its bridge (err %v)", err)
 	}
 }
 
 func TestSecurityProfileChanged_KeepsTheBridgeWhenTheProfileInForceIsUnchanged(t *testing.T) {
 	h, _ := reopenFixture(t)
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
 	h.SecurityProfileChanged(t.Context())
 
-	if second, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil || second != first {
+	if second, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || second != first {
 		t.Errorf("re-selecting the profile in force replaced the chat's bridge (err %v)", err)
 	}
 }
 
-// OpenBridge reconciles before the profile write's own callback runs; the callback must not
+// openBridge reconciles before the profile write's own callback runs; the callback must not
 // retire the bridge that already spawned under the new profile.
 func TestSecurityProfileChanged_KeepsABridgeAlreadyOpenedUnderTheNewProfile(t *testing.T) {
 	h, configDir := reopenFixture(t)
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	writeSetting(t, configDir, settings.KeySecurityProfile, "unrestricted")
-	fresh, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	fresh, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the write: %v", err)
 	}
 
 	h.SecurityProfileChanged(t.Context())
 
-	if again, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil || again != fresh {
+	if again, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || again != fresh {
 		t.Errorf("the profile callback replaced a bridge already spawned under the new profile (err %v)", err)
 	}
 }
@@ -219,6 +219,8 @@ var configWrites = []struct {
 	{key: settings.KeyInlineAgents, value: true, reach: reachReopen},
 	{key: settings.KeySteeringReminders, value: true, reach: reachReopen},
 	{key: settings.KeyCloudFormationSafety, value: settings.FeatureOn, reach: reachReopen},
+	{key: settings.KeyAutoRouting, value: settings.FeatureOff, reach: reachReopen},
+	{key: settings.KeyAutoDelegation, value: settings.FeatureOff, reach: reachReopen},
 	{key: settings.KeyKnowledgeEnabled, value: false, reach: reachReopen},
 	{key: settings.KeyToolSearchEnabled, value: true, reach: reachReopen},
 	{key: settings.KeyAutoCompactionEnabled, value: false, reach: reachReopen},
@@ -273,13 +275,13 @@ func TestConfigWrites_RouteEveryKnownKey(t *testing.T) {
 
 func reopensAfter(t *testing.T, h *Runtime, write func()) bool {
 	t.Helper()
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	write()
 	h.ReconcileSessionSettings(t.Context())
-	second, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	second, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the write: %v", err)
 	}
@@ -351,7 +353,7 @@ func TestEnsureCustomProfile_SwitchesAGuardedProfileToCustom(t *testing.T) {
 			`{"capability":"shell","effect":"allow","match":["ls *"],"scope":"session","source":"preset:read-workspace"}]}`)}
 	})
 	writeSetting(t, configDir, settings.KeySecurityProfile, policyfile.ProfileGuarded)
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -373,7 +375,7 @@ func TestEnsureCustomProfile_SwitchesAGuardedProfileToCustom(t *testing.T) {
 	if !reflect.DeepEqual(f.Rules, want) {
 		t.Errorf("user permissions file rules = %+v, want Guarded's preset rules %+v", f.Rules, want)
 	}
-	if second, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil || second == first {
+	if second, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || second == first {
 		t.Errorf("after the switch to Custom the chat's next open kept its bridge (err %v)", err)
 	}
 	got := broadcastTypes(h, since)
@@ -388,7 +390,7 @@ func TestEnsureCustomProfile_IsANoOpOnCustom(t *testing.T) {
 	h, configDir := reopenFixture(t)
 	t.Setenv("HOME", t.TempDir())
 	writeSetting(t, configDir, settings.KeySecurityProfile, "custom")
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -397,7 +399,7 @@ func TestEnsureCustomProfile_IsANoOpOnCustom(t *testing.T) {
 		t.Fatalf("EnsureCustomProfile on custom = %v, want nil", err)
 	}
 
-	if second, _ := h.coord.OpenBridge(t.Context(), "c1", ""); second != first {
+	if second, _ := h.coord.openBridge(t.Context(), "c1", ""); second != first {
 		t.Error("EnsureCustomProfile on custom reopened an open chat")
 	}
 	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".kiro", "settings", "permissions.yaml")); !os.IsNotExist(err) {
@@ -408,7 +410,7 @@ func TestEnsureCustomProfile_IsANoOpOnCustom(t *testing.T) {
 func TestReconcileSessionSettings_TelemetrySwitchReopensOpenChats(t *testing.T) {
 	cliJSON := withKiroTelemetry(t, `{"telemetry.enabled":true}`)
 	h, _ := reopenFixture(t)
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -416,7 +418,7 @@ func TestReconcileSessionSettings_TelemetrySwitchReopensOpenChats(t *testing.T) 
 
 	h.ReconcileSessionSettings(t.Context())
 
-	second, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	second, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the write: %v", err)
 	}
@@ -460,7 +462,7 @@ func TestGovernanceLockChange_ReopensOpenChatsOnlyWhenASpawnMoves(t *testing.T) 
 			for key, value := range tc.stored {
 				writeSetting(t, configDir, key, value)
 			}
-			first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+			first, err := h.coord.openBridge(t.Context(), "c1", "")
 			if err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
@@ -476,7 +478,7 @@ func TestGovernanceLockChange_ReopensOpenChatsOnlyWhenASpawnMoves(t *testing.T) 
 			if restarted := stopped(utility); restarted != tc.wantRestart {
 				t.Errorf("%s over stored %v: utility session stopped = %v, want %v", tc.name, tc.stored, restarted, tc.wantRestart)
 			}
-			second, err := h.coord.OpenBridge(t.Context(), "c1", "")
+			second, err := h.coord.openBridge(t.Context(), "c1", "")
 			if err != nil {
 				t.Fatalf("OpenBridge after the lock change: %v", err)
 			}
@@ -574,7 +576,7 @@ func rewriteConfigByHand(t *testing.T, configDir, body string) {
 
 func TestOpenBridge_AHandEditOfConfigReopensTheChatAtItsNextOpen(t *testing.T) {
 	h, configDir := reopenFixture(t)
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -582,7 +584,7 @@ func TestOpenBridge_AHandEditOfConfigReopensTheChatAtItsNextOpen(t *testing.T) {
 
 	rewriteConfigByHand(t, configDir, `{"`+settings.KeySecurityProfile+`":"unrestricted"}`)
 
-	second, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	second, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the hand edit: %v", err)
 	}
@@ -597,7 +599,7 @@ func TestOpenBridge_AHandEditOfConfigReopensTheChatAtItsNextOpen(t *testing.T) {
 
 func TestReconcileSessionSettings_ABusyChatSwitchesAfterItsTurn(t *testing.T) {
 	h, configDir := reopenFixture(t)
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -608,11 +610,11 @@ func TestReconcileSessionSettings_ABusyChatSwitchesAfterItsTurn(t *testing.T) {
 
 	h.ReconcileSessionSettings(t.Context())
 
-	if during, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil || during != first || stopped(fakeOf(first)) {
+	if during, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || during != first || stopped(fakeOf(first)) {
 		t.Fatalf("an open during the turn replaced or stopped the busy bridge (err %v)", err)
 	}
 	first.releaseAfterPrompt()
-	after, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	after, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the turn: %v", err)
 	}
@@ -630,7 +632,7 @@ func TestReconcileSessionSettings_AChatHostingALiveRunSwitchesAfterTheRun(t *tes
 	var runLive atomic.Bool
 	runLive.Store(true)
 	h.bridge.mgr.hostsLiveRun = func(chatID marotte.ChatID) bool { return chatID == "c1" && runLive.Load() }
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -638,11 +640,11 @@ func TestReconcileSessionSettings_AChatHostingALiveRunSwitchesAfterTheRun(t *tes
 
 	h.ReconcileSessionSettings(t.Context())
 
-	if during, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil || during != first || stopped(fakeOf(first)) {
+	if during, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || during != first || stopped(fakeOf(first)) {
 		t.Fatalf("an open while the chat hosts a live run replaced or stopped its bridge (err %v)", err)
 	}
 	runLive.Store(false)
-	after, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	after, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the run: %v", err)
 	}
@@ -658,7 +660,7 @@ func TestOpenBridge_LeavesTheUtilitySessionAloneWhenNothingMoved(t *testing.T) {
 	h, _ := reopenFixture(t)
 	utility := acquireUtility(t, h)
 
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -671,7 +673,7 @@ func TestReconcileSessionSettings_ACancelledCallerReopensNothing(t *testing.T) {
 	h, configDir := reopenFixture(t)
 	writeSetting(t, configDir, settings.KeySecurityProfile, policyfile.ProfileUnrestricted)
 	h.ReconcileSessionSettings(t.Context())
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -684,7 +686,7 @@ func TestReconcileSessionSettings_ACancelledCallerReopensNothing(t *testing.T) {
 	if stopped(utility) {
 		t.Error("a reconcile under a cancelled context stopped the utility session though no setting moved")
 	}
-	if second, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil || second != first {
+	if second, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || second != first {
 		t.Errorf("a reconcile under a cancelled context reopened the open chat though no setting moved (err %v)", err)
 	}
 }
@@ -692,14 +694,14 @@ func TestReconcileSessionSettings_ACancelledCallerReopensNothing(t *testing.T) {
 func TestOpenBridge_AShellEditOfTelemetryReopensTheChatAtItsNextOpen(t *testing.T) {
 	cliJSON := withKiroTelemetry(t, `{"telemetry.enabled":true}`)
 	h, _ := reopenFixture(t)
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
 	writeKiroCLISettings(t, cliJSON, `{"telemetry.enabled":false}`)
 
-	second, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	second, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the edit: %v", err)
 	}

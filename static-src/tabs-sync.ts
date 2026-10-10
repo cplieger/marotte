@@ -1,6 +1,6 @@
 // The SYNC half of the tab projection: which frames reach `tabs.ts`, in what order, and when to
 // re-list. No rows, no DOM, no SSE binding (the composition root feeds it).
-//  1. VERSION RULES over the collection's one monotonic version (internal/tabs.Store.List): at or
+//  1. VERSION RULES over the collection's one monotonic version (internal/tabs.Store.list): at or
 //     below local ignore, local+1 apply, beyond re-list. ONLY AN EVENT advances the watermark; a
 //     response version is consumed by the pending-op machine, never adopted.
 //  2. ONE SERIALIZED QUEUE in arrival order; frames arriving during a re-list are re-tested after.
@@ -36,8 +36,7 @@ let localVersion = 0;
 /** Frames waiting to be applied, in ARRIVAL order. */
 const queue: TabsChangedPayload[] = [];
 
-/** Whether the drain loop is running. One loop at a time is what makes the
- *  version rules well-defined; see mechanism 2. */
+/** One loop at a time is what makes the version rules well-defined; see mechanism 2. */
 let draining = false;
 
 /** The re-list in flight, so a gap detected while one is already running joins it
@@ -54,8 +53,9 @@ export function registerTabsTarget(next: TabsTarget): void {
   target = next;
 }
 
-/** The version the projection reflects. Diagnostic and test-facing: nothing in
- *  the app branches on it, because every rule that consumes it is in this file. */
+/** The version the projection reflects. Nothing in the app branches on it: every rule that
+ *  consumes it is in this file. */
+// deadset:ignore DS1004 -- test seam: observes the local tab list version
 export function tabsVersion(): number {
   return localVersion;
 }
@@ -96,7 +96,7 @@ function sweepOps(): void {
 
 /** What the machine needs from a remove: its tab ids; the captured subtree rides the
  *  `onConfirm`/`rollback` closures. */
-export interface PendingRemoveSpec {
+interface PendingRemoveSpec {
   /** The tab the close names. Presence of THIS id in an authoritative list is
    *  what settles a verifying op. */
   id: string;
@@ -117,9 +117,7 @@ interface PendingAdopt {
   /** Gesture order, for the suppression override below: only an open gestured
    *  AFTER a close may resurrect a row that close captured. */
   seq: number;
-  /** Server-minted, so set at response — which is why the op is keyed by opID. */
-  id?: string;
-  /** For snapshot merge-back. Set at response, with the id. */
+  /** For snapshot merge-back. Set at response. */
   subject?: TabSubject;
   committedVersion?: number;
 }
@@ -143,11 +141,8 @@ interface PendingReorder {
   kind: "reorder";
   opID: string;
   state: "awaiting-response" | "confirmed-awaiting-frame";
-  /** Gesture order, so two pending reorders overlay in the order they were made. */
-  seq: number;
-  /** The whole expanded order the drop showed. */
   order: readonly string[];
-  /** Put the projection back. Runs exactly once, on definitive failure. */
+  /** Runs exactly once, on definitive failure. */
   rollback: () => void;
   committedVersion?: number;
 }
@@ -200,7 +195,6 @@ export function beginReorder(
     kind: "reorder",
     opID,
     state: "awaiting-response",
-    seq: ++opSeq,
     order: [...spec.order],
     rollback: spec.rollback,
   });
@@ -251,7 +245,6 @@ export function adoptCommitted(
   if (op?.kind !== "adopt") {
     return;
   }
-  op.id = subject.id;
   op.subject = subject;
   op.committedVersion = committedVersion;
   if (!created || localVersion >= committedVersion) {
@@ -611,6 +604,7 @@ export function permute<T>(
 
 /** @internal Test seam: drop the target, the version, the queue and every
  *  pending correlation and op. */
+// deadset:ignore DS1004 -- test seam: resets the target, version, queue and pending ops
 export function _resetTabsSyncForTest(): void {
   target = null;
   localVersion = 0;

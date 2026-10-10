@@ -77,12 +77,9 @@ interface RouteRun {
    *  are one tab. */
   node?: string;
 }
-/** One SUBAGENT execution, read on its own page. */
 interface RouteSubagent {
   kind: "subagent";
-  /** The chat whose transcript holds this delegate's blocks. */
   chat: string;
-  /** The delegate's `agent_subtask_id`. */
   id: string;
 }
 /** One Kiro spec's documents, on the spec sub-tab. `dir` is the workspace-relative spec

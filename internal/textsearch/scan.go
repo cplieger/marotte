@@ -46,9 +46,8 @@ func (n Needle) Occurrences(text string) iter.Seq[Hit] {
 	}
 }
 
-// scan walks hay and text in parallel. Fold preserves rune count, so a rune
-// distance measured in hay is the same distance in text; the byte cursor walks
-// text by that many runes.
+// Fold preserves rune count, so a rune distance measured in hay is the same distance in text; the
+// byte cursor walks text by that many runes.
 func (n Needle) scan(hay, text string, yield func(Hit) bool) {
 	var hit Hit
 	hp := 0
@@ -78,7 +77,6 @@ func (n Needle) Count(text string) int {
 	return c
 }
 
-// advanceRunes returns the byte offset n runes past from in s.
 func advanceRunes(s string, from, n int) int {
 	for range n {
 		_, w := utf8.DecodeRuneInString(s[from:])

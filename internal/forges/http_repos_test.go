@@ -17,8 +17,7 @@ import (
 	"github.com/cplieger/forgeapi"
 )
 
-// pagedCore answers each list call with the page its cursor names and records
-// what each call asked for. The embedded Core is nil, so any other method panics.
+// The embedded Core is nil, so any other method panics.
 type pagedCore struct {
 	forgeapi.Core
 	prPages    map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]
@@ -98,14 +97,12 @@ func (c *pagedCore) RepoAffordances(_ context.Context, repo forgeapi.RepoRef) (f
 	return c.aff, c.affErr
 }
 
-// answerAffordances changes what RepoAffordances answers from the next read on.
 func (c *pagedCore) answerAffordances(aff forgeapi.RepoAffordances, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.aff, c.affErr = aff, err
 }
 
-// rolesCore is a pagedCore that also serves the two roles a family may lack.
 type rolesCore struct {
 	*pagedCore
 	releasePages map[forgeapi.Cursor]forgeapi.Page[forgeapi.Release]
@@ -150,7 +147,6 @@ func (c *pagedCore) reads() []forgeapi.PRRef {
 	return slices.Clone(c.prReads)
 }
 
-// onePRPage is a first page holding pull request n of o/r.
 func onePRPage(n int) map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest] {
 	return map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{"": {Items: []forgeapi.PullRequest{{
 		Ref:   forgeapi.PRRef{Number: n},
@@ -159,7 +155,6 @@ func onePRPage(n int) map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest] {
 	}}}}
 }
 
-// repoRoutes serves the forge routes over m.
 func repoRoutes(m *Manager) *http.ServeMux {
 	mux := http.NewServeMux()
 	NewHTTPHandler(m, nil).RegisterRoutes(mux)
@@ -173,12 +168,10 @@ func getRoute(t *testing.T, mux *http.ServeMux, path string) *httptest.ResponseR
 	return rec
 }
 
-// githubRepoPath is a repository sub-resource route on the GitHub row.
 func githubRepoPath(repoID, tail string) string {
 	return "/api/forges/github%3Agithub.com/repos/" + repoID + "/" + tail
 }
 
-// prNumbers is the numbers of the rows a PR list answer carries.
 func prNumbers(t *testing.T, rec *httptest.ResponseRecorder) []int {
 	t.Helper()
 	if rec.Code != http.StatusOK {
@@ -381,8 +374,6 @@ func TestListRoute_StateMapsAndAnUnknownStateIs400(t *testing.T) {
 	})
 }
 
-// patGitHub is the forge routes over a real GitHub client connected through
-// the PAT route, answered by wire.
 func patGitHub(t *testing.T, wire *userWire) *connectHarness {
 	t.Helper()
 	h := newConnectHarness(t, wire)
@@ -586,7 +577,6 @@ func seedPR(head string) forgeapi.PullRequest {
 	}
 }
 
-// detailPR is the pr object of a detail answer.
 func detailPR(t *testing.T, body map[string]any) map[string]any {
 	t.Helper()
 	pr, ok := body["pr"].(map[string]any)

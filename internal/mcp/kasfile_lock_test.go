@@ -17,7 +17,7 @@ type held struct {
 	on      *atomic.Bool
 	release func()
 	kasPath string
-	id      ServerID
+	id      serverID
 }
 
 func heldStore(t *testing.T) held {
@@ -28,7 +28,7 @@ func heldStore(t *testing.T) held {
 	var park atomic.Bool
 	parked := make(chan struct{})
 	freed := make(chan struct{})
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath),
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kasPath),
 		WithWaitForReady(func(context.Context) (bool, bool) {
 			if park.CompareAndSwap(true, false) {
 				close(parked)
@@ -46,7 +46,7 @@ func heldStore(t *testing.T) held {
 	park.Store(true)
 	written := make(chan error, 1)
 	go func() {
-		_, err := s.SetEnabled(context.Background(), created.ID, !created.Enabled)
+		_, err := s.setEnabled(context.Background(), created.ID, !created.Enabled)
 		written <- err
 	}()
 	<-parked
@@ -136,7 +136,7 @@ func TestSetEnabled_WaitingBehindAnotherWriterGivesUpWithItsContext(t *testing.T
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 	err := awaitWithin(t, 5*time.Second, "SetEnabled with a 50ms context", func() error {
-		_, err := s.SetEnabled(ctx, id, true)
+		_, err := s.setEnabled(ctx, id, true)
 		return err
 	})
 	if !errors.Is(err, context.DeadlineExceeded) {

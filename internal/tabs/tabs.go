@@ -32,8 +32,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// FileName is the store's file, beside the chats directory in the config dir.
-const FileName = "tabs.json"
+// fileName is the store's file, beside the chats directory in the config dir.
+const fileName = "tabs.json"
 
 // fileMode and dirMode are what the file and the config directory must carry.
 // The arrangement names chat ids and absolute paths, so it is nobody else's
@@ -50,16 +50,15 @@ const MaxTabs = 500
 // chat stops working (it opens a tab), so the client says "close a tab first".
 const MaxOpenTabs = 48
 
-// MaxBytes caps a decoded document, derived from MaxTabs and MaxRefBytes, and is enforced on
+// MaxBytes caps a decoded document, derived from MaxTabs and maxRefBytes, and is enforced on
 // read and write, so the store never writes a file its load would refuse.
-const MaxBytes = 512 * 1024
+const maxBytes = 512 * 1024
 
-// MaxRefBytes caps one subject's Ref (a chat id or an absolute path).
-const MaxRefBytes = 512
+// maxRefBytes caps one subject's Ref (a chat id or an absolute path).
+const maxRefBytes = 512
 
-// maxIDBytes bounds an id read off disk. Nothing this store mints is longer than
-// 32 characters; the slack is for a hand-edited file, and the bound is what stops
-// one entry from consuming the whole document budget.
+// Nothing this store mints is longer than 32 characters; the slack is for a hand-edited file, and
+// the bound is what stops one entry from consuming the whole document budget.
 const maxIDBytes = 128
 
 // The sentinels this package returns, compared with errors.Is; each is wrapped with the
@@ -73,11 +72,11 @@ var (
 	// ErrBadKind means the kind is not a marotte.TabKind.
 	ErrBadKind = errors.New("unknown tab kind")
 	// ErrBadRef means the ref does not fit its kind: missing where the kind
-	// needs one, present on a singleton, or over MaxRefBytes.
+	// needs one, present on a singleton, or over maxRefBytes.
 	ErrBadRef = errors.New("bad tab ref")
-	// ErrNotOpen means the id handed to Reparent names no open tab (unlike a pin, a reparent is a
+	// errNotOpen means the id handed to Reparent names no open tab (unlike a pin, a reparent is a
 	// statement about a tab, so it is refused).
-	ErrNotOpen = errors.New("tab is not open")
+	errNotOpen = errors.New("tab is not open")
 	// ErrCycle means Reparent was asked to hang a tab under itself or under one
 	// of its own descendants.
 	ErrCycle = errors.New("a tab cannot be its own ancestor")
@@ -107,7 +106,7 @@ type Store struct {
 // the error is diagnostic (warn and continue, invariant 6). The mode verdict comes BEFORE any
 // read: filemode.EnforceFile refuses a planted symlink and a FIFO that would block boot.
 func NewStore(dir string) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, FileName)}
+	s := &Store{path: filepath.Join(dir, fileName)}
 	if _, err := filemode.EnforceFile(s.path, fileMode); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return s, nil // first run
@@ -138,19 +137,18 @@ func readBounded(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	data, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > MaxBytes {
-		return nil, fmt.Errorf("over the %d byte decode bound", MaxBytes)
+	if len(data) > maxBytes {
+		return nil, fmt.Errorf("over the %d byte decode bound", maxBytes)
 	}
 	return data, nil
 }
 
-// subjectKey is the (Kind, Ref) pair uniqueness is keyed on. A named type rather
-// than a TabSubject with two fields set, because a half-populated record used as a
-// key reads like a tab and is not one.
+// A named type rather than a TabSubject with two fields set, because a half-populated record used
+// as a key reads like a tab and is not one.
 type subjectKey struct {
 	kind marotte.TabKind
 	ref  string
@@ -202,7 +200,7 @@ func (s *Store) persist(ctx context.Context, st *state) error {
 	}
 	if _, err := atomicfile.WriteFile(ctx, s.path, data,
 		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
-		atomicfile.WithMaxBytes(MaxBytes)); err != nil {
+		atomicfile.WithMaxBytes(maxBytes)); err != nil {
 		return fmt.Errorf("write %s: %w", s.path, err)
 	}
 	return nil
@@ -230,8 +228,8 @@ func checkSubject(kind marotte.TabKind, ref string) error {
 		return fmt.Errorf("%w: kind %q is a singleton and takes no ref, got %q", ErrBadRef, kind, ref)
 	case !kind.Singleton() && ref == "":
 		return fmt.Errorf("%w: kind %q needs a ref", ErrBadRef, kind)
-	case len(ref) > MaxRefBytes:
-		return fmt.Errorf("%w: ref is %d bytes, max %d", ErrBadRef, len(ref), MaxRefBytes)
+	case len(ref) > maxRefBytes:
+		return fmt.Errorf("%w: ref is %d bytes, max %d", ErrBadRef, len(ref), maxRefBytes)
 	}
 	return nil
 }

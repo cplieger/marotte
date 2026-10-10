@@ -129,7 +129,7 @@ func TestStepSessions_EmptyInputs(t *testing.T) {
 		t.Errorf("StepSessions(no root) = %+v, want nil", got)
 	}
 	// An unstarted step has no session: reporting one makes a caller address nothing.
-	only := &State{Root: &Node{NodeID: "r", Type: "sequence", Children: []Node{
+	only := &State{Root: &node{NodeID: "r", Type: "sequence", Children: []node{
 		{NodeID: "a", Type: "step"},
 	}}}
 	if got := StepSessions(only); got != nil {

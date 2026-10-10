@@ -36,7 +36,6 @@ describe("a11y: missing labels", () => {
     vi.doUnmock("./actions/index.js");
     vi.doUnmock("./api-client.js");
     vi.doUnmock("./signals.js");
-    // Setup minimal DOM for banner-stack
     const container = document.createElement("div");
     container.id = "banner-stack";
     document.body.appendChild(container);
@@ -56,7 +55,6 @@ describe("a11y: missing labels", () => {
     vi.doUnmock("./actions/index.js");
     vi.doUnmock("./api-client.js");
     vi.doUnmock("./signals.js");
-    // Setup minimal DOM for settings-tabs
     const bar = document.createElement("div");
     bar.id = "settings-tab-bar";
     const tabs = ["general", "tools", "permissions", "instructions"];
@@ -360,7 +358,7 @@ describe("a11y: failed tool aria-expanded", () => {
     }));
 
     const { buildToolCard } = await import("./tool-card.js");
-    const { initToolCallbacks, updateToolCall } = await import("./messages-tools.js");
+    const { initToolCallbacks, applyToolCallUpdate } = await import("./messages-tools.js");
 
     initToolCallbacks({
       pushBind: noop,
@@ -385,7 +383,7 @@ describe("a11y: failed tool aria-expanded", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(details.getAttribute("aria-hidden")).toBe("true");
 
-    updateToolCall(
+    applyToolCallUpdate(
       card,
       {
         id: "tf1",

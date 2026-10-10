@@ -16,17 +16,15 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 )
 
-// statusArgs is the one status invocation. `-z` for NUL-delimited records (see
-// parsePorcelainV2) and `-uall` so untracked files inside a new directory are
-// listed individually rather than collapsing to a directory the walk skips.
+// `-z` for NUL-delimited records (see parsePorcelainV2) and `-uall` so untracked files inside a new
+// directory are listed individually rather than collapsing to a directory the walk skips.
 var statusArgs = []string{
 	"status", "--porcelain=v2", "--branch", "--show-stash", "-z", "-uall",
 }
 
-// porcelainStatus is everything one status invocation reports. Branch is empty for
-// a detached HEAD. Ahead and Behind are 0 when the branch tracks nothing (git
-// omits the header), deliberately indistinguishable from being in sync.
-// Conflicted comes from v2's unmerged RECORD TYPE, not from reading XY letters.
+// Branch is empty for a detached HEAD. Ahead and Behind are 0 when the branch tracks nothing (git
+// omits the header), deliberately indistinguishable from being in sync. Conflicted comes from v2's
+// unmerged RECORD TYPE, not from reading XY letters.
 type porcelainStatus struct {
 	Branch     string
 	Files      []gitFile
@@ -36,9 +34,9 @@ type porcelainStatus struct {
 	Conflicted bool
 }
 
-// readStatus runs the status invocation in dir and parses it. The error survives because callers
-// differ: the dashboard degrades to empty counts, a discard refuses, pull-all treats an unreadable
-// tree as unsafe. A failed read still answers the branch, read off .git/HEAD.
+// The error survives because callers differ: the dashboard degrades to empty counts, a discard
+// refuses, pull-all treats an unreadable tree as unsafe. A failed read still answers the branch,
+// read off .git/HEAD.
 func readStatus(ctx context.Context, dir string) (porcelainStatus, error) {
 	raw, err := gitExec(ctx, dir, statusArgs...).CombinedOutput()
 	if err != nil {
@@ -59,13 +57,11 @@ func readStatus(ctx context.Context, dir string) (porcelainStatus, error) {
 // is a detached HEAD (a bare object id) or not a HEAD document at all.
 const headRefPrefix = "ref: refs/heads/"
 
-// headDocMaxBytes bounds the HEAD and .git reads. Both documents are one line, so
-// this is purely the hostile-content bound.
+// Both documents are one line, so this is purely the hostile-content bound.
 const headDocMaxBytes = 4 << 10
 
-// headBranch reads the checked-out branch straight off .git/HEAD, with no
-// subprocess. Empty for a detached HEAD, and for anything it cannot read or
-// recognise.
+// headBranch reads the checked-out branch straight off .git/HEAD, with no subprocess. Empty for a
+// detached HEAD, and for anything it cannot read or recognise.
 func headBranch(dir string) string {
 	gitPath := filepath.Join(dir, gitDirName)
 	info, err := os.Stat(gitPath) // #nosec G703 -- dir is resolved through repoDir, which refuses ".." and absolute paths
@@ -83,8 +79,6 @@ func headBranch(dir string) string {
 	return parseHeadRef(readSmallFile(filepath.Join(gitPath, "HEAD")))
 }
 
-// resolveGitDirFile reads a `.git` FILE and returns the git directory it names,
-// resolving a relative pointer against the file's own directory (git's rule).
 // Empty when the file is not a gitdir pointer.
 func resolveGitDirFile(dir, gitFile string) string {
 	target, ok := parseGitFile(readSmallFile(gitFile))
@@ -144,9 +138,9 @@ const (
 	unmergedFields = 11
 )
 
-// parsePorcelainV2 parses the status output; pure, so the grammar is testable without git.
-// NUL-separated records: the -z form never quotes a path, where the newline form C-quotes non-ASCII
-// into strings git cannot match. Malformed records are skipped.
+// Pure, so the grammar is testable without git. NUL-separated records: the -z form never quotes a
+// path, where the newline form C-quotes non-ASCII into strings git cannot match. Malformed records
+// are skipped.
 func parsePorcelainV2(raw []byte) porcelainStatus {
 	var st porcelainStatus
 	records := strings.Split(string(raw), "\x00")
@@ -182,7 +176,6 @@ func parsePorcelainV2(raw []byte) porcelainStatus {
 	return st
 }
 
-// appendHeader applies one `# <key> <value>` header record.
 func (st *porcelainStatus) applyHeader(rec string) {
 	key, val, found := strings.Cut(strings.TrimPrefix(rec, "# "), " ")
 	if !found {

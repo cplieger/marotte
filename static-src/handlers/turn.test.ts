@@ -20,10 +20,9 @@ import {
 } from "../store.js";
 import { noteRunLive, noteRunSettled } from "../run-store.js";
 import type { Session } from "../types.js";
-import type { Entry, EntryTurnClose, TurnOutcome } from "../wire/types.gen.js";
-import { severityOf } from "../turn-severity.js";
+import type { Entry, EntryTurnClose, NotificationPayload, TurnOutcome } from "../wire/types.gen.js";
 import type * as ApiClient from "../api-client.js";
-import { getActionLog } from "@cplieger/actions";
+import type * as ChatActions from "../actions/chat.js";
 
 // Spread, so other consumers keep the real module. `vi.hoisted`: the static run-store import
 // resolves this factory during linking, before plain consts initialize.
@@ -31,6 +30,19 @@ const { mockApiGetTyped } = vi.hoisted(() => ({ mockApiGetTyped: vi.fn() }));
 vi.mock("../api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
   apiGetTyped: mockApiGetTyped,
+}));
+
+// The three answers' dispatches, replaced so a case decides what the server made of one.
+const { mockRespondPermission, mockRespondElicitation, mockRespondUserInput } = vi.hoisted(() => ({
+  mockRespondPermission: vi.fn(),
+  mockRespondElicitation: vi.fn(),
+  mockRespondUserInput: vi.fn(),
+}));
+vi.mock("../actions/chat.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ChatActions>()),
+  respondPermission: { dispatch: mockRespondPermission },
+  respondElicitation: { dispatch: mockRespondElicitation },
+  respondUserInput: { dispatch: mockRespondUserInput },
 }));
 
 // scroll.ts touches DOM elements at import; use the shared mock.
@@ -42,13 +54,15 @@ vi.mock(
 // Through `vi.hoisted` for the reason the notify trio below states: the mocker resolves
 // these factories during LINKING, above this file's own top-level initializers, where a
 // plain `const` is still in its temporal dead zone.
-const { mockCollapseSettled, mockHasPendingDecision, mockDropTurnDecisions } = vi.hoisted(() => ({
-  mockCollapseSettled: vi.fn(),
-  mockHasPendingDecision: vi.fn(() => false),
-  mockDropTurnDecisions: vi.fn(),
-}));
+const { mockCollapseSettled, mockHasPendingDecision, mockDropTurnDecisions, mockPushDecision } =
+  vi.hoisted(() => ({
+    mockCollapseSettled: vi.fn(),
+    mockHasPendingDecision: vi.fn(() => false),
+    mockDropTurnDecisions: vi.fn(),
+    mockPushDecision: vi.fn(),
+  }));
 vi.mock("../decision-dock.js", () => ({
-  pushDecision: vi.fn(),
+  pushDecision: mockPushDecision,
   collapseSettledDecision: mockCollapseSettled,
   hasPendingDecision: mockHasPendingDecision,
   dropTurnDecisions: mockDropTurnDecisions,
@@ -92,23 +106,18 @@ vi.mock("../failure-notice.js", () => ({
   clearFailure: undefined,
 }));
 
-// There is no isPermissionNeededEnabled to mock: the permission ask has no per-kind
-// switch, so the three ask handlers notify unconditionally and only the master gate
-// inside notifyIfHidden applies.
-
 // A HOLDER so the agent-finished notification can be on in one block only (the permission block
 // needs the contrast). `vi.hoisted` because the factory closes over it.
-const { mockNotifyIfHidden, mockCloseNotificationsFor, notifyGate } = vi.hoisted(() => ({
-  mockNotifyIfHidden: vi.fn(),
+const { mockNotifyOffScreen, mockCloseNotificationsFor, notifyGate } = vi.hoisted(() => ({
+  mockNotifyOffScreen: vi.fn(),
   mockCloseNotificationsFor: vi.fn(() => Promise.resolve()),
   notifyGate: { agentFinished: false },
 }));
 vi.mock("../notify.js", () => ({
-  notifyIfHidden: mockNotifyIfHidden,
+  notifyOffScreen: mockNotifyOffScreen,
   closeNotificationsFor: mockCloseNotificationsFor,
   setBadge: vi.fn(),
   isAgentFinishedEnabled: () => notifyGate.agentFinished,
-  NOTIFY_TITLE: "marotte",
 }));
 
 const { mockOpenSetting } = vi.hoisted(() => ({ mockOpenSetting: vi.fn() }));
@@ -137,12 +146,13 @@ vi.mock("../turn-rail.js", () => ({
 import { refreshTurnRail } from "../turn-rail.js";
 
 // Import after mocks so turn.ts registers its handlers against the bus mock.
-const { ERROR_ROUTES } = await import("./turn.js");
+await import("./turn.js");
+const { ERROR_ROUTES } = await import("./error-routing.js");
 // After the mocks for the same reason turn.ts is: the cue module imports ../notify.js,
 // so a STATIC import here links it against the real module before the mocker is ready
 // and the whole file dies in module linking.
 const { forgetDeferredCue, hasDeferredCue } = await import("../agent-finished-cue.js");
-const { pushDecision } = await import("../decision-dock.js");
+await import("./notification.js");
 
 function makeSession(id: string, over: Partial<Session> = {}): Session {
   return {
@@ -189,8 +199,8 @@ function closeEntry(turnID: string, payload: Partial<EntryTurnClose> = {}, seq =
   };
 }
 
-/** Fire the close frame. `workflow_id` is the RUN partition and is absent for a chat's
- *  own turn, so the default omits it rather than sending "". */
+/** `workflow_id` is the RUN partition and is absent for a chat's own turn, so the default omits it
+ *  rather than sending "". */
 function fireClose(
   chatID: string,
   opts: {
@@ -229,6 +239,54 @@ beforeEach(() => {
   registerTurnRepair(mockRepairTurn);
   setSessions([]);
   document.body.innerHTML = '<div id="messages"></div>';
+});
+
+describe("a decision's answer", () => {
+  // The dock holds an answered card until the server settles it, so a dispatch that resolved nothing (failed or
+  // cancelled) must come back as `failed`, or the card stays inert with the ask still open.
+  const asks = {
+    permission: {
+      event: "permission_needed",
+      payload: { request_id: 4, options: [], title: "ls", kind: "execute" },
+      dispatch: mockRespondPermission,
+      answer: (submit: (...args: unknown[]) => Promise<unknown>) =>
+        submit({ optionID: "allow_once" }),
+    },
+    elicitation: {
+      event: "elicitation_needed",
+      payload: { request_id: 4, message: "token?" },
+      dispatch: mockRespondElicitation,
+      answer: (submit: (...args: unknown[]) => Promise<unknown>) => submit("decline"),
+    },
+    userInput: {
+      event: "user_input_needed",
+      payload: { request_id: 4, question: "Which region?" },
+      dispatch: mockRespondUserInput,
+      answer: (submit: (...args: unknown[]) => Promise<unknown>) => submit("dismissed"),
+    },
+  };
+
+  for (const [name, ask] of Object.entries(asks)) {
+    it(`${name}: a dispatch that resolved nothing is a failed answer`, async () => {
+      ask.dispatch.mockResolvedValue(null);
+      fireSSE(ask.event, "c1", ask.payload);
+      const decision = mockPushDecision.mock.lastCall?.[0] as {
+        submit: (...args: unknown[]) => Promise<unknown>;
+      };
+
+      await expect(ask.answer(decision.submit)).resolves.toBe("failed");
+    });
+
+    it(`${name}: the server's own answer passes through`, async () => {
+      ask.dispatch.mockResolvedValue("superseded");
+      fireSSE(ask.event, "c1", ask.payload);
+      const decision = mockPushDecision.mock.lastCall?.[0] as {
+        submit: (...args: unknown[]) => Promise<unknown>;
+      };
+
+      await expect(ask.answer(decision.submit)).resolves.toBe("superseded");
+    });
+  }
 });
 
 describe("ERROR_ROUTES", () => {
@@ -275,6 +333,7 @@ describe("ERROR_ROUTES", () => {
     // A pick refused before it reached the wire: same surface as switch_failed,
     // which is the other half of choosing a model.
     ["model_not_served", { surface: "toast" }],
+    ["tangent_merge_failed", { surface: "toast" }],
     // Empty-turn recovery could not respawn or resend. Routed explicitly rather
     // than left to the unknown-code fallthrough, on the one error whose meaning is
     // "the automatic repair failed".
@@ -706,207 +765,7 @@ describe("error handler", () => {
   });
 });
 
-// The approval floor: all three turn-blocking asks reach notifyIfHidden (the master switch). The
-// agent-finished mock returns false, which keeps these assertions non-vacuous.
-describe("the permission-class asks always notify", () => {
-  it.each([
-    ["permission_needed", { request_id: 1, options: [] }, "Permission needed"],
-    ["elicitation_needed", { request_id: 2 }, "Input requested by a tool"],
-    ["user_input_needed", { request_id: 3, options: [] }, "The agent has a question"],
-  ])("%s notifies with no per-kind gate", (event, payload, body) => {
-    fireSSE(event, "chat-1", payload);
-    // No `run_id` on any of these payloads, so `askTarget` falls to the envelope chat.
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", body, {
-      kind: "chat",
-      chatID: "chat-1",
-    });
-  });
-
-  it("uses the turn-approval wording when the ask carries files", () => {
-    fireSSE("permission_needed", "chat-1", {
-      request_id: 4,
-      options: [],
-      files: [{ path: "a.go", action_id: "act-1" }],
-    });
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", "Review this turn's changes", {
-      kind: "chat",
-      chatID: "chat-1",
-    });
-  });
-});
-
-describe("a refused always answer", () => {
-  function answerWith(
-    requestID: number,
-    status: number,
-    body: Record<string, string>,
-  ): PermissionDecisionLike {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status }))),
-    );
-    fireSSE("permission_needed", "chat-1", { request_id: requestID, options: [] });
-    const decision = vi.mocked(pushDecision).mock.calls.at(-1)?.[0] as PermissionDecisionLike;
-    decision.submit({ optionID: "always-accept", alwaysResource: "head *" });
-    return decision;
-  }
-
-  it("offers the same card again when the rule was not saved", async () => {
-    const decision = answerWith(21, 409, {
-      error: "no rule was saved",
-      reason: "always_rule_not_saved",
-    });
-    await vi.waitFor(() => {
-      expect(vi.mocked(pushDecision)).toHaveBeenCalledTimes(2);
-    });
-    expect(vi.mocked(pushDecision).mock.calls[1]?.[0]).toBe(decision);
-  });
-
-  it("does not offer it again on another refusal", async () => {
-    answerWith(22, 400, { error: "always_resource_invalid" });
-    await vi.waitFor(() => {
-      expect(
-        getActionLog().some(
-          (a) =>
-            a.name === "chat.respond_permission" &&
-            a.status === "error" &&
-            (a.args as { requestID?: number }).requestID === 22,
-        ),
-      ).toBe(true);
-    });
-    expect(vi.mocked(pushDecision)).toHaveBeenCalledTimes(1);
-  });
-});
-
-interface PermissionDecisionLike {
-  submit: (answer: { optionID: string; alwaysResource?: string }) => void;
-}
-
-// The off-screen notification reads the close entry's SEVERITY, so a failed or refused turn never
-// says "Agent finished". A distinct chat id per case: the cue dedups per chat.
-
-describe("the agent-finished notification reads the severity", () => {
-  /** outcome -> notification body, or "" for silence. Hardcoded: an expectation computed by the code
-   *  under test passes for any mapping. */
-  const cases: [TurnOutcome, string][] = [
-    ["completed", "seeded: Agent finished"],
-    ["failed", "seeded: The agent reported an error and the turn stopped."],
-    ["interrupted", "seeded: The turn was interrupted before the agent finished."],
-    ["refused", "seeded: The model declined to continue."],
-    // STOPPED. A cancel is what the reader asked for, and an end marotte could not
-    // read reports nothing about success, so neither earns a notification.
-    ["cancelled", ""],
-    ["unknown", ""],
-    // `running` cannot reach a `turn_close` in practice; the row keeps the handler from
-    // claiming a verdict for a turn that has not ended.
-    ["running", ""],
-  ];
-
-  beforeEach(() => {
-    notifyGate.agentFinished = true;
-  });
-  afterEach(() => {
-    notifyGate.agentFinished = false;
-  });
-
-  for (const [outcome, want] of cases) {
-    it(`says ${want === "" ? "nothing" : `"${want}"`} for a turn that closed ${outcome}`, () => {
-      const chatID = `notify-${outcome}`;
-      setSessions([makeSession(chatID)]);
-      openTurnOn(chatID);
-      fireClose(chatID, { payload: { outcome } });
-      if (want === "") {
-        expect(mockNotifyIfHidden).not.toHaveBeenCalled();
-        return;
-      }
-      expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", want, {
-        kind: "chat",
-        chatID,
-      });
-    });
-  }
-
-  it("never claims a broken turn finished", () => {
-    // The property behind the rows above, and the direction the defect ran in: the
-    // wording matters less than never saying `Agent finished` over a failure.
-    for (const [outcome] of cases) {
-      if (severityOf(outcome) !== "broken") {
-        continue;
-      }
-      mockNotifyIfHidden.mockClear();
-      const chatID = `broken-${outcome}`;
-      setSessions([makeSession(chatID)]);
-      openTurnOn(chatID);
-      fireClose(chatID, { payload: { outcome } });
-      const body = String(mockNotifyIfHidden.mock.calls[0]?.[1] ?? "");
-      expect(body, `${outcome} notified nothing at all`).not.toBe("");
-      expect(body, `${outcome} claimed the agent finished`).not.toContain("Agent finished");
-    }
-  });
-
-  it("says a model-call-limit stop's own reason rather than an error", () => {
-    // kiro-cli stopped the turn at its per-turn limit; nothing reported an error.
-    const reason =
-      'kiro-cli stopped this turn after 300 model calls, so its work may be unfinished. Type "continue" to carry on, or split the work into smaller prompts.';
-    setSessions([makeSession("capped")]);
-    openTurnOn("capped");
-    fireClose("capped", {
-      payload: { outcome: "failed", failure_kind: "model_call_limit", failure_reason: reason },
-    });
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", `seeded: ${reason}`, {
-      kind: "chat",
-      chatID: "capped",
-    });
-  });
-
-  it("covers a broken outcome, or the property above passes vacuously", () => {
-    expect(cases.filter(([o]) => severityOf(o) === "broken").length).toBeGreaterThan(0);
-  });
-
-  it("still notifies nothing at all when the master switch is off", () => {
-    // Severity decides WHAT is
-    // said, never WHETHER the user has asked to be told.
-    notifyGate.agentFinished = false;
-    setSessions([makeSession("gate-off")]);
-    openTurnOn("gate-off");
-    fireClose("gate-off", { payload: { outcome: "failed" } });
-    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
-  });
-
-  it("keeps the 2s dedup window, which an SSE replay burst needs", () => {
-    // The replayed close is a REDELIVERY the store drops by id, so the second frame
-    // reaches the cue with the turn already settled — which is the burst this window
-    // exists for.
-    setSessions([makeSession("dedup")]);
-    openTurnOn("dedup");
-    fireClose("dedup", { payload: { outcome: "failed" } });
-    fireClose("dedup", { payload: { outcome: "failed" } });
-    expect(mockNotifyIfHidden).toHaveBeenCalledTimes(1);
-  });
-
-  it("says nothing at all for a close that settles nothing", () => {
-    // The cue is a statement about a turn this handler SETTLED, so it sits inside the
-    // gate with the writes it reads.
-    setSessions([makeSession("still-open")]);
-    openTurnOn("still-open");
-    openTurnOn("still-open", "t2", 2);
-    fireClose("still-open");
-    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
-  });
-});
-
-// The server mints an `event` or `revert` turn to hold a record (an effort pick on an empty chat,
-// a rewind's carrier) and closes it at once, marking the close `carrier`. No agent ran it, so its
-// close says nothing about one.
-
 describe("turn_closed for a carrier turn no agent ran", () => {
-  beforeEach(() => {
-    notifyGate.agentFinished = true;
-  });
-  afterEach(() => {
-    notifyGate.agentFinished = false;
-  });
-
   function openCarrierOn(chatID: string, source: "event" | "revert"): void {
     openTurn(chatID, {
       id: "t1",
@@ -919,7 +778,7 @@ describe("turn_closed for a carrier turn no agent ran", () => {
   }
 
   for (const source of ["event", "revert"] as const) {
-    it(`takes the chat off working without an agent-finished cue (${source})`, () => {
+    it(`takes the chat off working and keeps the agent-down notice (${source})`, () => {
       const chatID = `carrier-${source}`;
       setSessions([makeSession(chatID)]);
       openCarrierOn(chatID, source);
@@ -928,12 +787,11 @@ describe("turn_closed for a carrier turn no agent ran", () => {
       fireClose(chatID, { payload: { outcome: "completed", carrier: true } });
 
       expect(tabStatusFor(get(chatID))).toBe("idle");
-      expect(mockNotifyIfHidden).not.toHaveBeenCalled();
       expect(mockClearAgentDown).not.toHaveBeenCalled();
     });
   }
 
-  it("stays silent when the carrier's turn_opened never reached this client", () => {
+  it("keeps the agent-down notice when the carrier's turn_opened never reached this client", () => {
     // The close lands as a hole and its range read is asynchronous, so the frame alone decides.
     setSessions([makeSession("carrier-unseen")]);
     setActive("carrier-unseen");
@@ -941,35 +799,19 @@ describe("turn_closed for a carrier turn no agent ran", () => {
       turnID: "unseen",
       payload: { outcome: "completed", carrier: true },
     });
-    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
     expect(mockClearAgentDown).not.toHaveBeenCalled();
   });
 
-  it("cues for a replayed `event` turn KAS ran, whose close is not a carrier's", () => {
+  it("clears it for a replayed `event` turn KAS ran, whose close is not a carrier's", () => {
     setSessions([makeSession("replayed-event")]);
     openCarrierOn("replayed-event", "event");
     fireClose("replayed-event");
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", "seeded: Agent finished", {
-      kind: "chat",
-      chatID: "replayed-event",
-    });
-    expect(mockClearAgentDown).toHaveBeenCalled();
-  });
-
-  it("still cues for the agent's own turn, or the rows above pass vacuously", () => {
-    setSessions([makeSession("agent-turn")]);
-    openTurnOn("agent-turn");
-    fireClose("agent-turn");
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", "seeded: Agent finished", {
-      kind: "chat",
-      chatID: "agent-turn",
-    });
     expect(mockClearAgentDown).toHaveBeenCalled();
   });
 });
-
 // A chat that launched a workflow must not raise the cue when `run_workflow` returns, only when the
-// work is done; the handler hands one fact to `agent-finished-cue.ts`. The real live-run inventory.
+// work is done: the server's notification frame goes through `agent-finished-cue.ts`. The real
+// live-run inventory.
 
 describe("the notification waits for the work, not just the turn", () => {
   beforeEach(() => {
@@ -989,17 +831,25 @@ describe("the notification waits for the work, not just the turn", () => {
     noteRunLive(workflowID, chatID, executing);
   }
 
-  /** A settled chat with one closed turn, which is what a cue is a statement about. */
-  function closeOn(chatID: string, outcome: TurnOutcome = "completed"): void {
+  /** A settled chat with one closed turn and the server's notification about it. */
+  function closeOn(chatID: string, outcome: TurnOutcome = "completed"): NotificationPayload {
     setSessions([makeSession(chatID)]);
     openTurnOn(chatID);
     fireClose(chatID, { payload: { outcome } });
+    const notice: NotificationPayload = {
+      chat_id: chatID,
+      kind: "agent_finished",
+      title: "seeded",
+      body: outcome === "completed" ? "Response complete" : "Turn failed",
+    };
+    fireSSE("notification", chatID, notice);
+    return notice;
   }
 
   it("says nothing when a run this chat launched is still live", () => {
     seedLiveRun("wf-defer-clean", "defer-clean");
     closeOn("defer-clean");
-    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+    expect(mockNotifyOffScreen).not.toHaveBeenCalled();
   });
 
   // The withhold is about the reader's attention rather than the turn's verdict, so a
@@ -1007,7 +857,7 @@ describe("the notification waits for the work, not just the turn", () => {
   it("says nothing for a BROKEN turn while a run is live", () => {
     seedLiveRun("wf-defer-broken", "defer-broken");
     closeOn("defer-broken", "failed");
-    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+    expect(mockNotifyOffScreen).not.toHaveBeenCalled();
   });
 
   // A run stopped on a person is exactly what a "finished" notification must not
@@ -1016,36 +866,27 @@ describe("the notification waits for the work, not just the turn", () => {
   it("says nothing while the run is merely PAUSED", () => {
     seedLiveRun("wf-defer-parked", "defer-parked", false);
     closeOn("defer-parked");
-    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+    expect(mockNotifyOffScreen).not.toHaveBeenCalled();
   });
 
   it("notifies immediately when nothing is outstanding", () => {
-    closeOn("defer-none");
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", "seeded: Agent finished", {
-      kind: "chat",
-      chatID: "defer-none",
-    });
+    const notice = closeOn("defer-none");
+    expect(mockNotifyOffScreen).toHaveBeenCalledWith(notice);
   });
 
   // One busy conversation must not mute the rest of the workspace.
   it("notifies when the live run belongs to another chat", () => {
     seedLiveRun("wf-defer-other", "some-other-chat");
-    closeOn("defer-other");
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", "seeded: Agent finished", {
-      kind: "chat",
-      chatID: "defer-other",
-    });
+    const notice = closeOn("defer-other");
+    expect(mockNotifyOffScreen).toHaveBeenCalledWith(notice);
   });
 
   // A manual or scheduled launch is parentless, so its lease names no chat and its
   // outcome travels on its own push rather than on a chat's.
   it("notifies when the live run is PARENTLESS", () => {
     seedLiveRun("wf-defer-parentless", "");
-    closeOn("defer-parentless");
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", "seeded: Agent finished", {
-      kind: "chat",
-      chatID: "defer-parentless",
-    });
+    const notice = closeOn("defer-parentless");
+    expect(mockNotifyOffScreen).toHaveBeenCalledWith(notice);
   });
 
   // The switch decides WHETHER the reader is told; the deferral decides WHEN. A cue
@@ -1055,18 +896,8 @@ describe("the notification waits for the work, not just the turn", () => {
     notifyGate.agentFinished = false;
     seedLiveRun("wf-defer-gate-off", "defer-gate-off");
     closeOn("defer-gate-off");
-    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+    expect(mockNotifyOffScreen).not.toHaveBeenCalled();
     expect(hasDeferredCue("defer-gate-off")).toBe(false);
-  });
-
-  // The two silences are different states and only one of them is a deferral: a turn
-  // that says nothing has nothing to park, so it must leave no cue behind that a
-  // later settle could fire.
-  it("parks nothing for a turn that says nothing", () => {
-    seedLiveRun("wf-defer-cancelled", "defer-cancelled");
-    closeOn("defer-cancelled", "cancelled");
-    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
-    expect(hasDeferredCue("defer-cancelled")).toBe(false);
   });
 
   // The positive half of the withhold: a cue IS parked, so the release effect the

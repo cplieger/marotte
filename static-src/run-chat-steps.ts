@@ -7,6 +7,7 @@ import {
   finalizeDetachedBody,
   updateDetachedBody,
 } from "./messages-blocks.js";
+import { buildRequestHeader } from "./fundamentals/turn-header.js";
 import { blockShape, shapeExtends } from "./subagent-slice.js";
 import type { Turn } from "./turns.js";
 
@@ -21,7 +22,7 @@ export interface RunStepPaint {
 
 /** Where a step's entries go. The exec page's detail pane answers this; declared here because it
  *  is this module's requirement, not the pane's. */
-export type StepHostFor = (nodePath: string) => HTMLElement;
+type StepHostFor = (nodePath: string) => HTMLElement;
 
 /** A run's projected step transcripts. One per run tab. */
 export interface RunStepStream {
@@ -31,13 +32,12 @@ export interface RunStepStream {
   dispose(): void;
 }
 
-/** One rendered step turn. */
 interface TurnRender {
-  /** The box this turn's entries were mounted into, a child of the step's host. */
+  /** The words that opened the turn (a message that resumed the step), above its box. */
+  heading: HTMLElement | undefined;
   box: HTMLElement;
   /** The entry shape already mounted, for the update-versus-rebuild decision. */
   shape: readonly string[];
-  /** Whether the settled body has been sealed. */
   sealed: boolean;
 }
 
@@ -56,8 +56,10 @@ export function createRunStepStream(hostFor: StepHostFor): RunStepStream {
     let rec = renders.get(turn.id);
     if (rec === undefined) {
       const box = el("div", { className: "ev-d-turn" });
-      hostFor(nodePath).append(box);
-      rec = { box, shape: [], sealed: false };
+      const request = turn.trigger?.text.trim() ?? "";
+      const heading = request === "" ? undefined : buildRequestHeader(request);
+      hostFor(nodePath).append(...(heading === undefined ? [box] : [heading, box]));
+      rec = { heading, box, shape: [], sealed: false };
       renders.set(turn.id, rec);
     }
     // The dispatcher's incremental update appends past a watermark, so it holds only while the
@@ -98,6 +100,7 @@ export function createRunStepStream(hostFor: StepHostFor): RunStepStream {
           continue;
         }
         disposeDetachedBody(turnID, ROOT_LANE);
+        rec.heading?.remove();
         rec.box.remove();
         renders.delete(turnID);
       }

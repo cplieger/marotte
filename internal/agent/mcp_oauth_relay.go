@@ -27,17 +27,14 @@ import (
 )
 
 const (
-	// relayURLCap bounds the pasted address.
 	relayURLCap = 4096
 
 	// relayMinPort refuses a privileged port: KAS's listener is ephemeral.
 	relayMinPort = 1024
 
-	// relayDialTimeout and relayTotalTimeout bound the replay to a listener in this container.
 	relayDialTimeout  = 3 * time.Second
 	relayTotalTimeout = 8 * time.Second
 
-	// relayBodyCap bounds the response read and discarded.
 	relayBodyCap = 64 << 10
 )
 
@@ -71,8 +68,8 @@ var (
 	errRelayStateDrift  = errors.New("that address belongs to a different sign-in")
 )
 
-// relayClientFor returns a client pinned to one validated callback's port, built per attempt.
-// ssrf.SafeTransport re-validates the connected address, closing DNS rebinding via `localhost`.
+// Built per attempt and pinned to one validated callback's port; ssrf.SafeTransport re-validates
+// the connected address, closing DNS rebinding via `localhost`.
 func relayClientFor(target *url.URL) (*http.Client, error) {
 	// parseLoopbackCallback already accepted this port; a mismatch is refused.
 	port, err := strconv.ParseUint(target.Port(), 10, 16)
@@ -156,7 +153,6 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 	webhttp.WriteJSON(w, mcpOAuthRelayResp{Status: status})
 }
 
-// replayCallback performs the one GET and returns the listener's status.
 func replayCallback(ctx context.Context, target *url.URL) (int, error) {
 	client, err := relayClientFor(target)
 	if err != nil {
@@ -207,8 +203,7 @@ func validateRelayAddress(pasted, authURL string) (*url.URL, error) {
 	return advertised, nil
 }
 
-// parseLoopbackCallback checks for a plain-http, credential-free, fragment-free loopback URL on
-// an unprivileged port; the paste and the advertised redirect_uri share it.
+// The paste and the advertised redirect_uri share it.
 func parseLoopbackCallback(raw string) (*url.URL, error) {
 	if len(raw) > relayURLCap {
 		return nil, errRelayTooLong
@@ -293,8 +288,7 @@ func matchAdvertisedCallback(pasted *url.URL, pastedState, authURL string) (*url
 	return want.Clone(), nil
 }
 
-// isLoopbackHost reports whether host is one of the three loopback spellings. A fixed set, not a
-// lookup: relayClientFor re-validates at socket time.
+// A fixed set, not a lookup: relayClientFor re-validates at socket time.
 func isLoopbackHost(host string) bool {
 	switch strings.ToLower(host) {
 	case "127.0.0.1", "::1", "localhost":

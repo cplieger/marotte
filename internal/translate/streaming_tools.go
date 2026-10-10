@@ -21,7 +21,7 @@ import (
 // the frame's agent_subtask_id, or for a subagent invocation the ISSUER's lane, with the
 // delegate's uuid in the payload as the lane it opens.
 func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
-	var tc ACPToolCallWire
+	var tc acpToolCallWire
 	if json.Unmarshal(raw, &tc) != nil {
 		return
 	}
@@ -63,20 +63,17 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, 
 		marotte.WorkingLabelPayload{Label: marotte.WorkingLabelForKind(tc.Kind, tc.Title)}))
 }
 
-// trackFileChanges folds a tool call's diffs into the turn's changed-files
-// aggregate, one line delta per path.
-func (t *Translator) trackFileChanges(turn *turnlog.Turn, diffs []marotte.ToolDiff, isNew bool) {
+func (*Translator) trackFileChanges(turn *turnlog.Turn, diffs []marotte.ToolDiff, isNew bool) {
 	for _, d := range diffs {
 		added, removed := buffer.LineDelta(d.OldText, d.NewText)
 		turn.ChangedFile(d.Path, added, removed, isNew)
 	}
 }
 
-// toolCallFromWire builds the domain tool call a `tool_call` frame describes. Shared with
-// the run-bridge path and the session/load replay so one frame decodes one way. ts is the
-// caller's: a replayed call keeps the frame's own timestamp.
+// Shared with the run-bridge path and the session/load replay so one frame decodes one way. ts is
+// the caller's: a replayed call keeps the frame's own timestamp.
 func toolCallFromWire(
-	tc *ACPToolCallWire, subtask string, content toolUpdateContent, ts int64,
+	tc *acpToolCallWire, subtask string, content toolUpdateContent, ts int64,
 ) marotte.ToolCall {
 	return marotte.ToolCall{
 		ID:             tc.ToolCallID,
@@ -98,7 +95,7 @@ func toolCallFromWire(
 // frame is announced as tool_progress (the fold's delta); a terminal one seals the
 // settled value as the tool_result entry.
 func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
-	var tu ACPToolCallUpdateWire
+	var tu acpToolCallUpdateWire
 	if json.Unmarshal(raw, &tu) != nil {
 		return
 	}
@@ -147,7 +144,7 @@ func (t *Translator) updateTarget(chatID marotte.ChatID, attr FrameAttribution) 
 
 // lateStepResult files a terminal update for a step path whose turn already closed: KAS's
 // own account of how the aborted call ended. A non-terminal late frame is dropped.
-func (t *Translator) lateStepResult(ctx context.Context, chatID marotte.ChatID, attr FrameAttribution, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
+func (t *Translator) lateStepResult(ctx context.Context, chatID marotte.ChatID, attr FrameAttribution, tu *acpToolCallUpdateWire, content toolUpdateContent) {
 	if !attr.Step || !tu.Status.Terminal() {
 		return
 	}
@@ -169,9 +166,8 @@ func (t *Translator) lateStepResult(ctx context.Context, chatID marotte.ChatID, 
 	t.publishAppended(ctx, runScope(attr.RunID), &e)
 }
 
-// toolProgress describes what one fold changed about an in-flight tool call. Every
-// omitted field means "unchanged", so applying it to `before` reconstructs `after`
-// exactly; the client keeps no accumulation rules. Input never changes on an update.
+// Every omitted field means "unchanged", so applying it to `before` reconstructs `after` exactly;
+// the client keeps no accumulation rules. Input never changes on an update.
 func toolProgress(turn string, before, after *marotte.ToolCall) marotte.ToolProgressPayload {
 	d := marotte.ToolProgressPayload{Turn: turn, ToolCallID: after.ID}
 	if after.Title != before.Title {
@@ -192,8 +188,7 @@ func toolProgress(turn string, before, after *marotte.ToolCall) marotte.ToolProg
 	return d
 }
 
-// deltaContent carries the three collections. Only Diffs accumulates; the other
-// two are absolute and go entire whenever they change.
+// Only Diffs accumulates; the other two are absolute and go entire whenever they change.
 func deltaContent(d *marotte.ToolProgressPayload, before, after *marotte.ToolCall) {
 	if !slices.Equal(after.OutputSpans, before.OutputSpans) {
 		d.OutputSpans = after.OutputSpans
@@ -207,8 +202,7 @@ func deltaContent(d *marotte.ToolProgressPayload, before, after *marotte.ToolCal
 	}
 }
 
-// deltaAttachments carries the late identity ids and the metadata blocks. Each is adopted
-// once and never overwritten, so it appears on at most one frame per call.
+// Each is adopted once and never overwritten, so it appears on at most one frame per call.
 func deltaAttachments(d *marotte.ToolProgressPayload, before, after *marotte.ToolCall) {
 	if after.TerminalID != before.TerminalID {
 		d.TerminalID = after.TerminalID
@@ -262,7 +256,7 @@ func derefCheckpoint(c *marotte.ToolCheckpoint) marotte.ToolCheckpoint {
 // parseToolUpdateContent extracts the sanitized output delta, any file diffs (made
 // workspace-relative), and the terminal id from a tool_call_update's content blocks.
 // A terminal block's text is not folded in: its bytes arrive on terminal/*.
-func (t *Translator) parseToolUpdateContent(toolCallID string, items []ACPToolCallContentBlock) toolUpdateContent {
+func (t *Translator) parseToolUpdateContent(toolCallID string, items []acpToolCallContentBlock) toolUpdateContent {
 	return parseToolContent(t.relPath, toolCallID, items)
 }
 
@@ -270,22 +264,22 @@ func (t *Translator) parseToolUpdateContent(toolCallID string, items []ACPToolCa
 // reuses it rather than a second switch over the content union. A func rather than a
 // workDir string avoids two adjacent same-typed strings.
 func parseToolContent(
-	relPath func(string) string, toolCallID string, items []ACPToolCallContentBlock,
+	relPath func(string) string, toolCallID string, items []acpToolCallContentBlock,
 ) toolUpdateContent {
 	var out toolUpdateContent
 	var outputDelta, rawDelta strings.Builder
 	for _, item := range items {
 		switch {
-		case item.Type == ContentTypeContent && item.Content.Text != "":
+		case item.Type == contentTypeContent && item.Content.Text != "":
 			outputDelta.WriteString(sanitize.Output(item.Content.Text))
 			outputDelta.WriteByte('\n')
 			rawDelta.WriteString(item.Content.Text)
 			rawDelta.WriteByte('\n')
-		case item.Type == ContentTypeDiff && item.Path != "":
+		case item.Type == contentTypeDiff && item.Path != "":
 			out.diffs = append(out.diffs, marotte.ToolDiff{
 				Path: relPath(item.Path), OldText: item.OldText, NewText: item.NewText,
 			})
-		case item.Type == ContentTypeTerminal && item.TerminalID != "":
+		case item.Type == contentTypeTerminal && item.TerminalID != "":
 			out.terminalID = item.TerminalID
 		case !knownToolContentType(item.Type):
 			// Guarded on the TYPE, not a bare default, which would also catch a known type whose
@@ -304,19 +298,16 @@ func parseToolContent(
 	return out
 }
 
-// knownToolContentType reports whether the ACP content-block discriminator is one
-// parseToolUpdateContent models. Separate from the switch, whose arms pair a type with
-// a payload condition.
+// Separate from the switch, whose arms pair a type with a payload condition.
 func knownToolContentType(t string) bool {
 	switch t {
-	case ContentTypeContent, ContentTypeDiff, ContentTypeTerminal:
+	case contentTypeContent, contentTypeDiff, contentTypeTerminal:
 		return true
 	default:
 		return false
 	}
 }
 
-// toolUpdateContent is one tool_call_update's parsed content blocks.
 type toolUpdateContent struct {
 	output string
 	// rawText is output before sanitizing, compared against the unsanitized rawOutput.
@@ -327,7 +318,7 @@ type toolUpdateContent struct {
 
 // applyToolCallUpdate folds a parsed tool_call_update into the in-flight tool call:
 // status, appended output, replaced locations, appended diffs with line tracking.
-func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.ChatID, turn *turnlog.Turn, open *turnlog.OpenCall, tc *marotte.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
+func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.ChatID, turn *turnlog.Turn, open *turnlog.OpenCall, tc *marotte.ToolCall, tu *acpToolCallUpdateWire, content toolUpdateContent) {
 	// KAS sends title and kind nullish on an update; applying them unconditionally wipes the
 	// initial tool_call's values.
 	if tu.Title != "" {
@@ -343,6 +334,7 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.Cha
 	}
 	t.applyToolCallStatus(ctx, chatID, open.StartedTs, tc, tu)
 	applyToolCallOutput(tc, tu, content)
+	t.gradeStoppedCall(chatID, turn, tc)
 	if len(tu.Locations) > 0 {
 		tc.Locations = tu.Locations
 	}
@@ -352,32 +344,31 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.Cha
 			"chat_id", chatID, "tool_call_id", tc.ID, "call_lane", open.Lane, "update_lane", tu.Meta.Kiro.AgentSubtaskID)
 	}
 	// AFTER the two folds above: it only grades a settled call and never competes for the output.
-	applyUpdateRefusal(tc, tu.RawOutput)
+	applyRefusal(tc, tu.RawOutput)
 	// Adopted once: a later frame cannot name a different run. An update call is excluded
 	// because `update_workflow` echoes the same `workflowId` while starting nothing; without
 	// this a refused plan update inherits the run's card and its refusal renders nowhere.
 	// KAS names no tool on an ordinary call, so the payload shape is the only discriminator.
-	if _, isUpdate := rawOutputUpdate(tu.RawOutput); tc.WorkflowID == "" && !isUpdate {
+	if isUpdate := rawOutputStatesUpdate(tu.RawOutput); tc.WorkflowID == "" && !isUpdate {
 		tc.WorkflowID = rawOutputWorkflowID(tu.RawOutput)
 	}
 	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
 	mergeToolMeta(tc, tu)
 }
 
-// applyUpdateRefusal folds a workflow-update tool's own verdict onto the card. One-way:
-// keyed on the field (rawOutputUpdate is present=false for every other tool), absent
-// means taken, it only marks a call already settled `completed`, and never clears the
-// mark. It reads a domain fact no other channel carries, never a restated outcome.
-func applyUpdateRefusal(tc *marotte.ToolCall, raw json.RawMessage) {
+// One-way: keyed on a workflow tool's verdict field (rawOutputVerdict is present=false for every
+// other tool), absent means taken, it only marks a call already settled `completed`, and never
+// clears the mark. It reads a domain fact no other channel carries, never a restated outcome.
+func applyRefusal(tc *marotte.ToolCall, raw json.RawMessage) {
 	if tc.Status != marotte.ToolCompleted {
 		return
 	}
-	if updated, present := rawOutputUpdate(raw); present && !updated {
+	if accepted, present := rawOutputVerdict(raw); present && !accepted {
 		tc.Declined = true
 	}
 }
 
-func toolCallContentOutput(tu *ACPToolCallUpdateWire, content toolUpdateContent) string {
+func toolCallContentOutput(tu *acpToolCallUpdateWire, content toolUpdateContent) string {
 	if content.output == "" {
 		return ""
 	}
@@ -390,11 +381,27 @@ func toolCallContentOutput(tu *ACPToolCallUpdateWire, content toolUpdateContent)
 	return content.output
 }
 
-// applyToolCallOutput folds an update's output text onto the card. Content wins unless it
-// is the stringified copy (stringifiedRawOutputMessage); a bare rawOutput string is the
-// fallback when KAS suppresses an edit's diff block.
-func applyToolCallOutput(tc *marotte.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
-	tc.Output += toolCallContentOutput(tu, content)
+// gradeStoppedCall settles a `failed` that lands after the reader's stop on this turn as `aborted`:
+// KAS maps Canceled and Error both to `failed`, and the stop is marotte's own fact. Never clears.
+func (t *Translator) gradeStoppedCall(chatID marotte.ChatID, turn *turnlog.Turn, tc *marotte.ToolCall) {
+	if tc.Status == marotte.ToolFailed && t.turns.StopRequestedAfter(chatID, turn.ID()) {
+		tc.Status = marotte.ToolAborted
+	}
+}
+
+// appendOutputSegment joins a content segment onto the accumulated output on a line boundary:
+// every content segment ends in '\n', but an adopted terminal snapshot may stop mid-line.
+func appendOutputSegment(output, segment string) string {
+	if output != "" && segment != "" && !strings.HasSuffix(output, "\n") {
+		return output + "\n" + segment
+	}
+	return output + segment
+}
+
+// Content wins unless it is the stringified copy (stringifiedRawOutputMessage); a bare rawOutput
+// string is the fallback when KAS suppresses an edit's diff block.
+func applyToolCallOutput(tc *marotte.ToolCall, tu *acpToolCallUpdateWire, content toolUpdateContent) {
+	tc.Output = appendOutputSegment(tc.Output, toolCallContentOutput(tu, content))
 	if tc.Output != "" {
 		return
 	}
@@ -407,11 +414,9 @@ func applyToolCallOutput(tc *marotte.ToolCall, tu *ACPToolCallUpdateWire, conten
 	}
 }
 
-// applyToolCallStatus folds an update's status in, and on a terminal status stamps
-// the duration and takes the terminal's output for keeping.
 func (t *Translator) applyToolCallStatus(
 	ctx context.Context, chatID marotte.ChatID, startedTs int64,
-	tc *marotte.ToolCall, tu *ACPToolCallUpdateWire,
+	tc *marotte.ToolCall, tu *acpToolCallUpdateWire,
 ) {
 	if tu.Status == "" {
 		return
@@ -446,7 +451,6 @@ func (t *Translator) applyToolCallDiffs(
 	t.lines.RecordFromDiffs(chatID, diffs, recency(), string(tc.Kind))
 }
 
-// recency is the line tracker's eviction key for a change recorded now (oldest-first).
 func recency() int {
 	return int(time.Now().UnixMilli())
 }
@@ -476,7 +480,7 @@ func (t *Translator) adoptTerminalOutput(chatID marotte.ChatID, tc *marotte.Tool
 
 // mergeToolMeta folds a tool_call_update's disclosure, denial and offload metadata into
 // the buffered call, never overwriting a held value. A denial can arrive on the update.
-func mergeToolMeta(tc *marotte.ToolCall, tu *ACPToolCallUpdateWire) {
+func mergeToolMeta(tc *marotte.ToolCall, tu *acpToolCallUpdateWire) {
 	if tc.Disclosed == nil {
 		tc.Disclosed = disclosedFrom(tu.Meta.Kiro.DisclosedContext)
 	}
@@ -490,7 +494,7 @@ func mergeToolMeta(tc *marotte.ToolCall, tu *ACPToolCallUpdateWire) {
 
 // offloadFrom maps KAS's outputTransformation block onto the domain type: nil
 // unless KAS offloaded the output to an absolute path.
-func offloadFrom(in *ACPOutputTransformation) *marotte.ToolOffload {
+func offloadFrom(in *acpOutputTransformation) *marotte.ToolOffload {
 	if in == nil || in.Kind != "offloaded" || !filepath.IsAbs(in.AbsFilePath) || in.TotalChars < 0 {
 		return nil
 	}
@@ -499,7 +503,7 @@ func offloadFrom(in *ACPOutputTransformation) *marotte.ToolOffload {
 
 // disclosedFrom maps KAS's disclosedContext block onto the domain type; nil for anything
 // but a disclose_context.
-func disclosedFrom(in *ACPDisclosedContext) *marotte.ToolDisclosed {
+func disclosedFrom(in *acpDisclosedContext) *marotte.ToolDisclosed {
 	if in == nil {
 		return nil
 	}
@@ -508,7 +512,7 @@ func disclosedFrom(in *ACPDisclosedContext) *marotte.ToolDisclosed {
 
 // denialFrom maps KAS's policyDenial block onto the domain type. The outer `effect` is
 // always "deny" and dropped; the rule's own effect is kept (an unanswered "ask" lands here).
-func denialFrom(in *ACPPolicyDenial) *marotte.ToolDenial {
+func denialFrom(in *acpPolicyDenial) *marotte.ToolDenial {
 	if in == nil {
 		return nil
 	}
@@ -531,7 +535,7 @@ func denialFrom(in *ACPPolicyDenial) *marotte.ToolDenial {
 
 // mergeCheckpoint folds a tool_call_update's _meta.kiro.checkpoint into the buffered call
 // field by field: the key set varies between frames, so replacing the struct is lossy.
-func mergeCheckpoint(tc *marotte.ToolCall, in *ACPCheckpointMeta) {
+func mergeCheckpoint(tc *marotte.ToolCall, in *acpCheckpointMeta) {
 	if in == nil || (in.Original == "" && in.Modified == "" && in.Local == "") {
 		return
 	}
@@ -567,9 +571,8 @@ func localPath(ref string) string {
 	return u.Path
 }
 
-// relPath strips the workspace root prefix from an absolute path; a path outside the
-// workspace is returned unchanged. URI normalising lives here because that branch
-// returns its input. The escape test is separator-precise (pathinside.RelEscapes).
+// A path outside the workspace is returned unchanged. URI normalising lives here because that
+// branch returns its input. The escape test is separator-precise (pathinside.RelEscapes).
 func (t *Translator) relPath(ref string) string {
 	return relPathIn(t.workDir, ref)
 }

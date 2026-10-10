@@ -10,7 +10,7 @@ import { iconEl } from "./icon-el.js";
 export const STEERING_SAVE_KEY = "steering";
 
 /** One key, or the set a single write carried. */
-export type SaveKeys = string | readonly string[];
+type SaveKeys = string | readonly string[];
 
 /** How long a settled face stays before it fades. The error holds longer because it is the one a
  *  user has to notice. */
@@ -139,6 +139,7 @@ export function showError(keys: SaveKeys): void {
 }
 
 /** @internal — test-only reset for module-level state. */
+// deadset:ignore DS1004 -- test seam: resets the per-slot save states and their timers
 export function _resetForTest(): void {
   for (const s of slotStates.values()) {
     clearTimers(s);

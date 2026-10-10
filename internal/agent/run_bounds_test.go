@@ -696,7 +696,7 @@ func TestForgetRunBounds_ARefillInsideTheTeardownLeavesNoTimer(t *testing.T) {
 		t.Fatalf("stage a near-expiry deadline: %v", err)
 	}
 	// One unanswered ask, or the teardown broadcasts nothing.
-	if !h.asks.Add(askOf("c1", id, "a1", "review")) {
+	if !h.asks.add(askOf("c1", id, "a1", "review")) {
 		t.Fatal("the ask was not recorded, so nothing in the teardown broadcasts")
 	}
 
@@ -954,19 +954,19 @@ func TestRecordRunEnd_RewriteDoesNotDoubleQueue(t *testing.T) {
 	}
 }
 
-// noopRunTranslator satisfies the one translate role observeStart reaches.
 type noopRunTranslator struct{}
 
 func (noopRunTranslator) HandleRunStart(context.Context, marotte.ChatID, *marotte.RPCResponse)    {}
 func (noopRunTranslator) HandleRunComplete(context.Context, marotte.ChatID, *marotte.RPCResponse) {}
 func (noopRunTranslator) RecordRunSteps(json.RawMessage)                                          {}
 func (noopRunTranslator) ForgetRunSteps(string)                                                   {}
+func (noopRunTranslator) HandleWorkflowMessage(context.Context, marotte.ChatID, *marotte.RPCResponse) {
+}
+
 func (noopRunTranslator) SessionNotifyAsk(*marotte.RPCResponse) (marotte.RunInputNeededPayload, bool) {
 	return marotte.RunInputNeededPayload{}, false
 }
 
-// recordingRunTranslator logs which runs had their step sessions forgotten, observed through the role
-// (the registry is internal/translate's).
 type recordingRunTranslator struct {
 	noopRunTranslator
 	forgotten []string
@@ -1027,14 +1027,14 @@ func TestObserveComplete_ClearsAStepsPendingDecisionOnlyWhenTheRunEnds(t *testin
 			const runID = "wf_1"
 			const launching marotte.ChatID = "c-parent"
 			// Filed as translate files a step's question: under the launching chat, run stamped on the payload.
-			h.bus.pendingPerms.Add(7, marotte.NewEvent(marotte.EventUserInputNeeded, launching,
-				marotte.UserInputNeededPayload{RequestID: 7, RunID: runID, NodeID: "review"}))
+			h.bus.pendingPerms.add(7, marotte.NewEvent(marotte.EventUserInputNeeded, launching,
+				marotte.UserInputNeededPayload{RequestID: 7, RunID: runID, NodeID: "review"}), nil)
 
 			h.runs.observeComplete(t.Context(), launching, runNotif(methodWFRunComplete, map[string]any{
 				"workflowId": runID, "status": tc.status,
 			}))
 
-			replayed := len(h.bus.pendingPerms.List("")) == 1
+			replayed := len(h.bus.pendingPerms.list("")) == 1
 			if replayed != tc.survives {
 				t.Errorf("the step's question replayable = %v after status %q, want %v",
 					replayed, tc.status, tc.survives)
@@ -1128,7 +1128,7 @@ func TestObserveComplete_ClosesTheStepTurnOnlyOnATerminalStatus(t *testing.T) {
 		t.Run(tc.status, func(t *testing.T) {
 			h := newBudgetRuntime(t)
 			const launching marotte.ChatID = "c-parent"
-			if _, _, err := h.runs.log.Open(t.Context(), translate.RunStep{RunID: "wf_1", NodePath: "seq/coder", SessionID: "sess-step"}, launching); err != nil {
+			if _, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf_1", NodePath: "seq/coder", SessionID: "sess-step"}, launching); err != nil {
 				t.Fatalf("Open(step turn): %v", err)
 			}
 
@@ -1136,7 +1136,7 @@ func TestObserveComplete_ClosesTheStepTurnOnlyOnATerminalStatus(t *testing.T) {
 				"workflowId": "wf_1", "status": tc.status,
 			}))
 
-			if open := h.runs.log.Turn("wf_1", "seq/coder") != nil; open != tc.stillOpen {
+			if open := h.runs.log.turn("wf_1", "seq/coder") != nil; open != tc.stillOpen {
 				t.Errorf("the step turn is still open = %v after status %q, want %v",
 					open, tc.status, tc.stillOpen)
 			}
@@ -1152,7 +1152,7 @@ func TestObserveComplete_ClosesTheStepTurnOnlyOnATerminalStatus(t *testing.T) {
 func TestObserveComplete_ClosesAParentlessRunsStepTurns(t *testing.T) {
 	h := newBudgetRuntime(t)
 	host := runChatID("wf_1")
-	if _, _, err := h.runs.log.Open(t.Context(), translate.RunStep{RunID: "wf_1", NodePath: "seq/coder", SessionID: "sess-step"}, host); err != nil {
+	if _, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf_1", NodePath: "seq/coder", SessionID: "sess-step"}, host); err != nil {
 		t.Fatalf("Open(step turn): %v", err)
 	}
 
@@ -1160,7 +1160,7 @@ func TestObserveComplete_ClosesAParentlessRunsStepTurns(t *testing.T) {
 		"workflowId": "wf_1", "status": "completed",
 	}))
 
-	if h.runs.log.Turn("wf_1", "seq/coder") != nil {
+	if h.runs.log.turn("wf_1", "seq/coder") != nil {
 		t.Error("a parentless run's terminal frame left its step turn open")
 	}
 	for _, chatID := range []marotte.ChatID{"", host} {
@@ -1180,7 +1180,7 @@ func TestCancel_ReleasesTheLeaseOfAPausedRunThatSendsNoTerminalFrame(t *testing.
 	}
 	leased(t, h.runs, "wf_1")
 
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 
@@ -1209,7 +1209,7 @@ func TestCancel_LeavesTheLeaseOfARunThatIsStillRunning(t *testing.T) {
 	}
 	leased(t, h.runs, "wf_1")
 
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 
@@ -1224,7 +1224,7 @@ func TestCancel_ReconcilesNothingWhenTheCancelFAILED(t *testing.T) {
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("bridge gone")}
 	leased(t, h.runs, "wf_1")
 
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Cancel reported success for a cancel that failed")
 	}
 

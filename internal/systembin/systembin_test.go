@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// withDirs points the resolver at a test-owned candidate set for one test.
 func withDirs(t *testing.T, dirs ...string) {
 	t.Helper()
 	prev := systemDirs

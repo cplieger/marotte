@@ -113,9 +113,6 @@ func TestParse_Fields(t *testing.T) {
 	if !fm.SteeringOverride {
 		t.Error("SteeringOverride = false, want true")
 	}
-	if !fm.HasFrontMatter {
-		t.Error("HasFrontMatter = false, want true")
-	}
 }
 
 func TestParse_Tools(t *testing.T) {
@@ -188,9 +185,10 @@ func TestParse_StripsOneLayerOfQuotes(t *testing.T) {
 
 func TestParse_NoFrontMatter(t *testing.T) {
 	// A spec doc: opens straight on an H1.
-	fm := Parse([]byte("# Requirements — HTTP security\n\nBody.\n"))
-	if fm.HasFrontMatter {
-		t.Error("HasFrontMatter = true for a doc with none")
+	doc := []byte("# Requirements — HTTP security\n\nBody.\n")
+	fm := Parse(doc)
+	if _, has := frontmatterBody(doc); has {
+		t.Error("frontmatterBody found front-matter in a doc with none")
 	}
 	if fm.Inclusion != inclusionAlways {
 		t.Errorf("Inclusion = %q, want the always default", fm.Inclusion)
@@ -210,8 +208,8 @@ func TestParse_EmptyFencePairCarriesNoFrontMatter(t *testing.T) {
 	} {
 		t.Run(strings.ReplaceAll(strings.ReplaceAll(in, "\n", "\\n"), "\r", "\\r"), func(t *testing.T) {
 			fm := Parse([]byte(in))
-			if fm.HasFrontMatter {
-				t.Errorf("HasFrontMatter = true for a fence pair enclosing nothing; the caller's H1 fallback is now suppressed")
+			if _, has := frontmatterBody([]byte(in)); has {
+				t.Errorf("frontmatterBody found front-matter in a fence pair enclosing nothing")
 			}
 			if fm.Inclusion != inclusionAlways {
 				t.Errorf("Inclusion = %q, want the always default", fm.Inclusion)

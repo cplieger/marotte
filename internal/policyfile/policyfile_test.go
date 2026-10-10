@@ -17,10 +17,10 @@ func TestWorkspaceHash(t *testing.T) {
 	// hex(sha256(abs))[:16].
 	dir := "/tmp/vk-ws"
 	want := hex.EncodeToString(func() []byte { s := sha256.Sum256([]byte(dir)); return s[:] }())[:16]
-	if got := WorkspaceHash(dir); got != want {
+	if got := workspaceHash(dir); got != want {
 		t.Errorf("WorkspaceHash(%q) = %q, want %q", dir, got, want)
 	}
-	if len(WorkspaceHash("/x")) != 16 {
+	if len(workspaceHash("/x")) != 16 {
 		t.Errorf("hash length != 16")
 	}
 	// A relative KIRO_WORK_DIR is resolved against the process cwd BEFORE it is
@@ -31,15 +31,15 @@ func TestWorkspaceHash(t *testing.T) {
 	t.Run("a relative work dir hashes as its absolute form", func(t *testing.T) {
 		base := t.TempDir()
 		t.Chdir(base)
-		want := WorkspaceHash(filepath.Join(base, "rel"))
-		if got := WorkspaceHash("rel"); got != want {
+		want := workspaceHash(filepath.Join(base, "rel"))
+		if got := workspaceHash("rel"); got != want {
 			t.Errorf("WorkspaceHash(%q) = %q, want %q (the hash of %q)",
 				"rel", got, want, filepath.Join(base, "rel"))
 		}
 	})
 }
 
-// TestWorkspaceHashGolden pins WorkspaceHash to a hardcoded value for the real
+// TestWorkspaceHashGolden pins workspaceHash to a hardcoded value for the real
 // default workspace root (/workspace, KIRO_WORK_DIR's default). This is the
 // KAS-agreement contract: marotte must write workspace-scope permissions.yaml
 // under workspace-roots/<this hash>/ or KAS silently never reads the rules
@@ -48,7 +48,7 @@ func TestWorkspaceHash(t *testing.T) {
 // rather than diverging from KAS in silence.
 func TestWorkspaceHashGolden(t *testing.T) {
 	const golden = "c52ddf65534b7b46" // hex(sha256("/workspace"))[:16]
-	if got := WorkspaceHash("/workspace"); got != golden {
+	if got := workspaceHash("/workspace"); got != golden {
 		t.Errorf("WorkspaceHash(%q) = %q, want golden %q", "/workspace", got, golden)
 	}
 	// Non-canonical spellings of the SAME root must canonicalize (absolute,
@@ -61,7 +61,7 @@ func TestWorkspaceHashGolden(t *testing.T) {
 		"/workspace//",      // duplicate + trailing slash
 		"/tmp/../workspace", // ".." segment
 	} {
-		if got := WorkspaceHash(variant); got != golden {
+		if got := workspaceHash(variant); got != golden {
 			t.Errorf("WorkspaceHash(%q) = %q, want %q (must canonicalize to /workspace)", variant, got, golden)
 		}
 	}
@@ -75,11 +75,11 @@ func TestPathFor(t *testing.T) {
 		t.Errorf("user path = %q, err = %v", up, err)
 	}
 	wp, err := PathFor(ScopeWorkspace, Roots{Home: home, WorkDir: wd})
-	wantWP := filepath.Join(home, ".kiro", "workspace-roots", WorkspaceHash(wd), "permissions.yaml")
+	wantWP := filepath.Join(home, ".kiro", "workspace-roots", workspaceHash(wd), "permissions.yaml")
 	if err != nil || wp != wantWP {
 		t.Errorf("workspace path = %q, want %q, err = %v", wp, wantWP, err)
 	}
-	if _, err := PathFor("agent", Roots{Home: home, WorkDir: wd}); err != ErrInvalidScope {
+	if _, err := PathFor("agent", Roots{Home: home, WorkDir: wd}); err != errInvalidScope {
 		t.Errorf("agent scope err = %v, want ErrInvalidScope", err)
 	}
 }
@@ -206,10 +206,10 @@ func TestSanitizeRule_RefusesAnAllEmptyPatternList(t *testing.T) {
 	}
 	for name, patterns := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := SanitizeRule(&Rule{Capability: "all", Effect: EffectAllow, Match: patterns}); !errors.Is(err, ErrPatternEmpty) {
+			if _, err := SanitizeRule(&Rule{Capability: "all", Effect: EffectAllow, Match: patterns}); !errors.Is(err, errPatternEmpty) {
 				t.Errorf("match %q: err = %v, want ErrPatternEmpty", patterns, err)
 			}
-			if _, err := SanitizeRule(&Rule{Capability: "all", Effect: EffectAllow, Exclude: patterns}); !errors.Is(err, ErrPatternEmpty) {
+			if _, err := SanitizeRule(&Rule{Capability: "all", Effect: EffectAllow, Exclude: patterns}); !errors.Is(err, errPatternEmpty) {
 				t.Errorf("exclude %q: err = %v, want ErrPatternEmpty", patterns, err)
 			}
 		})
@@ -262,7 +262,7 @@ func TestSanitizeRule_RejectsMalformedCapability(t *testing.T) {
 	}
 	for name, capability := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := SanitizeRule(&Rule{Capability: capability, Effect: "ask"}); !errors.Is(err, ErrCapabilityShape) {
+			if _, err := SanitizeRule(&Rule{Capability: capability, Effect: "ask"}); !errors.Is(err, errCapabilityShape) {
 				t.Errorf("err = %v, want ErrCapabilityShape", err)
 			}
 		})
@@ -270,7 +270,7 @@ func TestSanitizeRule_RejectsMalformedCapability(t *testing.T) {
 }
 
 // TestSanitizeRule_TrimsCapability: the trim has to happen before the rule is
-// written, because Signature is a byte comparison — " shell" and "shell" would
+// written, because signature is a byte comparison — " shell" and "shell" would
 // otherwise be two distinct rules the user cannot tell apart in the editor.
 func TestSanitizeRule_TrimsCapability(t *testing.T) {
 	got, err := SanitizeRule(&Rule{Capability: "  shell  ", Effect: "ask"})
@@ -381,7 +381,7 @@ func TestUpsert_RefusesAFullFile(t *testing.T) {
 	}
 
 	changed, err := full.Upsert(&Rule{Capability: "shell", Effect: "deny", Match: []string{"one-too-many"}})
-	if !errors.Is(err, ErrTooManyRules) {
+	if !errors.Is(err, errTooManyRules) {
 		t.Errorf("Upsert() into a file of %d rules error = %v, want ErrTooManyRules", maxRulesPerFile, err)
 	}
 	if changed || len(full.Rules) != maxRulesPerFile {
@@ -402,7 +402,7 @@ func TestUpsert_RefusesAFullFile(t *testing.T) {
 func TestSignatureOrderIndependent(t *testing.T) {
 	a := Rule{Capability: "fs_read", Effect: "ask", Match: []string{"x", "y"}}
 	b := Rule{Capability: "fs_read", Effect: "ask", Match: []string{"y", "x"}}
-	if Signature(&a) != Signature(&b) {
+	if signature(&a) != signature(&b) {
 		t.Error("signature must be order-independent for match globs")
 	}
 }

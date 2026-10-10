@@ -15,8 +15,8 @@ function textOf(root: HTMLElement, sel: string): string | null {
   return root.querySelector(sel)?.textContent ?? null;
 }
 
-/** Any control at all. The note carries none in either state: an undelivered message is
- *  the server's to resend, and the CLAMP's opener is the one button the note may hold. */
+/** The note carries none in either state: an undelivered message is the server's to resend, and the
+ *  CLAMP's opener is the one button the note may hold. */
 function controls(root: HTMLElement): HTMLButtonElement[] {
   return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).filter(
     (b) => !b.classList.contains("steer-note-more"),

@@ -8,13 +8,13 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// bridgeRole adapts the coordinator to command.BridgeAccess, checking for a nil *sharedBridge,
+// bridgeRole adapts the coordinator to command.bridgeAccess, checking for a nil *sharedBridge,
 // which would become a non-nil interface.
-type bridgeRole struct{ coord *BridgeCoordinator }
+type bridgeRole struct{ coord *bridgeCoordinator }
 
 // Bridge returns the active bridge for a chat, or nil.
 func (b bridgeRole) Bridge(chatID marotte.ChatID) command.Bridge {
-	sb := b.coord.Bridge(chatID)
+	sb := b.coord.bridgeFor(chatID)
 	if sb == nil {
 		return nil
 	}
@@ -23,7 +23,7 @@ func (b bridgeRole) Bridge(chatID marotte.ChatID) command.Bridge {
 
 // OpenBridge ensures a bridge exists for the chat (typed-nil checked).
 func (b bridgeRole) OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (command.Bridge, error) {
-	sb, err := b.coord.OpenBridge(ctx, chatID, model)
+	sb, err := b.coord.openBridge(ctx, chatID, model)
 	if err != nil || sb == nil {
 		return nil, err
 	}
@@ -32,37 +32,25 @@ func (b bridgeRole) OpenBridge(ctx context.Context, chatID marotte.ChatID, model
 
 // CloseBridge closes every turn the bridge hosted with outcome, then stops it.
 func (b bridgeRole) CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome) {
-	b.coord.CloseBridge(ctx, chatID, outcome)
+	b.coord.closeBridge(ctx, chatID, outcome)
 }
 
 // BridgeLive reports a bridge for the chat that is past its spawn.
 func (b bridgeRole) BridgeLive(chatID marotte.ChatID) bool { return b.coord.bridgeLive(chatID) }
-
-// DeleteChatState is the delete grade read off the record's session chain.
-func (rt *Runtime) DeleteChatState(ctx context.Context, chatID marotte.ChatID) {
-	c, ok := rt.chatStore.Get(ctx, chatID)
-	if !ok {
-		rt.beginSteerTeardown(ctx, chatID, false)
-		rt.cleanupChatState(ctx, chatID)
-		return
-	}
-	rt.deleteChatStateByChain(ctx, chatID, c.SessionChain(), userStop(stopWhyChatDeleted))
-}
 
 // DeleteChatStateByChain deletes a chat's runs and KAS sessions from a captured chain. Order is
 // the contract: runs before sessions (KAS refuses a session owning a live run), sessions
 // before the bridge closes, Reap last.
 func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.ChatID, sessionChain []string, cause command.RunStopCause) {
 	stop := runStop{}
-	if cause == command.RunStopTabClosed {
+	switch cause {
+	case command.RunStopTabClosed:
 		stop = userStop(stopWhyTabClosed)
+	case command.RunStopChatDeleted:
+		stop = userStop(stopWhyChatDeleted)
 	}
-	rt.deleteChatStateByChain(ctx, chatID, sessionChain, stop)
-}
-
-func (rt *Runtime) deleteChatStateByChain(ctx context.Context, chatID marotte.ChatID, sessionChain []string, stop runStop) {
 	rt.beginSteerTeardown(ctx, chatID, false)
-	rt.runs.DeleteForSessions(ctx, chatID, sessionChain, stop)
+	rt.runs.deleteForSessions(ctx, chatID, sessionChain, stop)
 	rt.deleteSessions(ctx, chatID, sessionChain)
 	rt.cleanupChatState(ctx, chatID)
 	rt.reapSessions(sessionChain)
@@ -71,13 +59,13 @@ func (rt *Runtime) deleteChatStateByChain(ctx context.Context, chatID marotte.Ch
 // CloseChatState tears down in-memory state without touching the KAS session, so a reopen session/loads it.
 func (rt *Runtime) CloseChatState(ctx context.Context, chatID marotte.ChatID) {
 	rt.beginSteerTeardown(ctx, chatID, true)
-	rt.runs.CancelForChat(ctx, chatID, userStop(stopWhyTabClosed))
+	rt.runs.cancelForChat(ctx, chatID, userStop(stopWhyTabClosed))
 	rt.cleanupChatState(ctx, chatID)
 }
 
 // DischargeWaiting ends a chat's retained waiting_on_user claim and broadcasts the clear.
 func (rt *Runtime) DischargeWaiting(ctx context.Context, chatID marotte.ChatID) {
-	if !rt.bus.chatStatus.ClearWaiting(chatID) {
+	if !rt.bus.chatStatus.clearWaiting(chatID) {
 		return
 	}
 	rt.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventChatStatus, chatID, marotte.ChatStatusPayload{}))
@@ -132,6 +120,11 @@ func (rt *Runtime) ReleaseTurnReservation(chatID marotte.ChatID) {
 // AwaitTurn blocks until the named turn has finalized and reports what it did.
 func (rt *Runtime) AwaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error) {
 	return rt.coord.AwaitTurn(ctx, chatID, turnID)
+}
+
+// AwaitTurnBound blocks until KAS binds the named turn's prompt or the turn finalizes unbound.
+func (rt *Runtime) AwaitTurnBound(ctx context.Context, chatID marotte.ChatID, turnID string) (bool, error) {
+	return rt.coord.AwaitTurnBound(ctx, chatID, turnID)
 }
 
 // ReleaseTurn gives up the completion handle OpenTurn issued.

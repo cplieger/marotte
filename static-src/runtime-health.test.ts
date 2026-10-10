@@ -62,8 +62,8 @@ describe("runtime-health: degraded banner reconciliation", () => {
     expect(message).toContain("restart the container");
     expect(level).toBe("error");
     expect(dismissible).toBe(false);
-    // The sibling family is retired rather than left stacked: the health envelope reports ONE
-    // reason, so the other family's banner is stale the moment this one is true.
+    // The health envelope reports ONE reason, so the other family's banner is stale the moment
+    // this one is true.
     expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_signed_out"]);
   });
 
@@ -182,7 +182,7 @@ describe("runtime-health: the sign-in family", () => {
     link?.onClick?.();
     expect(mockShowLoginModal).toHaveBeenCalledTimes(1);
     expect(mockOpenSetting).not.toHaveBeenCalled();
-    // The install family's banner is retired, not stacked.
+    // One reason at a time: the stale install-family banner clears.
     expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_degraded"]);
   });
 

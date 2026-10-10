@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	// maxImportServers bounds one paste. A README lists two or three servers;
-	// a block naming more than this is not something to install in one gesture.
+	// A README lists two or three servers; a block naming more than this is not something to install
+	// in one gesture.
 	maxImportServers = 32
 	// importSuggestDistance is the edit-distance ceiling for a "did you mean"
 	// hint. 2 catches a transposition or a dropped letter ("comand", "agrs")
@@ -28,20 +28,17 @@ const (
 	maxImportBlockKeys = 128
 )
 
-// pasteServerKeys are the per-server keys the translator consumes. `name` is
-// here because a single-server paste (the panel's own template) carries its
-// name inside the object, where a block carries it as the map key.
+// `name` is here because a single-server paste (the panel's own template) carries its name inside
+// the object, where a block carries it as the map key.
 var pasteServerKeys = []string{
 	"args", "command", "disabled", "disabledTools",
 	"env", "headers", "name", "oauth", "prewarm", "timeout", "type", "url",
 	"waitForReady",
 }
 
-// pasteServerIgnored are the per-server keys marotte recognises and has nowhere
-// to put. Each is accepted with a note naming why, so a block carrying one
-// installs instead of erroring, and the user is not left wondering whether it
-// was a typo. The reasons are the user's, not the schema's: "no field for it"
-// is actionable, "unknown key" would not be.
+// Each is accepted with a note naming why, so a block carrying one installs instead of erroring,
+// and the user is not left wondering whether it was a typo. The reasons are the user's, not the
+// schema's: "no field for it" is actionable, "unknown key" would not be.
 var pasteServerIgnored = map[string]string{
 	"$schema":     "a schema pointer, not configuration",
 	"alwaysAllow": "marotte does not pre-approve MCP tools, so every call asks for permission",
@@ -67,12 +64,9 @@ const pasteOAuthSecretKey = "clientSecret"
 
 const confidentialClientRefusal = "Kiro's v3 engine has no OAuth client secret, so it supports public pre-registered clients only"
 
-// pasteTopKeys are the top-level keys of a pasted block. Only the wrapper is
-// consumed; a single-server object is detected by the wrapper's absence.
+// Only the wrapper is consumed; a single-server object is detected by the wrapper's absence.
 var pasteTopKeys = []string{kasServerKey}
 
-// pasteTopIgnored are top-level keys other clients' config files carry around
-// an mcpServers block.
 var pasteTopIgnored = map[string]string{
 	"$schema": "a schema pointer, not configuration",
 	"inputs":  "an editor's input-prompt list. Type the values into the form instead",
@@ -86,24 +80,20 @@ type importRequest struct {
 	notes   []string
 }
 
-// pasteOAuth is the publisher shape of a pre-registered OAuth client, the
-// inverse of kasfile.go's kasOAuth.
 type pasteOAuth struct {
 	ClientID          string `json:"clientId"`
 	ClientMetadataURL string `json:"clientMetadataUrl"`
 	RedirectURI       string `json:"redirectUri"`
 }
 
-// pasteServer is the publisher-shaped server object. `env` and `headers` are
-// absent on purpose: they are JSON records, and marotte stores ordered
-// KeyPairs, so they are decoded from the raw bytes to keep the README's order
-// (a Go map would discard it, and the order is what the user reads in the form).
+// `env` and `headers` are absent on purpose: they are JSON records, and marotte stores ordered
+// KeyPairs, so they are decoded from the raw bytes to keep the README's order (a Go map would
+// discard it, and the order is what the user reads in the form).
 type pasteServer struct {
 	OAuth         *pasteOAuth `json:"oauth"`
 	Command       *string     `json:"command"`
 	URL           *string     `json:"url"`
 	Type          *string     `json:"type"`
-	Name          *string     `json:"name"`
 	Disabled      *bool       `json:"disabled"`
 	Prewarm       *bool       `json:"prewarm"`
 	WaitForReady  *bool       `json:"waitForReady"`
@@ -112,10 +102,8 @@ type pasteServer struct {
 	DisabledTools []string    `json:"disabledTools"`
 }
 
-// parseImportBody translates a pasted body into records ready for the store.
-// Two shapes are accepted, because a user pastes whatever the README gave them:
-// a `mcpServers` block (one or more servers, keyed by name) or a single server
-// object carrying its own `name`.
+// Two shapes are accepted, because a user pastes whatever the README gave them: a `mcpServers`
+// block (one or more servers, keyed by name) or a single server object carrying its own `name`.
 func parseImportBody(data []byte) (*importRequest, error) {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(data, &doc); err != nil {
@@ -157,8 +145,7 @@ func parseSingleServer(doc map[string]json.RawMessage, raw json.RawMessage, req 
 	return req, nil
 }
 
-// parseServerBlock handles the `mcpServers` map shape. Entries are translated
-// in the block's own key order (sorted, since a JSON object has none once
+// Entries are translated in the block's own key order (sorted, since a JSON object has none once
 // decoded) so a re-paste of the same block produces the same order.
 func parseServerBlock(block json.RawMessage, req *importRequest) (*importRequest, error) {
 	var entries map[string]json.RawMessage
@@ -188,9 +175,8 @@ func parseServerBlock(block json.RawMessage, req *importRequest) (*importRequest
 	return req, nil
 }
 
-// translateServer maps one publisher server object onto a marotte record.
-// Validate is NOT called here: the store calls it on every record it takes, and
-// running it twice would report the same problem in two voices.
+// validate is NOT called here: the store calls it on every record it takes, and running it twice
+// would report the same problem in two voices.
 func translateServer(rawName string, obj map[string]json.RawMessage, raw json.RawMessage, req *importRequest) (*Server, error) {
 	name, nameErr := importName(rawName, req)
 	if nameErr != nil {
@@ -301,26 +287,26 @@ func importName(raw string, req *importRequest) (string, error) {
 	return clean, nil
 }
 
-// sanitizeName folds a raw name into the shared grammar (outside NameAllowedRune becomes "-",
-// trimmed to open on a lead rune, capped at NameMaxLen), so a README's `@scope/pkg` installs.
-// TestSanitizeNameAlwaysValid asserts ValidateName accepts every output.
+// sanitizeName folds a raw name into the shared grammar (outside nameAllowedRune becomes "-",
+// trimmed to open on a lead rune, capped at nameMaxLen), so a README's `@scope/pkg` installs.
+// TestSanitizeNameAlwaysValid asserts validateName accepts every output.
 func sanitizeName(raw string) string {
 	var b strings.Builder
 	b.Grow(len(raw))
 	for _, r := range raw {
-		if NameAllowedRune(r) {
+		if nameAllowedRune(r) {
 			b.WriteRune(r)
 			continue
 		}
 		b.WriteByte('-')
 	}
-	out := strings.TrimFunc(b.String(), func(r rune) bool { return !NameLeadRune(r) })
+	out := strings.TrimFunc(b.String(), func(r rune) bool { return !nameLeadRune(r) })
 	// TrimFunc only strips the ends, so the leading rune is now a lead rune (or
 	// the string is empty). Trailing separators went with it, which is the shape
 	// the grammar wants anyway. The cap is applied last and is byte-safe: every
-	// kept rune is single-byte ASCII by NameAllowedRune's construction.
-	if len(out) > NameMaxLen {
-		out = out[:NameMaxLen]
+	// kept rune is single-byte ASCII by nameAllowedRune's construction.
+	if len(out) > nameMaxLen {
+		out = out[:nameMaxLen]
 	}
 	return out
 }
@@ -375,9 +361,7 @@ func classifyKeys(where string, obj map[string]json.RawMessage, consumed []strin
 	return nil
 }
 
-// suggestKey returns a parenthesised "did you mean" for the nearest known key,
-// or "" when nothing is close. This is what turns "comand" from a rejection
-// into a fix.
+// This is what turns "comand" from a rejection into a fix.
 func suggestKey(got string, consumed []string, ignored map[string]string) string {
 	lower := strings.ToLower(got)
 	best, bestDist := "", importSuggestDistance+1
@@ -394,9 +378,9 @@ func suggestKey(got string, consumed []string, ignored map[string]string) string
 	return fmt.Sprintf(" (did you mean %q?)", best)
 }
 
-// editDistance is Levenshtein over two short ASCII-ish keys, computed with one
-// rolling row. Only ever called on JSON object keys, so the quadratic cost is
-// bounded by maxImportBlockKeys and the key length cap the body limit implies.
+// editDistance is Levenshtein over two short ASCII-ish keys, computed with one rolling row. Only
+// ever called on JSON object keys, so the quadratic cost is bounded by maxImportBlockKeys and the
+// key length cap the body limit implies.
 func editDistance(a, b string) int {
 	prev := make([]int, len(b)+1)
 	cur := make([]int, len(b)+1)
@@ -421,7 +405,7 @@ func editDistance(a, b string) int {
 // scalars and naming an object, array or null as a mistake. The count is bounded here: an env
 // object at the 1 MiB body cap decoded to 174,762 pairs and 39.4 MB before reaching the store's
 // limit (go1.27.0).
-func decodeOrderedPairs(field string, raw json.RawMessage) ([]KeyPair, error) {
+func decodeOrderedPairs(field string, raw json.RawMessage) ([]keyPair, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -434,7 +418,7 @@ func decodeOrderedPairs(field string, raw json.RawMessage) ([]KeyPair, error) {
 	if tok != json.Delim('{') {
 		return nil, fmt.Errorf("%s must be a JSON object of name/value pairs", field)
 	}
-	var out []KeyPair
+	var out []keyPair
 	for dec.More() {
 		if len(out) >= maxImportBlockKeys {
 			return nil, fmt.Errorf("%s: more than %d entries", field, maxImportBlockKeys)
@@ -455,13 +439,12 @@ func decodeOrderedPairs(field string, raw json.RawMessage) ([]KeyPair, error) {
 		if !ok {
 			return nil, fmt.Errorf("%s[%q]: value must be a string, number or boolean", field, key)
 		}
-		out = append(out, KeyPair{Name: key, Value: text})
+		out = append(out, keyPair{Name: key, Value: text})
 	}
 	return out, nil
 }
 
-// scalarString renders a decoded JSON scalar as the string marotte stores. The
-// bool reports whether the value was a scalar at all.
+// The bool reports whether the value was a scalar at all.
 func scalarString(v any) (string, bool) {
 	switch t := v.(type) {
 	case string:
@@ -478,7 +461,6 @@ func scalarString(v any) (string, bool) {
 	}
 }
 
-// deref reads through an optional string field, treating absent as empty.
 func deref(p *string) string {
 	if p == nil {
 		return ""

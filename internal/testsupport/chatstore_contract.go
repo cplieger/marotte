@@ -2,6 +2,7 @@ package testsupport
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -14,7 +15,7 @@ type ChatStoreContract interface {
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
 	List(ctx context.Context) []marotte.ChatHeader
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
-	Delete(ctx context.Context, id marotte.ChatID) error
+	Delete(ctx context.Context, id marotte.ChatID) (sessionChain []string, err error)
 	SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error)
 }
 
@@ -136,10 +137,16 @@ func testDeleteRemovesChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	_, _ = s.Mutate(context.Background(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "doomed"
+		c.RecordSession("s1")
+		c.RecordSession("s2")
 		return true
 	})
-	if err := s.Delete(context.Background(), "c1"); err != nil {
+	chain, err := s.Delete(context.Background(), "c1")
+	if err != nil {
 		t.Fatalf("Delete: %v", err)
+	}
+	if want := []string{"s1", "s2"}; !slices.Equal(chain, want) {
+		t.Errorf("Delete(c1) chain = %v, want the removed record's %v", chain, want)
 	}
 	_, ok := s.Get(context.Background(), "c1")
 	if ok {

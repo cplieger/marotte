@@ -7,63 +7,38 @@
 export type {
   // Enums
   AlwaysAllowBlock,
-  DecisionKind,
   EntryKind,
-  ErrorCode,
-  ForgeKind,
   InterruptMode,
   ModelSwitchReason,
   PlanStatus,
-  ReadState,
-  RunNodeStatus,
-  RunStatus,
   RunStepTranscriptState,
-  SafetyStatus,
   SettledBy,
   SteerOrigin,
   SteerReason,
-  SteerState,
-  StopReason,
   TabKind,
   ToolKind,
   ToolStatus,
-  Transport,
-  TurnOpenSourceName,
-  TurnOutcome,
   TurnRevertCause,
   // The entry log: one envelope type plus one payload type per kind
   Entry,
   OpenEntry,
-  EntryCompaction,
-  EntryCompactionFailed,
-  EntryModeSwitched,
-  EntryModelSwitched,
-  EntryPlan,
   EntryPrompt,
-  EntryReconciled,
-  EntrySafetyBlocked,
   EntrySteer,
-  EntrySteerAck,
-  EntryText,
-  EntryThinking,
+  EntrySteerDelivered,
   EntryToolCall,
   EntryToolResult,
-  EntryTurnBind,
   EntryTurnClose,
   EntryTurnOpen,
-  EntryTurnRevert,
   // Domain shapes
   AccountUsage,
   AccountUsageBreakdown,
   ApprovalFile,
-  Attachment,
   ChatHeader,
   FileChange,
   CodeReference,
   RefusalInfo,
   ToolDisclosed,
   ToolDenial,
-  ToolDenialRule,
   ToolOffload,
   ToolInteraction,
   TurnThroughput,
@@ -78,18 +53,15 @@ export type {
   SessionEffortLevel,
   SessionMode,
   SessionModel,
-  TabList,
   TabSubject,
   ToolCall,
   ToolDiff,
-  ToolLocation,
   Usage,
   // GET /api/sessions: the two row kinds and the reply that carries their verdicts
   ResumableSession,
   WorkflowRun,
   SessionListResponse,
   // SSE payloads
-  ChatDeletedPayload,
   CodeReferencesPayload,
   // The entry log's frames: one payload type per SSE event of the log
   TurnOpenedPayload,
@@ -105,14 +77,11 @@ export type {
   ElicitationNeededPayload,
   UserInputNeededPayload,
   UserInputOption,
-  UserInputSubOption,
   ElicitationPropertySchema,
-  ElicitationRequestSchema,
   ErrorPayload,
   GovernanceFeatures,
   GovernanceLock,
   GovernanceMCPRegistry,
-  GovernanceRegistryServer,
   GovernanceStatePayload,
   KnowledgeIndexingPayload,
   MCPConnectedPayload,
@@ -124,7 +93,6 @@ export type {
   PermissionNeededPayload,
   PermissionsChangedPayload,
   PolicyErrorPayload,
-  SafetyProperty,
   SafetyStatusPayload,
   SafetyPropertiesPayload,
   CatalogInfo,
@@ -133,7 +101,6 @@ export type {
   Job,
   JobResponse,
   JobsResponse,
-  RemoveResponse,
   SearchHit,
   SearchResponse,
   ToolInfo,
@@ -150,9 +117,8 @@ export type {
   RunLaunchRequest,
   RunLaunchedResponse,
   // GET /api/runs/{id}/steps/{path}: one step's transcript plus its verdict.
-  RunStepTranscript,
-  SystemTool,
   SteerQueuedPayload,
+  TangentMergedPayload,
   AgentNoticePayload,
   SystemNoticePayload,
   TabsChangedPayload,
@@ -166,11 +132,9 @@ export type {
   SubjectStamp,
   PendingSnapshotPayload,
   StatusSnapshotPayload,
-  StatusRow,
 } from "./wire/types.gen.js";
 
-// PermissionNeeded is the legacy alias used at call sites that predate
-// the generated naming. The generated type is PermissionNeededPayload.
+// Short alias of the generated PermissionNeededPayload.
 export type { PermissionNeededPayload as PermissionNeeded } from "./wire/types.gen.js";
 
 import type {
@@ -179,12 +143,14 @@ import type {
   EntryCompactionFailed,
   EntryKind,
   EntryModeSwitched,
+  EntryModelRouted,
   EntryModelSwitched,
   EntryPlan,
   EntryReconciled,
   EntrySafetyBlocked,
   EntrySteer,
   EntrySteerAck,
+  EntrySteerDelivered,
   EntryText,
   EntryThinking,
   EntryToolCall,
@@ -217,11 +183,13 @@ export interface EntryPayload {
   tool_result: EntryToolResult;
   steer: EntrySteer;
   steer_ack: EntrySteerAck;
+  steer_delivered: EntrySteerDelivered;
   plan: EntryPlan;
   compaction: EntryCompaction;
   compaction_failed: EntryCompactionFailed;
   safety_blocked: EntrySafetyBlocked;
   model_switched: EntryModelSwitched;
+  model_routed: EntryModelRouted;
   mode_switched: EntryModeSwitched;
   turn_revert: EntryTurnRevert;
   reconciled: EntryReconciled;
@@ -336,7 +304,7 @@ export interface PendingSteer {
  *  - `evicted`: the idle sweep dropped the window; activation refetches.
  *  - `partial`: SSE ingest landed on an evicted chat.
  *  - `load_failed`: the newest-page GET failed; activation refetches. */
-export type MessagesResidency = "loaded" | "evicted" | "partial" | "load_failed";
+type MessagesResidency = "loaded" | "evicted" | "partial" | "load_failed";
 
 export interface Session {
   id: string;
@@ -403,6 +371,8 @@ export interface Session {
   /** The server-held follow-ups (`ChatHeader.queued_prompts`), drained one per clean
    *  turn end. A header read replaces it, so an absent list is a clear. */
   queued?: QueuedPrompt[];
+  /** `ChatHeader.tangent`. */
+  tangent?: boolean;
   /** Reasoning-effort level ("low".."max", "" = engine default): a per-chat composer setting. */
   effort?: string;
   /** The chat's thinking choice (`ChatHeader.thinking`: "on", "off", "" = the model's

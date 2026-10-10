@@ -25,9 +25,8 @@ describe("the durable channel", () => {
   });
 });
 
-/** A class name shaped like a duration slot. Deliberately wider than the audit's own vocabulary,
- *  because the guard's job is catching the NEXT slot rather than the ones the audit already
- *  names. */
+/** Deliberately wider than the audit's own vocabulary, because the guard's job is catching the NEXT
+ *  slot rather than the ones the audit already names. */
 const DURATION_SHAPED = /elapsed|duration|timings|dur|time|gap/iu;
 
 /** The audited list, CLOSED. Every member carries the row that rules on it, so adding a
@@ -41,9 +40,11 @@ const RULED = new Map<string, string>([
   ["ev-dur", "out of scope — the exec view"],
   ["ev-d-dur", "out of scope — the exec view"],
   ["ev-tl-dur", "out of scope — the exec view"],
+  ["ev-box-dur", "out of scope — the exec view's dock box row"],
   // Row 8's rule applied elsewhere: an absolute timestamp is not a duration.
   ["sched-time", "wall clock, not a duration"],
   ["entry-time", "wall clock, not a duration — and painted at rest on every device"],
+  ["steer-note-times", "wall clock, not a duration — a workflow message's send and read times"],
 ]);
 
 describe("the closed list stays closed", () => {

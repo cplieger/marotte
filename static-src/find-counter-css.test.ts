@@ -24,7 +24,7 @@ vi.mock("./messages-blocks.js", () => ({
 vi.mock("./editor-scroll.js", () => ({
   scrollToEditorLine: vi.fn(),
   flashEditorLine: vi.fn(),
-  markEditorSpan: vi.fn(),
+  revealBufferHit: vi.fn(),
   clearEditorMark: vi.fn(),
   // Present for real-ESM linking (editor-diff and editor-openers import them).
   trackEditorView: () => undefined,
@@ -117,8 +117,8 @@ async function bootEditorBar(): Promise<Bar> {
     `<div id="editor-error" class="editor-error hidden"></div>` +
     `<div id="editor-conflict-overlay" class="editor-conflict-overlay hidden"></div>` +
     `<div class="editor-body">` +
-    `<pre id="editor-gutter"></pre>` +
-    `<pre id="editor-highlight"><code id="editor-code"></code></pre>` +
+    `<div id="editor-viewer" class="viewer"></div>` +
+    `<div id="editor-edit-gutter" class="hidden"></div>` +
     `<textarea id="editor-content" class="hidden"></textarea>` +
     `<div id="editor-markdown" class="hidden"></div>` +
     `<div id="editor-image" class="hidden"></div>` +
@@ -129,7 +129,7 @@ async function bootEditorBar(): Promise<Bar> {
   state.loaded = true;
   state.current.value = "package main\n\nfunc target() {}\n";
   state.original.value = state.current.value;
-  state.mode.value = { kind: "edit", editing: false };
+  state.mode.value = { kind: "text", editing: false };
   types.fileStates.set("/workspace/a.go", state);
   types.setActiveFilePath("/workspace/a.go");
   const mod = (await import(
@@ -218,7 +218,6 @@ describe("the find bars' match counter under the shipped stylesheet", () => {
   });
 });
 
-/** `whiteSpace` and `minInlineSize` are the two the defect was made of. */
 function shapeOf(el: HTMLElement): Record<string, string> {
   const cs = getComputedStyle(el);
   return {

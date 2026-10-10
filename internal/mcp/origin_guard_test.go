@@ -12,15 +12,13 @@ import (
 	"testing"
 )
 
-// newRemoteServer stores one remote server carrying a bearer, and returns its
-// stored (masked) record.
 func newRemoteServer(t *testing.T, s *Store, transport Transport, rawURL string) *Server {
 	t.Helper()
 	got, err := s.Create(t.Context(), &Server{
 		Transport: transport,
 		Name:      "hosted",
 		URL:       rawURL,
-		Headers:   []KeyPair{{Name: "Authorization", Value: "Bearer old-origin-token"}},
+		Headers:   []keyPair{{Name: "Authorization", Value: "Bearer old-origin-token"}},
 		Enabled:   true,
 	})
 	if err != nil {
@@ -35,12 +33,12 @@ func TestUpdate_URLOriginChangeRefusesAPreservedHeader(t *testing.T) {
 			s := newTestStore(t)
 			stored := newRemoteServer(t, s, transport, "https://old.example.com/mcp")
 
-			_, err := s.Update(t.Context(), stored.ID, &Server{
+			_, err := s.update(t.Context(), stored.ID, &Server{
 				Transport: transport,
 				Name:      "hosted",
 				URL:       "https://new.example.com/mcp",
 				// What the edit modal re-submits for a row the user did not touch.
-				Headers: []KeyPair{{Name: "Authorization", Value: SecretMask}},
+				Headers: []keyPair{{Name: "Authorization", Value: secretMask}},
 				Enabled: true,
 			})
 			if err == nil {
@@ -54,7 +52,7 @@ func TestUpdate_URLOriginChangeRefusesAPreservedHeader(t *testing.T) {
 
 			// Nothing may have been written: the old token stays attached to the
 			// old origin.
-			raw := s.EnabledRaw(t.Context())
+			raw := s.enabledRaw(t.Context())
 			if len(raw) != 1 {
 				t.Fatalf("stored = %d", len(raw))
 			}
@@ -74,16 +72,16 @@ func TestUpdate_URLOriginChangeAcceptsARetypedSecret(t *testing.T) {
 	s := newTestStore(t)
 	stored := newRemoteServer(t, s, TransportHTTP, "https://old.example.com/mcp")
 
-	if _, err := s.Update(t.Context(), stored.ID, &Server{
+	if _, err := s.update(t.Context(), stored.ID, &Server{
 		Transport: TransportHTTP,
 		Name:      "hosted",
 		URL:       "https://new.example.com/mcp",
-		Headers:   []KeyPair{{Name: "Authorization", Value: "Bearer new-origin-token"}},
+		Headers:   []keyPair{{Name: "Authorization", Value: "Bearer new-origin-token"}},
 		Enabled:   true,
 	}); err != nil {
 		t.Fatalf("a retyped secret must be accepted: %v", err)
 	}
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if raw[0].Headers[0].Value != "Bearer new-origin-token" {
 		t.Errorf("header = %q", raw[0].Headers[0].Value)
 	}
@@ -103,16 +101,16 @@ func TestUpdate_SameOriginStillPreservesSecrets(t *testing.T) {
 			s := newTestStore(t)
 			stored := newRemoteServer(t, s, TransportHTTP, "https://old.example.com/mcp")
 
-			if _, err := s.Update(t.Context(), stored.ID, &Server{
+			if _, err := s.update(t.Context(), stored.ID, &Server{
 				Transport: TransportHTTP,
 				Name:      "hosted",
 				URL:       next,
-				Headers:   []KeyPair{{Name: "Authorization", Value: SecretMask}},
+				Headers:   []keyPair{{Name: "Authorization", Value: secretMask}},
 				Enabled:   true,
 			}); err != nil {
 				t.Fatalf("same-origin edit must preserve secrets: %v", err)
 			}
-			raw := s.EnabledRaw(t.Context())
+			raw := s.enabledRaw(t.Context())
 			if raw[0].Headers[0].Value != "Bearer old-origin-token" {
 				t.Errorf("header = %q, want the stored value preserved",
 					raw[0].Headers[0].Value)
@@ -135,15 +133,15 @@ func TestUpdate_OriginChangeWithNoStoredSecretIsAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := s.Update(t.Context(), created.ID, &Server{
+	if _, err := s.update(t.Context(), created.ID, &Server{
 		Transport: TransportHTTP, Name: "hosted",
 		URL:     "https://new.example.com/mcp",
-		Headers: []KeyPair{{Name: "X-Api-Key", Value: SecretMask}},
+		Headers: []keyPair{{Name: "X-Api-Key", Value: secretMask}},
 		Enabled: true,
 	}); err != nil {
 		t.Fatalf("no stored secret means nothing to protect: %v", err)
 	}
-	if got := s.EnabledRaw(t.Context())[0].URL; got != "https://new.example.com/mcp" {
+	if got := s.enabledRaw(t.Context())[0].URL; got != "https://new.example.com/mcp" {
 		t.Errorf("url = %q", got)
 	}
 }
@@ -158,7 +156,7 @@ func TestHandleOne_PUT_URLOriginChangeIs400(t *testing.T) {
 		Transport: TransportHTTP,
 		Name:      "hosted",
 		URL:       "https://new.example.com/mcp",
-		Headers:   []KeyPair{{Name: "Authorization", Value: SecretMask}},
+		Headers:   []keyPair{{Name: "Authorization", Value: secretMask}},
 		Enabled:   true,
 	})
 	if rec.Code != http.StatusBadRequest {

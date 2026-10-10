@@ -519,6 +519,7 @@ function layout(): void {
 
 /** @internal Test seam: forget every tab and the poll. The listeners stay,
  *  because the toolbar elements they sit on persist. */
+// deadset:ignore DS1004 -- test seam: resets the web tabs, poll and shown path
 export function _resetForTest(): void {
   for (const path of [...tabs.keys()]) {
     releaseWebTab(path);

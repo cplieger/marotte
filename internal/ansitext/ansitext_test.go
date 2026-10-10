@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-// styleAt returns the style covering off, or the zero style; spans never overlap.
-func styleAt(spans []Span, off int) (Span, bool) {
+// styled reports whether a span covers off; spans never overlap.
+func styled(spans []Span, off int) bool {
 	for _, s := range spans {
 		if off >= s.Start && off < s.End {
-			return s, true
+			return true
 		}
 	}
-	return Span{}, false
+	return false
 }
 
 func TestParse_PlainTextProducesNoSpans(t *testing.T) {
@@ -96,10 +96,10 @@ func TestParse_SpansAddressTheRightRanges(t *testing.T) {
 	if got.FG != 1 {
 		t.Errorf("FG = %d, want 1 (red)", got.FG)
 	}
-	if _, ok := styleAt(spans, 0); ok {
+	if ok := styled(spans, 0); ok {
 		t.Error("offset 0 is styled, want the leading text unstyled")
 	}
-	if _, ok := styleAt(spans, 8); ok {
+	if ok := styled(spans, 8); ok {
 		t.Error("offset 8 is styled, want the trailing text unstyled")
 	}
 }
@@ -111,18 +111,18 @@ func TestApplySGR_AllAttributes(t *testing.T) {
 		seq  string
 		want uint16
 	}{
-		{name: "bold", seq: "1", want: AttrBold},
-		{name: "dim", seq: "2", want: AttrDim},
-		{name: "italic", seq: "3", want: AttrItalic},
-		{name: "underline", seq: "4", want: AttrUnderline},
-		{name: "blink", seq: "5", want: AttrBlink},
-		{name: "rapid blink", seq: "6", want: AttrBlink},
-		{name: "inverse", seq: "7", want: AttrInverse},
-		{name: "hidden", seq: "8", want: AttrHidden},
-		{name: "strike", seq: "9", want: AttrStrike},
-		{name: "double underline", seq: "21", want: AttrDoubleUnderline},
-		{name: "overline", seq: "53", want: AttrOverline},
-		{name: "bold and italic", seq: "1;3", want: AttrBold | AttrItalic},
+		{name: "bold", seq: "1", want: attrBold},
+		{name: "dim", seq: "2", want: attrDim},
+		{name: "italic", seq: "3", want: attrItalic},
+		{name: "underline", seq: "4", want: attrUnderline},
+		{name: "blink", seq: "5", want: attrBlink},
+		{name: "rapid blink", seq: "6", want: attrBlink},
+		{name: "inverse", seq: "7", want: attrInverse},
+		{name: "hidden", seq: "8", want: attrHidden},
+		{name: "strike", seq: "9", want: attrStrike},
+		{name: "double underline", seq: "21", want: attrDoubleUnderline},
+		{name: "overline", seq: "53", want: attrOverline},
+		{name: "bold and italic", seq: "1;3", want: attrBold | attrItalic},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -145,10 +145,10 @@ func TestAttrBits_MatchTheWireRunContract(t *testing.T) {
 		"dim": 32, "hidden": 64, "blink": 128, "overline": 256, "doubleUnderline": 512,
 	}
 	got := map[string]uint16{
-		"bold": AttrBold, "italic": AttrItalic, "underline": AttrUnderline,
-		"inverse": AttrInverse, "strike": AttrStrike, "dim": AttrDim,
-		"hidden": AttrHidden, "blink": AttrBlink, "overline": AttrOverline,
-		"doubleUnderline": AttrDoubleUnderline,
+		"bold": attrBold, "italic": attrItalic, "underline": attrUnderline,
+		"inverse": attrInverse, "strike": attrStrike, "dim": attrDim,
+		"hidden": attrHidden, "blink": attrBlink, "overline": attrOverline,
+		"doubleUnderline": attrDoubleUnderline,
 	}
 	for name, w := range want {
 		if got[name] != w {
@@ -179,7 +179,7 @@ func TestApplySGR_AttributeOffSwitches(t *testing.T) {
 		{name: "28 clears hidden", seq: "8;28", want: 0},
 		{name: "29 clears strike", seq: "9;29", want: 0},
 		{name: "55 clears overline", seq: "53;55", want: 0},
-		{name: "22 leaves italic alone", seq: "1;3;22", want: AttrItalic},
+		{name: "22 leaves italic alone", seq: "1;3;22", want: attrItalic},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -202,21 +202,21 @@ func TestApplySGR_Colours(t *testing.T) {
 		wantFG int32
 		wantBG int32
 	}{
-		{name: "basic fg", seq: "31", wantFG: 1, wantBG: ColorDefault},
-		{name: "basic bg", seq: "41", wantFG: ColorDefault, wantBG: 1},
-		{name: "bright fg maps above 8", seq: "91", wantFG: 9, wantBG: ColorDefault},
-		{name: "bright bg maps above 8", seq: "101", wantFG: ColorDefault, wantBG: 9},
-		{name: "256 palette fg", seq: "38;5;208", wantFG: 208, wantBG: ColorDefault},
-		{name: "256 palette bg", seq: "48;5;17", wantFG: ColorDefault, wantBG: 17},
+		{name: "basic fg", seq: "31", wantFG: 1, wantBG: colorDefault},
+		{name: "basic bg", seq: "41", wantFG: colorDefault, wantBG: 1},
+		{name: "bright fg maps above 8", seq: "91", wantFG: 9, wantBG: colorDefault},
+		{name: "bright bg maps above 8", seq: "101", wantFG: colorDefault, wantBG: 9},
+		{name: "256 palette fg", seq: "38;5;208", wantFG: 208, wantBG: colorDefault},
+		{name: "256 palette bg", seq: "48;5;17", wantFG: colorDefault, wantBG: 17},
 		// Index 0 is black, a colour and not unset, and 255 is the last entry; excluding either paints the default.
-		{name: "256 palette first index", seq: "38;5;0", wantFG: 0, wantBG: ColorDefault},
-		{name: "256 palette last index", seq: "38;5;255", wantFG: 255, wantBG: ColorDefault},
-		{name: "truecolour fg", seq: "38;2;10;20;30", wantFG: RGB(10, 20, 30), wantBG: ColorDefault},
-		{name: "truecolour bg", seq: "48;2;1;2;3", wantFG: ColorDefault, wantBG: RGB(1, 2, 3)},
-		{name: "truecolour component extremes", seq: "38;2;0;255;0", wantFG: RGB(0, 255, 0), wantBG: ColorDefault},
-		{name: "truecolour white", seq: "48;2;255;255;255", wantFG: ColorDefault, wantBG: RGB(255, 255, 255)},
-		{name: "39 resets fg only", seq: "31;41;39", wantFG: ColorDefault, wantBG: 1},
-		{name: "49 resets bg only", seq: "31;41;49", wantFG: 1, wantBG: ColorDefault},
+		{name: "256 palette first index", seq: "38;5;0", wantFG: 0, wantBG: colorDefault},
+		{name: "256 palette last index", seq: "38;5;255", wantFG: 255, wantBG: colorDefault},
+		{name: "truecolour fg", seq: "38;2;10;20;30", wantFG: rgb(10, 20, 30), wantBG: colorDefault},
+		{name: "truecolour bg", seq: "48;2;1;2;3", wantFG: colorDefault, wantBG: rgb(1, 2, 3)},
+		{name: "truecolour component extremes", seq: "38;2;0;255;0", wantFG: rgb(0, 255, 0), wantBG: colorDefault},
+		{name: "truecolour white", seq: "48;2;255;255;255", wantFG: colorDefault, wantBG: rgb(255, 255, 255)},
+		{name: "39 resets fg only", seq: "31;41;39", wantFG: colorDefault, wantBG: 1},
+		{name: "49 resets bg only", seq: "31;41;49", wantFG: 1, wantBG: colorDefault},
 		{name: "fg and bg together", seq: "32;44", wantFG: 2, wantBG: 4},
 	}
 	for _, tc := range cases {
@@ -241,7 +241,7 @@ func TestApplySGR_MalformedExtendedColourDoesNotCorruptLaterParams(t *testing.T)
 	if len(spans) != 1 {
 		t.Fatalf("got %d spans, want 1", len(spans))
 	}
-	if spans[0].Attrs&AttrBold == 0 {
+	if spans[0].Attrs&attrBold == 0 {
 		t.Errorf("attrs = %#b, want bold set", spans[0].Attrs)
 	}
 }
@@ -256,12 +256,12 @@ func TestApplySGR_UnhonourableParametersDoNotReset(t *testing.T) {
 		reason    string
 	}{{
 		name: "colon subparameter underline", seq: "\x1b[4:3mx",
-		wantAttrs: AttrUnderline, wantFG: ColorDefault,
+		wantAttrs: attrUnderline, wantFG: colorDefault,
 		reason: "gcc and clang emit ESC[4:3m for a curly diagnostic underline;" +
 			" read whole the field is non-numeric, and non-numeric read as 0 resets",
 	}, {
 		name: "colon subparameter keeps earlier styling", seq: "\x1b[31m\x1b[4:3mx",
-		wantAttrs: AttrUnderline, wantFG: 1,
+		wantAttrs: attrUnderline, wantFG: 1,
 		reason: "the red opened by the previous sequence must survive the underline",
 	}, {
 		name: "private parameter marker is ignored whole", seq: "\x1b[31m\x1b[>4;2mx",
@@ -283,18 +283,18 @@ func TestApplySGR_UnhonourableParametersDoNotReset(t *testing.T) {
 		reason: "`=` is a private marker too, so the parameters after it are not SGR",
 	}, {
 		name: "intermediate byte is skipped not zeroed", seq: "\x1b[1m\x1b[2 mx",
-		wantAttrs: AttrBold, wantFG: ColorDefault,
+		wantAttrs: attrBold, wantFG: colorDefault,
 		reason: "an intermediate byte means the sequence is not SGR at all",
 	}, {
 		name: "underline colour is dropped without resetting", seq: "\x1b[1m\x1b[58:2::1:2:3mx",
-		wantAttrs: AttrBold, wantFG: ColorDefault,
+		wantAttrs: attrBold, wantFG: colorDefault,
 		reason: "a Span carries no underline colour, so 58 is dropped — not read as a reset",
 	}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, spans := Parse(tc.seq)
 			var gotAttrs uint16
-			gotFG := ColorDefault
+			gotFG := colorDefault
 			if len(spans) > 0 {
 				last := spans[len(spans)-1]
 				gotAttrs, gotFG = last.Attrs, last.FG
@@ -539,7 +539,7 @@ func TestParser_UnterminatedSequenceIsHeldUpToTheBound(t *testing.T) {
 }
 
 func TestRGB_RoundTripsAndIsDistinctFromPaletteIndices(t *testing.T) {
-	c := RGB(10, 20, 30)
+	c := rgb(10, 20, 30)
 	if c < rgbFlag {
 		t.Errorf("RGB(...) = %d, want it above rgbFlag (%d)", c, rgbFlag)
 	}
@@ -617,7 +617,7 @@ func FuzzParse(f *testing.F) {
 
 		// 3. No span carries default styling.
 		for i, s := range spans {
-			if s.FG == ColorDefault && s.BG == ColorDefault && s.Attrs == 0 {
+			if s.FG == colorDefault && s.BG == colorDefault && s.Attrs == 0 {
 				t.Fatalf("span %d styles nothing: %+v", i, s)
 			}
 		}

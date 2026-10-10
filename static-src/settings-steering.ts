@@ -14,10 +14,9 @@ import {
   type DebouncedDispatch,
 } from "./actions/index.js";
 
-/** Whether a read is in flight. There is no terminal state: the tab's loader runs on every
- *  activation, and re-seeding on one is the only invalidation this box has —
- *  `_kiro/steering/documents_changed` reaches no handler and no endpoint carries this file's
- *  content on any other channel. */
+/** There is no terminal state: the tab's loader runs on every activation, and re-seeding on one is
+ *  the only invalidation this box has — `_kiro/steering/documents_changed` reaches no handler and no
+ *  endpoint carries this file's content on any other channel. */
 let reading = false;
 
 /** The validator for the document the box was last seeded from, or "" when the server answered
@@ -34,8 +33,8 @@ let seeded = "";
  *  it decides to re-seed. */
 let debouncedSave: DebouncedDispatch<{ content: string; etag: string }> | null = null;
 
-/** The content a lifecycle event's dispatch carried. `RegistryListener` types its instance's
- *  args as `unknown`, so the shape is narrowed rather than asserted. */
+/** `RegistryListener` types its instance's args as `unknown`, so the shape is narrowed rather than
+ *  asserted. */
 function sentContent(args: unknown): string | null {
   if (typeof args !== "object" || args === null || !("content" in args)) {
     return null;
@@ -153,6 +152,7 @@ export function initSteeringEditor(): void {
 
 /** Drop the read state, so one test's document is not the next test's answer. Production never
  *  needs it: the state's lifetime is the page. */
+// deadset:ignore DS1004 -- test seam: resets the steering read state, etag and pending save
 export function _resetSteeringForTest(): void {
   reading = false;
   etag = "";

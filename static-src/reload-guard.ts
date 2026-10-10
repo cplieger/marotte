@@ -17,8 +17,7 @@ const WINDOW_MS = 10_000;
  *  the cost of being wrong here is bounded. */
 const THRESHOLD = 3;
 
-/** How long a page has to stay alive to clear the count. A page that lived this long was not in
- *  a 1.5s loop. */
+/** A page that lived this long was not in a 1.5s loop. */
 const STABLE_MS = 20_000;
 
 /** What this tab remembers: how many boots, and when the LAST one was. The last rather than the

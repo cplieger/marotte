@@ -108,7 +108,7 @@ func NewManager(configDir string) *Manager {
 // MakeID returns the canonical ID for a kind+host pair.
 func MakeID(kind Kind, host string) string {
 	if host == "" {
-		host = kind.DefaultHost()
+		host = kind.defaultHost()
 	}
 	return fmt.Sprintf("%s:%s", kind, host)
 }
@@ -144,8 +144,8 @@ func (m *Manager) List(ctx context.Context) []ConfiguredForge {
 	return out
 }
 
-// Get returns the configured forge with the given ID, or nil.
-func (m *Manager) Get(id string) *ConfiguredForge {
+// get returns the configured forge with the given ID, or nil.
+func (m *Manager) get(id string) *ConfiguredForge {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	f, ok := m.forges[id]
@@ -212,8 +212,6 @@ func (m *Manager) fillFromCredential(row *ConfiguredForge, rec *connectionRecord
 	}
 }
 
-// reconnectReason is the error a row whose stored credential the library
-// holds as reconnect-required carries.
 const reconnectReason = "the stored credential can be neither used nor renewed. Sign in to this forge again"
 
 // fillStanding marks row reconnect-required when the library's source over
@@ -280,20 +278,20 @@ func (m *Manager) mergeForges(out map[string]*ConfiguredForge, recs map[string]c
 	m.cacheAt = time.Now()
 }
 
-// Invalidate clears the cache so the next List/Get reloads, and drops the
+// invalidate clears the cache so the next List/Get reloads, and drops the
 // cached repo and PR listings with it: a connection change decides which
 // repositories are visible at all, so keeping them would serve one account's
 // listings after another has signed in.
-func (m *Manager) Invalidate() {
+func (m *Manager) invalidate() {
 	m.mu.Lock()
 	m.cacheAt = time.Time{}
 	m.mu.Unlock()
 	m.lists.clear()
 }
 
-// Probe runs a Whoami against the forge to verify auth still works
+// probeConnection runs a Whoami against the forge to verify auth still works
 // and updates the Connected/LastProbed/LastError fields.
-func (m *Manager) Probe(ctx context.Context, id string) error {
+func (m *Manager) probeConnection(ctx context.Context, id string) error {
 	m.mu.RLock()
 	f, ok := m.forges[id]
 	m.mu.RUnlock()
@@ -312,7 +310,6 @@ func (m *Manager) Probe(ctx context.Context, id string) error {
 // so one leaving does not end it for the others.
 const probeBudget = 30 * time.Second
 
-// probe reads fc's account and records the verdict on its connection's row.
 func (m *Manager) probe(ctx context.Context, fc forgeClient) (forgeapi.Account, error) {
 	ch := m.probeSF.DoChan(fc.id, func() (any, error) {
 		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), probeBudget)
@@ -330,7 +327,6 @@ func (m *Manager) probe(ctx context.Context, fc forgeClient) (forgeapi.Account, 
 	}
 }
 
-// recordProbe records a probe's verdict on id's row and answers err.
 func (m *Manager) recordProbe(id string, acct *forgeapi.Account, err error) error {
 	now := time.Now().UnixMilli()
 	m.mu.Lock()
@@ -391,11 +387,8 @@ func isTemporary(err error) bool {
 // serve until its record file or credential store is repaired.
 var errConnectionUnusable = errors.New("forges: connection unusable")
 
-// codeConnectionUnusable is the row code of errConnectionUnusable.
 const codeConnectionUnusable = "connection_unusable"
 
-// forgeClient is one connection's forgeapi client, the credential source behind
-// it, and the family its repository ids decode in.
 type forgeClient struct {
 	core   forgeapi.Core
 	cred   forgeapi.CredentialSource
@@ -403,24 +396,22 @@ type forgeClient struct {
 	family forgeapi.Family
 }
 
-// client answers connection id's forgeapi client.
 func (m *Manager) client(id string) (forgeClient, error) {
-	f := m.Get(id)
+	f := m.get(id)
 	if f == nil {
 		return forgeClient{}, fmt.Errorf("forges: unknown id %q", id)
 	}
 	return m.clientOf(f)
 }
 
-// clientOf answers the client of f's connection record. A row whose record a
-// refresh removed meanwhile answers ErrNotLoggedIn.
+// A row whose record a refresh removed meanwhile answers errNotLoggedIn.
 func (m *Manager) clientOf(f *ConfiguredForge) (forgeClient, error) {
 	m.mu.RLock()
 	rec, recorded := m.records[f.ID]
 	reason := m.recordsReason
 	m.mu.RUnlock()
 	if !recorded {
-		return forgeClient{}, fmt.Errorf("%w: %s connects through a connection record", ErrNotLoggedIn, f.Kind)
+		return forgeClient{}, fmt.Errorf("%w: %s connects through a connection record", errNotLoggedIn, f.Kind)
 	}
 	if reason != "" {
 		return forgeClient{}, fmt.Errorf("%w: %s", errConnectionUnusable, reason)
@@ -454,16 +445,11 @@ func (m *Manager) RepoNames(ctx context.Context, id string) ([]string, error) {
 	return names, nil
 }
 
-// connect stores token as a static credential for the instance rec addresses,
-// through connectCredential.
 func (m *Manager) connect(ctx context.Context, rec *connectionRecord, token string) error {
 	return m.connectCredential(ctx, rec, &creds.Record{Kind: forgeapi.CredKindStaticPAT, Token: token, Issued: time.Now()})
 }
 
-// connectCredential verifies cred's token against the instance rec addresses,
-// completes cred with the account that read names, then stores it and rec,
-// registers git's credential helper for the origin and scrubs the host's
-// cleartext git credentials. A refused verification stores nothing.
+// A refused verification stores nothing.
 func (m *Manager) connectCredential(ctx context.Context, rec *connectionRecord, cred *creds.Record) error {
 	if cred.Token == "" {
 		return errors.New("forges: empty token")
@@ -522,9 +508,7 @@ func (m *Manager) restoreCredential(id string, old *creds.Record, hadOld bool) {
 	}
 }
 
-// disconnect removes f's connection record, then the helper pair and the
-// credential it no longer references. A connection with no record is already
-// gone.
+// A connection with no record is already gone.
 func (m *Manager) disconnect(ctx context.Context, f *ConfiguredForge) error {
 	rec, err := m.writableRecord(f.ID)
 	if err != nil || rec == nil {
@@ -543,8 +527,6 @@ func (m *Manager) disconnect(ctx context.Context, f *ConfiguredForge) error {
 	return nil
 }
 
-// errNoRecord answers a change to a connection whose record a disconnect
-// removed meanwhile.
 var errNoRecord = errors.New("forges: the connection has no record. Connect it again")
 
 // setOwnerScopes replaces f's owner scopes with owners as ownerScopes stores
@@ -592,7 +574,6 @@ func (m *Manager) writableRecord(id string) (*connectionRecord, error) {
 	return nil, nil
 }
 
-// putRecord replaces the record with rec's id, or appends rec.
 func (m *Manager) putRecord(ctx context.Context, rec *connectionRecord) error {
 	return m.conns.update(ctx, func(cur []connectionRecord) []connectionRecord {
 		if i := slices.IndexFunc(cur, func(r connectionRecord) bool { return r.ID == rec.ID }); i >= 0 {

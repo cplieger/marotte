@@ -36,7 +36,6 @@ func authURLFor(t *testing.T, listenerURL, state string) string {
 	return "https://provider.example/authorize?" + q.Encode()
 }
 
-// pastedFor builds what the user copies out of the dead browser tab.
 func pastedFor(t *testing.T, listenerURL, code, state string) string {
 	t.Helper()
 	lu, err := url.Parse(listenerURL)
@@ -47,7 +46,6 @@ func pastedFor(t *testing.T, listenerURL, code, state string) string {
 	return "http://127.0.0.1:" + lu.Port() + "/oauth/callback?" + q.Encode()
 }
 
-// postRelay drives the handler and returns the recorder.
 func postRelay(t *testing.T, h *Runtime, server, pasted string) *httptest.ResponseRecorder {
 	t.Helper()
 	body := `{"server":` + strconv.Quote(server) + `,"redirect_url":` + strconv.Quote(pasted) + `}`
@@ -86,10 +84,9 @@ func stageFlow(t *testing.T, h *Runtime, server, listenerURL, state string) {
 	h.mcpRegistry.RecordOAuth(t.Context(), server, marotte.MCPSource{}, authURLFor(t, listenerURL, state))
 }
 
-// relayState reads the latch off the registry snapshot /api/mcp/status serves, as the client would.
 func relayState(t *testing.T, h *Runtime, server string) (relayed, pending bool) {
 	t.Helper()
-	for _, s := range h.mcpRegistry.Snapshot() {
+	for _, s := range h.mcpRegistry.snapshot() {
 		if s.Name == server {
 			return s.Relayed, s.State == mcpStateOAuth
 		}

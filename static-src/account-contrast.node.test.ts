@@ -50,7 +50,6 @@ const ratio = (theme: string, fg: string, bg: string): number => {
   return row?.ratio ?? 0;
 };
 
-/** One declaration's value out of a rule's body, comments stripped. */
 function decl(body: string, prop: string): string {
   const m = new RegExp(`(?:^|[;{\\s])${prop}:\\s*([^;]+);`).exec(
     body.replace(/\/\*[\s\S]*?\*\//g, " "),
@@ -59,7 +58,6 @@ function decl(body: string, prop: string): string {
   return (m?.[1] ?? "").trim();
 }
 
-/** A nested state block's body out of a rule. */
 function nested(body: string, selector: string): string {
   const clean = body.replace(/\/\*[\s\S]*?\*\//g, " ");
   const at = clean.indexOf(selector);

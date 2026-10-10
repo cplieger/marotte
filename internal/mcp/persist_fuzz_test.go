@@ -26,7 +26,7 @@ func FuzzServerUnmarshalJSON(f *testing.F) {
 		// If transport is set and not one of the accepted values
 		// (stdio/http/sse), UnmarshalJSON should have errored.
 		if s.Transport != "" {
-			if _, parseErr := ParseTransport(string(s.Transport)); parseErr != nil {
+			if _, parseErr := parseTransport(string(s.Transport)); parseErr != nil {
 				t.Errorf("UnmarshalJSON accepted unknown transport %q", s.Transport)
 			}
 		}

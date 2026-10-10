@@ -21,19 +21,34 @@ type Handler struct {
 	fetchFlight singleflight.Group
 	repoFlight  singleflight.Group
 	pullFlight  singleflight.Group
-	// statusCache is the dashboard's snapshot holder; see status_cache.go.
 	statusCache statusCache
 	workDir     string
 	timeouts    gitTimeouts
+	// showMax caps the blob /api/git/show serves.
+	showMax int64
 }
+
+// defaultShowMax is the show cap when no WithShowMax is given; the composition root passes
+// the viewer's own cap so the two cannot drift.
+const defaultShowMax = 2 << 20
 
 // NewHandler returns a Handler scoped to workDir.
 func NewHandler(workDir string, opts ...Option) *Handler {
-	h := &Handler{workDir: workDir, timeouts: defaultTimeouts()}
+	h := &Handler{workDir: workDir, timeouts: defaultTimeouts(), showMax: defaultShowMax}
 	for _, o := range opts {
 		o(h)
 	}
 	return h
+}
+
+// WithShowMax caps the blob /api/git/show serves at n bytes; a larger revision answers 413.
+// Non-positive keeps the default.
+func WithShowMax(n int64) Option {
+	return func(h *Handler) {
+		if n > 0 {
+			h.showMax = n
+		}
+	}
 }
 
 // RegisterRoutes installs the /api/git/* mux entries.
@@ -60,9 +75,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/git/pr-fetch", h.handlePRFetch)
 }
 
-// resolveRepoDir resolves a client-supplied repo name against workDir, rejecting a `..` component
-// or an absolute path; empty, "." and rejected inputs fall back to workDir. HasDotDot judges the
-// name as written, before any join.
+// Empty, "." and rejected inputs fall back to workDir. HasDotDot judges the name as written, before
+// any join.
 func resolveRepoDir(workDir, repo string) string {
 	if repo == "" || repo == "." || pathinside.HasDotDot(repo) || filepath.IsAbs(repo) {
 		return workDir
@@ -70,8 +84,8 @@ func resolveRepoDir(workDir, repo string) string {
 	return filepath.Join(workDir, filepath.Clean(repo))
 }
 
-// repoDir resolves repo against h.workDir (see resolveRepoDir). LEXICAL-ONLY on purpose: a
-// symlinked repo addressed by its link name is a feature here, which an os.Root would refuse.
+// LEXICAL-ONLY on purpose: a symlinked repo addressed by its link name is a feature here, which an
+// os.Root would refuse.
 func (h *Handler) repoDir(repo string) string {
 	return resolveRepoDir(h.workDir, repo)
 }

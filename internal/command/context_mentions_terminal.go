@@ -26,10 +26,10 @@ var (
 
 // mentionTerminal answers a terminal reference: the built-in shell's newest lines,
 // verbatim. The query is the line count, default defaultTerminalLines. Output
-// over MaxMentionChars is cut from the OLDEST end, because the newest output is
+// over maxMentionChars is cut from the OLDEST end, because the newest output is
 // what the reader is pointing at; renderMention would keep the head instead, so
 // the whole item is sized here and handed over fixed.
-func mentionTerminal(query string, sh ShellReader) ([]mentionPart, error) {
+func mentionTerminal(query string, sh shellReader) ([]mentionPart, error) {
 	n, err := terminalLines(query)
 	if err != nil {
 		return nil, err
@@ -53,7 +53,7 @@ func mentionTerminal(query string, sh ShellReader) ([]mentionPart, error) {
 		tail = terminalExitNote
 	}
 	body := out.Text
-	room := MaxMentionChars - utf8.RuneCountInString(head) - utf8.RuneCountInString(tail)
+	room := maxMentionChars - utf8.RuneCountInString(head) - utf8.RuneCountInString(tail)
 	if utf8.RuneCountInString(body) > room {
 		body = keepNewest(body, room-utf8.RuneCountInString(terminalOmitted))
 		head += terminalOmitted

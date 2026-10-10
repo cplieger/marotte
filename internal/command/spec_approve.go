@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/spec"
@@ -25,12 +24,12 @@ type SpecApprovals interface {
 	Approve(ctx context.Context, dir, phase, hash, user string) error
 }
 
-// CmdApproveSpecPhase records that a human approved one phase of a spec, against the version they
+// cmdApproveSpecPhase records that a human approved one phase of a spec, against the version they
 // approved. The chat id is empty on purpose: a spec is workspace-global.
 // Compare-and-swap: phase and hash are shape-validated, the document is RE-READ through
 // internal/spec's os.Root-confined loader, and a mismatch is refused with the CURRENT hash so the
 // client re-reads rather than have its claim trusted.
-func CmdApproveSpecPhase(ctx context.Context, approvals SpecApprovals, ws Workspace, bus Broadcaster, cmd *marotte.ClientCommand) (any, error) {
+func cmdApproveSpecPhase(ctx context.Context, approvals SpecApprovals, ws Workspace, bus broadcaster, cmd *marotte.ClientCommand) (any, error) {
 	if approvals == nil {
 		// Without a config dir nothing keeps the record, so refuse rather than report an approval
 		// that vanishes.
@@ -51,7 +50,7 @@ func CmdApproveSpecPhase(ctx context.Context, approvals SpecApprovals, ws Worksp
 		return nil, StatusError(http.StatusNotFound, errSpecNotFound)
 	}
 
-	sp, err := spec.Load(ctx, root, name, filebrowse.MaxFileSize)
+	sp, err := spec.Load(ctx, root, name, spec.MaxFileBytes)
 	switch {
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, spec.ErrNoDocs):
 		return nil, StatusError(http.StatusNotFound, errSpecNotFound)
@@ -73,7 +72,7 @@ func CmdApproveSpecPhase(ctx context.Context, approvals SpecApprovals, ws Worksp
 	if current != p.Hash {
 		// The current hash lets the client say the document moved; it is not a value to re-POST
 		// unread. An absent document answers "".
-		return nil, StatusErrorCurrentHash(http.StatusConflict, "doc_changed", current, errDocChanged)
+		return nil, statusErrorCurrentHash(http.StatusConflict, "doc_changed", current, errDocChanged)
 	}
 
 	if err := approvals.Approve(ctx, p.Dir, p.Phase, p.Hash, ""); err != nil {

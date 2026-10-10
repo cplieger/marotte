@@ -8,8 +8,8 @@ import (
 	"github.com/cplieger/marotte/internal/steering"
 )
 
-// agentDoorFixture is the listing shared with internal/steering's agentfiles_test.go; both
-// scans are checked against steering.DedupeAgentFiles' answer rather than restated expectations.
+// Both scans are checked against steering.DedupeAgentFiles' answer rather than restated
+// expectations.
 var agentDoorFixture = map[string]*fstest.MapFile{
 	"agents/.hidden.md":     {Data: []byte("# hidden\n")},
 	"agents/.md":            {Data: []byte("")},

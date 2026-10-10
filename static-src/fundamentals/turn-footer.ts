@@ -7,6 +7,7 @@ import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { copyClipboard } from "../actions/messages.js";
 import { iconEl } from "../icon-el.js";
+import { contextBreakdownRows } from "../context-breakdown.js";
 import { ASK_LABEL, type AskBucket } from "../interaction.js";
 import { ICON_INFO } from "../icons.js";
 import { openAtLine, openChange, openChangeSet } from "../navigate.js";
@@ -15,6 +16,7 @@ import { formatElapsed } from "../strings.js";
 import { kindNoun } from "../tool-kind-noun.js";
 import { severityOf } from "../turn-severity.js";
 import type { FileChange, ToolKind, TurnThroughput } from "../types.js";
+import type { ContextBreakdown } from "../wire/types.gen.js";
 import { COMMAND_KINDS, type TurnOutcome } from "../turns.js";
 import { relBeneath, workspaceRoot } from "../workspace.js";
 
@@ -66,6 +68,8 @@ export interface TurnSummaryData {
   recoveries?: string[];
   steering?: string[];
   engineErrorClass?: string;
+  /** What the turn's last model request carried (`turn_close.context_breakdown`). */
+  contextBreakdown?: ContextBreakdown | undefined;
 }
 
 /** KAS's recovery mechanism names (`AgentExecutionRecovered`), in words. A name this
@@ -255,9 +259,9 @@ function infoRow(label: string, value: string | Node): HTMLElement {
   );
 }
 
-/** One section, or null when it has nothing to state. Withholding is the panel's whole
- *  discipline: a delegate can fill three of the six and a mid-flight turn fewer, so a
- *  section that painted itself on absence would grow empty rows on most cards. */
+/** Withholding is the panel's whole discipline: a delegate can fill three of the six and a
+ *  mid-flight turn fewer, so a section that painted itself on absence would grow empty rows on most
+ *  cards. */
 function infoSection(title: string, rows: HTMLElement[], extra: Node[] = []): HTMLElement | null {
   if (rows.length === 0 && extra.length === 0) {
     return null;
@@ -285,8 +289,8 @@ function stampEl(ms: number): HTMLElement {
   return t;
 }
 
-/** Three durations and two stamps, each withheld on absence. MODEL TIME is withheld rather than
- *  clamped (overlapping tool calls make wall minus tool negative). */
+/** MODEL TIME is withheld rather than clamped (overlapping tool calls make wall minus tool
+ *  negative). */
 function timingRows(d: TurnSummaryData): HTMLElement[] {
   const rows: HTMLElement[] = [];
   const wall = d.elapsedMs ?? 0;
@@ -374,10 +378,12 @@ function renderInfoPanel(
   }
 
   const steering = d.steering ?? [];
-  const context = infoSection(
-    "Context",
-    steering.length > 0 ? [infoRow("Steering added", steeringList(steering))] : [],
-  );
+  const contextRows =
+    steering.length > 0 ? [infoRow("Steering added", steeringList(steering))] : [];
+  if (d.contextBreakdown !== undefined) {
+    contextRows.push(...contextBreakdownRows(d.contextBreakdown, infoRow, documentName));
+  }
+  const context = infoSection("Context", contextRows);
   if (context !== null) {
     sections.push(context);
   }
@@ -468,6 +474,8 @@ function panelSignature(d: TurnSummaryData): string[] {
     recoveries: join(...(d.recoveries ?? [])),
     steering: join(...(d.steering ?? [])),
     engineErrorClass: d.engineErrorClass ?? "",
+    // A decoded wire record, so the whole of it is the signature.
+    contextBreakdown: d.contextBreakdown === undefined ? "" : JSON.stringify(d.contextBreakdown),
   };
   // The root decides which steering ids link (`steeringList`).
   return [...Object.values(parts), workspaceRoot()];
@@ -493,23 +501,27 @@ function steeringList(ids: readonly string[]): HTMLElement {
   const list = el("span", { className: "turn-info-list" });
   for (const id of ids) {
     const path = filePathOf(id);
-    const name = path?.slice(path.lastIndexOf("/") + 1) ?? id;
-    const root = workspaceRoot();
-    if (path === null || root === "" || relBeneath(root, path) === null) {
-      list.appendChild(el("span", {}, name));
-      continue;
-    }
-    const btn = el(
-      "button",
-      { className: "turn-info-link", type: "button", "data-tooltip": path },
-      name,
-    );
-    btn.addEventListener("click", () => {
-      openAtLine(path);
-    });
-    list.appendChild(btn);
+    list.appendChild(documentName(path?.slice(path.lastIndexOf("/") + 1) ?? id, id));
   }
   return list;
+}
+
+/** A document's name, a button into the editor when `uri` is a file under the workspace. */
+function documentName(name: string, uri: string): HTMLElement {
+  const path = filePathOf(uri);
+  const root = workspaceRoot();
+  if (path === null || root === "" || relBeneath(root, path) === null) {
+    return el("span", {}, name);
+  }
+  const btn = el(
+    "button",
+    { className: "turn-info-link", type: "button", "data-tooltip": path },
+    name,
+  );
+  btn.addEventListener("click", () => {
+    openAtLine(path);
+  });
+  return btn;
 }
 
 /** The absolute path a `file:` URI names, or null for any other id. */
@@ -525,7 +537,6 @@ function filePathOf(id: string): string | null {
   }
 }
 
-/** The turn's backend request ids, one per line, with one control copying them all. */
 function requestIDList(ids: readonly string[]): HTMLElement {
   const list = el("span", { className: "turn-info-list turn-info-ids" });
   for (const id of ids) {

@@ -10,9 +10,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// clientPolicyPath is the TypeScript module holding the composer's copy of the
-// upload policy. Relative to this package's directory, which is the cwd of a
-// Go test.
+// clientPolicyPath is relative to this package's directory, which is the cwd of a Go test.
 const clientPolicyPath = "../../static-src/upload-policy.ts"
 
 var (

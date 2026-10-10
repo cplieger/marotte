@@ -38,7 +38,6 @@ func FuzzDeriveSubSession(f *testing.F) {
 	})
 }
 
-// stubDeriveSubDeps satisfies Deps with minimal stubs for deriveSubSession tests.
 type stubDeriveSubDeps struct {
 	baseDeps
 	parent string

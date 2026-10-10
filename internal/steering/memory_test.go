@@ -21,7 +21,12 @@ func TestParseRepoRemote_MatchesKASTags(t *testing.T) {
 		{"https://git.example.org:8443/owner/name.git", "git.example.org/owner/name"},
 		{"https://git.example.org/solo", "git.example.org/git.example.org/solo"},
 		{"/srv/repos/local.git", ""},
-		{"https://user:secret@git.example.org/o/r.git", "user:secret@git.example.org/o/r"},
+		{"https://user:secret@git.example.org/o/r.git", "git.example.org/o/r"},
+		{"ssh://git@gitea.example:2222/o/r.git", "gitea.example/o/r"},
+		{"ssh://git@gitea.example/solo", "gitea.example/gitea.example/solo"},
+		{"https://u:p@ss@host.example:8443/o/r", "host.example/o/r"},
+		{"git@github.com:o/r@x.git", ""},
+		{"git@host.example:o@x/r", ""},
 		{"", ""},
 	}
 	for _, tc := range cases {
@@ -36,8 +41,8 @@ func TestParseRepoRemote_MatchesKASTags(t *testing.T) {
 	}
 }
 
-// writeRepo makes a repo whose origin is url; linked makes `.git` a worktree
-// pointer file whose common dir holds the config, the way KAS follows it.
+// linked makes `.git` a worktree pointer file whose common dir holds the config, the way KAS
+// follows it.
 func writeRepo(t *testing.T, workDir, name, url string, linked bool) {
 	t.Helper()
 	repo := filepath.Join(workDir, name)
@@ -62,13 +67,21 @@ func mustWrite(t *testing.T, path, data string) {
 	}
 }
 
-// A credential in a generic host's userinfo, or markup, never reaches the doc.
+// Userinfo is stripped as KAS strips it; a path that is not plain path-shaped never reaches the doc.
 func TestMemoryRepoTag_RefusesAnUnsafeTag(t *testing.T) {
 	workDir := t.TempDir()
-	writeRepo(t, workDir, "leak", "https://user:secret@git.example.org/o/r.git", false)
+	writeRepo(t, workDir, "cred", "https://user:secret@git.example.org/o/r.git", false)
+	writeRepo(t, workDir, "at", "https://git.example.org/o/r@x", false)
+	writeRepo(t, workDir, "markup", "https://git.example.org/o/<b>r", false)
 	writeRepo(t, workDir, "ok", "git@github.com:o/r.git", false)
-	if got := memoryRepoTag(filepath.Join(workDir, "leak")); got != "" {
-		t.Errorf("memoryRepoTag(userinfo remote) = %q, want refused", got)
+	got := memoryRepoTag(filepath.Join(workDir, "cred"))
+	if got != "repo:git.example.org/o/r" || strings.Contains(got, "secret") {
+		t.Errorf("memoryRepoTag(userinfo remote) = %q, want repo:git.example.org/o/r", got)
+	}
+	for _, name := range []string{"at", "markup"} {
+		if got := memoryRepoTag(filepath.Join(workDir, name)); got != "" {
+			t.Errorf("memoryRepoTag(%s remote) = %q, want refused", name, got)
+		}
 	}
 	if got := memoryRepoTag(filepath.Join(workDir, "ok")); got != "repo:github/o/r" {
 		t.Errorf("memoryRepoTag(github remote) = %q, want repo:github/o/r", got)
@@ -79,6 +92,7 @@ func TestWriteMemory_NamesEachRepoTagUnlessOff(t *testing.T) {
 	workDir := t.TempDir()
 	writeRepo(t, workDir, "marotte", "git@github.com:cplieger/marotte.git", false)
 	writeRepo(t, workDir, "wt", "https://gitlab.com/g/wt.git", true)
+	writeRepo(t, workDir, "r", "ssh://git@gitea.example:2222/g/r.git", false)
 
 	cfg := t.TempDir()
 	var b strings.Builder
@@ -90,6 +104,7 @@ func TestWriteMemory_NamesEachRepoTagUnlessOff(t *testing.T) {
 		"`memory add` with a `path` inside that repository",
 		"- `marotte/`: `repo:github/cplieger/marotte`",
 		"- `wt/`: `repo:gitlab/g/wt`",
+		"- `r/`: `repo:gitea.example/g/r`",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Memory section is missing %q:\n%s", want, out)

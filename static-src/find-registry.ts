@@ -40,6 +40,7 @@ export function pageFind(kind: string): PageFind | undefined {
 }
 
 /** @internal Test seam: drop every registration. */
+// deadset:ignore DS1004 -- test seam: resets the find registrations and their version
 export function _resetFindRegistry(): void {
   registry.clear();
   version.value = version.value + 1;

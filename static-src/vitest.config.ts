@@ -7,6 +7,7 @@
 // browser, not headless-shell: `npx playwright install --with-deps chromium`.
 import { configDefaults, defineConfig, type TestProjectInlineConfiguration } from "vitest/config";
 import { resolve } from "node:path";
+import { msw } from "msw/vite";
 
 import { alwaysOnInterception } from "./__test-helpers__/always-on-interception.js";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
@@ -103,6 +104,9 @@ function browserProject(
 }
 
 export default defineConfig({
+  // Serves the MSW worker script from the package for the browser tests that mock the network;
+  // each such test starts its own worker.
+  plugins: [msw({ mode: "worker-only" })],
   // cmd/bundle injects the SSE worker's content-hashed URL into the page bundle; a test
   // build ships no worker, and the empty string is the adapter's "run the per-tab
   // stream" reading (static-src/globals.d.ts).
@@ -188,7 +192,6 @@ export default defineConfig({
     // Forbid .only tests unconditionally — not just in CI.
     allowOnly: false,
 
-    // Require explicit imports of describe/it/expect from "vitest".
     globals: false,
 
     // Force every test to call at least one expect(). Catches tests that
@@ -235,7 +238,6 @@ export default defineConfig({
     // tuning rationale.
     setupFiles: ["./fc-strict-setup.ts", "./waitfor-budget-setup.ts"],
 
-    // Print stack traces with every console.* call in tests.
     printConsoleTrace: true,
 
     // Show full diff when a snapshot fails, not just a patch.
@@ -245,12 +247,11 @@ export default defineConfig({
     // and CI). Vitest's built-in typecheck is experimental and redundant here.
     // typecheck: { enabled: false } is the default; omitted for clarity.
 
-    // V8 coverage with AST-accurate remapping, as good as Istanbul.
     coverage: {
       provider: "v8",
 
-      // Report every TS source file. `**/` is load-bearing on vitest 5: a bare `*.ts` matches only the
-      // top level. `node_modules/**` is too: this list feeds tinyglobby's `ignore` for untested-file
+      // `**/` is load-bearing on vitest 5: a bare `*.ts` matches only the top level.
+      // `node_modules/**` is too: this list feeds tinyglobby's `ignore` for untested-file
       // discovery, which otherwise walks dependencies (4439 extra files).
       include: ["**/*.ts"],
       exclude: [

@@ -41,11 +41,11 @@ const (
 	TransportRegistry Transport = "registry"
 )
 
-// ParseTransport validates a raw string as a known transport. All three
+// parseTransport validates a raw string as a known transport. All three
 // transports (stdio, http, sse) are first-class: "sse" is preserved as
 // TransportSSE, not folded into "http" — KAS accepts a distinct SSE
 // mcpServers entry over the v3 wire (see the Transport doc).
-func ParseTransport(s string) (Transport, error) {
+func parseTransport(s string) (Transport, error) {
 	switch Transport(s) {
 	case TransportStdio, TransportHTTP, TransportSSE, TransportRegistry:
 		return Transport(s), nil
@@ -54,8 +54,8 @@ func ParseTransport(s string) (Transport, error) {
 	}
 }
 
-// Valid reports whether t is one of the known transport values.
-func (t Transport) Valid() bool {
+// valid reports whether t is one of the known transport values.
+func (t Transport) valid() bool {
 	switch t {
 	case TransportStdio, TransportHTTP, TransportSSE, TransportRegistry:
 		return true
@@ -64,8 +64,8 @@ func (t Transport) Valid() bool {
 	}
 }
 
-// SecretMask references the shared marotte.SecretMask constant.
-const SecretMask = marotte.SecretMask
+// secretMask references the shared marotte.secretMask constant.
+const secretMask = marotte.SecretMask
 
 // Server is one user-configured MCP server. ID is a short stable
 // identifier used in URLs and events (generated at create time);
@@ -80,11 +80,11 @@ type Server struct {
 	// members (client-ID metadata document, pinned loopback redirect); not secrets.
 	OAuthClientMetadataURL string    `json:"oauth_client_metadata_url,omitempty"`
 	OAuthRedirectURI       string    `json:"oauth_redirect_uri,omitempty"`
-	ID                     ServerID  `json:"id"`
+	ID                     serverID  `json:"id"`
 	Transport              Transport `json:"transport"`
 	Args                   []string  `json:"args,omitempty"`
-	Env                    []KeyPair `json:"env,omitempty"`
-	Headers                []KeyPair `json:"headers,omitempty"`
+	Env                    []keyPair `json:"env,omitempty"`
+	Headers                []keyPair `json:"headers,omitempty"`
 	DisabledTools          []string  `json:"disabled_tools,omitempty"`
 	CreatedAt              int64     `json:"created_at"`
 	UpdatedAt              int64     `json:"updated_at"`
@@ -98,10 +98,10 @@ type Server struct {
 	WaitForReady bool `json:"wait_for_ready,omitempty"`
 }
 
-// KeyPair is an ordered env-var or header entry. Ordered (vs map) so
+// keyPair is an ordered env-var or header entry. Ordered (vs map) so
 // the UI can edit entries without dropping duplicates; the on-wire ACP
 // format is a JSON object so we flatten on export.
-type KeyPair struct {
+type keyPair struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
@@ -139,10 +139,8 @@ type renderedWait struct {
 // fire-and-forget persists. mcp.json is marotte's record; KAS's ~/.kiro/settings/mcp.json is
 // rendered from it (kasfile.go).
 func New(ctx context.Context, configDir string, onChange func(context.Context), opts ...Option) (*Store, error) {
-	// Required, not defaulted. ctx IS the store's lifetime, and
-	// notifyChange parents fire-and-forget callback work on it. Refusing
-	// here makes a missing ctx a startup error instead of a silent
-	// substitution deep in an unexported method.
+	// Required, not defaulted: ctx IS the store's lifetime and parents notifyChange's callback
+	// work, so a missing one is a startup error rather than a silent substitution.
 	if ctx == nil {
 		return nil, errors.New("mcp: New requires a non-nil ctx: it is the store's lifetime and parents the change callback")
 	}
@@ -160,10 +158,8 @@ func New(ctx context.Context, configDir string, onChange func(context.Context), 
 	if err := s.load(); err != nil {
 		return nil, err
 	}
-	// Boot reconcile, before anything can race on the store. A failure here must
-	// not stop the server from starting: the user needs the UI to fix whatever is
-	// wrong with the path or the disk, and a stale KAS file degrades to the
-	// previous server set rather than to nothing.
+	// Boot reconcile, before anything can race on the store. A failure must not stop the server:
+	// the user needs the UI to fix the path or disk, and a stale KAS file keeps the previous set.
 	if err := s.writeKASConfig(ctx, s.servers); err != nil {
 		slog.Error("mcp: initial kas config write failed; the agent may use a stale server set",
 			"path", s.kasPath, "error", err)
@@ -173,15 +169,6 @@ func New(ctx context.Context, configDir string, onChange func(context.Context), 
 
 // Option configures a Store at construction.
 type Option func(*Store)
-
-// WithKASConfigPath overrides where KAS's config file is rendered.
-//
-// This exists for TESTS: the default resolves under $HOME, so a test
-// that constructs a store without isolating it writes the developer's
-// own ~/.kiro/settings/mcp.json — which is exactly what happened once.
-func WithKASConfigPath(path string) Option {
-	return func(s *Store) { s.kasPath = path }
-}
 
 // WithWaitForReady supplies the resolver for the global MCP wait setting, which
 // renders `waitForReady: true` on every server. Unwired means off, KAS's own
@@ -294,7 +281,7 @@ func (s *Store) notifyChange() {
 	go cb(s.ctx)
 }
 
-func (s *Store) indexLocked(id ServerID) int {
+func (s *Store) indexLocked(id serverID) int {
 	for i, sv := range s.servers {
 		if sv.ID == id {
 			return i
@@ -315,7 +302,7 @@ func (s *Store) findByNameLocked(name string) *Server {
 	return nil
 }
 
-func (s *Store) hasNameLocked(name string, ignoreID ServerID) bool {
+func (s *Store) hasNameLocked(name string, ignoreID serverID) bool {
 	for _, sv := range s.servers {
 		if sv.ID == ignoreID {
 			continue

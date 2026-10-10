@@ -11,7 +11,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// reserveLocked takes the admission slot iff it is free. Caller holds mu.
+// Caller holds mu.
 func (lc *chatLifecycle) reserveLocked(source marotte.TurnOpenSource) bool {
 	if lc.reserved {
 		return false
@@ -105,42 +105,42 @@ func (r *turnRegistry) admissionHolder(chatID marotte.ChatID) (marotte.TurnOpenS
 }
 
 // TryReserveTurn takes the admission slot iff free, minting no Turn and never waiting.
-func (bc *BridgeCoordinator) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
+func (bc *bridgeCoordinator) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
 	return bc.turns.tryReserve(chatID, source, command.TurnFence{})
 }
 
 // TryReserveIdleTurn takes the admission slot iff no turn is open and nothing holds it, never waiting.
-func (bc *BridgeCoordinator) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
+func (bc *bridgeCoordinator) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
 	return bc.turns.tryReserveIdle(chatID, source)
 }
 
 // TryReserveTurnFenced is TryReserveTurn for a close's drain, refused once a turn
 // opened after the closed one. The open checks the fence again where it appends.
-func (bc *BridgeCoordinator) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) bool {
+func (bc *bridgeCoordinator) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) bool {
 	return bc.turns.tryReserve(chatID, source, fence)
 }
 
 // PromptHolder names the prompt-class turn holding the chat's admission.
-func (bc *BridgeCoordinator) PromptHolder(chatID marotte.ChatID) (string, bool) {
+func (bc *bridgeCoordinator) PromptHolder(chatID marotte.ChatID) (string, bool) {
 	return bc.turns.promptHolder(chatID)
 }
 
 // ReleaseTurnReservation frees the admission slot TryReserveTurn or
 // ReserveTurnForPrompt took, waking every waiter.
-func (bc *BridgeCoordinator) ReleaseTurnReservation(chatID marotte.ChatID) {
+func (bc *bridgeCoordinator) ReleaseTurnReservation(chatID marotte.ChatID) {
 	bc.turns.releaseReservation(chatID)
 }
 
 // AdmissionHolderSource reports the holder: the open turn's source (a wire turn holds no reservation), else the
-// reservation's. Satisfies command.TurnOutcomeAccess.
-func (bc *BridgeCoordinator) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpenSource, bool) {
+// reservation's. Satisfies command.turnOutcomeAccess.
+func (bc *bridgeCoordinator) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return bc.turns.admissionHolder(chatID)
 }
 
 // ReserveTurnForPrompt takes the slot for a prompt, waiting up to wait; one waiter acquires per wake. A
 // prompt-class holder answers Busy at once (CmdSteer parks the steer); a local_shell holder parks the waiter
 // and answers Starting at the budget. A dead ctx answers Starting.
-func (bc *BridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration) command.AdmissionOutcome {
+func (bc *bridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration) command.AdmissionOutcome {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for {
@@ -161,8 +161,8 @@ func (bc *BridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID ma
 	}
 }
 
-// expiredAdmission is the budget-expiry arm, keyed on the holder; one last try first.
-func (bc *BridgeCoordinator) expiredAdmission(chatID marotte.ChatID) command.AdmissionOutcome {
+// One last try first.
+func (bc *bridgeCoordinator) expiredAdmission(chatID marotte.ChatID) command.AdmissionOutcome {
 	ok, holder, _ := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt)
 	if ok {
 		return command.AdmissionAcquired
@@ -173,8 +173,8 @@ func (bc *BridgeCoordinator) expiredAdmission(chatID marotte.ChatID) command.Adm
 	return command.AdmissionStarting
 }
 
-// bridgeLive reports whether the chat's bridge is past its spawn; the manager registers before Start, so presence is not liveness.
-func (bc *BridgeCoordinator) bridgeLive(chatID marotte.ChatID) bool {
+// The manager registers before Start, so presence is not liveness.
+func (bc *bridgeCoordinator) bridgeLive(chatID marotte.ChatID) bool {
 	sb := bc.bridge.mgr.get(chatID)
 	return sb != nil && sb.startedPastSpawn()
 }

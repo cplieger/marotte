@@ -7,7 +7,7 @@ import { liveRunIDsForChat } from "./run-store.js";
 import { turnLive, watchSession } from "./store.js";
 
 /** What is still outstanding for a chat. Every field is a reason a cue must wait. */
-export interface ChatOutstanding {
+interface ChatOutstanding {
   /** This chat's own turn is running (`turnLive`: thinking, an open turn, or a row
    *  that states no liveness at all). */
   readonly turn: boolean;

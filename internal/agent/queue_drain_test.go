@@ -14,7 +14,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// promptIDs is every turn_open's prompt id in the chat's log, in file order.
 func promptIDs(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []string {
 	t.Helper()
 	var ids []string
@@ -48,8 +47,7 @@ func seedQueue(t *testing.T, cs *testChatStore, chatID marotte.ChatID, rows ...m
 // drainGates holds each drainHub's post-close drain switch, installed once: a close's goroutine may still read it.
 var drainGates sync.Map
 
-// drainHub is a hub whose c1 has run one prompt to its close, with the post-close drain parked for the test to drive.
-func drainHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
+func drainHub(t *testing.T) (*Runtime, *testChatStore) {
 	t.Helper()
 	h, cs, br := newTestHub()
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
@@ -68,23 +66,20 @@ func drainHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
 	// The close's drain hook runs after runPrompt's wait; still pending, it would read the gate the test arms next
 	// and drain, taking the reservation the test is about to ask for.
 	waitFor(t, func() bool { return reached.Load() == 1 })
-	return h, cs, br
+	return h, cs
 }
 
-// armDrain turns a drainHub's post-close drain on or off.
 func armDrain(h *Runtime, on bool) {
 	if g, ok := drainGates.Load(h); ok {
 		g.(*atomic.Bool).Store(on)
 	}
 }
 
-// drainOnce runs the command-side drain for a close with the given outcome, unfenced.
 func drainOnce(t *testing.T, h *Runtime, chatID marotte.ChatID, o marotte.TurnOutcome) {
 	t.Helper()
 	h.dispatcher.DrainAfterClose(t.Context(), chatID, command.CloseFacts{Outcome: o}, command.EndFacts{})
 }
 
-// runPrompt posts a prompt and waits for its turn to close.
 func runPrompt(t *testing.T, h *Runtime, cs *testChatStore, chatID marotte.ChatID, messageID string) {
 	t.Helper()
 	before := len(closesOf(t, logOf(t, cs, chatID)))
@@ -126,7 +121,7 @@ func TestDrain_OpensQueuedTurnAfterCleanClose(t *testing.T) {
 
 // The closing prompt releases its slot after the close, so the drain can find that reservation held.
 func TestDrain_WaitsOutTheClosingPromptsReservation(t *testing.T) {
-	h, cs, _ := drainHub(t)
+	h, cs := drainHub(t)
 	armDrain(h, true)
 	seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q1", Text: "then run the tests"})
 	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
@@ -154,7 +149,7 @@ func TestDrain_WaitsOutTheClosingPromptsReservation(t *testing.T) {
 
 // A turn opening behind the reservation owns the next close.
 func TestDrain_StandsDownWhenATurnOpensBehindTheReservation(t *testing.T) {
-	h, cs, _ := drainHub(t)
+	h, cs := drainHub(t)
 	armDrain(h, true)
 	seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q1", Text: "next"})
 	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
@@ -181,7 +176,7 @@ func TestDrain_StandsDownWhenATurnOpensBehindTheReservation(t *testing.T) {
 }
 
 func TestDrain_UserRowsWaitAfterCancelAndFailure(t *testing.T) {
-	h, cs, _ := drainHub(t)
+	h, cs := drainHub(t)
 	seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q1", Text: "after this turn"})
 
 	for _, o := range []marotte.TurnOutcome{
@@ -199,7 +194,7 @@ func TestDrain_UserRowsWaitAfterCancelAndFailure(t *testing.T) {
 }
 
 func TestDrain_OneUserRowPerCleanClose(t *testing.T) {
-	h, cs, _ := drainHub(t)
+	h, cs := drainHub(t)
 	seedQueue(t, cs, "c1",
 		marotte.QueuedPrompt{ID: "m-u1", Text: "first follow-up"},
 		marotte.QueuedPrompt{ID: "m-u2", Text: "second follow-up"},
@@ -217,7 +212,7 @@ func TestDrain_OneUserRowPerCleanClose(t *testing.T) {
 }
 
 func TestDrain_HeldRowsNeverAutoSent(t *testing.T) {
-	h, cs, _ := drainHub(t)
+	h, cs := drainHub(t)
 	held := marotte.CarriedRow("m-held-carry", []string{"x"}, []string{"steer-1"})
 	held.Held = true
 	seedQueue(t, cs, "c1", held, marotte.QueuedPrompt{ID: "m-held", Text: "from before the restart", Held: true})
@@ -230,7 +225,7 @@ func TestDrain_HeldRowsNeverAutoSent(t *testing.T) {
 }
 
 func TestDrain_NoOpWhileDrainingOrBridgeDeadOrTurnLive(t *testing.T) {
-	h, cs, _ := drainHub(t)
+	h, cs := drainHub(t)
 	seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q1", Text: "next"})
 
 	h.lifecycle.draining.Store(true)
@@ -255,7 +250,7 @@ func TestDrain_NoOpWhileDrainingOrBridgeDeadOrTurnLive(t *testing.T) {
 
 // A queue_prompt racing a close either lands before it or answers no turn.
 func TestAppendIfLive_IdleRefusesAndLiveAppends(t *testing.T) {
-	h, cs, _ := drainHub(t)
+	h, cs := drainHub(t)
 	appendRow := func(c *marotte.Chat) error {
 		c.QueuedPrompts = append(c.QueuedPrompts, marotte.QueuedPrompt{ID: "m-q1", Text: "x"})
 		return nil
@@ -280,7 +275,7 @@ func TestAppendIfLive_IdleRefusesAndLiveAppends(t *testing.T) {
 
 // An opened row is sending; an unqueue says so.
 func TestUnqueue_AnOpenedRowIsSending(t *testing.T) {
-	h, cs, _ := drainHub(t)
+	h, cs := drainHub(t)
 	seedQueue(t, cs, "c1",
 		marotte.QueuedPrompt{ID: "m-u1", Text: "first"},
 		marotte.QueuedPrompt{ID: "m-u2", Text: "second"},

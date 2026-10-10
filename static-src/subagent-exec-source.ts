@@ -9,7 +9,7 @@
 import type { ToolCall } from "./types.js";
 import { delegateStatusFor } from "./store.js";
 import { humanName, truncate } from "./strings.js";
-import { inlineAgentOf, subagentLabel, subagentName } from "./roles.js";
+import { inlineAgentOf, modelCategoryOf, subagentLabel, subagentName } from "./roles.js";
 import { inFlight, type ExecState } from "./exec-view/status.js";
 import type { ExecFact, ExecNode, ExecRun } from "./exec-view/model.js";
 import type { SubagentProjection } from "./subagent-slice.js";
@@ -24,9 +24,8 @@ export function subagentPath(subtaskID: string): string {
   return subtaskID;
 }
 
-/** The driver's path. Prefixed, because a driver is addressed by its TOOL-CALL id
- *  while every stage is addressed by a subtask uuid, and an unprefixed tool-call id
- *  could in principle collide with one. */
+/** Prefixed, because a driver is addressed by its TOOL-CALL id while every stage is addressed by a
+ *  subtask uuid, and an unprefixed tool-call id could in principle collide with one. */
 function driverPath(pipelineID: string): string {
   return `pipeline:${pipelineID}`;
 }
@@ -54,8 +53,8 @@ function toolState(status: ToolCall["status"] | undefined, turnLive: boolean): E
   }
 }
 
-/** The identity facts for one delegate. Model and effort rows appear only for an inline helper
- *  (`inlineAgent`); a saved agent's input names neither. */
+/** Model and effort rows appear only for an inline helper (`inlineAgent`); a Category row for the
+ *  parent's `modelCategory` request unless an inline model overrides it. */
 function factsOf(invocation: ToolCall | undefined, stage: string): ExecFact[] {
   const facts: ExecFact[] = [];
   const add = (label: string, value: string, mono = false): void => {
@@ -69,6 +68,9 @@ function factsOf(invocation: ToolCall | undefined, stage: string): ExecFact[] {
     if (inline !== null) {
       add("Model", inline.model);
       add("Effort", inline.effort);
+    }
+    if ((inline?.model ?? "") === "") {
+      add("Category", modelCategoryOf(invocation));
     }
   }
   add("Stage", stage);
@@ -111,7 +113,6 @@ function driverInputs(driver: ToolCall | undefined): Record<string, string> | un
   return { Task: truncate(task.trim(), 400) };
 }
 
-/** Fold one delegate into a leaf. */
 function toLeaf(
   subtaskID: string,
   stage: string,
@@ -172,7 +173,7 @@ function rollUp(own: ExecState, kids: readonly ExecNode[]): ExecState {
       return s;
     }
   }
-  // No `unknown` clause, unreachable: a KID is always a stage with a status (`groupOf` admits only
+  // No `unknown` clause, unreachable: a KID is always a stage with a status (`resolveGroup` admits only
   // `isSubagentInvocation` members). `unknown` arrives as `own` alone.
   if (states.has("ok")) {
     return states.has("pending") ? "running" : "ok";
@@ -254,9 +255,8 @@ export function subagentToExec(
   return out;
 }
 
-/** A node's declared stage name, off its own facts. Reading it back rather than
- *  carrying a second field, since `ExecFact` is the model's channel for exactly this
- *  and a parallel array would be one more thing to keep aligned. */
+/** Reading it back rather than carrying a second field, since `ExecFact` is the model's channel for
+ *  exactly this and a parallel array would be one more thing to keep aligned. */
 function factStage(node: ExecNode): string {
   return node.facts?.find((f) => f.label === "Stage")?.value ?? "";
 }

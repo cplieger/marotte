@@ -72,7 +72,7 @@ const asking = signal<ReadonlySet<string>>(new Set());
 vi.mock("./decision-dock.js", () => ({
   runPendingAsks: (id: string) => ({
     count: asking.value.has(id) ? 1 : 0,
-    nodes: new Set<string>(),
+    asked: [],
     label: "",
   }),
 }));

@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/marotte/internal/chatlock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
@@ -25,18 +26,18 @@ const reasonRunsInCut = "runs_in_cut"
 // errRewindRunsInCut is the refusal's prose; the runs ride beside it.
 var errRewindRunsInCut = errors.New("rewinding here stops workflow runs this conversation launched. Confirm to stop them and rewind")
 
-// CmdRewindChat reverts the chat to a past turn via KAS's checkpoint machinery, then appends the
+// cmdRewindChat reverts the chat to a past turn via KAS's checkpoint machinery, then appends the
 // turn_revert that records it. The record is required: the merge keeps a record turn the replay
 // lacks, and the appended revert refuses a projection built from the pre-revert replay. Refused
 // while the registry holds a turn or reservation; a live run the cut launched is stopRunsInCut's
 // question, asked first.
-func CmdRewindChat(
+func cmdRewindChat(
 	ctx context.Context,
-	bridges BridgeAccess,
-	chats ChatStore,
-	admission TurnAdmission,
-	runs RunCutter,
-	bus Broadcaster,
+	bridges bridgeAccess,
+	chats chatStore,
+	admission turnAdmission,
+	runs runCutter,
+	bus broadcaster,
 	cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
@@ -111,13 +112,13 @@ func CmdRewindChat(
 // unconfirmed rewind answers 409 naming those runs, and a confirmed one cancels each and waits
 // BEFORE the revert so no step appends into the cut. A run still live after its wait is logged and
 // the rewind continues: the cancel landed, and a step's entries are the run's own log.
-func stopRunsInCut(ctx context.Context, runs RunCutter, chatID marotte.ChatID, launched []string, confirmed bool) error {
+func stopRunsInCut(ctx context.Context, runs runCutter, chatID marotte.ChatID, launched []string, confirmed bool) error {
 	live := runs.LiveRuns(launched)
 	if len(live) == 0 {
 		return nil
 	}
 	if !confirmed {
-		return StatusErrorRuns(http.StatusConflict, reasonRunsInCut, live, errRewindRunsInCut)
+		return statusErrorRuns(http.StatusConflict, reasonRunsInCut, live, errRewindRunsInCut)
 	}
 	for _, run := range live {
 		switch err := runs.CancelRun(ctx, run.ID); {
@@ -133,11 +134,9 @@ func stopRunsInCut(ctx context.Context, runs RunCutter, chatID marotte.ChatID, l
 	return nil
 }
 
-// resumeForRevert hands back a bridge whose session is the one the target turn
-// lives in. `want` is read BEFORE the resume, because a failed session/load falls
-// through to session/new and retires that id. No replay barrier: a swap landing
-// after the revert is refused by the record the revert appended.
-func resumeForRevert(ctx context.Context, bridges BridgeAccess, chatID marotte.ChatID, want string) (Bridge, error) {
+// `want` is read BEFORE the resume, because a failed session/load falls through to session/new and
+// retires that id.
+func resumeForRevert(ctx context.Context, bridges bridgeAccess, chatID marotte.ChatID, want string) (Bridge, error) {
 	if want == "" {
 		return nil, StatusError(http.StatusConflict, errRewindNoSession)
 	}
@@ -174,9 +173,9 @@ type revertResult struct {
 // channels into one error plus the status to report: a transport failure comes
 // back as an error, a refusal KAS can explain as `success:false` with a reason,
 // forwarded verbatim since it is more specific than anything marotte can infer.
-func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string) (revertResult, int, error) {
+func revertToMessage(ctx context.Context, bridge SessionCaller, messageID string) (revertResult, int, error) {
 	var result revertResult
-	resp, err := bridge.Call(ctx, marotte.MethodCheckpointRevertMultiple, SessionParams(bridge, map[string]any{
+	resp, err := bridge.Call(ctx, marotte.MethodCheckpointRevertMultiple, sessionParams(bridge, map[string]any{
 		"messageId": messageID,
 	}))
 	if err != nil {
@@ -201,17 +200,18 @@ func explainRevertRefusal(kasMessageID string, err error) error {
 	return fmt.Errorf("%w — %w", err, errRewindNoAgentID)
 }
 
-// CmdSetEffort sets the chat's reasoning-effort level: switched in place on a running session,
+// cmdSetEffort sets the chat's reasoning-effort level: switched in place on a running session,
 // persisted on the chat and applied to later sessions through StartOpts.Effort. A bridgeless chat
-// auto-creates like CmdSetMode. The level is recorded LAST as the new-chat seed for this model, so
-// a refused level is never remembered.
-func CmdSetEffort(
+// auto-creates like cmdSetMode. The level is recorded LAST as the new-chat seed for this model, so
+// a refused level is never remembered. Serialized with cmdSetThinking through configLocks.
+func cmdSetEffort(
 	ctx context.Context,
-	bridges BridgeAccess,
-	chats ChatStore,
-	bus Broadcaster,
+	bridges bridgeAccess,
+	chats chatStore,
+	bus broadcaster,
 	ws Workspace,
-	recorder EffortRecorder,
+	recorder effortRecorder,
+	configLocks *chatlock.Set,
 	cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
@@ -221,21 +221,16 @@ func CmdSetEffort(
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || !p.Level.Valid() {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-
-	// Picking any tier turns thinking back on, the slider's other half of its Off
-	// stop. Before the effort, because KAS caps a high tier while thinking is off.
-	thinkingOff := false
-	if rec, ok := chats.Get(ctx, cmd.ChatID); ok && rec.ThinkingIsOff(recorder.ThinkingDefaultOff(rec.Model)) {
-		thinkingOff = true
-		if err := setThinking(ctx, bridges, cmd.ChatID, marotte.ThinkingOn); err != nil {
-			return nil, err
-		}
+	// applyEffortPick's thinking-off rollback restores a state it read; another device's effort or
+	// thinking change landing in between would be overwritten by it.
+	unlock, lockErr := configLocks.Lock(ctx, cmd.ChatID)
+	if lockErr != nil {
+		return nil, StatusError(http.StatusServiceUnavailable, lockErr)
 	}
+	defer unlock()
 
-	// Fail fast so a refusal is reported, not persisted; a cold-spawning bridge is not a refusal
-	// (applySessionConfig).
-	if err := applySessionConfig(ctx, bridges, cmd.ChatID, "set_effort",
-		marotte.MethodSetConfigOption, configOptionParams(marotte.ConfigOptionEffort, string(p.Level))); err != nil {
+	thinkingOff, err := applyEffortPick(ctx, bridges, chats, recorder, cmd.ChatID, p.Level)
+	if err != nil {
 		return nil, err
 	}
 
@@ -252,11 +247,39 @@ func CmdSetEffort(
 	return responseWith(map[string]any{"level": p.Level}), nil
 }
 
+func applyEffortPick(
+	ctx context.Context, bridges bridgeAccess, chats chatStore, recorder effortRecorder,
+	chatID marotte.ChatID, level marotte.EffortLevel,
+) (thinkingOff bool, err error) {
+	// Picking any tier turns thinking back on, the slider's other half of its Off
+	// stop. Before the effort, because KAS caps a high tier while thinking is off.
+	if rec, ok := chats.Get(ctx, chatID); ok && rec.ThinkingIsOff(recorder.ThinkingDefaultOff(rec.Model)) {
+		thinkingOff = true
+		if err := setThinking(ctx, bridges, chatID, marotte.ThinkingOn); err != nil {
+			return false, err
+		}
+	}
+
+	// Fail fast so a refusal is reported, not persisted; a cold-spawning bridge is not a refusal
+	// (applySessionConfig).
+	if err := applySessionConfig(ctx, bridges, chatID, "set_effort",
+		marotte.MethodSetConfigOption, configOptionParams(marotte.ConfigOptionEffort, string(level))); err != nil {
+		// The refused pick leaves the chat on its Off stop, so KAS's session goes back there too.
+		if thinkingOff {
+			if rErr := setThinking(ctx, bridges, chatID, marotte.ThinkingOff); rErr != nil {
+				slog.Warn("set_effort: restoring thinking off failed", "chat", chatID, keyError, rErr)
+			}
+		}
+		return false, err
+	}
+	return thinkingOff, nil
+}
+
 // persistEffortPick writes level onto the chat record, auto-creating it, and turns
 // thinking back on when the pick did. It reports the record's model, which the
 // payload does not carry, and whether the level changed.
 func persistEffortPick(
-	ctx context.Context, chats ChatStore, chatID marotte.ChatID, level string, thinkingOff bool,
+	ctx context.Context, chats chatStore, chatID marotte.ChatID, level string, thinkingOff bool,
 ) (model string, changed bool, err error) {
 	_, err = chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		model = c.Model
@@ -281,9 +304,8 @@ func persistEffortPick(
 	return model, changed, err
 }
 
-// recordEffortSeed remembers level as what a NEW chat on model opens with, and tells the other
-// devices. A failure does not fail the command; a chat with no model is skipped.
-func recordEffortSeed(ctx context.Context, bus Broadcaster, configDir, model string, level marotte.EffortLevel) {
+// A failure does not fail the command; a chat with no model is skipped.
+func recordEffortSeed(ctx context.Context, bus broadcaster, configDir, model string, level marotte.EffortLevel) {
 	if configDir == "" || model == "" {
 		return
 	}

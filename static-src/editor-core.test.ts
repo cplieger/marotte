@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { effect } from "@cplieger/reactive";
-import { routeForPath } from "./editor-core.js";
-import { freshState, fileStates, setActiveFilePath, activeDirty } from "./editor-types.js";
+import {
+  freshState,
+  fileStates,
+  setActiveFilePath,
+  activeDirty,
+  routeForPath,
+} from "./editor-types.js";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 
 // There are no isPendingPath / parsePendingPath tests: the `pending:` virtual
@@ -57,7 +62,7 @@ describe("getCachedDiff", () => {
   it("edit mode returns an empty array", async () => {
     const { getCachedDiff, freshState } = await import("./editor-types.js");
     const state = freshState("test.ts");
-    state.mode.value = { kind: "edit", editing: false };
+    state.mode.value = { kind: "text", editing: false };
     expect(getCachedDiff(state)).toEqual([]);
   });
 
@@ -67,11 +72,11 @@ describe("getCachedDiff", () => {
     state.mode.value = {
       kind: "diff",
       diffSource: {
-        oldContent: "a\nb\n",
-        newContent: "a\nc\n",
+        oldText: "a\nb\n",
+        newText: "a\nc\n",
         oldLabel: "old",
         newLabel: "new",
-        fromGit: false,
+        kind: "pair",
       },
     };
     const diff = getCachedDiff(state);
@@ -87,11 +92,11 @@ describe("getCachedDiff", () => {
     state.mode.value = {
       kind: "diff",
       diffSource: {
-        oldContent: "a\nb\n",
-        newContent: "a\nc\n",
+        oldText: "a\nb\n",
+        newText: "a\nc\n",
         oldLabel: "old",
         newLabel: "new",
-        fromGit: false,
+        kind: "pair",
       },
     };
     const first = getCachedDiff(state);
@@ -106,11 +111,11 @@ describe("getCachedDiff", () => {
     state.mode.value = {
       kind: "diff",
       diffSource: {
-        oldContent: "a\nb",
-        newContent: "a\nc",
+        oldText: "a\nb",
+        newText: "a\nc",
         oldLabel: "old",
         newLabel: "new",
-        fromGit: false,
+        kind: "pair",
       },
     };
     const before = getCachedDiff(state);
@@ -121,11 +126,11 @@ describe("getCachedDiff", () => {
     state.mode.value = {
       kind: "diff",
       diffSource: {
-        oldContent: "a\nb",
-        newContent: "a\nZ",
+        oldText: "a\nb",
+        newText: "a\nZ",
         oldLabel: "old",
         newLabel: "new",
-        fromGit: false,
+        kind: "pair",
       },
     };
     const after = getCachedDiff(state);

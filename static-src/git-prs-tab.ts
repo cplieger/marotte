@@ -1874,7 +1874,6 @@ function cloneGroup(dir: string): RepoGroup | undefined {
   return {
     forge_id: f.id,
     forge_kind: f.kind,
-    forge_host: f.host,
     repo_id: c.repo_id,
     owner: "",
     name: dir,

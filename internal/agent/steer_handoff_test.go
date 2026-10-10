@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -52,8 +53,7 @@ func (s *pausingStore) Mutate(ctx context.Context, id marotte.ChatID, fn func(c 
 	return v, err
 }
 
-// handoffHub is a hub whose chat c1 has a live bridge and two unread user steers.
-func handoffHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
+func handoffHub(t *testing.T) (*Runtime, *testChatStore) {
 	t.Helper()
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
@@ -65,10 +65,9 @@ func handoffHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
 			t.Fatalf("unsending %s = %q, want no_turn", k, refuse)
 		}
 	}
-	return h, cs, br
+	return h, cs
 }
 
-// steerEntries maps each steer entry's id to its payloads, in log order.
 func steerEntries(t *testing.T, cs *testChatStore, chatID marotte.ChatID) map[string][]marotte.EntrySteer {
 	t.Helper()
 	entries, err := cs.All(t.Context(), chatID)
@@ -106,7 +105,6 @@ func epochOf(h *Runtime, chatID marotte.ChatID) uint64 {
 	return lc.epoch
 }
 
-// fenceNow names the chat's newest turn, the fence a close of it would carry.
 func fenceNow(h *Runtime, chatID marotte.ChatID) command.TurnFence {
 	lc := h.coord.turns.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -135,44 +133,47 @@ func TestShutdown_AResendOpenedBeforeTheTakeHasOneDestination(t *testing.T) {
 			name = "expired wait"
 		}
 		t.Run(name, func(t *testing.T) {
-			if expired {
-				shortenSteerLockWait(t)
-			}
-			h, cs, _ := handoffHub(t)
-			ps := newPausingStore(h.coord.chatStore)
-			ps.onOpen = true
-			h.coord.chatStore = ps
-
-			fence := fenceNow(h, "c1")
-			drained := make(chan struct{})
-			go func() {
-				defer close(drained)
-				h.dispatcher.DrainAfterClose(context.Background(), "c1",
-					command.CloseFacts{Outcome: marotte.TurnOutcomeCompleted, Fence: fence}, command.EndFacts{})
-			}()
-			<-ps.paused
-			stopped := shutdownAsync(t, h)
-			if expired {
-				waitFor(t, func() bool { return h.bus.steers.gone("c1") })
-			} else {
-				awaitLockWaiters(t, h.steerQueue, 2)
-			}
-			close(ps.release)
-			<-drained
-			<-stopped
-
-			if p := resendPrompt(t, cs); p == nil || !slices.Equal(p.Resends, []string{"steer-a", "steer-b"}) {
-				t.Fatalf("resend prompt = %+v, want both steers named", p)
-			}
-			got := steerEntries(t, cs, "c1")
-			for _, k := range []string{"steer-a", "steer-b"} {
-				if e := got[k]; len(e) != 0 {
-					t.Errorf("entries for %s = %+v, want none: the resend prompt carries them", k, e)
+			synctest.Test(t, func(t *testing.T) {
+				if expired {
+					shortenSteerLockWait(t)
 				}
-			}
-			if rows := queuedRows(t, cs, "c1"); len(rows) != 0 {
-				t.Errorf("queue = %+v, want no Held row for steers a prompt already carried", rows)
-			}
+				h, cs := handoffHub(t)
+				ps := newPausingStore(h.coord.chatStore)
+				ps.onOpen = true
+				h.coord.chatStore = ps
+
+				fence := fenceNow(h, "c1")
+				drained := make(chan struct{})
+				go func() {
+					defer close(drained)
+					h.dispatcher.DrainAfterClose(context.Background(), "c1",
+						command.CloseFacts{Outcome: marotte.TurnOutcomeCompleted, Fence: fence}, command.EndFacts{})
+				}()
+				<-ps.paused
+				stopped := shutdownAsync(t, h)
+				if expired {
+					waitFor(t, func() bool { return h.bus.steers.gone("c1") })
+				} else {
+					// Every other goroutine is durably blocked: the shutdown is parked on the steer lock.
+					synctest.Wait()
+				}
+				close(ps.release)
+				<-drained
+				<-stopped
+
+				if p := resendPrompt(t, cs); p == nil || !slices.Equal(p.Resends, []string{"steer-a", "steer-b"}) {
+					t.Fatalf("resend prompt = %+v, want both steers named", p)
+				}
+				got := steerEntries(t, cs, "c1")
+				for _, k := range []string{"steer-a", "steer-b"} {
+					if e := got[k]; len(e) != 0 {
+						t.Errorf("entries for %s = %+v, want none: the resend prompt carries them", k, e)
+					}
+				}
+				if rows := queuedRows(t, cs, "c1"); len(rows) != 0 {
+					t.Errorf("queue = %+v, want no Held row for steers a prompt already carried", rows)
+				}
+			})
 		})
 	}
 }
@@ -181,7 +182,7 @@ func TestShutdown_AResendOpenedBeforeTheTakeHasOneDestination(t *testing.T) {
 // steers that resend already carries.
 func TestBeginChatTeardown_AResendOpenedBeforeTheCloseKeepsItsSteers(t *testing.T) {
 	shortenSteerLockWait(t)
-	h, cs, _ := handoffHub(t)
+	h, cs := handoffHub(t)
 	ps := newPausingStore(h.coord.chatStore)
 	ps.onOpen = true
 	h.coord.chatStore = ps
@@ -309,10 +310,10 @@ func TestDrain_ATurnOpeningBetweenThePickAndTheOpenSupersedesIt(t *testing.T) {
 			command.CloseFacts{Outcome: marotte.TurnOutcomeCompleted, Fence: fence}, command.EndFacts{})
 	}()
 	<-ps.paused
-	h.translateACPEvent("c1", newTurnStartMsg())
+	h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
 	close(ps.release)
 	<-drained
-	h.translateACPEvent("c1", newTurnEndMsg("end_turn"))
+	h.translateACPEvent("c1", h.originOf("c1"), newTurnEndMsg("end_turn"))
 
 	assertNotOpened(t, cs)
 }

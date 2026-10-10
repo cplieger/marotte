@@ -11,7 +11,6 @@ import (
 // disk or the wire. Applied writes and no-ops both return nil, so callers that must not proceed check errors.Is.
 var ErrTombstoned = errors.New("chat: id was recently deleted")
 
-// errInvalidChatID returns the error for a malformed chat ID.
 func errInvalidChatID(id marotte.ChatID) error {
 	return fmt.Errorf("invalid chat id: %q", id)
 }
@@ -22,5 +21,4 @@ func errChatIDMismatch(want marotte.ChatID, got string) error {
 	return fmt.Errorf("chat %q holds id %q: refusing to write it over another chat's file", want, got)
 }
 
-// errMsgChatNotFound is the HTTP message for missing or tombstoned chats.
 const errMsgChatNotFound = "chat not found"

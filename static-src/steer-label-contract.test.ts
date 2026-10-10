@@ -58,7 +58,7 @@ describe("the steer label contract shared with the Go implementation", () => {
   const rows = fixture.triples;
 
   it("reads a fixture with every origin, both states and an unset-state row", () => {
-    expect(fixture.origins).toEqual(["agent", "parent", "user"]);
+    expect(fixture.origins).toEqual(["agent", "parent", "step", "user"]);
     expect(fixture.states).toEqual(["dropped", "read"]);
     expect(rows.some((r) => r.state === "")).toBe(true);
   });

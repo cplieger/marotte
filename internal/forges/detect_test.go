@@ -25,15 +25,12 @@ const (
 	bothOptIns  = `,"plaintext_http":true,"private_addresses":true`
 )
 
-// giteaReads are the answers a Gitea instance gives the reads detection makes.
 var giteaReads = map[string]string{
 	"/api/v1/version":      `{"version":"1.27.0"}`,
 	"/swagger.v1.json":     `{"swagger":"2.0","basePath":"/api/v1","info":{"title":"Gitea API","version":"1.27.0"},"paths":{}}`,
 	"/api/v1/settings/api": `{"max_response_items":50}`,
 }
 
-// forgeInstance is a loopback instance answering the JSON body registered for
-// each path and a plain 404 for any other, recording every request.
 type forgeInstance struct {
 	srv   *httptest.Server
 	seen  []string
@@ -177,7 +174,7 @@ func TestDetect_NoTokenIsRefusedBeforeAnyRequest(t *testing.T) {
 func TestDetectedKind_RoundTripsThroughItsFamily(t *testing.T) {
 	for _, family := range []forgeapi.Family{forgeapi.FamilyGitHub, forgeapi.FamilyGitLab, forgeapi.FamilyGitea} {
 		kind := detectedKind(family, "forge.example")
-		if !kind.Valid() || kind.family() != family {
+		if !kind.valid() || kind.family() != family {
 			t.Errorf("detectedKind(%v) = %q, whose family is %v; want a valid kind of family %v", family, kind, kind.family(), family)
 		}
 	}
@@ -186,12 +183,11 @@ func TestDetectedKind_RoundTripsThroughItsFamily(t *testing.T) {
 // Codeberg is a Gitea instance under a kind of its own, so detection there
 // answers the kind its own button connects under: one id for one instance.
 func TestDetectedKind_CodebergKeepsItsOwnKind(t *testing.T) {
-	if got := detectedKind(forgeapi.FamilyGitea, KindCodeberg.DefaultHost()); got != KindCodeberg {
-		t.Errorf("detectedKind(gitea, %q) = %q, want %q", KindCodeberg.DefaultHost(), got, KindCodeberg)
+	if got := detectedKind(forgeapi.FamilyGitea, KindCodeberg.defaultHost()); got != KindCodeberg {
+		t.Errorf("detectedKind(gitea, %q) = %q, want %q", KindCodeberg.defaultHost(), got, KindCodeberg)
 	}
 }
 
-// rendered is every captured record as the production text handler writes it.
 func rendered(t *testing.T, logs *capture.Recorder) []byte {
 	t.Helper()
 	var buf bytes.Buffer

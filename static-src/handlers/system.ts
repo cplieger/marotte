@@ -23,6 +23,7 @@ import { loadList, scheduleListRetry } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { refreshRetention } from "../retention.js";
 import { adoptConnectRuns, invalidateCachedRuns, rebuildLiveRuns } from "../run-store.js";
+import { forgetAllStepSteers } from "../run-step-steers.js";
 import { fetchCatalog } from "../session-catalog.js";
 import { invalidateTurnRails } from "../turn-rail.js";
 import type { SSEPayloads } from "../bus.js";
@@ -185,8 +186,9 @@ onSSE("pending_snapshot", (_chatID, p) => {
     forgetSteers(s.id);
   }
   // A run's own asks are keyed to `run:<workflowId>`, which is no chat and so has no
-  // session row for the loop above to reach.
+  // session row for the loop above to reach; a run step's dock rows likewise.
   dropRunDecisions();
+  forgetAllStepSteers();
   for (const evt of items) {
     dispatch(evt);
   }

@@ -34,7 +34,7 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 	if err != nil {
 		return nil, err
 	}
-	l, err := OpenEntryLog(ctx, dir, s.header(chatID), WithEntryFileCap(int64(s.fileCap)))
+	l, err := OpenEntryLog(ctx, dir, s.header(chatID), withEntryFileCap(int64(s.fileCap)))
 	if err != nil {
 		return nil, err
 	}
@@ -101,10 +101,10 @@ func (s *Store) OpenTurn(ctx context.Context, chatID marotte.ChatID, spec *TurnS
 	m := s.lock(chatID)
 	m.Lock()
 	defer m.Unlock()
-	if _, err := s.pathFor(chatID); err != nil {
-		return nil, err
-	}
-	if !s.headerExists(chatID) {
+	if err := s.headerErr(chatID); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
 		if s.isTombstoned(chatID) {
 			return nil, ErrTombstoned
 		}
@@ -164,10 +164,10 @@ func (s *Store) Append(ctx context.Context, chatID marotte.ChatID, e *marotte.En
 
 // AppendBetweenTurns files a lane-less entry belonging to no open turn after the
 // newest turn's close, or mints a closed event carrier on an empty log to land it in
-// (EntryLog.AppendBetweenTurns).
+// (EntryLog.appendBetweenTurns).
 func (s *Store) AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) (minted []*marotte.Entry, err error) {
 	err = s.withLog(ctx, chatID, func(l *EntryLog) error {
-		minted, err = l.AppendBetweenTurns(ctx, e)
+		minted, err = l.appendBetweenTurns(ctx, e)
 		if err != nil {
 			return err
 		}
@@ -200,10 +200,10 @@ func (s *Store) withLog(ctx context.Context, chatID marotte.ChatID, op func(l *E
 // openedLog is logFor behind the header check: a chat with no header has no log to
 // open, and opening one would create the directory the header should have.
 func (s *Store) openedLog(ctx context.Context, chatID marotte.ChatID) (*EntryLog, error) {
-	if _, err := s.pathFor(chatID); err != nil {
-		return nil, err
-	}
-	if !s.headerExists(chatID) {
+	if err := s.headerErr(chatID); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
 		if s.isTombstoned(chatID) {
 			return nil, ErrTombstoned
 		}
@@ -225,14 +225,24 @@ func (s *Store) All(ctx context.Context, chatID marotte.ChatID) ([]marotte.Entry
 	return out, err
 }
 
-// Page is GET /api/chats/{id}'s answer: the header, one window of whole turns,
+// WaitingWorkflowMessages answers the chat's workflow messages no take-up has settled, oldest first.
+func (s *Store) WaitingWorkflowMessages(ctx context.Context, chatID marotte.ChatID) ([]marotte.WorkflowMessage, error) {
+	var out []marotte.WorkflowMessage
+	err := s.readLog(ctx, chatID, func(l *EntryLog) error {
+		out = l.WaitingWorkflowMessages()
+		return nil
+	})
+	return out, err
+}
+
+// logPage is GET /api/chats/{id}'s answer: the header, one window of whole turns,
 // the open tails of the open turns inside it, the registry's liveness verdict
 // and the stamps, one per list they certify: the `chat` stamp certifies Entries,
 // each `live_turn` stamp its turn's newest sealed seq. Nothing certifies
 // OpenEntries or Live; a turn opened between the registry read and the window
 // read is in Entries with no stamp and no tail, and the client learns it from
 // its own turn_opened frame.
-type Page struct {
+type logPage struct {
 	Draft       string
 	Entries     []marotte.Entry
 	OpenEntries []marotte.OpenEntry
@@ -242,18 +252,18 @@ type Page struct {
 	Live        bool
 }
 
-// Page reads the newest `turns` whole turns, or the `turns` below `before`, with everything the
+// page reads the newest `turns` whole turns, or the `turns` below `before`, with everything the
 // transcript GET serves beside them. False for a chat with no header; a `before` the log does not
 // hold is an error the handler answers 400.
 // The registry (Live and the open tails) is read BEFORE the chat's lock: its writers take the store
 // lock inside their own, so the reverse order deadlocks. The stamps are read under the lock with
 // the window, so each certifies exactly the entries served; a tail sealed in between is reconciled
 // by id (openTail). An older page carries the `chat` stamp alone and no tails.
-func (s *Store) Page(ctx context.Context, chatID marotte.ChatID, turns int, before string) (*Page, bool, error) {
+func (s *Store) page(ctx context.Context, chatID marotte.ChatID, turns int, before string) (*logPage, bool, error) {
 	if ctx.Err() != nil {
 		return nil, false, ctx.Err()
 	}
-	live := s.Live(chatID)
+	live := s.isLiveChat(chatID)
 	var tails []OpenTurnTail
 	if before == "" && s.openTurns != nil {
 		tails = s.openTurns(chatID)
@@ -277,12 +287,12 @@ func (s *Store) Page(ctx context.Context, chatID marotte.ChatID, turns int, befo
 	if err != nil {
 		return nil, false, err
 	}
-	win, err := l.Window(turns, before)
+	win, err := l.window(turns, before)
 	if err != nil {
 		return nil, false, err
 	}
 	version, _ := s.versions.Current(subject.KindChat, string(chatID))
-	page := &Page{
+	page := &logPage{
 		Chat:        c.Header(),
 		Draft:       c.Draft,
 		Entries:     win.Entries,
@@ -304,7 +314,7 @@ func (s *Store) Page(ctx context.Context, chatID marotte.ChatID, turns int, befo
 			continue
 		}
 		page.OpenEntries = append(page.OpenEntries, open...)
-		seq, _ := l.NewestSeq(tail.ID)
+		seq, _ := l.newestSeq(tail.ID)
 		page.Subject = append(page.Subject,
 			s.restStamp(subject.KindLiveTurn, tail.ID, liveTurnVersion(tail.ID, seq)))
 	}
@@ -411,7 +421,6 @@ func (s *Store) searchable(ctx context.Context, chatID marotte.ChatID) (entries 
 	return entries, drawn, err
 }
 
-// drawnSet is the rail's turn ids as a set.
 func drawnSet(rows []marotte.TurnSummary) map[string]struct{} {
 	drawn := make(map[string]struct{}, len(rows))
 	for i := range rows {
@@ -420,9 +429,9 @@ func drawnSet(rows []marotte.TurnSummary) map[string]struct{} {
 	return drawn
 }
 
-// RailRows answers one row per drawn turn, oldest first; empty for a chat whose
+// railRows answers one row per drawn turn, oldest first; empty for a chat whose
 // log does not exist.
-func (s *Store) RailRows(ctx context.Context, chatID marotte.ChatID) ([]marotte.TurnSummary, error) {
+func (s *Store) railRows(ctx context.Context, chatID marotte.ChatID) ([]marotte.TurnSummary, error) {
 	var out []marotte.TurnSummary
 	err := s.readLog(ctx, chatID, func(l *EntryLog) error {
 		out = l.RailRows()
@@ -524,7 +533,7 @@ func (s *Store) WriteCounters(ctx context.Context, chatID marotte.ChatID) error 
 		return err
 	}
 	before, berr := s.load(ctx, chatID)
-	err = l.WriteCounters(ctx)
+	err = l.writeCounters(ctx)
 	after, aerr := s.load(ctx, chatID)
 	m.Unlock()
 	if err != nil {
@@ -563,7 +572,7 @@ func (s *Store) TurnSeq(ctx context.Context, chatID marotte.ChatID, turn string)
 	var seq uint64
 	var held bool
 	err := s.readLog(ctx, chatID, func(l *EntryLog) error {
-		seq, held = l.NewestSeq(turn)
+		seq, held = l.newestSeq(turn)
 		return nil
 	})
 	if err != nil {

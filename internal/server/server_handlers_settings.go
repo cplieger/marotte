@@ -76,9 +76,9 @@ type steeringSaveBody struct {
 	OK   bool   `json:"ok"`
 }
 
-// steeringDoc reads custom.md and derives its validator token; an ABSENT file is an empty
-// document. It does NOT fail open (a save PUTs the whole textarea, so an empty answer for an
-// unreadable file lets the first keystroke replace it). OpenRegular refuses symlinks and FIFOs.
+// An ABSENT file is an empty document. It does NOT fail open (a save PUTs the whole textarea, so an
+// empty answer for an unreadable file lets the first keystroke replace it). OpenRegular refuses
+// symlinks and FIFOs.
 func steeringDoc(ctx context.Context, path string) (content, etag string, err error) {
 	// Absolute because OpenRegular requires it.
 	abs, err := filepath.Abs(path)
@@ -100,8 +100,8 @@ func steeringDoc(ctx context.Context, path string) (content, etag string, err er
 	return string(data), steeringETag(info), nil
 }
 
-// steeringETag renders the token for a present file from its mtime and size; two same-length
-// writes inside one timestamp tick share a token, failing toward accepting the second.
+// Two same-length writes inside one timestamp tick share a token, failing toward accepting the
+// second.
 func steeringETag(info fs.FileInfo) string {
 	return fmt.Sprintf("%q", strconv.FormatInt(info.ModTime().UnixNano(), 10)+"-"+strconv.FormatInt(info.Size(), 10))
 }
@@ -201,7 +201,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(s.configDir, settings.Filename)
 	switch r.Method {
 	case http.MethodGet:
-		handleSettingsGet(w, path)
+		handleSettingsGet(w, path, s.kiroDefaults)
 	case http.MethodPatch:
 		s.handleSettingsWrite(w, r)
 	default:
@@ -213,11 +213,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 // resolved underneath the stored file. It FAILS OPEN (an unreadable file warns and serves
 // defaults); the write path refuses the same file, so the data stays protected. Unknown stored
 // keys are not sent, and PATCH merges against the file, so they survive.
-func handleSettingsGet(w http.ResponseWriter, path string) {
+func handleSettingsGet(w http.ResponseWriter, path string, defaults kiroDefaultsReader) {
 	stored, err := readStoredSettings(path)
 	if err != nil {
 		slog.Warn("settings: serving defaults, stored config unreadable", "path", path, "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSON(w, settings.EffectiveDefaults())
+		effective := settings.EffectiveDefaults()
+		fillKiroDefaults(&effective, defaults)
+		webhttp.WriteJSON(w, effective)
 		return
 	}
 	effective, rejected := settings.EffectiveFrom(stored)
@@ -226,7 +228,21 @@ func handleSettingsGet(w http.ResponseWriter, path string) {
 		slog.Warn("settings: stored values did not fit their type, defaults applied",
 			"path", path, "keys", rejected)
 	}
+	fillKiroDefaults(&effective, defaults)
 	webhttp.WriteJSON(w, effective)
+}
+
+// fillKiroDefaults reports kiro-cli's resolution for the three-state settings left unset; a
+// chosen value is never shadowed by one.
+func fillKiroDefaults(e *marotte.EffectiveSettings, defaults kiroDefaultsReader) {
+	if defaults == nil {
+		return
+	}
+	for key, d := range defaults.KiroDefaults() {
+		if choice, threeState := settings.ThreeStateChoice(e, key); threeState && choice == settings.FeatureFollowKiro {
+			e.KiroDefaults[key] = d
+		}
+	}
 }
 
 // maxSettingsBytes caps the existing settings file read+merged on PATCH so a
@@ -237,9 +253,8 @@ const maxSettingsBytes = 1 << 20
 // unreadable, and nothing was written over it.
 const msgSettingsUnreadable = "config.json could not be read, so your settings were not overwritten"
 
-// readStoredSettings reads and parses config.json for the READ side; an ABSENT file is an
-// empty map and nil error, every other fault an error. Shared mechanics with the write, not
-// its policy: settings.Update refuses an unreadable document, a read fails open.
+// An ABSENT file is an empty map and nil error, every other fault an error. Shared mechanics with
+// the write, not its policy: settings.Update refuses an unreadable document, a read fails open.
 // OpenRegular because os.Open blocks forever on a FIFO and follows a final symlink.
 func readStoredSettings(path string) (map[string]json.RawMessage, error) {
 	// Absolute because OpenRegular requires it.
@@ -273,8 +288,7 @@ func readStoredSettings(path string) (map[string]json.RawMessage, error) {
 	return existing, nil
 }
 
-// mergeSettingsPatch merges the request body's keys over the document on disk, as the merge
-// step of one settings.Update. There is no replacing arm (only GET and PATCH are served).
+// There is no replacing arm (only GET and PATCH are served).
 func mergeSettingsPatch(patch map[string]json.RawMessage) func(map[string]json.RawMessage) error {
 	return func(doc map[string]json.RawMessage) error {
 		maps.Copy(doc, patch)

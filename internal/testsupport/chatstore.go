@@ -17,16 +17,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// chatStoreUnion is the union of what the real consumers declare, spelled out so a consumer
-// that grows a method fails to compile against these fakes.
-type chatStoreUnion interface {
-	ChatStoreContract
-	SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error)
-	SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error)
-	// Exists is the digest resolver's lock-free `chat` gone predicate (agent/deps.go).
-	Exists(id marotte.ChatID) bool
-}
-
 // RecordingChatStore is an in-memory chat store that keeps chats in a
 // map and fires broadcasts via an attached Broadcaster. Suitable for
 // integration-style tests that need a ChatStore that actually stores things.
@@ -151,16 +141,18 @@ func (s *RecordingChatStore) SetAttachments(_ context.Context, id marotte.ChatID
 	return &state, nil
 }
 
-// Delete removes the chat with the given id and broadcasts a chat_deleted event.
-func (s *RecordingChatStore) Delete(_ context.Context, id marotte.ChatID) error {
+// Delete removes the chat with the given id, broadcasts a chat_deleted event and answers the
+// removed record's session chain.
+func (s *RecordingChatStore) Delete(_ context.Context, id marotte.ChatID) ([]string, error) {
 	s.mu.Lock()
+	var chain []string
+	if c, ok := s.Chats[id]; ok {
+		chain = c.SessionChain()
+	}
 	delete(s.Chats, id)
 	s.mu.Unlock()
 	if s.Bus != nil {
 		s.Bus.Broadcast(context.Background(), marotte.ServerEvent{Type: marotte.EventChatDeleted, ChatID: id, Payload: map[string]string{"id": string(id)}})
 	}
-	return nil
+	return chain, nil
 }
-
-// Compile-time assertion.
-var _ chatStoreUnion = (*RecordingChatStore)(nil)

@@ -130,7 +130,6 @@ describe("mcpToolInfo (property-based)", () => {
 // ---------------------------------------------------------------------------
 
 describe("profileFor", () => {
-  // Title-based lookups
   const titleCases: {
     title: string;
     kind: string;
@@ -165,7 +164,6 @@ describe("profileFor", () => {
     },
   );
 
-  // Kind fallback (unknown title)
   const kindFallbackCases: {
     kind: string;
     expectedKind: ToolKind;

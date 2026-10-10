@@ -23,9 +23,8 @@ func (b *bus) forwardPresence(ev *sse.PresenceEvent) {
 	}
 }
 
-// handleAlive is POST /api/events/alive, the client's receipt for one keepalive, tagged by
-// SSE-Client. The tag is validated against the hub's WithClientTag grammar, so a hostile
-// header puts no bytes in the table. Answers 204.
+// The tag is validated against the hub's WithClientTag grammar, so a hostile header puts no bytes
+// in the table. Answers 204.
 func (rt *Runtime) handleAlive(w http.ResponseWriter, r *http.Request) {
 	tag := r.Header.Get(clientTagHeader)
 	if !webhttp.ValidRequestID(tag) {

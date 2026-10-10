@@ -38,10 +38,8 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 		Steers: rt.steerLedger,
 		// The projection of KAS's buffer the connect replay serves, a separate owner from Steers: an origin is TTL'd,
 		// a waiting steer lives as long as KAS's buffer.
-		SteerBuffer:  rt.bus,
-		PendingPerms: rt.bus,
-		// rt: BridgeRespond resolves the reply bridge by chat id.
-		Respond:        rt,
+		SteerBuffer:    rt.bus,
+		PendingPerms:   rt.bus,
 		Push:           rt.coord,
 		Sessions:       rt.coord,
 		Terminals:      rt.agentTerms,

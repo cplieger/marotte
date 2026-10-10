@@ -409,7 +409,6 @@ function parseItem(c: Cursor): Element | null {
   return applyScripts(c, base);
 }
 
-/** Attach `_` and `^` to a base, in either written order. */
 function applyScripts(c: Cursor, base: Atom): Element | null {
   let sub: Element | null = null;
   let sup: Element | null = null;

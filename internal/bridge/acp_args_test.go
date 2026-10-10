@@ -87,7 +87,7 @@ func TestFilterACPArgs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := FilterACPArgs(tc.in)
+			got := filterACPArgs(tc.in)
 			if !slices.Equal(got, tc.want) {
 				t.Errorf("FilterACPArgs(%v) = %v, want %v", tc.in, got, tc.want)
 			}
@@ -105,7 +105,7 @@ func TestFilterACPArgs_RefusesAuthMethod(t *testing.T) {
 	}
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
-			if got := FilterACPArgs(args); !slices.Equal(got, []string{"-v"}) {
+			if got := filterACPArgs(args); !slices.Equal(got, []string{"-v"}) {
 				t.Errorf("FilterACPArgs(%v) = %v, want [-v]", args, got)
 			}
 		})

@@ -22,7 +22,7 @@ import (
 // governanceWarmTimeout bounds the cold GET /api/governance: a utility bridge spawn plus the first push.
 const governanceWarmTimeout = 12 * time.Second
 
-// governanceCache holds the three sources and their composed payload; warm closes once, on the first profile.
+// warm closes once, on the first profile.
 type governanceCache struct {
 	profile  *marotte.GovernanceStatePayload
 	registry *marotte.GovernanceMCPRegistry
@@ -111,7 +111,7 @@ func (c *governanceCache) adminPolicyKnown() bool {
 	return c.adminKnown
 }
 
-// get answers the composed payload; ok is false until the first profile arrived.
+// Ok is false until the first profile arrived.
 func (c *governanceCache) get() (marotte.GovernanceStatePayload, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -141,18 +141,18 @@ func (c *governanceCache) locks() map[string]marotte.GovernanceLock {
 	return c.snapshot.Locks
 }
 
-// SetGovernance caches the account profile. Satisfies translate.GovernanceAccess.
+// SetGovernance caches the account profile. Satisfies translate.governanceAccess.
 func (st *Settings) SetGovernance(ctx context.Context, p marotte.GovernanceStatePayload) {
 	st.publishGovernance(ctx, st.governance.setProfile(p))
 }
 
-// SetMCPRegistry caches the organization's MCP registry. Satisfies translate.GovernanceAccess.
+// SetMCPRegistry caches the organization's MCP registry. Satisfies translate.governanceAccess.
 func (st *Settings) SetMCPRegistry(ctx context.Context, r *marotte.GovernanceMCPRegistry) {
 	st.publishGovernance(ctx, st.governance.setRegistry(r))
 }
 
 // PolicyChanged re-reads the administrator rules after a policy notification. A fatal
-// administration error fails every lock closed until a clean reload. Satisfies translate.GovernanceAccess.
+// administration error fails every lock closed until a clean reload. Satisfies translate.governanceAccess.
 func (st *Settings) PolicyChanged(ctx context.Context, errs []marotte.PolicyErrorItem, reloaded bool) {
 	if failed := hasFatalAdminError(errs); failed || reloaded {
 		st.publishGovernance(ctx, st.governance.setAdminFailed(failed))
@@ -165,8 +165,8 @@ func (st *Settings) GovernanceLocks() map[string]marotte.GovernanceLock {
 	return st.governance.locks()
 }
 
-// AdminPolicyKnown reports whether the administrator rules were read or failed closed.
-func (st *Settings) AdminPolicyKnown() bool {
+// adminPolicyKnown reports whether the administrator rules were read or failed closed.
+func (st *Settings) adminPolicyKnown() bool {
 	return st.governance.adminPolicyKnown()
 }
 
@@ -248,9 +248,9 @@ func (st *Settings) runAdminRefresh() {
 	}
 }
 
-// Governance returns the cached state, starting the utility bridge and waiting up to
+// governanceState returns the cached state, starting the utility bridge and waiting up to
 // governanceWarmTimeout when cold. A failed warm returns Known=false so clients stay permissive.
-func (st *Settings) Governance(ctx context.Context) marotte.GovernanceStatePayload {
+func (st *Settings) governanceState(ctx context.Context) marotte.GovernanceStatePayload {
 	if p, ok := st.governance.get(); ok {
 		return p
 	}
@@ -268,12 +268,10 @@ func (st *Settings) Governance(ctx context.Context) marotte.GovernanceStatePaylo
 	return st.governance.peek()
 }
 
-// handleGovernance serves GET /api/governance from the cache.
 func (st *Settings) handleGovernance(w http.ResponseWriter, r *http.Request) {
-	webhttp.WriteJSON(w, st.Governance(r.Context()))
+	webhttp.WriteJSON(w, st.governanceState(r.Context()))
 }
 
-// registerGovernanceRoutes wires the governance snapshot endpoint.
 func (st *Settings) registerGovernanceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/governance", st.handleGovernance)
 }

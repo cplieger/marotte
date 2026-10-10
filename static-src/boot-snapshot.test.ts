@@ -114,7 +114,6 @@ function toolResultEntry(turnID: string, seq: number, over: Partial<EntryToolRes
   return sealed(turnID, seq, "tool_result", Object.assign(base, over));
 }
 
-/** A tool payload read back off a carried entry. */
 function toolPayload(e: Entry | undefined): EntryToolCall {
   if (e === undefined) {
     throw new Error("the record carried no entry there");
@@ -137,12 +136,10 @@ function settledTurn(chatID: string, turnID: string, n: number): void {
   seedTurn(chatID, turnID, n, [textEntry(turnID, 1), closeEntry(turnID, 2)]);
 }
 
-/** `count` prose entries at seq 1..count. */
 function textBody(turnID: string, count: number, text = "answer"): Entry[] {
   return Array.from({ length: count }, (_unused, i) => textEntry(turnID, i + 1, text));
 }
 
-/** A chat with one open tab, active, ready for a capture. */
 function oneOpenChat(chatID = "c1"): void {
   m.openTabSubjects.mockReturnValue([chatTab("t1", chatID)]);
   setSessions([session(chatID, "One")]);
@@ -163,7 +160,6 @@ function carriedIDs(win: NonNullable<BootSnapshot["window"]>): string[] {
   return win.entries.map((e) => e.id);
 }
 
-/** The store row for a chat, asserted present. */
 function row(id: string): Session {
   const s = get(id);
   if (s === undefined) {
@@ -216,10 +212,10 @@ function span(i: number): TextSpan {
  * The module's object store, opened separately to plant records; the version never
  * changes, so two connections never block.
  */
-async function withStore<T>(
+async function withStore(
   mode: IDBTransactionMode,
   fn: (store: IDBObjectStore) => IDBRequest,
-): Promise<T> {
+): Promise<void> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
     req.onupgradeneeded = () => {
@@ -233,10 +229,10 @@ async function withStore<T>(
     };
   });
   try {
-    return await new Promise<T>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const req = fn(db.transaction(STORE_NAME, mode).objectStore(STORE_NAME));
       req.onsuccess = () => {
-        resolve(req.result as T);
+        resolve();
       };
       req.onerror = () => {
         reject(new Error("request failed"));

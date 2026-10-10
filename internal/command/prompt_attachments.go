@@ -54,20 +54,20 @@ var imageExts = map[string]string{
 // user can predict from a file listing, and the cheap pre-read gate.
 const MaxDocumentBytes = 10 * 1024 * 1024
 
-// MaxInlineEncodedBytes caps the base64 payload of one inlined attachment; MaxDocumentBytes cannot,
+// maxInlineEncodedBytes caps the base64 payload of one inlined attachment; MaxDocumentBytes cannot,
 // since base64 inflates by 4/3. Inferred from KiroCrew's reading of the backend's refusal text:
 // erring low only ships a smaller image.
-const MaxInlineEncodedBytes = 5 * 1024 * 1024
+const maxInlineEncodedBytes = 5 * 1024 * 1024
 
-// MaxInlineTurnEncodedBytes caps the total encoded bytes one prompt may
+// maxInlineTurnEncodedBytes caps the total encoded bytes one prompt may
 // inline. Counted in encoded bytes since that is what the request carries.
-const MaxInlineTurnEncodedBytes = 15 * 1024 * 1024
+const maxInlineTurnEncodedBytes = 15 * 1024 * 1024
 
-// MaxHistoryInlineImages caps user-prompt images still present after the last
+// maxHistoryInlineImages caps user-prompt images still present after the last
 // compaction. The value is inferred from the backend's approximately 20-image
 // rejection point. Paths count even when an earlier size gate refused them, and
 // a session change can leave stale paths; both errors fail closed.
-const MaxHistoryInlineImages = 16
+const maxHistoryInlineImages = 16
 
 // BuildPromptBlocks constructs the ACP prompt content array: a leading text block (omitted for an
 // attachment-only prompt, since KAS refuses an empty text part), then one block per attachment: a
@@ -80,8 +80,8 @@ func BuildPromptBlocks(ctx context.Context, text string, attachments []marotte.A
 		blocks = append(blocks, marotte.TextBlock(text))
 	}
 	blocks = append(blocks, mentionBlocks(ctx, text, ws, mcp)...)
-	budget := MaxInlineTurnEncodedBytes
-	imageAllowance := max(MaxHistoryInlineImages-historyImages, 0)
+	budget := maxInlineTurnEncodedBytes
+	imageAllowance := max(maxHistoryInlineImages-historyImages, 0)
 	for _, att := range attachments {
 		if ctx.Err() != nil {
 			return blocks
@@ -124,7 +124,7 @@ func attachmentBlock(ctx context.Context, att marotte.Attachment, ws Workspace, 
 
 	// Path-reference branch: validate containment only. marotte does not read
 	// this file; the agent does, through its own policy.
-	if _, err := ws.ResolveInside(att.Path); err != nil {
+	if err := ws.checkInside(att.Path); err != nil {
 		slog.Warn("attachment: path escapes workspace",
 			"path", displayName, keyError, err)
 		return marotte.TextBlock("Attached file (invalid path): " + displayName), 0
@@ -161,9 +161,8 @@ func inlineResourceBlock(ctx context.Context, att marotte.Attachment, displayNam
 	}, base64.StdEncoding.EncodedLen(len(in.data))
 }
 
-// inlineImageBlock reads an image attachment and returns an ACP `image` block with the fitted bytes
-// and MIME type; failure degrades to a path reference. No `uri`: KAS's toDataUrl returns a present
-// uri instead of building the data URL.
+// Failure degrades to a path reference. No `uri`: KAS's toDataUrl returns a present uri instead of
+// building the data URL.
 func inlineImageBlock(ctx context.Context, att marotte.Attachment, displayName, mime string, ws Workspace, budget int, allowImage bool) (block map[string]any, spentBytes int) {
 	in, fallback := readForInline(ctx, att, displayName, mime, ws, budget, allowImage)
 	if fallback != nil {
@@ -193,7 +192,7 @@ func readForInline(
 	// reads as text, so the caveat is keyed on MIME.
 	isBinaryDoc := !isImage && !strings.HasPrefix(mime, "text/")
 
-	f, info, abs, err := ws.OpenAttachment(att.Path)
+	f, info, abs, err := ws.openAttachment(att.Path)
 	if err != nil {
 		if errors.Is(err, errAttachmentOutsideRoots) {
 			slog.Warn("attachment: path escapes workspace",
@@ -232,9 +231,9 @@ func readForInline(
 	}
 	// After the read, on len(data): no pre-read check sees base64's 4/3 inflation. EncodedLen
 	// avoids allocating the encoding.
-	if encoded := base64.StdEncoding.EncodedLen(len(data)); encoded > MaxInlineEncodedBytes {
+	if encoded := base64.StdEncoding.EncodedLen(len(data)); encoded > maxInlineEncodedBytes {
 		slog.Warn("attachment: encoded payload over cap, sending a path reference",
-			"path", displayName, "size", len(data), "encoded", encoded, "cap", MaxInlineEncodedBytes)
+			"path", displayName, "size", len(data), "encoded", encoded, "cap", maxInlineEncodedBytes)
 		if isBinaryDoc {
 			return inlinePayload{}, marotte.TextBlock("Attached file: " + att.Path +
 				" (too large to inline — read it with your file tools; this format may not be readable as text)")
@@ -248,7 +247,7 @@ func readForInline(
 // fitForInline is the image half of readForInline: fit the bytes, then charge
 // the turn budget and the replayed-history allowance on what will be sent.
 func fitForInline(att marotte.Attachment, displayName, abs string, data []byte, budget int, allowImage bool) (payload inlinePayload, fallback map[string]any) {
-	out, outMime, reason := fitImage(data, MaxImageEdgePx, MaxInlineEncodedBytes)
+	out, outMime, reason := fitImage(data, maxImageEdgePx, maxInlineEncodedBytes)
 	if reason != "" {
 		slog.Warn("attachment: image could not be fitted, sending a path reference",
 			"path", displayName, "size", len(data), "reason", reason)
@@ -262,16 +261,15 @@ func fitForInline(att marotte.Attachment, displayName, abs string, data []byte, 
 	}
 	if !allowImage {
 		slog.Warn("attachment: replayed image history budget exhausted, sending a path reference",
-			"path", displayName, "cap", MaxHistoryInlineImages)
+			"path", displayName, "cap", maxHistoryInlineImages)
 		return inlinePayload{}, marotte.TextBlock("Attached file: " + att.Path +
 			" (not inlined: this chat's replayed image history budget is spent — read it with your file tools)")
 	}
 	return inlinePayload{abs: abs, mime: outMime, data: out}, nil
 }
 
-// tooLargeFileBlock is the path reference for a file over MaxDocumentBytes. It
-// names att.Path rather than the basename, because this branch needs a path a
-// file tool can open.
+// It names att.Path rather than the basename, because this branch needs a path a file tool can
+// open.
 func tooLargeFileBlock(path string, isImage bool) map[string]any {
 	if isImage {
 		// MaxDocumentBytes is KAS's own MAX_IMAGE_SIZE, so the image tool

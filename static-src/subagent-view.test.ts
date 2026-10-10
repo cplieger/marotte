@@ -58,7 +58,6 @@ function detachedRenderID(turnID: string, lane: string): string {
   return `${turnID}#${lane}`;
 }
 
-/** Whether the page still holds a mounted render for one member's lane. */
 function memberIsMounted(turnID: string, lane: string): boolean {
   return mountedWindow(detachedRenderID(turnID, lane)) !== undefined;
 }
@@ -68,9 +67,8 @@ function memberIsMounted(turnID: string, lane: string): boolean {
 let refs: readonly string[] = [];
 const refsVersion = signal(0);
 
-/** State the open subagent tabs. Bumps a version the fake reads, which is the whole
- *  subscription: production's reader subscribes to the tab projection's own
- *  `stateVersion` the same way. */
+/** Bumps a version the fake reads, which is the whole subscription: production's reader subscribes
+ *  to the tab projection's own `stateVersion` the same way. */
 function setSubagentTabs(open: readonly string[]): void {
   refs = open;
   refsVersion.value += 1;
@@ -141,7 +139,6 @@ function seedChats(...chats: readonly { readonly chat: string; readonly turn: st
   }
 }
 
-/** Append one sealed entry. `lane` absent is the chat's own lane. */
 function push(
   chat: string,
   turn: string,
@@ -234,8 +231,6 @@ function pipeline(
   }
 }
 
-/** The page's own host, and the note the detail pane shows for a node with nothing
- *  in it. */
 function body(): HTMLElement {
   return document.getElementById("subagent-body") as HTMLElement;
 }
@@ -243,8 +238,7 @@ function emptyNoteText(): string {
   return body().querySelector(".ev-d-empty")?.textContent ?? "";
 }
 
-/** Click a stage's row in the left-hand tree, the way a reader does. `.ev-row-main`
- *  is the row's own click target; the row element carries the path. */
+/** `.ev-row-main` is the row's own click target; the row element carries the path. */
 function clickRow(path: string): void {
   const row = body().querySelector<HTMLElement>(`.ev-row[data-path="${path}"] .ev-row-main`);
   expect(row).not.toBeNull();
@@ -725,7 +719,7 @@ describe("refreshSubagent delegates to the launching chat", () => {
   it("refreshes the launching chat and nothing else", () => {
     vi.mocked(refreshChatView).mockImplementation(() => undefined);
 
-    refreshSubagent("c-launcher", "task-9");
+    refreshSubagent("c-launcher");
 
     expect(refreshChatView).toHaveBeenCalledTimes(1);
     expect(refreshChatView).toHaveBeenCalledWith("c-launcher");

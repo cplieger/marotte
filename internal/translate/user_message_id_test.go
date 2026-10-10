@@ -10,12 +10,12 @@ import (
 // commitCountingStore counts committed Mutate calls: the only way to tell a bind that
 // stayed an entry from one that reached the header.
 type commitCountingStore struct {
-	ChatRecords
+	chatRecords
 	commits int
 }
 
 func (s *commitCountingStore) Mutate(ctx context.Context, id marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
-	return s.ChatRecords.Mutate(ctx, id, func(c *marotte.Chat, exists bool) bool {
+	return s.chatRecords.Mutate(ctx, id, func(c *marotte.Chat, exists bool) bool {
 		changed := fn(c, exists)
 		if changed {
 			s.commits++
@@ -39,13 +39,10 @@ func userMessageIDFrame(t *testing.T, kasID string) []byte {
 	})
 }
 
-// stagePromptTurn opens c1's turn and registers it as the prompt-class turn
-// PromptTurn answers, the one a bind lands in.
 func stagePromptTurn(deps *baseDeps) {
 	deps.prompts["c1"] = deps.turns.chatTurn("c1")
 }
 
-// bindsOf decodes every turn_bind entry in entries, in seal order.
 func bindsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryTurnBind {
 	t.Helper()
 	var out []marotte.EntryTurnBind
@@ -106,7 +103,7 @@ func TestHandleSessionInfoUpdate_ADifferentIDAppendsASecondBind(t *testing.T) {
 func TestHandleSessionInfoUpdate_ABindWritesNoHeader(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	stagePromptTurn(deps)
-	counting := &commitCountingStore{ChatRecords: store}
+	counting := &commitCountingStore{chatRecords: store}
 	deps.store = counting
 	tr := New(rolesOf(deps))
 

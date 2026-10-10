@@ -16,7 +16,6 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// toolCallsOf decodes every tool_call entry in entries, in file order.
 func toolCallsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolCall {
 	t.Helper()
 	var out []marotte.EntryToolCall
@@ -33,7 +32,6 @@ func toolCallsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolCall 
 	return out
 }
 
-// toolResultsOf decodes every tool_result entry in entries, in file order.
 func toolResultsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolResult {
 	t.Helper()
 	var out []marotte.EntryToolResult
@@ -50,7 +48,6 @@ func toolResultsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolRes
 	return out
 }
 
-// openTextEntry is the chat's one open text entry, failing on none or several.
 func openTextEntry(t *testing.T, h *Runtime, chatID marotte.ChatID) marotte.OpenEntry {
 	t.Helper()
 	turn := h.liveTurn(chatID)
@@ -71,7 +68,7 @@ func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	before := h.bus.fanout.Position().Head
-	h.translateACPEvent("c1", newChunkMsg("hello "))
+	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg("hello "))
 
 	gotTypes := extractTypes(t, bufferedSince(h, before))
 	if missing := missingEvents(gotTypes, "turn_opened", "entry_opened"); len(missing) > 0 {
@@ -90,11 +87,11 @@ func TestTranslateACPEvent_ASecondChunkExtendsTheOpenEntry(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	h.translateACPEvent("c1", newChunkMsg("one"))
+	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg("one"))
 	first := openTextEntry(t, h, "c1")
 
 	before := h.bus.fanout.Position().Head
-	h.translateACPEvent("c1", newChunkMsg("two"))
+	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg("two"))
 	second := openTextEntry(t, h, "c1")
 
 	if first.ID != second.ID {
@@ -244,7 +241,7 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 			h, cs, _ := newTestHub()
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 			for _, raw := range tc.events {
-				h.translateACPEvent("c1", &marotte.RPCResponse{
+				h.translateACPEvent("c1", h.originOf("c1"), &marotte.RPCResponse{
 					Method: "session/update",
 					Params: mustJSON(t, map[string]any{"update": raw}),
 				})
@@ -264,7 +261,7 @@ func TestTranslateACPEvent_PlanIsOneEntry(t *testing.T) {
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	raw := json.RawMessage(`{"sessionUpdate":"plan","entries":[{"content":"step 1","priority":"high","status":"pending"}]}`)
-	h.translateACPEvent("c1", &marotte.RPCResponse{
+	h.translateACPEvent("c1", h.originOf("c1"), &marotte.RPCResponse{
 		Method: "session/update",
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	})
@@ -299,7 +296,7 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 			},
 		}),
 	}
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 
 	types := extractTypes(t, bufferedSince(h, before))
 	if missing := missingEvents(types, "permission_needed"); len(missing) > 0 {
@@ -321,7 +318,7 @@ func TestTranslateACPEvent_MalformedJSONIgnored(t *testing.T) {
 		{Method: "unknown_method", Params: json.RawMessage(`{}`)},
 	}
 	for _, m := range bad {
-		h.translateACPEvent("c1", m)
+		h.translateACPEvent("c1", h.originOf("c1"), m)
 	}
 }
 
@@ -372,7 +369,7 @@ func BenchmarkTranslateACPEvent(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for b.Loop() {
-				h.translateACPEvent("bench", p.msg)
+				h.translateACPEvent("bench", h.originOf("bench"), p.msg)
 			}
 		})
 	}
@@ -419,7 +416,7 @@ func FuzzTranslateInitErrors(f *testing.F) {
 			Params: data,
 		}
 		// Must not panic.
-		h.translateACPEvent("fuzz", msg)
+		h.translateACPEvent("fuzz", h.originOf("fuzz"), msg)
 		if head := h.bus.fanout.Position().Head; head < before {
 			t.Errorf("event head went backwards from %d", before)
 		}
@@ -455,9 +452,9 @@ func FuzzTranslateMCP(f *testing.F) {
 			Params: data,
 		}
 		// Must not panic.
-		h.translateACPEvent("fuzz", msg)
+		h.translateACPEvent("fuzz", h.originOf("fuzz"), msg)
 		// Snapshot must not panic (concurrent-safe read).
-		_ = h.mcpRegistry.Snapshot()
+		_ = h.mcpRegistry.snapshot()
 	})
 }
 
@@ -489,7 +486,7 @@ func FuzzHandleSessionUpdate(f *testing.F) {
 			Params: json.RawMessage(`{"update":` + string(data) + `}`),
 		}
 		// Must not panic.
-		h.translateACPEvent("fuzz", msg)
+		h.translateACPEvent("fuzz", h.originOf("fuzz"), msg)
 	})
 }
 
@@ -506,7 +503,7 @@ func TestTranslateACPEvent_RoutesFSRequest(t *testing.T) {
 		Method: marotte.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "r.txt"}),
 	}
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 	select {
 	case <-br.done:
 	case <-time.After(3 * time.Second):
@@ -528,7 +525,7 @@ func TestTranslateACPEvent_RoutesTerminalRequest(t *testing.T) {
 		Method: methodTermOutput,
 		Params: mustJSON(t, map[string]any{"terminalId": "term-1"}),
 	}
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 	select {
 	case <-br.done:
 	case <-time.After(3 * time.Second):
@@ -547,8 +544,6 @@ func registerParentSession(t *testing.T, h *Runtime, chatID marotte.ChatID, pare
 	sb.state = bridgeIdle
 }
 
-// captureSubSession installs a capturing agent_message_chunk handler, drives handleSessionUpdate with sessionID,
-// and returns the computed subSessionID and whether the handler ran.
 func captureSubSession(t *testing.T, h *Runtime, chatID marotte.ChatID, sessionID string) (got string, called bool) {
 	t.Helper()
 	h.sessUpdateHandlers = map[marotte.ACPUpdateKind]sessionUpdateHandler{
@@ -696,7 +691,6 @@ func TestHandleSessionUpdate_AStepsConfigFrameLeavesTheChatsModelAlone(t *testin
 	}
 }
 
-// dispatchUpdate drives handleSessionUpdate with an update of `kind` plus extra fields and reports whether the live handler ran.
 func dispatchUpdate(t *testing.T, h *Runtime, kind marotte.ACPUpdateKind, extra map[string]any) (called bool) {
 	t.Helper()
 	h.sessUpdateHandlers = map[marotte.ACPUpdateKind]sessionUpdateHandler{

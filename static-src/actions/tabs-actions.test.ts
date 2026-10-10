@@ -41,7 +41,6 @@ import {
 const mockSend = vi.mocked(transportSend);
 const mockToastError = vi.mocked(toastError);
 
-/** One sent envelope, as the assertions read it. */
 interface Sent {
   type: string;
   payload: Record<string, unknown>;

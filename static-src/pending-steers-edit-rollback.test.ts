@@ -95,7 +95,6 @@ function type(text: string): void {
   input().dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-/** Holds the delete's reply open and hands back the hand that lands it. */
 function holdTheReply(): (outcome: RemoveOutcome) => void {
   let land: (outcome: RemoveOutcome) => void = () => undefined;
   removeDispatch.mockReturnValue({
@@ -117,7 +116,6 @@ async function refusalReported(): Promise<void> {
   });
 }
 
-/** Edit the one row chat-1's dock shows, with "half a draft" typed beforehand. */
 function editWithADraft(): void {
   type("half a draft");
   recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main", origin: "user" });

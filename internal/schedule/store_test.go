@@ -30,7 +30,7 @@ func TestNewStore_ReadsLegacyLastResult(t *testing.T) {
 	}
 
 	want := map[string]Outcome{
-		"a": {Status: StatusStarted},
+		"a": {Status: statusStarted},
 		"b": {Status: StatusFailed, Reason: "needed approval for fs_write with nobody watching. Add a permission rule to allow it"},
 		"c": {Status: StatusUnknown, Reason: "no terminal signal was seen and the run stayed absent for 6 hours"},
 		"d": {Status: StatusFailed, Reason: orphan},
@@ -50,7 +50,7 @@ func TestNewStore_ReadsLegacyLastResult(t *testing.T) {
 	if err := st.Put(t.Context(), &extra); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, FileName))
+	raw, err := os.ReadFile(filepath.Join(dir, fileName))
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}

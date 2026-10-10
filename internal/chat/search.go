@@ -18,8 +18,8 @@ import (
 // segmentation, scoped filters and hit context. No index: one linear pass over a log already read. Lexical, since
 // `_kiro/knowledge` cannot answer "which turn".
 
-// searchExcerptRadius is the context around a hit in its excerpt. The client's ranker slices the same radius
-// (find-in-chat.ts's EXCERPT_RADIUS); static-src/chat-search.node.test.ts keeps the two equal.
+// The client's ranker slices the same radius (find-in-chat.ts's EXCERPT_RADIUS);
+// static-src/chat-search.node.test.ts keeps the two equal.
 const searchExcerptRadius = 60
 
 // maxSearchHits caps the hit list: a query matching every turn gets refined, not paged. Counting continues past it
@@ -52,14 +52,6 @@ const (
 	// zero length).
 	SegmentEntry SegmentKind = "entry"
 )
-
-// segmentKinds is every declared kind in emission order, one list for the exhaustiveness test and the golden.
-var segmentKinds = []SegmentKind{
-	SegmentContent, SegmentReasoning, SegmentToolTitle, SegmentToolDisclosed,
-	SegmentToolDiff, SegmentToolDenial, SegmentToolInput, SegmentToolOutput,
-	SegmentSteer, SegmentPrompt, SegmentPlan, SegmentAttachment, SegmentTurnFailure,
-	SegmentEntry,
-}
 
 // Hit locates one match; the client fetches the turns it needs and highlights locally. Offset indexes runes inside
 // the one segment SegmentKind names on EntryID, never a whole turn.
@@ -127,7 +119,6 @@ func parseSearchQuery(raw string, caseSensitive bool) searchQuery {
 	return q
 }
 
-// empty reports a query with neither free text nor a filter.
 func (q *searchQuery) empty() bool {
 	return q.text == "" && q.file == "" && q.tool == "" && q.turn < 0
 }
@@ -146,8 +137,7 @@ type hitScan struct {
 	chars   int
 }
 
-// add counts one occurrence and keeps it while there is room; the hit is built lazily, since past the cap its excerpt
-// is discarded.
+// The hit is built lazily, since past the cap its excerpt is discarded.
 func (sc *hitScan) add(mk func() Hit) {
 	sc.matched++
 	if len(sc.hits) < maxSearchHits {
@@ -170,15 +160,15 @@ type searchCall struct {
 	diff string
 }
 
-// Search scans a chat's entries for a query and returns the hits and tally: Scanned counts every entry of a drawn
+// search scans a chat's entries for a query and returns the hits and tally: Scanned counts every entry of a drawn
 // turn, Matched the occurrences, Truncated is false. Undrawn turns (absent from drawn) are skipped: no card renders
 // them. caseSensitive governs the free text only and travels on the request so both halves agree.
-func Search(entries []marotte.Entry, drawn map[string]struct{}, raw string, caseSensitive bool) SearchResult {
+func search(entries []marotte.Entry, drawn map[string]struct{}, raw string, caseSensitive bool) SearchResult {
 	res, _ := searchEntries(entries, drawn, raw, caseSensitive)
 	return res
 }
 
-// searchEntries is Search plus the byte volume of the segments read, from one walk, for cross-chat ranking's
+// searchEntries is search plus the byte volume of the segments read, from one walk, for cross-chat ranking's
 // occurrences-per-byte.
 func searchEntries(entries []marotte.Entry, drawn map[string]struct{}, raw string, caseSensitive bool) (res SearchResult, chars int) {
 	q := parseSearchQuery(raw, caseSensitive)
@@ -284,7 +274,7 @@ func entryMatchesFilters(e *marotte.Entry, t *searchTurn, q *searchQuery) bool {
 	return true
 }
 
-// toolPairOf returns the tool_call payload and, for a tool_result, its own payload; nil call for neither.
+// nil call for neither.
 func toolPairOf(e *marotte.Entry, t *searchTurn) (*marotte.EntryToolCall, *marotte.EntryToolResult) {
 	switch e.Kind {
 	case marotte.EntryKindToolCall:
@@ -307,13 +297,11 @@ func (t *searchTurn) callPayload(id string) *marotte.EntryToolCall {
 	return nil
 }
 
-// toolCallIDOfResult inverts marotte.ToolResultID.
 func toolCallIDOfResult(resultID string) string {
 	return strings.TrimSuffix(resultID, ":result")
 }
 
-// toolTouchesFile matches a substring against a call's and its result's locations and diff paths; a read has a
-// location and no diff.
+// A read has a location and no diff.
 func toolTouchesFile(call *marotte.EntryToolCall, result *marotte.EntryToolResult, want string) bool {
 	for _, loc := range call.Locations {
 		if strings.Contains(strings.ToLower(loc.Path), want) {
@@ -362,7 +350,6 @@ func appendEntryHits(sc *hitScan, e *marotte.Entry, ordinal int, q *searchQuery,
 	}
 }
 
-// appendSegmentHits counts every occurrence of the query text inside one segment.
 func appendSegmentHits(sc *hitScan, e *marotte.Entry, ordinal int, q *searchQuery, seg *segment) {
 	var runes []rune
 	for hit := range q.needle.Occurrences(seg.text) {
@@ -384,7 +371,6 @@ func appendSegmentHits(sc *hitScan, e *marotte.Entry, ordinal int, q *searchQuer
 	}
 }
 
-// segment is one searchable span of an entry, the unit a hit's offset is relative to.
 type segment struct {
 	kind SegmentKind
 	text string
@@ -416,13 +402,16 @@ func entrySegments(e *marotte.Entry, t *searchTurn) []segment {
 	case marotte.EntryKindSafetyBlocked:
 		var p marotte.EntrySafetyBlocked
 		return oneSegment(SegmentContent, decodeText(e.Payload, &p, func() string { return strings.Join(p.Properties, "\n") }))
+	case marotte.EntryKindModelRouted:
+		var p marotte.EntryModelRouted
+		return oneSegment(SegmentContent, decodeText(e.Payload, &p, func() string { return p.Message }))
 	case marotte.EntryKindTurnClose:
 		var p marotte.EntryTurnClose
 		return oneSegment(SegmentTurnFailure, decodeText(e.Payload, &p, func() string { return p.FailureReason }))
 	case marotte.EntryKindTurnOpen:
 		return turnOpenSegments(e.Payload)
 	case marotte.EntryKindTurnBind, marotte.EntryKindSteerAck, marotte.EntryKindCompaction,
-		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched:
+		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindSteerDelivered:
 		// A compaction summary restates history searchable at its source; bind and switch render no text. An ack's words
 		// are the one rendered prose left out of the index.
 		return nil
@@ -446,7 +435,6 @@ func toolResultPayloadSegments(payload json.RawMessage) []segment {
 	return toolResultSegments(&res)
 }
 
-// planSegments is one span per plan entry, in plan order.
 func planSegments(payload json.RawMessage) []segment {
 	var p marotte.EntryPlan
 	if json.Unmarshal(payload, &p) != nil {
@@ -511,14 +499,13 @@ func toolResultSegments(res *marotte.EntryToolResult) []segment {
 	return append(segs, oneSegment(SegmentToolOutput, res.Output)...)
 }
 
-// inputLeafDedupeMin is the leaf length at which a leaf found verbatim in the diff text stops being searched. Shorter
-// leaves are paths, patterns or commands; at or above it, 7,281 of 7,361 measured calls with input and diffs carry the
-// leaf verbatim in new_text.
+// inputLeafDedupeMin is the leaf length at which a leaf found verbatim in the diff text stops being
+// searched. Shorter leaves are paths, patterns or commands; at or above it, 7,281 of 7,361 measured
+// calls with input and diffs carry the leaf verbatim in new_text.
 const inputLeafDedupeMin = 40
 
-// inputLeafText is a tool call's Input string leaves, one per line, in document order, minus those diffText carries.
-// Keys, numbers and bools are skipped. Decoder.Token() keeps the card's order, which a map would shuffle. Malformed
-// bytes and `null` yield "".
+// Decoder.Token() keeps the card's order, which a map would shuffle. Malformed bytes and `null`
+// yield "".
 func inputLeafText(raw json.RawMessage, diffText string) string {
 	if len(raw) == 0 {
 		return ""
@@ -599,7 +586,7 @@ func inputLeafInDiff(leaf, diffText string) bool {
 	return diffText != "" && len(leaf) >= inputLeafDedupeMin && strings.Contains(diffText, leaf)
 }
 
-// excerptAround returns the match with context, ellipsised where cut; rune-indexed so no character splits.
+// rune-indexed so no character splits.
 func excerptAround(runes []rune, at, length int) string {
 	start := max(at-searchExcerptRadius, 0)
 	end := min(at+length+searchExcerptRadius, len(runes))

@@ -1,25 +1,19 @@
 package command
 
 // Relays the answer to the agent's structured question (_kiro/userInput) on the request's JSON-RPC
-// id, as CmdElicitationResponse does.
+// id, as cmdElicitationResponse does.
 
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// CmdUserInputResponse forwards the user's answer to kiro-cli as the
+// cmdUserInputResponse forwards the user's answer to kiro-cli as the
 // _kiro/userInput response.
-func CmdUserInputResponse(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *marotte.ClientCommand) (any, error) {
-	sb := bridges.Bridge(cmd.ChatID)
-	if sb == nil {
-		return nil, StatusError(http.StatusBadRequest, errNoBridge)
-	}
+func cmdUserInputResponse(ctx context.Context, perms pendingPermAccess, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.UserInputResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
@@ -34,19 +28,16 @@ func CmdUserInputResponse(ctx context.Context, bridges BridgeAccess, perms Pendi
 	default:
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	// Take before responding, as CmdPermission does: the agent advances
+	// Take before responding, as cmdPermission does: the agent advances
 	// on the first answer it receives, so a second tab's answer is both
 	// discarded and invisible.
-	if !perms.TakePendingPerm(cmd.ChatID, p.RequestID, marotte.SettledByUser) {
+	reply, ok := perms.TakePendingPerm(cmd.ChatID, p.RequestID, marotte.SettledByUser)
+	if !ok {
 		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}
 	result := marotte.UserInputResult{Action: p.Action}
 	if p.Action == marotte.UserInputActionAnswered {
 		result.Answer = p.Answer
 	}
-	// Claimed, so it must be answered whether or not the client is still there.
-	if err := sb.Respond(durable.Context(ctx), p.RequestID, result, nil); err != nil {
-		slog.Error("user input response failed", "chat_id", cmd.ChatID, keyError, err)
-	}
-	return responseOK, nil
+	return answerResponse(ctx, "user_input", cmd.ChatID, reply, result)
 }

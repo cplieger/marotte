@@ -19,9 +19,9 @@ import (
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
 )
 
-// List returns a deep copy of every server with secrets masked. Safe to
+// list returns a deep copy of every server with secrets masked. Safe to
 // serve directly over the wire.
-func (s *Store) List(ctx context.Context) []*Server {
+func (s *Store) list(ctx context.Context) []*Server {
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -34,10 +34,10 @@ func (s *Store) List(ctx context.Context) []*Server {
 	return out
 }
 
-// EnabledRaw returns a deep copy of every enabled server with secrets
+// enabledRaw returns a deep copy of every enabled server with secrets
 // intact, the input EnabledServers projects for prewarm. Not exposed
 // over HTTP.
-func (s *Store) EnabledRaw(ctx context.Context) []*Server {
+func (s *Store) enabledRaw(ctx context.Context) []*Server {
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -53,8 +53,8 @@ func (s *Store) EnabledRaw(ctx context.Context) []*Server {
 	return out
 }
 
-// Get returns a masked copy of one server, or nil.
-func (s *Store) Get(_ context.Context, id ServerID) *Server {
+// get returns a masked copy of one server, or nil.
+func (s *Store) get(_ context.Context, id serverID) *Server {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, sv := range s.servers {
@@ -90,7 +90,7 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 		CreatedAt:              now,
 		UpdatedAt:              now,
 	}
-	if err := Validate(rec); err != nil {
+	if err := validate(rec); err != nil {
 		return nil, err
 	}
 
@@ -106,7 +106,7 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 	if existing := s.findByNameLocked(rec.Name); existing != nil {
 		if !sameSpec(existing, rec) {
 			s.mu.Unlock()
-			return nil, ErrNameConflict
+			return nil, errNameConflict
 		}
 		out := maskedCopy(existing)
 		s.mu.Unlock()
@@ -128,40 +128,40 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 	return maskedCopy(rec), nil
 }
 
-// ImportOutcome names what one entry of a pasted block did.
-type ImportOutcome string
+// importOutcome names what one entry of a pasted block did.
+type importOutcome string
 
-// ImportCreated and ImportUnchanged are the two outcomes of one import entry.
+// importCreated and ImportUnchanged are the two outcomes of one import entry.
 // There is no "updated": an entry naming a configured server either matches its
 // spec (unchanged) or conflicts with it (the whole paste fails), because
 // silently rewriting a server the user has since edited is not what pasting a
 // README asked for.
 const (
-	ImportCreated   ImportOutcome = "created"
-	ImportUnchanged ImportOutcome = "unchanged"
+	importCreated   importOutcome = "created"
+	importUnchanged importOutcome = "unchanged"
 )
 
-// ImportResult is one entry's outcome, in the order the block declared it.
-type ImportResult struct {
+// importResult is one entry's outcome, in the order the block declared it.
+type importResult struct {
 	Name    string        `json:"name"`
-	Outcome ImportOutcome `json:"outcome"`
+	Outcome importOutcome `json:"outcome"`
 }
 
-// ImportServers creates every server of one pasted block, or none: the block is one README's worth.
+// importServers creates every server of one pasted block, or none: the block is one README's worth.
 // A name configured with the SAME spec is `unchanged`; with a DIFFERENT spec the paste fails rather
 // than silently overwriting.
-func (s *Store) ImportServers(ctx context.Context, in []*Server) ([]ImportResult, error) {
+func (s *Store) importServers(ctx context.Context, in []*Server) ([]importResult, error) {
 	if len(in) == 0 {
 		return nil, errors.New("no servers to connect")
 	}
 	if len(in) > maxImportServers {
 		return nil, fmt.Errorf("too many servers in one paste (%d, max %d)", len(in), maxImportServers)
 	}
-	// Validate and de-duplicate before taking the lock: both are pure, and a
+	// validate and de-duplicate before taking the lock: both are pure, and a
 	// block that cannot land should not have made every other caller wait.
 	seen := make(map[string]struct{}, len(in))
 	for _, sv := range in {
-		if err := Validate(sv); err != nil {
+		if err := validate(sv); err != nil {
 			return nil, fmt.Errorf("server %q: %w", sv.Name, err)
 		}
 		key := strings.ToLower(sv.Name)
@@ -178,7 +178,7 @@ func (s *Store) ImportServers(ctx context.Context, in []*Server) ([]ImportResult
 	defer s.releaseWrite()
 	s.mu.Lock()
 	before := s.servers
-	results := make([]ImportResult, 0, len(in))
+	results := make([]importResult, 0, len(in))
 	created := 0
 	for _, sv := range in {
 		res, err := s.importOneLocked(sv, now)
@@ -187,7 +187,7 @@ func (s *Store) ImportServers(ctx context.Context, in []*Server) ([]ImportResult
 			s.mu.Unlock()
 			return nil, err
 		}
-		if res.Outcome == ImportCreated {
+		if res.Outcome == importCreated {
 			created++
 		}
 		results = append(results, res)
@@ -210,15 +210,15 @@ func (s *Store) ImportServers(ctx context.Context, in []*Server) ([]ImportResult
 
 // importOneLocked appends one entry, or reports that the stored record already
 // says the same thing. Caller must hold the write lock.
-func (s *Store) importOneLocked(sv *Server, now int64) (ImportResult, error) {
+func (s *Store) importOneLocked(sv *Server, now int64) (importResult, error) {
 	if existing := s.findByNameLocked(sv.Name); existing != nil {
 		if !sameSpec(existing, sv) {
-			return ImportResult{}, fmt.Errorf(
+			return importResult{}, fmt.Errorf(
 				"%w. %q is configured with a different command or url. Rename the entry or edit the existing integration",
-				ErrNameConflict, existing.Name,
+				errNameConflict, existing.Name,
 			)
 		}
-		return ImportResult{Name: existing.Name, Outcome: ImportUnchanged}, nil
+		return importResult{Name: existing.Name, Outcome: importUnchanged}, nil
 	}
 	rec := *sv
 	rec.ID = newID()
@@ -230,14 +230,14 @@ func (s *Store) importOneLocked(sv *Server, now int64) (ImportResult, error) {
 	rec.CreatedAt = now
 	rec.UpdatedAt = now
 	s.servers = append(s.servers, &rec)
-	return ImportResult{Name: rec.Name, Outcome: ImportCreated}, nil
+	return importResult{Name: rec.Name, Outcome: importCreated}, nil
 }
 
-// Update replaces one server by id. Fields whose secret value equals
-// SecretMask are preserved from the existing record, so a client can
+// update replaces one server by id. Fields whose secret value equals
+// secretMask are preserved from the existing record, so a client can
 // edit non-secret fields without re-submitting the secret. Returns a
 // masked copy of the stored record.
-func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, error) {
+func (s *Store) update(ctx context.Context, id serverID, in *Server) (*Server, error) {
 	if err := s.acquireWrite(ctx); err != nil {
 		return nil, err
 	}
@@ -246,7 +246,7 @@ func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, e
 	idx := s.indexLocked(id)
 	if idx < 0 {
 		s.mu.Unlock()
-		return nil, ErrNotFound
+		return nil, errNotFound
 	}
 	existing := s.servers[idx]
 	// Before mergeSecrets, not after: it substitutes a stored value for every
@@ -278,16 +278,16 @@ func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, e
 		CreatedAt:              existing.CreatedAt,
 		UpdatedAt:              time.Now().UnixMilli(),
 	}
-	// Validate runs under s.mu because rec.Env and rec.Headers were just
+	// validate runs under s.mu because rec.Env and rec.Headers were just
 	// resolved against `existing` via mergeSecrets, which only makes
 	// sense with the current stored set. Cheap regex + length checks; no I/O.
-	if err := Validate(rec); err != nil {
+	if err := validate(rec); err != nil {
 		s.mu.Unlock()
 		return nil, err
 	}
 	if s.hasNameLocked(rec.Name, id) {
 		s.mu.Unlock()
-		return nil, ErrNameConflict
+		return nil, errNameConflict
 	}
 	s.servers[idx] = rec
 	if err := s.persist(ctx); err != nil {
@@ -302,9 +302,9 @@ func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, e
 	return maskedCopy(rec), nil
 }
 
-// SetEnabled flips the enabled flag for one server. Returns the updated
+// setEnabled flips the enabled flag for one server. Returns the updated
 // masked copy.
-func (s *Store) SetEnabled(ctx context.Context, id ServerID, enabled bool) (*Server, error) {
+func (s *Store) setEnabled(ctx context.Context, id serverID, enabled bool) (*Server, error) {
 	if err := s.acquireWrite(ctx); err != nil {
 		return nil, err
 	}
@@ -313,7 +313,7 @@ func (s *Store) SetEnabled(ctx context.Context, id ServerID, enabled bool) (*Ser
 	idx := s.indexLocked(id)
 	if idx < 0 {
 		s.mu.Unlock()
-		return nil, ErrNotFound
+		return nil, errNotFound
 	}
 	if s.servers[idx].Enabled == enabled {
 		out := maskedCopy(s.servers[idx])
@@ -339,8 +339,8 @@ func (s *Store) SetEnabled(ctx context.Context, id ServerID, enabled bool) (*Ser
 	return out, nil
 }
 
-// Delete removes a server by id. No-op if not found.
-func (s *Store) Delete(ctx context.Context, id ServerID) error {
+// delete removes a server by id. No-op if not found.
+func (s *Store) delete(ctx context.Context, id serverID) error {
 	if err := s.acquireWrite(ctx); err != nil {
 		return err
 	}
@@ -377,7 +377,7 @@ func (s *Store) Delete(ctx context.Context, id ServerID) error {
 // Satisfies prewarm.ServerLister so the Store can be passed directly
 // to prewarm.NewRunner without an adapter.
 func (s *Store) EnabledServers(ctx context.Context) []prewarm.ServerInfo {
-	servers := s.EnabledRaw(ctx)
+	servers := s.enabledRaw(ctx)
 	out := make([]prewarm.ServerInfo, len(servers))
 	for i, srv := range servers {
 		out[i] = prewarm.ServerInfo{

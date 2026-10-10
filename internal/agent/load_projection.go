@@ -34,8 +34,8 @@ type replay struct {
 	// projections are the rebuilds in flight, keyed by chat.
 	projections map[marotte.ChatID]*loadProjection
 	// onProjection receives a settled projection without projMu held: the swap writes the chat store,
-	// which could deadlock against a replay frame.
-	onProjection func(chatID marotte.ChatID, lp *loadProjection)
+	// which could deadlock against a replay frame. Its error settles the load's gate.
+	onProjection func(chatID marotte.ChatID, lp *loadProjection) error
 	// underLifecycle runs the swap under the chat's lifecycle mutex, which the rewind holds across its
 	// truncate. Nil runs it unserialized (bare projection tests).
 	underLifecycle func(ctx context.Context, chatID marotte.ChatID, fn func() error) error
@@ -49,6 +49,8 @@ type replay struct {
 // loadProjection is one in-flight session/load transcript. Guarded by Runtime.projMu.
 type loadProjection struct {
 	proj *translate.EntryProjection
+	// settled is the loading bridge's gate, settled by the swap's outcome.
+	settled *sessionSettle
 	// sessionID is the session the replay came from: turn pairing's scope.
 	sessionID string
 	// snapshot is the newest turn_revert id at open, or empty; the swap refuses a log reverted since.
@@ -67,21 +69,25 @@ const (
 )
 
 // OpenReplayProjection starts a projection before a session/load, snapshotting the newest
-// turn_revert. An open one is discarded: only a re-load reaches this twice.
-func (rp *replay) OpenReplayProjection(ctx context.Context, chatID marotte.ChatID, sessionID string) {
+// turn_revert; its swap settles settled. An open one is discarded: only a re-load reaches this twice.
+func (rp *replay) OpenReplayProjection(ctx context.Context, chatID marotte.ChatID, sessionID string, settled *sessionSettle) {
 	snapshot, _ := rp.chats.NewestRevert(ctx, chatID)
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
 	if rp.projections == nil {
 		rp.projections = make(map[marotte.ChatID]*loadProjection)
 	}
-	if _, dup := rp.projections[chatID]; dup {
+	if old, dup := rp.projections[chatID]; dup {
 		slog.Debug("replay projection: superseding an open one", "chat_id", chatID)
+		if old.settled != settled {
+			old.settled.settle(errReplaySuperseded)
+		}
 	}
 	rp.projections[chatID] = &loadProjection{
 		proj:      translate.NewEntryProjection(newMessageID, rp.workDir),
 		sessionID: sessionID,
 		snapshot:  snapshot,
+		settled:   settled,
 	}
 }
 
@@ -92,7 +98,8 @@ func (rp *replay) MarkReplayLoadedAt(chatID marotte.ChatID, at drainPoint) {
 	rp.adopt(chatID, lp, settleOnLoad)
 }
 
-// DiscardReplayProjection drops a chat's projection unsettled after a failed load.
+// DiscardReplayProjection drops a chat's projection unsettled after a failed load; the fresh
+// session the spawn falls back to settles its gate.
 func (rp *replay) DiscardReplayProjection(chatID marotte.ChatID) {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
@@ -102,8 +109,6 @@ func (rp *replay) DiscardReplayProjection(chatID marotte.ChatID) {
 	}
 }
 
-// ingestReplayFrame folds one replay frame into the chat's open projection, reporting whether
-// one consumed it.
 func (rp *replay) ingestReplayFrame(chatID marotte.ChatID, kind marotte.ACPUpdateKind, raw json.RawMessage) bool {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
@@ -145,21 +150,23 @@ func (rp *replay) claimSettled(chatID marotte.ChatID, gen uint64, force bool, no
 	return lp
 }
 
-// adopt swaps a claimed projection into the record; nil means nothing was claimed.
+// nil means nothing was claimed.
 func (rp *replay) adopt(chatID marotte.ChatID, lp *loadProjection, trigger string) {
 	if lp == nil {
 		return
 	}
 	slog.Info("replay projection settled",
 		"chat_id", chatID, "frames", lp.frames, "trigger", trigger)
+	var err error
 	if rp.onProjection != nil {
-		rp.onProjection(chatID, lp)
+		err = rp.onProjection(chatID, lp)
 	}
+	lp.settled.settle(err)
 }
 
-// swapProjectedTranscript merges a settled replay through SwapMerged's gates under the lifecycle
+// swapProjectedTranscript merges a settled replay through swapMerged's gates under the lifecycle
 // mutex, never holding projMu. A rewrite is announced as subject_changed with its minted version.
-func (rp *replay) swapProjectedTranscript(chatID marotte.ChatID, lp *loadProjection) {
+func (rp *replay) swapProjectedTranscript(chatID marotte.ChatID, lp *loadProjection) error {
 	ctx := durable.Context(rp.lifetime.shutdownCtx)
 	projected := lp.proj.Turns()
 	var version string
@@ -173,11 +180,11 @@ func (rp *replay) swapProjectedTranscript(chatID marotte.ChatID, lp *loadProject
 			if readErr != nil {
 				return false, readErr
 			}
-			return SwapMerged(ctx, &Swap{
+			return swapMerged(ctx, &swapRequest{
 				Log:       l,
 				Header:    h,
 				SessionID: lp.sessionID,
-				Record:    RecordTurnsOf(entries, reverted),
+				Record:    recordTurnsOf(entries, reverted),
 				Projected: projected,
 				Snapshot:  lp.snapshot,
 			})
@@ -192,7 +199,7 @@ func (rp *replay) swapProjectedTranscript(chatID marotte.ChatID, lp *loadProject
 	}
 	if err != nil {
 		slog.Error("replay projection: swap failed", "chat_id", chatID, "error", err)
-		return
+		return err
 	}
 	slog.Info("replay projection: merged",
 		"chat_id", chatID, "projected_turns", len(projected), "rewritten", changed)
@@ -201,4 +208,5 @@ func (rp *replay) swapProjectedTranscript(chatID marotte.ChatID, lp *loadProject
 		frame.Subject = marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
 		rp.broadcast(ctx, frame)
 	}
+	return nil
 }

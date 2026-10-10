@@ -64,7 +64,7 @@ func TestCatalog_FetchesSanitizesAndCaches(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewCatalog(srv.Client(), srv.URL)
-	entries, err := c.Entries(t.Context())
+	entries, err := c.catalogEntries(t.Context())
 	if err != nil {
 		t.Fatalf("Entries: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestCatalog_FetchesSanitizesAndCaches(t *testing.T) {
 	if entries[1].rawBase != "" {
 		t.Errorf("a non-GitHub repository resolved to %q", entries[1].rawBase)
 	}
-	if _, err := c.Entries(t.Context()); err != nil {
+	if _, err := c.catalogEntries(t.Context()); err != nil {
 		t.Fatalf("second Entries: %v", err)
 	}
 	if hits.Load() != 1 {
@@ -98,17 +98,17 @@ func TestCatalog_AFailedRefetchKeepsTheLastGoodCopy(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewCatalog(srv.Client(), srv.URL)
-	if _, err := c.Entries(t.Context()); err != nil {
+	if _, err := c.catalogEntries(t.Context()); err != nil {
 		t.Fatalf("Entries: %v", err)
 	}
 	fail.Store(true)
 	c.fetchedAt = c.fetchedAt.Add(-2 * catalogTTL)
-	entries, err := c.Entries(t.Context())
+	entries, err := c.catalogEntries(t.Context())
 	if err != nil || len(entries) != 2 {
 		t.Errorf("Entries after a failed refetch = %d, %v; want the cached 2, nil", len(entries), err)
 	}
 	before := hits.Load()
-	if entries, err := c.Entries(t.Context()); err != nil || len(entries) != 2 {
+	if entries, err := c.catalogEntries(t.Context()); err != nil || len(entries) != 2 {
 		t.Errorf("Entries inside the failure backoff = %d, %v; want the cached 2, nil", len(entries), err)
 	}
 	if hits.Load() != before {
@@ -116,11 +116,11 @@ func TestCatalog_AFailedRefetchKeepsTheLastGoodCopy(t *testing.T) {
 	}
 
 	cold := NewCatalog(srv.Client(), srv.URL)
-	if _, err := cold.Entries(t.Context()); err == nil {
+	if _, err := cold.catalogEntries(t.Context()); err == nil {
 		t.Errorf("a cold catalogue answered a failed fetch with no error")
 	}
 	before = hits.Load()
-	if _, err := cold.Entries(t.Context()); err == nil || hits.Load() != before {
+	if _, err := cold.catalogEntries(t.Context()); err == nil || hits.Load() != before {
 		t.Errorf("a cold catalogue inside the failure backoff = %v after %d new requests; want the error and none",
 			err, hits.Load()-before)
 	}
@@ -140,21 +140,21 @@ func TestCatalog_AStaleCopyIsServedWhileOneCallerRefreshes(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewCatalog(srv.Client(), srv.URL)
-	if _, err := c.Entries(t.Context()); err != nil {
+	if _, err := c.catalogEntries(t.Context()); err != nil {
 		t.Fatalf("Entries: %v", err)
 	}
 	c.fetchedAt = c.fetchedAt.Add(-2 * catalogTTL)
 	block.Store(true)
 	refreshed := make(chan error, 1)
 	go func() {
-		_, err := c.Entries(t.Context())
+		_, err := c.catalogEntries(t.Context())
 		refreshed <- err
 	}()
 	<-entered
 
 	got := make(chan int, 1)
 	go func() {
-		entries, _ := c.Entries(t.Context())
+		entries, _ := c.catalogEntries(t.Context())
 		got <- len(entries)
 	}()
 	select {
@@ -188,7 +188,7 @@ func TestCatalog_ConcurrentColdCallersShareOneFetch(t *testing.T) {
 	errs := make(chan error, callers)
 	for range callers {
 		go func() {
-			_, err := c.Entries(t.Context())
+			_, err := c.catalogEntries(t.Context())
 			errs <- err
 		}()
 	}
@@ -216,7 +216,7 @@ func TestCatalog_RefusesAnOversizedRegistry(t *testing.T) {
 		_, _ = w.Write([]byte(`{"powers":[{"name":"a"}]}` + strings.Repeat(" ", maxRegistryBytes)))
 	}))
 	defer srv.Close()
-	if _, err := NewCatalog(srv.Client(), srv.URL).Entries(t.Context()); err == nil {
+	if _, err := NewCatalog(srv.Client(), srv.URL).catalogEntries(t.Context()); err == nil {
 		t.Errorf("an oversized registry was decoded")
 	}
 }
@@ -230,14 +230,14 @@ func TestCatalog_ServersReadsThePowersMCPFile(t *testing.T) {
 	defer srv.Close()
 	c := NewCatalog(srv.Client(), srv.URL)
 	e := Entry{Name: "x", rawBase: srv.URL + "/o/r/main/x"}
-	names, known := c.Servers(t.Context(), &e)
+	names, known := c.catalogServerNames(t.Context(), &e)
 	if !known || !slices.Equal(names, []string{"a", "b"}) {
 		t.Errorf("Servers = %v, %v; want [a b], true", names, known)
 	}
 	if path != "/o/r/main/x/mcp.json" {
 		t.Errorf("fetched %q, want the Power's mcp.json", path)
 	}
-	if names, known := c.Servers(t.Context(), &Entry{Name: "y"}); known || names != nil {
+	if names, known := c.catalogServerNames(t.Context(), &Entry{Name: "y"}); known || names != nil {
 		t.Errorf("an unresolvable repository reported %v, %v", names, known)
 	}
 }
@@ -251,17 +251,17 @@ func TestCatalog_ServersSeesAChangedMCPFileOnceTheCacheAges(t *testing.T) {
 	defer srv.Close()
 	c := NewCatalog(srv.Client(), srv.URL)
 	e := Entry{Name: "x", rawBase: srv.URL + "/o/r/main/x"}
-	if names, _ := c.Servers(t.Context(), &e); len(names) != 0 {
+	if names, _ := c.catalogServerNames(t.Context(), &e); len(names) != 0 {
 		t.Fatalf("Setup: Servers = %v, want none", names)
 	}
 	body.Store(`{"mcpServers":{"added":{}}}`)
-	if names, _ := c.Servers(t.Context(), &e); len(names) != 0 {
+	if names, _ := c.catalogServerNames(t.Context(), &e); len(names) != 0 {
 		t.Errorf("Servers within serversTTL = %v, want the cached empty list", names)
 	}
 	c.mu.Lock()
 	c.servers["x"] = serverList{at: time.Now().Add(-serversTTL - time.Second)}
 	c.mu.Unlock()
-	if names, known := c.Servers(t.Context(), &e); !known || !slices.Equal(names, []string{"added"}) {
+	if names, known := c.catalogServerNames(t.Context(), &e); !known || !slices.Equal(names, []string{"added"}) {
 		t.Errorf("Servers after the cache aged = %v, %v; want [added], true", names, known)
 	}
 }
@@ -312,16 +312,16 @@ func TestCatalog_AdmitReusesTheConfirmationsFetchAndRefreshesAnOlderOne(t *testi
 	}))
 	defer srv.Close()
 	c := NewCatalog(srv.Client(), srv.URL)
-	if _, ok, err := c.Revalidate(t.Context(), "postman"); !ok || err != nil {
+	if _, ok, err := c.revalidate(t.Context(), "postman"); !ok || err != nil {
 		t.Fatalf("Setup: Revalidate = %v, %v", ok, err)
 	}
-	if _, ok, err := c.Admit(t.Context(), "postman"); !ok || err != nil || fetches.Load() != 1 {
+	if ok, err := c.admit(t.Context(), "postman"); !ok || err != nil || fetches.Load() != 1 {
 		t.Errorf("Admit right after Revalidate = %v, %v with %d fetches; want the same fetch", ok, err, fetches.Load())
 	}
 	c.mu.Lock()
 	c.fetchedAt = time.Now().Add(-serversTTL - time.Second)
 	c.mu.Unlock()
-	if _, _, err := c.Admit(t.Context(), "postman"); err != nil || fetches.Load() != 2 {
+	if _, err := c.admit(t.Context(), "postman"); err != nil || fetches.Load() != 2 {
 		t.Errorf("Admit on a catalogue older than serversTTL: err %v, %d fetches; want a refetch", err, fetches.Load())
 	}
 }
@@ -332,7 +332,7 @@ func TestCatalog_ServersSanitizesTheDeclaredNames(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewCatalog(srv.Client(), srv.URL)
-	names, known := c.Servers(t.Context(), &Entry{Name: "x", rawBase: srv.URL + "/o/r/main/x"})
+	names, known := c.catalogServerNames(t.Context(), &Entry{Name: "x", rawBase: srv.URL + "/o/r/main/x"})
 	if !known || !slices.Equal(names, []string{"a b", "evil"}) {
 		t.Errorf("Servers = %q, %v; want [\"a b\" \"evil\"], true", names, known)
 	}
@@ -349,7 +349,7 @@ func TestCatalog_ServersReportsAnOversizedListAsUnknown(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewCatalog(srv.Client(), srv.URL)
-	if names, known := c.Servers(t.Context(), &Entry{Name: "x", rawBase: srv.URL + "/o/r/main/x"}); known || names != nil {
+	if names, known := c.catalogServerNames(t.Context(), &Entry{Name: "x", rawBase: srv.URL + "/o/r/main/x"}); known || names != nil {
 		t.Errorf("Servers over the cap = %d names, %v; want nil, false", len(names), known)
 	}
 }
@@ -377,7 +377,7 @@ func TestLegacyServers_RendersLegacyPowersAndSkipsPlugins(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "broken", "mcp.json"), `{not json`, 0o644)
 	writeFile(t, filepath.Join(dir, "steering-only", "POWER.md"), `# x`, 0o644)
 
-	servers, errs := LegacyServers(dir)
+	servers, errs := legacyServers(dir)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "broken") {
 		t.Errorf("errs = %v, want one naming the broken power", errs)
 	}
@@ -400,7 +400,7 @@ func TestLegacyServers_RendersLegacyPowersAndSkipsPlugins(t *testing.T) {
 }
 
 func TestLegacyServers_AnAbsentDirectoryIsEmpty(t *testing.T) {
-	servers, errs := LegacyServers(filepath.Join(t.TempDir(), "none"))
+	servers, errs := legacyServers(filepath.Join(t.TempDir(), "none"))
 	if len(servers) != 0 || errs != nil {
 		t.Errorf("LegacyServers(absent) = %v, %v; want empty, nil", servers, errs)
 	}
@@ -770,13 +770,13 @@ func TestLegacyServers_TwoPowersDerivingOneKeyAreBothReported(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "a", "mcp.json"), `{"mcpServers":{"b-c":{"command":"second"},"d":{"command":"kept"}}}`, 0o644)
 	writeFile(t, filepath.Join(dir, "z", "mcp.json"), `{"mcpServers":{"s":{"command":"z"}}}`, 0o644)
 
-	servers, errs := LegacyServers(dir)
+	servers, errs := legacyServers(dir)
 	if got := sortedNames(servers); !slices.Equal(got, []string{"power-a-d", "power-z-s"}) {
 		t.Errorf("servers = %v, want the colliding power-a-b-c dropped and the rest kept", got)
 	}
 	var reported []string
 	for _, err := range errs {
-		if se, ok := errors.AsType[*ScanError](err); ok {
+		if se, ok := errors.AsType[*scanError](err); ok {
 			reported = append(reported, se.Power)
 		}
 	}

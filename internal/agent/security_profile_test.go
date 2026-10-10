@@ -11,7 +11,6 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// writeProfileSetting writes a config.json with just the security profile, failing inside itself.
 func writeProfileSetting(t *testing.T, dir, value string) {
 	t.Helper()
 	body := map[string]any{}

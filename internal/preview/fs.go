@@ -10,14 +10,12 @@ var (
 	// errResolveUnsupported means the kernel cannot do a no-follow resolution, so
 	// the request is refused rather than served by a weaker walk.
 	errResolveUnsupported = errors.New("openat2 is unavailable")
-	// errResolveBusy means the kernel kept answering EAGAIN past the retry
-	// budget; the request fails closed instead of spinning.
+	// The request fails closed instead of spinning.
 	errResolveBusy = errors.New("openat2 kept racing a rename")
 )
 
-// maxResolveAttempts bounds openat2 calls per open. RESOLVE_BENEATH answers
-// EAGAIN when a concurrent rename stops the kernel proving containment, so a
-// tree under rename churn could otherwise hold the handler forever.
+// RESOLVE_BENEATH answers EAGAIN when a concurrent rename stops the kernel proving containment, so
+// a tree under rename churn could otherwise hold the handler forever.
 const maxResolveAttempts = 8
 
 // openat2 is unix.Openat2, reassignable so a test can drive the kernel's
@@ -49,7 +47,7 @@ func openBeneath(dirfd int, rel string, flags int) (int, error) {
 	return -1, errResolveBusy
 }
 
-// openDir opens a directory beneath dirfd; "" is dirfd itself.
+// "" is dirfd itself.
 func openDir(dirfd int, rel string) (int, error) {
 	if rel == "" {
 		rel = "."
@@ -57,9 +55,8 @@ func openDir(dirfd int, rel string) (int, error) {
 	return openBeneath(dirfd, rel, unix.O_RDONLY|unix.O_DIRECTORY)
 }
 
-// openRegular opens a regular file beneath dirfd and returns its stat. O_NONBLOCK
-// keeps a FIFO planted at the name from blocking the open; anything but a
-// regular file is closed and refused.
+// O_NONBLOCK keeps a FIFO planted at the name from blocking the open; anything but a regular file
+// is closed and refused.
 func openRegular(dirfd int, rel string) (int, unix.Stat_t, error) {
 	var st unix.Stat_t
 	fd, err := openBeneath(dirfd, rel, unix.O_RDONLY|unix.O_NONBLOCK)

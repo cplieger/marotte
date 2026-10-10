@@ -303,3 +303,10 @@ func TestParsedMap_CacheReuse(t *testing.T) {
 		t.Error("parsedMap re-parsed instead of returning the cached map (cache-hit gate broken)")
 	}
 }
+
+// readBytes is the cached file's bytes, (nil, nil) when the file is missing or configDir is
+// empty. The slice IS the shared cache's own.
+func readBytes(ctx context.Context, configDir string) ([]byte, error) {
+	g := readGeneration(ctx, configDir)
+	return g.data, g.err
+}

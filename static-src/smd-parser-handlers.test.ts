@@ -3,7 +3,8 @@
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
-import { parser, parser_write, parser_end, DOCUMENT } from "./smd-parser.js";
+import { parser, parser_write, parser_end } from "./smd-parser.js";
+import { DOCUMENT } from "./smd-parser-types.js";
 import type { Parser } from "./smd-parser.js";
 import {
   BLOCKQUOTE,
@@ -18,7 +19,6 @@ import {
   UNCLOSED,
 } from "./smd-parser-types.js";
 
-/** No-op renderer for structural testing. */
 function nullRenderer() {
   return {
     data: null,
@@ -37,14 +37,12 @@ function nullRenderer() {
   };
 }
 
-/** Feed input one character at a time to maximize handler invocations. */
 function feedCharByChar(p: Parser, input: string): void {
   for (const ch of input) {
     parser_write(p, ch);
   }
 }
 
-/** Generate a string from a set of characters. */
 function stringFromChars(...chars: string[]): fc.Arbitrary<string> {
   return fc
     .array(fc.constantFrom(...chars), { minLength: 0, maxLength: 60 })
@@ -112,13 +110,9 @@ describe("smd-parser-handlers edge cases", () => {
 // handleRawURL: the trailing-boundary rule
 
 interface Trace {
-  /** Every token opened, in order. */
   tokens: number[];
-  /** How many of them were closed. */
   ends: number;
-  /** Every attribute set, in order. */
   attrs: { attr: number; value: string }[];
-  /** Every text run emitted, in order. */
   texts: string[];
 }
 
@@ -140,7 +134,6 @@ function tracingRenderer(t: Trace) {
   };
 }
 
-/** Parse `input` in `chunkLen`-sized writes and report what the renderer saw. */
 function trace(input: string, chunkLen = input.length): Trace {
   const t: Trace = { tokens: [], ends: 0, attrs: [], texts: [] };
   const p = parser(tracingRenderer(t) as any);

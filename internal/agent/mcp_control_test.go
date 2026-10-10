@@ -13,7 +13,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// insertLiveBridge inserts a live bridge for chatID and returns its fake.
 func insertLiveBridge(t *testing.T, h *Runtime, chatID marotte.ChatID) *fakeBridge {
 	t.Helper()
 	sb, _ := h.bridge.mgr.orInsert(chatID)
@@ -24,14 +23,12 @@ func insertLiveBridge(t *testing.T, h *Runtime, chatID marotte.ChatID) *fakeBrid
 	return fb
 }
 
-// bridgeCalled reports whether the fake bridge received a call to method.
 func bridgeCalled(b *fakeBridge, method string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return slices.Contains(b.calls, method)
 }
 
-// enabledConfig stages names as the user's own enabled servers, in both sets as a real store nests them.
 func enabledConfig(names ...string) *fakeMCPConfig {
 	return &fakeMCPConfig{enabled: nameSet(names...), configured: nameSet(names...)}
 }
@@ -211,7 +208,7 @@ func TestMCPRegistry_RecordConnectedStoresDiscovery(t *testing.T) {
 	templates := []marotte.MCPResourceTemplateInfo{{Name: "issue", URITemplate: "gh://issues/{number}"}}
 	h.mcpRegistry.RecordConnected(t.Context(), "everything", marotte.MCPSource{}, nil, prompts, resources, templates)
 
-	snap := h.mcpRegistry.Snapshot()
+	snap := h.mcpRegistry.snapshot()
 	if len(snap) != 1 {
 		t.Fatalf("snapshot = %+v", snap)
 	}
@@ -226,7 +223,6 @@ func TestMCPRegistry_RecordConnectedStoresDiscovery(t *testing.T) {
 	}
 }
 
-// postJSON posts a JSON body to an http.HandlerFunc.
 func postJSON(handler http.HandlerFunc, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

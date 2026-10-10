@@ -24,9 +24,8 @@ interface Client {
 
 interface WindowClient extends Client {
   focus(): Promise<WindowClient>;
-  // Whether this window has user focus. Load-bearing: a focused page gets a
-  // posted message and no OS notification, which is the single sanctioned
-  // exception to userVisibleOnly.
+  // Load-bearing: a focused page gets a posted message and no OS notification, which is the single
+  // sanctioned exception to userVisibleOnly.
   readonly focused: boolean;
 }
 

@@ -38,7 +38,6 @@ func connectFrames(t *testing.T, rt *Runtime, legacy bool) []marotte.ServerEvent
 	return out
 }
 
-// connectPayload decodes the ONE connected frame a cold connect writes.
 func connectPayload(t *testing.T, rt *Runtime, _ string) marotte.ConnectedPayload {
 	t.Helper()
 	return connectedOf(t, connectFrames(t, rt, false))
@@ -60,7 +59,6 @@ func connectedOf(t *testing.T, frames []marotte.ServerEvent) marotte.ConnectedPa
 	return marotte.ConnectedPayload{}
 }
 
-// reencode moves a decoded `any` payload into its typed shape.
 func reencode(from, into any) error {
 	data, err := json.Marshal(from)
 	if err != nil {
@@ -119,7 +117,7 @@ func TestConnect_TheBusySetExcludesStepTurns(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	rt.bridge.mgr.orInsert("c-step")
 	rt.bridge.mgr.orInsert("c-own")
-	if _, _, err := rt.runs.log.Open(t.Context(), translate.RunStep{RunID: "wf-1", NodePath: "wf-1/step", SessionID: "sess-step"}, "c-step"); err != nil {
+	if _, _, err := rt.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf-1", NodePath: "wf-1/step", SessionID: "sess-step"}, "c-step"); err != nil {
 		t.Fatalf("Open(step turn): %v", err)
 	}
 	if !rt.runs.hostsLiveRun("c-step") {
@@ -319,9 +317,9 @@ func TestConnect_V3EmptySetsAreOneFrameEach(t *testing.T) {
 // TestConnect_V3StatusSnapshotCarriesTheWaitingSetMinusBusyChats pins that a running chat suppresses a stale waiting_on_user.
 func TestConnect_V3StatusSnapshotCarriesTheWaitingSetMinusBusyChats(t *testing.T) {
 	rt := newBudgetRuntime(t)
-	rt.bus.chatStatus.MergeStamped("c-waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "pick one"})
-	rt.bus.chatStatus.MergeStamped("c-working", marotte.ChatStatusPayload{Status: "in_progress"})
-	rt.bus.chatStatus.MergeStamped("c-busy", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
+	rt.bus.chatStatus.mergeStamped("c-waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "pick one"})
+	rt.bus.chatStatus.mergeStamped("c-working", marotte.ChatStatusPayload{Status: "in_progress"})
+	rt.bus.chatStatus.mergeStamped("c-busy", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
 	rt.bridge.mgr.orInsert("c-busy")
 	rt.stagePromptTurn(t, "c-busy")
 
@@ -353,7 +351,7 @@ func TestConnect_LegacyKeepsThePerItemReplayAndNumericBounds(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	ids := busyChatsWithHugeTurns(t, rt, 2)
 	rt.bus.steers.SteerWaiting(ids[1], &marotte.SteerQueuedPayload{SteerID: "s1", Text: "steer text"})
-	rt.bus.chatStatus.MergeStamped("c-waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
+	rt.bus.chatStatus.mergeStamped("c-waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
 	rt.bus.emit(marotte.ServerEvent{Type: marotte.EventChatUpdated, ChatID: "c1"})
 
 	frames := connectFrames(t, rt, true)

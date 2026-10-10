@@ -94,13 +94,12 @@ describe("relayOAuthCallback", () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ status: 200 }), { status: 200 }));
     const pasted = "http://localhost:41234/oauth/callback?code=abc&state=st";
 
-    const res = await relayOAuthCallback.dispatch({ server: "linear", redirect_url: pasted });
+    await relayOAuthCallback.dispatch({ server: "linear", redirect_url: pasted });
 
     const { url, init } = lastCall();
     expect(url).toContain("/api/mcp/oauth-relay");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ server: "linear", redirect_url: pasted });
-    expect(res?.status).toBe(200);
   });
 
   // An authorization code is single-use, so a retried relay could spend it twice.

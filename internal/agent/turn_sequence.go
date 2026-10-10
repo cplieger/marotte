@@ -9,42 +9,36 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// attachForward resets the observed position for a new forward goroutine and returns its generation. A new bridge
-// restarts its sequence at zero; the generation lets a straggling forward from the old bridge be ignored.
-func (r *turnRegistry) attachForward(chatID marotte.ChatID) uint64 {
+// forwardAttachment is one forward goroutine's generation and the closer of its exit channel.
+type forwardAttachment struct {
+	exited func()
+	gen    uint64
+}
+
+// attachForward resets the observed position for a new forward goroutine and returns its attachment. A new bridge
+// restarts its sequence at zero; the generation lets a straggling forward from the old bridge be ignored. The closer
+// is bound here, not when the goroutine starts: a teardown that captured the exit channel may forget the lifecycle
+// before the goroutine runs, and a closer looked up then would never release its drain wait.
+func (r *turnRegistry) attachForward(chatID marotte.ChatID) forwardAttachment {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	lc.fwdGen++
+	gen := lc.fwdGen
 	lc.observedSeq = 0
 	lc.forwardGone = false
 	if lc.fwdExits == nil {
 		lc.fwdExits = make(map[uint64]chan struct{})
 	}
-	lc.fwdExits[lc.fwdGen] = make(chan struct{})
+	exit := make(chan struct{})
+	lc.fwdExits[gen] = exit
 	lc.wakeLocked()
-	return lc.fwdGen
-}
-
-// exitFor answers the func generation gen's goroutine calls to close its exit channel. Taken at start: by exit a
-// teardown may have forgotten the lifecycle.
-func (r *turnRegistry) exitFor(chatID marotte.ChatID, gen uint64) (done func()) {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return func() {}
-	}
-	lc.mu.Lock()
-	exit := lc.fwdExits[gen]
-	lc.mu.Unlock()
-	return func() {
-		if exit == nil {
-			return
-		}
+	return forwardAttachment{gen: gen, exited: func() {
 		close(exit)
 		lc.mu.Lock()
 		delete(lc.fwdExits, gen)
 		lc.mu.Unlock()
-	}
+	}}
 }
 
 // forwardExit answers a channel the current forward goroutine closes on exit, nil when none is attached.
@@ -58,8 +52,8 @@ func (r *turnRegistry) forwardExit(chatID marotte.ChatID) <-chan struct{} {
 	return lc.fwdExits[lc.fwdGen]
 }
 
-// observe advances the folder's position to seq, waking waiters. Called for every frame Forward consumes, not every
-// fold: many frames touch no turn, and a fold-bounded position could park a settle forever.
+// Called for every frame Forward consumes, not every fold: many frames touch no turn, and a
+// fold-bounded position could park a settle forever.
 func (r *turnRegistry) observe(chatID marotte.ChatID, gen, seq uint64) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -84,6 +78,42 @@ func (r *turnRegistry) sealPosition(chatID marotte.ChatID, gen uint64) {
 	lc.wakeLocked()
 }
 
+// folded is how far chatID's forward goroutine has consumed, on its attachment; read during a fold, the
+// position before the frame being folded. Gen 0 is no attachment.
+func (r *turnRegistry) folded(chatID marotte.ChatID) drainPoint {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return drainPoint{}
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return drainPoint{gen: lc.fwdGen, seq: lc.observedSeq}
+}
+
+// awaitDrained parks until attachment at.gen has consumed at.seq, or until it cannot: an
+// attachment that exited or was replaced never will.
+func (r *turnRegistry) awaitDrained(ctx context.Context, chatID marotte.ChatID, at drainPoint) {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return
+	}
+	lc.mu.Lock()
+	for {
+		if lc.fwdGen != at.gen || lc.observedSeq >= at.seq || lc.forwardGone {
+			lc.mu.Unlock()
+			return
+		}
+		changed := lc.changed
+		lc.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return
+		}
+		lc.mu.Lock()
+	}
+}
+
 // awaitPosition parks until the folder has consumed everything before this turn's response, reporting whether it
 // got there. It holds no lifecycle mutex and claims nothing: claiming enters turnFinalizing, where a fold waits. It
 // does not stop when the awaited turn finalizes, because the wait also orders the empty-turn gate's later-turn
@@ -94,7 +124,6 @@ func (r *turnRegistry) awaitPosition(ctx context.Context, chatID marotte.ChatID,
 	gen := lc.fwdGen
 	if t := lc.turnLocked(turnID); t != nil {
 		t.NeedSeq = seq
-		t.needGen = gen
 	}
 	for {
 		switch {

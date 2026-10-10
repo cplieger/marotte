@@ -7,11 +7,15 @@ import {
   nodePathSegment,
   pauseDetailPhrase,
   pausePendingSentence,
+  resumeSentence,
   type RunNode,
   type RunState,
-  userStopSentence,
+  stopSentence,
 } from "./run-store.js";
-import { stateOf, withAsk, inFlight, type ExecState } from "./exec-view/status.js";
+import { askedSteps, type AskedSteps, type RunAsks } from "./run-asks.js";
+import { runStatusTerminal, type ClassifiedRunStatus } from "./run-status.js";
+import type { RunPlanUpdate, RunStepMessageVerb } from "./wire/types.gen.js";
+import { stateOf, withAsk, inFlight, settled, type ExecState } from "./exec-view/status.js";
 import {
   currentMembers,
   failureOwner,
@@ -21,21 +25,15 @@ import {
   type ExecNode,
   type ExecRun,
 } from "./exec-view/model.js";
+import {
+  lastTailLine,
+  watchResult,
+  watchSummary,
+  watchTailFence,
+  type WatchResult,
+} from "./watch-result.js";
 import { defaultFailureReason, isBroken } from "./turn-severity.js";
 import type { RunStepEnd } from "./wire/types.gen.js";
-
-/** What a run is waiting on a PERSON for. KAS leaves an asking run `running`, so `inspect` cannot
- *  show it; built by `decision-dock.ts` and declared here, by the adapter that folds it in. */
-export interface RunAsks {
-  /** How many of this run's asks are unanswered. */
-  count: number;
-  /** The node ids those asks name. Separate from `count` because the wire cannot
-   *  always attribute one (the step-session registry has to have seen the
-   *  sub-session), and a run with an unattributable ask is still blocked. */
-  nodes: ReadonlySet<string>;
-  /** The head ask as one line, for the alert. "" when there is none to name. */
-  label: string;
-}
 
 /** The run log's step ends by node path (`run-store.ts` `runStepEnds`). */
 export type StepEnds = ReadonlyMap<string, RunStepEnd>;
@@ -49,7 +47,7 @@ interface PlanEntry {
   stopCondition?: string;
   /** A parallel's join policy: `all` / `allSettled` / `any`. */
   join?: string;
-  /** A watch node's handler and what it waits for. */
+  /** A watch's handler id. */
   watch?: string;
   /** A container's planned children, raw: what it will hold before KAS expands it. */
   body?: unknown[];
@@ -103,10 +101,12 @@ export function indexPlan(plan: unknown): Map<string, PlanEntry> {
           entry.stopCondition = when;
         }
       }
-      const handler = str(o["watchHandler"]) ?? str(o["handler"]);
-      const until = str(o["until"]) ?? str(o["waitFor"]);
-      if (handler !== undefined || until !== undefined) {
-        entry.watch = [handler, until].filter((v) => v !== undefined).join(" \u2192 ");
+      // KAS's nodePlan carries a watch's handler id in `agentName`.
+      if (o["type"] === "watch") {
+        const handler = str(o["agentName"]);
+        if (handler !== undefined) {
+          entry.watch = handler;
+        }
       }
       const body = PLAN_CHILD_KEYS.flatMap((key) => {
         const v = o[key];
@@ -168,7 +168,11 @@ function kindOf(type: string): ExecKind {
 
 /** The identity facts for a step, in the order they answer questions: who ran it, on what, how
  *  it ended, and what it took to get there. */
-function stepFacts(node: RunNode, plan: PlanEntry | undefined): ExecFact[] {
+function stepFacts(
+  node: RunNode,
+  plan: PlanEntry | undefined,
+  watch: WatchResult | undefined,
+): ExecFact[] {
   const facts: ExecFact[] = [];
   const add = (label: string, value: string | undefined, mono = false): void => {
     if (value !== undefined && value !== "") {
@@ -195,15 +199,28 @@ function stepFacts(node: RunNode, plan: PlanEntry | undefined): ExecFact[] {
   add("At the cap", plan?.onMaxIterations);
   add("Stops when", plan?.stopCondition, true);
   add("Join", plan?.join);
-  add("Waits for", plan?.watch, true);
+  add("Handler", plan?.watch, true);
+  if (watch?.kind === "process") {
+    // "Signal" is KAS's completion signal above, so a kill is stated as the exit.
+    if (watch.signal !== null && watch.signal !== "") {
+      add("Exit", `killed by ${watch.signal}`);
+    } else if (watch.exitCode !== null) {
+      add("Exit", String(watch.exitCode));
+    }
+    add("Output file", watch.outputFile, true);
+  }
   // Last, and monospace: it is the handle for the step's own session rather than something a reader
   // acts on, so it sits below the facts that describe the work.
   add("Session", node.sessionId, true);
   return facts;
 }
 
-/** The one-line summary under a row's label. */
-function subtitleOf(node: RunNode, kind: ExecKind, plan: PlanEntry | undefined): string {
+function subtitleOf(
+  node: RunNode,
+  kind: ExecKind,
+  plan: PlanEntry | undefined,
+  watch: WatchResult | undefined,
+): string {
   const bits: string[] = [];
   if (kind === "repeat") {
     bits.push(
@@ -215,7 +232,11 @@ function subtitleOf(node: RunNode, kind: ExecKind, plan: PlanEntry | undefined):
   } else if (kind === "parallel") {
     bits.push(plan?.join === undefined ? "in parallel" : `in parallel, join ${plan.join}`);
   } else if (kind === "watch") {
-    bits.push(plan?.watch === undefined ? "polls" : `polls ${truncate(plan.watch, 60)}`);
+    if (watch !== undefined) {
+      bits.push(watchSummary(watch));
+    } else {
+      bits.push(plan?.watch === undefined ? "polls" : `polls ${truncate(plan.watch, 60)}`);
+    }
   } else if (kind === "step") {
     if (node.agentName !== undefined && node.agentName !== "") {
       bits.push(node.agentName);
@@ -229,7 +250,52 @@ function subtitleOf(node: RunNode, kind: ExecKind, plan: PlanEntry | undefined):
       bits.push(`${String(n)} ${n === 1 ? "retry" : "retries"}`);
     }
   }
+  // Kiro's step detail: a pause's reason, else a retry wait's, verbatim.
+  if (node.status === "paused" && node.pauseReason !== undefined) {
+    bits.push(`Paused: ${truncate(node.pauseReason, 80)}`);
+  } else if (node.status === "running" && node.retryReason !== undefined) {
+    bits.push(`Retrying: ${truncate(node.retryReason, 80)}`);
+  }
   return bits.join(" \u00b7 ");
+}
+
+function latestEnd(nodes: readonly ExecNode[]): string | undefined {
+  let best: string | undefined;
+  let bestAt = Number.NEGATIVE_INFINITY;
+  for (const n of nodes) {
+    const at = n.end === undefined ? Number.NaN : Date.parse(n.end);
+    if (!Number.isNaN(at) && at > bestAt) {
+      best = n.end;
+      bestAt = at;
+    }
+  }
+  return best;
+}
+
+/** `path` goes through `nodePathSegment`, so a step's tree row is addressed the way KAS addresses
+ *  its FRAMES, the key its live transcript is filed under. */
+interface FoldContext {
+  plans: Map<string, PlanEntry>;
+  asked: AskedSteps;
+  run: ClassifiedRunStatus;
+  ends: StepEnds;
+}
+
+/** The server's `stepMessageVerb` (internal/agent/run_message.go), read off the raw statuses. */
+function messageVerb(node: RunNode, ctx: FoldContext): RunStepMessageVerb | undefined {
+  if (runStatusTerminal(ctx.run) || node.sessionId === undefined || node.sessionId === "") {
+    return undefined;
+  }
+  if (node.status === "running") {
+    return "steer";
+  }
+  if (node.status !== "paused") {
+    return undefined;
+  }
+  if (ctx.asked.answerable.has(node)) {
+    return "answer";
+  }
+  return ctx.run === "paused" ? "prompt" : undefined;
 }
 
 /** A raw plan child as a not-yet-started state node, or nothing when it names no node. Any type is
@@ -276,28 +342,22 @@ function plannedChildren(node: RunNode, plan: PlanEntry | undefined): RunNode[] 
   return body;
 }
 
-/** Fold one state node and its subtree. `path` goes through `nodePathSegment`, so a step's tree
- *  row is addressed the way KAS addresses its FRAMES — otherwise a step inside a loop had its
- *  live transcript filed under a path no tree node ever selected, which is the other symptom of
- *  the same key defect that duplicated the transcript's step rows. */
 function toNode(
   node: RunNode,
   trail: readonly string[],
-  plans: Map<string, PlanEntry>,
-  asks: RunAsks,
-  ends: StepEnds,
+  ctx: FoldContext,
   parent?: RunNode,
 ): ExecNode {
   const path = [...trail, nodePathSegment(node, parent)];
   const address = nodePathKey(path);
-  const plan = plans.get(node.nodeId);
+  const plan = ctx.plans.get(node.nodeId);
   const kind = kindOf(node.type);
   const actual = node.children ?? [];
   const kids = actual.length > 0 ? actual : plannedChildren(node, plan);
-  const children = kids.map((k) => toNode(k, path, plans, asks, ends, node));
-  const own = withAsk(stateOf(node.status), asks.nodes.has(node.nodeId));
+  const children = kids.map((k) => toNode(k, path, ctx, node));
+  const own = withAsk(stateOf(node.status), ctx.asked.waiting.has(node));
   const work = isWork({ kind });
-  const end = work ? ends.get(address) : undefined;
+  const end = work ? ctx.ends.get(address) : undefined;
   const state = work ? endedState(own, end) : rollUp(own, currentMembers({ kind, children }));
   // A repeat's child is a PASS; KAS names a pass container `<repeatId>#<n>`, which is its id
   // and not something a reader can read.
@@ -312,6 +372,10 @@ function toNode(
     state,
     children,
   };
+  const verb = work ? messageVerb(node, ctx) : undefined;
+  if (verb !== undefined) {
+    out.verb = verb;
+  }
   if (pass !== undefined) {
     out.pass = pass;
   }
@@ -321,14 +385,27 @@ function toNode(
   if (node.startedAt !== undefined) {
     out.start = node.startedAt;
   }
+  if (node.startGen !== undefined) {
+    out.startGen = node.startGen;
+  }
   if (node.endedAt !== undefined) {
     out.end = node.endedAt;
+  } else if (!work && settled(out.state)) {
+    // KAS stamps no end on a finished repeat, so its row would count on to now.
+    const last = latestEnd(children);
+    if (last !== undefined) {
+      out.end = last;
+    }
   }
-  const sub = subtitleOf(node, kind, plan);
+  const watch =
+    kind === "watch" && node.capturedOutput !== undefined
+      ? watchResult(node.capturedOutput)
+      : undefined;
+  const sub = subtitleOf(node, kind, plan, watch);
   if (sub !== "") {
     out.subtitle = sub;
   }
-  const facts = stepFacts(node, plan);
+  const facts = stepFacts(node, plan, watch);
   if (facts.length > 0) {
     out.facts = facts;
   }
@@ -339,8 +416,19 @@ function toNode(
     const logReason = (end.failure_reason ?? "").trim();
     out.failure = logReason !== "" ? logReason : defaultFailureReason(end.outcome);
   }
-  if (node.capturedOutput !== undefined) {
+  // An idle-timeout record says only what the subtitle already does, so it shows no Output box.
+  if (watch?.kind === "process") {
+    out.output = watchTailFence(watch.tail);
+  } else if (watch === undefined && node.capturedOutput !== undefined) {
     out.output = node.capturedOutput;
+  }
+  if (node.capturedOutput !== undefined) {
+    out.capture =
+      watch === undefined
+        ? node.capturedOutput
+        : watch.kind === "process"
+          ? lastTailLine(watch.tail)
+          : "";
   }
   if (node.artifacts !== undefined && Object.keys(node.artifacts).length > 0) {
     out.artifacts = node.artifacts;
@@ -365,7 +453,7 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
       text: asks.count > 1 ? `${head} (${String(asks.count)} asks waiting)` : head,
     };
   }
-  const stopped = userStopSentence(state);
+  const stopped = stopSentence(state);
   if (stopped !== undefined) {
     return { kind: "stopped", text: stopped };
   }
@@ -373,12 +461,15 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
   if (pending !== undefined) {
     return { kind: "paused", text: pending };
   }
+  const resumed = resumeSentence(state);
+  if (resumed !== undefined) {
+    return { kind: "stopped", text: resumed };
+  }
   if (state.status === "paused") {
     // The two `need_input` literals are REPLACED rather than quoted.
     const bits = [
       isNeedInputPark(state)
-        ? "A step is waiting for your answer. Resume alone will park it again, " +
-          "so answer or waive it in the dock"
+        ? "A step is waiting for your answer. Resume alone will park it again"
         : state.pauseReason === undefined || state.pauseReason === ""
           ? "Waiting"
           : `Waiting: ${state.pauseReason}`,
@@ -402,6 +493,28 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
   return undefined;
 }
 
+/** What became of a queued plan revision, each outcome KAS names today in Kiro's words. The
+ *  vocabulary is open: a word missing here is shown as KAS sent it. */
+const PLAN_OUTCOMES = new Map<string, (reason: string) => string>([
+  ["queued", () => ""],
+  ["applied", () => "applied"],
+  ["rejected", (reason) => (reason === "" ? "rejected" : `rejected: ${truncate(reason, 200)}`)],
+  ["dropped", () => "dropped, the run ended first"],
+]);
+
+/** The run tab's one line for a plan revision: `Plan revised: N steps queued after <step>`, then
+ *  its outcome. */
+function planNotice(u: RunPlanUpdate): { text: string; failed: boolean } {
+  const steps = u.pending === 1 ? "1 step" : `${String(u.pending)} steps`;
+  const after = u.after === undefined || u.after === "" ? "" : ` after ${u.after}`;
+  const head = `Plan revised: ${steps} queued${after}`;
+  const outcome = PLAN_OUTCOMES.get(u.outcome)?.(u.reason ?? "") ?? u.outcome;
+  return {
+    text: outcome === "" ? head : `${head} \u00b7 ${outcome}`,
+    failed: u.outcome === "rejected",
+  };
+}
+
 /** Fold KAS's `inspect` reply into the exec view's model. */
 export function runToExec(
   workflowID: string,
@@ -411,19 +524,24 @@ export function runToExec(
   focus = "",
   ends: StepEnds = new Map(),
 ): ExecRun {
-  const plans = indexPlan(plan);
   // A sequence root is a container KAS names after the workflow itself, so its children are the
   // run's real top level (one group around everything is an indent for no information). The plan's
   // top level is the root's body, which no plan entry names.
   const root = state.root;
+  const ctx: FoldContext = {
+    plans: indexPlan(plan),
+    asked: askedSteps(root, asks),
+    run: state.status ?? "unknown",
+    ends,
+  };
   let nodes: ExecNode[] = [];
   if (root?.type === "sequence") {
     const planned = Array.isArray(plan) ? (plan as unknown[]).flatMap(plannedNode) : [];
     const top = root.children !== undefined && root.children.length > 0 ? root.children : planned;
     const trail = [nodePathSegment(root, undefined)];
-    nodes = top.map((k) => toNode(k, trail, plans, asks, ends, root));
+    nodes = top.map((k) => toNode(k, trail, ctx, root));
   } else if (root !== undefined) {
-    nodes = [toNode(root, [], plans, asks, ends)];
+    nodes = [toNode(root, [], ctx)];
   }
 
   const runState = stateOf(state.status);
@@ -440,6 +558,9 @@ export function runToExec(
   const alert = alertOf(state, asks, nodes);
   if (alert !== undefined) {
     out.alert = alert;
+  }
+  if (state.planUpdate !== undefined) {
+    out.notice = planNotice(state.planUpdate);
   }
   if (focus !== "") {
     out.focus = focus;

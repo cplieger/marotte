@@ -3,7 +3,6 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
-/** Every authored client source file plus the shipped page, inlined as text at transform time. */
 const authoredSource = import.meta.glob<string>(
   ["./*.ts", "./actions/*.ts", "./handlers/*.ts", "./fundamentals/*.ts", "../static/index.html"],
   { query: "?raw", import: "default", eager: true },
@@ -359,9 +358,8 @@ describe("the muted classes are gone rather than defined", () => {
         ruleBody(loadCSS("27-run-card.css"), ".run-output-val-empty"),
       ),
     ).toBe(true);
-    // The run PAGE's own note moved to the exec view, which is a different component with its own
-    // vocabulary — the page renders a delegated-execution view now rather than a variant of the
-    // transcript's card.
+    // The run PAGE's note lives in the exec view, a different component with its own vocabulary
+    // than the transcript's card.
     expect(
       /color:\s*var\(--c-text-tertiary\)/.test(
         ruleBody(loadCSS("31-exec-view.css"), ".ev-d-empty"),

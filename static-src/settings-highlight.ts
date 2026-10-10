@@ -40,7 +40,6 @@ export function openSetting(tab: SettingsTab, controlID: string): void {
   });
 }
 
-/** Swap the panel, push the URL and highlight. */
 function applySetting(tab: SettingsTab, controlID: string): void {
   // Swaps the panel and fires the tab's lazy loader; the URL is pushed here rather than by
   // forceSettingsTab, which is the router's own callee.
@@ -62,6 +61,7 @@ export function flushURLHighlight(): void {
 }
 
 /** Test-only: restore the module to its pre-boot state with a chosen target. */
+// deadset:ignore DS1004 -- test seam: sets the pending highlight target
 export function _setPendingTargetForTest(id: string | null): void {
   pendingTarget = id;
 }

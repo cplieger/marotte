@@ -12,7 +12,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// envNames returns the names in a composed environment.
 func envNames(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
@@ -310,7 +309,6 @@ func TestStop_ReapLineNamesTheSession(t *testing.T) {
 	}
 }
 
-// spawnEnvDump starts a bridge against the env-dumping fake and returns the child environment's lines.
 func spawnEnvDump(t *testing.T, opts *marotte.StartOpts) []string {
 	t.Helper()
 	dir := t.TempDir()

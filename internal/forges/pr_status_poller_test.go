@@ -24,55 +24,49 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// testConn is the one connection the poller's fakes answer for.
 var testConn = PRConnection{ID: "github:github.com", Account: "bob", WebBase: "https://github.com"}
 
-// rowOf is pr as the list row a source answers.
-func rowOf(pr *WatchedPR) PR {
-	return PR{RepoID: pr.RepoID, Repo: pr.Repo, Title: pr.Title, Number: pr.Number, Action: PRAction{Checks: pr.Check}}
+func rowOf(pr *watchedPR) PR {
+	return PR{RepoID: repoIDOf(pr.Repo), Repo: pr.Repo, Title: pr.Title, Number: pr.Number, Action: PRAction{Checks: pr.Check}}
 }
 
-// authoredRead is conn's read holding one authored page of prs, every one of
-// them in the cplieger/marotte clone the fakes track.
-func authoredRead(conn PRConnection, page ScopePage, prs []WatchedPR) ConnectionRead {
+func authoredRead(conn PRConnection, page scopePage, prs []watchedPR) ConnectionRead {
 	page.Scope = authoredScope
 	for i := range prs {
 		page.Rows = append(page.Rows, rowOf(&prs[i]))
 	}
 	clone := CloneRepo{Dir: "marotte", ForgeID: conn.ID, RepoID: repoIDOf("cplieger/marotte")}
-	return ConnectionRead{Conn: conn, Clones: []CloneRepo{clone}, Pages: []ScopePage{page}}
+	return ConnectionRead{Conn: conn, Clones: []CloneRepo{clone}, Pages: []scopePage{page}}
 }
 
 // fakeSource answers one complete page of prs (or err) for testConn and counts how
 // often it was asked, which is what makes "no forge work" assertable.
 type fakeSource struct {
 	err   error
-	prs   []WatchedPR
+	prs   []watchedPR
 	calls int
 }
 
 func (f *fakeSource) Read(context.Context, bool, func(PRConnection, Scope) forgeapi.Cursor) []ConnectionRead {
 	f.calls++
-	return []ConnectionRead{authoredRead(testConn, ScopePage{Err: f.err}, f.prs)}
+	return []ConnectionRead{authoredRead(testConn, scopePage{Err: f.err}, f.prs)}
 }
 
 type sentPush struct {
+	title   string
 	body    string
 	kind    marotte.PushKind
 	subject marotte.PushSubject
 }
 
-// fakeNotifier records every Send.
 type fakeNotifier struct {
 	sent []sentPush
 }
 
-func (f *fakeNotifier) Send(_ context.Context, _, body string, kind marotte.PushKind, subject marotte.PushSubject, _ string) {
-	f.sent = append(f.sent, sentPush{body: body, kind: kind, subject: subject})
+func (f *fakeNotifier) Notify(_ context.Context, n *marotte.NotificationPayload) {
+	f.sent = append(f.sent, sentPush{title: n.Title, body: n.Body, kind: n.Kind, subject: n.PushSubject})
 }
 
-// fakeGate is the poller's gate with a switch per arm, counting how often it was
-// asked.
 type fakeGate struct {
 	push    bool
 	present bool
@@ -92,10 +86,9 @@ func newTestPoller(src PRSource, n PRNotifier, g *fakeGate) *PRStatusPoller {
 	return p
 }
 
-func pr(number int, check string) WatchedPR {
-	return WatchedPR{
+func pr(number int, check string) watchedPR {
+	return watchedPR{
 		ForgeID: "github:github.com",
-		RepoID:  repoIDOf("cplieger/marotte"),
 		Repo:    "cplieger/marotte",
 		Number:  number,
 		Title:   "A change",
@@ -103,10 +96,9 @@ func pr(number int, check string) WatchedPR {
 	}
 }
 
-// checkOf is the verdict the poller holds for number, "" when it tracks none.
 func checkOf(p *PRStatusPoller, number int) string {
 	w := pr(number, "")
-	return p.seen[marotte.PRSubject(w.ForgeID, w.RepoID, w.Number).Key].check
+	return p.seen[marotte.PRSubject(w.ForgeID, repoIDOf(w.Repo), w.Number).Key].check
 }
 
 // TestPoller_DoesNoForgeWorkWithTheGateClosed is gate 1, and the assertion is on
@@ -114,7 +106,7 @@ func checkOf(p *PRStatusPoller, number int) string {
 // the user's shared quota, so a tick that listed first and consulted the gate second
 // would spend them while nobody is looking and nobody asked to be told.
 func TestPoller_DoesNoForgeWorkWithTheGateClosed(t *testing.T) {
-	src := &fakeSource{prs: []WatchedPR{pr(1, checkFailing)}}
+	src := &fakeSource{prs: []watchedPR{pr(1, checkFailing)}}
 	n := &fakeNotifier{}
 	g := &fakeGate{push: false}
 	p := newTestPoller(src, n, g)
@@ -156,7 +148,7 @@ func TestPoller_DoesNoPerPRWorkWithNoOpenPR(t *testing.T) {
 // would announce every open PR, and a PR that went green while the container was
 // down would arrive as a fresh alert hours late.
 func TestPoller_FirstSightingSeedsSilently(t *testing.T) {
-	src := &fakeSource{prs: []WatchedPR{pr(7, checkPassing)}}
+	src := &fakeSource{prs: []watchedPR{pr(7, checkPassing)}}
 	n := &fakeNotifier{}
 	p := newTestPoller(src, n, &fakeGate{push: true})
 
@@ -178,19 +170,19 @@ func TestPoller_PushesOnASettledFlip(t *testing.T) {
 		to       string
 		wantBody string
 	}{
-		{name: "PendingToPassing", from: checkPending, to: checkPassing, wantBody: "checks passed"},
-		{name: "PendingToFailing", from: checkPending, to: checkFailing, wantBody: "checks failed"},
-		{name: "PassingToFailing", from: checkPassing, to: checkFailing, wantBody: "checks failed"},
-		{name: "FailingToPassing", from: checkFailing, to: checkPassing, wantBody: "checks passed"},
+		{name: "PendingToPassing", from: checkPending, to: checkPassing, wantBody: "Checks passed"},
+		{name: "PendingToFailing", from: checkPending, to: checkFailing, wantBody: "Checks failed"},
+		{name: "PassingToFailing", from: checkPassing, to: checkFailing, wantBody: "Checks failed"},
+		{name: "FailingToPassing", from: checkFailing, to: checkPassing, wantBody: "Checks passed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			src := &fakeSource{prs: []WatchedPR{pr(42, tc.from)}}
+			src := &fakeSource{prs: []watchedPR{pr(42, tc.from)}}
 			n := &fakeNotifier{}
 			p := newTestPoller(src, n, &fakeGate{push: true})
 			p.sweep(t.Context()) // seed
 
-			src.prs = []WatchedPR{pr(42, tc.to)}
+			src.prs = []watchedPR{pr(42, tc.to)}
 			p.sweep(t.Context())
 
 			if len(n.sent) != 1 {
@@ -204,8 +196,8 @@ func TestPoller_PushesOnASettledFlip(t *testing.T) {
 			if !strings.Contains(got.body, tc.wantBody) {
 				t.Errorf("body %q does not say %q", got.body, tc.wantBody)
 			}
-			if !strings.Contains(got.body, "#42") {
-				t.Errorf("body %q does not name the PR", got.body)
+			if got.title != "cplieger/marotte #42" {
+				t.Errorf("title = %q, want the repo and number", got.title)
 			}
 		})
 	}
@@ -217,12 +209,12 @@ func TestPoller_PushesOnASettledFlip(t *testing.T) {
 func TestPoller_DoesNotPushIntoPendingOrNoVerdict(t *testing.T) {
 	for _, to := range []string{checkPending, forgeapi.CheckUnknown.String(), forgeapi.CheckNeutral.String()} {
 		t.Run("to_"+to, func(t *testing.T) {
-			src := &fakeSource{prs: []WatchedPR{pr(3, checkPassing)}}
+			src := &fakeSource{prs: []watchedPR{pr(3, checkPassing)}}
 			n := &fakeNotifier{}
 			p := newTestPoller(src, n, &fakeGate{push: true})
 			p.sweep(t.Context())
 
-			src.prs = []WatchedPR{pr(3, to)}
+			src.prs = []watchedPR{pr(3, to)}
 			p.sweep(t.Context())
 
 			if len(n.sent) != 0 {
@@ -240,11 +232,11 @@ func TestPoller_DoesNotPushIntoPendingOrNoVerdict(t *testing.T) {
 // TestPoller_UnchangedVerdictIsSilent: a PR sitting green for an hour is sixty
 // ticks and zero notifications.
 func TestPoller_UnchangedVerdictIsSilent(t *testing.T) {
-	src := &fakeSource{prs: []WatchedPR{pr(9, checkPending)}}
+	src := &fakeSource{prs: []watchedPR{pr(9, checkPending)}}
 	n := &fakeNotifier{}
 	p := newTestPoller(src, n, &fakeGate{push: true})
 	p.sweep(t.Context())
-	src.prs = []WatchedPR{pr(9, checkFailing)}
+	src.prs = []watchedPR{pr(9, checkFailing)}
 	p.sweep(t.Context())
 	for range 10 {
 		p.sweep(t.Context())
@@ -257,12 +249,12 @@ func TestPoller_UnchangedVerdictIsSilent(t *testing.T) {
 // TestPoller_SubjectIsPerPR is the coalescing-tag half of the reuse: two PRs
 // flipping inside one window must occupy their own tray slots.
 func TestPoller_SubjectIsPerPR(t *testing.T) {
-	src := &fakeSource{prs: []WatchedPR{pr(1, checkPending), pr(2, checkPending)}}
+	src := &fakeSource{prs: []watchedPR{pr(1, checkPending), pr(2, checkPending)}}
 	n := &fakeNotifier{}
 	p := newTestPoller(src, n, &fakeGate{push: true})
 	p.sweep(t.Context())
 
-	src.prs = []WatchedPR{pr(1, checkPassing), pr(2, checkFailing)}
+	src.prs = []watchedPR{pr(1, checkPassing), pr(2, checkFailing)}
 	p.sweep(t.Context())
 
 	if len(n.sent) != 2 {
@@ -289,26 +281,26 @@ func TestPoller_SubjectIsPerPR(t *testing.T) {
 func TestSweep_SubjectCarriesTheCanonicalRepoID(t *testing.T) {
 	const wantKey = "pr:github:github.com:v1.63706c69656765722f6d61726f747465#42"
 	cases := []struct {
-		name       string
-		seedPath   string
-		flipPath   string
-		wantInBody string
+		name        string
+		seedPath    string
+		flipPath    string
+		wantInTitle string
 	}{
-		{name: "DisplayPathDiffersFromTheID", seedPath: "CPlieger/Marotte", flipPath: "CPlieger/Marotte", wantInBody: "CPlieger/Marotte #42"},
-		{name: "DisplayPathRespeltBetweenSweeps", seedPath: "cplieger/marotte", flipPath: "CPlieger/Marotte", wantInBody: "CPlieger/Marotte #42"},
+		{name: "DisplayPathDiffersFromTheID", seedPath: "CPlieger/Marotte", flipPath: "CPlieger/Marotte", wantInTitle: "CPlieger/Marotte #42"},
+		{name: "DisplayPathRespeltBetweenSweeps", seedPath: "cplieger/marotte", flipPath: "CPlieger/Marotte", wantInTitle: "CPlieger/Marotte #42"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			seed := pr(42, checkPending)
 			seed.Repo = tc.seedPath
-			src := &fakeSource{prs: []WatchedPR{seed}}
+			src := &fakeSource{prs: []watchedPR{seed}}
 			n := &fakeNotifier{}
 			p := newTestPoller(src, n, &fakeGate{push: true})
 			p.sweep(t.Context())
 
 			flip := pr(42, checkPassing)
 			flip.Repo = tc.flipPath
-			src.prs = []WatchedPR{flip}
+			src.prs = []watchedPR{flip}
 			p.sweep(t.Context())
 
 			if len(n.sent) != 1 {
@@ -317,8 +309,8 @@ func TestSweep_SubjectCarriesTheCanonicalRepoID(t *testing.T) {
 			if got := n.sent[0].subject.Key; got != wantKey {
 				t.Errorf("subject key = %q, want %q", got, wantKey)
 			}
-			if !strings.Contains(n.sent[0].body, tc.wantInBody) {
-				t.Errorf("body %q does not name %q", n.sent[0].body, tc.wantInBody)
+			if got := n.sent[0].title; got != tc.wantInTitle {
+				t.Errorf("title = %q, want %q", got, tc.wantInTitle)
 			}
 		})
 	}
@@ -327,14 +319,14 @@ func TestSweep_SubjectCarriesTheCanonicalRepoID(t *testing.T) {
 // TestPoller_ForgetsAClosedPR keeps the state bounded by OPEN pull requests rather
 // than by every PR the process ever saw.
 func TestPoller_ForgetsAClosedPR(t *testing.T) {
-	src := &fakeSource{prs: []WatchedPR{pr(1, checkPassing), pr(2, checkPassing)}}
+	src := &fakeSource{prs: []watchedPR{pr(1, checkPassing), pr(2, checkPassing)}}
 	n := &fakeNotifier{}
 	p := newTestPoller(src, n, &fakeGate{push: true})
 	p.sweep(t.Context())
 	if len(p.seen) != 2 {
 		t.Fatalf("state entries = %d, want 2", len(p.seen))
 	}
-	src.prs = []WatchedPR{pr(1, checkPassing)}
+	src.prs = []watchedPR{pr(1, checkPassing)}
 	p.sweep(t.Context())
 	if len(p.seen) != 1 {
 		t.Errorf("state entries = %d after a PR merged, want 1", len(p.seen))
@@ -344,7 +336,7 @@ func TestPoller_ForgetsAClosedPR(t *testing.T) {
 // TestPoller_ClosedGateResetsTheState: a gate that opens later must not announce
 // every flip that happened while it was closed.
 func TestPoller_ClosedGateResetsTheState(t *testing.T) {
-	src := &fakeSource{prs: []WatchedPR{pr(5, checkPending)}}
+	src := &fakeSource{prs: []watchedPR{pr(5, checkPending)}}
 	n := &fakeNotifier{}
 	g := &fakeGate{push: true}
 	p := newTestPoller(src, n, g)
@@ -357,7 +349,7 @@ func TestPoller_ClosedGateResetsTheState(t *testing.T) {
 	}
 
 	g.push = true
-	src.prs = []WatchedPR{pr(5, checkFailing)}
+	src.prs = []watchedPR{pr(5, checkFailing)}
 	p.sweep(t.Context())
 	if len(n.sent) != 0 {
 		t.Errorf("reopening the gate announced a flip that happened while it was closed: %+v", n.sent)
@@ -367,7 +359,7 @@ func TestPoller_ClosedGateResetsTheState(t *testing.T) {
 // TestPoller_SourceFailureIsSurvivable: a forge that is down, rate-limited or
 // logged out must not silence the loop or lose the state it already holds.
 func TestPoller_SourceFailureIsSurvivable(t *testing.T) {
-	src := &fakeSource{prs: []WatchedPR{pr(1, checkPending)}}
+	src := &fakeSource{prs: []watchedPR{pr(1, checkPending)}}
 	n := &fakeNotifier{}
 	p := newTestPoller(src, n, &fakeGate{push: true})
 	p.sweep(t.Context())
@@ -380,7 +372,7 @@ func TestPoller_SourceFailureIsSurvivable(t *testing.T) {
 	}
 
 	src.err = nil
-	src.prs = []WatchedPR{pr(1, checkPassing)}
+	src.prs = []watchedPR{pr(1, checkPassing)}
 	p.sweep(t.Context())
 	if len(n.sent) != 1 {
 		t.Errorf("sent %d notifications after recovering, want 1", len(n.sent))
@@ -422,10 +414,10 @@ func TestPoller_TwoRates(t *testing.T) {
 		t.Errorf("a fresh poller arms %v, want the discovery interval %v", got, PRDiscoveryInterval)
 	}
 
-	src.prs = []WatchedPR{pr(1, checkPending)}
+	src.prs = []watchedPR{pr(1, checkPending)}
 	p.sweep(t.Context())
-	if got := p.nextDelay(); got != PRPollInterval {
-		t.Errorf("with a PR tracked the poller arms %v, want the active interval %v", got, PRPollInterval)
+	if got := p.nextDelay(); got != prPollInterval {
+		t.Errorf("with a PR tracked the poller arms %v, want the active interval %v", got, prPollInterval)
 	}
 
 	src.prs = nil
@@ -435,7 +427,7 @@ func TestPoller_TwoRates(t *testing.T) {
 			got, PRDiscoveryInterval)
 	}
 
-	src.prs = []WatchedPR{pr(1, checkPending)}
+	src.prs = []watchedPR{pr(1, checkPending)}
 	p.sweep(t.Context())
 	g.push = false
 	p.sweep(t.Context())
@@ -445,9 +437,9 @@ func TestPoller_TwoRates(t *testing.T) {
 	}
 
 	// The active rate is faster than discovery, or the two names mean nothing.
-	if PRPollInterval >= PRDiscoveryInterval {
+	if prPollInterval >= PRDiscoveryInterval {
 		t.Errorf("the active interval (%v) is not faster than discovery (%v)",
-			PRPollInterval, PRDiscoveryInterval)
+			prPollInterval, PRDiscoveryInterval)
 	}
 }
 
@@ -469,7 +461,7 @@ func (s *slowSource) Read(context.Context, bool, func(PRConnection, Scope) forge
 	s.mu.Lock()
 	s.ends = append(s.ends, time.Now())
 	s.mu.Unlock()
-	return []ConnectionRead{authoredRead(testConn, ScopePage{}, []WatchedPR{pr(1, checkPending)})}
+	return []ConnectionRead{authoredRead(testConn, scopePage{}, []watchedPR{pr(1, checkPending)})}
 }
 
 // TestPoller_SchedulesFromCompletion is the anti-hot-loop rule: a ticker retains one tick while a
@@ -538,22 +530,6 @@ func TestPoller_RunDoesNotSweepOnEntry(t *testing.T) {
 	}
 }
 
-// TestPRStatusBody covers the wording without a poller: the notice has to name the
-// repo, the number and the verdict, because a tray banner is all the reader gets.
-func TestPRStatusBody(t *testing.T) {
-	got := prStatusBody(&WatchedPR{Repo: "cplieger/marotte", Number: 12, Title: "Fix the thing", Check: checkPassing})
-	for _, want := range []string{"cplieger/marotte", "#12", "checks passed", "Fix the thing"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("body %q missing %q", got, want)
-		}
-	}
-	// A PR with no title still says what happened.
-	bare := prStatusBody(&WatchedPR{Repo: "a/b", Number: 1, Check: checkFailing})
-	if !strings.Contains(bare, "checks failed") || strings.HasSuffix(bare, ": ") {
-		t.Errorf("titleless body = %q", bare)
-	}
-}
-
 // scopeRun connects id by token over wire, then sweeps twice push-only, the
 // wire answering each path first names and then each path second names, and
 // answers what was sent and the verdicts the poller held for the two pull
@@ -581,11 +557,10 @@ func scopeRun(t *testing.T, wire *pathWire, id, webBase string, first, second ma
 	return n.sent, held
 }
 
-// sortedBodies is each notice's body, sorted.
 func sortedBodies(sent []sentPush) []string {
 	out := make([]string, 0, len(sent))
 	for _, s := range sent {
-		out = append(out, s.body)
+		out = append(out, s.title+": "+s.body)
 	}
 	slices.Sort(out)
 	return out
@@ -599,7 +574,7 @@ func sortedBodies(sent []sentPush) []string {
 // on both edges, which is what the settings copy promises. A family that loses
 // an edge fails here, next to the sentence that has to be rewritten.
 func TestProviderCheckVerdicts_MatchTheStatedScope(t *testing.T) {
-	want := []string{"alice/app #4 checks failed: PR 4", "alice/app #5 checks passed: PR 5"}
+	want := []string{"alice/app #4: Checks failed · PR 4", "alice/app #5: Checks passed · PR 5"}
 	t.Run("GitHubNotifiesOnBothEdges", func(t *testing.T) {
 		row := func(n int, state string) string {
 			return fmt.Sprintf(`{"__typename":"PullRequest","number":%d,"title":"PR %d",`+

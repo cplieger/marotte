@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
@@ -20,7 +21,6 @@ func newWithholdHub(t *testing.T) (*Runtime, *runOutcomePush) {
 	return h, fp
 }
 
-// seedRunLease records a bounded lease parented on chatID, as grantLease does for an agent's own run.
 func seedRunLease(t *testing.T, h *Runtime, workflowID, chatID string) {
 	t.Helper()
 	l := runlease.Lease{
@@ -179,8 +179,8 @@ func TestPushTurnOutcome_AModelCallLimitStopPushesItsOwnRemedy(t *testing.T) {
 
 	select {
 	case got := <-fp.sent:
-		if got.body != marotte.ModelCallLimitTurnReason {
-			t.Errorf("push body = %q, want %q", got.body, marotte.ModelCallLimitTurnReason)
+		if want := notice.TurnFailed(notice.Target{}, marotte.ModelCallLimitTurnReason).Body; got.body != want {
+			t.Errorf("push body = %q, want %q", got.body, want)
 		}
 	case <-time.After(2 * time.Second):
 		t.Error("no push sent for a turn kiro-cli stopped at its model-call limit")

@@ -16,7 +16,6 @@ function repoStatus(): GitRepoStatus {
     repo: "marotte",
     is_repo: true,
     branch: "main",
-    remote: "origin",
     ahead: 0,
     behind: 0,
     files: [],

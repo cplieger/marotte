@@ -195,7 +195,7 @@ describe("read as source", () => {
 
   it("keeps the row's yield in the same rule that names the state", () => {
     // The association a pair of file-wide `toContain`s cannot make: the selector and the
-    // declaration have to be one rule, or the fix is two facts about one file that happen to sit
+    // declaration have to be one rule, or the yield is two facts about one file that happen to sit
     // near each other.
     const sel = loadCSS("70-selection.css");
     const yielded = ruleContaining(sel, ".tab.active:has(.tab-close:active)", "top");

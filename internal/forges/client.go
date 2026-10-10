@@ -14,7 +14,6 @@ import (
 	"github.com/cplieger/forgeapi/gitlab"
 )
 
-// connectionFor is the forgeapi connection a record describes.
 func connectionFor(rec *connectionRecord) forgeapi.Connection {
 	return forgeapi.Connection{
 		WebBaseURL: rec.webBase(),
@@ -38,8 +37,7 @@ func connOptions(rec *connectionRecord) []forgeapi.Option {
 	}
 }
 
-// newFamilyClient builds the client of the family rec's kind names. The kind is
-// the user's own statement at connect time, so nothing is spent detecting it.
+// The kind is the user's own statement at connect time, so nothing is spent detecting it.
 func newFamilyClient(rec *connectionRecord, opts []forgeapi.Option) (forgeapi.Core, error) {
 	conn := connectionFor(rec)
 	switch rec.Kind.family() {
@@ -73,8 +71,6 @@ type clientFactory struct {
 	mu    sync.Mutex
 }
 
-// cachedClient is a connection's client, the credential source it reads its
-// token from, and the record shape it was built from.
 type cachedClient struct {
 	core  forgeapi.Core
 	cred  forgeapi.CredentialSource
@@ -98,13 +94,10 @@ func (f *clientFactory) options(rec *connectionRecord) []forgeapi.Option {
 	return append(connOptions(rec), f.extra...)
 }
 
-// sourceFor is the credential source behind rec's client, refreshing through
-// the record's own trust material and address policy.
 func (f *clientFactory) sourceFor(store creds.Store, rec *connectionRecord) (*creds.Source, error) {
 	return creds.NewSource(store, rec.ID, connectionFor(rec), f.options(rec)...)
 }
 
-// staticSource is one token held in memory.
 type staticSource string
 
 func (s staticSource) Token(context.Context) (string, error) { return string(s), nil }

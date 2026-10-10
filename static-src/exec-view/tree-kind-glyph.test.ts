@@ -45,7 +45,6 @@ afterEach(() => {
   host.remove();
 });
 
-/** The drawing each kind's row renders, read off the real tree pane. */
 function renderedGlyphs(): Map<ExecKind, string> {
   const tree = buildExecTree(vi.fn());
   host.appendChild(tree.root);
@@ -118,7 +117,6 @@ describe("the exec tree's kind glyph", () => {
 
 interface Seg {
   axis: "h" | "v" | "other";
-  /** The perpendicular coordinate of an axis-aligned segment. */
   at: number;
 }
 

@@ -4,7 +4,6 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 const m = vi.hoisted(() => ({
-  /** The next `POST /api/runs/{id}/retry` outcome, or an error to throw. */
   result: { current: undefined as unknown, err: undefined as unknown },
   invalidated: [] as string[],
   controlsInvalidated: [] as string[],
@@ -33,7 +32,6 @@ import { retryRun } from "./runs.js";
 import { configureSubjectNotice } from "./subject.js";
 import { error as toastError, success as toastSuccess } from "../toast.js";
 
-/** Answer the next fetch with a 2xx body, or with a JSON error envelope. */
 function stubFetch(): void {
   configureApi({
     fetchFn: () => {

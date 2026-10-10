@@ -136,7 +136,7 @@ func TestManagerDisconnect_AFailedRecordWriteKeepsTheConnection(t *testing.T) {
 	m := recordManager(t, &whoamiCore{})
 	failRecordWritesAfterOneRead(t)
 
-	if err := m.disconnect(t.Context(), m.Get("github:github.com")); err == nil {
+	if err := m.disconnect(t.Context(), m.get("github:github.com")); err == nil {
 		t.Fatal("disconnect() with the record write refused = nil, want its error")
 	}
 	if _, ok, err := m.store.Load("github:github.com"); err != nil || !ok {
@@ -284,7 +284,7 @@ func TestConnectionRecords_KindFamilyTable(t *testing.T) {
 			if got := c.kind.family(); got != c.family {
 				t.Errorf("%s.family() = %v, want %v", c.kind, got, c.family)
 			}
-			if got := c.kind.DefaultHost(); got != c.host {
+			if got := c.kind.defaultHost(); got != c.host {
 				t.Errorf("%s.DefaultHost() = %q, want %q", c.kind, got, c.host)
 			}
 		})

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -70,10 +69,10 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 func TestDeferred_DefaultHoldsASuppressedSend(t *testing.T) {
 	h := &payloadHandler{}
 	s, _ := filteredService(t, h)
-	s.Unsubscribe(goneEP)
-	s.presence.Observe(connected(TagOf(presentEP)))
+	s.unsubscribe(goneEP)
+	s.presence.Observe(connected(tagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
+	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
 
 	if n := s.heldCount(); n != 1 {
 		t.Errorf("held deliveries with the default switch = %d, want 1", n)
@@ -88,10 +87,10 @@ func TestDeferred_OffHoldsNothing(t *testing.T) {
 	deferredOff(t)
 	h := &payloadHandler{}
 	s, _ := filteredService(t, h)
-	s.Unsubscribe(goneEP)
-	s.presence.Observe(connected(TagOf(presentEP)))
+	s.unsubscribe(goneEP)
+	s.presence.Observe(connected(tagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
+	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
 
 	if n := s.heldCount(); n != 0 {
 		t.Errorf("held deliveries with the switch off = %d, want 0", n)
@@ -102,10 +101,10 @@ func TestDeferred_HeldDeliveryLandsWhenTheProfileFlipsToGone(t *testing.T) {
 	deferredOn(t)
 	h := &payloadHandler{}
 	s, clock := filteredService(t, h)
-	s.Unsubscribe(goneEP)
-	s.presence.Observe(connected(TagOf(presentEP)))
+	s.unsubscribe(goneEP)
+	s.presence.Observe(connected(tagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
+	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
 	if n := s.heldCount(); n != 1 {
 		t.Fatalf("held deliveries = %d, want 1", n)
 	}
@@ -125,10 +124,10 @@ func TestDeferred_HeldDeliveryIsDroppedAtItsTTL(t *testing.T) {
 	deferredOn(t)
 	h := &payloadHandler{}
 	s, clock := filteredService(t, h)
-	s.Unsubscribe(goneEP)
-	s.presence.Observe(connected(TagOf(presentEP)))
+	s.unsubscribe(goneEP)
+	s.presence.Observe(connected(tagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
+	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
 	// Past the permission TTL the profile also reads gone; the TTL is judged first.
 	clock.Advance(ttlPermission + time.Millisecond)
 	waitFor(t, "the held set to empty", func() bool { return s.heldCount() == 0 })
@@ -142,10 +141,10 @@ func TestDeferred_RetractionBeforeTheFlipDeliversNothing(t *testing.T) {
 	deferredOn(t)
 	h := &payloadHandler{}
 	s, clock := filteredService(t, h)
-	s.Unsubscribe(goneEP)
-	s.presence.Observe(connected(TagOf(presentEP)))
+	s.unsubscribe(goneEP)
+	s.presence.Observe(connected(tagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
+	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
 	s.Retract(marotte.ChatSubject("c1"))
 	if n := s.heldCount(); n != 0 {
 		t.Fatalf("held deliveries after the retraction = %d, want 0", n)
@@ -157,35 +156,30 @@ func TestDeferred_RetractionBeforeTheFlipDeliversNothing(t *testing.T) {
 	}
 }
 
-// The envelope carries the chat's display name, cut to the page's bound, so a page
-// that has dropped the chat's row can still name it.
-func TestSend_TheEnvelopeCarriesTheBoundedChatName(t *testing.T) {
-	for _, tc := range []struct{ desc, name, want string }{
-		{"short", "Fix the parser", "Fix the parser"},
-		{"over_the_bound", strings.Repeat("é", 100), strings.Repeat("é", 78) + pushTruncMarker},
-	} {
-		// A subtest per case: each service's Close cleanup must run before deferredOn restores deferPoll, which the
-		// service's re-arming timer reads.
-		t.Run(tc.desc, func(t *testing.T) {
-			deferredOn(t)
-			h := &payloadHandler{}
-			s, _ := filteredService(t, h)
-			s.Unsubscribe(goneEP)
-			s.presence.Observe(connected(TagOf(presentEP)))
+// The envelope IS the notification: the service worker shows the title, body and subject the
+// page would, with nothing re-derived on the way.
+func TestSend_TheEnvelopeIsTheNotification(t *testing.T) {
+	deferredOn(t)
+	h := &payloadHandler{}
+	s, _ := filteredService(t, h)
+	s.unsubscribe(goneEP)
+	s.presence.Observe(connected(tagOf(presentEP)))
 
-			s.Send(t.Context(), "Marotte", "Agent finished", marotte.PushKindAgentFinished, marotte.ChatSubject("c1"), tc.name)
-			key := heldKey{tag: TagOf(presentEP), kind: marotte.PushKindAgentFinished, subject: "c1"}
-			s.deferred.mu.Lock()
-			held := s.deferred.held[key]
-			s.deferred.mu.Unlock()
-			var p pushPayload
-			if err := json.Unmarshal(held.payload, &p); err != nil {
-				t.Fatalf("held payload is not the envelope: %v", err)
-			}
-			if p.ChatName != tc.want {
-				t.Errorf("chat_name = %q, want %q", p.ChatName, tc.want)
-			}
-		})
+	want := marotte.NotificationPayload{
+		PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindAgentFinished,
+		Title: "Fix the parser", Body: "Response complete · Parser fixed",
+	}
+	s.Send(t.Context(), &want)
+	key := heldKey{tag: tagOf(presentEP), kind: marotte.PushKindAgentFinished, subject: "c1"}
+	s.deferred.mu.Lock()
+	held := s.deferred.held[key]
+	s.deferred.mu.Unlock()
+	var got marotte.NotificationPayload
+	if err := json.Unmarshal(held.payload, &got); err != nil {
+		t.Fatalf("held payload is not the envelope: %v", err)
+	}
+	if got != want {
+		t.Errorf("envelope = %+v, want %+v", got, want)
 	}
 }
 
@@ -196,20 +190,20 @@ func TestDeferred_ASecondEventReplacesTheHeldPayload(t *testing.T) {
 	deferredOn(t)
 	h := &payloadHandler{}
 	s, clock := filteredService(t, h)
-	s.Unsubscribe(goneEP)
-	s.presence.Observe(connected(TagOf(presentEP)))
+	s.unsubscribe(goneEP)
+	s.presence.Observe(connected(tagOf(presentEP)))
 
-	s.Send(t.Context(), "first", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
+	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "first", Body: "body"})
 	resetDebounce(s)
-	s.Send(t.Context(), "second", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
+	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "second", Body: "body"})
 	if n := s.heldCount(); n != 1 {
 		t.Fatalf("held deliveries after two events on one key = %d, want 1", n)
 	}
-	key := heldKey{tag: TagOf(presentEP), kind: marotte.PushKindPermission, subject: "c1"}
+	key := heldKey{tag: tagOf(presentEP), kind: marotte.PushKindPermission, subject: "c1"}
 	s.deferred.mu.Lock()
 	held := s.deferred.held[key]
 	s.deferred.mu.Unlock()
-	var p pushPayload
+	var p marotte.NotificationPayload
 	if err := json.Unmarshal(held.payload, &p); err != nil {
 		t.Fatalf("held payload is not the envelope: %v", err)
 	}
@@ -219,4 +213,11 @@ func TestDeferred_ASecondEventReplacesTheHeldPayload(t *testing.T) {
 
 	clock.Advance(liveness.AliveWindow + time.Millisecond)
 	waitFor(t, "the held delivery", func() bool { return h.count() == 1 })
+}
+
+// heldCount is how many pushes the service holds back.
+func (s *Service) heldCount() int {
+	s.deferred.mu.Lock()
+	defer s.deferred.mu.Unlock()
+	return len(s.deferred.held)
 }

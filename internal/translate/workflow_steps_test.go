@@ -11,7 +11,7 @@ import (
 )
 
 // TestReportStepProgress_EveryStepFrameNamesTheRun pins that every step frame reports the
-// run as working; RunBoundsAccess has no stop verb, so a cancel is unrepresentable here.
+// run as working; runBoundsAccess has no stop verb, so a cancel is unrepresentable here.
 func TestReportStepProgress_EveryStepFrameNamesTheRun(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -72,7 +72,7 @@ func TestStepRef_AttributesAnAskToItsRun(t *testing.T) {
 			tr.RecordStepSession("sess_step", "wf_1", "build", "build")
 
 			id := int64(7)
-			tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+			tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
 				ID: &id,
 				Params: mustJSON(t, map[string]any{
 					"sessionId": tc.sessionID,

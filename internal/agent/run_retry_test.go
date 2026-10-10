@@ -28,14 +28,12 @@ func retryReply(t *testing.T, workflowID, status string, nodes ...string) json.R
 	return raw
 }
 
-// retryReq builds POST /api/runs/{id}/retry with the path value set.
 func retryReq(id string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+id+"/retry", bytes.NewReader(nil))
 	req.SetPathValue("id", id)
 	return req
 }
 
-// seedChatParentedRun stages one aborted run parented on a chat's session, the chat's bridge optionally live, KAS answering inspect, list and retry.
 func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, cs, br := newTestHub()
@@ -55,14 +53,13 @@ func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime
 		t.Fatalf("Setup: seeding the chat: %s", err)
 	}
 	if openChat {
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("Setup: opening the chat's bridge: %s", err)
 		}
 	}
 	return h, br
 }
 
-// gateAnswer resolves the retry route's real affordance and checks both threaded facts.
 func gateAnswer(t *testing.T, h *Runtime, workflowID string) *runAffordance {
 	t.Helper()
 	aff := h.runs.affordance(t.Context(), workflowID, "aborted")
@@ -115,7 +112,7 @@ func TestRetry_AddressesTheRunsRealHost(t *testing.T) {
 	aff := gateAnswer(t, h, "wf_1")
 	starts := br.startCount()
 
-	out, err := h.runs.Retry(t.Context(), "wf_1", aff)
+	out, err := h.runs.retry(t.Context(), "wf_1", aff)
 	if err != nil {
 		t.Fatalf("Retry on a chat-parented run = %v, want nil", err)
 	}
@@ -140,7 +137,7 @@ func TestRetry_ReachesAnUnhostedChatRunThroughItsChat(t *testing.T) {
 	// Nothing here holds the run.
 	h, br := seedChatParentedRun(t, false, "phase-c-loop")
 
-	if _, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1")); err != nil {
+	if _, err := h.runs.retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1")); err != nil {
 		t.Fatalf("Retry on a run nothing hosts = %v, want nil", err)
 	}
 	calls := br.callLog()
@@ -162,7 +159,7 @@ func TestRetry_ARefusedRetryOnAReHostedRunLeavesNothingBehind(t *testing.T) {
 	br.setCallRPCErr(methodKiroWorkflowRetry,
 		&marotte.RPCError{Code: -32603, Message: "Workflow wf_1 not found on disk"})
 
-	if _, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1")); err == nil {
+	if _, err := h.runs.retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1")); err == nil {
 		t.Fatal("Retry = nil for a retry KAS refused")
 	}
 	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
@@ -182,7 +179,7 @@ func TestRetry_AnInBandRefusalIsAFailure(t *testing.T) {
 	br.setCallRPCErr(methodKiroWorkflowRetry,
 		&marotte.RPCError{Code: -32603, Message: "Cannot retry a completed workflow"})
 
-	out, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1"))
+	out, err := h.runs.retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1"))
 	if err == nil {
 		t.Fatalf("Retry = (%+v, nil) for a refusal KAS answered in band; the run was not "+
 			"re-driven and its previous terminal reason is still the truth about it", out)
@@ -328,7 +325,7 @@ func TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry(t *testing.T) {
 			h.runs.recordEnd("wf_1", runEndOverran)
 			br.setCallResult(methodKiroWorkflowRetry, reply)
 
-			_, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1"))
+			_, err := h.runs.retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1"))
 			if !errors.Is(err, errRetryOutcomeUnreadable) {
 				t.Fatalf("Retry = %v, want errRetryOutcomeUnreadable: the verb LANDED, so "+
 					"telling the reader to retry would ask for the work twice", err)
@@ -347,7 +344,7 @@ func TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry(t *testing.T) {
 			h, br := seedChatParentedRun(t, false)
 			br.setCallResult(methodKiroWorkflowRetry, reply)
 
-			_, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1"))
+			_, err := h.runs.retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1"))
 			if !errors.Is(err, errRetryOutcomeUnreadable) {
 				t.Fatalf("Retry = %v, want errRetryOutcomeUnreadable", err)
 			}
@@ -397,7 +394,7 @@ func TestRetry_ReadsTheParentTheGateResolved(t *testing.T) {
 	}))
 
 	starts := br.startCount()
-	if _, err := h.runs.Retry(t.Context(), "wf_1", aff); err != nil {
+	if _, err := h.runs.retry(t.Context(), "wf_1", aff); err != nil {
 		t.Fatalf("Retry = %v, want nil: the verb re-asked and got a different answer", err)
 	}
 	if got := br.startCount() - starts; got != 0 {

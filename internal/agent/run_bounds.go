@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 )
@@ -25,8 +26,9 @@ import (
 // open steps. Longer than KAS's 300s stream idle timeout, which retries silently.
 const runIdleWindow = 15 * time.Minute
 
-// runBackstop is the absolute executing-time budget, for a runaway loop that refills the idle window
-// forever. 36 hours is observed (recipes have run for eight). A constant: a raisable backstop is none.
+// runBackstop is the absolute executing-time budget, for a runaway loop that refills the idle
+// window forever. 36 hours is observed (recipes have run for eight). A constant: a raisable
+// backstop is none.
 const runBackstop = 36 * time.Hour
 
 // refillGranularity is the smallest move a refill writes: each is a fsynced rewrite of runs.json. It
@@ -45,7 +47,7 @@ const (
 	runEndOrphaned = "orphaned"
 )
 
-// logMsgRunOrphaned is a constant because an external alert rule keys on the message.
+// logMsgRunOrphaned is a constant so the restart cancel is greppable as one line.
 const logMsgRunOrphaned = "run was orphaned by a restart; cancelling so its recipe is idle again"
 
 // logMsgRunStalled and logMsgRunBackstop are split because an operator acts differently: one stopped
@@ -60,17 +62,15 @@ const (
 const logMsgRunYieldedToSlot = "manual run reached its recipe's next scheduled slot; " +
 	"cancelling so the schedule can run"
 
-// logMsgCancelUnretried is logged when every cancel attempt failed; it claims nothing about the run,
-// since an unknown workflow id also lands here.
+// It claims nothing about the run, since an unknown workflow id also lands here.
 const logMsgCancelUnretried = "a run's cancel failed on every attempt; " +
 	"marotte has stopped trying to stop it"
 
-// maxRunEndReasons bounds the termination map. Records outlive the run (History reads them), so
-// the oldest goes first rather than clearing on the terminal frame.
+// Records outlive the run (History reads them), so the oldest goes first rather than clearing on
+// the terminal frame.
 const maxRunEndReasons = 256
 
-// runBoundsState holds the live timers, the termination claim and the recorded reasons, in memory;
-// the deadline lives on the durable lease. Field order is govet's fieldalignment.
+// The deadline lives on the durable lease. Field order is govet's fieldalignment.
 type runBoundsState struct {
 	// timers holds each run's live deadline timer; a fired callback re-reads the deadline it was armed for.
 	timers map[string]*time.Timer
@@ -142,8 +142,7 @@ func (rs *Runs) runBoundsLocked(l *runlease.Lease, stretchStart time.Time) runle
 	}
 }
 
-// armDeadline gives a run a fresh budget and its timer, opening the executing stretch. Idempotent:
-// `run_start` re-fires on resume, so the earliest arm wins.
+// Idempotent: `run_start` re-fires on resume, so the earliest arm wins.
 func (rs *Runs) armDeadline(ctx context.Context, workflowID string) {
 	rs.stampDeadline(ctx, workflowID, func(l runlease.Lease, now time.Time) (time.Time, bool) {
 		if l.Bounded() {
@@ -178,7 +177,7 @@ func (rs *Runs) refillDeadline(ctx context.Context, workflowID string) bool {
 	})
 }
 
-// RunMadeProgress rolls a run's idle window forward. Satisfies translate.RunBoundsAccess. Called per
+// RunMadeProgress rolls a run's idle window forward. Satisfies translate.runBoundsAccess. Called per
 // tool-call frame, so the `bounded` pre-check keeps it one map read.
 func (rs *Runs) RunMadeProgress(workflowID string) {
 	if !rs.bounded(workflowID) {
@@ -203,7 +202,6 @@ func (rs *Runs) setTimerLocked(workflowID string, deadline time.Time) {
 		func() { rs.cancelExpired(workflowID, deadline) })
 }
 
-// stopTimer stops and forgets a run's timer.
 func (rs *Runs) stopTimer(workflowID string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -236,7 +234,7 @@ func (rs *Runs) disarmDeadline(ctx context.Context, workflowID string) bool {
 	return true
 }
 
-// bankExecuted adds the current stretch to the total and closes it. The delete keeps two parks from double-charging.
+// The delete keeps two parks from double-charging.
 func (rs *Runs) bankExecuted(workflowID string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -328,7 +326,6 @@ func (rs *Runs) finishTermination(
 	return nil
 }
 
-// runEndNoteText is the sentence a bound leaves in the launching chat, one per reason.
 var runEndNoteText = map[string]string{
 	runEndStalled: "was stopped: no activity and no live shell for " +
 		strconv.Itoa(int(runIdleWindow.Minutes())) + " minutes",
@@ -363,8 +360,7 @@ func (rs *Runs) noteRunEnd(ctx context.Context, workflowID, reason string) {
 // refills it). cancelOn and cancelBounded share the budget.
 const maxCancelRetries = 3
 
-// defaultCancelRetryBase is the first retry delay, doubling (5s, 10s, 20s); nonzero because another
-// process owns the run. Runs.cancelRetryBase falls back to it.
+// Nonzero because another process owns the run. Runs.cancelRetryBase falls back to it.
 const defaultCancelRetryBase = 5 * time.Second
 
 // claimCancelRetry takes one cancel retry, false once spent, returning the attempt number for the
@@ -382,7 +378,6 @@ func (rs *Runs) claimCancelRetry(workflowID string) (attempt int, ok bool) {
 	return rs.bounds.cancelRetries[workflowID], true
 }
 
-// clearCancelRetries refills the retry budget on a landed cancel, on progress, and at a final stop.
 func (rs *Runs) clearCancelRetries(workflowID string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -439,7 +434,6 @@ func (rs *Runs) forgetBounds(ctx context.Context, workflowID string) {
 	rs.clearRunPerms(workflowID)
 }
 
-// clearRunPerms drops a run's unanswered request-shaped decisions, tolerating a bare &Runs{}.
 func (rs *Runs) clearRunPerms(workflowID string) {
 	if rs.perms == nil {
 		return
@@ -462,8 +456,6 @@ func (rs *Runs) claimHeal(workflowID string) (attempt int, ok bool) {
 	return rs.bounds.heals[workflowID], true
 }
 
-// clearHeals gives a run its full heal budget back. Called when a node
-// completes and when the run ends.
 func (rs *Runs) clearHeals(workflowID string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -490,9 +482,8 @@ func (rs *Runs) clearEnd(workflowID string) {
 		func(id string) bool { return id == workflowID })
 }
 
-// rearmRetried gives a re-driven run a clean row and a fresh budget. An already-hosted retry may
-// still carry its old deadline; one after a terminal frame needs a new lease, named from KAS's run
-// list for the single-run rule. The slot stays zero.
+// An already-hosted retry may still carry its old deadline; one after a terminal frame needs a new
+// lease, named from KAS's run list for the single-run rule. The slot stays zero.
 func (rs *Runs) rearmRetried(ctx context.Context, workflowID, recipe string) {
 	rs.clearEnd(workflowID)
 	rs.disarmDeadline(ctx, workflowID)
@@ -585,14 +576,13 @@ func (rs *Runs) backstopSpent(workflowID string) bool {
 	return spent >= runBackstop
 }
 
-// stepWorking reports whether one of the run's own open steps waits on a live agent terminal, on the
-// carrier (the launching chat, else the run's synthetic chat). Scoped to the step's sessions: a
-// parallel run's steps share one carrier. Every absence answers false, so the bound applies.
+// Scoped to the step's sessions: a parallel run's steps share one carrier. Every absence answers
+// false, so the bound applies.
 func (rs *Runs) stepWorking(leaseChatID, workflowID string) bool {
 	if rs.terminals == nil || rs.log == nil {
 		return false
 	}
-	sessions := rs.log.OpenSessions(workflowID)
+	sessions := rs.log.openSessions(workflowID)
 	if len(sessions) == 0 {
 		return false
 	}
@@ -603,8 +593,8 @@ func (rs *Runs) stepWorking(leaseChatID, workflowID string) bool {
 	return rs.terminals.LiveTerminalForSession(carrier, sessions)
 }
 
-// awaitingAnswer reports whether one of the run's own open steps has an unanswered decision. Scoped to
-// open steps: the engine abandons a finished step's ask without withdrawing it. Absence answers false.
+// Scoped to open steps: the engine abandons a finished step's ask without withdrawing it. Absence
+// answers false.
 func (rs *Runs) awaitingAnswer(workflowID string) bool {
 	if rs.perms == nil || rs.log == nil {
 		return false
@@ -613,7 +603,7 @@ func (rs *Runs) awaitingAnswer(workflowID string) bool {
 	if len(asked) == 0 {
 		return false
 	}
-	for node := range rs.log.OpenNodeIDs(workflowID) {
+	for node := range rs.log.openNodeIDs(workflowID) {
 		if _, ok := asked[node]; ok {
 			return true
 		}
@@ -642,8 +632,8 @@ func runStartLaunch(chatID marotte.ChatID) launchOrigin {
 	return launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}
 }
 
-// observeStart arms the deadline, then translates. `run_start` is the first sight of an
-// agent-launched run, so its lease is minted here; it also re-arms a resumed run.
+// `run_start` is the first sight of an agent-launched run, so its lease is minted here; it also
+// re-arms a resumed run.
 func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" {
 		if _, held := rs.lease(f.WorkflowID); !held {
@@ -661,58 +651,61 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 		// Before HandleRunComplete: the client repaints on its `run_finished` invalidation.
 		rs.closeRun(ctx, f.WorkflowID, string(f.Status))
 		rs.recordRunNotice(chatID, f.WorkflowID)
-		// Before forgetBounds, which releases the lease the label comes from.
-		rs.notifyRunOutcome(ctx, f)
+		// Before forgetBounds, which releases the lease the label and the parent come from.
+		rs.notifyRunOutcome(ctx, chatID, &f)
 		rs.forgetBounds(ctx, f.WorkflowID)
 		rs.translate.ForgetRunSteps(f.WorkflowID)
 		if rs.runEnded != nil {
 			defer rs.runEnded()
 		}
+	} else if f.WorkflowID != "" && f.Status == marotte.RunStatusPaused {
+		rs.notifyRunOutcome(ctx, chatID, &f)
 	}
 	rs.translate.HandleRunComplete(ctx, chatID, msg)
 }
 
-// notifyRunOutcome pushes a terminal run's verdict: the only channel to a reader off the page, for
-// every origin. The nil guard covers a bare &Runs{}.
-func (rs *Runs) notifyRunOutcome(ctx context.Context, f lifecycleFrame) {
+// notifyRunOutcome notifies a run's `run_complete`: the only channel to a reader off the page, for
+// every origin. notice.RunEnded decides which statuses say anything. The nil guard covers a bare &Runs{}.
+func (rs *Runs) notifyRunOutcome(ctx context.Context, chatID marotte.ChatID, f *lifecycleFrame) {
 	if rs.coord == nil {
 		return
 	}
-	rs.coord.NotifyPushSubject(ctx,
-		runOutcomeBody(f.Status, rs.runOutcomeLabel(f)),
-		marotte.PushKindRunOutcome,
-		marotte.RunSubject(f.WorkflowID))
-}
-
-// runOutcomeLabel names the run. run_complete's top-level name is empty (it sits at
-// finalState.workflowName), so the lease's recipe is read instead.
-func (rs *Runs) runOutcomeLabel(f lifecycleFrame) string {
-	var recipe string
-	if l, held := rs.lease(f.WorkflowID); held {
-		recipe = l.Recipe
+	var parent string
+	if p := rs.parentChat(chatID, f.WorkflowID); p != "" {
+		parent = rs.coord.NoticeTarget(ctx, p, "").Name
 	}
-	return cmp.Or(f.WorkflowName, recipe, "Workflow run")
-}
-
-// runOutcomeBody mirrors static-src/handlers/run.ts toastCompletion verbatim. Total over the four
-// terminal statuses; the live two get the generic.
-func runOutcomeBody(status marotte.RunStatus, label string) string {
-	switch status {
-	case marotte.RunStatusCompleted:
-		return label + " finished"
-	case marotte.RunStatusFailed:
-		return label + " failed"
-	case marotte.RunStatusAborted:
-		return label + " was aborted"
-	case marotte.RunStatusCancelled:
-		return label + " was cancelled"
-	case marotte.RunStatusRunning, marotte.RunStatusPaused:
-		return label + " finished"
+	label := cmp.Or(f.FinalState.RunLabel, f.FinalState.WorkflowName, f.WorkflowName, rs.tabLabel(f.WorkflowID))
+	n, ok := notice.RunEnded(notice.RunTarget(f.WorkflowID, label), f.Status, parent,
+		f.FinalState.StopReason, f.FinalState.Pause.Kind)
+	if !ok {
+		return
 	}
-	return label + " finished"
+	rs.coord.Notify(ctx, chatID, &n)
 }
 
-// observePaused parks the deadline of a run-level `paused`, then translates; a node pause is a step waiting inside a running run.
+// parentChat is the chat whose agent launched the run, "" for a parentless run: the lease's
+// record, else the frame's door when that is a real chat.
+func (rs *Runs) parentChat(chatID marotte.ChatID, workflowID string) marotte.ChatID {
+	if l, held := rs.lease(workflowID); held {
+		return marotte.ChatID(l.ChatID)
+	}
+	if chatID == "" || isRunChat(chatID) {
+		return ""
+	}
+	return chatID
+}
+
+// tabLabel is the name a run's tab shows: the label the launch sent KAS, else its recipe.
+// run_complete's top-level name is empty, so a terminal run is named from its lease.
+func (rs *Runs) tabLabel(workflowID string) string {
+	l, ok := rs.lease(workflowID)
+	if !ok {
+		return ""
+	}
+	return cmp.Or(launchOrigin{origin: l.Origin}.runLabel(l.Recipe), l.Recipe)
+}
+
+// A node pause is a step waiting inside a running run.
 func (rs *Runs) observePaused(next func(context.Context, marotte.ChatID, *marotte.RPCResponse)) func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
 	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 		rs.disarmDeadline(ctx, workflowIDOfFrame(msg))
@@ -720,9 +713,18 @@ func (rs *Runs) observePaused(next func(context.Context, marotte.ChatID, *marott
 	}
 }
 
-// lifecycleFrame is the three fields the bounds read off a lifecycle frame, decoded separately from
-// translate's KAS contract. WorkflowName is on `run_start`.
+// lifecycleFrame is the fields the bounds and the run's notification read off a lifecycle frame,
+// decoded separately from translate's KAS contract. WorkflowName is on `run_start`, FinalState
+// on `run_complete`.
 type lifecycleFrame struct {
+	FinalState struct {
+		WorkflowName string `json:"workflowName"`
+		RunLabel     string `json:"runLabel"`
+		StopReason   string `json:"stopReason"`
+		Pause        struct {
+			Kind string `json:"kind"`
+		} `json:"pause"`
+	} `json:"finalState"`
 	WorkflowID   string            `json:"workflowId"`
 	WorkflowName string            `json:"workflowName"`
 	Status       marotte.RunStatus `json:"status"`

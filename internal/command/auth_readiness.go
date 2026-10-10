@@ -9,8 +9,8 @@ type AuthReadiness struct {
 	unavailable atomic.Bool
 }
 
-// Record stores whether the latest relevant turn failed authentication.
-func (r *AuthReadiness) Record(err error) {
+// record stores whether the latest relevant turn failed authentication.
+func (r *AuthReadiness) record(err error) {
 	r.unavailable.Store(err != nil)
 }
 

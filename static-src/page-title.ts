@@ -4,8 +4,7 @@
 
 import { byId } from "./dom.js";
 
-/** Per-view-kind subtitles, read on every view switch. Keyed by `TabKind` as a plain string so
- *  this module stays a leaf; every caller already holds one. */
+/** Keyed by `TabKind` as a plain string so this module stays a leaf; every caller already holds one. */
 const subtitles = new Map<string, string>();
 
 /** The kind whose title is currently painted, so a sub-tab setter running for a view that is NOT

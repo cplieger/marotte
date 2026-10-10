@@ -11,7 +11,6 @@ import { announce } from "@cplieger/ui-primitives/announce";
 import { iconEl } from "./icon-el.js";
 import { ICON_MODEL_UI } from "./icons.js";
 
-/** Static header copy for the model picker. */
 const PICKER_LABEL = "Choose a model";
 const PICKER_DESCRIPTION = "Pick the model for this conversation. You can switch it anytime.";
 
@@ -50,10 +49,10 @@ class ModelPickerController {
     return this.models;
   }
 
-  /** Bind visibility to store state. The callback is registered once here rather than per
-   *  show(), because nothing calls show() from outside. Keyed on a computed primitive so the
-   *  effect dedups by value: `activeSession` re-derives on every streaming chunk, and show()
-   *  reconciles the grid and moves focus, which must not happen on each frame of a turn. */
+  /** The callback is registered once here rather than per show(), because nothing calls show() from
+   *  outside. Keyed on a computed primitive so the effect dedups by value: `activeSession`
+   *  re-derives on every streaming chunk, and show() reconciles the grid and moves focus, which must
+   *  not happen on each frame of a turn. */
   bindVisibility(onSelect: (modelId: string) => void): void {
     this.callback = onSelect;
     const wanted = computed(() => pickerModelFor(activeSession.value));
@@ -233,7 +232,7 @@ export type CatalogPhase = "unknown" | "ready" | "unavailable";
 /** The line to show where a model list would be, and whether an answer is still coming. ONE
  *  statement of that copy, because the hero picker and the model pill's card both need it and
  *  two copies drift into two vocabularies. */
-export interface CatalogNotice {
+interface CatalogNotice {
   readonly text: string;
   readonly busy: boolean;
   /** Whether asking again can change the answer, which is what offers the Retry. True for a
@@ -269,9 +268,8 @@ export function catalogNotice(): CatalogNotice | null {
   }
 }
 
-/** The catalog re-read, injected by the composition root. MODULE state rather than the
- *  controller's, because the model pill's card offers the same door and a second handler is a
- *  second thing that can be wired differently. */
+/** MODULE state rather than the controller's, because the model pill's card offers the same door and
+ *  a second handler is a second thing that can be wired differently. */
 let catalogRetry: (() => Promise<void>) | null = null;
 
 /** Ask for the catalog again, and SAY SO — from either surface. */

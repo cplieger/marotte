@@ -189,6 +189,26 @@ func TestRenderChatMarkdown_DistinguishesASteerAndItsDeliveryState(t *testing.T)
 	}
 }
 
+// A workflow message names the step on its far end in the launching chat's log, and the main agent in the step's own.
+func TestRenderChatMarkdown_NamesAWorkflowMessagesFarEnd(t *testing.T) {
+	entries, _ := chatOf(openTurn("t-1", 1, prompt("m-1", "go")).
+		add("", "notify-1", marotte.EntryKindSteer, marotte.EntrySteer{Text: "weigh this", Origin: marotte.SteerOriginParent, Step: "review"}).
+		add("", "notify-2", marotte.EntryKindSteer, marotte.EntrySteer{Text: "part 1 done", Origin: marotte.SteerOriginStep, Step: "build"}).
+		add("", "notify-3", marotte.EntryKindSteer, marotte.EntrySteer{Text: "need a decision", Origin: marotte.SteerOriginStep}))
+
+	md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Orchestrated"}, entries)
+
+	for _, want := range []string{
+		"**Message to step `review`**\n\nweigh this",
+		"**Message from step `build`**\n\npart 1 done",
+		"**Message to the main agent**\n\nneed a decision",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown missing %q\n---\n%s", want, md)
+		}
+	}
+}
+
 // A wordless ack adds nothing; asserted as equality with the same turn without it.
 func TestRenderChatMarkdown_AWordlessSteerAckAddsNothing(t *testing.T) {
 	steer := marotte.EntrySteer{Text: "use tabs", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead}

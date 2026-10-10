@@ -16,8 +16,7 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// testPortEnv names the listener port for a test binary. The browser-mode suite
-// starts one beside whatever already holds the default port.
+// The browser-mode suite starts one beside whatever already holds the default port.
 const testPortEnv = "MAROTTE_TEST_PORT"
 
 func init() {
@@ -43,7 +42,6 @@ type pushProbe interface {
 	Suppressed(kind marotte.PushKind) uint64
 }
 
-// sseProbeResponse is GET /api/test/sse's body.
 type sseProbeResponse struct {
 	Suppressed      map[marotte.PushKind]uint64 `json:"push_suppressed_total"`
 	Presence        []presenceRow               `json:"presence"`

@@ -13,10 +13,11 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// chatHandler is the notification handler type; a global handler gets an empty chatID.
+// A global handler gets an empty chatID.
 type chatHandler = func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
 
-// ignoreAttribution adapts a handler that needs no attribution to sessionUpdateHandler.
+type askHandler = func(ctx context.Context, chatID marotte.ChatID, origin translate.AskOrigin, msg *marotte.RPCResponse)
+
 func ignoreAttribution(fn func(context.Context, marotte.ChatID, json.RawMessage)) sessionUpdateHandler {
 	return func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, _ translate.FrameAttribution) {
 		fn(ctx, chatID, raw)
@@ -25,13 +26,16 @@ func ignoreAttribution(fn func(context.Context, marotte.ChatID, json.RawMessage)
 
 // initDispatch builds the method → handler maps once, eagerly: several bridge goroutines read them.
 func (rt *Runtime) initDispatch() {
-	rt.chatHandlers = map[string]chatHandler{
-		marotte.MethodSessionUpdate: rt.handleSessionUpdate,
+	// The request-shaped asks, behind both doors (routeInboundRequest, dispatchRequest).
+	rt.askHandlers = map[string]askHandler{
 		// Refused on a short budget for a scheduled run.
 		marotte.MethodRequestPermission: rt.runs.permissionWithUnattendedFloor(rt.askReportsStepProgress(rt.turnApprovalExpectsRestores(rt.translator.HandlePermissionRequest))),
 		marotte.MethodElicitationCreate: rt.askReportsStepProgress(rt.translator.HandleElicitationCreate),
 		// Gated on the _meta.kiro.userInput initialize capability (bridge.go).
 		marotte.MethodKiroUserInput: rt.askReportsStepProgress(rt.translator.HandleUserInput),
+	}
+	rt.chatHandlers = map[string]chatHandler{
+		marotte.MethodSessionUpdate: rt.handleSessionUpdate,
 		// v3 _kiro/* notifications.
 		methodV3RateLimit:            rt.translator.HandleRateLimit,
 		methodV3CustomAgentNotFound:  rt.translator.HandleAgentNotFound,
@@ -87,6 +91,8 @@ func (rt *Runtime) initDispatch() {
 		methodV3ToolsDidChange:           {},
 		methodV3ProgressiveContext:       {},
 		methodKiroWorkflowRecipesChanged: {},
+		// Only the utility bridge declares configurationState, and its own forward reads it.
+		methodKiroConfigurationState: {},
 	}
 	// Eager: several bridge goroutines read it.
 	rt.sessUpdateHandlers = map[marotte.ACPUpdateKind]sessionUpdateHandler{
@@ -119,18 +125,19 @@ func (rt *Runtime) initDispatch() {
 	}
 }
 
-// translateACPEvent is the sole entry point from the forward goroutine. Every branch returns promptly; long work belongs in a goroutine.
-func (rt *Runtime) translateACPEvent(chatID marotte.ChatID, msg *marotte.RPCResponse) {
+// translateACPEvent is the sole entry point from the forward goroutine, origin being the bridge msg arrived
+// on. Every branch returns promptly; long work belongs in a goroutine.
+func (rt *Runtime) translateACPEvent(chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
 
 	// A run bridge's frames take their own door.
 	if isRunChat(chatID) {
-		rt.dispatch(ctx, chatID, msg)
+		rt.dispatch(ctx, chatID, origin, msg)
 		return
 	}
 
-	if msg.ID != nil && rt.routeInboundRequest(ctx, chatID, msg) {
+	if msg.ID != nil && rt.routeInboundRequest(ctx, chatID, origin, msg) {
 		return
 	}
 
@@ -148,7 +155,7 @@ func (rt *Runtime) translateACPEvent(chatID marotte.ChatID, msg *marotte.RPCResp
 	if msg.ID != nil {
 		slog.Warn("chat bridge: refusing an unexpected peer request",
 			"method", msg.Method, "chat_id", chatID, "id", *msg.ID)
-		if err := rt.BridgeRespond(ctx, chatID, *msg.ID, nil,
+		if err := respondOn(ctx, rt.bridge.mgr, chatID, origin, msg, nil,
 			&marotte.RPCError{
 				Code:    marotte.RPCCodeMethodNotFound,
 				Message: "unsupported on the chat session: " + msg.Method,
@@ -165,43 +172,37 @@ func (rt *Runtime) translateACPEvent(chatID marotte.ChatID, msg *marotte.RPCResp
 	}
 }
 
-// routeInboundRequest dispatches an A→C request to its handler family, reporting whether one claimed it. Every arm owes a response.
-func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) bool {
-	if rt.inbound.handleFSRequest(ctx, chatID, msg) {
+// Every arm owes a response, on origin.
+func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) bool {
+	if rt.inbound.handleFSRequest(ctx, chatID, origin, msg) {
 		return true
 	}
 	// Confined execution of KAS's own fs verbs.
-	if rt.inbound.handleKiroFSRequest(ctx, chatID, msg) {
+	if rt.inbound.handleKiroFSRequest(ctx, chatID, origin, msg) {
 		return true
 	}
-	if rt.inbound.handleKiroClientRequest(ctx, chatID, msg) {
+	if rt.inbound.handleKiroClientRequest(ctx, chatID, origin, msg) {
 		return true
 	}
 	// Must be answered: KAS rethrows a store or delete failure into MCP connect.
-	if rt.inbound.handleKiroSecretRequest(ctx, chatID, msg) {
+	if rt.inbound.handleKiroSecretRequest(ctx, chatID, origin, msg) {
 		return true
 	}
 	if strings.HasPrefix(msg.Method, methodTermPrefix) {
-		rt.handleTerminalRequest(ctx, chatID, msg.Method, msg)
+		rt.handleTerminalRequest(ctx, chatID, origin, msg.Method, msg)
 		return true
 	}
-	// An explicit whitelist for the three request-shaped chat handlers, so double dispatch is unreachable.
-	switch msg.Method {
-	case marotte.MethodRequestPermission,
-		marotte.MethodElicitationCreate,
-		marotte.MethodKiroUserInput:
-		if fn, ok := rt.chatHandlers[msg.Method]; ok {
-			fn(ctx, chatID, msg)
-			return true
-		}
+	if fn, ok := rt.askHandlers[msg.Method]; ok {
+		fn(ctx, chatID, origin, msg)
+		return true
 	}
 	return false
 }
 
 // askReportsStepProgress reports a step's ask as progress before the handler, attributed by session id (a
 // request has no workflow meta), through the run bridge's key when it arrived on one.
-func (rt *Runtime) askReportsStepProgress(inner chatHandler) chatHandler {
-	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+func (rt *Runtime) askReportsStepProgress(inner askHandler) askHandler {
+	return func(ctx context.Context, chatID marotte.ChatID, origin translate.AskOrigin, msg *marotte.RPCResponse) {
 		var params struct {
 			SessionID string `json:"sessionId"`
 		}
@@ -214,14 +215,14 @@ func (rt *Runtime) askReportsStepProgress(inner chatHandler) chatHandler {
 			}
 			rt.translator.ReportStepProgress(attr)
 		}
-		inner(ctx, chatID, msg)
+		inner(ctx, chatID, origin, msg)
 	}
 }
 
 // turnApprovalExpectsRestores marks a turn approval's session as restoring before the ask reaches
 // anyone who could answer it, so no restore can arrive unmarked.
-func (rt *Runtime) turnApprovalExpectsRestores(inner chatHandler) chatHandler {
-	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+func (rt *Runtime) turnApprovalExpectsRestores(inner askHandler) askHandler {
+	return func(ctx context.Context, chatID marotte.ChatID, origin translate.AskOrigin, msg *marotte.RPCResponse) {
 		var params struct {
 			SessionID string `json:"sessionId"`
 			Meta      struct {
@@ -233,11 +234,10 @@ func (rt *Runtime) turnApprovalExpectsRestores(inner chatHandler) chatHandler {
 		if json.Unmarshal(msg.Params, &params) == nil && params.Meta.Kiro.Type == approvalTypeTurn {
 			rt.coord.turns.expectRestores(chatID, params.SessionID)
 		}
-		inner(ctx, chatID, msg)
+		inner(ctx, chatID, origin, msg)
 	}
 }
 
-// handleSessionUpdate decodes the `update` envelope and fans out by sessionUpdate subtype with the frame's attribution.
 func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var env struct {
 		Params translate.ACPSessionUpdateEnvelope `json:"params"`
@@ -296,10 +296,8 @@ func (rt *Runtime) handleRunStepFrame(ctx context.Context, chatID marotte.ChatID
 	fn(ctx, chatID, env.Params.Update, attr)
 }
 
-// sessionUpdateHandler is the common signature for session-update sub-handlers.
 type sessionUpdateHandler = func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr translate.FrameAttribution)
 
-// sessionUpdateHandlers returns the kind → handler map initDispatch built.
 func (rt *Runtime) sessionUpdateHandlers() map[marotte.ACPUpdateKind]sessionUpdateHandler {
 	return rt.sessUpdateHandlers
 }

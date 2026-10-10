@@ -6,7 +6,7 @@ import { highlightMarked, resolveLangHint } from "./highlight.js";
 import { el } from "@cplieger/reactive";
 import { CHROME_ATTR } from "./chrome-attr.js";
 
-export interface DiffPaneOpts {
+interface DiffPaneOpts {
   /** Drop rows beyond this and append a "+N more" footer. */
   maxRows?: number;
   /** Label above the old (left) column. */
@@ -95,7 +95,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
       col.appendChild(makeUnifiedRow(line, lineNumbers, lang, marks.get(line)));
       rowCount++;
     }
-    return finishPane(container, lines, rowCount, opts);
+    return finishPane(container, lines, rowCount);
   }
 
   // The body is the one vertical scroller (columns are its grid cells), so sides cannot shear. Each
@@ -124,7 +124,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     appendRow(leftCol, rightCol, line, lineNumbers, lang, marks.get(line));
     rowCount++;
   }
-  finishPane(container, lines, rowCount, opts);
+  finishPane(container, lines, rowCount);
 
   if (syncScroll) {
     wireHorizontalScroll(viewport, leftCol, rightCol);
@@ -144,7 +144,6 @@ function finishPane(
   container: HTMLDivElement,
   lines: DiffLine[],
   rowCount: number,
-  _opts: DiffPaneOpts,
 ): HTMLDivElement {
   const extra = Math.max(0, lines.length - rowCount);
   if (extra > 0) {
@@ -376,7 +375,6 @@ function buildWhitespaceToggle(container: HTMLDivElement, opts: DiffPaneOpts): H
   return wrap;
 }
 
-/** One contiguous run of changed rows of a single kind. */
 interface ChangeRun {
   readonly start: number;
   readonly len: number;

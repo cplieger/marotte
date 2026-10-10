@@ -31,9 +31,8 @@ type Listener = (tab: SettingsTab) => void;
 // same-tab popstate).
 const activeTab = signal<SettingsTab>("general");
 
-/** Subscribe to tab changes. Fires immediately with the current tab. */
-function onTabChange(fn: Listener): () => void {
-  return subscribe(activeTab, fn);
+function onTabChange(fn: Listener): void {
+  subscribe(activeTab, fn);
 }
 
 /** Switch to a tab. No-op if already active. Updates URL and notifies subscribers (DOM panel

@@ -4,12 +4,13 @@ import (
 	"context"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// TurnAccess resolves the accumulator a frame's content folds into and files the
+// turnAccess resolves the accumulator a frame's content folds into and files the
 // entries that belong to no open turn.
-type TurnAccess interface {
+type turnAccess interface {
 	// OwnTurn returns the chat's own open turn without opening one, for a frame
 	// that may fold into a turn but must never start one.
 	OwnTurn(chatID marotte.ChatID) (*turnlog.Turn, bool)
@@ -21,6 +22,9 @@ type TurnAccess interface {
 	// PromptTurn returns the chat's prompt-class turn awaiting or holding its
 	// bracket, the one a turn_bind joins; false when none is open.
 	PromptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool)
+	// StopRequestedAfter reports whether the reader asked to stop after the named turn
+	// opened; false for a turn the chat does not hold (a run's step turn).
+	StopRequestedAfter(chatID marotte.ChatID, turnID string) bool
 	// AppendBetweenTurns files a chat's lane-less entry after its newest turn's
 	// turn_close, minting a closed event carrier on an empty log. The carrier's
 	// turn_open and turn_close, when it minted one, come back for the announcement.
@@ -34,6 +38,8 @@ type RunStep struct {
 	NodePath  string
 	NodeID    string
 	SessionID string
+	// Path is NodePath's segments when the opening frame carried them, since the key is never split back.
+	Path []string
 }
 
 // RunAppender is the run registry as the content handlers reach it for a step's
@@ -42,7 +48,7 @@ type RunAppender interface {
 	// RunNodeStart opens the step's turn on the run's node_start frame, the run
 	// turn's opening bracket, recording chatID as the run's host when it is the
 	// run's first turn; a path already open is a no-op on the log.
-	RunNodeStart(ctx context.Context, step RunStep, chatID marotte.ChatID)
+	RunNodeStart(ctx context.Context, step *RunStep, chatID marotte.ChatID)
 	// RunNodeComplete closes the turn of the step at path (its workflow.PathKey)
 	// with KAS's status mapped onto the outcome, the run turn's closing bracket; a
 	// path with no open turn closes nothing.
@@ -51,7 +57,7 @@ type RunAppender interface {
 	// path has no turn yet and recording chatID as the run's host. False for a
 	// path whose turn already closed, where RunAppendAfterClosed files a late entry,
 	// and for an open the store refused.
-	RunFoldTarget(ctx context.Context, step RunStep, chatID marotte.ChatID) (*turnlog.Turn, bool)
+	RunFoldTarget(ctx context.Context, step *RunStep, chatID marotte.ChatID) (*turnlog.Turn, bool)
 	// RunAppendAfterClosed files an entry after the turn_close of the path's newest
 	// closed turn, the run log's between-turns rule.
 	RunAppendAfterClosed(ctx context.Context, runID, nodePath string, e *marotte.Entry) error
@@ -61,11 +67,26 @@ type RunAppender interface {
 	// RunStopReason records a step's last turn_end stop reason on its open turn;
 	// false when the path has no open turn.
 	RunStopReason(runID, nodePath string, raw marotte.StopReason) bool
+	// RunNodePaused ends the step's steering turn at its node_paused: the execution reading the
+	// buffer has stopped. The log's turn stays open.
+	RunNodePaused(ctx context.Context, runID string, path []string)
+	// RunSteer files a step steer's durable entry in the path's open turn, else after its newest
+	// closed one.
+	RunSteer(ctx context.Context, runID, nodePath, steerID string, steer *marotte.EntrySteer)
+	// RunSteerDelivered files a workflow message's take-up where RunSteer would file a steer.
+	RunSteerDelivered(ctx context.Context, runID, nodePath string, d *marotte.EntrySteerDelivered)
+	// RunWaitingWorkflowMessages is the run log's workflow messages no take-up has settled, oldest
+	// first, every step's.
+	RunWaitingWorkflowMessages(ctx context.Context, runID string) ([]marotte.WorkflowMessage, error)
+	// RunPlanUpdate records a run's queued plan revision, or settles it with KAS's outcome.
+	RunPlanUpdate(ctx context.Context, chatID marotte.ChatID, runID string, u marotte.RunPlanUpdate)
+	// RunStepReading reports whether the step a StepSteerKey names is mid-turn, reading its buffer.
+	RunStepReading(key marotte.ChatID) bool
 }
 
-// TurnBoundary is the wire's own turn bracket, which KAS emits for every
+// turnBoundary is the wire's own turn bracket, which KAS emits for every
 // turn, agent-initiated included.
-type TurnBoundary interface {
+type turnBoundary interface {
 	// WireTurnStart binds the bracket to the pending pre-open, or closes a turn
 	// whose own end never arrived.
 	WireTurnStart(ctx context.Context, chatID marotte.ChatID)
@@ -78,21 +99,21 @@ type TurnBoundary interface {
 	ReviseTurnBinding(ctx context.Context, chatID marotte.ChatID)
 }
 
-// LineRecorder records the changed lines a frame's diffs describe.
-type LineRecorder interface {
+// lineRecorder records the changed lines a frame's diffs describe.
+type lineRecorder interface {
 	RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDiff, turn int, kind string)
 }
 
-// SentSteers answers whose words a mid-turn steer this server sent carries, total
+// sentSteers answers whose words a mid-turn steer this server sent carries, total
 // by construction: an unknown id still gets an answer.
-type SentSteers interface {
+type sentSteers interface {
 	SteerOrigin(chatID marotte.ChatID, steerID string) marotte.SteerOrigin
 }
 
-// SteerBuffer is the host's record of KAS's steering buffer and of the user's own steers:
-// nothing can read that buffer back. Separate from SentSteers because the lifetimes differ
+// steerBuffer is the host's record of KAS's steering buffer and of the user's own steers:
+// nothing can read that buffer back. Separate from sentSteers because the lifetimes differ
 // (a TTL'd origin vs KAS's buffer).
-type SteerBuffer interface {
+type steerBuffer interface {
 	// SteerWaiting folds steering_queued; true means an agent row the caller broadcasts.
 	SteerWaiting(chatID marotte.ChatID, p *marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool)
 	// SteerForgotten folds an acknowledgement-evidenced read and answers what was
@@ -108,10 +129,10 @@ type SteerBuffer interface {
 	SteerCleared(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload
 }
 
-// ChatRecords is the chat store's HEADER as this package uses it. Every write
+// chatRecords is the chat store's HEADER as this package uses it. Every write
 // lands after the frame that caused it, so chat.ErrTombstoned is an expected
 // outcome here.
-type ChatRecords interface {
+type chatRecords interface {
 	// Get returns the chat header at id, or false if it does not exist.
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
 	// Mutate is the header write primitive: load, apply, save, broadcast.
@@ -123,6 +144,8 @@ type ChatRecords interface {
 	// EmptyCompactions is how many empty-summary compaction entries the chat's log
 	// holds, which numbers the next one's id.
 	EmptyCompactions(ctx context.Context, id marotte.ChatID) (int, error)
+	// WaitingWorkflowMessages is the chat log's workflow messages no take-up has settled, oldest first.
+	WaitingWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
 	// DepartedName is the name a chat had when its record was deleted, for a notice
 	// its bridge raises before teardown; false for a chat that was not deleted.
 	DepartedName(id marotte.ChatID) (string, bool)
@@ -134,45 +157,43 @@ type Roles struct {
 	// Bus is the event fan-out.
 	Bus Broadcaster
 	// Chats is the chat store.
-	Chats ChatRecords
+	Chats chatRecords
 	// Turns is the open turn's accumulator.
-	Turns TurnAccess
+	Turns turnAccess
 	// Runs is the run registry's appender, for a workflow step's frames.
 	Runs RunAppender
 	// Bracket is the wire's own turn bracket.
-	Bracket TurnBoundary
+	Bracket turnBoundary
 	// Lines is the changed-line tracker.
-	Lines LineRecorder
+	Lines lineRecorder
 	// Steers answers whose words a steer carries.
-	Steers SentSteers
+	Steers sentSteers
 	// SteerBuffer is the projection of KAS's steering buffer a reconnect replays.
-	SteerBuffer SteerBuffer
+	SteerBuffer steerBuffer
 	// PendingPerms registers an unanswered decision for reconnect replay.
-	PendingPerms PendingPermAdder
-	// Respond answers a server-to-client request on the chat's bridge.
-	Respond Responder
+	PendingPerms pendingPermAdder
 	// Push sends a web-push notification.
-	Push Pusher
+	Push pusher
 	// Sessions resolves a chat's parent ACP session.
-	Sessions SessionResolver
+	Sessions sessionResolver
 	// Terminals reads an agent terminal's rendered output.
-	Terminals TerminalReader
+	Terminals terminalReader
 	// HookStatus reports whether hook status display is on.
-	HookStatus HookStatusReader
+	HookStatus hookStatusReader
 	// Catalog is where a live config_option_update's model list lands.
-	Catalog ModelCatalog
+	Catalog modelCatalog
 	// Slash is the workspace slash-menu catalog; SteeringIssues KAS's steering
 	// configuration issues. Either may be nil.
 	Slash          SlashCatalog
 	SteeringIssues SteeringIssues
-	MCP            MCPRecorder
-	Governance     GovernanceAccess
-	RunOrigin      RunOriginAccess
-	RunBounds      RunBoundsAccess
+	MCP            mcpRecorder
+	Governance     governanceAccess
+	RunOrigin      runOriginAccess
+	RunBounds      runBoundsAccess
 	// TurnInterrupt ends a turn kiro-cli abandoned without answering.
-	TurnInterrupt TurnInterruptAccess
+	TurnInterrupt turnInterruptAccess
 	// Metering is the per-turn accounting a turn_completion frame writes.
-	Metering TurnMetering
+	Metering turnMetering
 	// WorkDir is the workspace root. Last for fieldalignment.
 	WorkDir string
 }
@@ -182,53 +203,58 @@ type Broadcaster interface {
 	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
 
-// PendingPermAdder registers an unanswered decision for reconnect replay.
-type PendingPermAdder interface {
-	PendingPermsAdd(requestID int64, evt marotte.ServerEvent)
+// pendingPermAdder registers an unanswered decision for reconnect replay.
+type pendingPermAdder interface {
+	// PendingPermsAdd records the ask KAS sent as acpID with the bridge it arrived on, which carries
+	// its answer and whose end retires it, and returns evt carrying the ask's own id: the request_id
+	// a client sees and echoes, since acpID restarts on every bridge.
+	PendingPermsAdd(acpID int64, evt marotte.ServerEvent, origin AskOrigin) marotte.ServerEvent
 	// PendingPermsWithdraw retires the chat's ask for toolCallID, which KAS
-	// stopped waiting on, reporting whether one was pending.
+	// stopped waiting on, reporting whether one was open.
 	PendingPermsWithdraw(chatID marotte.ChatID, toolCallID string) bool
 }
 
-// Responder answers a server-to-client ACP request on the chat's bridge: a declined request
-// must still be answered (KAS's sendRequest has no timeout). A chat with no bridge reports nil.
-type Responder interface {
-	BridgeRespond(ctx context.Context, chatID marotte.ChatID, requestID int64, result any, err error) error
+// AskOrigin is the bridge a server-to-client ask arrived on: every answer to it goes back there,
+// a declined one included (KAS's sendRequest has no timeout).
+type AskOrigin interface {
+	Respond(ctx context.Context, requestID int64, result any, err error) error
 }
 
-// Pusher delivers a web-push notification for a chat.
-type Pusher interface {
-	NotifyPush(ctx context.Context, body string, kind marotte.PushKind, chatID marotte.ChatID)
+// pusher shows a notification on the page and as a Web Push.
+type pusher interface {
+	// NoticeTarget names the tab a notification about chatID, or about its run, opens.
+	NoticeTarget(ctx context.Context, chatID marotte.ChatID, runID string) notice.Target
+	Notify(ctx context.Context, chatID marotte.ChatID, n *marotte.NotificationPayload)
 }
 
-// SessionResolver answers a chat's parent ACP session id, or "" when no bridge
+// sessionResolver answers a chat's parent ACP session id, or "" when no bridge
 // is running.
-type SessionResolver interface {
+type sessionResolver interface {
 	ParentACPSession(chatID marotte.ChatID) string
 }
 
-// HookStatusReader reports whether hook status display is enabled.
-type HookStatusReader interface {
+// hookStatusReader reports whether hook status display is enabled.
+type hookStatusReader interface {
 	IsHookStatusEnabled() bool
 }
 
-// ModelCatalog is the workspace's model vocabulary, which a live
+// modelCatalog is the workspace's model vocabulary, which a live
 // config_option_update updates. SetModels reports whether the list changed.
-type ModelCatalog interface {
+type modelCatalog interface {
 	SetModels(models []marotte.SessionModel) bool
 }
 
-// TerminalReader returns an agent terminal's rendered output: plain text with
+// terminalReader returns an agent terminal's rendered output: plain text with
 // escapes parsed off, plus the spans styling it. ok reports whether the terminal
 // is known, not whether it printed anything — a registered terminal that produced
 // no output answers ("", nil, true).
-type TerminalReader interface {
+type terminalReader interface {
 	Output(terminalID string) (text string, spans []marotte.TextSpan, ok bool)
 }
 
-// GovernanceAccess is the runtime's governance cache: the account profile, the MCP
+// governanceAccess is the runtime's governance cache: the account profile, the MCP
 // registry and the administrator rules it composes into the lock map.
-type GovernanceAccess interface {
+type governanceAccess interface {
 	// SetGovernance replaces the cached account profile.
 	SetGovernance(ctx context.Context, state marotte.GovernanceStatePayload)
 	// SetMCPRegistry replaces the organization's MCP registry; nil means no registry.
@@ -239,8 +265,8 @@ type GovernanceAccess interface {
 	PolicyChanged(ctx context.Context, errs []marotte.PolicyErrorItem, reloaded bool)
 }
 
-// MCPRecorder groups MCP server state tracking methods.
-type MCPRecorder interface {
+// mcpRecorder groups MCP server state tracking methods.
+type mcpRecorder interface {
 	// RecordConnected marks a server connected and replaces what it advertises
 	// (tools, prompts, resources, resource templates) wholesale; any may be nil.
 	RecordConnected(ctx context.Context, serverName string, src marotte.MCPSource, tools []string, prompts []marotte.MCPPromptInfo, resources []marotte.MCPResourceInfo, templates []marotte.MCPResourceTemplateInfo)
@@ -254,28 +280,27 @@ type MCPRecorder interface {
 // Translator holds the package's stateful translate logic, one field per role.
 type Translator struct {
 	bus            Broadcaster
-	chats          ChatRecords
-	turns          TurnAccess
+	chats          chatRecords
+	turns          turnAccess
 	runs           RunAppender
-	bracket        TurnBoundary
-	lines          LineRecorder
-	steers         SentSteers
-	steerBuffer    SteerBuffer
-	pendingPerms   PendingPermAdder
-	respond        Responder
-	push           Pusher
-	sessions       SessionResolver
-	terminals      TerminalReader
-	hookStatus     HookStatusReader
-	catalog        ModelCatalog
+	bracket        turnBoundary
+	lines          lineRecorder
+	steers         sentSteers
+	steerBuffer    steerBuffer
+	pendingPerms   pendingPermAdder
+	push           pusher
+	sessions       sessionResolver
+	terminals      terminalReader
+	hookStatus     hookStatusReader
+	catalog        modelCatalog
 	slash          SlashCatalog
 	steeringIssues SteeringIssues
-	mcp            MCPRecorder
-	governance     GovernanceAccess
-	runOrigin      RunOriginAccess
-	runBounds      RunBoundsAccess
-	turnInterrupt  TurnInterruptAccess
-	metering       TurnMetering
+	mcp            mcpRecorder
+	governance     governanceAccess
+	runOrigin      runOriginAccess
+	runBounds      runBoundsAccess
+	turnInterrupt  turnInterruptAccess
+	metering       turnMetering
 	// steps maps a workflow step's ACP session id to its run and node, fed from the
 	// wire (node_start) and from an inspect read.
 	steps   *stepRegistry
@@ -294,7 +319,6 @@ func New(r *Roles, opts ...Option) *Translator {
 		steers:         r.Steers,
 		steerBuffer:    r.SteerBuffer,
 		pendingPerms:   r.PendingPerms,
-		respond:        r.Respond,
 		push:           r.Push,
 		sessions:       r.Sessions,
 		terminals:      r.Terminals,
@@ -323,15 +347,15 @@ type Option func(*Translator)
 // deriveSubSession returns the sessionID when it belongs to a subagent, and ""
 // for the launching chat itself or for a workflow step.
 func (t *Translator) deriveSubSession(chatID marotte.ChatID, sessionID string) string {
-	if t.ClassifyFrame(chatID, sessionID, false) == OwnerSubagent {
+	if t.classifyFrame(chatID, sessionID, false) == ownerSubagent {
 		return sessionID
 	}
 	return ""
 }
 
-// RunOriginAccess answers where a run-shaped fact came from. In-memory on the host: a
+// runOriginAccess answers where a run-shaped fact came from. In-memory on the host: a
 // run that outlives a restart reports false afterwards.
-type RunOriginAccess interface {
+type runOriginAccess interface {
 	// IsScheduled reports whether a run was launched by a schedule, keyed by
 	// workflow id because a parentless run's frames carry no topic.
 	IsScheduled(workflowID string) bool
@@ -344,27 +368,27 @@ type RunOriginAccess interface {
 	RunNotice(chatID marotte.ChatID) (workflowID string, producedTs int64, ok bool)
 }
 
-// RunBoundsAccess reports the observable progress that rolls a run's idle window
+// runBoundsAccess reports the observable progress that rolls a run's idle window
 // forward. Detection belongs here (the step's frames pass through this package) while
 // the bound belongs on the host, which owns the bridges and the only stop verb.
-type RunBoundsAccess interface {
+type runBoundsAccess interface {
 	// RunMadeProgress reports that a run's step did something observable, so its idle window may
 	// roll forward. Called per step frame: cheap, idempotent, a no-op for an unbounded run. Keyed
 	// on the RUN, because the window is the run's.
 	RunMadeProgress(workflowID string)
 }
 
-// TurnInterruptAccess carries terminal signals that arrive without a response frame: detected
+// turnInterruptAccess carries terminal signals that arrive without a response frame: detected
 // here, terminated on the host. Advisory; a compaction failure does not prove the turn ended.
-type TurnInterruptAccess interface {
+type turnInterruptAccess interface {
 	CompactionFailed(chatID marotte.ChatID, detail string)
 	InterruptTurn(chatID marotte.ChatID, reason string)
 }
 
-// TurnMetering is the per-turn accounting a turn_completion frame writes, split
+// turnMetering is the per-turn accounting a turn_completion frame writes, split
 // in two because a step's credits belong to the launching chat while the
 // conversation turn count and duration are the conversation's.
-type TurnMetering interface {
+type turnMetering interface {
 	// AccumulateSpend adds a turn_completion's credit spend, step frames included.
 	AccumulateSpend(ctx context.Context, chatID marotte.ChatID, credits float64)
 	// StageConversationTurnSummary accumulates a conversation turn's reported

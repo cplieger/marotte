@@ -43,7 +43,7 @@ func TestHandleOpenExternalURL(t *testing.T) {
 	t.Run("SafeURLBroadcasts", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		before := h.bus.fanout.Position().Head
-		h.translateACPEvent("c1", openExternalURLMsg(t, 1, "https://auth.example.com/oauth"))
+		h.translateACPEvent("c1", h.originOf("c1"), openExternalURLMsg(t, 1, "https://auth.example.com/oauth"))
 		types := extractTypes(t, bufferedSince(h, before))
 		if missing := missingEvents(types, string(marotte.EventOpenExternalURL)); len(missing) > 0 {
 			t.Errorf("missing events %v; got %v", missing, types)
@@ -53,7 +53,7 @@ func TestHandleOpenExternalURL(t *testing.T) {
 	t.Run("UnsafeURLDoesNotBroadcast", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		before := h.bus.fanout.Position().Head
-		h.translateACPEvent("c1", openExternalURLMsg(t, 2, "javascript:alert(1)"))
+		h.translateACPEvent("c1", h.originOf("c1"), openExternalURLMsg(t, 2, "javascript:alert(1)"))
 		types := extractTypes(t, bufferedSince(h, before))
 		for _, ty := range types {
 			if ty == string(marotte.EventOpenExternalURL) {
@@ -85,7 +85,7 @@ func TestHandleKiroClientRequest_DoesNotClaimGetAccessToken(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			if got := h.inbound.handleKiroClientRequest(t.Context(), "c1", tc.msg); got != tc.want {
+			if got := h.inbound.handleKiroClientRequest(t.Context(), "c1", h.originOf("c1"), tc.msg); got != tc.want {
 				t.Errorf("handleKiroClientRequest(%q) = %v, want %v", tc.msg.Method, got, tc.want)
 			}
 		})
@@ -96,7 +96,7 @@ func TestHandleOpenExternalURL_UnsafeSchemeIsRefusedWithInvalidParams(t *testing
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, t.TempDir(), br)
 
-	h.translateACPEvent("c1", openExternalURLMsg(t, 9, "javascript:alert(1)"))
+	h.translateACPEvent("c1", h.originOf("c1"), openExternalURLMsg(t, 9, "javascript:alert(1)"))
 
 	resp, ok := br.lastResponse()
 	if !ok {

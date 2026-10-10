@@ -1,6 +1,6 @@
 package mcp
 
-// One identity grammar, one writer: Validate (a name), ParseServerID (a path segment) and
+// One identity grammar, one writer: Validate (a name), parseServerID (a path segment) and
 // sanitizeName (a repairer) all derive from the shared rune predicates, and these tests hold them
 // together.
 
@@ -17,7 +17,7 @@ import (
 type nameDoorCase struct {
 	name string
 	in   string
-	// okName is ValidateName's verdict, okID is ParseServerID's. They differ on
+	// okName is ValidateName's verdict, okID is parseServerID's. They differ on
 	// exactly two axes and each row that uses one says which.
 	okName bool
 	okID   bool
@@ -51,19 +51,19 @@ func nameDoorTable() []nameDoorCase {
 		{name: "EmbeddedNUL", in: "gi\x00thub", okName: false, okID: false, why: "shared charset"},
 		{name: "TrailingSpace", in: "github ", okName: false, okID: false, why: "neither door trims"},
 		{
-			name: "AtNameBound", in: "a" + strings.Repeat("b", NameMaxLen-1), okName: true, okID: false,
+			name: "AtNameBound", in: "a" + strings.Repeat("b", nameMaxLen-1), okName: true, okID: false,
 			why: "64 is the name's bound; the id's is 32",
 		},
 		{
-			name: "OverNameBound", in: "a" + strings.Repeat("b", NameMaxLen), okName: false, okID: false,
+			name: "OverNameBound", in: "a" + strings.Repeat("b", nameMaxLen), okName: false, okID: false,
 			why: "one past the name bound",
 		},
 		{
-			name: "AtIDBound", in: "a" + strings.Repeat("b", IDMaxLen-1), okName: true, okID: true,
+			name: "AtIDBound", in: "a" + strings.Repeat("b", idMaxLen-1), okName: true, okID: true,
 			why: "32 is legal for both",
 		},
 		{
-			name: "OverIDBound", in: "a" + strings.Repeat("b", IDMaxLen), okName: true, okID: false,
+			name: "OverIDBound", in: "a" + strings.Repeat("b", idMaxLen), okName: true, okID: false,
 			why: "one past the id bound, still inside the name bound",
 		},
 		// The charset's own edges. Every rule here is a range, and a range is
@@ -86,11 +86,11 @@ func nameDoorTable() []nameDoorCase {
 func TestNameDoorsAgree(t *testing.T) {
 	for _, tc := range nameDoorTable() {
 		t.Run(tc.name, func(t *testing.T) {
-			gotName := ValidateName(tc.in) == nil
+			gotName := validateName(tc.in) == nil
 			if gotName != tc.okName {
 				t.Errorf("ValidateName(%q) ok=%v, want %v (%s)", tc.in, gotName, tc.okName, tc.why)
 			}
-			_, idErr := ParseServerID(tc.in)
+			_, idErr := parseServerID(tc.in)
 			gotID := idErr == nil
 			if gotID != tc.okID {
 				t.Errorf("ParseServerID(%q) ok=%v, want %v (%s)", tc.in, gotID, tc.okID, tc.why)
@@ -101,21 +101,21 @@ func TestNameDoorsAgree(t *testing.T) {
 
 // TestNameDoorsShareTheCharset states the shared half on its own, keyed on the
 // property rather than on the row list: for any candidate holding a rune outside
-// NameAllowedRune, BOTH doors refuse. This is the half that has to hold whatever
+// nameAllowedRune, BOTH doors refuse. This is the half that has to hold whatever
 // the bounds do, because it is what refuses a traversal-shaped path segment.
 func TestNameDoorsShareTheCharset(t *testing.T) {
 	for _, tc := range nameDoorTable() {
 		if tc.in == "" {
 			continue
 		}
-		if !strings.ContainsFunc(tc.in, func(r rune) bool { return !NameAllowedRune(r) }) {
+		if !strings.ContainsFunc(tc.in, func(r rune) bool { return !nameAllowedRune(r) }) {
 			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
-			if ValidateName(tc.in) == nil {
+			if validateName(tc.in) == nil {
 				t.Errorf("ValidateName(%q) accepted a value outside the shared charset", tc.in)
 			}
-			if _, err := ParseServerID(tc.in); err == nil {
+			if _, err := parseServerID(tc.in); err == nil {
 				t.Errorf("ParseServerID(%q) accepted a value outside the shared charset", tc.in)
 			}
 		})
@@ -124,7 +124,7 @@ func TestNameDoorsShareTheCharset(t *testing.T) {
 
 // TestSanitizeNameAlwaysValid is the third door's contract. It REPAIRS rather than
 // rejects, so its agreement with the grammar cannot be "same verdict" — it is
-// "every non-empty output is a value ValidateName accepts". That postcondition is
+// "every non-empty output is a value validateName accepts". That postcondition is
 // what folding it into the one writer bought.
 func TestSanitizeNameAlwaysValid(t *testing.T) {
 	for _, tc := range nameDoorTable() {
@@ -133,7 +133,7 @@ func TestSanitizeNameAlwaysValid(t *testing.T) {
 			if got == "" {
 				return // nothing salvageable; importName turns this into an error
 			}
-			if err := ValidateName(got); err != nil {
+			if err := validateName(got); err != nil {
 				t.Errorf("sanitizeName(%q) = %q, which ValidateName rejects: %v", tc.in, got, err)
 			}
 		})
@@ -141,37 +141,37 @@ func TestSanitizeNameAlwaysValid(t *testing.T) {
 }
 
 // TestSanitizeNameRespectsSharedBound pins that the repairer's cap comes from
-// NameMaxLen, not from a literal beside it, and that truncating at a byte index
+// nameMaxLen, not from a literal beside it, and that truncating at a byte index
 // cannot split a rune (every kept rune is single-byte ASCII by construction).
 func TestSanitizeNameRespectsSharedBound(t *testing.T) {
-	long := strings.Repeat("a", NameMaxLen*3)
+	long := strings.Repeat("a", nameMaxLen*3)
 	got := sanitizeName(long)
-	if len(got) != NameMaxLen {
-		t.Fatalf("sanitizeName capped at %d bytes, want NameMaxLen=%d", len(got), NameMaxLen)
+	if len(got) != nameMaxLen {
+		t.Fatalf("sanitizeName capped at %d bytes, want NameMaxLen=%d", len(got), nameMaxLen)
 	}
 	if !utf8.ValidString(got) {
 		t.Errorf("sanitizeName produced invalid UTF-8: %q", got)
 	}
 	// A multi-byte input folds to single-byte separators, so the cap still lands
 	// on a rune boundary.
-	wide := sanitizeName("a" + strings.Repeat("\u65e5", NameMaxLen*2))
+	wide := sanitizeName("a" + strings.Repeat("\u65e5", nameMaxLen*2))
 	if !utf8.ValidString(wide) {
 		t.Errorf("sanitizeName produced invalid UTF-8 from a multi-byte input: %q", wide)
 	}
-	if err := ValidateName(wide); err != nil {
+	if err := validateName(wide); err != nil {
 		t.Errorf("sanitizeName(multi-byte) = %q, which ValidateName rejects: %v", wide, err)
 	}
 }
 
-// TestGeneratedIDsPassTheirOwnDoor is why ParseServerID does not borrow the name's
+// TestGeneratedIDsPassTheirOwnDoor is why parseServerID does not borrow the name's
 // lead rule: newID mints base32 lowercase (a-z 2-7), so roughly a fifth of all
-// generated ids open with a digit and would be refused by ValidateName.
+// generated ids open with a digit and would be refused by validateName.
 func TestGeneratedIDsPassTheirOwnDoor(t *testing.T) {
 	digitLeading := 0
 	const draws = 200
 	for range draws {
 		id := newID()
-		if _, err := ParseServerID(string(id)); err != nil {
+		if _, err := parseServerID(string(id)); err != nil {
 			t.Fatalf("ParseServerID refused a generated id %q: %v", id, err)
 		}
 		if id[0] >= '2' && id[0] <= '7' {
@@ -180,15 +180,15 @@ func TestGeneratedIDsPassTheirOwnDoor(t *testing.T) {
 	}
 	// Six of base32's 32 symbols are digits, so ~19% of draws open with one and
 	// seeing none in 200 has probability ~1e-18. A zero here means the encoding
-	// changed, and the comment above ParseServerID about why it cannot borrow the
+	// changed, and the comment above parseServerID about why it cannot borrow the
 	// name's lead rule would have gone stale with it.
 	if digitLeading == 0 {
 		t.Errorf("no digit-leading id in %d draws: newID's encoding changed, "+
 			"so re-check whether ParseServerID still needs its lead-rule exemption", draws)
 	}
-	// The exemption is load-bearing precisely because ValidateName refuses that
+	// The exemption is load-bearing precisely because validateName refuses that
 	// shape; a digit-leading value is legal as an id and illegal as a name.
-	if err := ValidateName("2abcdefghi"); err == nil {
+	if err := validateName("2abcdefghi"); err == nil {
 		t.Error("ValidateName accepted a digit-leading value; the id door's exemption is now moot")
 	}
 }
@@ -207,7 +207,7 @@ func TestValidateNameIsTheRunePredicates(t *testing.T) {
 		// rather than a lottery on rapid's bias toward short values.
 		n := rapid.OneOf(
 			rapid.IntRange(0, 6),
-			rapid.IntRange(NameMaxLen-2, NameMaxLen+4),
+			rapid.IntRange(nameMaxLen-2, nameMaxLen+4),
 		).Draw(t, "length")
 		runes := rapid.SliceOfN(rapid.SampledFrom(inCharset), n, n).Draw(t, "runes")
 		// Inject exactly ONE rune from outside the charset, sometimes. One rather
@@ -224,12 +224,12 @@ func TestValidateNameIsTheRunePredicates(t *testing.T) {
 		// The predicates, applied here and nowhere else in this function, are the
 		// oracle. Deliberately spelled as the rule rather than by calling the
 		// production helper, or this would assert a function against itself.
-		wantOK := name != "" && len(name) <= NameMaxLen
+		wantOK := name != "" && len(name) <= nameMaxLen
 		if wantOK {
 			for i, r := range name {
-				allowed := NameAllowedRune(r)
+				allowed := nameAllowedRune(r)
 				if i == 0 {
-					allowed = NameLeadRune(r)
+					allowed = nameLeadRune(r)
 				}
 				if !allowed {
 					wantOK = false
@@ -238,7 +238,7 @@ func TestValidateNameIsTheRunePredicates(t *testing.T) {
 			}
 		}
 
-		gotOK := ValidateName(name) == nil
+		gotOK := validateName(name) == nil
 		if gotOK != wantOK {
 			t.Fatalf("ValidateName(%q) ok=%v, the rune predicates say %v: "+
 				"the validator and the predicates are no longer one grammar", name, gotOK, wantOK)
@@ -247,13 +247,13 @@ func TestValidateNameIsTheRunePredicates(t *testing.T) {
 }
 
 // TestNameGrammarSaysWhatTheBoundIs keeps the human-readable half honest: the
-// message must be built from NameMaxLen, or raising it tells the user an old rule.
+// message must be built from nameMaxLen, or raising it tells the user an old rule.
 func TestNameGrammarSaysWhatTheBoundIs(t *testing.T) {
 	got := nameGrammar()
-	if !strings.Contains(got, strconv.Itoa(NameMaxLen)) {
-		t.Errorf("nameGrammar() = %q, which does not state NameMaxLen=%d", got, NameMaxLen)
+	if !strings.Contains(got, strconv.Itoa(nameMaxLen)) {
+		t.Errorf("nameGrammar() = %q, which does not state NameMaxLen=%d", got, nameMaxLen)
 	}
-	err := ValidateName("bad name")
+	err := validateName("bad name")
 	if err == nil {
 		t.Fatal("ValidateName accepted a spaced name")
 	}
@@ -272,12 +272,12 @@ func FuzzValidateNameMatchesPredicates(f *testing.F) {
 	f.Add("\xff\xfe")
 	f.Add("a\xc3")
 	f.Fuzz(func(t *testing.T, name string) {
-		wantOK := name != "" && len(name) <= NameMaxLen
+		wantOK := name != "" && len(name) <= nameMaxLen
 		if wantOK {
 			for i, r := range name {
-				allowed := NameAllowedRune(r)
+				allowed := nameAllowedRune(r)
 				if i == 0 {
-					allowed = NameLeadRune(r)
+					allowed = nameLeadRune(r)
 				}
 				if !allowed {
 					wantOK = false
@@ -285,7 +285,7 @@ func FuzzValidateNameMatchesPredicates(f *testing.F) {
 				}
 			}
 		}
-		if gotOK := ValidateName(name) == nil; gotOK != wantOK {
+		if gotOK := validateName(name) == nil; gotOK != wantOK {
 			t.Fatalf("ValidateName(%q) ok=%v, the rune predicates say %v", name, gotOK, wantOK)
 		}
 	})
@@ -306,7 +306,7 @@ func FuzzSanitizeNameProducesValidName(f *testing.F) {
 		if got == "" {
 			return
 		}
-		if err := ValidateName(got); err != nil {
+		if err := validateName(got); err != nil {
 			t.Fatalf("sanitizeName(%q) = %q, rejected by ValidateName: %v", raw, got, err)
 		}
 		if !utf8.ValidString(got) {

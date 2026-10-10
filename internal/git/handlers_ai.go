@@ -47,7 +47,6 @@ func (a *AIHandler) repoDir(repo string) string {
 	return resolveRepoDir(a.workDir, repo)
 }
 
-// getRecentCommits returns the last n non-merge commits as "hash subject" lines.
 func getRecentCommits(ctx context.Context, dir string, n int) string {
 	out, err := gitCmd(ctx, dir, "log", "--oneline", "--no-merges",
 		"-n"+strconv.Itoa(n))
@@ -57,12 +56,8 @@ func getRecentCommits(ctx context.Context, dir string, n int) string {
 	return strings.TrimSpace(out)
 }
 
-// diffTruncatedSuffix is the canonical suffix appended when a diff
-// exceeds the byte cap for prompt construction.
 const diffTruncatedSuffix = "\n\n[Diff truncated due to size]"
 
-// truncateDiff caps diff at maxBytes bytes, appending the canonical suffix
-// when truncation occurs.
 func truncateDiff(diff string, maxBytes int) string {
 	if len(diff) > maxBytes {
 		return diff[:maxBytes] + diffTruncatedSuffix
@@ -83,7 +78,7 @@ func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) 
 	// --no-textconv even with --stat: the flag stops the textconv program from running at all.
 	diff, err := gitCmd(r.Context(), dir, "diff", "--no-textconv", "--cached", "--stat")
 	if err != nil || strings.TrimSpace(diff) == "" {
-		writeGitError(w, KindNoStaged, "")
+		writeGitError(w, kindNoStaged, "")
 		return
 	}
 
@@ -101,7 +96,7 @@ func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) 
 	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, marotte.EffortMedium)
 	if err != nil {
 		slog.Error("commit message generation failed", "error", err)
-		writeGitError(w, KindGenerationFailed, err.Error())
+		writeGitError(w, kindGenerationFailed, err.Error())
 		return
 	}
 
@@ -144,7 +139,7 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 		// Fall back to origin/main if local main doesn't exist.
 		diff, err = gitCmd(r.Context(), dir, "diff", "--no-textconv", "origin/"+base+"...HEAD")
 		if err != nil || strings.TrimSpace(diff) == "" {
-			writeGitError(w, KindNoChanges, "against "+base)
+			writeGitError(w, kindNoChanges, "against "+base)
 			return
 		}
 	}
@@ -164,7 +159,7 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, marotte.EffortMedium)
 	if err != nil {
 		slog.Error("PR description generation failed", "error", err)
-		writeGitError(w, KindGenerationFailed, err.Error())
+		writeGitError(w, kindGenerationFailed, err.Error())
 		return
 	}
 
@@ -193,7 +188,7 @@ func (a *AIHandler) handleBranchName(w http.ResponseWriter, r *http.Request) {
 		// Nothing uncommitted: fall back to recent commits.
 		commits := getRecentCommits(r.Context(), dir, 5)
 		if commits == "No commit history available" {
-			writeGitError(w, KindNoChanges, "nothing to name a branch after")
+			writeGitError(w, kindNoChanges, "nothing to name a branch after")
 			return
 		}
 		workContext = "Recent commits:\n" + commits
@@ -208,20 +203,18 @@ func (a *AIHandler) handleBranchName(w http.ResponseWriter, r *http.Request) {
 	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, marotte.EffortLow)
 	if err != nil {
 		slog.Error("branch name generation failed", "error", err)
-		writeGitError(w, KindGenerationFailed, err.Error())
+		writeGitError(w, kindGenerationFailed, err.Error())
 		return
 	}
 	name := sanitizeBranchName(result)
 	if name == "" {
-		writeGitError(w, KindGenerationFailed, "model returned no usable name")
+		writeGitError(w, kindGenerationFailed, "model returned no usable name")
 		return
 	}
 	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: name})
 }
 
-// uncommittedContext summarises the repo's uncommitted state (porcelain
-// status + a capped combined diff) for prompt construction. Empty when the
-// tree is clean.
+// Empty when the tree is clean.
 func uncommittedContext(ctx context.Context, dir string) string {
 	status, err := gitCmd(ctx, dir, "status", "--porcelain")
 	if err != nil || strings.TrimSpace(status) == "" {

@@ -73,10 +73,8 @@ func (h *Handler) mountFor(clean string) *mount {
 	return nil
 }
 
-// enforce runs the allow-list + sensitive-path policy on an
-// already-canonicalised absolute path. Applied to both the lexical and
-// the real-path forms by resolvePath so they enforce identical policy —
-// any drift would create a symlink-based bypass.
+// Applied to both the lexical and the real-path forms by resolvePath so they enforce identical
+// policy — any drift would create a symlink-based bypass.
 func (h *Handler) enforce(clean string) (*mount, error) {
 	m := h.mountFor(clean)
 	if m == nil {
@@ -88,10 +86,9 @@ func (h *Handler) enforce(clean string) (*mount, error) {
 	return m, nil
 }
 
-// resolvePath cleans reqPath and enforces the access policy on both its lexical and real-path
-// forms; a symlink escaping the mounts or landing on a sensitive path gets the lexical error. A
-// target that does not exist yet is resolved through its parent. The loc carries the mount owning
-// the REAL path.
+// A symlink escaping the mounts or landing on a sensitive path gets the lexical error. A target
+// that does not exist yet is resolved through its parent. The loc carries the mount owning the REAL
+// path.
 func (h *Handler) resolvePath(reqPath string) (loc, error) {
 	clean := filepath.Clean("/" + reqPath)
 	if _, err := h.enforce(clean); err != nil {
@@ -108,9 +105,9 @@ func (h *Handler) resolvePath(reqPath string) (loc, error) {
 	return loc{m: m, abs: realPath}, nil
 }
 
-// resolveRealPath evaluates symlinks on an absolute, cleaned path. For a target that does not exist
-// it walks up to the first ancestor that resolves and recomposes the missing suffix, so a symlinked
-// ancestor over a deep missing leaf cannot leak an unresolved segment past enforce.
+// For a target that does not exist it walks up to the first ancestor that resolves and recomposes
+// the missing suffix, so a symlinked ancestor over a deep missing leaf cannot leak an unresolved
+// segment past enforce.
 func resolveRealPath(clean string) (string, error) {
 	if realPath, err := filepath.EvalSymlinks(clean); err == nil {
 		return realPath, nil
@@ -171,8 +168,8 @@ func ParseBrowseRoots(raw string) (roots, invalid []string) {
 	return roots, invalid
 }
 
-// openMounts opens an os.Root per granted directory. A directory that cannot be opened is skipped
-// with its error recorded, so a typo'd grant cannot brick the UI; the caller fails if none survive.
+// A directory that cannot be opened is skipped with its error recorded, so a typo'd grant cannot
+// brick the UI; the caller fails if none survive.
 func openMounts(rootDirs []string) ([]mount, []error) {
 	var errs []error
 	seen := make(map[string]bool)

@@ -25,7 +25,7 @@ func runLoggingHub(t *testing.T) (*Runtime, *testChatStore) {
 // A content frame can open a step's turn while the registry is cold; a later fold that knows the id names it.
 func TestRunFoldTarget_ALaterFoldNamesATurnOpenedWithNoNodeID(t *testing.T) {
 	h, _ := runLoggingHub(t)
-	step := translate.RunStep{RunID: "wf_1", NodePath: workflow.PathKey([]string{"wf_1", "a"}), SessionID: "step-session-a"}
+	step := &translate.RunStep{RunID: "wf_1", NodePath: workflow.PathKey([]string{"wf_1", "a"}), SessionID: "step-session-a"}
 	if _, ok := h.runs.RunFoldTarget(t.Context(), step, ""); !ok {
 		t.Fatal("Setup: RunFoldTarget(no id) opened no turn")
 	}
@@ -33,29 +33,27 @@ func TestRunFoldTarget_ALaterFoldNamesATurnOpenedWithNoNodeID(t *testing.T) {
 	if _, ok := h.runs.RunFoldTarget(t.Context(), step, ""); !ok {
 		t.Fatal("RunFoldTarget(with id) found no open turn")
 	}
-	if got := h.runs.log.OpenNodeIDs("wf_1"); !maps.Equal(got, map[string]struct{}{"a": {}}) {
+	if got := h.runs.log.openNodeIDs("wf_1"); !maps.Equal(got, map[string]struct{}{"a": {}}) {
 		t.Errorf("OpenNodeIDs() after a fold naming the node = %v, want [a]: awaitingAnswer reads the step as not waiting", got)
 	}
 }
 
-// refuseStep opens the step's turn, latches the refusal metadata, and records the declining turn_end.
 func refuseStep(t *testing.T, rs *Runs, runID string, path []string, r *marotte.RefusalInfo) {
 	t.Helper()
 	nodePath := workflow.PathKey(path)
-	rs.RunNodeStart(t.Context(), translate.RunStep{RunID: runID, NodePath: nodePath, NodeID: path[len(path)-1], SessionID: "step-session-1"}, "")
-	turn := rs.log.Turn(runID, nodePath)
+	rs.RunNodeStart(t.Context(), &translate.RunStep{RunID: runID, NodePath: nodePath, NodeID: path[len(path)-1], SessionID: "step-session-1"}, "")
+	turn := rs.log.turn(runID, nodePath)
 	if turn == nil {
 		t.Fatalf("no open turn for %s/%s", runID, nodePath)
 	}
 	if r != nil {
 		turn.SetRefusal(r)
 	}
-	if !rs.log.StopReason(runID, nodePath, marotte.StopReasonRefusal) {
+	if !rs.log.stopReason(runID, nodePath, marotte.StopReasonRefusal) {
 		t.Fatalf("StopReason refused on the open turn %s/%s", runID, nodePath)
 	}
 }
 
-// chatSteers is every steer entry the chat's log holds, decoded.
 func chatSteers(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []marotte.EntrySteer {
 	t.Helper()
 	entries, err := cs.All(t.Context(), chatID)
@@ -143,8 +141,8 @@ func TestRunNodeComplete_AStepStoppedAtTheModelCallLimitTellsTheLaunchingChat(t 
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
 		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
-	h.runs.RunNodeStart(t.Context(), translate.RunStep{RunID: id, NodePath: nodePath, NodeID: "build", SessionID: "step-session-1"}, "")
-	if !h.runs.log.StopReason(id, nodePath, marotte.StopReasonToolUse) {
+	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: nodePath, NodeID: "build", SessionID: "step-session-1"}, "")
+	if !h.runs.log.stopReason(id, nodePath, marotte.StopReasonToolUse) {
 		t.Fatal("StopReason(tool_use) refused on the open turn")
 	}
 
@@ -216,8 +214,8 @@ func TestRunNodeComplete_AStepThatRanLeavesNoNote(t *testing.T) {
 			seedChat(t, cs, chatID)
 			h.runs.grantLease(t.Context(), id, "nightly",
 				launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
-			h.runs.RunNodeStart(t.Context(), translate.RunStep{RunID: id, NodePath: "build", NodeID: "build", SessionID: "step-session-1"}, "")
-			if !h.runs.log.StopReason(id, "build", tc.raw) {
+			h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: "build", NodeID: "build", SessionID: "step-session-1"}, "")
+			if !h.runs.log.stopReason(id, "build", tc.raw) {
 				t.Fatalf("StopReason(%q) refused on the open turn", tc.raw)
 			}
 

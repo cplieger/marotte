@@ -2,10 +2,22 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fc from "fast-check";
-import { renderMarkdown, createMarkdownStream } from "./markdown.js";
+import { el } from "@cplieger/reactive";
+import { createMarkdownStream } from "./markdown.js";
+import { parser, parser_end, parser_write } from "./smd-parser.js";
+import { domRenderer } from "./smd-renderer.js";
 import { adoptLinkGuard, setLinkCopyCallback } from "./link-guard.js";
 import { exfilShaped } from "./utils-url.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
+
+/** The parser's own output, undecorated, as an HTML string to assert against. */
+function renderMarkdown(md: string): string {
+  const tmp = el("div");
+  const p = parser(domRenderer(tmp));
+  parser_write(p, md);
+  parser_end(p);
+  return tmp.innerHTML;
+}
 
 describe("renderMarkdown XSS invariants (property-based)", () => {
   it("never produces <script in output", () => {
@@ -465,7 +477,7 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: '<pre class="code"><code>snake_case</code></pre>',
     },
     {
-      // A pre-existing divergence from CommonMark, from handleCommon's STRONG_AST guard. Characterization.
+      // A divergence from CommonMark, from handleCommon's STRONG_AST guard. Characterization.
       name: "_ inside ** is literal today (characterization)",
       input: "**_both_**",
       expected: "<p><strong>_both_</strong></p>",
@@ -1496,7 +1508,7 @@ describe("renderMarkdown ordered list delimiters", () => {
     {
       name: "a nine-digit marker is still a list",
       input: "123456789. x",
-      expected: '<ol start="123456789"><li>x</li></ol>',
+      expected: '<ol start="123456789" style="--marker-digits: 9;"><li>x</li></ol>',
     },
     {
       name: "a ten-digit marker is not a list",

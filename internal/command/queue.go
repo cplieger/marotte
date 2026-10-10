@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/ids"
@@ -49,15 +50,15 @@ type QueueAccess interface {
 	Dequeue(ctx context.Context, chatID marotte.ChatID, id string) error
 }
 
-// chatMutator is the one ChatStore write the record-only queue and mode handlers
+// chatMutator is the one chatStore write the record-only queue and mode handlers
 // make.
 type chatMutator interface {
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
 }
 
-// CmdQueuePrompt holds a message for the end of the running turn. An idle chat is
+// cmdQueuePrompt holds a message for the end of the running turn. An idle chat is
 // a 409 no_turn, the refusal a steer gives, so the client sends a prompt instead.
-func CmdQueuePrompt(ctx context.Context, queue QueueAccess, cmd *marotte.ClientCommand) (any, error) {
+func cmdQueuePrompt(ctx context.Context, queue QueueAccess, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -66,20 +67,7 @@ func CmdQueuePrompt(ctx context.Context, queue QueueAccess, cmd *marotte.ClientC
 		return nil, err
 	}
 	live, err := queue.AppendIfLive(ctx, cmd.ChatID, func(c *marotte.Chat) error {
-		if slices.ContainsFunc(c.QueuedPrompts, func(q marotte.QueuedPrompt) bool { return q.ID == row.ID }) {
-			return nil
-		}
-		users := 0
-		for i := range c.QueuedPrompts {
-			if !c.QueuedPrompts[i].Carried() {
-				users++
-			}
-		}
-		if users >= marotte.MaxQueuedPrompts-2 {
-			return StatusErrorReason(http.StatusConflict, reasonFull, errQueueFull)
-		}
-		c.QueuedPrompts = append(c.QueuedPrompts, row)
-		return nil
+		return appendUserRow(c, &row)
 	})
 	switch {
 	case err != nil:
@@ -94,7 +82,25 @@ func CmdQueuePrompt(ctx context.Context, queue QueueAccess, cmd *marotte.ClientC
 	return responseWith(map[string]any{"message_id": row.ID}), nil
 }
 
-// queuedRow validates the queue payload into the row it stores.
+// appendUserRow adds a user row to the queue: a repeated id is already there, and the cap
+// leaves room for the carried rows a close can add.
+func appendUserRow(c *marotte.Chat, row *marotte.QueuedPrompt) error {
+	if slices.ContainsFunc(c.QueuedPrompts, func(q marotte.QueuedPrompt) bool { return q.ID == row.ID }) {
+		return nil
+	}
+	users := 0
+	for i := range c.QueuedPrompts {
+		if !c.QueuedPrompts[i].Carried() {
+			users++
+		}
+	}
+	if users >= marotte.MaxQueuedPrompts-2 {
+		return StatusErrorReason(http.StatusConflict, reasonFull, errQueueFull)
+	}
+	c.QueuedPrompts = append(c.QueuedPrompts, *row)
+	return nil
+}
+
 func queuedRow(cmd *marotte.ClientCommand) (marotte.QueuedPrompt, error) {
 	var p marotte.QueuePromptCommand
 	if json.Unmarshal(cmd.Payload, &p) != nil {
@@ -105,7 +111,7 @@ func queuedRow(cmd *marotte.ClientCommand) (marotte.QueuedPrompt, error) {
 		return marotte.QueuedPrompt{}, StatusError(http.StatusBadRequest, errEmptyPrompt)
 	case len(p.Text) > marotte.MaxDraftBytes:
 		return marotte.QueuedPrompt{}, StatusError(http.StatusRequestEntityTooLarge, errQueueTooBig)
-	case !ValidMessageID(p.MessageID):
+	case !validMessageID(p.MessageID):
 		return marotte.QueuedPrompt{}, StatusError(http.StatusBadRequest, errMissingMessageID)
 	case len(p.Attachments) > marotte.MaxAttachments:
 		return marotte.QueuedPrompt{}, StatusError(http.StatusBadRequest, errQueueTooMany)
@@ -115,13 +121,13 @@ func queuedRow(cmd *marotte.ClientCommand) (marotte.QueuedPrompt, error) {
 			return marotte.QueuedPrompt{}, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 		}
 	}
-	return marotte.QueuedPrompt{ID: p.MessageID, Text: p.Text, Attachments: p.Attachments}, nil
+	return marotte.QueuedPrompt{ID: p.MessageID, Text: p.Text, Label: displayLabel(p.DisplayText), Attachments: p.Attachments}, nil
 }
 
-// CmdUnqueuePrompt removes one queued row. An unknown id is success (two devices can discard one
+// cmdUnqueuePrompt removes one queued row. An unknown id is success (two devices can discard one
 // row); a row whose turn opened is a 409 sending. The steer lock orders it against a drain's
 // pick-to-open transfer.
-func CmdUnqueuePrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
+func cmdUnqueuePrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -182,8 +188,7 @@ func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 	sendNextUserRow(ctx, roles, chatID, cl.Fence)
 }
 
-// sendNextUserRow opens the chat's first sendable queued row, holding the
-// reservation the drain took; no row, or one that cannot be read, releases it.
+// No row, or one that cannot be read, releases it.
 func sendNextUserRow(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, fence TurnFence) {
 	row, ok, err := roles.followups.NextUserRow(ctx, chatID)
 	if err != nil || !ok {
@@ -193,7 +198,7 @@ func sendNextUserRow(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 		roles.admission.ReleaseTurnReservation(chatID)
 		return
 	}
-	p := &marotte.PromptCommand{Text: row.Text, MessageID: row.ID, Attachments: row.Attachments}
+	p := &marotte.PromptCommand{Text: row.Text, MessageID: row.ID, DisplayText: row.Label, Attachments: row.Attachments}
 	if err := launchPrompt(ctx, roles, chatID, p, launch{dequeue: row.ID, fence: fence}); err != nil {
 		logDrainRefused(chatID, row.ID, err)
 		return
@@ -210,13 +215,20 @@ func sendUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, 
 		keys = append(keys, r.Key)
 		texts = append(texts, r.Text)
 	}
-	p := &marotte.PromptCommand{Text: strings.Join(texts, "\n\n"), MessageID: ids.NewMessageID()}
+	p := &marotte.PromptCommand{Text: strings.Join(texts, "\n\n"), MessageID: ids.NewMessageID(), DisplayText: unreadLabel(len(rows))}
 	if err := launchPrompt(ctx, roles, chatID, p, launch{resends: keys, fence: fence}); err != nil {
 		logDrainRefused(chatID, p.MessageID, err)
 		return
 	}
 	roles.jobs.Delivered(chatID, keys)
 	slog.Info("unread steers sent as the next prompt", "chat_id", chatID, "steers", len(keys))
+}
+
+func unreadLabel(n int) string {
+	if n == 1 {
+		return "Resending a message the agent had not read"
+	}
+	return "Resending " + strconv.Itoa(n) + " messages the agent had not read"
 }
 
 func logDrainRefused(chatID marotte.ChatID, messageID string, err error) {

@@ -7,8 +7,7 @@ import (
 	"testing"
 )
 
-// textconvMarker is what an armed textconv driver prints. It appears in a diff
-// as a context line, which is why the fixture works as an assertion in both
+// It appears in a diff as a context line, which is why the fixture works as an assertion in both
 // directions rather than only proving the flag was passed.
 const textconvMarker = "TEXTCONV_DRIVER_RAN"
 
@@ -17,8 +16,6 @@ const textconvMarker = "TEXTCONV_DRIVER_RAN"
 // `sh -c` the path lands in $0.
 const textconvDriver = "sh -c 'echo " + textconvMarker + "; cat \"$0\"'"
 
-// armTextconv turns dir into a repo that executes a command whenever git renders changed.txt for a
-// diff, through its own .git/config and .gitattributes.
 func armTextconv(t *testing.T, dir string) {
 	t.Helper()
 	initFixtureRepo(t, dir)
@@ -71,10 +68,11 @@ func TestGitShowCmd_ReturnsTheRawBlobNotTextconvOutput(t *testing.T) {
 	dir := t.TempDir()
 	armTextconv(t, dir)
 
-	out, err := gitShowCmd(t.Context(), dir, "HEAD", "changed.txt")
+	blob, stderr, err := gitShowCmd(t.Context(), dir, "HEAD", "changed.txt", defaultShowMax)
 	if err != nil {
-		t.Fatalf("gitShowCmd: %v\n%s", err, out)
+		t.Fatalf("gitShowCmd: %v\n%s", err, stderr)
 	}
+	out := string(blob)
 	if strings.Contains(out, textconvMarker) {
 		t.Errorf("show ran the repo's textconv driver:\n%s", out)
 	}

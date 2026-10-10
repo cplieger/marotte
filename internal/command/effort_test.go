@@ -11,6 +11,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/chatlock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/testsupport"
@@ -29,18 +30,18 @@ func effortReq(t *testing.T, chatID marotte.ChatID, level string) *marotte.Clien
 	}
 }
 
-// setEffort drives the command with one double answering the bridge, the store
-// and the bus. An empty configDir means the seed is not this case's subject: the
-// per-model memory is skipped, and nothing touches a settings file.
-func setEffort(t *testing.T, host hostDouble, configDir string, chatID marotte.ChatID, level string) (any, error) {
+// An empty configDir means the seed is not this case's subject: the per-model memory is skipped,
+// and nothing touches a settings file.
+func setEffort(t *testing.T, host hostDouble, configDir string, chatID marotte.ChatID, level string) error {
 	t.Helper()
-	return CmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: configDir}, host,
+	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: configDir}, host, chatlock.New(),
 		effortReq(t, chatID, level))
+	return err
 }
 
 // effortHost is newBridgeHost's double kept at its concrete type, so a test can
 // read back what the transcript recorder saw.
-func effortHost(t *testing.T, store ChatStore, bridge Bridge) *bridgeDeps {
+func effortHost(t *testing.T, store chatStore, bridge Bridge) *bridgeDeps {
 	t.Helper()
 	h, ok := newBridgeHost(store, bridge).(*bridgeDeps)
 	if !ok {
@@ -69,7 +70,7 @@ func (b *recordingBus) countOf(kind marotte.EventType) int {
 	return n
 }
 
-func seedChatOnModel(t *testing.T, store ChatStore, id marotte.ChatID, model string) {
+func seedChatOnModel(t *testing.T, store chatStore, id marotte.ChatID, model string) {
 	t.Helper()
 	if _, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "a chat"
@@ -87,7 +88,6 @@ func writeConfig(t *testing.T, dir, body string) {
 	}
 }
 
-// effortSeeds reads the per-model memory back off disk, where the pill reads it from.
 func effortSeeds(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, settings.Filename))
@@ -116,7 +116,7 @@ func TestCmdSetEffort_ARefusedSwitchWritesNoSeed(t *testing.T) {
 	host := newBridgeHost(store, b)
 	bus := &recordingBus{}
 
-	_, err := CmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host,
+	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, chatlock.New(),
 		effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusBadGateway {
@@ -141,7 +141,7 @@ func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 	host := newBridgeHost(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 	bus := &recordingBus{}
 
-	_, err := CmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host,
+	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, chatlock.New(),
 		effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusOK {
@@ -180,7 +180,7 @@ func TestCmdSetEffort_AChatWithNoModelIsNotSeeded(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
 
-	_, err := CmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: dir}, host,
+	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: dir}, host, chatlock.New(),
 		effortReq(t, "c-brand-new", "high"))
 
 	if statusOf(err) != http.StatusOK {
@@ -197,7 +197,7 @@ func TestCmdSetEffort_PersistsOnTheChatRecord(t *testing.T) {
 	b := &recordingBridge{result: map[string]any{}, sessionID: "sess-1"}
 	host := newBridgeHost(store, b)
 
-	_, err := setEffort(t, host, "", "c1", "high")
+	err := setEffort(t, host, "", "c1", "high")
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -227,8 +227,8 @@ func TestCmdSetEffort_TwoChatsHoldDifferentLevels(t *testing.T) {
 	seedEmptyChat(t, store, "c2")
 	host := newBridgeHost(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
-	_, _ = setEffort(t, host, "", "c1", "low")
-	_, _ = setEffort(t, host, "", "c2", "max")
+	_ = setEffort(t, host, "", "c1", "low")
+	_ = setEffort(t, host, "", "c2", "max")
 
 	c1, _ := store.Get(t.Context(), "c1")
 	c2, _ := store.Get(t.Context(), "c2")
@@ -241,7 +241,7 @@ func TestCmdSetEffort_TwoChatsHoldDifferentLevels(t *testing.T) {
 // prompt.
 type noBridgeDeps struct{ *storeDeps }
 
-func (d *noBridgeDeps) Bridge(marotte.ChatID) Bridge { return nil }
+func (*noBridgeDeps) Bridge(marotte.ChatID) Bridge { return nil }
 
 // A bridgeless chat is not a conflict: the persisted level is enough, because
 // spawnBridge applies it at session/new.
@@ -250,7 +250,7 @@ func TestCmdSetEffort_NoBridgeIsNotAConflict(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
 
-	_, err := setEffort(t, host, "", "c1", "medium")
+	err := setEffort(t, host, "", "c1", "medium")
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -261,14 +261,14 @@ func TestCmdSetEffort_NoBridgeIsNotAConflict(t *testing.T) {
 	}
 }
 
-// Mirrors CmdSetMode: a fresh chat is client-side only until its first prompt, so
+// Mirrors cmdSetMode: a fresh chat is client-side only until its first prompt, so
 // without auto-create every pick before the first message 404'd and the control
 // rolled back.
 func TestCmdSetEffort_AutoCreatesTheRecordLikeSetMode(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
 
-	_, err := setEffort(t, host, "", "c-brand-new", "xhigh")
+	err := setEffort(t, host, "", "c-brand-new", "xhigh")
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -294,7 +294,7 @@ func TestCmdSetEffort_ARefusedLiveSwitchIsNotPersisted(t *testing.T) {
 	b := &recordingBridge{callErr: errors.New("no such config option"), sessionID: "sess-1"}
 	host := newBridgeHost(store, b)
 
-	_, err := setEffort(t, host, "", "c1", "max")
+	err := setEffort(t, host, "", "c1", "max")
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", statusOf(err))
@@ -313,7 +313,7 @@ func TestCmdSetEffort_RejectsAMalformedLevel(t *testing.T) {
 			b := &recordingBridge{result: map[string]any{}, sessionID: "s"}
 			host := newBridgeHost(store, b)
 
-			_, err := setEffort(t, host, "", "c1", level)
+			err := setEffort(t, host, "", "c1", level)
 
 			if statusOf(err) != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400", statusOf(err))
@@ -333,7 +333,7 @@ func TestCmdSetEffort_AcceptsATierOutsideTheConstants(t *testing.T) {
 	b := &recordingBridge{result: map[string]any{}, sessionID: "s"}
 	host := newBridgeHost(store, b)
 
-	_, err := setEffort(t, host, "", "c1", "none")
+	err := setEffort(t, host, "", "c1", "none")
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (err %v)", statusOf(err), err)
@@ -355,7 +355,7 @@ func TestCmdSetEffort_AnAcceptedTierRecordsOneRow(t *testing.T) {
 	seedChatOnModel(t, store, "c1", "opus-5")
 	host := effortHost(t, store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
-	_, err := CmdSetEffort(t.Context(), host, host, host, Workspace{}, host, effortReq(t, "c1", "max"))
+	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, chatlock.New(), effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -373,7 +373,7 @@ func TestCmdSetEffort_ARefusedSwitchRecordsNoRow(t *testing.T) {
 	seedChatOnModel(t, store, "c1", "opus-5")
 	host := effortHost(t, store, &recordingBridge{callErr: errors.New("no such config option"), sessionID: "s"})
 
-	_, err := CmdSetEffort(t.Context(), host, host, host, Workspace{}, host, effortReq(t, "c1", "max"))
+	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, chatlock.New(), effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", statusOf(err))
@@ -393,7 +393,7 @@ func TestCmdSetEffort_ARepeatOfTheHeldTierRecordsNoSecondRow(t *testing.T) {
 	host := effortHost(t, store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
 	for range 2 {
-		if _, err := CmdSetEffort(t.Context(), host, host, host, Workspace{}, host,
+		if _, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, chatlock.New(),
 			effortReq(t, "c1", "high")); statusOf(err) != http.StatusOK {
 			t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 		}

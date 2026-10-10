@@ -27,14 +27,12 @@ const (
 	fsTypeSymlink   = "symlink"
 )
 
-// errRefusedWorkDirRoot rejects a delete aimed at the workspace root.
 var errRefusedWorkDirRoot = errors.New("refusing to delete the workspace root")
 
-// kiroFSParams is `{sessionId, path}`, shared by all three verbs. KAS sends the path already
-// absolute, so the confinement re-checks a claim.
+// kiroFSParams is the `path` of `{sessionId, path}`, shared by all three verbs. KAS sends the
+// path already absolute, so the confinement re-checks a claim.
 type kiroFSParams struct {
-	SessionID string `json:"sessionId"`
-	Path      string `json:"path"`
+	Path string `json:"path"`
 }
 
 // kiroStatBody answers `_kiro/fs/stat`. `size` is required by KAS's
@@ -55,11 +53,10 @@ type kiroReadDirBody struct {
 	Entries []kiroDirEntry `json:"entries"`
 }
 
-// handleKiroFSRequest dispatches the three `_kiro/fs/*` verbs, reporting whether msg was
-// one. Async under inflight with a fresh runtime context: Respond drops a write on the
-// cancelled per-event ctx, and KAS's `extMethod` has no timeout.
-func (in *inbound) handleKiroFSRequest(_ context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) bool {
-	var handler func(context.Context, marotte.ChatID, *marotte.RPCResponse)
+// Async under inflight with a fresh runtime context: Respond drops a write on the cancelled
+// per-event ctx, and KAS's `extMethod` has no timeout.
+func (in *inbound) handleKiroFSRequest(_ context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) bool {
+	var handler func(context.Context, marotte.ChatID, acpResponder, *marotte.RPCResponse)
 	switch msg.Method {
 	case methodKiroFSStat:
 		handler = in.respondKiroFSStat
@@ -77,10 +74,10 @@ func (in *inbound) handleKiroFSRequest(_ context.Context, chatID marotte.ChatID,
 			if r := recover(); r != nil {
 				slog.Error("kiro fs handler panic",
 					"chat_id", chatID, "method", msg.Method, "panic", r)
-				in.respondBridge(ctx, chatID, msg, nil, errors.New("internal error"))
+				in.respondBridge(ctx, chatID, origin, msg, nil, errors.New("internal error"))
 			}
 		}()
-		handler(ctx, chatID, msg)
+		handler(ctx, chatID, origin, msg)
 	})
 	return true
 }
@@ -104,46 +101,44 @@ func (in *inbound) kiroFSReadablePath(msg *marotte.RPCResponse) (root *os.Root, 
 	return in.lifetime.confineReadable(p)
 }
 
-// respondKiroFSStat answers `_kiro/fs/stat` with `{type, size}`.
-func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	root, rel, release, err := in.kiroFSReadablePath(msg)
 	if err != nil {
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
 	defer release()
 	// Root.Stat follows symlinks, like KAS's fs.stat; the symlink type is still reachable via read_directory.
 	info, err := root.Stat(rel)
 	if err != nil {
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
 	body := kiroStatBody{Type: fsTypeFile, Size: info.Size()}
 	if info.IsDir() {
 		body.Type = fsTypeDirectory
 	}
-	in.respondBridge(ctx, chatID, msg, body, nil)
+	in.respondBridge(ctx, chatID, origin, msg, body, nil)
 }
 
-// respondKiroFSReadDirectory answers `_kiro/fs/read_directory` with `{entries}`. A missing
-// directory answers an empty list, matching KAS's NodeFileSystem.
-func (in *inbound) respondKiroFSReadDirectory(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+// A missing directory answers an empty list, matching KAS's NodeFileSystem.
+func (in *inbound) respondKiroFSReadDirectory(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	root, rel, release, err := in.kiroFSReadablePath(msg)
 	if err != nil {
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
 	defer release()
 	dirEntries, err := readDirInRoot(root, rel)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			in.respondBridge(ctx, chatID, msg, kiroReadDirBody{Entries: []kiroDirEntry{}}, nil)
+			in.respondBridge(ctx, chatID, origin, msg, kiroReadDirBody{Entries: []kiroDirEntry{}}, nil)
 			return
 		}
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	in.respondBridge(ctx, chatID, msg, kiroReadDirBody{
+	in.respondBridge(ctx, chatID, origin, msg, kiroReadDirBody{
 		Entries: dirEntriesToWire(dirEntries),
 	}, nil)
 }
@@ -159,8 +154,7 @@ func readDirInRoot(root *os.Root, rel string) ([]os.DirEntry, error) {
 	return f.ReadDir(-1)
 }
 
-// dirEntriesToWire maps os.DirEntry values onto the wire shape. Every entry travels: KAS's
-// ignore evaluators cover the listed directory, not its entry names.
+// Every entry travels: KAS's ignore evaluators cover the listed directory, not its entry names.
 func dirEntriesToWire(dirEntries []os.DirEntry) []kiroDirEntry {
 	out := make([]kiroDirEntry, 0, len(dirEntries))
 	for _, e := range dirEntries {
@@ -179,20 +173,20 @@ func dirEntriesToWire(dirEntries []os.DirEntry) []kiroDirEntry {
 
 // respondKiroFSDelete answers `_kiro/fs/delete` with `{}`, recursive for a directory like
 // KAS's NodeFileSystem; it refuses only the workspace root. Not gated: KAS checkpoints and reviews.
-func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	p, err := kiroFSPath(msg)
 	if err != nil {
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
 	root, rel, err := in.lifetime.confineInWorkDir(p)
 	if err != nil {
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
 	// The workspace root, which has exactly one root-relative spelling.
 	if rel == "." {
-		in.respondFSError(ctx, chatID, msg, errRefusedWorkDirRoot)
+		in.respondFSError(ctx, chatID, origin, msg, errRefusedWorkDirRoot)
 		return
 	}
 	// A lost delete race is unrecoverable, so the parent is pinned with
@@ -200,14 +194,14 @@ func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatI
 	// the final element is unlinked; root.Remove would follow an in-root link.
 	parent, base, err := atomicfile.OpenParentInRoot(root, rel)
 	if err != nil {
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
 	defer func() { _ = parent.Close() }()
 
 	info, err := parent.Lstat(base)
 	if err != nil {
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
 	// Remove unlinks a symlink rather than following it, matching KAS's fs.rm; RemoveFileInRoot
@@ -218,7 +212,7 @@ func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatI
 		err = parent.Remove(base)
 	}
 	if err != nil {
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
 	slog.Info("agent deleted a path", "chat_id", chatID, "dir", info.IsDir())
@@ -226,5 +220,5 @@ func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatI
 		in.specs.Mark(specDir)
 	}
 	// KAS's isFSDeleteCapabilityResponse throws on a non-empty `message`, so success is an empty object.
-	in.respondBridge(ctx, chatID, msg, struct{}{}, nil)
+	in.respondBridge(ctx, chatID, origin, msg, struct{}{}, nil)
 }

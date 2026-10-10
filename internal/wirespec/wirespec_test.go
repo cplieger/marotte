@@ -101,8 +101,6 @@ func declaredMarottePayloads(t *testing.T) map[string]int {
 	return out
 }
 
-// registeredMarottePayloads returns the names of the marotte.*Payload types in the
-// registry.
 func registeredMarottePayloads(t *testing.T) []string {
 	t.Helper()
 	var out []string

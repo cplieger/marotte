@@ -13,9 +13,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// fillBound is how many rows of one connection a cycle reads one by one, for the
-// view and the notice together. It is a launch value: a cycle that leaves rows
-// unfilled logs how many, and that count is what moves it.
+// It is a launch value: a cycle that leaves rows unfilled logs how many, and that count is what
+// moves it.
 const fillBound = 10
 
 // FieldFill.Reason vocabulary.
@@ -61,7 +60,6 @@ type familyFill struct {
 	sourceFromRead bool
 }
 
-// reads reports whether a read fills field.
 func (ff *familyFill) reads(field rowField) bool {
 	return slices.ContainsFunc(ff.read, func(f rowField) bool { return f.name == field.name })
 }
@@ -112,24 +110,18 @@ func (f *rowFill) due(held, watched bool, row *PR) (rank int, ok bool) {
 	return 0, false
 }
 
-// source is the source repository the last answered read named, and whether a
-// read answered.
 func (f *rowFill) source() (string, bool) {
 	return f.read.SourceRepoID, f.asOf != 0
 }
 
-// readRows reads the due rows among rows on a family whose list leaves fields
-// unknown, at most fillBound of them; watched are the rows among them the notice
-// compares. It is the one per-row reader: the view's fill and the notice both
-// read through it, under one bound a cycle.
+// watched are the rows among them the notice compares. It is the one per-row reader: the view's
+// fill and the notice both read through it, under one bound a cycle.
 func (p *PRStatusPoller) readRows(ctx context.Context, r *ConnectionRead, rows, watched []PR) {
 	if _, ok := familyFills[r.Family]; ok && r.ReadPR != nil && len(rows) > 0 {
 		p.readDue(ctx, r, rows, watched)
 	}
 }
 
-// heldCheck is the verdict the last read of conn's row answered, checkUnread
-// while no read of it answered.
 func (p *PRStatusPoller) heldCheck(conn string, row *PR) string {
 	if f, ok := p.fills[fillKeyOf(conn, row)]; ok && f.ok {
 		return f.read.Action.Checks
@@ -137,8 +129,6 @@ func (p *PRStatusPoller) heldCheck(conn string, row *PR) string {
 	return checkUnread
 }
 
-// layFills lays every held read over e's rows and drops the reads of rows e no
-// longer holds.
 func (p *PRStatusPoller) layFills(r *ConnectionRead, e *InventoryEntry) {
 	ff, ok := familyFills[r.Family]
 	if !ok {
@@ -173,7 +163,6 @@ func (p *PRStatusPoller) refill(conn, repoID string, number int) {
 	p.refills[fillKey{conn: conn, subject: marotte.PRSubject(conn, repoID, number).Key}] = struct{}{}
 }
 
-// takeRefills forgets the fills of conn's rows a refill named.
 func (p *PRStatusPoller) takeRefills(conn string) {
 	p.refillMu.Lock()
 	defer p.refillMu.Unlock()
@@ -185,7 +174,6 @@ func (p *PRStatusPoller) takeRefills(conn string) {
 	}
 }
 
-// distinctRows is each row of e once.
 func distinctRows(e *InventoryEntry) []PR {
 	type rowKey struct {
 		repo   string
@@ -214,12 +202,10 @@ type dueRow struct {
 	rank  int
 }
 
-// byWait orders rows longest waiting first, then most recently updated first.
 func byWait(a, b dueRow) int {
 	return cmp.Or(cmp.Compare(a.since, b.since), newerFirst(a.row, b.row))
 }
 
-// rankReread is due's rank for a watched row whose settled fill is read again.
 const rankReread = 3
 
 // capDue keeps fillBound of the sorted due rows, the last slot for the longest

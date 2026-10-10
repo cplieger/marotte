@@ -14,8 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// countingBridge counts the answers that reach the wire. Respond is the only
-// method these handlers use; the rest satisfies the interface.
+// Respond is the only method these handlers use; the rest satisfies the interface.
 type countingBridge struct {
 	recordingBridge
 	responds []int64
@@ -26,7 +25,6 @@ func (b *countingBridge) Respond(_ context.Context, id int64, _ any, _ error) er
 	return nil
 }
 
-// takeDeps is a host double whose claim outcome the test scripts.
 type takeDeps struct {
 	*benchDeps
 	bridge Bridge
@@ -37,18 +35,36 @@ type takeDeps struct {
 	takeOK    bool
 }
 
-func (d *takeDeps) Bridge(marotte.ChatID) Bridge { return d.bridge }
-
-func (d *takeDeps) TakePendingPerm(chatID marotte.ChatID, requestID int64, _ marotte.SettledBy) bool {
-	d.takes = append(d.takes, requestID)
-	d.takeChats = append(d.takeChats, chatID)
-	return d.takeOK
+// bridgeReply answers a claimed ask on the bridge the claim handed back, as the tracker's reply
+// answers on the ask's origin.
+type bridgeReply struct {
+	b  Bridge
+	id int64
 }
 
-func (d *takeDeps) TakePendingPermissionOption(chatID marotte.ChatID, requestID int64, _ string, _ marotte.SettledBy) (bool, bool) {
+func (r bridgeReply) Respond(ctx context.Context, result any) (AnswerOutcome, error) {
+	if err := r.b.Respond(ctx, r.id, result, nil); err != nil {
+		return AnswerReopened, err
+	}
+	return AnswerDelivered, nil
+}
+
+func (d *takeDeps) TakePendingPerm(chatID marotte.ChatID, requestID int64, _ marotte.SettledBy) (AskReply, bool) {
 	d.takes = append(d.takes, requestID)
 	d.takeChats = append(d.takeChats, chatID)
-	return d.takeOK, d.takeOK
+	if !d.takeOK {
+		return nil, false
+	}
+	return bridgeReply{b: d.bridge, id: requestID}, true
+}
+
+func (d *takeDeps) TakePendingPermissionOption(chatID marotte.ChatID, requestID int64, _ string, _ marotte.SettledBy) (AskReply, bool, bool) {
+	d.takes = append(d.takes, requestID)
+	d.takeChats = append(d.takeChats, chatID)
+	if !d.takeOK {
+		return nil, false, false
+	}
+	return bridgeReply{b: d.bridge, id: requestID}, true, true
 }
 
 func decisionCommand(t *testing.T, typ marotte.CommandType, payload any) *marotte.ClientCommand {
@@ -62,8 +78,6 @@ func decisionCommand(t *testing.T, typ marotte.CommandType, payload any) *marott
 
 const decisionRequestID = int64(7)
 
-// decisionCases is the three handlers, each with a payload that answers
-// request 7 in the least eventful way its wire allows.
 func decisionCases(t *testing.T) []struct {
 	name string
 	run  func(hostDouble) (any, error)
@@ -80,13 +94,13 @@ func decisionCases(t *testing.T) []struct {
 		run  func(hostDouble) (any, error)
 	}{
 		{name: "permission", run: func(host hostDouble) (any, error) {
-			return CmdPermission(t.Context(), host, host, host, perm)
+			return cmdPermission(t.Context(), host, host, perm)
 		}},
 		{name: "elicitation", run: func(host hostDouble) (any, error) {
-			return CmdElicitationResponse(t.Context(), host, host, elicit)
+			return cmdElicitationResponse(t.Context(), host, elicit)
 		}},
 		{name: "user_input", run: func(host hostDouble) (any, error) {
-			return CmdUserInputResponse(t.Context(), host, host, input)
+			return cmdUserInputResponse(t.Context(), host, input)
 		}},
 	}
 }
@@ -134,8 +148,8 @@ func TestDecisionHandlers_WonClaimAnswersOnce(t *testing.T) {
 			if len(bridge.responds) != 1 || bridge.responds[0] != decisionRequestID {
 				t.Errorf("answers = %v, want exactly [%d]", bridge.responds, decisionRequestID)
 			}
-			// The claim names the command's own chat: a request id is unique only within one
-			// bridge, so a chatless claim would resolve another chat's card.
+			// The claim names the command's own chat, so an answer posted under another chat
+			// cannot settle this one's ask.
 			if !slices.Equal(deps.takeChats, []marotte.ChatID{"c1"}) {
 				t.Errorf("claimed chats = %v, want [c1]", deps.takeChats)
 			}
@@ -160,19 +174,19 @@ func TestDecisionHandlers_AClaimedAnswerOutlivesTheRequest(t *testing.T) {
 	gone, cancel := context.WithCancel(t.Context())
 	cancel()
 	for _, tc := range []struct {
-		run  func(BridgeAccess, PendingPermAccess, ProfileSwitcher) (any, error)
+		run  func(pendingPermAccess, profileSwitcher) (any, error)
 		name string
 	}{
-		{name: "permission", run: func(b BridgeAccess, p PendingPermAccess, s ProfileSwitcher) (any, error) {
-			return CmdPermission(gone, b, p, s, decisionCommand(t, marotte.CmdPermissionResponse,
+		{name: "permission", run: func(p pendingPermAccess, s profileSwitcher) (any, error) {
+			return cmdPermission(gone, p, s, decisionCommand(t, marotte.CmdPermissionResponse,
 				marotte.PermissionResponseCommand{RequestID: decisionRequestID, OptionID: "allow_once"}))
 		}},
-		{name: "elicitation", run: func(b BridgeAccess, p PendingPermAccess, _ ProfileSwitcher) (any, error) {
-			return CmdElicitationResponse(gone, b, p, decisionCommand(t, marotte.CmdElicitationResponse,
+		{name: "elicitation", run: func(p pendingPermAccess, _ profileSwitcher) (any, error) {
+			return cmdElicitationResponse(gone, p, decisionCommand(t, marotte.CmdElicitationResponse,
 				marotte.ElicitationResponseCommand{RequestID: decisionRequestID, Action: marotte.ElicitationActionDecline}))
 		}},
-		{name: "user_input", run: func(b BridgeAccess, p PendingPermAccess, _ ProfileSwitcher) (any, error) {
-			return CmdUserInputResponse(gone, b, p, decisionCommand(t, marotte.CmdUserInputResponse,
+		{name: "user_input", run: func(p pendingPermAccess, _ profileSwitcher) (any, error) {
+			return cmdUserInputResponse(gone, p, decisionCommand(t, marotte.CmdUserInputResponse,
 				marotte.UserInputResponseCommand{RequestID: decisionRequestID, Action: marotte.UserInputActionDismissed}))
 		}},
 	} {
@@ -180,7 +194,7 @@ func TestDecisionHandlers_AClaimedAnswerOutlivesTheRequest(t *testing.T) {
 			bridge := &liveCtxBridge{}
 			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
 
-			if _, err := tc.run(deps, deps, deps); err != nil {
+			if _, err := tc.run(deps, deps); err != nil {
 				t.Fatalf("%s on a request whose client left = %v", tc.name, err)
 			}
 
@@ -227,7 +241,7 @@ func TestCmdElicitationResponse_ContentTravelsOnlyOnAccept(t *testing.T) {
 				Content:   json.RawMessage(filled),
 			})
 
-			if _, err := CmdElicitationResponse(t.Context(), deps, deps, cmd); err != nil {
+			if _, err := cmdElicitationResponse(t.Context(), deps, cmd); err != nil {
 				t.Fatalf("CmdElicitationResponse(%s) = %v", tc.action, err)
 			}
 
@@ -270,7 +284,7 @@ func TestCmdUserInputResponse_AnswerTravelsOnlyWhenAnswered(t *testing.T) {
 				Answer:    typed,
 			})
 
-			if _, err := CmdUserInputResponse(t.Context(), deps, deps, cmd); err != nil {
+			if _, err := cmdUserInputResponse(t.Context(), deps, cmd); err != nil {
 				t.Fatalf("CmdUserInputResponse(%s) = %v", tc.action, err)
 			}
 

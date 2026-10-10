@@ -3,7 +3,7 @@ import { settingsPayload } from "./__test-helpers__/settings.js";
 
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve({})),
-  withTimeout: (_signal: AbortSignal | undefined, _ms: number) => AbortSignal.timeout(30000),
+  withTimeout: () => AbortSignal.timeout(30000),
   API_TIMEOUT_MS: 30000,
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened this graph and these
   // names are imported somewhere in it. No case here calls them.
@@ -89,7 +89,6 @@ describe("patchSettings debounce coalescing", () => {
       // Each iteration is an independent batch; reset the dedup tracker so values from prior
       // iterations don't filter out patches in this one.
       __testResetTracking();
-      // Generate random patches.
       const keys = ["notifications_enabled", "debug_logs", "last_model"] as const;
       const patches: Record<string, unknown>[] = [];
       const count = 1 + Math.floor(Math.random() * 5);

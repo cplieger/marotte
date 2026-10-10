@@ -486,8 +486,21 @@
 
     & ul,
     & ol {
-      padding-inline-start: 1.5em;
       margin: var(--sp-2) 0;
+    }
+
+    & ul {
+      padding-inline-start: 1.5em;
+    }
+
+    /* An outside marker paints in this padding and `.msg-row`'s content-visibility
+     * clips past it, so each digit beyond the first widens it by one digit's
+     * advance. smd-renderer.ts `fitMarkerGutter` writes the count; the reset stops a
+     * nested list inheriting its parent's. */
+    & ol {
+      --marker-digits: 1;
+
+      padding-inline-start: calc(1.5em + (var(--marker-digits, 1) - 1) * 1ch);
     }
 
     & ul.task-list {
@@ -1666,9 +1679,44 @@
   overflow: hidden;
 }
 
+/* A workflow message's two times, after the label. */
+.steer-note-times {
+  margin-inline-start: auto;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Kiro's notification group: one row naming a run of workflow updates, which
+ * opens and closes them. */
+.steer-group-toggle {
+  align-self: flex-start;
+  min-height: var(--btn-h);
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-secondary);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.steer-group-toggle:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+@media (any-hover: hover) {
+  .steer-group-toggle:hover {
+    color: var(--c-accent);
+  }
+}
+
 /* Skinned on `.steer-note-more` (13-messages.css): it is the same control, a text
  * button that opens a clamp. */
-.steer-note-more {
+.steer-note-more,
+.turn-req-more {
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   background: none;
@@ -1679,11 +1727,13 @@
   text-underline-offset: 2px;
 }
 
-.steer-note-more:hover {
+.steer-note-more:hover,
+.turn-req-more:hover {
   color: var(--c-accent);
 }
 
-.steer-note-more:focus-visible {
+.steer-note-more:focus-visible,
+.turn-req-more:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
 }

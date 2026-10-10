@@ -41,7 +41,7 @@ func TestMCPRegistry_ConcurrentRecordClear(t *testing.T) {
 
 	wg.Go(func() {
 		for range N {
-			_ = reg.Snapshot()
+			_ = reg.snapshot()
 		}
 	})
 

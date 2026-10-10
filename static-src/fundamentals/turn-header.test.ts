@@ -223,3 +223,45 @@ describe("the request's attachments", () => {
     expect(attachmentPaths(h)).toEqual([]);
   });
 });
+
+describe("a labelled request", () => {
+  function opener(h: HTMLElement): HTMLButtonElement {
+    const b = h.querySelector<HTMLButtonElement>(".turn-req-more");
+    if (b === null) {
+      throw new Error("no .turn-req-more");
+    }
+    return b;
+  }
+  function full(h: HTMLElement): HTMLElement {
+    const f = h.querySelector<HTMLElement>(".turn-req-full");
+    if (f === null) {
+      throw new Error("no .turn-req-full");
+    }
+    return f;
+  }
+
+  it("shows the label, with the full text one click away", () => {
+    const h = buildTurnHeader(data({ request: "the whole instruction", label: "Run task 2" }));
+    expect(text(h).textContent).toBe("Run task 2");
+    expect(full(h).classList.contains("hidden")).toBe(true);
+
+    opener(h).click();
+    expect(full(h).textContent).toBe("the whole instruction");
+    expect(full(h).classList.contains("hidden")).toBe(false);
+    expect(opener(h).getAttribute("aria-expanded")).toBe("true");
+    expect(opener(h).textContent).toBe("Hide full message");
+  });
+
+  it("keeps the reader's open state across a repaint", () => {
+    const h = buildTurnHeader(data({ request: "the whole instruction", label: "Run task 2" }));
+    opener(h).click();
+    updateTurnHeader(h, data({ request: "the whole instruction", label: "Run task 2", n: 2 }));
+    expect(full(h).classList.contains("hidden")).toBe(false);
+  });
+
+  it("never relabels a typed request", () => {
+    const h = buildTurnHeader(data({ request: "what I typed" }));
+    expect(text(h).textContent).toBe("what I typed");
+    expect(h.querySelector(".turn-req-more, .turn-req-full")).toBeNull();
+  });
+});

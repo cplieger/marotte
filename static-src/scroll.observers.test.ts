@@ -61,9 +61,9 @@ class FakeResizeObserver {
   }
 }
 
-/** The live-edge publisher's trigger. Faked for the same reason the ResizeObserver is: the real
- *  one reports a THRESHOLD CROSSING computed from real boxes, and this harness has no overflow
- *  and no layout, so the platform would never deliver an entry for the sentinel. */
+/** Faked for the same reason the ResizeObserver is: the real one reports a THRESHOLD CROSSING
+ *  computed from real boxes, and this harness has no overflow and no layout, so the platform would
+ *  never deliver an entry for the sentinel. */
 class FakeIntersectionObserver {
   static instances: FakeIntersectionObserver[] = [];
   readonly targets = new Set<Element>();
@@ -83,7 +83,6 @@ class FakeIntersectionObserver {
   disconnect(): void {
     this.targets.clear();
   }
-  /** Deliver a batch, the way the platform coalesces several crossings into one callback. */
   fire(entries: readonly { isIntersecting: boolean }[]): void {
     this.cb(
       entries as unknown as IntersectionObserverEntry[],
@@ -158,8 +157,6 @@ function readerScroll(el: HTMLElement): void {
   el.dispatchEvent(new Event("scroll"));
 }
 
-/** Drain the MutationObserver microtask, the queued animation frame, and a smooth scroll's
- *  deferred write. */
 async function settle(): Promise<void> {
   await new Promise((r) => setTimeout(r, 25));
 }
@@ -193,8 +190,6 @@ interface Harness {
   scrollEl: HTMLElement;
   /** Every `addEventListener` on the scroller since just before the module was imported. */
   listeners: MockInstance<typeof EventTarget.prototype.addEventListener>;
-  /** A row the transcript already held when the controller was built, when the test asked for
-   *  one. */
   existingRow: HTMLElement | null;
 }
 

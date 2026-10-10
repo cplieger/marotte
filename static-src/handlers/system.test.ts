@@ -33,15 +33,14 @@ vi.mock("../store-load.js", () => ({
 }));
 const mockLoadList = vi.fn((_signal?: AbortSignal) => Promise.resolve(true));
 const mockLoadMessages = vi.fn(() => Promise.resolve(true));
-// The gap door's answer to a failed list load. A spy, because the LADDER is
-// store-load.test.ts's subject (it owns the reach gate, the delays and the bound);
-// what this file owns is that the door consults it and only on a failure.
+// A spy, because the LADDER is store-load.test.ts's subject (it owns the reach gate, the delays and
+// the bound); what this file owns is that the door consults it and only on a failure.
 const mockScheduleListRetry = vi.fn();
 
 const mockCloseTab = vi.fn();
 const mockHasTab = vi.fn(() => true);
-// The dispatcher door. The gate itself is tabs.test.ts's subject; what this file
-// owns is that the gap and the resume reach it, once, and after the epoch bump.
+// The gate itself is tabs.test.ts's subject; what this file owns is that the gap and the resume
+// reach it, once, and after the epoch bump.
 const mockRefreshActiveView = vi.fn();
 vi.mock("../tabs.js", () => ({
   // Undefined: present only so real-ESM linking succeeds.
@@ -53,6 +52,7 @@ vi.mock("../tabs.js", () => ({
   parentChatRef: undefined,
   setTabParent: undefined,
   getActiveTabId: undefined,
+  getActiveTabKind: undefined,
   getActiveTabRoute: undefined,
   openEditorView: undefined,
   setGitTab: undefined,
@@ -193,7 +193,6 @@ function openTurnOn(chatID: string, turnID = "t1"): void {
   openTurn(chatID, open);
 }
 
-/** Append the `steer` ENTRY that records a steer's transcript fact. */
 function steerEntryOn(chatID: string, steerID: string, text: string, turnID = "t1"): void {
   appendEntry(chatID, {
     id: steerID,
@@ -205,7 +204,6 @@ function steerEntryOn(chatID: string, steerID: string, text: string, turnID = "t
   });
 }
 
-/** Every entry the chat's resident log holds for `turnID`, by id. */
 function entryIDs(chatID: string, turnID = "t1"): string[] {
   return (get(chatID)?.turns.get(turnID)?.entries ?? []).map((e) => e.id);
 }
@@ -269,8 +267,8 @@ describe("connected handshake", () => {
 // that died with the previous process. Each is guarded by its STATED flag, since a scoped, capped
 // or withheld list looks complete.
 
-/** A handshake stating both halves. The two flags default TRUE here, which is the
- *  opposite of the wire default, so each case names the withholding it is about. */
+/** The two flags default TRUE here, which is the opposite of the wire default, so each case names
+ *  the withholding it is about. */
 function fireConnected(over: Record<string, unknown> = {}): void {
   fireSSE("connected", "", {
     floor: 1,
@@ -657,6 +655,15 @@ describe("pending_snapshot handler", () => {
     fireSSE("pending_snapshot", "", { items: [] });
     expect(steerCount("a")).toBe(0);
     expect(steerCount("b")).toBe(0);
+  });
+
+  it("clears every run step's dock too, which no session row reaches", async () => {
+    const { recordStepSteerQueued, stepSteers } = await import("../run-step-steers.js");
+    recordStepSteerQueued("wf_1", "root/review", { id: "steer-s", text: "one", origin: "user" });
+    expect(stepSteers("wf_1", "root/review")).toHaveLength(1);
+
+    fireSSE("pending_snapshot", "", { items: [] });
+    expect(stepSteers("wf_1", "root/review")).toEqual([]);
   });
 
   it("clears the dock and touches no steer entry, because an entry is a fact", () => {

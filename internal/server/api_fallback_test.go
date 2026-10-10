@@ -60,8 +60,6 @@ func registeredAPIPatterns(t *testing.T) []string {
 	return out
 }
 
-// requestFor turns a registered pattern into a method and a concrete path that
-// addresses it.
 func requestFor(pattern string) (method, path string) {
 	method = http.MethodGet
 	path = pattern

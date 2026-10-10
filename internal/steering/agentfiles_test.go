@@ -26,12 +26,12 @@ func (e fakeDirEntry) Info() (fs.FileInfo, error) { return fakeFileInfo{e}, nil 
 
 type fakeFileInfo struct{ e fakeDirEntry }
 
-func (i fakeFileInfo) Name() string       { return i.e.name }
-func (i fakeFileInfo) Size() int64        { return 0 }
-func (i fakeFileInfo) Mode() fs.FileMode  { return i.e.Type() }
-func (i fakeFileInfo) ModTime() time.Time { return time.Time{} }
-func (i fakeFileInfo) IsDir() bool        { return i.e.isDir }
-func (i fakeFileInfo) Sys() any           { return nil }
+func (i fakeFileInfo) Name() string      { return i.e.name }
+func (fakeFileInfo) Size() int64         { return 0 }
+func (i fakeFileInfo) Mode() fs.FileMode { return i.e.Type() }
+func (fakeFileInfo) ModTime() time.Time  { return time.Time{} }
+func (i fakeFileInfo) IsDir() bool       { return i.e.isDir }
+func (fakeFileInfo) Sys() any            { return nil }
 
 func entries(names ...string) []fs.DirEntry {
 	out := make([]fs.DirEntry, 0, len(names))
@@ -167,9 +167,8 @@ func TestFindRepoAgents_AgreesWithTheRule(t *testing.T) {
 		t.Fatalf("findRepoAgents = %+v (len %d), want the rule's %+v (len %d)", got, len(got), want, len(want))
 	}
 	for i := range want {
-		if got[i].Name != want[i].Base || got[i].Filename != want[i].File {
-			t.Errorf("findRepoAgents[%d] = {Name:%q Filename:%q}, the rule says {Base:%q File:%q}",
-				i, got[i].Name, got[i].Filename, want[i].Base, want[i].File)
+		if got[i].Name != want[i].Base {
+			t.Errorf("findRepoAgents[%d].Name = %q, the rule says %q", i, got[i].Name, want[i].Base)
 		}
 	}
 }

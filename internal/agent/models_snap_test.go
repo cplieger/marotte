@@ -16,7 +16,7 @@ func (b *modelsBridge) Models() []marotte.SessionModel { return b.models }
 
 func TestHubModels_EmptyWhenNoBridges(t *testing.T) {
 	h, _, _ := newTestHub()
-	if ms := h.Models(); ms != nil {
+	if ms := h.models(); ms != nil {
 		t.Errorf("Models() = %+v, want nil", ms)
 	}
 }
@@ -37,7 +37,7 @@ func TestHubModels_ReturnsFirstNonEmpty(t *testing.T) {
 	h.bridge.mgr.bridges["c2"] = &sharedBridge{bridge: populated}
 	h.bridge.mgr.mu.Unlock()
 
-	got := h.Models()
+	got := h.models()
 	if len(got) != 1 || got[0].ID != "claude-3-sonnet" {
 		t.Errorf("Models() = %+v, want [claude-3-sonnet]", got)
 	}
@@ -52,7 +52,7 @@ func TestHubModels_AllEmptyReturnsNil(t *testing.T) {
 	h.bridge.mgr.bridges["c1"] = &sharedBridge{bridge: empty}
 	h.bridge.mgr.mu.Unlock()
 
-	if ms := h.Models(); ms != nil {
+	if ms := h.models(); ms != nil {
 		t.Errorf("Models() = %+v, want nil", ms)
 	}
 }

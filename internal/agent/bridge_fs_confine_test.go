@@ -78,7 +78,6 @@ func stageAncestorSwap(t *testing.T) escapeStage {
 	return escapeStage{rt: rt, work: work, outside: outside, abs: abs, root: root, rel: rel}
 }
 
-// canonDir resolves dir through EvalSymlinks.
 func canonDir(t *testing.T, dir string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(dir)

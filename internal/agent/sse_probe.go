@@ -27,7 +27,7 @@ func (rt *Runtime) CloseNextSSEAfter(n int) {
 // errCloseAfter is what the cut connection's writer answers once its budget is spent.
 var errCloseAfter = errors.New("sse: connection cut by the close-after hook")
 
-// keepaliveFrameStart opens every keepalive write; the named keepalive carries data:, so it is skipped by name.
+// The named keepalive carries data:, so it is skipped by name.
 var keepaliveFrameStart = []byte("event: " + keepaliveEventName + "\n")
 
 // closeAfterWriter counts data frames and fails the first write past the budget; the retry line and keepalives are not counted.

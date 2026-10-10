@@ -122,7 +122,7 @@ func TestSearchIndex_AnAppendExtendsTheFilterAndTheNextQueryFindsTheNewText(t *t
 	}
 	closeTurn(t, s, id, turn, marotte.TurnOutcomeCompleted)
 
-	s.SearchAll(t.Context(), "alpha")
+	s.searchAll(t.Context(), "alpha")
 	built, ok := s.index.lookup(id)
 	if !ok {
 		t.Fatal("the first query did not record the chat's filter")
@@ -147,7 +147,7 @@ func TestSearchIndex_AnAppendExtendsTheFilterAndTheNextQueryFindsTheNewText(t *t
 		if f, _ := s.index.lookup(id); f != built {
 			t.Fatalf("the filter is not the object the first query built: the append dropped or replaced it")
 		}
-		got := s.SearchAll(t.Context(), query)
+		got := s.searchAll(t.Context(), query)
 		if got.Matched != 1 || len(got.Matches) != 1 || got.Matches[0].ID != id {
 			t.Errorf("SearchAll(%q) after the append: Matched = %d, Matches = %+v, want the chat", query, got.Matched, got.Matches)
 		}
@@ -168,7 +168,7 @@ func TestSearchIndex_ARevertDropsTheFilter(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 	closeTurn(t, s, id, second, marotte.TurnOutcomeCompleted)
-	s.SearchAll(t.Context(), "cutword")
+	s.searchAll(t.Context(), "cutword")
 	if _, ok := s.index.lookup(id); !ok {
 		t.Fatal("the first query did not record the chat's filter")
 	}
@@ -179,10 +179,10 @@ func TestSearchIndex_ARevertDropsTheFilter(t *testing.T) {
 	if _, ok := s.index.lookup(id); ok {
 		t.Error("the revert left the chat's filter standing")
 	}
-	if got := s.SearchAll(t.Context(), "cutword"); got.Matched != 0 {
+	if got := s.searchAll(t.Context(), "cutword"); got.Matched != 0 {
 		t.Errorf("SearchAll(cutword) after the revert: Matched = %d, want 0", got.Matched)
 	}
-	if got := s.SearchAll(t.Context(), "keptword"); got.Matched != 1 {
+	if got := s.searchAll(t.Context(), "keptword"); got.Matched != 1 {
 		t.Errorf("SearchAll(keptword) after the revert: Matched = %d, want 1", got.Matched)
 	}
 }
@@ -209,7 +209,7 @@ func TestSearchIndex_ARewriteDropsTheFilter(t *testing.T) {
 				t.Fatalf("Append: %v", err)
 			}
 			closeTurn(t, s, id, turn, marotte.TurnOutcomeCompleted)
-			s.SearchAll(t.Context(), "oldword")
+			s.searchAll(t.Context(), "oldword")
 			if _, ok := s.index.lookup(id); !ok {
 				t.Fatal("the first query did not record the chat's filter")
 			}
@@ -223,10 +223,10 @@ func TestSearchIndex_ARewriteDropsTheFilter(t *testing.T) {
 			if _, ok := s.index.lookup(id); ok {
 				t.Error("the rewrite left the chat's filter standing")
 			}
-			if got := s.SearchAll(t.Context(), "mergedword"); got.Matched != 1 {
+			if got := s.searchAll(t.Context(), "mergedword"); got.Matched != 1 {
 				t.Errorf("SearchAll(mergedword) after the rewrite: Matched = %d, want 1", got.Matched)
 			}
-			if got := s.SearchAll(t.Context(), "oldword"); got.Matched != 0 {
+			if got := s.searchAll(t.Context(), "oldword"); got.Matched != 0 {
 				t.Errorf("SearchAll(oldword) after the rewrite: Matched = %d, want 0", got.Matched)
 			}
 		})
@@ -238,12 +238,12 @@ func TestSearchIndex_ADeleteDropsTheEntry(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
 	seedChatEntries(t, s, id, "Notes", "alpha bravo")
-	s.SearchAll(t.Context(), "alpha")
+	s.searchAll(t.Context(), "alpha")
 	if _, ok := s.index.lookup(id); !ok {
 		t.Fatal("the first query did not record the chat's filter")
 	}
 
-	if err := s.Delete(t.Context(), id); err != nil {
+	if _, err := s.Delete(t.Context(), id); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, ok := s.index.lookup(id); ok {
@@ -274,7 +274,7 @@ func TestSearchIndex_IsBuiltByTheFirstQueryNotAtOpen(t *testing.T) {
 		}
 	}
 
-	s.SearchAll(t.Context(), "unrelatedword")
+	s.searchAll(t.Context(), "unrelatedword")
 	first := make(map[string]*chatFilter, len(ids))
 	for _, id := range ids {
 		f, ok := s.index.lookup(marotte.ChatID(id))
@@ -284,7 +284,7 @@ func TestSearchIndex_IsBuiltByTheFirstQueryNotAtOpen(t *testing.T) {
 		first[id] = f
 	}
 
-	s.SearchAll(t.Context(), "needle")
+	s.searchAll(t.Context(), "needle")
 	for _, id := range ids {
 		if f, _ := s.index.lookup(marotte.ChatID(id)); f != first[id] {
 			t.Errorf("chat %s was re-indexed by a second query over an unchanged file", id)
@@ -298,7 +298,7 @@ func TestSearchAll_ARejectingFilterAnswersWithoutARead(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
 	seedChatEntries(t, s, id, "Notes", "alpha bravo")
-	s.SearchAll(t.Context(), "alpha")
+	s.searchAll(t.Context(), "alpha")
 	if _, ok := s.index.lookup(id); !ok {
 		t.Fatal("the first query did not record the chat's filter")
 	}
@@ -306,17 +306,17 @@ func TestSearchAll_ARejectingFilterAnswersWithoutARead(t *testing.T) {
 		t.Fatalf("corrupt chat file: %v", err)
 	}
 
-	pruned := s.SearchAll(t.Context(), "zetaword")
+	pruned := s.searchAll(t.Context(), "zetaword")
 	if pruned.Scanned != 1 || pruned.Truncated || pruned.Matched != 0 {
 		t.Errorf("SearchAll(zetaword) = scanned %d, truncated %t, matched %d; want 1, false, 0: the filter answered without a read",
 			pruned.Scanned, pruned.Truncated, pruned.Matched)
 	}
-	admitted := s.SearchAll(t.Context(), "alpha")
+	admitted := s.searchAll(t.Context(), "alpha")
 	if admitted.Scanned != 0 || !admitted.Truncated {
 		t.Errorf("SearchAll(alpha) = scanned %d, truncated %t; want 0, true: the filter admitted the chat and the read failed",
 			admitted.Scanned, admitted.Truncated)
 	}
-	short := s.SearchAll(t.Context(), "zz")
+	short := s.searchAll(t.Context(), "zz")
 	if short.Scanned != 0 || !short.Truncated {
 		t.Errorf("SearchAll(zz) = scanned %d, truncated %t; want 0, true: under three runes every chat is read",
 			short.Scanned, short.Truncated)
@@ -328,13 +328,13 @@ func TestSearchAll_AsksTheIndexAboutTheFreeTextOnly(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
 	seedChatEntries(t, s, id, "Notes", "we moved the cache to redis today")
-	s.SearchAll(t.Context(), "unrelatedword")
+	s.searchAll(t.Context(), "unrelatedword")
 	if _, ok := s.index.lookup(id); !ok {
 		t.Fatal("the first query did not record the chat's filter")
 	}
 
 	for _, query := range []string{"redis turn:1", "turn:1", "redis   today", "  redis  "} {
-		got := s.SearchAll(t.Context(), query)
+		got := s.searchAll(t.Context(), query)
 		if got.Matched != 1 {
 			t.Errorf("SearchAll(%q) matched %d chats, want 1: the filter must be asked about the free text alone", query, got.Matched)
 		}
@@ -355,7 +355,7 @@ func TestChatFilter_MemoryIsSixtyFourKiBPerChat(t *testing.T) {
 	for _, id := range ids {
 		seedChatEntries(t, s, id, "Notes", "alpha bravo")
 	}
-	s.SearchAll(t.Context(), "alpha")
+	s.searchAll(t.Context(), "alpha")
 	s.index.mu.Lock()
 	held := len(s.index.filters)
 	s.index.mu.Unlock()

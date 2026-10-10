@@ -8,8 +8,6 @@ import {
   gitRepoSkeleton,
   loadMoreSkeleton,
   paintPlaceholder,
-  skeletonField,
-  skeletonRows,
 } from "./skeleton.js";
 
 // The accessibility contract: the placeholder is `aria-hidden` and the HOST carries the busy state.
@@ -96,8 +94,6 @@ describe("every painter's root is hidden from the accessibility tree", () => {
     ["editorDocSkeleton", () => editorDocSkeleton()],
     ["fileRowsSkeleton", () => fileRowsSkeleton()],
     ["gitRepoSkeleton", () => gitRepoSkeleton({ widths: ["40%"] })],
-    ["skeletonRows", () => skeletonRows("list-row", [[{ w: "50%" }]])],
-    ["skeletonField", () => skeletonField()],
   ];
 
   for (const [name, build] of roots) {

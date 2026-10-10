@@ -201,7 +201,7 @@ func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 		t.Run(tc.method, func(t *testing.T) {
 			msg := &marotte.RPCResponse{Method: tc.method, ID: &id}
 			// No bridge is registered, so the return value is the whole contract.
-			if got := h.inbound.handleKiroSecretRequest(t.Context(), "c1", msg); got != tc.want {
+			if got := h.inbound.handleKiroSecretRequest(t.Context(), "c1", h.originOf("c1"), msg); got != tc.want {
 				t.Errorf("handleKiroSecretRequest(%q) = %v, want %v", tc.method, got, tc.want)
 			}
 		})
@@ -244,7 +244,6 @@ func TestSecretRequestReportsOnlyUndecodableParams(t *testing.T) {
 	})
 }
 
-// startedChatBridge spawns one chat bridge with opts and returns the fake it started.
 func startedChatBridge(t *testing.T, opts ...Option) *fakeBridge {
 	t.Helper()
 	cs := newTestChatStore()
@@ -257,7 +256,7 @@ func startedChatBridge(t *testing.T, opts ...Option) *fakeBridge {
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	if br.lastStartOpts() == nil {

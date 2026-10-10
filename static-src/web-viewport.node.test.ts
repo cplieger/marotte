@@ -76,8 +76,6 @@ describe("frameGeometry", () => {
     expect(frameGeometry(800, 600, null, true)).toEqual({
       frameW: 800,
       frameH: 600,
-      boxW: 800,
-      boxH: 600,
       scale: 1,
       overflows: false,
     });
@@ -87,8 +85,6 @@ describe("frameGeometry", () => {
     expect(frameGeometry(800, 600, 390, true)).toEqual({
       frameW: 390,
       frameH: 600,
-      boxW: 390,
-      boxH: 600,
       scale: 1,
       overflows: false,
     });
@@ -99,8 +95,6 @@ describe("frameGeometry", () => {
     expect(g.scale).toBe(0.5);
     expect(g.frameW).toBe(1440);
     expect(g.frameH).toBe(1200);
-    expect(g.boxW).toBe(720);
-    expect(g.boxH).toBe(600);
     expect(g.overflows).toBe(false);
   });
 
@@ -112,8 +106,6 @@ describe("frameGeometry", () => {
     expect(frameGeometry(720, 600, 1440, false)).toEqual({
       frameW: 1440,
       frameH: 600,
-      boxW: 1440,
-      boxH: 600,
       scale: 1,
       overflows: true,
     });

@@ -9,14 +9,14 @@ import (
 
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/sse"
 )
 
-// wireHeader is the request header a v3 client sends; without it the connect is a v2 bundle, which still
-// needs numeric floor/head on `connected` and the per-item pending replay.
+// Without it the connect is a v2 bundle, which still needs numeric floor/head on `connected` and
+// the per-item pending replay.
 const wireHeader = "SSE-Wire"
 
-// clientTagHeader carries the client's tag for the hub's presence table.
 const clientTagHeader = "SSE-Client"
 
 // Broadcast publishes evt to every connected client.
@@ -25,13 +25,13 @@ func (b *bus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 }
 
 // PendingPermsAdd registers an unanswered decision so a reconnecting client gets
-// it replayed.
-func (b *bus) PendingPermsAdd(requestID int64, evt marotte.ServerEvent) {
-	b.pendingPerms.Add(requestID, evt)
+// it replayed, with the bridge its answer goes back on.
+func (b *bus) PendingPermsAdd(acpID int64, evt marotte.ServerEvent, origin translate.AskOrigin) marotte.ServerEvent {
+	return b.pendingPerms.add(acpID, evt, origin)
 }
 
-// emit is the single publish path for live frames. It touches evt.Subject only for chat_status, taking the
-// stamp MergeStamped minted with the payload.
+// It touches evt.Subject only for chat_status, taking the stamp MergeStamped minted with the
+// payload.
 func (b *bus) emit(evt marotte.ServerEvent) {
 	switch evt.Type {
 	case marotte.EventChatStatus:
@@ -40,10 +40,10 @@ func (b *bus) emit(evt marotte.ServerEvent) {
 			// The raw description: Turn.statusDesc is this turn's declaration.
 			b.stageStatusDesc(evt.ChatID, p.Description)
 			// The merged payload, since the client replaces both fields. evt is a value.
-			evt.Payload, evt.Subject = b.chatStatus.MergeStamped(evt.ChatID, p)
+			evt.Payload, evt.Subject = b.chatStatus.mergeStamped(evt.ChatID, p)
 		}
 	case marotte.EventTurnClosed:
-		b.chatStatus.ClearAtTurnEnd(evt.ChatID)
+		b.chatStatus.clearAtTurnEnd(evt.ChatID)
 	}
 	data, err := json.Marshal(evt)
 	if err != nil {
@@ -80,8 +80,8 @@ func (b *bus) emit(evt marotte.ServerEvent) {
 	}
 }
 
-// handleSSE opens /api/events. The sse library owns the transport; marotte owns the connected handshake and the
-// initial state the event log cannot give.
+// The sse library owns the transport; marotte owns the connected handshake and the initial state
+// the event log cannot give.
 func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	legacy := r.Header.Get(wireHeader) == ""
 	tag := r.Header.Get(clientTagHeader)
@@ -173,7 +173,7 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 	if err := writeEvent(pendingFrame); err != nil {
 		return err
 	}
-	status, statusStamp := rt.bus.chatStatus.SnapshotStamped(rt.coord.turns.ownTurns())
+	status, statusStamp := rt.bus.chatStatus.snapshotStamped(rt.coord.turns.ownTurns())
 	statusFrame := marotte.NewEvent(marotte.EventStatusSnapshot, "", status)
 	statusFrame.Subject = statusStamp
 	return writeEvent(statusFrame)
@@ -199,9 +199,9 @@ func (rt *Runtime) replayLegacyState(writeEvent func(marotte.ServerEvent) error)
 // replayWaitingStatus emits chat_status for every chat left waiting on a person whose turn is not running.
 func (rt *Runtime) replayWaitingStatus(
 	writeFn func(marotte.ServerEvent) error,
-	open map[marotte.ChatID]*Turn,
+	open map[marotte.ChatID]*activeTurn,
 ) error {
-	for id, p := range rt.bus.chatStatus.Snapshot() {
+	for id, p := range rt.bus.chatStatus.snapshot() {
 		if _, busy := open[id]; busy {
 			continue
 		}
@@ -217,7 +217,7 @@ func (rt *Runtime) replayWaitingStatus(
 
 // replayPendingPermissions sends every unresolved permission_needed to a new client, however old: KAS holds the request open until answered.
 func (rt *Runtime) replayPendingPermissions(writeFn func(marotte.ServerEvent) error) error {
-	for _, evt := range rt.bus.pendingPerms.List("") {
+	for _, evt := range rt.bus.pendingPerms.list("") {
 		if err := writeFn(evt); err != nil {
 			return err
 		}
@@ -225,9 +225,9 @@ func (rt *Runtime) replayPendingPermissions(writeFn func(marotte.ServerEvent) er
 	return nil
 }
 
-// replayPendingRunAsks sends every unanswered step question to a new client; the dock de-duplicates by ask id.
+// The dock de-duplicates by ask id.
 func (rt *Runtime) replayPendingRunAsks(writeFn func(marotte.ServerEvent) error) error {
-	for _, evt := range rt.runs.asks.List("") {
+	for _, evt := range rt.runs.asks.list("") {
 		if err := writeFn(evt); err != nil {
 			return err
 		}

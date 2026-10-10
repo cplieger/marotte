@@ -114,8 +114,7 @@ func writeRepoEntry(b *strings.Builder, workDir, r string) {
 	}
 }
 
-// writeRepoAgents renders the custom-agents inventory line for a repo.
-func writeRepoAgents(b *strings.Builder, repo string, agents []AgentEntry) {
+func writeRepoAgents(b *strings.Builder, repo string, agents []agentEntry) {
 	fmt.Fprintf(b, "  - **Custom agents** (`%s/.kiro/agents/`):", repo)
 	for _, a := range agents {
 		fmt.Fprintf(b, " `%s`", a.Name)
@@ -123,9 +122,6 @@ func writeRepoAgents(b *strings.Builder, repo string, agents []AgentEntry) {
 	b.WriteString("\n")
 }
 
-// writeRepoHooks renders the hooks inventory for a repo, one bullet per
-// hook with its name, trigger label, and (when present) an action
-// preview. Fields are pre-sanitised by parseHookDoc.
 func writeRepoHooks(b *strings.Builder, repo string, hooks []HookEntry) {
 	fmt.Fprintf(b, "  - **Hooks** (`%s/.kiro/hooks/`):\n", repo)
 	for _, h := range hooks {
@@ -168,8 +164,7 @@ func readGitOrigin(repoDir string) string {
 	return ""
 }
 
-// readGitBranch returns the current branch from `.git/HEAD` (no subprocess); "" when
-// detached. Cut at the FIRST line and defused: the file is workspace content.
+// "" when detached. Cut at the FIRST line and defused: the file is workspace content.
 func readGitBranch(repoDir string) string {
 	data, err := readCappedFile(filepath.Join(repoDir, ".git", "HEAD"), 1024)
 	if err != nil {
@@ -184,10 +179,8 @@ func readGitBranch(repoDir string) string {
 	return ""
 }
 
-// hostFromGitURL extracts the host from a git remote URL. Handles
-// both https:// and scp-style git@host:path forms. Returns "" for
-// shapes we don't recognise (file://, ext::, etc) and for anything that is not
-// SHAPED like a host (see isHostShaped).
+// Handles both https:// and scp-style git@host:path forms. Returns "" for shapes we don't recognise
+// (file://, ext::, etc) and for anything that is not SHAPED like a host (see isHostShaped).
 func hostFromGitURL(url string) string {
 	url = strings.TrimSpace(url)
 	var host string
@@ -264,8 +257,7 @@ func hostFromSCPURL(url string) string {
 	return host
 }
 
-// classifyEntries splits workspace entries into git repos and plain directories. Dot-named
-// repos (".kiro", ".github") are listed; dot-named non-repos (.cache, .venv) stay hidden.
+// Dot-named repos (".kiro", ".github") are listed; dot-named non-repos (.cache, .venv) stay hidden.
 func classifyEntries(ctx context.Context, entries []os.DirEntry, workDir string) (repos, dirs []string) {
 	for _, e := range entries {
 		name := e.Name()

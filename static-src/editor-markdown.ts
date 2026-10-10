@@ -8,14 +8,14 @@
 //
 // # Nodes, never innerHTML
 //
-// `renderMarkdown(md): string` exists and is safe to re-parse today — the
+// A string render of the parser's output would be safe to re-parse today — the
 // renderer's emittable tag set is fixed and namespace-flat, so no `svg`, `math`,
 // `template` or `noscript` can be produced and an innerHTML round trip is an
 // equivalent tree. It is still the wrong call. The property the transcript's
 // renderer earns its keep with is architectural and grep-checkable — NO renderer
 // output ever passes through an HTML parser, pinned by markdown.test.ts's
 // fast-check properties over `<script`, `javascript:` and `on*` — and one
-// `host.innerHTML = renderMarkdown(md)` here reintroduces exactly one parse step
+// `host.innerHTML = <that string>` here reintroduces exactly one parse step
 // with no failing test behind it. CSP does not block innerHTML either (there is
 // no trusted-types directive), so the invariant is the only thing standing
 // between the next parser change and an injection; `script-src 'self' <hash>`

@@ -14,8 +14,6 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// captureSlog swaps the default slog logger for a buffer-backed Debug text handler and restores it
-// on cleanup.
 func captureSlog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}

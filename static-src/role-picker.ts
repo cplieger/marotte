@@ -166,9 +166,9 @@ function selectMode(modeID: string): void {
   });
 }
 
-/** Send the pick. No tab write: a chat tab's leading element is its activity dot, not a mode
- *  glyph, so the only optimistic surface is the pill — which the action's own update flips,
- *  confirmed by the server's mode_changed. */
+/** No tab write: a chat tab's leading element is its activity dot, not a mode glyph, so the only
+ *  optimistic surface is the pill — which the action's own update flips, confirmed by the server's
+ *  mode_changed. */
 function dispatchMode(chatID: string, modeID: string): void {
   void setMode.dispatch({ chatID, modeID });
 }

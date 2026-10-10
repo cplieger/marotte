@@ -19,7 +19,7 @@ const policyCallTimeout = 45 * time.Second
 // buildUtility is the utility lease's constructor, here because it closes over Settings hooks into runtime services.
 func (rt *Runtime) buildUtility() *utilityRuntime {
 	return newUtilityRuntime(
-		rt.lifecycle.shutdownCtx, rt.bridge.factory, rt.Models,
+		rt.lifecycle.shutdownCtx, rt.bridge.factory, rt.models,
 		&utilitySessionHooks{
 			onHooksChanged: rt.config.broadcastHooksChanged,
 			onPowersChanged: func(params json.RawMessage) {
@@ -30,6 +30,7 @@ func (rt *Runtime) buildUtility() *utilityRuntime {
 					marotte.NewEvent(marotte.EventRecipesChanged, "", marotte.RecipesChangedPayload{}))
 			},
 			onGovernanceState:    rt.config.cacheGovernanceFromUtility,
+			onConfigurationState: rt.config.cacheConfigurationState,
 			onPolicyNotification: rt.forwardPolicyNotification,
 			onSlashCommands:      rt.applyUtilitySlashCommands,
 			onSteeringDocs: func(params json.RawMessage) {

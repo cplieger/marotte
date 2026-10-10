@@ -70,7 +70,7 @@ func memoryRepoTag(repoDir string) string {
 	}
 	tag := "repo:" + provider + "/" + owner + "/" + name
 	// The origin url is workspace content: a tag that is not plain path-shaped
-	// (markup, a credential in userinfo) is refused rather than rendered.
+	// (markup, an `@` in the path) is refused rather than rendered.
 	if !safeRepoTag.MatchString(tag) {
 		return ""
 	}
@@ -136,10 +136,13 @@ func originURL(config string) string {
 	return ""
 }
 
-var remoteForms = []*regexp.Regexp{
-	regexp.MustCompile(`^git@([^:]+):(.+?)(?:\.git)?$`),
-	regexp.MustCompile(`^ssh://([^/]+)/(.+?)(?:\.git)?$`),
-	regexp.MustCompile(`^https?://([^/]+)/(.+?)(?:\.git)?$`),
+var remoteForms = []struct {
+	re  *regexp.Regexp
+	scp bool
+}{
+	{regexp.MustCompile(`^git@([^:]+):(.+?)(?:\.git)?$`), true},
+	{regexp.MustCompile(`^ssh://([^/]+)/(.+?)(?:\.git)?$`), false},
+	{regexp.MustCompile(`^https?://([^/]+)/(.+?)(?:\.git)?$`), false},
 }
 
 var portSuffix = regexp.MustCompile(`:\d+$`)
@@ -149,10 +152,16 @@ func parseRepoRemote(url string) (provider, owner, name string, ok bool) {
 	if url == "" {
 		return "", "", "", false
 	}
-	for _, re := range remoteForms {
-		if m := re.FindStringSubmatch(url); m != nil {
-			return splitRepoPath(portSuffix.ReplaceAllString(m[1], ""), m[2])
+	for _, f := range remoteForms {
+		m := f.re.FindStringSubmatch(url)
+		if m == nil {
+			continue
 		}
+		if f.scp && strings.Contains(m[2], "@") {
+			return "", "", "", false
+		}
+		host := m[1][strings.LastIndex(m[1], "@")+1:]
+		return splitRepoPath(portSuffix.ReplaceAllString(host, ""), m[2])
 	}
 	return "", "", "", false
 }

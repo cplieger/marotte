@@ -17,7 +17,6 @@ import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 
-/** CSS class names for tool-group collapse state machine. */
 const CLS_COLLAPSED = "tool-group-collapsed";
 const CLS_AUTO_COLLAPSED = "tool-group-auto-collapsed";
 const CLS_USER_TOGGLED = "tool-group-user-toggled";

@@ -42,7 +42,8 @@
  * `min(26rem, 55dvh)`), so on a short viewport they would then be painted under
  * that bar. Matching its z-index restores the previous order, which was a
  * DOM-order tie between two z-index-10 elements. */
-[id="prompt-form"] {
+[id="prompt-form"],
+[id="run-composer"] {
   display: flex;
   flex-direction: column;
   contain: layout;
@@ -170,14 +171,15 @@
    * it patches instances where this patches the class. What it buys instead —
    * the border no longer lights while a pill menu is open — is the honest
    * reading of a treatment that is a text-field focus ring plus an input tint. */
-  &:has([id="prompt-input"]:focus) {
+  &:has(:is([id="prompt-input"], [id="run-composer-input"]):focus) {
     border-color: var(--c-accent);
     box-shadow: 0 0 0 1px var(--c-accent);
     background: color-mix(in srgb, var(--c-accent) 3%, var(--c-bg-secondary));
   }
 }
 
-[id="prompt-input"] {
+[id="prompt-input"],
+[id="run-composer-input"] {
   flex: 1;
   background: transparent;
   color: var(--c-text-primary);
@@ -2159,7 +2161,8 @@
 :where([data-pointer="coarse"]) {
   /* The token, not one control's padding: `.pill` and `.send-btn` both derive from
      `--pill-pad-inline`, so the two icon-only controls move together. */
-  [id="prompt-form"] {
+  [id="prompt-form"],
+  [id="run-composer"] {
     --pill-pad-inline: var(--sp-3);
   }
 

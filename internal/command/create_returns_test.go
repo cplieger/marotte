@@ -39,7 +39,7 @@ func TestCmdResumeSession_MintsAndReturnsTheChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newTestHost(t, store)
 
-	body, err := CmdResumeSession(t.Context(), newTestMembership(t, host),
+	body, err := cmdResumeSession(t.Context(), newTestMembership(t, host),
 		resumeReqOp(t, "sess_abc-123", "Earlier work", "op-1"))
 
 	if statusOf(err) != http.StatusOK {
@@ -68,11 +68,11 @@ func TestCmdResumeSession_RepeatOpBindsOneChat(t *testing.T) {
 	host := newTestHost(t, store)
 	ops := newTestMembership(t, host)
 
-	first, err := CmdResumeSession(t.Context(), ops, resumeReqOp(t, "sess_abc", "", "op-same"))
+	first, err := cmdResumeSession(t.Context(), ops, resumeReqOp(t, "sess_abc", "", "op-same"))
 	if err != nil {
 		t.Fatalf("first attempt: %v", err)
 	}
-	second, err := CmdResumeSession(t.Context(), ops, resumeReqOp(t, "sess_abc", "", "op-same"))
+	second, err := cmdResumeSession(t.Context(), ops, resumeReqOp(t, "sess_abc", "", "op-same"))
 	if err != nil {
 		t.Fatalf("retry: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestCmdForkChat_MintsAndReturnsTheChat(t *testing.T) {
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
 	host := newForkHost(store, br, "c-parent")
 
-	body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host),
+	body, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host),
 		forkReqOp(t, "c-parent", "Reaper detour", "op-1"))
 
 	if statusOf(err) != http.StatusOK {
@@ -128,13 +128,13 @@ func TestCmdForkChat_RepeatOpDoesNotForkTwice(t *testing.T) {
 	host := newForkHost(store, br, "c-parent")
 	ops := newTestMembership(t, host)
 
-	first, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), ops,
+	first, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), ops,
 		forkReqOp(t, "c-parent", "", "op-same"))
 	if err != nil {
 		t.Fatalf("first attempt: %v", err)
 	}
 	callsAfterFirst := br.callCount
-	second, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), ops,
+	second, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), ops,
 		forkReqOp(t, "c-parent", "", "op-same"))
 	if err != nil {
 		t.Fatalf("retry: %v", err)
@@ -160,11 +160,11 @@ func TestCmdForkChat_RepeatOpReportsThePathTheFirstAttemptTook(t *testing.T) {
 	host := newForkHost(store, nil, "c-parent")
 	ops := newTestMembership(t, host)
 
-	if _, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), ops,
+	if _, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), ops,
 		forkReqOp(t, "c-parent", "", "op-same")); err != nil {
 		t.Fatalf("first attempt: %v", err)
 	}
-	body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), ops,
+	body, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), ops,
 		forkReqOp(t, "c-parent", "", "op-same"))
 	if err != nil {
 		t.Fatalf("retry: %v", err)

@@ -37,10 +37,14 @@ type fakeBridge struct {
 	blockOn       map[string]chan struct{}
 	blockNotifyOn map[string]chan struct{}
 	// onCall answers a Call instead of the scripted result, delivering its frames before returning, as KAS does.
-	onCall    func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)
-	sessionID string
-	modelID   string
-	effort    string
+	onCall func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)
+	// refuseAfterCall is KAS refusing in band after onCall ran, so frames can fold before the refusal.
+	refuseAfterCall map[string]*marotte.RPCError
+	// failAfterCall is the transport failing after onCall ran: the words were written, then the reply was lost.
+	failAfterCall map[string]error
+	sessionID     string
+	modelID       string
+	effort        string
 	// observedEffort is the level the SESSION reported, not the one asked for.
 	observedEffort   string
 	thinking         string
@@ -78,10 +82,16 @@ type fakeBridge struct {
 	startTerminalTimeoutMs int
 	// notifsOnStart is the transcript a session/load replays, pushed before Start returns.
 	notifsOnStart []*marotte.RPCResponse
-	mu            sync.Mutex
+	// withholdReplay holds back that many trailing replay frames, which the load's position still
+	// counts, until releaseWithheld delivers them: a load that answered before its replay was read.
+	withholdReplay int
+	withheld       []*marotte.RPCResponse
+	mu             sync.Mutex
 	// sendMu orders a send against the close: a real bridge reads no frame once stopped.
 	sendMu   sync.RWMutex
 	responds int
+	// respondedIDs are the ACP request ids answered, in order.
+	respondedIDs []int64
 	// setModelFailures fails the next N SetModel calls.
 	setModelFailures int
 	// supervisedApplied is whether the session took `autopilot: off`, set by Start from opts.Supervised as the real bridge does.
@@ -135,6 +145,7 @@ func (b *fakeBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	// Mirrors applySupervised recording the accepted assert; false would make every supervised chat look refused.
 	b.supervisedApplied = opts.Supervised && !b.supervisedAssertFails
 	notifs := b.notifsOnStart
+	keep := len(notifs) - min(b.withholdReplay, len(notifs))
 	_, doorAssertFails := b.callErrs[marotte.MethodSetConfigOption]
 	b.mu.Unlock()
 	b.startLive(ctx, opts)
@@ -150,14 +161,25 @@ func (b *fakeBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	if opts.SessionID == "" {
 		return nil
 	}
-	for _, n := range notifs {
+	for _, n := range notifs[:keep] {
 		b.deliver(n)
 	}
 	// After the replay: CallAt's position counts the frames already delivered.
 	b.mu.Lock()
-	b.loadSeq = b.deliveredSeq
+	b.withheld = notifs[keep:]
+	b.loadSeq = b.deliveredSeq + uint64(len(b.withheld))
 	b.mu.Unlock()
 	return nil
+}
+
+func (b *fakeBridge) releaseWithheld() {
+	b.mu.Lock()
+	frames := b.withheld
+	b.withheld = nil
+	b.mu.Unlock()
+	for _, n := range frames {
+		b.deliver(n)
+	}
 }
 
 func (b *fakeBridge) startLive(ctx context.Context, opts *marotte.StartOpts) {
@@ -217,21 +239,20 @@ func (b *fakeBridge) RefreshContentCollection(ctx context.Context) (bool, error)
 	return enabled, err
 }
 
-// SessionLoadSeq is the read-loop position of the `session/load` response; zero until a Start names a session.
+// Zero until a Start names a session.
 func (b *fakeBridge) SessionLoadSeq() uint64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.loadSeq
 }
 
-// lastStartOpts returns the StartOpts of the most recent Start, or nil.
 func (b *fakeBridge) lastStartOpts() *marotte.StartOpts {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.startOpts
 }
 
-// startCount is how many spawns this factory served; read it as a delta.
+// Read it as a delta.
 func (b *fakeBridge) startCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -306,12 +327,20 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*maro
 	blocker := b.blockOn[method]
 	sessionID := b.sessionID
 	hook := b.onCall
+	refusal := b.refuseAfterCall[method]
+	failure := b.failAfterCall[method]
 	b.mu.Unlock()
 	if hook != nil {
 		p, _ := params.(map[string]any)
 		if r, hooked, ok := hook(method, p); ok {
 			res, frames = r, hooked
 		}
+	}
+	if refusal != nil {
+		return &marotte.RPCResponse{Error: refusal}, nil
+	}
+	if failure != nil {
+		return nil, failure
 	}
 	// Blocked outside the mutex, so other methods' Calls proceed.
 	if blocker != nil {
@@ -414,21 +443,26 @@ func (b *fakeBridge) notifyLog() []string {
 	return slices.Clone(b.notifies)
 }
 
-func (b *fakeBridge) Respond(_ context.Context, _ int64, _ any, _ error) error {
+func (b *fakeBridge) Respond(_ context.Context, id int64, _ any, _ error) error {
 	b.mu.Lock()
 	b.responds++
+	b.respondedIDs = append(b.respondedIDs, id)
 	b.mu.Unlock()
 	return nil
 }
 
-// respondCount reports how many A→C requests were answered on this bridge.
+func (b *fakeBridge) answeredIDs() []int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.respondedIDs)
+}
+
 func (b *fakeBridge) respondCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.responds
 }
 
-// callLog snapshots the ordered method names Call received.
 func (b *fakeBridge) callLog() []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -437,8 +471,8 @@ func (b *fakeBridge) callLog() []string {
 	return out
 }
 
-// setCallResult re-arms one method's reply under the fake's mutex, for use after the bridge runs (OpenBridge's
-// tryLoadSession calls Call concurrently). Assigning the map before OpenBridge is fine.
+// setCallResult re-arms one method's reply under the fake's mutex, for use after the bridge runs (openBridge's
+// tryLoadSession calls Call concurrently). Assigning the map before openBridge is fine.
 func (b *fakeBridge) setCallResult(method string, res json.RawMessage) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -492,7 +526,6 @@ func (b *fakeBridge) setStartGate(gate chan struct{}) {
 	b.startGate = gate
 }
 
-// lastCall is the most recent Call's method, or "".
 func (b *fakeBridge) lastCall() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -543,7 +576,6 @@ func (b *fakeBridge) SessionTitle() string {
 	return b.sessionTitle
 }
 
-// SessionTitleSetByUser returns whatever a test set.
 func (b *fakeBridge) SessionTitleSetByUser() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -622,14 +654,14 @@ func (b *fakeBridge) ObserveThinking(value string) {
 	b.mu.Unlock()
 }
 
-// lastObservedEffort reports the level ObserveEffort last recorded; empty if never told.
+// Empty if never told.
 func (b *fakeBridge) lastObservedEffort() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.observedEffort
 }
 
-// lastEffort reports the level SetEffort last applied; empty if never called.
+// Empty if never called.
 func (b *fakeBridge) lastEffort() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -641,7 +673,6 @@ func (b *fakeBridge) NotifCh() <-chan marotte.Notification { return b.notifCh }
 // newNoopBridge is for benchmarks where the bridge is never called.
 func newNoopBridge() ACPBridge { return &fakeBridge{notifCh: make(chan marotte.Notification)} }
 
-// testChatStore is a real chat.Store on its own directory under the package test root, plus a Get counter.
 type testChatStore struct {
 	*chat.Store
 	// Gets counts Get calls, for a test about how often the store is read.
@@ -689,6 +720,6 @@ func (s *testChatStore) seed(tb testing.TB, id marotte.ChatID, fill func(c *maro
 }
 
 // Forward runs one bridge's forward loop in the caller, taking the chat's forward attachment first.
-func (bc *BridgeCoordinator) Forward(chatID marotte.ChatID, bridge ACPBridge) {
+func (bc *bridgeCoordinator) Forward(chatID marotte.ChatID, bridge ACPBridge) {
 	bc.forwardAt(chatID, bridge, bc.turns.attachForward(chatID))
 }

@@ -7,44 +7,50 @@ import type * as Skeleton from "./skeleton.js";
 
 // The creating actions answer with the SERVER's header, so the mocks do too (undefined
 // would take the refused branch). A FIXED id per action, so assertions name their id.
-const { setModeDispatch, forkDispatch, createDispatch, submitPromptMock, messagesEl } = vi.hoisted(
-  () => {
-    const serverHeader = (id: string): unknown => ({
-      id,
-      name: "New conversation",
-      model: "auto",
-      usage: {
-        context_pct: 0,
-        context_size: 0,
-        credits: 0,
-        last_turn_ms: 0,
-        has_real_data: false,
-      },
-      created_at: 0,
-      updated_at: 0,
-      turn_count: 0,
-    });
-    // The creating reply: chat, the tab the coordinator opened, the committed version. A fork's
-    // subject carries the PARENT the server nested it under.
-    const serverCreated = (id: string, tabID: string, parent = ""): unknown => ({
-      chat: serverHeader(id),
-      subject: { id: tabID, kind: "chat", ref: id, parent, pinned: false, owns: true },
-      version: 3,
-    });
-    return {
-      setModeDispatch: vi.fn(),
-      // Typed with a payload parameter, so the calls tuple carries the argument under test.
-      forkDispatch: vi.fn(async (_payload?: Record<string, unknown>) =>
-        serverCreated("c-forked", "tb_forked", "tb_parent"),
-      ),
-      createDispatch: vi.fn(async (_payload?: Record<string, unknown>) =>
-        serverCreated("c-created", "tb_created"),
-      ),
-      submitPromptMock: vi.fn(),
-      messagesEl: document.createElement("div"),
-    };
-  },
-);
+const {
+  setModeDispatch,
+  forkDispatch,
+  createDispatch,
+  submitPromptMock,
+  submitLabelledMock,
+  messagesEl,
+} = vi.hoisted(() => {
+  const serverHeader = (id: string): unknown => ({
+    id,
+    name: "New conversation",
+    model: "auto",
+    usage: {
+      context_pct: 0,
+      context_size: 0,
+      credits: 0,
+      last_turn_ms: 0,
+      has_real_data: false,
+    },
+    created_at: 0,
+    updated_at: 0,
+    turn_count: 0,
+  });
+  // The creating reply: chat, the tab the coordinator opened, the committed version. A fork's
+  // subject carries the PARENT the server nested it under.
+  const serverCreated = (id: string, tabID: string, parent = ""): unknown => ({
+    chat: serverHeader(id),
+    subject: { id: tabID, kind: "chat", ref: id, parent, pinned: false, owns: true },
+    version: 3,
+  });
+  return {
+    setModeDispatch: vi.fn(),
+    // Typed with a payload parameter, so the calls tuple carries the argument under test.
+    forkDispatch: vi.fn(async (_payload?: Record<string, unknown>) =>
+      serverCreated("c-forked", "tb_forked", "tb_parent"),
+    ),
+    createDispatch: vi.fn(async (_payload?: Record<string, unknown>) =>
+      serverCreated("c-created", "tb_created"),
+    ),
+    submitPromptMock: vi.fn(),
+    submitLabelledMock: vi.fn(),
+    messagesEl: document.createElement("div"),
+  };
+});
 
 let activeId = "";
 
@@ -156,8 +162,10 @@ vi.mock("./composer-state.js", () => ({
 vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
 vi.mock("./model-switcher.js", () => ({ applyLocalModel: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
-vi.mock("./roles.js", () => ({ iconForMode: vi.fn(() => "") }));
-vi.mock("./submit.js", () => ({ submitPrompt: submitPromptMock }));
+vi.mock("./submit.js", () => ({
+  submitPrompt: submitPromptMock,
+  submitLabelled: submitLabelledMock,
+}));
 // A real element, witnessing that chat.ts registers no listener (see "no transcript context
 // menu").
 vi.mock("./dom.js", () => ({
@@ -197,6 +205,7 @@ import {
   refreshChatView,
   closeChatTab,
   createPlannerSession,
+  createSpecSession,
   openTangentChat,
   openPreviousSession,
   installStoreSubscribers,
@@ -259,6 +268,37 @@ describe("createPlannerSession", () => {
     await createPlannerSession();
     const arg = createDispatch.mock.calls[0]?.[0] as { opID: string };
     expect(arg.opID).toMatch(/^op-/);
+  });
+});
+
+describe("createSpecSession", () => {
+  it("switches the new chat to spec mode before sending the labelled prompt", async () => {
+    const order: string[] = [];
+    setModeDispatch.mockImplementationOnce((arg: { chatID: string; modeID: string }) => {
+      order.push(`mode ${arg.chatID} ${arg.modeID}`);
+      return { outcome: Promise.resolve({ status: "success", value: { prev: "" } }) };
+    });
+    submitLabelledMock.mockImplementationOnce((id: string, text: string, label: string) => {
+      order.push(`send ${id} ${text} ${label}`);
+    });
+    await createSpecSession("the prompt", "the description");
+    expect(order).toEqual(["mode c-created spec", "send c-created the prompt the description"]);
+  });
+
+  // kiro-cli stops at a failed mode switch; a prompt there would draft no spec.
+  it("sends nothing when the mode switch is refused", async () => {
+    setModeDispatch.mockReturnValueOnce({
+      outcome: Promise.resolve({ status: "error", error: { message: "no spec mode" } }),
+    });
+    await createSpecSession("the prompt", "d");
+    expect(submitLabelledMock).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing when the create is refused", async () => {
+    createDispatch.mockResolvedValueOnce(null);
+    await createSpecSession("the prompt", "d");
+    expect(setModeDispatch).not.toHaveBeenCalled();
+    expect(submitLabelledMock).not.toHaveBeenCalled();
   });
 });
 
@@ -518,7 +558,7 @@ describe("the scroller on a chat switch", () => {
   }
 
   /** Drive the restore and wait for the activation, which runs in the OPEN's
-   *  continuation now that opening a tab is a round trip. */
+   *  continuation: opening a tab is a round trip. */
   async function activate(): Promise<void> {
     openPreviousSession({ chat_id: "c-1", session_id: "s1", title: "t", updated_at: 1 });
     await vi.waitFor(() => {

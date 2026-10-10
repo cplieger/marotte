@@ -3,7 +3,7 @@
 import { vi, describe, it, expect } from "vitest";
 
 import { buildRunCard } from "./run-card.js";
-import type { RunAsks } from "../run-exec-source.js";
+import type { RunAsks } from "../run-asks.js";
 import { workNodes } from "../exec-view/model.js";
 import { runToExec } from "../run-exec-source.js";
 import type { RunNode, RunState } from "../run-store.js";
@@ -21,7 +21,7 @@ function runOf(status: NonNullable<RunState["status"]>, ...children: RunNode[]):
 }
 
 function asks(count: number, nodes: string[], label = ""): RunAsks {
-  return { count, nodes: new Set(nodes), label };
+  return { count, asked: nodes.map((nodeID) => ({ nodeID, sessionID: "", answer: false })), label };
 }
 
 const NO_ASKS: RunAsks = asks(0, []);
@@ -44,7 +44,6 @@ function glyphs(root: HTMLElement): string[] {
   );
 }
 
-/** The markup of each step's SVG mark, for the distinctness check below. */
 function iconMarkup(root: HTMLElement): string[] {
   return [...root.querySelectorAll<HTMLElement>(".run-step-glyph svg")].map((e) => e.outerHTML);
 }
@@ -99,6 +98,45 @@ describe("the head against the foot", () => {
       [...(c.root.querySelector(".run-head")?.children ?? [])].map((e) => e.className),
     ).toEqual(["run-toggle", "run-icon", "run-name", "run-count"]);
     expect(ledger(c.root)).toContain("running");
+  });
+});
+
+describe("a background-process watch's result", () => {
+  const record = JSON.stringify({
+    terminalId: "t1",
+    status: "exited",
+    exitCode: 1,
+    signal: null,
+    startedAt: "2026-10-06T00:00:00.000Z",
+    outputTail: "ok\nFAIL x\n",
+  });
+
+  it("reads how the watch ended and its last output line on the row", () => {
+    const c = card();
+    c.render(
+      runOf("completed", {
+        nodeId: "build",
+        type: "watch",
+        status: "completed",
+        capturedOutput: record,
+      }),
+    );
+    expect(c.root.querySelector(".run-step-meta")?.textContent).toBe("exited 1");
+    expect(c.root.querySelector(".run-step-capture")?.textContent).toBe("FAIL x");
+  });
+
+  it("lists the summary for a watch key and the raw value for a step key", () => {
+    const c = card();
+    c.render({
+      ...runOf(
+        "completed",
+        { nodeId: "build", type: "watch", status: "completed" },
+        { nodeId: "report", type: "step", status: "completed" },
+      ),
+      capturedOutputs: { build: record, report: '{"done":true}' },
+    });
+    const vals = [...c.root.querySelectorAll(".run-output-val")].map((e) => e.textContent);
+    expect(vals).toEqual(["exited 1", '{"done":true}']);
   });
 });
 
@@ -234,13 +272,13 @@ describe("an unanswered ask", () => {
 
   it("says the user paused it, and that a requested pause has not landed yet", () => {
     const paused: RunState = { ...runOf("paused", step("a", "paused")), stopInitiator: "user" };
-    expect(alertText(buildAndRender(paused, NO_ASKS))).toBe("Paused by you");
+    expect(alertText(buildAndRender(paused, NO_ASKS))).toBe("Paused by user");
     const closed: RunState = {
       ...runOf("aborted", step("a", "aborted")),
       stopInitiator: "user",
       stopReason: "tab closed",
     };
-    expect(alertText(buildAndRender(closed, NO_ASKS))).toBe("Stopped by you: tab closed");
+    expect(alertText(buildAndRender(closed, NO_ASKS))).toBe("Stopped by user: tab closed");
     const pending: RunState = {
       ...runOf("running", step("a", "running")),
       pausePending: { initiator: "user" },

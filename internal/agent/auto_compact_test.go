@@ -40,7 +40,6 @@ func TestAutoCompactPolicy(t *testing.T) {
 	}
 }
 
-// compactRig is an autoCompactor over stubbed inputs, recording every compact call.
 type compactRig struct {
 	ac      *autoCompactor
 	bridge  *fakeBridge
@@ -279,7 +278,7 @@ func TestAfterTurnClose_Order(t *testing.T) {
 		record("compact")
 		return inner(ctx, b)
 	}
-	bc := &BridgeCoordinator{
+	bc := &bridgeCoordinator{
 		turns:             newTurnRegistry(),
 		lifecycle:         &lifetime{shutdownCtx: t.Context()},
 		applyPendingModel: func(context.Context, marotte.ChatID) { record("model") },
@@ -364,7 +363,7 @@ func TestChatSpawn_SendsTheCompactionPolicyAndOtherSpawnsDoNot(t *testing.T) {
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	if _, err := h.utility.get().session.acquire(t.Context()); err != nil {

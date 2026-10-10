@@ -17,7 +17,9 @@ const m = {
   launchedBy: new Map<string, string>(),
 };
 
-vi.mock("./tabs.js", () => ({
+vi.mock("./tabs.js", async () => ({
+  // Complete and inert first: the run composer's steer stack reaches the chat notice path too.
+  ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   // Present-but-inert: the run tab renders the run CARD now, whose markdown bubble reaches the
   // linkifier and through it the editor openers, so these names are imported somewhere in this
   // graph. No case here opens a file, closes a tab, or reads which tab is on screen.
@@ -53,7 +55,7 @@ vi.mock("./tabs.js", () => ({
 vi.mock("./decision-dock.js", () => ({
   // The card's second input beside `inspect`: which step is blocked on a person, which no node
   // status can say. None is here.
-  runPendingAsks: vi.fn(() => ({ count: 0, nodes: new Set<string>(), label: "" })),
+  runPendingAsks: vi.fn(() => ({ count: 0, asked: [], label: "" })),
   mountRunDecisionDock: vi.fn(),
   rerenderDocks: vi.fn(),
   hasPendingDecision: vi.fn(() => false),
@@ -109,6 +111,11 @@ vi.mock("./actions/runs.js", () => {
     retryRun: stub,
     extendRunRepeat: stub,
     finishRunRepeat: stub,
+    messageRunStep: stub,
+    removeRunStepSteer: stub,
+    clearRunStepSteers: stub,
+    // Linked by the step transcript read; no case here reads a step.
+    runStepURL: undefined,
   };
 });
 

@@ -2,7 +2,8 @@
 // GRADES a failure, and what it commits to the run store.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Entry, OpenEntry, RunStepTranscript } from "./types.js";
+import type { Entry, OpenEntry } from "./types.js";
+import type { RunStepTranscript } from "./wire/types.gen.js";
 
 const apiGetTypedOrError = vi.fn<(url: string, decode: unknown) => Promise<unknown>>();
 
@@ -14,7 +15,6 @@ vi.mock("./api-client.js", () => ({
   apiGetOrError: vi.fn(),
   apiGetTyped: vi.fn(),
   apiPost: vi.fn(),
-  apiDelete: vi.fn(),
 }));
 
 const {
@@ -69,7 +69,6 @@ function turnOpen(turn: string, nodePath: string): Entry {
   };
 }
 
-/** One sealed `text` entry at the position its own `seq` claims. */
 function text(turn: string, seq: number, body: string): Entry {
   return { id: `${turn}-${String(seq)}`, turn, kind: "text", seq, ts: 0, payload: { text: body } };
 }
@@ -79,13 +78,11 @@ function tail(turn: string, body: string): OpenEntry {
   return { turn, id: `${turn}-tail`, kind: "text", text: body, n: 1 };
 }
 
-/** The entries of one turn of a run's log, by id, in file order. */
 function entryIDs(workflowID: string, turnID: string): string[] {
   const found = runTurns(workflowID).find(([id]) => id === turnID);
   return (found?.[1].entries ?? []).map((e) => e.id);
 }
 
-/** Ask, then wait for the answer that was queued for this call. */
 async function ask(workflowID: string, nodePath: string, answer: unknown): Promise<void> {
   apiGetTypedOrError.mockResolvedValueOnce(answer);
   requestStepTranscript(workflowID, nodePath);

@@ -42,8 +42,6 @@ func isValidGitRef(s string) bool {
 	return true
 }
 
-// maxRepoPaths caps how many paths a single stage/unstage/discard
-// request can carry.
 const maxRepoPaths = 1024
 
 // sanitizeRepoPaths validates the repo-relative paths of stage/unstage/discard: no absolute paths,

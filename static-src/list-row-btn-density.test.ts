@@ -21,7 +21,6 @@ function track<T extends HTMLElement>(el: T): T {
   return el;
 }
 
-/** As `tools.ts` `renderSearchHit` builds the Add modal's result. */
 function rowWithAction(): { row: HTMLElement; btn: HTMLElement } {
   const row = document.createElement("div");
   row.className = "list-row tool-hit";

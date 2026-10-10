@@ -48,7 +48,8 @@ vi.mock("./submit.js", () => ({ submitPrompt: vi.fn() }));
 
 function focusSelector(): string {
   const body = ruleBody(loadCSS("15-input.css"), ".prompt-box");
-  const m = /&(:[^\s{]+)\s*\{[^}]*border-color:\s*var\(--c-accent\)/.exec(body);
+  // `[^{]` rather than `\S`: the run composer's box shares the rule, so the selector is a list.
+  const m = /&(:[^{]+?)\s*\{[^}]*border-color:\s*var\(--c-accent\)/.exec(body);
   expect(
     m,
     "expected .prompt-box to light its border from ONE nested state selector",
@@ -112,7 +113,7 @@ describe("the composer's focus treatment", () => {
       "the border must key on the message box's own focus. `:focus-within` is what it was, and it is " +
         "true for every focusable descendant — so every press on a NON-focusable one flickers it, " +
         "which is one bug for the label row, the context card's spans and the pill row's padding alike.",
-    ).toBe('.prompt-box:has([id="prompt-input"]:focus)');
+    ).toBe('.prompt-box:has(:is([id="prompt-input"], [id="run-composer-input"]):focus)');
     expect(
       loadCSS("15-input.css").replace(/\/\*[\s\S]*?\*\//g, " "),
       "no rule may reintroduce :focus-within on the prompt box",

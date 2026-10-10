@@ -73,7 +73,6 @@ func (h *Handler) resolveZipPaths(w http.ResponseWriter, reqPaths []string) (pat
 	return paths, true
 }
 
-// zipStream carries the mutable accounting for one streaming-zip response.
 type zipStream struct {
 	zw         *zip.Writer
 	flusher    http.Flusher
@@ -147,8 +146,7 @@ func (z *zipStream) addDir(dir *os.File, abs, zipName string, depth int) bool {
 	}
 }
 
-// addEntry archives one directory entry, opened against its parent's handle. A
-// symlink is skipped rather than followed, and so is a FIFO, device or socket.
+// A symlink is skipped rather than followed, and so is a FIFO, device or socket.
 func (z *zipStream) addEntry(dir *os.File, e fs.DirEntry, parentAbs, parentZip string, depth int) bool {
 	name := e.Name()
 	abs := filepath.Join(parentAbs, name)

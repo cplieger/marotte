@@ -99,7 +99,7 @@ func (rt *Runtime) exportSession(ctx context.Context, chatID marotte.ChatID, sid
 	return openConfinedExport(res.FilePath, sid)
 }
 
-// callSessionExport routes to the chat's live bridge when it holds sid, else the utility session; any process can answer from disk.
+// Any process can answer from disk.
 func (rt *Runtime) callSessionExport(ctx context.Context, chatID marotte.ChatID, sid string) (json.RawMessage, error) {
 	if sb := rt.bridge.mgr.get(chatID); sb != nil && string(sb.SessionID()) == sid {
 		resp, err := sb.Call(ctx, marotte.MethodSessionExport, map[string]any{marotte.KeySessionID: sid})
@@ -174,7 +174,7 @@ func (e *kasExport) close() {
 	}
 }
 
-// mergeSessionZips copies every segment's entries raw into one zip; KAS prefixes entries with the session id, so names never collide.
+// KAS prefixes entries with the session id, so names never collide.
 func mergeSessionZips(w http.ResponseWriter, segments []*kasExport) error {
 	zw := zip.NewWriter(w)
 	for _, e := range segments {
@@ -195,7 +195,6 @@ func mergeSessionZips(w http.ResponseWriter, segments []*kasExport) error {
 	return zw.Close()
 }
 
-// remove deletes a served export, then its emptied directory, through the check-time handles.
 func (e *kasExport) remove() {
 	defer e.close()
 	if err := unix.Unlinkat(int(e.dir.Fd()), e.name, 0); err != nil && !errors.Is(err, unix.ENOENT) {

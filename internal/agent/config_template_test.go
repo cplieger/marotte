@@ -231,7 +231,7 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 		br.callResults = map[string]json.RawMessage{
 			methodKiroConfigTemplate: json.RawMessage(goodReply),
 		}
-		h.catalog.SetModes([]marotte.SessionMode{
+		h.catalog.setModes([]marotte.SessionMode{
 			{ID: "vibe", Name: "Default", Source: "bundled"},
 			{ID: "reviewer", Name: "reviewer", Source: "workspace"},
 		})
@@ -255,7 +255,7 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 	t.Run("a live catalog survives a template outage", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("kas gone")}
-		h.catalog.SetModes([]marotte.SessionMode{{ID: "reviewer", Name: "reviewer", Source: "workspace"}})
+		h.catalog.setModes([]marotte.SessionMode{{ID: "reviewer", Name: "reviewer", Source: "workspace"}})
 		h.catalog.SetModels([]marotte.SessionModel{{ID: "m-live", Name: "Live"}})
 
 		got := serve(t, h)
