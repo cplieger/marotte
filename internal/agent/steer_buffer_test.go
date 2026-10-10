@@ -877,8 +877,8 @@ func TestSteerRecords_ABridgeGoneWithNoTurnLeavesTheRowsUnsent(t *testing.T) {
 }
 
 // A resolved end leaves its rows unsent for the drain, lead first, and they stay on
-// the dock until the prompt carrying them has opened: only then is each noted at
-// the boundary and gone.
+// the dock until the prompt carrying them has opened: only then does each leave on a
+// removed frame, with no entry beside that prompt.
 func TestSteerRecords_ResolvedRowsStayUntilDelivered(t *testing.T) {
 	s := newSteerHarness(t)
 	s.bind()
@@ -911,8 +911,11 @@ func TestSteerRecords_ResolvedRowsStayUntilDelivered(t *testing.T) {
 	s.q.Delivered(s.chat, keys)
 
 	for _, k := range keys {
-		if n := s.spy.note(k); n == nil || n.Reason != marotte.SteerReasonBoundary {
-			t.Errorf("entry %s = %+v, want dropped/boundary", k, n)
+		if n := s.spy.note(k); n != nil {
+			t.Errorf("entry %s = %+v, want none: the prompt carries its words", k, n)
+		}
+		if f := s.spy.framesFor(k); len(f) == 0 || f[len(f)-1].State != marotte.SteerRowRemoved {
+			t.Errorf("frames for %s = %+v, want the last one removed", k, f)
 		}
 		if _, live := s.state(k); live {
 			t.Errorf("row %s is still held after its prompt opened", k)
@@ -1320,6 +1323,67 @@ func TestSteerRecords_AQueuedFrameIsTheRowsOwnOrABatch(t *testing.T) {
 	if len(batch) != 1 || !slices.Equal(batch[0].Replaces, []string{"steer-b", "steer-c"}) || batch[0].Text != "second\n\nthird" {
 		t.Errorf("published probe frames = %+v, want one batch of steer-b and steer-c", batch)
 	}
+}
+
+// A read answers the rows its id carries when that id is not a row's own key, by
+// either read path, for the read entry's Resends; a row read under its key carries none.
+func TestSteerRecords_AReadAnswersTheRowsItsIDCarries(t *testing.T) {
+	combined := func(s *steerHarness) string {
+		s.bind()
+		s.steer("steer-a", "a")
+		s.steer("steer-b", "b")
+		s.steer("steer-c", "c")
+		res, _, _ := s.remove("steer-a")
+		return res.Resend.ID
+	}
+	for _, tc := range []struct {
+		stage func(s *steerHarness) string
+		read  func(s *steerHarness, id string) []string
+		name  string
+		// taken is a row the read must take off the dock, so a nil answer is not a missed read.
+		taken string
+		want  []string
+	}{
+		{name: "a combined resend read", stage: combined, read: readInjected, taken: "steer-b", want: []string{"steer-b", "steer-c"}},
+		{name: "a combined resend acknowledged", stage: combined, read: readByAck, taken: "steer-b", want: []string{"steer-b", "steer-c"}},
+		{name: "one row re-sent under a fresh id", stage: func(s *steerHarness) string {
+			s.bind()
+			s.steer("steer-a", "a")
+			s.recs.SteerCleared(s.chat, []string{"steer-a"})
+			sends, _ := s.q.RouteSteer(s.chat, "steer-a", "a", promptHolder)
+			s.kas(sends)
+			return s.kasID("steer-a")
+		}, read: readInjected, taken: "steer-a", want: []string{"steer-a"}},
+		{name: "a row under its own key", stage: func(s *steerHarness) string {
+			s.bind()
+			s.steer("steer-a", "a")
+			return "steer-a"
+		}, read: readInjected, taken: "steer-a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSteerHarness(t)
+			id := tc.stage(s)
+			if id == "" {
+				t.Fatal("staged no id to read")
+			}
+			if got := tc.read(s, id); !slices.Equal(got, tc.want) {
+				t.Errorf("read of %s answers %v, want %v", id, got, tc.want)
+			}
+			if _, live := s.state(tc.taken); live {
+				t.Errorf("row %s is still on the dock after the read of %s", tc.taken, id)
+			}
+		})
+	}
+}
+
+func readInjected(s *steerHarness, id string) []string { return s.recs.SteerRead(s.chat, id) }
+
+func readByAck(s *steerHarness, id string) []string {
+	read := s.recs.SteerForgotten(s.chat, []string{id})
+	if len(read) != 1 {
+		s.fatalf("SteerForgotten(%s) = %+v, want one read", id, read)
+	}
+	return read[0].Replaces
 }
 
 // A chat whose teardown began answers no frame.

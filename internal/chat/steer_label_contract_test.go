@@ -329,62 +329,68 @@ func steerProducerSites(t *testing.T, consts map[string]steerConst) []steerLabel
 	return out
 }
 
-// steerSitesInFile is the per-file half: composite literals, then the mutation form (a value whose State and Reason
-// are assigned).
+// steerSitesInFile is the per-file half: composite literals, then the mutation form (a declared value whose Origin,
+// State or Reason is assigned). A mutation starts from its declaration's literal fields, the zero value for a bare var.
 func steerSitesInFile(t *testing.T, consts map[string]steerConst, path string) []steerLabelSite {
 	t.Helper()
 	file, fset := steerParse(t, path)
 	var out []steerLabelSite
 	mutated := map[string]*steerLabelSite{}
-	declared := map[string]bool{}
+	declared := map[string]steerLabelSite{}
 
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.CompositeLit:
-			if !steerIsEntrySteer(node.Type) {
-				return true
+			if lit, ok := steerLiteral(node); ok {
+				out = append(out, steerLiteralSite(t, consts, fset, path, lit))
 			}
-			site := steerLabelSite{Site: steerSiteName(fset, path, node.Pos()), Form: "literal"}
-			for _, elt := range node.Elts {
-				kv, ok := elt.(*ast.KeyValueExpr)
-				if !ok {
-					continue
-				}
-				key, ok := kv.Key.(*ast.Ident)
-				if !ok {
-					continue
-				}
-				steerSetField(t, consts, &site, key.Name, kv.Value)
-			}
-			out = append(out, site)
 		case *ast.ValueSpec:
-			if steerIsEntrySteer(node.Type) {
-				for _, name := range node.Names {
-					declared[name.Name] = true
+			for i, name := range node.Names {
+				var lit *ast.CompositeLit
+				if i < len(node.Values) {
+					lit, _ = steerLiteral(node.Values[i])
+				}
+				switch {
+				case lit != nil:
+					declared[name.Name] = steerLiteralSite(t, consts, fset, path, lit)
+				case steerIsEntrySteer(node.Type):
+					declared[name.Name] = steerLabelSite{}
 				}
 			}
 		case *ast.AssignStmt:
-			for _, lhs := range node.Lhs {
+			paired := len(node.Rhs) == len(node.Lhs)
+			for i, lhs := range node.Lhs {
+				rhs := node.Rhs[0]
+				if paired {
+					rhs = node.Rhs[i]
+				}
+				if id, ok := lhs.(*ast.Ident); ok && node.Tok == token.DEFINE && paired {
+					if lit, ok := steerLiteral(rhs); ok {
+						declared[id.Name] = steerLiteralSite(t, consts, fset, path, lit)
+					}
+					continue
+				}
 				sel, ok := lhs.(*ast.SelectorExpr)
 				if !ok {
 					continue
 				}
 				base, ok := sel.X.(*ast.Ident)
-				if !ok || !declared[base.Name] {
+				if !ok {
 					continue
 				}
-				if sel.Sel.Name != "State" && sel.Sel.Name != "Reason" {
+				from, isSteer := declared[base.Name]
+				if !isSteer || !steerStampedField(sel.Sel.Name) {
 					continue
 				}
 				site, seen := mutated[base.Name]
 				if !seen {
 					site = &steerLabelSite{
-						Site: steerSiteName(fset, path, node.Pos()),
-						Form: "mutation",
+						Site: steerSiteName(fset, path, node.Pos()), Form: "mutation",
+						Origin: from.Origin, State: from.State, Reason: from.Reason,
 					}
 					mutated[base.Name] = site
 				}
-				steerSetField(t, consts, site, sel.Sel.Name, node.Rhs[0])
+				steerSetField(t, consts, site, sel.Sel.Name, rhs)
 			}
 		}
 		return true
@@ -401,15 +407,19 @@ func steerSitesInFile(t *testing.T, consts map[string]steerConst, path string) [
 	return out
 }
 
-// steerSetField resolves one stamped field. An unresolvable Origin stays empty and expands to the whole enum; an
-// unresolvable State or Reason stops the test, since widening would cover values the code does not write.
+// steerStampedField reports whether a field is one of the triple's three.
+func steerStampedField(name string) bool {
+	return name == "Origin" || name == "State" || name == "Reason"
+}
+
+// steerSetField resolves one stamped field. An unresolvable Origin becomes empty and expands to the whole enum, a
+// mutation's included; an unresolvable State or Reason stops the test, since widening would cover values the code
+// does not write.
 func steerSetField(t *testing.T, consts map[string]steerConst, site *steerLabelSite, field string, value ast.Expr) {
 	t.Helper()
 	switch field {
 	case "Origin":
-		if v, ok := steerResolve(consts, value); ok {
-			site.Origin = v
-		}
+		site.Origin, _ = steerResolve(consts, value)
 	case "State":
 		v, ok := steerResolve(consts, value)
 		if !ok {
@@ -457,6 +467,31 @@ func steerResolve(consts map[string]steerConst, e ast.Expr) (string, bool) {
 		return c.Value, true
 	}
 	return "", false
+}
+
+// steerLiteral answers e as a marotte.EntrySteer composite literal, bare or under &.
+func steerLiteral(e ast.Expr) (*ast.CompositeLit, bool) {
+	if u, ok := e.(*ast.UnaryExpr); ok && u.Op == token.AND {
+		e = u.X
+	}
+	lit, ok := e.(*ast.CompositeLit)
+	return lit, ok && steerIsEntrySteer(lit.Type)
+}
+
+// steerLiteralSite resolves the fields one literal stamps.
+func steerLiteralSite(t *testing.T, consts map[string]steerConst, fset *token.FileSet, path string, lit *ast.CompositeLit) steerLabelSite {
+	t.Helper()
+	site := steerLabelSite{Site: steerSiteName(fset, path, lit.Pos()), Form: "literal"}
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		if key, ok := kv.Key.(*ast.Ident); ok {
+			steerSetField(t, consts, &site, key.Name, kv.Value)
+		}
+	}
+	return site
 }
 
 func steerIsEntrySteer(e ast.Expr) bool {

@@ -87,6 +87,7 @@ func turnOpenOf(entries []marotte.Entry) (marotte.EntryTurnOpen, bool) {
 // Pure. sid scopes pairing rule one: a turn_bind naming another session falls to rule two.
 func MergeEntries(record []RecordTurn, projected []translate.ProjectedTurn, sid string) (merged []MergedTurn, changed bool) {
 	recPartner, projPartner := pairTurns(record, projected, sid)
+	carried := carriedSteerKeys(record)
 	// An unpaired projected turn goes right after the nearest paired record turn before it in KAS
 	// order, else at the head. Only a paired turn has a KAS position, which puts a resumed
 	// session's history ahead of the prompt that opened it.
@@ -101,24 +102,69 @@ func MergeEntries(record []RecordTurn, projected []translate.ProjectedTurn, sid 
 		buckets[anchor] = append(buckets[anchor], j)
 	}
 	out := make([]MergedTurn, 0, len(record)+len(projected))
+	insert := func(j int) {
+		if turn, ok := insertedTurn(&projected[j], carried); ok {
+			out = append(out, turn)
+			changed = true
+		}
+	}
 	for _, j := range buckets[head] {
-		out = append(out, insertedTurn(&projected[j]))
-		changed = true
+		insert(j)
 	}
 	for i := range record {
 		if j, paired := recPartner[i]; paired {
-			turn, moved := mergeTurn(&record[i], &projected[j])
+			turn, moved := mergeTurn(&record[i], &projected[j], carried)
 			out = append(out, turn)
 			changed = changed || moved
 		} else {
 			out = append(out, keptTurn(&record[i]))
 		}
 		for _, j := range buckets[i] {
-			out = append(out, insertedTurn(&projected[j]))
-			changed = true
+			insert(j)
 		}
 	}
 	return out, renumber(out) || changed
+}
+
+// carriedSteerKeys is every steer row key a record prompt or steer names in Resends, in any turn:
+// that carrier holds the row's words under no entry of the key's own, while KAS replays the row
+// at its send position.
+func carriedSteerKeys(record []RecordTurn) map[string]struct{} {
+	keys := make(map[string]struct{})
+	for i := range record {
+		for j := range record[i].Entries {
+			for _, k := range carriedSteerIDs(&record[i].Entries[j]) {
+				keys[k] = struct{}{}
+			}
+		}
+	}
+	return keys
+}
+
+// carriedSteerIDs is the steer row keys one record entry carries; nil for any other kind or an
+// undecodable payload.
+func carriedSteerIDs(e *marotte.Entry) []string {
+	switch e.Kind {
+	case marotte.EntryKindSteer:
+		var steer marotte.EntrySteer
+		if json.Unmarshal(e.Payload, &steer) != nil {
+			return nil
+		}
+		return steer.Resends
+	case marotte.EntryKindTurnOpen:
+		if open, ok := turnOpenOf([]marotte.Entry{*e}); ok && open.Prompt != nil {
+			return open.Prompt.Resends
+		}
+	}
+	return nil
+}
+
+func carriedSteer(e *marotte.Entry, carried map[string]struct{}) bool {
+	if e.Kind != marotte.EntryKindSteer {
+		return false
+	}
+	_, ok := carried[e.ID]
+	return ok
 }
 
 // Swap is one merge swap's inputs, as a struct so the call site names every value.
@@ -463,23 +509,49 @@ func keptTurn(rec *RecordTurn) MergedTurn {
 	return MergedTurn{Entries: slices.Clone(rec.Entries), Reverted: rec.Reverted}
 }
 
-// insertedTurn is an unpaired projected turn, inserted whole with its generator-minted id.
-// Rule 3's stamps apply to every entry; the synthesized closer lands when the replay had no turn_end.
-func insertedTurn(proj *translate.ProjectedTurn) MergedTurn {
+// insertedTurn is an unpaired projected turn, inserted with its generator-minted id, less the
+// steers a record carrier holds. Rule 3's stamps apply to every entry; the synthesized closer
+// lands when the replay had no turn_end. False when skipping those steers leaves a prompt-less
+// bracket pair, which would render as a blank turn.
+func insertedTurn(proj *translate.ProjectedTurn, carried map[string]struct{}) (MergedTurn, bool) {
 	turn := proj.Entries[0].Turn
 	entries := make([]marotte.Entry, 0, len(proj.Entries)+1)
+	skipped, content := false, false
 	for i := range proj.Entries {
-		entries = append(entries, insertedEntry(&proj.Entries[i], turn))
+		e := &proj.Entries[i]
+		if carriedSteer(e, carried) {
+			skipped = true
+			continue
+		}
+		content = content || rendersContent(e)
+		entries = append(entries, insertedEntry(e, turn))
+	}
+	if skipped && !content {
+		return MergedTurn{}, false
 	}
 	if !holdsKind(entries, marotte.EntryKindTurnClose) {
 		entries = append(entries, synthesizedCloser(turn))
 	}
-	return MergedTurn{Entries: entries}
+	return MergedTurn{Entries: entries}, true
+}
+
+// rendersContent reports whether an entry shows anything beyond a turn's brackets: a
+// turn_open does when it carries the user's prompt.
+func rendersContent(e *marotte.Entry) bool {
+	switch e.Kind {
+	case marotte.EntryKindTurnClose:
+		return false
+	case marotte.EntryKindTurnOpen:
+		open, ok := turnOpenOf([]marotte.Entry{*e})
+		return ok && open.Prompt != nil
+	default:
+		return true
+	}
 }
 
 // insertedEntry is a projected entry with no record twin. A projected-only steer is stamped
-// `dropped, restart`: marotte persists a steer at injection, so the record's absence proves
-// it was never read as a steer.
+// `dropped, restart`: marotte persists a steer at injection and names a carried one in its
+// carrier's Resends, so an id the record lacks was never read as a steer.
 func insertedEntry(proj *marotte.Entry, turn string) marotte.Entry {
 	out := *proj
 	out.Turn = turn
@@ -587,7 +659,8 @@ type entryPairing struct {
 }
 
 // mergeTurn folds a projected turn into its paired record turn, keeping the record's turn id.
-func mergeTurn(rec *RecordTurn, proj *translate.ProjectedTurn) (MergedTurn, bool) {
+// An unpaired projected steer a record carrier holds is left out.
+func mergeTurn(rec *RecordTurn, proj *translate.ProjectedTurn, carried map[string]struct{}) (MergedTurn, bool) {
 	turn := rec.Entries[0].Turn
 	idx := indexRecordEntries(rec.Entries)
 	pairing := pairEntries(rec.Entries, proj.Entries, idx)
@@ -604,6 +677,9 @@ func mergeTurn(rec *RecordTurn, proj *translate.ProjectedTurn) (MergedTurn, bool
 			}
 			// A say's position is its last segment, so a following entry lands after all of it.
 			after = g[len(g)-1]
+			continue
+		}
+		if carriedSteer(&proj.Entries[j], carried) {
 			continue
 		}
 		queued[after] = append(queued[after], j)

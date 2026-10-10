@@ -67,8 +67,7 @@ describe("the read state", () => {
 });
 
 describe("the dropped state", () => {
-  // The label states only what is known: the agent never read it (not the resend, a turn it
-  // cannot see).
+  // The label states only what is known: the agent never read it.
   it("says it was not read, and keeps the text", () => {
     const n = note({ text: "never read this", dropped: true });
 
@@ -78,7 +77,7 @@ describe("the dropped state", () => {
     expect(n.getAttribute("aria-label")).toBe("Not read: never read this");
   });
 
-  // A record, not an offer: the resend already carries the text into the next turn.
+  // A record, not an offer.
   it("carries no control, so the mark is a record rather than an offer", () => {
     const n = note({ text: "never read this", dropped: true });
     expect(controls(n)).toEqual([]);
@@ -95,7 +94,7 @@ describe("the dropped state", () => {
   });
 });
 
-// `boundary` is what marotte's translator writes: KAS clears its buffer at every turn boundary.
+// A user steer's `boundary` is the close's note: the tab closed while it was unread.
 describe("the reason clause", () => {
   it("words the boundary drop, so the label says what ended the turn", () => {
     const n = note({ text: "use tabs", dropped: true, reason: "boundary" });

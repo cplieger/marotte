@@ -660,8 +660,8 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// holdUnreadSteers hands off one drained chat's steers. The lifecycle is re-fenced first; a resend already
-// opened gets its boundary note; the forward exit is awaited within ctx. Every other live row gets one
+// holdUnreadSteers hands off one drained chat's steers. The lifecycle is re-fenced first; a row an opened
+// resend carried gets no entry; the forward exit is awaited within ctx. Every other live row gets one
 // dropped/restart entry (textless when KAS may hold it), and record-only rows join the Held row.
 func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) {
 	rt.coord.turns.refence(chatID)
@@ -687,14 +687,15 @@ func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) 
 	resent := rt.resentKeys(durableCtx, chatID)
 	var held []shutdownRow
 	for _, r := range rows {
+		if resent[r.Key] {
+			continue
+		}
 		steer := &marotte.EntrySteer{
 			Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonRestart,
 		}
 		switch {
 		case r.Agent:
 			steer.Origin = marotte.SteerOriginAgent
-		case resent[r.Key]:
-			steer.Text, steer.Reason = r.Text, marotte.SteerReasonBoundary
 		case !r.KASHeld:
 			steer.Text = r.Text
 			held = append(held, r)
@@ -708,7 +709,7 @@ func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) 
 func (rt *Runtime) resentKeys(ctx context.Context, chatID marotte.ChatID) map[string]bool {
 	entries, err := rt.coord.chatStore.All(ctx, chatID)
 	if err != nil {
-		slog.Warn("shutdown: the chat's log could not be read; its steers are held", "chat_id", chatID, "error", err)
+		slog.Warn("steer handoff: the chat's log could not be read; no steer counts as resent", "chat_id", chatID, "error", err)
 		return nil
 	}
 	keys := make(map[string]bool)

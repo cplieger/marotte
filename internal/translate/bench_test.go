@@ -69,8 +69,6 @@ type baseDeps struct {
 	brackets []turnBracket
 	// userSteers are the steer ids this double reports as the USER's; absent means the agent's.
 	userSteers map[string]bool
-	// steerResends are the resends the double reports per steer id.
-	steerResends map[string][]string
 	// waiting is the steers this double holds as in KAS's buffer, per chat: the SET a reconnect
 	// would replay.
 	waiting map[marotte.ChatID][]marotte.SteerQueuedPayload
@@ -127,8 +125,11 @@ func (d *baseDeps) SteerCleared(chatID marotte.ChatID, steerIDs []string) []maro
 	})
 }
 
-func (d *baseDeps) SteerRead(chatID marotte.ChatID, steerID string) {
-	d.forget(chatID, []string{steerID})
+func (d *baseDeps) SteerRead(chatID marotte.ChatID, steerID string) []string {
+	if held := d.forget(chatID, []string{steerID}); len(held) > 0 {
+		return held[0].Replaces
+	}
+	return nil
 }
 
 func (d *baseDeps) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
@@ -167,11 +168,6 @@ func (d *baseDeps) SteerOrigin(_ marotte.ChatID, steerID string) marotte.SteerOr
 		return marotte.SteerOriginUser
 	}
 	return marotte.SteerOriginAgent
-}
-
-// SteerResends stands in for the ledger's resends record, keyed by steer id.
-func (d *baseDeps) SteerResends(_ marotte.ChatID, steerID string) []string {
-	return d.steerResends[steerID]
 }
 
 func (d *baseDeps) Broadcast(ctx context.Context, evt marotte.ServerEvent) {

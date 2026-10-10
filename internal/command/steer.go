@@ -137,7 +137,7 @@ func issueSteers(ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
 	sb := roles.bridges.Bridge(chatID)
 	var keyErr error
 	for _, s := range sends {
-		roles.steers.RecordUserSteer(chatID, s.ID, s.Keys)
+		roles.steers.RecordUserSteer(chatID, s.ID)
 		if sb == nil {
 			done(s, false, nil)
 			continue

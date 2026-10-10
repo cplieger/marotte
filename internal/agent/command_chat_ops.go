@@ -35,8 +35,8 @@ func (rt *Runtime) BeginChatTeardown(chatID marotte.ChatID, keep bool) {
 }
 
 // beginSteerTeardown marks the steer record gone and captures its forward exit. The lifecycle is
-// re-fenced first and the record marked under the steer lock; on a close an unread row
-// leaves its cancel note.
+// re-fenced first and the record marked under the steer lock; on a close an unread row no
+// opened resend carries leaves its cancel note.
 func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID, notes bool) {
 	rt.coord.turns.refence(chatID)
 	if rt.steerQueue.locks != nil && !rt.bus.steers.gone(chatID) {
@@ -50,12 +50,16 @@ func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID
 		}
 	}
 	unread := rt.bus.steers.BeginTeardown(chatID, rt.coord.turns.forwardExit(chatID))
-	if !notes {
+	if !notes || len(unread) == 0 {
 		return
 	}
+	resent := rt.resentKeys(durable.Context(ctx), chatID)
 	for _, p := range unread {
+		if resent[p.SteerID] {
+			continue
+		}
 		rt.coord.recordSteer(durable.Context(ctx), chatID, p.SteerID, &marotte.EntrySteer{
-			Text: p.Text, Origin: p.Origin, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
+			Text: p.Text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
 		})
 	}
 }

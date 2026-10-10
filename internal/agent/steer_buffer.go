@@ -281,8 +281,8 @@ func setState(w *dockRow, s rowState, fx *steerFx) {
 	fx.changed = true
 }
 
-// retire leaves a row whose key already carries its one entry with a removed
-// frame, the only signal that takes it off a client's dock.
+// retire ends a row. One that writes no new entry (already noted, or steer nil)
+// leaves on a removed frame, the only signal that takes it off a client's dock.
 func retire(w *dockRow, steer *marotte.EntrySteer, fx *steerFx) {
 	w.state = rowDone
 	fx.changed = true
@@ -297,12 +297,6 @@ func retire(w *dockRow, steer *marotte.EntrySteer, fx *steerFx) {
 func deletedSteer(w *dockRow) *marotte.EntrySteer {
 	return &marotte.EntrySteer{
 		Text: w.text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonDeleted,
-	}
-}
-
-func boundarySteer(w *dockRow) *marotte.EntrySteer {
-	return &marotte.EntrySteer{
-		Text: w.text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
 	}
 }
 
@@ -343,15 +337,18 @@ func (r *steerRecords) SteerWaiting(chatID marotte.ChatID, in *marotte.SteerQueu
 	return p, other
 }
 
-// SteerRead folds steering_injected.
-func (r *steerRecords) SteerRead(chatID marotte.ChatID, steerID string) {
+// SteerRead folds steering_injected and answers the row keys steerID carries when
+// it is not a row's own key (nil otherwise), for the read entry's Resends.
+func (r *steerRecords) SteerRead(chatID marotte.ChatID, steerID string) (resends []string) {
 	r.step(chatID, false, func(rec *steerRecord, fx *steerFx) {
-		rec.readLocked(steerID, false, fx)
+		p, _ := rec.readLocked(steerID, false, fx)
+		resends = p.Replaces
 	})
+	return resends
 }
 
 // SteerForgotten folds an acknowledgement-evidenced read and answers what it read,
-// with the text a lane's read entry needs.
+// with the text and the carried row keys (Replaces) a lane's read entry needs.
 func (r *steerRecords) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
 	var out []marotte.SteerQueuedPayload
 	r.step(chatID, false, func(rec *steerRecord, fx *steerFx) {
@@ -379,8 +376,9 @@ func (rec *steerRecord) takeOther(id string) (marotte.SteerQueuedPayload, bool) 
 	return marotte.SteerQueuedPayload{}, false
 }
 
-// readLocked: byAck is a delegate's read, which proves nothing about the main
-// cursor reaching new rows.
+// readLocked answers the read text, and in Replaces the row keys an id that is not
+// its one row's own key carries. byAck is a delegate's read, which proves nothing
+// about the main cursor reaching new rows.
 func (rec *steerRecord) readLocked(id string, byAck bool, fx *steerFx) (marotte.SteerQueuedPayload, bool) {
 	if !byAck {
 		if _, ok := rec.takeOther(id); ok {
@@ -402,7 +400,11 @@ func (rec *steerRecord) readLocked(id string, byAck bool, fx *steerFx) (marotte.
 	if rec.channel == chanProbing && id == rec.probe {
 		rec.probeReadLocked(ev, fx)
 	}
-	return marotte.SteerQueuedPayload{SteerID: id, Text: read.Text, Origin: marotte.SteerOriginUser}, true
+	out := marotte.SteerQueuedPayload{SteerID: id, Text: read.Text, Origin: marotte.SteerOriginUser}
+	if len(members) > 1 || members[0].key != id {
+		out.Replaces = read.Replaces
+	}
+	return out, true
 }
 
 // readEvent names a probe's read whether or not it is still the channel's: a late
@@ -849,8 +851,8 @@ func (b *bus) SteerWaiting(chatID marotte.ChatID, p *marotte.SteerQueuedPayload)
 	return b.steers.SteerWaiting(chatID, p)
 }
 
-func (b *bus) SteerRead(chatID marotte.ChatID, steerID string) {
-	b.steers.SteerRead(chatID, steerID)
+func (b *bus) SteerRead(chatID marotte.ChatID, steerID string) []string {
+	return b.steers.SteerRead(chatID, steerID)
 }
 
 func (b *bus) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {

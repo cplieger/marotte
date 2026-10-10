@@ -451,12 +451,10 @@ type PreSendCompactor interface {
 }
 
 // SteerRecorder is what the steer commands need of the steer ledger: record that
-// THIS server sent a steer under an id, and the rows it carries, before the RPC,
-// which is the only ordering that beats KAS's own notification (see CmdSteer).
+// THIS server sent a steer under an id before the RPC, which is the only ordering
+// that beats KAS's own notification (see CmdSteer).
 type SteerRecorder interface {
-	// RecordUserSteer records a steer this server sent, with the row keys it
-	// carries when the id is not a row's own (nil for an ordinary one).
-	RecordUserSteer(chatID marotte.ChatID, steerID string, resends []string)
+	RecordUserSteer(chatID marotte.ChatID, steerID string)
 }
 
 // The refusal classes a steer operation answers with; the client branches on them.
@@ -589,8 +587,7 @@ type SteerJobs interface {
 	// UnsentRows answers the unread rows the drain may send, lead first; none
 	// while KAS may re-inject them, unless the drain follows a drained death.
 	UnsentRows(chatID marotte.ChatID, deathDrained bool) []SteerRow
-	// Delivered retires the named rows with their boundary notes, once the prompt
-	// carrying them has opened.
+	// Delivered retires the named rows, once the prompt carrying them has opened.
 	Delivered(chatID marotte.ChatID, keys []string)
 	// PlanFlush answers the sends the record owes after a read or a clear.
 	PlanFlush(chatID marotte.ChatID) []SteerSend
