@@ -1,6 +1,7 @@
 // KAS's own filesystem verbs `_kiro/fs/{stat,read_directory,delete}`, gated on
 // `clientCapabilities.fs._meta.kiro.<name>`. Undeclared, KAS serves them itself, so
-// declaring one confines an existing capability to resolveInsideWorkDir. No second gate:
+// declaring one confines an existing capability: stat and read_directory to
+// confineReadable, delete to confineInWorkDir. No second gate:
 // KAS restores a rejected delete through `fs/write_text_file`. Read and write stay
 // undeclared so `fs/{read,write}_text_file` keeps every write guardrail.
 
@@ -30,7 +31,7 @@ const (
 var errRefusedWorkDirRoot = errors.New("refusing to delete the workspace root")
 
 // kiroFSParams is `{sessionId, path}`, shared by all three verbs. KAS sends the path already
-// absolute, so resolveInsideWorkDir re-checks a claim.
+// absolute, so the confinement re-checks a claim.
 type kiroFSParams struct {
 	SessionID string `json:"sessionId"`
 	Path      string `json:"path"`
@@ -84,24 +85,33 @@ func (in *inbound) handleKiroFSRequest(_ context.Context, chatID marotte.ChatID,
 	return true
 }
 
-// kiroFSPath returns the workspace root and the root-relative name for the request's path.
-// A confined pair, never an absolute path, so the verdict and the operation share a
-// handle (lifetime.confineInWorkDir).
-func (in *inbound) kiroFSPath(msg *marotte.RPCResponse) (root *os.Root, rel string, err error) {
+// kiroFSPath decodes the request's path. Each verb confines it to a root and a root-relative
+// name, never an absolute path, so the verdict and the operation share a handle.
+func kiroFSPath(msg *marotte.RPCResponse) (string, error) {
 	var p kiroFSParams
-	if pErr := parseRequest(msg, &p); pErr != nil {
-		return nil, "", fmt.Errorf("decode %s params: %w", msg.Method, pErr)
+	if err := parseRequest(msg, &p); err != nil {
+		return "", fmt.Errorf("decode %s params: %w", msg.Method, err)
 	}
-	return in.lifetime.confineInWorkDir(p.Path)
+	return p.Path, nil
+}
+
+// kiroFSReadablePath confines a stat or read_directory path (lifetime.confineReadable).
+func (in *inbound) kiroFSReadablePath(msg *marotte.RPCResponse) (root *os.Root, rel string, release func(), err error) {
+	p, err := kiroFSPath(msg)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return in.lifetime.confineReadable(p)
 }
 
 // respondKiroFSStat answers `_kiro/fs/stat` with `{type, size}`.
 func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
-	root, rel, err := in.kiroFSPath(msg)
+	root, rel, release, err := in.kiroFSReadablePath(msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
+	defer release()
 	// Root.Stat follows symlinks, like KAS's fs.stat; the symlink type is still reachable via read_directory.
 	info, err := root.Stat(rel)
 	if err != nil {
@@ -118,11 +128,12 @@ func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID,
 // respondKiroFSReadDirectory answers `_kiro/fs/read_directory` with `{entries}`. A missing
 // directory answers an empty list, matching KAS's NodeFileSystem.
 func (in *inbound) respondKiroFSReadDirectory(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
-	root, rel, err := in.kiroFSPath(msg)
+	root, rel, release, err := in.kiroFSReadablePath(msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
+	defer release()
 	dirEntries, err := readDirInRoot(root, rel)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -169,7 +180,12 @@ func dirEntriesToWire(dirEntries []os.DirEntry) []kiroDirEntry {
 // respondKiroFSDelete answers `_kiro/fs/delete` with `{}`, recursive for a directory like
 // KAS's NodeFileSystem; it refuses only the workspace root. Not gated: KAS checkpoints and reviews.
 func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
-	root, rel, err := in.kiroFSPath(msg)
+	p, err := kiroFSPath(msg)
+	if err != nil {
+		in.respondFSError(ctx, chatID, msg, err)
+		return
+	}
+	root, rel, err := in.lifetime.confineInWorkDir(p)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)
 		return
