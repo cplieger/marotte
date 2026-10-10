@@ -22,6 +22,7 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_QUICK_SPEC: "",
   ICON_TAB_BUG: "",
   ICON_TAB_AUTONOMOUS: "",
+  ICON_TAB_REVIEW: "",
   ICON_SUBAGENT_INTROSPECT: "",
   ICON_SUBAGENT_GATHERER: "",
   ICON_SUBAGENT_TASK: "",
