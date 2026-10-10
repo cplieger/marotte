@@ -13,12 +13,10 @@ import (
 
 const dotcomPAT = "ghp-dotcom-token"
 
-// dotcomRecord is the github.com connection as a connect writes it.
 func dotcomRecord() connectionRecord {
 	return connectionRecord{ID: MakeID(KindGitHub, "github.com"), Kind: KindGitHub, Host: "github.com"}
 }
 
-// patFor is a static token credential for webBase.
 func patFor(webBase, token string) creds.Record {
 	return creds.Record{
 		Family: forgeapi.FamilyGitHub, WebBaseURL: webBase, Kind: forgeapi.CredKindStaticPAT,

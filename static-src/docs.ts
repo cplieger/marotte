@@ -8,7 +8,7 @@ import { defineAction, ActionError, retryNetwork, registerCleanup } from "./acti
 import { setHookEnabled } from "./actions/hooks.js";
 import { asObject, decodeArray, optStr, reqBool, reqStr } from "./validators.js";
 import { onSSE } from "./bus.js";
-import { $ } from "./dom.js";
+import { $, byId } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import { el } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
@@ -33,6 +33,7 @@ import { pushRoute, replaceRoute } from "./router.js";
 import { buildPath, type DocsTab } from "./route-path.js";
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { agentRunButton } from "./agent-run.js";
+import { mountNewDocButton } from "./docs-new.js";
 import { renderMemoriesPanel, setMemoryCountsListener } from "./memories.js";
 import { loadSettings } from "./persist.js";
 import { renderPowersPanel, setPowerCountsListener } from "./powers.js";
@@ -70,7 +71,7 @@ interface HookState {
   trigger?: string;
   command?: string;
   prompt?: string;
-  /** The regex KAS tests this hook's trigger subject against. Display-only. */
+  /** KAS's matcher string, shown verbatim: a regex, or on tool triggers also a tool id, glob or tag. */
   matcher?: string;
   /**
    * The trigger-and-matcher defect, computed server-side (internal/marotte's ClassifyHookMatcher):
@@ -145,7 +146,7 @@ function hookKey(scope: HookScope, path: string, name: string): string {
 }
 
 /** Tab order is fixed; it must match the `data-docs-tab` order in index.html. */
-export const DOCS_TABS: readonly DocsTab[] = [
+const DOCS_TABS: readonly DocsTab[] = [
   "steering",
   "skills",
   "prompts",
@@ -293,7 +294,7 @@ function withdrawMemories(): void {
 }
 
 /** Fetch (or refetch) the inventory and repaint. */
-export function loadDocs(): void {
+function loadDocs(): void {
   loadDocsAction.cancel();
   const skeleton = inventoryAnswered ? null : skeletonTiming(() => showSkeleton());
   void loadDocsAction.dispatch(undefined, {
@@ -381,8 +382,20 @@ function initDocsView(): void {
     }
   });
 
+  const syncNewDoc = mountNewDocButton(
+    byId("docs-new-slot"),
+    (path) => {
+      loadDocs();
+      openFile(path);
+    },
+    (prompt, shown) => {
+      // Lazy: the chat module's graph is the app's, which this page has no other use for.
+      void import("./chat.js").then(({ createSpecSession }) => createSpecSession(prompt, shown));
+    },
+  );
   subscribe(activeTab, (tab) => {
     syncTabChrome(tab, paintBar);
+    syncNewDoc(tab);
     renderActive();
   });
   subscribe(memoryOff, (off) => {
@@ -513,7 +526,7 @@ function matches(doc: KiroDoc): boolean {
   return filterHaystack(doc).includes(filterText);
 }
 
-/** Matches on the other inventory tabs, with their labels. Workflows is never a `where`: its rows are not in memory. */
+/** Workflows is never a `where`: its rows are not in memory. */
 function matchesElsewhere(tab: DocsTab): {
   matched: number;
   scanned: number;
@@ -921,7 +934,6 @@ function issueTooltip(issues: readonly SteeringIssue[]): string {
     .join(" · ");
 }
 
-/** The badge's label and tooltip, for the filter haystack and the signature. */
 function issueText(doc: KiroDoc): string[] {
   const issues = issuesFor(doc);
   return issues.length === 0 ? [] : [issueLabel(issues.length), issueTooltip(issues)];
@@ -1143,29 +1155,34 @@ function showSkeleton(): () => void {
 }
 
 /** @internal Test seam: inject rows without a fetch. */
+// deadset:ignore DS1004 -- test seam: seeds the docs inventory without a fetch
 export function _setDocsForTest(list: KiroDoc[]): void {
   docs = list;
 }
 
 /** @internal Test seam: inject hook state without a fetch, keyed the way the
  *  join keys it. */
+// deadset:ignore DS1004 -- test seam: seeds the hook state map without a fetch
 export function _setHooksForTest(list: HookState[]): void {
   hooks = new Map(list.map((h) => [hookKey(hookScopeOf(h), h.file_path ?? "", h.name), h]));
 }
 
 /** @internal Test seam for the Hooks tab's row set — the one tab that is not a
  *  pure filter of the inventory. */
+// deadset:ignore DS1004 -- test seam: reads the Hooks rows built from the docs inventory and the hook-state map
 export function _hookRowsForTest(): KiroDoc[] {
   return hookRows();
 }
 
 /** @internal Test seam for one rendered row. */
+// deadset:ignore DS1004 -- test seam: renders one row from the hook, steering-issue and repository-status state
 export function _renderRowForTest(doc: KiroDoc): HTMLElement {
   return buildRow(doc);
 }
 
 /** @internal Test seam: repaint the active panel from the seeded state, without
  *  a fetch. */
+// deadset:ignore DS1004 -- test seam: repaints from the active tab, docs inventory, hook map and filter state
 export function _renderActiveForTest(): void {
   renderActive();
 }

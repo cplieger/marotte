@@ -1,7 +1,7 @@
 // The per-chat localStorage map two viewer-owned stores sit on (fold overrides, banner dismissals).
 import { describe, it, expect, beforeEach } from "vitest";
 
-import { readPerChat, writePerChat, MAX_TRACKED_CHATS } from "./per-chat-store.js";
+import { readPerChat, writePerChat, MAX_CHATS } from "./per-chat-store.js";
 
 const KEY = "marotte.test-per-chat";
 
@@ -90,28 +90,28 @@ describe("writing", () => {
 });
 
 describe("the bound", () => {
-  it("keeps at most MAX_TRACKED_CHATS chats", () => {
-    for (let i = 0; i < MAX_TRACKED_CHATS + 20; i++) {
+  it("keeps at most MAX_CHATS chats", () => {
+    for (let i = 0; i < MAX_CHATS + 20; i++) {
       write(`c${String(i)}`, ["x"]);
     }
-    expect(Object.keys(read())).toHaveLength(MAX_TRACKED_CHATS);
+    expect(Object.keys(read())).toHaveLength(MAX_CHATS);
   });
 
   it("evicts the oldest and keeps the newest", () => {
-    for (let i = 0; i < MAX_TRACKED_CHATS + 1; i++) {
+    for (let i = 0; i < MAX_CHATS + 1; i++) {
       write(`c${String(i)}`, ["x"]);
     }
     const kept = read();
     expect(kept["c0"]).toBeUndefined();
     expect(kept["c1"]).toEqual(["x"]);
-    expect(kept[`c${String(MAX_TRACKED_CHATS)}`]).toEqual(["x"]);
+    expect(kept[`c${String(MAX_CHATS)}`]).toEqual(["x"]);
   });
 
   // "Oldest" means least recently WRITTEN, not first ever seen, and the re-insert on every write is
   // what makes that true.
   it("counts a rewrite as touching the chat, so it is not the next to go", () => {
     write("first", ["x"]);
-    for (let i = 0; i < MAX_TRACKED_CHATS - 1; i++) {
+    for (let i = 0; i < MAX_CHATS - 1; i++) {
       write(`c${String(i)}`, ["x"]);
     }
     // "first" is the oldest at this point; touching it moves it to the end.

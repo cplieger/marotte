@@ -49,9 +49,8 @@ const DIGEST_TIMEOUT_MS = 10_000;
  *  missing-session guards drop the frames — which is exactly the behaviour the gate replaced. */
 const HYDRATE_TIMEOUT_MS = 20_000;
 
-/** Ceiling on the held queue. A busy workspace's connect hook is a handful of frames, so
- *  reaching this means hydration is not coming and the stream should move rather than grow a
- *  buffer without bound. */
+/** A busy workspace's connect hook is a handful of frames, so reaching this means hydration is not
+ *  coming and the stream should move rather than grow a buffer without bound. */
 const MAX_PENDING_FRAMES = 2000;
 
 let onMsg: MsgHandler = () => {
@@ -380,9 +379,8 @@ function isWake(cause: RevalidateContext["cause"]): boolean {
   return cause === "visible" || cause === "pageshow" || cause === "online";
 }
 
-/** The action column over one digest verdict, whoever performed the digest. Every fetch takes
- *  `signal`, so `stop()` and the revalidation timeout cancel them and `reconnect()` does not.
- *  Resolves to whether `pending` or `status` moved. */
+/** Every fetch takes `signal`, so `stop()` and the revalidation timeout cancel them and
+ *  `reconnect()` does not. Resolves to whether `pending` or `status` moved. */
 async function applyVerdict(
   changed: readonly State[],
   removed: readonly Removed[],
@@ -571,6 +569,7 @@ export async function adoptPushSubscription(
 /** Undo `init` completely, for tests that boot the module more than once. `vi.resetModules()`
  *  cannot substitute in Browser Mode: the module map is URL-keyed, so a re-import hands back
  *  this instance with its stream live. */
+// deadset:ignore DS1004 -- test seam: resets the stream attachment, worker override, sinks and hydrate timer
 export function _resetForTest(): void {
   attachment?.detach();
   attachment = null;
@@ -593,12 +592,14 @@ export function _resetForTest(): void {
 }
 
 /** Attach the next `init` to a host the suite holds instead of a SharedWorker. */
+// deadset:ignore DS1004 -- test seam: replaces the SharedWorker spawn with a suite-held host
 export function _spawnWorkerForTest(spawn: (() => SharedWorkerLike) | null): void {
   spawnOverride = spawn;
 }
 
 /** The two reconciliation bodies, reachable for their tests without a live stream or a live
  *  worker. */
+// deadset:ignore DS1004 -- test seam: reconciles the subject-version map and the projections its digest repairs
 export { revalidate as _revalidateForTest, tabRevalidate as _tabRevalidateForTest };
 
 registerCleanup(() => {

@@ -1185,20 +1185,181 @@
 
 /* --- The run tab's bottom bar --------------------------------------------- */
 
-/* The decision region, above the content it is about — the run tab's half of
-   the "one dock, two hosts" contract. No composer: there is nobody to type to,
-   which is exactly why the dock is a bottom-bar region rather than a composer
-   feature. The column shape the pinned bar needs, and the `flex: 1` that gives
-   the scroller above a parent height to fill, both come from the shared view
-   group in 16-login.css — a `flex-basis: 0` scroller under a content-sized
+/* The column shape and the `flex: 1` the scroller above fills come from the shared
+   view group in 16-login.css: a `flex-basis: 0` scroller under a content-sized
    parent collapses, so the two cannot be separated. */
 .run-bottom-bar {
   flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
 
-  /* Collapse entirely while the dock inside is hidden: an empty bar is a
-     stripe of chrome claiming a decision region that is not there. */
-  &:has(> .decision-dock.hidden) {
+/* The prompt box's measure, so the boxes, the dock and the composer share an edge. */
+.run-boxes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-width: var(--content-max-w);
+  width: 100%;
+  margin: 0 auto;
+}
+
+.ev-box {
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  background: var(--c-bg-secondary);
+  overflow: hidden;
+
+  &[hidden] {
     display: none;
+  }
+}
+
+.ev-box-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-block-size: var(--btn-h);
+  padding-inline: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--fs-sm);
+  transition: background var(--dur-micro) var(--ease-standard);
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover);
+    }
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset-inset);
+  }
+}
+
+.ev-box-twist {
+  display: grid;
+  place-items: center;
+  inline-size: 1rem;
+  flex-shrink: 0;
+  color: var(--c-text-control);
+}
+
+.ev-box[open] > .ev-box-head .disclosure-chevron {
+  --chev-turn: 0deg;
+}
+
+.ev-box-title {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--c-text-primary);
+}
+
+.ev-box-latest {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-text-secondary);
+}
+
+.ev-box-dur {
+  flex-shrink: 0;
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A MOBILE-SAFE CEILING, and the box scrolls inside itself: an open box may not
+   push the composer off a phone's screen. */
+.ev-box-body {
+  max-block-size: min(40dvh, 22rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-2);
+  border-block-start: 1px solid var(--c-border);
+
+  /* The tree pane and the results region carry the page's own pane chrome; inside
+     a box the box is the chrome. */
+  & > .ev-pane,
+  & > .ev-results,
+  & > .ev-tl {
+    padding: 0;
+    background: none;
+    border: 0;
+    margin: 0;
+  }
+
+  & > .ev-pane[hidden] {
+    display: none;
+  }
+}
+
+.ev-box-empty {
+  margin: 0;
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-sm);
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.run-composer-box {
+  flex-direction: row;
+  align-items: flex-end;
+
+  & > [id="run-composer-input"] {
+    border-radius: calc(var(--r-lg) - 1px) 0 0 calc(var(--r-lg) - 1px);
+    max-height: 8rem;
+  }
+
+  & > .send-btn {
+    margin: var(--composer-pill-pad);
+  }
+}
+
+[id="run-composer"][data-mode="answer"] > .prompt-box {
+  border-color: var(--c-yellow);
+  box-shadow: 0 0 0 1px var(--c-yellow);
+}
+
+[id="run-composer"][data-mode="disabled"] > .prompt-box {
+  background: var(--c-bg-primary);
+}
+
+/* Sticky rather than absolute: this scroller has no positioned box around it. */
+[id="run-scroll-bottom"] {
+  position: sticky;
+  bottom: var(--sp-3);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-inline: auto;
+  min-height: var(--btn-h);
+  padding: 0 var(--sp-3);
+  border-radius: var(--r);
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-primary);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  transition:
+    background var(--dur-micro),
+    color var(--dur-micro);
+
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-bg-tertiary);
+    }
   }
 }
 

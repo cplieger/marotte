@@ -71,9 +71,8 @@ type KiroDoc struct {
 	Tools            []string `json:"tools,omitempty"`
 	SteeringOverride bool     `json:"steering_override,omitempty"`
 
-	// ReadOnly says this row is not writable, so it renders without edit or delete. Nothing
-	// sets it today: no writability source exists yet. omitempty, so read-only is only ever
-	// asserted by the server, never produced by a field failing to arrive.
+	// ReadOnly says this row is not writable, so it renders without edit or delete. omitempty, so
+	// read-only is only ever asserted by the server, never produced by a field failing to arrive.
 	ReadOnly bool `json:"read_only,omitempty"`
 
 	// DeleteProtected says this row renders without DELETE but keeps its edit: set for an entry
@@ -107,7 +106,6 @@ func (sc *docScan) add(d *KiroDoc) bool {
 	return true
 }
 
-// absorb merges a category's or a root's scan into this one.
 func (sc *docScan) absorb(part docScan) {
 	sc.docs = append(sc.docs, part.docs...)
 	sc.truncated = sc.truncated || part.truncated
@@ -132,7 +130,6 @@ func (s *Server) handleKiroDocs(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, res)
 }
 
-// collectKiroDocs returns the cached inventory, rescanning when the signature changed.
 func (s *Server) collectKiroDocs(ctx context.Context) KiroDocsResponse {
 	roots := s.kiroRoots()
 	sig := dirSignature(roots)
@@ -259,8 +256,7 @@ func scanDocsSteering(ctx context.Context, root fs.FS, prefix string, guard path
 	})
 }
 
-// scanDocsSkills emits one row per skill MANIFEST (`skills/<name>/SKILL.md`); other markdown
-// under a skill directory is reference material.
+// Other markdown under a skill directory is reference material.
 func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
 	entries, err := readGuardedDir(root, "skills", guard)
 	if err != nil {
@@ -471,7 +467,6 @@ func hookRows(data []byte, prefix, file string, deleteProtected bool) []KiroDoc 
 	return out
 }
 
-// walkMarkdown walks `sub` under root for `.md` files, bounded in depth and count.
 func walkMarkdown(
 	ctx context.Context,
 	root fs.FS,
@@ -498,8 +493,8 @@ type mdWalker struct {
 	sc       docScan
 }
 
-// step is fs.WalkDir's visitor. A single unreadable directory is skipped rather
-// than aborting the category: one bad permission must not empty the page.
+// A single unreadable directory is skipped rather than aborting the category: one bad permission
+// must not empty the page.
 func (w *mdWalker) step(p string, d fs.DirEntry, walkErr error) error {
 	if walkErr != nil {
 		return nil //nolint:nilerr // deliberate: skip this entry and keep walking

@@ -10,8 +10,8 @@ import (
 // sub-path. Its prefix tests are not pathinside calls, because Blocks excludes a
 // listed directory itself and protectedDir asks in both directions.
 
-// DefaultConfigDir is the config root a zero Sensitive is built over.
-const DefaultConfigDir = "/config"
+// defaultConfigDir is the config root a zero Sensitive is built over.
+const defaultConfigDir = "/config"
 
 // sensitivePath describes a single blocked path entry with explicit
 // match semantics: IsDir=true means "directory prefix" (blocks all
@@ -49,7 +49,7 @@ var sensitiveEntries = []sensitivePath{
 // Sensitive is the deny list rooted at one config directory. The file
 // browser and the `.kiro` docs scanner share one value, so the two cannot
 // disagree about what is off limits. The zero value is the list rooted at
-// DefaultConfigDir.
+// defaultConfigDir.
 type Sensitive struct {
 	list []sensitivePath
 }
@@ -57,10 +57,10 @@ type Sensitive struct {
 // NewSensitive builds the deny list under configDir. When configDir is a
 // symlink the list carries both its spelling and its resolved target, since
 // the docs scanner compares resolved paths only. An empty configDir is
-// DefaultConfigDir.
+// defaultConfigDir.
 func NewSensitive(configDir string) Sensitive {
 	if configDir == "" {
-		configDir = DefaultConfigDir
+		configDir = defaultConfigDir
 	}
 	root, err := filepath.Abs(configDir)
 	if err != nil {
@@ -87,7 +87,7 @@ func rootedAt(root string) []sensitivePath {
 
 func (s Sensitive) entries() []sensitivePath {
 	if s.list == nil {
-		return rootedAt(DefaultConfigDir)
+		return rootedAt(defaultConfigDir)
 	}
 	return s.list
 }

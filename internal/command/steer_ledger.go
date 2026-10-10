@@ -14,16 +14,14 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// steerTTL is how long a recorded steer id answers "the user's". Not the turn's length: nothing
-// tells the ledger when a turn ends, and turns can run for hours.
+// Not the turn's length: nothing tells the ledger when a turn ends, and turns can run for hours.
 const steerTTL = 30 * time.Minute
 
 // maxSteerOps bounds the map against a pathological producer; the live population is single digits.
 const maxSteerOps = 512
 
-// steerKey addresses one steer. A STRUCT key rather than a joined string: a
-// steer id is KAS's, so composing one would put a separator inside a value
-// marotte does not own the shape of.
+// A STRUCT key rather than a joined string: a steer id is KAS's, so composing one would put a
+// separator inside a value marotte does not own the shape of.
 type steerKey struct {
 	chat marotte.ChatID
 	id   string

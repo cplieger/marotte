@@ -20,7 +20,7 @@ import { decodeSlashCommandsResponse } from "./wire/decoders.gen.js";
 import type { SlashCommand, SlashCommandKind } from "./wire/types.gen.js";
 
 /** One menu row. `kind` is `marotte` for a verb typed-commands.ts handles. */
-export interface MenuEntry {
+interface MenuEntry {
   readonly name: string;
   readonly description: string;
   readonly kind: SlashCommandKind | "marotte";
@@ -182,8 +182,8 @@ let searchTimer: ReturnType<typeof setTimeout> | undefined;
 // Bumped by every close, so a read started for an earlier menu neither fills this menu's cache nor
 // reopens a menu the reader closed.
 let menuSession = 0;
-// Bumped by mcp_pool_changed. An MCP list belongs to one chat's pool at one moment, so its key
-// carries both and a moved pool or chat misses the cache.
+// An MCP list belongs to one chat's pool at one moment, so its key carries both and a moved pool or
+// chat misses the cache.
 let mcpGen = 0;
 
 function itemsKey(provider: ItemProvider, query: string): string {
@@ -472,11 +472,13 @@ export function initSlashMenu(openPicker: () => void): void {
   loadSlashCatalog();
 }
 
+// deadset:ignore DS1004 -- test seam: seeds the slash command catalog without a fetch
 export function _setCatalogForTest(commands: readonly SlashCommand[]): void {
   catalog.value = commands;
   catalogReady = true;
 }
 
+// deadset:ignore DS1004 -- test seam: resets the slash command catalog
 export function _resetCatalogForTest(): void {
   catalog.value = [];
   catalogReady = false;

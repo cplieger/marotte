@@ -38,10 +38,9 @@ export function syncRefusal(
   syncRewind(callout, rewindTo);
 }
 
-/** Mount, rebind or withdraw the Rewind action. Withdrawn when the turn carries no prompt of its
- *  own: KAS refuses to revert to anything but a user message, so an agent-initiated refusal has
- *  no address. Rebound on every call for the reason the footer's button is — the value moves
- *  when the projection does. */
+/** Withdrawn when the turn carries no prompt of its own: KAS refuses to revert to anything but a
+ *  user message, so an agent-initiated refusal has no address. Rebound on every call for the reason
+ *  the footer's button is — the value moves when the projection does. */
 function syncRewind(callout: HTMLElement, rewindTo?: EntryPrompt): void {
   const actions = callout.querySelector<HTMLElement>(`:scope > .refusal-actions`);
   if (actions === null) {

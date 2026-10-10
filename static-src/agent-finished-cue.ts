@@ -1,14 +1,14 @@
 // The agent-finished cue: raised when a turn ends and EVERYTHING it started is over. One
-// module owns the whole policy (per-kind switch, replay dedup, settle test, parking,
-// re-fire) so no two copies can disagree. A cue is parked with the turn's own body and
+// module owns WHEN (per-kind switch, replay dedup, settle test, parking, re-fire); the
+// server's notification owns what it says. A cue is parked with its notification and
 // released by whatever ends the last outstanding thing, whatever its outcome. The
 // re-fire is an effect over `chatSettled`'s tracked reads. Not persisted: after a reload
 // the reader is back, and a persisted cue would notify for work already seen.
 
 import { effect, signal, touch } from "@cplieger/reactive";
 import { chatSettled } from "./chat-settled.js";
-import { isAgentFinishedEnabled, notifyIfHidden, NOTIFY_TITLE } from "./notify.js";
-import { chatTarget } from "./push-subject.js";
+import { isAgentFinishedEnabled, notifyOffScreen } from "./notify.js";
+import type { NotificationPayload } from "./wire/types.gen.js";
 
 /** Per-chat dedup window. An SSE reconnect replays `turn_closed`, and the duplicates
  *  arrive within milliseconds of each other. */
@@ -25,10 +25,10 @@ const MAP_CAP = 200;
 const lastNotifyMs = new Map<string, number>();
 
 /**
- * chat id -> the body of the cue withheld for it. Insertion-ordered, so eviction drops the
+ * chat id -> the notification withheld for it. Insertion-ordered, so eviction drops the
  * chat waiting longest.
  */
-const deferred = new Map<string, string>();
+const deferred = new Map<string, NotificationPayload>();
 
 /**
  * Bumped when a cue is PARKED, so the release effect has something to wake on before any
@@ -58,34 +58,33 @@ function pruneNotifyMap(now: number): void {
  * re-read here because a deferral can outlive the reader's choice. No time bound on a
  * parked cue: the entry cap bounds the set, and an evicted cue is DROPPED, not fired.
  */
-function raiseAgentFinished(chatID: string, body: string): boolean {
+function raiseAgentFinished(chatID: string, notice: NotificationPayload): void {
   if (!isAgentFinishedEnabled()) {
-    return false;
+    return;
   }
   const now = Date.now();
   pruneNotifyMap(now);
   if (now - (lastNotifyMs.get(chatID) ?? 0) <= DEDUP_MS) {
-    return false;
+    return;
   }
   lastNotifyMs.set(chatID, now);
-  return notifyIfHidden(NOTIFY_TITLE, body, chatTarget(chatID));
+  notifyOffScreen(notice);
 }
 
 /**
- * A turn ended on `chatID`; `body` is what its cue would say ("" for a turn that says
- * nothing). Raises now when the chat is settled, parks otherwise; the per-kind switch is
- * checked before parking too.
+ * A turn ended on `chatID` and the server says `notice` about it. Raises now when the chat is
+ * settled, parks otherwise; the per-kind switch is checked before parking too.
  */
-export function noteAgentFinished(chatID: string, body: string): void {
-  if (chatID === "" || body === "" || !isAgentFinishedEnabled()) {
+export function noteAgentFinished(chatID: string, notice: NotificationPayload): void {
+  if (chatID === "" || !isAgentFinishedEnabled()) {
     return;
   }
   if (chatSettled(chatID)) {
-    raiseAgentFinished(chatID, body);
+    raiseAgentFinished(chatID, notice);
     return;
   }
-  // A repeat park overwrites by key, so a replayed `turn_closed` cannot produce two cues.
-  deferred.set(chatID, body);
+  // A repeat park overwrites by key, so a replayed notification cannot produce two cues.
+  deferred.set(chatID, notice);
   while (deferred.size > MAP_CAP) {
     const oldest = deferred.keys().next().value;
     if (oldest === undefined) {
@@ -96,6 +95,19 @@ export function noteAgentFinished(chatID: string, body: string): void {
   deferredVersion.value = deferredVersion.peek() + 1;
 }
 
+/**
+ * Deliver one server notification on this page, whichever channel brought it (the `notification`
+ * frame, or a Web Push that landed on a focused page): a finished turn waits for its work, every
+ * other notice shows at once, and both stay silent while their own tab is on screen.
+ */
+export function deliverNotification(chatID: string, notice: NotificationPayload): void {
+  if (notice.kind === "agent_finished") {
+    noteAgentFinished(chatID, notice);
+    return;
+  }
+  notifyOffScreen(notice);
+}
+
 /** Drop a chat's parked cue, wherever the chat goes away (tab close, remote delete). */
 export function forgetDeferredCue(chatID: string): void {
   deferred.delete(chatID);
@@ -103,6 +115,7 @@ export function forgetDeferredCue(chatID: string): void {
 
 /** Whether a cue is currently parked for `chatID`. Read by tests and by nothing in
  *  production: the release is an effect, so no caller polls. */
+// deadset:ignore DS1004 -- test seam: observes the parked-cue map
 export function hasDeferredCue(chatID: string): boolean {
   return deferred.has(chatID);
 }
@@ -115,18 +128,19 @@ export function installDeferredCueSubscriber(): () => void {
   return effect(() => {
     touch(deferredVersion);
     // A copy, so deleting the entry a pass is releasing cannot disturb the walk.
-    for (const [chatID, body] of [...deferred]) {
+    for (const [chatID, notice] of [...deferred]) {
       if (!chatSettled(chatID)) {
         continue;
       }
       // Removed BEFORE the raise, or a refused raise would re-offer it on every later pass.
       deferred.delete(chatID);
-      raiseAgentFinished(chatID, body);
+      raiseAgentFinished(chatID, notice);
     }
   });
 }
 
 /** Reset every map. Exported for test isolation only. */
+// deadset:ignore DS1004 -- test seam: resets the parked cues, notify times and deferred version
 export function _resetAgentFinishedCueForTest(): void {
   deferred.clear();
   lastNotifyMs.clear();

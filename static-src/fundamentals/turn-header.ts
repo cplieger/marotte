@@ -20,6 +20,9 @@ export interface TurnHeaderData {
   ts: number;
   /** The user's request. Undefined for a turn the user did not ask for. */
   request: string | undefined;
+  /** The label of a request marotte wrote on the user's behalf, drawn in its place with the
+   *  request one click away. Undefined for a typed request. */
+  label?: string | undefined;
   /** Files the user attached to this request. Drawn as the composer's own pill,
    *  read-only (a sent attachment cannot be un-sent), and OUTSIDE the clamp. */
   attachments: readonly AttachmentRef[];
@@ -60,6 +63,18 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
 
   updateTurnHeader(header, d);
   return header;
+}
+
+/** The request band alone, for a turn drawn without card chrome: a run step's turn that the user's
+ *  message resumed. */
+export function buildRequestHeader(request: string): HTMLElement {
+  const text = el("div", { className: "turn-req-text" }, request);
+  linkifyPaths(text);
+  return el(
+    "div",
+    { className: "turn-header", "data-trigger": "user" },
+    el("div", { className: "turn-req" }, text),
+  );
 }
 
 /** Recompute the header from turn data. Idempotent. */
@@ -103,14 +118,60 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     // No user message: naming the trigger is honest, fabricating one is not.
     header.dataset["trigger"] = "system";
     text.textContent = "Agent-initiated turn";
+    syncFullText(header, undefined);
     return;
   }
 
   header.dataset["trigger"] = "user";
   const body = d.request.trim();
-  if (text.textContent !== body) {
-    text.textContent = body;
+  const label = d.label?.trim() ?? "";
+  const shown = label === "" ? body : label;
+  if (text.textContent !== shown) {
+    text.textContent = shown;
     linkifyPaths(text);
+  }
+  syncFullText(header, label === "" ? undefined : body);
+}
+
+const LABEL_SHOW = "Show full message";
+const LABEL_HIDE = "Hide full message";
+
+function setFullShown(more: HTMLElement, full: HTMLElement, on: boolean): void {
+  more.setAttribute("aria-expanded", on ? "true" : "false");
+  more.textContent = on ? LABEL_HIDE : LABEL_SHOW;
+  full.classList.toggle("hidden", !on);
+}
+
+/** A labelled request's full text behind its opener, both siblings of the text so the folded clamp
+ *  cannot hide them; `body` undefined removes both. The reader's open state survives a repaint. */
+function syncFullText(header: HTMLElement, body: string | undefined): void {
+  const req = header.querySelector<HTMLElement>(":scope > .turn-req");
+  if (req === null) {
+    return;
+  }
+  let full = req.querySelector<HTMLElement>(":scope > .turn-req-full");
+  if (body === undefined) {
+    req.querySelector(":scope > .turn-req-more")?.remove();
+    full?.remove();
+    return;
+  }
+  if (full === null) {
+    const opener = el(
+      "button",
+      { className: "turn-req-more", type: "button", "aria-expanded": "false" },
+      LABEL_SHOW,
+    );
+    const shown = el("div", { className: "turn-req-full hidden" });
+    opener.addEventListener("click", () => {
+      setFullShown(opener, shown, opener.getAttribute("aria-expanded") !== "true");
+    });
+    // After the text and before the attachments, in reading order.
+    req.querySelector(":scope > .turn-req-text")?.after(opener, shown);
+    full = shown;
+  }
+  if (full.textContent !== body) {
+    full.textContent = body;
+    linkifyPaths(full);
   }
 }
 

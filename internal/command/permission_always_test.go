@@ -32,7 +32,7 @@ func (d *alwaysDeps) EnsureCustomProfile(context.Context) error {
 	return d.switchErr
 }
 
-func (d *alwaysDeps) TakePendingPermissionOption(chatID marotte.ChatID, id int64, opt string, by marotte.SettledBy) (bool, bool) {
+func (d *alwaysDeps) TakePendingPermissionOption(chatID marotte.ChatID, id int64, opt string, by marotte.SettledBy) (AskReply, bool, bool) {
 	d.events = append(d.events, "claim")
 	return d.takeDeps.TakePendingPermissionOption(chatID, id, opt, by)
 }
@@ -96,7 +96,7 @@ func TestCmdPermission_AlwaysSavesAUserRuleAfterSwitchingToCustom(t *testing.T) 
 				RequestID: 7, OptionID: tc.option, AlwaysResource: "  head *  ",
 			})
 
-			if _, err := CmdPermission(t.Context(), d, d, d, cmd); err != nil {
+			if _, err := cmdPermission(t.Context(), d, d, cmd); err != nil {
 				t.Fatalf("CmdPermission = %v", err)
 			}
 
@@ -120,7 +120,7 @@ func TestCmdPermission_AlwaysRefusalLeavesTheAskPending(t *testing.T) {
 		RequestID: 7, OptionID: "always-accept", AlwaysResource: "head *",
 	})
 
-	_, err := CmdPermission(t.Context(), d, d, d, cmd)
+	_, err := cmdPermission(t.Context(), d, d, cmd)
 
 	var se *statusError
 	if !errors.As(err, &se) || se.code != http.StatusConflict || se.reason != reasonAlwaysRuleNotSaved {
@@ -145,7 +145,7 @@ func TestCmdPermission_AlwaysPatternIsChecked(t *testing.T) {
 				RequestID: 7, OptionID: tc.option, AlwaysResource: tc.resource,
 			})
 
-			_, err := CmdPermission(t.Context(), d, d, d, cmd)
+			_, err := cmdPermission(t.Context(), d, d, cmd)
 
 			if got := statusOf(err); got != http.StatusBadRequest || !errors.Is(err, errAlwaysResourceInvalid) {
 				t.Fatalf("CmdPermission(%q, %q) = %v (status %d), want 400 always_resource_invalid", tc.option, tc.resource, err, got)
@@ -161,7 +161,7 @@ func TestCmdPermission_OneTimeAnswerLeavesTheProfileAlone(t *testing.T) {
 	d, br := newAlwaysDeps()
 	cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{RequestID: 7, OptionID: "accept"})
 
-	if _, err := CmdPermission(t.Context(), d, d, d, cmd); err != nil {
+	if _, err := cmdPermission(t.Context(), d, d, cmd); err != nil {
 		t.Fatalf("CmdPermission = %v", err)
 	}
 
@@ -214,7 +214,7 @@ func TestCmdPermission_AlwaysSubjectPatternSavesKASOwnSubject(t *testing.T) {
 				RequestID: 7, OptionID: "always-accept", AlwaysResource: tc.chosen,
 			})
 
-			if _, err := CmdPermission(t.Context(), d, d, d, cmd); err != nil {
+			if _, err := cmdPermission(t.Context(), d, d, cmd); err != nil {
 				t.Fatalf("CmdPermission(%q) = %v", tc.chosen, err)
 			}
 
@@ -242,7 +242,7 @@ func TestCmdPermission_AlwaysAnswerSurvivesAClientThatLeftDuringTheSwitch(t *tes
 		RequestID: 7, OptionID: "always-accept", AlwaysResource: "head *",
 	})
 
-	if _, err := CmdPermission(ctx, d, d, d, cmd); err != nil {
+	if _, err := cmdPermission(ctx, d, d, cmd); err != nil {
 		t.Fatalf("CmdPermission = %v", err)
 	}
 

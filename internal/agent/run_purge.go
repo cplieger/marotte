@@ -53,7 +53,6 @@ func (rt *Runtime) PurgeParentlessRuns(ctx context.Context, window time.Duration
 	return res
 }
 
-// purgeCandidate deletes one due, apparently unclaimed finished run, recording the outcome.
 func (rt *Runtime) purgeCandidate(ctx context.Context, r *kasWorkflowRun, window time.Duration, now time.Time, res *RunPurgeResult) {
 	updated := parseKASTime(r.UpdatedAt)
 	if updated <= 0 {

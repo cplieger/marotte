@@ -4,12 +4,17 @@
 // where the reader left it, whether they went to another view or another file.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { mountEditorView } from "./__test-helpers__/editor-dom.js";
 import { initEditor } from "./editor-core.js";
 import { activateFile, closeEditorFile } from "./editor-openers.js";
+import { viewer } from "./editor-pane.js";
+import { scrollToEditorLine } from "./editor-scroll.js";
 import { fileStates, freshState, setActiveFilePath, type FileMode } from "./editor-types.js";
 
 let sheet: HTMLStyleElement;
 let sizing: HTMLStyleElement;
+let host: HTMLElement;
+let other: HTMLElement;
 
 beforeAll(() => {
   sheet = mountAppCSS();
@@ -17,38 +22,19 @@ beforeAll(() => {
   sizing.textContent = `[id="editor-view"] { width: 480px; height: 240px; display: flex; flex-direction: column; }
     [id="editor-view"] > .editor-page { flex: 1; min-height: 0; }`;
   document.head.appendChild(sizing);
-  document.body.innerHTML = `
-    <div id="other-view" data-tab-view class="hidden">chat</div>
-    <div id="editor-view" data-tab-view>
-      <div class="editor-page">
-        <div id="editor-error" class="editor-error hidden"></div>
-        <div id="editor-conflict-overlay" class="editor-conflict-overlay hidden"></div>
-        <div class="editor-body">
-          <pre id="editor-gutter" class="editor-gutter" aria-hidden="true"></pre>
-          <pre id="editor-highlight" class="editor-highlight"><code id="editor-code"></code></pre>
-          <textarea id="editor-content" class="editor-content hidden" aria-label="File editor"></textarea>
-          <div id="editor-markdown" class="editor-markdown hidden"></div>
-          <div id="editor-image" class="editor-image hidden"></div>
-          <div id="editor-diff-pane" class="editor-diff-pane hidden"></div>
-        </div>
-        <div class="editor-toolbar bottom-bar">
-          <span id="editor-filename"></span>
-          <button type="button" id="editor-preview-btn" class="hidden"></button>
-          <button type="button" id="editor-git-diff-btn" class="hidden"></button>
-          <button type="button" id="editor-diff-btn"></button>
-          <button type="button" id="editor-edit-btn"></button>
-          <button type="button" id="editor-save-btn" class="hidden"></button>
-          <button type="button" id="editor-cancel-btn" class="hidden"></button>
-        </div>
-      </div>
-    </div>`;
+  host = mountEditorView();
+  other = document.createElement("div");
+  other.id = "other-view";
+  other.className = "hidden";
+  other.textContent = "chat";
+  host.prepend(other);
   initEditor();
 });
 
 afterAll(() => {
   sheet.remove();
   sizing.remove();
-  document.body.replaceChildren();
+  host.remove();
 });
 
 const A = "/workspace/a.go";
@@ -60,18 +46,30 @@ function lines(tag: string, n: number, width = 10): string {
   );
 }
 
-function seed(path: string, content: string, mode: FileMode = { kind: "edit", editing: false }) {
+function seed(path: string, content: string, mode: FileMode = { kind: "text", editing: false }) {
   const state = freshState(path);
   state.original.value = content;
   state.current.value = content;
   state.loaded = true;
+  state.facts.value = {
+    kind: "small",
+    binary: false,
+    utf8: true,
+    conflict: false,
+    readOnly: false,
+    size: content.length,
+  };
   state.mode.value = mode;
   fileStates.set(path, state);
-  return state;
 }
 
 function body(): HTMLElement {
   return document.querySelector<HTMLElement>(".editor-body")!;
+}
+
+/** One line box: a read-state position is restored by its logical line. */
+function lineBox(): number {
+  return parseFloat(getComputedStyle(document.getElementById("editor-viewer")!).lineHeight);
 }
 
 function textarea(): HTMLTextAreaElement {
@@ -85,20 +83,43 @@ async function frames(n = 2): Promise<void> {
   }
 }
 
+/** A short line, then one cut into ten rows (rows 1 to 10), then short lines. */
+function longLineFile(): string {
+  return `first\n${"y".repeat(4096 * 10)}\n${lines("a", 200)}`;
+}
+
+function seatedRow(row: number): HTMLElement {
+  const el = document.querySelector<HTMLElement>(`.viewer-row[data-row="${String(row)}"]`);
+  if (el === null) {
+    throw new Error(`row ${String(row)} is not seated`);
+  }
+  return el;
+}
+
+/** Scroll the read surface so `row` sits at its top, as a reader's scroll would. */
+function scrollRowToTop(row: number): void {
+  body().scrollTop +=
+    seatedRow(row).getBoundingClientRect().top - body().getBoundingClientRect().top;
+}
+
+function rowOffsetFromTop(row: number): number {
+  return Math.abs(seatedRow(row).getBoundingClientRect().top - body().getBoundingClientRect().top);
+}
+
 function leaveEditorView(): void {
   document.getElementById("editor-view")!.classList.add("hidden");
-  document.getElementById("other-view")!.classList.remove("hidden");
+  other.classList.remove("hidden");
 }
 
 function returnToEditorView(path: string): void {
-  document.getElementById("other-view")!.classList.add("hidden");
+  other.classList.add("hidden");
   document.getElementById("editor-view")!.classList.remove("hidden");
   activateFile(path);
 }
 
 beforeEach(() => {
   document.getElementById("editor-view")!.classList.remove("hidden");
-  document.getElementById("other-view")!.classList.add("hidden");
+  other.classList.add("hidden");
 });
 
 afterEach(() => {
@@ -116,7 +137,7 @@ describe("the editor keeps each file's reading position", () => {
     leaveEditorView();
     await frames();
     returnToEditorView(A);
-    expect(body().scrollTop).toBe(1200);
+    expect(Math.abs(body().scrollTop - 1200)).toBeLessThan(lineBox());
   });
 
   it("is per file: A, then B, then A lands each where it was left", async () => {
@@ -131,20 +152,92 @@ describe("the editor keeps each file's reading position", () => {
     body().scrollTop = 300;
     await frames();
     activateFile(A);
-    expect(body().scrollTop).toBe(1200);
+    expect(Math.abs(body().scrollTop - 1200)).toBeLessThan(lineBox());
     await frames();
     activateFile(B);
-    expect(body().scrollTop).toBe(300);
+    expect(Math.abs(body().scrollTop - 300)).toBeLessThan(lineBox());
+  });
+
+  it("reopens a file taller than the height cap at its first line after a jump past the cap", async () => {
+    const text = "\n".repeat((2 << 20) - 1);
+    seed(A, text);
+    activateFile(A);
+    scrollToEditorLine(1_500_000);
+    await frames();
+    expect(viewer().rows?.lines[viewer().topRow()], "the jump moved the view").toBe(1_500_000);
+    closeEditorFile(A);
+    seed(A, text);
+    activateFile(A);
+    await frames();
+    expect(viewer().rows?.lines[viewer().topRow()]).toBe(1);
+    expect(rowOffsetFromTop(0)).toBeLessThan(lineBox());
+  });
+
+  it("comes back on the cut row of a long line it was left at, across a tab switch", async () => {
+    seed(A, longLineFile());
+    seed(B, lines("b", 400));
+    activateFile(A);
+    await frames();
+    scrollRowToTop(7);
+    await frames();
+    activateFile(B);
+    await frames();
+    activateFile(A);
+    await frames();
+    expect(rowOffsetFromTop(7)).toBeLessThan(2);
+  });
+
+  it("comes back on the cut row of a long line after an edit that kept the line", async () => {
+    seed(A, longLineFile());
+    activateFile(A);
+    await frames();
+    scrollRowToTop(7);
+    await frames();
+    document.getElementById("editor-edit-btn")!.click();
+    // Edit opens on the same line, the caret at its start rather than at the end of the file.
+    const ta = textarea();
+    const style = getComputedStyle(ta);
+    expect(
+      Math.abs(ta.scrollTop - parseFloat(style.paddingBlockStart) - parseFloat(style.lineHeight)),
+    ).toBeLessThan(1);
+    expect(ta.selectionStart).toBe("first\n".length);
+    await frames();
+    document.getElementById("editor-cancel-btn")!.click();
+    await frames();
+    expect(rowOffsetFromTop(7)).toBeLessThan(2);
+  });
+
+  it("opens Edit on the line in view when the kept selection is off screen", async () => {
+    const text = lines("a", 400);
+    seed(A, text);
+    seed(B, lines("b", 400));
+    activateFile(A);
+    document.getElementById("editor-edit-btn")!.click();
+    const ta = textarea();
+    const lineFive = text.split("\n").slice(0, 4).join("\n").length + 1;
+    ta.setSelectionRange(lineFive, lineFive);
+    const style = getComputedStyle(ta);
+    const line150 = parseFloat(style.paddingBlockStart) + 149 * parseFloat(style.lineHeight);
+    ta.scrollTop = line150;
+    await frames();
+    activateFile(B);
+    activateFile(A);
+    document.getElementById("editor-cancel-btn")!.click();
+    await frames();
+    document.getElementById("editor-edit-btn")!.click();
+    expect(ta.selectionStart).toBe(lineFive);
+    expect(Math.abs(ta.scrollTop - line150)).toBeLessThan(parseFloat(style.lineHeight));
+    ta.blur();
   });
 
   it("keeps the selection and the textarea's own pan in edit mode", async () => {
-    seed(A, lines("a", 40, 300), { kind: "edit", editing: true });
-    seed(B, lines("b", 40, 300), { kind: "edit", editing: true });
+    seed(A, lines("a", 40, 300), { kind: "text", editing: true });
+    seed(B, lines("b", 40, 300), { kind: "text", editing: true });
     activateFile(A);
     const ta = textarea();
     ta.setSelectionRange(10, 25, "backward");
     ta.scrollLeft = 200;
-    body().scrollTop = 150;
+    ta.scrollTop = 150;
     await frames();
     activateFile(B);
     activateFile(A);
@@ -152,7 +245,8 @@ describe("the editor keeps each file's reading position", () => {
     expect(ta.selectionEnd).toBe(25);
     expect(ta.selectionDirection).toBe("backward");
     expect(ta.scrollLeft).toBe(200);
-    expect(body().scrollTop).toBe(150);
+    // Restored by line, so within one line box of where it was left.
+    expect(Math.abs(ta.scrollTop - 150)).toBeLessThan(parseFloat(getComputedStyle(ta).lineHeight));
     expect(document.activeElement).not.toBe(ta);
   });
 
@@ -160,8 +254,8 @@ describe("the editor keeps each file's reading position", () => {
   // back would file the outgoing file's selection under the incoming one, and two
   // equal selections cannot show that.
   it("restores each file's own selection when two files differ", async () => {
-    seed(A, lines("a", 40, 300), { kind: "edit", editing: true });
-    seed(B, lines("b", 40, 300), { kind: "edit", editing: true });
+    seed(A, lines("a", 40, 300), { kind: "text", editing: true });
+    seed(B, lines("b", 40, 300), { kind: "text", editing: true });
     const ta = textarea();
     activateFile(A);
     ta.setSelectionRange(10, 25, "backward");
@@ -190,11 +284,11 @@ describe("the editor keeps each file's reading position", () => {
     seed(A, old, {
       kind: "diff",
       diffSource: {
-        oldContent: old,
-        newContent: next,
+        oldText: old,
+        newText: next,
         oldLabel: "saved",
         newLabel: "unsaved",
-        fromGit: false,
+        kind: "pair",
       },
     });
     seed(B, lines("b", 400));
@@ -215,5 +309,19 @@ describe("the editor keeps each file's reading position", () => {
     expect(col().scrollLeft).toBe(120);
     await frames(4);
     expect(bar().scrollLeft).toBe(120);
+  });
+});
+
+describe("the edit gutter", () => {
+  it("numbers the lines typed into the textarea", () => {
+    seed(A, "one\ntwo", { kind: "text", editing: true });
+    activateFile(A);
+    const ta = textarea();
+    ta.value = "one\ntwo\nthree\nfour";
+    ta.dispatchEvent(new Event("input"));
+    const numbers = [
+      ...document.querySelectorAll<HTMLElement>('[id="editor-edit-gutter"] .viewer-ln'),
+    ].map((c) => c.textContent);
+    expect(numbers).toEqual(["1", "2", "3", "4"]);
   });
 });

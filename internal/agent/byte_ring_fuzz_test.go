@@ -18,8 +18,8 @@ func FuzzByteRingWrite(f *testing.F) {
 			return
 		}
 		r := newByteRing(cap)
-		r.Write(a)
-		r.Write(b)
+		r.write(a)
+		r.write(b)
 
 		stored := r.Bytes()
 		if len(stored) > cap {

@@ -9,7 +9,6 @@ import { handleEditorFindHotkey, toggleEditorFind, editorFindAvailable } from ".
 import { pageFind } from "./find-registry.js";
 import type { FindKind } from "./find-registry.js";
 
-/** Where a tab kind's find lives. */
 type FindDestination =
   /** The transcript popup (find-in-chat.ts). */
   | "transcript"

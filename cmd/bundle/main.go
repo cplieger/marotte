@@ -66,8 +66,8 @@ func run() error {
 }
 
 // precacheManifest is static/precache.json. Field names are the wire contract with
-// static-src/sw.ts. Fetched rather than inlined: this worker never calls skipWaiting, so
-// an inlined list would reach a client only through a worker update.
+// static-src/sw.ts. Fetched rather than inlined: this worker never calls skipWaiting, so an inlined
+// list would reach a client only through a worker update.
 type precacheManifest struct {
 	Stamp  string   `json:"stamp"`
 	Assets []string `json:"assets"`
@@ -121,10 +121,9 @@ func precacheAssets() ([]string, error) {
 	return assets, nil
 }
 
-// cleanOutputs removes build artifacts from static/; committed assets are untouched.
-// Ownership is by extension at any depth, matching .gitignore's `static/**/*.js`.
-// `chunks` is removed whole. `vendor` is kept: the Dockerfile fetches the web fonts
-// into it BEFORE the bundle runs.
+// Committed assets are untouched. Ownership is by extension at any depth, matching .gitignore's
+// `static/**/*.js`. `chunks` is removed whole. `vendor` is kept: the Dockerfile fetches the web
+// fonts into it BEFORE the bundle runs.
 func cleanOutputs() error {
 	if err := os.RemoveAll(filepath.Join(outDir, "chunks")); err != nil {
 		return err
@@ -136,7 +135,7 @@ func cleanOutputs() error {
 	return pruneEmptyDirs(outDir)
 }
 
-// bundleOwns reports whether the bundler owns this file name. Keep in step with .gitignore's static/ block.
+// Keep in step with .gitignore's static/ block.
 func bundleOwns(name string) bool {
 	switch filepath.Ext(name) {
 	case jsExt, ".map", ".gz":
@@ -208,8 +207,7 @@ func bundleScripts() error {
 // workerURLDefine is the identifier static-src/globals.d.ts declares for the worker's URL.
 const workerURLDefine = "__SSE_WORKER_URL__"
 
-// bundleApp bundles the main client entry as ESM with code splitting into hashed
-// /chunks/. The entry keeps its stable /app.js name, so the HTML is never rewritten.
+// The entry keeps its stable /app.js name, so the HTML is never rewritten.
 func bundleApp(workerURL string) error {
 	result := api.Build(api.BuildOptions{
 		EntryPoints:       []string{filepath.Join(srcDir, "app.ts")},
@@ -256,7 +254,6 @@ func bundleSSEWorker() (string, error) {
 	return emittedEntry(result.Metafile)
 }
 
-// emittedEntry returns the metafile's one entry JavaScript output as a site-root URL path.
 func emittedEntry(metafile string) (string, error) {
 	var meta struct {
 		Outputs map[string]struct {
@@ -344,9 +341,8 @@ var fontRef = regexp.MustCompile(`url\(\s*["']?/vendor/fonts/([^"')\s]+)`)
 // stampedFontName matches stampFont's output, which internal/server.assetCachePolicy also reads.
 var stampedFontName = regexp.MustCompile(`^(.+)\.[0-9a-f]{8}(\.[^.]+)$`)
 
-// fingerprintFonts renames each face the bundle names to <stem>.<8 hex><ext> and
-// rewrites the bundle's url()s. An unfetched font tree is skipped; a tree lacking a
-// named face is an error.
+// fingerprintFonts renames each face the bundle names to <stem>.<8 hex><ext> and rewrites the
+// bundle's url()s. An unfetched font tree is skipped; a tree lacking a named face is an error.
 func fingerprintFonts() error {
 	cssPath := filepath.Join(outDir, "style.css")
 	css, err := os.ReadFile(cssPath)
@@ -389,7 +385,6 @@ func fingerprintFonts() error {
 	return nil
 }
 
-// cssFontNames lists the /vendor/fonts names the bundle references, deduplicated.
 func cssFontNames(css string) []string {
 	seen := map[string]bool{}
 	var names []string
@@ -403,7 +398,6 @@ func cssFontNames(css string) []string {
 	return names
 }
 
-// stampFont renames one face to its content-addressed name and returns that name.
 func stampFont(dir, name string) (string, error) {
 	// A URL component reaches a filesystem path here.
 	if name != filepath.Base(name) || name == "" || name == "." || name == ".." {
@@ -462,7 +456,6 @@ func fontSource(dir, name string) (string, error) {
 	}
 }
 
-// hashFile returns the first 8 hex digits of the file's SHA-256, streamed.
 func hashFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -476,7 +469,7 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(sum.Sum(nil))[:8], nil
 }
 
-// cssManifest is one ordered concat source; paths are relative to baseDir.
+// Paths are relative to baseDir.
 type cssManifest struct {
 	manifestPath string
 	baseDir      string

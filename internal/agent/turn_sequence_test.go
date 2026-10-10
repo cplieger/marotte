@@ -13,7 +13,6 @@ import (
 	"github.com/cplieger/sse"
 )
 
-// entriesOfBroadcasts returns the turn_close entry of every turn_closed frame in events.
 func entriesOfBroadcasts(t *testing.T, events []sse.ReplayEvent) []marotte.Entry {
 	t.Helper()
 	var out []marotte.Entry
@@ -23,7 +22,6 @@ func entriesOfBroadcasts(t *testing.T, events []sse.ReplayEvent) []marotte.Entry
 	return out
 }
 
-// closedStops returns the raw stop of every turn_closed frame broadcast so far.
 func closedStops(t *testing.T, h *Runtime) []marotte.StopReason {
 	t.Helper()
 	var out []marotte.StopReason
@@ -61,7 +59,7 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 3)
 
 	for _, n := range queued {
-		h.coord.consumeFrame(chatID, gen, n)
+		h.coord.consumeFrame(chatID, h.originOf(chatID), gen, n)
 	}
 	<-settled
 
@@ -116,7 +114,7 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 2)
 
 	for _, n := range queued {
-		h.coord.consumeFrame(chatID, gen, n)
+		h.coord.consumeFrame(chatID, h.originOf(chatID), gen, n)
 	}
 	<-settled
 
@@ -254,8 +252,8 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	defer h.ReleaseTurn(chatID, preOpen)
 
 	// The auto-wake's brackets mis-bind and close the pre-open; the prompted turn's bracket is still queued.
-	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 1})
-	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 2})
+	h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 1})
+	h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 2})
 
 	var openedAfterAtSettle bool
 	settled := make(chan struct{})
@@ -267,8 +265,8 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	}()
 	waitForParkedSettle(t, h.coord.turns, chatID, preOpen, 4)
 
-	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 3})
-	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 4})
+	h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 3})
+	h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 4})
 	<-settled
 
 	if !openedAfterAtSettle {

@@ -22,7 +22,6 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// recordingWire answers every request with body and records what was sent.
 type recordingWire struct {
 	body string
 	seen []*http.Request
@@ -164,8 +163,8 @@ func TestSourceFor_CarriesTheRecordsPostures(t *testing.T) {
 	}
 }
 
-// fakeCore stands in for a forgeapi client. The embedded Core is nil, so a
-// method a test does not override panics rather than answering a zero value.
+// The embedded Core is nil, so a method a test does not override panics rather than answering a
+// zero value.
 type fakeCore struct {
 	forgeapi.Core
 	repo      forgeapi.RepoRef
@@ -175,14 +174,12 @@ type fakeCore struct {
 	closed    atomic.Int32
 }
 
-// Close counts the releases, the one thing a client's Close does Marotte can see.
 func (f *fakeCore) Close() { f.closed.Add(1) }
 
 func (*fakeCore) BudgetState() forgeapi.BudgetState {
 	return forgeapi.BudgetState{Remaining: forgeapi.BudgetRemainingUnknown}
 }
 
-// ReadPR answers the listed pull request number in repo.
 func (f *fakeCore) ReadPR(_ context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
 	for _, p := range f.prs {
 		if p.Ref.Number == pr.Number && strings.EqualFold(p.Repo.Selector, repo.Selector) {
@@ -192,7 +189,7 @@ func (f *fakeCore) ReadPR(_ context.Context, repo forgeapi.RepoRef, pr forgeapi.
 	return forgeapi.PullRequest{}, &forgeapi.Error{Kind: forgeapi.KindNotFound}
 }
 
-func (f *fakeCore) Whoami(context.Context) (forgeapi.Account, error) {
+func (*fakeCore) Whoami(context.Context) (forgeapi.Account, error) {
 	return forgeapi.Account{Login: "bob", Email: "bob@example.com"}, nil
 }
 
@@ -210,7 +207,6 @@ func (f *fakeCore) ListPRs(_ context.Context, repo forgeapi.RepoRef, opts ...for
 	return forgeapi.Page[forgeapi.PullRequest]{Items: f.prs}, nil
 }
 
-// ListMyPRs answers prs as one complete page, the call the poller makes.
 func (f *fakeCore) ListMyPRs(_ context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	f.listCalls++
 	if _, err := forgeapi.ResolveList(opts...); err != nil {
@@ -219,15 +215,12 @@ func (f *fakeCore) ListMyPRs(_ context.Context, opts ...forgeapi.ListOption) (fo
 	return forgeapi.Page[forgeapi.PullRequest]{Items: f.prs}, nil
 }
 
-// recordManager is a manager over cfg with one record-backed GitHub row whose
-// client is core, and no forge CLI on PATH.
 func recordManager(t *testing.T, core forgeapi.Core) *Manager {
 	t.Helper()
 	rec := githubRecord()
 	return recordManagerFor(t, &rec, core)
 }
 
-// recordManagerFor is recordManager for the connection rec describes.
 func recordManagerFor(t *testing.T, rec *connectionRecord, core forgeapi.Core) *Manager {
 	t.Helper()
 	stubPath(t)
@@ -245,10 +238,10 @@ func recordManagerFor(t *testing.T, rec *connectionRecord, core forgeapi.Core) *
 func TestManagerProbe_RecordRowAsksTheLibrary(t *testing.T) {
 	m := recordManager(t, &fakeCore{})
 
-	if err := m.Probe(t.Context(), "github:github.com"); err != nil {
+	if err := m.probeConnection(t.Context(), "github:github.com"); err != nil {
 		t.Fatalf("Probe() with no CLI on PATH = %v, want the library's Whoami", err)
 	}
-	if got := m.Get("github:github.com"); got.Email != "bob@example.com" || !got.Connected || got.LastProbed == 0 {
+	if got := m.get("github:github.com"); got.Email != "bob@example.com" || !got.Connected || got.LastProbed == 0 {
 		t.Errorf("row after Probe() = %+v, want connected with the library's email and a probe time", got)
 	}
 }

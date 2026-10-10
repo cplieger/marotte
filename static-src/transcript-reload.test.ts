@@ -265,7 +265,7 @@ describe("a reload with one entry sealed in the gap", () => {
 
     // The turn's stamp alone, because the window's turn set did not move.
     expect(digests[0]?.changed).toEqual([{ kind: "live_turn", ref: TURN, version: `${TURN}:4` }]);
-    // The TURN it addresses is the claim; the query is not (hand-off 2).
+    // The TURN it addresses is the claim; the query is not.
     expect(rangeReads()).toHaveLength(1);
     expect(rangeReads()[0]?.startsWith(`/api/chats/${CHAT}/turns/${TURN}`)).toBe(true);
   });

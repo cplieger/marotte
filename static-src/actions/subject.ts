@@ -11,7 +11,7 @@ type SubjectNotice = (
   name?: string,
 ) => void;
 
-export interface StagedSubject {
+interface StagedSubject {
   readonly subject: string;
   readonly name: string;
 }

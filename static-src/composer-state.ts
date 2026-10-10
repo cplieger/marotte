@@ -208,6 +208,7 @@ export function dropComposerState(chatID: string): void {
 }
 
 /** Test seam: reset the module between cases. */
+// deadset:ignore DS1004 -- test seam: resets the drafts, live chat and pending save
 export function _resetComposerStateForTest(): void {
   debouncedSave?.cancel();
   debouncedSave = null;

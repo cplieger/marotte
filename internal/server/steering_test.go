@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,14 +13,10 @@ import (
 	"time"
 )
 
-// fakeSteering answers CustomPath with a path the test owns; Generate is never driven.
 type fakeSteering struct{ path string }
 
-func (f fakeSteering) Generate(context.Context) {}
-func (f fakeSteering) CustomPath() string       { return f.path }
+func (f fakeSteering) CustomPath() string { return f.path }
 
-// steeringServer wires a Server whose custom.md lives in a directory the test
-// owns, and returns that path.
 func steeringServer(t *testing.T) (*Server, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "custom.md")
@@ -229,7 +224,6 @@ func TestHandleSteeringPut_RefusesAStaleToken(t *testing.T) {
 	}
 }
 
-// savedETag decodes a 200 PUT's body and reports its validator (the client reads the body).
 func savedETag(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 	var got steeringSaveBody

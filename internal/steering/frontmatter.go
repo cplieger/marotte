@@ -40,10 +40,6 @@ type FrontMatter struct {
 	// SteeringOverride reports whether `steering_override` is present and
 	// truthy — a skill that replaces the steering set is worth spotting.
 	SteeringOverride bool
-	// HasFrontMatter distinguishes "no front-matter at all" (a spec doc, which
-	// opens straight on an H1) from "front-matter present but empty". Callers
-	// that fall back to the first H1 need the difference.
-	HasFrontMatter bool
 }
 
 // Parse extracts the front-matter of a `.kiro` markdown document.
@@ -56,22 +52,19 @@ func Parse(data []byte) FrontMatter {
 	if !ok {
 		return fm
 	}
-	fm.HasFrontMatter = true
 	for _, f := range parseFields(body) {
 		applyField(&fm, f)
 	}
 	return fm
 }
 
-// field is one parsed top-level key and its value, with any block-scalar or
-// block-sequence continuation already folded in.
 type field struct {
 	key   string
 	value string
 	list  []string
 }
 
-// applyField folds one parsed field into fm. Split out so Parse stays flat.
+// Split out so Parse stays flat.
 func applyField(fm *FrontMatter, f field) {
 	switch f.key {
 	case "name":
@@ -92,9 +85,8 @@ func applyField(fm *FrontMatter, f field) {
 	}
 }
 
-// parseFields walks the front-matter body and returns its top-level fields. A block scalar
-// or block sequence owns every more-indented line after its key, which is why this is not a
-// per-line Cut.
+// A block scalar or block sequence owns every more-indented line after its key, which is why this
+// is not a per-line Cut.
 func parseFields(body string) []field {
 	lines := strings.Split(body, "\n")
 	var out []field
@@ -193,8 +185,7 @@ func readBlockSequence(lines []string, from int) (items []string, lastIdx int) {
 	return items, i - 1
 }
 
-// parseFlowSequence parses a single-line `[a, b, c]` sequence. Values containing
-// a comma inside quotes are not supported — no `.kiro` document uses one, and
+// Values containing a comma inside quotes are not supported — no `.kiro` document uses one, and
 // guessing would be worse than the simple split.
 func parseFlowSequence(val string) []string {
 	inner := strings.TrimSuffix(strings.TrimPrefix(val, "["), "]")

@@ -9,7 +9,6 @@ import type { ExecRun } from "./exec-view/model.js";
 import type { SubagentCard } from "./fundamentals/subagent-block.js";
 import type { ToolCall, ToolStatus } from "./wire/types.gen.js";
 
-/** One producible status, with what the server says each surface renders for it. */
 interface DotRow {
   status: string;
   dot: string;

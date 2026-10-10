@@ -72,9 +72,8 @@ function tabRow(): Row {
   return { row, name, close };
 }
 
-/** The four distances, named. A `Record<string, number>` would be a weaker type than
- *  the truth — the keys are fixed — and under `noPropertyAccessFromIndexSignature` it
- *  also forces every reader to index with brackets. */
+/** A `Record<string, number>` would be a weaker type than the truth — the keys are fixed — and under
+ *  `noPropertyAccessFromIndexSignature` it also forces every reader to index with brackets. */
 interface Insets {
   readonly top: number;
   readonly bottom: number;

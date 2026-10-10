@@ -25,10 +25,10 @@ func TestIdentity_ObserveRetiresOncePerChange(t *testing.T) {
 	retired := 0
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
 
-	id.Observe("account-a")
-	id.Observe("account-a")
-	id.Observe("account-b")
-	id.Observe("account-b")
+	id.observe("account-a")
+	id.observe("account-a")
+	id.observe("account-b")
+	id.observe("account-b")
 
 	if retired != 1 {
 		t.Errorf("Observe identity changes retired %d times, want 1", retired)
@@ -40,22 +40,22 @@ func TestIdentity_AbsentRetiresOnTheSecondReadingAndNeverBecomesBaseline(t *test
 	retired := 0
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
 
-	id.Observe("account-a")
-	id.Observe("")
+	id.observe("account-a")
+	id.observe("")
 	if retired != 0 {
 		t.Fatalf("one absent reading retired %d times, want 0 (a transient)", retired)
 	}
-	id.Observe("")
+	id.observe("")
 	if retired != 1 {
 		t.Fatalf("two absent readings retired %d times, want 1", retired)
 	}
-	id.Observe("")
-	id.Observe("account-a")
+	id.observe("")
+	id.observe("account-a")
 	if retired != 1 {
 		t.Errorf("a third absent reading then the original identity retired %d times, want 1", retired)
 	}
 
-	id.Observe("account-b")
+	id.observe("account-b")
 	if retired != 2 {
 		t.Errorf("Observe identity after absent retired %d times, want 2; absent must not replace the baseline", retired)
 	}
@@ -66,10 +66,10 @@ func TestIdentity_ATransientAbsenceResetsOnTheIdentitysReturn(t *testing.T) {
 	retired := 0
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
 
-	id.Observe("account-a")
-	id.Observe("")
-	id.Observe("account-a")
-	id.Observe("")
+	id.observe("account-a")
+	id.observe("")
+	id.observe("account-a")
+	id.observe("")
 
 	if retired != 0 {
 		t.Errorf("two non-consecutive absent readings retired %d times, want 0", retired)
@@ -110,13 +110,13 @@ func TestIdentity_ProbeFailureKeepsBaseline(t *testing.T) {
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) {
 		return "", errors.New("whoami unavailable")
 	})
-	id.Observe("account-a")
+	id.observe("account-a")
 
 	id.EnsureCurrent(t.Context())
 	if retired != 0 {
 		t.Fatalf("a failed probe retired %d times, want 0", retired)
 	}
-	id.Observe("account-b")
+	id.observe("account-b")
 	if retired != 1 {
 		t.Errorf("Observe after a failed probe retired %d times, want 1; the failed probe must keep the baseline", retired)
 	}
@@ -126,7 +126,7 @@ func TestHandleLogout_ObservesAbsentIdentity(t *testing.T) {
 	skipIfNotUnix(t)
 	retired := 0
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
-	id.Observe("account-a")
+	id.observe("account-a")
 	cli := writeFakeCLI(t, "Logged out\n", 0)
 	h := NewHandler(fixedPath(cli), WithIdentity(id))
 
@@ -162,7 +162,7 @@ func TestReadIdentity_ObservesAParsedIdentity(t *testing.T) {
 	skipIfNotUnix(t)
 	retired := 0
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
-	id.Observe(identityFingerprint(&WhoamiResponse{Email: "first@example.com", AccountType: "BuilderId"}))
+	id.observe(identityFingerprint(&WhoamiResponse{Email: "first@example.com", AccountType: "BuilderId"}))
 	cli := writeFakeCLI(t, `{"email":"second@example.com","account_type":"BuilderId"}`, 0)
 	h := NewHandler(fixedPath(cli), WithIdentity(id))
 
@@ -178,7 +178,7 @@ func TestReadIdentity_WithholdsAnUnreadableIdentity(t *testing.T) {
 	skipIfNotUnix(t)
 	retired := 0
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
-	id.Observe(identityFingerprint(&WhoamiResponse{Email: "first@example.com", AccountType: "BuilderId"}))
+	id.observe(identityFingerprint(&WhoamiResponse{Email: "first@example.com", AccountType: "BuilderId"}))
 	cli := writeFakeCLI(t, "not json", 0)
 	h := NewHandler(fixedPath(cli), WithIdentity(id))
 
@@ -196,7 +196,7 @@ func TestReadIdentity_ObservesASignOutTheCLIReports(t *testing.T) {
 	skipIfNotUnix(t)
 	retired := 0
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
-	id.Observe(identityFingerprint(&WhoamiResponse{Email: "first@example.com", AccountType: "BuilderId"}))
+	id.observe(identityFingerprint(&WhoamiResponse{Email: "first@example.com", AccountType: "BuilderId"}))
 	cli := writeFakeCLI(t, `{"account":null}`, 1)
 	h := NewHandler(fixedPath(cli), WithIdentity(id))
 

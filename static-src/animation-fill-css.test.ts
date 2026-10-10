@@ -25,11 +25,8 @@ afterAll(() => {
 /** Build `spec` (a tag plus classes and attributes) and return it, optionally
  *  inside `parent`, which is built the same way. */
 interface Fixture {
-  /** What the stylesheet's selector needs to match, in words. */
   readonly what: string;
-  /** `tag.class.class[attr]`, the element under test. */
   readonly el: string;
-  /** Ancestor chain, outermost first, when the rule needs one. */
   readonly under?: readonly string[];
 }
 

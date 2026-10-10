@@ -7,6 +7,7 @@ import { uploadLimitHint } from "./upload-policy.js";
 const {
   openFilePicker,
   openTangentChat,
+  mergeTangentChat,
   openRunView,
   setSupervisedDispatch,
   setInterruptDispatch,
@@ -42,6 +43,7 @@ const {
   toastError: vi.fn(),
   chatNotice: vi.fn(),
   collapseAll: vi.fn(),
+  mergeTangentChat: vi.fn(),
 }));
 
 let activeID = "";
@@ -49,6 +51,7 @@ let supervised: boolean | undefined;
 let interruptMode: "steer" | "queue" | undefined;
 let thinking = false;
 let messageCount = 3;
+let tangent = false;
 
 /** The active chat as the menu sees it; `message_count` unlocks the tangent row. */
 function session():
@@ -58,6 +61,7 @@ function session():
       supervised_mode: boolean | undefined;
       interrupt_mode: "steer" | "queue" | undefined;
       message_count: number;
+      tangent: boolean;
     }
   | undefined {
   return activeID === ""
@@ -68,6 +72,7 @@ function session():
         supervised_mode: supervised,
         interrupt_mode: interruptMode,
         message_count: messageCount,
+        tangent,
       };
 }
 
@@ -90,6 +95,7 @@ vi.mock("./store.js", () => ({
 vi.mock("./pill-expand.js", () => ({ makeExpandable: vi.fn(), collapseAll }));
 vi.mock("./files-picker.js", () => ({ openFilePicker }));
 vi.mock("./chat.js", () => ({ openTangentChat }));
+vi.mock("./tangent-merge.js", () => ({ mergeTangentChat }));
 vi.mock("./run-view.js", () => ({ openRunView }));
 vi.mock("./toast.js", () => ({ error: toastError, success: vi.fn(), info: vi.fn() }));
 // A refusal about the active chat is named for it through the notice door.
@@ -171,12 +177,10 @@ async function mountMenu(): Promise<{ card: HTMLElement; mod: typeof ChatOptions
   return { card: document.getElementById("chat-options-card") as HTMLElement, mod };
 }
 
-/** Click the row whose visible name matches. */
 function clickRow(card: HTMLElement, name: string): void {
   rowButton(card, name).click();
 }
 
-/** The button of the row whose visible name matches. */
 function rowButton(card: HTMLElement, name: string): HTMLButtonElement {
   for (const btn of Array.from(card.querySelectorAll<HTMLButtonElement>(".chat-opt-btn"))) {
     if (btn.querySelector(".chat-opt-name")?.textContent === name) {
@@ -193,6 +197,7 @@ beforeEach(() => {
   interruptMode = undefined;
   thinking = false;
   messageCount = 3;
+  tangent = false;
   // Left armed: a regression reaching the recipe list proceeds to the explicit negative.
   recipesDispatch.mockResolvedValue({
     recipes: [
@@ -203,14 +208,15 @@ beforeEach(() => {
 });
 
 describe("the chat-actions menu", () => {
-  // Five actions, then the two switches: an addition or loss shows here.
-  it("holds exactly seven entries, the switches last", async () => {
+  // Six actions, then the two switches: an addition or loss shows here.
+  it("holds exactly eight entries, the switches last", async () => {
     const { card } = await mountMenu();
     const names = Array.from(card.querySelectorAll(".chat-opt-name")).map((n) => n.textContent);
     expect(names).toEqual([
       "Attach a file",
       "Set a goal",
       "Start a tangent",
+      "Merge into parent chat",
       "Compact the context",
       "Rename chat",
       "Queue messages",
@@ -221,7 +227,7 @@ describe("the chat-actions menu", () => {
   // The switches are labels with a checkbox; the rest are buttons.
   it("renders the switches as labels with a checkbox and the rest as buttons", async () => {
     const { card } = await mountMenu();
-    expect(card.querySelectorAll(".chat-opt-btn")).toHaveLength(5);
+    expect(card.querySelectorAll(".chat-opt-btn")).toHaveLength(6);
     for (const id of ["chat-opt-queue", "chat-opt-supervised"]) {
       const row = card.querySelector<HTMLLabelElement>(`label.chat-opt-row[for="${id}"]`);
       expect(row?.querySelector<HTMLInputElement>("input")?.type, id).toBe("checkbox");
@@ -359,6 +365,38 @@ describe("attach a file", () => {
   });
 });
 
+describe("merge into parent chat", () => {
+  function mergeRowOf(card: HTMLElement): HTMLElement | null {
+    return rowButton(card, "Merge into parent chat").closest(".chat-opt-entry");
+  }
+
+  it("is offered on a tangent only", async () => {
+    const plain = await mountMenu();
+    expect(mergeRowOf(plain.card)?.classList.contains("hidden")).toBe(true);
+    tangent = true;
+    const forked = await mountMenu();
+    expect(mergeRowOf(forked.card)?.classList.contains("hidden")).toBe(false);
+  });
+
+  it("merges the active tangent", async () => {
+    tangent = true;
+    const { card } = await mountMenu();
+    clickRow(card, "Merge into parent chat");
+    expect(mergeTangentChat).toHaveBeenCalledWith("c-active");
+  });
+
+  it("is unavailable mid-turn and says what unlocks it", async () => {
+    tangent = true;
+    thinking = true;
+    const { card } = await mountMenu();
+    const btn = rowButton(card, "Merge into parent chat");
+    expect(btn.disabled).toBe(true);
+    expect(btn.querySelector(".chat-opt-hint")?.textContent).toBe(
+      "Wait for this turn to finish, then merge",
+    );
+  });
+});
+
 describe("start a tangent", () => {
   it("opens a tangent off the active chat", async () => {
     const { card } = await mountMenu();
@@ -415,7 +453,6 @@ describe("start a tangent", () => {
 });
 
 describe("set a goal", () => {
-  /** Open the goal form on the row. */
   function openForm(card: HTMLElement): HTMLFormElement {
     clickRow(card, "Set a goal");
     const form = card.querySelector<HTMLFormElement>(".chat-opt-form");
@@ -741,6 +778,6 @@ describe("initChatOptions", () => {
   it("is idempotent", async () => {
     const { card, mod } = await mountMenu();
     mod.initChatOptions();
-    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(7);
+    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(8);
   });
 });

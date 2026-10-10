@@ -17,7 +17,6 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// errForkParentUnknown is returned when the chat being forked has no record.
 var errForkParentUnknown = errors.New("the chat this tangent came from no longer exists")
 
 // errForkParentIsSelf guards forking a chat into itself, which would rebind
@@ -25,7 +24,6 @@ var errForkParentUnknown = errors.New("the chat this tangent came from no longer
 // still using.
 var errForkParentIsSelf = errors.New("a tangent cannot fork the chat it opens into")
 
-// forkPayload decodes and validates the tangent command's payload.
 func forkPayload(cmd *marotte.ClientCommand) (marotte.ForkChatCommand, error) {
 	var p marotte.ForkChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
@@ -36,16 +34,16 @@ func forkPayload(cmd *marotte.ClientCommand) (marotte.ForkChatCommand, error) {
 	if !ids.ValidChatID(string(p.ParentChatID)) || userNameTooLong(p.Title) {
 		return p, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !ValidIdent(p.OpID) {
+	if !validIdent(p.OpID) {
 		return p, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	return p, nil
 }
 
-// CmdForkChat opens a tangent off another chat and returns the chat it
+// cmdForkChat opens a tangent off another chat and returns the chat it
 // created plus the tab it opened for it. The new chat's id is minted here
 // when the envelope carries none.
-func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws Workspace, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+func cmdForkChat(ctx context.Context, bridges bridgeAccess, chats chatStore, ws Workspace, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
 	p, err := forkPayload(cmd)
 	if err != nil {
 		return nil, err
@@ -55,7 +53,7 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 	// chat must not ask KAS to fork again. A READ rather than the
 	// coordinator's resolve, because the fork round trip must not happen
 	// under the operation lock — a bridge Call has no client-side timeout.
-	chatID, replay := mem.ResolvedChat(p.OpID)
+	chatID, replay := mem.resolvedChat(p.OpID)
 	if cmd.ChatID != "" {
 		chatID, replay = cmd.ChatID, false
 	}
@@ -124,7 +122,7 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 // RE-READ record, plus whether it still names the session the fork produced: the fork binds its
 // session inside the create, so a non-empty retirement chain means that session was retired and the
 // tangent inherited nothing. It refuses nothing, and a failure does not heal itself.
-func loadForkedHistory(ctx context.Context, bridges BridgeAccess, chats ChatStore, c *marotte.Chat) (*marotte.Chat, bool) {
+func loadForkedHistory(ctx context.Context, bridges bridgeAccess, chats chatStore, c *marotte.Chat) (*marotte.Chat, bool) {
 	if c == nil || c.ACPSessionID == "" {
 		return c, false
 	}
@@ -144,15 +142,11 @@ func loadForkedHistory(ctx context.Context, bridges BridgeAccess, chats ChatStor
 	return c, c.ACPSessionID == want
 }
 
-// resumeForkedSession opens the TANGENT's own bridge, whose session/load replays
-// the fork's history. Its own bridge rather than the parent's, which is already
-// resumed: the projection is keyed by chat, so a load issued on the parent's bridge
-// would ingest the fork's history into the PARENT's transcript. It does not wait
-// for the swap: the tangent opens at once and fills when the merge announces the
-// replacement.
-func resumeForkedSession(ctx context.Context, bridges BridgeAccess, chatID marotte.ChatID, want string) {
-	// durable: a cancelled spawn takes tryLoadSession's failure branch, which
-	// DETACHES the forked session.
+// Its own bridge rather than the parent's, which is already resumed: the projection is keyed by
+// chat, so a load issued on the parent's bridge would ingest the fork's history into the PARENT's
+// transcript.
+func resumeForkedSession(ctx context.Context, bridges bridgeAccess, chatID marotte.ChatID, want string) {
+	// durable: the fork's answer reports whether the resume held, which a client leaving must not cut short.
 	bridge, err := bridges.OpenBridge(durable.Context(ctx), chatID, "")
 	if err != nil || bridge == nil {
 		slog.Warn("tangent: the forked session could not be resumed, so the tangent opens empty",
@@ -187,6 +181,8 @@ func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marott
 		ParentChat:  p.ParentChatID,
 		Init: func(c *marotte.Chat) {
 			c.Name = marotte.DefaultChatName
+			// Only a session KAS forked carries the parent link a merge resolves through.
+			c.Tangent = sessionID != ""
 			// KAS latches a tangent's fork title as the user's, so the record does too.
 			if p.Title != "" {
 				c.Name = p.Title
@@ -212,11 +208,11 @@ func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marott
 // session id, or "" when the tangent has to start fresh. Every refusal is a
 // warning and an empty string, since the caller's answer is always to open the
 // tangent without a bound session.
-func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p marotte.ForkChatCommand) string {
+func forkSession(ctx context.Context, bridges bridgeAccess, ws Workspace, p marotte.ForkChatCommand) string {
 	bridge := bridges.Bridge(p.ParentChatID)
 	if bridge == nil || bridge.SessionID() == "" {
 		// Branching needs the parent's context, so its bridge resumes on demand, the trade
-		// CmdRewindChat also takes. Empty model: the parent keeps its own.
+		// cmdRewindChat also takes. Empty model: the parent keeps its own.
 		var err error
 		bridge, err = bridges.OpenBridge(ctx, p.ParentChatID, "")
 		if err != nil || bridge == nil || bridge.SessionID() == "" {
@@ -230,7 +226,7 @@ func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p maro
 	if p.Title != "" {
 		meta["title"] = p.Title
 	}
-	resp, err := bridge.Call(ctx, marotte.MethodSessionFork, SessionParams(bridge, map[string]any{
+	resp, err := bridge.Call(ctx, marotte.MethodSessionFork, sessionParams(bridge, map[string]any{
 		"cwd":   ws.Dir,
 		"_meta": map[string]any{"kiro": meta},
 	}))

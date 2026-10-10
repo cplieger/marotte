@@ -97,7 +97,7 @@ func TestServe_RefusesATokenForADenyListedFolder(t *testing.T) {
 	folder := filepath.Join(cfg, "home", "proj")
 	write(t, filepath.Join(folder, "secret.txt"), "deny-listed-bytes")
 	f := newDenyFixture(t, root, cfg)
-	base := PathPrefix + f.h.signer.Mint(folder, f.now.Add(time.Hour)) + "/"
+	base := PathPrefix + f.h.signer.mint(folder, f.now.Add(time.Hour)) + "/"
 	if rec := f.do(http.MethodGet, base+"secret.txt", ""); rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "deny-listed-bytes") {
 		t.Errorf("GET %ssecret.txt = %d %q, want 403 without the file", base, rec.Code, rec.Body)
 	}

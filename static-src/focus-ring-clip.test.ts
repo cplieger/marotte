@@ -294,7 +294,6 @@ function codeBlock(): { clipper: HTMLElement; copy: HTMLElement; run: HTMLElemen
   return { clipper: mount(clipper), copy, run };
 }
 
-/** `.git-repo-section-header` is the button, chevron first. */
 function gitRepoSection(): { clipper: HTMLElement; head: HTMLElement } {
   const head = node("button", "git-repo-section-header", { type: "button" });
   head.append(

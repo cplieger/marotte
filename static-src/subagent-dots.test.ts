@@ -15,8 +15,6 @@ import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 
 const m = {
   painted: [] as { id: string; status: string }[],
-  /** The subagent refs the projection holds, in order, as `openSubagentRefs`
-   *  answers them. */
   refs: [] as string[],
 };
 
@@ -32,9 +30,9 @@ vi.mock("./tabs.js", () => ({
     void tabsVersion.value;
     return [...m.refs];
   }),
-  // The projection's own lookup. The fake keeps a readable id so the assertions
-  // below name something a reader can follow, and it answers ONLY for a ref the
-  // set holds — which is what makes "a closed tab is not painted" observable.
+  // The fake keeps a readable id so the assertions below name something a reader can follow, and it
+  // answers ONLY for a ref the set holds — which is what makes "a closed tab is not painted"
+  // observable.
   tabIdFor: vi.fn((_kind: string, ref: string) => (m.refs.includes(ref) ? `sub:${ref}` : "")),
   setTabStatus: vi.fn((id: string, status: string) => {
     m.painted.push({ id, status });
@@ -43,13 +41,11 @@ vi.mock("./tabs.js", () => ({
 
 const { installSubagentDotSubscriber } = await import("./subagent-dots.js");
 
-/** Bump the mocked tab set the way a committed tab mutation does. */
 function tabsChanged(): void {
   tabsVersion.value = tabsVersion.value + 1;
 }
 
-/** Let the store's microtask coalescer flush. A macrotask, so every pending
- *  microtask has drained by the time it resolves. */
+/** A macrotask, so every pending microtask has drained by the time it resolves. */
 function tick(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0));
 }

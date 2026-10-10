@@ -18,7 +18,7 @@ const CLAMP_H = "--clamp-h";
  */
 const SNAP_EPSILON = 0.5;
 
-export interface ClampOptions {
+interface ClampOptions {
   /** Lines the STYLESHEET clamps to; read here by the character fallback only. */
   readonly lines?: number;
   /** Character threshold for the no-layout guess. */
@@ -33,7 +33,7 @@ export interface ClampOptions {
   readonly setExpanded?: (on: boolean) => void;
 }
 
-export interface ClampHandle {
+interface ClampHandle {
   /** Re-decide the opener against the current text, PRESERVING an expansion. */
   sync(): void;
   /** Collapse and forget any expansion — for content that has changed. */
@@ -322,16 +322,15 @@ export function releaseClampsIn(root: HTMLElement): void {
 }
 
 /** Number of elements the shared observer watches. Test-only. */
+// deadset:ignore DS1004 -- test seam: observes the shared clamp observer's watched set
 export function clampObservationCount(): number {
   return observed.size;
 }
 
 let clampWatcher: ResizeObserver | undefined;
 
-/**
- * One observer for every clamped element. A detached element measures 0; a resize callback lands after layout and
- * before paint, so the first character guess is never painted.
- */
+/** A detached element measures 0; a resize callback lands after layout and before paint, so the
+ *  first character guess is never painted. */
 function watchClamp(text: HTMLElement): void {
   clampWatcher ??= new ResizeObserver((entries) => {
     for (const entry of entries) {

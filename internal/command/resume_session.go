@@ -16,17 +16,17 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// CmdResumeSession creates a chat bound to an existing KAS session so the
+// cmdResumeSession creates a chat bound to an existing KAS session so the
 // stored conversation can be opened, and returns the chat plus its tab.
 // The id is minted here when the envelope carries none.
-func CmdResumeSession(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+func cmdResumeSession(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.ResumeSessionCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	// The id reaches a filesystem path inside KAS and the reaper keep-list, so it is validated like
 	// a chat id.
-	if !ids.ValidSessionID(p.SessionID) || !ValidIdent(p.OpID) {
+	if !ids.ValidSessionID(p.SessionID) || !validIdent(p.OpID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	name := cmp.Or(p.Name, marotte.DefaultChatName)

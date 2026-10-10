@@ -11,8 +11,6 @@ import (
 	"github.com/cplieger/forgeapi/creds"
 )
 
-// seedStoreRecord saves a static credential for id under configDir's store, as
-// a token connect would.
 func seedStoreRecord(t *testing.T, configDir, id, account string) {
 	t.Helper()
 	store, reason := openCredentialStore(configDir)

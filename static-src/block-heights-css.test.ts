@@ -108,7 +108,6 @@ function toolCard(): HTMLElement {
   return card;
 }
 
-/** A settled delegate card, from its real builder. */
 function subagentCard(i: number): HTMLElement {
   const sa = buildSubagentCard(`review-${String(i)}`, "completed", {
     open: { href: `/chat/c-1/subagent/sub-${String(i)}`, open: () => undefined },
@@ -200,8 +199,7 @@ interface Reading {
   /** The FIRST instance's rect, which is real. Reported so a case that fails on the
    *  premise says what it was reading instead. */
   readonly realBox: number;
-  /** The premise. Both halves, because "nothing is skipped" and "everything is
-   *  skipped" are different failures. */
+  /** Both halves, because "nothing is skipped" and "everything is skipped" are different failures. */
   readonly premise: { readonly firstRendered: boolean; readonly lastSkipped: boolean };
   /** Every term the box is made of, so a red case names which one moved. */
   readonly terms: {
@@ -268,8 +266,7 @@ interface Totals {
  */
 const PREMISE_FLOOR = INSTANCES * 10;
 
-/** The estimate the premise probe substitutes. Far from every real box height here, so
- *  the shift it produces cannot be a rounding difference. */
+/** Far from every real box height here, so the shift it produces cannot be a rounding difference. */
 const PROBE_PX = 400;
 
 /**
@@ -332,8 +329,8 @@ async function readTotals(build: (i: number) => HTMLElement): Promise<Totals> {
   };
 }
 
-/** Assert one entry, premise first. The received `terms` are echoed into the expected
- *  object so a failure prints them beside the number without asserting them. */
+/** The received `terms` are echoed into the expected object so a failure prints them beside the
+ *  number without asserting them. */
 function expectShadows(r: Reading, want: number, label: string): void {
   expect(r.premise, `${label}: the last instance's contents are being skipped`).toEqual({
     firstRendered: true,
@@ -345,7 +342,6 @@ function expectShadows(r: Reading, want: number, label: string): void {
   });
 }
 
-/** Set the pointer tier the way `pointer-tier.ts` does. */
 function tier(name: "fine" | "coarse"): void {
   document.documentElement.dataset["pointer"] = name;
 }

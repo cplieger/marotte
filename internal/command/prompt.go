@@ -13,12 +13,13 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/kascap"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/runesafe/v2"
 )
 
-// validatePromptPayload parses and validates the prompt command payload.
 func validatePromptPayload(cmd *marotte.ClientCommand) (marotte.PromptCommand, int, error) {
 	var p marotte.PromptCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
@@ -43,25 +44,35 @@ func validatePromptPayload(cmd *marotte.ClientCommand) (marotte.PromptCommand, i
 	if p.MessageID == "" {
 		return p, http.StatusBadRequest, errMissingMessageID
 	}
-	if !ValidMessageID(p.MessageID) {
+	if !validMessageID(p.MessageID) {
 		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
-	if !ValidIdent(p.Model) {
+	if !validIdent(p.Model) {
 		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
+	p.DisplayText = displayLabel(p.DisplayText)
 	return p, 0, nil
 }
 
-// promptLabel is what names a chat from its first prompt: the text, or the
+const maxDisplayLabelBytes = 256
+
+// displayLabel prepares a prompt's display label: one line, control runes removed, bounded.
+func displayLabel(s string) string {
+	return strings.TrimSpace(runesafe.SanitizeSingleLineBounded(s, maxDisplayLabelBytes))
+}
+
+// promptLabel is what names a chat from its first prompt: the display label, the text, or the
 // first attachment's file name for an attachment-only prompt.
 func promptLabel(p *marotte.PromptCommand) string {
+	if p.DisplayText != "" {
+		return p.DisplayText
+	}
 	if strings.TrimSpace(p.Text) != "" || len(p.Attachments) == 0 {
 		return p.Text
 	}
 	return filepath.Base(p.Attachments[0].Path)
 }
 
-// promptRetryDelay is the one wait this package retries at.
 const promptRetryDelay = 2 * time.Second
 
 // promptReply is a session/prompt response and the read loop position it arrived at, so the local
@@ -71,9 +82,7 @@ type promptReply struct {
 	seq  uint64
 }
 
-// retry re-invokes fn up to maxAttempts more times, promptRetryDelay
-// apart, for as long as shouldRetry keeps saying yes. The delay is fixed,
-// no backoff.
+// The delay is fixed, no backoff.
 func retry(ctx context.Context, maxAttempts int, shouldRetry func(error) bool, fn func() (promptReply, error)) (promptReply, error) {
 	result, err := fn()
 	if err == nil || !shouldRetry(err) {
@@ -158,7 +167,7 @@ func turnStopBeforeStart(ctx context.Context, interrupted string) (stop marotte.
 
 // refreshRetrySession abandons the session that answered nothing: close its bridge and detach the
 // chat from it. Nothing is written: the empty turn already closed `outcome: empty`.
-func refreshRetrySession(ctx context.Context, bridges BridgeAccess, chats ChatStore, chatID marotte.ChatID) {
+func refreshRetrySession(ctx context.Context, bridges bridgeAccess, chats chatStore, chatID marotte.ChatID) {
 	bridges.CloseBridge(ctx, chatID, marotte.TurnOutcomeInterrupted)
 	if _, err := chats.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
@@ -205,7 +214,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, chatID marott
 	defer cancelRetry(nil)
 	sb2.BeginPromptCall(cancelRetry)
 	defer sb2.EndPromptCall()
-	// After BeginPromptCall: CmdCancel records its stop before it arms, so a stop this read misses
+	// After BeginPromptCall: cmdCancel records its stop before it arms, so a stop this read misses
 	// finds the prompt registered and owns it through the grace budget.
 	if roles.turnOutcome.StopRequestedAfter(chatID, emptyTurnID) {
 		slog.Info("empty turn: a stop arrived during the respawn, not retrying", "chat_id", chatID, "turn", emptyTurnID)
@@ -247,8 +256,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, chatID marott
 	roles.turnOutcome.SettleTurnOnResponse(ctx, chatID, retryTurn, reply.seq, reply.resp)
 }
 
-// supervisedDefaultSetting reads the settings-wide Supervised default
-// applied to newly auto-created chats. Fails closed to false.
+// Fails closed to false.
 func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 	var b bool
 	if !settings.FieldInto(ctx, configDir, settings.KeySupervisedDefault, &b) {
@@ -261,12 +269,11 @@ func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 // client's id, the text and the attachments, which for an image or document are
 // the only record of what was attached, since the path never reaches the text.
 func promptEntry(p *marotte.PromptCommand, resends []string) *marotte.EntryPrompt {
-	return &marotte.EntryPrompt{ID: p.MessageID, Text: p.Text, Attachments: p.Attachments, Resends: resends}
+	return &marotte.EntryPrompt{ID: p.MessageID, Text: p.Text, Label: p.DisplayText, Attachments: p.Attachments, Resends: resends}
 }
 
-// openPromptTurn appends the prompt's turn_open at admission and creates its registry record. The
-// header fallback names, models and supervises a chat with no record; an existing record is left
-// alone.
+// The header fallback names, models and supervises a chat with no record; an existing record is
+// left alone.
 func openPromptTurn(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand, l launch) (string, error) {
 	supervisedDefault := supervisedDefaultSetting(ctx, roles.workspace.ConfigDir)
 	init := func(c *marotte.Chat) {
@@ -275,14 +282,14 @@ func openPromptTurn(ctx context.Context, roles *promptRoles, chatID marotte.Chat
 		c.SupervisedMode = supervisedDefault
 	}
 	return roles.turnOutcome.OpenTurn(ctx, chatID, TurnOpen{
-		Source: marotte.TurnSourcePrompt, Prompt: promptEntry(p, l.resends), Init: init, Fence: l.fence,
+		Source: marotte.TurnSourcePrompt, Prompt: promptEntry(p, l.resends), Init: init, Fence: l.fence, Awaited: l.awaited,
 	})
 }
 
 // settleComposerOnPrompt is the header write a sent prompt owes: the draft is cleared (so a lost
 // set_draft POST cannot restore the sent text on reload) and a still-default name takes the
 // prompt's first 80 runes.
-func settleComposerOnPrompt(ctx context.Context, chats ChatStore, bus Broadcaster, chatID marotte.ChatID, p *marotte.PromptCommand) {
+func settleComposerOnPrompt(ctx context.Context, chats chatStore, bus broadcaster, chatID marotte.ChatID, p *marotte.PromptCommand) {
 	var (
 		hadComposer bool
 		cleared     marotte.ComposerState
@@ -300,7 +307,7 @@ func settleComposerOnPrompt(ctx context.Context, chats ChatStore, bus Broadcaste
 			changed = true
 		}
 		if label := promptLabel(p); c.Name == marotte.DefaultChatName && !c.NameSetByUser && label != "" {
-			name := TruncateRunes(label, 80)
+			name := truncateRunes(label, 80)
 			if name != label {
 				name += ellipsis
 			}
@@ -341,10 +348,10 @@ type promptAck struct {
 	Accepted  bool   `json:"accepted"`
 }
 
-// CmdPrompt handles the prompt command: validate → persist → admit → ack.
+// cmdPrompt handles the prompt command: validate → persist → admit → ack.
 // The turn itself runs on its own goroutine (runPromptTurn), so the POST
 // answers in the time of a disk append rather than a turn.
-func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
+func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if cmd.ChatID == "" {
 		return nil, StatusError(http.StatusBadRequest, ErrMissingChatID)
 	}
@@ -353,7 +360,7 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 		return nil, StatusError(code, vErr)
 	}
 	if strings.HasPrefix(p.Text, "!") {
-		return HandleShellInterception(ctx, roles, cmd, &p)
+		return handleShellInterception(ctx, roles, cmd, &p)
 	}
 
 	// Admission FIRST: a refused admission writes nothing, so the log never holds a turn no process
@@ -370,28 +377,34 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 // launch is how launchPrompt opens a turn. resends names the steer keys the
 // prompt carries, dequeue the queued row it takes off the header once the turn is
 // announced, fence the closed turn the open must find unsuperseded, and composer
-// whether the prompt's words were the draft.
+// whether the prompt's words were the draft. awaited sets TurnOpen.Awaited.
 type launch struct {
 	dequeue  string
 	resends  []string
 	fence    TurnFence
 	composer bool
+	awaited  bool
 }
 
 // launchPrompt opens an admitted prompt's turn and starts it, owning the
 // reservation its caller took. A refused open releases it and returns the error;
 // ErrTurnSuperseded is returned as is, for the drain to stand down on.
 func launchPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand, l launch) error {
+	_, err := startPrompt(ctx, roles, chatID, p, l)
+	return err
+}
+
+func startPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand, l launch) (string, error) {
 	turnID, err := openPromptTurn(ctx, roles, chatID, p, l)
 	if err != nil {
 		roles.admission.ReleaseTurnReservation(chatID)
 		switch {
 		case errors.Is(err, ErrTurnSuperseded):
-			return err
+			return "", err
 		case errors.Is(err, chat.ErrTombstoned):
-			return StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound)
+			return "", StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound)
 		}
-		return StatusError(http.StatusInternalServerError, err)
+		return "", StatusError(http.StatusInternalServerError, err)
 	}
 	// After OpenTurn returned, so the turn_opened frame precedes the header write
 	// that drops the row.
@@ -410,7 +423,7 @@ func launchPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID
 	roles.lifecycle.InflightAdd(1)
 	turnCtx, cancel := roles.lifecycle.TurnContext(ctx)
 	go runPromptTurn(turnCtx, cancel, roles, chatID, turnID, p)
-	return nil
+	return turnID, nil
 }
 
 // reservePromptAdmission takes the chat's admission slot for a prompt: a prompt-class holder with a
@@ -427,10 +440,8 @@ func reservePromptAdmission(ctx context.Context, roles *promptRoles, chatID maro
 	}
 }
 
-// runPromptTurn drives one admitted prompt end to end, owning the reservation
-// CmdPrompt took, the turn CmdPrompt opened, the turn context's cancel, and the
-// in-flight registration; every path out releases all four. Failures past the
-// ack are SSE-only: the POST has already answered.
+// Every path out releases all four. Failures past the ack are SSE-only: the POST has already
+// answered.
 func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *promptRoles, chatID marotte.ChatID, turnID string, p *marotte.PromptCommand) {
 	defer roles.lifecycle.InflightDone()
 	defer cancel()
@@ -498,7 +509,7 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	deliverParkedSteers(ctx, roles, chatID, turnID)
 	slog.Info("prompt", "chat_id", chatID, "len", len(p.Text))
 	start := time.Now()
-	promptParams, inlinedImage := BuildPromptParams(ctx, roles.workspace, sb, p, historyInlineImages(ctx, roles.chats, chatID))
+	promptParams, inlinedImage := buildPromptParams(ctx, roles.workspace, sb, p, historyInlineImages(ctx, roles.chats, chatID))
 	reply, err := callPromptWithRetry(ctx, sb, promptParams, chatID)
 	elapsed := time.Since(start)
 	if err != nil {
@@ -509,7 +520,7 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	}
 	slog.Info("prompt complete", "chat_id", chatID, "elapsed", elapsed)
 	if roles.auth != nil {
-		roles.auth.Record(nil)
+		roles.auth.record(nil)
 	}
 
 	// Settle this turn before deciding whether it produced nothing: the
@@ -539,9 +550,9 @@ func deliverParkedSteers(ctx context.Context, roles *promptRoles, chatID marotte
 		return
 	}
 	defer unlock()
-	ResolveEnds(ctx, roles, chatID, math.MaxUint64)
+	resolveEnds(ctx, roles, chatID, math.MaxUint64)
 	if roles.jobs.NeedsPostLoadClear(chatID) {
-		cleared, landed := clearSteerBuffer(ctx, roles, chatID)
+		cleared, landed := clearSteerBuffer(ctx, roles.steerTarget(chatID))
 		roles.jobs.PostLoadCleared(chatID, cleared, landed)
 	}
 	deliverUnread(ctx, roles, chatID, turnID)
@@ -569,14 +580,14 @@ func deliverUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatI
 // historyInlineImages counts the images KAS still holds inline for this chat (image attachments
 // after the compaction watermark), bounding how many more this prompt may inline. An unreadable
 // history answers the cap.
-func historyInlineImages(ctx context.Context, chats ChatStore, chatID marotte.ChatID) int {
+func historyInlineImages(ctx context.Context, chats chatStore, chatID marotte.ChatID) int {
 	c, ok := chats.Get(ctx, chatID)
 	if !ok {
-		return MaxHistoryInlineImages
+		return maxHistoryInlineImages
 	}
 	paths, err := chats.PromptAttachmentPaths(ctx, chatID, c.CompactionWatermark)
 	if err != nil {
-		return MaxHistoryInlineImages
+		return maxHistoryInlineImages
 	}
 	count := 0
 	for _, p := range paths {
@@ -607,7 +618,7 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID marotte
 	if classifyPromptFailure(err) == classAuth {
 		code = marotte.ErrCodeAuthTokenUnavailable
 		if roles.auth != nil {
-			roles.auth.Record(err)
+			roles.auth.record(err)
 		}
 	}
 	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)
@@ -622,11 +633,11 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID marotte
 		marotte.ErrorPayload{Code: code, Message: reason, TurnScoped: true}))
 }
 
-// BuildPromptParams constructs the full session/prompt parameter map and
+// buildPromptParams constructs the full session/prompt parameter map and
 // reports whether this prompt contains an inlined image.
-func BuildPromptParams(ctx context.Context, ws Workspace, sb sessionCaller, p *marotte.PromptCommand, historyImages int) (map[string]any, bool) {
+func buildPromptParams(ctx context.Context, ws Workspace, sb SessionCaller, p *marotte.PromptCommand, historyImages int) (map[string]any, bool) {
 	blocks := BuildPromptBlocks(ctx, p.Text, p.Attachments, historyImages, ws, sb)
-	params := SessionParams(sb, map[string]any{
+	params := sessionParams(sb, map[string]any{
 		marotte.KeyPrompt: blocks,
 	})
 	// The client's message id is what makes rewind addressable: revertMultiple requires a messageId
@@ -634,21 +645,20 @@ func BuildPromptParams(ctx context.Context, ws Workspace, sb sessionCaller, p *m
 	if p.MessageID != "" {
 		params["messageId"] = p.MessageID
 	}
-	if style := outputStyleSetting(ctx, ws.ConfigDir); style != settings.OutputStyleDefault {
-		params["_meta"] = map[string]any{"kiro": map[string]any{"outputStyle": style}}
+	if meta := kascap.PromptMeta(promptFacts(ctx, ws.ConfigDir, p.DisplayText)); len(meta) > 0 {
+		params["_meta"] = map[string]any{"kiro": meta}
 	}
 	return params, inlineImageBlockCount(blocks) > 0
 }
 
-// outputStyleSetting reads Output style. KAS applies a prompt-scoped style to
-// this turn only and ignores it on continuations, so it rides every prompt; the
-// default id is never sent.
-func outputStyleSetting(ctx context.Context, configDir string) string {
-	var v string
-	if configDir != "" && settings.FieldInto(ctx, configDir, settings.KeyOutputStyle, &v) && settings.ValidOutputStyle(v) {
-		return v
+// promptFacts withholds the output style when it is the default, unset or unknown.
+func promptFacts(ctx context.Context, configDir, label string) *kascap.Prompt {
+	var style string
+	read := configDir != "" && settings.FieldInto(ctx, configDir, settings.KeyOutputStyle, &style)
+	if !read || !settings.ValidOutputStyle(style) || style == settings.OutputStyleDefault {
+		style = ""
 	}
-	return settings.OutputStyleDefault
+	return &kascap.Prompt{OutputStyle: style, Label: label}
 }
 
 func promptParamsInlineImage(params map[string]any) bool {
@@ -663,8 +673,7 @@ type promptFailureClass int
 const (
 	// classFatal is the default: surface it, do not retry.
 	classFatal promptFailureClass = iota
-	// classPipeDeath is a dead subprocess. Retrying the same bridge is
-	// provably useless (readLoop closed done permanently).
+	// Retrying the same bridge is provably useless (readLoop closed done permanently).
 	classPipeDeath
 	// classBusy is the session still finishing a prior turn: a real wait.
 	classBusy
@@ -672,14 +681,13 @@ const (
 	// attempt can fix. An answered prompt is never transient: KAS may already
 	// have run it, and its own retry layers have already spent their attempts.
 	classTransient
-	// classThrottled is a backend rate limit. Not retryable here: KAS's
-	// own client already exhausted its adaptive attempts.
+	// Not retryable here: KAS's own client already exhausted its adaptive attempts.
 	classThrottled
 	// classRejected is a backend validation refusal (validationErrorNames).
 	// Non-retryable by construction: the payload is what was refused.
 	classRejected
 	// classAuth is the backend refusing the token rather than the
-	// request. CmdPrompt sends marotte.ErrCodeAuthTokenUnavailable for
+	// request. cmdPrompt sends marotte.ErrCodeAuthTokenUnavailable for
 	// it, the only code the client routes to a Sign in CTA.
 	classAuth
 )
@@ -719,7 +727,6 @@ var authErrorNames = []string{
 	"INVALID_IDC_AUTH",
 }
 
-// classifyPromptFailure maps a prompt error onto its class.
 func classifyPromptFailure(err error) promptFailureClass {
 	if err == nil {
 		return classFatal
@@ -836,9 +843,8 @@ func isImageValidationShaped(re *marotte.RPCError) bool {
 	return false
 }
 
-// promptFailureAccount decides what a failed prompt CONCLUDES (the stop), says (the prose) and
-// offers a remedy for (the kind). Only the cancel-grace timer stamps ErrCancelGraceExpired on the
-// cause, so an absent sentinel is a fault and grades `interrupted`.
+// Only the cancel-grace timer stamps ErrCancelGraceExpired on the cause, so an absent sentinel is a
+// fault and grades `interrupted`.
 func promptFailureAccount(ctx context.Context, err error, inlinedImage bool) (stop marotte.StopReason, reason string, kind marotte.FailureKind) {
 	if errors.Is(err, context.Canceled) {
 		if errors.Is(context.Cause(ctx), ErrCancelGraceExpired) {

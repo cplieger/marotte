@@ -9,7 +9,7 @@ import { onViewportChange, viewportBox, viewportMoved } from "./viewport-frame.j
 
 /** How long a press must hold, and how far it may stray meanwhile, to become a drag.
  *  A `holdMs` of 0 means no hold: travel past `slopPx` starts the drag. */
-export interface DragActivation {
+interface DragActivation {
   readonly holdMs: number;
   readonly slopPx: number;
 }
@@ -70,7 +70,7 @@ export function exceedsSlop(dx: number, dy: number, rule: DragActivation): boole
 
 /** The last position seen along the strip's axis, and when it last moved by more than
  *  REORDER_MOVE_EPS_PX. */
-export interface RestState {
+interface RestState {
   at: number | null;
   movedAt: number;
 }
@@ -86,11 +86,10 @@ export function noteRestSample(rest: RestState, pos: number, now: number): boole
   return !moved && now - rest.movedAt >= REORDER_STILL_MS;
 }
 
-/** How a drag ended. `commit` and `cancelled` both arrive on a pointer RELEASE, so
- *  both suppress the click that release would otherwise fire on the row; `tap` is a
- *  lifted hold released without travel, which is the reader's tap and activates the
- *  row; `abandoned` has no release of its own, so it suppresses nothing, or the NEXT
- *  gesture's click would be swallowed and the strip would stop answering taps. */
+/** `commit` and `cancelled` both arrive on a pointer RELEASE, so both suppress the click that
+ *  release would otherwise fire on the row; `tap` is a lifted hold released without travel, which is
+ *  the reader's tap and activates the row; `abandoned` has no release of its own, so it suppresses
+ *  nothing, or the NEXT gesture's click would be swallowed and the strip would stop answering taps. */
 type DragEnd = "commit" | "cancelled" | "tap" | "abandoned";
 
 /** A press that has not become a drag yet. ONE per controller rather than a
@@ -288,7 +287,6 @@ class TabDragController {
     this.tapCallback = fn;
   }
 
-  /** Attach drag-to-reorder behavior to a tab element. */
   attachDrag(tabEl: HTMLElement): void {
     tabEl.addEventListener("pointerdown", (e) => {
       if ((e.target as HTMLElement).closest(".tab-close") !== null) {
@@ -626,7 +624,7 @@ class TabDragController {
     }
   }
 
-  /** Hands every displaced row back to the stylesheet. Idempotent. */
+  /** Idempotent. */
   private endShift(): void {
     if (this.shiftTimer !== null) {
       clearTimeout(this.shiftTimer);
@@ -680,7 +678,6 @@ class TabDragController {
     }
   }
 
-  /** Put the strip back in the committed order, sliding the rows home. */
   private revertPreview(announceCancel: boolean): void {
     this.flipTo(() => {
       this.reproject();

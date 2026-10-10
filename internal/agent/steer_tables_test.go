@@ -24,7 +24,7 @@ func TestSteerTables_ATeardownDropsEveryLiveState(t *testing.T) {
 		}
 	})
 
-	unread := s.recs.BeginTeardown(s.chat, nil)
+	unread := s.recs.beginTeardown(s.chat, nil)
 
 	var got []string
 	for _, p := range unread {
@@ -54,7 +54,7 @@ func TestSteerTables_OnlyTheOwnTurnsEndClosesTheChannel(t *testing.T) {
 					end = "t-1"
 				}
 
-				s.recs.TurnEnded(s.chat, command.SteerTurnEnd{TurnID: end, Source: marotte.TurnSourcePrompt})
+				s.recs.turnEnded(s.chat, command.SteerTurnEnd{TurnID: end, Source: marotte.TurnSourcePrompt})
 
 				want := c
 				if own {

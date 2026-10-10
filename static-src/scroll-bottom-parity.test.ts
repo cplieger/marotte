@@ -133,9 +133,8 @@ function styles(el: Element): Record<string, string> {
   return Object.fromEntries(ALIGNED.map((p) => [p, cs.getPropertyValue(p)]));
 }
 
-/** A token in PX. An unregistered custom property's computed value is its own token stream, so
- *  reading it back answers `1.5rem`; assigning it to a real length property is what absolutizes
- *  it. */
+/** An unregistered custom property's computed value is its own token stream, so reading it back
+ *  answers `1.5rem`; assigning it to a real length property is what absolutizes it. */
 function tokenPx(host: HTMLElement, token: string): number {
   const probe = document.createElement("span");
   probe.style.cssText = `position:absolute;visibility:hidden;block-size:var(${token})`;
@@ -145,8 +144,8 @@ function tokenPx(host: HTMLElement, token: string): number {
   return px;
 }
 
-/** Two used values agree to the pixel. `toBeCloseTo`'s second argument is a digit count rather
- *  than a tolerance, so a 0.5 there asks for something else entirely. */
+/** `toBeCloseTo`'s second argument is a digit count rather than a tolerance, so a 0.5 there asks for
+ *  something else entirely. */
 function near(actual: number, expected: number, what: string): void {
   expect(
     Math.abs(actual - expected),

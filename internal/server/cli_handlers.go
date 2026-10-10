@@ -201,12 +201,10 @@ func (s *Server) writeKiroSetting(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// kiroSettingLocks maps a lock to the kiro-cli setting it pins.
 var kiroSettingLocks = map[string]string{
 	marotte.LockTelemetry: "telemetry.enabled",
 }
 
-// kiroSettingLock answers the lock pinning kiro-cli setting key, if any.
 func (s *Server) kiroSettingLock(key string) (marotte.GovernanceLock, bool) {
 	if s.governance == nil {
 		return marotte.GovernanceLock{}, false

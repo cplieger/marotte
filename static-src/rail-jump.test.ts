@@ -10,7 +10,7 @@ import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget
 import { makeSession } from "./__test-helpers__/model.js";
 import type * as ScrollModule from "./scroll.js";
 import type { Session, TurnState } from "./types.js";
-import type { TurnSummary } from "./turn-rail.js";
+import type { TurnSummary } from "./rail-merge.js";
 
 /** How long one scroll is given to settle before the landing is re-measured (`turn-rail.ts`
  *  PICK_SETTLE_MS), and the correction loop's landing tolerance. Hardcoded: deriving either from
@@ -23,7 +23,6 @@ const TOLERANCE_PX = 8;
 // instrument, not a fake.
 const { probe } = vi.hoisted(() => ({
   probe: {
-    /** Every absolute landing the jump asked for, with the behavior and the clock. */
     landings: [] as { px: number; behavior: string; at: number }[],
     /** When the epoch was released, which is the operation's own last act. */
     releases: [] as number[],
@@ -273,7 +272,6 @@ function suppressScrollend(): void {
   });
 }
 
-/** The rail pointed at a chat holding `n` turns, every one of them resident. */
 async function residentChat(n: number): Promise<void> {
   vi.mocked(apiGet).mockResolvedValue({
     turns: Array.from({ length: n }, (_, i) => summary(i + 1)),

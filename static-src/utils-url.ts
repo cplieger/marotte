@@ -71,7 +71,6 @@ function servedRoots(): readonly string[] {
   return root === "/" ? [`${UPLOADS_DIR}/`] : [`${root}/`, `${UPLOADS_DIR}/`];
 }
 
-/** Is this an absolute path the byte route can serve? */
 function isServedPath(path: string): boolean {
   return servedRoots().some((root) => path.startsWith(root));
 }

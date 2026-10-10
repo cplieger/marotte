@@ -21,20 +21,16 @@ type LineRange struct {
 	Turn      int    `json:"turn"`
 }
 
-// maxLineRangesPerFile caps per-file ranges.
 const maxLineRangesPerFile = 200
 
-// maxFilesPerChat caps the number of distinct file paths tracked per chat.
 const maxFilesPerChat = 500
 
-// fileHeapEntry tracks a file's last turn for heap-based eviction.
 type fileHeapEntry struct {
 	path     string
 	lastTurn int
 	index    int // heap index
 }
 
-// fileHeap implements heap.Interface for O(log n) eviction of the oldest file.
 type fileHeap []*fileHeapEntry
 
 func (h fileHeap) Len() int           { return len(h) }
@@ -52,7 +48,6 @@ func (h *fileHeap) Pop() any {
 	return e
 }
 
-// chatLineState holds per-chat line tracking data with a heap for eviction.
 type chatLineState struct {
 	ranges  map[string][]LineRange
 	entries map[string]*fileHeapEntry

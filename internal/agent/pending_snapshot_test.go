@@ -29,7 +29,6 @@ func permNeeded(chat marotte.ChatID, id int64) marotte.ServerEvent {
 	return marotte.NewEvent(marotte.EventPermissionNeeded, chat, marotte.PermissionNeededPayload{RequestID: id})
 }
 
-// snapshotKeys reduces a snapshot's items to the identities the client would hold.
 func snapshotKeys(t rapid.TB, items []json.RawMessage) []string {
 	keys := make([]string, 0, len(items))
 	for _, raw := range items {
@@ -64,9 +63,9 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 		rt := pendingFixture()
 		// A resident population to resolve from.
 		for id := int64(1); id <= 3; id++ {
-			rt.bus.pendingPerms.Add(id, permNeeded("c1", id))
+			rt.bus.pendingPerms.add(id, permNeeded("c1", id), nil)
 		}
-		rt.runs.asks.Add(askOf("c2", "wf", "a1", "n1"))
+		rt.runs.asks.add(askOf("c2", "wf", "a1", "n1"))
 		rt.bus.steers.SteerWaiting("c3", &marotte.SteerQueuedPayload{SteerID: "s1"})
 
 		addAt := rapid.IntRange(-1, 3).Draw(t, "addAfterRead")
@@ -74,18 +73,18 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 		resolveID := rapid.Int64Range(1, 3).Draw(t, "resolveID")
 		payload, stamp := rt.pendingSnapshot(func(n int) {
 			if n == addAt {
-				rt.bus.pendingPerms.Add(9, permNeeded("c1", 9))
+				rt.bus.pendingPerms.add(9, permNeeded("c1", 9), nil)
 			}
 			if n == resolveAt {
-				rt.bus.pendingPerms.TakeIfPresent("c1", resolveID)
+				rt.bus.pendingPerms.takeIfPresent("c1", resolveID)
 			}
 		})
 		// The late arms (-1) land after the snapshot, like a queued live frame.
 		if addAt == -1 {
-			rt.bus.pendingPerms.Add(9, permNeeded("c1", 9))
+			rt.bus.pendingPerms.add(9, permNeeded("c1", 9), nil)
 		}
 		if resolveAt == -1 {
-			rt.bus.pendingPerms.TakeIfPresent("c1", resolveID)
+			rt.bus.pendingPerms.takeIfPresent("c1", resolveID)
 		}
 		server, _ := rt.versions.Current(subject.KindPending, "")
 		client := snapshotKeys(t, payload.Items)
@@ -111,16 +110,16 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 // yields a false unchanged, which is why the order is normative.
 func TestPendingSnapshot_CounterLastHasAFalseUnchanged(t *testing.T) {
 	rt := pendingFixture()
-	rt.bus.pendingPerms.Add(1, permNeeded("c1", 1))
+	rt.bus.pendingPerms.add(1, permNeeded("c1", 1), nil)
 	counterLast := func(afterPerms func()) ([]marotte.ServerEvent, string) {
-		events := rt.bus.pendingPerms.List("")
+		events := rt.bus.pendingPerms.list("")
 		afterPerms()
-		events = append(events, rt.runs.asks.List("")...)
-		events = append(events, rt.bus.steers.List("")...)
+		events = append(events, rt.runs.asks.list("")...)
+		events = append(events, rt.bus.steers.list("")...)
 		version, _ := rt.versions.Current(subject.KindPending, "")
 		return events, version
 	}
-	events, version := counterLast(func() { rt.bus.pendingPerms.Add(2, permNeeded("c1", 2)) })
+	events, version := counterLast(func() { rt.bus.pendingPerms.add(2, permNeeded("c1", 2), nil) })
 	server, _ := rt.versions.Current(subject.KindPending, "")
 	if version != server {
 		t.Fatalf("counter-last stamp %q != server %q; the demonstration needs them equal", version, server)
@@ -129,7 +128,7 @@ func TestPendingSnapshot_CounterLastHasAFalseUnchanged(t *testing.T) {
 		t.Fatalf("counter-last snapshot holds %d items; the demonstration needs the added item missing", len(events))
 	}
 	// One item at the server's version: the false unchanged.
-	if got := len(rt.bus.pendingPerms.List("")); got != 2 {
+	if got := len(rt.bus.pendingPerms.list("")); got != 2 {
 		t.Fatalf("server holds %d permissions, want 2", got)
 	}
 }

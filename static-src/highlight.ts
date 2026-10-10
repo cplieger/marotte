@@ -192,6 +192,44 @@ export function highlightByLang(code: string, lang: string): string {
   return escText(code);
 }
 
+/** The token classes a run can carry, indexed by `HighlightRuns.kinds`. */
+export const RUN_CLASSES = ["keyword", "string", "comment", "number", "punctuation"] as const;
+
+/** A file's highlighted tokens as offsets into its text, plain-text tokens omitted, so a row
+ *  renderer can build spans for any slice without parsing markup. */
+export interface HighlightRuns {
+  readonly starts: Int32Array;
+  readonly ends: Int32Array;
+  /** An index into RUN_CLASSES per run. */
+  readonly kinds: Uint8Array;
+}
+
+/** Tokenize `code` once by its filename's language; null for a language with no highlighting. */
+export function highlightRuns(code: string, filename: string): HighlightRuns | null {
+  const lang = detectLang(filename);
+  if (!tokenizable(lang)) {
+    return null;
+  }
+  const starts: number[] = [];
+  const ends: number[] = [];
+  const kinds: number[] = [];
+  let at = 0;
+  for (const t of tokenize(code, lang)) {
+    const end = at + t.value.length;
+    if (t.type !== "text") {
+      starts.push(at);
+      ends.push(end);
+      kinds.push(RUN_CLASSES.indexOf(t.type));
+    }
+    at = end;
+  }
+  return {
+    starts: Int32Array.from(starts),
+    ends: Int32Array.from(ends),
+    kinds: Uint8Array.from(kinds),
+  };
+}
+
 /** Highlight source code by filename (extension-based language detection). */
 export function highlight(code: string, filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";

@@ -4,6 +4,7 @@
 
 import { el } from "@cplieger/reactive";
 import { attachClamp, releaseClampsIn } from "../clamp-text.js";
+import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN } from "../icons.js";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
@@ -11,7 +12,10 @@ import { formatElapsed } from "../strings.js";
 import {
   counters,
   currentWork,
+  elapsed,
+  isWork,
   window as execWindow,
+  workNodes,
   type ExecNode,
   type ExecRun,
 } from "./model.js";
@@ -25,7 +29,7 @@ import {
   type EmptyNote,
 } from "./detail.js";
 
-export interface ExecPageOpts {
+interface ExecPageOpts {
   /** What a node with a transcript host but no content yet should say; the
    *  consumer's call (a workflow run has three reasons, a subagent tab its own). */
   emptyNote: EmptyNote;
@@ -41,11 +45,21 @@ export interface ExecPageOpts {
    *  passes the agent hexagon. */
   icon?: string;
   /** Fired when the node the DETAIL PANE is showing changes, or when that node's
-   *  state moves — the seam a consumer arms an on-demand fetch on, and the only way
-   *  to learn which node is shown (`emptyNote`/`emptyAction` run on every render and
-   *  must stay pure). The STATE half is required because `select()` PINS the
-   *  selection: a path-only guard never re-fires for a step clicked while running. */
+   *  state moves — the seam a consumer arms an on-demand fetch on (`emptyNote`/`emptyAction`
+   *  run on every render and must stay pure). The STATE half is required because `select()`
+   *  PINS the selection: a path-only guard never re-fires for a step clicked while running. */
   onShowNode?: (node: ExecNode | undefined) => void;
+  /** Fired after every repaint with the selected node as that render built it, so a consumer keeps no
+   *  copy whose fields (`verb` among them) can go stale between `onShowNode` calls. */
+  onSelect?: (node: ExecNode | undefined) => void;
+  /** Where the timeline, the step tree and (once the execution ends) the results go, as one-row
+   *  accordion boxes, leaving the page to the selected node. Absent keeps them on the page. */
+  dock?: HTMLElement;
+  /** How the page picks a node without a click. `attention` (the default) opens the one that wants
+   *  something. `newest` keeps the most recently started step selected, switching when a newer one
+   *  starts; a click holds until then, and a container click picks its newest step, so a step is
+   *  always selected. */
+  follow?: "attention" | "newest";
 }
 
 /** The instructions clamp: the line count the STYLESHEET clamps to, plus the
@@ -79,6 +93,12 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   const inputs = el("dl", { className: "ev-inputs" });
   const alert = el("div", {
     className: "ev-alert",
+    role: "status",
+    "aria-live": "polite",
+    hidden: true,
+  });
+  const notice = el("p", {
+    className: "ev-alert ev-notice",
     role: "status",
     "aria-live": "polite",
     hidden: true,
@@ -139,17 +159,45 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   );
   const results = el("div", { className: "ev-results", hidden: true }, resultsHead, resultsBody);
 
+  const dock = opts.dock === undefined ? undefined : buildDock(opts.dock);
   // Results sit BELOW the panes: the region toggles as the reader clicks between steps, and above
-  // them its `hidden` flip moved the tree and detail under the pointer.
-  const root = el("div", { className: "ev-page" }, head, alert, timeline.root, panes, results);
+  // them its `hidden` flip moved the tree and detail under the pointer. Docked, the page keeps the
+  // detail alone and the dock boxes hold the rest.
+  const root =
+    dock === undefined
+      ? el("div", { className: "ev-page" }, head, alert, notice, timeline.root, panes, results)
+      : el("div", { className: "ev-page ev-page-docked" }, head, alert, notice, panes);
+  if (dock !== undefined) {
+    dock.steps.body.append(treePane);
+    dock.timeline.body.append(timeline.root, dock.timelineEmpty);
+    dock.results.body.append(results, dock.resultsEmpty);
+  }
 
   let current: ExecRun | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
+  const follow = opts.follow ?? "attention";
+  let seenGen = 0;
+
+  function advance(node: ExecNode | undefined): boolean {
+    if (node?.startGen === undefined || node.startGen <= seenGen) {
+      return false;
+    }
+    seenGen = node.startGen;
+    return true;
+  }
 
   function select(path: string): void {
     userPicked = true;
-    selected = path;
+    selected = follow === "newest" && current !== undefined ? stepFor(current, path) : path;
     repaint();
+  }
+
+  function stepFor(run: ExecRun, path: string): string {
+    const node = nodeAt(run.nodes, path);
+    if (node === undefined || isWork(node)) {
+      return path;
+    }
+    return (newestStarted(node.children) ?? currentWork([node])[0])?.path ?? path;
   }
 
   /** The node the page opens on: the work node of the current pass (`currentWork`) that wants
@@ -171,6 +219,20 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     return best.path;
   }
 
+  /** The newest-follow choice: a newer start moves the selection and ends a pick; otherwise a pick
+   *  holds, and with none the newest started step (else the first) is shown. */
+  function followNewest(run: ExecRun): string {
+    const newest = newestStarted(run.nodes);
+    if (newest !== undefined && advance(newest)) {
+      userPicked = false;
+      return newest.path;
+    }
+    if (userPicked && nodeAt(run.nodes, selected) !== undefined) {
+      return stepFor(run, selected);
+    }
+    return newest?.path ?? currentWork(run.nodes)[0]?.path ?? "";
+  }
+
   function repaint(): void {
     const run = current;
     if (run === undefined) {
@@ -179,19 +241,31 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     // Degrades by content: a tree of one row is not navigation, and a timeline
     // of one bar says nothing the header's elapsed does not. Structural regions
     // appear only when there is structure (more than one root, or any node with
-    // children).
-    const structural = run.nodes.length > 1 || run.nodes.some((n) => n.children.length > 0);
+    // children). Docked, the tree is the run's step list and always shows.
+    const structural =
+      dock !== undefined || run.nodes.length > 1 || run.nodes.some((n) => n.children.length > 0);
     panes.classList.toggle("ev-panes-flat", !structural);
+    // Docked, the tree is in a box: one column, and the detail keeps its name row, because the
+    // Steps box is navigation and the row says which step it picked.
+    panes.classList.toggle("ev-panes-docked", dock !== undefined);
     treePane.hidden = !structural;
     if (structural) {
       tree.render(run.nodes, selected);
     }
     timeline.render(run.nodes, selected, run.live);
+    if (dock !== undefined) {
+      dock.paint(run);
+    }
     const node = nodeAt(run.nodes, selected);
     detail.render(node);
     // In `repaint` rather than in `render`, because the region is the SELECTED node's:
     // a selection change is a change of subject, and only this path runs on one.
     renderResults(node);
+    if (dock !== undefined) {
+      dock.results.box.hidden = run.live;
+      dock.resultsEmpty.hidden = !results.hidden;
+      dock.resultsEmpty.textContent = node === undefined ? "" : `No results from ${node.label}.`;
+    }
     // AFTER the pane, so a synchronous consumer finds its host created. Guarded on PATH and STATE:
     // `repaint` runs per invalidation, and a path-only guard misses a node settling in place.
     const path = node?.path ?? "";
@@ -201,6 +275,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       shownState = state;
       opts.onShowNode?.(node);
     }
+    opts.onSelect?.(node);
   }
 
   /** The header's instructions list, rebuilt only when the SET changed. The signature
@@ -317,6 +392,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
         tree.tick();
         detail.tick();
         timeline.tick(run.nodes, selected, run.live);
+        dock?.paint(run);
         const win = execWindow(run.nodes, run.live);
         clock.textContent = win === undefined ? "" : formatElapsed(win.span);
       }, 1000);
@@ -360,6 +436,11 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
         alert.dataset["kind"] = run.alert.kind;
         alert.textContent = run.alert.text;
       }
+      notice.hidden = run.notice === undefined;
+      if (run.notice !== undefined) {
+        notice.dataset["kind"] = run.notice.failed ? "failed" : "stopped";
+        notice.textContent = run.notice.text;
+      }
 
       // Re-inserted only when it is a DIFFERENT row. `replaceChildren` with a node
       // that is already the host's only child still removes and re-adds it, which
@@ -388,8 +469,12 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
         focused = run.focus;
         selected = run.focus;
         userPicked = true;
+        // A door's pick is the reader's, so the start already under way does not undo it.
+        advance(newestStarted(run.nodes));
       }
-      if (!userPicked || nodeAt(run.nodes, selected) === undefined) {
+      if (follow === "newest") {
+        selected = followNewest(run);
+      } else if (!userPicked || nodeAt(run.nodes, selected) === undefined) {
         selected = autoSelect(run);
       }
       repaint();
@@ -400,6 +485,96 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     },
     dispose() {
       setClock(false);
+      dock?.dispose();
+    },
+  };
+}
+
+/** The work node with the largest `startGen`; one carrying none has not started. */
+function newestStarted(nodes: readonly ExecNode[]): ExecNode | undefined {
+  let best: ExecNode | undefined;
+  for (const n of workNodes(nodes)) {
+    if (n.startGen !== undefined && (best?.startGen === undefined || n.startGen > best.startGen)) {
+      best = n;
+    }
+  }
+  return best;
+}
+
+interface DockBox {
+  readonly box: HTMLDetailsElement;
+  readonly body: HTMLElement;
+  readonly latest: HTMLElement;
+  readonly dur: HTMLElement;
+}
+
+interface Dock {
+  readonly timeline: DockBox;
+  readonly steps: DockBox;
+  readonly results: DockBox;
+  readonly timelineEmpty: HTMLElement;
+  readonly resultsEmpty: HTMLElement;
+  paint(run: ExecRun): void;
+  dispose(): void;
+}
+
+function buildDock(host: HTMLElement): Dock {
+  const mk = (key: string, title: string): DockBox => {
+    const latest = el("span", { className: "ev-box-latest" });
+    const dur = el("span", { className: "ev-box-dur" });
+    const summary = el(
+      "summary",
+      { className: "ev-box-head" },
+      el("span", { className: "ev-box-twist", "aria-hidden": "true" }, chevronEl()),
+      el("span", { className: "ev-box-title" }, title),
+      latest,
+      dur,
+    );
+    const body = el("div", { className: "ev-box-body" });
+    const box = el(
+      "details",
+      { className: "ev-box", "data-box": key },
+      summary,
+      body,
+    ) as HTMLDetailsElement;
+    box.name = "ev-dock";
+    return { box, body, latest, dur };
+  };
+  const timeline = mk("timeline", "Timeline");
+  const steps = mk("steps", "Steps");
+  const results = mk("results", "Results");
+  results.box.hidden = true;
+  const timelineEmpty = el(
+    "p",
+    { className: "ev-box-empty" },
+    "The timeline appears once two steps have run.",
+  );
+  const resultsEmpty = el("p", { className: "ev-box-empty" });
+  host.replaceChildren(timeline.box, steps.box, results.box);
+  return {
+    timeline,
+    steps,
+    results,
+    timelineEmpty,
+    resultsEmpty,
+    paint(run) {
+      const newest = newestStarted(run.nodes);
+      const ms = newest === undefined ? 0 : elapsed(newest.start, newest.end);
+      const label = newest?.label ?? "";
+      const time = ms > 0 ? formatElapsed(ms) : "";
+      for (const b of [timeline, steps, results]) {
+        if (b.latest.textContent !== label) {
+          b.latest.textContent = label;
+        }
+        if (b.dur.textContent !== time) {
+          b.dur.textContent = time;
+        }
+      }
+      const charted = workNodes(run.nodes).filter((n) => n.start !== undefined).length >= 2;
+      timelineEmpty.hidden = charted;
+    },
+    dispose() {
+      host.replaceChildren();
     },
   };
 }

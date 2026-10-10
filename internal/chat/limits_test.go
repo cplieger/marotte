@@ -63,27 +63,3 @@ func TestResolveChatFileCap(t *testing.T) {
 		})
 	}
 }
-
-// TestChatFileCapReadBound pins that an unlimited cap passes the file's measured size, since 0 would refuse every non-empty
-// file.
-func TestChatFileCapReadBound(t *testing.T) {
-	cases := []struct {
-		name string
-		cap  chatFileCap
-		size int64
-		want int64
-	}{
-		{"unlimited bounds by the measured size", 0, 4096, 4096},
-		{"a negative cap is unlimited too", -1, 4096, 4096},
-		{"unlimited on an empty file", 0, 0, 0},
-		{"a real cap is the bound", 2048, 4096, 2048},
-		{"a real cap applies below it too", 2048, 10, 2048},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.cap.readBound(tc.size); got != tc.want {
-				t.Errorf("chatFileCap(%d).readBound(%d) = %d, want %d", tc.cap, tc.size, got, tc.want)
-			}
-		})
-	}
-}

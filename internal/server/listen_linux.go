@@ -9,8 +9,8 @@ import (
 	"github.com/cplieger/marotte/internal/liveness"
 )
 
-// tcpUserTimeout is TCP_USER_TIMEOUT (tcp(7)). Package-local because syscall
-// exports the constant on arm64 and not on amd64, and the app carries no x/sys.
+// tcpUserTimeout is TCP_USER_TIMEOUT (tcp(7)). Package-local because syscall exports the constant
+// on arm64 and not on amd64, and the app carries no x/sys.
 const tcpUserTimeout = 0x12
 
 // listenConfig returns the listener config with TCP_USER_TIMEOUT set to the alive window,

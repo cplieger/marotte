@@ -3,7 +3,7 @@ package agent
 // The replay merge: KAS's account of a chat folded into the record. The record's order is
 // the spine; nothing is sorted and no timestamp read. A projected entry the record lacks
 // hangs off its nearest paired KAS-order predecessor, so a mid-turn steer stays put.
-// SwapMerged owns the two gates.
+// swapMerged owns the two gates.
 
 import (
 	"bytes"
@@ -20,29 +20,28 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// RecordTurn is one turn as the log holds it: entries in seq order, turn_open at index 0
-// (RecordTurnsOf builds it). A Reverted turn is emitted unchanged and never paired, so no
+// recordTurn is one turn as the log holds it: entries in seq order, turn_open at index 0
+// (recordTurnsOf builds it). A Reverted turn is emitted unchanged and never paired, so no
 // replay can resurrect it.
-type RecordTurn struct {
+type recordTurn struct {
 	Entries  []marotte.Entry
 	Reverted bool
 }
 
-// MergedTurn is one merged turn: entries in write order, seq renumbered from 0, turn_open's
+// mergedTurn is one merged turn: entries in write order, seq renumbered from 0, turn_open's
 // n the turn's ordinal among surviving turns. Reverted keeps a hidden turn out of that numbering.
-type MergedTurn struct {
+type mergedTurn struct {
 	Entries  []marotte.Entry
 	Reverted bool
 }
 
-// synthesizedCloserSuffix names the turn_close appended to a turn neither side closed.
 // Derived from the turn id, not random, so a second merge of the same replay is a no-op.
 const synthesizedCloserSuffix = ":close"
 
-// RecordTurnsOf groups one log read into the merge spine, turns in the read's first-appearance
+// recordTurnsOf groups one log read into the merge spine, turns in the read's first-appearance
 // order, entries by seq, each stamped from reverted. A turn without turn_open is skipped with
 // a Warn. Never sorted by turn_open.n: a revert can reuse an ordinal.
-func RecordTurnsOf(entries []marotte.Entry, reverted map[string]struct{}) []RecordTurn {
+func recordTurnsOf(entries []marotte.Entry, reverted map[string]struct{}) []recordTurn {
 	byTurn := make(map[string][]marotte.Entry)
 	var order []string
 	for _, e := range entries {
@@ -51,7 +50,7 @@ func RecordTurnsOf(entries []marotte.Entry, reverted map[string]struct{}) []Reco
 		}
 		byTurn[e.Turn] = append(byTurn[e.Turn], e)
 	}
-	turns := make([]RecordTurn, 0, len(order))
+	turns := make([]recordTurn, 0, len(order))
 	for _, id := range order {
 		group := byTurn[id]
 		slices.SortStableFunc(group, func(a, b marotte.Entry) int {
@@ -63,7 +62,7 @@ func RecordTurnsOf(entries []marotte.Entry, reverted map[string]struct{}) []Reco
 			continue
 		}
 		_, hidden := reverted[id]
-		turns = append(turns, RecordTurn{Entries: group, Reverted: hidden})
+		turns = append(turns, recordTurn{Entries: group, Reverted: hidden})
 	}
 	return turns
 }
@@ -83,9 +82,9 @@ func turnOpenOf(entries []marotte.Entry) (marotte.EntryTurnOpen, bool) {
 	return marotte.EntryTurnOpen{}, false
 }
 
-// MergeEntries folds a replay's turns into the record's and reports whether anything moved.
+// mergeEntries folds a replay's turns into the record's and reports whether anything moved.
 // Pure. sid scopes pairing rule one: a turn_bind naming another session falls to rule two.
-func MergeEntries(record []RecordTurn, projected []translate.ProjectedTurn, sid string) (merged []MergedTurn, changed bool) {
+func mergeEntries(record []recordTurn, projected []translate.ProjectedTurn, sid string) (merged []mergedTurn, changed bool) {
 	recPartner, projPartner := pairTurns(record, projected, sid)
 	carried := carriedSteerKeys(record)
 	// An unpaired projected turn goes right after the nearest paired record turn before it in KAS
@@ -101,7 +100,7 @@ func MergeEntries(record []RecordTurn, projected []translate.ProjectedTurn, sid 
 		}
 		buckets[anchor] = append(buckets[anchor], j)
 	}
-	out := make([]MergedTurn, 0, len(record)+len(projected))
+	out := make([]mergedTurn, 0, len(record)+len(projected))
 	insert := func(j int) {
 		if turn, ok := insertedTurn(&projected[j], carried); ok {
 			out = append(out, turn)
@@ -129,7 +128,7 @@ func MergeEntries(record []RecordTurn, projected []translate.ProjectedTurn, sid 
 // carriedSteerKeys is every steer row key a record prompt or steer names in Resends, in any turn:
 // that carrier holds the row's words under no entry of the key's own, while KAS replays the row
 // at its send position.
-func carriedSteerKeys(record []RecordTurn) map[string]struct{} {
+func carriedSteerKeys(record []recordTurn) map[string]struct{} {
 	keys := make(map[string]struct{})
 	for i := range record {
 		for j := range record[i].Entries {
@@ -167,27 +166,27 @@ func carriedSteer(e *marotte.Entry, carried map[string]struct{}) bool {
 	return ok
 }
 
-// Swap is one merge swap's inputs, as a struct so the call site names every value.
-type Swap struct {
+// swapRequest is one merge swap's inputs, as a struct so the call site names every value.
+type swapRequest struct {
 	// Log is the chat's entry log; its atomic rewrite is the swap's one write.
 	Log *chat.EntryLog
 	// Header is the record beside the log: the gates read it and a moved watermark writes it.
 	Header chat.EntryHeader
 	// SessionID is the session the replay came from, turn pairing's rule-one scope.
 	SessionID string
-	// Record is the log's own account of the transcript, grouped by RecordTurnsOf.
-	Record []RecordTurn
+	// Record is the log's own account of the transcript, grouped by recordTurnsOf.
+	Record []recordTurn
 	// Snapshot is the newest turn_revert's entry id when the projection opened, or empty.
 	Snapshot string
 	// Projected is the replay's account, from EntryProjection.Turns.
 	Projected []translate.ProjectedTurn
 }
 
-// SwapMerged runs the merge's two gates and, on passing both, makes the merged transcript the
+// swapMerged runs the merge's two gates and, on passing both, makes the merged transcript the
 // log. Gate 1 is the log's own reconcile predicate (synthesized closer, empty-text steer,
 // unbound session). Gate 2 is the newest turn_revert's id, so a replay predating a rewind
 // cannot hand reverted turns back. A failed gate changes nothing; a revert under it Warns.
-func SwapMerged(ctx context.Context, s *Swap) (bool, error) {
+func swapMerged(ctx context.Context, s *swapRequest) (bool, error) {
 	header, err := s.Header.Read(ctx)
 	if err != nil {
 		return false, err
@@ -204,7 +203,7 @@ func SwapMerged(ctx context.Context, s *Swap) (bool, error) {
 	}
 	// Read off the predicate that decided gate 1, so the records clear exactly what it answered.
 	turns, session := s.Log.ReconcileTargets()
-	merged, changed := MergeEntries(s.Record, s.Projected, s.SessionID)
+	merged, changed := mergeEntries(s.Record, s.Projected, s.SessionID)
 	if !changed {
 		// Nothing to add: the clearing records are the whole write, or every resume re-runs the merge.
 		// Nothing is broadcast; no client's transcript moved.
@@ -226,8 +225,7 @@ func SwapMerged(ctx context.Context, s *Swap) (bool, error) {
 	return true, nil
 }
 
-// clearReconcileSignals writes one reconciled record per signal looked at, making a no-op swap
-// final. A failure is returned: swallowing it recreates the loop.
+// A failure is returned: swallowing it recreates the loop.
 func clearReconcileSignals(ctx context.Context, log *chat.EntryLog, turns []string, session string) error {
 	for _, turn := range turns {
 		if _, _, err := log.AppendReconciled(ctx, marotte.EntryReconciled{Turn: turn}); err != nil {
@@ -246,7 +244,7 @@ func clearReconcileSignals(ctx context.Context, log *chat.EntryLog, turns []stri
 // insertReconciled files the signal-stopping records into the merged turns, in the one Rewrite
 // (an extra append could fail with the signal still armed). Clearers are computed over the
 // MERGED entries, since the merge can settle a signal itself. Reverted turns are skipped.
-func insertReconciled(turns []MergedTurn, session string) {
+func insertReconciled(turns []mergedTurn, session string) {
 	if len(turns) == 0 {
 		return
 	}
@@ -272,8 +270,7 @@ func insertReconciled(turns []MergedTurn, session string) {
 	}
 }
 
-// lastSurviving is the newest merged turn the surviving view holds.
-func lastSurviving(turns []MergedTurn) (*MergedTurn, bool) {
+func lastSurviving(turns []mergedTurn) (*mergedTurn, bool) {
 	for i := len(turns) - 1; i >= 0; i-- {
 		if !turns[i].Reverted {
 			return &turns[i], true
@@ -284,7 +281,7 @@ func lastSurviving(turns []MergedTurn) (*MergedTurn, bool) {
 
 // mergedClearers reads the merged list's reconcile answers: turns a reconciled record names, and
 // whether the header's session is adopted.
-func mergedClearers(turns []MergedTurn, session string) (recorded map[string]struct{}, sessionKnown bool) {
+func mergedClearers(turns []mergedTurn, session string) (recorded map[string]struct{}, sessionKnown bool) {
 	recorded = make(map[string]struct{})
 	for i := range turns {
 		for j := range turns[i].Entries {
@@ -296,7 +293,7 @@ func mergedClearers(turns []MergedTurn, session string) (recorded map[string]str
 	return recorded, sessionKnown
 }
 
-// clearerAdopts reads one entry's part of mergedClearers' answer; an undecodable payload answers nothing.
+// An undecodable payload answers nothing.
 func clearerAdopts(e *marotte.Entry, session string, recorded map[string]struct{}) bool {
 	switch e.Kind {
 	case marotte.EntryKindReconciled:
@@ -338,9 +335,8 @@ func holdsEvidenceOfLoss(entries []marotte.Entry) bool {
 	return false
 }
 
-// appendReconciled files a record at the end of a merged turn, one seq past its predecessor.
 // The seq matters despite renumbering: groupByTurn sorts by seq.
-func appendReconciled(turn *MergedTurn, rec marotte.EntryReconciled) {
+func appendReconciled(turn *mergedTurn, rec marotte.EntryReconciled) {
 	last := turn.Entries[len(turn.Entries)-1]
 	e := marotte.Entry{
 		ID:   chat.ReconciledEntryID(rec),
@@ -371,7 +367,6 @@ func recordWatermark(ctx context.Context, h chat.EntryHeader, held string, entri
 	return err
 }
 
-// turnKeys are the two keys one turn offers turn pairing.
 type turnKeys struct {
 	// prompt is rule one's key: the in-scope turn_bind's kas_message_id on the record side, the
 	// turn_open's prompt id on the projected side. Exact: KAS mints one id per prompt.
@@ -381,8 +376,7 @@ type turnKeys struct {
 	content string
 }
 
-// pairTurns applies the two pairing rules in order and answers both directions.
-func pairTurns(record []RecordTurn, projected []translate.ProjectedTurn, sid string) (recPartner, projPartner map[int]int) {
+func pairTurns(record []recordTurn, projected []translate.ProjectedTurn, sid string) (recPartner, projPartner map[int]int) {
 	recKeys := recordTurnKeys(record, sid)
 	projKeys := projectedTurnKeys(projected)
 	recPartner, projPartner = make(map[int]int), make(map[int]int)
@@ -391,8 +385,7 @@ func pairTurns(record []RecordTurn, projected []translate.ProjectedTurn, sid str
 	return recPartner, projPartner
 }
 
-// recordTurnKeys is each record turn's two keys.
-func recordTurnKeys(record []RecordTurn, sid string) []turnKeys {
+func recordTurnKeys(record []recordTurn, sid string) []turnKeys {
 	keys := make([]turnKeys, len(record))
 	for i := range record {
 		// A reverted turn gets zero keys, which excludes it from pairing.
@@ -407,7 +400,7 @@ func recordTurnKeys(record []RecordTurn, sid string) []turnKeys {
 	return keys
 }
 
-// projectedTurnKeys is each projected turn's two keys; rule one's is its turn_open prompt id.
+// Rule one's is its turn_open prompt id.
 func projectedTurnKeys(projected []translate.ProjectedTurn) []turnKeys {
 	keys := make([]turnKeys, len(projected))
 	for j := range projected {
@@ -420,8 +413,7 @@ func projectedTurnKeys(projected []translate.ProjectedTurn) []turnKeys {
 	return keys
 }
 
-// pairOnKey pairs on one key, skipping already-paired turns. A duplicate projected key pairs
-// only the first; inserting is the recoverable answer.
+// A duplicate projected key pairs only the first; inserting is the recoverable answer.
 func pairOnKey(recKeys, projKeys []turnKeys, recPartner, projPartner map[int]int, key func(turnKeys) string) {
 	byKey := firstByKey(projKeys, key)
 	for i := range recKeys {
@@ -495,7 +487,7 @@ func firstContentKey(entries []marotte.Entry) string {
 	return ""
 }
 
-// invocationKey is a subagent invocation's delegate uuid; empty for an ordinary tool call.
+// Empty for an ordinary tool call.
 func invocationKey(e *marotte.Entry) string {
 	var call marotte.EntryToolCall
 	if json.Unmarshal(e.Payload, &call) != nil {
@@ -505,15 +497,15 @@ func invocationKey(e *marotte.Entry) string {
 }
 
 // keptTurn is an unpaired record turn, emitted as a copy: renumber writes into its slice.
-func keptTurn(rec *RecordTurn) MergedTurn {
-	return MergedTurn{Entries: slices.Clone(rec.Entries), Reverted: rec.Reverted}
+func keptTurn(rec *recordTurn) mergedTurn {
+	return mergedTurn{Entries: slices.Clone(rec.Entries), Reverted: rec.Reverted}
 }
 
-// insertedTurn is an unpaired projected turn, inserted with its generator-minted id, less the
-// steers a record carrier holds. Rule 3's stamps apply to every entry; the synthesized closer
-// lands when the replay had no turn_end. False when skipping those steers leaves a prompt-less
-// bracket pair, which would render as a blank turn.
-func insertedTurn(proj *translate.ProjectedTurn, carried map[string]struct{}) (MergedTurn, bool) {
+// The projected turn is inserted with its generator-minted id, less the steers a record carrier
+// holds. Rule 3's stamps apply to every entry; the synthesized closer lands when the replay had no
+// turn_end. False when skipping those steers leaves a prompt-less bracket pair, which would render
+// as a blank turn.
+func insertedTurn(proj *translate.ProjectedTurn, carried map[string]struct{}) (mergedTurn, bool) {
 	turn := proj.Entries[0].Turn
 	entries := make([]marotte.Entry, 0, len(proj.Entries)+1)
 	skipped, content := false, false
@@ -527,12 +519,12 @@ func insertedTurn(proj *translate.ProjectedTurn, carried map[string]struct{}) (M
 		entries = append(entries, insertedEntry(e, turn))
 	}
 	if skipped && !content {
-		return MergedTurn{}, false
+		return mergedTurn{}, false
 	}
 	if !holdsKind(entries, marotte.EntryKindTurnClose) {
 		entries = append(entries, synthesizedCloser(turn))
 	}
-	return MergedTurn{Entries: entries}, true
+	return mergedTurn{Entries: entries}, true
 }
 
 // rendersContent reports whether an entry shows anything beyond a turn's brackets: a
@@ -549,9 +541,9 @@ func rendersContent(e *marotte.Entry) bool {
 	}
 }
 
-// insertedEntry is a projected entry with no record twin. A projected-only steer is stamped
-// `dropped, restart`: marotte persists a steer at injection and names a carried one in its
-// carrier's Resends, so an id the record lacks was never read as a steer.
+// A projected-only steer is stamped `dropped, restart`: marotte persists a steer at injection and
+// names a carried one in its carrier's Resends, so an id the record lacks was never read as a
+// steer. A workflow message is recorded at its send instead, so its absence proves nothing.
 func insertedEntry(proj *marotte.Entry, turn string) marotte.Entry {
 	out := *proj
 	out.Turn = turn
@@ -562,14 +554,16 @@ func insertedEntry(proj *marotte.Entry, turn string) marotte.Entry {
 	if json.Unmarshal(out.Payload, &steer) != nil {
 		return out
 	}
+	if steer.Origin.WorkflowMessage() {
+		return out
+	}
 	steer.State = marotte.SteerStateDropped
 	steer.Reason = marotte.SteerReasonRestart
 	setPayload(&out, steer)
 	return out
 }
 
-// synthesizedCloser is the closer for a turn neither side closed; its placeholder stop reason
-// lets a later merge replace it.
+// Its placeholder stop reason lets a later merge replace it.
 func synthesizedCloser(turn string) marotte.Entry {
 	e := marotte.Entry{
 		ID:   turn + synthesizedCloserSuffix,
@@ -583,12 +577,11 @@ func synthesizedCloser(turn string) marotte.Entry {
 	return e
 }
 
-// holdsKind reports whether a turn already holds an entry of that kind.
 func holdsKind(entries []marotte.Entry, kind marotte.EntryKind) bool {
 	return slices.ContainsFunc(entries, func(e marotte.Entry) bool { return e.Kind == kind })
 }
 
-// setPayload re-marshals an entry's payload in place; a failure leaves the entry and logs.
+// A failure leaves the entry and logs.
 func setPayload(e *marotte.Entry, payload any) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -599,7 +592,6 @@ func setPayload(e *marotte.Entry, payload any) {
 	e.Payload = raw
 }
 
-// recordEntryIndex keys a record turn's entries the four ways entry pairing asks.
 type recordEntryIndex struct {
 	byID map[string]int
 	// bySay holds every segment of a say in seq order: projected S pairs with every S and S#k,
@@ -607,9 +599,21 @@ type recordEntryIndex struct {
 	bySay map[string][]int
 	// byInvocation is each subagent invocation's delegate uuid.
 	byInvocation map[string]int
+	messages     *workflowMessageIndex
+	// routed is every model_routed in seq order: neither side's frame carries an id and KAS's
+	// message is constant, so the n-th route of a paired turn is the n-th on the other side.
+	routed []int
 	// turnOpen and turnClose pair by kind: their ids are minted differently on each side.
 	turnOpen  int
 	turnClose int
+}
+
+// workflowMessageIndex is the record's workflow messages, whose KAS id never reached this process
+// at the send: by their words, and by the id a take-up named.
+type workflowMessageIndex struct {
+	byWords map[string][]int
+	// deliveredAs maps the id KAS persisted a message under to the record row's id.
+	deliveredAs map[string]string
 }
 
 func indexRecordEntries(entries []marotte.Entry) recordEntryIndex {
@@ -617,6 +621,7 @@ func indexRecordEntries(entries []marotte.Entry) recordEntryIndex {
 		byID:         make(map[string]int, len(entries)),
 		bySay:        make(map[string][]int),
 		byInvocation: make(map[string]int),
+		messages:     &workflowMessageIndex{byWords: map[string][]int{}, deliveredAs: map[string]string{}},
 		turnOpen:     -1,
 		turnClose:    -1,
 	}
@@ -626,7 +631,7 @@ func indexRecordEntries(entries []marotte.Entry) recordEntryIndex {
 	return idx
 }
 
-// add files a record entry under every key that can claim it; first wins, keeping record order.
+// First wins, keeping record order.
 func (idx *recordEntryIndex) add(e *marotte.Entry, i int) {
 	if _, dup := idx.byID[e.ID]; !dup {
 		idx.byID[e.ID] = i
@@ -640,6 +645,10 @@ func (idx *recordEntryIndex) add(e *marotte.Entry, i int) {
 		if idx.turnClose < 0 {
 			idx.turnClose = i
 		}
+	case marotte.EntryKindModelRouted:
+		idx.routed = append(idx.routed, i)
+	case marotte.EntryKindSteer, marotte.EntryKindSteerDelivered:
+		idx.messages.add(e, i)
 	case marotte.EntryKindText, marotte.EntryKindThinking:
 		say := marotte.SayIDOf(e.ID)
 		idx.bySay[say] = append(idx.bySay[say], i)
@@ -652,15 +661,56 @@ func (idx *recordEntryIndex) add(e *marotte.Entry, i int) {
 	}
 }
 
-// entryPairing is one projected entry's record twins, or none.
+func (w *workflowMessageIndex) add(e *marotte.Entry, i int) {
+	if e.Kind == marotte.EntryKindSteerDelivered {
+		var d marotte.EntrySteerDelivered
+		if json.Unmarshal(e.Payload, &d) == nil && d.KASID != "" {
+			w.deliveredAs[d.KASID] = d.SteerID
+		}
+		return
+	}
+	if !strings.HasPrefix(e.ID, marotte.WorkflowMessageIDPrefix) {
+		return
+	}
+	if text, ok := steerTextOf(e); ok {
+		w.byWords[text] = append(w.byWords[text], i)
+	}
+}
+
+// steerTwins answers the record rows a projected steer may pair with, in preference order: its own
+// id, the row a take-up named by KAS's id, else a workflow message's rows with the same words that
+// no take-up named.
+func (idx *recordEntryIndex) steerTwins(e *marotte.Entry) []int {
+	if i := indexOr(idx.byID, e.ID); i >= 0 {
+		return []int{i}
+	}
+	if row, ok := idx.messages.deliveredAs[e.ID]; ok {
+		return []int{indexOr(idx.byID, row)}
+	}
+	var steer marotte.EntrySteer
+	if json.Unmarshal(e.Payload, &steer) != nil || !steer.Origin.WorkflowMessage() {
+		return nil
+	}
+	named := make(map[int]bool, len(idx.messages.deliveredAs))
+	for _, row := range idx.messages.deliveredAs {
+		named[indexOr(idx.byID, row)] = true
+	}
+	var out []int
+	for _, i := range idx.messages.byWords[steer.Text] {
+		if !named[i] {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
 type entryPairing struct {
 	// group is every record index this entry claims, in seq order; several only for a say.
 	group []int
 }
 
-// mergeTurn folds a projected turn into its paired record turn, keeping the record's turn id.
 // An unpaired projected steer a record carrier holds is left out.
-func mergeTurn(rec *RecordTurn, proj *translate.ProjectedTurn, carried map[string]struct{}) (MergedTurn, bool) {
+func mergeTurn(rec *recordTurn, proj *translate.ProjectedTurn, carried map[string]struct{}) (mergedTurn, bool) {
 	turn := rec.Entries[0].Turn
 	idx := indexRecordEntries(rec.Entries)
 	pairing := pairEntries(rec.Entries, proj.Entries, idx)
@@ -687,11 +737,12 @@ func mergeTurn(rec *RecordTurn, proj *translate.ProjectedTurn, carried map[strin
 	warnUnpairedCompactions(turn, rec.Entries, proj.Entries, unioned, pairing)
 
 	changed := false
+	watched := watchedEnd(rec.Entries, idx.turnClose)
 	out := make([]marotte.Entry, 0, len(rec.Entries)+len(proj.Entries)+1)
 	for i := range rec.Entries {
 		emitted := rec.Entries[i]
 		if j, paired := unioned[i]; paired {
-			emitted = unionEntry(&rec.Entries[i], &proj.Entries[j], sayExcess(rec.Entries, idx, i, &proj.Entries[j]))
+			emitted = unionEntry(&rec.Entries[i], &proj.Entries[j], sayExcess(rec.Entries, &idx, i, &proj.Entries[j]), watched)
 			changed = changed || !sameEntry(&rec.Entries[i], &emitted)
 		}
 		out = append(out, emitted)
@@ -704,7 +755,18 @@ func mergeTurn(rec *RecordTurn, proj *translate.ProjectedTurn, carried map[strin
 		out = append(out, synthesizedCloser(turn))
 		changed = true
 	}
-	return MergedTurn{Entries: out, Reverted: rec.Reverted}, changed
+	return mergedTurn{Entries: out, Reverted: rec.Reverted}, changed
+}
+
+// watchedEnd reports whether the record's closer is the live process's own, not the store's
+// placeholder for a turn no process saw end.
+func watchedEnd(entries []marotte.Entry, at int) bool {
+	if at < 0 {
+		return false
+	}
+	var closer marotte.EntryTurnClose
+	return json.Unmarshal(entries[at].Payload, &closer) == nil &&
+		closer.StopReasonRaw != string(marotte.StopReasonUnterminated)
 }
 
 // pairEntries answers each projected entry's record twin, claiming each record entry once.
@@ -715,9 +777,15 @@ func pairEntries(rec, proj []marotte.Entry, idx recordEntryIndex) []entryPairing
 	}
 	// A result pairs through its call, whose twin is always known by then.
 	resultTwin := make(map[string]int, len(proj))
+	routes := 0
 	for j := range proj {
 		e := &proj[j]
 		switch e.Kind {
+		case marotte.EntryKindModelRouted:
+			if routes < len(idx.routed) {
+				c.claim(j, idx.routed[routes])
+			}
+			routes++
 		case marotte.EntryKindTurnOpen:
 			c.claim(j, idx.turnOpen)
 		case marotte.EntryKindTurnClose:
@@ -741,6 +809,8 @@ func pairEntries(rec, proj []marotte.Entry, idx recordEntryIndex) []entryPairing
 				break
 			}
 			c.claim(j, indexOr(idx.byID, e.ID))
+		case marotte.EntryKindSteer:
+			c.claimFirst(j, idx.steerTwins(e))
 		default:
 			c.claim(j, indexOr(idx.byID, e.ID))
 		}
@@ -748,10 +818,27 @@ func pairEntries(rec, proj []marotte.Entry, idx recordEntryIndex) []entryPairing
 	return c.pairing
 }
 
-// entryClaims accumulates the pairing, claiming each record entry once.
+func steerTextOf(e *marotte.Entry) (string, bool) {
+	var steer marotte.EntrySteer
+	if json.Unmarshal(e.Payload, &steer) != nil {
+		return "", false
+	}
+	return steer.Text, true
+}
+
 type entryClaims struct {
 	claimed map[int]bool
 	pairing []entryPairing
+}
+
+// claimFirst pairs projected j with the first unclaimed of the candidates, in record order.
+func (c *entryClaims) claimFirst(j int, candidates []int) {
+	for _, i := range candidates {
+		if !c.claimed[i] {
+			c.claim(j, i)
+			return
+		}
+	}
 }
 
 // claim pairs projected j with every index in group, or nothing if any is missing or taken:
@@ -771,7 +858,6 @@ func (c *entryClaims) claim(j int, group ...int) {
 	c.pairing[j].group = group
 }
 
-// indexOr is a map lookup answering -1 for a miss.
 func indexOr(m map[string]int, key string) int {
 	if i, ok := m[key]; ok {
 		return i
@@ -805,7 +891,7 @@ func warnUnpairedCompactions(turn string, rec, proj []marotte.Entry, unioned map
 
 // sayExcess is the tail a paired say's last segment gains when the projection is longer; ""
 // otherwise. Segments are never merged.
-func sayExcess(rec []marotte.Entry, idx recordEntryIndex, at int, proj *marotte.Entry) string {
+func sayExcess(rec []marotte.Entry, idx *recordEntryIndex, at int, proj *marotte.Entry) string {
 	if proj.Kind != marotte.EntryKindText && proj.Kind != marotte.EntryKindThinking {
 		return ""
 	}
@@ -831,7 +917,7 @@ func sayExcess(rec []marotte.Entry, idx recordEntryIndex, at int, proj *marotte.
 	return whole[len(held):]
 }
 
-// sayTextOf is a text or thinking entry's text; both payloads share the field.
+// Both payloads share the field.
 func sayTextOf(e *marotte.Entry) string {
 	var say marotte.EntryText
 	if json.Unmarshal(e.Payload, &say) != nil {
@@ -840,10 +926,9 @@ func sayTextOf(e *marotte.Entry) string {
 	return say.Text
 }
 
-// unionEntry merges a record entry with its projected twin. The record is the base, so new
-// payload fields survive by default; a KAS-observed fact fills an empty record field, and a
-// process-only fact stays the record's.
-func unionEntry(rec, proj *marotte.Entry, excess string) marotte.Entry {
+// The record is the base, so new payload fields survive by default; a KAS-observed fact fills an
+// empty record field, and a process-only fact stays the record's.
+func unionEntry(rec, proj *marotte.Entry, excess string, watched bool) marotte.Entry {
 	out := *rec
 	// The record's lane is the live observation and wins; a disagreement logs.
 	if out.Lane == "" {
@@ -857,7 +942,7 @@ func unionEntry(rec, proj *marotte.Entry, excess string) marotte.Entry {
 	case marotte.EntryKindText, marotte.EntryKindThinking:
 		unionSay(&out, excess)
 	case marotte.EntryKindToolResult:
-		unionToolResult(&out, proj)
+		unionToolResult(&out, proj, watched)
 	case marotte.EntryKindSteer:
 		unionSteer(&out, proj)
 	case marotte.EntryKindCompaction:
@@ -869,7 +954,6 @@ func unionEntry(rec, proj *marotte.Entry, excess string) marotte.Entry {
 	return out
 }
 
-// unionSay appends a longer projected say's excess onto the record's last segment.
 func unionSay(out *marotte.Entry, excess string) {
 	if excess == "" {
 		return
@@ -882,14 +966,15 @@ func unionSay(out *marotte.Entry, excess string) {
 	setPayload(out, marotte.EntryText{Text: text})
 }
 
-// unionToolResult merges the settled value of one tool call.
-func unionToolResult(out, proj *marotte.Entry) {
+func unionToolResult(out, proj *marotte.Entry, watched bool) {
 	var r, p marotte.EntryToolResult
 	if json.Unmarshal(out.Payload, &r) != nil || json.Unmarshal(proj.Payload, &p) != nil {
 		return
 	}
-	// The record's `aborted` is a close-time inference; KAS's terminal status replaces it.
-	if r.Status == marotte.ToolAborted && p.Status.Terminal() {
+	// The record's `aborted` is the process seeing the call stopped or left unsettled. KAS's
+	// `completed` replaces it; its `failed` (Canceled maps there too) only where no process
+	// watched the turn end.
+	if r.Status == marotte.ToolAborted && (p.Status == marotte.ToolCompleted || (!watched && p.Status.Terminal())) {
 		r.Status = p.Status
 	}
 	// Filled only where the record states nothing.
@@ -928,7 +1013,7 @@ func unionSteer(out, proj *marotte.Entry) {
 	setPayload(out, r)
 }
 
-// unionCompaction fills a summary the record lost; both ids paired on the same bytes.
+// Both ids paired on the same bytes.
 func unionCompaction(out, proj *marotte.Entry) {
 	var r, p marotte.EntryCompaction
 	if json.Unmarshal(out.Payload, &r) != nil || json.Unmarshal(proj.Payload, &p) != nil {
@@ -965,18 +1050,18 @@ func unionTurnClose(out, proj *marotte.Entry) {
 	r.RequestIDs = p.RequestIDs
 	r.Recoveries = p.Recoveries
 	r.Steering = p.Steering
+	r.ContextBreakdown = p.ContextBreakdown
 	setPayload(out, r)
 }
 
-// sameEntry reports whether the merge left a record entry alone; seq excluded, payloads compared through the encoder.
+// seq excluded, payloads compared through the encoder.
 func sameEntry(rec, out *marotte.Entry) bool {
 	return rec.ID == out.ID && rec.Turn == out.Turn && rec.Lane == out.Lane &&
 		rec.Kind == out.Kind && rec.Ts == out.Ts && sameRawJSON(rec.Payload, out.Payload)
 }
 
-// renumber assigns seq from 0 per turn and turn_open n from 1 over surviving turns, reporting
-// any move. A hidden turn keeps its n but gets seq like every turn.
-func renumber(turns []MergedTurn) bool {
+// A hidden turn keeps its n but gets seq like every turn.
+func renumber(turns []mergedTurn) bool {
 	moved := false
 	surviving := uint64(0)
 	for i := range turns {
@@ -997,7 +1082,7 @@ func renumber(turns []MergedTurn) bool {
 	return moved
 }
 
-// renumberOpen sets a turn_open's n, reporting a move; anything else is left alone.
+// Anything else is left alone.
 func renumberOpen(e *marotte.Entry, n uint64) bool {
 	if e.Kind != marotte.EntryKindTurnOpen {
 		return false

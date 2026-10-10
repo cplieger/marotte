@@ -23,9 +23,8 @@ const displayErrorMCPConnection = "mcp_connection_error"
 // maxDisplayErrorBytes bounds the latched message, which becomes a turn reason.
 const maxDisplayErrorBytes = 2048
 
-// handleDisplayError latches the engine's account on the chat's own open turn.
-// It is not a verdict: a retried attempt or a sub-agent fault on a turn that
-// recovers writes one too, so the close reads it only for a broken outcome.
+// It is not a verdict: a retried attempt or a sub-agent fault on a turn that recovers writes one
+// too, so the close reads it only for a broken outcome.
 func (t *Translator) handleDisplayError(chatID marotte.ChatID, d *displayErrorBlock) {
 	if d.ErrorType == displayErrorMCPConnection {
 		slog.Debug("display_error: MCP connect failure, reported by _kiro/mcp/status", "chat_id", chatID)

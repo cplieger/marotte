@@ -13,6 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // TestUnattendedBudget_MatchesTheDisclaimer pins a cross-language constant: the schedule form promises the
@@ -116,11 +117,11 @@ func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
 	}
 
 	inner := 0
-	noteAsk := func(context.Context, marotte.ChatID, *marotte.RPCResponse) { inner++ }
+	noteAsk := func(context.Context, marotte.ChatID, translate.AskOrigin, *marotte.RPCResponse) { inner++ }
 	wrapped := rs.permissionWithUnattendedFloor(noteAsk)
 
 	// A permission frame with no id.
-	wrapped(t.Context(), runChatID("wf_1"), &marotte.RPCResponse{
+	wrapped(t.Context(), runChatID("wf_1"), nil, &marotte.RPCResponse{
 		Method: marotte.MethodRequestPermission,
 		ID:     nil,
 	})
@@ -297,10 +298,10 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 			h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
 
 			id := int64(90210)
-			h.bus.pendingPerms.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
-				marotte.PermissionNeededPayload{RequestID: id}))
+			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+				marotte.PermissionNeededPayload{RequestID: id}), br)
 
-			h.runs.answerUnattended(chatID, id, "sched-1", "execute_bash",
+			h.runs.answerUnattended(chatID, br, id, "sched-1", "execute_bash",
 				[]byte(`{"options":`+tc.options+`}`))
 
 			select {
@@ -354,10 +355,10 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
 
 	id := int64(4242)
-	h.bus.pendingPerms.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
-		marotte.PermissionNeededPayload{RequestID: id}))
+	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+		marotte.PermissionNeededPayload{RequestID: id}), br)
 
-	h.runs.answerUnattended(chatID, id, "sched-1", "execute_bash", []byte(`{
+	h.runs.answerUnattended(chatID, br, id, "sched-1", "execute_bash", []byte(`{
 		"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}],
 		"_meta":{"kiro":{"consent":{"scope":"administration"}}}}`))
 
@@ -399,10 +400,11 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	h.runs.schedules = st
 
 	id := int64(90211)
-	h.bus.pendingPerms.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
-		marotte.PermissionNeededPayload{RequestID: id}))
+	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+		marotte.PermissionNeededPayload{RequestID: id}), br)
+	logs := captureLogs(t)
 
-	h.runs.answerUnattended(chatID, id, "sched-1", "execute_bash",
+	h.runs.answerUnattended(chatID, br, id, "sched-1", "execute_bash",
 		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
 
 	rows := st.List()
@@ -413,6 +415,54 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	if rows[0].LastStatus != schedule.StatusFailed || rows[0].LastReason != wantReason {
 		t.Errorf("answerUnattended(deny) row = (%q, %q), want (%q, %q)",
 			rows[0].LastStatus, rows[0].LastReason, schedule.StatusFailed, wantReason)
+	}
+	// The alert rule's signal: the fixed message carrying the refused outcome.
+	if got := logs.String(); !strings.Contains(got, `"msg":"`+logMsgUnattendedPermission+`"`) ||
+		!strings.Contains(got, `"outcome":"refused"`) {
+		t.Errorf("answerUnattended(deny) logged %s, want %q with outcome=refused", got, logMsgUnattendedPermission)
+	}
+}
+
+// An ask whose run bridge ended while the floor's refusal was being written was refused by nobody, so the
+// schedule row is not failed with a "nobody watching" reason that never reached the run.
+func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *testing.T) {
+	h, _ := hubForFSTest(t, t.TempDir())
+	chatID := runChatID("wf_deny")
+	br := &duringWriteBridge{fakeBridge: newFakeBridge()}
+	br.during = func() { h.bus.endAsksOf(br) }
+	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+
+	st, err := schedule.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	entry := schedule.Entry{
+		ID: "sched-1", Source: "bundled://nightly", Enabled: true,
+		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+	}
+	if pErr := st.Put(t.Context(), &entry); pErr != nil {
+		t.Fatalf("Put schedule: %v", pErr)
+	}
+	h.runs.schedules = st
+
+	id := int64(90212)
+	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+		marotte.PermissionNeededPayload{RequestID: id}), br)
+	logs := captureLogs(t)
+
+	h.runs.answerUnattended(chatID, br, id, "sched-1", "execute_bash",
+		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
+
+	rows := st.List()
+	if len(rows) != 1 {
+		t.Fatalf("the schedule store holds %d rows, want 1", len(rows))
+	}
+	if rows[0].LastStatus != "" || rows[0].LastReason != "" {
+		t.Errorf("answerUnattended(deny, withdrawn) row = (%q, %q), want it untouched", rows[0].LastStatus, rows[0].LastReason)
+	}
+	// An alert rule keys on this message: a refusal that reached nobody must not page as one.
+	if got := logs.String(); strings.Contains(got, logMsgUnattendedPermission) {
+		t.Errorf("answerUnattended(deny, withdrawn) logged %s, want no %q line", got, logMsgUnattendedPermission)
 	}
 }
 

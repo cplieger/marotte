@@ -13,11 +13,9 @@ import (
 	"github.com/cplieger/runesafe/v2"
 )
 
-// handleCompactionCompleted appends the compaction entry and records its id as the
-// header's watermark. KAS self-reorients, so no context-recovery prompt is
-// injected. Inside a turn the entry seals every lane first and sits at the
-// position the compaction happened; between turns it joins the newest turn after
-// its close.
+// KAS self-reorients, so no context-recovery prompt is injected. Inside a turn the entry seals
+// every lane first and sits at the position the compaction happened; between turns it joins the
+// newest turn after its close.
 func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID marotte.ChatID, summaryPtr *string) {
 	summary := ""
 	if summaryPtr != nil {
@@ -58,8 +56,6 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID marot
 
 const maxCompactionDetailBytes = 200
 
-// handleCompactionFailed appends a compaction_failed entry and broadcasts a typed
-// error to the client.
 func (t *Translator) handleCompactionFailed(ctx context.Context, chatID marotte.ChatID, errMsg string) {
 	detail := cmp.Or(errMsg, "compaction failed")
 	detail = runesafe.SanitizeSingleLineBounded(detail, maxCompactionDetailBytes)

@@ -51,7 +51,6 @@ function q<T extends HTMLElement>(sel: string): T {
   return found;
 }
 
-/** Production `#app`, with the rows script would add. */
 function mountApp(tier: Tier, widened: boolean): Shell {
   document.documentElement.dataset["pointer"] = tier;
   if (widened) {
@@ -138,7 +137,6 @@ function beneath(s: Shell, x: number, y: number): Element | undefined {
   return document.elementsFromPoint(x, y).find((e) => e !== s.handle && !e.contains(s.handle));
 }
 
-/** Show one view of the chat area, as the tab projection would. */
 function show(id: string): void {
   for (const v of document.querySelectorAll("[data-tab-view]")) {
     v.classList.toggle("hidden", v.id !== id);
@@ -192,7 +190,8 @@ describe.each(CASES)("at the %s tier, widened %s", (tier, widened) => {
       const editor = q("#editor-content");
       if (view === "editor-view") {
         editor.classList.remove("hidden");
-        q("#editor-gutter").textContent = "1\n2\n3";
+        q("#editor-edit-gutter").classList.remove("hidden");
+        q(".editor-body").classList.add("is-editing");
       }
       const textStart =
         editor.getBoundingClientRect().left + parseFloat(getComputedStyle(editor).paddingLeft);
@@ -222,7 +221,8 @@ describe.each(CASES)("at the %s tier, widened %s", (tier, widened) => {
     show("editor-view");
     const editor = q("#editor-content");
     editor.classList.remove("hidden");
-    q("#editor-gutter").textContent = "1\n2\n3";
+    q("#editor-edit-gutter").classList.remove("hidden");
+    q(".editor-body").classList.add("is-editing");
     const textStart =
       editor.getBoundingClientRect().left + parseFloat(getComputedStyle(editor).paddingLeft);
     expect(textStart).toBeGreaterThanOrEqual(edge(s) + FLOOR[tier]);

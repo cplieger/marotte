@@ -124,7 +124,6 @@ export const probeForge = apiAction<ConnectionArgs, ProbeResult>({
 
 interface RepoPageArgs {
   forgeId: string;
-  /** The cursor the previous page answered. */
   after: string;
 }
 

@@ -16,6 +16,7 @@ vi.mock("../tabs.js", () => ({
   activateTab: undefined,
   tabIdFor: undefined,
   getActiveTabId: undefined,
+  getActiveTabKind: undefined,
   getActiveTabRoute: undefined,
   openEditorView: undefined,
   setGitTab: undefined,
@@ -47,6 +48,21 @@ vi.mock("../composer-state.js", () => ({
   // Present-but-inert so real-ESM linking succeeds: another module in this graph
   // imports the name.
   restoreFailedSend: vi.fn(),
+}));
+
+const mockForgetDeletedChat = vi.fn();
+vi.mock("../submit.js", () => ({
+  forgetDeletedChat: mockForgetDeletedChat,
+  // Undefined: present only so real-ESM linking succeeds.
+  submitPrompt: undefined,
+  submitLabelled: undefined,
+}));
+
+const mockReconcileMerges = vi.fn();
+vi.mock("../tangent-merge.js", () => ({
+  reconcileMerges: mockReconcileMerges,
+  noteTangentMerged: vi.fn(),
+  noteTangentMergeFailed: vi.fn(),
 }));
 
 // Import after mocks so chat.ts registers its handlers against the bus mock.
@@ -207,6 +223,12 @@ describe("chat_deleted", () => {
     expect(mockCloseTab).not.toHaveBeenCalled();
   });
 
+  it("tells submit the chat is deleted", () => {
+    setSessions([makeSession("c5")]);
+    fireSSE("chat_deleted", "", { id: "c5" });
+    expect(mockForgetDeletedChat).toHaveBeenCalledWith("c5");
+  });
+
   it("does not reach the tab store at all when nothing is open", () => {
     setSessions([makeSession("c3")]);
     mockHasTab.mockReturnValue(false);
@@ -257,5 +279,14 @@ describe("draft_changed", () => {
   it("drops an undefined payload", () => {
     fireSSE("draft_changed", "c1", undefined);
     expect(mockAdoptComposer).not.toHaveBeenCalled();
+  });
+});
+
+describe("connected", () => {
+  it("asks the server where this device's unsettled merges stand on every connection", () => {
+    mockReconcileMerges.mockClear();
+    fireSSE("connected", "", {});
+    fireSSE("connected", "", {});
+    expect(mockReconcileMerges).toHaveBeenCalledTimes(2);
   });
 });

@@ -200,10 +200,10 @@ func TestHandleShow_PathOutsideEveryRepoIsNotAFailure(t *testing.T) {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `"error":"`+string(KindNotInRepo)+`"`) {
+	if !strings.Contains(body, `"error":"`+string(kindNotInRepo)+`"`) {
 		t.Errorf("body = %q, want the not-in-repo marker: no repository owns the path", body)
 	}
-	if strings.Contains(body, string(KindShowFailed)) {
+	if strings.Contains(body, string(kindShowFailed)) {
 		t.Errorf("body = %q, want the absence of a base reported as such rather than as a git failure", body)
 	}
 }
@@ -240,7 +240,7 @@ func TestHandleShow_ResolvesTheOwningRepoWhenNoneIsNamed(t *testing.T) {
 	if got.Error != "" {
 		t.Fatalf("error = %q, want the subrepo resolved", got.Error)
 	}
-	if got.Content != "from the subrepo" {
+	if got.Content != "from the subrepo\n" {
 		t.Errorf("content = %q, want the committed base from the owning repo."+
 			" Empty means the base was read from the workspace root, so the diff"+
 			" claims every line was added", got.Content)
@@ -249,7 +249,7 @@ func TestHandleShow_ResolvesTheOwningRepoWhenNoneIsNamed(t *testing.T) {
 
 // A file that genuinely does not exist at the ref, inside a real repo, is still
 // the empty-base case: the diff renders as all-add, which is correct for a new
-// file. This is the branch KindNotInRepo must NOT swallow.
+// file. This is the branch kindNotInRepo must NOT swallow.
 func TestHandleShow_MissingFileInARepoReturnsEmptyContent(t *testing.T) {
 	work := t.TempDir()
 	initFixtureRepo(t, work)
@@ -1575,7 +1575,6 @@ func TestHandleRepos_IncludesDotWhenWorkDirIsRepo(t *testing.T) {
 	}
 }
 
-// skipNoGit skips the test when the git binary isn't on PATH.
 func skipNoGit(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -1603,8 +1602,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// initFixtureRepo creates a minimal git repo at dir with one file + one
-// commit on "main". Skips the test if git isn't on PATH.
+// Skips the test if git isn't on PATH.
 func initFixtureRepo(t *testing.T, dir string) {
 	t.Helper()
 	skipNoGit(t)
@@ -1616,7 +1614,6 @@ func initFixtureRepo(t *testing.T, dir string) {
 	runGit(t, dir, "commit", "-q", "-m", "initial commit")
 }
 
-// writeCommit writes file with content in dir and commits it with msg.
 func writeCommit(t *testing.T, dir, file, content, msg string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, file), []byte(content), 0o644); err != nil {
@@ -1626,8 +1623,6 @@ func writeCommit(t *testing.T, dir, file, content, msg string) {
 	runGit(t, dir, "commit", "-q", "-m", msg)
 }
 
-// captureLogs swaps the slog default to a buffer-backed debug handler for the test and restores it
-// on cleanup.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
@@ -1641,9 +1636,6 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 	return buf
 }
 
-// behindRepo builds a work tree whose HEAD is at C1 while origin/main has
-// been advanced to C2 (then fetched). The local "main" tracks
-// origin/main. Returns the work tree path.
 func behindRepo(t *testing.T) string {
 	t.Helper()
 	skipNoGit(t)
@@ -1888,6 +1880,7 @@ func TestHandleBranches_RepoReturnsCurrentBranch(t *testing.T) {
 	}
 }
 
+// The blob's exact bytes, trailing newline included: a trimmed base reads as a changed last line.
 func TestHandleShow_ExistingFileAtHEADReturnsContent(t *testing.T) {
 	workDir := t.TempDir()
 	initFixtureRepo(t, workDir)
@@ -1904,8 +1897,8 @@ func TestHandleShow_ExistingFileAtHEADReturnsContent(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if resp.Content != "hi" {
-		t.Errorf("content = %q, want %q", resp.Content, "hi")
+	if resp.Content != "hi\n" {
+		t.Errorf("content = %q, want %q", resp.Content, "hi\n")
 	}
 }
 
@@ -2206,7 +2199,7 @@ func TestSimpleHandlers_NonPostRejected(t *testing.T) {
 	}
 	for _, tt := range tests {
 		for _, m := range methods {
-			t.Run(tt.name+"/"+m, func(t *testing.T) {
+			t.Run(tt.name+"_"+m, func(t *testing.T) {
 				h := NewHandler(t.TempDir())
 				req := httptest.NewRequest(m, "/api/git/"+tt.name, nil)
 				rec := httptest.NewRecorder()
@@ -2219,7 +2212,6 @@ func TestSimpleHandlers_NonPostRejected(t *testing.T) {
 	}
 }
 
-// mockPrompter implements UtilityPrompter for tests.
 type mockPrompter struct {
 	err    error
 	result string
@@ -2801,20 +2793,20 @@ func TestExtractCommitMessage_WordBreakBoundary(t *testing.T) {
 // writeGitError includes the detail field only when it is non-empty.
 func TestWriteGitError_DetailField(t *testing.T) {
 	rec := httptest.NewRecorder()
-	writeGitError(rec, KindShowFailed, "boundary-detail")
+	writeGitError(rec, kindShowFailed, "boundary-detail")
 	var m map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if m["error"] != string(KindShowFailed) {
-		t.Errorf("error = %q, want %q", m["error"], string(KindShowFailed))
+	if m["error"] != string(kindShowFailed) {
+		t.Errorf("error = %q, want %q", m["error"], string(kindShowFailed))
 	}
 	if m["detail"] != "boundary-detail" {
 		t.Errorf("detail = %q, want %q", m["detail"], "boundary-detail")
 	}
 
 	rec2 := httptest.NewRecorder()
-	writeGitError(rec2, KindShowFailed, "")
+	writeGitError(rec2, kindShowFailed, "")
 	var m2 map[string]string
 	if err := json.Unmarshal(rec2.Body.Bytes(), &m2); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -2825,17 +2817,17 @@ func TestWriteGitError_DetailField(t *testing.T) {
 }
 
 // In a real repo, `git show HEAD:<missing>` exits 128 without "not a git
-// repository"; gitShowCmd classifies that as ErrPathNotInRef with empty
+// repository"; gitShowCmd classifies that as errPathNotInRef with empty
 // output rather than surfacing the raw exec error.
 func TestGitShowCmd_MissingPathInRealRepo(t *testing.T) {
 	skipNoGit(t)
 	dir := t.TempDir()
 	initFixtureRepo(t, dir)
-	out, err := gitShowCmd(t.Context(), dir, refHEAD, "does-not-exist.txt")
-	if !errors.Is(err, ErrPathNotInRef) {
+	out, _, err := gitShowCmd(t.Context(), dir, refHEAD, "does-not-exist.txt", defaultShowMax)
+	if !errors.Is(err, errPathNotInRef) {
 		t.Errorf("err = %v, want ErrPathNotInRef", err)
 	}
-	if out != "" {
+	if len(out) != 0 {
 		t.Errorf("out = %q, want empty for path-not-in-ref", out)
 	}
 }
@@ -3571,7 +3563,7 @@ func TestHandleRemove_RefusesASwappedAncestor(t *testing.T) {
 	}
 }
 
-// TestHandleRemove_RefusesAnEscapingAncestor is the original defect's own bait: a
+// TestHandleRemove_RefusesAnEscapingAncestor stages a
 // lexically clean "link/victim" whose intermediate component is a symlink OUT of
 // the workspace. No `..`, not absolute, and the workspace-root guard does not
 // fire, so an unlink by name deletes a tree the workspace does not contain.

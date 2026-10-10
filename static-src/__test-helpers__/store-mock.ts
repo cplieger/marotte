@@ -22,7 +22,7 @@ export const storeMock = {
   // The real answer for a chat with no flushed cause; keeps suites on the full-pass paint path.
   renderCauseOf: vi.fn(() => ({ cause: "shape" as const })),
 
-  MODEL_CONTEXT_SIZES: {} as Record<string, number>,
+  MODEL_CONTEXT_SIZES: new Map<string, number>(),
   parseContextSize: vi.fn((): number | undefined => undefined),
   contextSizeFor: vi.fn(() => 0),
   defaultUsage: vi.fn(() => ({})),
@@ -80,6 +80,8 @@ export const storeMock = {
   recordSteerSent: vi.fn(),
   recordSteerQueued: vi.fn(),
   forgetSteer: vi.fn(),
+  // FALSE: an empty store holds no steer, so a failed send restores its text.
+  holdsSteer: vi.fn(() => false),
   forgetSteers: vi.fn(),
   dropConfirmedSteers: vi.fn(() => []),
   restoreSteers: vi.fn(),
@@ -96,6 +98,7 @@ export const storeMock = {
 
   // IDENTITY: a fresh object would pass a card assertion against a value nothing wrote.
   settledToolCall: vi.fn((call: unknown) => call),
+  paintsTheSame: vi.fn(() => true),
   foldToolCallDelta: vi.fn((prev: unknown) => prev),
   applyToolProgress: vi.fn((): undefined => undefined),
   republishWindowToolCalls: vi.fn(),

@@ -41,7 +41,6 @@ var dangerousAgentEnv = map[string]struct{}{
 // `GIT_PAGER=cat` and `PAGER=` are how git paging is stopped, so they must pass.
 var safeAgentEnvValues = map[string]struct{}{"": {}, "true": {}, "cat": {}}
 
-// parseAllowedEnv turns the operator's comma-separated list into a set.
 func parseAllowedEnv(raw string) map[string]struct{} {
 	if strings.TrimSpace(raw) == "" {
 		return nil

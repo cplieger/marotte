@@ -29,7 +29,7 @@ func FuzzParseServerID(f *testing.F) {
 	f.Add("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaX") // 33 chars
 
 	f.Fuzz(func(t *testing.T, raw string) {
-		id, err := ParseServerID(raw)
+		id, err := parseServerID(raw)
 		if err == nil {
 			if id == "" {
 				t.Fatal("ParseServerID returned empty ID with nil error")
@@ -38,7 +38,7 @@ func FuzzParseServerID(f *testing.F) {
 				t.Fatalf("ParseServerID accepted %d-char input (max 32)", len(id))
 			}
 			// Idempotent: re-parsing a valid ID must succeed.
-			id2, err2 := ParseServerID(string(id))
+			id2, err2 := parseServerID(string(id))
 			if err2 != nil {
 				t.Fatalf("ParseServerID not idempotent: %v", err2)
 			}
@@ -72,14 +72,14 @@ func TestNewID_UniqueOver10k(t *testing.T) {
 // 33-char id is rejected.
 func TestParseServerID_LengthBoundary(t *testing.T) {
 	atMax := strings.Repeat("a", 32)
-	id, err := ParseServerID(atMax)
+	id, err := parseServerID(atMax)
 	if err != nil {
 		t.Errorf("ParseServerID(32 chars) = err %v, want nil", err)
 	}
 	if string(id) != atMax {
 		t.Errorf("ParseServerID(32 chars) id = %q, want %q", string(id), atMax)
 	}
-	if _, err := ParseServerID(strings.Repeat("a", 33)); err == nil {
+	if _, err := parseServerID(strings.Repeat("a", 33)); err == nil {
 		t.Error("ParseServerID(33 chars) = nil, want too-long error")
 	}
 }

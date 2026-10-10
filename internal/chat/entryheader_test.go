@@ -30,7 +30,7 @@ func TestEntryHeader_RoundTripsEveryField(t *testing.T) {
 		LastTurnOutcome: marotte.TurnOutcomeFailed, PendingModel: "sonnet",
 		SupervisedMode: true,
 	}
-	if err := h.Write(t.Context(), want); err != nil {
+	if err := h.write(t.Context(), want); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 
@@ -71,7 +71,7 @@ func TestEntryHeader_AnAbsentHeaderReadsAsNotExist(t *testing.T) {
 // Update is one write, so two fields cannot be left half moved by a crash.
 func TestEntryHeader_UpdateAppliesEveryChangeInOneWrite(t *testing.T) {
 	h, root := newHeaderFixture(t)
-	if err := h.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01"}); err != nil {
+	if err := h.write(t.Context(), &marotte.Chat{ID: "c-abcdef01"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	applied, err := h.Update(t.Context(), func(c *marotte.Chat) bool {
@@ -114,13 +114,12 @@ func TestEntryHeader_UpdateCreatesAnAbsentHeader(t *testing.T) {
 	}
 }
 
-// A header write carries none of the retired fields. The write is checked, not the struct, because a re-added field
-// reaches the file under its json tag. `revision` gave way to turn_revert records; `needs_reconcile` and `degraded`
-// to the log's own records.
+// A header write carries no `revision`, `needs_reconcile` or `degraded` key: turn_revert and the log's own records own
+// those facts. The write is checked, not the struct, because a re-added field reaches the file under its json tag.
 func TestEntryHeader_AHeaderWriteCarriesNoRetiredField(t *testing.T) {
 	h, root := newHeaderFixture(t)
 	// Both writers, Write and Update.
-	if err := h.Write(t.Context(), &marotte.Chat{
+	if err := h.write(t.Context(), &marotte.Chat{
 		ID: "c-abcdef01", Name: "a chat", TurnCount: 7,
 		LastTurnOutcome: marotte.TurnOutcomeFailed, SupervisedMode: true,
 	}); err != nil {
@@ -155,7 +154,7 @@ func TestEntryHeader_CachesAndFlagsWriteOnlyOnAChange(t *testing.T) {
 		ID: "c-abcdef01", TurnCount: 2,
 		LastTurnOutcome: marotte.TurnOutcomeCompleted,
 	}
-	if err := h.Write(t.Context(), stored); err != nil {
+	if err := h.write(t.Context(), stored); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	path := filepath.Join(root, headerFileName)

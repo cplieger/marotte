@@ -21,23 +21,22 @@ import (
 
 // Style attribute bits, matching web-terminal-engine's vt.WireRun.A. 1024 is WireRun's AttrAutolink.
 const (
-	AttrBold uint16 = 1 << iota
-	AttrItalic
-	AttrUnderline
-	AttrInverse
-	AttrStrike
-	AttrDim
-	AttrHidden
-	AttrBlink
-	AttrOverline
-	AttrDoubleUnderline
+	attrBold uint16 = 1 << iota
+	attrItalic
+	attrUnderline
+	attrInverse
+	attrStrike
+	attrDim
+	attrHidden
+	attrBlink
+	attrOverline
+	attrDoubleUnderline
 )
 
-// ColorDefault marks "no colour set", distinct from black (index 0).
-const ColorDefault int32 = -1
+// colorDefault marks "no colour set", distinct from black (index 0).
+const colorDefault int32 = -1
 
-// rgbFlag marks an FG/BG value as packed 24-bit colour; one past the largest 24-bit value, so the spaces cannot
-// collide.
+// One past the largest 24-bit value, so the spaces cannot collide.
 const rgbFlag int32 = 0x1000000
 
 // Span styles the half-open range [Start,End) of the plain text. Offsets are UTF-16 code units because the consumer
@@ -47,7 +46,7 @@ type Span struct {
 	Start int `json:"start"`
 	// End is the exclusive UTF-16 offset into the plain text.
 	End int `json:"end"`
-	// FG is the foreground colour: ColorDefault, a 0-255 palette index, or rgbFlag|RGB.
+	// FG is the foreground colour: ColorDefault, a 0-255 palette index, or rgbFlag|rgb.
 	FG int32 `json:"fg"`
 	// BG is the background colour, encoded like FG.
 	BG int32 `json:"bg"`
@@ -55,8 +54,8 @@ type Span struct {
 	Attrs uint16 `json:"attrs"`
 }
 
-// RGB packs three components into an FG/BG value.
-func RGB(r, g, b uint8) int32 {
+// rgb packs three components into an FG/BG value.
+func rgb(r, g, b uint8) int32 {
 	return rgbFlag | int32(r)<<16 | int32(g)<<8 | int32(b)
 }
 
@@ -125,7 +124,6 @@ func incompleteRuneTail(b string) int {
 	return 0
 }
 
-// style is the parser's current SGR state.
 type style struct {
 	fg    int32
 	bg    int32
@@ -133,7 +131,7 @@ type style struct {
 }
 
 func (s style) isDefault() bool {
-	return s.fg == ColorDefault && s.bg == ColorDefault && s.attrs == 0
+	return s.fg == colorDefault && s.bg == colorDefault && s.attrs == 0
 }
 
 // Parser holds the SGR state and the incomplete-sequence remainder between Write calls, so an escape split across
@@ -147,7 +145,7 @@ type Parser struct {
 }
 
 // NewParser returns a Parser with default style and no pending bytes.
-func NewParser() *Parser { return &Parser{cur: style{fg: ColorDefault, bg: ColorDefault}} }
+func NewParser() *Parser { return &Parser{cur: style{fg: colorDefault, bg: colorDefault}} }
 
 // Offset returns how many UTF-16 units this Parser has emitted, the offset the next unit carries. The agent's
 // terminal_output reads it rather than keeping a second counter that could drift from the span offsets.
@@ -209,16 +207,15 @@ type writer struct {
 	openStyle style
 }
 
-// write appends text, coerced to valid UTF-8 per byte. An escape between a rune's bytes or a chunk boundary mid-rune
-// would otherwise make offsets disagree with the client's string; per-run replacement breaks length additivity (both
-// found by FuzzParse).
+// write appends text, coerced to valid UTF-8 per byte. An escape between a rune's bytes or a chunk
+// boundary mid-rune would otherwise make offsets disagree with the client's string; per-run
+// replacement breaks length additivity (both found by FuzzParse).
 func (w *writer) write(s string) {
 	valid := validUTF8PerByte(s)
 	w.sb.WriteString(valid)
 	w.emitted += utf16Len(valid)
 }
 
-// closeRun emits the open style run, ending at the given absolute offset.
 func (w *writer) closeRun(absEnd int) {
 	if absEnd > w.openStart && !w.openStyle.isDefault() {
 		w.spans = append(w.spans, Span{
@@ -228,7 +225,6 @@ func (w *writer) closeRun(absEnd int) {
 	}
 }
 
-// scan consumes buf, writing its text and recording style runs.
 func (w *writer) scan(buf string) {
 	for i := 0; i < len(buf); {
 		e := strings.IndexByte(buf[i:], 0x1b)
@@ -272,7 +268,6 @@ func (w *writer) hold(rest string) {
 	w.p.pending = append(w.p.pending[:0], rest...)
 }
 
-// restyle closes the open run at the current position and opens a new one.
 func (w *writer) restyle(s style) {
 	absEnd := w.p.offset + w.emitted
 	w.closeRun(absEnd)
@@ -346,10 +341,10 @@ func scanStringTerminated(b string) int {
 	return 0
 }
 
-// applySGR folds one SGR parameter list into a style; an empty list is a reset, like `ESC[m`.
+// An empty list is a reset, like `ESC[m`.
 func applySGR(cur style, params string) style {
 	if params == "" {
-		return style{fg: ColorDefault, bg: ColorDefault}
+		return style{fg: colorDefault, bg: colorDefault}
 	}
 	if isPrivateParams(params) {
 		return cur
@@ -392,7 +387,6 @@ func applyExtendedColor(cur style, selector int, fields []string, i int) (next s
 	return cur, i + adv
 }
 
-// applySGRParam folds one self-contained SGR parameter into a style.
 func applySGRParam(cur style, n int) style {
 	if set, ok := sgrAttrSet[n]; ok {
 		cur.attrs |= set
@@ -404,11 +398,11 @@ func applySGRParam(cur style, n int) style {
 	}
 	switch {
 	case n == 0:
-		return style{fg: ColorDefault, bg: ColorDefault}
+		return style{fg: colorDefault, bg: colorDefault}
 	case n == 39:
-		cur.fg = ColorDefault
+		cur.fg = colorDefault
 	case n == 49:
-		cur.bg = ColorDefault
+		cur.bg = colorDefault
 	case n >= 30 && n <= 37:
 		cur.fg = int32(n - 30)
 	case n >= 40 && n <= 47:
@@ -423,30 +417,30 @@ func applySGRParam(cur style, n int) style {
 
 // sgrAttrSet maps an SGR parameter to the attribute bits it sets. 6 (rapid blink) renders like 5.
 var sgrAttrSet = map[int]uint16{
-	1:  AttrBold,
-	2:  AttrDim,
-	3:  AttrItalic,
-	4:  AttrUnderline,
-	5:  AttrBlink,
-	6:  AttrBlink,
-	7:  AttrInverse,
-	8:  AttrHidden,
-	9:  AttrStrike,
-	21: AttrDoubleUnderline,
-	53: AttrOverline,
+	1:  attrBold,
+	2:  attrDim,
+	3:  attrItalic,
+	4:  attrUnderline,
+	5:  attrBlink,
+	6:  attrBlink,
+	7:  attrInverse,
+	8:  attrHidden,
+	9:  attrStrike,
+	21: attrDoubleUnderline,
+	53: attrOverline,
 }
 
 // sgrAttrClear maps an SGR parameter to the bits it clears: 22 clears bold and dim, 24 both underlines, so it is a
 // mask per entry, not sgrAttrSet's inverse.
 var sgrAttrClear = map[int]uint16{
-	22: AttrBold | AttrDim,
-	23: AttrItalic,
-	24: AttrUnderline | AttrDoubleUnderline,
-	25: AttrBlink,
-	27: AttrInverse,
-	28: AttrHidden,
-	29: AttrStrike,
-	55: AttrOverline,
+	22: attrBold | attrDim,
+	23: attrItalic,
+	24: attrUnderline | attrDoubleUnderline,
+	25: attrBlink,
+	27: attrInverse,
+	28: attrHidden,
+	29: attrStrike,
+	55: attrOverline,
 }
 
 // extendedColor reads the parameters after a 38/48 selector (`5;<idx>` or `2;<r>;<g>;<b>`). adv is how many it
@@ -495,13 +489,13 @@ func trueColor(rest []string) (c int32, adv int, ok bool) {
 		// #nosec G115 -- bounded to 0-255 on the line above.
 		comp[i] = uint8(v)
 	}
-	return RGB(comp[0], comp[1], comp[2]), 4, true
+	return rgb(comp[0], comp[1], comp[2]), 4, true
 }
 
-// sgrParam parses one decimal SGR parameter field. An empty field is 0, as terminals read it. Colon subparameters
-// are dropped (`4:3` curly underline, `58:2::1:2:3` underline colour): read whole, the field is non-numeric, and
-// `ESC[4:3m`, which gcc and clang emit, would reset every attribute. ok is false otherwise and the caller skips the
-// field. The value is bounded against overflow.
+// An empty field is 0, as terminals read it. Colon subparameters are dropped (`4:3` curly
+// underline, `58:2::1:2:3` underline colour): read whole, the field is non-numeric, and `ESC[4:3m`,
+// which gcc and clang emit, would reset every attribute. ok is false otherwise and the caller skips
+// the field. The value is bounded against overflow.
 func sgrParam(field string) (n int, ok bool) {
 	if base, _, found := strings.Cut(field, ":"); found {
 		field = base

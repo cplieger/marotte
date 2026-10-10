@@ -68,8 +68,7 @@ const DEFAULT_TOOLTIP: Record<SendKind, string> = {
   error: RETRY_HINT,
 };
 
-/** The reason a state carries, "" for the states that carry none. Doubles as the dedupe key: two
- *  errors differing only in reason are different states. */
+/** Doubles as the dedupe key: two errors differing only in reason are different states. */
 function reasonOf(s: SendState): string {
   return s.kind === "error" ? s.reason : "";
 }
@@ -82,7 +81,6 @@ let initialized = false;
 const IME_TAIL_MS = 50;
 
 class PromptInputController {
-  // History cycling state
   private idx = -1;
   private draft = "";
   private lastActiveID = "";
@@ -91,7 +89,6 @@ class PromptInputController {
   private composing = false;
   private imeTimer: ReturnType<typeof setTimeout> | undefined;
 
-  // Send-button state
   private state: SendState = { kind: "idle" };
   private onCancel: Cancel = () => undefined;
   private onSubmit: Submit = () => undefined;
@@ -117,9 +114,8 @@ class PromptInputController {
     this.draft = "";
   }
 
-  /** Leave cycling and put the saved draft back in the box. ONE method for both keys that end
-   *  cycling (Escape, ArrowDown off the newest prompt), because exitCycling() zeroes `draft`:
-   *  read after the exit it is "". */
+  /** ONE method for both keys that end cycling (Escape, ArrowDown off the newest prompt), because
+   *  exitCycling() zeroes `draft`: read after the exit it is "". */
   private restoreDraft(el: HTMLTextAreaElement): void {
     const saved = this.draft;
     this.exitCycling();
@@ -133,9 +129,8 @@ class PromptInputController {
     return this.composing || e.isComposing || e.keyCode === 229;
   }
 
-  /** Drop composition state, on blur and on Escape. Some Android IMEs never deliver
-   *  compositionend when the field loses focus mid-candidate, which would leave Enter dead for
-   *  the rest of the page's life. */
+  /** Some Android IMEs never deliver compositionend when the field loses focus mid-candidate, which
+   *  would leave Enter dead for the rest of the page's life. */
   private resetIME(): void {
     clearTimeout(this.imeTimer);
     this.imeTimer = undefined;

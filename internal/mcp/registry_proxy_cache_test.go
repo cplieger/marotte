@@ -117,7 +117,7 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				_, _, _ = cache.GetOrFetch(b.Context(), "bench-key", func() (RegistrySearchResult, error) {
+				_, _, _ = cache.getOrFetch(b.Context(), "bench-key", func() (RegistrySearchResult, error) {
 					return payload, nil
 				})
 			}
@@ -129,7 +129,7 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				_, _, _ = cache.GetOrFetch(b.Context(), "sf-key", func() (RegistrySearchResult, error) {
+				_, _, _ = cache.getOrFetch(b.Context(), "sf-key", func() (RegistrySearchResult, error) {
 					return payload, nil
 				})
 			}
@@ -147,7 +147,7 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				key := fmt.Sprintf("key-%d", keys.Add(1))
-				_, _, _ = cache.GetOrFetch(b.Context(), key, func() (RegistrySearchResult, error) {
+				_, _, _ = cache.getOrFetch(b.Context(), key, func() (RegistrySearchResult, error) {
 					return payload, nil
 				})
 			}
@@ -173,7 +173,7 @@ func TestRegistryCache_theTTLEdgeIsExpired(t *testing.T) {
 
 		// A nanosecond short of the TTL is still fresh, so nothing is fetched.
 		synctest.Sleep(registryCacheTTL - time.Nanosecond)
-		got, cached, err := p.cache.GetOrFetch(t.Context(), "k", fetch)
+		got, cached, err := p.cache.getOrFetch(t.Context(), "k", fetch)
 		if err != nil {
 			t.Fatalf("GetOrFetch a nanosecond inside the TTL: %v", err)
 		}
@@ -187,7 +187,7 @@ func TestRegistryCache_theTTLEdgeIsExpired(t *testing.T) {
 
 		// On the edge it is stale, so the reader goes upstream.
 		synctest.Sleep(time.Nanosecond)
-		got, _, err = p.cache.GetOrFetch(t.Context(), "k", fetch)
+		got, _, err = p.cache.getOrFetch(t.Context(), "k", fetch)
 		if err != nil {
 			t.Fatalf("GetOrFetch exactly on the TTL: %v", err)
 		}

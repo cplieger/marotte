@@ -1,7 +1,5 @@
-// The interaction dock: where the agent asks the user something (permission, MCP elicitation, structured question,
-// workflow-step question). A bottom-bar region rather than a modal, so the transcript the decision is about stays
-// readable; any bottom bar can host it (`mountDecisionDock(host)`), since the run tab has no composer. Focus is not
-// trapped: the region is non-modal. The queue is per-chat, so a second ask never overwrites the first.
+// A bottom-bar region rather than a modal, so the transcript a decision is about stays readable; focus is not
+// trapped. The queue is per-chat, so a second ask never overwrites the first.
 
 import { el, signal, effect, touch } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
@@ -17,7 +15,7 @@ import { buildRunInputCard } from "./run-input.js";
 import { info } from "./toast.js";
 import { named, noticeSubject } from "./notice-subject.js";
 import { join } from "@cplieger/keyenc";
-import type { RunAsks } from "./run-exec-source.js";
+import type { RunAskAddress, RunAsks } from "./run-asks.js";
 import type {
   PermissionNeededPayload,
   ElicitationNeededPayload,
@@ -34,7 +32,7 @@ interface PermissionDecision {
   runID?: string;
   requestID: number;
   payload: PermissionNeededPayload;
-  submit: (answer: PermissionAnswer) => void;
+  submit: (answer: PermissionAnswer) => Promise<AnswerOutcome>;
 }
 
 interface ElicitationDecision {
@@ -43,7 +41,10 @@ interface ElicitationDecision {
   runID?: string;
   requestID: number;
   payload: ElicitationNeededPayload;
-  submit: (action: "accept" | "decline" | "cancel", content?: Record<string, unknown>) => void;
+  submit: (
+    action: "accept" | "decline" | "cancel",
+    content?: Record<string, unknown>,
+  ) => Promise<AnswerOutcome>;
 }
 
 interface UserInputDecision {
@@ -52,7 +53,7 @@ interface UserInputDecision {
   runID?: string;
   requestID: number;
   payload: UserInputNeededPayload;
-  submit: (action: "answered" | "dismissed", answer?: string) => void;
+  submit: (action: "answered" | "dismissed", answer?: string) => Promise<AnswerOutcome>;
 }
 
 /**
@@ -73,11 +74,24 @@ interface RunInputDecision {
 }
 
 /** The dock's input; the per-kind shapes are this module's business. */
-export type Decision =
-  PermissionDecision | ElicitationDecision | UserInputDecision | RunInputDecision;
+type Decision = PermissionDecision | ElicitationDecision | UserInputDecision | RunInputDecision;
 
 /** The three request-shaped kinds (an open JSON-RPC request with an int64 id), which `decision_settled` can name. */
 type RequestDecision = PermissionDecision | ElicitationDecision | UserInputDecision;
+
+/**
+ * What the server made of an answer: `answered` (its `decision_settled` retires the card), `superseded` (another
+ * surface holds the ask, so this card goes now), `withdrawn` (the ask settled before the answer reached the agent; that
+ * settlement's `decision_settled` or the turn's or run's end retires the card), or `failed` (the ask is still open and
+ * the card is offered again).
+ */
+export type AnswerOutcome = "answered" | "superseded" | "withdrawn" | "failed";
+
+/**
+ * Request decisions this surface answered and the server has not yet settled: their cards stay on screen, inert,
+ * because only the server knows whether the answer reached the agent.
+ */
+const answering = new WeakSet<RequestDecision>();
 
 function isRequestDecision(d: Decision): d is RequestDecision {
   return d.kind !== "run_input";
@@ -117,19 +131,18 @@ interface BoxState {
   margin: string;
 }
 
-/**
- * One mounted dock. The composer's shows the active chat's queue; a run tab's shows one run's decisions wherever keyed
- * (launching chat id or `run:<id>`). Each host owns its own phase.
- */
+/** The composer's shows the active chat's queue; a run tab's shows one run's decisions wherever
+ *  keyed (launching chat id or `run:<id>`). Each host owns its own phase. */
 interface DockHost {
   el: HTMLElement;
   match: (d: Decision) => boolean;
   renderedKey: string;
+  /** The card `renderedKey` names, which an answer in flight makes inert. */
+  card: HTMLElement | null;
   /** The answered card, kept on screen (neutralised) for the phase's duration.
    *  At most one per host, ever. */
   outgoing: HTMLElement | null;
-  /** The cleanup timer. `clearTimeout` is the optimisation; `gen` is the
-   *  guarantee. */
+  /** `clearTimeout` is the optimisation; `gen` is the guarantee. */
   timer: ReturnType<typeof setTimeout> | null;
   /** Bumped by `endPhase`. A timer callback whose generation has moved on
    *  returns without touching the DOM. */
@@ -150,12 +163,17 @@ export function mountDecisionDock(hostEl: HTMLElement): void {
 
 /**
  * Wire the run view's dock: the current run's decisions, whether keyed to the launching chat or `run:<id>`. The run is
- * a getter because one view element serves every run tab. Idempotent per host element.
+ * a getter because one view element serves every run tab. Idempotent per host element. A step's question takes no
+ * card here: the run composer answers it, marked by its attention border (`run-composer.ts`).
  */
 export function mountRunDecisionDock(hostEl: HTMLElement, runID: () => string): void {
   addHost(hostEl, (d) => {
     const id = runID();
-    return id !== "" && (d.runID === id || d.chatID === `${RUN_CHAT_PREFIX}${id}`);
+    return (
+      id !== "" &&
+      d.kind !== "run_input" &&
+      (d.runID === id || d.chatID === `${RUN_CHAT_PREFIX}${id}`)
+    );
   });
 }
 
@@ -198,6 +216,7 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
     el: hostEl,
     match,
     renderedKey: "",
+    card: null,
     outgoing: null,
     timer: null,
     gen: 0,
@@ -324,9 +343,9 @@ export function hasPendingDecision(chatID: string): boolean {
  */
 export function runPendingAsks(workflowID: string): RunAsks {
   touch(queueVersion);
-  const nodes = new Set<string>();
+  const asked: RunAskAddress[] = [];
   if (workflowID === "") {
-    return { count: 0, nodes, label: "" };
+    return { count: 0, asked, label: "" };
   }
   const runKey = `${RUN_CHAT_PREFIX}${workflowID}`;
   let count = 0;
@@ -337,17 +356,22 @@ export function runPendingAsks(workflowID: string): RunAsks {
         continue;
       }
       count++;
-      // Absent when the step-session registry never saw the sub-session; the run is blocked either way.
-      const node = d.payload.node_id ?? "";
-      if (node !== "") {
-        nodes.add(node);
-      }
+      asked.push(askAddress(d));
       if (label === "") {
         label = askLabel(d);
       }
     }
   }
-  return { count, nodes, label };
+  return { count, asked, label };
+}
+
+/** Either id is absent when the step-session registry never saw the sub-session; the run is blocked either way. */
+function askAddress(d: Decision): RunAskAddress {
+  const nodeID = d.payload.node_id ?? "";
+  if (d.kind === "run_input") {
+    return { nodeID, sessionID: d.payload.step_session_id, answer: true };
+  }
+  return { nodeID, sessionID: d.payload.sub_session_id ?? "", answer: false };
 }
 
 /** Per-kind and private: the run card takes the sentence, not a payload. */
@@ -388,7 +412,13 @@ export function collapseSettledDecision(
     queues.delete(chatID);
   }
   const key = decisionKey(chatID, kind, String(requestID));
-  if (hosts.some((h) => h.renderedKey === key)) {
+  // This surface's own answer, delivered: nothing to explain. An end or a withdrawal still says why.
+  const ownAnswer =
+    settled !== undefined &&
+    isRequestDecision(settled) &&
+    answering.has(settled) &&
+    settledBy === "user";
+  if (!ownAnswer && hosts.some((h) => h.renderedKey === key)) {
     // The toast announces itself into the shared live region; a second announce() would read it twice.
     info(named(noticeSubject(chatID), settledMessage(kind, settledBy)));
   }
@@ -398,8 +428,9 @@ export function collapseSettledDecision(
 }
 
 /**
- * Three causes read differently: another window (a person), the unattended floor (a deadline), `moot` (nobody;
- * the subject moved on, so claiming an answer would be false).
+ * Four causes read differently: another window (a person), the unattended floor (a deadline), `moot` (nobody;
+ * the subject moved on, so claiming an answer would be false), `ended` (nobody can: the agent session that asked
+ * is gone).
  */
 function settledMessage(kind: Decision["kind"], settledBy: SettledBy): string {
   const subject = settledSubject(kind);
@@ -408,6 +439,8 @@ function settledMessage(kind: Decision["kind"], settledBy: SettledBy): string {
       return `${subject} was answered automatically because nobody was watching.`;
     case "moot":
       return `${subject} is no longer waiting for an answer.`;
+    case "ended":
+      return `${subject} was closed because the agent session that asked it ended, so nothing is listening for an answer.`;
     case "user":
       return `${subject} was answered in another window.`;
     default:
@@ -466,7 +499,7 @@ export function collapseSettledRunInput(
 }
 
 /**
- * A run-input card's typed words, held per ask: `settle` splices before sending, so a retryable refusal
+ * A run-input card's typed words, held per ask: `settleRunInput` unqueues before sending, so a retryable refusal
  * (`errRunNotParked`) re-offers the same ask and must return the text. Nested by run because `collapseSettledRunInput`
  * (per ask) and `dropRunAsks` (per run) are every exit, which bounds the map.
  */
@@ -499,23 +532,84 @@ function forgetHeldAnswer(workflowID: string, askID: string): void {
   }
 }
 
-/**
- * Answer a decision and retire it. The settle-once guard lives here because "answered" is the queue entry's property.
- * Membership, not head position: a run tab may answer an ask queued behind the chat's own, which is protocol-correct.
- */
-function settle(d: Decision, run: () => void): void {
+/** Whether d is still queued; membership, not head position: a run tab may answer an ask queued behind the chat's
+ *  own, which is protocol-correct. */
+function isQueued(d: Decision): boolean {
+  return queues.get(d.chatID)?.includes(d) ?? false;
+}
+
+function unqueue(d: Decision): void {
   const q = queues.get(d.chatID);
   const i = q?.indexOf(d) ?? -1;
   if (q === undefined || i < 0) {
-    // A double answer on one request id is worse than a dropped click.
     return;
   }
   q.splice(i, 1);
   if (q.length === 0) {
     queues.delete(d.chatID);
   }
+}
+
+/** A run ask retires on send: a retryable refusal comes back as a re-offered ask, which `heldAnswers` refills. */
+function settleRunInput(d: RunInputDecision, run: () => void): void {
+  if (!isQueued(d)) {
+    // A double answer on one ask is worse than a dropped click.
+    return;
+  }
+  unqueue(d);
   run();
   bump();
+}
+
+/**
+ * Send a request decision's answer, holding its card inert until the server settles it: `decision_settled`
+ * retires it, a failure hands it back, and `onAnswered` runs only once the agent has the answer.
+ */
+function answerRequest(
+  d: RequestDecision,
+  send: () => Promise<AnswerOutcome>,
+  onAnswered?: () => void,
+): void {
+  if (!isQueued(d) || answering.has(d)) {
+    // A double answer on one request id is worse than a dropped click.
+    return;
+  }
+  answering.add(d);
+  paintAnswering(d);
+  void send().then((outcome) => {
+    switch (outcome) {
+      case "answered":
+        onAnswered?.();
+        return;
+      case "superseded":
+        unqueue(d);
+        bump();
+        return;
+      case "withdrawn":
+        return;
+      case "failed":
+        answering.delete(d);
+        paintAnswering(d);
+        return;
+      default:
+        outcome satisfies never;
+    }
+  });
+}
+
+/** Every host showing d's card makes it inert while its answer is in flight, and live again after. */
+function paintAnswering(d: RequestDecision): void {
+  const key = decisionKey(d.chatID, d.kind, decisionIdentity(d));
+  for (const h of hosts) {
+    if (h.renderedKey === key && h.card !== null) {
+      markAnswering(h.card, answering.has(d));
+    }
+  }
+}
+
+function markAnswering(card: HTMLElement, on: boolean): void {
+  card.inert = on;
+  card.toggleAttribute("aria-busy", on);
 }
 
 /** Insertion order across queues is stable enough: a run's asks come from one bridge. */
@@ -531,10 +625,7 @@ function matching(h: DockHost): Decision[] {
   return out;
 }
 
-/**
- * Within-kind identity: int64 request id, or the run ask id. A synthetic number would share the per-bridge JSON-RPC
- * id space, where collisions are ordinary.
- */
+/** Within-kind identity: the server's int64 ask id (`request_id`), or the run ask id. */
 function decisionIdentity(d: Decision): string {
   return d.kind === "run_input" ? d.askID : String(d.requestID);
 }
@@ -567,8 +658,8 @@ function renderHost(h: DockHost): void {
   swap(h, head, depth);
 }
 
-// The phase machine. The next head is observed, not detected: `settle` splices then `bump()`s, so the render sees the
-// next decision or none, and every retirement path animates the same way. The dispatch is never gated on motion.
+// The phase machine. The next head is observed, not detected: every retirement unqueues then `bump()`s, so the render
+// sees the next decision or none, and every retirement path animates the same way. The dispatch is never gated on motion.
 
 /**
  * Swap the host's content, animating unless motion is off: nothing->head enters, head->head advances, head->nothing
@@ -594,6 +685,7 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
       h.el.replaceChildren();
       h.el.classList.add("hidden");
       h.renderedKey = "";
+      h.card = null;
     } else {
       show(h, head, depth);
     }
@@ -607,6 +699,7 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
     // `.hidden` lands in `finishPhase`, after the collapse; adding it here makes the exit unanimatable.
     h.el.replaceChildren();
     h.renderedKey = "";
+    h.card = null;
   } else {
     show(h, head, depth);
   }
@@ -630,7 +723,12 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
 
 /** Identical on both paths, so `announce()` fires once per new head with the card in the DOM and never opacity-0. */
 function show(h: DockHost, head: Decision, depth: number): void {
-  h.el.replaceChildren(buildCard(head), depthRow(depth));
+  const card = buildCard(head);
+  if (isRequestDecision(head) && answering.has(head)) {
+    markAnswering(card, true);
+  }
+  h.card = card;
+  h.el.replaceChildren(card, depthRow(depth));
   h.el.classList.remove("hidden");
   h.renderedKey = decisionKey(head.chatID, head.kind, decisionIdentity(head));
   announce(announcementFor(head));
@@ -663,7 +761,7 @@ function pinAndRelease(h: DockHost, from: BoxState, to: BoxState): void {
 
 /**
  * The answered content in a neutralised wrapper: `aria-hidden` (no second reading) and `inert` (no tab or click;
- * `settle`'s membership guard is authoritative).
+ * the answer paths' membership guards are authoritative).
  */
 function takeOutgoing(h: DockHost): HTMLElement | null {
   const kids = [...h.el.children];
@@ -676,7 +774,6 @@ function takeOutgoing(h: DockHost): HTMLElement | null {
   return wrap;
 }
 
-/** Tear down this host's phase. Idempotent. */
 function endPhase(h: DockHost): void {
   h.gen++;
   if (h.timer !== null) {
@@ -756,39 +853,37 @@ function buildCard(d: Decision): HTMLElement {
   switch (d.kind) {
     case "permission":
       return buildPermissionCard(d.chatID, d.payload, (answer) => {
-        settle(d, () => {
-          d.submit(answer);
-        });
+        answerRequest(d, () => d.submit(answer));
       });
     case "elicitation":
       return buildElicitationCard(d.payload, (action, content) => {
-        settle(d, () => {
-          d.submit(action, content);
-        });
+        answerRequest(d, () => d.submit(action, content));
       });
     case "user_input":
       return buildUserInputCard(d.payload, (action, answer) => {
-        settle(d, () => {
-          d.submit(action, answer);
-          // After the answer goes out, inside settle's callback: never act on an ask another surface answered, or before the
-          // agent has it.
-          if (action === "answered" && answer !== undefined) {
-            emitBus(BUS_USER_INPUT_ANSWERED, { chatID: d.chatID, answer });
-          }
-        });
+        answerRequest(
+          d,
+          () => d.submit(action, answer),
+          // Never act on an ask another surface answered, or before the agent has it.
+          action === "answered" && answer !== undefined
+            ? () => {
+                emitBus(BUS_USER_INPUT_ANSWERED, { chatID: d.chatID, answer });
+              }
+            : undefined,
+        );
       });
     case "run_input":
-      // Inside settle's callback, so an already-answered ask leaves nothing held.
+      // Inside settleRunInput's callback, so an already-answered ask leaves nothing held.
       return buildRunInputCard(
         d.payload,
         heldAnswer(d),
         (text) => {
-          settle(d, () => {
+          settleRunInput(d, () => {
             holdAnswer(d, text);
             d.submit(text);
           });
         },
-        // Unwrapped: a deferral answers nothing, and splicing would remove the card while the run is still parked.
+        // Unwrapped: a deferral answers nothing, and unqueueing would remove the card while the run is still parked.
         d.defer,
       );
     default:
@@ -798,6 +893,7 @@ function buildCard(d: Decision): HTMLElement {
 }
 
 /** Reset module state between tests. `endPhase` first: a pending timer would fire into the next test's DOM. */
+// deadset:ignore DS1004 -- test seam: resets the mounted hosts, queues and held answers
 export function _resetForTest(): void {
   for (const h of hosts) {
     endPhase(h);
@@ -810,6 +906,7 @@ export function _resetForTest(): void {
 }
 
 /** @internal Number of mounted hosts: the one observable of a release. */
+// deadset:ignore DS1004 -- test seam: observes the mounted host list
 export function _hostCount(): number {
   return hosts.length;
 }

@@ -5,18 +5,17 @@
 
 import { newMessageID } from "./transport.js";
 import { getCurrentModel } from "./session-context.js";
-import {
-  switchModel as switchModelAction,
-  sendPrompt as sendPromptAction,
-} from "./actions/chat.js";
+import { sendPrompt as sendPromptAction } from "./actions/chat.js";
 
 /** Options for the low-level prompt sender. */
-export interface SendPromptOpts {
+interface SendPromptOpts {
   model?: string;
   attachments?: readonly unknown[];
   /** Reuse a specific user-message id instead of minting a fresh one: submit.ts
    *  passes a failed attempt's id so its retry addresses the same message. */
   messageID?: string;
+  /** The label of a message marotte writes on the user's behalf (`_meta.kiro.displayText`). */
+  displayText?: string;
 }
 
 /** Every answer `sendPromptTo` gives; a caller's branch over it should be total. */
@@ -39,18 +38,7 @@ export async function sendPromptTo(
     messageID: opts.messageID ?? newMessageID(),
     model: opts.model ?? getCurrentModel(),
     ...(opts.attachments !== undefined ? { attachments: opts.attachments } : {}),
+    ...(opts.displayText !== undefined ? { displayText: opts.displayText } : {}),
   });
   return result ?? "failed";
-}
-
-/**
- * Send a standalone switch_model command; a pick during a turn is applied after it. True
- * when accepted; false means clear any in-flight UI state.
- */
-export async function switchModel(chatID: string, model: string): Promise<boolean> {
-  if (chatID === "") {
-    return false;
-  }
-  const result = await switchModelAction.dispatch({ chatID, model });
-  return result !== null && result;
 }

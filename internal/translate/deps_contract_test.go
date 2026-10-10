@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 )
 
 // TestStubDeps_Contract verifies that baseDeps satisfies the Deps
@@ -73,11 +74,12 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	})
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
-		d.PendingPermsAdd(42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"})
+		d.PendingPermsAdd(42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nopOrigin{})
 	})
 
-	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {
-		d.NotifyPush(ctx, "test body", marotte.PushKindPermission, "")
+	t.Run("Notify_does_not_panic", func(t *testing.T) {
+		n := notice.Question(d.NoticeTarget(ctx, "", ""), "", "test body")
+		d.Notify(ctx, "", &n)
 	})
 
 	t.Run("turn_and_line_methods_work", func(t *testing.T) {

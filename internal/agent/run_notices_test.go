@@ -44,7 +44,6 @@ func TestObserveComplete_QueuesANoticeForABusyLaunchingChatOnly(t *testing.T) {
 	}
 }
 
-// awaitCall polls the fake's call log for method, failing closed at the deadline.
 func awaitCall(t *testing.T, br *fakeBridge, method string) bool {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

@@ -21,7 +21,7 @@ func (s *Server) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if raw.Transport != "" {
-		parsed, err := ParseTransport(string(raw.Transport))
+		parsed, err := parseTransport(string(raw.Transport))
 		if err != nil {
 			return err
 		}
@@ -54,11 +54,11 @@ func (s *Store) persist(ctx context.Context) error {
 	f := file{Version: fileVersion, Servers: s.servers}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w mcp.json: %w", ErrPersistMarshal, err)
+		return fmt.Errorf("%w mcp.json: %w", errPersistMarshal, err)
 	}
 	if _, err := atomicfile.WriteFile(ctx, s.path, data,
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
-		return fmt.Errorf("%w: %w", ErrPersistWrite, err)
+		return fmt.Errorf("%w: %w", errPersistWrite, err)
 	}
 	return s.writeKASConfig(ctx, s.servers)
 }

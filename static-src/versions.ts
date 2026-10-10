@@ -12,7 +12,7 @@ interface VersionPayload {
 
 /** A version pair. `""` means "not known", never "absent" — a reader renders
  *  what it has and says nothing about what it does not. */
-export interface Versions {
+interface Versions {
   readonly marotte: string;
   readonly kiroCli: string;
 }
@@ -88,6 +88,7 @@ export function knownConfigDir(): string {
 
 /** Reset for tests. Not part of the app's own lifecycle — the pair is read once
  *  per page load and a page load is the reset. */
+// deadset:ignore DS1004 -- test seam: resets the loaded version pair and config dir
 export function _resetVersionsForTest(): void {
   inflight = null;
   loaded = false;

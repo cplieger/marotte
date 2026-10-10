@@ -1,23 +1,11 @@
-// A DELEGATE CARD RESERVES NOTHING FOR OUTPUT IT HAS NOT RECEIVED, and the box
-// it grows into is animated rather than snapped.
-//
-// The card is built the moment the delegate is dispatched, which is before the
-// delegate has said anything, so its rolling tail (`subagent-tail.ts` derives it
-// from the store) starts with no lines in it. A padded empty box therefore paints
-// a band nothing fills — reported as an empty line inside the box that then GREW
-// when the first line landed, because 12px of block padding is not a line of
-// 11px mono text. Both halves are one CSS pair in 14-tools.css: the resting state
-// is `:empty` at zero size, the shown state is `:not(:empty)` at `auto`.
-//
-// Measured against the assembled stylesheet on real boxes, because neither half
-// is visible in the markup: the empty band is padding on an element that is
-// present either way, and the growth is a transition whose absence looks
-// identical in a DOM dump.
+// A DELEGATE CARD RESERVES NOTHING FOR OUTPUT IT HAS NOT RECEIVED, and the box it grows
+// into is animated rather than snapped: 14-tools.css rests the tail at `:empty` zero size
+// and shows it at `:not(:empty)` `auto`. Measured on real boxes against the assembled
+// stylesheet, because neither half is visible in the markup.
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
-// This graph reaches scroll.ts, a self-initialising singleton over a real `#messages`; the
-// canonical mock is what every other suite reaching that graph uses. Nothing here folds
-// anything — this file's subject is the tail's own box — so the mock only has to exist.
+// scroll.ts is a self-initialising singleton over a real `#messages`; nothing here folds,
+// so the canonical mock only has to exist.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 import { buildSubagentCard, type SubagentCard } from "./fundamentals/subagent-block.js";
@@ -29,8 +17,6 @@ let stage: HTMLDivElement;
 
 beforeAll(() => {
   sheet = mountAppCSS();
-  // The transcript's own block container, at a transcript width: a card takes
-  // both from it, and the tail's line height is inherited.
   stage = document.createElement("div");
   stage.className = "turn-body";
   stage.style.inlineSize = "760px";
@@ -63,9 +49,8 @@ function tailOf(sa: SubagentCard): HTMLElement {
 
 const height = (el: Element): number => el.getBoundingClientRect().height;
 
-/** Let the resting style be committed. Without it there is no before-change value
- *  for the growth to transition FROM, so the box would jump and every assertion
- *  below would pass for the wrong reason. */
+/** Commit the resting style, or the growth has no before-change value to transition
+ *  FROM and the assertions pass for the wrong reason. */
 const frame = (): Promise<void> =>
   new Promise((resolve) => {
     requestAnimationFrame(() => {
@@ -79,22 +64,16 @@ describe("a delegate's tail before its first line", () => {
     expect(height(tailOf(sa))).toBe(0);
   });
 
-  // `bindSubagentTail` paints as soon as it binds, so an empty projection is the
-  // FIRST thing most cards are handed rather than an edge case.
+  // `bindSubagentTail` paints on bind, so an empty projection is most cards' first paint.
   it("occupies nothing when the projection paints no lines", () => {
     const sa = card("in_progress");
     sa.setTail([]);
     expect(height(tailOf(sa))).toBe(0);
   });
 
-  // The card's own height is the claim a reader actually sees, and an empty tail
-  // is the one region between the identity row and the foot — so if it costs the
-  // card anything, that cost IS the band. Measured after the frames
-  // `content-visibility: auto` needs, because a card renders at its
-  // `contain-intrinsic-size` reserve for its first two — 71px here, which is the
-  // rule's 69px of CONTENT plus its own 2px border, measured in Chromium 151 — so
-  // measured there the box IS the reserve rather than the laid-out row, and both
-  // comparisons below fail whatever the tail does.
+  // An empty tail is the one region between the identity row and the foot, so any cost
+  // to the card IS the band. Measured after two frames: before them `content-visibility:
+  // auto` renders the card at its `contain-intrinsic-size` reserve.
   it("leaves the card at its identity row, with nothing reserved under it", async () => {
     const sa = card("in_progress");
     await frame();
@@ -129,8 +108,7 @@ describe("a delegate's first line", () => {
     expect(height(tail), "resting at zero before the line lands").toBe(0);
 
     sa.setTail(["go build ./..."]);
-    // getAnimations flushes style, so the transitions have started by the read
-    // below — which is what makes that read the animation's own first value.
+    // getAnimations flushes style, so the read below is the animation's first value.
     const running = tail.getAnimations();
     expect(running.length, "the growth is transitioned").toBeGreaterThan(0);
     expect(height(tail), "still at the resting height on the frame it lands").toBeLessThan(2);
@@ -149,11 +127,8 @@ describe("a delegate's first line", () => {
     );
   });
 
-  // The anti-thrash property, and the reason a height transition is safe on a box
-  // whose text is rewritten per streamed delta: `auto` is the computed value in
-  // every shown state, so a rewrite that keeps the line count transitions nothing.
-  // 13-messages.css records the defect this forbids — a 200ms height animation
-  // retriggered per delta, with deltas landing faster than that.
+  // Anti-thrash: `auto` is the computed value in every shown state, so a per-delta
+  // rewrite that keeps the line count must transition nothing.
   it("does not re-run the growth for a delta that rewrites its last line", async () => {
     const sa = card("in_progress");
     const tail = tailOf(sa);
@@ -162,16 +137,12 @@ describe("a delegate's first line", () => {
     await Promise.all(tail.getAnimations().map((a) => a.finished));
     const settled = height(tail);
 
-    // A rewrite that keeps the line count; how many lines a long one wraps to is
-    // `subagent-tail-wrap.test.ts`'s subject.
+    // Wrapping is `subagent-tail-wrap.test.ts`'s subject.
     sa.setTail(["go test ./..."]);
     expect(tail.getAnimations(), "a rewrite starts no transition").toEqual([]);
     expect(height(tail), "and moves the box not at all").toBeCloseTo(settled, 1);
   });
 
-  // Stated as a RELATION rather than a length: what this catches is a resting
-  // state that keeps the block padding, which is the defect, whatever the tokens
-  // are worth.
   it("is what the block padding arrives with", async () => {
     const sa = card("in_progress");
     const tail = tailOf(sa);
@@ -179,8 +150,7 @@ describe("a delegate's first line", () => {
     const resting = getComputedStyle(tail);
     expect(Number.parseFloat(resting.paddingBlockStart)).toBe(0);
     expect(Number.parseFloat(resting.paddingBlockEnd)).toBe(0);
-    // Inline padding is constant: the tail's lines align with the header's name
-    // from the first frame, so only the block axis is part of the growth.
+    // Inline padding is constant, aligning with the header's name from the first frame.
     expect(Number.parseFloat(resting.paddingInlineStart)).toBeGreaterThan(0);
 
     sa.setTail(["one"]);

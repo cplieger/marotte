@@ -12,9 +12,8 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// maxSteerCarry bounds what may be withheld. A marker the model opens and never
-// closes would otherwise swallow the rest of the turn; past this the carry is
-// released as ordinary text on the reasoning that a marker this long is not one.
+// A marker the model opens and never closes would otherwise swallow the rest of the turn; past this
+// the carry is released as ordinary text on the reasoning that a marker this long is not one.
 const maxSteerCarry = 8 << 10
 
 // steerAckRe matches a COMPLETE marker, the same shape as KAS's STEERING_RESPONSE_PATTERN

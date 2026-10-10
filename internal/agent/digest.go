@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/sse"
@@ -35,12 +36,13 @@ func (rt *Runtime) resolveDigest(ctx context.Context, held []sse.Held) ([]sse.St
 	return out, nil
 }
 
-// resolveOne answers one subject; an unserved kind is gone, so the client forgets it.
+// An unserved kind is gone, so the client forgets it.
 func (rt *Runtime) resolveOne(ctx context.Context, h *sse.Held) sse.State {
 	st := sse.State{Subject: h.Subject}
 	switch subject.Kind(h.Kind) {
 	case subject.KindChat:
-		if !rt.chatStore.Exists(marotte.ChatID(h.Ref)) {
+		// An unreadable header is a fault, not a deletion: the client keeps the chat.
+		if rt.chatStore.Presence(marotte.ChatID(h.Ref)) == chat.PresenceAbsent {
 			st.Status = sse.StatusGone
 			return st
 		}

@@ -7,9 +7,8 @@ import (
 	"github.com/cplieger/runesafe/v2"
 )
 
-// interactionResolvedBlock is the kind=="interaction_resolved" block. KAS emits
-// it for every approval it resolves; outcome "cancelled" means the asker ended and
-// KAS stopped waiting, so the request's JSON-RPC id is answered by nobody.
+// KAS emits it for every approval it resolves; outcome "cancelled" means the asker ended and KAS
+// stopped waiting, so the request's JSON-RPC id is answered by nobody.
 type interactionResolvedBlock struct {
 	ToolCallID     string `json:"toolCallId"`
 	Outcome        string `json:"outcome"`

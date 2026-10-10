@@ -239,6 +239,10 @@
   color: var(--c-text-primary);
 }
 
+.ev-notice {
+  margin: 0;
+}
+
 .ev-alert[data-kind="failed"] {
   border-inline-start-color: var(--c-red);
   background: color-mix(in srgb, var(--c-red) 10%, transparent);
@@ -440,7 +444,8 @@
    pane holding one row is a row you cannot avoid clicking rather than navigation.
    The detail takes the whole width, which is what a reader of a single delegate
    wants — the page's whole point is that the thing being read gets the room. */
-.ev-panes.ev-panes-flat {
+.ev-panes.ev-panes-flat,
+.ev-panes.ev-panes-docked {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto;
 }
@@ -549,25 +554,6 @@
   }
 }
 
-/* The NESTING MARKER for a sub-sub-item, `ICON_TAB_SUBTAB` — the same glyph and the
-   same carrier the tab strip's sub-tab row uses (`.tab .tab-nest`, 12-tabs.css), so
-   nesting reads one way across the app. `aria-hidden`: the row's `aria-label`
-   already carries the structure.
-
-   The `[hidden]` companion is REQUIRED, not defensive — there is no author
-   `[hidden]` rule in this tree, so the UA sheet's loses the specificity tie to the
-   bare class above, exactly as `.ev-inputs[hidden]` records. */
-.ev-nest {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  color: var(--c-text-tertiary);
-}
-
-.ev-nest[hidden] {
-  display: none;
-}
-
 .ev-row-main {
   display: flex;
   align-items: center;
@@ -589,13 +575,14 @@
      wrapper with padding — which is what keeps the reconcile an ordering pass over
      flat elements rather than a tree of boxes to rebuild.
 
-     `--ev-depth` is now ZERO for depth 0 AND depth 1 (`tree.ts` writes
-     `depth >= 2 ? depth - 1 : 0`): a direct child of a top-level group is inside
-     that group's box, and the box is the hierarchy, so indenting it too would say
-     the same thing twice. Only a sub-sub-item indents, one step per level past 1,
-     and it also takes the `↳` glyph. */
+     ONE STEP PER LEVEL, and the step is a top-level group's twist plus the row gap:
+     that group's dot sits one step in, so a direct child's dot lands in the same
+     column, and each deeper level moves one more step. */
+  --ev-step: calc(1rem + var(--sp-1));
+
+  position: relative;
   padding-block: 0.1875rem;
-  padding-inline: calc(var(--sp-1) + var(--ev-depth, 0) * var(--sp-3)) var(--sp-1);
+  padding-inline: calc(var(--sp-1) + var(--ev-depth, 0) * var(--ev-step)) var(--sp-1);
   border-radius: var(--r);
   cursor: pointer;
   transition:
@@ -620,6 +607,37 @@
     outline: var(--focus-ring);
     outline-offset: var(--focus-offset-inset);
   }
+}
+
+/* THE INDENT GUIDES, one thin line at each ancestor's dot column (a file tree's
+   guides). Depths 0 and 1 share a column, so a depth-k row draws max(1, k - 1)
+   lines, the first at one step plus half a dot. A pseudo-element rather than the
+   row's background, which the hover and the selected fill own. Rows inside a box
+   are flush, so the segments join. */
+.ev-row[data-guides] > .ev-row-main::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(var(--sp-1) + var(--ev-step));
+  inline-size: calc(max(1, var(--ev-depth, 1) - 1) * var(--ev-step));
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to right,
+    transparent 0 calc(0.5rem - 0.5px),
+    var(--c-border) calc(0.5rem - 0.5px) calc(0.5rem + 0.5px),
+    transparent calc(0.5rem + 0.5px) var(--ev-step)
+  );
+}
+
+/* A direct child's line runs through its own dot, so it breaks around the 1rem dot
+   the row centres, or a hollow ring reads as struck through. */
+.ev-row[data-guides="through-dot"] > .ev-row-main::before {
+  mask-image: linear-gradient(
+    to bottom,
+    #000 calc(50% - 0.625rem),
+    transparent calc(50% - 0.625rem) calc(50% + 0.625rem),
+    #000 calc(50% + 0.625rem)
+  );
 }
 
 /* SELECTION lives in 70-selection.css, with every other selected surface in the

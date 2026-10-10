@@ -52,7 +52,6 @@ func (s *steerSpy) framesFor(key string) []marotte.SteerQueuedPayload {
 	return out
 }
 
-// steerHarness drives one chat's record the way the frames and commands do.
 type steerHarness struct {
 	fatalf func(string, ...any)
 	h      *Runtime
@@ -96,15 +95,13 @@ func harnessOn(h *Runtime, chat marotte.ChatID, fatalf func(string, ...any)) *st
 
 var promptHolder = command.SteerHolder{Held: true, PromptClass: true, Live: true}
 
-func (s *steerHarness) bind() string {
+func (s *steerHarness) bind() {
 	s.turn++
-	id := "t-" + string(rune('0'+s.turn))
-	s.recs.TurnBound(s.chat, id)
-	return id
+	s.recs.turnBound(s.chat, "t-"+string(rune('0'+s.turn)))
 }
 
 func (s *steerHarness) endTurn() {
-	s.recs.TurnEnded(s.chat, command.SteerTurnEnd{TurnID: s.turnID(), Source: marotte.TurnSourcePrompt})
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{TurnID: s.turnID(), Source: marotte.TurnSourcePrompt})
 }
 
 // kas folds each send the way KAS answers it: steering_queued, then the reply.
@@ -115,13 +112,12 @@ func (s *steerHarness) kas(sends []command.SteerSend) {
 	}
 }
 
-func (s *steerHarness) steer(key, text string) []command.SteerSend {
+func (s *steerHarness) steer(key, text string) {
 	sends, refuse := s.q.RouteSteer(s.chat, key, text, promptHolder)
 	if refuse != "" {
 		s.fatalf("RouteSteer(%s) refused %q", key, refuse)
 	}
 	s.kas(sends)
-	return sends
 }
 
 // kasHolds is every id KAS's buffer holds for the chat, the reply a clear gives.
@@ -153,7 +149,6 @@ func (s *steerHarness) clearKAS() []string {
 	return ids
 }
 
-// remove runs a delete through its clear and answers the record's verdict.
 func (s *steerHarness) remove(key string) (res command.SteerOpResult, needsClear bool, refuse string) {
 	op := "op-" + key
 	needsClear, refuse = s.q.BeginRemove(s.chat, key, op)
@@ -318,7 +313,7 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		{name: "E0′ keeps the channel", key: "steer-a", row: rowQueued, channel: chanOpen, run: func(s *steerHarness) {
 			s.bind()
 			s.steer("steer-a", "a")
-			s.recs.TurnRevised(s.chat, "t-other")
+			s.recs.turnRevised(s.chat, "t-other")
 			if s.turnID() != "t-other" {
 				s.fatalf("turn = %q, want t-other", s.turnID())
 			}
@@ -403,7 +398,7 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		}},
 		{name: "E8 reads a re-injected copy", key: "steer-a", row: rowDone, channel: chanNone, run: func(s *steerHarness) {
 			s.steer("steer-a", "a")
-			s.recs.BridgeGone(s.chat)
+			s.recs.bridgeGone(s.chat)
 			s.recs.SteerRead(s.chat, "steer-a")
 		}},
 		{name: "E9 owes the waiters a probe", key: "steer-c", row: rowWaiting, channel: chanProbing, run: func(s *steerHarness) {
@@ -429,8 +424,8 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		{name: "E10b collects and owes the post-load clear", key: "steer-a", row: rowQueued, channel: chanNone, run: func(s *steerHarness) {
 			s.bind()
 			s.steer("steer-a", "a")
-			s.recs.TurnEnded(s.chat, command.SteerTurnEnd{TurnID: s.turnID(), BridgeDeath: true, Source: marotte.TurnSourcePrompt})
-			if !s.recs.NeedsPostLoadClear(s.chat) {
+			s.recs.turnEnded(s.chat, command.SteerTurnEnd{TurnID: s.turnID(), BridgeDeath: true, Source: marotte.TurnSourcePrompt})
+			if !s.recs.needsPostLoadClear(s.chat) {
 				s.fatalf("a dead buffer's row does not owe the post-load clear")
 			}
 		}},
@@ -454,7 +449,7 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		{name: "E14 drops every row", key: "steer-a", row: rowDone, channel: chanNone, run: func(s *steerHarness) {
 			s.bind()
 			s.steer("steer-a", "a")
-			s.recs.BeginTeardown(s.chat, nil)
+			s.recs.beginTeardown(s.chat, nil)
 		}},
 		{name: "E15 OPEN clears the refused row", key: "steer-a", row: rowCleared, channel: chanUnconfirmed, run: func(s *steerHarness) {
 			s.bind()
@@ -473,7 +468,7 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		}},
 		{name: "E17 parks a row sent during the wait", key: "steer-b", row: rowParked, channel: chanNone, run: func(s *steerHarness) {
 			s.steer("steer-a", "a")
-			s.recs.BridgeGone(s.chat)
+			s.recs.bridgeGone(s.chat)
 			s.steer("steer-b", "b")
 			s.q.PostLoadCleared(s.chat, []string{"steer-a", "steer-b"}, true)
 		}},
@@ -672,7 +667,7 @@ func TestSteerRecords_ARowKASDoesNotHoldIsDeletedWithoutAClear(t *testing.T) {
 // turn's cursor is about to read, so it waits; with no started turn it goes ahead.
 func TestSteerRecords_ADeleteInNoneIsRefusedOnlyWhileATurnIsStarting(t *testing.T) {
 	s := newSteerHarness(t)
-	s.recs.TurnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
 	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", promptHolder)
 	s.kas(sends)
 	s.mustState("steer-a", rowQueued)
@@ -791,7 +786,7 @@ func TestSteerRecords_ATurnEndingUnderADeleteHandsItTheParkedRowsToo(t *testing.
 	if needs, refuse := s.q.BeginRemove(s.chat, "steer-a", op); !needs || refuse != "" {
 		t.Fatalf("BeginRemove = %v %q, want a clear", needs, refuse)
 	}
-	s.recs.TurnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
 
 	if ends := s.q.Ends(s.chat); len(ends) != 0 {
 		t.Errorf("ends before the op lets go = %+v, want the op alone to hold the turn's rows", ends)
@@ -822,7 +817,7 @@ func TestSteerRecords_ATurnEndingUnderADiscardLeavesALaterRowToItsEnd(t *testing
 		command.SteerHolder{Held: true, PromptClass: true}); refuse != "" {
 		t.Fatalf("RouteSteer(steer-b) refused %q", refuse)
 	}
-	s.recs.TurnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
 	s.q.DiscardCleared(s.chat, op, true)
 	s.q.EndOp(s.chat, op)
 
@@ -842,13 +837,13 @@ func TestSteerRecords_ABridgeDeathCollectsTheRowsAndArmsThePostLoadClear(t *test
 	s.bind()
 	s.steer("steer-a", "first")
 
-	s.recs.TurnEnded(s.chat, command.SteerTurnEnd{TurnID: s.turnID(), BridgeDeath: true, Source: marotte.TurnSourcePrompt})
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{TurnID: s.turnID(), BridgeDeath: true, Source: marotte.TurnSourcePrompt})
 
 	ends := s.q.Ends(s.chat)
 	if len(ends) != 1 || !ends[0].End.BridgeDeath {
 		t.Fatalf("ends = %+v, want the death's turn end", ends)
 	}
-	if !s.recs.NeedsPostLoadClear(s.chat) {
+	if !s.recs.needsPostLoadClear(s.chat) {
 		t.Error("a row the dead buffer held does not arm the post-load clear")
 	}
 	rows, _ := s.q.JobRows(s.chat, ends[0].Owner)
@@ -861,17 +856,17 @@ func TestSteerRecords_ABridgeDeathCollectsTheRowsAndArmsThePostLoadClear(t *test
 // the next prompt, and owes the post-load clear.
 func TestSteerRecords_ABridgeGoneWithNoTurnLeavesTheRowsUnsent(t *testing.T) {
 	s := newSteerHarness(t)
-	s.recs.TurnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
 	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", promptHolder)
 	s.kas(sends)
 
-	s.recs.BridgeGone(s.chat)
+	s.recs.bridgeGone(s.chat)
 
 	s.mustState("steer-a", rowUnsent)
 	if f := s.spy.framesFor("steer-a"); len(f) == 0 || f[len(f)-1].State != marotte.SteerRowUnsent {
 		t.Errorf("frames = %+v, want an unsent frame last", f)
 	}
-	if !s.recs.NeedsPostLoadClear(s.chat) {
+	if !s.recs.needsPostLoadClear(s.chat) {
 		t.Error("the dead buffer's row does not arm the post-load clear")
 	}
 }
@@ -935,7 +930,7 @@ func TestSteerRecords_UndeliveredRowsGoToTheNextPrompt(t *testing.T) {
 	s.q.EndUnsent(s.chat, ends[0].Owner)
 	s.mustState("steer-a", rowUnsent)
 
-	s.recs.TurnStarted(s.chat, "t-next")
+	s.recs.turnStarted(s.chat, "t-next")
 	key, _, ok := s.q.NextParked(s.chat, "t-next")
 	if !ok || key != "steer-a" {
 		t.Fatalf("NextParked = %q %v, want steer-a for the next prompt", key, ok)
@@ -951,7 +946,7 @@ func TestSteerRecords_UndeliveredRowsGoToTheNextPrompt(t *testing.T) {
 // row unsent, so a superseded prompt cannot take it.
 func TestSteerRecords_ADeliveryToAnUnnamedTurnIsRefused(t *testing.T) {
 	s := newSteerHarness(t)
-	s.recs.TurnStarted(s.chat, "t-next")
+	s.recs.turnStarted(s.chat, "t-next")
 	s.q.RouteSteer(s.chat, "steer-a", "first", command.SteerHolder{Held: true, PromptClass: true})
 
 	_, refuse := s.q.RouteSteer(s.chat, "steer-a", "first",
@@ -976,7 +971,7 @@ func TestSteerRecords_UnsentRowsAreParkedForTheNextPrompt(t *testing.T) {
 	if _, _, ok := s.q.NextParked(s.chat, "t-next"); ok {
 		t.Fatal("NextParked answered for a turn the record does not name")
 	}
-	s.recs.TurnStarted(s.chat, "t-next")
+	s.recs.turnStarted(s.chat, "t-next")
 	key, text, ok := s.q.NextParked(s.chat, "t-next")
 
 	if !ok || key != "steer-a" || text != "first" {
@@ -990,8 +985,8 @@ func TestSteerRecords_UnsentRowsAreParkedForTheNextPrompt(t *testing.T) {
 func TestSteerRecords_ThePostLoadClearParksARowSentDuringTheWait(t *testing.T) {
 	s := newSteerHarness(t)
 	s.steer("steer-a", "first")
-	s.recs.BridgeGone(s.chat)
-	if !s.recs.NeedsPostLoadClear(s.chat) {
+	s.recs.bridgeGone(s.chat)
+	if !s.recs.needsPostLoadClear(s.chat) {
 		t.Fatal("a dead buffer's row does not arm the post-load clear")
 	}
 	sends, _ := s.q.RouteSteer(s.chat, "steer-b", "second", promptHolder)
@@ -1000,7 +995,7 @@ func TestSteerRecords_ThePostLoadClearParksARowSentDuringTheWait(t *testing.T) {
 	s.q.PostLoadCleared(s.chat, []string{s.kasID("steer-b")}, true)
 
 	s.mustState("steer-b", rowParked)
-	if s.recs.NeedsPostLoadClear(s.chat) {
+	if s.recs.needsPostLoadClear(s.chat) {
 		t.Error("the post-load clear is still owed after it landed")
 	}
 }
@@ -1037,7 +1032,7 @@ func TestSteerRecords_ATornDownChatOwesNothing(t *testing.T) {
 	s.steer("steer-a", "first")
 	exit := make(chan struct{})
 
-	unread := s.recs.BeginTeardown(s.chat, exit)
+	unread := s.recs.beginTeardown(s.chat, exit)
 	s.endTurn()
 
 	if len(unread) != 1 || unread[0].SteerID != "steer-a" {
@@ -1047,7 +1042,7 @@ func TestSteerRecords_ATornDownChatOwesNothing(t *testing.T) {
 		t.Errorf("a torn-down chat queued %+v", jobs)
 	}
 	done := make(chan struct{})
-	go func() { s.recs.EndTeardown(s.chat); close(done) }()
+	go func() { s.recs.endTeardown(s.chat); close(done) }()
 	select {
 	case <-done:
 		t.Fatal("EndTeardown returned before the forward goroutine drained")
@@ -1068,7 +1063,7 @@ func TestSteerRecords_ATornDownChatOwesNothing(t *testing.T) {
 func TestSteerRecords_ATornDownChatTakesNoNewRow(t *testing.T) {
 	s := newSteerHarness(t)
 	s.bind()
-	s.recs.BeginTeardown(s.chat, nil)
+	s.recs.beginTeardown(s.chat, nil)
 
 	sends, refuse := s.q.RouteSteer(s.chat, "steer-a", "late", promptHolder)
 
@@ -1111,7 +1106,7 @@ func TestSteerRecords_BeginTeardownWaitsForAnActivePublication(t *testing.T) {
 	<-entered
 	returned := make(chan struct{})
 	wg.Go(func() {
-		s.recs.BeginTeardown(s.chat, nil)
+		s.recs.beginTeardown(s.chat, nil)
 		log("teardown returned")
 		close(returned)
 	})
@@ -1178,7 +1173,7 @@ func TestSteerRecords_TheReplayListsEachRowWithItsBatch(t *testing.T) {
 	}
 
 	var rows, batches []marotte.SteerQueuedPayload
-	for _, e := range s.recs.List(s.chat) {
+	for _, e := range s.recs.list(s.chat) {
 		p := e.Payload.(marotte.SteerQueuedPayload)
 		if len(p.Replaces) > 0 {
 			batches = append(batches, p)
@@ -1208,7 +1203,7 @@ func TestSteerRecords_AnUnsettledPostLoadClearHoldsTheReloadedRows(t *testing.T)
 		}},
 		{name: "an agent row blocked the clear", settle: func(s *steerHarness) {
 			s.recs.SteerWaiting(s.chat, &marotte.SteerQueuedPayload{SteerID: "notify-1", Origin: marotte.SteerOriginAgent})
-			if s.recs.NeedsPostLoadClear(s.chat) {
+			if s.recs.needsPostLoadClear(s.chat) {
 				s.fatalf("a clear that would drop an agent row is still owed")
 			}
 		}},
@@ -1219,9 +1214,9 @@ func TestSteerRecords_AnUnsettledPostLoadClearHoldsTheReloadedRows(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			s := newSteerHarness(t)
 			s.steer("steer-a", "first")
-			s.recs.BridgeGone(s.chat)
+			s.recs.bridgeGone(s.chat)
 			tc.settle(s)
-			s.recs.TurnStarted(s.chat, "t-next")
+			s.recs.turnStarted(s.chat, "t-next")
 
 			_, _, ok := s.q.NextParked(s.chat, "t-next")
 
@@ -1389,7 +1384,7 @@ func readByAck(s *steerHarness, id string) []string {
 // A chat whose teardown began answers no frame.
 func TestSteerRecords_AGoneChatAnswersNoFrame(t *testing.T) {
 	s := newSteerHarness(t)
-	s.recs.BeginTeardown(s.chat, nil)
+	s.recs.beginTeardown(s.chat, nil)
 
 	if _, ok := s.recs.SteerWaiting(s.chat, &marotte.SteerQueuedPayload{SteerID: "notify-1"}); ok {
 		t.Error("a torn-down chat answered a frame")
@@ -1402,14 +1397,14 @@ func TestSteerRecords_AgentRowsWaitAndAreBounded(t *testing.T) {
 	for i := range maxSteerRows + 1 {
 		s.recs.SteerWaiting(s.chat, &marotte.SteerQueuedPayload{SteerID: "notify-" + strings.Repeat("x", i+1), Origin: marotte.SteerOriginAgent})
 	}
-	if n := len(s.recs.List(s.chat)); n != maxSteerRows {
+	if n := len(s.recs.list(s.chat)); n != maxSteerRows {
 		t.Errorf("listed %d agent rows, want %d", n, maxSteerRows)
 	}
 	s.recs.SteerRead(s.chat, "notify-"+strings.Repeat("x", maxSteerRows+1))
-	if n := len(s.recs.List(s.chat)); n != maxSteerRows-1 {
+	if n := len(s.recs.list(s.chat)); n != maxSteerRows-1 {
 		t.Errorf("listed %d after a read, want %d", n, maxSteerRows-1)
 	}
-	if n := len(s.recs.List("other")); n != 0 {
+	if n := len(s.recs.list("other")); n != 0 {
 		t.Errorf("another chat lists %d rows", n)
 	}
 }
@@ -1442,53 +1437,14 @@ func TestCleanupChatState_ForgetsTheSteerRecord(t *testing.T) {
 
 	h.cleanupChatState(t.Context(), "c1")
 
-	if n := len(h.bus.steers.List("c1")); n != 0 {
+	if n := len(h.bus.steers.list("c1")); n != 0 {
 		t.Errorf("c1 still lists %d rows", n)
 	}
-	if n := len(h.bus.steers.List("c2")); n != 1 {
+	if n := len(h.bus.steers.list("c2")); n != 1 {
 		t.Errorf("c2 lists %d rows, want its own", n)
 	}
 	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-3", "three", promptHolder); refuse != "" {
 		t.Errorf("a reopened chat refused a steer: %q", refuse)
-	}
-}
-
-func TestChatLocks_SerializeOneChatAndNotOthers(t *testing.T) {
-	locks := newChatLocks()
-	unlock, err := locks.lock(t.Context(), "c1")
-	if err != nil {
-		t.Fatalf("lock c1: %v", err)
-	}
-	other, err := locks.lock(t.Context(), "c2")
-	if err != nil {
-		t.Fatalf("lock c2 while c1 is held: %v", err)
-	}
-	other()
-
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer cancel()
-	if _, err := locks.lock(ctx, "c1"); err == nil {
-		t.Fatal("second lock of c1 succeeded while the first was held")
-	}
-	acquired := make(chan func())
-	go func() {
-		u, err := locks.lock(t.Context(), "c1")
-		if err != nil {
-			t.Errorf("waiting lock: %v", err)
-		}
-		acquired <- u
-	}()
-	unlock()
-	select {
-	case u := <-acquired:
-		u()
-	case <-time.After(5 * time.Second):
-		t.Fatal("a waiter was not woken by the unlock")
-	}
-	locks.mu.Lock()
-	defer locks.mu.Unlock()
-	if len(locks.m) != 0 {
-		t.Errorf("map holds %d chats after every holder left, want 0", len(locks.m))
 	}
 }
 
@@ -1521,7 +1477,7 @@ func TestSteerRecords_ShutdownTakeLeavesNothingToFold(t *testing.T) {
 	s.steer("steer-a", "in kas")
 	s.q.RouteSteer(s.chat, "steer-b", "parked", command.SteerHolder{Held: true, PromptClass: true})
 
-	rows := s.recs.ShutdownTake(s.chat)
+	rows := s.recs.shutdownTake(s.chat)
 
 	if len(rows) != 2 || !rows[0].KASHeld || rows[1].KASHeld || rows[1].Text != "parked" {
 		t.Fatalf("taken = %+v, want steer-a KAS-held then steer-b record-only", rows)
@@ -1530,7 +1486,7 @@ func TestSteerRecords_ShutdownTakeLeavesNothingToFold(t *testing.T) {
 	if _, refuse := s.q.RouteSteer(s.chat, "steer-c", "late", promptHolder); refuse != command.SteerRefuseNoTurn {
 		t.Errorf("a steer after the take = %q, want no_turn", refuse)
 	}
-	if again := s.recs.ShutdownTake(s.chat); len(again) != 0 {
+	if again := s.recs.shutdownTake(s.chat); len(again) != 0 {
 		t.Errorf("a second take = %+v, want nothing", again)
 	}
 	if n := s.spy.note("steer-a"); n != nil {

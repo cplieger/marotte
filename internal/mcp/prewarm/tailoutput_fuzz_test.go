@@ -5,7 +5,7 @@ import (
 	"unicode/utf8"
 )
 
-// FuzzTailOutput exercises TailOutput with arbitrary byte slices and
+// FuzzTailOutput exercises tailOutput with arbitrary byte slices and
 // tail lengths, verifying UTF-8 boundary safety and length invariants.
 func FuzzTailOutput(f *testing.F) {
 	f.Add([]byte("hello world"), 5)
@@ -19,7 +19,7 @@ func FuzzTailOutput(f *testing.F) {
 		if n < 0 || n > 1<<20 {
 			return
 		}
-		result := TailOutput(data, n)
+		result := tailOutput(data, n)
 
 		// Result must be valid UTF-8 when input is valid UTF-8.
 		if utf8.Valid(data) && !utf8.ValidString(result) {

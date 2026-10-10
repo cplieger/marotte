@@ -80,13 +80,11 @@ func TestHookMethodConstants_OmitTheRunNowPair(t *testing.T) {
 	}
 }
 
-// constString is one string-valued constant declaration.
 type constString struct {
 	name  string
 	value string
 }
 
-// constStrings returns every string-literal constant a file declares.
 func constStrings(file *ast.File) []constString {
 	var out []constString
 	for _, decl := range file.Decls {

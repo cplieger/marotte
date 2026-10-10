@@ -28,19 +28,23 @@ import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN, ICON_EXTERNAL } from "../icons.js";
 import { buildPath } from "../route-path.js";
-import { runToExec, type RunAsks, type StepEnds } from "../run-exec-source.js";
+import type { RunAsks } from "../run-asks.js";
+import { runToExec, type StepEnds } from "../run-exec-source.js";
 import { formatElapsed, truncate } from "../strings.js";
 import type { ToolStatus } from "../types.js";
+import { watchResult, watchSummary } from "../watch-result.js";
 import {
   isNeedInputPark,
+  nodesOfType,
   pauseDetailPhrase,
   pausePendingSentence,
+  resumeSentence,
   runIsLive,
   type RunState,
-  userStopSentence,
+  stopSentence,
 } from "../run-store.js";
 
-const NO_ASKS: RunAsks = { count: 0, nodes: new Set<string>(), label: "" };
+const NO_ASKS: RunAsks = { count: 0, asked: [], label: "" };
 
 /** The parts of a run's read the store keeps beside its state (`runPlan`, `runStepEnds`): the plan
  *  is what a container KAS has not expanded yet will hold. */
@@ -362,7 +366,7 @@ export function buildRunCard(
     // Visible on the collapsed row, since a capture is a RESULT. Guarded on the text changing, since
     // render() runs on every invalidation.
     const cap = row.root.querySelector<HTMLElement>(":scope > .run-step-capture");
-    const text = node.output ?? "";
+    const text = node.capture ?? "";
     if (text === "") {
       cap?.remove();
     } else if (cap?.dataset["text"] !== text) {
@@ -426,12 +430,15 @@ export function buildRunCard(
       if (asks.count > 1) {
         parts.push(`${String(asks.count)} asks waiting`);
       }
-    } else if (state !== undefined && userStopSentence(state) !== undefined) {
+    } else if (state !== undefined && stopSentence(state) !== undefined) {
       kind = "stopped";
-      parts.push(userStopSentence(state) ?? "");
+      parts.push(stopSentence(state) ?? "");
     } else if (state !== undefined && pausePendingSentence(state) !== undefined) {
       kind = "paused";
       parts.push(pausePendingSentence(state) ?? "");
+    } else if (state !== undefined && resumeSentence(state) !== undefined) {
+      kind = "stopped";
+      parts.push(resumeSentence(state) ?? "");
     } else if (state?.status === "paused") {
       kind = "paused";
       parts.push(pauseSentence(state));
@@ -462,8 +469,10 @@ export function buildRunCard(
    *  collision. */
   function renderOutputs(state: RunState | undefined): void {
     const merged = new Map<string, string>();
+    const watches = new Set(nodesOfType(state?.root, "watch").map((n) => n.nodeId));
     for (const [k, v] of Object.entries(state?.capturedOutputs ?? {})) {
-      merged.set(k, v);
+      const watch = watches.has(k) ? watchResult(v) : undefined;
+      merged.set(k, watch === undefined ? v : watchSummary(watch));
     }
     for (const [k, v] of Object.entries(state?.artifacts ?? {})) {
       merged.set(k, v);

@@ -31,7 +31,6 @@ export function loadAccountUsage(force = false): void {
     });
 }
 
-/** Pick the credit breakdown (or the first line) for the compact summary. */
 function primaryBreakdown(u: AccountUsage): AccountUsageBreakdown | undefined {
   const list = u.breakdowns;
   return list.find((b) => b.resource_type === "CREDIT") ?? list[0];

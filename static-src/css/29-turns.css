@@ -187,7 +187,8 @@
   gap: var(--sp-1);
 }
 
-.turn-req-text {
+.turn-req-text,
+.turn-req-full {
   font-size: var(--fs-md);
   line-height: 1.5;
   color: var(--c-text-primary);
@@ -690,6 +691,58 @@
       color: var(--c-accent);
     }
   }
+}
+
+/* A context-breakdown category: its share is the summary, its items open beneath.
+ * `list-style: none` or the native marker paints beside the real chevron. */
+.ctx-breakdown-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  list-style: none;
+  cursor: pointer;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+
+  @media (any-hover: hover) {
+    &:hover {
+      color: var(--c-text-primary);
+    }
+  }
+}
+
+.ctx-breakdown-category[open] > .ctx-breakdown-summary > .disclosure-chevron {
+  --chev-turn: 0deg;
+}
+
+.ctx-breakdown-items {
+  display: grid;
+  gap: 2px;
+  margin: 2px 0 0;
+  padding: 0 0 0 calc(1rem + var(--sp-1));
+  list-style: none;
+}
+
+.ctx-breakdown-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.ctx-breakdown-badge {
+  padding: 0 var(--sp-1);
+  border-radius: var(--r-sm);
+  background: var(--c-well);
+  color: var(--c-text-tertiary);
+  font-family: var(--font-mono);
+}
+
+.ctx-breakdown-more,
+.ctx-breakdown-parts {
+  color: var(--c-text-tertiary);
 }
 
 .turn-ledger-file {

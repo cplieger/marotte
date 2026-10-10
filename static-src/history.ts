@@ -58,7 +58,6 @@ interface HistoryRow {
   kind: "chat" | "run";
   title: string;
   updatedAt: number;
-  /** The one subtitle line, already joined. */
   sub: string;
   /** The verdict stated as a glyph, or null: any chat, a moving run, or a status with no verdict. */
   outcome: RunVerdict | null;
@@ -337,10 +336,8 @@ function runsContainer(): HTMLElement | null {
 
 class HistoryController {
   private abort: AbortController | null = null;
-  /**
-   * The Chats pane's search popup. Closing clears the query, or a hidden box leaves the list narrowed unexplained. No
-   * case toggle: `GET /api/chats/search` reads no `case` parameter.
-   */
+  /** Closing clears the query, or a hidden box leaves the list narrowed unexplained. No case toggle:
+   *  `GET /api/chats/search` reads no `case` parameter. */
   readonly search: SearchPopup = createSearchPopup<null>({
     id: "hist-search",
     // A search, so the magnifier: the server reads every chat file, beyond the loaded list.
@@ -752,10 +749,8 @@ function buildDeleteButton(row: HistoryRow, refresh: () => void): HTMLElement | 
 
 // Search is a second mode, not a filter: the list is the newest N sessions while search reads every chat file.
 
-/**
- * Hands the reader to the chat's own find, stepped to the best hit. The tab opens first, awaited: the switch clears
- * the transcript's box. A chat that did not open gets no find.
- */
+/** The tab opens first, awaited: the switch clears the transcript's box. A chat that did not open
+ *  gets no find. */
 async function openMatch(match: Match, query: string): Promise<void> {
   const outcome = await openChatTab(match.id, match.name);
   if (outcome === "opened" && match.best !== undefined) {

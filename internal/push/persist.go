@@ -119,8 +119,7 @@ func (s *Service) reportOrphanedSubs(stored int) {
 		"count", stored, "hint", pushResubscribeHint)
 }
 
-// readPersistedSubs decodes push-subs.json. A missing file is the first-boot
-// state, reported as no subscriptions and no error.
+// A missing file is the first-boot state, reported as no subscriptions and no error.
 func (s *Service) readPersistedSubs() ([]marotte.PushSubscription, error) {
 	data, err := os.ReadFile(s.subsPath())
 	if err != nil {
@@ -200,13 +199,9 @@ func (s *Service) saveSubs(ctx context.Context) {
 	done := make(chan struct{})
 	select {
 	case s.saveCh <- saveRequest{subs: subs, done: done}:
-		// Guard the completion wait with the service LIFETIME as well as the
-		// send: if Close() raced this send and writeLoop already exited,
-		// nothing will ever close `done` — without this guard the goroutine (an
-		// inflight.Go member) would block forever and hang inflight.Wait() at
-		// shutdown. This is the second signal, and it is why the lifetime stays
-		// a field rather than becoming a parameter: a caller's ctx cannot say
-		// whether the write loop is still alive.
+		// The wait needs the service LIFETIME too: if Close() raced the send and writeLoop exited,
+		// nothing closes `done` and this inflight.Go member hangs inflight.Wait(). A caller's ctx
+		// cannot say whether the write loop is alive, which is why the lifetime is a field.
 		select {
 		case <-done:
 		case <-s.lifetime.Done():
@@ -215,35 +210,6 @@ func (s *Service) saveSubs(ctx context.Context) {
 	}
 }
 
-// flushSaves blocks until any pending async save completes by sending
-// a synchronous no-op through the write loop. Exported for tests that
-// need to verify persistence after Subscribe/Unsubscribe.
-func (s *Service) flushSaves() {
-	done := make(chan struct{})
-	s.mu.Lock()
-	subs := make([]marotte.PushSubscription, 0, len(s.subs))
-	for _, sub := range s.subs {
-		subs = append(subs, sub)
-	}
-	s.mu.Unlock()
-	select {
-	case s.saveCh <- saveRequest{subs: subs, done: done}:
-		// Guard the completion wait with the service LIFETIME as well as the
-		// send: if Close() raced this send and writeLoop already exited,
-		// nothing will ever close `done` — without this guard the goroutine (an
-		// inflight.Go member) would block forever and hang inflight.Wait() at
-		// shutdown. This is the second signal, and it is why the lifetime stays
-		// a field rather than becoming a parameter: a caller's ctx cannot say
-		// whether the write loop is still alive.
-		select {
-		case <-done:
-		case <-s.lifetime.Done():
-		}
-	case <-s.lifetime.Done():
-	}
-}
-
-// writeSubsSnapshot marshals and persists a subscription snapshot to disk.
 func (s *Service) writeSubsSnapshot(subs []marotte.PushSubscription) {
 	data, err := json.MarshalIndent(subs, "", "  ")
 	if err != nil {

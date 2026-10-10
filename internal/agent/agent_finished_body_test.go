@@ -8,37 +8,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func TestAgentFinishedBodyFrom(t *testing.T) {
-	cases := []struct {
-		name string
-		desc string
-		want string
-	}{
-		{
-			name: "TheAgentsOwnLine",
-			desc: "Reviewing the MCP validation accumulation",
-			want: "Reviewing the MCP validation accumulation",
-		},
-		{
-			name: "EmptyFallsBackToTheLiteral", desc: "", want: defaultAgentFinishedBody,
-		},
-		{
-			name: "WhitespaceOnlyFallsBackToo", desc: "  \n\t ", want: defaultAgentFinishedBody,
-		},
-		{
-			name: "SurroundingWhitespaceIsTrimmed",
-			desc: "  Fixing the poller  ", want: "Fixing the poller",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := agentFinishedBodyFrom(tc.desc); got != tc.want {
-				t.Errorf("agentFinishedBodyFrom(%q) = %q, want %q", tc.desc, got, tc.want)
-			}
-		})
-	}
-}
-
 // emit() clears the chat's status as turn_closed goes out, so the push must not read it at the push site.
 func TestPushTurnOutcome_PushBodyCarriesAgentText(t *testing.T) {
 	cs := newTestChatStore()
@@ -60,7 +29,7 @@ func TestPushTurnOutcome_PushBodyCarriesAgentText(t *testing.T) {
 
 	select {
 	case body := <-fp.sends:
-		if body != "Wiring the PR status poller" {
+		if body != "Response complete · Wiring the PR status poller" {
 			t.Errorf("push body = %q, want the agent's own line", body)
 		}
 	case <-time.After(2 * time.Second):
@@ -68,7 +37,7 @@ func TestPushTurnOutcome_PushBodyCarriesAgentText(t *testing.T) {
 	}
 
 	// Still cleared afterwards, or a later connect reports a finished turn's label as current.
-	if got := h.bus.chatStatus.Snapshot()["c1"]; got.Description != "" {
+	if got := h.bus.chatStatus.snapshot()["c1"]; got.Description != "" {
 		t.Errorf("the chat status survived turn end: %+v", got)
 	}
 }
@@ -82,9 +51,9 @@ func TestPushTurnOutcome_PushReadsTheSeverity(t *testing.T) {
 		silent bool   // the turn seals nothing, so end_turn grades empty
 		want   string // "" means no push at all
 	}{
-		{name: "clean", stop: marotte.StopReasonEndTurn, want: "Wiring the PR status poller"},
-		{name: "failed", stop: marotte.StopReasonError, want: "The agent reported an error and the turn stopped."},
-		{name: "refused", stop: marotte.StopReasonRefusal, want: "The model declined to continue."},
+		{name: "clean", stop: marotte.StopReasonEndTurn, want: "Response complete · Wiring the PR status poller"},
+		{name: "failed", stop: marotte.StopReasonError, want: "Turn failed · The agent reported an error and the turn stopped."},
+		{name: "refused", stop: marotte.StopReasonRefusal, want: "Turn failed · The model declined to continue."},
 		// STOPPED: the reader asked for the cancel, and an unreadable end claims nothing.
 		{name: "cancelled", stop: marotte.StopReasonCancelled, want: ""},
 		{name: "unknown", stop: marotte.StopReasonUnknown, want: ""},
@@ -165,7 +134,7 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 		}))
 		endTurn(t, h, "c1", id)
 
-		if got := awaitBody(t, fp); got != "waiting on the user to disposition both proposals" {
+		if got := awaitBody(t, fp); got != "Response complete · waiting on the user to disposition both proposals" {
 			t.Errorf("push body = %q, want the description this turn declared", got)
 		}
 	})
@@ -181,7 +150,7 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 		endTurn(t, h, "c1", id)
 		_ = awaitBody(t, fp)
 		// The claim is retained past turn end by design, so the cache still holds a description turn N+1 never declared.
-		if got := h.bus.chatStatus.Snapshot()["c1"]; got.Status != marotte.ChatStatusWaitingOnUser {
+		if got := h.bus.chatStatus.snapshot()["c1"]; got.Status != marotte.ChatStatusWaitingOnUser {
 			t.Fatalf("the fixture lost the retention: status is %q", got.Status)
 		}
 
@@ -192,8 +161,8 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 		sayText(t, wire)
 		h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonEndTurn)
 
-		if got := awaitBody(t, fp); got != defaultAgentFinishedBody {
-			t.Errorf("push body = %q, want %q: this turn declared nothing", got, defaultAgentFinishedBody)
+		if got := awaitBody(t, fp); got != "Response complete" {
+			t.Errorf("push body = %q, want %q: this turn declared nothing", got, "Response complete")
 		}
 	})
 }

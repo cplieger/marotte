@@ -73,7 +73,6 @@ type grantBody struct {
 	connectionFields
 }
 
-// handleDeviceGrant serves /api/forges/oauth/{github|gitlab}/{start|poll|cancel}.
 func (h *HTTPHandler) handleDeviceGrant(w http.ResponseWriter, r *http.Request) {
 	name, op, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/forges/oauth/"), "/")
 	kind := Kind(name)
@@ -125,12 +124,12 @@ func (h *HTTPHandler) handleGrantStart(w http.ResponseWriter, r *http.Request, k
 
 // grantFor is the connection a start signs in and the application it signs in
 // with: Marotte's own on the public instance, the body's anywhere else.
-func (h *HTTPHandler) grantFor(kind Kind, body *grantBody) (connectionRecord, creds.GrantRequest, error) {
+func (*HTTPHandler) grantFor(kind Kind, body *grantBody) (connectionRecord, creds.GrantRequest, error) {
 	rec, err := body.record(kind, body.Host)
 	if err != nil {
 		return connectionRecord{}, creds.GrantRequest{}, err
 	}
-	if rec.Host != kind.DefaultHost() {
+	if rec.Host != kind.defaultHost() {
 		if body.ClientID == "" {
 			return connectionRecord{}, creds.GrantRequest{}, errClientIDNeeded
 		}
@@ -190,8 +189,7 @@ func (h *HTTPHandler) handleGrantPoll(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, PollResult{Status: statePending})
 }
 
-// completeGrant saves an approved grant through the connect path. It does not
-// end with the request, because the token cannot be asked for again.
+// It does not end with the request, because the token cannot be asked for again.
 func (h *HTTPHandler) completeGrant(ctx context.Context, g *polledGrant) PollResult {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grantSaveBudget)
 	defer cancel()
@@ -202,15 +200,14 @@ func (h *HTTPHandler) completeGrant(ctx context.Context, g *polledGrant) PollRes
 		}
 		return res
 	}
-	h.manager.Invalidate()
+	h.manager.invalidate()
 	_ = h.manager.Refresh(ctx)
 	h.NotifyChanged(ctx)
 	return PollResult{Status: stateComplete}
 }
 
-// writeGrantPollError answers a failed poll. A refusal that ends the grant is
-// a terminal status, which the client stops on; a failure the grant survives is
-// a non-2xx, which the client backs off from and polls again.
+// A refusal that ends the grant is a terminal status, which the client stops on; a failure the
+// grant survives is a non-2xx, which the client backs off from and polls again.
 func writeGrantPollError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, errGrantNotFound) {
 		webhttp.WriteJSON(w, PollResult{Status: statusError, Error: err.Error(), Code: codeGrantNotFound})
@@ -231,8 +228,7 @@ func writeGrantPollError(w http.ResponseWriter, r *http.Request, err error) {
 	webhttp.WriteJSON(w, PollResult{Status: status, Error: logsafe.Field(ferr.Error()), Code: ferr.Code})
 }
 
-// handleGrantCancel withdraws and ends a grant. It answers 204 whether or not
-// the id named one, so a repeated cancel is not an error.
+// It answers 204 whether or not the id named one, so a repeated cancel is not an error.
 func (h *HTTPHandler) handleGrantCancel(w http.ResponseWriter, r *http.Request) {
 	id, ok := grantIDOf(w, r)
 	if !ok {
@@ -242,7 +238,6 @@ func (h *HTTPHandler) handleGrantCancel(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// grantIDOf reads a {grant_id} body, answering a malformed one itself.
 func grantIDOf(w http.ResponseWriter, r *http.Request) (string, bool) {
 	var body struct {
 		GrantID string `json:"grant_id"`

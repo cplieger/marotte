@@ -107,7 +107,7 @@ func TestProbeRoute_ARefusalSurvivesARefresh(t *testing.T) {
 	if err := m.Refresh(t.Context()); err != nil {
 		t.Fatalf("Setup: Refresh() = %v", err)
 	}
-	if f := m.Get("github:github.com"); f == nil || f.Connected || f.ErrorCode != forgeapi.CodeScopeInsufficient {
+	if f := m.get("github:github.com"); f == nil || f.Connected || f.ErrorCode != forgeapi.CodeScopeInsufficient {
 		t.Errorf("row after a refused probe and a Refresh = %+v, want disconnected and coded %q", f, forgeapi.CodeScopeInsufficient)
 	}
 
@@ -116,7 +116,7 @@ func TestProbeRoute_ARefusalSurvivesARefresh(t *testing.T) {
 	if err := m.Refresh(t.Context()); err != nil {
 		t.Fatalf("Setup: Refresh() = %v", err)
 	}
-	if f := m.Get("github:github.com"); f == nil || !f.Connected || f.LastError != "" {
+	if f := m.get("github:github.com"); f == nil || !f.Connected || f.LastError != "" {
 		t.Errorf("row after a successful probe and a Refresh = %+v, want connected with no error", f)
 	}
 }

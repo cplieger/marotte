@@ -12,7 +12,7 @@ export interface ContextMenuItem {
   disabled?: boolean;
 }
 
-export interface ContextMenuPosition {
+interface ContextMenuPosition {
   x: number;
   y: number;
 }

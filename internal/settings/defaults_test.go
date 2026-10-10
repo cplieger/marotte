@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"log/slog"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -29,6 +30,8 @@ func TestEffectiveSettings_EveryFieldIsSettable(t *testing.T) {
 	for _, k := range effectiveKeys() {
 		settable[k] = struct{}{}
 	}
+	// Resolved per GET from kiro-cli's own view, never stored (the server's fillKiroDefaults).
+	resolved := map[string]struct{}{"kiro_defaults": {}}
 	rt := reflect.TypeFor[marotte.EffectiveSettings]()
 	for f := range rt.Fields() {
 		tag, _, _ := strings.Cut(f.Tag.Get("json"), ",")
@@ -36,7 +39,8 @@ func TestEffectiveSettings_EveryFieldIsSettable(t *testing.T) {
 			t.Errorf("EffectiveSettings.%s has no json tag; every field is part of the wire", f.Name)
 			continue
 		}
-		if _, ok := settable[tag]; !ok {
+		_, isResolved := resolved[tag]
+		if _, ok := settable[tag]; !ok && !isResolved {
 			t.Errorf("EffectiveSettings.%s (json %q) has no setter, so a stored value for it is ignored", f.Name, tag)
 		}
 		// No omitempty: wiregen would emit an OPTIONAL field, letting a client invent a fallback.
@@ -44,7 +48,7 @@ func TestEffectiveSettings_EveryFieldIsSettable(t *testing.T) {
 			t.Errorf("EffectiveSettings.%s carries omitempty; that generates an optional TS field and reopens the client-fallback class", f.Name)
 		}
 	}
-	if got, want := rt.NumField(), len(effectiveKeys()); got != want {
+	if got, want := rt.NumField(), len(effectiveKeys())+len(resolved); got != want {
 		t.Errorf("EffectiveSettings has %d fields but %d setters; one side gained a key alone", got, want)
 	}
 }
@@ -230,9 +234,7 @@ func TestDefaultAgentIgnoreFiles_EmptyAndTheFloorCarriesEnforcement(t *testing.T
 	}
 }
 
-// captureSlog installs a Debug-level slog handler writing to a buffer and restores it, along
-// with the log package's writer and flags, which slog.SetDefault also redirects. The default
-// is process-wide, so a test using it must not run in parallel.
+// The default is process-wide, so a test using it must not run in parallel.
 func captureSlog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
@@ -271,4 +273,10 @@ func TestWarnUnknownKeys_LogsOnlyWhenUnknownPresent(t *testing.T) {
 			t.Errorf("did not warn for an unknown key; log=%q", buf.String())
 		}
 	})
+}
+
+// effectiveKeys is every key EffectiveSettings decodes, sorted.
+func effectiveKeys() []string {
+	var out marotte.EffectiveSettings
+	return slices.Sorted(maps.Keys(effectiveSetters(&out)))
 }

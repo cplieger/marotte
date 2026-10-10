@@ -19,9 +19,9 @@ vi.mock("./actions/editor.js", () => ({
   suggestResolution: { cancel: vi.fn(), dispatch: vi.fn(async () => null) },
 }));
 vi.mock("./editor-ui.js", () => ({
-  updateGutter: vi.fn(),
-  renderEditModeUI: vi.fn(),
-  showEditMode: vi.fn(),
+  paintCommonControls: vi.fn(),
+  renderTextModeUI: vi.fn(),
+  showEditSurface: vi.fn(),
 }));
 
 const { renderConflictOverlay } = await import("./editor-conflict.js");
@@ -56,7 +56,7 @@ function fileState(text: string): FileState {
     original,
     current,
     loaded: true,
-    loadedHash: "",
+    fileId: "",
     error: signal(""),
     mode: signal({ kind: "conflict", conflict: parseConflicts(text), editing: true }),
     dirty: computed(() => current.value !== original.value),
@@ -122,7 +122,7 @@ describe("the overlay's shape", () => {
     renderConflictOverlay(st);
     expect(overlay.children.length).toBeGreaterThan(0);
 
-    st.mode.value = { kind: "edit", editing: false };
+    st.mode.value = { kind: "text", editing: false };
     renderConflictOverlay(st);
 
     expect(overlay.children.length).toBe(0);

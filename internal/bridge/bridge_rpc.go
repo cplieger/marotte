@@ -16,8 +16,8 @@ import (
 
 const jsonRPCVersion = "2.0"
 
-// bridgeExitedResp is the pointer-identity sentinel readLoop's exit drain sends to each pending channel. Call maps
-// it to errBridgeExited, so a dead kiro-cli and a Stop racing a fresh Call return one sentinel.
+// bridgeExitedResp is the pointer-identity sentinel the exit drain sends to each pending channel.
+// Call maps it to errBridgeExited, so a dead kiro-cli and a Stop return one sentinel.
 var bridgeExitedResp = &marotte.RPCResponse{
 	Error: &marotte.RPCError{Code: marotte.RPCCodeBridgeExited, Message: "ACP bridge exited"},
 }
@@ -27,6 +27,9 @@ var bridgeExitedResp = &marotte.RPCResponse{
 var frameTooLargeResp = &marotte.RPCResponse{
 	Error: &marotte.RPCError{Code: marotte.RPCCodeInternal, Message: marotte.ErrFrameTooLarge.Error()},
 }
+
+// errWriteFenced refuses a frame once the read loop exited: nothing is left to read it, so it is never written.
+var errWriteFenced = errors.New("ACP bridge exited before the frame was written")
 
 // pendingReply is the answer to one of our requests plus the read-loop position when it arrived: the response skips
 // the queued notifications before it, so the position is captured with it.
@@ -78,10 +81,10 @@ func (b *Bridge) readLoop() {
 	go b.Stop()
 }
 
-// reportDroppedFrame makes an oversize frame a visible loss. The dropped bytes may have been the response to a
-// request, so every pending request fails: Call has no deadline and a prompt would wait forever. The prompt path
-// then fails the turn with marotte.ErrFrameTooLarge's wording while process and session survive. A frame dropped
-// with nothing pending shows only in this log line.
+// The dropped bytes may have been the response to a request, so every pending request fails: Call
+// has no deadline and a prompt would wait forever. The prompt path then fails the turn with
+// marotte.ErrFrameTooLarge's wording while process and session survive. A frame dropped with
+// nothing pending shows only in this log line.
 func (b *Bridge) reportDroppedFrame(dropped int) {
 	failed := b.failPending(frameTooLargeResp)
 	slog.Error("ACP read: frame exceeds the size cap; dropped it and failed the pending requests",
@@ -91,14 +94,26 @@ func (b *Bridge) reportDroppedFrame(dropped int) {
 }
 
 // drainPendingAndClose unblocks in-flight Call waiters with bridgeExitedResp so a dead worker cannot wedge the
-// bridge, then closes notifCh; readLoop's deferred cleanup. The stranded count is logged when nonzero: a wedged
-// kiro-cli otherwise shows as one prompt line then silence.
+// bridge, then closes notifCh; the cleanup of whichever owns notifCh, readLoop or a Stop with no read loop. The
+// stranded count is logged when nonzero: a wedged kiro-cli otherwise shows as one prompt line then silence.
 func (b *Bridge) drainPendingAndClose() {
-	if failed := b.failPending(bridgeExitedResp); failed > 0 {
+	if failed := b.closePending(); failed > 0 {
 		slog.Warn("ACP bridge exited with requests in flight; failed them",
 			"failed_requests", failed)
 	}
 	close(b.notifCh)
+}
+
+// closePending refuses every later frame and fails every pending request as exited, so a request the bridge settles
+// gets exactly one reply carrying the read-loop position. A caller that cancelled has already deregistered.
+func (b *Bridge) closePending() int {
+	// Before any lock: a fence published behind pendingMu would let a frame write after the reader is gone.
+	b.readerExited.Store(true)
+	// Waits out a frame admitted before the fence, so it is wholly written before the drain or refused after: a request
+	// registers before its write, so every written one is in the map failPending drains.
+	b.writeMu.Lock()
+	b.writeMu.Unlock() //nolint:gocritic,staticcheck // badLock, SA2001: the empty section is that wait.
+	return b.failPending(bridgeExitedResp)
 }
 
 // failPending hands resp to every waiting Call, clears the map and returns how many it answered. The send is
@@ -122,12 +137,12 @@ func (b *Bridge) failPending(resp *marotte.RPCResponse) int {
 // recordParseError feeds an unmarshal failure to the parse-error tracker and logs it, returning true when the
 // circuit breaker tripped and readLoop should reap the bridge.
 func (b *Bridge) recordParseError(tracker *parseErrTracker, lineLen int, err error) bool {
-	switch tracker.Record() {
+	switch tracker.record() {
 	case parseErrLog:
 		slog.Error("ACP parse", "error", err, "line_len", lineLen)
 	case parseErrSummarize:
 		slog.Error("ACP parse storm",
-			"count", tracker.SummaryCount(),
+			"count", tracker.summaryCount(),
 			"window_s", int(parseErrWindow/time.Second))
 	case parseErrCircuitBreak:
 		slog.Error("ACP parse: consecutive-error ceiling reached; reaping bridge",
@@ -161,8 +176,8 @@ func (b *Bridge) dispatch(msg *marotte.RPCResponse) {
 	}
 }
 
-// logReadError reports what ended the read loop. A clean EOF logs nothing; an exhausted drain budget gets its own
-// message, since the stream stopped being JSON lines.
+// A clean EOF logs nothing; an exhausted drain budget gets its own message, since the stream
+// stopped being JSON lines.
 func logReadError(err error) {
 	if err == nil || errors.Is(err, io.EOF) {
 		return
@@ -175,15 +190,14 @@ func logReadError(err error) {
 	slog.Error("ACP read", "error", err)
 }
 
-// deregisterPending removes a pending request from the map.
 func (b *Bridge) deregisterPending(id int64) {
 	b.pendingMu.Lock()
 	delete(b.pending, id)
 	b.pendingMu.Unlock()
 }
 
-// Call sends a JSON-RPC request and waits for its response or readLoop's exit, which unblocks every waiter with a
-// sentinel. Turns can run for hours, so there is no in-Call timeout; the caller cancels via
+// Call sends a JSON-RPC request and waits for its response or the bridge's exit drain, which unblocks every waiter
+// with a sentinel. Turns can run for hours, so there is no in-Call timeout; the caller cancels via
 // Notify("session/cancel", ...).
 func (b *Bridge) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
 	resp, _, err := b.CallAt(ctx, method, params)
@@ -191,7 +205,9 @@ func (b *Bridge) Call(ctx context.Context, method string, params any) (*marotte.
 }
 
 // CallAt is Call plus the read-loop position the response arrived at, for callers ordering a decision against
-// frames still in flight (the prompt paths).
+// frames still in flight (the prompt paths). Once written, every bridge-side outcome (the response, an oversize
+// failure or the exit drain) arrives through the pending reply and carries that position. A cancelled ctx abandons
+// the request and returns position zero, so a caller ordering a post-write failure passes a context that never cancels.
 func (b *Bridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	id := b.nextID.Add(1)
 	req := marotte.RPCRequest{JSONRPC: jsonRPCVersion, ID: id, Method: method, Params: params}
@@ -227,9 +243,6 @@ func (b *Bridge) CallAt(ctx context.Context, method string, params any) (*marott
 			return resp, reply.seq, fmt.Errorf("ACP error %d: %w", resp.Error.Code, resp.Error)
 		}
 		return resp, reply.seq, nil
-	case <-b.done:
-		b.deregisterPending(id)
-		return nil, 0, &marotte.TransportError{Err: errBridgeExited, Retryable: true}
 	case <-ctx.Done():
 		b.deregisterPending(id)
 		return nil, 0, ctx.Err()
@@ -256,7 +269,8 @@ func (b *Bridge) Notify(ctx context.Context, method string, params any) error {
 const maxRespondErrorBytes = 256
 
 // Respond writes a JSON-RPC response to a kiro-cli request (fs/read_text_file, fs/write_text_file). Set exactly one
-// of result or err. Errors use -32603 unless err unwraps to a *marotte.RPCError with its own code.
+// of result or err. Errors use -32603 unless err unwraps to a *marotte.RPCError with its own code. Once the read loop
+// has exited it writes nothing and returns an error wrapping marotte.ErrBridgeExited: no agent is left to read it.
 func (b *Bridge) Respond(ctx context.Context, id int64, result any, err error) error {
 	if cErr := ctx.Err(); cErr != nil {
 		return cErr
@@ -278,16 +292,24 @@ func (b *Bridge) Respond(ctx context.Context, id int64, result any, err error) e
 		return mErr
 	}
 	data = append(data, '\n')
-	return b.writeFrame(data)
+	wErr := b.writeFrame(data)
+	if errors.Is(wErr, errWriteFenced) {
+		return fmt.Errorf("respond on ACP: %w", errBridgeExited)
+	}
+	return wErr
 }
 
-// writeFrame serialises stdin writes across Call/Notify/Respond, bounds each by writeDeadline, and treats a partial
-// frame as the end of the bridge: a truncated frame desyncs kiro-cli's stdin scanner for good, whether from a short
-// write or a peer that stopped reading. Without the deadline one wedged write blocks every later frame,
+// writeFrame serialises stdin writes across Call/Notify/Respond, refuses each once the read loop exited
+// (readerExited, loaded under writeMu so closePending's wait orders it), bounds each by writeDeadline, and treats a
+// partial frame as the end of the bridge: a truncated frame desyncs kiro-cli's stdin scanner for good, whether from a
+// short write or a peer that stopped reading. Without the deadline one wedged write blocks every later frame,
 // session/cancel included, with nothing logged.
 func (b *Bridge) writeFrame(data []byte) error {
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
+	if b.readerExited.Load() {
+		return errWriteFenced
+	}
 	// Before anything touches the handle: a write before Start once panicked on a nil interface
 	// (marotte.ErrBridgeNotStarted).
 	pipe := b.stdin.Load()

@@ -24,6 +24,8 @@ let responses: (
   | undefined
 )[] = [];
 let resolvers: (() => void)[] = [];
+// Top-level keys marotte splices beside `state`, for the next read only.
+let replyExtra: Record<string, unknown> = {};
 // The HTTP status each FAILED read answers with, in order. 502 by default — a read that never
 // reached the engine, which is what every case predating the status means by an absent response,
 // and the arm that keeps the retry ladder.
@@ -45,6 +47,8 @@ vi.mock("./api-client.js", () => ({
     if (state === undefined) {
       return { ok: false, status: failStatuses.shift() ?? 502, data: null, error: "" };
     }
+    const extra = replyExtra;
+    replyExtra = {};
     const { stepEnds, stepStarts, ...kasState } = state;
     return {
       ok: true,
@@ -54,6 +58,7 @@ vi.mock("./api-client.js", () => ({
         state: kasState,
         ...(stepEnds === undefined ? {} : { step_ends: stepEnds }),
         ...(stepStarts === undefined ? {} : { step_starts: stepStarts }),
+        ...extra,
       },
       error: "",
     };
@@ -76,7 +81,6 @@ vi.mock("./api-client.js", () => ({
 
 const store = await import("./run-store.js");
 
-/** Let every pending fetch resolve, then drain the microtask queue. */
 async function settle(): Promise<void> {
   for (const r of resolvers.splice(0)) {
     r();
@@ -554,6 +558,32 @@ describe("nodePathSegment spells a node the way a step frame addresses it", () =
 
   it("uses the bare id at the root", () => {
     expect(store.nodePathSegment(step("wf"), undefined)).toBe("wf");
+  });
+});
+
+describe("nodesOfType", () => {
+  it("finds a type at any depth, every pass included, in plan order", () => {
+    const root: RunNode = {
+      nodeId: "wf",
+      type: "sequence",
+      status: "running",
+      children: [
+        step("a"),
+        {
+          nodeId: "loop",
+          type: "repeat",
+          status: "running",
+          children: [
+            { nodeId: "loop#0", type: "sequence", status: "completed", children: [step("b")] },
+            { nodeId: "loop#1", type: "sequence", status: "running", children: [step("b")] },
+          ],
+        },
+        { nodeId: "w", type: "watch", status: "pending" },
+      ],
+    };
+    expect(store.nodesOfType(root, "step").map((n) => n.nodeId)).toEqual(["a", "b", "b"]);
+    expect(store.nodesOfType(root, "watch").map((n) => n.nodeId)).toEqual(["w"]);
+    expect(store.nodesOfType(undefined, "step")).toEqual([]);
   });
 });
 
@@ -1180,6 +1210,79 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     expect(store.peekRunState("r1")).not.toBe(before);
     expect(store.peekRunState("r1")?.root?.startedAt).toBe("T1");
   });
+
+  // KAS sends `node_start` twice per step, each stamped on arrival.
+  it("keeps the start a running node holds when that start is announced again", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "coder", type: "step", status: "running", startedAt: "2026-10-08T10:00:00Z" },
+    });
+    const gen = store.peekRunState("r1")?.root?.startGen;
+
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["coder"],
+      status: "running",
+      started_at: "2026-10-08T10:00:01Z",
+    });
+
+    const root = store.peekRunState("r1")?.root;
+    expect([root?.startedAt, root?.startGen]).toEqual(["2026-10-08T10:00:00Z", gen]);
+  });
+
+  it("starts a finished node afresh, without the end its last execution left", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "coder",
+        type: "step",
+        status: "failed",
+        startedAt: "2026-10-08T10:00:00Z",
+        endedAt: "2026-10-08T10:00:05Z",
+        failureReason: "boom",
+        sessionId: "sess-a",
+      },
+    });
+    const gen = store.peekRunState("r1")?.root?.startGen ?? 0;
+
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["coder"],
+      status: "running",
+      started_at: "2026-10-08T10:01:00Z",
+    });
+
+    const root = store.peekRunState("r1")?.root;
+    expect(root?.startedAt).toBe("2026-10-08T10:01:00Z");
+    expect(root?.startGen).toBeGreaterThan(gen);
+    expect([root?.endedAt, root?.failureReason, root?.sessionId]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("writes the session the second node_start names onto the execution the first opened", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "coder", type: "step", status: "running", startedAt: "2026-10-08T10:00:00Z" },
+    });
+    const gen = store.peekRunState("r1")?.root?.startGen;
+
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["coder"],
+      status: "running",
+      started_at: "2026-10-08T10:00:01Z",
+      session_id: "sess-a",
+    });
+
+    const root = store.peekRunState("r1")?.root;
+    expect([root?.sessionId, root?.startGen]).toEqual(["sess-a", gen]);
+  });
 });
 
 describe("applyRunProgress refuses what it cannot express, so the caller refetches", () => {
@@ -1519,5 +1622,80 @@ describe("forgetRun asks the registered demands before it drops anything", () =>
     store.forgetRun("r1");
 
     expect(store.peekRunState("r1")).toBeUndefined();
+  });
+});
+
+describe("a step's live pause and retry reasons", () => {
+  it("keeps a retry wait running with KAS's sentence, until the step starts again", async () => {
+    await seedRun("r-retry", {
+      workflowId: "r-retry",
+      status: "running",
+      root: {
+        nodeId: "seq",
+        type: "sequence",
+        status: "running",
+        children: [step("coder", { status: "running", startedAt: "T0" })],
+      },
+    });
+
+    store.applyRunProgress({
+      workflow_id: "r-retry",
+      node_path: ["seq", "coder"],
+      status: "running",
+      retry_reason: "Waiting 30s to retry after a network error.",
+    });
+    let leaf = store.peekRunState("r-retry")?.root?.children?.[0];
+    expect(leaf?.status).toBe("running");
+    expect(leaf?.retryReason).toBe("Waiting 30s to retry after a network error.");
+
+    store.applyRunProgress({
+      workflow_id: "r-retry",
+      node_path: ["seq", "coder"],
+      status: "running",
+      started_at: "T1",
+    });
+    leaf = store.peekRunState("r-retry")?.root?.children?.[0];
+    expect(leaf?.retryReason).toBeUndefined();
+  });
+
+  it("records a pause's reason and drops it when the step runs again", async () => {
+    await seedRun("r-pause", {
+      workflowId: "r-pause",
+      status: "running",
+      root: { nodeId: "coder", type: "step", status: "running", startedAt: "T0" },
+    });
+
+    store.applyRunProgress({
+      workflow_id: "r-pause",
+      node_path: ["coder"],
+      status: "paused",
+      pause_reason: "Step 'coder' was paused via update_status.",
+    });
+    expect(store.peekRunState("r-pause")?.root?.pauseReason).toBe(
+      "Step 'coder' was paused via update_status.",
+    );
+
+    store.applyRunProgress({ workflow_id: "r-pause", node_path: ["coder"], status: "running" });
+    expect(store.peekRunState("r-pause")?.root?.pauseReason).toBeUndefined();
+  });
+});
+
+describe("the run read's plan revision", () => {
+  it("rides the state with any outcome word KAS sends, and a malformed one is left out", async () => {
+    replyExtra = { plan_update: { outcome: "rejected", pending: 2, reason: "unknown agent" } };
+    await seedRun("r-plan", { workflowId: "r-plan", status: "running" });
+    expect(store.peekRunState("r-plan")?.planUpdate).toEqual({
+      outcome: "rejected",
+      pending: 2,
+      reason: "unknown agent",
+    });
+
+    replyExtra = { plan_update: { outcome: "superseded", pending: 1 } };
+    await seedRun("r-plan", { workflowId: "r-plan", status: "running" });
+    expect(store.peekRunState("r-plan")?.planUpdate).toEqual({ outcome: "superseded", pending: 1 });
+
+    replyExtra = { plan_update: { outcome: 7 } };
+    await seedRun("r-plan", { workflowId: "r-plan", status: "running" });
+    expect(store.peekRunState("r-plan")?.planUpdate).toBeUndefined();
   });
 });

@@ -16,7 +16,7 @@ const settingsKey = "settings"
 //
 // The returned map is the caller's own: it shares no object with the table, so
 // a caller may hold or modify it without reaching back into this package.
-func Capabilities(s *Spawn) map[string]any { return buildDoor(doorConnection, s) }
+func Capabilities(s *Spawn) map[string]any { return buildDoor(doorConnection, s, nil) }
 
 // SessionMeta returns the _meta.kiro map for the session door, ready to sit
 // under a session/new or session/load request's _meta.kiro.
@@ -24,13 +24,17 @@ func Capabilities(s *Spawn) map[string]any { return buildDoor(doorConnection, s)
 // The caller sends it on BOTH verbs and only when it is NON-EMPTY, so a table
 // that declares no session key adds no bytes to a call that carries none. Like
 // Capabilities, the returned map is the caller's own.
-func SessionMeta(s *Spawn) map[string]any { return buildDoor(doorSession, s) }
+func SessionMeta(s *Spawn) map[string]any { return buildDoor(doorSession, s, nil) }
+
+// PromptMeta returns the _meta.kiro map for one session/prompt. The caller sends it only when it is
+// NON-EMPTY; like the other projections, the returned map is the caller's own.
+func PromptMeta(p *Prompt) map[string]any { return buildDoor(doorPrompt, nil, p) }
 
 // ChildEnv returns the environment-door rows as KEY=value assignments, sorted
 // by name, for the bridge to append AFTER its credential screen so they win
 // over anything inherited.
 func ChildEnv(s *Spawn) []string {
-	vars := buildDoor(doorEnvironment, s)
+	vars := buildDoor(doorEnvironment, s, nil)
 	out := make([]string, 0, len(vars))
 	for name, v := range vars {
 		val, _ := v.(string)
@@ -40,8 +44,7 @@ func ChildEnv(s *Spawn) []string {
 	return out
 }
 
-// buildDoor projects the table onto one door.
-func buildDoor(d door, s *Spawn) map[string]any {
+func buildDoor(d door, s *Spawn, p *Prompt) map[string]any {
 	out := make(map[string]any, len(table))
 	settings := make(map[string]any)
 	for i := range table {
@@ -49,13 +52,15 @@ func buildDoor(d door, s *Spawn) map[string]any {
 		if row.door != d || !row.send {
 			continue
 		}
-		value := row.value
-		if row.gate != nil {
-			gated, present := row.gate(s)
-			if !present {
-				continue
-			}
-			value = gated
+		value, present := row.value, true
+		switch {
+		case row.gate != nil:
+			value, present = row.gate(s)
+		case row.promptGate != nil:
+			value, present = row.promptGate(p)
+		}
+		if !present {
+			continue
 		}
 		if inSettings(row.resolver) {
 			settings[row.key] = cloneValue(value)

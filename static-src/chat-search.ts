@@ -26,7 +26,6 @@ let buildRevealedTurn: (chatID: string, turnID: string, entryID?: string) => Pro
  *  rather than to the one navigation the reader is making. */
 let buildWalkTurn: (chatID: string, turnID: string) => Promise<void> = () => Promise.resolve();
 
-/** Release every grant the loop above took, in the chat it took them in. */
 let endWalkReveal: (chatID: string) => void = () => undefined;
 
 export function initSearchRevealBuilder(

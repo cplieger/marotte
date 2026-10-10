@@ -34,6 +34,19 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 			},
 		},
 		{
+			name: "the node_start naming the step's session carries it, the client's execution identity",
+			kind: marotte.RunProgressNodeStart,
+			frame: kasRunNode{
+				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"seq", "coder"},
+				SessionID: "sess_coder",
+			},
+			want: marotte.RunProgressPayload{
+				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"seq", "coder"},
+				Status: "running", StartedAt: atRFC, SessionID: "sess_coder",
+				Kind: marotte.RunProgressNodeStart,
+			},
+		},
+		{
 			name: "node_complete forwards KAS's own terminal word and stamps the end",
 			kind: marotte.RunProgressNodeComplete,
 			frame: kasRunNode{
@@ -67,7 +80,34 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 			},
 			want: marotte.RunProgressPayload{
 				WorkflowID: "wf1", NodeID: "ask", NodePath: []string{"ask"},
-				Status: "paused", Kind: marotte.RunProgressNodePaused,
+				Status: "paused", PauseReason: "Step requested user input via send_message.",
+				Kind: marotte.RunProgressNodePaused,
+			},
+		},
+		{
+			name: "a run-level pause carries KAS's initiator and its sentence verbatim",
+			kind: marotte.RunProgressPaused,
+			frame: kasRunNode{
+				WorkflowID: "wf1", Initiator: "user",
+				InitiatorReason: "Pause requested by owning parent/orchestrator; human intent not verified.",
+			},
+			want: marotte.RunProgressPayload{
+				WorkflowID: "wf1", Initiator: "user",
+				InitiatorReason: "Pause requested by owning parent/orchestrator; human intent not verified.",
+				Kind:            marotte.RunProgressPaused,
+			},
+		},
+		{
+			name: "a retry wait keeps the node running and carries KAS's retry sentence",
+			kind: marotte.RunProgressNodePaused,
+			frame: kasRunNode{
+				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"seq", "coder"},
+				Reason: "Waiting 30s to retry after a network error.", Kind: "retry-wait",
+			},
+			want: marotte.RunProgressPayload{
+				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"seq", "coder"},
+				Status: "running", RetryReason: "Waiting 30s to retry after a network error.",
+				Kind: marotte.RunProgressNodePaused,
 			},
 		},
 		{

@@ -39,8 +39,7 @@ const attached = createCollection<AttachedFile>((a) => a.path);
  */
 const stash = new Map<string, AttachedFile[]>();
 
-/** The chat the live collection currently belongs to. Written only by
- *  stashAttachments / restoreAttachments, so the two cannot disagree about which
+/** Written only by stashAttachments / restoreAttachments, so the two cannot disagree about which
  *  chat the visible pills describe. */
 let liveChatID = "";
 
@@ -106,7 +105,6 @@ function ensureBound(): void {
   });
 }
 
-/** Split a workspace path into the record the pill row renders. */
 function toAttached(path: string): AttachedFile {
   const parts = path.split("/");
   return { path, name: parts[parts.length - 1] ?? path };
@@ -177,7 +175,6 @@ export function removeAttachmentFrom(chatID: string, path: string): void {
   );
 }
 
-/** Remove an attachment by path. */
 function removeAttachment(path: string): void {
   attached.remove(path);
   persistLive();

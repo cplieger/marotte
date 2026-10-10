@@ -38,9 +38,8 @@ afterEach(() => {
   card.remove();
 });
 
-/** A turn card carrying its footer, panel open, at the transcript's own measure.
- *  `--content-max-w` rather than the viewport, because the row's slack is what the
- *  column's width decides. */
+/** `--content-max-w` rather than the viewport, because the row's slack is what the column's width
+ *  decides. */
 function mountFooter(files: Record<string, FileChange>): HTMLElement {
   card = document.createElement("div");
   card.className = "turn";

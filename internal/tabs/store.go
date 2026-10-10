@@ -47,8 +47,7 @@ func (s *Store) snapshot() state {
 	return state{tabs: slices.Clone(s.tabs), version: s.version}
 }
 
-// publish installs a mutated clone. Called only after the clone is durable, so
-// what a reader sees is always what is on disk.
+// Called only after the clone is durable, so what a reader sees is always what is on disk.
 func (s *Store) publish(st *state) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
@@ -170,14 +169,14 @@ func (s *Store) SetPinned(ctx context.Context, id string, pinned bool) (uint64, 
 // their positions and their Parent, because the one caller reparents leaves.
 // Idempotent when Parent already equals parent (no version bump).
 //
-// Returns ErrNotOpen when id is not open and ErrCycle when parent is id or one
+// Returns errNotOpen when id is not open and ErrCycle when parent is id or one
 // of its descendants; a parent that is not open is promoted to top level like
 // Open. Nothing is applied on error.
 func (s *Store) Reparent(ctx context.Context, id, parent string) (uint64, error) {
 	return s.mutate(ctx, func(st *state) (bool, error) {
 		i := indexOfID(st.tabs, id)
 		if i < 0 {
-			return false, fmt.Errorf("%w: %q", ErrNotOpen, id)
+			return false, fmt.Errorf("%w: %q", errNotOpen, id)
 		}
 		if st.tabs[i].Parent == parent {
 			return false, nil
@@ -324,7 +323,6 @@ func closure(tabs []marotte.TabSubject, id string) map[string]struct{} {
 	return out
 }
 
-// indexOfID returns the position of the tab with this id, or -1.
 func indexOfID(tabs []marotte.TabSubject, id string) int {
 	return slices.IndexFunc(tabs, func(t marotte.TabSubject) bool { return t.ID == id })
 }

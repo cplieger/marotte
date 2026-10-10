@@ -14,8 +14,8 @@ import (
 	"strings"
 )
 
-// systemDirs is the trusted candidate set, in order. A var rather than a const
-// slice so a test can point it at a temp dir; production never reassigns it.
+// systemDirs is the trusted candidate set, in order. A var rather than a const slice so a test can
+// point it at a temp dir; production never reassigns it.
 var systemDirs = []string{"/usr/bin", "/bin"}
 
 // Resolve returns the absolute path of an image-baked binary and whether it was found. On a

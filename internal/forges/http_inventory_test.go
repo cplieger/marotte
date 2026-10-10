@@ -29,7 +29,6 @@ const (
 	watchPath     = "/api/forges/inventory/watch"
 )
 
-// inventoryRoutes is the forge routes with p's inventory behind them.
 func inventoryRoutes(m *Manager, p *PRStatusPoller) *http.ServeMux {
 	h := NewHTTPHandler(m, nil)
 	h.SetPoller(p)
@@ -46,7 +45,6 @@ func serve(t *testing.T, mux http.Handler, method, path string) *httptest.Respon
 	return rec
 }
 
-// readInventory is the entries GET /api/forges/inventory answers.
 func readInventory(t *testing.T, mux http.Handler) []InventoryEntry {
 	t.Helper()
 	return readInventoryList(t, mux).Entries
@@ -75,8 +73,7 @@ func postWatch(t *testing.T, mux http.Handler, tag, body string) *httptest.Respo
 	return rec
 }
 
-// pressRefresh is the cycle id POST /api/forges/inventory/refresh answers. It
-// reports with Errorf, so it may run off the test's goroutine.
+// It reports with Errorf, so it may run off the test's goroutine.
 func pressRefresh(t *testing.T, mux http.Handler) string {
 	t.Helper()
 	rec := serve(t, mux, http.MethodPost, refreshPath)
@@ -109,7 +106,7 @@ func (s *heldSource) Read(_ context.Context, present bool, _ func(PRConnection, 
 	s.presents = append(s.presents, present)
 	s.mu.Unlock()
 	<-s.release
-	return []ConnectionRead{authoredRead(testConn, ScopePage{}, nil)}
+	return []ConnectionRead{authoredRead(testConn, scopePage{}, nil)}
 }
 
 func (s *heldSource) reads() []bool {
@@ -118,9 +115,7 @@ func (s *heldSource) reads() []bool {
 	return slices.Clone(s.presents)
 }
 
-// runLoop starts p's loop and answers the function that stops it and waits for
-// it to return. The intervals are an hour, so inside a bubble only a request
-// for a cycle can start one.
+// The intervals are an hour, so inside a bubble only a request for a cycle can start one.
 func runLoop(t *testing.T, p *PRStatusPoller) (stop func()) {
 	t.Helper()
 	p.tick, p.discovery = time.Hour, time.Hour
@@ -136,7 +131,6 @@ func runLoop(t *testing.T, p *PRStatusPoller) (stop func()) {
 	}
 }
 
-// cycleOf is the cycle id of id's entry, "" when the inventory holds none.
 func cycleOf(p *PRStatusPoller, id string) string {
 	entries := entriesOf(p)
 	for i := range entries {
@@ -180,7 +174,7 @@ func TestInventoryRoute_NeverFilledIsLoadingAndAsksForACycle(t *testing.T) {
 	p, g, _, m := inventoryPoller(t, map[string]forgeapi.Core{gh.ID: core}, nil, gh)
 	// gl has no stored credential, so it is not connected and no cycle fills it.
 	saveRecords(t, m.conns, gh, gl)
-	m.Invalidate()
+	m.invalidate()
 	g.present = false
 	mux := inventoryRoutes(m, p)
 
@@ -237,7 +231,7 @@ func TestInventoryRoute_StampsEachEntryWithItsVersion(t *testing.T) {
 	p.sweep(t.Context())
 	seedStoreRecord(t, m.configDir, gl.ID, "bob")
 	saveRecords(t, m.conns, gh, gl)
-	m.Invalidate()
+	m.invalidate()
 
 	rec := serve(t, inventoryRoutes(m, p), http.MethodGet, inventoryPath)
 	var body InventoryList
@@ -275,7 +269,7 @@ func TestInventoryRoute_LeavesOutAConnectionNoLongerConnected(t *testing.T) {
 	if err := m.store.Delete(rec.ID); err != nil {
 		t.Fatalf("Setup: delete the credential: %v", err)
 	}
-	m.Invalidate()
+	m.invalidate()
 
 	if got := readInventory(t, inventoryRoutes(m, p)); len(got) != 0 {
 		t.Errorf("GET %s after the connection lost its credential = %+v, want no entry before the next sweep drops it",

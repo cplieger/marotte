@@ -9,7 +9,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// newTestBridgeManager builds a bridgeManager whose factory returns a fresh fakeBridge.
 func newTestBridgeManager() *bridgeManager {
 	return newBridgeManager(func() ACPBridge { return newFakeBridge() })
 }
@@ -105,7 +104,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 func TestRetireBridges_ClosesIdleChatBridges(t *testing.T) {
 	h, cs, br := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -127,7 +126,7 @@ func TestRetireBridges_MarksBusyBridgeAndReplacesItAtNextOpen(t *testing.T) {
 	h := New(t.Context(), "/tmp/retire-busy", func() ACPBridge { return newFakeBridge() }, cs)
 	cs.wire(h)
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -150,7 +149,7 @@ func TestRetireBridges_MarksBusyBridgeAndReplacesItAtNextOpen(t *testing.T) {
 	}
 
 	first.releaseAfterPrompt()
-	second, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	second, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after retirement: %v", err)
 	}
@@ -192,10 +191,10 @@ func TestOpenBridge_ChecksIdentityBeforeReuse(t *testing.T) {
 	h.SetIdentityCheck(func(context.Context) { checks++ })
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge reuse: %v", err)
 	}
 

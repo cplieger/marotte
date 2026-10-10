@@ -281,7 +281,7 @@ type InventoryList struct {
 	Entries []InventoryEntry        `json:"entries"`
 	Subject []*marotte.SubjectStamp `json:"subject"`
 	// Viewing is a client showing the pull-request view, which holds the cycle
-	// at PRPollInterval.
+	// at prPollInterval.
 	Viewing bool `json:"viewing"`
 }
 

@@ -8,7 +8,6 @@ import {
   activeTurnAt,
   buildOffsets,
   markerSlotFor,
-  turnTop,
   turnsInView,
   type RailGeom,
   type TurnOffsets,
@@ -18,7 +17,6 @@ const READING = 200;
 const LIVE: RailGeom = { clientHeight: 600, atLiveEdge: true };
 const PARKED: RailGeom = { clientHeight: 600, atLiveEdge: false };
 
-/** Four cards, 500px apart, in the scroller's frame. */
 function table(): TurnOffsets {
   return buildOffsets([
     { id: "t1", top: 0 },
@@ -58,12 +56,6 @@ describe("the table", () => {
       { id: "t3", top: Number.POSITIVE_INFINITY },
     ]);
     expect(offsets.ids).toEqual(["t1"]);
-  });
-
-  it("answers a turn's own top, and null for a turn it does not carry", () => {
-    const offsets = table();
-    expect(turnTop(offsets, "t3")).toBe(1000);
-    expect(turnTop(offsets, "t9")).toBeNull();
   });
 });
 

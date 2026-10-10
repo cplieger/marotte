@@ -24,7 +24,7 @@ export interface CatalogAnswer {
 }
 
 /** What a read's verdict means to the fetch policy: apply it, or keep asking. */
-export type CatalogVerdict = "usable" | "retry";
+type CatalogVerdict = "usable" | "retry";
 
 /** Total over the wire enum with no default arm, so a new value is a compile error.
  *  `empty` is usable: the endpoint is a pure cache read, so re-asking re-reads the
@@ -40,7 +40,7 @@ export function readVerdict(catalog: CatalogState): CatalogVerdict {
 }
 
 /** What one refresh needs from its caller. */
-export interface CatalogRefresh<T extends CatalogAnswer> {
+interface CatalogRefresh<T extends CatalogAnswer> {
   /** One read of the endpoint. `null` is a transient failure (network, decode). */
   readonly read: (signal: AbortSignal) => Promise<T | null>;
   /** Apply a usable answer. Never called on `retry`, so a degraded read cannot

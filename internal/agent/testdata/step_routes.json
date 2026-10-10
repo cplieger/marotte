@@ -1,0 +1,30 @@
+[
+  {
+    "id": "independent_ids",
+    "desc": "the run's id and its root node's id differ",
+    "workflow_id": "wf1",
+    "node_path": ["seq", "coder"],
+    "step_url": "/api/runs/wf1/steps/seq%3Acoder"
+  },
+  {
+    "id": "step_named_like_a_verb",
+    "desc": "a step whose id is a verb's name",
+    "workflow_id": "wf_1",
+    "node_path": ["wf_1", "message"],
+    "step_url": "/api/runs/wf_1/steps/wf_1%3Amessage"
+  },
+  {
+    "id": "escaped_segment",
+    "desc": "a node id holding URL metacharacters",
+    "workflow_id": "wf_1",
+    "node_path": ["wf_1", "a b#0"],
+    "step_url": "/api/runs/wf_1/steps/wf_1%3Aa%20b%230"
+  },
+  {
+    "id": "slash_in_a_node_id",
+    "desc": "a node id holding a slash",
+    "workflow_id": "wf_1",
+    "node_path": ["wf_1", "a/b"],
+    "step_url": "/api/runs/wf_1/steps/wf_1%3Aa%2Fb"
+  }
+]

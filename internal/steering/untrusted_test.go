@@ -14,8 +14,7 @@ import (
 // environment.md is AUTHORITATIVE agent context built mostly from workspace strings, so this
 // file guards it with one case per CHANNEL: a new channel that forgets defuse fails here.
 
-// injMarker is the sentinel every payload carries; its presence proves the case reached the
-// channel.
+// Its presence proves the case reached the channel.
 const injMarker = "VKINJ"
 
 // injPayload is the marker plus a backtick (closes a code span) and a newline (forges a line),
@@ -212,8 +211,6 @@ func lineAt(s string, i int) string {
 	return s[start : i+end]
 }
 
-// seedRepo creates a git repo directory under workDir with the given name and
-// `.git/HEAD` branch, and returns its path.
 func seedRepo(t *testing.T, workDir, name, branch string) string {
 	t.Helper()
 	repo := filepath.Join(workDir, name)

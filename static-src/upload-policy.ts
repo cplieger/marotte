@@ -30,20 +30,19 @@ export const MAX_UPLOAD_TOTAL_BYTES = MAX_UPLOAD_BYTES - MULTIPART_RESERVE_BYTES
 export const MAX_UPLOAD_FILES = 25;
 
 /** Why a file was refused before upload. */
-export interface RejectedFile {
+interface RejectedFile {
   name: string;
   reason: string;
 }
 
 /** What the pre-flight decided. `accepted` preserves input order. */
-export interface PreflightResult {
+interface PreflightResult {
   accepted: File[];
   rejected: RejectedFile[];
 }
 
-/** Human-readable byte size for a limit message. Deliberately not
- *  files-shared.ts's formatSize: that one is a table cell's exact size
- *  ("52.4 MB"), and a limit reads better round. */
+/** Deliberately not files-shared.ts's formatSize: that one is a table cell's exact size ("52.4 MB"),
+ *  and a limit reads better round. */
 function limitLabel(bytes: number): string {
   return `${String(Math.round(bytes / (1024 * 1024)))} MB`;
 }
@@ -106,7 +105,7 @@ export function preflightMessage(rejected: readonly RejectedFile[]): string {
 /** What one door should upload, and what to say about the rest. `files` is null
  *  when nothing survived, so a caller's whole branch is "say the message, then
  *  stop if there is nothing left". */
-export interface ScreenedUpload {
+interface ScreenedUpload {
   files: FileList | null;
   /** Empty on the common path, so a caller can skip the toast without a count. */
   skipped: string;

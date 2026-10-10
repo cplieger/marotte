@@ -21,14 +21,13 @@ const CALL = "tc-1";
 /** A `ts` no reader may touch. The store's own fold is the subject: an entry's
  *  timestamp is METADATA, so a marker derived from one would be ordering state
  *  wearing a display value's name. */
-function poison(e: Entry): Entry {
+function poison(e: Entry): void {
   Object.defineProperty(e, "ts", {
     configurable: true,
     get(): never {
       throw new Error("entry ts was read");
     },
   });
-  return e;
 }
 
 function turnOpen(): Entry {

@@ -27,8 +27,7 @@ const (
 // so importing the server's type would test it against itself.
 type transcriptPage struct {
 	Entries []struct {
-		Kind    string          `json:"kind"`
-		Payload json.RawMessage `json:"payload"`
+		Kind string `json:"kind"`
 	} `json:"entries"`
 	OpenEntries []struct {
 		Turn string `json:"turn"`
@@ -80,7 +79,7 @@ func openReplayGapTurn(t *testing.T, rt *Runtime) {
 	openBudgetChatTab(t, rt, replayGapChat)
 }
 
-// getTranscript drives the real route and decodes the newest page; the page rules are internal/chat's.
+// The page rules are internal/chat's.
 func getTranscript(t *testing.T, mux *http.ServeMux, id marotte.ChatID) transcriptPage {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id), nil)

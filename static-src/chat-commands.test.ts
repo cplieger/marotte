@@ -21,7 +21,7 @@ vi.mock("./transport.js", () => ({
 vi.mock("./session-context.js", () => ({
   getCurrentModel: () => "claude",
 }));
-import { sendPromptTo, switchModel } from "./chat-commands.js";
+import { sendPromptTo } from "./chat-commands.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -71,20 +71,5 @@ describe("sendPromptTo", () => {
     mockSendPromptDispatch.mockResolvedValue(null);
     const result = await sendPromptTo("chat1", "hello");
     expect(result).toBe("failed");
-  });
-});
-
-describe("switchModel", () => {
-  it("returns false immediately for empty chatID", async () => {
-    const result = await switchModel("", "gpt-4");
-    expect(result).toBe(false);
-    expect(mockSwitchModelDispatch).not.toHaveBeenCalled();
-  });
-
-  it("returns true on successful switch", async () => {
-    mockSwitchModelDispatch.mockResolvedValue(true);
-    const result = await switchModel("chat1", "gpt-4");
-    expect(result).toBe(true);
-    expect(mockSwitchModelDispatch).toHaveBeenCalledWith({ chatID: "chat1", model: "gpt-4" });
   });
 });

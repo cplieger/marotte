@@ -13,7 +13,7 @@ func FuzzACPToolCallContentBlockDecode(f *testing.F) {
 	f.Add([]byte(`null`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		var block ACPToolCallContentBlock
+		var block acpToolCallContentBlock
 		if json.Unmarshal(data, &block) != nil {
 			return
 		}
@@ -21,7 +21,7 @@ func FuzzACPToolCallContentBlockDecode(f *testing.F) {
 		if err != nil {
 			t.Fatalf("re-marshal: %v", err)
 		}
-		var block2 ACPToolCallContentBlock
+		var block2 acpToolCallContentBlock
 		if json.Unmarshal(b, &block2) != nil {
 			t.Fatal("round-trip decode failed")
 		}

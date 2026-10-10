@@ -47,7 +47,6 @@ func (r *countingReader) setResp(resp WhoamiResponse) {
 	r.resp = resp
 }
 
-// signedIn is the arm a successful read produces, for the tests below.
 func signedIn(email string) WhoamiResponse {
 	return WhoamiResponse{State: WhoamiSignedIn, Email: email}
 }

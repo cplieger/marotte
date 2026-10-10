@@ -3,8 +3,8 @@ package agent
 import (
 	"context"
 	"slices"
-	"sync"
 
+	"github.com/cplieger/marotte/internal/chatlock"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -13,8 +13,10 @@ import (
 // command.SteerQueue, so neither collaborator learns the other.
 type steerQueue struct {
 	recs  *steerRecords
-	coord *BridgeCoordinator
-	locks *chatLocks
+	coord *bridgeCoordinator
+	locks *chatlock.Set
+	// steps names the carrier whose read loop folds a step key's frames.
+	steps *stepSteers
 }
 
 var (
@@ -23,21 +25,28 @@ var (
 )
 
 func (q steerQueue) LockSteerOps(ctx context.Context, chatID marotte.ChatID) (func(), error) {
-	return q.locks.lock(ctx, chatID)
+	return q.locks.Lock(ctx, chatID)
 }
 
 func (q steerQueue) AwaitReadLoop(ctx context.Context, chatID marotte.ChatID, seq uint64) bool {
+	if _, step := chatID.StepSession(); step {
+		t, ok := q.steps.target(chatID)
+		if !ok {
+			return false
+		}
+		chatID = t.host
+	}
 	return q.coord.turns.awaitPosition(ctx, chatID, "", seq)
 }
 
 func (q steerQueue) OnSteerJob(run func(command.SteerJob)) { q.recs.runJob = run }
 
 func (q steerQueue) SetSteerLead(chatID marotte.ChatID, key string) func() {
-	return q.recs.SetLead(chatID, key)
+	return q.recs.setLead(chatID, key)
 }
 
 func (q steerQueue) NeedsPostLoadClear(chatID marotte.ChatID) bool {
-	return q.recs.NeedsPostLoadClear(chatID)
+	return q.recs.needsPostLoadClear(chatID)
 }
 
 // PostLoadCleared parks again a row sent before the clear (one that arrived during the MCP wait), so the
@@ -66,9 +75,15 @@ func (q steerQueue) do(chatID marotte.ChatID, fn func(rec *steerRecord, fx *stee
 	return q.recs.step(chatID, false, fn)
 }
 
-// RouteSteer writes the row's state before the caller sends.
+// RouteSteer writes the row's state before the caller sends. A step's record takes a steer only while
+// its steering turn is bound: a finished or paused step stays so.
 func (q steerQueue) RouteSteer(chatID marotte.ChatID, key, text string, h command.SteerHolder) (sends []command.SteerSend, refuse string) {
-	if !q.recs.step(chatID, true, func(rec *steerRecord, fx *steerFx) {
+	_, step := chatID.StepSession()
+	if !q.recs.step(chatID, !step, func(rec *steerRecord, fx *steerFx) {
+		if rec.noCarry && rec.channel == chanNone {
+			refuse = command.SteerRefuseNoTurn
+			return
+		}
 		sends, refuse = rec.routeSteerLocked(key, text, h, fx)
 	}) {
 		return nil, command.SteerRefuseNoTurn
@@ -156,7 +171,7 @@ func (rec *steerRecord) parkedBesides(w *dockRow) bool {
 
 // sendSelf uses a fresh id once the key may already be in KAS's log: one id never
 // names two records there.
-func (rec *steerRecord) sendSelf(w *dockRow, fx *steerFx) command.SteerSend {
+func (*steerRecord) sendSelf(w *dockRow, fx *steerFx) command.SteerSend {
 	id := w.key
 	var keys []string
 	if w.sent || w.noted {
@@ -176,7 +191,7 @@ func (rec *steerRecord) probeOf(rows []*dockRow, fx *steerFx) command.SteerSend 
 	return rec.combine(id, rows, rowOutstanding, fx)
 }
 
-func (rec *steerRecord) combine(id string, rows []*dockRow, s rowState, fx *steerFx) command.SteerSend {
+func (*steerRecord) combine(id string, rows []*dockRow, s rowState, fx *steerFx) command.SteerSend {
 	keys := make([]string, 0, len(rows))
 	texts := make([]string, 0, len(rows))
 	for _, w := range rows {
@@ -399,17 +414,28 @@ func (q steerQueue) EndOp(chatID marotte.ChatID, opID string) (reroute bool) {
 		}
 		unread := rec.takeUnread(opID)
 		rec.clearOp()
-		switch {
-		case stale:
-			for _, w := range unread {
-				settleStaleLocked(w, fx)
-			}
-			reroute = true
-		case len(unread) > 0:
-			q.recs.pendEndLocked(rec, unread, *end, fx)
-		}
+		reroute = q.settleOpUnread(rec, unread, end, stale, fx)
 	})
 	return reroute
+}
+
+// A step's rows go "not read" at the boundary because a finished step carries nothing.
+func (q steerQueue) settleOpUnread(rec *steerRecord, unread []*dockRow, end *command.SteerTurnEnd, stale bool, fx *steerFx) (reroute bool) {
+	switch {
+	case rec.noCarry:
+		for _, w := range unread {
+			w.owner = ""
+			retire(w, boundarySteer(w), fx)
+		}
+	case stale:
+		for _, w := range unread {
+			settleStaleLocked(w, fx)
+		}
+		return true
+	case len(unread) > 0:
+		q.recs.pendEndLocked(rec, unread, *end, fx)
+	}
+	return false
 }
 
 // takeUnread answers the rows owner still holds that the agent has not read,
@@ -634,49 +660,4 @@ func (q steerQueue) NextParked(chatID marotte.ChatID, turnID string) (key, text 
 		key, text, ok = parked[0].key, parked[0].text, true
 	})
 	return key, text, ok
-}
-
-// chatLocks is one context-aware mutex per chat, reclaimed when its last holder or waiter leaves.
-type chatLocks struct {
-	m  map[marotte.ChatID]*chatLock
-	mu sync.Mutex
-}
-
-type chatLock struct {
-	ch   chan struct{}
-	refs int
-}
-
-func newChatLocks() *chatLocks {
-	return &chatLocks{m: make(map[marotte.ChatID]*chatLock)}
-}
-
-func (c *chatLocks) lock(ctx context.Context, chatID marotte.ChatID) (func(), error) {
-	c.mu.Lock()
-	l := c.m[chatID]
-	if l == nil {
-		l = &chatLock{ch: make(chan struct{}, 1)}
-		c.m[chatID] = l
-	}
-	l.refs++
-	c.mu.Unlock()
-	select {
-	case l.ch <- struct{}{}:
-		return func() {
-			<-l.ch
-			c.leave(chatID, l)
-		}, nil
-	case <-ctx.Done():
-		c.leave(chatID, l)
-		return nil, ctx.Err()
-	}
-}
-
-func (c *chatLocks) leave(chatID marotte.ChatID, l *chatLock) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	l.refs--
-	if l.refs == 0 {
-		delete(c.m, chatID)
-	}
 }

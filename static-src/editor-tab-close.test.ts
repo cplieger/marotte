@@ -65,12 +65,29 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
 }));
-// `apiGet` is the file read; `apiGetTyped` is tabs-sync's collection read, which
-// the harness answers off the fake collection.
+// `apiGetTypedOrError` is the file stat; `apiGetTyped` is tabs-sync's collection
+// read, which the harness answers off the fake collection. The stat says "too
+// large", so the open completes without a second read.
 vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => ({
-    apiGet: vi.fn(() => Promise.resolve({ content: "hello", content_hash: "h" })),
+    apiGet: vi.fn(() => Promise.resolve(null)),
     apiGetTyped: m.tabListRead(),
+    apiGetTypedOrError: vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        error: "",
+        data: {
+          path: "",
+          size: 3 << 20,
+          modified: "",
+          large: true,
+          binary: false,
+          utf8: true,
+          read_only: false,
+        },
+      }),
+    ),
     apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
   })),
 );
@@ -126,13 +143,24 @@ vi.mock("./editor-conflict.js", () => ({
 }));
 vi.mock("./editor-modes.js", () => ({ restoreUI: vi.fn() }));
 vi.mock("./editor-ui.js", () => ({
-  showReadMode: vi.fn(),
+  showSurface: vi.fn(),
+  requestedBy: vi.fn(() => "read"),
   applyPendingLine: vi.fn(),
   fetchAgentLines: vi.fn(),
-  pendingLines: new Map<string, number>(),
   clearAgentLineCache: vi.fn(),
-  updateGutter: vi.fn(),
-  renderEditModeUI: vi.fn(),
+}));
+vi.mock("./viewer-live.js", () => ({
+  liveActivate: vi.fn(),
+  liveDispose: vi.fn(),
+  paintLiveButton: vi.fn(),
+  setLiveReload: vi.fn(),
+}));
+vi.mock("./editor-pane.js", () => ({
+  paneBody: () => document.createElement("div"),
+  viewer: vi.fn(),
+  editDecor: vi.fn(),
+  editSurface: vi.fn(),
+  editing: () => false,
 }));
 vi.mock("./actions/editor.js", () => ({
   loadDiff: { dispatch: () => ({ outcome: Promise.resolve({ status: "cancelled" }) }) },
@@ -154,11 +182,6 @@ vi.mock("./dom.js", () => ({
             document.body.appendChild(tl);
           }
           return tl;
-        }
-        if (prop === "editorHighlight") {
-          const pre = document.createElement("pre");
-          document.createElement("div").appendChild(pre);
-          return pre;
         }
         return document.createElement("div");
       },

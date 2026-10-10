@@ -5,8 +5,13 @@ import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import { retryOutcomeNotice } from "../run-controls.js";
 import { invalidateRun, invalidateRunControls } from "../run-store.js";
 import { errorAbout, noticeAbout } from "./subject.js";
-import { decodeRunRetriedResponse } from "../wire/decoders.gen.js";
-import type { RunRetriedResponse } from "../wire/types.gen.js";
+import { decodeRunRetriedResponse, decodeRunStepMessageResponse } from "../wire/decoders.gen.js";
+import type {
+  RunRetriedResponse,
+  RunStepMessageRequest,
+  RunStepMessageResponse,
+  RunStepSteerRequest,
+} from "../wire/types.gen.js";
 import type {
   RecipesResponse,
   RunAnswerRequest,
@@ -131,6 +136,65 @@ export const answerRunInput = apiAction<{ workflowID: string } & RunAnswerReques
     ),
   },
 );
+
+/** One run step's address, `/api/runs/{id}/steps/{path}` with `{path}` one encoded `nodePathKey`; its
+ *  verbs are sub-paths. The workflow id and the node path are independent, so neither is derived from
+ *  the other. */
+export function runStepURL(workflowID: string, nodePath: string): string {
+  return `/api/runs/${encodeURIComponent(workflowID)}/steps/${encodeURIComponent(nodePath)}`;
+}
+
+interface StepAddress {
+  workflowID: string;
+  nodePath: string;
+}
+
+/** Send the user's words to one run step; the server picks the verb from the step's live state (steer,
+ *  answer, or resume). The rejection carries the server's sentence and its machine reason (`code`) for
+ *  the run composer to word, which owns the failure, so there is no toast. The idempotency key is the
+ *  message id, so a retry of a send whose reply was lost replays its answer instead of delivering the
+ *  words twice; a retry of a refused send therefore needs a fresh id. */
+export const messageRunStep = apiAction<
+  StepAddress & RunStepMessageRequest,
+  RunStepMessageResponse
+>({
+  name: "runs.message_step",
+  idempotencyKey: ({ message_id }) => message_id,
+  request: ({ workflowID, nodePath, text, message_id }) => ({
+    method: "POST",
+    path: `${runStepURL(workflowID, nodePath)}/message`,
+    body: { text, message_id },
+  }),
+  decode: decodeRunStepMessageResponse,
+  error: false,
+});
+
+/** Delete one unread row of a step's dock (the chat's steer_remove, on the step's session). Rejects
+ *  with the server's sentence and status, so Edit can tell a refusal from a lost reply. */
+export const removeRunStepSteer = apiAction<StepAddress & RunStepSteerRequest, { deleted: string }>(
+  {
+    name: "runs.remove_step_steer",
+    request: ({ workflowID, nodePath, steer_id }) => ({
+      method: "POST",
+      path: `${runStepURL(workflowID, nodePath)}/steer-remove`,
+      body: { steer_id },
+    }),
+    error: false,
+  },
+);
+
+/** Discard every unread row of a step's dock (the chat's steer_clear, on the step's session). */
+export const clearRunStepSteers = apiAction<StepAddress, { ok: boolean }>({
+  name: "runs.clear_step_steers",
+  request: ({ workflowID, nodePath }) => ({
+    method: "POST",
+    path: `${runStepURL(workflowID, nodePath)}/steer-clear`,
+  }),
+  error: errorAbout(
+    ({ workflowID }: { workflowID: string }) => onRun(workflowID),
+    "Could not discard",
+  ),
+});
 
 /** The server's error sentence, or null. `@cplieger/fetch` falls back to the literal
  *  `HTTP <status>` for an empty body, and a transport failure (`status === 0`) carries a browser

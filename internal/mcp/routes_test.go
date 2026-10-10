@@ -10,8 +10,7 @@ import (
 // registrations (/api/mcp, /api/mcp/, /api/mcp/registry/search) don't
 // accidentally let a user-created server named "registry" or "status"
 // shadow the sibling handlers. Go's http.ServeMux uses longest-prefix
-// match; this test is the guard against a future refactor that adds a
-// new subtree and forgets to check precedence.
+// match.
 func TestRoutePrecedence(t *testing.T) {
 	mux := http.NewServeMux()
 	s := newTestStore(t)

@@ -112,9 +112,7 @@ func pickerCapabilities(rules []marotte.PolicyRule) []string {
 	return slices.Sorted(maps.Keys(seen))
 }
 
-// policyRulesFromFiles reads the user + workspace permissions.yaml directly
-// and returns them as marotte.PolicyRule with provenance. Used only as the
-// no-bridge fallback for the view.
+// Used only as the no-bridge fallback for the view.
 func (s *Server) policyRulesFromFiles(scope string) []marotte.PolicyRule {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -176,9 +174,8 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, res)
 }
 
-// policyRuleBody is the POST /api/permissions/rules request; op is "add", "remove" or
-// "update". An add's empty effect defaults to "ask". For remove and update the rule fields
-// identify the EXISTING rule; a widening change needs confirm=true.
+// op is "add", "remove" or "update". An add's empty effect defaults to "ask". For remove and update
+// the rule fields identify the EXISTING rule; a widening change needs confirm=true.
 type policyRuleBody struct {
 	Op         string   `json:"op"`
 	Scope      string   `json:"scope"`
@@ -201,9 +198,8 @@ var effectRank = map[string]int{
 	policyfile.EffectAllow: 0,
 }
 
-// handlePolicyRules serves POST /api/permissions/rules (op=add|remove).
-// Writes the scope's permissions.yaml; KAS hot-reloads and emits
-// _kiro/policy/changed → the permissions_changed SSE.
+// Writes the scope's permissions.yaml; KAS hot-reloads and emits _kiro/policy/changed → the
+// permissions_changed SSE.
 func (s *Server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return
@@ -238,7 +234,7 @@ func (s *Server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
+func (*Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
 	// Conservative default: a new rule with no explicit effect is `ask`, never `allow`.
 	effect := cmp.Or(body.Effect, policyfile.EffectAsk)
 	rule, err := policyfile.SanitizeRule(&policyfile.Rule{
@@ -316,8 +312,7 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 	webhttp.Ok(w)
 }
 
-// policyRuleUpdate changes an existing rule's effect in place (op=update) in one atomic file
-// write. A widening change requires confirm=true.
+// A widening change requires confirm=true.
 func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
 	if !policyfile.ValidEffect(body.Effect) {
 		httpreply.BadRequest(w, "effect required to identify the rule")

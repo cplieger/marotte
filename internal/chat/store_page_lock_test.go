@@ -81,7 +81,7 @@ func TestStorePage_ReadsTheRegistryOutsideTheStoreLock(t *testing.T) {
 	go func() {
 		defer close(finished)
 		for range rounds {
-			if _, ok, err := f.s.Page(context.Background(), f.chatID, 20, ""); err != nil || !ok {
+			if _, ok, err := f.s.page(context.Background(), f.chatID, 20, ""); err != nil || !ok {
 				t.Errorf("Page() = ok %v, err %v; want a page", ok, err)
 				return
 			}
@@ -112,7 +112,7 @@ func TestStorePage_ReconcilesATailSealedBetweenTheReads(t *testing.T) {
 	if err := f.s.Append(ctx, f.chatID, entryOf(f.turn, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "hello"})); err != nil {
 		t.Fatalf("Append(say-1): %v", err)
 	}
-	page, ok, err := f.s.Page(ctx, f.chatID, 20, "")
+	page, ok, err := f.s.page(ctx, f.chatID, 20, "")
 	if err != nil || !ok {
 		t.Fatalf("Page() = ok %v, err %v", ok, err)
 	}
@@ -134,7 +134,7 @@ func TestStorePage_ReconcilesATailSealedBetweenTheReads(t *testing.T) {
 	if err := f.s.Append(ctx, f.chatID, entryOf(f.turn, "", f.turn+":close", marotte.EntryKindTurnClose, marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted})); err != nil {
 		t.Fatalf("Append(turn_close): %v", err)
 	}
-	page, ok, err = f.s.Page(ctx, f.chatID, 20, "")
+	page, ok, err = f.s.page(ctx, f.chatID, 20, "")
 	if err != nil || !ok {
 		t.Fatalf("Page() after close = ok %v, err %v", ok, err)
 	}

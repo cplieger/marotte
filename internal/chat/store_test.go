@@ -37,14 +37,12 @@ func (f *fakeBroadcaster) Broadcast(_ context.Context, e marotte.ServerEvent) {
 	f.count.Add(1)
 }
 
-// snapshot returns a copy of the captured events under the mutex.
 func (f *fakeBroadcaster) snapshot() []marotte.ServerEvent {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.events)
 }
 
-// reset clears the event log under the mutex.
 func (f *fakeBroadcaster) reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -89,10 +87,8 @@ func ageChat(t *testing.T, s *Store, id string, ago time.Duration) {
 	}
 }
 
-// badChatIDs is the canonical set of invalid chat identifiers for every RejectsBadChatID test.
 var badChatIDs = []marotte.ChatID{"", "a/b", "..", "a\x00b", "a b", marotte.ChatID(strings.Repeat("x", 200))}
 
-// assertRejectsBadChatIDs asserts fn returns a non-nil error for every id in badChatIDs.
 func assertRejectsBadChatIDs(t *testing.T, fn func(id marotte.ChatID) error) {
 	t.Helper()
 	for _, bad := range badChatIDs {
@@ -334,7 +330,7 @@ func TestDelete_RemovesFileAndBroadcasts(t *testing.T) {
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	b.reset()
 
-	if err := s.Delete(t.Context(), "c1"); err != nil {
+	if _, err := s.Delete(t.Context(), "c1"); err != nil {
 		t.Fatalf("Delete error = %v", err)
 	}
 	if _, ok := s.Get(t.Context(), "c1"); ok {
@@ -347,7 +343,7 @@ func TestDelete_RemovesFileAndBroadcasts(t *testing.T) {
 
 func TestDelete_MissingChatIsNoOp(t *testing.T) {
 	s, b := newTestStore(t)
-	if err := s.Delete(t.Context(), "nonexistent"); err != nil {
+	if _, err := s.Delete(t.Context(), "nonexistent"); err != nil {
 		t.Errorf("error on missing chat: %v", err)
 	}
 	if len(b.events) != 1 {
@@ -358,7 +354,7 @@ func TestDelete_MissingChatIsNoOp(t *testing.T) {
 func TestDelete_TombstonesChatID(t *testing.T) {
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Delete(t.Context(), "c1")
+	_, _ = s.Delete(t.Context(), "c1")
 	if !s.isTombstoned("c1") {
 		t.Error("tombstone not set after Delete")
 	}
@@ -367,7 +363,7 @@ func TestDelete_TombstonesChatID(t *testing.T) {
 func TestMutate_RefusesToCreateTombstonedChat(t *testing.T) {
 	s, b := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Delete(t.Context(), "c1")
+	_, _ = s.Delete(t.Context(), "c1")
 	b.reset()
 
 	_, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, exists bool) bool {
@@ -399,7 +395,7 @@ func TestMutate_PinsAppliedNoOpAndRefusedApart(t *testing.T) {
 		t.Errorf("Mutate(no-op) = %v, want nil", err)
 	}
 	_, _ = s.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true })
-	if err := s.Delete(t.Context(), "c2"); err != nil {
+	if _, err := s.Delete(t.Context(), "c2"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	_, err := s.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool { c.Name = "ghost"; return true })
@@ -411,7 +407,7 @@ func TestMutate_PinsAppliedNoOpAndRefusedApart(t *testing.T) {
 func TestMutate_UpdatingExistingChatIsNotBlockedByTombstone(t *testing.T) {
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Delete(t.Context(), "c1")
+	_, _ = s.Delete(t.Context(), "c1")
 	_, err := s.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true })
 	if err != nil {
 		t.Fatalf("unrelated chat blocked by unrelated tombstone: %v", err)
@@ -424,7 +420,7 @@ func TestMutate_UpdatingExistingChatIsNotBlockedByTombstone(t *testing.T) {
 func TestAppend_OnTombstonedChatIsRefused(t *testing.T) {
 	s, b := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Delete(t.Context(), "c1")
+	_, _ = s.Delete(t.Context(), "c1")
 	b.reset()
 
 	err := s.Append(t.Context(), "c1", entryOf("t-ghost", "", "a1", marotte.EntryKindText, marotte.EntryText{Text: "ghost"}))
@@ -448,7 +444,7 @@ func TestHandleList_ReturnsHeaders(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleList(rec, req)
+	newRouter(s).handleList(rec, req)
 
 	if rec.Code != 200 {
 		t.Fatalf("code = %d", rec.Code)
@@ -466,7 +462,7 @@ func TestHandleOne_NotFound(t *testing.T) {
 	s, _ := newTestStore(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/nope", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("code = %d", rec.Code)
 	}
@@ -476,7 +472,7 @@ func TestHandleOne_RejectsUnknownSubResource(t *testing.T) {
 	s, _ := newTestStore(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/a/b", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("code = %d, want 404", rec.Code)
 	}
@@ -527,7 +523,7 @@ func TestHandleList_EmptyStoreReturnsEmptyArrayNotNull(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleList(rec, req)
+	newRouter(s).handleList(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200", rec.Code)
@@ -546,7 +542,7 @@ func TestHandleList_RejectsNonGET(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		req := httptest.NewRequest(method, "/api/chats", nil)
 		rec := httptest.NewRecorder()
-		NewRouter(s).handleList(rec, req)
+		newRouter(s).handleList(rec, req)
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("handleList(%s) code = %d, want 405", method, rec.Code)
 		}
@@ -565,7 +561,7 @@ func TestHandleOne_RejectsEmptyOrLeadingSlashPath(t *testing.T) {
 	for _, tc := range cases {
 		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
 		rec := httptest.NewRecorder()
-		NewRouter(s).handleOne(rec, req)
+		newRouter(s).handleOne(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("handleOne(%s) code = %d, want 400", tc.name, rec.Code)
 		}
@@ -578,7 +574,7 @@ func TestHandleOne_BaseRejectsNonGET(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		req := httptest.NewRequest(method, "/api/chats/c1", nil)
 		rec := httptest.NewRecorder()
-		NewRouter(s).handleOne(rec, req)
+		newRouter(s).handleOne(rec, req)
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("handleOne(%s /api/chats/c1) code = %d, want 405", method, rec.Code)
 		}
@@ -602,7 +598,7 @@ func TestHandleOne_IgnoresInvalidQueryParams(t *testing.T) {
 	for _, tc := range cases {
 		req := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+tc.query, nil)
 		rec := httptest.NewRecorder()
-		NewRouter(s).handleOne(rec, req)
+		newRouter(s).handleOne(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Errorf("handleOne(%s) code = %d, want 200 (invalid params should fall back)", tc.name, rec.Code)
 		}
@@ -714,7 +710,7 @@ func TestIsTombstoned_ExpiredEntryIsPrunedAndReturnsFalse(t *testing.T) {
 func TestMutate_ExpiredTombstoneDoesNotBlockRecreation(t *testing.T) {
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Delete(t.Context(), "c1")
+	_, _ = s.Delete(t.Context(), "c1")
 
 	s.tombMu.Lock()
 	s.tombstone["c1"] = tombstone{at: time.Now().Add(-2 * tombstoneTTL)}
@@ -771,7 +767,7 @@ func TestDepartedName_IsTheNameTheChatHadWhenDeleted(t *testing.T) {
 	if name, ok := s.DepartedName("c1"); ok {
 		t.Fatalf("DepartedName(c1) before delete = %q, true; want false", name)
 	}
-	if err := s.Delete(t.Context(), "c1"); err != nil {
+	if _, err := s.Delete(t.Context(), "c1"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if name, ok := s.DepartedName("c1"); !ok || name != "Release notes" {
@@ -786,7 +782,7 @@ func TestDelete_MissingChatDoesNotTombstone(t *testing.T) {
 	// A stale DELETE for an id the server never knew still broadcasts, but must not tombstone the
 	// id and block a legitimate create for 10 minutes.
 	s, _ := newTestStore(t)
-	_ = s.Delete(t.Context(), "never-existed")
+	_, _ = s.Delete(t.Context(), "never-existed")
 	if s.isTombstoned("never-existed") {
 		t.Error("phantom delete tombstoned a chat that never existed")
 	}
@@ -871,7 +867,7 @@ func TestHandleOne_RejectsInvalidChatID(t *testing.T) {
 	for _, bad := range []string{"bad.id", "with@sign", "plus+sign"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/chats/"+bad, nil)
 		rec := httptest.NewRecorder()
-		NewRouter(s).handleOne(rec, req)
+		newRouter(s).handleOne(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("handleOne(%q) = %d, want 400", bad, rec.Code)
 		}
@@ -891,7 +887,8 @@ func TestDelete_RejectsBadChatID(t *testing.T) {
 	// nothing.
 	s, b := newTestStore(t)
 	assertRejectsBadChatIDs(t, func(id marotte.ChatID) error {
-		return s.Delete(t.Context(), id)
+		_, err := s.Delete(t.Context(), id)
+		return err
 	})
 	if evs := b.snapshot(); len(evs) != 0 {
 		t.Errorf("invalid chat id deletes broadcast events: %+v", evs)
@@ -907,7 +904,7 @@ func TestDelete_SurfacesNonENOENTChatRemoveError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(s.dir, 0o700) })
 
-	err := s.Delete(t.Context(), "c1")
+	_, err := s.Delete(t.Context(), "c1")
 	if err == nil {
 		t.Fatal("Delete on readonly parent dir = nil error, want EACCES")
 	}
@@ -922,7 +919,7 @@ func TestHandleExport_JSONFormatReturnsChatJSON(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export?format=json", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
@@ -942,7 +939,7 @@ func TestHandleExport_MarkdownIsDefaultFormat(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
@@ -966,7 +963,7 @@ func TestHandleExport_RejectsUnsupportedFormat(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export?format=xml", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400 for unsupported format", rec.Code)
@@ -979,7 +976,7 @@ func TestHandleExport_FallsBackToChatIDWhenNameEmpty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d", rec.Code)
@@ -994,7 +991,7 @@ func TestHandleExport_NotFoundForMissingChat(t *testing.T) {
 	s, _ := newTestStore(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("code = %d, want 404", rec.Code)
 	}
@@ -1006,7 +1003,7 @@ func TestHandleExport_RejectsNonGET(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		req := httptest.NewRequest(method, "/api/chats/c1/export", nil)
 		rec := httptest.NewRecorder()
-		NewRouter(s).handleOne(rec, req)
+		newRouter(s).handleOne(rec, req)
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("handleExport(%s) = %d, want 405", method, rec.Code)
 		}
@@ -1017,7 +1014,7 @@ func TestHandleExport_RejectsInvalidChatID(t *testing.T) {
 	s, _ := newTestStore(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/bad.id/export", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", rec.Code)
 	}
@@ -1032,7 +1029,7 @@ func TestHandleExport_SanitisesAdversarialChatName(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d", rec.Code)
@@ -1121,7 +1118,7 @@ func TestHandleExport_SuccessfulMarkdownWriteIsQuiet(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
@@ -1160,8 +1157,6 @@ func TestMutate_RefusesACancelledContext(t *testing.T) {
 	}
 }
 
-// exportSeed writes one named chat holding a prompt turn with a reply, the shape
-// the export handlers render.
 func exportSeed(t *testing.T, s *Store, id marotte.ChatID, name string) {
 	t.Helper()
 	turn := openPromptTurn(t, s, id, "m-"+string(id))

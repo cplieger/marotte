@@ -123,8 +123,6 @@ func NewEntryProjection(newID func() string, workDir string) *EntryProjection {
 	return &EntryProjection{newID: newID, workDir: workDir, compactAt: -1}
 }
 
-// relPath normalizes a wire path reference to workspace-relative form, the rule the
-// live path applies.
 func (p *EntryProjection) relPath(ref string) string {
 	return relPathIn(p.workDir, ref)
 }
@@ -215,11 +213,12 @@ func (p *EntryProjection) flushUser() {
 	p.ensureTurn(marotte.TurnOpenNameEvent)
 	p.sealLanes()
 	// state stays empty; a steer with no record twin is stamped `dropped, restart` by the merge.
-	p.appendEntry(marotte.EntryKindSteer, id, "", ts, marotte.EntrySteer{
-		Text:     text,
-		Origin:   projectedSteerOrigin(id, sender),
-		Severity: severity,
-	})
+	steerRow := marotte.EntrySteer{Text: text, Origin: projectedSteerOrigin(id, sender), Severity: severity}
+	if steerRow.Origin.WorkflowMessage() {
+		// KAS persists a workflow message's row at the send.
+		steerRow.ProducedTs = ts
+	}
+	p.appendEntry(marotte.EntryKindSteer, id, "", ts, steerRow)
 }
 
 // projectedSteerOrigin is a replayed steer's origin from its id (`steer-` is the reader's) and
@@ -230,6 +229,8 @@ func projectedSteerOrigin(id, sender string) marotte.SteerOrigin {
 		return marotte.SteerOriginUser
 	case sender == senderParent:
 		return marotte.SteerOriginParent
+	case sender == senderStep:
+		return marotte.SteerOriginStep
 	default:
 		return marotte.SteerOriginAgent
 	}
@@ -323,7 +324,6 @@ func payloadForSay(kind marotte.EntryKind, text string) any {
 	return marotte.EntryText{Text: text}
 }
 
-// setCarry replaces a lane's withheld tail and records the say a release belongs to.
 func (p *EntryProjection) setCarry(lane, sayID, held string) {
 	if held == "" {
 		delete(p.carry, lane)
@@ -357,7 +357,7 @@ func (p *EntryProjection) sealLanes() {
 }
 
 func (p *EntryProjection) ingestToolCall(raw json.RawMessage) {
-	var tc ACPToolCallWire
+	var tc acpToolCallWire
 	if json.Unmarshal(raw, &tc) != nil || tc.ToolCallID == "" {
 		return
 	}
@@ -386,11 +386,9 @@ func (p *EntryProjection) ingestToolCall(raw json.RawMessage) {
 	p.appendEntry(marotte.EntryKindToolCall, tc.ToolCallID, lane, ts, call)
 }
 
-// ingestToolUpdate folds a replayed tool_call_update into the call's tool_result when the
-// update SETTLES it (a replay carries the terminal status on the update). A non-terminal
-// update leaves the call open for the close's abort rule.
+// A non-terminal update leaves the call open for the close's abort rule.
 func (p *EntryProjection) ingestToolUpdate(raw json.RawMessage) {
-	var tu ACPToolCallUpdateWire
+	var tu acpToolCallUpdateWire
 	if json.Unmarshal(raw, &tu) != nil || tu.ToolCallID == "" {
 		return
 	}
@@ -432,15 +430,14 @@ func (p *EntryProjection) ingestToolUpdate(raw json.RawMessage) {
 
 // checkpointFrom maps KAS's checkpoint block onto the domain type, nil for the tool
 // calls that touch no file.
-func checkpointFrom(in *ACPCheckpointMeta) *marotte.ToolCheckpoint {
+func checkpointFrom(in *acpCheckpointMeta) *marotte.ToolCheckpoint {
 	if in == nil || (in.Original == "" && in.Modified == "" && in.Local == "") {
 		return nil
 	}
 	return &marotte.ToolCheckpoint{Original: in.Original, Modified: in.Modified, Local: in.Local}
 }
 
-// noteAskFact records an ask, its answer or the steering added on the open turn;
-// outside a turn there is nothing to record it on.
+// Outside a turn there is nothing to record it on.
 func (p *EntryProjection) noteAskFact(k *replayInfoKiro) {
 	if p.cur == nil {
 		return
@@ -471,7 +468,12 @@ func (p *EntryProjection) ingestInfo(raw json.RawMessage) {
 	case infoKindTurnCompletion:
 		p.noteTurnMetering(u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime)
 		k := &u.Meta.Kiro
-		p.facts.footer.NoteTurnCompletion(boundedIDs(k.RequestIDs), boundedIDs(k.Recoveries), k.Throughput.summary())
+		p.facts.footer.NoteTurnCompletion(&turnlog.Completion{
+			RequestIDs:       boundedIDs(k.RequestIDs),
+			Recoveries:       boundedIDs(k.Recoveries),
+			Throughput:       k.Throughput.summary(),
+			ContextBreakdown: contextBreakdownFrom(k.ContextBreakdown),
+		})
 	case infoKindPendingInteraction, infoKindInteractionResolved, infoKindSteeringInclusion:
 		p.noteAskFact(&u.Meta.Kiro)
 	case infoKindDisplayError:
@@ -491,12 +493,17 @@ func (p *EntryProjection) ingestInfo(raw json.RawMessage) {
 		p.compactAt = len(p.cur)
 	case infoKindSummary:
 		p.applySummary(u.Meta.Kiro.SummaryMessage)
+	case infoKindModelRouted:
+		p.flushUser()
+		p.ensureTurn(marotte.TurnOpenNameEvent)
+		p.sealLanes()
+		p.appendEntry(marotte.EntryKindModelRouted, p.newID(), "", p.frameTS(""),
+			modelRoutedPayload(u.Meta.Kiro.Message))
 	}
 }
 
-// noteTurnMetering records what the replayed turn_completion says this turn spent.
-// The credit sum matches the live path's: an empty unit or the credit unit counts,
-// anything else is a dimension this does not price.
+// The credit sum matches the live path's: an empty unit or the credit unit counts, anything else is
+// a dimension this does not price.
 func (p *EntryProjection) noteTurnMetering(summaries []promptTurnSummary, elapsedMs float64) {
 	for i := range summaries {
 		if summaries[i].Unit == "" || summaries[i].Unit == meteringUnitCredit {
@@ -506,10 +513,8 @@ func (p *EntryProjection) noteTurnMetering(summaries []promptTurnSummary, elapse
 	p.facts.elapsedMs = elapsedMs
 }
 
-// noteTurnEnd reads the replayed turn_end payload into the open turn's facts. A bracket
-// carrying no payload records ConcludeStopReason's answer for an unstated reason, because
-// the wire requires an outcome on every turn_close. The mapping is delegated, never
-// re-implemented.
+// A bracket carrying no payload records ConcludeStopReason's answer for an unstated reason, because
+// the wire requires an outcome on every turn_close. The mapping is delegated, never re-implemented.
 func (p *EntryProjection) noteTurnEnd(e *turnEndBlock) {
 	if e == nil {
 		c := marotte.ConcludeStopReason("")
@@ -562,7 +567,6 @@ func (p *EntryProjection) ensureTurn(source marotte.TurnOpenSourceName) {
 	p.startTurn(source, nil, 0)
 }
 
-// openTurn settles the newest turn and starts one from the pending prompt.
 func (p *EntryProjection) openTurn() {
 	p.closeTurn()
 	p.sealCur()
@@ -575,7 +579,7 @@ func (p *EntryProjection) openTurn() {
 	p.startTurn(source, prompt, ts)
 }
 
-// startTurn appends the turn_open later entries hang off. `n` stays zero: the merged log numbers turns.
+// `n` stays zero: the merged log numbers turns.
 func (p *EntryProjection) startTurn(source marotte.TurnOpenSourceName, prompt *marotte.EntryPrompt, ts int64) {
 	p.curID = p.newID()
 	p.cur = nil
@@ -646,7 +650,6 @@ func (p *EntryProjection) settle() {
 	p.calls, p.callOrder = map[string]string{}, nil
 }
 
-// sealCur moves the newest turn into the settled list.
 func (p *EntryProjection) sealCur() {
 	if p.cur == nil {
 		return
@@ -706,8 +709,6 @@ func (p *EntryProjection) insertEntry(at int, kind marotte.EntryKind, id, lane s
 	return true
 }
 
-// rewritePayload replaces one entry's payload in place, for a say a later delta
-// extended.
 func (p *EntryProjection) rewritePayload(at int, payload any) {
 	raw, err := json.Marshal(payload)
 	if err != nil {

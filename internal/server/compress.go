@@ -58,9 +58,8 @@ func isCompressSkipped(path string) bool {
 	return false
 }
 
-// acceptsGzip reports whether an Accept-Encoding header allows gzip. A `gzip;q=0` is a
-// REFUSAL rather than an offer (RFC 9110 section 12.5.3), and a bare `*` with no gzip
-// entry is an offer.
+// A `gzip;q=0` is a REFUSAL rather than an offer (RFC 9110 section 12.5.3), and a bare `*` with no
+// gzip entry is an offer.
 func acceptsGzip(header string) bool {
 	wildcard := false
 	for part := range strings.SplitSeq(header, ",") {
@@ -120,15 +119,12 @@ const (
 	// modeBuffering holds the body, and the status line with it, until the size is
 	// worth compressing.
 	modeBuffering compressMode = iota
-	// modePlain passes every write through untouched.
 	modePlain
-	// modeGzip writes through a gzip.Writer.
 	modeGzip
 )
 
-// compressWriter decides per response whether to gzip it. That needs the Content-Type (at
-// WriteHeader) and the body size (as it arrives), so the status line is held back until the
-// threshold is crossed or the handler returns.
+// That needs the Content-Type (at WriteHeader) and the body size (as it arrives), so the status
+// line is held back until the threshold is crossed or the handler returns.
 type compressWriter struct {
 	http.ResponseWriter
 	gz     *gzip.Writer
@@ -160,11 +156,8 @@ func (cw *compressWriter) WriteHeader(code int) {
 	}
 }
 
-// encodingGzip is the content-coding token, on the wire and in Accept-Encoding.
 const encodingGzip = "gzip"
 
-// gzipCandidate reports whether a response with this status and these headers
-// could carry a gzip body.
 func (cw *compressWriter) gzipCandidate(code int) bool {
 	if code < http.StatusOK || code == http.StatusNoContent || code == http.StatusNotModified {
 		return false
@@ -176,7 +169,6 @@ func (cw *compressWriter) gzipCandidate(code int) bool {
 	return isJSONMediaType(h.Get("Content-Type"))
 }
 
-// passThrough commits the held status line and every buffered byte as-is.
 func (cw *compressWriter) passThrough() {
 	cw.mode = modePlain
 	cw.commit()
@@ -215,7 +207,6 @@ func (cw *compressWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// startGzip switches a buffering response over to gzip, replaying what is buffered.
 // Content-Length is dropped: the handler's value describes the identity representation.
 func (cw *compressWriter) startGzip() {
 	h := cw.Header()
@@ -259,8 +250,8 @@ func (cw *compressWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return hj.Hijack()
 }
 
-// finish closes out whichever mode the response ended in. Called from the middleware's
-// defer, so a panicking handler still leaves a consistent response for the recoverer.
+// Called from the middleware's defer, so a panicking handler still leaves a consistent response for
+// the recoverer.
 func (cw *compressWriter) finish() {
 	switch cw.mode {
 	case modeGzip:

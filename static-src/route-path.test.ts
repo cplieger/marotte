@@ -461,7 +461,6 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
     fc.assert(
       fc.property(arbRoute, (route) => {
         const path = buildPath(route);
-        // Split path and hash for parseRoute
         const hashIdx = path.indexOf("#");
         const pathname = hashIdx >= 0 ? path.slice(0, hashIdx) : path;
         const hash = hashIdx >= 0 ? path.slice(hashIdx) : "";
@@ -496,7 +495,6 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
   });
 });
 
-/** Canonicalize a route to the form parseRoute would produce. */
 function canonicalize(route: Route): Route {
   switch (route.kind) {
     case "settings":

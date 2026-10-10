@@ -21,7 +21,7 @@ const RED_BELOW_T = 10;
 const NO_COMPACTION_T = 100;
 
 /** The compaction settings the ring reads, mirrored from EffectiveSettings. */
-export interface CompactionPolicy {
+interface CompactionPolicy {
   readonly enabled: boolean;
   readonly pct: number;
 }

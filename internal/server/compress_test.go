@@ -15,7 +15,6 @@ func bigJSON() string {
 	return `{"chats":[` + strings.Repeat(`{"id":"c1","name":"a chat"},`, 200) + `{"id":"z"}]}`
 }
 
-// jsonHandler answers every request with body under Content-Type ct.
 func jsonHandler(ct, body string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", ct)
@@ -23,8 +22,6 @@ func jsonHandler(ct, body string) http.Handler {
 	})
 }
 
-// serveCompressed runs one request through the middleware and returns the
-// recorder.
 func serveCompressed(t *testing.T, h http.Handler, path, acceptEncoding string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)

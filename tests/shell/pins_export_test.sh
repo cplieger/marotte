@@ -143,8 +143,8 @@ else
 fi
 
 # --- the LIBRARY half of the same non-claim: pinstall.Untrusted --------------
-# The pinstall.Config field the env var would feed (renamed Tainted -> Untrusted at v2, so the old
-# spelling passes vacuously). Setting it without a hardening pass is a guard with no producer.
+# The pinstall.Config field the env var would feed (Untrusted since pinstall v2; grepping the v1
+# spelling Tainted would pass vacuously). Setting it without a hardening pass is a guard with no producer.
 # kirocli.go CITES this assertion.
 if grep -q 'Untrusted:' "$KIROCLI_GO"; then
   no "Untrusted claimed" "internal/composition/kirocli.go now sets pinstall.Untrusted, but marotte has no hardening pass to make that observation: the field then reports every boot as clean while looking like a check"

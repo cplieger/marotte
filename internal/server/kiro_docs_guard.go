@@ -28,7 +28,6 @@ type docVerdict struct {
 	deleteProtected bool
 }
 
-// pathGuard reports what the scan may do with one entry, by its path WITHIN the walked fs.FS.
 // A nil guard admits everything (the MapFS tests); a restriction is asserted, never inferred.
 type pathGuard func(rel string) docVerdict
 
@@ -36,7 +35,6 @@ func (g pathGuard) allows(rel string) bool {
 	return g == nil || g(rel).allowed
 }
 
-// rootGuard is the production guard for one `.kiro` tree.
 type rootGuard struct {
 	// dir is the root as EvalSymlinks resolved it (an operator may symlink `.kiro` in), so its
 	// target is the boundary.
@@ -48,8 +46,7 @@ type rootGuard struct {
 	sensitive filebrowse.Sensitive
 }
 
-// newRootGuard resolves dir and returns a guard over it; an unresolvable dir yields a guard
-// that refuses everything.
+// An unresolvable dir yields a guard that refuses everything.
 func newRootGuard(dir, category string, sensitive filebrowse.Sensitive) pathGuard {
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
@@ -115,8 +112,8 @@ func readGuardedFS(root fs.FS, name string, guard pathGuard) ([]byte, docVerdict
 	return data, v, err
 }
 
-// readGuardedDir is fs.ReadDir with the guard in front. Refuse AT the directory: a listing is
-// itself a disclosure, since skills and agents rows are built from the names.
+// Refuse AT the directory: a listing is itself a disclosure, since skills and agents rows are built
+// from the names.
 func readGuardedDir(root fs.FS, name string, guard pathGuard) ([]fs.DirEntry, error) {
 	if !guard.allows(name) {
 		return nil, errRefused

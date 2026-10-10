@@ -251,7 +251,7 @@ func TestAffordance_ChatParentedRunIsHostedByItsChatsBridge(t *testing.T) {
 		t.Errorf("the refusal = %q, want it to name the launching chat", closed.refusal(verbPause))
 	}
 
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: opening the chat's bridge: %s", err)
 	}
 	open := h.runs.affordance(t.Context(), "wf_1", "running")

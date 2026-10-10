@@ -77,7 +77,6 @@ function call(over: Partial<EntryToolCall> = {}): EntryToolCall {
   ) as EntryToolCall;
 }
 
-/** A chat holding one open turn with one in-flight tool call. */
 function seedCall(tc: EntryToolCall = call()): void {
   setSessions([makeSession({ id: CHAT })]);
   setActive(CHAT);

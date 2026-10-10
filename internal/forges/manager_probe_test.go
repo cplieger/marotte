@@ -29,24 +29,24 @@ func TestManagerProbe_ATemporaryFailureKeepsTheRowConnected(t *testing.T) {
 			core := &whoamiCore{err: tc.err}
 			m := recordManager(t, core)
 
-			if err := m.Probe(t.Context(), probedID); err == nil {
+			if err := m.probeConnection(t.Context(), probedID); err == nil {
 				t.Fatalf("Probe() over %v = nil, want the failure", tc.err)
 			}
-			if f := m.Get(probedID); !f.Connected || f.ReconnectRequired || f.LastError == "" || f.LastProbed == 0 {
+			if f := m.get(probedID); !f.Connected || f.ReconnectRequired || f.LastError == "" || f.LastProbed == 0 {
 				t.Errorf("row after the failure = %+v, want connected with the error and the probe time recorded", f)
 			}
 			if err := m.Refresh(t.Context()); err != nil {
 				t.Fatalf("Setup: Refresh() = %v", err)
 			}
-			if f := m.Get(probedID); !f.Connected || f.LastError == "" {
+			if f := m.get(probedID); !f.Connected || f.LastError == "" {
 				t.Errorf("row after the failure and a Refresh = %+v, want still connected with the error carried", f)
 			}
 
 			core.err = nil
-			if err := m.Probe(t.Context(), probedID); err != nil {
+			if err := m.probeConnection(t.Context(), probedID); err != nil {
 				t.Fatalf("Probe() once the forge answers = %v", err)
 			}
-			if f := m.Get(probedID); !f.Connected || f.LastError != "" || f.ErrorKind != "" || f.RetryAfterS != 0 {
+			if f := m.get(probedID); !f.Connected || f.LastError != "" || f.ErrorKind != "" || f.RetryAfterS != 0 {
 				t.Errorf("row after a successful probe = %+v, want connected with the error cleared", f)
 			}
 		})
@@ -72,16 +72,16 @@ func TestManagerProbe_ANonTemporaryFailureDisconnects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := recordManager(t, &whoamiCore{err: tc.err})
 
-			if err := m.Probe(t.Context(), probedID); err == nil {
+			if err := m.probeConnection(t.Context(), probedID); err == nil {
 				t.Fatalf("Probe() over %v = nil, want the failure", tc.err)
 			}
-			if f := m.Get(probedID); f.Connected || f.LastError == "" {
+			if f := m.get(probedID); f.Connected || f.LastError == "" {
 				t.Errorf("row after the failure = %+v, want disconnected with the error", f)
 			}
 			if err := m.Refresh(t.Context()); err != nil {
 				t.Fatalf("Setup: Refresh() = %v", err)
 			}
-			if f := m.Get(probedID); f.Connected {
+			if f := m.get(probedID); f.Connected {
 				t.Errorf("row after the failure and a Refresh = %+v, want still disconnected", f)
 			}
 		})

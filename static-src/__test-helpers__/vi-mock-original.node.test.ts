@@ -43,7 +43,6 @@ function skipString(src: string, i: number): number {
 }
 
 interface Args {
-  /** Everything between the call's own parentheses. */
   readonly text: string;
   /** Commas at the call's own depth, so a factory is `count > 0` rather than a guess
    *  over a body that is full of commas of its own. */

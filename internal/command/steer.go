@@ -28,7 +28,6 @@ const maxSteerBytes = MaxPromptBytes
 var notificationPrefix = regexp.MustCompile(`^\s*\[notification/(info|success|warning|error)\]`)
 
 var (
-	// errSteerNoTurn is the refusal for a steer with no turn to join.
 	errSteerNoTurn = errors.New("nothing is running to steer, so send this as a prompt instead")
 	// errSteerLooksLikeNotification refuses that collision: escaping would alter the user's text,
 	// passing through would drop it on resume.
@@ -47,7 +46,6 @@ const reasonNoTurn = "no_turn"
 // prompt, and a prompt would meet the same running turn.
 const reasonFull = "full"
 
-// errSteerFull is the refusal for a steer past the chat's steer budget.
 var errSteerFull = errors.New("too many unread messages are waiting in this chat. Wait for the agent to read them, then send again")
 
 // steerReply is KAS's answer to one _session/steer.
@@ -56,16 +54,33 @@ type steerReply struct {
 	Queued  bool   `json:"queued"`
 }
 
-// sendSteer issues one _session/steer for the steer steerID names. KAS prefixes
-// the messageId it is sent into the steer's own id, so the wire carries the id
-// with marotte.SteerIDPrefix removed.
-func sendSteer(ctx context.Context, sb sessionCaller, steerID, text string) (steerReply, error) {
+// KAS prefixes the messageId it is sent into the steer's own id, so the wire carries the id with
+// marotte.SteerIDPrefix removed.
+func sendSteer(ctx context.Context, sb SessionCaller, steerID, text string) (steerReply, error) {
 	resp, err := sb.Call(ctx, marotte.MethodSessionSteer, steerParams(sb, steerID, text))
 	return decodeSteerReply(resp), err
 }
 
+// SteerTarget is one steering buffer and what reaches it: a chat's own session, or a run step's
+// session on its run's carrier. Key names the buffer's record in Queue and Ledger. Caller is nil
+// when no live process holds the session.
+type SteerTarget struct {
+	Caller SessionCaller
+	Queue  SteerQueue
+	Ledger SteerRecorder
+	Key    marotte.ChatID
+}
+
+func (r *promptRoles) steerTarget(chatID marotte.ChatID) SteerTarget {
+	t := SteerTarget{Queue: r.queue, Ledger: r.steers, Key: chatID}
+	if sb := r.bridges.Bridge(chatID); sb != nil {
+		t.Caller = sb
+	}
+	return t
+}
+
 func steerParams(sb sessionScoped, steerID, text string) map[string]any {
-	return SessionParams(sb, map[string]any{
+	return sessionParams(sb, map[string]any{
 		"message":   text,
 		"messageId": strings.TrimPrefix(steerID, marotte.SteerIDPrefix),
 	})
@@ -79,10 +94,10 @@ func decodeSteerReply(resp *marotte.RPCResponse) steerReply {
 	return reply
 }
 
-// CmdSteer delivers a message into the running turn. It requires a holder whose turn drains the
+// cmdSteer delivers a message into the running turn. It requires a holder whose turn drains the
 // buffer: a steer to an idle chat or a `!cmd` turn would sit unread. Every steer command takes the
 // chat's steer lock, so a delete's clear and resubmit never interleave with a new steer.
-func CmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
+func cmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -109,9 +124,8 @@ func CmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComman
 	return steerAccepted(steerID), nil
 }
 
-// steerOne is the one place a user steer is routed, new or re-routed; the error is
-// the send carrying key. turn is the prompt turn a delivery is aimed at, empty for
-// a new steer.
+// The error is the send carrying key. turn is the prompt turn a delivery is aimed at, empty for a
+// new steer.
 func steerOne(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, key, text, turn string) (refuse string, err error) {
 	source, held := roles.admission.AdmissionHolderSource(chatID)
 	h := SteerHolder{
@@ -121,71 +135,89 @@ func steerOne(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, ke
 		Turn:        turn,
 		Delivering:  turn != "",
 	}
-	sends, refuse := roles.queue.RouteSteer(chatID, key, text, h)
+	return SteerInto(ctx, roles.steerTarget(chatID), h, key, text)
+}
+
+// SteerInto routes one steer row into t's buffer under the holder h and sends what the record
+// answers. The caller holds t's steer lock. refuse is the record's refusal class; err is the
+// failed send carrying key.
+func SteerInto(ctx context.Context, t SteerTarget, h SteerHolder, key, text string) (refuse string, err error) {
+	sends, refuse := t.Queue.RouteSteer(t.Key, key, text, h)
 	if refuse != "" {
 		return refuse, nil
 	}
-	return "", issueSteers(ctx, roles, chatID, sends, key, func(s SteerSend, queued bool, err error) {
-		roles.queue.SteerSent(chatID, s, queued, err)
+	return "", issueSteers(ctx, t, sends, key, func(s SteerSend, queued bool, err error) {
+		t.Queue.SteerSent(t.Key, s, queued, err)
+	})
+}
+
+// SendPlanned sends rows the record already routed (a flush job's plan) into t. The caller holds t's
+// steer lock.
+func SendPlanned(ctx context.Context, t SteerTarget, sends []SteerSend) {
+	_ = issueSteers(ctx, t, sends, "", func(s SteerSend, queued bool, err error) {
+		t.Queue.SteerSent(t.Key, s, queued, err)
 	})
 }
 
 // issueSteers writes the ledger BEFORE each call: KAS emits steering_queued before
 // it answers, on the Forward goroutine, so a record written after the reply races
 // the fold.
-func issueSteers(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, sends []SteerSend, key string, done func(SteerSend, bool, error)) error {
-	sb := roles.bridges.Bridge(chatID)
+func issueSteers(ctx context.Context, t SteerTarget, sends []SteerSend, key string, done func(SteerSend, bool, error)) error {
 	var keyErr error
 	for _, s := range sends {
-		roles.steers.RecordUserSteer(chatID, s.ID)
-		if sb == nil {
+		t.Ledger.RecordUserSteer(t.Key, s.ID)
+		if t.Caller == nil {
 			done(s, false, nil)
 			continue
 		}
-		reply, err := sendSteer(ctx, sb, s.ID, s.Text)
+		reply, err := sendSteer(ctx, t.Caller, s.ID, s.Text)
 		done(s, reply.Queued, err)
 		switch {
 		case err != nil:
-			slog.Warn("steer: bridge call failed", "chat", chatID, "steer_id", s.ID, keyError, err)
+			slog.Warn("steer: bridge call failed", "chat", t.Key, "steer_id", s.ID, keyError, err)
 			if s.ID == key || slices.Contains(s.Keys, key) {
 				keyErr = err
 			}
 		case !reply.Queued:
-			slog.Info("steer dropped", "chat", chatID, "steer_id", s.ID, "reason", reply.Dropped)
+			slog.Info("steer dropped", "chat", t.Key, "steer_id", s.ID, "reason", reply.Dropped)
 		}
 	}
 	return keyErr
 }
 
-// steerText validates the payload and answers its trimmed text and the id KAS will stamp on it
-// (marotte.SteerIDFor). It refuses the two shapes that break that derivation: an empty id, and text
-// KAS would file under `notify-`.
 func steerText(cmd *marotte.ClientCommand) (text, steerID string, err error) {
 	var p marotte.SteerCommand
 	if json.Unmarshal(cmd.Payload, &p) != nil {
 		return "", "", StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	text = strings.TrimSpace(p.Text)
+	return ValidSteerText(p.Text, p.MessageID)
+}
+
+// ValidSteerText answers a steer's trimmed text and the id KAS will stamp on it (marotte.SteerIDFor),
+// or a StatusError. It refuses the two shapes that break that derivation: an empty id, and text KAS
+// would file under `notify-`.
+func ValidSteerText(raw, messageID string) (text, steerID string, err error) {
+	text = strings.TrimSpace(raw)
 	switch {
 	case text == "":
 		return "", "", StatusError(http.StatusBadRequest, errEmptyPrompt)
 	case len(text) > maxSteerBytes:
 		return "", "", StatusError(http.StatusRequestEntityTooLarge, errPromptTooLong)
-	case !ValidMessageID(p.MessageID):
+	case !validMessageID(messageID):
 		return "", "", StatusError(http.StatusBadRequest, errMissingMessageID)
 	case notificationPrefix.MatchString(text):
 		return "", "", StatusError(http.StatusBadRequest, errSteerLooksLikeNotification)
 	}
-	return text, marotte.SteerIDFor(p.MessageID), nil
+	return text, marotte.SteerIDFor(messageID), nil
 }
 
 func steerAccepted(steerID string) map[string]any {
 	return responseWith(map[string]any{"steer_id": steerID})
 }
 
-// CmdSteerClear is Discard all. It does not cancel the turn, and a row the agent
+// cmdSteerClear is Discard all. It does not cancel the turn, and a row the agent
 // read before the clear landed keeps its read entry rather than a deleted one.
-func CmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
+func cmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -194,8 +226,21 @@ func CmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientC
 		return nil, StatusError(http.StatusServiceUnavailable, err)
 	}
 	defer unlock()
+	cleared, err := ClearSteersIn(ctx, roles.steerTarget(cmd.ChatID), func(opID string) {
+		endSteerOp(ctx, roles, cmd.ChatID, opID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("steers discarded", "chat", cmd.ChatID, "cleared", len(cleared))
+	return responseWith(map[string]any{"cleared": cleared}), nil
+}
+
+// ClearSteersIn discards every row of t's buffer. endOp ends the op under the steer lock the
+// caller holds; it runs only when a clear was issued.
+func ClearSteersIn(ctx context.Context, t SteerTarget, endOp func(opID string)) ([]string, error) {
 	opID := ids.NewMessageID()
-	needsClear, refuse := roles.queue.BeginDiscard(cmd.ChatID, opID)
+	needsClear, refuse := t.Queue.BeginDiscard(t.Key, opID)
 	if refuse != "" {
 		return nil, steerRefusal(refuse)
 	}
@@ -203,32 +248,30 @@ func CmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientC
 	if needsClear {
 		rpcCtx, cancel := context.WithTimeout(durable.Context(ctx), steerRemoveBudget)
 		defer cancel()
-		defer endSteerOp(ctx, roles, cmd.ChatID, opID)
-		names, landed := clearSteerBuffer(rpcCtx, roles, cmd.ChatID)
-		if res := roles.queue.DiscardCleared(cmd.ChatID, opID, landed); res.Reason != "" {
+		defer endOp(opID)
+		names, landed := clearSteerBuffer(rpcCtx, t)
+		if res := t.Queue.DiscardCleared(t.Key, opID, landed); res.Reason != "" {
 			return nil, steerRefusal(res.Reason)
 		}
 		cleared = names
 	}
-	slog.Info("steers discarded", "chat", cmd.ChatID, "cleared", len(cleared))
-	return responseWith(map[string]any{"cleared": cleared}), nil
+	return cleared, nil
 }
 
 // clearSteerBuffer issues one _session/steer/clear and waits until every frame KAS wrote before its
 // reply has folded, so the reply's ids and the frames agree. landed false means the outcome is
 // unknown: no reply, or a read loop that never reached it.
-func clearSteerBuffer(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) (cleared []string, landed bool) {
-	sb := roles.bridges.Bridge(chatID)
-	if sb == nil {
+func clearSteerBuffer(ctx context.Context, t SteerTarget) (cleared []string, landed bool) {
+	if t.Caller == nil {
 		return nil, true
 	}
-	resp, seq, err := sb.CallAt(ctx, marotte.MethodSessionSteerClear, SessionParams(sb))
+	resp, seq, err := t.Caller.CallAt(ctx, marotte.MethodSessionSteerClear, sessionParams(t.Caller))
 	if err != nil {
-		slog.Warn("steer clear: bridge call failed", "chat", chatID, keyError, err)
+		slog.Warn("steer clear: bridge call failed", "chat", t.Key, keyError, err)
 		return nil, false
 	}
-	if !roles.queue.AwaitReadLoop(ctx, chatID, seq) {
-		slog.Warn("steer clear: the frames before its reply never folded", "chat", chatID)
+	if !t.Queue.AwaitReadLoop(ctx, t.Key, seq) {
+		slog.Warn("steer clear: the frames before its reply never folded", "chat", t.Key)
 		return nil, false
 	}
 	var result struct {

@@ -3,6 +3,7 @@ package marotte
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 )
 
 // SecretMask is the placeholder value returned for every secret on
@@ -53,6 +54,18 @@ type ChatID string
 
 // String implements fmt.Stringer for logging convenience.
 func (c ChatID) String() string { return string(c) }
+
+const stepSteerPrefix = "step:"
+
+// StepSteerKey keys a run step session's steering buffer in the steer record, which keys a chat's own
+// session's by the chat id. Never a chat file or a tab: it addresses an in-memory record only.
+func StepSteerKey(sessionID string) ChatID { return ChatID(stepSteerPrefix + sessionID) }
+
+// StepSession answers the step session a StepSteerKey names, or false for a chat id.
+func (c ChatID) StepSession() (string, bool) {
+	session, ok := strings.CutPrefix(string(c), stepSteerPrefix)
+	return session, ok && session != ""
+}
 
 // SessionID is a typed wrapper for ACP session identifiers. Values are
 // validated via ids.ValidSessionID before assignment; the type makes

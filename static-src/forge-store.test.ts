@@ -67,30 +67,16 @@ describe("forge-store read-through", () => {
     expect(forced?.forges[0]?.username).toBe("bob");
     expect((await store.ensureForges())?.forges[0]?.username).toBe("bob");
   });
-
-  it("publishes the payload to its accessors", async () => {
-    dispatch.mockResolvedValue(payload("alice"));
-    const store = await load();
-
-    expect(store.oauthByKind()).toEqual({});
-
-    await store.ensureForges();
-
-    expect(store.oauthByKind()).toEqual({ github: true });
-  });
 });
 
 describe("forge-store failure handling", () => {
-  it("reports a failure without discarding the last good payload", async () => {
+  it("keeps the last good payload through a failed fetch", async () => {
     dispatch.mockResolvedValueOnce(payload("alice")).mockResolvedValueOnce(null);
     const store = await load();
 
     await store.ensureForges();
-    expect(store.forgeLoadFailed()).toBe(false);
+    expect(await store.refreshForges()).toBeNull();
 
-    await store.refreshForges();
-
-    expect(store.forgeLoadFailed()).toBe(true);
     // Blanking would turn one bad round trip into "no forges connected" in the PRs tab.
     expect((await store.ensureForges())?.forges).toHaveLength(1);
   });
@@ -100,10 +86,8 @@ describe("forge-store failure handling", () => {
     const store = await load();
 
     expect(await store.ensureForges()).toBeNull();
-    expect(store.forgeLoadFailed()).toBe(true);
     // Nothing was cached, so the next read reaches the endpoint again instead of serving the failure.
     expect(await store.ensureForges()).not.toBeNull();
-    expect(store.forgeLoadFailed()).toBe(false);
     expect(dispatch).toHaveBeenCalledTimes(2);
   });
 });

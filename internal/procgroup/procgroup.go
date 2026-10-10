@@ -26,7 +26,7 @@ import (
 // inherits marotte's own group, so Kill(-pgid, sig) would signal marotte itself.
 func Kill(p *os.Process, sig syscall.Signal) error {
 	pgid, err := syscall.Getpgid(p.Pid)
-	if err == nil && Owns(p.Pid, pgid) {
+	if err == nil && owns(p.Pid, pgid) {
 		if gErr := syscall.Kill(-pgid, sig); gErr == nil {
 			return nil
 		}
@@ -42,7 +42,7 @@ func Kill(p *os.Process, sig syscall.Signal) error {
 // exactly the case where teardown worked.
 func GroupOf(p *os.Process) (pgid int, ok bool) {
 	pgid, err := syscall.Getpgid(p.Pid)
-	if err != nil || !Owns(p.Pid, pgid) {
+	if err != nil || !owns(p.Pid, pgid) {
 		return 0, false
 	}
 	return pgid, true
@@ -99,10 +99,9 @@ func groupHasLiveMember(pgid int) bool {
 	return false
 }
 
-// statPgrpState reads pid's process-group id and state letter out of
-// /proc/<pid>/stat. Fields are counted from the LAST ')' because field 2 is the
-// executable name in parens and may itself contain spaces and parens; after that
-// bracket the fields are state, ppid, pgrp.
+// statPgrpState reads pid's process-group id and state letter out of /proc/<pid>/stat. Fields are
+// counted from the LAST ')' because field 2 is the executable name in parens and may itself contain
+// spaces and parens; after that bracket the fields are state, ppid, pgrp.
 func statPgrpState(pid int) (pgrp int, state byte, ok bool) {
 	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
@@ -125,11 +124,11 @@ func statPgrpState(pid int) (pgrp int, state byte, ok bool) {
 	return g, f[0][0], true
 }
 
-// Owns reports whether pid leads pgid, i.e. whether Setpgid took and the group
+// owns reports whether pid leads pgid, i.e. whether Setpgid took and the group
 // holds only this command's tree. Pure and exported so the guard that keeps
 // Kill(-pgid, …) off marotte's own group can be tested without signalling a
 // non-leader, which would hit the test binary.
-func Owns(pid, pgid int) bool { return pgid == pid }
+func owns(pid, pgid int) bool { return pgid == pid }
 
 // AlreadyGone reports whether err says the signal target had already been reaped,
 // which for a kill is success under another name. Two spellings, one condition: a

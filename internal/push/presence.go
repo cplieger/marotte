@@ -25,8 +25,8 @@ type Presence struct {
 	expired uint64
 }
 
-// presenceRow is one tag's fold. A row is created by whichever feed arrives
-// first, since the first acknowledgement can race the hook's connected.
+// A row is created by whichever feed arrives first, since the first acknowledgement can race the
+// hook's connected.
 type presenceRow struct {
 	lastAliveAt time.Time
 	// leftAt is when connected last fell to zero; the zero time while the tag has
@@ -125,8 +125,8 @@ func (p *Presence) AnyPresent() bool {
 	return false
 }
 
-// Rows returns every row with its current verdict, sorted by tag.
-func (p *Presence) Rows() []PresenceRow {
+// snapshotRows returns every row with its current verdict, sorted by tag.
+func (p *Presence) snapshotRows() []PresenceRow {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
@@ -143,13 +143,13 @@ func (p *Presence) Rows() []PresenceRow {
 	return out
 }
 
-// Transitions reports how often a tag turned alive (present after being gone or
+// transitions reports how often a tag turned alive (present after being gone or
 // unseen) and how often a connected tag expired (no acknowledgement within the
 // alive window while its socket still read connected). The second is the count
 // of how often the socket-only view would have been wrong. Both count OBSERVED
 // flips: a row is judged only when something reads or feeds it, so a tag that
 // expires and returns between two reads is not counted.
-func (p *Presence) Transitions() (alive, expired uint64) {
+func (p *Presence) transitions() (alive, expired uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.alive, p.expired

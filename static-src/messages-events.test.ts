@@ -5,7 +5,6 @@ import { describe, it, expect, vi } from "vitest";
 import { buildEvent, type EventEntry } from "./messages-events.js";
 import type { EntryKind, KindedEntry } from "./types.js";
 
-/** One event entry of `kind`, sealed at `seq` 1 of its turn. */
 function event<K extends EntryKind & EventEntry["kind"]>(
   kind: K,
   payload: KindedEntry<K>["payload"],
@@ -35,6 +34,7 @@ describe("the row a kind draws", () => {
     const faces: readonly (readonly [EventEntry, string])[] = [
       [event("model_switched", { from: "a", to: "b" }), "boundary-switched"],
       [event("mode_switched", { from: "spec", to: "vibe", source: "user" }), "boundary-switched"],
+      [event("model_routed", { message: "" }), "boundary-switched"],
       [event("compaction", { summary: "" }), "boundary-compacted"],
       [event("compaction_failed", { reason: "" }), "boundary-failed"],
       [event("safety_blocked", { properties: [] }), "boundary-blocked"],
@@ -42,6 +42,21 @@ describe("the row a kind draws", () => {
     for (const [entry, face] of faces) {
       expect(buildEvent(entry).className, entry.kind).toContain(face);
     }
+  });
+});
+
+describe("model_routed", () => {
+  it("shows KAS's notice as the row's words", () => {
+    const node = buildEvent(
+      event("model_routed", { message: "Found a better model for this task. Switched to it." }),
+    );
+    expect(labelOf(node)).toBe("Found a better model for this task. Switched to it.");
+  });
+
+  it("says what happened when KAS sent no notice text", () => {
+    expect(labelOf(buildEvent(event("model_routed", { message: "" })))).toBe(
+      "Auto moved to a stronger model",
+    );
   });
 });
 
@@ -61,12 +76,16 @@ describe("model_switched", () => {
     expect(labelOf(node)).toBe("Reasoning effort: high");
   });
 
-  // `effort` is optional on the wire so older chat files still decode and render the row they always did.
-  it("names the reason on a switch KAS made by itself", () => {
+  it("names the unavailable model, the one now running and why", () => {
     const node = buildEvent(
-      event("model_switched", { from: "opus-9", to: "sonnet-5", reason: "unavailable" }),
+      event("model_switched", {
+        from: "opus-9",
+        to: "sonnet-5",
+        effort: "high",
+        reason: "unavailable",
+      }),
     );
-    expect(labelOf(node)).toBe("Switched to sonnet-5 · not available for this account");
+    expect(labelOf(node)).toBe("Switched from opus-9 to sonnet-5 · not available for this account");
   });
 
   it("names the model alone when the entry carries no tier", () => {

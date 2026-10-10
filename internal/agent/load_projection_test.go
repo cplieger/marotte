@@ -16,7 +16,6 @@ import (
 	"github.com/cplieger/sse"
 )
 
-// replayUpdate builds a replay-tagged session/update `update` object.
 func replayUpdate(t *testing.T, kind marotte.ACPUpdateKind, text, sub string) json.RawMessage {
 	t.Helper()
 	kiro := map[string]any{"replay": true}
@@ -39,16 +38,18 @@ func replayUpdate(t *testing.T, kind marotte.ACPUpdateKind, text, sub string) js
 	return raw
 }
 
-// settleRecorder captures what a settle handed to the swap seam.
 type settleRecorder struct {
+	// err is the swap's outcome the sink reports.
+	err   error
 	calls int
 	turns int
 }
 
-func (r *settleRecorder) sink() func(marotte.ChatID, *loadProjection) {
-	return func(_ marotte.ChatID, lp *loadProjection) {
+func (r *settleRecorder) sink() func(marotte.ChatID, *loadProjection) error {
+	return func(_ marotte.ChatID, lp *loadProjection) error {
 		r.calls++
 		r.turns = len(lp.proj.Turns())
+		return r.err
 	}
 }
 
@@ -61,18 +62,16 @@ func (noChats) Reconcile(context.Context, marotte.ChatID, func(*chat.EntryLog, c
 	panic("a bare replay swaps nothing")
 }
 
-// revertingChats moves its provenance between two reads, as a rewind during a replay does.
 type revertingChats struct{ newest string }
 
 func (c *revertingChats) NewestRevert(context.Context, marotte.ChatID) (string, bool) {
 	return c.newest, c.newest != ""
 }
 
-func (c *revertingChats) Reconcile(context.Context, marotte.ChatID, func(*chat.EntryLog, chat.EntryHeader) (bool, error)) (string, bool, error) {
+func (*revertingChats) Reconcile(context.Context, marotte.ChatID, func(*chat.EntryLog, chat.EntryHeader) (bool, error)) (string, bool, error) {
 	panic("a bare replay swaps nothing")
 }
 
-// feedOneTurn ingests a complete bracketed turn.
 func feedOneTurn(t *testing.T, rp *replay, chatID marotte.ChatID) {
 	t.Helper()
 	for _, f := range []struct {
@@ -101,7 +100,6 @@ const (
 // atFrame is the observation Forward reports after folding the frame at seq.
 func atFrame(seq uint64) drainPoint { return drainPoint{gen: testFwdGen, seq: seq} }
 
-// atLoad is the position the session/load response arrived at.
 func atLoad() drainPoint { return drainPoint{gen: testFwdGen, seq: testLoadSeq} }
 
 // atExit is the bridge-exit seal: an attachment and no position.
@@ -114,7 +112,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 
 	t.Run("no settle before the load returns", func(t *testing.T) {
 		rp, rec := replayWithRecorder()
-		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+		rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 		feedOneTurn(t, rp, chatID)
 
 		rp.SettleReplayProjection(chatID, atLoad(), false)
@@ -128,7 +126,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 
 	t.Run("no settle while the consumer is behind the load position", func(t *testing.T) {
 		rp, rec := replayWithRecorder()
-		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+		rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 		feedOneTurn(t, rp, chatID)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
 
@@ -144,7 +142,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 
 	t.Run("settles once the consumer reaches the load position", func(t *testing.T) {
 		rp, rec := replayWithRecorder()
-		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+		rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 		feedOneTurn(t, rp, chatID)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
 
@@ -162,7 +160,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 
 	t.Run("a frame PAST the load position does not delay the settle", func(t *testing.T) {
 		rp, rec := replayWithRecorder()
-		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+		rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 		feedOneTurn(t, rp, chatID)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
 
@@ -175,7 +173,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 
 	t.Run("settle is idempotent", func(t *testing.T) {
 		rp, rec := replayWithRecorder()
-		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+		rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 		feedOneTurn(t, rp, chatID)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
 
@@ -190,7 +188,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 
 	t.Run("the seal settles despite an unreached position", func(t *testing.T) {
 		rp, rec := replayWithRecorder()
-		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+		rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 		feedOneTurn(t, rp, chatID)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
 
@@ -203,7 +201,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 
 	t.Run("the seal still requires the load to have returned", func(t *testing.T) {
 		rp, rec := replayWithRecorder()
-		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+		rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 		feedOneTurn(t, rp, chatID)
 
 		// A bridge dying before session/load returned has nothing to adopt.
@@ -215,7 +213,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 
 	t.Run("a straggler from a previous attachment settles nothing", func(t *testing.T) {
 		rp, rec := replayWithRecorder()
-		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+		rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 		feedOneTurn(t, rp, chatID)
 		// This chat's load ran on attachment 2, the reload's forward.
 		const reload = testFwdGen + 1
@@ -247,7 +245,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 
 	t.Run("a NEW attachment invalidates the load position", func(t *testing.T) {
 		rp, rec := replayWithRecorder()
-		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+		rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 		feedOneTurn(t, rp, chatID)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
 
@@ -264,7 +262,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 func TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	rp, rec := replayWithRecorder()
-	rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+	rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 	feedOneTurn(t, rp, chatID)
 
 	// The ordinary short transcript: drained while the RPC is in flight.
@@ -292,7 +290,7 @@ func TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) 
 func TestReplayProjection_DiscardOnFailedLoad(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	rp, rec := replayWithRecorder()
-	rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+	rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 	feedOneTurn(t, rp, chatID)
 
 	rp.DiscardReplayProjection(chatID)
@@ -321,9 +319,9 @@ func TestReplayProjection_ReloadSupersedes(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	rp, rec := replayWithRecorder()
 
-	rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+	rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 	feedOneTurn(t, rp, chatID)
-	rp.OpenReplayProjection(t.Context(), chatID, "old-acp") // re-load
+	rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil) // re-load
 	feedOneTurn(t, rp, chatID)
 	rp.MarkReplayLoadedAt(chatID, atLoad())
 	rp.SettleReplayProjection(chatID, atFrame(testLoadSeq), false)
@@ -336,7 +334,7 @@ func TestReplayProjection_ReloadSupersedes(t *testing.T) {
 	}
 }
 
-// TestReplayProjection_OneProjectionPerChat pins that SwapMerged's revert gate is sound only while a chat
+// TestReplayProjection_OneProjectionPerChat pins that swapMerged's revert gate is sound only while a chat
 // holds at most one projection and a settle consumes it (NewestRevert is file order, which a rewrite can reorder).
 func TestReplayProjection_OneProjectionPerChat(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
@@ -345,12 +343,12 @@ func TestReplayProjection_OneProjectionPerChat(t *testing.T) {
 		chats := &revertingChats{}
 		rp := &replay{chats: chats, projections: map[marotte.ChatID]*loadProjection{}}
 
-		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+		rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 		feedOneTurn(t, rp, chatID)
 
 		// A rewind lands between the failed load and the fallback re-load.
 		chats.newest = "t-2:revert"
-		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+		rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 
 		snapshot, open := rp.projectionSnapshot(chatID)
 		if open != 1 {
@@ -366,7 +364,7 @@ func TestReplayProjection_OneProjectionPerChat(t *testing.T) {
 
 	t.Run("a settle consumes the projection", func(t *testing.T) {
 		rp, rec := replayWithRecorder()
-		rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+		rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 		feedOneTurn(t, rp, chatID)
 		rp.MarkReplayLoadedAt(chatID, atLoad())
 		rp.SettleReplayProjection(chatID, atFrame(testLoadSeq), false)
@@ -396,7 +394,6 @@ func replayWithRecorder() (*replay, *settleRecorder) {
 	return rp, rec
 }
 
-// hasProjection reports whether a projection is open.
 func (rp *replay) hasProjection(chatID marotte.ChatID) bool {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
@@ -404,7 +401,6 @@ func (rp *replay) hasProjection(chatID marotte.ChatID) bool {
 	return ok
 }
 
-// projectionSnapshot answers the open projection's provenance and how many the replay holds.
 func (rp *replay) projectionSnapshot(chatID marotte.ChatID) (string, int) {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
@@ -427,7 +423,6 @@ func replayNotif(t *testing.T, kind marotte.ACPUpdateKind, text, sub string) *ma
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: raw}
 }
 
-// loadedChat seeds a chat with an ACP session id, sending its next spawn down session/load.
 func loadedChat(t *testing.T, cs *testChatStore, chatID marotte.ChatID) {
 	t.Helper()
 	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
@@ -439,8 +434,8 @@ func loadedChat(t *testing.T, cs *testChatStore, chatID marotte.ChatID) {
 	}
 }
 
-// awaitPatience is a test patience bound. Never widen it to fix a failure: an early settle drops
-// every later frame. A one-message transcript is that bug; an empty one is a stuck Forward.
+// Never widen it to fix a failure: an early settle drops every later frame. A one-message
+// transcript is that bug; an empty one is a stuck Forward.
 const awaitPatience = 20 * time.Second
 
 func awaitReplayedTurn(t *testing.T, cs *testChatStore, chatID marotte.ChatID, want string) {
@@ -486,7 +481,7 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 	loadedChat(t, cs, chatID)
 
 	// The replay arrives inside this call, as KAS delivers it inside session/load.
-	sb, err := h.coord.OpenBridge(t.Context(), chatID, "")
+	sb, err := h.coord.openBridge(t.Context(), chatID, "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -520,7 +515,7 @@ func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
 		replayNotif(t, marotte.ACPUpdateSessionInfo, "", "turn_end"),
 	}
 
-	h.replay.OpenReplayProjection(t.Context(), chatID, "old-acp")
+	h.replay.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 	gen := h.coord.turns.attachForward(chatID)
 	go h.coord.forwardAt(chatID, br, gen)
 
@@ -550,7 +545,7 @@ func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
 	loadedChat(t, cs, chatID)
 
 	// Folded without being consumed off a channel, so the position stays short.
-	h.replay.OpenReplayProjection(t.Context(), chatID, "old-acp")
+	h.replay.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 	feedOneTurn(t, h.replay, chatID)
 	h.replay.MarkReplayLoadedAt(chatID, atLoad())
 
@@ -573,12 +568,12 @@ func TestReplayProjection_ConcurrentLoadsAreIndependent(t *testing.T) {
 	const first marotte.ChatID = "c1"
 	const second marotte.ChatID = "c2"
 
-	rp.OpenReplayProjection(t.Context(), first, "old-acp")
+	rp.OpenReplayProjection(t.Context(), first, "old-acp", nil)
 	feedOneTurn(t, rp, first)
 	rp.MarkReplayLoadedAt(first, atLoad())
 
 	// The second spawn while the first is in flight.
-	rp.OpenReplayProjection(t.Context(), second, "old-acp")
+	rp.OpenReplayProjection(t.Context(), second, "old-acp", nil)
 	if !rp.hasProjection(first) {
 		t.Fatal("opening a second chat's load dropped the first chat's rebuild, so that " +
 			"chat resumes with an empty transcript")
@@ -604,7 +599,7 @@ func TestReplayProjection_SettleReportsFramesAgainstTurns(t *testing.T) {
 	rp, rec := replayWithRecorder()
 	const chatID marotte.ChatID = "c1"
 
-	rp.OpenReplayProjection(t.Context(), chatID, "old-acp")
+	rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 	feedOneTurn(t, rp, chatID) // four frames: user, turn_start, reply, turn_end
 	rp.MarkReplayLoadedAt(chatID, atLoad())
 	rp.SettleReplayProjection(chatID, atFrame(testLoadSeq), false)
@@ -621,7 +616,6 @@ func TestReplayProjection_SettleReportsFramesAgainstTurns(t *testing.T) {
 	}
 }
 
-// projectedTurn builds a settled one-turn projection for the swap seam, bypassing the drain.
 func projectedTurn(t *testing.T, h *Runtime) *loadProjection {
 	t.Helper()
 	lp := &loadProjection{
@@ -643,7 +637,6 @@ func projectedTurn(t *testing.T, h *Runtime) *loadProjection {
 	return lp
 }
 
-// eventFor decodes the first event of type want in events.
 func eventFor(t *testing.T, events []sse.ReplayEvent, want marotte.EventType) (marotte.ServerEvent, bool) {
 	t.Helper()
 	for _, e := range events {
@@ -724,7 +717,7 @@ func TestSwapProjectedTranscript_WritesOnACancelledLifetime(t *testing.T) {
 }
 
 // TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched pins the provenance carried from
-// open into the Swap: an empty snapshot makes every resume of a rewound chat discard its projection.
+// open into the swapRequest: an empty snapshot makes every resume of a rewound chat discard its projection.
 func TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched(t *testing.T) {
 	h, cs, br := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -748,7 +741,7 @@ func TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched(t *testing.T) 
 	}
 
 	// Through the production door, so the snapshot is the store's.
-	h.replay.OpenReplayProjection(t.Context(), chatID, "old-acp")
+	h.replay.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 	feedOneTurn(t, h.replay, chatID)
 	h.replay.MarkReplayLoadedAt(chatID, atLoad())
 	br.Stop()
@@ -774,8 +767,6 @@ func TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched(t *testing.T) 
 	}
 }
 
-// revertedEntriesAfterSwap reads the whole log through Reconcile and returns turn's entries plus
-// the reverted set, reporting no change.
 func revertedEntriesAfterSwap(t *testing.T, cs *testChatStore, chatID marotte.ChatID, turn string) ([]marotte.Entry, map[string]struct{}) {
 	t.Helper()
 	var (

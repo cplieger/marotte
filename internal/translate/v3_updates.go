@@ -24,8 +24,7 @@ type v3Summarization struct {
 	Status string `json:"status"`
 }
 
-// sessionInfoUpdate is the v3 session_info_update payload. A kind carrying none
-// of the sub-blocks sessionInfoKiroBlock names is ignored.
+// A kind carrying none of the sub-blocks sessionInfoKiroBlock names is ignored.
 type sessionInfoUpdate struct {
 	Meta struct {
 		Kiro sessionInfoKiroBlock `json:"kiro"`
@@ -72,10 +71,15 @@ type sessionInfoKiroBlock struct {
 	Content              string   `json:"content"`
 	NotificationSeverity string   `json:"notificationSeverity"`
 	Kind                 string   `json:"kind"`
+	// Message is model_routed's notice, FLAT beside Kind; display_error and interaction frames
+	// spread one too, read from their blocks instead.
+	Message string `json:"message"`
 	// RequestIDs, Throughput and Recoveries ride turn_completion FLAT beside Kind.
 	RequestIDs []string        `json:"requestIds"`
 	Throughput *turnThroughput `json:"throughput"`
 	Recoveries []string        `json:"recoveries"`
+	// ContextBreakdown rides turn_completion when the prompt asked for it (contextBreakdownFrom).
+	ContextBreakdown json.RawMessage `json:"contextBreakdown"`
 	// PromptTurnSummaries is KAS's per-turn metering record, emitted just before the
 	// session/prompt response returns.
 	PromptTurnSummaries []promptTurnSummary `json:"promptTurnSummaries"`
@@ -95,14 +99,14 @@ func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 	// The live frame also spreads every event field flat beside its nested block; those of
 	// display_error and interaction_resolved are read from the block.
 	censusMeta("session_info_update._meta.kiro", data, reflect.TypeFor[sessionInfoKiroShadow](),
-		"message", "errorType", "retryErrorType", "toolCallId", "outcome", "selectedOption",
+		"errorType", "retryErrorType", "toolCallId", "outcome", "selectedOption",
 		"interactionType", "question", "options", "agentSubtaskId", "status")
 	return nil
 }
 
-// turnEndBlock is the kind=="turn_end" sub-block. StopDetails is KAS's refusal object
-// ({refusal:{category?, explanation?, recommendedModel?}}), kept raw so an upstream shape
-// change fails one field (stopDetailsRefusal) rather than dropping the turn_end bracket.
+// StopDetails is KAS's refusal object ({refusal:{category?, explanation?, recommendedModel?}}),
+// kept raw so an upstream shape change fails one field (stopDetailsRefusal) rather than dropping
+// the turn_end bracket.
 type turnEndBlock struct {
 	StopReason  string          `json:"stopReason"`
 	StopDetails json.RawMessage `json:"stopDetails"`
@@ -115,7 +119,7 @@ func stopDetailsRefusal(raw json.RawMessage) *marotte.RefusalInfo {
 		return nil
 	}
 	var d struct {
-		Refusal *ACPRefusalMeta `json:"refusal"`
+		Refusal *acpRefusalMeta `json:"refusal"`
 	}
 	if json.Unmarshal(raw, &d) != nil {
 		return nil
@@ -123,14 +127,12 @@ func stopDetailsRefusal(raw json.RawMessage) *marotte.RefusalInfo {
 	return refusalFrom(d.Refusal)
 }
 
-// promptTurnSummary is one metering line of a turn-end summary.
 type promptTurnSummary struct {
 	Unit  string  `json:"unit"`
 	Usage float64 `json:"usage"`
 }
 
-// meteringUnitCredit is the one unit persistTurnSummary counts as spend; the census
-// reports every OTHER unit, so the two must agree or counting stops silently.
+// The census reports every OTHER unit, so the two must agree or counting stops silently.
 const meteringUnitCredit = "credit"
 
 // HandleSessionInfoUpdate folds v3 context-usage into the chat's usage and routes v3
@@ -141,9 +143,13 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	if json.Unmarshal(raw, &u) != nil {
 		return
 	}
-	// Before the parent-only gate: a steer belongs to the chat but is consumed by whichever
-	// execution is running.
-	if t.handleSteeringUpdate(ctx, chatID, &u) {
+	// Before the parent-only gate: a chat's steer belongs to the chat but is consumed by whichever
+	// execution is running. A step session's buffer is the step's own, so its frames go to its run.
+	sc := chatSteerScope(chatID)
+	if stepSteering(attr) {
+		sc = stepSteerScope(attr)
+	}
+	if t.handleSteeringUpdate(ctx, sc, &u) {
 		return
 	}
 	// Before the gate too: a subagent's or a step's ask is filed under this chat.
@@ -173,12 +179,7 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 		t.handleUserMessageID(ctx, chatID, id)
 		return
 	}
-	// After the gate: pre-gate, every step's turn_start would close the chat's live turn.
-	if u.Meta.Kiro.TurnStart != nil {
-		t.bracket.WireTurnStart(ctx, chatID)
-		return
-	}
-	if t.handleWireTurnEnd(ctx, chatID, u.Meta.Kiro.TurnEnd) {
+	if t.handleTurnEvent(ctx, chatID, &u.Meta.Kiro) {
 		return
 	}
 	// Adoption rules for an agent focus title are focus.go's.
@@ -191,8 +192,9 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 		return
 	}
 	// The only v3 channel that reliably carries the turn's credit spend and duration;
-	// usage_update.cost never arrived on the live 2.12.1 wire.
-	if len(u.Meta.Kiro.PromptTurnSummaries) > 0 {
+	// usage_update.cost never arrived on the live 2.12.1 wire. Present, not non-empty: a turn
+	// that metered nothing sends [] and still carries its request ids and recoveries.
+	if u.Meta.Kiro.PromptTurnSummaries != nil {
 		t.persistTurnSummary(ctx, chatID, &u.Meta.Kiro)
 		return
 	}
@@ -200,8 +202,8 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 }
 
 // HandleStepInfoUpdate is the parentless run bridge's reading of a step's
-// session_info_update: the run turn's metering and the withdrawal of an ask filed under
-// `run:<id>`. It never reaches a chat header.
+// session_info_update: the run turn's metering, the withdrawal of an ask filed under
+// `run:<id>`, and the step's own steering frames. It never reaches a chat header.
 func (t *Translator) HandleStepInfoUpdate(ctx context.Context, key marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
@@ -211,11 +213,12 @@ func (t *Translator) HandleStepInfoUpdate(ctx context.Context, key marotte.ChatI
 		t.handleInteractionResolved(key, r)
 		return
 	}
+	if stepSteering(attr) && t.handleSteeringUpdate(ctx, stepSteerScope(attr), &u) {
+		return
+	}
 	t.stepMetering(ctx, attr, &u.Meta.Kiro)
 }
 
-// billStepMetering folds a chat-parented step's metering into its run turn and
-// bills the credits it took to the chat as well.
 func (t *Translator) billStepMetering(ctx context.Context, chatID marotte.ChatID, attr FrameAttribution, k *sessionInfoKiroBlock) {
 	if credits, ok := t.stepMetering(ctx, attr, k); ok {
 		t.metering.AccumulateSpend(ctx, chatID, credits)
@@ -233,7 +236,7 @@ func (t *Translator) stepMetering(_ context.Context, attr FrameAttribution, k *s
 				"workflow_id", attr.RunID, "node_path", attr.NodePath)
 		}
 		return 0, false
-	case len(k.PromptTurnSummaries) > 0:
+	case k.PromptTurnSummaries != nil:
 		credits = creditsOf(k.PromptTurnSummaries)
 		if !t.runs.RunMeter(attr.RunID, attr.NodePath, credits, k.ElapsedTime) {
 			slog.Debug("run log: turn_completion for a step path with no open turn, dropped",
@@ -270,8 +273,24 @@ func (t *Translator) handleContextUsage(ctx context.Context, chatID marotte.Chat
 	t.persistUsage(ctx, chatID, *pct, 0, -1) // no size/credits on this channel
 }
 
-// handleWireTurnEnd closes the chat's live turn on the wire's own turn_end
-// bracket. Reports whether the frame was a turn_end, so the caller stops.
+// handleTurnEvent takes the wire's turn bracket and the routing notice inside it, reporting whether
+// the frame was one. After the parent-only gate: pre-gate, every step's turn_start would close the
+// chat's live turn.
+func (t *Translator) handleTurnEvent(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) bool {
+	switch {
+	case k.TurnStart != nil:
+		t.bracket.WireTurnStart(ctx, chatID)
+		return true
+	case t.handleWireTurnEnd(ctx, chatID, k.TurnEnd):
+		return true
+	case k.Kind == infoKindModelRouted:
+		t.handleModelRouted(ctx, chatID, k)
+		return true
+	}
+	return false
+}
+
+// Reports whether the frame was a turn_end, so the caller stops.
 func (t *Translator) handleWireTurnEnd(ctx context.Context, chatID marotte.ChatID, e *turnEndBlock) bool {
 	if e == nil {
 		return false
@@ -338,8 +357,6 @@ func logUnconsumedInfoKind(chatID marotte.ChatID, kind string) {
 		"chat_id", chatID, "kind", safe)
 }
 
-// handleV3Summarization maps the v3 summarization sub-states onto the compaction
-// domain events.
 func (t *Translator) handleV3Summarization(ctx context.Context, chatID marotte.ChatID, s *v3Summarization) {
 	switch s.Status {
 	case "running":
@@ -366,7 +383,12 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID marotte.Chat
 	elapsedMs := k.ElapsedTime
 	if turn, ok := t.turns.OwnTurn(chatID); ok {
 		turn.Meter(credits, elapsedMs)
-		turn.NoteTurnCompletion(boundedIDs(k.RequestIDs), boundedIDs(k.Recoveries), k.Throughput.summary())
+		turn.NoteTurnCompletion(&turnlog.Completion{
+			RequestIDs:       boundedIDs(k.RequestIDs),
+			Recoveries:       boundedIDs(k.Recoveries),
+			Throughput:       k.Throughput.summary(),
+			ContextBreakdown: contextBreakdownFrom(k.ContextBreakdown),
+		})
 	}
 	t.metering.AccumulateSpend(ctx, chatID, credits)
 	t.metering.StageConversationTurnSummary(ctx, chatID, elapsedMs)
@@ -399,10 +421,10 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID marotte.ChatI
 	t.persistUsage(ctx, chatID, pct, int(u.Size), credits)
 }
 
-// persistUsage writes the context percentage, and optionally the window size (size <= 0
-// leaves it) and credits (credits < 0 leaves them), into the chat's usage. The percentage
-// gate is a MATERIAL delta: each Mutate rewrites the whole chat file and KAS emits the
-// percentage several times per response.
+// persistUsage writes the context percentage, and optionally the window size (size <= 0 leaves it)
+// and credits (credits < 0 leaves them), into the chat's usage. The percentage gate is a MATERIAL
+// delta: each Mutate rewrites the whole chat file and KAS emits the percentage several times per
+// response.
 func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pct float64, size int, credits float64) {
 	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
@@ -461,12 +483,9 @@ type configOptionUpdate struct {
 	ConfigOptions []configOption `json:"configOptions"`
 }
 
-// configOption is one entry in the config_option_update catalog. ID is the
-// configId ("model" | "mode" | "effortLevel"); a select's choices may be grouped.
+// ID is the configId ("model" | "mode" | "effortLevel"); a select's choices may be grouped.
 type configOption struct {
 	ID           string          `json:"id"`
-	Category     string          `json:"category"`
-	Type         string          `json:"type"`
 	CurrentValue json.RawMessage `json:"currentValue"`
 	Options      []configChoice  `json:"options"`
 }
@@ -556,7 +575,6 @@ func (cat *configCatalog) unsolicitedRepin(c *marotte.Chat) *marotte.EntryModelS
 	return &marotte.EntryModelSwitched{From: c.Model, To: cat.currentModel, Reason: marotte.ModelSwitchReasonUnavailable}
 }
 
-// readConfigCatalog extracts both options from one frame.
 func readConfigCatalog(opts []configOption) configCatalog {
 	var cat configCatalog
 	for i := range opts {
@@ -577,8 +595,7 @@ func readConfigCatalog(opts []configOption) configCatalog {
 	return cat
 }
 
-// applyCurrent writes the session's current model and effort onto the chat, reporting
-// whether anything changed; a repeated frame answers false.
+// A repeated frame answers false.
 func (cat *configCatalog) applyCurrent(c *marotte.Chat) bool {
 	changed := false
 	if cat.currentModel != "" && c.Model != cat.currentModel {
@@ -602,8 +619,8 @@ func (cat *configCatalog) applyCurrent(c *marotte.Chat) bool {
 	return changed
 }
 
-// applyThinking records the thinking option's value. KAS sends it only for a toggleable
-// model, so a frame naming the current model without it clears the value.
+// KAS sends it only for a toggleable model, so a frame naming the current model without it clears
+// the value.
 func (cat *configCatalog) applyThinking(c *marotte.Chat) bool {
 	want := c.ThinkingActive
 	switch {
@@ -679,9 +696,8 @@ func flattenModelChoices(choices []configChoice) []marotte.SessionModel {
 	return out
 }
 
-// choiceMeta decodes a model choice's `_meta` block. Absent meta yields the zero value,
-// which the client reads as "not plumbed": no tiers and no credit readout. The tier list
-// belongs to the `effortLevel` option, not to a model choice.
+// Absent meta yields the zero value, which the client reads as "not plumbed": no tiers and no
+// credit readout. The tier list belongs to the `effortLevel` option, not to a model choice.
 func choiceMeta(raw json.RawMessage) marotte.ModelChoiceMeta {
 	var m marotte.ModelChoiceMeta
 	if len(raw) == 0 {

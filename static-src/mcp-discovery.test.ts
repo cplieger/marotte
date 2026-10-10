@@ -9,9 +9,7 @@ import type { MCPPromptInfo, MCPResourceInfo } from "./mcp-state.js";
 const prompts: MCPPromptInfo[] = [
   { name: "Simple Prompt", prompt_name: "simple-prompt", description: "no args" },
 ];
-const resources: MCPResourceInfo[] = [
-  { name: "doc", uri: "demo://doc", mime_type: "text/markdown" },
-];
+const resources: MCPResourceInfo[] = [{ name: "doc", uri: "demo://doc" }];
 const tools = ["create_issue", "search_repos"];
 
 describe("discovery signals", () => {

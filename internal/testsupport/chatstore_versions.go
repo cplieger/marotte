@@ -15,7 +15,6 @@ type chatVersions struct {
 	mu       sync.Mutex
 }
 
-// bump mints the next `chat` version for id.
 func (v *chatVersions) bump(id marotte.ChatID) string {
 	v.mu.Lock()
 	defer v.mu.Unlock()

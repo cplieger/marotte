@@ -42,9 +42,8 @@ const KIND_IDS = {
   run_outcome: "notify-run-outcome-toggle",
 } as const;
 
-/** The panel's own markup, reduced to what initNotificationToggles reads. The three kind toggles
- *  are authored with the CHECKED state index.html gives them, so the pr_status box starts
- *  unchecked like the real first frame. */
+/** The three kind toggles are authored with the CHECKED state index.html gives them, so the
+ *  pr_status box starts unchecked like the real first frame. */
 function mountPanel(): void {
   const host = document.createElement("div");
   host.innerHTML = `
@@ -64,7 +63,6 @@ function input(id: string): HTMLInputElement {
   return el as HTMLInputElement;
 }
 
-/** Flip the master switch the way a reader does, then let the write settle. */
 async function turnMasterOn(): Promise<void> {
   const master = input("notify-toggle");
   master.checked = true;

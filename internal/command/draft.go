@@ -2,7 +2,7 @@ package command
 
 // Composer drafts are server-side so they follow the user across devices. The client autosaves on a
 // 600ms debounce, so the handler is minimal: no bridge call, a write that does not move the
-// retention clock (ChatStore.SetDraft), and one broadcast only when something changed.
+// retention clock (chatStore.SetDraft), and one broadcast only when something changed.
 
 import (
 	"context"
@@ -14,10 +14,10 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 )
 
-// CmdSetDraft records the chat's unsent composer text. An empty Text is a
+// cmdSetDraft records the chat's unsent composer text. An empty Text is a
 // legitimate value (how a sent or abandoned message clears). The reply
 // carries the byte length rather than the text.
-func CmdSetDraft(ctx context.Context, chats ChatStore, bus Broadcaster, cmd *marotte.ClientCommand) (any, error) {
+func cmdSetDraft(ctx context.Context, chats chatStore, bus broadcaster, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func CmdSetDraft(ctx context.Context, chats ChatStore, bus Broadcaster, cmd *mar
 // same value already stored. The frame carries the `chat` stamp from
 // state.Version, which the store filled under the chat's lock, because the
 // composer is part of the chat projection the digest certifies.
-func broadcastComposer(ctx context.Context, bus Broadcaster, chatID marotte.ChatID, state *marotte.ComposerState) {
+func broadcastComposer(ctx context.Context, bus broadcaster, chatID marotte.ChatID, state *marotte.ComposerState) {
 	if state == nil {
 		return
 	}

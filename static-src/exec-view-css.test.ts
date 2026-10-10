@@ -1,10 +1,12 @@
 // Real-layout guards for the exec view's disclosures and the run card's clamped step output; each fact was a measured
 // defect invisible to a source read.
-import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { chevronEl } from "./chevron.js";
 import { attachClamp, releaseClampsIn } from "./clamp-text.js";
 import execPageSrc from "./exec-view/page.ts?raw";
+import { buildExecTree } from "./exec-view/tree.js";
+import type { ExecNode } from "./exec-view/model.js";
 
 let styleEl: HTMLStyleElement;
 let host: HTMLElement;
@@ -132,6 +134,89 @@ describe("a tree row with no disclosure keeps no phantom indent", () => {
   });
 });
 
+describe("the tree's indent lines dots up under their parents", () => {
+  function node(path: string, kind: ExecNode["kind"], children: ExecNode[] = []): ExecNode {
+    return { path, label: path, kind, state: "running", children };
+  }
+
+  function mountNested(): (path: string) => HTMLElement {
+    const tree = buildExecTree(vi.fn());
+    const pane = document.createElement("div");
+    pane.className = "ev-pane ev-pane-tree";
+    pane.appendChild(tree.root);
+    mount(pane);
+    tree.render(
+      [
+        node("par", "parallel", [
+          node("par/loop", "repeat", [node("par/loop/coder", "step")]),
+          node("par/lint", "step"),
+        ]),
+      ],
+      "",
+    );
+    return (path) =>
+      pane.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)!;
+  }
+
+  function dotCentre(main: HTMLElement): number {
+    const r = main.querySelector<HTMLElement>(":scope > .ev-state")!.getBoundingClientRect();
+    return r.x + r.width / 2;
+  }
+
+  it("puts a group's direct children's dots in the group's dot column", () => {
+    const row = mountNested();
+    expect(dotCentre(row("par/loop"))).toBeCloseTo(dotCentre(row("par")), 1);
+    expect(dotCentre(row("par/lint"))).toBeCloseTo(dotCentre(row("par")), 1);
+  });
+
+  it("moves a deeper level one step further in", () => {
+    const row = mountNested();
+    const step = dotCentre(row("par/loop/coder")) - dotCentre(row("par/loop"));
+    // One step: the group's twist plus the row gap, the same step that put depth 1 under depth 0.
+    const twist = row("par")
+      .querySelector<HTMLElement>(":scope > .ev-twist")!
+      .getBoundingClientRect();
+    expect(step).toBeCloseTo(dotCentre(row("par")) - (twist.x + twist.width / 2), 1);
+    expect(step).toBeGreaterThan(0);
+  });
+
+  function guideOf(main: HTMLElement): { line: number; width: number } {
+    const guide = getComputedStyle(main, "::before");
+    expect(guide.getPropertyValue("content"), "the row draws a guide").not.toBe("none");
+    // An absolute box's offsets are from the padding edge, inside the row's border.
+    const start =
+      main.getBoundingClientRect().x +
+      Number.parseFloat(css(main, "border-left-width")) +
+      Number.parseFloat(guide.getPropertyValue("left"));
+    const rootPx = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+    // The gradient's line sits half a dot (0.5rem) into each step of the guide box.
+    return {
+      line: start + 0.5 * rootPx,
+      width: Number.parseFloat(guide.getPropertyValue("width")),
+    };
+  }
+
+  it("draws a direct child's guide at its parent's dot column, broken around its own dot", () => {
+    const row = mountNested();
+    const loop = row("par/loop");
+    const { line, width } = guideOf(loop);
+    expect(line).toBeCloseTo(dotCentre(row("par")), 0);
+    // One line: the guide box is one step, the same step a deeper level moves in.
+    expect(width).toBeCloseTo(dotCentre(row("par/loop/coder")) - dotCentre(loop), 1);
+    expect(getComputedStyle(loop, "::before").getPropertyValue("mask-image")).not.toBe("none");
+    expect(getComputedStyle(row("par"), "::before").getPropertyValue("content")).toBe("none");
+  });
+
+  it("draws one guide per ancestor column on a depth-2 row, unbroken", () => {
+    const row = mountNested();
+    const coder = row("par/loop/coder");
+    const { line, width } = guideOf(coder);
+    expect(line).toBeCloseTo(dotCentre(row("par/loop")), 0);
+    expect(width).toBeCloseTo(dotCentre(coder) - dotCentre(row("par/loop")), 1);
+    expect(getComputedStyle(coder, "::before").getPropertyValue("mask-image")).toBe("none");
+  });
+});
+
 describe("the tree's disclosure arrow follows the app's direction convention", () => {
   it("points DOWN when open and RIGHT when closed, with no wrapper transform", () => {
     for (const expanded of [true, false]) {
@@ -156,8 +241,7 @@ describe("a row inside the group box is a band, not a pill", () => {
   it("squares the header and every row inside the box, and leaves the box its corners", () => {
     const box = evRow({ depth: 0, kids: true, expanded: true });
     box.classList.add("ev-group");
-    // `tree.ts` writes `--ev-depth` 0 for depth 0 and 1.
-    const child = evRow({ depth: 0, kids: false });
+    const child = evRow({ depth: 1, kids: false });
     box.querySelector<HTMLElement>(":scope > .ev-kids")!.appendChild(child);
     mount(evTree(box));
 
@@ -187,7 +271,7 @@ describe("a row inside the group box is a band, not a pill", () => {
     box.classList.add("ev-group");
     const kids = box.querySelector<HTMLElement>(":scope > .ev-kids")!;
     for (const _ of [0, 1]) {
-      kids.appendChild(evRow({ depth: 0, kids: false }));
+      kids.appendChild(evRow({ depth: 1, kids: false }));
     }
     mount(evTree(box));
 
@@ -209,7 +293,7 @@ describe("a row inside the group box is a band, not a pill", () => {
     const box = evRow({ depth: 0, kids: true, expanded: true });
     box.classList.add("ev-group");
     const kids = box.querySelector<HTMLElement>(":scope > .ev-kids")!;
-    const children = [evRow({ depth: 0, kids: false }), evRow({ depth: 0, kids: false })];
+    const children = [evRow({ depth: 1, kids: false }), evRow({ depth: 1, kids: false })];
     for (const child of children) {
       kids.appendChild(child);
     }

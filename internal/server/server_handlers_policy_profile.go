@@ -14,8 +14,7 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// profileBody is the request. Seed is valid only when switching TO custom, and refused
-// otherwise rather than ignored.
+// Seed is valid only when switching TO custom, and refused otherwise rather than ignored.
 type profileBody struct {
 	Profile string `json:"profile"`
 	Seed    bool   `json:"seed"`

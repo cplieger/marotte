@@ -15,18 +15,18 @@ func TestMaskedCopy_ReplacesEnvAndHeaderValues(t *testing.T) {
 	s := &Server{
 		Name:      "s1",
 		Transport: TransportStdio,
-		Env:       []KeyPair{{Name: "TOKEN", Value: "secret"}},
-		Headers:   []KeyPair{{Name: "Auth", Value: "bearer"}},
+		Env:       []keyPair{{Name: "TOKEN", Value: "secret"}},
+		Headers:   []keyPair{{Name: "Auth", Value: "bearer"}},
 		Args:      []string{"--flag", "value"},
 	}
 	m := maskedCopy(s)
 	for _, kv := range m.Env {
-		if kv.Value != SecretMask {
+		if kv.Value != secretMask {
 			t.Errorf("env %q unmasked: %q", kv.Name, kv.Value)
 		}
 	}
 	for _, kv := range m.Headers {
-		if kv.Value != SecretMask {
+		if kv.Value != secretMask {
 			t.Errorf("header %q unmasked: %q", kv.Name, kv.Value)
 		}
 	}
@@ -51,7 +51,7 @@ func TestRawCopy_NilSafe(t *testing.T) {
 func TestRawCopy_PreservesSecrets(t *testing.T) {
 	s := &Server{
 		Name: "s1",
-		Env:  []KeyPair{{Name: "TOKEN", Value: "secret"}},
+		Env:  []keyPair{{Name: "TOKEN", Value: "secret"}},
 	}
 	c := rawCopy(s)
 	if c.Env[0].Value != "secret" {
@@ -65,12 +65,12 @@ func TestRawCopy_PreservesSecrets(t *testing.T) {
 }
 
 func TestMergeSecrets_PreservesMaskedValues(t *testing.T) {
-	existing := []KeyPair{
+	existing := []keyPair{
 		{Name: "TOKEN", Value: "original"},
 		{Name: "URL", Value: "https://old"},
 	}
-	patch := []KeyPair{
-		{Name: "TOKEN", Value: SecretMask},  // keep
+	patch := []keyPair{
+		{Name: "TOKEN", Value: secretMask},  // keep
 		{Name: "URL", Value: "https://new"}, // replace
 		{Name: "NEW", Value: "hello"},       // new field
 	}
@@ -90,7 +90,7 @@ func TestMergeSecrets_MaskedWithNoPriorValueBecomesEmpty(t *testing.T) {
 	// User wrote a mask for a key that doesn't exist in existing.
 	// Should resolve to empty string, not the literal mask.
 	merged := mergeSecrets(
-		[]KeyPair{{Name: "ORPHAN", Value: SecretMask}},
+		[]keyPair{{Name: "ORPHAN", Value: secretMask}},
 		nil,
 	)
 	if merged[0].Value != "" {
@@ -100,7 +100,7 @@ func TestMergeSecrets_MaskedWithNoPriorValueBecomesEmpty(t *testing.T) {
 
 func TestEnabledNames_ReturnsOnlyEnabled(t *testing.T) {
 	tmp := t.TempDir()
-	s, err := New(t.Context(), tmp, nil, WithKASConfigPath(filepath.Join(tmp, "kas-mcp.json")))
+	s, err := New(t.Context(), tmp, nil, withKASConfigPath(filepath.Join(tmp, "kas-mcp.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,17 +136,17 @@ func TestConfiguredNames_IncludesDisabled(t *testing.T) {
 
 // mergeSecrets round-trip + idempotency as table tests.
 func TestMergeSecrets_IdempotentAndNoMutation(t *testing.T) {
-	existing := []KeyPair{
+	existing := []keyPair{
 		{Name: "TOKEN", Value: "secret"},
 		{Name: "URL", Value: "https://old"},
 	}
-	cases := [][]KeyPair{
+	cases := [][]keyPair{
 		{}, // empty patch
-		{{Name: "TOKEN", Value: SecretMask}},
+		{{Name: "TOKEN", Value: secretMask}},
 		{{Name: "TOKEN", Value: "new"}},
-		{{Name: "TOKEN", Value: SecretMask}, {Name: "URL", Value: "https://new"}},
-		{{Name: "ORPHAN", Value: SecretMask}},                                  // resolves to empty
-		{{Name: "URL", Value: SecretMask}, {Name: "TOKEN", Value: SecretMask}}, // reordered
+		{{Name: "TOKEN", Value: secretMask}, {Name: "URL", Value: "https://new"}},
+		{{Name: "ORPHAN", Value: secretMask}},                                  // resolves to empty
+		{{Name: "URL", Value: secretMask}, {Name: "TOKEN", Value: secretMask}}, // reordered
 	}
 	for _, patch := range cases {
 		once := mergeSecrets(patch, existing)
@@ -164,14 +164,14 @@ func TestMergeSecrets_IdempotentAndNoMutation(t *testing.T) {
 // the secret-preserving merge under arbitrary inputs.
 func FuzzMergeSecrets(f *testing.F) {
 	// Seed corpus: representative shapes.
-	f.Add("TOKEN", "secret", "TOKEN", SecretMask)
+	f.Add("TOKEN", "secret", "TOKEN", secretMask)
 	f.Add("URL", "https://old", "URL", "https://new")
-	f.Add("A", "val", "B", SecretMask)
+	f.Add("A", "val", "B", secretMask)
 	f.Add("", "", "", "")
 
 	f.Fuzz(func(t *testing.T, eName, eVal, pName, pVal string) {
-		existing := []KeyPair{{Name: eName, Value: eVal}}
-		patch := []KeyPair{{Name: pName, Value: pVal}}
+		existing := []keyPair{{Name: eName, Value: eVal}}
+		patch := []keyPair{{Name: pName, Value: pVal}}
 
 		// Snapshot existing to detect mutation.
 		origEVal := existing[0].Value
@@ -197,13 +197,13 @@ func FuzzMergeSecrets(f *testing.F) {
 // TestMergeSecrets_RapidRoundTrip is a property-based test verifying the
 // mergeSecrets invariants across arbitrary key sets:
 //   - len(output) == len(patch)
-//   - if patch[i].Value == SecretMask AND name exists in existing → output uses existing's value
-//   - if patch[i].Value != SecretMask → output uses patch's value verbatim
-//   - if patch[i].Value == SecretMask AND name NOT in existing → output is ""
+//   - if patch[i].Value == secretMask AND name exists in existing → output uses existing's value
+//   - if patch[i].Value != secretMask → output uses patch's value verbatim
+//   - if patch[i].Value == secretMask AND name NOT in existing → output is ""
 //   - existing slice is never mutated
 func TestMergeSecrets_RapidRoundTrip(t *testing.T) {
-	genKeyPair := rapid.Custom(func(t *rapid.T) KeyPair {
-		return KeyPair{
+	genKeyPair := rapid.Custom(func(t *rapid.T) keyPair {
+		return keyPair{
 			Name:  rapid.StringMatching(`[a-zA-Z_][a-zA-Z0-9_]{0,15}`).Draw(t, "name"),
 			Value: rapid.StringN(0, 64, -1).Draw(t, "value"),
 		}
@@ -213,19 +213,19 @@ func TestMergeSecrets_RapidRoundTrip(t *testing.T) {
 		existing := rapid.SliceOfN(genKeyPair, 0, 10).Draw(t, "existing")
 		patchLen := rapid.IntRange(0, 10).Draw(t, "patchLen")
 
-		// Build patch: randomly choose SecretMask or a real value for each entry.
-		patch := make([]KeyPair, patchLen)
+		// Build patch: randomly choose secretMask or a real value for each entry.
+		patch := make([]keyPair, patchLen)
 		for i := range patch {
 			patch[i].Name = rapid.StringMatching(`[a-zA-Z_][a-zA-Z0-9_]{0,15}`).Draw(t, "patchName")
 			if rapid.Bool().Draw(t, "useMask") {
-				patch[i].Value = SecretMask
+				patch[i].Value = secretMask
 			} else {
 				patch[i].Value = rapid.StringN(0, 64, -1).Draw(t, "patchValue")
 			}
 		}
 
 		// Snapshot existing to detect mutation.
-		existingSnapshot := make([]KeyPair, len(existing))
+		existingSnapshot := make([]keyPair, len(existing))
 		copy(existingSnapshot, existing)
 
 		output := mergeSecrets(patch, existing)
@@ -243,7 +243,7 @@ func TestMergeSecrets_RapidRoundTrip(t *testing.T) {
 
 		// Invariant 2 & 3: per-element value correctness.
 		for i, kv := range patch {
-			if kv.Value == SecretMask {
+			if kv.Value == secretMask {
 				if prev, ok := existingIndex[kv.Name]; ok {
 					// Masked + exists → preserve existing value.
 					if output[i].Value != prev {

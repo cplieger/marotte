@@ -12,10 +12,10 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// kasSessionNotify mirrors `_kiro/session/notify`'s params. `sessionId` (the target) is not
-// decoded: the frame arrives on that session's connection. `callerSessionId` is the PAUSED
-// STEP's session; a session/prompt there is rerouted into the run by KAS.
+// `sessionId` is the target and `callerSessionId` the sender. On a step's question the caller is
+// the PAUSED STEP's session; a session/prompt there is rerouted into the run by KAS.
 type kasSessionNotify struct {
+	SessionID       string `json:"sessionId"`
 	CallerSessionID string `json:"callerSessionId"`
 	Message         string `json:"message"`
 	Severity        string `json:"severity"`

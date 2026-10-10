@@ -91,7 +91,8 @@ vi.mock("./store.js", () => ({
   tabStatusFor: vi.fn(() => ""),
 }));
 
-import { FileBrowserState, pointFilesTab, releaseFilesTab, showFilesTab } from "./files.js";
+import { pointFilesTab, releaseFilesTab, showFilesTab } from "./files.js";
+import { FileBrowserState } from "./files-state.js";
 import { FB_ROOT } from "./files-shared.js";
 import { apiGetOrError } from "./api-client.js";
 

@@ -11,14 +11,14 @@ import (
 func TestSanitizeRule_RejectsC1Controls(t *testing.T) {
 	for _, r := range []rune{0x0080, 0x0085, 0x009B, 0x009F} {
 		t.Run(runeName(r), func(t *testing.T) {
-			if _, err := SanitizeRule(&Rule{Capability: "fs_" + string(r) + "write", Effect: "ask"}); !errors.Is(err, ErrCapabilityShape) {
+			if _, err := SanitizeRule(&Rule{Capability: "fs_" + string(r) + "write", Effect: "ask"}); !errors.Is(err, errCapabilityShape) {
 				t.Errorf("capability with U+%04X: err = %v, want ErrCapabilityShape", r, err)
 			}
 			if _, err := SanitizeRule(&Rule{
 				Capability: "fs_write",
 				Effect:     "ask",
 				Match:      []string{"src/" + string(r) + "**"},
-			}); !errors.Is(err, ErrPatternInvalid) {
+			}); !errors.Is(err, errPatternInvalid) {
 				t.Errorf("pattern with U+%04X: err = %v, want ErrPatternInvalid", r, err)
 			}
 		})

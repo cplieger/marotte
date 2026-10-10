@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// opensOf decodes every turn_open in entries, in file order.
 func opensOf(t *testing.T, entries []marotte.Entry) []marotte.EntryTurnOpen {
 	t.Helper()
 	var out []marotte.EntryTurnOpen
@@ -107,16 +107,16 @@ func TestPrompt_RejectsMissingMessageID(t *testing.T) {
 func TestCreateChat_Idempotent(t *testing.T) {
 	h, cs, _ := newTestHub()
 
-	post := func(reqID string) int {
+	post := func() int {
 		return postCmd(t, h, marotte.ClientCommand{
 			Type: "create_chat", ChatID: "c-dup",
 			Payload: json.RawMessage(`{"name":"X"}`),
 		}).Code
 	}
-	if code := post("r1"); code != http.StatusOK {
+	if code := post(); code != http.StatusOK {
 		t.Errorf("first create code = %d", code)
 	}
-	if code := post("r2"); code != http.StatusOK {
+	if code := post(); code != http.StatusOK {
 		t.Errorf("second create code = %d", code)
 	}
 	c, _ := cs.Get(t.Context(), "c-dup")
@@ -162,7 +162,7 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,21 +175,23 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 	}
 }
 
-func TestPermission_RequiresBridge(t *testing.T) {
+// An answer whose ask is no longer pending, its bridge's end included (which retires the ask), is
+// the same refusal as a second answer, so the client reads it as superseded.
+func TestPermission_AnAnswerWithNoPendingAskIs409(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "permission_response", ChatID: "no-bridge",
 		Payload: json.RawMessage(`{"request_id":1,"option_id":"allow"}`),
 	})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("code = %d, want 400", rec.Code)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "already_answered") {
+		t.Errorf("answer with no pending ask = %d %s, want 409 already_answered", rec.Code, rec.Body.String())
 	}
 }
 
 func TestPermission_InvalidPayloadIs400(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	_, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,19 +207,18 @@ func TestPermission_InvalidPayloadIs400(t *testing.T) {
 func TestPermission_ForwardsToBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	_, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The request must be pending: the handler claims it before answering.
-	h.bus.pendingPerms.Add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+	askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{
-			RequestID: 42,
-			Options:   []marotte.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
-		}))
+			Options: []marotte.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
+		}), nil))
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "permission_response", ChatID: "c1",
-		Payload: json.RawMessage(`{"request_id":42,"option_id":"allow"}`),
+		Payload: json.RawMessage(`{"request_id":` + strconv.FormatInt(askID, 10) + `,"option_id":"allow"}`),
 	})
 	if rec.Code != http.StatusOK {
 		t.Errorf("code = %d", rec.Code)
@@ -228,26 +229,24 @@ func TestPermission_ForwardsToBridge(t *testing.T) {
 func TestPermission_SecondAnswerIs409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatal(err)
 	}
-	h.bus.pendingPerms.Add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+	askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{
-			RequestID: 42,
-			Options:   []marotte.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
-		}))
+			Options: []marotte.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
+		}), nil))
 
-	answer := func(reqID string) int {
+	answer := func() int {
 		return postCmd(t, h, marotte.ClientCommand{
 			Type: "permission_response", ChatID: "c1",
-			Payload: json.RawMessage(`{"request_id":42,"option_id":"allow"}`),
+			Payload: json.RawMessage(`{"request_id":` + strconv.FormatInt(askID, 10) + `,"option_id":"allow"}`),
 		}).Code
 	}
-	if code := answer("r1"); code != http.StatusOK {
+	if code := answer(); code != http.StatusOK {
 		t.Fatalf("first answer: code = %d, want 200", code)
 	}
-	// A distinct request id, or the idempotency cache replays the first 200.
-	if code := answer("r2"); code != http.StatusConflict {
+	if code := answer(); code != http.StatusConflict {
 		t.Errorf("second answer: code = %d, want 409", code)
 	}
 }
@@ -337,170 +336,6 @@ func newCmdRec() *httptest.ResponseRecorder {
 	return httptest.NewRecorder()
 }
 
-func TestCreateHook_RequiresNameAndEventType(t *testing.T) {
-	h, _, _ := newTestHub()
-	rec := postCmd(t, h, marotte.ClientCommand{
-		Type:    "create_hook",
-		ChatID:  "c1",
-		Payload: mustJSON(t, map[string]string{}),
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
-	}
-}
-
-func TestCreateHook_WritesFile(t *testing.T) {
-	h, _, _ := newTestHubIn(t.TempDir())
-
-	rec := postCmd(t, h, marotte.ClientCommand{
-		Type:   "create_hook",
-		ChatID: "c1",
-		Payload: mustJSON(t, map[string]string{
-			"name":        "Test Hook",
-			"event_type":  "fileEdited",
-			"action_type": "askAgent",
-			"prompt":      "review this",
-			"patterns":    "*.go,*.ts",
-		}),
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	// The path is workspace-relative: no workDir prefix leaks to clients or logs.
-	var resp map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if p, _ := resp["path"].(string); p != filepath.Join(".kiro", "hooks", "test-hook.json") {
-		t.Errorf("path = %q, want .kiro/hooks/test-hook.json (workDir-relative)", p)
-	}
-	// The v1 schema on disk at 0o600: hooks can hold runCommand shell.
-	data, err := os.ReadFile(filepath.Join(h.lifecycle.workDir, ".kiro", "hooks", "test-hook.json"))
-	if err != nil {
-		t.Fatalf("hook file missing: %v", err)
-	}
-	info, err := os.Stat(filepath.Join(h.lifecycle.workDir, ".kiro", "hooks", "test-hook.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Windows reports 0o666 for every file.
-	if perm := info.Mode().Perm(); perm != 0o600 && perm != 0o666 {
-		t.Errorf("mode = %v, want 0o600", perm)
-	}
-	var got map[string]any
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatal(err)
-	}
-	// v1 envelope: { version:"v1", hooks:[ { name, trigger, matcher, action } ] }.
-	if got["version"] != "v1" {
-		t.Errorf("version = %v, want v1", got["version"])
-	}
-	hooks, _ := got["hooks"].([]any)
-	if len(hooks) != 1 {
-		t.Fatalf("hooks = %v, want 1 entry", hooks)
-	}
-	hook, _ := hooks[0].(map[string]any)
-	// fileEdited maps to PostFileSave; patterns become the single-regex matcher.
-	if hook["trigger"] != "PostFileSave" {
-		t.Errorf("trigger = %v, want PostFileSave", hook["trigger"])
-	}
-	if hook["matcher"] != "*.go,*.ts" {
-		t.Errorf("matcher = %v, want *.go,*.ts", hook["matcher"])
-	}
-	// askAgent maps to action.type=agent with a prompt.
-	action, _ := hook["action"].(map[string]any)
-	if action["type"] != "agent" || action["prompt"] != "review this" {
-		t.Errorf("action = %+v", action)
-	}
-	if _, has := action["command"]; has {
-		t.Error("askAgent hook leaked a command field")
-	}
-}
-
-// TestCreateHook_RunCommandBranchWritesCommand pins runCommand as action.type=command + action.command.
-func TestCreateHook_RunCommandBranchWritesCommand(t *testing.T) {
-	h, _, _ := newTestHubIn(t.TempDir())
-
-	rec := postCmd(t, h, marotte.ClientCommand{
-		Type: "create_hook", ChatID: "c1",
-		Payload: mustJSON(t, map[string]string{
-			"name": "Lint", "event_type": "fileEdited",
-			"action_type": "runCommand", "command": "lint %",
-		}),
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	data, err := os.ReadFile(filepath.Join(h.lifecycle.workDir, ".kiro", "hooks", "lint.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got map[string]any
-	_ = json.Unmarshal(data, &got)
-	hooks, _ := got["hooks"].([]any)
-	if len(hooks) != 1 {
-		t.Fatalf("hooks = %v, want 1 entry", hooks)
-	}
-	hook, _ := hooks[0].(map[string]any)
-	action, _ := hook["action"].(map[string]any)
-	if action["type"] != "command" || action["command"] != "lint %" {
-		t.Errorf("action = %+v", action)
-	}
-	if _, has := action["prompt"]; has {
-		t.Error("runCommand hook leaked a prompt field")
-	}
-}
-
-// TestCreateHook_RejectsTraversal pins the path-traversal guard: 400, and nothing outside .kiro/hooks/.
-func TestCreateHook_RejectsTraversal(t *testing.T) {
-	h, _, _ := newTestHubIn(t.TempDir())
-
-	bad := []string{
-		"../evil",
-		"../../etc/passwd",
-		"foo/bar",
-		"foo\\bar",
-		"has\x00nul",
-		"",
-		"....",
-		"   ",
-		"/absolute",
-		"-leading-hyphen",
-	}
-	for _, name := range bad {
-		rec := postCmd(t, h, marotte.ClientCommand{
-			Type: "create_hook", ChatID: "c1",
-			Payload: mustJSON(t, map[string]string{
-				"name": name, "event_type": "fileEdited",
-				"action_type": "askAgent", "prompt": "p",
-			}),
-		})
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("name=%q code=%d, want 400", name, rec.Code)
-		}
-	}
-	matches, _ := filepath.Glob(filepath.Join(h.lifecycle.workDir, "..", "*.json"))
-	if len(matches) > 0 {
-		t.Errorf("traversal succeeded: %v", matches)
-	}
-}
-
-// TestCreateHook_RejectsOversizeField pins the 8 KiB per-field cap (maxHookField): kiro-cli rescans hooks at every chat start.
-func TestCreateHook_RejectsOversizeField(t *testing.T) {
-	h, _, _ := newTestHubIn(t.TempDir())
-	big := strings.Repeat("a", command.MaxHookField+1)
-	rec := postCmd(t, h, marotte.ClientCommand{
-		Type: "create_hook", ChatID: "c1",
-		Payload: mustJSON(t, map[string]string{
-			"name": "ok", "event_type": "fileEdited",
-			"action_type": "askAgent", "prompt": big,
-		}),
-	})
-	if rec.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("status = %d, want 413", rec.Code)
-	}
-}
-
 func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
 	h, cs, _ := newTestHubIn(t.TempDir())
 	rec := postCmd(t, h, marotte.ClientCommand{
@@ -576,7 +411,7 @@ func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -789,18 +624,17 @@ func BenchmarkHandleCommand(b *testing.B) {
 func TestPermission_RejectsOptionNotOfferedByRequest(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatal(err)
 	}
-	h.bus.pendingPerms.Add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+	askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{
-			RequestID: 42,
-			Options:   []marotte.PermissionOption{{OptionID: "allow-once", Name: "Allow", Kind: "allow_once"}},
-		}))
+			Options: []marotte.PermissionOption{{OptionID: "allow-once", Name: "Allow", Kind: "allow_once"}},
+		}), nil))
 
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "permission_response", ChatID: "c1",
-		Payload: json.RawMessage(`{"request_id":42,"option_id":"allow-always"}`),
+		Payload: json.RawMessage(`{"request_id":` + strconv.FormatInt(askID, 10) + `,"option_id":"allow-always"}`),
 	})
 
 	if rec.Code != http.StatusBadRequest {
@@ -809,7 +643,7 @@ func TestPermission_RejectsOptionNotOfferedByRequest(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "option_not_offered") {
 		t.Errorf("off-list permission response body = %q, want a nonsensitive option_not_offered error", rec.Body.String())
 	}
-	if _, ok := h.bus.pendingPerms.TakeIfPresent("c1", 42); !ok {
+	if _, ok := h.bus.pendingPerms.takeIfPresent("c1", askID); !ok {
 		t.Error("off-list permission response consumed the pending request")
 	}
 }

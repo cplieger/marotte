@@ -9,7 +9,6 @@ import (
 	"github.com/cplieger/sse/ssetest"
 )
 
-// dataFrames parses a recording into its data-bearing frames, hello included and the bare retry line excluded.
 func dataFrames(t *testing.T, body string) []ssetest.Frame {
 	t.Helper()
 	frames, err := ssetest.ReadFrames(strings.NewReader(body), 0)

@@ -92,7 +92,6 @@ function seed(): void {
   });
 }
 
-/** The listed numbers of org/repo. */
 function listed(): number[] {
   return getPRGroups()[0]?.prs.map((p) => p.number) ?? [];
 }
@@ -118,17 +117,14 @@ const mergeArgs = {
 };
 const rerunArgs = { ...prArgs, head_sha: "" };
 
-/** The request URL of the Nth fetch the action framework issued. */
 function requestURL(call = 0): string {
   return mockFetch.mock.calls[call]![0] as string;
 }
 
-/** The JSON body of the Nth fetch the action framework issued. */
 function requestBody(call = 0): unknown {
   return JSON.parse(mockFetch.mock.calls[call]![1].body as string);
 }
 
-/** A merge answer whose outcome is `state`. */
 function outcome(state: string): Response {
   return new Response(
     JSON.stringify({ outcome: { state, queue_state: "none", queue_position: -1 }, cycle_id: "4" }),

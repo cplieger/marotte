@@ -19,15 +19,14 @@ type entryFoldFixture struct {
 	Turns   []entryFoldTurn `json:"turns"`
 }
 
-// entryFoldTurn is one turn of the grouping, in groupTurns' own order.
 type entryFoldTurn struct {
 	Turn    string         `json:"turn"`
 	N       uint64         `json:"n"`
 	Entries []entryFoldRow `json:"entries"`
 }
 
-// entryFoldRow is one entry's answer. Compared is false where the halves deliberately disagree or render at
-// different scopes; Edge says which.
+// Compared is false where the halves deliberately disagree or render at different scopes; Edge says
+// which.
 type entryFoldRow struct {
 	ID       string            `json:"id"`
 	Seq      uint64            `json:"seq"`
@@ -78,8 +77,8 @@ var entryFoldEdges = map[marotte.EntryKind]string{
 	marotte.EntryKindTurnClose: "card-level on the client: the footer, a sibling of .turn-body",
 }
 
-// entryFoldLog writes one log of two interleaved turns and returns its entries with turn ids normalised to t-1, t-2
-// and timestamps zeroed. Nothing may assume a turn is contiguous, and with one turn file order is the grouping.
+// Turn ids are normalised to t-1, t-2 and timestamps zeroed. Nothing may assume a turn is
+// contiguous, and with one turn file order is the grouping.
 func entryFoldLog(t *testing.T) []marotte.Entry {
 	t.Helper()
 	f := newLogFixture(t)
@@ -255,7 +254,6 @@ func TestEntryFoldContract(t *testing.T) {
 	pinGolden(t, "testdata/entry_fold.json", fx, "TestEntryFoldContract", "entry-fold-contract.node.test.ts")
 }
 
-// foldInterleaved reports whether any turn's entries are split by another's in file order.
 func foldInterleaved(entries []marotte.Entry) bool {
 	for i := 1; i < len(entries); i++ {
 		if entries[i].Turn != entries[i-1].Turn {

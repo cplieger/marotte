@@ -9,8 +9,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// promptTurn opens a prompt-class turn carrying text and attachment paths and
-// answers its turn id.
 func promptTurn(t *testing.T, s *Store, id marotte.ChatID, promptID, text string, paths ...string) string {
 	t.Helper()
 	prompt := &marotte.EntryPrompt{ID: promptID, Text: text}
@@ -34,7 +32,6 @@ func bindTurn(t *testing.T, s *Store, id marotte.ChatID, turn, kasID, session st
 	}
 }
 
-// compactAt appends a compaction entry into turn and answers its id.
 func compactAt(t *testing.T, s *Store, id marotte.ChatID, turn, summary string, emptyOrdinal int) string {
 	t.Helper()
 	cid := marotte.CompactionEntryID([]byte(summary), emptyOrdinal)
@@ -137,6 +134,34 @@ func TestStore_RewindTarget_ResolvesThePromptsTurnAndItsBind(t *testing.T) {
 	}
 	if want := (marotte.RewindTarget{Turn: t2}); !reflect.DeepEqual(got, want) {
 		t.Errorf("RewindTarget(u2) = %+v, want %+v (a turn with no bind has no KAS id)", got, want)
+	}
+}
+
+func TestStore_PromptReceipt_IsBoundOnlyWhenATurnOfThatPromptWasBound(t *testing.T) {
+	s, _ := newTestStore(t)
+	const id marotte.ChatID = "c1"
+	recordSession(t, s, id, "sess-2")
+	unbound := promptTurn(t, s, id, "u1", "first findings")
+	closeTurn(t, s, id, unbound, marotte.TurnOutcomeInterrupted)
+	other := promptTurn(t, s, id, "u2", "second")
+	bindTurn(t, s, id, other, "kas-2", "sess-2")
+	closeTurn(t, s, id, other, marotte.TurnOutcomeCompleted)
+
+	got, err := s.PromptReceipt(t.Context(), id, "u1")
+	if err != nil {
+		t.Fatalf("PromptReceipt(u1): %v", err)
+	}
+	if want := (marotte.PromptReceipt{Text: "first findings", Opened: true}); got != want {
+		t.Errorf("PromptReceipt(u1) = %+v, want %+v: another prompt's bind is not this one's", got, want)
+	}
+
+	again := promptTurn(t, s, id, "u1", "first findings")
+	bindTurn(t, s, id, again, "kas-3", "sess-1")
+	if got, _ := s.PromptReceipt(t.Context(), id, "u1"); !got.Bound {
+		t.Errorf("PromptReceipt(u1) after a bound resend = %+v, want bound: a bind on any session proves receipt", got)
+	}
+	if got, _ := s.PromptReceipt(t.Context(), id, "u-none"); got != (marotte.PromptReceipt{}) {
+		t.Errorf("PromptReceipt(u-none) = %+v, want the zero receipt", got)
 	}
 }
 

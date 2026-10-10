@@ -71,6 +71,55 @@ func TestAdoptTerminalOutput_LinkOnAnEarlierFrame(t *testing.T) {
 	}
 }
 
+// TestAdoptTerminalOutput_SameFrameNoteStartsOnItsOwnLine pins the join after an adopted
+// snapshot: kiro-cli 2.28's cancel frame carries a text block beside the terminal's output, and
+// a command stopped mid-line must not run into it.
+func TestAdoptTerminalOutput_SameFrameNoteStartsOnItsOwnLine(t *testing.T) {
+	const (
+		termID = "term-note"
+		l6     = "This tool was interrupted before it reported a result, so it may or may not have taken effect."
+	)
+	spans := []marotte.TextSpan{{Start: 0, End: 5, FG: 2, BG: -1}}
+	cases := []struct {
+		name     string
+		terminal string
+		want     string
+	}{
+		{name: "partial", terminal: "building 42%", want: "building 42%\n" + l6 + "\n"},
+		{name: "complete line", terminal: "done\n", want: "done\n" + l6 + "\n"},
+		{name: "silent", terminal: "", want: l6 + "\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tr, _, deps, events, chatID := primeToolCall(t)
+			deps.terminals[termID] = termRendered{text: c.terminal, spans: spans}
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+				"toolCallId": "tc-1", "status": "in_progress",
+				"content": []map[string]any{{"type": "terminal", "terminalId": termID}},
+			}), FrameAttribution{})
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+				"toolCallId": "tc-1",
+				"status":     "failed",
+				"rawOutput":  l6,
+				"content": []map[string]any{
+					{"type": "content", "content": map[string]any{"type": "text", "text": l6}},
+				},
+			}), FrameAttribution{})
+
+			tc, ok := lastToolCallUpdate(t, deps, events)
+			if !ok {
+				t.Fatal("no tool_call_update was broadcast")
+			}
+			if tc.Output != c.want {
+				t.Errorf("output over terminal %q = %q, want %q", c.terminal, tc.Output, c.want)
+			}
+			if c.terminal != "" && (len(tc.OutputSpans) != 1 || tc.OutputSpans[0] != spans[0]) {
+				t.Errorf("output_spans = %+v, want the terminal's own %+v", tc.OutputSpans, spans)
+			}
+		})
+	}
+}
+
 // TestAdoptTerminalOutput_TerminalWinsOverAnEarlierFragment pins the terminal's full output over
 // an earlier content fragment.
 func TestAdoptTerminalOutput_TerminalWinsOverAnEarlierFragment(t *testing.T) {

@@ -28,7 +28,6 @@ function runsChanged(): void {
   runsVersion.value = runsVersion.value + 1;
 }
 
-/** Bump the mocked dock queue the way a real push does. */
 function dockChanged(): void {
   queueVersion.value = queueVersion.value + 1;
 }
@@ -93,7 +92,7 @@ vi.mock("./decision-dock.js", () => ({
     void queueVersion.value;
     return {
       count: m.asks.filter((a) => a === workflowID).length,
-      nodes: new Set<string>(),
+      asked: [],
       label: "",
     };
   }),
@@ -204,7 +203,6 @@ async function resetProjection(): Promise<void> {
   document.body.innerHTML = '<div id="tab-list"></div>';
 }
 
-/** Open a tab of any kind and answer with its minted id. */
 async function openSubject(kind: TabKind, ref = "", activate = true): Promise<string> {
   const { openTab, tabIdFor } = await import("./tabs.js");
   await openTab({ kind, ref, activate });
@@ -277,7 +275,6 @@ function titleLeft(id: string): number {
   return name.getBoundingClientRect().left;
 }
 
-/** Record a run as live for a chat, with the status its own cell reports. */
 function liveRun(runID: string, chatID: string, state: Partial<RunState> = {}): void {
   m.live.set(runID, { chat: chatID, executing: true });
   m.states.set(runID, { workflowId: runID, ...state } as RunState);

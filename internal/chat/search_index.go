@@ -55,7 +55,6 @@ func (f *chatFilter) addEntry(e *marotte.Entry) {
 	}
 }
 
-// addText records every rune trigram of one folded span.
 func (f *chatFilter) addText(s string) {
 	var a, b rune
 	seen := 0
@@ -68,7 +67,6 @@ func (f *chatFilter) addText(s string) {
 	}
 }
 
-// add sets the trigram's positions.
 func (f *chatFilter) add(key uint64) {
 	h1, h2 := splitHash(key)
 	for i := range uint64(filterHashes) {
@@ -98,14 +96,13 @@ const (
 	runeMask = 1<<runeBits - 1
 )
 
-// trigramKey packs three runes into one key; distinct trigrams never share one.
+// Distinct trigrams never share one.
 func trigramKey(a, b, c rune) uint64 {
 	return uint64(a&runeMask)<<(2*runeBits) | uint64(b&runeMask)<<runeBits | uint64(c&runeMask)
 }
 
-// splitHash is a trigram's 64-bit hash split into the two halves positions derive from. The packed key goes through
-// splitmix64's finalizer first, or the halves would carry rune structure. The step is forced odd so positions stay
-// distinct.
+// The packed key goes through splitmix64's finalizer first, or the halves would carry rune
+// structure. The step is forced odd so positions stay distinct.
 func splitHash(key uint64) (h1, h2 uint64) {
 	h := key
 	h = (h ^ (h >> 30)) * 0xbf58476d1ce4e5b9
@@ -157,8 +154,8 @@ func (x *searchIndex) drop(id marotte.ChatID) {
 	delete(x.filters, id)
 }
 
-// extend folds one appended entry into the chat's filter if it has one; only a full read builds a filter. The caller
-// holds the chat's lock, ordering this against the query-side build and other appends.
+// Only a full read builds a filter. The caller holds the chat's lock, ordering this against the
+// query-side build and other appends.
 func (x *searchIndex) extend(id marotte.ChatID, e *marotte.Entry) {
 	if f, ok := x.lookup(id); ok {
 		f.addEntry(e)

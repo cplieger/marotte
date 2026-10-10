@@ -11,7 +11,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// recoveryOutcome is a TurnOutcomeAccess whose captured result and later-turn answer the test
+// recoveryOutcome is a turnOutcomeAccess whose captured result and later-turn answer the test
 // dictates, with a real single-holder admission slot so the retry's try-reserve contract is
 // exercised.
 type recoveryOutcome struct {
@@ -29,15 +29,19 @@ func (o *recoveryOutcome) OpenTurn(_ context.Context, _ marotte.ChatID, open Tur
 	return "t-" + strconv.Itoa(len(o.openedTurns)), nil
 }
 
-func (o *recoveryOutcome) StartTurn(context.Context, marotte.ChatID, string) bool { return true }
+func (*recoveryOutcome) StartTurn(context.Context, marotte.ChatID, string) bool { return true }
 
-func (o *recoveryOutcome) AwaitTurn(context.Context, marotte.ChatID, string) (marotte.TurnResult, error) {
+func (*recoveryOutcome) AwaitTurn(context.Context, marotte.ChatID, string) (marotte.TurnResult, error) {
 	return marotte.TurnResult{}, marotte.ErrNoSuchTurn
 }
 
-func (o *recoveryOutcome) ReleaseTurn(marotte.ChatID, string) {}
+func (*recoveryOutcome) AwaitTurnBound(context.Context, marotte.ChatID, string) (bool, error) {
+	return false, marotte.ErrNoSuchTurn
+}
 
-func (o *recoveryOutcome) SettleTurnOnResponse(context.Context, marotte.ChatID, string, uint64, *marotte.RPCResponse) {
+func (*recoveryOutcome) ReleaseTurn(marotte.ChatID, string) {}
+
+func (*recoveryOutcome) SettleTurnOnResponse(context.Context, marotte.ChatID, string, uint64, *marotte.RPCResponse) {
 }
 
 func (o *recoveryOutcome) TurnOpenedAfter(marotte.ChatID, string) bool { return o.laterTurn }
@@ -48,7 +52,7 @@ func (o *recoveryOutcome) StopRequestedAfter(marotte.ChatID, string) bool {
 	return o.stopped
 }
 
-func (o *recoveryOutcome) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
+func (*recoveryOutcome) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return 0, false
 }
 
@@ -59,7 +63,7 @@ func (o *recoveryOutcome) ReserveTurnForPrompt(context.Context, marotte.ChatID, 
 	return AdmissionStarting
 }
 
-func (o *recoveryOutcome) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
+func (*recoveryOutcome) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
 
 func (o *recoveryOutcome) TryReserveIdleTurn(c marotte.ChatID, s marotte.TurnOpenSource) bool {
 	return o.TryReserveTurn(c, s)
@@ -85,9 +89,9 @@ func (o *recoveryOutcome) ReleaseTurnReservation(marotte.ChatID) {
 	o.reserved = false
 }
 
-func (o *recoveryOutcome) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
+func (*recoveryOutcome) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
 
-func (o *recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string, marotte.FailureKind, uint64) {
+func (*recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string, marotte.FailureKind, uint64) {
 }
 
 // recoveryBridges records whether the recovery tore the session down, which is the

@@ -9,7 +9,6 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// handleFileChanges serves GET /api/file-changes?chat_id=<id>&path=<path> from the line tracker.
 func (rt *Runtime) handleFileChanges(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)

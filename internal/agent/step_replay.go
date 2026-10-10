@@ -48,8 +48,7 @@ func (sr *stepReplays) open(sessionID string, proj *translate.EntryProjection) b
 	return true
 }
 
-// ingest folds one frame into sessionID's replay, reporting whether one consumed it; false (no reader) is
-// ordinary, checked before a foreign-frame warning.
+// False (no reader) is ordinary, checked before a foreign-frame warning.
 func (sr *stepReplays) ingest(sessionID string, kind marotte.ACPUpdateKind, raw json.RawMessage) bool {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
@@ -75,7 +74,7 @@ func (sr *stepReplays) markLoadedAt(sessionID string, at drainPoint) {
 	sr.settleLocked(sessionID, rep, at.gen, false, settleOnLoad)
 }
 
-// closedBarrier answers barrier for a session with no replay; a closed channel is stateless.
+// A closed channel is stateless.
 var closedBarrier = func() chan struct{} {
 	ch := make(chan struct{})
 	close(ch)
@@ -134,7 +133,7 @@ func (sr *stepReplays) take(sessionID string) []translate.ProjectedTurn {
 }
 
 // closeLocked closes a barrier at most once, reporting whether this call did (three paths reach it). Caller holds sr.mu.
-func (sr *stepReplays) closeLocked(rep *stepReplay) bool {
+func (*stepReplays) closeLocked(rep *stepReplay) bool {
 	select {
 	case <-rep.settled:
 		return false

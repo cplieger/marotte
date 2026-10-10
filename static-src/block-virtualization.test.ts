@@ -46,7 +46,8 @@ const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { openEntry, applyDelta, appendEntry } = await import("./store.js");
 const { mountChatView, mountTurnBody, activeTranscriptView, teardownAll } =
   await import("./messages.js");
-const { scrollToBottom, readingState, setPinSettleMs } = await import("./scroll.js");
+const { scrollToBottom, readingState } = await import("./scroll.js");
+const { setPinSettleMs } = await import("./scroll-controller.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 const { projectTurns } = await import("./turns.js");
@@ -255,8 +256,8 @@ function bodyOf(turnID: string): HTMLElement {
   return body;
 }
 
-/** The entry ordinals this turn's body actually holds, ascending. A prose RUN is stamped
- *  for its first member alone, which is why the ROW cases read `data-entries` instead. */
+/** A prose RUN is stamped for its first member alone, which is why the ROW cases read `data-entries`
+ *  instead. */
 function mountedSeqs(turnID: string): number[] {
   return [...card(turnID).querySelectorAll<HTMLElement>("[data-entry-seq]")]
     .map((e) => Number(e.dataset["entrySeq"]))
@@ -267,7 +268,6 @@ function seqEl(turnID: string, at: number): HTMLElement | null {
   return card(turnID).querySelector<HTMLElement>(`[data-entry-seq="${String(at)}"]`);
 }
 
-/** This turn's mounted prose RUNS, in document order. */
 function bodyRows(turnID: string): HTMLElement[] {
   return [...bodyOf(turnID).querySelectorAll<HTMLElement>(":scope > .msg-row")];
 }

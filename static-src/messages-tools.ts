@@ -46,7 +46,7 @@ interface ToolSlot {
 }
 const toolSlots = new Map<string, ToolSlot[]>();
 
-/** Every slot for one composite key. The empty array is never stored. */
+/** The empty array is never stored. */
 function slotsOf(chatID: string, toolID: string): ToolSlot[] {
   return toolSlots.get(toolCallSigKey(chatID, toolID)) ?? [];
 }
@@ -348,11 +348,9 @@ export function resumeToolEffectsFor(
   }
 }
 
-/**
- * Record a tool call's terminal link and settle any hold. Only an in-flight card becomes the live sink, never
- * displacing another in-flight owner. A hold is flushed only when the call carries no output, since that output is
- * the whole-stream snapshot; it is dropped either way.
- */
+/** Only an in-flight card becomes the live sink, never displacing another in-flight owner. A hold is
+ *  flushed only when the call carries no output, since that output is the whole-stream snapshot; it
+ *  is dropped either way. */
 function linkTerminal(chatID: string, tc: ToolCall): void {
   const termID = tc.terminal_id;
   if (termID === undefined || termID === "") {
@@ -596,17 +594,12 @@ export function mountToolCallCard(
 // Public helpers
 // ---------------------------------------------------------------------------
 
-/** Apply a ToolCall snapshot to a mounted card. Reads no signal; `chatID` stamps the terminal link's owner. */
-export function updateToolCall(el: HTMLElement, tc: ToolCall, chatID: string): void {
-  applyToolCallUpdate(el as HTMLDivElement, tc, chatID);
-}
-
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
 /** Apply a ToolCall snapshot's updatable fields to its DOM card. Idempotent. */
-function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: string): void {
+export function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: string): void {
   linkTerminal(chatID, tc);
   if (tc.title !== undefined) {
     applyTitleUpdate(el, tc);

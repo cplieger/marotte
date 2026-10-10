@@ -87,7 +87,7 @@ func TestReconcileSessionSettings_ACancelledCallerSeesNoMoveOverNonDefaultValues
 	rec := newLiveRecorder(t)
 	h, configDir := reopenFixture(t, rec.options()...)
 	rec.openWithStore(t, configDir)
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestReconcileSessionSettings_AnUnreadableDocumentPushesNoDefaults(t *testin
 	rec := newLiveRecorder(t)
 	h, configDir := reopenFixture(t, rec.options()...)
 	rec.openWithStore(t, configDir)
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -249,7 +249,7 @@ func openWithin(t *testing.T, h *Runtime, chatID marotte.ChatID, limit time.Dura
 	start := time.Now()
 	opened := make(chan error, 1)
 	go func() {
-		_, err := h.coord.OpenBridge(t.Context(), chatID, "")
+		_, err := h.coord.openBridge(t.Context(), chatID, "")
 		opened <- err
 	}()
 	select {
@@ -292,7 +292,7 @@ func TestOpenBridge_AnMCPRenderQueuedBehindAHeldStoreWaitsOnlyThePushBound(t *te
 		}
 
 		release()
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge once the store is free: %v", err)
 		}
 		if got := render.count(); got != 2 {
@@ -549,7 +549,7 @@ func TestOpenBridge_ReopeningARetiredChatWithTheMCPStoreHeldWaitsOnlyThePushBoun
 		}}
 		h, configDir := reopenFixture(t, WithKASMCPRenderer(render))
 		t.Cleanup(release)
-		first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+		first, err := h.coord.openBridge(t.Context(), "c1", "")
 		if err != nil {
 			t.Fatalf("Setup: OpenBridge: %v", err)
 		}
@@ -565,7 +565,7 @@ func TestOpenBridge_ReopeningARetiredChatWithTheMCPStoreHeldWaitsOnlyThePushBoun
 		}
 
 		release()
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge once the store is free: %v", err)
 		}
 		if wait, known := render.RenderedWaitForReady(); !known || !wait {

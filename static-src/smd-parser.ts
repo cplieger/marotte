@@ -28,18 +28,7 @@ import {
   handleCommon,
 } from "./smd-parser-handlers.js";
 
-// Re-export only the constants used by test consumers.
-export {
-  DOCUMENT,
-  HEADING_1,
-  HEADING_2,
-  HEADING_3,
-  HEADING_4,
-  HEADING_5,
-  HEADING_6,
-} from "./smd-parser-types.js";
-
-export type { Renderer, Parser } from "./smd-parser-types.js";
+export type { Parser } from "./smd-parser-types.js";
 
 import type { Parser, Token, Renderer } from "./smd-parser-types.js";
 import {
@@ -166,10 +155,8 @@ const TOKEN_HANDLERS: Partial<Record<Token, TokenHandler>> = {
   [HEADING_6]: (p, char, pending) =>
     handleHeading(p, char, pending) ? actionContinue : actionBreak,
   [TABLE]: (p, char, pending) => (handleTable(p, char, pending) ? actionContinue : actionBreak),
-  [TABLE_ROW]: (p, char, pending) =>
-    handleTableRow(p, char, pending) ? actionContinue : actionBreak,
-  [TABLE_CELL]: (p, char, pending) =>
-    handleTableCell(p, char, pending) ? actionContinue : actionBreak,
+  [TABLE_ROW]: (p, char) => (handleTableRow(p, char) ? actionContinue : actionBreak),
+  [TABLE_CELL]: (p, char) => (handleTableCell(p, char) ? actionContinue : actionBreak),
   [CODE_BLOCK]: (p, char, pending) => {
     handleCodeBlock(p, char, pending);
     return actionAlwaysContinue;
@@ -201,7 +188,7 @@ const TOKEN_HANDLERS: Partial<Record<Token, TokenHandler>> = {
     }
     return actionBreak;
   },
-  [MAYBE_EQ_BLOCK]: (p, char, _pending) => {
+  [MAYBE_EQ_BLOCK]: (p, char) => {
     handleMaybeEqBlock(p, char);
     return actionAlwaysContinue;
   },

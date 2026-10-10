@@ -34,7 +34,7 @@ marotte sends no telemetry. Its outbound requests are these:
 - the public MCP registry when you search it
 - the kiro-cli download on first start, the tools you install, and the tool catalog refresh, once a day by default. When a github.com account is connected, its token goes with the tools' requests to GitHub's API and to no other host.
 
-kiro-cli's own telemetry starts switched off, and you can turn it on in **Settings**. Push notifications go only to the browser vendors' push services, over HTTPS on port 443. Each push connection is checked again after the name is resolved.
+kiro-cli's own telemetry starts switched off, and you can turn it on in **Settings**. When it is on, kiro-cli sends usage data linked to your signed-in account. On an enterprise account, the organization's usage-analytics setting decides it instead. Push notifications go only to the browser vendors' push services, over HTTPS on port 443. Each push connection is checked again after the name is resolved.
 
 ## How kiro-cli is installed
 

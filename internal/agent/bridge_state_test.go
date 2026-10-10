@@ -13,7 +13,6 @@ import (
 // A short grace: it is armed against a specific turn generation.
 const testGrace = 20 * time.Millisecond
 
-// newPromptingBridge returns a bridge holding the prompt slot with a registered prompt context.
 func newPromptingBridge(t *testing.T) (*sharedBridge, context.Context, uint64) {
 	t.Helper()
 	sb := &sharedBridge{}

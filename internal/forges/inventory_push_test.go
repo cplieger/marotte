@@ -25,8 +25,6 @@ func (b *recordingBroadcaster) Broadcast(_ context.Context, evt marotte.ServerEv
 
 func (b *recordingBroadcaster) Epoch() string { return b.epoch }
 
-// pushPoller is inventoryPoller with the push wired to a recording broadcaster
-// and a registry of its own.
 func pushPoller(t *testing.T, cores map[string]forgeapi.Core, origins []RepoOrigin, recs ...connectionRecord,
 ) (*PRStatusPoller, *fakeGate, *recordingBroadcaster, *subject.Versions, *Manager) {
 	t.Helper()
@@ -43,7 +41,6 @@ func inventoryVersion(v *subject.Versions, id string) string {
 	return got
 }
 
-// lastStamp is the version the newest frame carries, "" when it carries none.
 func lastStamp(b *recordingBroadcaster) string {
 	if len(b.events) == 0 || b.events[len(b.events)-1].Subject == nil {
 		return ""
@@ -51,8 +48,6 @@ func lastStamp(b *recordingBroadcaster) string {
 	return b.events[len(b.events)-1].Subject.Version
 }
 
-// framesByConnection answers the forge_inventory frames among events, keyed by
-// the connection their stamp names.
 func framesByConnection(t *testing.T, events []marotte.ServerEvent) map[string][]marotte.ServerEvent {
 	t.Helper()
 	out := map[string][]marotte.ServerEvent{}
@@ -141,7 +136,7 @@ func TestInventory_VersionBumpsWithTheEntry(t *testing.T) {
 	if err := m.store.Delete(rec.ID); err != nil {
 		t.Fatalf("Setup: delete the credential: %v", err)
 	}
-	m.Invalidate()
+	m.invalidate()
 	p.sweep(t.Context())
 	if got := inventoryVersion(v, rec.ID); got != "3" || len(b.events) != 2 {
 		t.Errorf("after the connection was dropped: version %q, %d frames; want \"3\" and no frame: "+
@@ -149,7 +144,7 @@ func TestInventory_VersionBumpsWithTheEntry(t *testing.T) {
 	}
 
 	seedStoreRecord(t, m.configDir, rec.ID, "bob")
-	m.Invalidate()
+	m.invalidate()
 	p.sweep(t.Context())
 	if got := inventoryVersion(v, rec.ID); got != "4" || lastStamp(b) != "4" {
 		t.Errorf("after it reconnected: version %q, last stamp %q; want \"4\", never a version a client already holds",

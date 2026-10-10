@@ -83,11 +83,10 @@ func resolvedExecutable() (string, error) {
 	return filepath.EvalSymlinks(p)
 }
 
-// helperValue is the credential.<url>.helper value that runs bin as the helper
-// for configDir. Git runs a value through the shell only when it passes
-// is_absolute_path, so the leading slash stays outside the quotes: a value
-// starting with a quote is taken as a helper name and run as
-// git credential-'<path>', which never reaches bin.
+// helperValue is the credential.<url>.helper value that runs bin as the helper for configDir. Git
+// runs a value through the shell only when it passes is_absolute_path, so the leading slash stays
+// outside the quotes: a value starting with a quote is taken as a helper name and run as git
+// credential-'<path>', which never reaches bin.
 func helperValue(bin, configDir string) (string, error) {
 	if !filepath.IsAbs(bin) {
 		return "", fmt.Errorf("forges: helper binary path %q is not absolute", bin)
@@ -146,8 +145,7 @@ func (m *Manager) reconcileHelpers(ctx context.Context) {
 	}
 }
 
-// registerHelper makes Marotte's helper the answer for rec's origin and records
-// the value on rec. A failure is logged; the next boot's reconcile retries it.
+// A failure is logged; the next boot's reconcile retries it.
 func (m *Manager) registerHelper(ctx context.Context, rec *connectionRecord) {
 	want, err := m.currentHelperValue()
 	if err == nil {
@@ -162,7 +160,6 @@ func (m *Manager) registerHelper(ctx context.Context, rec *connectionRecord) {
 	}
 }
 
-// unregisterHelper removes Marotte's helper pair from rec's origin.
 func (m *Manager) unregisterHelper(ctx context.Context, rec *connectionRecord) {
 	if err := reconcileHelper(ctx, rec.webBase(), "", m.ownedBy(rec)); err != nil {
 		slog.Warn("forges: git credential helper not removed", "connection", rec.ID, "error", err)
@@ -199,10 +196,9 @@ func (m *Manager) recordHelperValue(ctx context.Context, ids map[string]bool, va
 	}
 }
 
-// reconcileHelper makes Marotte's helper the answer for url in the global git config. Git consults
-// helpers in order and an empty value resets the list, so a connected origin gets "" then want
-// after whatever precedes it; every owned value goes with the empty value before it, and want empty
-// removes the pair.
+// Git consults helpers in order and an empty value resets the list, so a connected origin gets ""
+// then want after whatever precedes it; every owned value goes with the empty value before it, and
+// want empty removes the pair.
 func reconcileHelper(ctx context.Context, url, want string, owned func(string) bool) error {
 	key := "credential." + url + ".helper"
 	have, err := gitHelperValues(ctx, key)

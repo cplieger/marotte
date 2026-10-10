@@ -3,19 +3,37 @@
 // workflow knows — the status's verbs, what an empty step body means, and which of the run's own
 // log turns each step renders.
 
-import { el, effect, touch } from "@cplieger/reactive";
+import { el, effect, signal, touch } from "@cplieger/reactive";
+import { announce } from "@cplieger/ui-primitives/announce";
 import { join } from "@cplieger/keyenc";
 import { bindLoadingState } from "./actions/index.js";
 import { openRunTab, openTab, parentChatRef, tabIdFor } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks, runPendingAsks } from "./decision-dock.js";
 import {
   cancelRun,
+  clearRunStepSteers,
   extendRunRepeat,
   finishRunRepeat,
   pauseRun,
+  removeRunStepSteer,
   resumeRun,
   retryRun,
 } from "./actions/runs.js";
+import {
+  mountRunComposer,
+  restoreRunComposer,
+  setRunComposerTarget,
+  takeIntoRunComposer,
+} from "./run-composer.js";
+import { DEFINITE_REFUSALS, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
+import { stepSteers } from "./run-step-steers.js";
+import { confirm } from "./confirm.js";
+import { noticeAbout } from "./actions/subject.js";
+import {
+  createFollowScroller,
+  type FollowScroller,
+  type ViewScrollState,
+} from "./scroll-controller.js";
 import { CONTROL_LABEL, offeredVerbs, refusalSentences, type RunVerb } from "./run-controls.js";
 import { get } from "./store.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
@@ -50,7 +68,6 @@ import { refreshRunDots, trackRun } from "./run-dots.js";
 import { buildPath } from "./route-path.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_EXTERNAL } from "./icons.js";
-import { SharedScroll } from "./view-scroll.js";
 
 /** The two verbs a repeat paused at its iteration cap offers. They address the paused NODE as
  *  well as the run, so they cannot share the one-argument table. */
@@ -80,10 +97,9 @@ let shownRun = "";
  *  no verb is gated on it here. */
 let shownRunChatParented = false;
 
-/** The launching chat of a run, or "" for a parentless one. TWO sources: `runChatID` (SSE-fed,
- *  so it answers for a live run), then the run tab's persisted `TabSubject.Parent`, the only
- *  answer left once a finished run's lease is released. A non-empty second answer is written
- *  back so every other reader converges on it. */
+/** TWO sources: `runChatID` (SSE-fed, so it answers for a live run), then the run tab's persisted
+ *  `TabSubject.Parent`, the only answer left once a finished run's lease is released. A non-empty
+ *  second answer is written back so every other reader converges on it. */
 function launchingChatOf(workflowID: string): string {
   const known = runChatID(workflowID);
   if (known !== "") {
@@ -108,7 +124,6 @@ let controlBindings: (() => void)[] = [];
 let controlRow: HTMLElement | null = null;
 let controlSig = "";
 
-/** Drop the row on screen and the bindings its buttons hold. */
 function dropControlRow(): void {
   for (const dispose of controlBindings) {
     dispose();
@@ -130,11 +145,16 @@ export function showRun(workflowID: string): void {
     mountRunDecisionDock(dock, () => shownRun);
   }
   rerenderDocks();
-  pageScroll.track();
-  // A different run's page is restored by the paint that mounts it.
-  if (pageRun === workflowID) {
-    pageScroll.restore(workflowID);
+  mountBottomBar();
+  // Before any read resolves: until this run's page publishes a step, Send and the step dock address
+  // nothing rather than the run shown before.
+  if (targetRun !== workflowID) {
+    runFlags = { live: false, paused: false };
+    pushStepTarget(workflowID, undefined);
   }
+  // This run's own page still holds the follower (a hidden box keeps its offset); another run's is
+  // restored by the paint that mounts it.
+  mountFollower();
   // ONE effect for the life of the module, installed on the first show. It reads `shownRun` through
   // the store, so a tab switch re-points it with no teardown: the previous run's cell simply stops
   // being read. Installing one per show would leak a subscription per tab opened.
@@ -150,7 +170,7 @@ export function refreshRun(workflowID: string): void {
   // step transcript's refresh is the step GET, armed by `armStepRead`.
 }
 
-/** The view's single subscription to the store. Idempotent. */
+/** The view's single subscription to the store. */
 let viewEffectInstalled = false;
 function installViewEffect(): void {
   if (viewEffectInstalled) {
@@ -209,11 +229,176 @@ let focusRequest: { workflowID: string; path: string } | undefined;
 let page: ExecPageView | undefined;
 let pageRun = "";
 
-/** `.page-content` is shared by every run tab, so each run keeps its own offset. */
-const pageScroll = new SharedScroll(
-  () => document.querySelector<HTMLElement>("[id='run-view'] > .page-content"),
-  () => (page?.root.isConnected === true ? pageRun : ""),
-);
+let follower: FollowScroller | undefined;
+
+/** Where each run's page stood when another run took the one scroller. */
+const parkedScroll = new Map<string, ViewScrollState>();
+
+function parkPage(): void {
+  if (follower !== undefined && page !== undefined && pageRun !== "") {
+    parkedScroll.set(pageRun, follower.detach());
+  }
+}
+
+function attachFollower(workflowID: string): void {
+  const body = document.getElementById("run-body");
+  if (follower === undefined || body === null) {
+    return;
+  }
+  follower.attach({
+    el: body,
+    ...(parkedScroll.get(workflowID) ?? { scrollTop: 0, readingState: "following" }),
+  });
+}
+
+let runFlags = { live: false, paused: false };
+
+/** The run both step addresses currently name. */
+let targetRun = "";
+
+const stackTarget = signal<{ workflowID: string; nodePath: string }>({
+  workflowID: "",
+  nodePath: "",
+});
+
+let barMounted = false;
+function mountBottomBar(): void {
+  if (barMounted) {
+    return;
+  }
+  const form = document.getElementById("run-composer");
+  const input = document.getElementById("run-composer-input");
+  const send = document.getElementById("run-send-btn");
+  const stack = document.getElementById("run-steer-stack");
+  if (
+    !(form instanceof HTMLFormElement) ||
+    !(input instanceof HTMLTextAreaElement) ||
+    !(send instanceof HTMLButtonElement) ||
+    !(stack instanceof HTMLUListElement)
+  ) {
+    return;
+  }
+  barMounted = true;
+  mountRunComposer(form, input, send);
+  mountSteerStack(stack, stepStackSource);
+}
+
+function mountFollower(): void {
+  if (follower !== undefined) {
+    return;
+  }
+  const scroller = document.querySelector<HTMLElement>("[id='run-view'] > .page-content");
+  const body = document.getElementById("run-body");
+  const resume = document.getElementById("run-scroll-bottom");
+  if (scroller === null || body === null || resume === null) {
+    return;
+  }
+  follower = createFollowScroller(body, scroller, resume);
+}
+
+/** The one writer of both step addresses, the composer's and the step dock's, so they cannot name
+ *  different runs. */
+function pushStepTarget(workflowID: string, selected: ExecNode | undefined): void {
+  const step = selected?.children.length === 0 ? selected : undefined;
+  targetRun = workflowID;
+  setRunComposerTarget({
+    workflowID,
+    runLive: runFlags.live,
+    runPaused: runFlags.paused,
+    step,
+  });
+  const next = { workflowID: step === undefined ? "" : workflowID, nodePath: step?.path ?? "" };
+  const cur = stackTarget.peek();
+  if (cur.workflowID !== next.workflowID || cur.nodePath !== next.nodePath) {
+    stackTarget.value = next;
+  }
+}
+
+/** The run step's dock: the selected step's unread rows and the chat's Edit and Delete, addressed to
+ *  the step. No Send now: nothing stops a step's turn for a reader. */
+const stepStackSource: SteerStackSource = {
+  read: () => {
+    const t = stackTarget.value;
+    return {
+      id: t.workflowID === "" ? "" : join(t.workflowID, t.nodePath),
+      steers: t.workflowID === "" ? [] : stepSteers(t.workflowID, t.nodePath),
+      queued: [],
+    };
+  },
+  edit: async (steer) => {
+    const t = stackTarget.peek();
+    const edit = takeIntoRunComposer(steer.text);
+    if (edit === undefined) {
+      stepRefused(t.workflowID, STILL_SENDING);
+      return;
+    }
+    announce("Message taken back for editing");
+    const outcome = await removeRunStepSteer.dispatch({
+      workflowID: t.workflowID,
+      nodePath: t.nodePath,
+      steer_id: steer.id,
+    }).outcome;
+    if (outcome.status !== "error") {
+      return;
+    }
+    if (DEFINITE_REFUSALS.has(outcome.error.status ?? 0)) {
+      restoreRunComposer(edit);
+      stepRefused(t.workflowID, outcome.error.message);
+      return;
+    }
+    stepRefused(t.workflowID, "Could not confirm the message was taken back");
+  },
+  editByClear: async (text) => {
+    const t = stackTarget.peek();
+    if (takeIntoRunComposer(text) === undefined) {
+      stepRefused(t.workflowID, STILL_SENDING);
+      return;
+    }
+    announce("Message taken back for editing");
+    await clearRunStepSteers.dispatch(t).outcome;
+  },
+  remove: async (steerID) => {
+    const t = stackTarget.peek();
+    announce("Deleting the message");
+    const outcome = await removeRunStepSteer.dispatch({
+      workflowID: t.workflowID,
+      nodePath: t.nodePath,
+      steer_id: steerID,
+    }).outcome;
+    if (outcome.status === "error") {
+      stepRefused(
+        t.workflowID,
+        DEFINITE_REFUSALS.has(outcome.error.status ?? 0)
+          ? outcome.error.message
+          : "Could not delete the message",
+      );
+    }
+  },
+  discard: async (waiting) => {
+    const t = stackTarget.peek();
+    if (waiting > 1) {
+      const ok = await confirm(
+        `Discard all ${String(waiting)} messages the step has not read yet? A workflow message is waiting beside them, so they clear together.`,
+        "Discard all",
+        "destructive",
+      );
+      if (!ok) {
+        return;
+      }
+    }
+    announce("Discarding messages the step has not read");
+    await clearRunStepSteers.dispatch(t).outcome;
+  },
+  waitingFor: "the step",
+};
+
+const STILL_SENDING =
+  "Your last message to this step is still sending. Try Edit again once it has gone.";
+
+function stepRefused(workflowID: string, message: string): void {
+  announce(message);
+  noticeAbout(`run:${workflowID}`, message, "error");
+}
 
 /** The step transcript, LAZILY loaded — ONE stream now, because there is one source. */
 let stepStream: RunStepStream | undefined;
@@ -227,14 +412,24 @@ let emptyLink: { workflowID: string; chatID: string; el: HTMLElement } | undefin
 
 /** Build the page into `#run-body`, replacing whatever was there. */
 function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
+  parkPage();
   page?.dispose();
   // The row belonged to the page being replaced, and its host goes with it.
   dropControlRow();
+  const boxes = document.getElementById("run-boxes");
   const built = buildExecPage({
     emptyNote: stepEmptyNote,
     emptyAction: stepEmptyAction,
     controls: (run) => buildRunControls(run.id),
     onShowNode: armStepRead,
+    // A page still drawn while another run loads publishes nothing.
+    onSelect: (node) => {
+      if (workflowID === shownRun) {
+        pushStepTarget(workflowID, node);
+      }
+    },
+    ...(boxes === null ? {} : { dock: boxes }),
+    follow: "newest",
   });
   page = built;
   pageRun = workflowID;
@@ -266,7 +461,6 @@ function runSource(turns: readonly [string, TurnState][]): TurnSource {
   return { turns: new Map(turns), turn_order: turns.map(([id]) => id) };
 }
 
-/** The turns of one node path, in file order. */
 function turnsForStep(
   turns: readonly [string, TurnState][],
   nodePath: string,
@@ -333,7 +527,6 @@ function armShownStepHole(workflowID: string, turns: readonly [string, TurnState
   }
 }
 
-/** What a node with a transcript host but nothing in it should say. */
 function stepEmptyNote(node: ExecNode): string {
   // Ahead of everything else, because a step with no execution behind it is the one case here that
   // no read can change. `.ev-d-state` two rows above already reads "not started" or "skipped";
@@ -420,9 +613,9 @@ function stepEmptyAction(node: ExecNode): HTMLElement | null {
   return link;
 }
 
-/** Paint the view from a store value. `undefined` means the first fetch has not resolved, which
- *  is the ONLY case that shows a loading row: a refetch driven by an invalidation must not blank
- *  a run the reader is looking at, several times a minute on a busy one. */
+/** `undefined` means the first fetch has not resolved, which is the ONLY case that shows a loading
+ *  row: a refetch driven by an invalidation must not blank a run the reader is looking at, several
+ *  times a minute on a busy one. */
 function paint(
   workflowID: string,
   state: RunState | undefined,
@@ -433,6 +626,15 @@ function paint(
     return;
   }
   if (state === undefined) {
+    if (pageRun !== workflowID && page !== undefined) {
+      // Another run's page and its dock boxes must not stand in for this run while it loads.
+      parkPage();
+      page.dispose();
+      page = undefined;
+      pageRun = "";
+      dropControlRow();
+      container.replaceChildren();
+    }
     if (container.childElementCount === 0) {
       container.replaceChildren(el("div", { className: "list-empty" }, "Loading run\u2026"));
     }
@@ -460,9 +662,13 @@ function paint(
     focus,
     runStepEnds(workflowID),
   );
+  // Before the render, whose repaint publishes the selection with them.
+  runFlags = { live: run.live, paused: state.status === "paused" };
   view.render(run);
   if (!mounted) {
-    pageScroll.restore(workflowID);
+    // After the first render, or a parked position lands on an empty page and clamps. The replace
+    // also took the follower's edge marker; attaching seats a new one.
+    attachFollower(workflowID);
   }
   // Spent only once the page could actually honour it — the plan has to CONTAIN the path, since
   // `page.ts` ignores a focus naming an absent node.
@@ -474,7 +680,6 @@ function paint(
   armShownStepHole(workflowID, turns);
 }
 
-/** Project this run's step transcripts into the detail pane, from the run's own log. */
 function projectStepTranscripts(
   workflowID: string,
   nodes: readonly ExecNode[],
@@ -518,7 +723,6 @@ function projectStepTranscripts(
     });
 }
 
-/** What to paint for every LEAF of this plan the log holds a turn for. */
 function leafPaints(
   nodes: readonly ExecNode[],
   turns: readonly [string, TurnState][],
@@ -614,7 +818,6 @@ function repeatControl(
   return { nodes: [count, btn], btn, name: extendRunRepeat.name };
 }
 
-/** The row itself. Split from the decision above so the guard reads as one thing. */
 function renderControls(workflowID: string, answer: RunControlsResponse): HTMLElement | null {
   const verbs = offeredVerbs(answer.verbs);
   if (verbs.length === 0) {

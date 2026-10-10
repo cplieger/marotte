@@ -6,14 +6,14 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/workspace"
 )
 
 func withKiroTelemetry(t *testing.T, body string) string {
 	t.Helper()
 	home := t.TempDir()
-	workspace.SetKiroHomeForTest(t, home)
-	path := filepath.Join(home, "settings", "cli.json")
+	// No resolver is installed under test, so KiroHome reads $HOME live.
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".kiro", "settings", "cli.json")
 	if body != "" {
 		writeKiroCLISettings(t, path, body)
 	}
@@ -70,7 +70,7 @@ func TestChatSpawn_ResolvesTelemetryUnderTheOrganizationLock(t *testing.T) {
 			if tc.org != nil {
 				h.config.SetGovernance(t.Context(), *tc.org)
 			}
-			sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
+			sb, err := h.coord.openBridge(t.Context(), "c1", "")
 			if err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}

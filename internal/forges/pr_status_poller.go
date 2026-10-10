@@ -2,7 +2,7 @@
 // connection's inventory while a client is present. A sweep is the gate first: a
 // present client or its request for a cycle reads every scope of every
 // connection, the notice alone the authored ListMyPRs of each connection a clone
-// tracks. The rate is PRPollInterval while something is tracked or the list is
+// tracks. The rate is prPollInterval while something is tracked or the list is
 // viewed, else PRDiscoveryInterval. The verdict is GitHub's row, else a ReadPR of
 // each tracked row (TestProviderCheckVerdicts_MatchTheStatedScope pins the copy);
 // a first verdict seeds silently, so a boot never announces a missed flip.
@@ -15,23 +15,22 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/push"
+	"github.com/cplieger/marotte/internal/notice"
 )
 
-// PRPollInterval is the ACTIVE rate: how often the poller looks while it is
+// prPollInterval is the ACTIVE rate: how often the poller looks while it is
 // tracking at least one open authored PR, or while a client shows the
 // pull-request view, which is open to be fresh. Sixty seconds against a
 // three-to-six minute CI run: fast enough that the notice is still useful, slow
-// enough that a run is not sampled a dozen times. Matches schedule.TickInterval,
+// enough that a run is not sampled a dozen times. Matches schedule.tickInterval,
 // and for the same reason: one shared timer rather than a timer per subject.
-const PRPollInterval = time.Minute
+const prPollInterval = time.Minute
 
 // PRDiscoveryInterval is the IDLE rate: how often the poller asks whether an open
 // authored PR has appeared while it tracks none. The seeding rule bounds it: a PR
@@ -53,13 +52,10 @@ const (
 // seeds, so a row the bound left unread or a failed read is never news.
 const checkUnread = ""
 
-// WatchedPR is an authored row whose target or source repository a clone
+// watchedPR is an authored row whose target or source repository a clone
 // tracks, reduced to the fields the notice needs.
-type WatchedPR struct {
+type watchedPR struct {
 	ForgeID string
-	// RepoID is the target repository's canonical id, the key the
-	// notification's subject uses.
-	RepoID string
 	// Repo is the repository's display path, the one the notice names.
 	Repo  string
 	Title string
@@ -100,13 +96,12 @@ const (
 	scopeAdded    = "added"
 )
 
-// authoredScope is the credential's own open pull requests, the notifier's call.
 var authoredScope = Scope{Kind: scopeAuthored}
 
-// ScopePage is one scope's answer to a sweep: one call's rows and the cursor
+// scopePage is one scope's answer to a sweep: one call's rows and the cursor
 // that continues its walk, empty on the page that ends it. Err is the call's
 // failure, with the page empty.
-type ScopePage struct {
+type scopePage struct {
 	Err     error
 	Partial *PartialResult
 	Scope   Scope
@@ -123,7 +118,7 @@ type ConnectionRead struct {
 	ReadPR     func(ctx context.Context, repoID string, number int) (PR, error)
 	Conn       PRConnection
 	Credential string
-	Pages      []ScopePage
+	Pages      []scopePage
 	Clones     []CloneRepo
 	// Family decides which fields of the connection's rows a read fills.
 	Family forgeapi.Family
@@ -139,10 +134,11 @@ type PRSource interface {
 	Read(ctx context.Context, present bool, after func(PRConnection, Scope) forgeapi.Cursor) []ConnectionRead
 }
 
-// PRNotifier is the one push-service method the poller uses; *push.Service
-// satisfies it directly. Whether a sweep runs at all is the gate's question.
+// PRNotifier shows a CI flip's notification on the page and as a Web Push, the one
+// delivery every notification takes (*agent.Runtime). Whether a sweep runs at all is
+// the gate's question.
 type PRNotifier interface {
-	Send(ctx context.Context, title, body string, kind marotte.PushKind, subject marotte.PushSubject, chatName string)
+	Notify(ctx context.Context, n *marotte.NotificationPayload)
 }
 
 // trackedPR is the poller's state for one subject: the last verdict, and the
@@ -173,9 +169,7 @@ type walkKey struct {
 	conn  string
 }
 
-// cycleClock numbers the sweeps that start a cycle and carries a client's
-// request for one. The inventory routes call request and ask; only the sweep
-// calls begin and end.
+// The inventory routes call request and ask; only the sweep calls begin and end.
 type cycleClock struct {
 	// wake rings Run's loop. It holds one ring, so a burst of requests wakes one
 	// sweep; asked is what the ring was for, since Run's receive consumes it.
@@ -252,8 +246,8 @@ func (c *cycleClock) end() {
 // NewPRStatusPoller and call Run in a goroutine; it returns when ctx is
 // cancelled.
 type PRStatusPoller struct {
-	src  PRSource
-	push PRNotifier
+	src      PRSource
+	notifier PRNotifier
 	// gate is consulted before every sweep; closed, the sweep does no forge work.
 	gate    func() Gate
 	inv     *inventory
@@ -286,12 +280,12 @@ type PRStatusPoller struct {
 	cycle uint64
 }
 
-// NewPRStatusPoller wires a poller over a source, the push service and the gate
+// NewPRStatusPoller wires a poller over a source, the notification delivery and the gate
 // every sweep consults first.
 func NewPRStatusPoller(src PRSource, notifier PRNotifier, gate func() Gate, opts ...PollerOption) *PRStatusPoller {
 	p := &PRStatusPoller{
 		src:       src,
-		push:      notifier,
+		notifier:  notifier,
 		gate:      gate,
 		inv:       newInventory(),
 		cycles:    newCycleClock(),
@@ -302,7 +296,7 @@ func NewPRStatusPoller(src PRSource, notifier PRNotifier, gate func() Gate, opts
 		fills:     make(map[fillKey]rowFill),
 		waits:     make(map[fillKey]uint64),
 		refills:   make(map[fillKey]struct{}),
-		tick:      PRPollInterval,
+		tick:      prPollInterval,
 		discovery: PRDiscoveryInterval,
 	}
 	for _, opt := range opts {
@@ -352,7 +346,6 @@ func (p *PRStatusPoller) nextDelay() time.Duration {
 	return p.discovery
 }
 
-// sweep is one tick.
 func (p *PRStatusPoller) sweep(ctx context.Context) {
 	// The gate, first, before any forge work. Clearing the state on the way out is
 	// deliberate: a gate opening later must not announce every flip that happened
@@ -429,7 +422,7 @@ func (p *PRStatusPoller) fold(ctx context.Context, r *ConnectionRead, present, v
 	// A present cycle reads every scope the connection has, so a walk it did
 	// not read is a scope that went (an owner removed, a login renamed).
 	for k := range p.walks {
-		if k.conn == id && !slices.ContainsFunc(r.Pages, func(pg ScopePage) bool { return pg.Scope == k.scope }) {
+		if k.conn == id && !slices.ContainsFunc(r.Pages, func(pg scopePage) bool { return pg.Scope == k.scope }) {
 			delete(p.walks, k)
 		}
 	}
@@ -446,7 +439,7 @@ func (p *PRStatusPoller) fold(ctx context.Context, r *ConnectionRead, present, v
 // apply folds one scope's page into its walk, answers its watched and unsorted
 // authored rows (watches), and prunes what the walk never read once the page
 // ends it.
-func (p *PRStatusPoller) apply(r *ConnectionRead, page *ScopePage, tracked map[string]struct{}) (watched, unsorted []PR) {
+func (p *PRStatusPoller) apply(r *ConnectionRead, page *scopePage, tracked map[string]struct{}) (watched, unsorted []PR) {
 	conn := r.Conn
 	k := walkKey{conn: conn.ID, scope: page.Scope}
 	w := p.walks[k]
@@ -524,16 +517,16 @@ func (p *PRStatusPoller) notify(ctx context.Context, r *ConnectionRead, watched 
 	}
 }
 
-func watchedOf(forgeID string, row *PR) WatchedPR {
-	return WatchedPR{
-		ForgeID: forgeID, RepoID: row.RepoID, Repo: row.Repo,
+func watchedOf(forgeID string, row *PR) watchedPR {
+	return watchedPR{
+		ForgeID: forgeID, Repo: row.Repo,
 		Title: row.Title, Check: row.Action.Checks, Number: row.Number,
 	}
 }
 
 // observe records pr's verdict under subject, the poller's state key and the
 // notification's, so the two cannot describe different things.
-func (p *PRStatusPoller) observe(ctx context.Context, subject marotte.PushSubject, pr *WatchedPR) {
+func (p *PRStatusPoller) observe(ctx context.Context, subject marotte.PushSubject, pr *watchedPR) {
 	prev, known := p.seen[subject.Key]
 	if pr.Check == checkUnread {
 		if !known {
@@ -547,7 +540,8 @@ func (p *PRStatusPoller) observe(ctx context.Context, subject marotte.PushSubjec
 		// INTO pending is the run starting, which the user caused by pushing.
 		return
 	}
-	p.push.Send(ctx, push.DefaultTitle, prStatusBody(pr), marotte.PushKindPRStatus, subject, "")
+	n := notice.PRStatus(subject, pr.Repo, pr.Number, pr.Title, pr.Check == checkPassing)
+	p.notifier.Notify(ctx, &n)
 }
 
 // endWalk prunes, for the authored walk, the subjects of its connection it never
@@ -571,7 +565,6 @@ func (p *PRStatusPoller) endWalk(id string, w *prWalk, authored bool) {
 	w.restart()
 }
 
-// holds reports whether a walk of k's connection holds k's row.
 func (p *PRStatusPoller) holds(k fillKey) bool {
 	for wk, w := range p.walks {
 		if _, ok := w.rows[k.subject]; ok && wk.conn == k.conn {
@@ -581,14 +574,12 @@ func (p *PRStatusPoller) holds(k fillKey) bool {
 	return false
 }
 
-// restart forgets the walk's position and what it read, keeping its rows.
 func (w *prWalk) restart() {
 	w.next = ""
 	clear(w.keys)
 	clear(w.read)
 }
 
-// forget drops connection id's walks, fills, subjects and inventory entry.
 func (p *PRStatusPoller) forget(id string) {
 	delete(p.conns, id)
 	for k := range p.walks {
@@ -618,19 +609,4 @@ func (p *PRStatusPoller) dropSubjects(id string) {
 // ignore it.
 func isSettledCheck(check string) bool {
 	return check == checkPassing || check == checkFailing
-}
-
-// prStatusBody is what the notification says. Short by design: the tray truncates,
-// and fitToCap trims against the payload cap, so the verdict and the number lead
-// and the title follows.
-func prStatusBody(pr *WatchedPR) string {
-	verdict := "checks failed"
-	if pr.Check == checkPassing {
-		verdict = "checks passed"
-	}
-	body := pr.Repo + " #" + strconv.Itoa(pr.Number) + " " + verdict
-	if pr.Title != "" {
-		body += ": " + pr.Title
-	}
-	return body
 }

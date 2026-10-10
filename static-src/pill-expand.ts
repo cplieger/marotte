@@ -122,10 +122,10 @@ function trackViewport(pill: HTMLElement, card: HTMLElement): () => void {
   };
 }
 
-/** The smallest block size worth clamping to. Below this a card is unusable whatever it does, so
- *  the floor keeps one row plus its scroll affordance on screen and lets the overflow do the
- *  rest, rather than resolving to a height that renders nothing. Only reachable on a viewport
- *  short enough that the composer is nearly at the top edge. */
+/** Below this a card is unusable whatever it does, so the floor keeps one row plus its scroll
+ *  affordance on screen and lets the overflow do the rest, rather than resolving to a height that
+ *  renders nothing. Only reachable on a viewport short enough that the composer is nearly at the top
+ *  edge. */
 const MIN_CARD_BLOCK_PX = 96;
 
 /** Keep an expanded card inside the visual viewport, on BOTH axes; `trackViewport` owns when

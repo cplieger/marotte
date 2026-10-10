@@ -97,8 +97,8 @@ vi.mock("./device-view.js", () => {
 // The two leaf stores the tab factory reads for a display NAME. Neither matters
 // here: what this suite reads off a row is its DOT.
 vi.mock("./run-store.js", () => ({
-  // The tab factory's name read. Inert here; a Browser-Mode mock is linked as
-  // real ESM, so a name any module in the graph reaches has to exist on it.
+  // Inert here; a Browser-Mode mock is linked as real ESM, so a name any module in the graph
+  // reaches has to exist on it.
   runLabelOf: vi.fn(() => ""),
 }));
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
@@ -195,7 +195,6 @@ function place(el: Element, r: DOMRect): void {
   el.getBoundingClientRect = (): DOMRect => r;
 }
 
-/** A sidebar and a tab list with a real clip box, plus one row per id. */
 function buildSidebar(rows: readonly { id: string; top: number; height: number }[]): {
   sidebar: HTMLElement;
   tabList: HTMLElement;

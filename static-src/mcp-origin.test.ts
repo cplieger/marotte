@@ -473,7 +473,7 @@ describe("resource templates after a status fetch", () => {
     await settle();
 
     expect(discoverySignalFor("tpl").peek().resource_templates).toEqual([
-      { name: "issue", uri_template: "gh://issues/{number}", mime_type: "text/plain" },
+      { name: "issue", uri_template: "gh://issues/{number}" },
     ]);
   });
 });

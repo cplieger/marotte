@@ -142,8 +142,8 @@ func TestBounds(t *testing.T) {
 
 	t.Run("value over limit", func(t *testing.T) {
 		s := newStore(t)
-		err := s.Set(ctx, realKey, strings.Repeat("x", MaxValueBytes+1))
-		if !errors.Is(err, ErrTooLarge) {
+		err := s.Set(ctx, realKey, strings.Repeat("x", maxValueBytes+1))
+		if !errors.Is(err, errTooLarge) {
 			t.Errorf("Set(oversize value) error = %v, want ErrTooLarge", err)
 		}
 		if _, ok := s.Get(realKey); ok {
@@ -153,7 +153,7 @@ func TestBounds(t *testing.T) {
 
 	t.Run("key over limit", func(t *testing.T) {
 		s := newStore(t)
-		if err := s.Set(ctx, strings.Repeat("k", MaxKeyBytes+1), "v"); !errors.Is(err, ErrTooLarge) {
+		if err := s.Set(ctx, strings.Repeat("k", maxKeyBytes+1), "v"); !errors.Is(err, errTooLarge) {
 			t.Errorf("Set(oversize key) error = %v, want ErrTooLarge", err)
 		}
 	})
@@ -161,27 +161,27 @@ func TestBounds(t *testing.T) {
 	// The limits are inclusive: a blob exactly at the cap is stored.
 	t.Run("value exactly at the limit is stored", func(t *testing.T) {
 		s := newStore(t)
-		value := strings.Repeat("x", MaxValueBytes)
+		value := strings.Repeat("x", maxValueBytes)
 		if err := s.Set(ctx, realKey, value); err != nil {
-			t.Fatalf("Set(value of exactly %d bytes) error = %v, want nil", MaxValueBytes, err)
+			t.Fatalf("Set(value of exactly %d bytes) error = %v, want nil", maxValueBytes, err)
 		}
 		got, ok := s.Get(realKey)
 		if !ok {
 			t.Fatalf("Get(%q) missing after a Set at the value limit", realKey)
 		}
-		if len(got) != MaxValueBytes {
-			t.Errorf("Get(%q) returned %d bytes, want %d", realKey, len(got), MaxValueBytes)
+		if len(got) != maxValueBytes {
+			t.Errorf("Get(%q) returned %d bytes, want %d", realKey, len(got), maxValueBytes)
 		}
 	})
 
 	t.Run("key exactly at the limit is stored", func(t *testing.T) {
 		s := newStore(t)
-		key := strings.Repeat("k", MaxKeyBytes)
+		key := strings.Repeat("k", maxKeyBytes)
 		if err := s.Set(ctx, key, "v"); err != nil {
-			t.Fatalf("Set(key of exactly %d bytes) error = %v, want nil", MaxKeyBytes, err)
+			t.Fatalf("Set(key of exactly %d bytes) error = %v, want nil", maxKeyBytes, err)
 		}
 		if got, ok := s.Get(key); !ok || got != "v" {
-			t.Errorf("Get(key of exactly %d bytes) = %q, %v, want %q, true", MaxKeyBytes, got, ok, "v")
+			t.Errorf("Get(key of exactly %d bytes) = %q, %v, want %q, true", maxKeyBytes, got, ok, "v")
 		}
 	})
 
@@ -194,26 +194,25 @@ func TestBounds(t *testing.T) {
 
 	t.Run("entry count", func(t *testing.T) {
 		s := newStore(t)
-		for i := range MaxEntries {
+		for i := range maxEntries {
 			if err := s.Set(ctx, "k"+string(rune('a'+i%26))+strings.Repeat("z", i/26+1), "v"); err != nil {
 				t.Fatalf("Set(#%d) error = %v", i, err)
 			}
 		}
-		if got := s.count(); got != MaxEntries {
-			t.Fatalf("count = %d, want %d", got, MaxEntries)
+		if got := s.count(); got != maxEntries {
+			t.Fatalf("count = %d, want %d", got, maxEntries)
 		}
-		if err := s.Set(ctx, "one-too-many", "v"); !errors.Is(err, ErrTooLarge) {
+		if err := s.Set(ctx, "one-too-many", "v"); !errors.Is(err, errTooLarge) {
 			t.Errorf("Set() past the entry cap error = %v, want ErrTooLarge", err)
 		}
 		// An OVERWRITE at the cap is still allowed: KAS refreshes a token set in place.
-		existing, _ := firstKey(s)
+		existing := firstKey(s)
 		if err := s.Set(ctx, existing, "refreshed"); err != nil {
 			t.Errorf("Set(existing key) at the cap error = %v, want nil", err)
 		}
 	})
 }
 
-// count reports how many keys the store holds (test-only).
 func (s *Store) count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -221,13 +220,13 @@ func (s *Store) count() int {
 }
 
 // firstKey returns any key the store holds. Only for the cap test.
-func firstKey(s *Store) (string, bool) {
+func firstKey(s *Store) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for k := range s.secrets {
-		return k, true
+		return k
 	}
-	return "", false
+	return ""
 }
 
 // TestCorruptStoreMovedAside covers the recovery posture: these credentials are
@@ -276,8 +275,6 @@ func TestCorruptStoreReportsTheQuarantineNotAFailure(t *testing.T) {
 	}
 }
 
-// captureLogs swaps the slog default to a buffer-backed debug handler and restores it,
-// along with the log package's writer and flags, which slog.SetDefault also redirects.
 // The handler is global, so this package's tests never run in parallel.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
@@ -455,7 +452,7 @@ func FuzzKeysAndValues(f *testing.F) {
 	f.Add("a/b/c", "slashes")
 	f.Add("k\x00v", "nul")
 	f.Add("ключ", "юникод")
-	f.Add(strings.Repeat("k", MaxKeyBytes), "at the key limit")
+	f.Add(strings.Repeat("k", maxKeyBytes), "at the key limit")
 	// Seeds for the two round-trip bugs found: a non-UTF-8 value and a non-UTF-8 key.
 	f.Add(realKey, "\x9c")
 	f.Add("\xfe", "0")

@@ -25,15 +25,12 @@ const sessionListTimeout = 45 * time.Second
 // maxDisplayTextBytes, since it is the same upstream field read back from session.json.
 const maxSessionDescBytes = 512
 
-// kasSessionList is the session/list result shape.
 type kasSessionList struct {
 	Sessions []kasSessionRow `json:"sessions"`
 }
 
-// kasSessionRow is one stored session as session/list reports it.
 type kasSessionRow struct {
 	SessionID string `json:"sessionId"`
-	CWD       string `json:"cwd"`
 	Title     string `json:"title"`
 	UpdatedAt string `json:"updatedAt"`
 	Meta      struct {
@@ -43,6 +40,8 @@ type kasSessionRow struct {
 			Status    string `json:"status"`
 			// Description is the agent's self-declared "what I'm working on".
 			Description string `json:"description"`
+			// ParentSessionID is the session this one was forked or spawned from.
+			ParentSessionID string `json:"parentSessionId"`
 			// Workflow is present only on a workflow-step session: the discriminator.
 			Workflow json.RawMessage `json:"workflow"`
 		} `json:"kiro"`
@@ -77,6 +76,15 @@ func (rt *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]marotte.ChatID) ([]marotte.ResumableSession, error) {
+	rows, err := rt.workspaceSessionRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return toResumable(claimed, rows), nil
+}
+
+// workspaceSessionRows is KAS's session/list for this workspace, over the utility session.
+func (rt *Runtime) workspaceSessionRows(ctx context.Context) ([]kasSessionRow, error) {
 	u := rt.utility.get()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
@@ -92,7 +100,7 @@ func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]mar
 	if uErr := json.Unmarshal(raw, &list); uErr != nil {
 		return nil, uErr
 	}
-	return toResumable(claimed, list.Sessions), nil
+	return list.Sessions, nil
 }
 
 // claimedSessions maps every KAS session a chat owns to that chat, keyed on the whole session chain so retired sessions stay owned.
@@ -143,7 +151,6 @@ func toResumable(claimed map[string]marotte.ChatID, rows []kasSessionRow) []maro
 	return out
 }
 
-// collapseClaimedByChat keeps one row per owning chat, the most recently updated.
 func collapseClaimedByChat(rows []marotte.ResumableSession) []marotte.ResumableSession {
 	newestFor := map[string]int{}
 	drop := map[int]bool{}
@@ -176,7 +183,7 @@ func collapseClaimedByChat(rows []marotte.ResumableSession) []marotte.ResumableS
 	return kept
 }
 
-// livelierThan orders (UpdatedAt, CreatedAt, SessionID) descending; an UpdatedAt tie is reachable since parseKASTime sinks bad values to 0.
+// An UpdatedAt tie is reachable since parseKASTime sinks bad values to 0.
 func livelierThan(a, b *marotte.ResumableSession) bool {
 	return cmp.Or(
 		cmp.Compare(a.UpdatedAt, b.UpdatedAt),
@@ -199,12 +206,10 @@ func parseKASTime(s string) int64 {
 
 // Runs come from _kiro/workflow/list, not session/list, whose workflow rows are step sessions always reading idle.
 
-// kasWorkflowRuns is the _kiro/workflow/list result.
 type kasWorkflowRuns struct {
 	Runs []kasWorkflowRun `json:"runs"`
 }
 
-// kasWorkflowRun is one run as _kiro/workflow/list reports it.
 type kasWorkflowRun struct {
 	WorkflowID string `json:"workflowId"`
 	// Name is the display name, `runLabel ?? workflowName`; never key a recipe on it.
@@ -225,7 +230,6 @@ type kasWorkflowRun struct {
 	PausePending bool `json:"pausePending"`
 }
 
-// list fetches the workspace's workflow runs, newest first.
 func (rs *Runs) list(ctx context.Context, claimed map[string]marotte.ChatID) ([]marotte.WorkflowRun, error) {
 	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)

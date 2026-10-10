@@ -16,7 +16,7 @@ import (
 // lane and announces it: entry_opened for the delta that opens an entry,
 // entry_delta for one that extends it, and whatever the fold sealed ahead of it.
 func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, isReasoning bool, attr FrameAttribution) {
-	var chunk ACPChunkWire
+	var chunk acpChunkWire
 	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != marotte.ContentTypeText || chunk.Content.Text == "" {
 		return
 	}
@@ -82,7 +82,7 @@ func (t *Translator) markRefusal(
 	sc entryScope,
 	turn *turnlog.Turn,
 	chatID marotte.ChatID,
-	chunk *ACPChunkWire,
+	chunk *acpChunkWire,
 	lane string,
 	interrupted bool,
 ) bool {
@@ -171,14 +171,13 @@ func setPayload(e *marotte.Entry, payload any) {
 	e.Payload = raw
 }
 
-// refusalInfo maps a chunk's _meta.kiro.refusal block to the domain shape.
-func refusalInfo(chunk *ACPChunkWire) *marotte.RefusalInfo {
+func refusalInfo(chunk *acpChunkWire) *marotte.RefusalInfo {
 	return refusalFrom(chunk.Meta.Kiro.Refusal)
 }
 
 // refusalFrom maps KAS's refusal block onto the domain type. The explanation is CARRIED (it is
 // the only copy once the chunk's text is withheld) and takes displayText. Every field is optional.
-func refusalFrom(r *ACPRefusalMeta) *marotte.RefusalInfo {
+func refusalFrom(r *acpRefusalMeta) *marotte.RefusalInfo {
 	if r == nil {
 		return nil
 	}
@@ -193,7 +192,7 @@ func refusalFrom(r *ACPRefusalMeta) *marotte.RefusalInfo {
 // resends the whole entries array on every update, and turnlog drops a frame equal
 // to the turn's newest plan.
 func (t *Translator) HandlePlan(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
-	var p ACPPlanWire
+	var p acpPlanWire
 	if json.Unmarshal(raw, &p) != nil {
 		return
 	}
@@ -211,7 +210,7 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID marotte.ChatID, raw 
 
 // HandleModeUpdate persists the agent's new mode and broadcasts mode_changed.
 func (t *Translator) HandleModeUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage) {
-	var p ACPModeUpdateWire
+	var p acpModeUpdateWire
 	if json.Unmarshal(raw, &p) != nil || p.ModeID == "" {
 		return
 	}

@@ -1,6 +1,6 @@
 // Package policyfile reads and writes kiro-cli's native Cedar permission files for the user and
 // workspace scopes, resolved from $HOME rather than KIRO_HOME: <home>/.kiro/settings/permissions.yaml
-// and <home>/.kiro/workspace-roots/<WorkspaceHash>/permissions.yaml. KAS also writes the user file
+// and <home>/.kiro/workspace-roots/<workspaceHash>/permissions.yaml. KAS also writes the user file
 // for a user-scope consent, and hot-reloads both, so a write reaches every live session. Load
 // accepts block YAML or JSON; Save writes block YAML (KAS 2.12).
 package policyfile
@@ -23,8 +23,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// filename is the policy file marotte writes. Always .yaml (first in KAS's
-// POLICY_FILENAMES, so it wins over any sibling .json).
+// Always .yaml (first in KAS's POLICY_FILENAMES, so it wins over any sibling .json).
 const filename = "permissions.yaml"
 
 // Limits guarding hand-edited / API-supplied rule payloads so a pathological
@@ -89,8 +88,7 @@ func Capabilities() []string {
 	return out
 }
 
-// maxCapabilityLen bounds a capability token. KAS's own names are under 16
-// characters; this is generous headroom, and its job is only to keep a
+// KAS's own names are under 16 characters; this is generous headroom, and its job is only to keep a
 // pathological value out of the file (see SanitizeRule).
 const maxCapabilityLen = 128
 
@@ -99,13 +97,13 @@ const maxCapabilityLen = 128
 // array (not _kiro/policy/error, which is fatal-only); translate/policy.go carries it to
 // permissions_changed and the client renders it.
 var (
-	ErrInvalidScope    = errors.New("scope must be user or workspace")
-	ErrInvalidEffect   = errors.New("effect must be allow, deny, or ask")
-	ErrCapabilityShape = errors.New("capability must be a non-empty token with no control characters")
-	ErrTooManyRules    = errors.New("policy file has too many rules")
-	ErrPatternTooLong  = errors.New("match/exclude pattern too long")
-	ErrPatternInvalid  = errors.New("match/exclude pattern contains invalid characters")
-	ErrPatternEmpty    = errors.New("match/exclude list has no non-empty pattern")
+	errInvalidScope    = errors.New("scope must be user or workspace")
+	errInvalidEffect   = errors.New("effect must be allow, deny, or ask")
+	errCapabilityShape = errors.New("capability must be a non-empty token with no control characters")
+	errTooManyRules    = errors.New("policy file has too many rules")
+	errPatternTooLong  = errors.New("match/exclude pattern too long")
+	errPatternInvalid  = errors.New("match/exclude pattern contains invalid characters")
+	errPatternEmpty    = errors.New("match/exclude list has no non-empty pattern")
 )
 
 // ValidScope reports whether scope is writable by marotte.
@@ -118,10 +116,10 @@ func ValidEffect(effect string) bool {
 	return effect == EffectAllow || effect == EffectDeny || effect == EffectAsk
 }
 
-// WorkspaceHash mirrors KAS's computeWorkspaceHash on Linux: the first 16 hex chars of sha256 over
+// workspaceHash mirrors KAS's computeWorkspaceHash on Linux: the first 16 hex chars of sha256 over
 // the canonicalized root (absolute, cleaned, no trailing slash), matching KAS's path.resolve. A
 // divergent hash would write workspace rules to a directory KAS never reads.
-func WorkspaceHash(workDir string) string {
+func workspaceHash(workDir string) string {
 	sum := sha256.Sum256([]byte(canonicalWorkDir(workDir)))
 	return hex.EncodeToString(sum[:])[:16]
 }
@@ -153,16 +151,16 @@ type Roots struct {
 //
 // scope stays a separate parameter: it is the discriminator this switches on,
 // and confusing it with a root is already loud (a path is not "user" or
-// "workspace", so it returns ErrInvalidScope). The silent mistake was the pair.
+// "workspace", so it returns errInvalidScope). The silent mistake was the pair.
 func PathFor(scope string, roots Roots) (string, error) {
 	switch scope {
 	case ScopeUser:
 		return filepath.Join(roots.Home, ".kiro", "settings", filename), nil
 	case ScopeWorkspace:
 		return filepath.Join(roots.Home, ".kiro", "workspace-roots",
-			WorkspaceHash(roots.WorkDir), filename), nil
+			workspaceHash(roots.WorkDir), filename), nil
 	default:
-		return "", ErrInvalidScope
+		return "", errInvalidScope
 	}
 }
 
@@ -236,10 +234,10 @@ func SanitizeRule(r *Rule) (Rule, error) {
 	capability := strings.TrimSpace(r.Capability)
 	if capability == "" || len(capability) > maxCapabilityLen ||
 		!utf8.ValidString(capability) || strings.ContainsFunc(capability, isCtrl) {
-		return Rule{}, ErrCapabilityShape
+		return Rule{}, errCapabilityShape
 	}
 	if !ValidEffect(r.Effect) {
-		return Rule{}, ErrInvalidEffect
+		return Rule{}, errInvalidEffect
 	}
 	match, err := sanitizePatterns(r.Match)
 	if err != nil {
@@ -254,7 +252,7 @@ func SanitizeRule(r *Rule) (Rule, error) {
 
 func sanitizePatterns(in []string) ([]string, error) {
 	if len(in) > maxMatchEntries {
-		return nil, ErrTooManyRules
+		return nil, errTooManyRules
 	}
 	seen := make(map[string]struct{}, len(in))
 	out := make([]string, 0, len(in))
@@ -264,10 +262,10 @@ func sanitizePatterns(in []string) ([]string, error) {
 			continue
 		}
 		if len(p) > maxPatternLen {
-			return nil, ErrPatternTooLong
+			return nil, errPatternTooLong
 		}
 		if !utf8.ValidString(p) || strings.ContainsFunc(p, isCtrl) {
-			return nil, ErrPatternInvalid
+			return nil, errPatternInvalid
 		}
 		if _, dup := seen[p]; dup {
 			continue
@@ -280,7 +278,7 @@ func sanitizePatterns(in []string) ([]string, error) {
 	// would be written as "matches everything". Keyed on len(in), so a bare rule
 	// stays writable.
 	if len(in) > 0 && len(out) == 0 {
-		return nil, ErrPatternEmpty
+		return nil, errPatternEmpty
 	}
 	if len(out) == 0 {
 		return nil, nil
@@ -294,10 +292,10 @@ func sanitizePatterns(in []string) ([]string, error) {
 // cannot gain members.
 func isCtrl(r rune) bool { return unicode.IsControl(r) }
 
-// Signature is the dedup/equality key for a rule: capability + effect +
+// signature is the dedup/equality key for a rule: capability + effect +
 // sorted match + sorted exclude. Mirrors KAS ruleSignature so marotte's
 // notion of "same rule" matches the engine's.
-func Signature(r *Rule) string {
+func signature(r *Rule) string {
 	m := slices.Clone(r.Match)
 	e := slices.Clone(r.Exclude)
 	slices.Sort(m)
@@ -313,11 +311,11 @@ func Signature(r *Rule) string {
 	return b.String()
 }
 
-// Has reports whether an identical rule (by Signature) already exists.
+// Has reports whether an identical rule (by signature) already exists.
 func (f *File) Has(r *Rule) bool {
-	sig := Signature(r)
+	sig := signature(r)
 	for i := range f.Rules {
-		if Signature(&f.Rules[i]) == sig {
+		if signature(&f.Rules[i]) == sig {
 			return true
 		}
 	}
@@ -330,7 +328,7 @@ func (f *File) Has(r *Rule) bool {
 // security-sensitive file.
 func (f *File) Upsert(r *Rule) (bool, error) {
 	if len(f.Rules) >= maxRulesPerFile {
-		return false, ErrTooManyRules
+		return false, errTooManyRules
 	}
 	if f.Has(r) {
 		return false, nil
@@ -339,12 +337,12 @@ func (f *File) Upsert(r *Rule) (bool, error) {
 	return true, nil
 }
 
-// Remove deletes the first rule matching r by Signature. Returns true if a
+// Remove deletes the first rule matching r by signature. Returns true if a
 // rule was removed.
 func (f *File) Remove(r *Rule) bool {
-	sig := Signature(r)
+	sig := signature(r)
 	for i := range f.Rules {
-		if Signature(&f.Rules[i]) == sig {
+		if signature(&f.Rules[i]) == sig {
 			// slices.Delete, not append(a[:i], a[i+1:]...): it zeroes the vacated
 			// tail, so the removed rule's Match and Exclude slices are not still
 			// reachable through the backing array of a security policy the caller
@@ -356,7 +354,7 @@ func (f *File) Remove(r *Rule) bool {
 	return false
 }
 
-// ReplaceEffect changes the effect of the rule matching old (by Signature)
+// ReplaceEffect changes the effect of the rule matching old (by signature)
 // IN PLACE, preserving its position in the file — one atomic mutation, so
 // an in-place edit can never half-apply the way a client-side remove+add
 // could. When the resulting rule would duplicate an existing one, the old
@@ -364,10 +362,10 @@ func (f *File) Remove(r *Rule) bool {
 // state). Returns true if the file changed: false means the old rule is
 // absent or the effect is already effect.
 func (f *File) ReplaceEffect(old *Rule, effect string) bool {
-	sig := Signature(old)
+	sig := signature(old)
 	idx := -1
 	for i := range f.Rules {
-		if Signature(&f.Rules[i]) == sig {
+		if signature(&f.Rules[i]) == sig {
 			idx = i
 			break
 		}
@@ -377,12 +375,12 @@ func (f *File) ReplaceEffect(old *Rule, effect string) bool {
 	}
 	next := f.Rules[idx]
 	next.Effect = effect
-	nextSig := Signature(&next)
+	nextSig := signature(&next)
 	if nextSig == sig {
 		return false // same effect — nothing to change
 	}
 	for i := range f.Rules {
-		if i != idx && Signature(&f.Rules[i]) == nextSig {
+		if i != idx && signature(&f.Rules[i]) == nextSig {
 			f.Rules = slices.Delete(f.Rules, idx, idx+1)
 			return true
 		}

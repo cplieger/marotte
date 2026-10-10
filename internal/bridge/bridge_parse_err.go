@@ -4,7 +4,6 @@ package bridge
 
 import "time"
 
-// parseErrAction describes what readLoop should do after recording a parse error.
 type parseErrAction int
 
 const (
@@ -22,7 +21,6 @@ const (
 	parseErrMaxConsecutive = 1000
 )
 
-// parseErrTracker holds the burst/summary logging and circuit-breaker state for readLoop.
 type parseErrTracker struct {
 	windowStart time.Time
 	lastErrorAt time.Time
@@ -34,8 +32,8 @@ type parseErrTracker struct {
 // burst. It never touches the breaker: Reset clears that on every valid frame, so a slow total failure still trips.
 const parseErrDecay = 5 * time.Minute
 
-// Record notes a parse error and returns the action readLoop should take.
-func (t *parseErrTracker) Record() parseErrAction {
+// record notes a parse error and returns the action readLoop should take.
+func (t *parseErrTracker) record() parseErrAction {
 	now := time.Now()
 	if !t.lastErrorAt.IsZero() && now.Sub(t.lastErrorAt) > parseErrDecay {
 		t.total = 0
@@ -64,5 +62,5 @@ func (t *parseErrTracker) Record() parseErrAction {
 // Reset clears the consecutive counter on a successful parse.
 func (t *parseErrTracker) Reset() { t.consecutive = 0 }
 
-// SummaryCount returns the errors suppressed since the last summary (total minus the burst).
-func (t *parseErrTracker) SummaryCount() int { return t.total - parseErrBurst }
+// summaryCount returns the errors suppressed since the last summary (total minus the burst).
+func (t *parseErrTracker) summaryCount() int { return t.total - parseErrBurst }

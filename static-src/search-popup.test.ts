@@ -4,14 +4,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createSearchPopup } from "./search-popup.js";
 import type { FindKind } from "./find-registry.js";
 
-function fixture(): HTMLElement {
+function fixture(): void {
   document.body.innerHTML = `
     <button type="button" id="find-btn" aria-pressed="false"></button>
     <div id="host"></div>`;
-  return document.getElementById("host") as HTMLElement;
+  document.getElementById("host") as HTMLElement;
 }
 
 /** A popup over a synchronous query, which is what all three filters are. */
+/** Open, as the page shows it: the toolbar magnifier is pressed exactly while the box is open. */
+function isOpen(): boolean {
+  return document.getElementById("find-btn")?.getAttribute("aria-pressed") === "true";
+}
+
 function build(over: { note?: boolean; kind?: FindKind } = {}) {
   const seen: string[] = [];
   const rendered: string[] = [];
@@ -59,7 +64,7 @@ describe("building", () => {
     document.body.innerHTML = `<button type="button" id="find-btn"></button>`;
     const { popup } = build();
     expect(popup.open()).toBe(false);
-    expect(popup.isOpen()).toBe(false);
+    expect(isOpen()).toBe(false);
   });
 
   it("is hidden before its first open, so it takes no clicks it was never given", () => {
@@ -67,7 +72,7 @@ describe("building", () => {
     // visible to the layout — and this one is a fixed-position box at opacity 0 over the page.
     const { popup } = build();
     popup.close();
-    expect(popup.isOpen()).toBe(false);
+    expect(isOpen()).toBe(false);
   });
 
   it("carries the shared classes rather than a per-page skin", () => {
@@ -126,7 +131,7 @@ describe("closing clears", () => {
     input.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
-    expect(popup.isOpen()).toBe(false);
+    expect(isOpen()).toBe(false);
     expect(input.value).toBe("");
     expect(seen.at(-1)).toBe("");
   });
@@ -137,7 +142,7 @@ describe("closing clears", () => {
     const close = document.querySelector<HTMLButtonElement>('#probe [aria-label="Close filter"]');
     expect(close).not.toBeNull();
     close?.click();
-    expect(popup.isOpen()).toBe(false);
+    expect(isOpen()).toBe(false);
   });
 });
 
@@ -155,9 +160,9 @@ describe("the toolbar magnifier", () => {
   it("toggles rather than only opening", () => {
     const { popup } = build();
     popup.toggle();
-    expect(popup.isOpen()).toBe(true);
+    expect(isOpen()).toBe(true);
     popup.toggle();
-    expect(popup.isOpen()).toBe(false);
+    expect(isOpen()).toBe(false);
   });
 
   it("restores focus to wherever it was", () => {

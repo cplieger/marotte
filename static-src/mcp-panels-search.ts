@@ -38,7 +38,7 @@ const NOUNS: Nouns = {
 };
 
 /** Switches the modal to another panel mode. */
-export type SwitchModeFn = (
+type SwitchModeFn = (
   kind: string,
   slug: string,
   identifier: string,
@@ -72,7 +72,7 @@ let retryBtnUnbind: (() => void) | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let searchBtnUnbind: (() => void) | null = null;
 
-/** The newest query asked for. Dispatches are not scoped, so a slow answer for an abandoned prefix must not render. */
+/** Dispatches are not scoped, so a slow answer for an abandoned prefix must not render. */
 let wantedQuery = "";
 
 registerCleanup(() => {
@@ -355,9 +355,8 @@ export function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
   return row;
 }
 
-/** One install path, split across the row's two halves. */
 interface InstallOption {
-  /** Starts the install. Sits on the row, so it needs no expansion. */
+  /** Sits on the row, so it needs no expansion. */
   btn: HTMLButtonElement;
   /** The identifier and what installing it will ask for. Sits in the body. */
   detail: HTMLDivElement;

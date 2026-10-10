@@ -43,8 +43,7 @@ func writeKASExport(t *testing.T, sid string) string {
 	return p
 }
 
-// exportAnswer scripts a bridge to answer _kiro/session/export from paths by sessionId, recording the asks;
-// an unknown id gets KAS's in-band not-found.
+// An unknown id gets KAS's in-band not-found.
 func exportAnswer(b *fakeBridge, paths map[string]string, asked *[]string, mu *sync.Mutex) {
 	b.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method != marotte.MethodSessionExport {

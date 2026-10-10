@@ -4,7 +4,7 @@
 // source repository a workspace clone tracks, the scope the setting's copy
 // promises (a clone of a fork tracks the pull requests opened from it), so a
 // cycle with nobody present does not read a connection no clone tracks.
-// CloneRepos is the one answer to which repository a clone is; a clone's origin
+// cloneRepos is the one answer to which repository a clone is; a clone's origin
 // must name a connection's web base, so an ssh clone joins nothing.
 
 package forges
@@ -27,11 +27,11 @@ type RepoOrigin struct {
 	Slug    string
 }
 
-// CloneRepos joins each clone to the connection whose web base its origin
+// cloneRepos joins each clone to the connection whose web base its origin
 // names. The repository id is the canonical one of the remote's path on that
 // connection's family, so a mixed-case remote and the forge's own spelling are
 // one repository; a path the family refuses joins nothing. It sends no request.
-func CloneRepos(rows []ConfiguredForge, origins []RepoOrigin) []CloneRepo {
+func cloneRepos(rows []ConfiguredForge, origins []RepoOrigin) []CloneRepo {
 	byOrigin := make(map[string]*ConfiguredForge, len(rows))
 	for i := range rows {
 		byOrigin[originKey(rows[i].webBase)] = &rows[i]
@@ -70,8 +70,6 @@ func originKey(base string) string {
 
 var defaultPorts = map[string]string{"https": "443", "http": "80"}
 
-// managerPRSource reads each connection's scopes through the manager's forgeapi
-// clients.
 type managerPRSource struct {
 	mgr *Manager
 	// origins is injected rather than computed here: which repositories are
@@ -96,7 +94,7 @@ func (s *managerPRSource) Read(ctx context.Context, present bool, after func(PRC
 		return nil
 	}
 	clones := make(map[string][]CloneRepo)
-	for _, c := range CloneRepos(rows, s.origins(ctx)) {
+	for _, c := range cloneRepos(rows, s.origins(ctx)) {
 		clones[c.ForgeID] = append(clones[c.ForgeID], c)
 	}
 	var out []ConnectionRead
@@ -131,7 +129,7 @@ func (s *managerPRSource) read(ctx context.Context, f *ConfiguredForge, r *Conne
 	}
 	for _, sc := range cycleScopes(f, login, present) {
 		if err != nil {
-			r.Pages = append(r.Pages, ScopePage{Scope: sc, Err: err})
+			r.Pages = append(r.Pages, scopePage{Scope: sc, Err: err})
 			continue
 		}
 		r.Pages = append(r.Pages, listScope(ctx, fc.core, sc, after(r.Conn, sc)))
@@ -146,7 +144,6 @@ func (s *managerPRSource) read(ctx context.Context, f *ConfiguredForge, r *Conne
 	r.ReadPR = readerOf(fc.core, r.Family)
 }
 
-// readerOf reads one pull request on core by a row's canonical repository id.
 func readerOf(core forgeapi.Core, family forgeapi.Family) func(context.Context, string, int) (PR, error) {
 	return func(ctx context.Context, repoID string, number int) (PR, error) {
 		ref, err := forgeapi.DecodeRepoRef(repoID, family)
@@ -161,9 +158,8 @@ func readerOf(core forgeapi.Core, family forgeapi.Family) func(context.Context, 
 	}
 }
 
-// cycleScopes are the lists a cycle reads for f, in the order it reads them.
-// GitLab's owner scope takes a group only and refuses the user's own namespace,
-// so its authored rows stand in for the login's.
+// GitLab's owner scope takes a group only and refuses the user's own namespace, so its authored
+// rows stand in for the login's.
 func cycleScopes(f *ConfiguredForge, login string, present bool) []Scope {
 	if !present {
 		return []Scope{authoredScope}
@@ -180,8 +176,8 @@ func cycleScopes(f *ConfiguredForge, login string, present bool) []Scope {
 }
 
 // listScope is one ListMyPRs call for sc from after.
-func listScope(ctx context.Context, core forgeapi.Core, sc Scope, after forgeapi.Cursor) ScopePage {
-	page := ScopePage{Scope: sc}
+func listScope(ctx context.Context, core forgeapi.Core, sc Scope, after forgeapi.Cursor) scopePage {
+	page := scopePage{Scope: sc}
 	opts := []forgeapi.ListOption{forgeapi.WithAfter(after)}
 	if sc.Owner != "" {
 		opts = append(opts, forgeapi.WithOwner(sc.Owner))

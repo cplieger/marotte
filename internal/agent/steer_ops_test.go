@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -42,7 +43,6 @@ func clearedMsg(ids ...string) *marotte.RPCResponse {
 	return newSessionInfoMsg(map[string]any{"kind": "steering_cleared", "messageIds": ids})
 }
 
-// steerOpsHub is a runtime whose chat c1 has a live bridge the steer commands reach.
 func steerOpsHub(t *testing.T) (*steerHarness, *testChatStore, *fakeBridge) {
 	t.Helper()
 	h, cs, br := newTestHub()
@@ -56,28 +56,6 @@ func steerOpsHub(t *testing.T) (*steerHarness, *testChatStore, *fakeBridge) {
 func clearReply(ids []string) json.RawMessage {
 	raw, _ := json.Marshal(map[string]any{"cleared": true, "messageIds": ids})
 	return raw
-}
-
-// awaitLockWaiters polls until n holders and waiters share the chat's steer lock.
-func awaitLockWaiters(t *testing.T, q steerQueue, n int) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		q.locks.mu.Lock()
-		l := q.locks.m["c1"]
-		refs := 0
-		if l != nil {
-			refs = l.refs
-		}
-		q.locks.mu.Unlock()
-		if refs >= n {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("steer lock refs = %d, want %d", refs, n)
-		}
-		time.Sleep(time.Millisecond)
-	}
 }
 
 // A read emitted before the clear's reply that never folds leaves the clear unsettled: nothing is deleted,
@@ -107,7 +85,7 @@ func TestCmdSteerRemove_AReadThatCannotFoldBeforeTheBarrierDeletesNothing(t *tes
 		t.Errorf("the target got entry %+v before its read folded", n)
 	}
 	s.mustState("steer-a", rowQueued)
-	s.h.translateACPEvent("c1", injectedMsg("steer-a", "first"))
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), injectedMsg("steer-a", "first"))
 	if _, live := s.state("steer-a"); live {
 		t.Error("the stranded read, once folded, did not retire the row")
 	}
@@ -116,87 +94,93 @@ func TestCmdSteerRemove_AReadThatCannotFoldBeforeTheBarrierDeletesNothing(t *tes
 // Two deletes take the lock in turn; the second re-reads, finds its target in the first's probe, clears again
 // and resends the rest under a fresh probe.
 func TestCmdSteerRemove_TwoDeletesInFlightTakeTurns(t *testing.T) {
-	s, _, br := steerOpsHub(t)
-	s.bind()
-	s.steer("steer-a", "a")
-	s.steer("steer-b", "b")
-	s.steer("steer-c", "c")
-	gate := make(chan struct{})
-	br.blockOn = map[string]chan struct{}{marotte.MethodSessionSteerClear: gate}
-	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
-		if method != marotte.MethodSessionSteerClear {
-			return nil, nil, false
+	synctest.Test(t, func(t *testing.T) {
+		s, _, br := steerOpsHub(t)
+		s.bind()
+		s.steer("steer-a", "a")
+		s.steer("steer-b", "b")
+		s.steer("steer-c", "c")
+		gate := make(chan struct{})
+		br.blockOn = map[string]chan struct{}{marotte.MethodSessionSteerClear: gate}
+		br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+			if method != marotte.MethodSessionSteerClear {
+				return nil, nil, false
+			}
+			return clearReply(s.kasHolds()), nil, true
 		}
-		return clearReply(s.kasHolds()), nil, true
-	}
 
-	type answer struct {
-		body []byte
-		code int
-	}
-	answers := make([]answer, 2)
-	var wg sync.WaitGroup
-	for i, key := range []string{"steer-a", "steer-b"} {
-		wg.Go(func() {
-			rec := postCmd(t, s.h, removeCmd(key))
-			answers[i] = answer{code: rec.Code, body: rec.Body.Bytes()}
-		})
-		if i == 0 {
-			waitForCall(t, br, marotte.MethodSessionSteerClear)
+		type answer struct {
+			body []byte
+			code int
 		}
-	}
-	awaitLockWaiters(t, s.h.steerQueue, 2)
-	close(gate)
-	wg.Wait()
+		answers := make([]answer, 2)
+		var wg sync.WaitGroup
+		for i, key := range []string{"steer-a", "steer-b"} {
+			wg.Go(func() {
+				rec := postCmd(t, s.h, removeCmd(key))
+				answers[i] = answer{code: rec.Code, body: rec.Body.Bytes()}
+			})
+			if i == 0 {
+				waitForCall(t, br, marotte.MethodSessionSteerClear)
+			}
+		}
+		// Every other goroutine is durably blocked: the second delete is parked on the steer lock.
+		synctest.Wait()
+		close(gate)
+		wg.Wait()
 
-	for i, key := range []string{"steer-a", "steer-b"} {
-		if got := removedBody(t, answers[i].code, answers[i].body); got["deleted"] != key {
-			t.Errorf("delete %s = %v, want deleted with its kept rows resent", key, got)
+		for i, key := range []string{"steer-a", "steer-b"} {
+			if got := removedBody(t, answers[i].code, answers[i].body); got["deleted"] != key {
+				t.Errorf("delete %s = %v, want deleted with its kept rows resent", key, got)
+			}
+			if n := s.spy.note(key); n == nil || n.Reason != marotte.SteerReasonDeleted {
+				t.Errorf("entry %s = %+v, want deleted", key, n)
+			}
 		}
-		if n := s.spy.note(key); n == nil || n.Reason != marotte.SteerReasonDeleted {
-			t.Errorf("entry %s = %+v, want deleted", key, n)
+		want := []string{marotte.MethodSessionSteerClear, marotte.MethodSessionSteer, marotte.MethodSessionSteerClear, marotte.MethodSessionSteer}
+		var got []string
+		for _, m := range br.callLog() {
+			if m == marotte.MethodSessionSteerClear || m == marotte.MethodSessionSteer {
+				got = append(got, m)
+			}
 		}
-	}
-	want := []string{marotte.MethodSessionSteerClear, marotte.MethodSessionSteer, marotte.MethodSessionSteerClear, marotte.MethodSessionSteer}
-	var got []string
-	for _, m := range br.callLog() {
-		if m == marotte.MethodSessionSteerClear || m == marotte.MethodSessionSteer {
-			got = append(got, m)
+		if !slices.Equal(got, want) {
+			t.Errorf("wire = %v, want each delete's clear and resubmit in turn", got)
 		}
-	}
-	if !slices.Equal(got, want) {
-		t.Errorf("wire = %v, want each delete's clear and resubmit in turn", got)
-	}
-	s.mustState("steer-c", rowOutstanding)
-	if msg := br.paramsFor(marotte.MethodSessionSteer)["message"]; msg != "c" {
-		t.Errorf("the second probe carries %q, want c alone", msg)
-	}
+		s.mustState("steer-c", rowOutstanding)
+		if msg := br.paramsFor(marotte.MethodSessionSteer)["message"]; msg != "c" {
+			t.Errorf("the second probe carries %q, want c alone", msg)
+		}
+	})
 }
 
 // The same row deleted twice at once: the second finds nothing waiting.
 func TestCmdSteerRemove_TheSameRowTwiceAnswersNotWaiting(t *testing.T) {
-	s, _, br := steerOpsHub(t)
-	s.bind()
-	s.steer("steer-a", "a")
-	gate := make(chan struct{})
-	br.blockOn = map[string]chan struct{}{marotte.MethodSessionSteerClear: gate}
+	synctest.Test(t, func(t *testing.T) {
+		s, _, br := steerOpsHub(t)
+		s.bind()
+		s.steer("steer-a", "a")
+		gate := make(chan struct{})
+		br.blockOn = map[string]chan struct{}{marotte.MethodSessionSteerClear: gate}
 
-	codes := make([]int, 2)
-	var wg sync.WaitGroup
-	for i := range 2 {
-		wg.Go(func() { codes[i] = postCmd(t, s.h, removeCmd("steer-a")).Code })
-		if i == 0 {
-			waitForCall(t, br, marotte.MethodSessionSteerClear)
+		codes := make([]int, 2)
+		var wg sync.WaitGroup
+		for i := range 2 {
+			wg.Go(func() { codes[i] = postCmd(t, s.h, removeCmd("steer-a")).Code })
+			if i == 0 {
+				waitForCall(t, br, marotte.MethodSessionSteerClear)
+			}
 		}
-	}
-	awaitLockWaiters(t, s.h.steerQueue, 2)
-	close(gate)
-	wg.Wait()
+		// Every other goroutine is durably blocked: the second delete is parked on the steer lock.
+		synctest.Wait()
+		close(gate)
+		wg.Wait()
 
-	slices.Sort(codes)
-	if !slices.Equal(codes, []int{http.StatusOK, http.StatusNotFound}) {
-		t.Errorf("codes = %v, want one delete and one not_waiting", codes)
-	}
+		slices.Sort(codes)
+		if !slices.Equal(codes, []int{http.StatusOK, http.StatusNotFound}) {
+			t.Errorf("codes = %v, want one delete and one not_waiting", codes)
+		}
+	})
 }
 
 // failingClear is a bridge whose clear fails after a hook runs, the shape a clear
@@ -235,7 +219,7 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 			s.h.bridge.mgr.remove("c1")
 			s.h.bridge.mgr.insert("c1", &sharedBridge{bridge: failingClear{fakeBridge: br, before: func() {
 				once.Do(func() {
-					s.recs.TurnEnded("c1", command.SteerTurnEnd{
+					s.recs.turnEnded("c1", command.SteerTurnEnd{
 						TurnID: s.turnID(), BridgeDeath: true, Exit: deathExit, Source: marotte.TurnSourcePrompt,
 					})
 				})
@@ -277,22 +261,21 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 func wireEndUnderTheClear(stop string) func(t *testing.T, s *steerHarness, br *fakeBridge) {
 	return func(t *testing.T, s *steerHarness, br *fakeBridge) {
 		id, _ := s.h.stagePromptTurn(t, "c1")
-		s.h.translateACPEvent("c1", newTurnStartMsg())
+		s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
 		s.steer("steer-a", "a")
 		s.steer("steer-b", "b")
 		br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 			if method != marotte.MethodSessionSteerClear {
 				return nil, nil, false
 			}
-			s.h.translateACPEvent("c1", clearedMsg("steer-a", "steer-b"))
-			s.h.translateACPEvent("c1", newTurnEndMsg(stop))
+			s.h.translateACPEvent("c1", s.h.originOf("c1"), clearedMsg("steer-a", "steer-b"))
+			s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg(stop))
 			s.h.coord.ReleaseTurn("c1", id)
 			return clearReply(nil), nil, true
 		}
 	}
 }
 
-// resendPrompt polls the log for the resend's turn_open, the one carrying resends.
 func resendPrompt(t *testing.T, cs *testChatStore) *marotte.EntryPrompt {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -322,7 +305,7 @@ func TestCmdCancel_TheSendNowRowOpensTheNextTurnWithNoNotReadNote(t *testing.T) 
 		s.h.coord.recordSteer(ctx, chatID, id, steer)
 	}
 	id, _ := s.h.stagePromptTurn(t, "c1")
-	s.h.translateACPEvent("c1", newTurnStartMsg())
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")
 
@@ -333,8 +316,8 @@ func TestCmdCancel_TheSendNowRowOpensTheNextTurnWithNoNotReadNote(t *testing.T) 
 	if len(br.notified(marotte.MethodCancel)) == 0 {
 		t.Fatal("no session/cancel reached the bridge")
 	}
-	s.h.translateACPEvent("c1", clearedMsg("steer-a", "steer-b"))
-	s.h.translateACPEvent("c1", newTurnEndMsg("cancelled"))
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), clearedMsg("steer-a", "steer-b"))
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("cancelled"))
 	s.h.coord.ReleaseTurn("c1", id)
 
 	if p := resendPrompt(t, cs); p == nil || p.Text != "second\n\nfirst" || !slices.Equal(p.Resends, []string{"steer-b", "steer-a"}) {
@@ -359,7 +342,7 @@ func TestCmdCancel_TheSendNowRowOpensTheNextTurnWithNoNotReadNote(t *testing.T) 
 func TestSteerRead_ACombinedResendReadAfterTheLedgerForgotItNamesItsRows(t *testing.T) {
 	s, cs, br := steerOpsHub(t)
 	s.h.stagePromptTurn(t, "c1")
-	s.h.translateACPEvent("c1", newTurnStartMsg())
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
 	s.steer("steer-a", "a")
 	s.steer("steer-b", "b")
 	s.steer("steer-c", "c")
@@ -380,7 +363,7 @@ func TestSteerRead_ACombinedResendReadAfterTheLedgerForgotItNamesItsRows(t *test
 	// ForgetChat stands in for the TTL lapse: the ledger answers nothing about the probe.
 	s.h.steerLedger.ForgetChat("c1")
 
-	s.h.translateACPEvent("c1", injectedMsg(probe, "a\n\nc"))
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), injectedMsg(probe, "a\n\nc"))
 
 	read := steerEntries(t, cs, "c1")[probe]
 	if len(read) != 1 || !slices.Equal(read[0].Resends, []string{"steer-a", "steer-c"}) {
@@ -392,7 +375,7 @@ func TestSteerRead_ACombinedResendReadAfterTheLedgerForgotItNamesItsRows(t *test
 		steerRow("steer-c", marotte.EntrySteer{Text: "c", Origin: marotte.SteerOriginUser}),
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
-	merged, _ := MergeEntries(RecordTurnsOf(logOf(t, cs, "c1"), nil), projected, "sid-1")
+	merged, _ := mergeEntries(recordTurnsOf(logOf(t, cs, "c1"), nil), projected, "sid-1")
 	for _, turn := range merged {
 		for _, e := range turn.Entries {
 			if e.ID == "steer-a" || e.ID == "steer-c" {
@@ -410,7 +393,7 @@ func TestSteerRecords_ABridgeDeathCollectsOutstandingAndWaitingRows(t *testing.T
 	s.q.RouteSteer(s.chat, "steer-c", "c", promptHolder)
 	s.mustState("steer-c", rowWaiting)
 
-	s.recs.TurnEnded(s.chat, command.SteerTurnEnd{TurnID: s.turnID(), BridgeDeath: true, Source: marotte.TurnSourcePrompt})
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{TurnID: s.turnID(), BridgeDeath: true, Source: marotte.TurnSourcePrompt})
 
 	ends := s.q.Ends(s.chat)
 	if len(ends) != 1 || !ends[0].End.BridgeDeath {
@@ -420,8 +403,8 @@ func TestSteerRecords_ABridgeDeathCollectsOutstandingAndWaitingRows(t *testing.T
 	if len(rows) != 2 || rows[0].Key != "steer-b" || !rows[0].InKAS || rows[1].Key != "steer-c" || rows[1].InKAS {
 		t.Errorf("end rows = %+v, want steer-b in KAS then steer-c not", rows)
 	}
-	if s.channel() != chanNone || !s.recs.NeedsPostLoadClear(s.chat) {
-		t.Errorf("channel = %d post-load %v, want NONE owing the clear", s.channel(), s.recs.NeedsPostLoadClear(s.chat))
+	if s.channel() != chanNone || !s.recs.needsPostLoadClear(s.chat) {
+		t.Errorf("channel = %d post-load %v, want NONE owing the clear", s.channel(), s.recs.needsPostLoadClear(s.chat))
 	}
 }
 
@@ -460,7 +443,7 @@ func TestSteerRecords_AnEndResolvedAfterTeardownFindsTheChatGone(t *testing.T) {
 	s.endTurn()
 	ends := s.q.Ends(s.chat)
 
-	s.recs.BeginTeardown(s.chat, nil)
+	s.recs.beginTeardown(s.chat, nil)
 
 	if rows, gone := s.q.JobRows(s.chat, ends[0].Owner); !gone || len(rows) != 0 {
 		t.Errorf("JobRows after teardown = %+v gone %v, want gone", rows, gone)
@@ -490,7 +473,7 @@ func TestPromptDrain_ADeadBuffersRowWaitsForThePostLoadClear(t *testing.T) {
 			s := harnessOn(h, "c1", t.Fatalf)
 			br.callResults = map[string]json.RawMessage{marotte.MethodSessionSteer: json.RawMessage(`{"queued":true}`)}
 			s.steer("steer-a", "first")
-			s.recs.BridgeGone("c1")
+			s.recs.bridgeGone("c1")
 			tc.setup(s, br)
 
 			postCmd(t, h, marotte.ClientCommand{
@@ -520,65 +503,68 @@ func TestPromptDrain_ADeadBuffersRowWaitsForThePostLoadClear(t *testing.T) {
 // A turn StartTurn began during a NONE-state delete cannot read the buffer until the delete ends; from
 // StartTurn on, a new delete is refused, read under the same lock.
 func TestCmdSteerRemove_ATurnStartingUnderADeleteWaitsAndLaterDeletesAreRefused(t *testing.T) {
-	s, _, br := steerOpsHub(t)
-	for _, key := range []string{"steer-a", "steer-b"} {
-		sends, _ := s.q.RouteSteer("c1", key, key, promptHolder)
-		s.kas(sends)
-	}
-	gate := make(chan struct{})
-	br.blockOn = map[string]chan struct{}{marotte.MethodSessionSteerClear: gate}
-	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
-		if method != marotte.MethodSessionSteerClear {
-			return nil, nil, false
+	synctest.Test(t, func(t *testing.T) {
+		s, _, br := steerOpsHub(t)
+		for _, key := range []string{"steer-a", "steer-b"} {
+			sends, _ := s.q.RouteSteer("c1", key, key, promptHolder)
+			s.kas(sends)
 		}
-		return clearReply([]string{"steer-a", "steer-b"}), nil, true
-	}
-	var wg sync.WaitGroup
-	var code int
-	var body []byte
-	wg.Go(func() {
-		rec := postCmd(t, s.h, removeCmd("steer-a"))
-		code, body = rec.Code, rec.Body.Bytes()
+		gate := make(chan struct{})
+		br.blockOn = map[string]chan struct{}{marotte.MethodSessionSteerClear: gate}
+		br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+			if method != marotte.MethodSessionSteerClear {
+				return nil, nil, false
+			}
+			return clearReply([]string{"steer-a", "steer-b"}), nil, true
+		}
+		var wg sync.WaitGroup
+		var code int
+		var body []byte
+		wg.Go(func() {
+			rec := postCmd(t, s.h, removeCmd("steer-a"))
+			code, body = rec.Code, rec.Body.Bytes()
+		})
+		waitForCall(t, br, marotte.MethodSessionSteerClear)
+
+		postCmd(t, s.h, marotte.ClientCommand{
+			Type: marotte.CmdPrompt, ChatID: "c1",
+			Payload: json.RawMessage(`{"text":"next","message_id":"m-1"}`),
+		})
+		// Every other goroutine is durably blocked: the second delete is parked on the steer lock.
+		synctest.Wait()
+
+		if slices.Contains(br.callLog(), marotte.MethodPrompt) {
+			t.Fatal("the prompt reached KAS while the delete's clear was in flight")
+		}
+		late, _ := s.q.RouteSteer("c1", "steer-c", "c", promptHolder)
+		s.kas(late)
+		if _, refuse := s.q.BeginRemove("c1", "steer-c", "op-late"); refuse != command.SteerRefuseStarting {
+			t.Errorf("a delete after StartTurn = %q, want starting", refuse)
+		}
+
+		close(gate)
+		wg.Wait()
+		waitForCall(t, br, marotte.MethodPrompt)
+
+		if got := removedBody(t, code, body); got["deleted"] != "steer-a" {
+			t.Errorf("the in-flight delete = %v, want steer-a deleted", got)
+		}
+		// Up to the prompt only.
+		var order []string
+		for _, m := range br.callLog() {
+			switch m {
+			case marotte.MethodSessionSteerClear, marotte.MethodSessionSteer, marotte.MethodPrompt:
+				order = append(order, m)
+			}
+			if m == marotte.MethodPrompt {
+				break
+			}
+		}
+		want := []string{marotte.MethodSessionSteerClear, marotte.MethodSessionSteer, marotte.MethodPrompt}
+		if !slices.Equal(order, want) {
+			t.Errorf("wire = %v, want the delete's clear and resubmit before the prompt", order)
+		}
 	})
-	waitForCall(t, br, marotte.MethodSessionSteerClear)
-
-	postCmd(t, s.h, marotte.ClientCommand{
-		Type: marotte.CmdPrompt, ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"next","message_id":"m-1"}`),
-	})
-	awaitLockWaiters(t, s.h.steerQueue, 2)
-
-	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
-		t.Fatal("the prompt reached KAS while the delete's clear was in flight")
-	}
-	late, _ := s.q.RouteSteer("c1", "steer-c", "c", promptHolder)
-	s.kas(late)
-	if _, refuse := s.q.BeginRemove("c1", "steer-c", "op-late"); refuse != command.SteerRefuseStarting {
-		t.Errorf("a delete after StartTurn = %q, want starting", refuse)
-	}
-
-	close(gate)
-	wg.Wait()
-	waitForCall(t, br, marotte.MethodPrompt)
-
-	if got := removedBody(t, code, body); got["deleted"] != "steer-a" {
-		t.Errorf("the in-flight delete = %v, want steer-a deleted", got)
-	}
-	// Up to the prompt only.
-	var order []string
-	for _, m := range br.callLog() {
-		switch m {
-		case marotte.MethodSessionSteerClear, marotte.MethodSessionSteer, marotte.MethodPrompt:
-			order = append(order, m)
-		}
-		if m == marotte.MethodPrompt {
-			break
-		}
-	}
-	want := []string{marotte.MethodSessionSteerClear, marotte.MethodSessionSteer, marotte.MethodPrompt}
-	if !slices.Equal(order, want) {
-		t.Errorf("wire = %v, want the delete's clear and resubmit before the prompt", order)
-	}
 }
 
 // A resubmit failing after the clear still answers deleted; every kept row stays outstanding under the probe KAS may hold.
@@ -615,7 +601,7 @@ func TestCmdSteerRemove_AFailedResubmitKeepsEveryKeptRowInCustody(t *testing.T) 
 		}
 	}
 	var listed []string
-	for _, e := range s.recs.List("c1") {
+	for _, e := range s.recs.list("c1") {
 		if p := e.Payload.(marotte.SteerQueuedPayload); len(p.Replaces) == 0 {
 			listed = append(listed, p.SteerID)
 		}

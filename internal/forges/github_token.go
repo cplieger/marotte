@@ -51,7 +51,7 @@ func dotcomGitHub(recs []connectionRecord) *connectionRecord {
 	for i := range recs {
 		r := &recs[i]
 		api := strings.TrimSuffix(r.APIBaseURL, "/")
-		if r.Kind == KindGitHub && strings.EqualFold(r.Host, KindGitHub.DefaultHost()) &&
+		if r.Kind == KindGitHub && strings.EqualFold(r.Host, KindGitHub.defaultHost()) &&
 			(api == "" || strings.EqualFold(api, dotcomAPIBase)) {
 			return r
 		}

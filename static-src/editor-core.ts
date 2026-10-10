@@ -1,123 +1,81 @@
 // ---------------------------------------------------------------------------
-// Editor core: init, mode switches, plan handoff.
-// Types, state, and pure predicates live in editor-types.ts.
-// Openers live in editor-openers.ts; UI helpers in editor-ui.ts.
-//
-// Extracted modules:
-//   editor-types.ts    — shared types, state container, predicates
-//   editor-modes.ts    — restoreUI dispatcher
-//   editor-conflict.ts — conflict-mode rendering and AI merge suggestions
-//   editor-diff.ts     — diff source helpers
-//   editor-ui.ts       — rendering helpers (gutter, highlight, mode UI)
-//   editor-openers.ts  — file open, load, and fetch logic
+// Editor core: init, mode switches, save. Types and state live in editor-types.ts, openers in
+// editor-openers.ts, rendering in editor-ui.ts and the windowed renderer in viewer-render.ts.
 // ---------------------------------------------------------------------------
 
-import { effect } from "@cplieger/reactive";
+import { effect, el } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { parseConflicts } from "./conflict.js";
-import { saveFile as saveFileAction } from "./actions/editor.js";
+import { saveFile as saveFileAction, type SaveOutcome } from "./actions/editor.js";
 import { isPending, registerCleanup } from "./actions/index.js";
 import { renderConflictOverlay } from "./editor-conflict.js";
-import { showEditMode, updateGutter, renderReadSurface, renderEditModeUI } from "./editor-ui.js";
+import { getAgentLines, identifiedDownloadURL } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
-import { trackEditorView } from "./editor-scroll.js";
-import { fetchGitDiffSources, openFileGitDiff } from "./editor-openers.js";
+import { restoreEditorView, trackEditorView } from "./editor-scroll.js";
+import { activateFile, openFileGitDiff, startGitDiffLoad } from "./editor-openers.js";
 import {
+  baselineHeld,
+  commitBaseline,
+  enterView,
   fileStates,
   getActiveFilePath,
   activeDirty,
-  unsavedDiffSource,
+  bufferDiffSource,
   gitDiffSource,
+  isShown,
+  recordFor,
 } from "./editor-types.js";
-import type { FileState } from "./editor-types.js";
+import { staleDiskText } from "./file-identity.js";
+import type { FileMode, FileState } from "./editor-types.js";
+import { rulesFor } from "./viewer-rules.js";
 import { markGitDirty } from "./git.js";
 import { onWorkspaceRoot, relToWorkspace } from "./workspace.js";
 import { isPreviewablePage } from "./preview-page.js";
 import { openWebPreview } from "./web-open.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_GIT_COMMIT, ICON_TAB_WEB } from "./icons.js";
-import { isViewableImage } from "./file-extensions.js";
+import { ICON_DOWNLOAD, ICON_GIT_COMMIT, ICON_TAB_WEB } from "./icons.js";
 import { onGitStatusChange, statusForPath } from "./git-status-store.js";
-
-// --- Re-exports for backward compatibility ---
-// Consumers that import from editor-core.ts continue to work.
-
-export { routeForPath } from "./editor-types.js";
+import { isViewableImage } from "./file-extensions.js";
+import { normalize, serialize } from "./viewer-eol.js";
+import { editSurface } from "./editor-pane.js";
+import { countLines } from "./viewer-rows.js";
+import { initLive, liveHold, liveSaved } from "./viewer-live.js";
+import { initViewerCopy } from "./viewer-copy.js";
+import { initGoto } from "./editor-goto.js";
+import type { FileRefusal } from "./wire/types.gen.js";
 
 export function initEditor(): void {
   $.editorEditBtn.addEventListener("click", startEditing);
   $.editorCancelBtn.addEventListener("click", confirmStopEditing);
   $.editorSaveBtn.addEventListener("click", saveFile);
   $.editorDiffBtn.addEventListener("click", toggleDiffMode);
-  // No pending accept/reject/partial/discuss buttons, and no bus listeners
-  // closing pending tabs: the whole staged-write review surface is gone. KAS
-  // reviews a turn at once, so there is no per-file verdict to give from the
-  // editor and no `pending:` tab to close when one lands.
-  let conflictReparseQueued = false;
-  $.editorContent.addEventListener("input", () => {
-    const state = fileStates.get(getActiveFilePath());
-    if (state === undefined) {
-      return;
-    }
-    state.current.value = $.editorContent.value;
-    updateGutter(state.current.value);
-    if (state.mode.value.kind === "conflict" && !conflictReparseQueued) {
-      // Debounce the O(lines) re-parse + overlay rebuild to one animation
-      // frame: running it synchronously on EVERY keystroke janked typing
-      // in large conflicted files on slow devices. The frame callback
-      // re-resolves the active state (tab may have switched meanwhile).
-      conflictReparseQueued = true;
-      requestAnimationFrame(() => {
-        conflictReparseQueued = false;
-        const st = fileStates.get(getActiveFilePath());
-        if (st?.mode.value.kind !== "conflict") {
-          return;
-        }
-        st.mode.value = {
-          kind: "conflict",
-          conflict: parseConflicts(st.current.value),
-          editing: true,
-        };
-        renderConflictOverlay(st);
-      });
-    }
-  });
-  $.editorContent.addEventListener("scroll", () => {
-    $.editorGutter.scrollTop = $.editorContent.scrollTop;
-  });
+  $.editorDownloadBtn.replaceChildren(iconEl(ICON_DOWNLOAD));
+  $.editorDownloadBtn.addEventListener("click", downloadActive);
+  $.editorError.addEventListener("click", onSaveWay);
+  wireTextarea();
   trackEditorView();
+  initLive();
+  initViewerCopy();
+  initGoto();
 
-  // Sole owner of the save button's disabled state: disabled when the
-  // active file is clean OR a save is in flight; enabled exactly when the
-  // active file is dirty and no save is running. `activeDirty` re-tracks on
-  // edits and tab switches; `isPending` is signal-backed, so this one effect
-  // replaces the former bindLoadingState(save_file) plus every scattered
-  // imperative `disabled = current === original` write.
+  // Sole owner of the save button's disabled state.
   effect(() => {
-    $.editorSaveBtn.disabled = !activeDirty.value || isPending("editor.save_file");
+    $.editorSaveBtn.disabled =
+      !activeDirty.value ||
+      isPending("editor.save_file") ||
+      fileStates.get(getActiveFilePath())?.alert.value?.kind === "refused";
   });
 
-  // The glyph is injected rather than drawn in static/index.html, because a
-  // concept with an icons.ts entry may not be redrawn there. One drawing, so
-  // drift is unrepresentable and menu-icons.test.ts needs no pair for it.
+  // The glyph is injected rather than drawn in static/index.html, because a concept with an
+  // icons.ts entry may not be redrawn there.
   $.editorGitDiffBtn.replaceChildren(iconEl(ICON_GIT_COMMIT));
   $.editorGitDiffBtn.addEventListener("click", toggleGitDiffMode);
 
-  // Sole owner of the git-diff button's visibility and its toggle attributes.
-  // TWO triggers because it has two kinds of input: this effect for the active
-  // path, that file's error and its mode (all three signals), and the imperative
-  // git-status subscription armed below for a letter arriving after the file is
-  // open.
-  // `statusForPath` reads a plain Map, so it is deliberately NOT tracked here —
-  // which is exactly why the second trigger has to exist.
+  // Sole owner of the git-diff button's visibility and its toggle attributes. Two triggers: this
+  // effect for the active path, error and mode signals, and the git-status subscription armed
+  // below for a letter arriving after the file is open (statusForPath reads a plain Map).
   effect(() => {
-    // Arming HERE rather than from `activateFile` is the one departure from the
-    // brief, and it is forced by direction: the writer belongs in this module
-    // (one writer) and `editor-openers.ts` importing it back would close a
-    // cycle. The trigger is the same — `activateFile` is what sets the active
-    // path — so the store's first-subscriber walk of every worktree is still
-    // paid on the first file activation and never at boot.
     if (getActiveFilePath() !== "") {
       armGitStatusWatch();
     }
@@ -134,19 +92,79 @@ export function initEditor(): void {
   registerCleanup(onWorkspaceRoot(paintPreviewBtn));
 }
 
-function paintPreviewBtn(): void {
-  $.editorPreviewBtn.classList.toggle("hidden", !isPreviewablePage(previewPath()));
+/** Shadow every native edit for the line-ending record and hold live refresh around it: on a
+ *  mutating `beforeinput` and through an IME composition, before the buffer turns dirty. */
+function wireTextarea(): void {
+  const area = $.editorContent;
+  let conflictReparseQueued = false;
+  // Each release is bound to the record its hold began on (liveHold), never to the path on screen
+  // when the matching end event arrives.
+  let releaseTyping = (): void => undefined;
+  let releaseComposing = (): void => undefined;
+  area.addEventListener("beforeinput", (e) => {
+    const state = fileStates.get(getActiveFilePath());
+    if (state === undefined) {
+      return;
+    }
+    state.eol?.tracker.noteBeforeInput(area.selectionStart, area.selectionEnd, e.inputType);
+    releaseTyping();
+    releaseTyping = liveHold(state, "typing");
+  });
+  area.addEventListener("compositionstart", () => {
+    const state = fileStates.get(getActiveFilePath());
+    releaseComposing();
+    releaseComposing = state === undefined ? () => undefined : liveHold(state, "composing");
+  });
+  const endComposition = (): void => {
+    releaseComposing();
+    releaseComposing = () => undefined;
+  };
+  area.addEventListener("compositionend", endComposition);
+  // Some IMEs drop compositionend when the field loses focus mid-candidate.
+  area.addEventListener("blur", endComposition);
+  area.addEventListener("input", () => {
+    const state = fileStates.get(getActiveFilePath());
+    if (state === undefined) {
+      return;
+    }
+    state.eol?.tracker.noteInput(area.value);
+    state.current.value = area.value;
+    releaseTyping();
+    releaseTyping = () => undefined;
+    editSurface().setLines(countLines(area.value), getAgentLines(state.path));
+    if (state.mode.value.kind === "conflict" && !conflictReparseQueued) {
+      // One re-parse per frame: a synchronous one per keystroke janked typing in large conflicts.
+      conflictReparseQueued = true;
+      requestAnimationFrame(() => {
+        conflictReparseQueued = false;
+        const st = fileStates.get(getActiveFilePath());
+        if (st?.mode.value.kind !== "conflict") {
+          return;
+        }
+        st.mode.value = {
+          kind: "conflict",
+          conflict: parseConflicts(st.current.value),
+          editing: true,
+        };
+        renderConflictOverlay(st);
+      });
+    }
+  });
 }
 
-/** The server's ServeMux collapses `/file//workspace/x` to `/file/workspace/x` on a
- *  cold load, so an editor path can lack its leading slash; `/api/file` reads it
- *  from the root, and so does this. */
+function paintPreviewBtn(): void {
+  const state = fileStates.get(getActiveFilePath());
+  const large = state?.mode.value.kind === "large";
+  $.editorPreviewBtn.classList.toggle("hidden", large || !isPreviewablePage(previewPath()));
+}
+
+/** The server's ServeMux collapses `/file//workspace/x` to `/file/workspace/x` on a cold load, so
+ *  an editor path can lack its leading slash. */
 function previewPath(): string {
   const path = getActiveFilePath();
   return path === "" || path.startsWith("/") ? path : `/${path}`;
 }
 
-/** Whether the git-status store is being watched for this surface yet. */
 let gitStatusWatched = false;
 
 function armGitStatusWatch(): void {
@@ -157,50 +175,24 @@ function armGitStatusWatch(): void {
   registerCleanup(onGitStatusChange(paintGitDiffBtn));
 }
 
-/** Paint #editor-git-diff-btn. The ONE writer — see the effect above.
- *
- *  Shown when the active file is a text file with no error, being READ or in a
- *  git diff, and differing from the ref. The last clause carries an OR: once the
- *  reader is looking at the diff the control must not vanish if the file gets
- *  committed underneath them, because it is also the way out.
- *
- *  Two clauses that are deliberately NOT here. `state.loaded` is absent because
- *  this control fetches both of its own sides (`openFileGitDiff` routes into
- *  `fetchGitDiffSources`), so it is complete before the buffer arrives and
- *  withholding it during the read would withdraw a working affordance; the
- *  window is bounded by one `/api/file` round trip and a failed one lands on the
- *  error clause above. And `statusForPath` is read here rather than tracked
- *  because it is a plain Map — which is exactly why the second, imperative
- *  trigger exists. */
+/** Paint #editor-git-diff-btn: shown for a text file with no error, read or in a git diff, and
+ *  differing from the ref (or already in the diff, since it is also the way out). */
 function paintGitDiffBtn(): void {
   const btn = $.editorGitDiffBtn;
   const path = getActiveFilePath();
   const state = path === "" ? undefined : fileStates.get(path);
   const m = state?.mode.value;
-  const inGitDiff = m?.kind === "diff" && m.diffSource.fromGit;
-  // `state.error !== ""` is what hides it for a BINARY file, and that is
-  // verified rather than assumed: /api/file answers 415 for one, apiGet
-  // collapses every non-2xx to null, and `loadFile`'s null branch sets the
-  // error. So a git-dirty .zip reaches the error state and needs no clause of
-  // its own here. An image never loads at all, hence the extension test.
+  const inGitDiff = m?.kind === "diff" && m.diffSource.kind === "git";
+  const readingText = (m?.kind === "text" && !m.editing) || m?.kind === "markdown";
+  // The extension clause covers an image opened straight into a git diff, before its view is set.
   const show =
-    // `state?.error.value === ""` carries the existence check too: an absent
-    // state yields undefined, which is not "".
     state?.error.value === "" &&
     !isViewableImage(path) &&
-    // `!m.editing` puts this control in the set `startEditing` withdraws. Edit
-    // mode is left through Cancel, which confirms a discard, or through Save; a
-    // third sideways exit replaces the textarea with a two-pane diff on one
-    // click, which reads as losing the edit even though the buffer survives
-    // (`open` captures it into `current` and `startEditing` restores it).
-    ((m?.kind === "edit" && !m.editing) || inGitDiff) &&
+    (readingText || inGitDiff) &&
     (statusForPath(path) !== "" || inGitDiff);
   btn.classList.toggle("hidden", !show);
   btn.setAttribute("aria-pressed", inGitDiff ? "true" : "false");
-  // The accessible NAME is stable across both states and the state travels on
-  // aria-pressed alone; the tooltip is the one surface with no state channel
-  // beside it, so it carries state plus action. Written unconditionally so this
-  // effect owns the attribute and nothing else can flip it.
+  // The accessible NAME is stable across both states and the state travels on aria-pressed alone.
   btn.setAttribute("aria-label", "View diff vs HEAD");
   btn.setAttribute(
     "data-tooltip",
@@ -208,21 +200,38 @@ function paintGitDiffBtn(): void {
   );
 }
 
-/** Enter or leave the diff against HEAD. A different question from
- *  `toggleDiffMode`'s buffer-vs-saved, so it is a different control — but the
- *  EXIT is the same path, so the two cannot diverge. */
+/** Enter or leave the diff against HEAD; the exit is the same path as toggleDiffMode's. */
 function toggleGitDiffMode(): void {
   const state = fileStates.get(getActiveFilePath());
   if (state === undefined) {
     return;
   }
   const m = state.mode.value;
-  if (m.kind === "diff" && m.diffSource.fromGit) {
-    state.mode.value = { kind: "edit", editing: false };
-    renderEditModeUI(state);
+  if (m.kind === "diff" && m.diffSource.kind === "git") {
+    leaveDiff(state);
     return;
   }
   openFileGitDiff(state.path, "HEAD");
+}
+
+/** The read state the rules pick for the file. */
+function readView(state: FileState): FileMode {
+  return rulesFor(state.facts.value, state.path, "read").view === "markdown"
+    ? { kind: "markdown" }
+    : { kind: "text", editing: false };
+}
+
+function leaveDiff(state: FileState): void {
+  enterView(state, readView(state));
+  showView(state);
+}
+
+/** Paint a view change and, when the file is on screen, land it on the file's line. */
+function showView(state: FileState): void {
+  restoreUI(state);
+  if (isShown(state)) {
+    restoreEditorView(state);
+  }
 }
 
 // --- Mode switches ---
@@ -233,40 +242,30 @@ function toggleDiffMode(): void {
     return;
   }
   if (state.mode.value.kind === "diff") {
-    state.mode.value = { kind: "edit", editing: false };
-    renderEditModeUI(state);
+    leaveDiff(state);
     return;
   }
   if (state.current.value === state.original.value) {
     return;
   }
-  state.mode.value = {
-    kind: "diff",
-    diffSource: unsavedDiffSource(state.original.value, state.current.value),
-  };
+  enterView(state, { kind: "diff", diffSource: bufferDiffSource() });
   restoreUI(state);
 }
 
 function startEditing(): void {
   const state = fileStates.get(getActiveFilePath());
-  if (state === undefined || state.readOnly) {
+  if (state?.loaded !== true || !rulesFor(state.facts.value, state.path, "edit").edit) {
     return;
   }
   const m = state.mode.value;
-  if (m.kind === "diff") {
-    state.returnToGitDiff = m.diffSource.fromGit
-      ? { ref: m.diffSource.oldLabel, repo: state.repo }
+  state.returnToGitDiff =
+    m.kind === "diff" && m.diffSource.kind === "git"
+      ? { ref: m.diffSource.ref, repo: state.repo }
       : null;
-  }
-  state.mode.value = { kind: "edit", editing: true };
-  $.editorContent.value = state.current.value;
-  showEditMode();
-  updateGutter(state.current.value);
-  $.editorContent.focus();
-  $.editorEditBtn.classList.add("hidden");
-  $.editorDiffBtn.classList.add("hidden");
-  $.editorCancelBtn.classList.remove("hidden");
-  $.editorSaveBtn.classList.remove("hidden");
+  enterView(state, { kind: "text", editing: true });
+  showView(state);
+  // showView put the textarea on the file's line; a scrolling focus would move it to the caret.
+  $.editorContent.focus({ preventScroll: true });
 }
 
 function confirmStopEditing(): void {
@@ -286,102 +285,210 @@ function confirmStopEditing(): void {
   }
 }
 
-function stopEditing(state: FileState): void {
-  // Guard: if user switched tabs during the confirm dialog, reset silently.
-  if (getActiveFilePath() !== state.path) {
-    state.current.value = state.original.value;
-    return;
-  }
+/** Drop the edit: the buffer, and the line-ending record with its logs, go back to what was
+ *  saved, and a save outcome about the dropped edit goes with them. */
+function discardEdits(state: FileState): void {
   state.current.value = state.original.value;
-  $.editorConflictOverlay.classList.add("hidden");
-  if (state.returnToGitDiff !== null) {
-    const { ref, repo } = state.returnToGitDiff;
-    state.returnToGitDiff = null;
-    state.mode.value = {
-      kind: "diff",
-      diffSource: gitDiffSource(ref, "", state.current.value),
-    };
-    void fetchGitDiffSources(state, repo, ref);
-    return;
+  if (state.eol !== null) {
+    state.eol.tracker.reset(state.original.value, state.eol.saved);
   }
-  state.mode.value = { kind: "edit", editing: false };
-  // `current` was just reset to `original` above, so the read surface paints the
-  // saved text — as markdown for a document, as source otherwise.
-  renderReadSurface(state);
-  $.editorEditBtn.classList.remove("hidden");
-  $.editorCancelBtn.classList.add("hidden");
-  $.editorSaveBtn.classList.add("hidden");
-  $.editorDiffBtn.classList.add("hidden");
+  state.alert.value = null;
 }
+
+/** Leave the edit for the view it came from, a git diff waiting on a fresh load. */
+function leaveEdit(state: FileState): void {
+  const back = state.returnToGitDiff;
+  state.returnToGitDiff = null;
+  if (back === null) {
+    enterView(state, readView(state));
+  } else {
+    state.repo = back.repo;
+    enterView(state, { kind: "diff", diffSource: gitDiffSource(back.ref) });
+  }
+  showView(state);
+  startGitDiffLoad(state);
+}
+
+function stopEditing(state: FileState): void {
+  discardEdits(state);
+  leaveEdit(state);
+}
+
+// --- Save ---
 
 function saveFile(): void {
   const state = fileStates.get(getActiveFilePath());
-  if (state === undefined) {
+  const eol = state?.eol;
+  if (
+    state === undefined ||
+    eol === undefined ||
+    eol === null ||
+    state.alert.value?.kind === "refused"
+  ) {
     return;
   }
-  const content = $.editorContent.value;
-  const args: Parameters<typeof saveFileAction.dispatch>[0] = { path: state.path, content };
-  if (state.loadedHash !== "") {
-    args.expectedHash = state.loadedHash;
+  const text = $.editorContent.value;
+  const unchanged = text === state.original.value;
+  if (!unchanged && eol.tracker.uncertain) {
+    showSaveRefusal(state, "uncertain");
+    return;
   }
+  dispatchSave(state, text, state.fileId === "" ? undefined : state.fileId);
+}
+
+/** PUT the serialized buffer; `fileId` absent writes over whatever is on disk (Overwrite). */
+function dispatchSave(state: FileState, text: string, fileId: string | undefined): void {
+  const eol = state.eol;
+  const record = recordFor(state, text);
+  if (eol === null || record === null) {
+    return;
+  }
+  const args: Parameters<typeof saveFileAction.dispatch>[0] = {
+    path: state.path,
+    content: serialize(text, record),
+  };
+  if (fileId !== undefined) {
+    args.fileId = fileId;
+  }
+  // A save's answer lands on its file's record whichever file is on screen by then. One whose tab
+  // closed, or whose baseline a read replaced meanwhile, is recorded nowhere and paints nothing.
+  const settles = baselineHeld(state);
   void saveFileAction.dispatch(args, {
     onError: (e) => {
-      if (getActiveFilePath() === state.path) {
-        $.editorError.textContent = e.message || "Save failed";
-        $.editorError.classList.remove("hidden");
-      }
-    },
-    onSuccess: (d) => {
-      if (d.error !== undefined) {
-        if (getActiveFilePath() === state.path) {
-          $.editorError.textContent = d.error;
-          $.editorError.classList.remove("hidden");
-          // A refused stale write carries the file's current bytes. Show the
-          // difference rather than the words: the user's own text stays in the
-          // buffer (it is the only copy), `original` becomes what is on disk, so
-          // the existing unsaved-diff view answers "what changed under me" and
-          // the next save carries the new hash.
-          if (d.content !== undefined) {
-            state.original.value = d.content;
-            state.loadedHash = d.content_hash ?? "";
-            state.mode.value = {
-              kind: "diff",
-              diffSource: unsavedDiffSource(d.content, content),
-            };
-            renderEditModeUI(state);
-          }
-        }
+      if (!settles()) {
         return;
       }
-      state.original.value = content;
-      // Don't overwrite state.current — user may have edited during save.
-      // The save-button effect re-derives `disabled` from `activeDirty`
-      // (dirty flips to false once original === current, unless the user
-      // edited during the save), so no manual write here.
-      $.editorError.classList.add("hidden");
-      // A save is a write to the worktree, so the badge, the file-browser
-      // decorations and the docs page are stale from here. The agent's own writes
-      // announce themselves through `tool_call_update`; the user's own editor is
-      // the second writer and had no announcement at all, which left every one of
-      // those surfaces stale indefinitely. Scoped to the one file, so it costs the
-      // owning repository's two git subprocesses.
-      markGitDirty([relToWorkspace(state.path)]);
-      if (getActiveFilePath() === state.path) {
-        const m = state.mode.value;
-        if (m.kind === "conflict" && m.conflict.hunks.length === 0) {
-          state.mode.value = { kind: "edit", editing: false };
-          renderEditModeUI(state);
-        }
-        if (state.returnToGitDiff !== null) {
-          const { ref, repo } = state.returnToGitDiff;
-          state.returnToGitDiff = null;
-          state.mode.value = {
-            kind: "diff",
-            diffSource: gitDiffSource(ref, "", content),
-          };
-          void fetchGitDiffSources(state, repo, ref);
-        }
+      state.alert.value = { kind: "failed", sentence: e.message || "Save failed" };
+      restoreUI(state);
+    },
+    onSuccess: (outcome: SaveOutcome) => {
+      if (outcome.kind === "saved") {
+        // The user's own editor is a second writer with no announcement, so the git surfaces are
+        // told of the write even when its answer settles nowhere; scoped to the one file.
+        markGitDirty([relToWorkspace(state.path)]);
       }
+      if (!settles()) {
+        return;
+      }
+      if (outcome.kind === "stale") {
+        onStaleSave(state, outcome.refusal);
+        return;
+      }
+      // `current` is not touched: the reader may have typed while the save was in flight.
+      commitBaseline(state, {
+        fileId: outcome.result.file_id,
+        text,
+        eol: { saved: record, tracker: eol.tracker },
+      });
+      state.alert.value = null;
+      liveSaved(state.path);
+      const m = state.mode.value;
+      if (state.returnToGitDiff !== null) {
+        leaveEdit(state);
+        return;
+      }
+      if (m.kind === "conflict" && m.conflict.hunks.length === 0) {
+        enterView(state, { kind: "text", editing: false });
+      }
+      // A diff of the buffer opened while the save was in flight now compares against what it
+      // wrote; with nothing left unsaved there is no diff to show.
+      if (m.kind === "diff" && m.diffSource.kind === "buffer" && !state.dirty.value) {
+        leaveDiff(state);
+        return;
+      }
+      restoreUI(state);
     },
   });
+}
+
+/** A save refused because the file moved. Text on disk becomes `original` and the view diffs the
+ *  buffer, which is kept, against it; anything else waits for the reader's choice. */
+function onStaleSave(state: FileState, refusal: FileRefusal): void {
+  const eol = state.eol;
+  const onDisk = staleDiskText(refusal);
+  if (onDisk === null || eol === null) {
+    showSaveRefusal(state, refusal);
+    return;
+  }
+  const disk = normalize(onDisk.text);
+  commitBaseline(state, {
+    fileId: onDisk.fileId,
+    text: disk.text,
+    eol: { saved: disk.record, tracker: eol.tracker },
+  });
+  state.alert.value = { kind: "stale", sentence: refusal.error };
+  enterView(state, { kind: "diff", diffSource: bufferDiffSource() });
+  restoreUI(state);
+}
+
+function showSaveRefusal(state: FileState, r: FileRefusal | "uncertain"): void {
+  state.alert.value = { kind: "refused", reason: r };
+  restoreUI(state);
+}
+
+/** The refused-save banner's ways on, painted by editor-modes with a `data-save-way` each. */
+function onSaveWay(e: Event): void {
+  const way = (e.target as Element | null)
+    ?.closest("[data-save-way]")
+    ?.getAttribute("data-save-way");
+  const state = fileStates.get(getActiveFilePath());
+  if (state === undefined || state.alert.value?.kind !== "refused") {
+    return;
+  }
+  switch (way) {
+    case "overwrite":
+      state.alert.value = null;
+      restoreUI(state);
+      dispatchSave(state, state.current.value, undefined);
+      return;
+    case "download":
+      downloadBuffer(state);
+      return;
+    case "discard":
+      discardEdits(state);
+      state.loaded = false;
+      enterView(state, { kind: "text", editing: false });
+      activateFile(state.path);
+      return;
+    default:
+      return;
+  }
+}
+
+function basename(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** Save the buffer as a download, with the endings the record holds. */
+function downloadBuffer(state: FileState): void {
+  const text = state.current.value;
+  const record = recordFor(state, text);
+  if (record === null) {
+    return;
+  }
+  const blob = new Blob([serialize(text, record)], {
+    type: "application/octet-stream",
+  });
+  const url = URL.createObjectURL(blob);
+  clickDownload(url, basename(state.path));
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 0);
+}
+
+/** Download the bytes the view shows, pinned to their identity when it has one. */
+function downloadActive(): void {
+  const state = fileStates.get(getActiveFilePath());
+  if (state !== undefined) {
+    clickDownload(identifiedDownloadURL(state), basename(state.path));
+  }
+}
+
+/** Safe only because the server answers `Content-Disposition: attachment`: a navigated `.svg`
+ *  is script-capable. */
+function clickDownload(href: string, name: string): void {
+  const a = el("a", { href, download: name, rel: "noopener" });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }

@@ -31,16 +31,15 @@ type sessionModes struct {
 	AvailableModes []sessionMode `json:"availableModes"`
 }
 
-// sessionConfigOption is one v3 configOptions entry. The model catalog is the "model" entry; v3 has no top-level
-// `models` block.
+// The model catalog is the "model" entry; v3 has no top-level `models` block.
 type sessionConfigOption struct {
 	ID           string                `json:"id"`
 	CurrentValue json.RawMessage       `json:"currentValue"`
 	Options      []sessionConfigChoice `json:"options"`
 }
 
-// sessionConfigChoice is one selectable value in a config-option select. For the model option the rate
-// multiplier, effort capability and default tier ride _meta.kiro, decoded through the shared marotte.ModelChoiceMeta.
+// For the model option the rate multiplier, effort capability and default tier ride _meta.kiro,
+// decoded through the shared marotte.ModelChoiceMeta.
 type sessionConfigChoice struct {
 	Value       string                  `json:"value"`
 	Name        string                  `json:"name"`
@@ -72,7 +71,6 @@ type sessionCreated struct {
 // mcpServers is always `[]`: KAS reads the user's servers from its own hot-reloading file (internal/mcp/kasfile.go),
 // and a client entry would outrank it, so UI edits would do nothing. The key is required since 2.16.
 
-// validIdent delegates to ids.ValidIdent.
 func validIdent(s string) bool {
 	return ids.ValidIdent(s)
 }
@@ -105,7 +103,7 @@ func sessionKiroMeta(params map[string]any) map[string]any {
 
 // withSessionChoices adds the chat's model, effort level and mode to session/new's _meta.kiro. Not on load: KAS
 // restores them. The model must come with the level, since KAS drops a level sent while on `auto`.
-func (b *Bridge) withSessionChoices(params map[string]any, opts *marotte.StartOpts) map[string]any {
+func (*Bridge) withSessionChoices(params map[string]any, opts *marotte.StartOpts) map[string]any {
 	choices := make(map[string]any, 3)
 	if opts.Model != "" && opts.Model != marotte.ModelAuto {
 		choices[metaKeyModelID] = opts.Model
@@ -166,16 +164,16 @@ func (b *Bridge) newSession(ctx context.Context, opts *marotte.StartOpts) error 
 // applyContentCollection asserts the content-collection value on a session door either way: kiro-cli starts KAS
 // opted in. Logged at Error, not fatal.
 func (b *Bridge) applyContentCollection(ctx context.Context, sessionID string) {
-	if enabled, err := b.AssertContentCollection(ctx); err != nil {
+	if enabled, err := b.assertContentCollection(ctx); err != nil {
 		slog.Error("content collection not applied; model requests from this process may be opted in to content collection",
 			"session_id", sessionID, "enabled", enabled, "error", err)
 	}
 }
 
-// AssertContentCollection resolves StartOpts.ContentCollection and sets it on the live session, serialized with
+// assertContentCollection resolves StartOpts.ContentCollection and sets it on the live session, serialized with
 // every other assert so a stale resolution never lands last. It reports the resolved value; no resolver sends
 // nothing.
-func (b *Bridge) AssertContentCollection(ctx context.Context) (bool, error) {
+func (b *Bridge) assertContentCollection(ctx context.Context) (bool, error) {
 	if b.contentCollection == nil {
 		return false, nil
 	}
@@ -195,7 +193,7 @@ func (b *Bridge) RefreshContentCollection(ctx context.Context) (bool, error) {
 	b.contentCollectionMu.Lock()
 	defer b.contentCollectionMu.Unlock()
 	enabled, readable := b.contentCollection(ctx)
-	if applied, known := b.ContentCollectionApplied(); known && (!readable || applied == enabled) {
+	if applied, known := b.contentCollectionState(); known && (!readable || applied == enabled) {
 		return enabled, nil
 	}
 	return enabled, b.sendContentCollection(ctx, enabled)
@@ -235,8 +233,8 @@ func (b *Bridge) applyThinking(ctx context.Context, sessionID, choice string) {
 	}
 }
 
-// applyInitialModel selects the chat's model on a new session. Not a launch flag: kiro-cli refuses `--model` with
-// `--agent-engine=v3` and exits. Best-effort; a failure leaves KAS's default.
+// Not a launch flag: kiro-cli refuses `--model` with `--agent-engine=v3` and exits. Best-effort; a
+// failure leaves KAS's default.
 func (b *Bridge) applyInitialModel(ctx context.Context, model string) {
 	if model == "" || model == marotte.ModelAuto {
 		return
@@ -306,8 +304,7 @@ func (b *Bridge) applyIgnoreFiles(ctx context.Context, resolve func(context.Cont
 	return names
 }
 
-// resolveTerminalTimeout reads the shell tool's default timeout into the initialize features. Nil keeps the
-// captured value.
+// Nil keeps the captured value.
 func (b *Bridge) resolveTerminalTimeout(ctx context.Context, resolve func(context.Context) int) {
 	if resolve != nil {
 		b.features.TerminalCommandTimeoutMs = resolve(ctx)
@@ -396,7 +393,7 @@ func (b *Bridge) adoptLoadedSession(acpSessionID, fallbackModel string, resp *ma
 	}
 }
 
-// applySessionResultLocked copies the ACP session response into the bridge's state. Caller holds b.mu.
+// Caller holds b.mu.
 func (b *Bridge) applySessionResultLocked(r *sessionCreated, fallbackModel string) {
 	if r.Modes != nil {
 		b.currentMode = r.Modes.CurrentModeID
@@ -452,7 +449,6 @@ func (b *Bridge) reportWorkflowsDisagreement(resolved *bool) {
 		"declared", declared, "resolved", *resolved)
 }
 
-// declaredSessionWorkflows reports whether a spawn's session door, as kascap builds it, enables settings.workflows.
 func declaredSessionWorkflows(s *kascap.Spawn) bool {
 	settings, ok := kascap.SessionMeta(s)["settings"].(map[string]any)
 	if !ok {
@@ -466,8 +462,8 @@ func declaredSessionWorkflows(s *kascap.Spawn) bool {
 	return on
 }
 
-// applyEffortConfigOptionLocked records the effort level from the `effortLevel` option's currentValue. Caller holds
-// b.mu. An absent option is unknown, so the previous value stands: KAS omits it for tierless models and on loads.
+// Caller holds b.mu. An absent option is unknown, so the previous value stands: KAS omits it for
+// tierless models and on loads.
 func (b *Bridge) applyEffortConfigOptionLocked(opts []sessionConfigOption) {
 	for i := range opts {
 		opt := &opts[i]
@@ -483,8 +479,7 @@ func (b *Bridge) applyEffortConfigOptionLocked(opts []sessionConfigOption) {
 	}
 }
 
-// applyThinkingConfigOptionLocked records the `thinking` option's currentValue ("on" or "off"); absent (an
-// untoggleable model) keeps the previous value. Caller holds b.mu.
+// Absent (an untoggleable model) keeps the previous value. Caller holds b.mu.
 func (b *Bridge) applyThinkingConfigOptionLocked(opts []sessionConfigOption) {
 	for i := range opts {
 		if opts[i].ID != marotte.ConfigOptionThinking {
@@ -499,9 +494,8 @@ func (b *Bridge) applyThinkingConfigOptionLocked(opts []sessionConfigOption) {
 	}
 }
 
-// applyModelConfigOptionLocked takes the current model and catalog from the v3 "model" select. Caller holds b.mu.
-// models is for display, without end-of-life entries; servedModels is every advertised id, the only sound input to
-// an entitlement check.
+// Caller holds b.mu. models is for display, without end-of-life entries; servedModels is every
+// advertised id, the only sound input to an entitlement check.
 func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 	b.applyEffortConfigOptionLocked(opts)
 	b.applyThinkingConfigOptionLocked(opts)

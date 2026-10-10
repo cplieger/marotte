@@ -27,8 +27,8 @@ func FuzzNewStore(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, doc []byte) {
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, FileName), doc, fileMode); err != nil {
-			t.Fatalf("Setup: write %s: %v", FileName, err)
+		if err := os.WriteFile(filepath.Join(dir, fileName), doc, fileMode); err != nil {
+			t.Fatalf("Setup: write %s: %v", fileName, err)
 		}
 
 		// The error is a warning; a store always comes back.

@@ -21,8 +21,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// ownersRoutes is the forge routes over a manager holding recs, each connected
-// as bob, sending no forge request.
 func ownersRoutes(t *testing.T, recs ...connectionRecord) (*Manager, *http.ServeMux) {
 	t.Helper()
 	m := sourceManager(t, map[string]forgeapi.Core{}, recs...)
@@ -43,7 +41,6 @@ func putOwners(t *testing.T, mux *http.ServeMux, id, body string) *httptest.Resp
 	return rec
 }
 
-// ownersBodyOf is the JSON body naming owners.
 func ownersBodyOf(owners ...string) string {
 	data, err := json.Marshal(map[string][]string{"owners": append([]string{}, owners...)})
 	if err != nil {
@@ -52,7 +49,6 @@ func ownersBodyOf(owners ...string) string {
 	return string(data)
 }
 
-// answeredOwners is the owners a 200 answer names, failing on any other answer.
 func answeredOwners(t *testing.T, rec *httptest.ResponseRecorder) []string {
 	t.Helper()
 	if rec.Code != http.StatusOK {
@@ -67,7 +63,6 @@ func answeredOwners(t *testing.T, rec *httptest.ResponseRecorder) []string {
 	return *got.Owners
 }
 
-// storedRecord is the record id names in m's record file.
 func storedRecord(t *testing.T, m *Manager, id string) connectionRecord {
 	t.Helper()
 	recs, err := m.conns.load()
@@ -85,7 +80,7 @@ func storedRecord(t *testing.T, m *Manager, id string) connectionRecord {
 
 func rowOwners(t *testing.T, m *Manager, id string) []string {
 	t.Helper()
-	row := m.Get(id)
+	row := m.get(id)
 	if row == nil {
 		t.Fatalf("no row for %s", id)
 	}

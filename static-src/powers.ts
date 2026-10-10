@@ -48,7 +48,7 @@ interface PowerList {
 }
 
 /** How many Powers are listed and how many the filter shows, for the page's note. */
-export interface PowerCounts {
+interface PowerCounts {
   total: number;
   shown: number;
 }
@@ -489,6 +489,7 @@ async function run(name: string, verb: () => Promise<unknown>): Promise<void> {
   await refresh();
 }
 
+// deadset:ignore DS1004 -- test seam: resets the powers list, load states, filter and busy set
 export function _resetPowersForTest(): void {
   powers = [];
   catalogState = "ready";

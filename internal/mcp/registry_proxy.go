@@ -36,13 +36,11 @@ const (
 	// doFetch asks for one more, its sentinel row, so the upstream ask tops
 	// out at 25.
 	maxSearchLimit = 24
-	// Upper bound on the `q` string. Real search queries are a handful
-	// of words; anything longer is a cache-fill DoS attempt.
+	// Real search queries are a handful of words; anything longer is a cache-fill DoS attempt.
 	maxSearchQueryLen = 128
-	// Upper bound on distinct cached entries. Each entry is one decoded
-	// reply, no larger than the 2 MiB body it came from, so the cache holds
-	// at most maxCacheEntries × 2 MiB = 128 MiB in the worst case. Oldest
-	// entries get evicted on insert when full.
+	// Each entry is one decoded reply, no larger than the 2 MiB body it came from, so the cache holds
+	// at most maxCacheEntries × 2 MiB = 128 MiB in the worst case. Oldest entries get evicted on
+	// insert when full.
 	maxCacheEntries = 64
 	// Max upstream response body we'll read. 2 MiB comfortably covers
 	// the full registry at the 25-row upstream ask; the +1 sentinel in
@@ -250,7 +248,7 @@ func retryAfterSeconds(header string, now time.Time) int {
 func (p *RegistryProxy) fetchSearch(ctx context.Context, q string, limit int) (result RegistrySearchResult, cached bool, err error) {
 	key := searchCacheKey(q, limit)
 
-	return p.cache.GetOrFetch(ctx, key, func() (RegistrySearchResult, error) {
+	return p.cache.getOrFetch(ctx, key, func() (RegistrySearchResult, error) {
 		fetchCtx, fetchCancel := context.WithTimeout(ctx, registryTimeout)
 		defer fetchCancel()
 		body, err := p.doFetch(fetchCtx, q, limit)
@@ -301,22 +299,16 @@ func (p *RegistryProxy) doFetch(ctx context.Context, q string, limit int) ([]byt
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		// Drain a bounded tail of the body so net/http can reuse the
-		// keep-alive connection for the next fetch. Without this,
-		// every non-200 forces a fresh TLS handshake on the follow-up
-		// query — under an upstream incident with retries, the cost
-		// compounds.
+		// Drain a bounded tail so net/http can reuse the keep-alive connection; otherwise every
+		// non-200 forces a fresh TLS handshake on the follow-up query.
 		drainRegistryBody(resp.Body)
 		return nil, &upstreamStatusError{
 			status:     resp.StatusCode,
 			retryAfter: retryAfterSeconds(resp.Header.Get("Retry-After"), time.Now()),
 		}
 	}
-	// Pre-check upstream-declared size so we fail fast on oversize
-	// responses instead of reading up to the cap and then silently
-	// truncating (which would parse as empty and surface as "no
-	// results matching your query" — a lie indistinguishable from a
-	// real empty result).
+	// Refuse a declared oversize body up front: reading to the cap would truncate, parse as empty,
+	// and surface as "no results", indistinguishable from a real empty result.
 	if resp.ContentLength > maxRegistryBody {
 		drainRegistryBody(resp.Body)
 		return nil, fmt.Errorf("upstream body too large: %d > %d",
@@ -365,10 +357,10 @@ func newRegistryCache() *registryCache {
 	}
 }
 
-// GetOrFetch returns the cached reply for key if fresh, otherwise calls
+// getOrFetch returns the cached reply for key if fresh, otherwise calls
 // fetchFn (coalesced via singleflight) and caches what it returns.
 // Followers bail early on ctx cancellation.
-func (c *registryCache) GetOrFetch(ctx context.Context, key string, fetchFn func() (RegistrySearchResult, error)) (result RegistrySearchResult, cached bool, err error) {
+func (c *registryCache) getOrFetch(ctx context.Context, key string, fetchFn func() (RegistrySearchResult, error)) (result RegistrySearchResult, cached bool, err error) {
 	c.mu.Lock()
 	if entry, ok := c.entries[key]; ok && time.Since(entry.insertedAt) < c.ttl {
 		result = entry.result
@@ -515,34 +507,27 @@ type RegistryHeader struct {
 	Secret      bool   `json:"secret,omitempty"`
 }
 
-// supportedPackageRegistries defines which package registry types
-// marotte can install. Only npm is supported (via npx -y).
-// This is the single source of truth for install-capability gating:
-// both normaliseRegistryResponse (which filters registry search results
-// for the UI) and extractNpxPackage in prewarm.go (which decides what
-// to pre-install) reference this map.
+// Only npm is supported (via npx -y). This is the single source of truth for install-capability
+// gating: both normaliseRegistryResponse (which filters registry search results for the UI) and
+// extractNpxPackage in prewarm.go (which decides what to pre-install) reference this map.
 var supportedPackageRegistries = map[string]bool{"npm": true}
 
-// supportedPackageTransports defines which transport types are valid
-// for npm packages. Empty string means "default stdio".
-// Shared with prewarm.go's extractNpxPackage: a server is only
-// prewarm-eligible if its transport is in this set, ensuring the
-// invariant "prewarm only targets packages the registry would surface".
+// Empty string means "default stdio". Shared with prewarm.go's extractNpxPackage: a server is only
+// prewarm-eligible if its transport is in this set, ensuring the invariant "prewarm only targets
+// packages the registry would surface".
 var supportedPackageTransports = map[string]bool{"stdio": true, "": true}
 
-// supportedRemoteTypes maps upstream remote type strings to the local
-// Transport enum. Only these remote types are surfaced to the UI.
+// Only these remote types are surfaced to the UI.
 var supportedRemoteTypes = map[string]Transport{
 	"streamable-http":     TransportHTTP,
 	string(TransportHTTP): TransportHTTP,
 	string(TransportSSE):  TransportSSE,
 }
 
-// registryWireResponse mirrors the upstream registry v0.1 search
-// response. Only the fields marotte surfaces are decoded; everything
-// else (schema URLs, timestamps, OIDC metadata) is ignored. Named
-// (vs an inline anonymous struct) so the per-package / per-remote
-// mapping can be factored into convertRegistryPackage / convertRegistryRemote.
+// registryWireResponse mirrors the upstream registry v0.1 search response. Only the fields marotte
+// surfaces are decoded; everything else (schema URLs, timestamps, OIDC metadata) is ignored. Named
+// (vs an inline anonymous struct) so the per-package / per-remote mapping can be factored into
+// convertRegistryPackage / convertRegistryRemote.
 type registryWireResponse struct {
 	// A pointer so an absent key is told apart from an empty list: a body
 	// without one is not a registry reply (an upstream rename, a CDN error
@@ -554,7 +539,6 @@ type registryWireResponse struct {
 	} `json:"metadata"`
 }
 
-// errRegistryShape is a 200 whose JSON carries no servers list.
 var errRegistryShape = errors.New("registry reply has no servers list")
 
 // registryWireEntry is one row of the upstream list: the server document, plus
@@ -568,15 +552,14 @@ type registryWireEntry struct {
 	Server registryWireServer `json:"server"`
 }
 
-// registryWireMeta mirrors the upstream ResponseMeta. The key is a namespaced
-// literal, so it cannot be a Go identifier — hence the tag.
+// registryWireMeta mirrors the upstream ResponseMeta. The key is a namespaced literal, so it cannot
+// be a Go identifier — hence the tag.
 type registryWireMeta struct {
 	Official registryWireOfficial `json:"io.modelcontextprotocol.registry/official"`
 }
 
-// registryWireOfficial is the subset of RegistryExtensions marotte surfaces.
-// The timestamps and isLatest are decoded by nobody: a row shows a version, and
-// "published 8 months ago" is not a fact that changes an install decision.
+// The timestamps and isLatest are decoded by nobody: a row shows a version, and "published 8 months
+// ago" is not a fact that changes an install decision.
 type registryWireOfficial struct {
 	Status        string `json:"status"`
 	StatusMessage string `json:"statusMessage"`
@@ -660,10 +643,8 @@ func normaliseRegistryResponse(body []byte, limit int) (RegistrySearchResult, er
 	return out, nil
 }
 
-// buildRegistryEntry maps one upstream server record to a browser-facing
-// RegistryEntry. The bool is false when the server exposes zero usable
-// install paths (no supported package and no supported remote), in which
-// case the caller skips it — common for schema-only publications or
+// The bool is false when the server exposes zero usable install paths (no supported package and no
+// supported remote), in which case the caller skips it — common for schema-only publications or
 // packages using registries marotte doesn't support.
 func buildRegistryEntry(row *registryWireEntry) (RegistryEntry, bool) {
 	srv := &row.Server
@@ -694,10 +675,8 @@ func buildRegistryEntry(row *registryWireEntry) (RegistryEntry, bool) {
 	return entry, true
 }
 
-// convertRegistryPackage maps one upstream package to the browser-facing
-// RegistryPackage. The bool is false when the package uses a registry or
-// transport marotte can't install (npm-only, stdio/default-only), in
-// which case the caller skips it.
+// The bool is false when the package uses a registry or transport marotte can't install (npm-only,
+// stdio/default-only), in which case the caller skips it.
 func convertRegistryPackage(pkg *registryWirePackage) (RegistryPackage, bool) {
 	if !supportedPackageRegistries[pkg.RegistryType] {
 		return RegistryPackage{}, false
@@ -723,10 +702,8 @@ func convertRegistryPackage(pkg *registryWirePackage) (RegistryPackage, bool) {
 	return pe, true
 }
 
-// convertRegistryRemote maps one upstream remote to the browser-facing
-// RegistryRemote, normalising the transport type via supportedRemoteTypes
-// (e.g. streamable-http to http). The bool is false when the remote type
-// isn't one marotte surfaces, in which case the caller skips it.
+// The bool is false when the remote type isn't one marotte surfaces, in which case the caller skips
+// it.
 func convertRegistryRemote(rem *registryWireRemote) (RegistryRemote, bool) {
 	transport, ok := supportedRemoteTypes[rem.Type]
 	if !ok {

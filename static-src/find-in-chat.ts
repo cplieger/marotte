@@ -757,7 +757,6 @@ function activateQuietly(control: HTMLElement): void {
   }
 }
 
-/** Open every closed disclosure between the element and its turn body, through each control's real path. */
 function openDisclosureChain(target: HTMLElement, hit: Hit): void {
   for (let cur: HTMLElement | null = target; cur !== null; cur = cur.parentElement) {
     if (cur instanceof HTMLDetailsElement && !cur.open) {
@@ -1021,7 +1020,6 @@ export function openChatFindAt(query: string, hit: Hit): void {
  * Close the search with the full teardown. Idempotent.
  *
  * @internal Test seam.
- * @knipignore The test loads this module through a cache-busting dynamic specifier.
  */
 export function closeChatFind(): void {
   popup?.hide();
@@ -1077,10 +1075,8 @@ export function handleFindHotkey(e: KeyboardEvent): void {
   openFindInChat();
 }
 
-/**
- * @internal Test seam: whether the search is open.
- * @knipignore The test loads this module through a cache-busting dynamic specifier.
- */
+/** @internal Test seam: whether the search is open. */
+// deadset:ignore DS1004 -- test seam: observes whether the chat find bar is open
 export function _isChatFindOpen(): boolean {
   return isOpen();
 }

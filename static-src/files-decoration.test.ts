@@ -29,7 +29,6 @@ function repo(name: string, files: { path: string; status: string }[]): GitRepoS
     repo: name,
     is_repo: true,
     branch: "main",
-    remote: "origin",
     ahead: 0,
     behind: 0,
     has_dirty: files.length > 0,

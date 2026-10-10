@@ -128,7 +128,6 @@ function state(
   return opts.closeAt === undefined ? base : Object.assign(base, { closeAt: opts.closeAt });
 }
 
-/** The two store fields a projection reads, in file order. */
 function src(...pairs: readonly (readonly [string, TurnState])[]): TurnSource {
   return { turns: new Map(pairs), turn_order: pairs.map(([id]) => id) };
 }

@@ -55,7 +55,6 @@ function session(id: string, over: Partial<Session> = {}): Session {
   return { ...makeSession({ id, name: id }), ...over };
 }
 
-/** A sealed entry at `at`. The transcript's own lane is `""`, which an absent one is. */
 function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknown, id?: string) {
   return {
     id: id ?? `${turnID}-e${String(at)}`,
@@ -123,7 +122,6 @@ function viewOf(chatID: string): HTMLElement {
   return el;
 }
 
-/** Mount `entries` as `chatID`'s whole transcript (one turn, announced as a replay) and paint. */
 async function paint(chatID: string, turnID: string, entries: Entry[]): Promise<HTMLElement> {
   const turns = new Map<string, TurnState>([[turnID, { entries, openEntries: new Map() }]]);
   store.setSessions([session(chatID, { turns, turn_order: [turnID], turn_count: 1 })]);

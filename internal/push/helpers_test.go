@@ -37,7 +37,7 @@ func (errRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
 
 // newServiceOnTestServer builds a Service whose client is httptest.NewTestServer's in-memory one
 // (Go 1.27), so a Send reaches h instead of dialing through ssrf.SafeTransport.
-func newServiceOnTestServer(t *testing.T, h http.Handler) (*Service, *httptest.Server) {
+func newServiceOnTestServer(t *testing.T, h http.Handler) *Service {
 	t.Helper()
 	srv := httptest.NewTestServer(t, h)
 	client := srv.Client()
@@ -52,7 +52,7 @@ func newServiceOnTestServer(t *testing.T, h http.Handler) (*Service, *httptest.S
 	s := New(context.Background(), t.TempDir(), testSubject)
 	t.Cleanup(s.Close)
 	s.client = client
-	return s, srv
+	return s
 }
 
 // recordingHandler answers every push with status and records how many arrived
@@ -64,7 +64,6 @@ type recordingHandler struct {
 	status   int
 }
 
-// recordedPush is the assertable part of one delivery attempt.
 type recordedPush struct {
 	host            string
 	path            string
@@ -88,7 +87,6 @@ func (h *recordingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 }
 
-// snapshot returns a copy of the recorded deliveries.
 func (h *recordingHandler) snapshot() []recordedPush {
 	h.mu.Lock()
 	defer h.mu.Unlock()

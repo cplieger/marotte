@@ -101,7 +101,6 @@ function renderedNumbers(): string[] {
   return cards().map((c) => c.querySelector(".turn-n")?.textContent ?? "");
 }
 
-/** Each card's `turnAnchorID`, in document order. */
 function anchorIDs(): string[] {
   return cards().map((c) => c.id);
 }

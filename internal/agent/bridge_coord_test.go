@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"net/http"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,11 +16,11 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// recordingStartBridge records the StartOpts passed to Start.
 type recordingStartBridge struct {
 	*fakeBridge
 	lastStart marotte.StartOpts
@@ -58,24 +58,29 @@ func newRecordingStartHub(t *testing.T) (*Runtime, *testChatStore, *recordingSta
 type recordingPush struct {
 	sends chan string
 	// noSubs flips HasSubscribers to false; the zero value keeps a subscriber.
-	noSubs   atomic.Bool
-	subject  marotte.PushSubject
-	chatName string
+	noSubs  atomic.Bool
+	subject marotte.PushSubject
+	title   string
+	// retracted records each Retract call's subject, in order.
+	retracted []marotte.PushSubject
+	mu        sync.Mutex
 }
 
-func (p *recordingPush) RegisterRoutes(*http.ServeMux)            {}
-func (p *recordingPush) Subscribe(marotte.PushSubscription)       {}
-func (p *recordingPush) Unsubscribe(string)                       {}
-func (p *recordingPush) HasSubscribers() bool                     { return !p.noSubs.Load() }
-func (p *recordingPush) SetPreferences(map[marotte.PushKind]bool) {}
-func (p *recordingPush) Preferences() map[marotte.PushKind]bool   { return nil }
-func (p *recordingPush) Close()                                   {}
-func (p *recordingPush) Retract(marotte.PushSubject)              {}
-func (p *recordingPush) Send(_ context.Context, _, body string, _ marotte.PushKind, subject marotte.PushSubject, chatName string) {
-	p.subject = subject
-	p.chatName = chatName
+func (p *recordingPush) HasSubscribers() bool                   { return !p.noSubs.Load() }
+func (*recordingPush) SetPreferences(map[marotte.PushKind]bool) {}
+func (*recordingPush) Preferences() map[marotte.PushKind]bool   { return nil }
+func (*recordingPush) Close()                                   {}
+func (p *recordingPush) Retract(subj marotte.PushSubject) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.retracted = append(p.retracted, subj)
+}
+
+func (p *recordingPush) Send(_ context.Context, n *marotte.NotificationPayload) {
+	p.subject = n.PushSubject
+	p.title = n.Title
 	select {
-	case p.sends <- body:
+	case p.sends <- n.Body:
 	default:
 	}
 }
@@ -90,7 +95,7 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 		return true // no ACPSessionID -> fresh session/new path
 	})
 
-	if _, err := h.coord.OpenBridge(ctx, "c1", "model-override"); err != nil {
+	if _, err := h.coord.openBridge(ctx, "c1", "model-override"); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -131,7 +136,7 @@ func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 		t.Fatalf("seed the chat: %v", err)
 	}
 
-	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -159,11 +164,11 @@ func TestApplyModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
-	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.ApplyModelSwitch(ctx, "c1", "m-new", "max"); got != true {
+	if got := h.coord.applyModelSwitch(ctx, "c1", "m-new", "max"); got != true {
 		t.Errorf("ApplyModelSwitch(success) = %v, want true", got)
 	}
 	if got := br.lastEffort(); got != "max" {
@@ -176,12 +181,12 @@ func TestApplyModelSwitch_TouchesNoOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
-	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	id, log := streamingPromptTurn(t, h, "c1", "the user's own reply, still streaming")
 
-	if got := h.coord.ApplyModelSwitch(ctx, "c1", "m-new", ""); !got {
+	if got := h.coord.applyModelSwitch(ctx, "c1", "m-new", ""); !got {
 		t.Fatalf("ApplyModelSwitch = %v, want true", got)
 	}
 
@@ -198,11 +203,11 @@ func TestApplyModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
-	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.ApplyModelSwitch(ctx, "c1", "m-new", ""); got != true {
+	if got := h.coord.applyModelSwitch(ctx, "c1", "m-new", ""); got != true {
 		t.Errorf("ApplyModelSwitch(success) = %v, want true", got)
 	}
 	if got := br.lastEffort(); got != "" {
@@ -219,7 +224,7 @@ func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 		c.Effort = "max"
 		return true
 	})
-	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	// Stand in for KAS moving the level.
@@ -227,7 +232,7 @@ func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 	br.effort = "high"
 	br.mu.Unlock()
 
-	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge (reopen): %v", err)
 	}
 
@@ -241,14 +246,14 @@ func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	br.mu.Lock()
 	br.effort = ""
 	br.mu.Unlock()
 
-	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge (reopen): %v", err)
 	}
 
@@ -257,7 +262,6 @@ func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
 	}
 }
 
-// writeEffortSeed writes a config.json carrying only the per-model effort seed.
 func writeEffortSeed(t *testing.T, dir string, seed map[string]string) {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{settings.KeyLastEffortByModel: seed})
@@ -390,7 +394,7 @@ func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
 			h.coord.lifecycle.configDir = dir
 			h.coord.catalog.SetModels(catalog)
 
-			got := h.coord.EffortForSwitch(t.Context(), test.target)
+			got := h.coord.effortForSwitch(t.Context(), test.target)
 
 			if got != test.want {
 				t.Errorf("EffortForSwitch(target=%q, last_effort_by_model=%v) = %q, want %q — the chat's own choice must never leak into a switch",
@@ -429,7 +433,7 @@ func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
 		seed(h)
 		br.Stop() // close notifCh so Forward's range exits immediately
 		h.coord.Forward("nochat", br)
-		if n := len(h.mcpRegistry.Snapshot()); n != 0 {
+		if n := len(h.mcpRegistry.snapshot()); n != 0 {
 			t.Errorf("registry size = %d, want 0 (no bridges left must clearAll)", n)
 		}
 	})
@@ -442,7 +446,7 @@ func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
 		other := newFakeBridge()
 		other.Stop()
 		h.coord.Forward("other", other)
-		if n := len(h.mcpRegistry.Snapshot()); n != 1 {
+		if n := len(h.mcpRegistry.snapshot()); n != 1 {
 			t.Errorf("registry size = %d, want 1 (a remaining bridge must NOT clearAll)", n)
 		}
 	})
@@ -463,16 +467,17 @@ func TestSettleTurnOnResponse_NonCancelledFiresPush(t *testing.T) {
 
 	select {
 	case body := <-fp.sends:
-		if body != "Agent finished" {
-			t.Errorf("push body = %q, want %q", body, "Agent finished")
+		if body != "Response complete" {
+			t.Errorf("push body = %q, want %q", body, "Response complete")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no push sent for a non-cancelled turn")
 	}
 }
 
-// The push names its chat from the record when raised: the toasting page may have dropped the row.
-func TestNotifyPush_CarriesTheChatsNameAndAnUnnamedSubjectNone(t *testing.T) {
+// A notification is titled by the tab its click opens: the chat's name from its record, the
+// tab strip's default for a chat with none, and the run's label for a run.
+func TestNoticeTarget_TitlesTheTabTheClickOpens(t *testing.T) {
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
@@ -480,21 +485,26 @@ func TestNotifyPush_CarriesTheChatsNameAndAnUnnamedSubjectNone(t *testing.T) {
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "Fix the parser" })
 
 	for _, tc := range []struct {
-		subj marotte.PushSubject
-		want string
+		chatID    marotte.ChatID
+		runID     string
+		want      string
+		wantSubjs marotte.PushSubject
 	}{
-		{marotte.ChatSubject("c1"), "Fix the parser"},
-		{marotte.ChatSubject("gone"), ""},
-		{marotte.PRSubject("gh", "o/r", 7), ""},
+		{"c1", "", "Fix the parser", marotte.ChatSubject("c1")},
+		{"gone", "", marotte.DefaultChatName, marotte.ChatSubject("gone")},
+		{"c1", "wf1", "Workflow run", marotte.RunSubject("wf1")},
 	} {
-		h.coord.NotifyPushSubject(t.Context(), "Agent finished", marotte.PushKindAgentFinished, tc.subj)
+		target := h.coord.NoticeTarget(t.Context(), tc.chatID, tc.runID)
+		n := notice.TurnFinished(target, "")
+		h.coord.Notify(t.Context(), tc.chatID, &n)
 		select {
 		case <-fp.sends:
 		case <-time.After(2 * time.Second):
-			t.Fatalf("no push sent for %+v", tc.subj)
+			t.Fatalf("no push sent for %q/%q", tc.chatID, tc.runID)
 		}
-		if fp.chatName != tc.want {
-			t.Errorf("chat name for %+v = %q, want %q", tc.subj, fp.chatName, tc.want)
+		if fp.title != tc.want || fp.subject != tc.wantSubjs {
+			t.Errorf("NoticeTarget(%q, %q) pushed title %q under %+v, want %q under %+v",
+				tc.chatID, tc.runID, fp.title, fp.subject, tc.want, tc.wantSubjs)
 		}
 	}
 }
@@ -522,7 +532,7 @@ func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 
 	logs := captureLogs(t)
-	h.coord.PersistModelSwitch(ctx, "c1", marotte.EntryModelSwitched{From: "m-old", To: "m-new"}, 1234)
+	h.coord.persistModelSwitch(ctx, "c1", marotte.EntryModelSwitched{From: "m-old", To: "m-new"}, 1234)
 	if got := logs.String(); strings.Contains(got, "switch_model:") {
 		t.Errorf("unexpected switch_model error log on success: %s", got)
 	}
@@ -546,7 +556,7 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 		return true
 	})
 
-	h.coord.PersistModelSwitch(ctx, "c1",
+	h.coord.persistModelSwitch(ctx, "c1",
 		marotte.EntryModelSwitched{From: "m-old", To: "m-new", Effort: "high"}, 1234)
 
 	entries := logOf(t, cs, "c1")
@@ -628,7 +638,7 @@ func TestPersistEffortChange_FoldsTheTierIntoAnOpenTurn(t *testing.T) {
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "opus-5"; return true })
 	turnID, _ := streamingPromptTurn(t, h, "c1", "the reply")
 
-	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortHigh)
+	h.coord.PersistEffortChange(ctx, "c1", "opus-5", "high")
 
 	entries := logOf(t, cs, "c1")
 	switches := switchesOf(t, entries)
@@ -649,7 +659,7 @@ func TestPersistEffortChange_AChatWithNoModelWritesNothing(t *testing.T) {
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	h.coord.PersistEffortChange(ctx, "c1", "", marotte.EffortHigh)
+	h.coord.PersistEffortChange(ctx, "c1", "", "high")
 
 	if switches := switchesOf(t, logOf(t, cs, "c1")); len(switches) != 0 {
 		t.Errorf("model_switched entries = %+v, want none for a modelless chat", switches)
@@ -668,14 +678,14 @@ func finishedTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 func TestPersistSwitches_RecordNothingBeforeTheFirstPrompt(t *testing.T) {
 	tests := map[string]func(h *Runtime){
 		"effort": func(h *Runtime) {
-			h.coord.PersistEffortChange(t.Context(), "c1", "opus-5", marotte.EffortHigh)
+			h.coord.PersistEffortChange(t.Context(), "c1", "opus-5", "high")
 		},
 		"mode": func(h *Runtime) {
 			h.coord.PersistModeSwitch(t.Context(), "c1",
 				marotte.EntryModeSwitched{From: "", To: "spec", Source: marotte.ModeSwitchSourceUser})
 		},
 		"model": func(h *Runtime) {
-			h.coord.PersistModelSwitch(t.Context(), "c1", marotte.EntryModelSwitched{From: "opus-5", To: "sonnet-5"}, 1234)
+			h.coord.persistModelSwitch(t.Context(), "c1", marotte.EntryModelSwitched{From: "opus-5", To: "sonnet-5"}, 1234)
 		},
 	}
 	for name, persist := range tests {
@@ -704,7 +714,7 @@ func TestPersistModelSwitch_UnstartedChatTakesThePickOnTheHeader(t *testing.T) {
 		return true
 	})
 
-	h.coord.PersistModelSwitch(t.Context(), "c1", marotte.EntryModelSwitched{From: "opus-5", To: "sonnet-5"}, 1234)
+	h.coord.persistModelSwitch(t.Context(), "c1", marotte.EntryModelSwitched{From: "opus-5", To: "sonnet-5"}, 1234)
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if c.Model != "sonnet-5" || c.PendingModel != "" || c.Usage.ContextSize != 1234 {
@@ -845,7 +855,7 @@ func TestAdoptKASTitle_LogsTheSanitizedTitleWithItsReason(t *testing.T) {
 // the reaper reaps only for its own workspace.
 const testReaperWorkDir = "/tmp/work"
 
-// writeSessionRecord writes the session.json the reaper reads; without one the reaper retains (doubt).
+// Without one the reaper retains (doubt).
 func writeSessionRecord(t *testing.T, sessionDir, workspaceRoot string) {
 	t.Helper()
 	body := `{"workspacePaths":["` + workspaceRoot + `"]}`
@@ -944,7 +954,7 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 }
 
 // TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted pins that a fact the load omitted is
-// not written: a fresh bridge answers zero values. Catalog owns the catalogs' rule.
+// not written: a fresh bridge answers zero values. catalog owns the catalogs' rule.
 func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
 	cases := map[string]struct {
 		mode     string
@@ -959,7 +969,7 @@ func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
 			c := &marotte.Chat{Name: "A", CurrentModeID: "spec"}
 			br := &fakeBridge{currentMode: tc.mode}
 
-			applyLoadedSessionFacts(c, br, "")
+			_, _ = applyLoadedSessionFacts(c, br, "")
 
 			if c.CurrentModeID != tc.wantMode {
 				t.Errorf("CurrentModeID = %q, want %q", c.CurrentModeID, tc.wantMode)
@@ -983,7 +993,7 @@ func TestApplyLoadedSessionFacts_KeepsSummarizationThreshold(t *testing.T) {
 			c.Usage.SummarizationThresholdPct = 80
 			br := &fakeBridge{summarizationPct: tc.summarization}
 
-			applyLoadedSessionFacts(c, br, "")
+			_, _ = applyLoadedSessionFacts(c, br, "")
 
 			if c.Usage.SummarizationThresholdPct != tc.want {
 				t.Errorf("SummarizationThresholdPct = %v, want %v",
@@ -1073,7 +1083,7 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 			})
 
 			since := h.bus.fanout.Position().Head
-			if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 
@@ -1112,8 +1122,10 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 			wantSurvive: true,
 		},
 		{
-			name:        "delete reaps it (control)",
-			teardown:    func(h *Runtime, ctx context.Context, id marotte.ChatID) { h.DeleteChatState(ctx, id) },
+			name: "delete reaps it (control)",
+			teardown: func(h *Runtime, ctx context.Context, id marotte.ChatID) {
+				h.DeleteChatStateByChain(ctx, id, []string{"sess_owned"}, command.RunStopChatDeleted)
+			},
 			wantSurvive: false,
 		},
 	}
@@ -1158,55 +1170,31 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 }
 
 // TestChatTeardown_DeleteByChainReapsWithoutTheRecord pins a reap driven from the chain
-// captured before the commit; the record-reading grade must leave the session.
+// captured before the record went.
 func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
-	cases := []struct {
-		name        string
-		teardown    func(h *Runtime, ctx context.Context, id marotte.ChatID)
-		wantSurvive bool
-	}{
-		{
-			name: "the captured chain reaps with the record gone",
-			teardown: func(h *Runtime, ctx context.Context, id marotte.ChatID) {
-				h.DeleteChatStateByChain(ctx, id, []string{"sess_owned"}, command.RunStopTabClosed)
-			},
-			wantSurvive: false,
-		},
-		{
-			name:        "the record-reading grade no-ops without one (control)",
-			teardown:    func(h *Runtime, ctx context.Context, id marotte.ChatID) { h.DeleteChatState(ctx, id) },
-			wantSurvive: true,
-		},
+	sessionsDir := t.TempDir()
+	sessDir := filepath.Join(sessionsDir, "hash01", "sess_owned")
+	if err := os.MkdirAll(sessDir, 0o700); err != nil {
+		t.Fatalf("mkdir session: %v", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			sessionsDir := t.TempDir()
-			sessDir := filepath.Join(sessionsDir, "hash01", "sess_owned")
-			if err := os.MkdirAll(sessDir, 0o700); err != nil {
-				t.Fatalf("mkdir session: %v", err)
-			}
-			writeSessionRecord(t, sessDir, testReaperWorkDir)
+	writeSessionRecord(t, sessDir, testReaperWorkDir)
 
-			cs := newTestChatStore()
-			h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
-				WithSessionReaper(
-					kirosession.New(sessionsDir, testReaperWorkDir),
-					func(context.Context) (map[string]struct{}, bool) {
-						return map[string]struct{}{"sess_owned": {}}, true
-					},
-				))
-			cs.wire(h)
-			t.Cleanup(func() { shutdownHub(t, h) })
+	cs := newTestChatStore()
+	h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
+		WithSessionReaper(
+			kirosession.New(sessionsDir, testReaperWorkDir),
+			func(context.Context) (map[string]struct{}, bool) {
+				return map[string]struct{}{"sess_owned": {}}, true
+			},
+		))
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
 
-			// No chat record: the escalation deleted it inside the close commit.
-			tc.teardown(h, t.Context(), "c-doomed")
+	// No chat record: every delete removes it before the teardown.
+	h.DeleteChatStateByChain(t.Context(), "c-doomed", []string{"sess_owned"}, command.RunStopTabClosed)
 
-			_, err := os.Stat(sessDir)
-			survived := err == nil
-			if survived != tc.wantSurvive {
-				t.Errorf("session survived = %v, want %v", survived, tc.wantSurvive)
-			}
-		})
+	if _, err := os.Stat(sessDir); err == nil {
+		t.Errorf("session %s survived a by-chain delete with the record gone, want it reaped", sessDir)
 	}
 }
 
@@ -1230,7 +1218,7 @@ func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 		t.Fatalf("seed the chat: %v", err)
 	}
 
-	if _, err := h.coord.OpenBridge(t.Context(), chatID, ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -1301,7 +1289,7 @@ func TestApplyLoadedSessionFacts_RefreshesTheEntitlementSet(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			chat := &marotte.Chat{ServedModelIDs: []string{"seed"}}
-			applyLoadedSessionFacts(chat, &fakeBridge{catalog: tc.catalog}, "")
+			_, _ = applyLoadedSessionFacts(chat, &fakeBridge{catalog: tc.catalog}, "")
 			if !slices.Equal(chat.ServedModelIDs, tc.want) {
 				t.Errorf("ServedModelIDs = %v, want %v", chat.ServedModelIDs, tc.want)
 			}
@@ -1334,8 +1322,8 @@ func TestLoad_ASavedModelIsJudgedAgainstTheServedCatalogue(t *testing.T) {
 			h, _, _ := newTestHub()
 			rec := &marotte.Chat{Name: "A", Model: "m-saved", Effort: "max", ServedModelIDs: tc.served}
 
-			sent, _, _ := h.coord.sessionChoices(t.Context(), "c1", rec, "")
-			applyLoadedSessionFacts(rec, &fakeBridge{catalog: tc.catalog}, "")
+			sent, _, _, _ := h.coord.sessionChoices(t.Context(), "c1", rec, "")
+			_, _ = applyLoadedSessionFacts(rec, &fakeBridge{catalog: tc.catalog}, "")
 
 			if sent != tc.wantSent {
 				t.Errorf("sessionChoices model = %q, want %q", sent, tc.wantSent)
@@ -1343,6 +1331,122 @@ func TestLoad_ASavedModelIsJudgedAgainstTheServedCatalogue(t *testing.T) {
 			if rec.Model != tc.wantModel || rec.Effort != tc.wantEff {
 				t.Errorf("after load: model = %q, effort = %q; want %q, %q",
 					rec.Model, rec.Effort, tc.wantModel, tc.wantEff)
+			}
+		})
+	}
+}
+
+func TestOpenBridge_RecordsAWithheldModelAsAnUnavailableSwitch(t *testing.T) {
+	h, cs, rb := newRecordingStartHub(t)
+	ctx := t.Context()
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Name, c.Model, c.Effort, c.ServedModelIDs = "A", "m-gone", "max", []string{"m-other"}
+		c.TurnCount = 1
+		return true
+	})
+
+	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+
+	if got := rb.startOpts().Model; got != "" {
+		t.Errorf("StartOpts.Model = %q, want the unserved model withheld", got)
+	}
+	want := []marotte.EntryModelSwitched{{From: "m-gone", To: "fake-model", Reason: marotte.ModelSwitchReasonUnavailable}}
+	if got := switchesOf(t, logOf(t, cs, "c1")); !slices.Equal(got, want) {
+		t.Errorf("model_switched entries = %+v, want %+v", got, want)
+	}
+	if c, _ := cs.Get(ctx, "c1"); c.Model != "fake-model" || c.Effort != "" {
+		t.Errorf("header = {Model %q, Effort %q}, want {fake-model, \"\"}", c.Model, c.Effort)
+	}
+}
+
+func TestOpenBridge_RecordsAModelTheLoadDropped(t *testing.T) {
+	h, cs, rb := newRecordingStartHub(t)
+	rb.catalog = []marotte.SessionModel{{ID: "fake-model"}}
+	ctx := t.Context()
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Name, c.Model = "A", "m-gone"
+		c.RecordSession("sess_saved")
+		c.TurnCount = 1
+		return true
+	})
+
+	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+
+	want := []marotte.EntryModelSwitched{{From: "m-gone", To: "fake-model", Reason: marotte.ModelSwitchReasonUnavailable}}
+	if got := switchesOf(t, logOf(t, cs, "c1")); !slices.Equal(got, want) {
+		t.Errorf("model_switched entries = %+v, want %+v", got, want)
+	}
+	if c, _ := cs.Get(ctx, "c1"); c.Model != "fake-model" {
+		t.Errorf("header Model = %q, want the running model", c.Model)
+	}
+}
+
+func TestOpenBridge_ServedOrFailedSpawnRecordsNoUnavailableSwitch(t *testing.T) {
+	t.Run("served", func(t *testing.T) {
+		h, cs, _ := newRecordingStartHub(t)
+		ctx := t.Context()
+		_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
+			c.Name, c.Model, c.ServedModelIDs = "A", "fake-model", []string{"fake-model"}
+			return true
+		})
+		if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+			t.Fatalf("OpenBridge: %v", err)
+		}
+		if got := switchesOf(t, logOf(t, cs, "c1")); len(got) != 0 {
+			t.Errorf("model_switched entries = %+v, want none", got)
+		}
+	})
+	t.Run("failed_spawn", func(t *testing.T) {
+		h, cs, rb := newRecordingStartHub(t)
+		rb.startErr = errors.New("spawn refused")
+		ctx := t.Context()
+		_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
+			c.Name, c.Model, c.Effort, c.ServedModelIDs = "A", "m-gone", "max", []string{"m-other"}
+			return true
+		})
+		if _, err := h.coord.openBridge(ctx, "c1", ""); err == nil {
+			t.Fatal("OpenBridge = nil, want the spawn's error")
+		}
+		if got := switchesOf(t, logOf(t, cs, "c1")); len(got) != 0 {
+			t.Errorf("model_switched entries = %+v, want none", got)
+		}
+		if c, _ := cs.Get(ctx, "c1"); c.Model != "m-gone" || c.Effort != "max" {
+			t.Errorf("header = {Model %q, Effort %q}, want {m-gone, max} back for the next spawn to withhold and record",
+				c.Model, c.Effort)
+		}
+	})
+}
+
+func TestOpenBridge_AnUnservedModelTheSessionRunsKeepsItsSelection(t *testing.T) {
+	cases := map[string]func(c *marotte.Chat){
+		"withheld at the door": func(c *marotte.Chat) { c.ServedModelIDs = []string{"m-other"} },
+		"dropped by the load":  func(c *marotte.Chat) { c.RecordSession("sess_saved") },
+	}
+	for name, seed := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, cs, rb := newRecordingStartHub(t)
+			rb.catalog = []marotte.SessionModel{{ID: "m-other"}}
+			rb.modelID = "m-gone"
+			ctx := t.Context()
+			_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
+				c.Name, c.Model, c.Effort = "A", "m-gone", "max"
+				seed(c)
+				return true
+			})
+
+			if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+				t.Fatalf("OpenBridge: %v", err)
+			}
+
+			if got := switchesOf(t, logOf(t, cs, "c1")); len(got) != 0 {
+				t.Errorf("model_switched entries = %+v, want none", got)
+			}
+			if c, _ := cs.Get(ctx, "c1"); c.Model != "m-gone" || c.Effort != "max" {
+				t.Errorf("header = {Model %q, Effort %q}, want {m-gone, max}", c.Model, c.Effort)
 			}
 		})
 	}

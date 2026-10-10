@@ -91,7 +91,7 @@ func TestPromptLabel_AnAttachmentOnlyPromptIsNamedForItsFile(t *testing.T) {
 
 // seedDefaultNamedChat seeds the record OpenTurn's header fallback leaves behind:
 // a chat still carrying the default name, which the first prompt may rename.
-func seedDefaultNamedChat(t *testing.T, store ChatStore, id marotte.ChatID) {
+func seedDefaultNamedChat(t *testing.T, store chatStore, id marotte.ChatID) {
 	t.Helper()
 	if _, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.Name = marotte.DefaultChatName

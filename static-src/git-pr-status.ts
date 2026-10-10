@@ -5,7 +5,7 @@ import type { GitPR } from "./git-types.js";
 import type { Affordance, RepoSuccessor } from "./wire/types.gen.js";
 
 /** A rendered CI chip: text, a CSS state class, and its hover detail. */
-export interface CheckChip {
+interface CheckChip {
   text: string;
   className: string;
   tooltip: string;

@@ -9,7 +9,7 @@ vi.mock("../toast.js", () => ({
 }));
 
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { getActionLog as recentLog } from "./index.js";
+import { getActionLog as recentLog } from "@cplieger/actions";
 import { downloadFiles } from "./files.js";
 
 beforeEach(() => {

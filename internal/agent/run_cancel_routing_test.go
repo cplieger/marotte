@@ -33,7 +33,6 @@ func (s *spawnRecorder) factory() ACPBridge {
 	return br
 }
 
-// sawCall reports how many bridges took the method and how many times in total.
 func (s *spawnRecorder) sawCall(method string) (bridges, calls int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -66,7 +65,6 @@ func chatBridge(t *testing.T, h *Runtime, chatID marotte.ChatID) *fakeBridge {
 	return br
 }
 
-// agentLaunchedRun stages a chat with a live bridge and one run KAS parents on its session.
 func agentLaunchedRun(t *testing.T, results map[string]json.RawMessage, errs map[string]error) (*Runtime, *spawnRecorder) {
 	t.Helper()
 	rec := &spawnRecorder{results: results, errs: errs}
@@ -80,13 +78,12 @@ func agentLaunchedRun(t *testing.T, results map[string]json.RawMessage, errs map
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	return h, rec
 }
 
-// agentRunList is what `workflow/list` answers for one agent-launched run.
 func agentRunList(t *testing.T, status string) json.RawMessage {
 	t.Helper()
 	return kasRuns(t, map[string]any{
@@ -106,7 +103,7 @@ func TestCancel_IsCarriedOnTheOWNINGChatsBridge(t *testing.T) {
 	owner := chatBridge(t, h, "c1")
 	leased(t, h.runs, "wf_1")
 
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 
@@ -129,7 +126,7 @@ func TestDelete_IsCarriedOnTheOWNINGChatsBridge(t *testing.T) {
 	owner := chatBridge(t, h, "c1")
 	leased(t, h.runs, "wf_1")
 
-	if err := h.runs.Delete(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.delete(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
@@ -142,7 +139,7 @@ func TestDelete_IsCarriedOnTheOWNINGChatsBridge(t *testing.T) {
 }
 
 // TestCancelForSessions_ReadsTheRunInventoryOnce pins one `workflow/list` for a tab close, not N+1. The
-// bridge is inserted so OpenBridge's rehydrate hook does not read the inventory.
+// bridge is inserted so openBridge's rehydrate hook does not read the inventory.
 func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -171,7 +168,7 @@ func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
 	leased(t, h.runs, "wf_1")
 	leased(t, h.runs, "wf_2")
 
-	h.runs.CancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
+	h.runs.cancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
 
 	if got := callsOf(br, methodKiroWorkflowCancel); got != 2 {
 		t.Errorf("the cancel went out %d times for 2 live runs, want 2", got)
@@ -204,7 +201,7 @@ func TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED(t *testing.T) {
 	}
 	leased(t, h.runs, "wf_1")
 
-	h.runs.CancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
+	h.runs.cancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
 
 	if !slices.Contains(owner.callLog(), methodKiroWorkflowCancel) {
 		t.Error("the cancel did not reach the launching chat's bridge for a chat whose " +
@@ -241,7 +238,7 @@ func TestCancelForSessions_PrefersTheRunsOWNProcess(t *testing.T) {
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: runBr, state: bridgeIdle})
 	leased(t, h.runs, "wf_1")
 
-	h.runs.CancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
+	h.runs.cancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
 
 	if !slices.Contains(runBr.callLog(), methodKiroWorkflowCancel) {
 		t.Error("the cancel did not reach the run's own re-hosted process, which is the " +
@@ -266,7 +263,7 @@ func TestCancel_FallsBackToTheUtilitySessionWhenNothingHostsTheRun(t *testing.T)
 	owner := chatBridge(t, h, "c1")
 	leased(t, h.runs, "wf_1")
 
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 
@@ -288,7 +285,7 @@ func TestFinishTermination_ARefusedCancelKEEPSTheDeadline(t *testing.T) {
 		t.Fatal("the fixture is not bounded, so it cannot show a deadline surviving")
 	}
 
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 
@@ -309,7 +306,7 @@ func TestFinishTermination_ALandedCancelRELEASESTheDeadline(t *testing.T) {
 	leased(t, h.runs, "wf_1")
 	h.runs.armDeadline(t.Context(), "wf_1")
 
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 
@@ -366,7 +363,7 @@ func TestRetryTermination_IsBoundedAndDoesNotReFireForever(t *testing.T) {
 	h.runs.armDeadline(t.Context(), "wf_1")
 
 	// The first attempt is the caller's.
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 
@@ -418,7 +415,7 @@ func TestHealProgress_RefillsTheCancelRetryBudget(t *testing.T) {
 	h.runs.armDeadline(t.Context(), "wf_1")
 
 	// Spend the whole ladder on the user's button.
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 	spent := 1 + maxCancelRetries
@@ -436,12 +433,12 @@ func TestHealProgress_RefillsTheCancelRetryBudget(t *testing.T) {
 	}
 
 	// The run completes a node.
-	h.translateACPEvent("c1", runNotif(methodWFNodeComplete, map[string]any{
+	h.translateACPEvent("c1", h.originOf("c1"), runNotif(methodWFNodeComplete, map[string]any{
 		"workflowId": "wf_1", "nodeId": "n1", "status": "completed",
 	}))
 
 	// A later refused cancel gets a fresh ladder.
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 	awaitCalls(t, br, methodKiroWorkflowCancel, spent+1+maxCancelRetries,
@@ -449,7 +446,6 @@ func TestHealProgress_RefillsTheCancelRetryBudget(t *testing.T) {
 			"re-attempts stay spent by the user's earlier presses")
 }
 
-// callsOf counts how many times a fake took one method.
 func callsOf(br *fakeBridge, method string) int {
 	n := 0
 	for _, m := range br.callLog() {
@@ -471,7 +467,7 @@ func TestRetryTermination_ARunNoLongerBoundedIsLeftAlone(t *testing.T) {
 	leased(t, h.runs, "wf_1")
 	h.runs.armDeadline(t.Context(), "wf_1")
 
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 	before := callsOf(br, methodKiroWorkflowCancel)
@@ -502,7 +498,7 @@ func TestResumeIfInterrupted_ArmsTheDeadline(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	// Leased and parked, so the arm is a fresh budget.
@@ -536,7 +532,7 @@ func TestResumeIfInterrupted_DoesNotArmARefusedResume(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	leased(t, h.runs, "wf_1")

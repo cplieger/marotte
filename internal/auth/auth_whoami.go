@@ -75,7 +75,6 @@ func whoamiInfo(out []byte) (WhoamiResponse, error) {
 	return resp, nil
 }
 
-// maxIdentityFieldBytes bounds one identity string on its way to the sidebar and the log.
 const maxIdentityFieldBytes = 256
 
 // identityText prepares one upstream identity string for a single-line UI row, mapping C0/C1, DEL and Bidi controls

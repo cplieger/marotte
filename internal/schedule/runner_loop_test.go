@@ -7,11 +7,10 @@ import (
 	"time"
 )
 
-// These tests drive Run in a synctest bubble so the PRODUCTION TickInterval is used and the
+// These tests drive Run in a synctest bubble so the PRODUCTION tickInterval is used and the
 // counts are exact; Run parks in a select, and a sweep's file I/O is transient.
 
-// bubbleFixture builds a store with one 5-minute schedule plus a runner on the bubble's
-// clock. anchorOffset selects whether a slot is already due at t=0.
+// anchorOffset selects whether a slot is already due at t=0.
 func bubbleFixture(t *testing.T, anchorOffset time.Duration) (*Store, *fakeLauncher, *Runner) {
 	t.Helper()
 	st, err := NewStore(t.TempDir())
@@ -35,7 +34,7 @@ func bubbleFixture(t *testing.T, anchorOffset time.Duration) (*Store, *fakeLaunc
 }
 
 // TestRun_DoesNotSweepOnEntry pins that a slot due during downtime is not fired at boot.
-// The slot sits inside MissGrace at t=0, so only WHEN the first sweep ran is measured.
+// The slot sits inside missGrace at t=0, so only WHEN the first sweep ran is measured.
 func TestRun_DoesNotSweepOnEntry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		_, l, r := bubbleFixture(t, -2*time.Minute)
@@ -44,12 +43,12 @@ func TestRun_DoesNotSweepOnEntry(t *testing.T) {
 		go r.Run(ctx)
 
 		// Half a tick in: a sweep on entry would already have launched.
-		synctest.Sleep(TickInterval / 2)
+		synctest.Sleep(tickInterval / 2)
 		if srcs, _, _ := l.snap(); len(srcs) != 0 {
 			t.Errorf("launches after %v = %v, want none: Run must not sweep on entry",
-				TickInterval/2, srcs)
+				tickInterval/2, srcs)
 		}
-		synctest.Sleep(TickInterval)
+		synctest.Sleep(tickInterval)
 		if got := l.launched(); got != 1 {
 			t.Errorf("launches after the first tick = %d, want exactly 1", got)
 		}
@@ -93,7 +92,7 @@ func TestRun_ReturnsOnCancel(t *testing.T) {
 			defer close(done)
 			r.Run(ctx)
 		}()
-		synctest.Sleep(TickInterval / 2)
+		synctest.Sleep(tickInterval / 2)
 		cancel()
 		synctest.Wait()
 		select {

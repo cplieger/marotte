@@ -94,7 +94,7 @@ func TestExtendRepeat_SendsNodeAndCountOnResume(t *testing.T) {
 	h, _, br := newTestHub()
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.runs.ExtendRepeat(t.Context(), "wf_1", "loop", 5); err != nil {
+	if err := h.runs.extendRepeat(t.Context(), "wf_1", "loop", 5); err != nil {
 		t.Fatalf("ExtendRepeat = %v, want nil", err)
 	}
 	params := br.paramsFor(methodKiroWorkflowResume)
@@ -117,7 +117,7 @@ func TestExtendRepeat_RefusesACountOutsideTheCap(t *testing.T) {
 	for _, n := range []int{0, -1, maxExtendIterations + 1} {
 		h, _, br := newTestHub()
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-		if err := h.runs.ExtendRepeat(t.Context(), "wf_1", "loop", n); err == nil {
+		if err := h.runs.extendRepeat(t.Context(), "wf_1", "loop", n); err == nil {
 			t.Errorf("ExtendRepeat(n=%d) = nil, want an error", n)
 		}
 		if br.paramsFor(methodKiroWorkflowResume) != nil {
@@ -130,7 +130,7 @@ func TestFinishRepeat_SendsNodeIdAndCompleted(t *testing.T) {
 	h, _, br := newTestHub()
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.runs.FinishRepeat(t.Context(), "wf_1", "loop"); err != nil {
+	if err := h.runs.finishRepeat(t.Context(), "wf_1", "loop"); err != nil {
 		t.Fatalf("FinishRepeat = %v, want nil", err)
 	}
 	params := br.paramsFor(methodKiroWorkflowUpdate)
@@ -155,7 +155,7 @@ func TestFinishRepeat_AnUpdatedFalseIsARefusal(t *testing.T) {
 		),
 	}
 
-	err := h.runs.FinishRepeat(t.Context(), "wf_1", "loop")
+	err := h.runs.finishRepeat(t.Context(), "wf_1", "loop")
 	if !errors.Is(err, errStepStatusRefused) {
 		t.Fatalf("FinishRepeat = %v, want errStepStatusRefused", err)
 	}
@@ -170,7 +170,7 @@ func TestSetStepStatus_NeverSendsNodeId(t *testing.T) {
 	addressableStep(t, h, br, "wf_1", "review")
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepCompleted); err != nil {
+	if err := h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepCompleted); err != nil {
 		t.Fatalf("SetStepStatus = %v, want nil", err)
 	}
 	if got, ok := br.paramsFor(methodKiroWorkflowUpdate)["nodeId"]; ok {

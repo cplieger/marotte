@@ -14,7 +14,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// logFixture is one entry log under its own root with the header beside it.
 type logFixture struct {
 	t      *testing.T
 	log    *EntryLog
@@ -35,7 +34,6 @@ func newLogFixture(t *testing.T) *logFixture {
 	return &logFixture{t: t, log: lg, header: h, root: root}
 }
 
-// reopen closes and reopens the log, rerunning the scan, the torn-tail rule and the store-open closer.
 func (f *logFixture) reopen() {
 	f.t.Helper()
 	if err := f.log.Close(); err != nil {
@@ -86,7 +84,7 @@ func (f *logFixture) readHeader() *marotte.Chat {
 	return c
 }
 
-// entryOf is one sealed entry for Append; the store assigns seq and ts.
+// The store assigns seq and ts.
 func entryOf(turn, lane, id string, kind marotte.EntryKind, payload any) *marotte.Entry {
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -115,16 +113,16 @@ func wantShapes(t *testing.T, got []marotte.Entry, want []string, what string) {
 // log.
 func TestEntryLog_AMissingLogIsAChatOfZeroTurns(t *testing.T) {
 	f := newLogFixture(t)
-	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Name: "fresh"}); err != nil {
+	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Name: "fresh"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	f.reopen()
 
-	window, err := f.log.Window(20, "")
+	window, err := f.log.window(20, "")
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
-	count, last := f.log.Counters()
+	count, last := counters(f.log)
 	switch {
 	case len(window.Entries) != 0 || window.HasMore:
 		t.Errorf("window is %+v, want empty with has_more false", window)
@@ -141,7 +139,7 @@ func TestEntryLog_AMissingLogIsAChatOfZeroTurns(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.root, entriesFileName)); err != nil {
 		t.Errorf("the first turn open did not create the log: %v", err)
 	}
-	if got, _ := f.log.Counters(); got != 1 {
+	if got, _ := counters(f.log); got != 1 {
 		t.Errorf("turn_count after one open is %d, want 1", got)
 	}
 	if rows := f.log.RailRows(); len(rows) != 1 || rows[0].ID != turn || rows[0].N != 1 {
@@ -157,13 +155,13 @@ func TestEntryLog_SeqIsContiguousAndTheHeaderCachesFollow(t *testing.T) {
 	f.append(turn, "", "call-1", marotte.EntryKindToolCall, marotte.EntryToolCall{ID: "call-1"})
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
 
-	entries, err := f.log.TurnRange(turn, 0)
+	entries, err := turnRange(f.log, turn, 0)
 	if err != nil {
 		t.Fatalf("turn range: %v", err)
 	}
 	wantShapes(t, entries, []string{"0:/turn_open", "1:/text", "2:/tool_call", "3:/turn_close"}, "one turn")
 
-	if err := f.log.WriteCounters(t.Context()); err != nil {
+	if err := f.log.writeCounters(t.Context()); err != nil {
 		t.Fatalf("write counters: %v", err)
 	}
 	h := f.readHeader()
@@ -181,7 +179,7 @@ func TestEntryLog_LastOutcomeIsTheNewestFinishedTurn(t *testing.T) {
 	f.closeTurn(second, marotte.TurnOutcomeCompleted)
 	f.prompt("three")
 
-	count, last := f.log.Counters()
+	count, last := counters(f.log)
 	if count != 3 || last != marotte.TurnOutcomeCompleted {
 		t.Errorf("counters are (%d, %q), want (3, completed)", count, last)
 	}
@@ -245,7 +243,7 @@ func TestEntryLog_ATornTailIsDroppedAndSeqContinues(t *testing.T) {
 // seq continues.
 func TestEntryLog_StoreOpenCloserClosesEveryOrphanedTurn(t *testing.T) {
 	f := newLogFixture(t)
-	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
+	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	first := f.prompt("one")
@@ -329,7 +327,7 @@ func TestEntryLog_BetweenTurnsAppend(t *testing.T) {
 		f := newLogFixture(t)
 		e := entryOf("", "", "switch-1", marotte.EntryKindModelSwitched,
 			marotte.EntryModelSwitched{From: "a", To: "b"})
-		if _, err := f.log.AppendBetweenTurns(ctx, e); err != nil {
+		if _, err := f.log.appendBetweenTurns(ctx, e); err != nil {
 			t.Fatalf("between-turns append: %v", err)
 		}
 		rows := f.log.RailRows()
@@ -361,7 +359,7 @@ func TestEntryLog_BetweenTurnsAppend(t *testing.T) {
 			t.Error("NeedsReconcile() = true after a reopen, want false: the carrier was closed when it was minted")
 		}
 		// The hollow ring: a chat whose only turn is a carrier has initiated nothing.
-		if count, last := f.log.Counters(); last != "" {
+		if count, last := counters(f.log); last != "" {
 			t.Errorf("Counters() after a reopen = (%d, %q), want last_turn_outcome \"\"", count, last)
 		}
 	})
@@ -372,7 +370,7 @@ func TestEntryLog_BetweenTurnsAppend(t *testing.T) {
 		f.closeTurn(turn, marotte.TurnOutcomeCompleted)
 		e := entryOf("", "", "compaction-x", marotte.EntryKindCompaction,
 			marotte.EntryCompaction{Summary: "s"})
-		if _, err := f.log.AppendBetweenTurns(ctx, e); err != nil {
+		if _, err := f.log.appendBetweenTurns(ctx, e); err != nil {
 			t.Fatalf("between-turns append: %v", err)
 		}
 		if e.Turn != turn {
@@ -380,7 +378,7 @@ func TestEntryLog_BetweenTurnsAppend(t *testing.T) {
 		}
 		wantShapes(t, mustRange(t, f, turn),
 			[]string{"0:/turn_open", "1:/turn_close", "2:/compaction"}, "the newest turn")
-		if got, _ := f.log.Counters(); got != 1 {
+		if got, _ := counters(f.log); got != 1 {
 			t.Errorf("turn_count is %d, want 1: a between-turns entry opens no turn", got)
 		}
 	})
@@ -397,7 +395,7 @@ func TestEntryLog_WindowPagesByTurn(t *testing.T) {
 		turns = append(turns, turn)
 	}
 
-	newest, err := f.log.Window(2, "")
+	newest, err := f.log.window(2, "")
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
@@ -408,7 +406,7 @@ func TestEntryLog_WindowPagesByTurn(t *testing.T) {
 		t.Errorf("the newest page holds turns %v, want the last two", got)
 	}
 
-	older, err := f.log.Window(2, turns[2])
+	older, err := f.log.window(2, turns[2])
 	if err != nil {
 		t.Fatalf("window before: %v", err)
 	}
@@ -419,7 +417,7 @@ func TestEntryLog_WindowPagesByTurn(t *testing.T) {
 		t.Errorf("the ?before page holds turns %v, want the first two", got)
 	}
 
-	if _, err := f.log.Window(2, "t-nosuchturn"); err == nil {
+	if _, err := f.log.window(2, "t-nosuchturn"); err == nil {
 		t.Error("a window before an unknown turn reported success")
 	}
 }
@@ -435,7 +433,7 @@ func TestEntryLog_WindowSkipsAForeignTurnInsideItsRange(t *testing.T) {
 	f.closeTurn(third, marotte.TurnOutcomeCompleted)
 	f.closeTurn(second, marotte.TurnOutcomeCompleted)
 
-	window, err := f.log.Window(1, third)
+	window, err := f.log.window(1, third)
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
@@ -488,7 +486,7 @@ func TestEntryLog_RailRowsHoldOnlyDrawnTurns(t *testing.T) {
 	if rows[2].AgentInitiated {
 		t.Error("the empty_retry turn is marked agent_initiated, and it carries the prompt")
 	}
-	if count, _ := f.log.Counters(); count != 5 {
+	if count, _ := counters(f.log); count != 5 {
 		t.Errorf("turn_count is %d, want 5: it counts turns drawn or not", count)
 	}
 }
@@ -583,7 +581,7 @@ func TestEntryLog_ABetweenTurnsEntryCanDrawTheNewestTurn(t *testing.T) {
 		t.Fatalf("rail rows are %+v, want none for a turn of two lines", f.log.RailRows())
 	}
 	e := entryOf("", "", "compaction-y", marotte.EntryKindCompaction, marotte.EntryCompaction{Summary: "s"})
-	if _, err := f.log.AppendBetweenTurns(t.Context(), e); err != nil {
+	if _, err := f.log.appendBetweenTurns(t.Context(), e); err != nil {
 		t.Fatalf("between-turns append: %v", err)
 	}
 	if rows := f.log.RailRows(); len(rows) != 1 || rows[0].ID != turn {
@@ -644,7 +642,7 @@ func TestEntryLog_ALineOverThePerEntryCapIsRefused(t *testing.T) {
 func TestEntryLog_TheWholeLogCapRefusesBeforeTheWrite(t *testing.T) {
 	ctx := t.Context()
 	root := filepath.Join(t.TempDir(), "chats", "c-abcdef01")
-	lg, err := OpenEntryLog(ctx, root, NoHeader(), WithEntryFileCap(400))
+	lg, err := OpenEntryLog(ctx, root, NoHeader(), withEntryFileCap(400))
 	if err != nil {
 		t.Fatalf("open entry log: %v", err)
 	}
@@ -662,7 +660,7 @@ func TestEntryLog_TheWholeLogCapRefusesBeforeTheWrite(t *testing.T) {
 	if err := lg.Append(ctx, filler); !errors.Is(err, atomicfile.ErrFileTooLarge) {
 		t.Fatalf("a write past the cap answered %v, want ErrFileTooLarge", err)
 	}
-	entries, err := lg.TurnRange(opened.Turn, 0)
+	entries, err := turnRange(lg, opened.Turn, 0)
 	if err != nil {
 		t.Fatalf("read the turn: %v", err)
 	}
@@ -693,12 +691,12 @@ func TestEntryLog_TurnRangeAnswersTheTailFromItsBound(t *testing.T) {
 	f.append(turn, "", "say-2", marotte.EntryKindText, marotte.EntryText{Text: "two"})
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
 
-	tail, err := f.log.TurnRange(turn, 2)
+	tail, err := turnRange(f.log, turn, 2)
 	if err != nil {
 		t.Fatalf("turn range: %v", err)
 	}
 	wantShapes(t, tail, []string{"2:/text", "3:/turn_close"}, "the tail from seq 2")
-	if _, err := f.log.TurnRange("t-nosuchturn", 0); err == nil {
+	if _, err := turnRange(f.log, "t-nosuchturn", 0); err == nil {
 		t.Error("a range read of an unknown turn reported success")
 	}
 }
@@ -710,17 +708,17 @@ func TestEntryLog_AMissingTurnCarriesTheSentinel(t *testing.T) {
 	turn := f.prompt("hello")
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
 
-	if _, err := f.log.TurnRange("t-nosuchturn", 0); !errors.Is(err, ErrTurnNotInLog) {
+	if _, err := turnRange(f.log, "t-nosuchturn", 0); !errors.Is(err, ErrTurnNotInLog) {
 		t.Errorf("TurnRange(unknown, 0) = %v, want ErrTurnNotInLog", err)
 	}
-	if _, err := f.log.TurnRange("t-nosuchturn", 3); !errors.Is(err, ErrTurnNotInLog) {
+	if _, err := turnRange(f.log, "t-nosuchturn", 3); !errors.Is(err, ErrTurnNotInLog) {
 		t.Errorf("TurnRange(unknown, from 3) = %v, want ErrTurnNotInLog", err)
 	}
 	if _, _, err := f.log.TurnPage("t-nosuchturn", 0); !errors.Is(err, ErrTurnNotInLog) {
 		t.Errorf("TurnPage(unknown) = %v, want ErrTurnNotInLog", err)
 	}
 	// The other direction, so a sentinel on every read fails.
-	if _, err := f.log.TurnRange(turn, 0); err != nil {
+	if _, err := turnRange(f.log, turn, 0); err != nil {
 		t.Errorf("TurnRange(%q) = %v, want the turn's entries and no error", turn, err)
 	}
 }
@@ -729,13 +727,13 @@ func TestEntryLog_AMissingTurnCarriesTheSentinel(t *testing.T) {
 // truncate everything while answering success.
 func TestEntryLog_ARewriteMissingATurnOpenIsRefused(t *testing.T) {
 	f := newLogFixture(t)
-	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01"}); err != nil {
+	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	turn := f.prompt("one")
 	f.append(turn, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "p"})
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
-	merged, err := f.log.Window(10, "")
+	merged, err := f.log.window(10, "")
 	if err != nil {
 		t.Fatalf("read the whole log: %v", err)
 	}
@@ -768,7 +766,7 @@ func TestEntryLog_ARewriteMissingATurnOpenIsRefused(t *testing.T) {
 // A rewrite writes turns contiguously in n order with seq renumbered and stamps only the counters.
 func TestEntryLog_RewriteMakesTurnsContiguous(t *testing.T) {
 	f := newLogFixture(t)
-	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01"}); err != nil {
+	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	first := f.prompt("one")
@@ -778,7 +776,7 @@ func TestEntryLog_RewriteMakesTurnsContiguous(t *testing.T) {
 	f.closeTurn(second, marotte.TurnOutcomeCompleted)
 	f.closeTurn(first, marotte.TurnOutcomeCompleted)
 
-	merged, err := f.log.Window(10, "")
+	merged, err := f.log.window(10, "")
 	if err != nil {
 		t.Fatalf("read the whole log: %v", err)
 	}
@@ -786,7 +784,7 @@ func TestEntryLog_RewriteMakesTurnsContiguous(t *testing.T) {
 		t.Fatalf("rewrite: %v", err)
 	}
 
-	after, err := f.log.Window(10, "")
+	after, err := f.log.window(10, "")
 	if err != nil {
 		t.Fatalf("read the rewritten log: %v", err)
 	}
@@ -838,7 +836,7 @@ func TestEntryLog_ARunRootNeedsNoHeader(t *testing.T) {
 		t.Fatalf("reopen run log: %v", err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
-	entries, err := reopened.TurnRange(step.Turn, 0)
+	entries, err := turnRange(reopened, step.Turn, 0)
 	if err != nil {
 		t.Fatalf("read the step turn: %v", err)
 	}
@@ -858,7 +856,7 @@ func TestEntryLog_ARunRootNeedsNoHeader(t *testing.T) {
 
 func mustRange(t *testing.T, f *logFixture, turn string) []marotte.Entry {
 	t.Helper()
-	entries, err := f.log.TurnRange(turn, 0)
+	entries, err := turnRange(f.log, turn, 0)
 	if err != nil {
 		t.Fatalf("turn range %q: %v", turn, err)
 	}

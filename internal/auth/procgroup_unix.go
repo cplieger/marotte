@@ -14,7 +14,6 @@ func setProcGroup(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
-// killGroup sends SIGKILL to the subprocess's whole group (-pgid).
 func killGroup(c *exec.Cmd) error {
 	if c.Process == nil {
 		return syscall.ESRCH

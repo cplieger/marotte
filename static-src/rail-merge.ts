@@ -18,10 +18,9 @@ export interface TurnSummary {
   elapsed_ms?: number;
 }
 
-/** Rows the index answered with, and how many it carried that could not be read. */
-export interface ValidatedIndex {
+/** Rows the index answered with. */
+interface ValidatedIndex {
   turns: TurnSummary[];
-  dropped: number;
 }
 
 /** The preview line's cap, matching `internal/chat/entrylog.go`'s `firstLineMax`. */
@@ -33,7 +32,7 @@ const FIRST_LINE_MAX = 120;
  *  are DROPPED, description is COERCED. One `console.warn` per call, which is one per fetch. */
 export function validateTurnIndex(raw: unknown): ValidatedIndex {
   if (!Array.isArray(raw)) {
-    return { turns: [], dropped: 0 };
+    return { turns: [] };
   }
   const rows: TurnSummary[] = [];
   const badTs: number[] = [];
@@ -87,7 +86,7 @@ export function validateTurnIndex(raw: unknown): ValidatedIndex {
   if (dropped > 0) {
     console.warn("turn map: dropped unreadable index rows", dropped);
   }
-  return { turns: rows, dropped };
+  return { turns: rows };
 }
 
 /** Sit an unreadable `ts` on a neighbour rather than leaving it at the epoch, so the decoded row

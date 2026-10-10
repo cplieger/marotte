@@ -11,7 +11,6 @@ import {
   setTabParent,
   tabIdFor,
 } from "./tabs.js";
-import { isSafeURL } from "./url-safety.js";
 import { openWebPreview } from "./web-open.js";
 import { absPath } from "./workspace.js";
 
@@ -79,14 +78,4 @@ export async function openSpec(dir: string, chatID?: string): Promise<void> {
       ? { kind: "spec", ref: dir, owns: false }
       : { kind: "spec", ref: dir, parent, owns: false },
   );
-}
-
-/** Never auto-opens (an SSE-driven `window.open` is popup-blocked). False when the
- *  URL is unsafe, so the caller renders plain text. */
-export function openExternal(url: string): boolean {
-  if (!isSafeURL(url)) {
-    return false;
-  }
-  window.open(url, "_blank", "noopener,noreferrer");
-  return true;
 }

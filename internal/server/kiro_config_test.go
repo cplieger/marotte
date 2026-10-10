@@ -6,9 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 	"testing/fstest"
+
+	"github.com/cplieger/marotte/internal/steering"
 )
 
-// filterType returns the subset of items with the given Type.
 func filterType(items []kiroConfigItem, typ string) []kiroConfigItem {
 	var out []kiroConfigItem
 	for _, it := range items {
@@ -119,7 +120,7 @@ func TestScanKiroDirFS_Caps(t *testing.T) {
 // TestScanSteering_CapsOversizeRead pins that an over-cap file is still classified from its head.
 func TestScanSteering_CapsOversizeRead(t *testing.T) {
 	head := "---\ninclusion: manual\n---\n"
-	big := make([]byte, steeringReadCap+(1<<20)) // > cap
+	big := make([]byte, steering.FrontMatterReadCap+(1<<20)) // > cap
 	for i := range big {
 		big[i] = 'x'
 	}
