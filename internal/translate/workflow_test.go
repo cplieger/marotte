@@ -6,6 +6,7 @@ package translate
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -330,6 +331,107 @@ func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 	}
 }
 
+func TestNodeStart_SlashBearingNodeIDsKeyDistinctTurns(t *testing.T) {
+	t.Parallel()
+	var events []marotte.ServerEvent
+	d := capturing(&events)
+	tr := New(rolesOf(d))
+
+	for _, f := range []struct {
+		session string
+		path    []string
+	}{
+		{session: "sess_ab_c", path: []string{"wf_1", "a/b", "c"}},
+		{session: "sess_a_bc", path: []string{"wf_1", "a", "b/c"}},
+	} {
+		tr.RunProgressHandler(marotte.RunProgressNodeStart)(t.Context(), testChat,
+			notif("_kiro/workflow/node_start", map[string]any{
+				"workflowId": "wf_1", "nodeId": f.path[len(f.path)-1], "sessionId": f.session, "nodePath": f.path,
+			}))
+	}
+
+	var opened []string
+	for _, c := range d.runCalls {
+		if c.kind == "node_start" {
+			opened = append(opened, c.nodePath)
+		}
+	}
+	if want := []string{`wf_1:a/b:c`, `wf_1:a:b/c`}; !slices.Equal(opened, want) {
+		t.Errorf("node_start turn keys = %q, want %q", opened, want)
+	}
+	if ab, abc := tr.steps.refFor("sess_ab_c").NodePath, tr.steps.refFor("sess_a_bc").NodePath; ab == abc {
+		t.Errorf("both step sessions recorded node path %q, want two", ab)
+	}
+}
+
+// TestStepAttribution_SlashBearingNodeIDsKeyDistinctTurns pins the content frame's own meta to the same key.
+func TestStepAttribution_SlashBearingNodeIDsKeyDistinctTurns(t *testing.T) {
+	t.Parallel()
+	var events []marotte.ServerEvent
+	tr := New(rolesOf(capturing(&events)))
+
+	ab := tr.StepAttribution("wf_1", "sess_ab_c",
+		&ACPWorkflowMeta{WorkflowID: "wf_1", NodeID: "c", NodePath: []string{"wf_1", "a/b", "c"}})
+	abc := tr.StepAttribution("wf_1", "sess_a_bc",
+		&ACPWorkflowMeta{WorkflowID: "wf_1", NodeID: "b/c", NodePath: []string{"wf_1", "a", "b/c"}})
+	if ab.NodePath != `wf_1:a/b:c` || abc.NodePath != `wf_1:a:b/c` {
+		t.Errorf("StepAttribution node paths = %q and %q, want wf_1:a/b:c and wf_1:a:b/c", ab.NodePath, abc.NodePath)
+	}
+}
+
+// TestRunStep_CarriesTheNodeIDBesideItsKey pins the id both turn openers hand the run log: a hashed
+// path key cannot be split back into it.
+func TestRunStep_CarriesTheNodeIDBesideItsKey(t *testing.T) {
+	t.Parallel()
+	var events []marotte.ServerEvent
+	d := capturing(&events)
+	tr := New(rolesOf(d))
+	ctx := t.Context()
+
+	tr.RunProgressHandler(marotte.RunProgressNodeStart)(ctx, testChat,
+		notif("_kiro/workflow/node_start", map[string]any{
+			"workflowId": "wf_1", "nodeId": "a/b", "sessionId": "sess_ab", "nodePath": []string{"wf_1", "a/b"},
+		}))
+	raw, err := json.Marshal(map[string]any{"content": map[string]any{"type": "text", "text": "hi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr.HandleAssistantChunk(ctx, testChat, raw, false, tr.StepAttribution("wf_1", "sess_ab", nil))
+
+	got := map[string][]string{}
+	for _, c := range d.runCalls {
+		got[c.kind] = append(got[c.kind], c.nodeID)
+	}
+	if want := []string{"a/b"}; !slices.Equal(got["node_start"], want) || !slices.Equal(got["fold"], want) {
+		t.Errorf("node ids: node_start %q, content fold %q; want %q for each", got["node_start"], got["fold"], want)
+	}
+}
+
+// A cold registry (after a restart) knows no step; a content frame's own workflow _meta names its node.
+func TestRunStep_TakesTheMetasNodeIDWithAColdRegistry(t *testing.T) {
+	t.Parallel()
+	var events []marotte.ServerEvent
+	d := capturing(&events)
+	tr := New(rolesOf(d))
+	raw, err := json.Marshal(map[string]any{"content": map[string]any{"type": "text", "text": "hi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf := &ACPWorkflowMeta{WorkflowID: "wf_1", NodeID: "a/b", NodePath: []string{"wf_1", "a/b"}}
+
+	tr.HandleAssistantChunk(t.Context(), testChat, raw, false, tr.StepAttribution("wf_1", "sess_cold", wf))
+
+	var folds []string
+	for _, c := range d.runCalls {
+		if c.kind == "fold" {
+			folds = append(folds, c.nodeID)
+		}
+	}
+	if want := []string{"a/b"}; !slices.Equal(folds, want) {
+		t.Errorf("content fold node ids = %q, want %q from the frame's meta", folds, want)
+	}
+}
+
 // TestRunComplete_LeavesTheStepSessionsToItsCaller pins that this handler forgets nothing:
 // the status can be `paused`, and the terminal gate is agent.observeComplete's.
 func TestRunComplete_LeavesTheStepSessionsToItsCaller(t *testing.T) {
@@ -559,6 +661,24 @@ func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
 	// An empty key would make every unattributed frame on this chat look like a step.
 	if _, ok := tr.steps.lookup(""); ok {
 		t.Error("a pending step seeded an empty-keyed entry")
+	}
+}
+
+func TestRecordRunSteps_SlashBearingNodeIDsStayDistinct(t *testing.T) {
+	t.Parallel()
+	var events []marotte.ServerEvent
+	tr := New(rolesOf(capturing(&events)))
+
+	tr.RecordRunSteps(json.RawMessage(`{"state": {"workflowId": "wf_1", "root": {"nodeId": "wf_1", "type": "sequence", "children": [
+	  {"nodeId": "a/b", "type": "sequence", "children": [{"nodeId": "c", "type": "step", "sessionId": "sess_ab_c"}]},
+	  {"nodeId": "a", "type": "sequence", "children": [{"nodeId": "b/c", "type": "step", "sessionId": "sess_a_bc"}]}
+	]}}}`))
+
+	if got := tr.steps.refFor("sess_ab_c").NodePath; got != `wf_1:a/b:c` {
+		t.Errorf("refFor(sess_ab_c).NodePath = %q, want %q", got, `wf_1:a/b:c`)
+	}
+	if got := tr.steps.refFor("sess_a_bc").NodePath; got != `wf_1:a:b/c` {
+		t.Errorf("refFor(sess_a_bc).NodePath = %q, want %q", got, `wf_1:a:b/c`)
 	}
 }
 

@@ -175,14 +175,14 @@ describe("the reply's step ends travel beside the state", () => {
       {
         workflowId: "r1",
         status: "completed",
-        stepEnds: { "r1/build": { outcome: "failed", failure_reason: "stopped" } },
+        stepEnds: { "r1:build": { outcome: "failed", failure_reason: "stopped" } },
       },
       { workflowId: "r1", status: "completed" },
     ];
     store.invalidateRun("r1");
     await settle();
     expect([...store.runStepEnds("r1")]).toEqual([
-      ["r1/build", { outcome: "failed", failure_reason: "stopped" }],
+      ["r1:build", { outcome: "failed", failure_reason: "stopped" }],
     ]);
 
     store.invalidateRun("r1");
@@ -433,8 +433,7 @@ describe("nodePathOf separates two iterations that share a node id", () => {
   });
 });
 
-// The FALLBACK above is a well-formed value and not an address: its first segment is a LEAF id
-// where the endpoint asserts the run id, so a read of it is refused.
+// The FALLBACK above is a well-formed value and not an address: the walk did not place it.
 describe("nodeAddressOf reports whether the walk PLACED the target", () => {
   it("reports placed for a node the tree holds", () => {
     const target = step("work");
@@ -963,7 +962,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
 
     const landed = store.applyRunProgress({
       workflow_id: "r1",
-      node_path: "seq/coder",
+      node_path: ["seq", "coder"],
       status: "running",
       started_at: "2026-03-04T05:06:07Z",
     });
@@ -1008,7 +1007,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     expect(
       store.applyRunProgress({
         workflow_id: "r1",
-        node_path: "loop/iter-1/body",
+        node_path: ["loop", "iter-1", "body"],
         status: "running",
       }),
     ).toBe(true);
@@ -1018,13 +1017,64 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     expect(iters[0]?.children?.[0]?.status).toBe("completed");
   });
 
+  it("addresses a slash-bearing node id by its own segments", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "r",
+        type: "sequence",
+        status: "running",
+        children: [
+          { nodeId: "a/b", type: "sequence", status: "running", children: [step("c")] },
+          {
+            nodeId: "a",
+            type: "sequence",
+            status: "running",
+            children: [{ nodeId: "b", type: "sequence", status: "running", children: [step("c")] }],
+          },
+        ],
+      },
+    });
+
+    const landed = store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["r", "a/b", "c"],
+      status: "completed",
+    });
+
+    expect(landed).toBe(true);
+    const [slashed, nested] = store.peekRunState("r1")?.root?.children ?? [];
+    expect(slashed?.children?.[0]?.status).toBe("completed");
+    expect(nested?.children?.[0]?.children?.[0]?.status).toBe("pending");
+  });
+
+  it("addresses a node whose path is too long for an unhashed key", async () => {
+    // Past keyenc's 8 KiB component limit a path's key is a hash, so the frame names segments.
+    const long = "x".repeat(9 * 1024);
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "r", type: "sequence", status: "running", children: [step(long)] },
+    });
+
+    const landed = store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["r", long],
+      status: "completed",
+    });
+
+    expect(landed).toBe(true);
+    expect(store.peekRunState("r1")?.root?.children?.[0]?.status).toBe("completed");
+  });
+
   it("is idempotent, because KAS duplicates progress frames across a resume", async () => {
     await seedRun("r1", {
       workflowId: "r1",
       status: "running",
       root: { nodeId: "coder", type: "step", status: "pending" },
     });
-    const frame = { workflow_id: "r1", node_path: "coder", status: "completed", ended_at: "T1" };
+    const frame = { workflow_id: "r1", node_path: ["coder"], status: "completed", ended_at: "T1" };
     store.applyRunProgress(frame);
     const once = store.peekRunState("r1")?.root;
     store.applyRunProgress(frame);
@@ -1040,13 +1090,13 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
       root: { nodeId: "w", type: "watch", status: "running", startedAt: "T0" },
     });
 
-    store.applyRunProgress({ workflow_id: "r1", node_path: "w" });
+    store.applyRunProgress({ workflow_id: "r1", node_path: ["w"] });
     expect(store.peekRunState("r1")?.root?.status).toBe("running");
     expect(store.peekRunState("r1")?.root?.startedAt).toBe("T0");
 
     store.applyRunProgress({
       workflow_id: "r1",
-      node_path: "w",
+      node_path: ["w"],
       status: "completed",
       ended_at: "T9",
     });
@@ -1063,7 +1113,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
       status: "running",
       root: { nodeId: "coder", type: "step", status: "running" },
     });
-    store.applyRunProgress({ workflow_id: "r1", node_path: "coder", status: "quantum" });
+    store.applyRunProgress({ workflow_id: "r1", node_path: ["coder"], status: "quantum" });
     expect(store.peekRunState("r1")?.root?.status).toBe("running");
   });
 
@@ -1081,7 +1131,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     const before = store.peekRunState("r1");
     const untouchedSibling = before?.root?.children?.[1];
 
-    store.applyRunProgress({ workflow_id: "r1", node_path: "seq/a", status: "running" });
+    store.applyRunProgress({ workflow_id: "r1", node_path: ["seq", "a"], status: "running" });
 
     const after = store.peekRunState("r1");
     expect(after).not.toBe(before);
@@ -1109,7 +1159,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     // The watch_poll shape: the node's path and the status it already holds.
     const landed = store.applyRunProgress({
       workflow_id: "r1",
-      node_path: "seq/w",
+      node_path: ["seq", "w"],
       status: "running",
     });
 
@@ -1134,7 +1184,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     });
     const root = store.peekRunState("r1")?.root;
 
-    store.applyRunProgress({ workflow_id: "r1", node_path: "seq/w", status: "running" });
+    store.applyRunProgress({ workflow_id: "r1", node_path: ["seq", "w"], status: "running" });
 
     expect(store.peekRunState("r1")?.root).toBe(root);
   });
@@ -1151,7 +1201,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
 
     store.applyRunProgress({
       workflow_id: "r1",
-      node_path: "w",
+      node_path: ["w"],
       status: "running",
       started_at: "T1",
     });
@@ -1169,11 +1219,11 @@ describe("applyRunProgress refuses what it cannot express, so the caller refetch
       root: { nodeId: "coder", type: "step", status: "running" },
     });
     expect(store.applyRunProgress({ workflow_id: "r1" })).toBe(false);
-    expect(store.applyRunProgress({ workflow_id: "r1", node_path: "" })).toBe(false);
+    expect(store.applyRunProgress({ workflow_id: "r1", node_path: [] })).toBe(false);
   });
 
   it("refuses a run it holds no state for", () => {
-    expect(store.applyRunProgress({ workflow_id: "r4", node_path: "coder" })).toBe(false);
+    expect(store.applyRunProgress({ workflow_id: "r4", node_path: ["coder"] })).toBe(false);
   });
 
   it("refuses a path this tree does not hold, which is a freshly-created container", async () => {
@@ -1182,8 +1232,8 @@ describe("applyRunProgress refuses what it cannot express, so the caller refetch
       status: "running",
       root: { nodeId: "seq", type: "sequence", status: "running", children: [step("a")] },
     });
-    expect(store.applyRunProgress({ workflow_id: "r1", node_path: "seq/b" })).toBe(false);
-    expect(store.applyRunProgress({ workflow_id: "r1", node_path: "other/a" })).toBe(false);
+    expect(store.applyRunProgress({ workflow_id: "r1", node_path: ["seq", "b"] })).toBe(false);
+    expect(store.applyRunProgress({ workflow_id: "r1", node_path: ["other", "a"] })).toBe(false);
   });
 });
 

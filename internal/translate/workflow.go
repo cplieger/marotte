@@ -7,7 +7,6 @@ import (
 	"cmp"
 	"context"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -110,16 +109,16 @@ func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(conte
 		node := cmp.Or(p.NodeID, p.LoopID)
 		switch kind {
 		case marotte.RunProgressNodeStart:
-			path := runNodePathOf(&p, node)
+			path := nodeKey(p.NodePath, node)
 			// The ONE frame announcing a step's session id; recorded before the broadcast so a racing
 			// permission ask still classifies.
 			if p.SessionID != "" {
 				t.steps.record(p.SessionID, p.WorkflowID, node, path)
 			}
 			// The run turn's opening bracket; a path already open is a no-op on the log.
-			t.runs.RunNodeStart(ctx, p.WorkflowID, path, p.SessionID, chatID)
+			t.runs.RunNodeStart(ctx, RunStep{RunID: p.WorkflowID, NodePath: path, NodeID: node, SessionID: p.SessionID}, chatID)
 		case marotte.RunProgressNodeComplete:
-			t.runs.RunNodeComplete(ctx, p.WorkflowID, runNodePathOf(&p, node), p.Status, p.Reason)
+			t.runs.RunNodeComplete(ctx, p.WorkflowID, nodePathOf(p.NodePath, node), p.Status, p.Reason)
 		}
 		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunProgress, chatID,
 			runProgress(kind, node, &p, time.Now())))
@@ -135,21 +134,21 @@ func runProgress(
 	stamp := at.UTC().Format(time.RFC3339Nano)
 	switch kind {
 	case marotte.RunProgressNodeStart:
-		out.NodePath = runNodePathOf(p, node)
+		out.NodePath = nodePathOf(p.NodePath, node)
 		out.Status = runNodeStatusRunning
 		out.StartedAt = stamp
 	case marotte.RunProgressNodeComplete:
-		out.NodePath = runNodePathOf(p, node)
+		out.NodePath = nodePathOf(p.NodePath, node)
 		// KAS's word is already the client tree's NodeState vocabulary.
 		out.Status = p.Status
 		out.EndedAt = stamp
 		out.FailureReason = p.Reason
 	case marotte.RunProgressNodePaused:
-		out.NodePath = runNodePathOf(p, node)
+		out.NodePath = nodePathOf(p.NodePath, node)
 		out.Status = runNodeStatusPaused
 	case marotte.RunProgressWatchPoll:
 		// A poll re-states `running`: a frame stating nothing cannot be applied.
-		out.NodePath = runNodePathOf(p, node)
+		out.NodePath = nodePathOf(p.NodePath, node)
 		out.Status = runNodeStatusRunning
 	case marotte.RunProgressLoopIteration, marotte.RunProgressPaused, marotte.RunProgressStepsQueued:
 	}
@@ -161,12 +160,3 @@ const (
 	runNodeStatusRunning = "running"
 	runNodeStatusPaused  = "paused"
 )
-
-// runNodePathOf joins the frame's node path, falling back to the node id: an
-// empty path would silently mean "refetch" (see runProgress).
-func runNodePathOf(p *kasRunNode, node string) string {
-	if len(p.NodePath) > 0 {
-		return strings.Join(p.NodePath, "/")
-	}
-	return node
-}

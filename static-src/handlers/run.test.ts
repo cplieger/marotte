@@ -215,7 +215,7 @@ describe("run SSE handlers", () => {
   // The verb set changes only when a run ENDS, so that is the affordance's second and last refetch
   // (the first is a tab opening); per frame would add a round trip to every node event.
   it("refetches the affordance when a run ENDS, and never mid-run", () => {
-    send("run_progress", { workflow_id: "wf_1", kind: "node_start", node_path: "seq/coder" });
+    send("run_progress", { workflow_id: "wf_1", kind: "node_start", node_path: ["seq", "coder"] });
     send("run_started", { workflow_id: "wf_1", name: "x" });
     expect(invalidateControls).not.toHaveBeenCalled();
 
@@ -241,7 +241,7 @@ describe("run SSE handlers", () => {
     send("run_progress", {
       workflow_id: "wf_1",
       kind: "node_start",
-      node_path: "seq/coder",
+      node_path: ["seq", "coder"],
       status: "running",
     });
     expect(applyProgress).toHaveBeenCalledTimes(1);

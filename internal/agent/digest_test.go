@@ -14,6 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/sse"
 )
 
@@ -139,7 +140,7 @@ func TestResolveDigest_LiveTurnFollowsTheTurnRegistry(t *testing.T) {
 
 func TestResolveDigest_RunTurnFollowsTheRunRegistry(t *testing.T) {
 	h := newBudgetRuntime(t)
-	turn, _, err := h.runs.log.Open(t.Context(), "wf-1", "wf-1/step", "sess-step", "c1")
+	turn, _, err := h.runs.log.Open(t.Context(), translate.RunStep{RunID: "wf-1", NodePath: "wf-1/step", SessionID: "sess-step"}, "c1")
 	if err != nil {
 		t.Fatalf("Open(step turn): %v", err)
 	}

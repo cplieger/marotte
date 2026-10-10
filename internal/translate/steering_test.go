@@ -246,7 +246,7 @@ func TestSteering_SurvivesSubagentAttribution(t *testing.T) {
 		steerFrame(t, "steering_injected", map[string]any{
 			"messageId": "steer-1",
 			"content":   "use tabs",
-		}), FrameAttribution{SubSessionID: "sub-session-7"})
+		}), FrameAttribution{Subagent: true, SessionID: "sub-session-7"})
 
 	rows := appendedSteers(t, *events)
 	if len(rows) != 1 || rows[0].ID != "steer-1" || rows[0].State != marotte.SteerStateRead {

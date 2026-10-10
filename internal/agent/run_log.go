@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -21,6 +20,7 @@ import (
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
@@ -42,6 +42,8 @@ type runTurn struct {
 	// rawStop is the last turn_end's stop reason, carried by the close.
 	rawStop marotte.StopReason
 	path    string
+	// nodeID is the step's own id, held because path is never split back (workflow.PathKey).
+	nodeID string
 	// session is the step's ACP session, as its turn_open records. Held here because the open set is this registry's alone.
 	session string
 	// seq is the newest seq the sink assigned, written on the dispatch goroutine and read by the digest.
@@ -234,16 +236,24 @@ func stepEntries(all []marotte.Entry, nodePath string) (entries []marotte.Entry,
 	return entries, newest
 }
 
-// Turn answers the open turn for a step, or nil.
-func (r *runLog) Turn(workflowID, nodePath string) *turnlog.Turn {
+// foldTurn answers the step's open turn, or nil, naming its node when the turn was opened with none.
+func (r *runLog) foldTurn(step translate.RunStep) *turnlog.Turn {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if rec, ok := r.runs[workflowID]; ok {
-		if t := rec.open[nodePath]; t != nil {
-			return t.turn
-		}
+	t := r.openLocked(step.RunID, step.NodePath)
+	if t == nil {
+		return nil
 	}
-	return nil
+	t.learnNodeID(step.NodeID)
+	return t.turn
+}
+
+// learnNodeID names a turn opened with no id: a content frame can open it before the step registry knows
+// the step (after a restart), and awaitingAnswer matches asks by this id. Caller holds runLog.mu.
+func (t *runTurn) learnNodeID(id string) {
+	if t.nodeID == "" {
+		t.nodeID = id
+	}
 }
 
 // hasClosed reports whether the step path has a closed turn this process knows.
@@ -303,7 +313,7 @@ func (r *runLog) OpenSessions(workflowID string) map[string]struct{} {
 	return out
 }
 
-// OpenNodeIDs answers each open step turn's node id (its path's last segment), or nil for no record.
+// OpenNodeIDs answers each open step turn's node id, or nil for no record. A turn opened with no id adds nothing.
 func (r *runLog) OpenNodeIDs(workflowID string) map[string]struct{} {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -312,15 +322,19 @@ func (r *runLog) OpenNodeIDs(workflowID string) map[string]struct{} {
 		return nil
 	}
 	out := make(map[string]struct{}, len(rec.open))
-	for nodePath := range rec.open {
-		out[nodePath[strings.LastIndex(nodePath, "/")+1:]] = struct{}{}
+	for _, t := range rec.open {
+		if t.nodeID != "" {
+			out[t.nodeID] = struct{}{}
+		}
 	}
 	return out
 }
 
-// Open opens the step's turn when none is open and answers it; opened is the appended turn_open, nil when
-// already open. The frame's chat id becomes the run's host when unset (`run:<id>` for an empty one).
-func (r *runLog) Open(ctx context.Context, workflowID, nodePath, sessionID string, chatID marotte.ChatID) (turn *turnlog.Turn, opened *marotte.Entry, err error) {
+// Open opens the step's turn, keyed by its NodePath, when none is open and answers it; opened is the
+// appended turn_open, nil when already open. The frame's chat id becomes the run's host when unset
+// (`run:<id>` for an empty one).
+func (r *runLog) Open(ctx context.Context, step translate.RunStep, chatID marotte.ChatID) (turn *turnlog.Turn, opened *marotte.Entry, err error) {
+	workflowID, nodePath := step.RunID, step.NodePath
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, err := r.recordLocked(ctx, workflowID)
@@ -331,18 +345,19 @@ func (r *runLog) Open(ctx context.Context, workflowID, nodePath, sessionID strin
 		rec.host = hostFor(workflowID, chatID)
 	}
 	if t := rec.open[nodePath]; t != nil {
+		t.learnNodeID(step.NodeID)
 		return t.turn, nil, nil
 	}
 	e, err := rec.log.OpenTurn(ctx, &chat.TurnSpec{
 		Source:    marotte.TurnOpenNameWorkflowStep,
 		Run:       workflowID,
 		NodePath:  nodePath,
-		SessionID: sessionID,
+		SessionID: step.SessionID,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	t := &runTurn{path: nodePath, session: sessionID}
+	t := &runTurn{path: nodePath, nodeID: step.NodeID, session: step.SessionID}
 	t.turn = turnlog.Open(e.ID, runSink{log: rec.log, turn: t})
 	rec.open[nodePath] = t
 	return t.turn, e, nil

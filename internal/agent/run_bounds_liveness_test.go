@@ -40,7 +40,7 @@ func TestCancelExpired_ALiveTerminalRefillsTheWindow(t *testing.T) {
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.terminals = terminalsAnswering{runChatID(id): true}
 	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, "root/a", "step-session-a")
+	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 
 	h.runs.cancelExpired(id, deadline)
@@ -65,7 +65,7 @@ func TestCancelExpired_AnAgentRunsCarrierIsTheLaunchingChat(t *testing.T) {
 	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.terminals = terminalsAnswering{"c1": true}
 	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, "root/a", "step-session-a")
+	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
 	deadline := stagedExpiry(t, h.runs, id, launchOrigin{origin: runlease.OriginAgent, chatID: "c1"})
 
 	h.runs.cancelExpired(id, deadline)
@@ -105,7 +105,7 @@ func TestCancelExpired_ASpentBackstopOutranksALiveTerminal(t *testing.T) {
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.terminals = terminalsAnswering{runChatID(id): true}
 	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, "root/a", "step-session-a")
+	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 	h.runs.mu.Lock()
 	h.runs.bounds.executed = map[string]time.Duration{id: runBackstop}
@@ -127,7 +127,7 @@ func TestCancelExpired_ARefillInsideTheBackstopsLastMinuteStillBounds(t *testing
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.terminals = terminalsAnswering{runChatID(id): true}
 	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, "root/a", "step-session-a")
+	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 	h.runs.mu.Lock()
 	h.runs.bounds.armedAt[id] = time.Now().Add(-runBackstop + 30*time.Second)

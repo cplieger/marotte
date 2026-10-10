@@ -2,6 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { runToExec, indexPlan } from "./run-exec-source.js";
+import { nodePathKey } from "./run-node-key.js";
 import { flatten, leaves, counters } from "./exec-view/model.js";
 import { makeRunState } from "./__test-helpers__/model.js";
 import type { RunNode, RunState } from "./run-store.js";
@@ -42,7 +43,25 @@ describe("runToExec structure", () => {
     expect(run.nodes.map((n) => n.label)).toEqual(["a", "b"]);
     // The path still carries the root, because it is the address the server stamps on a step frame
     // and the two sides of that join must agree.
-    expect(run.nodes[0]?.path).toBe("wf_1/a");
+    expect(run.nodes[0]?.path).toBe("wf_1:a");
+  });
+
+  it("keys two steps whose ids spell alike under a slash join apart", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [
+          { nodeId: "a/b", type: "sequence", status: "running", children: [step("c", "running")] },
+          { nodeId: "a", type: "sequence", status: "running", children: [step("b/c", "running")] },
+        ],
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(leaves(run.nodes).map((n) => n.path)).toEqual(["wf_1:a/b:c", "wf_1:a:b/c"]);
   });
 
   // Flattening the tree to its leaves would make a loop, a parallel and a watch invisible.
@@ -84,10 +103,10 @@ describe("runToExec structure", () => {
     // the PATH: the detail pane addresses a step's live transcript by path, so a tree keyed on the
     // state tree's `loop#0` selects a row nothing ever streams into.
     expect(flatten(run.nodes).map((n) => n.path)).toEqual([
-      "wf_1/loop",
-      "wf_1/loop/iter-0",
-      "wf_1/loop/iter-0/work",
-      "wf_1/watch",
+      "wf_1:loop",
+      "wf_1:loop:iter-0",
+      "wf_1:loop:iter-0:work",
+      "wf_1:watch",
     ]);
     // Only the leaves count as steps: a container's span is its children's, so counting it would
     // inflate the total and double-count the time.
@@ -483,7 +502,7 @@ describe("runToExec reads the run log's step ends", () => {
       "",
       new Map([
         [
-          "wf_1/build",
+          nodePathKey(["wf_1", "build"]),
           { outcome: "failed", failure_kind: "model_call_limit", failure_reason: CAPPED },
         ],
       ]),
@@ -499,7 +518,7 @@ describe("runToExec reads the run log's step ends", () => {
       undefined,
       NO_ASKS,
       "",
-      new Map([["wf_1/build", { outcome: "refused" }]]),
+      new Map([[nodePathKey(["wf_1", "build"]), { outcome: "refused" }]]),
     );
     expect(run.nodes[0]?.state).toBe("fail");
     expect(run.nodes[0]?.failure).toBe("The model declined to continue.");
@@ -512,7 +531,7 @@ describe("runToExec reads the run log's step ends", () => {
       undefined,
       NO_ASKS,
       "",
-      new Map([["wf_1/build", { outcome: "failed", failure_reason: CAPPED }]]),
+      new Map([[nodePathKey(["wf_1", "build"]), { outcome: "failed", failure_reason: CAPPED }]]),
     );
     expect(run.nodes[0]?.state).toBe("fail");
     expect(run.nodes[0]?.failure).toBe("exit 1");
@@ -525,7 +544,7 @@ describe("runToExec reads the run log's step ends", () => {
       undefined,
       NO_ASKS,
       "",
-      new Map([["wf_1/other", { outcome: "failed", failure_reason: CAPPED }]]),
+      new Map([[nodePathKey(["wf_1", "other"]), { outcome: "failed", failure_reason: CAPPED }]]),
     );
     expect(run.nodes[0]?.state).toBe("ok");
     expect(run.nodes[0]?.failure).toBeUndefined();

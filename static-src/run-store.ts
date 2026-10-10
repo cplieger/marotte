@@ -203,7 +203,7 @@ export function peekRunState(workflowID: string): RunState | undefined {
  *  missed the start), or the path addresses a node this tree does not hold yet (a step inside a
  *  freshly-created iteration container). */
 export function applyRunProgress(p: RunProgressFrame): boolean {
-  if (p.workflow_id === "" || p.node_path === undefined || p.node_path === "") {
+  if (p.workflow_id === "" || p.node_path === undefined || p.node_path.length === 0) {
     return false;
   }
   const c = cells.get(p.workflow_id);
@@ -211,7 +211,7 @@ export function applyRunProgress(p: RunProgressFrame): boolean {
   if (c === undefined || root === undefined) {
     return false;
   }
-  const next = patchNode(root, undefined, p.node_path.split("/"), p);
+  const next = patchNode(root, undefined, p.node_path, p);
   if (next === undefined) {
     return false;
   }
@@ -233,7 +233,7 @@ export function applyRunProgress(p: RunProgressFrame): boolean {
  *  hand it a literal. */
 export interface RunProgressFrame {
   workflow_id: string;
-  node_path?: string;
+  node_path?: readonly string[];
   status?: string;
   started_at?: string;
   ended_at?: string;
@@ -245,7 +245,7 @@ export interface RunProgressFrame {
 function patchNode(
   node: RunNode,
   parent: RunNode | undefined,
-  trail: string[],
+  trail: readonly string[],
   p: RunProgressFrame,
 ): RunNode | undefined {
   const [head, ...rest] = trail;
@@ -1073,8 +1073,7 @@ export function nodeAddressOf(root: RunNode | undefined, target: RunNode): NodeA
     return { path: found, placed: true };
   }
   // An UNPLACED node keeps the bare id, which `placed: false` stops a consumer spending as an
-  // address (its first segment is a leaf id where the endpoint asserts the run id). A row still
-  // needs a key, so the value stays.
+  // address: it is not the node's path. A row still needs a key, so the value stays.
   return { path: [target.nodeId], placed: false };
 }
 

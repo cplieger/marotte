@@ -151,7 +151,7 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 		return
 	}
 	// By session, never by payload: `_meta.kiro.workflow` never reaches a session_info_update.
-	if attr.SubSessionID != "" {
+	if attr.Subagent {
 		return
 	}
 	// A step's frame stops here: only its metering and credits reach the chat.

@@ -2,12 +2,15 @@ package agent
 
 import (
 	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // runLoggingHub is a runtime whose Runs has a run log, set directly rather than through the order-sensitive wiring.
@@ -19,10 +22,27 @@ func runLoggingHub(t *testing.T) (*Runtime, *testChatStore) {
 	return h, cs
 }
 
+// A content frame can open a step's turn while the registry is cold; a later fold that knows the id names it.
+func TestRunFoldTarget_ALaterFoldNamesATurnOpenedWithNoNodeID(t *testing.T) {
+	h, _ := runLoggingHub(t)
+	step := translate.RunStep{RunID: "wf_1", NodePath: workflow.PathKey([]string{"wf_1", "a"}), SessionID: "step-session-a"}
+	if _, ok := h.runs.RunFoldTarget(t.Context(), step, ""); !ok {
+		t.Fatal("Setup: RunFoldTarget(no id) opened no turn")
+	}
+	step.NodeID = "a"
+	if _, ok := h.runs.RunFoldTarget(t.Context(), step, ""); !ok {
+		t.Fatal("RunFoldTarget(with id) found no open turn")
+	}
+	if got := h.runs.log.OpenNodeIDs("wf_1"); !maps.Equal(got, map[string]struct{}{"a": {}}) {
+		t.Errorf("OpenNodeIDs() after a fold naming the node = %v, want [a]: awaitingAnswer reads the step as not waiting", got)
+	}
+}
+
 // refuseStep opens the step's turn, latches the refusal metadata, and records the declining turn_end.
-func refuseStep(t *testing.T, rs *Runs, runID, nodePath string, r *marotte.RefusalInfo) {
+func refuseStep(t *testing.T, rs *Runs, runID string, path []string, r *marotte.RefusalInfo) {
 	t.Helper()
-	rs.RunNodeStart(t.Context(), runID, nodePath, "step-session-1", "")
+	nodePath := workflow.PathKey(path)
+	rs.RunNodeStart(t.Context(), translate.RunStep{RunID: runID, NodePath: nodePath, NodeID: path[len(path)-1], SessionID: "step-session-1"}, "")
 	turn := rs.log.Turn(runID, nodePath)
 	if turn == nil {
 		t.Fatalf("no open turn for %s/%s", runID, nodePath)
@@ -59,20 +79,20 @@ func chatSteers(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []marott
 // TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat pins that KAS grades a refused step `completed`.
 func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 	const (
-		id       = "wf_1"
-		chatID   = marotte.ChatID("c1")
-		nodePath = "wf_1/loop#0/iter-1/build"
+		id     = "wf_1"
+		chatID = marotte.ChatID("c1")
 	)
+	path := []string{"wf_1", "loop", "iter-1", "build"}
 	h, cs := runLoggingHub(t)
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
 		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
-	refuseStep(t, h.runs, id, nodePath, &marotte.RefusalInfo{
+	refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{
 		Category:    "policy",
 		Explanation: "I will not continue with this request.",
 	})
 
-	h.runs.RunNodeComplete(t.Context(), id, nodePath, "completed", "")
+	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
 
 	entries, err := cs.All(t.Context(), chatID)
 	if err != nil {
@@ -82,7 +102,7 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 	if i < 0 {
 		t.Fatalf("no steer entry reached the launching chat; entries: %+v", entries)
 	}
-	if want := stepNoteID(id, stepNoteRefused, nodePath); entries[i].ID != want {
+	if want := stepNoteID(id, stepNoteRefused, workflow.PathKey(path)); entries[i].ID != want {
 		t.Errorf("note id = %q, want %q (the step's own path, so each refused step gets its own row)",
 			entries[i].ID, want)
 	}
@@ -99,7 +119,8 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 	if steer.OriginRun != id {
 		t.Errorf("note provenance = run %q, want %q", steer.OriginRun, id)
 	}
-	for _, want := range []string{"nightly", nodePath, "policy", "I will not continue with this request."} {
+	// The reader sees the step's segments joined with "/", never the key's own spelling.
+	for _, want := range []string{"nightly", "step wf_1/loop/iter-1/build was declined", "policy", "I will not continue with this request."} {
 		if !strings.Contains(steer.Text, want) {
 			t.Errorf("note text = %q, want it to carry %q", steer.Text, want)
 		}
@@ -113,20 +134,21 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 // KAS grades a step its iteration limit stopped `completed`, so only this note tells the launching chat it did not finish.
 func TestRunNodeComplete_AStepStoppedAtTheModelCallLimitTellsTheLaunchingChat(t *testing.T) {
 	const (
-		id       = "wf_1"
-		chatID   = marotte.ChatID("c1")
-		nodePath = "wf_1/build"
+		id     = "wf_1"
+		chatID = marotte.ChatID("c1")
 	)
+	path := []string{"wf_1", "build"}
+	nodePath := workflow.PathKey(path)
 	h, cs := runLoggingHub(t)
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
 		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
-	h.runs.RunNodeStart(t.Context(), id, nodePath, "step-session-1", "")
+	h.runs.RunNodeStart(t.Context(), translate.RunStep{RunID: id, NodePath: nodePath, NodeID: "build", SessionID: "step-session-1"}, "")
 	if !h.runs.log.StopReason(id, nodePath, marotte.StopReasonToolUse) {
 		t.Fatal("StopReason(tool_use) refused on the open turn")
 	}
 
-	h.runs.RunNodeComplete(t.Context(), id, nodePath, "completed", "")
+	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
 
 	entries, err := cs.All(t.Context(), chatID)
 	if err != nil {
@@ -143,7 +165,7 @@ func TestRunNodeComplete_AStepStoppedAtTheModelCallLimitTellsTheLaunchingChat(t 
 	if err := json.Unmarshal(entries[i].Payload, &steer); err != nil {
 		t.Fatalf("decode the steer: %v", err)
 	}
-	if want := "nightly step " + nodePath + " stopped early. " + marotte.ModelCallLimitStepReason; steer.Text != want {
+	if want := "nightly step wf_1/build stopped early. " + marotte.ModelCallLimitStepReason; steer.Text != want {
 		t.Errorf("note text = %q, want %q", steer.Text, want)
 	}
 	if steer.Severity != "warning" || steer.OriginRun != id {
@@ -161,9 +183,9 @@ func TestRunNodeComplete_ARefusalWithNoMetadataStillLeavesANote(t *testing.T) {
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
 		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
-	refuseStep(t, h.runs, id, "build", nil)
+	refuseStep(t, h.runs, id, []string{"build"}, nil)
 
-	h.runs.RunNodeComplete(t.Context(), id, "build", "completed", "")
+	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
 
 	steers := chatSteers(t, cs, chatID)
 	if len(steers) != 1 {
@@ -194,12 +216,12 @@ func TestRunNodeComplete_AStepThatRanLeavesNoNote(t *testing.T) {
 			seedChat(t, cs, chatID)
 			h.runs.grantLease(t.Context(), id, "nightly",
 				launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
-			h.runs.RunNodeStart(t.Context(), id, "build", "step-session-1", "")
+			h.runs.RunNodeStart(t.Context(), translate.RunStep{RunID: id, NodePath: "build", NodeID: "build", SessionID: "step-session-1"}, "")
 			if !h.runs.log.StopReason(id, "build", tc.raw) {
 				t.Fatalf("StopReason(%q) refused on the open turn", tc.raw)
 			}
 
-			h.runs.RunNodeComplete(t.Context(), id, "build", tc.status, "")
+			h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, tc.status, "")
 
 			if steers := chatSteers(t, cs, chatID); len(steers) != 0 {
 				t.Errorf("%s left %d notes, want none: %+v", tc.desc, len(steers), steers)
@@ -214,10 +236,10 @@ func TestRunNodeComplete_AParentlessRunLeavesNoNote(t *testing.T) {
 	const id = "wf_1"
 	h, cs := runLoggingHub(t)
 	leased(t, h.runs, id)
-	refuseStep(t, h.runs, id, "build", &marotte.RefusalInfo{Category: "policy"})
+	refuseStep(t, h.runs, id, []string{"build"}, &marotte.RefusalInfo{Category: "policy"})
 	logs := captureLogs(t)
 
-	h.runs.RunNodeComplete(t.Context(), id, "build", "completed", "")
+	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
 
 	if strings.Contains(logs.String(), "a steer was not recorded") {
 		t.Errorf("a parentless run's refusal tried to write a note: %s", logs.String())
@@ -237,10 +259,10 @@ func TestRunNodeComplete_ARefusalIsNotedOnce(t *testing.T) {
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
 		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
-	refuseStep(t, h.runs, id, "build", &marotte.RefusalInfo{Category: "policy"})
+	refuseStep(t, h.runs, id, []string{"build"}, &marotte.RefusalInfo{Category: "policy"})
 
-	h.runs.RunNodeComplete(t.Context(), id, "build", "completed", "")
-	h.runs.RunNodeComplete(t.Context(), id, "build", "completed", "")
+	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
+	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
 
 	if steers := chatSteers(t, cs, chatID); len(steers) != 1 {
 		t.Errorf("got %d notes for one refusal, want one", len(steers))

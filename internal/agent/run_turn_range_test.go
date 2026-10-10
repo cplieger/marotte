@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // The run's per-turn range read, addressed by turn as the `run_turn` stamp names it.
@@ -20,7 +21,7 @@ func runTurnRangeFixture(t *testing.T) (*runLog, string) {
 	t.Helper()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
-	turn, _, err := r.Open(ctx, "wf1", "root/step", "sess-a", "c-1")
+	turn, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "root/step", SessionID: "sess-a"}, "c-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +111,7 @@ func TestRunTurnRange_AnAbsentAfterAsksForTheWholeTurn(t *testing.T) {
 func TestRunTurnRange_AParallelRunsOtherOpenTurnIsNeitherServedNorStamped(t *testing.T) {
 	r, first := runTurnRangeFixture(t)
 	ctx := t.Context()
-	second, _, err := r.Open(ctx, "wf1", "root/other", "sess-b", "c-1")
+	second, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "root/other", SessionID: "sess-b"}, "c-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +139,7 @@ func runTurnRangeUnreadableFixture(t *testing.T) (*runLog, string) {
 	dir := t.TempDir()
 	r := newRunLog(dir)
 	ctx := t.Context()
-	turn, _, err := r.Open(ctx, "wf1", "root/step", "sess-a", "c-1")
+	turn, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "root/step", SessionID: "sess-a"}, "c-1")
 	if err != nil {
 		t.Fatalf("Setup: Open: %v", err)
 	}

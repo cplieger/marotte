@@ -1,6 +1,8 @@
 package translate
 
 import (
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -27,7 +29,7 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"seq", "coder"},
 			},
 			want: marotte.RunProgressPayload{
-				WorkflowID: "wf1", NodeID: "coder", NodePath: "seq/coder",
+				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"seq", "coder"},
 				Status: "running", StartedAt: atRFC, Kind: marotte.RunProgressNodeStart,
 			},
 		},
@@ -39,7 +41,7 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 				Status: "completed",
 			},
 			want: marotte.RunProgressPayload{
-				WorkflowID: "wf1", NodeID: "coder", NodePath: "seq/coder",
+				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"seq", "coder"},
 				Status: "completed", EndedAt: atRFC, Kind: marotte.RunProgressNodeComplete,
 			},
 		},
@@ -51,7 +53,7 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 				Status: "failed", Reason: "the build did not link",
 			},
 			want: marotte.RunProgressPayload{
-				WorkflowID: "wf1", NodeID: "coder", NodePath: "coder",
+				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"coder"},
 				Status: "failed", EndedAt: atRFC, FailureReason: "the build did not link",
 				Kind: marotte.RunProgressNodeComplete,
 			},
@@ -64,7 +66,7 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 				Reason: "Step requested user input via send_message.",
 			},
 			want: marotte.RunProgressPayload{
-				WorkflowID: "wf1", NodeID: "ask", NodePath: "ask",
+				WorkflowID: "wf1", NodeID: "ask", NodePath: []string{"ask"},
 				Status: "paused", Kind: marotte.RunProgressNodePaused,
 			},
 		},
@@ -76,7 +78,7 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 				WorkflowID: "wf1", NodeID: "watch", NodePath: []string{"watch"},
 			},
 			want: marotte.RunProgressPayload{
-				WorkflowID: "wf1", NodeID: "watch", NodePath: "watch",
+				WorkflowID: "wf1", NodeID: "watch", NodePath: []string{"watch"},
 				Status: "running", Kind: marotte.RunProgressWatchPoll,
 			},
 		},
@@ -88,7 +90,7 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 				node = c.frame.LoopID
 			}
 			got := runProgress(c.kind, node, &c.frame, at)
-			if got != c.want {
+			if !reflect.DeepEqual(got, c.want) {
 				t.Errorf("runProgress(%q, …) = %+v, want %+v", c.kind, got, c.want)
 			}
 		})
@@ -125,7 +127,7 @@ func TestRunProgress_ShapeChangingKindsCarryNoNodePath(t *testing.T) {
 				node = c.frame.LoopID
 			}
 			got := runProgress(c.kind, node, &c.frame, at)
-			if got.NodePath != "" {
+			if len(got.NodePath) != 0 {
 				t.Errorf("node_path = %q, want empty (%s)", got.NodePath, c.why)
 			}
 			if got.Status != "" || got.StartedAt != "" || got.EndedAt != "" {
@@ -142,7 +144,17 @@ func TestRunProgress_ShapeChangingKindsCarryNoNodePath(t *testing.T) {
 func TestRunProgress_FallsBackToTheNodeIDWithNoPath(t *testing.T) {
 	f := kasRunNode{WorkflowID: "wf1", NodeID: "coder"}
 	got := runProgress(marotte.RunProgressNodeStart, "coder", &f, at)
-	if got.NodePath != "coder" {
-		t.Errorf("node_path = %q, want %q", got.NodePath, "coder")
+	if want := []string{"coder"}; !slices.Equal(got.NodePath, want) {
+		t.Errorf("node_path = %q, want %q", got.NodePath, want)
+	}
+}
+
+func TestRunProgress_SlashBearingNodeIDsKeepDistinctPaths(t *testing.T) {
+	ab := kasRunNode{WorkflowID: "wf1", NodeID: "c", NodePath: []string{"wf1", "a/b", "c"}}
+	bc := kasRunNode{WorkflowID: "wf1", NodeID: "b/c", NodePath: []string{"wf1", "a", "b/c"}}
+	gotAB := runProgress(marotte.RunProgressNodeStart, "c", &ab, at).NodePath
+	gotBC := runProgress(marotte.RunProgressNodeStart, "b/c", &bc, at).NodePath
+	if slices.Equal(gotAB, gotBC) {
+		t.Errorf("node_path for [wf1 a/b c] and [wf1 a b/c] = %q for both, want two paths", gotAB)
 	}
 }

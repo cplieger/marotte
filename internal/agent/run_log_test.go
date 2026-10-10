@@ -10,8 +10,20 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/turnlog"
+	"github.com/cplieger/marotte/internal/workflow"
 )
+
+// Turn answers the open turn for a step, or nil.
+func (r *runLog) Turn(workflowID, nodePath string) *turnlog.Turn {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if t := r.openLocked(workflowID, nodePath); t != nil {
+		return t.turn
+	}
+	return nil
+}
 
 // runLogEntries reads a run's log back as decoded entries.
 func runLogEntries(t *testing.T, r *runLog, workflowID string) []marotte.Entry {
@@ -63,7 +75,7 @@ func kinds(entries []marotte.Entry) []marotte.EntryKind {
 func TestRunLog_ANodeStartOpensOneTurnPerStepInstance(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
-	turn, opened, err := r.Open(ctx, "wf1", "root/step", "sess-a", "c-1")
+	turn, opened, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "root/step", SessionID: "sess-a"}, "c-1")
 	if err != nil || turn == nil || opened == nil {
 		t.Fatalf("Open(first) = %v, %v, %v; want a turn and its turn_open", turn, opened, err)
 	}
@@ -71,7 +83,7 @@ func TestRunLog_ANodeStartOpensOneTurnPerStepInstance(t *testing.T) {
 	if o.Source != marotte.TurnOpenNameWorkflowStep || o.Run != "wf1" || o.NodePath != "root/step" || o.SessionID != "sess-a" || o.N != 1 {
 		t.Fatalf("turn_open payload = %+v, want workflow_step/wf1/root/step/sess-a/n=1", o)
 	}
-	again, reopened, err := r.Open(ctx, "wf1", "root/step", "sess-a", "c-1")
+	again, reopened, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "root/step", SessionID: "sess-a"}, "c-1")
 	if err != nil || reopened != nil || again != turn {
 		t.Fatalf("Open(second) = %v, %v, %v; want the same turn and no second turn_open", again == turn, reopened, err)
 	}
@@ -88,9 +100,48 @@ func TestRunLog_ANodeStartOpensOneTurnPerStepInstance(t *testing.T) {
 	}
 }
 
+// TestRunLog_OpenNodeIDsNamesEachOpenStepsOwnID pins the id answered whole: one holding "/", and one whose
+// path is over keyenc.MaxComponentBytes, so its key is a hash.
+func TestRunLog_OpenNodeIDsNamesEachOpenStepsOwnID(t *testing.T) {
+	r := newRunLog(t.TempDir())
+	long := strings.Repeat("x", 9<<10)
+	for _, path := range [][]string{{"wf1", "grp", "a/b"}, {"wf1", "b"}, {"wf1", long}} {
+		step := translate.RunStep{RunID: "wf1", NodePath: workflow.PathKey(path), NodeID: path[len(path)-1]}
+		if _, _, err := r.Open(t.Context(), step, "c-1"); err != nil {
+			t.Fatalf("Open(%.40q): %v", path, err)
+		}
+	}
+	got := r.OpenNodeIDs("wf1")
+	if want := map[string]struct{}{"a/b": {}, "b": {}, long: {}}; !maps.Equal(got, want) {
+		t.Errorf("OpenNodeIDs() = %d ids, has the %d-byte id: %t; has a/b: %t; want a/b, b and the long id",
+			len(got), len(long), hasNodeID(got, long), hasNodeID(got, "a/b"))
+	}
+}
+
+// A content frame can open a step's turn before node_start names the node; the id still lands.
+func TestRunLog_ALaterOpenNamesATurnOpenedWithNoNodeID(t *testing.T) {
+	r := newRunLog(t.TempDir())
+	step := translate.RunStep{RunID: "wf1", NodePath: workflow.PathKey([]string{"wf1", "a"})}
+	if _, _, err := r.Open(t.Context(), step, "c-1"); err != nil {
+		t.Fatalf("Open(no id): %v", err)
+	}
+	step.NodeID = "a"
+	if _, reopened, err := r.Open(t.Context(), step, "c-1"); err != nil || reopened != nil {
+		t.Fatalf("Open(with id) = %v, %v; want the open turn and no second turn_open", reopened, err)
+	}
+	if got := r.OpenNodeIDs("wf1"); !maps.Equal(got, map[string]struct{}{"a": {}}) {
+		t.Errorf("OpenNodeIDs() = %v, want [a]", got)
+	}
+}
+
+func hasNodeID(m map[string]struct{}, k string) bool {
+	_, ok := m[k]
+	return ok
+}
+
 func TestRunLog_AnEmptyChatIDRecordsTheParentlessBridgeAsHost(t *testing.T) {
 	r := newRunLog(t.TempDir())
-	if _, _, err := r.Open(t.Context(), "wf1", "root/step", "", ""); err != nil {
+	if _, _, err := r.Open(t.Context(), translate.RunStep{RunID: "wf1", NodePath: "root/step"}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !r.hostsOpen(runChatID("wf1")) {
@@ -101,10 +152,10 @@ func TestRunLog_AnEmptyChatIDRecordsTheParentlessBridgeAsHost(t *testing.T) {
 func TestRunLog_TheHostIsRecordedByTheFirstOpenAndNeverMoved(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
-	if _, _, err := r.Open(ctx, "wf1", "a", "", "c-1"); err != nil {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "a"}, "c-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := r.Open(ctx, "wf1", "b", "", "c-2"); err != nil {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "b"}, "c-2"); err != nil {
 		t.Fatal(err)
 	}
 	if !r.hostsOpen("c-1") || r.hostsOpen("c-2") {
@@ -128,7 +179,7 @@ func TestRunLog_NodeCompleteMapsKASStatusOntoTheOutcome(t *testing.T) {
 		t.Run(tc.status, func(t *testing.T) {
 			r := newRunLog(t.TempDir())
 			ctx := t.Context()
-			if _, _, err := r.Open(ctx, "wf1", "s", "", "c-1"); err != nil {
+			if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
 				t.Fatal(err)
 			}
 			sealed, closed, err := r.CloseNode(ctx, "wf1", "s", tc.status, "why")
@@ -177,7 +228,7 @@ func TestRunLog_ARecordedRefusalOutranksTheNodeCompleteStatus(t *testing.T) {
 		t.Run(tc.desc, func(t *testing.T) {
 			r := newRunLog(t.TempDir())
 			ctx := t.Context()
-			turn, _, err := r.Open(ctx, "wf1", "s", "", "c-1")
+			turn, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -230,7 +281,7 @@ func TestRunLog_AStepStoppedAtTheModelCallLimitNeverReadsCompleted(t *testing.T)
 		t.Run(tc.desc, func(t *testing.T) {
 			r := newRunLog(t.TempDir())
 			ctx := t.Context()
-			if _, _, err := r.Open(ctx, "wf1", "s", "", "c-1"); err != nil {
+			if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
 				t.Fatal(err)
 			}
 			if !r.StopReason("wf1", "s", marotte.StopReasonToolUse) {
@@ -252,7 +303,7 @@ func TestRunLog_AStepStoppedAtTheModelCallLimitNeverReadsCompleted(t *testing.T)
 // closeStep runs one step turn through its turn_end and node_complete.
 func closeStep(t *testing.T, r *runLog, path string, raw marotte.StopReason, status string) {
 	t.Helper()
-	if _, _, err := r.Open(t.Context(), "wf1", path, "", "c-1"); err != nil {
+	if _, _, err := r.Open(t.Context(), translate.RunStep{RunID: "wf1", NodePath: path}, "c-1"); err != nil {
 		t.Fatal(err)
 	}
 	if !r.StopReason("wf1", path, raw) {
@@ -264,6 +315,11 @@ func closeStep(t *testing.T, r *runLog, path string, raw marotte.StopReason, sta
 }
 
 func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
+	var (
+		capped = workflow.PathKey([]string{"wf1", "capped"})
+		clean  = workflow.PathKey([]string{"wf1", "clean"})
+		rerun  = workflow.PathKey([]string{"wf1", "rerun"})
+	)
 	limit := marotte.RunStepEnd{
 		Outcome:       marotte.TurnOutcomeFailed,
 		FailureReason: marotte.ModelCallLimitStepReason,
@@ -272,34 +328,34 @@ func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
 	t.Run("a fresh registry reads them off the log on disk", func(t *testing.T) {
 		dir := t.TempDir()
 		w := newRunLog(dir)
-		closeStep(t, w, "wf1/capped", marotte.StopReasonToolUse, "completed")
-		closeStep(t, w, "wf1/clean", marotte.StopReasonEndTurn, "completed")
+		closeStep(t, w, capped, marotte.StopReasonToolUse, "completed")
+		closeStep(t, w, clean, marotte.StopReasonEndTurn, "completed")
 		// A rerun of a path that once failed: its newest turn is what the step says now.
-		closeStep(t, w, "wf1/rerun", marotte.StopReasonToolUse, "completed")
-		closeStep(t, w, "wf1/rerun", marotte.StopReasonEndTurn, "completed")
+		closeStep(t, w, rerun, marotte.StopReasonToolUse, "completed")
+		closeStep(t, w, rerun, marotte.StopReasonEndTurn, "completed")
 
 		got, err := newRunLog(dir).StepEnds(t.Context(), "wf1")
 		if err != nil {
 			t.Fatalf("StepEnds: %v", err)
 		}
-		want := map[string]marotte.RunStepEnd{"wf1/capped": limit}
+		want := map[string]marotte.RunStepEnd{capped: limit}
 		if !maps.Equal(got, want) {
 			t.Errorf("StepEnds = %+v, want %+v", got, want)
 		}
 	})
 	t.Run("a close after the first read keeps the answer current", func(t *testing.T) {
 		r := newRunLog(t.TempDir())
-		closeStep(t, r, "wf1/clean", marotte.StopReasonEndTurn, "completed")
+		closeStep(t, r, clean, marotte.StopReasonEndTurn, "completed")
 		if got, err := r.StepEnds(t.Context(), "wf1"); err != nil || len(got) != 0 {
 			t.Fatalf("StepEnds before any broken close = %+v, %v, want none", got, err)
 		}
-		closeStep(t, r, "wf1/capped", marotte.StopReasonToolUse, "completed")
+		closeStep(t, r, capped, marotte.StopReasonToolUse, "completed")
 
 		got, err := r.StepEnds(t.Context(), "wf1")
 		if err != nil {
 			t.Fatalf("StepEnds: %v", err)
 		}
-		if want := map[string]marotte.RunStepEnd{"wf1/capped": limit}; !maps.Equal(got, want) {
+		if want := map[string]marotte.RunStepEnd{capped: limit}; !maps.Equal(got, want) {
 			t.Errorf("StepEnds after the capped close = %+v, want %+v", got, want)
 		}
 	})
@@ -314,7 +370,7 @@ func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
 func TestRunLog_ANodeCompleteForAClosedPathClosesNothing(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
-	if _, _, err := r.Open(ctx, "wf1", "s", "", "c-1"); err != nil {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, closed, err := r.CloseNode(ctx, "wf1", "s", "completed", ""); err != nil || !closed {
@@ -339,7 +395,7 @@ func TestRunLog_MeteringFoldsIntoTheOpenTurnAndDropsOtherwise(t *testing.T) {
 	if r.Meter("wf1", "s", 1, 1) || r.StopReason("wf1", "s", "end_turn") {
 		t.Fatal("metering landed on a run with no open turn")
 	}
-	if _, _, err := r.Open(ctx, "wf1", "s", "", "c-1"); err != nil {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
 		t.Fatal(err)
 	}
 	// Two KAS turns in one step: credits and elapsed sum, the last stop reason wins.
@@ -368,7 +424,7 @@ func TestRunLog_MeteringFoldsIntoTheOpenTurnAndDropsOtherwise(t *testing.T) {
 func TestRunLog_AnUnmappedStatusKeepsTheStatusAsTheRawStop(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
-	if _, _, err := r.Open(ctx, "wf1", "s", "", "c-1"); err != nil {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
 		t.Fatal(err)
 	}
 	r.StopReason("wf1", "s", "end_turn")
@@ -388,14 +444,14 @@ func TestRunLog_ABetweenTurnsAppendLandsAfterThePathsNewestClosedTurn(t *testing
 	if ok, err := r.AppendAfterClosed(ctx, "wf1", "a", late); ok || err != nil {
 		t.Fatalf("AppendAfterClosed on an unknown run = %v, %v; want false", ok, err)
 	}
-	turnA, _, err := r.Open(ctx, "wf1", "a", "", "c-1")
+	turnA, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "a"}, "c-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := r.AppendAfterClosed(ctx, "wf1", "a", late); ok || err != nil {
 		t.Fatalf("AppendAfterClosed while the path is open = %v, %v; want false", ok, err)
 	}
-	if _, _, err := r.Open(ctx, "wf1", "b", "", "c-1"); err != nil {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "b"}, "c-1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := r.CloseNode(ctx, "wf1", "a", "completed", ""); err != nil {
@@ -425,7 +481,7 @@ func TestRunLog_CloseRunClosesEveryOpenTurnAndDropsHostWhenTerminal(t *testing.T
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	for _, p := range []string{"par/b1", "par/b2"} {
-		if _, _, err := r.Open(ctx, "wf1", p, "", "c-1"); err != nil {
+		if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: p}, "c-1"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -434,7 +490,7 @@ func TestRunLog_CloseRunClosesEveryOpenTurnAndDropsHostWhenTerminal(t *testing.T
 	if err != nil || len(sealed) != 2 {
 		t.Fatalf("CloseRun(non-terminal) = %d sealed, %v; want the two closers", len(sealed), err)
 	}
-	if _, _, err := r.Open(ctx, "wf1", "par/b3", "", "c-9"); err != nil {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "par/b3"}, "c-9"); err != nil {
 		t.Fatal(err)
 	}
 	if !r.hostsOpen("c-1") || r.hostsOpen("c-9") {
@@ -446,7 +502,7 @@ func TestRunLog_CloseRunClosesEveryOpenTurnAndDropsHostWhenTerminal(t *testing.T
 	if open := r.OpenSeqs("wf1"); open != nil {
 		t.Fatalf("after the terminal close open=%v; want none", open)
 	}
-	if _, _, err := r.Open(ctx, "wf1", "par/b4", "", "c-9"); err != nil {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "par/b4"}, "c-9"); err != nil {
 		t.Fatal(err)
 	}
 	if !r.hostsOpen("c-9") || r.hostsOpen("c-1") {
@@ -465,10 +521,10 @@ func TestRunLog_CloseRunClosesEveryOpenTurnAndDropsHostWhenTerminal(t *testing.T
 func TestRunLog_TheDeathArmClosesTheDeadHostsRunsOnly(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
-	if _, _, err := r.Open(ctx, "wf1", "s", "", "c-1"); err != nil {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := r.Open(ctx, "wf2", "s", "", "c-2"); err != nil {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf2", NodePath: "s"}, "c-2"); err != nil {
 		t.Fatal(err)
 	}
 	c := marotte.ConcludeStopReason(marotte.StopReasonInterrupted)
@@ -485,7 +541,7 @@ func TestRunLog_TheDeathArmClosesTheDeadHostsRunsOnly(t *testing.T) {
 	if c := closeEntryOf(t, runLogEntries(t, r, "wf1")[1]); c.Outcome != marotte.TurnOutcomeInterrupted {
 		t.Fatalf("outcome = %s, want interrupted", c.Outcome)
 	}
-	if _, _, err := r.Open(ctx, "wf1", "s2", "", "c-9"); err != nil {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "s2"}, "c-9"); err != nil {
 		t.Fatal(err)
 	}
 	if !r.hostsOpen("c-1") || r.hostsOpen("c-9") {
@@ -496,7 +552,7 @@ func TestRunLog_TheDeathArmClosesTheDeadHostsRunsOnly(t *testing.T) {
 func TestRunLog_DeleteClosesCancelledTombstonesAndRemovesLast(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
-	turn, _, err := r.Open(ctx, "wf1", "s", "", "c-1")
+	turn, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +574,7 @@ func TestRunLog_DeleteClosesCancelledTombstonesAndRemovesLast(t *testing.T) {
 		t.Fatalf("Delete left the maps populated: %v", open)
 	}
 	// A frame after the cancel meets the tombstone.
-	if _, _, err := r.Open(ctx, "wf1", "s2", "", "c-1"); !errors.Is(err, errRunLogRemoved) {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "s2"}, "c-1"); !errors.Is(err, errRunLogRemoved) {
 		t.Fatalf("Open after Delete = %v, want errRunLogRemoved", err)
 	}
 	if _, err := r.AppendAfterClosed(ctx, "wf1", "s", &marotte.Entry{Kind: marotte.EntryKindToolResult, Payload: json.RawMessage(`{}`)}); !errors.Is(err, errRunLogRemoved) {
@@ -547,7 +603,7 @@ func TestRunLog_LogReadsAnExistingDirectoryAndCreatesNone(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(r.root, "wf-none")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("a read created the run's directory")
 	}
-	if _, _, err := r.Open(ctx, "wf1", "s", "", "c-1"); err != nil {
+	if _, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := r.CloseNode(ctx, "wf1", "s", "completed", ""); err != nil {
@@ -570,7 +626,7 @@ func TestRunLog_LogReadsAnExistingDirectoryAndCreatesNone(t *testing.T) {
 func TestRunLog_OpenSeqsTracksTheNewestSealedSeq(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
-	turn, _, err := r.Open(ctx, "wf1", "s", "", "c-1")
+	turn, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,7 +657,7 @@ func sealedEntries(s []turnlog.Sealed) []marotte.Entry {
 func TestRunLog_StepTurnsStampCertifiesTheServedEntries(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
-	turn, _, err := r.Open(ctx, "wf1", "root/step", "sess-a", "c-1")
+	turn, _, err := r.Open(ctx, translate.RunStep{RunID: "wf1", NodePath: "root/step", SessionID: "sess-a"}, "c-1")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -640,7 +696,7 @@ func TestRunLog_RefusesAWorkflowIDThatIsNotAPlainName(t *testing.T) {
 		if _, err := r.Log(t.Context(), id); !errors.Is(err, errRunIDInvalid) {
 			t.Errorf("Log(%q) err = %v, want errRunIDInvalid", id, err)
 		}
-		if _, _, err := r.Open(t.Context(), id, "step", "sess", "c1"); !errors.Is(err, errRunIDInvalid) {
+		if _, _, err := r.Open(t.Context(), translate.RunStep{RunID: id, NodePath: "step", SessionID: "sess"}, "c1"); !errors.Is(err, errRunIDInvalid) {
 			t.Errorf("Open(%q) err = %v, want errRunIDInvalid", id, err)
 		}
 		if err := r.RemoveDir(id); !errors.Is(err, errRunIDInvalid) {

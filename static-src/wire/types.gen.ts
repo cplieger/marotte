@@ -2595,13 +2595,6 @@ export interface RunProgressPayload {
   workflow_id: string;
   node_id?: string;
   /**
- * NodePath addresses ONE execution of a node, joined with "/", spelling an
- * iteration container `iter-<n>` as the run's entry log does. Empty on the
- * run-level and shape-changing kinds, which is what tells the client to
- * refetch instead.
- */
-  node_path?: string;
-  /**
  * Status is the node's status after this frame, in KAS's own NodeState
  * vocabulary so it drops straight onto the cached tree.
  */
@@ -2619,6 +2612,12 @@ export interface RunProgressPayload {
  */
   failure_reason?: string;
   kind: RunProgressKind;
+  /**
+ * NodePath addresses ONE execution of a node by its path segments, spelling
+ * an iteration container `iter-<n>`. Empty on the run-level and
+ * shape-changing kinds, which is what tells the client to refetch instead.
+ */
+  node_path?: string[];
 }
 
 /**
@@ -2661,15 +2660,15 @@ export interface RunStepEnd {
 }
 
 /**
- * RunStepTranscript is GET /api/runs/{id}/steps/{path...}'s reply: every turn of the run's log at
+ * RunStepTranscript is GET /api/runs/{id}/steps/{path}'s reply: every turn of the run's log at
  * that node path in file order, with open tails, or KAS's replay projected into the same shape when
  * the log holds none. No `omitempty` anywhere, so the generated fields are required and a client
  * cannot assume a verdict.
  */
 export interface RunStepTranscript {
   /**
- * WorkflowID and NodePath echo the request, so a client holding several reads in
- * flight tells the answers apart without correlating.
+ * WorkflowID and NodePath (the step's workflow.PathKey) echo the request, so a
+ * client holding several reads in flight tells the answers apart without correlating.
  */
   workflow_id: string;
   node_path: string;

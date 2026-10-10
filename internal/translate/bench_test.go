@@ -10,6 +10,7 @@ import (
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // baseDeps is a composable Deps for tests and benchmarks: no-ops by default, hook fields to
@@ -329,25 +330,26 @@ func (d *baseDeps) lastFold() (foldRecord, bool) {
 }
 
 // The RunAppender half: one open turn per run path, recorded call by call.
-func (d *baseDeps) RunNodeStart(_ context.Context, runID, nodePath, sessionID string, chatID marotte.ChatID) {
-	d.runCalls = append(d.runCalls, runCall{kind: "node_start", runID: runID, nodePath: nodePath, sessionID: sessionID, chat: chatID})
-	d.turns.runTurn(runID, nodePath)
+func (d *baseDeps) RunNodeStart(_ context.Context, step RunStep, chatID marotte.ChatID) {
+	d.runCalls = append(d.runCalls, runCall{kind: "node_start", runID: step.RunID, nodePath: step.NodePath, nodeID: step.NodeID, sessionID: step.SessionID, chat: chatID})
+	d.turns.runTurn(step.RunID, step.NodePath)
 }
 
-func (d *baseDeps) RunNodeComplete(ctx context.Context, runID, nodePath, status, reason string) {
+func (d *baseDeps) RunNodeComplete(ctx context.Context, runID string, path []string, status, reason string) {
+	nodePath := workflow.PathKey(path)
 	d.runCalls = append(d.runCalls, runCall{kind: "node_complete", runID: runID, nodePath: nodePath, status: status, reason: reason})
 	if t, ok := d.turns.runs[runPathKey(runID, nodePath)]; ok && !t.Closed() {
 		_, _ = t.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted, Reason: reason})
 	}
 }
 
-func (d *baseDeps) RunFoldTarget(_ context.Context, runID, nodePath, sessionID string, chatID marotte.ChatID) (*turnlog.Turn, bool) {
-	d.folds = append(d.folds, foldRecord{chat: chatID, runID: runID, nodePath: nodePath})
-	if t, ok := d.turns.runs[runPathKey(runID, nodePath)]; ok && t.Closed() {
+func (d *baseDeps) RunFoldTarget(_ context.Context, step RunStep, chatID marotte.ChatID) (*turnlog.Turn, bool) {
+	d.folds = append(d.folds, foldRecord{chat: chatID, runID: step.RunID, nodePath: step.NodePath})
+	if t, ok := d.turns.runs[runPathKey(step.RunID, step.NodePath)]; ok && t.Closed() {
 		return nil, false
 	}
-	d.runCalls = append(d.runCalls, runCall{kind: "fold", runID: runID, nodePath: nodePath, sessionID: sessionID, chat: chatID})
-	return d.turns.runTurn(runID, nodePath), true
+	d.runCalls = append(d.runCalls, runCall{kind: "fold", runID: step.RunID, nodePath: step.NodePath, nodeID: step.NodeID, sessionID: step.SessionID, chat: chatID})
+	return d.turns.runTurn(step.RunID, step.NodePath), true
 }
 
 func (d *baseDeps) RunAppendAfterClosed(_ context.Context, runID, nodePath string, e *marotte.Entry) error {
@@ -382,6 +384,7 @@ type runCall struct {
 	kind      string
 	runID     string
 	nodePath  string
+	nodeID    string
 	sessionID string
 	status    string
 	reason    string

@@ -2063,8 +2063,6 @@ export const decodeRunProgressPayload: Decoder<RunProgressPayload> = (v) => {
   };
   const nodeId = o["node_id"] === null ? undefined : optStr(o, "node_id", "$.run_progress_payload");
   if (nodeId !== undefined) out.node_id = nodeId;
-  const nodePath = o["node_path"] === null ? undefined : optStr(o, "node_path", "$.run_progress_payload");
-  if (nodePath !== undefined) out.node_path = nodePath;
   const status = o["status"] === null ? undefined : optStr(o, "status", "$.run_progress_payload");
   if (status !== undefined) out.status = status;
   const startedAt = o["started_at"] === null ? undefined : optStr(o, "started_at", "$.run_progress_payload");
@@ -2073,6 +2071,7 @@ export const decodeRunProgressPayload: Decoder<RunProgressPayload> = (v) => {
   if (endedAt !== undefined) out.ended_at = endedAt;
   const failureReason = o["failure_reason"] === null ? undefined : optStr(o, "failure_reason", "$.run_progress_payload");
   if (failureReason !== undefined) out.failure_reason = failureReason;
+  if (o["node_path"] !== undefined && o["node_path"] !== null) out.node_path = decodeArray(o["node_path"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.run_progress_payload.node_path");
   return out;
 };
 

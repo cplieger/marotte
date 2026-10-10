@@ -12,6 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/sse/ssetest"
 )
 
@@ -118,7 +119,7 @@ func TestConnect_TheBusySetExcludesStepTurns(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	rt.bridge.mgr.orInsert("c-step")
 	rt.bridge.mgr.orInsert("c-own")
-	if _, _, err := rt.runs.log.Open(t.Context(), "wf-1", "wf-1/step", "sess-step", "c-step"); err != nil {
+	if _, _, err := rt.runs.log.Open(t.Context(), translate.RunStep{RunID: "wf-1", NodePath: "wf-1/step", SessionID: "sess-step"}, "c-step"); err != nil {
 		t.Fatalf("Open(step turn): %v", err)
 	}
 	if !rt.runs.hostsLiveRun("c-step") {

@@ -27,22 +27,31 @@ type TurnAccess interface {
 	AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) ([]*marotte.Entry, error)
 }
 
+// RunStep names the step a run-log turn opens for: NodePath is its workflow.PathKey
+// and NodeID rides beside it, since the key is never split back.
+type RunStep struct {
+	RunID     string
+	NodePath  string
+	NodeID    string
+	SessionID string
+}
+
 // RunAppender is the run registry as the content handlers reach it for a step's
 // frame: the run's log keys a turn on the node PATH, so every method takes both.
 type RunAppender interface {
-	// RunNodeStart opens the step path's turn on the run's node_start frame, the
-	// run turn's opening bracket, recording chatID as the run's host when it is
-	// the run's first turn; a path already open is a no-op on the log.
-	RunNodeStart(ctx context.Context, runID, nodePath, sessionID string, chatID marotte.ChatID)
-	// RunNodeComplete closes the step path's turn with KAS's status mapped onto
-	// the outcome, the run turn's closing bracket; a path with no open turn closes
-	// nothing.
-	RunNodeComplete(ctx context.Context, runID, nodePath, status, reason string)
-	// RunFoldTarget returns the run's open turn for the step path, opening one when
-	// the path has no turn yet and recording chatID as the run's host. False for a
+	// RunNodeStart opens the step's turn on the run's node_start frame, the run
+	// turn's opening bracket, recording chatID as the run's host when it is the
+	// run's first turn; a path already open is a no-op on the log.
+	RunNodeStart(ctx context.Context, step RunStep, chatID marotte.ChatID)
+	// RunNodeComplete closes the turn of the step at path (its workflow.PathKey)
+	// with KAS's status mapped onto the outcome, the run turn's closing bracket; a
+	// path with no open turn closes nothing.
+	RunNodeComplete(ctx context.Context, runID string, path []string, status, reason string)
+	// RunFoldTarget returns the run's open turn for the step, opening one when its
+	// path has no turn yet and recording chatID as the run's host. False for a
 	// path whose turn already closed, where RunAppendAfterClosed files a late entry,
 	// and for an open the store refused.
-	RunFoldTarget(ctx context.Context, runID, nodePath, sessionID string, chatID marotte.ChatID) (*turnlog.Turn, bool)
+	RunFoldTarget(ctx context.Context, step RunStep, chatID marotte.ChatID) (*turnlog.Turn, bool)
 	// RunAppendAfterClosed files an entry after the turn_close of the path's newest
 	// closed turn, the run log's between-turns rule.
 	RunAppendAfterClosed(ctx context.Context, runID, nodePath string, e *marotte.Entry) error

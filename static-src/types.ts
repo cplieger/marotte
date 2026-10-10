@@ -149,7 +149,7 @@ export type {
   RecipesResponse,
   RunLaunchRequest,
   RunLaunchedResponse,
-  // GET /api/runs/{id}/steps/{path...}: one step's transcript plus its verdict.
+  // GET /api/runs/{id}/steps/{path}: one step's transcript plus its verdict.
   RunStepTranscript,
   SystemTool,
   SteerQueuedPayload,

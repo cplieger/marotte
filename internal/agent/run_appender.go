@@ -11,32 +11,34 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/turnlog"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 var _ translate.RunAppender = (*Runs)(nil)
 
 // RunNodeStart opens the step path's turn and announces its turn_open under the
 // run scope; a path already open appends nothing.
-func (rs *Runs) RunNodeStart(ctx context.Context, runID, nodePath, sessionID string, chatID marotte.ChatID) {
+func (rs *Runs) RunNodeStart(ctx context.Context, step translate.RunStep, chatID marotte.ChatID) {
 	if rs.log == nil {
 		return
 	}
-	_, opened, err := rs.log.Open(ctx, runID, nodePath, sessionID, chatID)
+	_, opened, err := rs.log.Open(ctx, step, chatID)
 	if err != nil {
-		slog.Warn("run log: open step turn", "run", runID, "node_path", nodePath, "error", err)
+		slog.Warn("run log: open step turn", "run", step.RunID, "node_path", step.NodePath, "error", err)
 		return
 	}
 	if opened != nil {
-		translate.PublishAppended(ctx, rs.bus, "", runID, opened)
+		translate.PublishAppended(ctx, rs.bus, "", step.RunID, opened)
 	}
 }
 
 // RunNodeComplete closes the step path's turn with KAS's status and announces what
 // the close sealed.
-func (rs *Runs) RunNodeComplete(ctx context.Context, runID, nodePath, status, reason string) {
+func (rs *Runs) RunNodeComplete(ctx context.Context, runID string, path []string, status, reason string) {
 	if rs.log == nil {
 		return
 	}
+	nodePath := workflow.PathKey(path)
 	sealed, closed, err := rs.log.CloseNode(ctx, runID, nodePath, status, reason)
 	if err != nil {
 		slog.Warn("run log: close step turn", "run", runID, "node_path", nodePath, "error", err)
@@ -45,7 +47,7 @@ func (rs *Runs) RunNodeComplete(ctx context.Context, runID, nodePath, status, re
 		slog.Debug("run log: node_complete for a path with no open turn", "run", runID, "node_path", nodePath)
 	}
 	translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
-	rs.noteStepEnded(ctx, runID, nodePath, sealed)
+	rs.noteStepEnded(ctx, runID, path, sealed)
 }
 
 // stepNoteRefused and stepNoteModelCallLimit name why a step left the launching chat a note, in its steer id.
@@ -63,7 +65,7 @@ func stepNoteID(workflowID, cause, nodePath string) string {
 // noteStepEnded leaves the launching chat a row saying a step KAS graded completed did not finish (it was declined,
 // or kiro-cli stopped it at its model-call limit), read off the close's turn_close. It reaches the human reading
 // the chat, not the agent (recordSteer never calls _session/steer). Only CloseNode's close gets here.
-func (rs *Runs) noteStepEnded(ctx context.Context, workflowID, nodePath string, sealed []turnlog.Sealed) {
+func (rs *Runs) noteStepEnded(ctx context.Context, workflowID string, path []string, sealed []turnlog.Sealed) {
 	c, ok := turnCloseOf(sealed)
 	if !ok {
 		return
@@ -82,11 +84,11 @@ func (rs *Runs) noteStepEnded(ctx context.Context, workflowID, nodePath string, 
 		return
 	}
 	recipe := cmp.Or(l.Recipe, "Workflow run")
-	text := stepModelCallLimitNoteText(recipe, nodePath)
+	text := stepModelCallLimitNoteText(recipe, path)
 	if cause == stepNoteRefused {
-		text = stepRefusalNoteText(recipe, nodePath, c.Refusal)
+		text = stepRefusalNoteText(recipe, path, c.Refusal)
 	}
-	rs.coord.recordSteer(ctx, marotte.ChatID(l.ChatID), stepNoteID(workflowID, cause, nodePath), &marotte.EntrySteer{
+	rs.coord.recordSteer(ctx, marotte.ChatID(l.ChatID), stepNoteID(workflowID, cause, workflow.PathKey(path)), &marotte.EntrySteer{
 		Text:       text,
 		Origin:     marotte.SteerOriginAgent,
 		State:      marotte.SteerStateRead,
@@ -112,17 +114,17 @@ func turnCloseOf(sealed []turnlog.Sealed) (marotte.EntryTurnClose, bool) {
 }
 
 // stepModelCallLimitNoteText names the step and carries the step close's own remedy.
-func stepModelCallLimitNoteText(recipe, nodePath string) string {
-	return recipe + " step " + nodePath + " stopped early. " + marotte.ModelCallLimitStepReason
+func stepModelCallLimitNoteText(recipe string, path []string) string {
+	return recipe + " step " + strings.Join(path, "/") + " stopped early. " + marotte.ModelCallLimitStepReason
 }
 
 // stepRefusalNoteText names the step and does not invite a re-run: a refusal is deterministic.
 // Category and explanation are optional. The total length is unbounded, accepted as in noteRunEnd.
-func stepRefusalNoteText(recipe, nodePath string, r *marotte.RefusalInfo) string {
+func stepRefusalNoteText(recipe string, path []string, r *marotte.RefusalInfo) string {
 	var b strings.Builder
 	b.WriteString(recipe)
 	b.WriteString(" step ")
-	b.WriteString(nodePath)
+	b.WriteString(strings.Join(path, "/"))
 	b.WriteString(" was declined by the model")
 	if r != nil && r.Category != "" {
 		b.WriteString(" (")
@@ -138,23 +140,23 @@ func stepRefusalNoteText(recipe, nodePath string, r *marotte.RefusalInfo) string
 }
 
 // RunFoldTarget answers the step path's open turn, opening one when the path has neither an open nor a closed turn.
-func (rs *Runs) RunFoldTarget(ctx context.Context, runID, nodePath, sessionID string, chatID marotte.ChatID) (*turnlog.Turn, bool) {
+func (rs *Runs) RunFoldTarget(ctx context.Context, step translate.RunStep, chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	if rs.log == nil {
 		return nil, false
 	}
-	if t := rs.log.Turn(runID, nodePath); t != nil {
+	if t := rs.log.foldTurn(step); t != nil {
 		return t, true
 	}
-	if rs.log.hasClosed(runID, nodePath) {
+	if rs.log.hasClosed(step.RunID, step.NodePath) {
 		return nil, false
 	}
-	t, opened, err := rs.log.Open(ctx, runID, nodePath, sessionID, chatID)
+	t, opened, err := rs.log.Open(ctx, step, chatID)
 	if err != nil {
-		slog.Warn("run log: open step turn for a content frame", "run", runID, "node_path", nodePath, "error", err)
+		slog.Warn("run log: open step turn for a content frame", "run", step.RunID, "node_path", step.NodePath, "error", err)
 		return nil, false
 	}
 	if opened != nil {
-		translate.PublishAppended(ctx, rs.bus, "", runID, opened)
+		translate.PublishAppended(ctx, rs.bus, "", step.RunID, opened)
 	}
 	return t, true
 }

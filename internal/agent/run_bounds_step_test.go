@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // terminalsBySession is each chat's live-terminal sessions, so a case can put a terminal on a step or on the carrier alone.
@@ -24,10 +26,11 @@ func (t terminalsBySession) LiveTerminalForSession(chatID marotte.ChatID, sessio
 }
 
 // openStep opens one step turn on its own session, as node_start leaves it.
-func openStep(t *testing.T, h *Runtime, workflowID, nodePath, sessionID string) {
+func openStep(t *testing.T, h *Runtime, workflowID string, path []string, sessionID string) {
 	t.Helper()
-	if _, _, err := h.runs.log.Open(t.Context(), workflowID, nodePath, sessionID, runChatID(workflowID)); err != nil {
-		t.Fatalf("open step %s on %s: %v", nodePath, sessionID, err)
+	step := translate.RunStep{RunID: workflowID, NodePath: workflow.PathKey(path), NodeID: path[len(path)-1], SessionID: sessionID}
+	if _, _, err := h.runs.log.Open(t.Context(), step, runChatID(workflowID)); err != nil {
+		t.Fatalf("open step %q on %s: %v", path, sessionID, err)
 	}
 }
 
@@ -42,7 +45,7 @@ func TestCancelExpired_AStepWaitingOnItsOwnCommandStillYields(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, "root/a", stepSID)
+	openStep(t, h, id, []string{"root", "a"}, stepSID)
 	h.runs.terminals = terminalsBySession{runChatID(id): {stepSID}}
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 
@@ -69,8 +72,8 @@ func TestCancelExpired_AnUnrelatedSessionOnTheCarrierDoesNotHoldTheWindow(t *tes
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, "root/a", "step-session-a")
-	openStep(t, h, id, "root/b", "step-session-b")
+	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
+	openStep(t, h, id, []string{"root", "b"}, "step-session-b")
 	// A carrier terminal on a session no step names.
 	h.runs.terminals = terminalsBySession{runChatID(id): {"chat-session"}}
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
@@ -97,7 +100,7 @@ func TestStepWorking_EveryAbsenceAnswersFalse(t *testing.T) {
 		arrange: func(t *testing.T, h *Runtime) {
 			h.runs.terminals = nil
 			h.runs.log = newRunLog(t.TempDir())
-			openStep(t, h, id, "root/a", "step-session-a")
+			openStep(t, h, id, []string{"root", "a"}, "step-session-a")
 		},
 	}, {
 		name: "no open step turn",
@@ -110,7 +113,7 @@ func TestStepWorking_EveryAbsenceAnswersFalse(t *testing.T) {
 		arrange: func(t *testing.T, h *Runtime) {
 			h.runs.terminals = terminalsBySession{runChatID(id): {""}}
 			h.runs.log = newRunLog(t.TempDir())
-			openStep(t, h, id, "root/a", "")
+			openStep(t, h, id, []string{"root", "a"}, "")
 		},
 	}}
 	for _, tc := range cases {

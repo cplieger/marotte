@@ -398,7 +398,7 @@ describe("a step row's key is the exec view's own node path", () => {
     };
   }
 
-  const CODE_PATH = "wf_1/loop/iter-0/code";
+  const CODE_PATH = "wf_1:loop:iter-0:code";
 
   function rowPaths(root: HTMLElement): (string | undefined)[] {
     return [...root.querySelectorAll<HTMLElement>(".run-step")].map((e) => e.dataset["node"]);
@@ -412,7 +412,7 @@ describe("a step row's key is the exec view's own node path", () => {
     // navigates and `bodyFor` files a transcript under, so a row that keyed on
     // anything else would open the page on no node at all.
     const execPaths = leaves(runToExec("wf_1", state, undefined, NO_ASKS).nodes).map((n) => n.path);
-    expect(execPaths).toEqual(["wf_1/plan", CODE_PATH, "wf_1/loop/iter-0/review"]);
+    expect(execPaths).toEqual(["wf_1:plan", CODE_PATH, "wf_1:loop:iter-0:review"]);
     expect(rowPaths(c.root)).toEqual(execPaths);
   });
 
@@ -454,7 +454,39 @@ describe("a step row's key is the exec view's own node path", () => {
         ],
       },
     });
-    expect(rowPaths(c.root)).toEqual(["wf_1/iter-0/work", "wf_1/iter-1/work"]);
+    expect(rowPaths(c.root)).toEqual(["wf_1:iter-0:work", "wf_1:iter-1:work"]);
+  });
+
+  it("keeps two steps whose ids spell alike under a slash join in two rows", () => {
+    const c = card();
+    c.render({
+      workflowId: "wf_1",
+      status: "completed",
+      root: {
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "completed",
+        children: [
+          {
+            nodeId: "a/b",
+            type: "sequence",
+            status: "completed",
+            children: [step("c", "completed")],
+          },
+          {
+            nodeId: "a",
+            type: "sequence",
+            status: "completed",
+            children: [step("b/c", "completed")],
+          },
+        ],
+      },
+    });
+    expect(rowPaths(c.root)).toEqual(["wf_1:a/b:c", "wf_1:a:b/c"]);
+    expect([...c.root.querySelectorAll(".run-step-name")].map((e) => e.textContent)).toEqual([
+      "c",
+      "b/c",
+    ]);
   });
 });
 
@@ -481,7 +513,7 @@ describe("a step row is a door into the run tab", () => {
     // `/` and the tab's identity stays `(run, workflowId)`.
     const h = head(doorCard());
     expect(h.tagName).toBe("A");
-    expect(h.getAttribute("href")).toBe("/run/wf_1#node=wf_1%2Fbuild");
+    expect(h.getAttribute("href")).toBe("/run/wf_1#node=wf_1%3Abuild");
   });
 
   it("keeps the FOOT link on the run itself, with no fragment", () => {
@@ -526,7 +558,7 @@ describe("a step row is a door into the run tab", () => {
       [...c.root.querySelectorAll<HTMLAnchorElement>(".run-step-head")].map((a) =>
         a.getAttribute("href"),
       ),
-    ).toEqual(["/run/wf_1#node=wf_1%2Fiter-0%2Fwork", "/run/wf_1#node=wf_1%2Fiter-1%2Fwork"]);
+    ).toEqual(["/run/wf_1#node=wf_1%3Aiter-0%3Awork", "/run/wf_1#node=wf_1%3Aiter-1%3Awork"]);
   });
 
   it("hosts no step body and carries no disclosure chevron", () => {
@@ -553,7 +585,7 @@ describe("a step row is a door into the run tab", () => {
     const c = doorCard();
     const ev = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
     head(c).dispatchEvent(ev);
-    expect(opened).toEqual([["wf_1", "Workflow run", "wf_1/build"]]);
+    expect(opened).toEqual([["wf_1", "Workflow run", "wf_1:build"]]);
     // The app's own routing took the click, so the browser must not also navigate.
     expect(ev.defaultPrevented).toBe(true);
   });
