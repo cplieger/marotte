@@ -113,6 +113,13 @@ export const ICON_CANCEL = svg(
 // Transport, beside `ICON_CANCEL` and `ICON_PLAY`. Line art: an open chevron has no interior to become a sliver.
 // Left-pointing and doubled, clear of `.disclosure-chevron`.
 export const ICON_REWIND = svg("ui", '<path d="M11 18l-6-6 6-6M19 18l-6-6 6-6"/>');
+// Transport too: two filled bars as tall as `ICON_CANCEL`'s square, at its weight. Stroked hairlines read lighter
+// than the filled stop beside them, and an outlined 4-unit bar leaves no interior at 16px.
+export const ICON_PAUSE = svg(
+  "ui",
+  '<rect x="6.5" y="6" width="4" height="12" rx="1" fill="currentColor" stroke="none"/>' +
+    '<rect x="13.5" y="6" width="4" height="12" rx="1" fill="currentColor" stroke="none"/>',
+);
 
 /*
  * One `d`, two sizes (picker heading, model pill at 12px). A redraw keeps: filled eyes (a ring cannot survive 1.5 CSS

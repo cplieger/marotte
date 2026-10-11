@@ -1,6 +1,7 @@
 // Tests for the run tab: its control row, its structure, its outputs and its empty-step notes.
 
 import { vi, describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
+import { page } from "vitest/browser";
 import type * as RunStore from "./run-store.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
@@ -598,6 +599,76 @@ describe("run view controls", () => {
     }
     painted.body.querySelector<HTMLButtonElement>(".run-controls button")?.click();
     expect(m.dispatched).toEqual(['finish_loop:{"workflowID":"wf_1","nodeID":"loop-2"}']);
+  });
+
+  /** Every run-verb button in a painted row, with what a reader and a screen reader get from it. */
+  function verbFaces(body: HTMLElement): {
+    name: string | null;
+    glyph: boolean;
+    word: HTMLElement | null;
+    btn: HTMLButtonElement;
+  }[] {
+    return [...body.querySelectorAll<HTMLButtonElement>(".run-controls button")].map((btn) => ({
+      name: btn.getAttribute("aria-label"),
+      glyph: btn.querySelector(":scope > svg") !== null,
+      word: btn.querySelector<HTMLElement>(".run-control-label"),
+      btn,
+    }));
+  }
+
+  const ROWS: readonly (readonly [status: string, verbs: string[]])[] = [
+    ["running", ["Pause", "Cancel"]],
+    ["paused", ["Resume", "Cancel"]],
+    ["aborted", ["Retry failed steps"]],
+  ];
+
+  it.each(ROWS)("leads each %s verb with its glyph, then its word", async (status, verbs) => {
+    const painted = await paint(openRunView, status);
+    const faces = verbFaces(painted.body);
+    expect(faces.map((f) => f.name)).toEqual(verbs);
+    for (const face of faces) {
+      expect(face.glyph, `${face.name ?? ""} has no glyph`).toBe(true);
+      expect(face.btn.firstElementChild?.tagName.toLowerCase(), "the glyph comes first").toBe(
+        "svg",
+      );
+      expect(face.word?.textContent).toBe(face.name);
+      expect(getComputedStyle(face.word ?? face.btn).display).not.toBe("none");
+    }
+  });
+
+  it.each(ROWS)("draws each %s verb icon-only on a phone, named and square", async (status) => {
+    try {
+      await page.viewport(390, 844);
+      const painted = await paint(openRunView, status);
+      const faces = verbFaces(painted.body);
+      expect(faces.length).toBeGreaterThan(0);
+      for (const face of faces) {
+        expect(face.name, "the accessible name survives the hidden word").toBeTruthy();
+        expect(face.glyph).toBe(true);
+        expect(getComputedStyle(face.word ?? face.btn).display).toBe("none");
+        const box = face.btn.getBoundingClientRect();
+        expect(box.width, `${face.name ?? ""} is not square`).toBeCloseTo(box.height, 0);
+      }
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      for (const face of faces) {
+        const box = face.btn.getBoundingClientRect();
+        expect(box.width, `${face.name ?? ""} under the coarse hit floor`).toBeGreaterThanOrEqual(
+          44,
+        );
+        expect(box.height, `${face.name ?? ""} under the coarse hit floor`).toBeGreaterThanOrEqual(
+          44,
+        );
+      }
+    } finally {
+      document.documentElement.removeAttribute("data-pointer");
+      await page.viewport(1280, 720);
+    }
+  });
+
+  it("keeps Cancel's btn-danger class beside its glyph", async () => {
+    const painted = await paint(openRunView, "running");
+    const cancel = verbFaces(painted.body).find((f) => f.name === "Cancel");
+    expect(cancel?.btn.classList.contains("btn-danger")).toBe(true);
   });
 
   it("draws no repeat control when the server named no paused node", async () => {
