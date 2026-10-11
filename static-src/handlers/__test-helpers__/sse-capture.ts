@@ -19,7 +19,6 @@ export function createBusMock(extras: Record<string, unknown> = {}): Record<stri
     lookupSSEDecoder: undefined,
     onBus: undefined,
     emitBus: undefined,
-    BUS_TURN_IDLE: undefined,
     BUS_RECONCILE: undefined,
     decodeEnvelope: undefined,
     BUS_PAGE_RESUMED: undefined,

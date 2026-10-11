@@ -101,10 +101,8 @@
                popup's trigger: a reader presses the row rather than an 8px disc.
                Its children are non-interactive spans, because axe's
                nested-interactive is serious and aria-hidden + tabindex="-1" does
-               not clear it — and html-validate's element-permitted-content fails
-               the build outright if an <a> or a <button> ever lands in here. The
-               account link the address used to carry now lives INSIDE the card
-               below, where a real <a> is legal.
+               not clear it. The account link the address used to carry now
+               lives INSIDE the card below, where a real <a> is legal.
 
                The `.sr-only` subject is `position: absolute` (40-a11y.css), so it
                is OUT OF FLOW and this button has exactly TWO flex items: the mark
@@ -320,7 +318,6 @@
                in THIS turn. -->
           <ul id="steer-stack" class="steer-stack hidden" aria-label="Messages sent to the running turn"></ul>
           <!-- The `/` menu, above the box it completes into (slash-menu.ts). -->
-          <!-- [html-validate-disable-next prefer-native-element -- a <select> cannot filter as the textarea is typed into, or carry a hint and a description per row] -->
           <ul id="slash-menu" class="slash-menu" role="listbox" aria-label="Commands" hidden></ul>
           <div id="prompt-box" class="prompt-box">
             <!-- No top-edge drag handle here. The message box sizes itself:
@@ -1436,13 +1433,11 @@
             </nav>
           </header>
           <div data-history-panel="chats" class="history-panel">
-            <!-- [html-validate-disable-next prefer-native-element -- history.ts fills it with div[role=listitem] rows] -->
             <div id="history-table" class="list-container" role="list">
               <div class="list-empty">No previous conversations in this workspace.</div>
             </div>
           </div>
           <div data-history-panel="runs" class="history-panel hidden">
-            <!-- [html-validate-disable-next prefer-native-element -- history.ts fills it with div[role=listitem] rows] -->
             <div id="history-runs" class="list-container" role="list">
               <div class="list-empty">No previous workflow runs in this workspace.</div>
             </div>

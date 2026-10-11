@@ -7,7 +7,12 @@
 import { type PrecacheManifest, isPreviewPath, isShellPath, parseManifest } from "./precache.js";
 import { buildPath } from "./route-path.js";
 import type { Route } from "./route-path.js";
-import { parsePushTarget, pushTargetRoute, pushTargetTag } from "./push-subject.js";
+import {
+  type PushPageMessage,
+  parsePushTarget,
+  pushTargetRoute,
+  pushTargetTag,
+} from "./push-subject.js";
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
@@ -151,18 +156,6 @@ interface PushData {
   subject?: string;
 }
 
-/** Message to an open page: the SUBJECT (the page owns routes) and whether the user asked to go
- *  there, the notification arrived for the page to deliver, or the presence tag must be re-derived. */
-interface PushPageMessage {
-  type: "push";
-  reason: "clicked" | "arrived" | "subscription_changed";
-  chatId: string;
-  subject: string;
-  kind: string;
-  title: string;
-  body: string;
-}
-
 /** Read one string field off a notification's `data` bag. The bag is whatever the
  *  browser round-tripped, so every field is checked rather than cast; an absent or
  *  wrong-typed field reads as "", which every consumer treats as unset. */
@@ -223,7 +216,7 @@ sw.addEventListener("push", ((event: PushEvent) => {
             kind,
             title,
             body,
-          } satisfies PushPageMessage);
+          } satisfies Required<PushPageMessage>);
         }
         return;
       }
@@ -277,7 +270,7 @@ sw.addEventListener("notificationclick", ((event: NotificationEvent) => {
             kind: "",
             title: event.notification.title,
             body: event.notification.body,
-          } satisfies PushPageMessage);
+          } satisfies Required<PushPageMessage>);
           await target.focus();
           return;
         }
@@ -312,7 +305,7 @@ sw.addEventListener("pushsubscriptionchange", ((event: PushSubscriptionChangeEve
             kind: "",
             title: "",
             body: "",
-          } satisfies PushPageMessage);
+          } satisfies Required<PushPageMessage>);
         }
       })
       .catch((err: unknown) => {

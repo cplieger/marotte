@@ -720,10 +720,22 @@ anything is sent is the telemetryEnabled row, which the Data sharing switch driv
 The external memory eligibility arm. marotte used to write it from the memory
 setting; the session-door memory row's explicit mode replaces that, and mode
 "disabled" holds whatever the arm says.`,
+	"env.KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+Lets a turn whose model is unavailable move to the next model of the chain
+getModelFallbacks serves.`,
+	"env.KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+Lets a turn whose model refused move to the next model of the chain
+getModelFallbacks serves.`,
 	"env.KIRO_FEATURE_SESSION_TITLE_LLM_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 The LLM session title on chat bridges. Run bridges turn the title off through
 KIRO_DISABLE_SESSION_TITLE_LLM instead (row below).`,
+	"env.KIRO_FEATURE_SKILL_NAME_QUALIFIERS_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The experiment value of the hidden skillNameQualifiers setting (default off),
+which qualifies same-named skills with their layer or owner.`,
 	"env.KIRO_FEATURE_STALL_TOOL_CONTINUATION_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 Continues a turn stalled after a tool result (default on).`,
@@ -746,6 +758,9 @@ Backend user-agent shape; not pinned by decision.`,
 (decision: pin only where a marotte setting owns the behaviour).
 The bundled validation reviewer; the validation settings row carries the user's
 choice when there is one, and otherwise this arm's experiment decides.`,
+	"env.KIRO_FEATURE_VIBE_TO_DEFAULT_V2_ROUTING_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+Routes a session asking for the vibe mode to the bundled default-v2 mode.`,
 	"env.KIRO_DISABLE_EXPERIMENT_CONFIG": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 Turning off the experiment service would stop every ramp at once; not pinned by

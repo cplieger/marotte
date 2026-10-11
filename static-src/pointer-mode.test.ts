@@ -448,9 +448,8 @@ describe("the phone-shaped gate, measured at real viewport sizes", () => {
 
 describe("the coarse glyph", () => {
   it("keeps folded fingers beside the extended one", () => {
-    // No other gate can see this: prettier never formats
-    // `static/index.html`, html-validate does not read path data, and `menu-icons.test.ts` only
-    // asks whether the six header glyphs differ from each other.
+    // No other gate can see this: prettier never formats `static/index.html`, and
+    // `menu-icons.test.ts` only asks whether the six header glyphs differ from each other.
     const glyph = markupFor('id="pointer-mode-btn"').match(
       /<svg class="pointer-icon-coarse[\s\S]*?<\/svg>/,
     )?.[0];

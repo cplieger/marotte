@@ -12,7 +12,7 @@ export interface DiffLine {
   text: string;
 }
 
-export interface DiffStats {
+interface DiffStats {
   adds: number;
   dels: number;
 }
@@ -327,7 +327,7 @@ export interface CharRange {
 }
 
 /** The changed character ranges of one del/add line pair. */
-export interface WordDiff {
+interface WordDiff {
   /** Ranges into the OLD line that the new line does not have. */
   readonly del: CharRange[];
   /** Ranges into the NEW line that the old line did not have. */
