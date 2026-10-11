@@ -20,7 +20,7 @@ served by the Go backend.
 npm test              # single pass (vitest --run)
 npm run test:watch    # watch mode
 npm run test:coverage # with V8 coverage
-npm run typecheck     # tsc type-check (source)
+npm run typecheck     # tsc type-check (source, service worker, vitest configs)
 npm run typecheck:tests # tsc type-check (tests)
 ```
 
