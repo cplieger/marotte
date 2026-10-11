@@ -46,7 +46,7 @@
     "@cplieger/keyenc": "1.1.0-dev.1",
     "@cplieger/reactive": "2.2.0",
     "@cplieger/sse": "1.2.0",
-    "@cplieger/ui-primitives": "3.2.0-dev.3",
+    "@cplieger/ui-primitives": "3.2.0",
     "@cplieger/web-terminal-engine": "6.2.0",
     "@cplieger/web-terminal-ui": "8.4.0-dev.3"
   },
