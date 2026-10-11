@@ -9,7 +9,7 @@
     "test": "vitest --run --reporter=default --reporter=json --outputFile.json=.vitest/duration-report.json && node scripts/check-suite-duration.ts .vitest/duration-report.json",
     "test:watch": "vitest",
     "test:coverage": "vitest --run --coverage",
-    "typecheck": "tsc -project tsconfig.json && tsc -project tsconfig.sw.json",
+    "typecheck": "tsc -project tsconfig.json && tsc -project tsconfig.sw.json && tsc -project tsconfig.node.json",
     "typecheck:tests": "tsc -project tsconfig.test.json",
     "typecheck:build": "tsc -project tsconfig.build.json",
     "typecheck:sw": "tsc -project tsconfig.sw.json",
