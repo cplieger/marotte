@@ -5,7 +5,7 @@ go 1.27.2
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
-	github.com/cplieger/runesafe/v2 v2.1.1 // indirect
+	github.com/cplieger/runesafe/v3 v3.0.0 // indirect
 	github.com/cplieger/scheduler/v4 v4.2.3 // indirect
 	github.com/cplieger/urlform v1.4.0 // indirect
 	github.com/creack/pty v1.1.24 // indirect
