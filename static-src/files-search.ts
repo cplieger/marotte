@@ -60,7 +60,7 @@ const FILES_HINT =
   "Comma-separated. A bare name matches that file or folder at any depth, and .md matches that extension. " +
   "* and ? stay within a folder, ** crosses folders, ! excludes.";
 
-export interface FilesSearchCtx {
+interface FilesSearchCtx {
   /** The folder the browser is showing, which is the search ROOT. */
   getSearchPath: () => string;
   /** Bring the browser into view; injected (importing files.ts would be a cycle). Must show, never toggle. */
@@ -486,10 +486,8 @@ function renderResults(searchPath: string): void {
   rowNav?.refresh();
 }
 
-/**
- * Open state is the bar's own class. Not a popup: results render outside the panel, so outside-click dismissal would
- * close it on a hit click.
- */
+/** Not a popup: results render outside the panel, so outside-click dismissal would close it on a hit
+ *  click. */
 function isOpen(): boolean {
   return barEl !== null && !barEl.classList.contains("hidden");
 }
@@ -554,6 +552,7 @@ function resetToggles(): void {
 }
 
 /** @internal Test seam: whether the bar is open. */
+// deadset:ignore DS1004 -- test seam: observes whether the files search bar is open
 export function _isFilesSearchOpen(): boolean {
   return isOpen();
 }
@@ -619,11 +618,13 @@ export function toggleFilesSearch(): void {
 }
 
 /** @internal Test seam: the lazily-built search bar, once it exists. */
+// deadset:ignore DS1004 -- test seam: observes the lazily built search bar
 export function _filesSearchBar(): HTMLElement | null {
   return document.getElementById("fb-search");
 }
 
 /** @internal Test seam: the results list, once it exists. */
+// deadset:ignore DS1004 -- test seam: observes the search results list
 export function _filesSearchResults(): HTMLElement {
   return byId<HTMLDivElement>("fb-search-results");
 }

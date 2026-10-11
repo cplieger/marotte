@@ -83,11 +83,8 @@ export function listedRepos(l: RepoListing): Repo[] {
 export interface RepoDeps {
   /** Check if a repo name is locally cloned. */
   isCloned: (name: string) => boolean;
-  /** Mark a repo name as locally cloned. */
   addCloned: (name: string) => void;
-  /** Remove a repo name from the cloned set. */
   removeCloned: (name: string) => void;
-  /** Bump the state version to trigger a re-render. */
   bumpState: () => void;
   /** Start the row request `key` unless it already runs, answering it. */
   start: (key: string, fn: () => Promise<void>) => Promise<void> | undefined;
@@ -335,8 +332,7 @@ export function renderRepoActions(repo: Repo, cloned: boolean, deps: RepoDeps): 
   return actions;
 }
 
-/** Clone one repository into the workspace. Rejects when it did not land, after
- *  its row says why. */
+/** Rejects when it did not land, after its row says why. */
 async function cloneRepo(
   repo: Repo,
   deps: RepoDeps,
@@ -370,10 +366,7 @@ async function confirmRemoval(repo: Repo, btn: HTMLButtonElement, deps: RepoDeps
   }
 }
 
-/**
- * Delete the workspace copy of one repository. The row keeps its copy until the delete lands; a refusal rejects
- * after the row says why.
- */
+/** The row keeps its copy until the delete lands; a refusal rejects after the row says why. */
 async function removeLocalRepo(repo: Repo, deps: RepoDeps): Promise<void> {
   setRowNote(repo, "", deps);
   const o = await deleteLocalAction.dispatch({ repoName: repo.name }).outcome;

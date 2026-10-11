@@ -17,6 +17,7 @@ import (
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/httpx/v5"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"golang.org/x/sync/singleflight"
 )
@@ -44,12 +45,16 @@ type ConfiguredForge struct {
 	// RetryAfterS is the wait the refusal behind LastError asked for, counted
 	// from LastProbed.
 	RetryAfterS int64 `json:"retry_after_s,omitempty"`
-	Connected   bool  `json:"connected"`
+	// Connected says requests may use the connection. A connected row's
+	// LastError is a temporary failure the next probe retries: any other
+	// failure disconnects the row.
+	Connected bool `json:"connected"`
 	// ReconnectRequired says the stored credential can be neither used nor
 	// renewed: only a new sign-in revives the connection.
 	ReconnectRequired bool `json:"reconnect_required"`
-	// probeFailed says the row's error is a probe's refusal, which no record
-	// or store read restates, so a refresh carries it.
+	// probeFailed says the row's error, and the Connected verdict beside it,
+	// are a probe's, which no record or store read restates, so a refresh
+	// carries them.
 	probeFailed bool
 }
 
@@ -103,7 +108,7 @@ func NewManager(configDir string) *Manager {
 // MakeID returns the canonical ID for a kind+host pair.
 func MakeID(kind Kind, host string) string {
 	if host == "" {
-		host = kind.DefaultHost()
+		host = kind.defaultHost()
 	}
 	return fmt.Sprintf("%s:%s", kind, host)
 }
@@ -139,8 +144,8 @@ func (m *Manager) List(ctx context.Context) []ConfiguredForge {
 	return out
 }
 
-// Get returns the configured forge with the given ID, or nil.
-func (m *Manager) Get(id string) *ConfiguredForge {
+// get returns the configured forge with the given ID, or nil.
+func (m *Manager) get(id string) *ConfiguredForge {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	f, ok := m.forges[id]
@@ -207,8 +212,6 @@ func (m *Manager) fillFromCredential(row *ConfiguredForge, rec *connectionRecord
 	}
 }
 
-// reconnectReason is the error a row whose stored credential the library
-// holds as reconnect-required carries.
 const reconnectReason = "the stored credential can be neither used nor renewed. Sign in to this forge again"
 
 // fillStanding marks row reconnect-required when the library's source over
@@ -222,10 +225,10 @@ func (m *Manager) fillStanding(row *ConfiguredForge, rec *connectionRecord) {
 	row.ErrorCode, row.ErrorKind = forgeapi.CodeReconnectRequired, forgeapi.KindUnauthorized.String()
 }
 
-// recordFailure records err as the row's error in the error envelope's terms.
-// The message carries upstream text, so it is sanitized and bounded first.
-func (f *ConfiguredForge) recordFailure(err error) {
-	f.Connected = false
+// recordError records err as the row's error in the error envelope's terms,
+// leaving Connected to the caller. The message carries upstream text, so it is
+// sanitized and bounded first.
+func (f *ConfiguredForge) recordError(err error) {
 	if fe, ok := errors.AsType[*forgeapi.Error](err); ok {
 		env := envelopeFor(fe)
 		f.LastError, f.ErrorCode, f.ErrorKind, f.RetryAfterS = env.Error, env.Code, env.Kind, env.RetryAfterS
@@ -249,8 +252,8 @@ func (m *Manager) logRecordsVerdict(err error) {
 }
 
 // mergeForges swaps in the freshly-read forge set and records, carrying across
-// what only Probe populates: Email, LastProbed and a probe's refusal. A row the
-// fresh read itself marks unusable keeps the fresh verdict.
+// what only Probe populates: Email, LastProbed and a probe's failure with its
+// verdict. A row the fresh read itself marks unusable keeps the fresh verdict.
 func (m *Manager) mergeForges(out map[string]*ConfiguredForge, recs map[string]connectionRecord, reason string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -267,7 +270,7 @@ func (m *Manager) mergeForges(out map[string]*ConfiguredForge, recs map[string]c
 			f.LastProbed = prev.LastProbed
 		}
 		if prev.probeFailed && f.Connected {
-			f.Connected, f.ReconnectRequired, f.probeFailed = false, prev.ReconnectRequired, true
+			f.Connected, f.ReconnectRequired, f.probeFailed = prev.Connected, prev.ReconnectRequired, true
 			f.LastError, f.ErrorCode, f.ErrorKind, f.RetryAfterS = prev.LastError, prev.ErrorCode, prev.ErrorKind, prev.RetryAfterS
 		}
 	}
@@ -275,20 +278,20 @@ func (m *Manager) mergeForges(out map[string]*ConfiguredForge, recs map[string]c
 	m.cacheAt = time.Now()
 }
 
-// Invalidate clears the cache so the next List/Get reloads, and drops the
+// invalidate clears the cache so the next List/Get reloads, and drops the
 // cached repo and PR listings with it: a connection change decides which
 // repositories are visible at all, so keeping them would serve one account's
 // listings after another has signed in.
-func (m *Manager) Invalidate() {
+func (m *Manager) invalidate() {
 	m.mu.Lock()
 	m.cacheAt = time.Time{}
 	m.mu.Unlock()
 	m.lists.clear()
 }
 
-// Probe runs a Whoami against the forge to verify auth still works
+// probeConnection runs a Whoami against the forge to verify auth still works
 // and updates the Connected/LastProbed/LastError fields.
-func (m *Manager) Probe(ctx context.Context, id string) error {
+func (m *Manager) probeConnection(ctx context.Context, id string) error {
 	m.mu.RLock()
 	f, ok := m.forges[id]
 	m.mu.RUnlock()
@@ -307,7 +310,6 @@ func (m *Manager) Probe(ctx context.Context, id string) error {
 // so one leaving does not end it for the others.
 const probeBudget = 30 * time.Second
 
-// probe reads fc's account and records the verdict on its connection's row.
 func (m *Manager) probe(ctx context.Context, fc forgeClient) (forgeapi.Account, error) {
 	ch := m.probeSF.DoChan(fc.id, func() (any, error) {
 		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), probeBudget)
@@ -325,7 +327,6 @@ func (m *Manager) probe(ctx context.Context, fc forgeClient) (forgeapi.Account, 
 	}
 }
 
-// recordProbe records a probe's verdict on id's row and answers err.
 func (m *Manager) recordProbe(id string, acct *forgeapi.Account, err error) error {
 	now := time.Now().UnixMilli()
 	m.mu.Lock()
@@ -336,9 +337,15 @@ func (m *Manager) recordProbe(id string, acct *forgeapi.Account, err error) erro
 	}
 	f.LastProbed = now
 	if err != nil {
-		f.recordFailure(err)
-		f.ReconnectRequired = f.ReconnectRequired || isReconnectRequired(err)
+		f.recordError(err)
 		f.probeFailed = true
+		// A temporary failure leaves Connected as it was: a connected row is the
+		// one the pull-request cycle probes again, so disconnecting it here
+		// would leave nothing to heal it.
+		if !isTemporary(err) {
+			f.Connected = false
+			f.ReconnectRequired = f.ReconnectRequired || isReconnectRequired(err)
+		}
 		return err
 	}
 	f.Connected, f.probeFailed = true, false
@@ -353,15 +360,35 @@ func (m *Manager) recordProbe(id string, acct *forgeapi.Account, err error) erro
 	return nil
 }
 
+// isTemporary reports whether err is a failure another attempt can outlive: a
+// dead network, a throttle, the instance's own 408 or 5xx, or an instance that
+// did not answer in time. Any other failure says the connection itself is
+// wrong. A deadline here is always the probe's own: probe runs detached from
+// its callers, so a caller leaving never reaches recordProbe.
+func isTemporary(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	fe, ok := errors.AsType[*forgeapi.Error](err)
+	if !ok {
+		return false
+	}
+	switch fe.Kind {
+	case forgeapi.KindTransient, forgeapi.KindRateLimited:
+		return true
+	case forgeapi.KindUpstream:
+		return httpx.IsRetryableStatus(fe.Status)
+	default:
+		return false
+	}
+}
+
 // errConnectionUnusable marks a record-backed connection the server cannot
 // serve until its record file or credential store is repaired.
 var errConnectionUnusable = errors.New("forges: connection unusable")
 
-// codeConnectionUnusable is the row code of errConnectionUnusable.
 const codeConnectionUnusable = "connection_unusable"
 
-// forgeClient is one connection's forgeapi client, the credential source behind
-// it, and the family its repository ids decode in.
 type forgeClient struct {
 	core   forgeapi.Core
 	cred   forgeapi.CredentialSource
@@ -369,24 +396,22 @@ type forgeClient struct {
 	family forgeapi.Family
 }
 
-// client answers connection id's forgeapi client.
 func (m *Manager) client(id string) (forgeClient, error) {
-	f := m.Get(id)
+	f := m.get(id)
 	if f == nil {
 		return forgeClient{}, fmt.Errorf("forges: unknown id %q", id)
 	}
 	return m.clientOf(f)
 }
 
-// clientOf answers the client of f's connection record. A row whose record a
-// refresh removed meanwhile answers ErrNotLoggedIn.
+// A row whose record a refresh removed meanwhile answers errNotLoggedIn.
 func (m *Manager) clientOf(f *ConfiguredForge) (forgeClient, error) {
 	m.mu.RLock()
 	rec, recorded := m.records[f.ID]
 	reason := m.recordsReason
 	m.mu.RUnlock()
 	if !recorded {
-		return forgeClient{}, fmt.Errorf("%w: %s connects through a connection record", ErrNotLoggedIn, f.Kind)
+		return forgeClient{}, fmt.Errorf("%w: %s connects through a connection record", errNotLoggedIn, f.Kind)
 	}
 	if reason != "" {
 		return forgeClient{}, fmt.Errorf("%w: %s", errConnectionUnusable, reason)
@@ -420,16 +445,11 @@ func (m *Manager) RepoNames(ctx context.Context, id string) ([]string, error) {
 	return names, nil
 }
 
-// connect stores token as a static credential for the instance rec addresses,
-// through connectCredential.
 func (m *Manager) connect(ctx context.Context, rec *connectionRecord, token string) error {
 	return m.connectCredential(ctx, rec, &creds.Record{Kind: forgeapi.CredKindStaticPAT, Token: token, Issued: time.Now()})
 }
 
-// connectCredential verifies cred's token against the instance rec addresses,
-// completes cred with the account that read names, then stores it and rec,
-// registers git's credential helper for the origin and scrubs the host's
-// cleartext git credentials. A refused verification stores nothing.
+// A refused verification stores nothing.
 func (m *Manager) connectCredential(ctx context.Context, rec *connectionRecord, cred *creds.Record) error {
 	if cred.Token == "" {
 		return errors.New("forges: empty token")
@@ -488,9 +508,7 @@ func (m *Manager) restoreCredential(id string, old *creds.Record, hadOld bool) {
 	}
 }
 
-// disconnect removes f's connection record, then the helper pair and the
-// credential it no longer references. A connection with no record is already
-// gone.
+// A connection with no record is already gone.
 func (m *Manager) disconnect(ctx context.Context, f *ConfiguredForge) error {
 	rec, err := m.writableRecord(f.ID)
 	if err != nil || rec == nil {
@@ -509,8 +527,6 @@ func (m *Manager) disconnect(ctx context.Context, f *ConfiguredForge) error {
 	return nil
 }
 
-// errNoRecord answers a change to a connection whose record a disconnect
-// removed meanwhile.
 var errNoRecord = errors.New("forges: the connection has no record. Connect it again")
 
 // setOwnerScopes replaces f's owner scopes with owners as ownerScopes stores
@@ -558,7 +574,6 @@ func (m *Manager) writableRecord(id string) (*connectionRecord, error) {
 	return nil, nil
 }
 
-// putRecord replaces the record with rec's id, or appends rec.
 func (m *Manager) putRecord(ctx context.Context, rec *connectionRecord) error {
 	return m.conns.update(ctx, func(cur []connectionRecord) []connectionRecord {
 		if i := slices.IndexFunc(cur, func(r connectionRecord) bool { return r.ID == rec.ID }); i >= 0 {

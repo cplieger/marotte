@@ -48,7 +48,6 @@ const PAT_SCOPES: Record<ForgeKind, string> = {
 const ANY_FORGE_SCOPES = `Token scopes: ${SCOPES.github} on GitHub (classic token), ${SCOPES.gitlab} on GitLab, ${SCOPES.gitea} on Gitea or Forgejo.`;
 
 export interface PATFormDeps {
-  /** Close the add-account slot. */
   closeSlot: (slot: HTMLElement) => void;
   /** The token connected the account `id` from the pane in `slot`. */
   connected: (slot: HTMLElement, id: string) => void;

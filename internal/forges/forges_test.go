@@ -16,10 +16,10 @@ func TestKindHelpers(t *testing.T) {
 		{Kind("nope"), "", false},
 	}
 	for _, c := range cases {
-		if got := c.kind.Valid(); got != c.valid {
+		if got := c.kind.valid(); got != c.valid {
 			t.Errorf("%s.Valid() = %v", c.kind, got)
 		}
-		if got := c.kind.DefaultHost(); got != c.host {
+		if got := c.kind.defaultHost(); got != c.host {
 			t.Errorf("%s.DefaultHost() = %q", c.kind, got)
 		}
 	}

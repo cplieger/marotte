@@ -2,7 +2,8 @@
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
-import { parser, parser_write, parser_end, DOCUMENT } from "./smd-parser.js";
+import { parser, parser_write, parser_end } from "./smd-parser.js";
+import { DOCUMENT } from "./smd-parser-types.js";
 
 /** No-op renderer that records nothing — we only care about parser state. */
 function nullRenderer() {
@@ -104,7 +105,6 @@ describe("smd parser_write fuzz", () => {
 });
 
 describe("smd handleCodeFence targeted fuzz", () => {
-  // Generates adversarial code fence inputs and asserts parser invariants.
   const fenceLang = fc.oneof(
     fc.string({ minLength: 0, maxLength: 50 }),
     fc.constant(""),

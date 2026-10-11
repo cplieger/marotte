@@ -26,7 +26,6 @@ let buildRevealedTurn: (chatID: string, turnID: string, entryID?: string) => Pro
  *  rather than to the one navigation the reader is making. */
 let buildWalkTurn: (chatID: string, turnID: string) => Promise<void> = () => Promise.resolve();
 
-/** Release every grant the loop above took, in the chat it took them in. */
 let endWalkReveal: (chatID: string) => void = () => undefined;
 
 export function initSearchRevealBuilder(
@@ -39,7 +38,7 @@ export function initSearchRevealBuilder(
   endWalkReveal = endWalk;
 }
 
-/** The turn numbers holding hits for the current query, for the timeline rail
+/** The turn numbers holding hits for the current query, for the turn map
  *  and the folded rows' match counts. */
 let hitTurns = new Set<number>();
 /** Hits per turn number, so a folded row can advertise what is inside it rather

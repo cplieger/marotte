@@ -18,8 +18,6 @@ import (
 	"github.com/cplieger/slogx/capture"
 )
 
-// fillCore is a scopeCore that also reads one pull request, from reads keyed by
-// readKey, recording every read in the order asked.
 type fillCore struct {
 	*scopeCore
 	reads map[string]forgeapi.PullRequest
@@ -48,8 +46,6 @@ func readKey(selector string, number int) string { return selector + "#" + strco
 
 var fillBase = time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 
-// listed is an open row as GitLab and the Gitea family list it, with no verdict,
-// updated minute minutes past fillBase.
 func listed(family forgeapi.Family, selector string, number, minute int) forgeapi.PullRequest {
 	pr := prIn(family, selector, number, forgeapi.CheckUnknown)
 	pr.UpdatedAt = fillBase.Add(time.Duration(minute) * time.Minute)
@@ -78,8 +74,6 @@ func giteaRead(pr forgeapi.PullRequest, check forgeapi.CheckState, head string) 
 
 const viewerTag = "tab-a"
 
-// fillPoller is a poller over the production source for recs, each served by the
-// core cores names, whose presence table holds viewerTag live.
 func fillPoller(t *testing.T, cores map[string]forgeapi.Core, origins []RepoOrigin, recs ...connectionRecord,
 ) (*PRStatusPoller, *fakeGate, *Manager) {
 	t.Helper()
@@ -110,7 +104,6 @@ func fillsOf(row *PR) map[string]FieldFill {
 	return out
 }
 
-// gitlabFills is a GitLab row's fill with every readable field at reason.
 func gitlabFills(reason string, asOf int64) map[string]FieldFill {
 	return map[string]FieldFill{
 		"checks":        {Field: "checks", Reason: reason, AsOf: asOf},
@@ -122,7 +115,6 @@ func gitlabFills(reason string, asOf int64) map[string]FieldFill {
 
 func asOfOf(row *PR) int64 { return fillsOf(row)["checks"].AsOf }
 
-// unfilledBy is each logged msg line's unfilled count by its forge.
 func unfilledBy(logs *capture.Recorder, msg string) map[string]string {
 	out := map[string]string{}
 	for _, r := range logs.Records() {
@@ -563,10 +555,10 @@ func TestFill_AForgottenFillIsReadAgain(t *testing.T) {
 		if err := m.store.Delete(rec.ID); err != nil {
 			t.Fatalf("Setup: delete the credential: %v", err)
 		}
-		m.Invalidate()
+		m.invalidate()
 		p.sweep(t.Context())
 		seedStoreRecord(t, m.configDir, rec.ID, "bob")
-		m.Invalidate()
+		m.invalidate()
 		p.sweep(t.Context())
 		if len(core.asked) != 2 {
 			t.Errorf("reads of a settled row across a disconnect = %q, want it read again", core.asked)

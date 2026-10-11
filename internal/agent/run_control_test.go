@@ -106,7 +106,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 
 	t.Run("the launching chat's live bridge hosts the run", func(t *testing.T) {
 		h, _ := setup(t, "sess_owned", "sess_owned")
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
 		if _, sb := h.runs.hostBridgeChat(t.Context(), "wf_1"); sb == nil {
@@ -118,7 +118,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 	// A run launched before a session change is parented on a retired id.
 	t.Run("a run parented on a RETIRED session in the chain still resolves", func(t *testing.T) {
 		h, _ := setup(t, "sess_old", "sess_old", "sess_current")
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
 		if _, sb := h.runs.hostBridgeChat(t.Context(), "wf_1"); sb == nil {
@@ -136,7 +136,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 
 	t.Run("a PARENTLESS run resolves to nothing", func(t *testing.T) {
 		h, _ := setup(t, "", "sess_owned")
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
 		if _, sb := h.runs.hostBridgeChat(t.Context(), "wf_1"); sb != nil {
@@ -147,7 +147,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 
 	t.Run("a session no open chat owns resolves to nothing", func(t *testing.T) {
 		h, _ := setup(t, "sess_stranger", "sess_owned")
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
 		if _, sb := h.runs.hostBridgeChat(t.Context(), "wf_1"); sb != nil {
@@ -158,10 +158,10 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 	// The RPC reaches KAS on the chat's own bridge, with no re-host.
 	t.Run("Pause reaches KAS through the chat's bridge", func(t *testing.T) {
 		h, br := setup(t, "sess_owned", "sess_owned")
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
-		if err := h.runs.Pause(t.Context(), "wf_1"); err != nil {
+		if err := h.runs.pause(t.Context(), "wf_1"); err != nil {
 			t.Fatalf("Pause(agent-launched run) = %v, want nil", err)
 		}
 		if !slices.Contains(br.callLog(), methodKiroWorkflowPause) {
@@ -179,7 +179,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("seed the chat: %v", err)
 		}
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
 		if _, sb := h.runs.hostBridgeChat(t.Context(), "wf_1"); sb != nil {
@@ -274,7 +274,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		}); err != nil {
 			t.Fatalf("seed the chat: %v", err)
 		}
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
 		return h, br

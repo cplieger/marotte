@@ -1,9 +1,41 @@
 package marotte
 
-import "testing"
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"testing"
+)
+
+// turnSourceCount is the number of TurnOpenSource members domain_turn.go declares, read
+// from its const block so a member added there is counted without a sentinel.
+func turnSourceCount(t *testing.T) TurnOpenSource {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "domain_turn.go", nil, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse domain_turn.go: %v", err)
+	}
+	for _, decl := range f.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST || len(gen.Specs) == 0 {
+			continue
+		}
+		first, ok := gen.Specs[0].(*ast.ValueSpec)
+		if !ok || len(first.Names) == 0 || first.Names[0].Name != "TurnSourcePrompt" {
+			continue
+		}
+		var n TurnOpenSource
+		for _, spec := range gen.Specs {
+			n += TurnOpenSource(len(spec.(*ast.ValueSpec).Names))
+		}
+		return n
+	}
+	t.Fatal("domain_turn.go declares no TurnOpenSource const block starting at TurnSourcePrompt")
+	return 0
+}
 
 // TestTurnSourcePredicates decides all three predicates for every member of the
-// enum. The count is DERIVED from turnSourceCount rather than written twice, so a
+// enum. The count is DERIVED from the const block rather than written twice, so a
 // member added to the const block fails here instead of silently answering false
 // for a predicate nobody decided about it — the mutation that measured this gap
 // was widening PromptClass to a wire-opened source, which left the whole tree
@@ -18,11 +50,11 @@ func TestTurnSourcePredicates(t *testing.T) {
 		{"localShell", TurnSourceLocalShell, false, false, false},
 		{"wireTurnStart", TurnSourceWireTurnStart, false, false, false},
 		{"emptyRetry", TurnSourceEmptyRetry, true, true, true},
-		{"workflowStep", TurnSourceWorkflowStep, false, false, false},
+		{"workflowStep", turnSourceWorkflowStep, false, false, false},
 	}
-	if len(rows) != int(turnSourceCount) {
+	if count := turnSourceCount(t); len(rows) != int(count) {
 		t.Fatalf("the table covers %d sources, the enum has %d: decide every predicate for the new member",
-			len(rows), turnSourceCount)
+			len(rows), count)
 	}
 	// A duplicated src would let a member go unasserted while the count still passes.
 	seen := make(map[TurnOpenSource]string, len(rows))

@@ -66,7 +66,6 @@ func TestChatFilter_NeverRejectsAChatTheScanMatches(t *testing.T) {
 	})
 }
 
-// drawTurn is one turn of a random shape, each shape feeding different segment kinds.
 func drawTurn(rt *rapid.T, i int, text func(*rapid.T, string, int) string) *turnFixture {
 	id := fmt.Sprintf("t-%d", i)
 	switch rapid.IntRange(0, 3).Draw(rt, id+"_shape") {
@@ -102,7 +101,6 @@ func drawTurn(rt *rapid.T, i int, text func(*rapid.T, string, int) string) *turn
 	}
 }
 
-// sliceRunes is a random rune window of s, at most max runes and at least three where possible.
 func sliceRunes(rt *rapid.T, s string, max int) string {
 	runes := []rune(s)
 	if len(runes) == 0 {
@@ -114,7 +112,6 @@ func sliceRunes(rt *rapid.T, s string, max int) string {
 	return string(runes[start:end])
 }
 
-// flipCase upper-cases a random subset of s's runes.
 func flipCase(rt *rapid.T, s string) string {
 	var b strings.Builder
 	for i, r := range s {

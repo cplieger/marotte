@@ -1,5 +1,0 @@
-{
-  "ts": {
-    "entry_files": ["app.ts", "prepaint.ts", "sse-worker.ts", "sw.ts"]
-  }
-}

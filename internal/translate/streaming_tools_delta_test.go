@@ -197,7 +197,6 @@ func TestOutputDelta(t *testing.T) {
 	}
 }
 
-// toolCallDeltas returns every tool_progress payload in events, in order.
 func toolCallDeltas(t *testing.T, events *[]marotte.ServerEvent) []marotte.ToolProgressPayload {
 	t.Helper()
 	var out []marotte.ToolProgressPayload

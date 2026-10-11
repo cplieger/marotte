@@ -16,6 +16,7 @@ vi.mock("../run-store.js", () => ({
   invalidateCachedRuns: vi.fn(),
   noteRunChat: vi.fn(),
   noteRunLabel: vi.fn(),
+  noteRunResumed: vi.fn(),
   noteRunLive: vi.fn(),
   noteRunSettled: vi.fn(),
   hasLiveRunForChat: vi.fn(() => false),
@@ -33,12 +34,11 @@ vi.mock("../run-store.js", () => ({
   sealRunEntry: vi.fn(),
   appendRunEntry: vi.fn(),
 }));
-// submitPrompt is mocked: the deferral's contract is which CHAT the prompt reaches and its text.
 // `vi.hoisted` because the factory is lifted and the value is asserted on.
 const { mockSubmitPrompt } = vi.hoisted(() => ({
   mockSubmitPrompt: vi.fn(async (): Promise<"sent" | "steered" | "failed"> => "sent"),
 }));
-vi.mock("../submit.js", () => ({ submitPrompt: mockSubmitPrompt }));
+vi.mock("../submit.js", () => ({ submitLabelled: mockSubmitPrompt }));
 // The launching chat's own liveness, for the orphan sweep's two gates. Mocked
 // because what this suite pins is WHEN the sweep fires, not how a chat comes to
 // be thinking.
@@ -58,9 +58,8 @@ vi.mock("../actions/runs.js", () => ({
   continueRunStep: { dispatch: vi.fn() },
 }));
 vi.mock("../notify.js", () => ({
-  notifyIfHidden: vi.fn(),
+  notifyOffScreen: vi.fn(),
   closeNotificationsFor: vi.fn(() => Promise.resolve()),
-  NOTIFY_TITLE: "Marotte",
 }));
 
 import "./run.js";
@@ -74,6 +73,7 @@ import {
   invalidateRunControls,
   noteRunChat,
   noteRunLabel,
+  noteRunResumed,
   noteRunLive,
   noteRunSettled,
   hasLiveRunForChat,
@@ -93,13 +93,14 @@ import {
   dropTurnDecisions,
 } from "../decision-dock.js";
 import { answerRunInput, continueRunStep } from "../actions/runs.js";
-import { closeNotificationsFor, notifyIfHidden } from "../notify.js";
+import { closeNotificationsFor, notifyOffScreen } from "../notify.js";
 
 const invalidate = vi.mocked(invalidateRun);
 const invalidateControls = vi.mocked(invalidateRunControls);
 const applyProgress = vi.mocked(applyRunProgress);
 const noteChat = vi.mocked(noteRunChat);
 const noteLabel = vi.mocked(noteRunLabel);
+const noteResumed = vi.mocked(noteRunResumed);
 const noteLive = vi.mocked(noteRunLive);
 const noteSettled = vi.mocked(noteRunSettled);
 const track = vi.mocked(trackRun);
@@ -121,7 +122,7 @@ const runSealed = vi.mocked(sealRunEntry);
 const runAppended = vi.mocked(appendRunEntry);
 const answer = vi.mocked(answerRunInput.dispatch);
 const waive = vi.mocked(continueRunStep.dispatch);
-const notify = vi.mocked(notifyIfHidden);
+const notify = vi.mocked(notifyOffScreen);
 const closeNotifications = vi.mocked(closeNotificationsFor);
 
 /** Every toast raised, in order, whatever its level. */
@@ -215,7 +216,7 @@ describe("run SSE handlers", () => {
   // The verb set changes only when a run ENDS, so that is the affordance's second and last refetch
   // (the first is a tab opening); per frame would add a round trip to every node event.
   it("refetches the affordance when a run ENDS, and never mid-run", () => {
-    send("run_progress", { workflow_id: "wf_1", kind: "node_start", node_path: "seq/coder" });
+    send("run_progress", { workflow_id: "wf_1", kind: "node_start", node_path: ["seq", "coder"] });
     send("run_started", { workflow_id: "wf_1", name: "x" });
     expect(invalidateControls).not.toHaveBeenCalled();
 
@@ -233,6 +234,25 @@ describe("run SSE handlers", () => {
     expect(noteLabel).toHaveBeenLastCalledWith("wf_1", "publish v2");
   });
 
+  it("hands a start's resume attribution to the store before the refetch it triggers", () => {
+    send("run_started", {
+      workflow_id: "wf_1",
+      initiator: "user",
+      initiator_reason:
+        "Resume requested by owning parent/orchestrator; human intent not verified.",
+    });
+    expect(noteResumed).toHaveBeenLastCalledWith(
+      "wf_1",
+      "user",
+      "Resume requested by owning parent/orchestrator; human intent not verified.",
+    );
+    expect(noteResumed.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidate.mock.invocationCallOrder.at(-1) ?? 0,
+    );
+    send("run_started", { workflow_id: "wf_1" });
+    expect(noteResumed).toHaveBeenLastCalledWith("wf_1", "", "");
+  });
+
   // A progress frame is APPLIED, and the refetch is what happens only when it cannot be:
   // a burst of node events otherwise costs one `GET /api/runs/{id}` each — a JSON-RPC round
   // trip to KAS for the whole state tree — with up to five runs doing it concurrently.
@@ -241,7 +261,7 @@ describe("run SSE handlers", () => {
     send("run_progress", {
       workflow_id: "wf_1",
       kind: "node_start",
-      node_path: "seq/coder",
+      node_path: ["seq", "coder"],
       status: "running",
     });
     expect(applyProgress).toHaveBeenCalledTimes(1);
@@ -726,12 +746,11 @@ describe("a step's question", () => {
     expect(noteLive).toHaveBeenCalledWith("wf_1", "", false);
   });
 
-  it("pushes a notification, because this ask blocks a run indefinitely", () => {
+  // The server's `notification` frame carries this ask's words; a second page-side notice
+  // would show it twice.
+  it("raises no notification of its own", () => {
     ask();
-    expect(notify).toHaveBeenCalledWith("Marotte", "A workflow step is waiting for your answer", {
-      kind: "run",
-      workflowID: "wf_1",
-    });
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("refetches nothing: the question is on no endpoint", () => {
@@ -767,7 +786,12 @@ describe("a step's question", () => {
       await d.defer?.();
 
       expect(mockSubmitPrompt).toHaveBeenCalledTimes(1);
-      const [chat, text] = mockSubmitPrompt.mock.calls[0] as unknown as [string, string];
+      const [chat, text, label] = mockSubmitPrompt.mock.calls[0] as unknown as [
+        string,
+        string,
+        string,
+      ];
+      expect(label).toBe("Deferred the open question on workflow run wf_1");
       // The run id would address the run to nobody: a prompt is delivered to a chat.
       expect(chat).toBe("c1");
       expect(text).toContain("wf_1");

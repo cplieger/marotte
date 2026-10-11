@@ -102,9 +102,9 @@ func testRuntime(t *testing.T) *agent.Runtime {
 	return h
 }
 
-// mkdirMode creates a directory at an EXACT mode. MkdirAll applies the process
-// umask, so a group-writable fixture has to chmod afterwards or it silently
-// lands at 0755 and the case asserts nothing.
+// mkdirMode creates a directory at an EXACT mode. MkdirAll applies the process umask, so a
+// group-writable fixture has to chmod afterwards or it silently lands at 0755 and the case asserts
+// nothing.
 func mkdirMode(t *testing.T, path string, mode os.FileMode) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o750); err != nil {

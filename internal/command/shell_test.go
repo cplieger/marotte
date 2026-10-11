@@ -115,7 +115,7 @@ func TestHandleShellInterception_HeldAdmissionReturns409Immediately(t *testing.T
 	p := &marotte.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
 
 	start := time.Now()
-	_, err := HandleShellInterception(t.Context(), promptRolesOf(deps), cmd, p)
+	_, err := handleShellInterception(t.Context(), promptRolesOf(deps), cmd, p)
 	elapsed := time.Since(start)
 
 	if statusOf(err) != http.StatusConflict {
@@ -151,7 +151,7 @@ func (d *shellStoreDeps) Mutate(_ context.Context, _ marotte.ChatID, mutate func
 	return strconv.Itoa(d.mutations), nil
 }
 
-func (d *shellStoreDeps) Get(context.Context, marotte.ChatID) (*marotte.Chat, bool) {
+func (*shellStoreDeps) Get(context.Context, marotte.ChatID) (*marotte.Chat, bool) {
 	return &marotte.Chat{}, true
 }
 
@@ -160,7 +160,7 @@ func (d *shellStoreDeps) FinalizeLocalShellTurn(_ context.Context, _ marotte.Cha
 }
 
 // TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand pins the capture contract at
-// the site: output past ShellOutputCap still reports the command's real exit.
+// the site: output past shellOutputCap still reports the command's real exit.
 func TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skipf("sh not available: %v", err)
@@ -174,7 +174,7 @@ func TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand(t *tes
 		MessageID: "m-1",
 	}
 
-	if _, err := HandleShellInterception(t.Context(), promptRolesOf(deps), cmd, p); err != nil {
+	if _, err := handleShellInterception(t.Context(), promptRolesOf(deps), cmd, p); err != nil {
 		t.Fatalf("HandleShellInterception: %v", err)
 	}
 	if len(deps.finalized) != 1 {
@@ -189,7 +189,7 @@ func TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand(t *tes
 	if !strings.Contains(body, "[output truncated at 1 MiB]") {
 		t.Error("output crossed the cap but was not labelled truncated")
 	}
-	if len(body) > ShellOutputCap+1024 {
+	if len(body) > shellOutputCap+1024 {
 		t.Errorf("assistant body is %d bytes, want at most the cap plus the trailer", len(body))
 	}
 }
@@ -245,7 +245,7 @@ func TestHandleShellInterception_SuccessLogsTheOutcomeHonestly(t *testing.T) {
 	cmd := &marotte.ClientCommand{Type: "prompt", ChatID: "c1"}
 	p := &marotte.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
 
-	if _, err := HandleShellInterception(t.Context(), promptRolesOf(deps), cmd, p); err != nil {
+	if _, err := handleShellInterception(t.Context(), promptRolesOf(deps), cmd, p); err != nil {
 		t.Fatalf("HandleShellInterception = %v, want it to succeed", err)
 	}
 

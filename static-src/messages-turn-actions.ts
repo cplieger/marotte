@@ -16,13 +16,11 @@ import { el } from "@cplieger/reactive";
 // Module state
 // ---------------------------------------------------------------------------
 
-/** Tracks active "copied" animation timers per button. */
 const copyTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
 
 /** The turn each footer acts on, refreshed every paint so handlers read current data. */
 const footerTurns = new WeakMap<HTMLElement, Turn>();
 
-/** Whether the two document-level dismissal listeners are installed. */
 let dismissalWired = false;
 
 // ---------------------------------------------------------------------------
@@ -90,10 +88,8 @@ export function initTurnActionsBodyProbe(holdsWholeTurn: typeof bodyHoldsWholeTu
   bodyHoldsWholeTurn = holdsWholeTurn;
 }
 
-/**
- * Copy and confirm. `announce` is for a click from the collapsed overflow, whose `.copied` flash goes off screen
- * with the menu; elsewhere the flash suffices.
- */
+/** `announce` is for a click from the collapsed overflow, whose `.copied` flash goes off screen with
+ *  the menu; elsewhere the flash suffices. */
 function copyAndAnimate(btn: HTMLButtonElement, text: string, announce = false): void {
   void copyClipboard.dispatch(text, {
     silent: !announce,

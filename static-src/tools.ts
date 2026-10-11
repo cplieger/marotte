@@ -68,8 +68,8 @@ function resultCount(shown: number, cut: boolean, matched?: number): string {
     : `${String(shown)} shown`;
 }
 
-/** Why the reply carries no Debian package, in the engine's three states. `indexing` is PENDING:
- *  the same search answers differently a moment later. An engine stating nothing names no cause. */
+/** `indexing` is PENDING: the same search answers differently a moment later. An engine stating
+ *  nothing names no cause. */
 function aptNote(d: ToolSearchResponse): string {
   if (d.apt_state === undefined) {
     return d.apt_available ? "" : "Debian packages are not searchable right now.";
@@ -94,9 +94,8 @@ interface CascadeReply {
   dependents?: string[];
 }
 
-/** Trailing-edge debounce for the catalog search input. `cancel` exists because
- *  the same search has two immediate doors (Enter, the button): without it each
- *  one is followed 200ms later by an identical query. */
+/** `cancel` exists because the same search has two immediate doors (Enter, the button): without it
+ *  each one is followed 200ms later by an identical query. */
 function debounce(fn: () => void, ms: number): { (): void; cancel: () => void } {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const cancel = (): void => {
@@ -119,17 +118,15 @@ function debounce(fn: () => void, ms: number): { (): void; cancel: () => void } 
 type ListEntry =
   | { kind: "label"; label: string }
   | { kind: "tool"; tool: ToolInfo }
-  | { kind: "system"; name: string; installed: boolean }
+  | { kind: "system"; name: string }
   | { kind: "apt"; pkg: AptPackage };
 
-// The two toolbelt job kinds a reader launches from a named pill. The rest — install, uninstall,
-// disable and reconcile — come from a tool row, a tools.json save or the boot, so they are the
-// residual case in `pillOwns` and are never named here.
+// The rest — install, uninstall, disable and reconcile — come from a tool row, a tools.json save or
+// the boot, so they are the residual case in `pillOwns` and are never named here.
 const JOB_UPDATE = "update";
 const JOB_CATALOG_REFRESH = "catalog-refresh";
 
-/** Whether a job is still queued or running. One predicate, because every
- *  control's face and the output panel's headline read the same answer. */
+/** One predicate, because every control's face and the output panel's headline read the same answer. */
 function jobIsLive(job: Job): boolean {
   return job.state === "queued" || job.state === "running";
 }
@@ -142,13 +139,10 @@ function pillOwns(kind: string): boolean {
 }
 
 interface JobPillSpec {
-  /** What a click does while no job of this pill's kind is live. */
   start: () => void;
-  /** What a click does while one is. */
   cancel: () => void;
-  /** The busy face's accessible name. The visible label is just "Cancel"; a
-   *  screen reader gets the whole "Cancel the running update", because out of
-   *  the row's context a bare "Cancel" says nothing about what it stops. */
+  /** The visible label is just "Cancel"; a screen reader gets the whole "Cancel the running update",
+   *  because out of the row's context a bare "Cancel" says nothing about what it stops. */
   busyAria: string;
 }
 
@@ -173,8 +167,8 @@ class JobPill {
     });
   }
 
-  /** Follow the live job. Idempotent: the SSE reports one event per state
-   *  transition and several of them describe the same live job. */
+  /** Idempotent: the SSE reports one event per state transition and several of them describe the
+   *  same live job. */
   setBusy(busy: boolean): void {
     if (busy === this.busy) {
       return;
@@ -216,7 +210,6 @@ class JobPill {
   }
 }
 
-// Modal form fields owned by this module (feature-local ids).
 const f = {
   get cancel(): HTMLButtonElement {
     return byId("tool-cancel-btn");
@@ -250,9 +243,8 @@ const f = {
   },
 };
 
-/** The orders the results bar offers. `relevance` is the SERVER's, adopted verbatim: it scores both
- *  corpora on one scale and aliases never reach the wire. No `popularity`: nothing on the wire
- *  measures it. */
+/** `relevance` is the SERVER's, adopted verbatim: it scores both corpora on one scale and aliases
+ *  never reach the wire. No `popularity`: nothing on the wire measures it. */
 type SortOrder = "relevance" | "name-asc" | "name-desc";
 
 function isSortOrder(v: string): v is SortOrder {
@@ -262,7 +254,6 @@ function isSortOrder(v: string): v is SortOrder {
 class ToolsManager {
   private data: Inventory | null = null;
   private output: RollingOutput | null = null;
-  /** Job id the output panel is currently following. */
   private followedJob = "";
   /** The job the SSE last reported queued or running, null when nothing is.
    *  Decides which of the three controls carries its cancel. */
@@ -387,13 +378,6 @@ class ToolsManager {
     f.sort.addEventListener("change", () => {
       this.paintSearch();
     });
-  }
-
-  dispose(): void {
-    for (const un of this.unsubscribes) {
-      un();
-    }
-    this.unsubscribes = [];
   }
 
   /** Point the output panel at a job: reset on a new id, headline the
@@ -526,7 +510,7 @@ class ToolsManager {
     if (system.length > 0) {
       flat.push({ kind: "label", label: "built into the image" });
       for (const s of system) {
-        flat.push({ kind: "system", name: s.name, installed: s.installed });
+        flat.push({ kind: "system", name: s.name });
       }
     }
     // Debian packages somebody CHOSE (image or shell), minus apt's auto-installed dependencies and
@@ -815,8 +799,7 @@ class ToolsManager {
     return true;
   }
 
-  /** Flip the enabled/disabled state. Returns whether anything reached the
-   *  server, so a declined confirm can put the switch back. */
+  /** Returns whether anything reached the server, so a declined confirm can put the switch back. */
   private async toggleDisabled(t: ToolInfo, disabled: boolean): Promise<boolean> {
     // Enabling never cascades: the engine derives the dependent set for a
     // DISABLE only, so there is nothing to ask about and nothing to force.
@@ -953,8 +936,8 @@ class ToolsManager {
     });
   }
 
-  /** The sentence for a reply with no rows. An empty query is a featured browse with its own
-   *  sentence. `apt_available` false means a corpus was asked for and not read. */
+  /** An empty query is a featured browse with its own sentence. `apt_available` false means a corpus
+   *  was asked for and not read. */
   private emptyAnswer(d: ToolSearchResponse): string {
     if (this.lastQuery === "") {
       return "Everything featured is already installed. Search by name.";
@@ -962,8 +945,8 @@ class ToolsManager {
     return emptyNote(classify({ matched: 0, shown: 0, truncated: !d.apt_available }), NOUNS);
   }
 
-  /** Apply the chosen order. `relevance` returns the server's own order, which
-   *  is why this carries no scoring of its own — see [SortOrder]. */
+  /** `relevance` returns the server's own order, which is why this carries no scoring of its own —
+   *  see [SortOrder]. */
   private orderHits(hits: readonly SearchHit[]): SearchHit[] {
     const raw = f.sort.value;
     const order: SortOrder = isSortOrder(raw) ? raw : "relevance";

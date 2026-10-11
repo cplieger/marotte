@@ -7,7 +7,7 @@
 // a run of `text` entries into ONE element.
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import { userEvent } from "vitest/browser";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { TurnState } from "./types.js";
@@ -27,8 +27,8 @@ for (const id of [
   document.body.appendChild(d);
 }
 
-// The canonical scroll.ts mock; its compensation helpers run their mutation, so the fold pass
-// applies immediately unless a case holds the queue open.
+// The canonical scroll.ts mock; its deferral runs its mutation, so the fold pass applies
+// immediately unless a case holds the queue open.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 // The clipboard action, so what a turn's Copy hands over is observable. A REPLACING
@@ -269,8 +269,8 @@ function isFolded(turnID: string): boolean {
   return card(turnID).hasAttribute("data-folded");
 }
 
-/** The entry ordinals this turn's body holds, ascending. A prose RUN is stamped for
- *  its first member alone, which is why the heavy fixture is `thinking` entries. */
+/** A prose RUN is stamped for its first member alone, which is why the heavy fixture is `thinking`
+ *  entries. */
 function mountedSeqs(turnID: string): number[] {
   return [...card(turnID).querySelectorAll<HTMLElement>("[data-entry-seq]")]
     .map((e) => Number(e.dataset["entrySeq"]))
@@ -281,7 +281,6 @@ function ordinalsIn(turnID: string): number {
   return mountedSeqs(turnID).length;
 }
 
-/** Press the turn footer's "Copy as text", the reader's own gesture. */
 function copyAsText(turnID: string): void {
   const btn = card(turnID).querySelector<HTMLButtonElement>(
     '.turn-action-btn[aria-label="Copy as text"]',
@@ -292,18 +291,20 @@ function copyAsText(turnID: string): void {
   btn.click();
 }
 
-/** The spacer sides this card carries, in document order. They are the body's
- *  SIBLINGS rather than its children: the renderer owns the body's children and
- *  seats a streamed entry with `appendChild`. */
+/** The head is the body's first child; the tail is the body's next SIBLING, since the renderer seats
+ *  a streamed entry with `appendChild`. */
 function spacersIn(turnID: string): string[] {
-  return [...card(turnID).querySelectorAll<HTMLElement>(":scope > .turn-space")].map(
-    (e) => e.dataset["space"] ?? "",
-  );
+  return [
+    ...card(turnID).querySelectorAll<HTMLElement>(
+      ":scope > .turn-body > .turn-space, :scope > .turn-space",
+    ),
+  ].map((e) => e.dataset["space"] ?? "");
 }
 
 function spacerPx(turnID: string, side: "head" | "tail"): number {
+  const host = side === "head" ? ":scope > .turn-body" : ":scope";
   const space = card(turnID).querySelector<HTMLElement>(
-    `:scope > .turn-space[data-space="${side}"]`,
+    `${host} > .turn-space[data-space="${side}"]`,
   );
   return space === null ? 0 : Number.parseFloat(space.style.blockSize);
 }
@@ -688,7 +689,7 @@ describe("the residency lifecycle", () => {
     expect(entryTextSigs.get(entryKey("u1", "u1-e1"))).toBeUndefined();
   });
 
-  it("defers the unmount while reading and applies it height-compensated", () => {
+  it("defers the unmount while reading and applies it when the reader returns", () => {
     const id = chatID();
     activate(id, plainTurns(8));
     openForSearch(id, "u1");
@@ -701,7 +702,6 @@ describe("the residency lifecycle", () => {
     scrollMock.deferWhileReading.mockImplementation((mutate: () => void) => {
       queue.push(mutate);
     });
-    scrollMock.preserveReadingPosition.mockClear();
 
     // The reveal goes away AND the budget is spent, so u1 loses both its pin and
     // its place: a search close alone leaves a cheap turn resident now.
@@ -713,14 +713,10 @@ describe("the residency lifecycle", () => {
     expect(hasBody("u1")).toBe(true);
     expect(queue.length).toBeGreaterThan(0);
 
-    // The reader returns: the queued flip runs inside the compensation helper.
+    // The reader returns: the queued flip runs.
     for (const fn of queue) {
       fn();
     }
-    expect(scrollMock.preserveReadingPosition).toHaveBeenCalledWith(
-      expect.any(Function),
-      "content-growth",
-    );
     expect(hasBody("u1")).toBe(false);
     expect(isFolded("u1")).toBe(true);
   });
@@ -1109,7 +1105,28 @@ describe("the cold build", () => {
 // --- Navigation surfaces --------------------------------------------------------
 
 describe("navigation onto a stub", () => {
-  it("a rail jump mounts the stub turn it lands on", async () => {
+  // Browser Mode serves no CSS, and the map lays no rows until its track has measured a height.
+  const trackCSS = document.createElement("style");
+  trackCSS.textContent = ".turn-map-track{display:block;block-size:2000px}";
+
+  beforeAll(async () => {
+    document.head.appendChild(trackCSS);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  });
+
+  afterAll(() => {
+    trackCSS.remove();
+  });
+
+  function firstRow(): HTMLAnchorElement {
+    const a = document.querySelector<HTMLAnchorElement>(".turn-map .turn-pill-link");
+    if (a === null) {
+      throw new Error("no turn-map row");
+    }
+    return a;
+  }
+
+  it("a turn-map jump mounts the stub turn it lands on", async () => {
     const id = chatID();
     activate(id, [...plainTurns(2), heavyTurn("big", RESIDENT_ENTRIES + 64, 3)]);
     expect(hasBody("u1")).toBe(false);
@@ -1120,9 +1137,9 @@ describe("navigation onto a stub", () => {
       ts: (i + 1) * 60_000,
     }));
     await loadTurnRail(id);
-    const marker = document.querySelector<HTMLButtonElement>(".turn-rail .rail-marker");
-    expect(marker?.textContent).toBe("1");
-    marker?.click();
+    const marker = firstRow();
+    expect(marker.getAttribute("href")).toMatch(/#turn-1$/u);
+    marker.click();
     // BOTH ends of the jump: the body is built BEFORE anything scrolls, so waiting
     // on the body alone would assert the scroll a frame before it happens.
     await vi.waitFor(() => {
@@ -1154,7 +1171,7 @@ describe("navigation onto a stub", () => {
       ts: (i + 1) * 60_000,
     }));
     await loadTurnRail(id);
-    document.querySelector<HTMLButtonElement>(".turn-rail .rail-marker")?.click();
+    firstRow().click();
     await vi.waitFor(() => {
       expect(hasBody("u1")).toBe(true);
     });

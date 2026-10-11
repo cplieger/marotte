@@ -33,14 +33,7 @@ vi.mock("./git-tabs.js", () => ({
   },
 }));
 
-import {
-  openChange,
-  openCallDiff,
-  openChangeSet,
-  openAtLine,
-  openExternal,
-  openFileOrPage,
-} from "./navigate.js";
+import { openChange, openCallDiff, openChangeSet, openAtLine, openFileOrPage } from "./navigate.js";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 
 beforeEach(() => {
@@ -165,21 +158,5 @@ describe("path-space normalisation", () => {
     expect.assertions(1);
     openAtLine("src/a.ts", 42);
     expect(calls).toEqual(["file:/workspace/src/a.ts:42"]);
-  });
-});
-
-describe("openExternal", () => {
-  it("refuses a URL that is not http(s), and says so", () => {
-    const open = vi.fn();
-    vi.stubGlobal("open", open);
-    expect(openExternal("javascript:alert(1)")).toBe(false);
-    expect(open).not.toHaveBeenCalled();
-  });
-
-  it("opens an https URL with noopener", () => {
-    const open = vi.fn();
-    vi.stubGlobal("open", open);
-    expect(openExternal("https://example.com")).toBe(true);
-    expect(open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener,noreferrer");
   });
 });

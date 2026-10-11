@@ -604,19 +604,37 @@
      own height: measured, this moves desktop by at most 1px and gives every
      list row a real 36px target on touch. */
   min-block-size: var(--ctl-h-sm);
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--sp-3);
+  gap: 0.125rem var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   background: var(--c-bg-secondary);
 }
 
+.mcp-row-readonly {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+/* The toggle and actions centre on the name and meta lines only, so opening
+   the discovery or OAuth disclosure below grows the row without moving them. */
+.mcp-row > .mcp-toggle {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+.mcp-row > .mcp-row-actions {
+  grid-column: -2;
+  grid-row: 1 / span 2;
+}
+
 .mcp-row-body {
-  flex: 1;
+  display: contents;
+}
+
+.mcp-row-body > * {
+  grid-column: -3 / -2;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
 }
 
 .mcp-row-name-line {
@@ -751,7 +769,7 @@
 }
 
 .mcp-oauth-pill {
-  align-self: flex-start;
+  justify-self: start;
   padding: 0.125rem var(--sp-2);
   /* A link you click: the small rung. */
   border-radius: var(--r);
@@ -771,7 +789,6 @@
    on the wrong machine. Sits under the sign-in pill on a needs_auth row, and is
    collapsed by default so a local-browser sign-in sees one line, not a form. */
 .mcp-relay {
-  align-self: stretch;
   margin-block-start: var(--sp-1);
   font-size: var(--fs-xs);
 

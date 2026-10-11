@@ -8,7 +8,6 @@ interface ShortcutDef {
   key: string;
   shift?: boolean;
   action: () => void;
-  /** In the reference sheet's words. */
   description: string;
   /** The sheet is generated from this table, so a binding declared here needs no second edit to appear on it. */
   group: string;

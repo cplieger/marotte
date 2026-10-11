@@ -21,7 +21,7 @@ func (s *Server) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if raw.Transport != "" {
-		parsed, err := ParseTransport(string(raw.Transport))
+		parsed, err := parseTransport(string(raw.Transport))
 		if err != nil {
 			return err
 		}
@@ -44,8 +44,8 @@ const fileVersion = 1
 // failed KAS write would leave the UI showing a server the agent cannot
 // see. The caller rolls its in-memory mutation back on error.
 //
-// MUST be called with s.mu held for writing: sync.RWMutex is not
-// reentrant, and every call site already holds the write lock across its
+// MUST be called on the write turn with s.mu held for writing: sync.RWMutex
+// is not reentrant, and every call site already holds both across its
 // mutation and this write.
 func (s *Store) persist(ctx context.Context) error {
 	if ctx.Err() != nil {
@@ -54,11 +54,11 @@ func (s *Store) persist(ctx context.Context) error {
 	f := file{Version: fileVersion, Servers: s.servers}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w mcp.json: %w", ErrPersistMarshal, err)
+		return fmt.Errorf("%w mcp.json: %w", errPersistMarshal, err)
 	}
 	if _, err := atomicfile.WriteFile(ctx, s.path, data,
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
-		return fmt.Errorf("%w: %w", ErrPersistWrite, err)
+		return fmt.Errorf("%w: %w", errPersistWrite, err)
 	}
 	return s.writeKASConfig(ctx, s.servers)
 }

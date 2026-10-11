@@ -52,6 +52,19 @@ func TestProbeRoute_AScopeRefusalCodesTheRow(t *testing.T) {
 	}
 }
 
+func TestProbeRoute_ATemporaryFailureAnswersConnectedWithItsSentence(t *testing.T) {
+	core := &whoamiCore{err: &forgeapi.Error{Op: "Whoami", Kind: forgeapi.KindTransient, Message: "no route to host"}}
+	got := postProbe(t, repoRoutes(recordManager(t, core)))
+
+	if !got.Connected || !got.Forge.Connected {
+		t.Errorf("probe over a dead network = %+v, want connected", got)
+	}
+	if got.Error == "" || got.Error != got.Forge.LastError || got.Forge.ErrorKind != "transient" {
+		t.Errorf("probe error %q, row last_error %q, kind %q, want both the same sentence, kind transient",
+			got.Error, got.Forge.LastError, got.Forge.ErrorKind)
+	}
+}
+
 func TestProbeRoute_ARateLimitNamesTheWaitInWholeSeconds(t *testing.T) {
 	core := &whoamiCore{err: &forgeapi.Error{
 		Op: "Whoami", Kind: forgeapi.KindRateLimited, Status: http.StatusTooManyRequests, RetryAfter: 41200 * time.Millisecond,
@@ -94,7 +107,7 @@ func TestProbeRoute_ARefusalSurvivesARefresh(t *testing.T) {
 	if err := m.Refresh(t.Context()); err != nil {
 		t.Fatalf("Setup: Refresh() = %v", err)
 	}
-	if f := m.Get("github:github.com"); f == nil || f.Connected || f.ErrorCode != forgeapi.CodeScopeInsufficient {
+	if f := m.get("github:github.com"); f == nil || f.Connected || f.ErrorCode != forgeapi.CodeScopeInsufficient {
 		t.Errorf("row after a refused probe and a Refresh = %+v, want disconnected and coded %q", f, forgeapi.CodeScopeInsufficient)
 	}
 
@@ -103,7 +116,7 @@ func TestProbeRoute_ARefusalSurvivesARefresh(t *testing.T) {
 	if err := m.Refresh(t.Context()); err != nil {
 		t.Fatalf("Setup: Refresh() = %v", err)
 	}
-	if f := m.Get("github:github.com"); f == nil || !f.Connected || f.LastError != "" {
+	if f := m.get("github:github.com"); f == nil || !f.Connected || f.LastError != "" {
 		t.Errorf("row after a successful probe and a Refresh = %+v, want connected with no error", f)
 	}
 }

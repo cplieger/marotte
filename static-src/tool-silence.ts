@@ -10,9 +10,8 @@ import { toolCallSigKey } from "./store-signals.js";
  *  threshold in seconds fires on every ordinary compile. */
 export const SILENCE_THRESHOLD_MS = 120_000;
 
-/** How often the marker's words are re-derived while a call is tracked. The
- *  marker is worded in whole MINUTES, so a coarser tick than the run card's own
- *  1s clock costs nothing a reader can see. */
+/** The marker is worded in whole MINUTES, so a coarser tick than the run card's own 1s clock costs
+ *  nothing a reader can see. */
 const SILENCE_TICK_MS = 15_000;
 
 /** Keyed `toolCallSigKey(chat, call)`, as the card's signal is: a backend-authored tool call id is

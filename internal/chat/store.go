@@ -29,7 +29,6 @@ import (
 // errInvalidUTF8 marks content that cannot round-trip through JSON, the storage format.
 var errInvalidUTF8 = errors.New("chat: content contains invalid UTF-8")
 
-// errDraftTooLarge is returned when a composer draft exceeds marotte.MaxDraftBytes.
 var errDraftTooLarge = errors.New("chat: draft exceeds the size cap")
 
 // The two ways a staged attachment list is refused at the store: more entries than
@@ -39,7 +38,6 @@ var (
 	errBadAttachmentPath  = errors.New("chat: attachment path is empty or too long")
 )
 
-// broadcaster is the SSE fan-out this store emits chat lifecycle events through.
 type broadcaster interface {
 	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
@@ -125,7 +123,7 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 		tombstone: make(map[marotte.ChatID]tombstone),
 		versions:  &subject.Versions{},
 	}
-	// Options land AFTER the derivation so WithChatFileCap overrides it, and the
+	// Options land AFTER the derivation so an option overrides it, and the
 	// derivation's own log line still records what the container asked for.
 	for _, opt := range opts {
 		opt(s)
@@ -185,10 +183,10 @@ func WithOpenTurns(fn func(chatID marotte.ChatID) []OpenTurnTail) StoreOption {
 	return func(s *Store) { s.openTurns = fn }
 }
 
-// Live reports whether the chat's own turn is open, a prompt is admitted and
+// isLiveChat reports whether the chat's own turn is open, a prompt is admitted and
 // awaiting its bracket, or the admission slot is held. False when no predicate was
 // injected: an unwired Store reads the record as final, the safe direction.
-func (s *Store) Live(chatID marotte.ChatID) bool {
+func (s *Store) isLiveChat(chatID marotte.ChatID) bool {
 	if s.live == nil {
 		return false
 	}
@@ -202,24 +200,14 @@ func WithOnPurge(fn func(chatID marotte.ChatID, sessionChain []string)) StoreOpt
 	return func(s *Store) { s.onPurge = fn }
 }
 
-// chatIDPattern reports whether id is a valid chat identifier.
 func chatIDPattern(id marotte.ChatID) bool {
 	return ids.ValidChatID(string(id))
 }
 
 // Get returns the chat's header at chatID, or false if it does not exist.
 func (s *Store) Get(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, bool) {
-	c, _, ok := s.GetStamped(ctx, chatID)
-	return c, ok
-}
-
-// GetStamped is Get plus the `chat` stamp the REST envelope carries: the current
-// version read under the same per-chat mutex the load holds, so a Mutate or a
-// composer write cannot land between the record and the version that vouches
-// for it. A chat never mutated this process stamps subject.Unminted.
-func (s *Store) GetStamped(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, *marotte.SubjectStamp, bool) {
 	if ctx.Err() != nil {
-		return nil, nil, false
+		return nil, false
 	}
 	m := s.lock(chatID)
 	m.Lock()
@@ -229,10 +217,9 @@ func (s *Store) GetStamped(ctx context.Context, chatID marotte.ChatID) (*marotte
 		if !errors.Is(err, os.ErrNotExist) {
 			slog.Error("chat get", "chat_id", chatID, "error", err)
 		}
-		return nil, nil, false
+		return nil, false
 	}
-	version, _ := s.versions.Current(subject.KindChat, string(chatID))
-	return c, s.restStamp(subject.KindChat, string(chatID), version), true
+	return c, true
 }
 
 // restStamp builds a REST envelope's stamp: the version with the hub epoch.
@@ -435,19 +422,31 @@ func (s *Store) setComposer(ctx context.Context, chatID marotte.ChatID, what str
 	return &state, nil
 }
 
-// Delete removes the chat directory and broadcasts chat_deleted. Records a
-// tombstone first so a concurrent Mutate cannot resurrect the id.
-func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) error {
+// Delete removes the chat directory, tombstones the id and broadcasts chat_deleted. It answers
+// the session chain of the record it removed, read under the same lock as the removal, so a
+// session a concurrent Mutate records is either in that chain or refused with ErrTombstoned.
+// A missing chat is a no-op with a nil chain. A header that exists but cannot be read (a
+// fault, a decode failure, a cancelled ctx) removes nothing and answers that error: the chain
+// it holds is the caller's teardown input.
+func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) (sessionChain []string, err error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	m := s.lock(chatID)
 	m.Lock()
+	c, loadErr := s.load(ctx, chatID)
+	switch {
+	case loadErr == nil:
+		sessionChain = c.SessionChain()
+	case !errors.Is(loadErr, os.ErrNotExist):
+		m.Unlock()
+		return nil, loadErr
+	}
 	chatsVersion, rmErr := s.Remove(chatID)
 	missing := errors.Is(rmErr, os.ErrNotExist)
 	m.Unlock()
 	if rmErr != nil && !missing {
-		return rmErr
+		return nil, rmErr
 	}
 	if s.broadcast != nil {
 		frame := marotte.NewEvent(marotte.EventChatDeleted, chatID, marotte.ChatDeletedPayload{ID: string(chatID)})
@@ -463,5 +462,5 @@ func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) error {
 		s.tombMu.Unlock()
 		slog.Debug("chat delete", "chat_id", chatID, "tombstones", tombCount)
 	}
-	return nil
+	return sessionChain, nil
 }

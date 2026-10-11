@@ -131,7 +131,7 @@ func TestHandlePermissionRequest_AnUnknownToolKindIsOther(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 	id := int64(7)
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess_x",

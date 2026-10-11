@@ -28,7 +28,7 @@ func TestHandleSessionInfoUpdate_InteractionResolvedCancelledWithdrawsTheAsk(t *
 		want    []string
 	}{
 		{name: "the chat's own ask, cancelled", outcome: "cancelled", want: []string{"c1/tc-1"}},
-		{name: "a subagent's ask, cancelled", attr: FrameAttribution{SubSessionID: "sub"}, outcome: "cancelled", want: []string{"c1/tc-1"}},
+		{name: "a subagent's ask, cancelled", attr: FrameAttribution{Subagent: true, SessionID: "sub"}, outcome: "cancelled", want: []string{"c1/tc-1"}},
 		{name: "a step's ask, cancelled", attr: FrameAttribution{Step: true, RunID: "wf"}, outcome: "cancelled", want: []string{"c1/tc-1"}},
 		{name: "an answer marotte sent", outcome: "selected", want: nil},
 		{name: "a dismissed question", outcome: "dismissed", want: nil},
@@ -66,7 +66,7 @@ func TestHandlePermissionRequest_DecodesLocationsRoundAndWatch(t *testing.T) {
 	tr := New(roles)
 
 	id := int64(7)
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{
 		"sessionId": "sess_parent",
 		"toolCall": map[string]any{
 			"toolCallId": "tc-9",
@@ -104,7 +104,7 @@ func TestHandlePermissionRequest_NoWatchNoRoundNoLocations(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 	id := int64(8)
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{
 		"sessionId": "s", "toolCall": map[string]any{"toolCallId": "tc", "title": "t"},
 		"options": []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
 	})})

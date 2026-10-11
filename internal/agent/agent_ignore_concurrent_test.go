@@ -20,7 +20,6 @@ import (
 // errProbeNotStarted mirrors bridge.ErrBridgeNotStarted, the refusal a write takes before `initialize`.
 var errProbeNotStarted = errors.New("bridge not started")
 
-// ignoreProbeBridge parks inside Start, then resolves StartOpts.IgnoreFiles where applyIgnoreFiles would.
 type ignoreProbeBridge struct {
 	*fakeBridge
 	// arrival fires once Start has its StartOpts.
@@ -86,7 +85,6 @@ func (b *ignoreProbeBridge) refusedNotifies() int {
 	return b.refused
 }
 
-// writeIgnoreFiles rewrites the whole settings document, as the PATCH handler's save does.
 func writeIgnoreFiles(t *testing.T, dir string, entries []string) {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{settings.KeyAgentIgnoreFiles: entries})
@@ -120,7 +118,7 @@ func TestSpawnIgnoreFiles_ConcurrentSaveReachesASpawningBridge(t *testing.T) {
 
 	opened := make(chan error, 1)
 	go func() {
-		_, err := h.coord.OpenBridge(ctx, "c1", "")
+		_, err := h.coord.openBridge(ctx, "c1", "")
 		opened <- err
 	}()
 

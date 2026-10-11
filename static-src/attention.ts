@@ -133,7 +133,7 @@ export interface AttentionEnv {
   setIcon?: ((variant: "input" | "done" | "alert" | null) => void) | undefined;
 }
 
-export interface AttentionSurfaces {
+interface AttentionSurfaces {
   /** Render an attention state. Idempotent: a value equal to the last one
    *  applied touches nothing. */
   apply: (next: Attention) => void;
@@ -240,7 +240,7 @@ export interface CueSeenStorage {
   write: (raw: string) => void;
 }
 
-export interface CueSeen {
+interface CueSeen {
   /** The live map, for the fold to read. */
   map: () => ReadonlyMap<string, CueStatus>;
   /** Record that this reader has seen `id` holding `status`. A non-cue status is
@@ -279,7 +279,7 @@ export function createCueSeen(storage: CueSeenStorage): CueSeen {
 }
 
 /** Everything the controller needs from outside itself. */
-export interface AttentionWiring {
+interface AttentionWiring {
   /** The chat tabs and their current dot states. */
   candidates: () => readonly CueCandidate[];
   /**
@@ -295,7 +295,7 @@ export interface AttentionWiring {
   surfaces: AttentionSurfaces;
 }
 
-export interface AttentionController {
+interface AttentionController {
   /** Apply the observation rules to current state, then re-render the surfaces.
    *  The recompute funnel's target; idempotent, so calling it more often than
    *  necessary costs a loop over a handful of tabs. */

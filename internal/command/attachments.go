@@ -12,10 +12,10 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// CmdSetAttachments records the paths staged beside the chat's draft. An
+// cmdSetAttachments records the paths staged beside the chat's draft. An
 // empty Paths is a legitimate value (how a sent or emptied pill row clears);
 // the whole list arrives every time, so nothing needs reconciling.
-func CmdSetAttachments(ctx context.Context, chats ChatStore, bus Broadcaster, cmd *marotte.ClientCommand) (any, error) {
+func cmdSetAttachments(ctx context.Context, chats chatStore, bus broadcaster, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}

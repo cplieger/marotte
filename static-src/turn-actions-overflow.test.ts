@@ -46,7 +46,6 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-/** One turn card with a mounted footer, appended to the page. */
 function mountCard(id: string): HTMLDetailsElement {
   const card = document.createElement("div");
   card.className = "turn";
@@ -291,7 +290,6 @@ describe("dismissal, which the native disclosure does not supply", () => {
   });
 });
 
-/** The block that follows `marker`, brace-matched. */
 function blockAfter(css: string, marker: string): string {
   const at = css.indexOf(marker);
   expect(at, `not found in the stylesheet: ${marker}`).toBeGreaterThan(-1);

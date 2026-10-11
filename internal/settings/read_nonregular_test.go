@@ -13,23 +13,19 @@ import (
 
 // fieldWithin runs Field on its own goroutine and fails if it has not returned inside budget:
 // on a FIFO the defect HANGS inside the singleflight slot, wedging every settings reader.
-func fieldWithin(t *testing.T, budget time.Duration, dir string) (bool, bool) {
+func fieldWithin(t *testing.T, budget time.Duration, dir string) bool {
 	t.Helper()
-	type res struct {
-		v  bool
-		ok bool
-	}
-	out := make(chan res, 1)
+	out := make(chan bool, 1)
 	go func() {
-		v, ok := Field[bool](t.Context(), dir, KeyDebugLogs)
-		out <- res{v, ok}
+		_, ok := Field[bool](t.Context(), dir, KeyDebugLogs)
+		out <- ok
 	}()
 	select {
-	case r := <-out:
-		return r.v, r.ok
+	case ok := <-out:
+		return ok
 	case <-time.After(budget):
 		t.Fatalf("Field still blocked after %v: the settings read followed a non-regular file into open(2)", budget)
-		return false, false
+		return false
 	}
 }
 
@@ -38,7 +34,7 @@ func TestField_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 	if err := syscall.Mkfifo(filepath.Join(dir, Filename), 0o600); err != nil {
 		t.Skipf("mkfifo unsupported here: %v", err)
 	}
-	if _, ok := fieldWithin(t, 3*time.Second, dir); ok {
+	if ok := fieldWithin(t, 3*time.Second, dir); ok {
 		t.Error("Field reported a value from a FIFO planted at config.json")
 	}
 }

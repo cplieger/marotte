@@ -58,7 +58,6 @@ func (f *swapFixture) reopen() {
 	f.log = lg
 }
 
-// promptTurn opens a prompt turn and answers its id.
 func (f *swapFixture) promptTurn(text string) string {
 	f.t.Helper()
 	e, err := f.log.OpenTurn(f.t.Context(), &chat.TurnSpec{
@@ -79,7 +78,6 @@ func (f *swapFixture) append(turn string, kind marotte.EntryKind, id string, pay
 	}
 }
 
-// closeTurn appends the closer a live process would write.
 func (f *swapFixture) closeTurn(turn string, outcome marotte.TurnOutcome, raw marotte.StopReason) {
 	f.t.Helper()
 	f.append(turn, marotte.EntryKindTurnClose, turn+":close-live",
@@ -87,20 +85,17 @@ func (f *swapFixture) closeTurn(turn string, outcome marotte.TurnOutcome, raw ma
 }
 
 // record is the log's account as the merge spine: the whole file plus the reverted set.
-func (f *swapFixture) record() []RecordTurn {
+func (f *swapFixture) record() []recordTurn {
 	f.t.Helper()
 	entries, reverted := f.everything()
-	return RecordTurnsOf(entries, reverted)
+	return recordTurnsOf(entries, reverted)
 }
 
-// revert appends the record a rewind writes.
-func (f *swapFixture) revert(turn string) *marotte.Entry {
+func (f *swapFixture) revert(turn string) {
 	f.t.Helper()
-	record, _, err := f.log.Revert(f.t.Context(), turn, marotte.TurnRevertCauseRewind, "")
-	if err != nil {
+	if _, _, err := f.log.Revert(f.t.Context(), turn, marotte.TurnRevertCauseRewind, ""); err != nil {
 		f.t.Fatalf("revert %s: %v", turn, err)
 	}
-	return record
 }
 
 // everything is the merge's own read: the whole file plus the reverted set, which the surviving view cannot show.
@@ -113,7 +108,6 @@ func (f *swapFixture) everything() ([]marotte.Entry, map[string]struct{}) {
 	return entries, reverted
 }
 
-// entriesOfTurn is one turn's entries from a flat read, in read order.
 func entriesOfTurn(entries []marotte.Entry, turn string) []marotte.Entry {
 	var out []marotte.Entry
 	for i := range entries {
@@ -124,7 +118,6 @@ func entriesOfTurn(entries []marotte.Entry, turn string) []marotte.Entry {
 	return out
 }
 
-// bytes is the log file as it stands, for a byte-identical assertion.
 func (f *swapFixture) bytes() []byte {
 	f.t.Helper()
 	data, err := os.ReadFile(filepath.Join(f.root, "entries.jsonl"))
@@ -134,7 +127,6 @@ func (f *swapFixture) bytes() []byte {
 	return data
 }
 
-// snapshot is the provenance a projection opening now would carry, read off the log as the gate reads it.
 func (f *swapFixture) snapshot() string {
 	f.t.Helper()
 	id, _ := f.log.NewestRevert()
@@ -150,7 +142,6 @@ func (f *swapFixture) chat() *marotte.Chat {
 	return c
 }
 
-// oneClosedTurn is one prompt turn holding one say, closed by a process.
 func (f *swapFixture) oneClosedTurn(say string) string {
 	f.t.Helper()
 	turn := f.promptTurn("go")
@@ -189,7 +180,7 @@ func TestSwapMerged_WithNoEvidenceOfLossNothingIsWritten(t *testing.T) {
 		t.Fatalf("the fixture's log already holds evidence of loss, so the gate under test is bypassed")
 	}
 
-	changed, err := SwapMerged(t.Context(), &Swap{
+	changed, err := swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: differingReplay(t, "S"), SessionID: "sid-1", Snapshot: f.snapshot(),
 	})
@@ -227,7 +218,7 @@ func TestSwapMerged_AnOrphanedTurnMakesTheMergeRun(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCancelled, StopReasonRaw: "cancelled"}),
 	)}
 
-	changed, err := SwapMerged(t.Context(), &Swap{
+	changed, err := swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: projected, SessionID: "sid-1", Snapshot: f.snapshot(),
 	})
@@ -242,16 +233,13 @@ func TestSwapMerged_AnOrphanedTurnMakesTheMergeRun(t *testing.T) {
 	if f.log.NeedsReconcile() {
 		t.Errorf("the reconcile signal survived a completed swap that replaced the placeholder closer")
 	}
-	// The header caches are the log's and must match what the rewrite wrote.
-	count, last := f.log.Counters()
-	if uint64(after.TurnCount) != count {
-		t.Errorf("header turn_count = %d, want the log's %d", after.TurnCount, count)
+	// The header caches are the log's and must match what the rewrite wrote: two turns, the
+	// crashed one closed by KAS's account.
+	if after.TurnCount != 2 {
+		t.Errorf("header turn_count = %d, want 2", after.TurnCount)
 	}
-	if after.LastTurnOutcome != last {
-		t.Errorf("header last_turn_outcome = %q, want the log's %q", after.LastTurnOutcome, last)
-	}
-	if last != marotte.TurnOutcomeCancelled {
-		t.Errorf("last_turn_outcome = %q, want KAS's own account of the crashed turn", last)
+	if after.LastTurnOutcome != marotte.TurnOutcomeCancelled {
+		t.Errorf("header last_turn_outcome = %q, want KAS's own account of the crashed turn", after.LastTurnOutcome)
 	}
 	// The placeholder keeps its position and id and loses its conclusion to KAS's account.
 	merged := f.record()
@@ -302,7 +290,7 @@ func TestSwapMerged_AStaleProvenanceDiscardsTheProjection(t *testing.T) {
 		projTurn(t, "P1", openRow("P1", 0, nil), textRow("S1", "", "the turn the reader reverts"),
 			closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"})),
 	}
-	changed, err := SwapMerged(t.Context(), &Swap{
+	changed, err := swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: projected, SessionID: "sid-1", Snapshot: snapshot,
 	})
@@ -337,7 +325,7 @@ func TestSwapMerged_AStaleProvenanceDiscardsTheProjection(t *testing.T) {
 		projTurn(t, "P0", openRow("P0", 0, nil), textRow("S0", "", "half an answer and the tail a crash lost"),
 			closeRow("P0:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"})),
 	}
-	changed, err = SwapMerged(t.Context(), &Swap{
+	changed, err = swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: postRevert, SessionID: "sid-1", Snapshot: fresh,
 	})
@@ -368,7 +356,7 @@ func TestSwapMerged_AStaleProvenanceDiscardsTheProjection(t *testing.T) {
 			"compacted the history a rewind is a record of:\n%s", f.bytes())
 	}
 	merged := f.record()
-	var survivors []RecordTurn
+	var survivors []recordTurn
 	for i := range merged {
 		if !merged[i].Reverted {
 			survivors = append(survivors, merged[i])
@@ -379,7 +367,7 @@ func TestSwapMerged_AStaleProvenanceDiscardsTheProjection(t *testing.T) {
 			"stay out of the view every other reader asks for:\n%s", len(survivors), f.bytes())
 	}
 	var say marotte.EntryText
-	decodePayload(t, entryIn(t, MergedTurn(survivors[0]), marotte.EntryKindText), &say)
+	decodePayload(t, entryIn(t, mergedTurn(survivors[0]), marotte.EntryKindText), &say)
 	if say.Text != "half an answer and the tail a crash lost" {
 		t.Errorf("merged say = %q, want the replay's longer text", say.Text)
 	}
@@ -401,7 +389,7 @@ func TestSwapMerged_ARewritePreservesEveryIDAndTheTurnOrder(t *testing.T) {
 	}
 
 	projected := differingReplay(t, "S")
-	changed, err := SwapMerged(t.Context(), &Swap{
+	changed, err := swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: before,
 		Projected: projected, SessionID: "sid-1", Snapshot: f.snapshot(),
 	})
@@ -451,7 +439,7 @@ func TestSwapMerged_ARewritePreservesEveryIDAndTheTurnOrder(t *testing.T) {
 		t.Fatalf("the re-armed signal is absent, so the second load has nothing to test")
 	}
 	settled, settledChat := f.bytes(), f.chat()
-	changed, err = SwapMerged(t.Context(), &Swap{
+	changed, err = swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: projected, SessionID: "sid-1", Snapshot: f.snapshot(),
 	})
@@ -494,7 +482,7 @@ func TestSwapMerged_AnInsertedCompactionMovesTheWatermark(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	if _, err := SwapMerged(t.Context(), &Swap{
+	if _, err := swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: projected, SessionID: "sid-1", Snapshot: f.snapshot(),
 	}); err != nil {
@@ -522,7 +510,7 @@ func TestSwapMerged_AMergeThatAddedNothingRecordsThatItLooked(t *testing.T) {
 	}
 
 	// No projected turns: the case reconciliation exists for.
-	changed, err := SwapMerged(t.Context(), &Swap{
+	changed, err := swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: nil, SessionID: "sid-1", Snapshot: f.snapshot(),
 	})
@@ -570,7 +558,7 @@ func TestSwapMerged_ARewriteRecordsWhatItCouldNotFix(t *testing.T) {
 		closeRow("P2:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	changed, err := SwapMerged(t.Context(), &Swap{
+	changed, err := swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: projected, SessionID: "sid-1", Snapshot: f.snapshot(),
 	})
@@ -587,7 +575,7 @@ func TestSwapMerged_ARewriteRecordsWhatItCouldNotFix(t *testing.T) {
 		t.Errorf("the orphan's records = %+v, want exactly one naming %q", got, orphan)
 	}
 	// The record files after the turn's closer.
-	entries, err := f.log.TurnRange(orphan, 0)
+	entries, _, err := f.log.TurnPage(orphan, 0)
 	if err != nil {
 		t.Fatalf("turn range %q: %v", orphan, err)
 	}
@@ -613,7 +601,7 @@ func TestSwapMerged_ARewriteRecordsWhatItCouldNotFix(t *testing.T) {
 		textRow("S-kas-2", "", "a second turn the record never held"),
 		closeRow("P3:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
-	changed, err = SwapMerged(t.Context(), &Swap{
+	changed, err = swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: later, SessionID: "sid-1", Snapshot: f.snapshot(),
 	})
@@ -653,7 +641,7 @@ func TestSwapMerged_ARewriteRecordsNothingForASignalItSETTLED(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCancelled, StopReasonRaw: "cancelled"}),
 	)}
 
-	changed, err := SwapMerged(t.Context(), &Swap{
+	changed, err := swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: projected, SessionID: "sid-1", Snapshot: f.snapshot(),
 	})
@@ -697,7 +685,7 @@ func TestSwapMerged_AResumedSessionTheRecordNeverAdoptedMakesTheMergeRun(t *test
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	changed, err := SwapMerged(t.Context(), &Swap{
+	changed, err := swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: projected, SessionID: "sess-1", Snapshot: f.snapshot(),
 	})
@@ -728,7 +716,6 @@ func (f *swapFixture) everythingEntries() []marotte.Entry {
 	return entries
 }
 
-// swapKinds names a turn's body in order, for a failure that has to show placement.
 func swapKinds(entries []marotte.Entry) string {
 	kinds := make([]string, 0, len(entries))
 	for i := range entries {
@@ -737,10 +724,9 @@ func swapKinds(entries []marotte.Entry) string {
 	return strings.Join(kinds, ", ")
 }
 
-// swapReconciled decodes one turn's reconciled payloads, in seq order.
 func swapReconciled(t *testing.T, f *swapFixture, turn string) []marotte.EntryReconciled {
 	t.Helper()
-	entries, err := f.log.TurnRange(turn, 0)
+	entries, _, err := f.log.TurnPage(turn, 0)
 	if err != nil {
 		t.Fatalf("turn range %q: %v", turn, err)
 	}
@@ -799,7 +785,7 @@ func TestSwapMerged_ARewriteEmitsEveryRevertedEntryUnchanged(t *testing.T) {
 			textRow("S1", "", "a turn the rewind took, with a tail the record lacks"),
 			closeRow("P2:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"})))
 
-	changed, err := SwapMerged(t.Context(), &Swap{
+	changed, err := swapMerged(t.Context(), &swapRequest{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: projected, SessionID: "sid-1", Snapshot: f.snapshot(),
 	})
@@ -860,7 +846,6 @@ func TestSwapMerged_ARewriteEmitsEveryRevertedEntryUnchanged(t *testing.T) {
 	}
 }
 
-// surviving is the view every reader but the merge asks for.
 func surviving(t *testing.T, f *swapFixture) []marotte.Entry {
 	t.Helper()
 	entries, err := f.log.All()
@@ -870,7 +855,6 @@ func surviving(t *testing.T, f *swapFixture) []marotte.Entry {
 	return entries
 }
 
-// ordinalOfTurn reads a turn's stored n out of a flat log read.
 func ordinalOfTurn(t *testing.T, entries []marotte.Entry, turn string) (uint64, bool) {
 	t.Helper()
 	open, ok := turnOpenOf(entriesOfTurn(entries, turn))

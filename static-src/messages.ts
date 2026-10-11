@@ -26,8 +26,8 @@ import {
   scrollToBottom,
   resetScrollState,
   setLoadMore,
+  rebaseLoadMore,
   deferWhileReading,
-  preserveReadingPosition,
   fillViewport,
   onReadingStateChange,
   onReaderGesture,
@@ -38,8 +38,8 @@ import {
   jumpTo,
   attach as attachScroll,
   detach as detachScroll,
-  type ReadingState,
 } from "./scroll.js";
+import type { ReadingState } from "./scroll-controller.js";
 import {
   buildTurnHeader,
   updateTurnHeader,
@@ -82,7 +82,7 @@ import {
   type EntryRange,
   type ResidencyAnchor,
 } from "./block-window.js";
-import { forgetHeights, spacerHeight } from "./block-heights.js";
+import { forgetHeights, spacerHeight, spacerOrdinalAt } from "./block-heights.js";
 import { wireRowToggle } from "./disclosure-row.js";
 import { initSearchRevealBuilder, searchHitCount } from "./chat-search.js";
 import {
@@ -142,7 +142,7 @@ import { syncRefusal, setRefusalRewindHandler } from "./refusal.js";
 
 // --- Public re-exports ---
 
-export { getScrollEl, setLoadMore };
+export { getScrollEl, setLoadMore, rebaseLoadMore };
 // This module owns the rail, so chat.ts reaches it through here.
 export { loadTurnRail, pointTurnRail };
 
@@ -170,10 +170,8 @@ interface ChatView {
   reachableEntries: number;
   lastNewestTurnID: string | undefined;
   resumeLabel: string;
-  /**
-   * Turn ids still being written into at park. Resume rebuilds them even if closed since: their binding effects were
-   * disposed, so they missed every update while parked.
-   */
+  /** Resume rebuilds them even if closed since: their binding effects were disposed, so they missed
+   *  every update while parked. */
   pausedStreaming: Set<string>;
 }
 
@@ -217,7 +215,6 @@ function paintRoot(): HTMLElement {
   return activeView?.el ?? messagesEl;
 }
 
-/** The turn bodies this view has mounted, as `(turn id, body)`, found by walking cards. */
 function mountedBodies(view: ChatView): [string, HTMLElement][] {
   const out: [string, HTMLElement][] = [];
   for (const card of view.el.querySelectorAll<HTMLElement>(".turn")) {
@@ -311,7 +308,6 @@ function activateView(chatID: string): boolean {
   return unparking;
 }
 
-/** Dispose least-recently-used parked views past the budget. */
 function evictParkedViews(): void {
   const parked = [...views.values()].filter((v) => v.parked);
   for (let i = 0; i <= parked.length - 1 - PARKED_VIEWS; i++) {
@@ -322,7 +318,6 @@ function evictParkedViews(): void {
   }
 }
 
-/** Dispose views whose chat left the store (close, delete, mass removal). */
 function pruneDeadViews(): void {
   for (const chatID of [...views.keys()]) {
     if (get(chatID) === undefined) {
@@ -365,7 +360,7 @@ export function disposeChatView(chatID: string): void {
  * render, DOM and card stay.
  */
 function pauseTurnBody(view: ChatView, turnID: string): void {
-  disposeStreamingEffect(turnID);
+  disposeTurnEffects(turnID);
   pauseAssistantBody(turnID);
   suspendToolEffectsFor(
     view.chatID,
@@ -398,13 +393,15 @@ function rebuildTurnBody(session: Session, t: Turn, body: HTMLElement): void {
   const want = mountedWindow(t.id) ?? bodyRange(t, wantedWindow.get(t.id) ?? EMPTY_RANGE);
   // Before the render's own disposers, which would drop the terminal links.
   const reattach = detachToolEffectsForRebuild(session.id, body);
-  disposeStreamingEffect(t.id);
+  disposeTurnEffects(t.id);
   finalizeAssistantBody(t.id);
   disposeAssistantBody(t.id);
   clearTurnSigs(t.id);
   releaseClampsIn(body);
   body.replaceChildren();
   buildAssistantBody(body, t, session.id, turnIsLive(t), want);
+  // The wipe took the head spacer.
+  syncSpacers(body, t, mountedWindow(t.id) ?? want);
   reattach();
 }
 
@@ -432,27 +429,8 @@ function pushBind(key: string, unbind: () => void): void {
   arr.push(unbind);
 }
 
-/**
- * Per-turn streaming cleanups, disposed on turn end and on unmount; separate so a tool card's loading binding
- * survives turn end.
- */
-const streamingEffects = new Map<string, (() => void)[]>();
-function pushStreamingEffect(turnID: string, fn: () => void): void {
-  const arr = streamingEffects.get(turnID);
-  if (arr === undefined) {
-    streamingEffects.set(turnID, [fn]);
-  } else {
-    arr.push(fn);
-  }
-}
-function disposeStreamingEffect(turnID: string): void {
-  const arr = streamingEffects.get(turnID);
-  if (arr !== undefined) {
-    for (const fn of arr) {
-      fn();
-    }
-    streamingEffects.delete(turnID);
-  }
+/** Dispose one turn's per-entry effects, on turn end and on unmount. */
+function disposeTurnEffects(turnID: string): void {
   const per = entryEffects.get(turnID);
   if (per !== undefined) {
     disposeEntryEffects(turnID, [...per.keys()]);
@@ -530,7 +508,6 @@ initToolCallbacks({
 });
 initTurnActionCallbacks({ svgTemplate });
 initBlockRenderer({
-  pushStreamingEffect,
   pushEntryEffect,
   disposeEntryEffects,
   makeRow,
@@ -567,7 +544,7 @@ export function mountChatView(): void {
     endWalkReveal,
   );
   // Scrolling re-windows, not repaints. Two hooks: the gesture says the reader moved, and the viewport change is the
-  // frame to measure in. `onViewportChange` alone fires for this module's own compensation and would feed itself.
+  // frame to measure in. `onViewportChange` alone also fires for the anchoring a pass's own mutations cause.
   onReaderGesture(noteReaderMoved);
   onViewportChange(windowPass);
   // The tool layer sits below this module, so the multiplexer injects whether a view is parked and that a resident
@@ -617,10 +594,7 @@ function entryCount(turns: readonly Turn[]): number {
 /** Reachable entries present when the reader last entered Reading. */
 let followBaseline = 0;
 
-/**
- * The last full pass's reachable-entry count. Chunk and tool paints cannot add a reachable entry, so the walk runs
- * once per full pass.
- */
+/** Chunk and tool paints cannot add a reachable entry, so the walk runs once per full pass. */
 let reachableEntries = 0;
 
 function initFollowModel(): void {
@@ -659,10 +633,8 @@ function refreshResumeLabel(): void {
 interface FoldPlan {
   open: boolean;
   mounted: boolean;
-  /**
-   * Whether the header offers the fold. False for the newest turn, a running turn and one whose fold hides nothing;
-   * true for every stub, where the toggle is the only way to a body.
-   */
+  /** False for the newest turn, a running turn and one whose fold hides nothing; true for every
+   *  stub, where the toggle is the only way to a body. */
   canFold: boolean;
 }
 const foldPlan = new Map<string, FoldPlan>();
@@ -679,9 +651,70 @@ const EMPTY_RANGE: EntryRange = { from: 0, to: 0 };
 /** Every ordinal a turn could have, for a caller with no range to name. */
 const WHOLE_TURN: EntryRange = { from: 0, to: Number.MAX_SAFE_INTEGER };
 
-/** Whether `outer` holds every ordinal of `inner`. */
 function covers(outer: EntryRange, inner: EntryRange): boolean {
   return outer.from <= inner.from && outer.to >= inner.to;
+}
+
+function hull(a: EntryRange, b: EntryRange): EntryRange {
+  return { from: Math.min(a.from, b.from), to: Math.max(a.to, b.to) };
+}
+
+/** A client-space span: the scrollport plus one scrollport each side. */
+interface Band {
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/** The span residency may not unmount from: a row dropped in it would blank the screen or arrive on the next one. */
+function readerBand(): Band {
+  const box = getScrollEl().getBoundingClientRect();
+  return { top: box.top - box.height, bottom: box.bottom + box.height };
+}
+
+/** A collapsed region, laid out under a zero-height clip. */
+const CLOSED_REGION = ".uip-disclosure-region[inert], .subagent-block.collapsed > .subagent-body";
+
+/**
+ * What the reader sees of `row`: the row, or the box of the outermost closed disclosure holding it, whose own
+ * box lies. Dropping every row in a disclosure takes its box with them.
+ */
+function outermostShown(row: Element): Element | null {
+  let shown = row;
+  let closed = row.closest(CLOSED_REGION);
+  while (closed !== null) {
+    const up = closed.parentElement;
+    if (up === null) {
+      return null;
+    }
+    shown = up;
+    closed = up.closest(CLOSED_REGION);
+  }
+  return shown;
+}
+
+function seenRange(turnID: string, band: Band): EntryRange | undefined {
+  const have = mountedWindow(turnID);
+  if (have === undefined) {
+    return undefined;
+  }
+  let from = -1;
+  let to = -1;
+  for (let seq = have.from; seq < have.to; seq++) {
+    const row = blockElement(turnID, seq);
+    const shown = row === undefined ? null : outermostShown(row);
+    if (shown === null || geometrySkipped(shown)) {
+      continue;
+    }
+    const box = shown.getBoundingClientRect();
+    if (box.top >= band.bottom) {
+      break;
+    }
+    if (box.bottom > band.top) {
+      from = from < 0 ? seq : from;
+      to = seq + 1;
+    }
+  }
+  return from < 0 ? undefined : { from, to };
 }
 
 function computeFoldPlan(
@@ -697,6 +730,7 @@ function computeFoldPlan(
   setRunCardOwners(runCardOwners(turns));
   // The transcript's root lane; `planResidency` takes no default.
   const window = planResidency(openable, anchor, "");
+  const band = anchor === undefined ? undefined : readerBand();
   for (const [i, t] of turns.entries()) {
     turnByID.set(t.id, t);
     const hides = turnFoldHides(t);
@@ -709,9 +743,12 @@ function computeFoldPlan(
     // never under.
     const merged =
       grown === undefined ? asked : asked === undefined || covers(grown, asked) ? grown : asked;
+    // Residency never takes what the reader can see: an ordinal mounted in the band stays, whatever the budget.
+    const seen = band === undefined ? undefined : seenRange(t.id, band);
+    const kept = seen === undefined ? merged : merged === undefined ? seen : hull(merged, seen);
     // A turn that renders nothing is bodied whatever the budget, for `.is-bodyless`; one with rows is a stub, since
     // an empty range emits the whole-turn tail spacer.
-    const range = merged ?? (rendersNothing(t) ? EMPTY_RANGE : undefined);
+    const range = kept ?? (rendersNothing(t) ? EMPTY_RANGE : undefined);
     const mounted = range !== undefined;
     if (range !== undefined) {
       wantedWindow.set(t.id, range);
@@ -772,10 +809,6 @@ const turnByID = new Map<string, Turn>();
 /** The last full pass's projection, which `windowPass` re-filters per scroll frame. */
 let lastTurns: readonly Turn[] = [];
 
-// `el.offsetTop` is comparable with `scrollTop` only because these rows are the `.msg-row`s, whose offset parent is
-// `#messages-wrap` (`content-visibility: auto` makes each a containing block). Measuring a bubble, or adding
-// `position: relative` to a card type, breaks this. Pick the last entry at or above the viewport top, or the first.
-
 /**
  * Where the reader is, or `undefined` for the live edge. Membership is the store predicate, never `data-folded`,
  * which a deferral can leave behind the plan.
@@ -789,27 +822,29 @@ function residencyAnchor(openable: readonly Turn[]): ResidencyAnchor | undefined
   if (scrollEl.scrollHeight <= scrollEl.clientHeight) {
     return undefined;
   }
-  const top = scrollEl.scrollTop;
+  // Rects, not `offsetTop`: `scroll.ts` `scrollFrameRect` owns why.
+  const top = scrollEl.getBoundingClientRect().top + scrollEl.clientTop;
   const cards = turnCards(paintRoot());
   const at = pickIndex(cards, top);
-  const grown = new Set(openable.map((t) => t.id));
+  const grown = new Map(openable.map((t) => [t.id, t]));
   for (let i = at; i < cards.length; i++) {
     const card = cards[i];
     const id = card?.getAttribute(KEY_ATTR);
-    if (card === undefined || id === null || id === undefined || !grown.has(id)) {
+    const t = id === null || id === undefined ? undefined : grown.get(id);
+    if (card === undefined || t === undefined) {
       continue;
     }
     // A card the walk stepped forward to starts at the reader, so its first ordinal is the seed.
-    return i === at ? { turnID: id, at: cardOrdinal(id, card, top) } : { turnID: id, at: 0 };
+    return i === at ? { turnID: t.id, at: cardOrdinal(t, card, top) } : { turnID: t.id, at: 0 };
   }
   return undefined;
 }
 
-/** The index of the last entry at or above `top`, or 0. */
+/** The index of the last entry starting at or above the client-space `top`, or 0; a subpixel short still counts. */
 function pickIndex(entries: readonly HTMLElement[], top: number): number {
   let at = 0;
   for (const [i, e] of entries.entries()) {
-    if (e.offsetTop <= top) {
+    if (e.getBoundingClientRect().top < top + 1) {
       at = i;
     }
   }
@@ -817,13 +852,30 @@ function pickIndex(entries: readonly HTMLElement[], top: number): number {
 }
 
 /**
- * The ordinal of `turnID` at the viewport top inside its card; a card rendered folded answers its first ordinal.
+ * The ordinal of `t` at the client-space `top` inside its card; a card rendered folded answers its first ordinal.
+ * Over a spacer, or above the head one, it is the ordinal the spacer prices there, so one pass reaches a reader
+ * dropped deep into it.
  * One level, since the renderer files one element per mounted `seq`; the range is the render's own (`mountedWindow`).
  */
-function cardOrdinal(turnID: string, card: HTMLElement, top: number): number {
+function cardOrdinal(t: Turn, card: HTMLElement, top: number): number {
+  const turnID = t.id;
   const range = mountedWindow(turnID);
   if (range === undefined || card.hasAttribute("data-folded")) {
     return 0;
+  }
+  const body = card.querySelector<HTMLElement>(":scope > .turn-body");
+  const head = body?.querySelector<HTMLElement>(':scope > .turn-space[data-space="head"]');
+  const tail = card.querySelector<HTMLElement>(':scope > .turn-space[data-space="tail"]');
+  const headBox = head?.getBoundingClientRect();
+  const tailBox = tail?.getBoundingClientRect();
+  const priced =
+    headBox !== undefined && top < headBox.bottom
+      ? spacerOrdinalAt(t, range, "head", "", Math.max(0, top - headBox.top))
+      : tailBox !== undefined && top >= tailBox.top
+        ? spacerOrdinalAt(t, range, "tail", "", top - tailBox.top)
+        : undefined;
+  if (priced !== undefined) {
+    return priced;
   }
   // A prose run files every seq against its one row, so the element's first seq is the ordinal.
   const seqs: number[] = [];
@@ -940,6 +992,8 @@ function paint(): void {
       skel.remove();
     }
   }
+  // An older page lands in this write (scroll.ts `rebaseLoadMore`).
+  rebaseLoadMore();
   reconcile(root, turns, turnSpec);
   // One walk builds the card list the rail and the fold pass share.
   const cards = turnCards(root);
@@ -959,7 +1013,6 @@ function paint(): void {
   }
 }
 
-/** The turn cards of `root` in document order, filtering out unkeyed furniture. */
 function turnCards(root: HTMLElement): HTMLElement[] {
   const out: HTMLElement[] = [];
   for (const child of root.children) {
@@ -970,7 +1023,8 @@ function turnCards(root: HTMLElement): HTMLElement[] {
   return out;
 }
 
-/** Not re-entrant: the head compensation writes `scrollTop`. Across frames the plan-equality exit terminates. */
+/** Not re-entrant: a pass's mutations can scroll the reader through anchoring. Across frames the plan-equality exit
+ *  terminates. */
 let inWindowPass = false;
 
 /**
@@ -980,13 +1034,15 @@ let inWindowPass = false;
 let appliedPlan = "";
 
 /**
- * Whether the reader stated a position since the last scroll pass. This module's own compensation publishes no
- * gesture, so the pass cannot schedule itself.
+ * Whether the reader stated a position since the last scroll pass. Anchoring and the scroll controller's own writes
+ * publish no gesture, so the pass cannot schedule itself.
  */
 let readerMoved = false;
 
 function noteReaderMoved(): void {
   readerMoved = true;
+  // A position the reader states supersedes one they asked for; the anchor prices where they went.
+  demandPin = undefined;
 }
 
 /**
@@ -1105,10 +1161,8 @@ function rewindConfirmText(target: EntryPrompt, discarded: readonly Turn[]): str
   return lines.join("\n");
 }
 
-/**
- * Confirm and dispatch the rewind. Refused mid-turn: KAS throws on a session with a live abortController.
- * `mountRewind` disables the button; this is the second gate.
- */
+/** Refused mid-turn: KAS throws on a session with a live abortController. `mountRewind` disables the
+ *  button; this is the second gate. */
 async function handleRewindClick(target: EntryPrompt): Promise<void> {
   const session = getActive();
   if (session === undefined) {
@@ -1169,9 +1223,6 @@ export function teardownAll(): void {
     }
   }
   bindUnbinds.clear();
-  for (const id of [...streamingEffects.keys()]) {
-    disposeStreamingEffect(id);
-  }
   disposeAllToolEffects();
   resetBlockRenders();
   resetScrollState();
@@ -1215,12 +1266,12 @@ function bodyRange(t: Turn, range: EntryRange): EntryRange {
   return sliceTurn(t, range);
 }
 
-/** Which end of a body's window a spacer stands at. */
 type SpacerSide = "head" | "tail";
 
 /**
- * Price both spacers against the range the body now holds. An element, not `padding-block`, which transitions;
- * a sibling of the body, since the renderer appends streamed entries to it.
+ * An element, not `padding-block`, which transitions. The head spacer is the body's first child, so the body's top
+ * edge, a scroll-anchor candidate, holds still while the head moves; the tail is the body's next sibling, since the
+ * renderer appends streamed entries to the body.
  */
 function syncSpacers(body: HTMLElement, t: Turn, range: EntryRange): void {
   // `seq` space: a rendered count reads short and withdraws a tail spacer the window still owes.
@@ -1229,13 +1280,12 @@ function syncSpacers(body: HTMLElement, t: Turn, range: EntryRange): void {
   placeSpacer(body, "tail", range.to < span ? spacerPx(t, range, "tail") : 0);
 }
 
-/** Seat, re-price or remove one spacer, anchored on the body so the pair cannot share a side. */
 function placeSpacer(body: HTMLElement, side: SpacerSide, px: number): void {
-  const card = body.parentElement;
-  if (card === null) {
+  const host = side === "head" ? body : body.parentElement;
+  if (host === null) {
     return;
   }
-  const held = card.querySelector<HTMLElement>(`:scope > .turn-space[data-space="${side}"]`);
+  const held = host.querySelector<HTMLElement>(`:scope > .turn-space[data-space="${side}"]`);
   if (px <= 0) {
     held?.remove();
     return;
@@ -1244,7 +1294,7 @@ function placeSpacer(body: HTMLElement, side: SpacerSide, px: number): void {
   if (held === null) {
     space.dataset["space"] = side;
     if (side === "head") {
-      body.before(space);
+      body.prepend(space);
     } else {
       body.after(space);
     }
@@ -1280,18 +1330,8 @@ function disposeTurnBody(turnID: string): void {
 // ---------------------------------------------------------------------------
 
 /**
- * One collected transition and the reader edge it lands at, measured while collecting: reading between mutations
- * later forces a layout per change.
- */
-interface FoldChange {
-  readonly side: "head" | "tail";
-  readonly fn: () => void;
-}
-
-/**
- * Apply the plan to every card. Deferred while reading and compensated, since content vanishing above the reader is
- * the failure. `immediate` (the window pass) skips only the deferral. Head changes run before tail ones under one
- * compensation; the tail runs bare.
+ * Apply the plan to every card. Deferred while reading, since content vanishing above the reader is the failure;
+ * `immediate` (the window pass) skips the deferral. The reader's position is held by native scroll anchoring.
  */
 function applyFoldPass(
   chatID: string,
@@ -1306,9 +1346,7 @@ function applyFoldPass(
     hits.set(t.id, searchHitCount(t.n));
     byID.set(t.id, t);
   }
-  const changes: FoldChange[] = [];
-  const top = getScrollEl().scrollTop;
-  const sideOf = (el: HTMLElement): "head" | "tail" => (el.offsetTop < top ? "head" : "tail");
+  const changes: (() => void)[] = [];
   // A pass that refused a turn records nothing: recording an unapplied plan drops the delta until the next gesture.
   let refused = false;
   const record = (): void => {
@@ -1330,7 +1368,6 @@ function applyFoldPass(
     const t = byID.get(id);
     const folded = card.hasAttribute("data-folded");
     const body = card.querySelector<HTMLElement>(":scope > .turn-body");
-    const side = sideOf(card);
     if (wantMounted && body === null && t !== undefined) {
       // No whole-turn fallback: `wantMounted` is `wantedWindow.has(id)`.
       const range = wantedWindow.get(id);
@@ -1339,30 +1376,24 @@ function applyFoldPass(
           // Hidden build: the card is folded, so the body lands at zero height.
           startTurnBody(card, t, range);
         } else {
-          // A card mid-deferral is visible, so its build joins the compensated batch.
-          changes.push({
-            side,
-            fn: () => {
-              if (card.isConnected) {
-                startTurnBody(card, t, range);
-              }
-            },
+          // A card mid-deferral is visible, so its build joins the deferred batch.
+          changes.push(() => {
+            if (card.isConnected) {
+              startTurnBody(card, t, range);
+            }
           });
         }
       }
     } else if (!wantMounted && body !== null) {
-      changes.push({
-        side,
-        fn: () => {
-          // A deferred transition is a request, re-checked when it runs: a newer plan may want this body.
-          if (!card.isConnected || wantedWindow.has(id)) {
-            return;
-          }
-          unmountTurnBody(card);
-        },
+      changes.push(() => {
+        // A deferred transition is a request, re-checked when it runs: a newer plan may want this body.
+        if (!card.isConnected || wantedWindow.has(id)) {
+          return;
+        }
+        unmountTurnBody(card);
       });
     } else if (body !== null && t !== undefined) {
-      if (!collectWindowMove(chatID, changes, card, body, t, side, sideOf)) {
+      if (!collectWindowMove(chatID, changes, card, body, t)) {
         refused = true;
       }
     }
@@ -1373,14 +1404,11 @@ function applyFoldPass(
       }
       continue;
     }
-    changes.push({
-      side,
-      fn: () => {
-        setCardFolded(card, !open);
-        if (t !== undefined) {
-          syncTurnFace(card, t);
-        }
-      },
+    changes.push(() => {
+      setCardFolded(card, !open);
+      if (t !== undefined) {
+        syncTurnFace(card, t);
+      }
     });
   }
   if (changes.length === 0) {
@@ -1392,16 +1420,8 @@ function applyFoldPass(
     return;
   }
   const apply = (): void => {
-    const head = changes.filter((c) => c.side === "head");
-    preserveReadingPosition(() => {
-      for (const c of head) {
-        c.fn();
-      }
-    }, "content-growth");
-    for (const c of changes) {
-      if (c.side === "tail") {
-        c.fn();
-      }
+    for (const change of changes) {
+      change();
     }
     // After the batch: a change the plan moved under has skipped itself.
     record();
@@ -1420,12 +1440,10 @@ function applyFoldPass(
 /** What moving `t`'s window costs an existing body. False when the turn was refused, so the plan is not recorded. */
 function collectWindowMove(
   chatID: string,
-  changes: FoldChange[],
+  changes: (() => void)[],
   card: HTMLElement,
   body: HTMLElement,
   t: Turn,
-  side: "head" | "tail",
-  sideOf: (el: HTMLElement) => "head" | "tail",
 ): boolean {
   if (hasPendingBuild(t.id)) {
     // A still-owed cold build would mount whole on this frame; it converges on the moved range itself.
@@ -1440,59 +1458,29 @@ function collectWindowMove(
   if (have === undefined) {
     return true; // nothing mounted for this turn, so the cold build owns its whole range
   }
-  // Re-checked when it runs: a newer plan's pass has already applied itself.
-  const stale = (): boolean => {
-    const now = wantedWindow.get(t.id);
-    return now?.from !== plan.from || now.to !== plan.to;
-  };
+  if (want.from === have.from && want.to === have.to) {
+    return true;
+  }
   const live = turnIsLive(t);
-  // A folded body is `block-size: 0`, so its `offsetTop` reads 0 and `sideOf` would always answer "head"; use the card.
-  const bodySide = (): "head" | "tail" => (geometrySkipped(body) ? side : sideOf(body));
-  if (want.from < have.from) {
-    changes.push({
-      side: bodySide(),
-      fn: () => {
-        if (!stale()) {
-          mountHeadRange(t, want, live);
-          syncSpacers(body, t, want);
-        }
-      },
-    });
-  } else if (want.from > have.from) {
-    changes.push({
-      side: bodySide(),
-      fn: () => {
-        if (!stale()) {
-          dropHead(t, want);
-          syncSpacers(body, t, want);
-        }
-      },
-    });
-  }
-  // Two calls: one compensated call would include the below-the-reader removal.
-  if (want.to < have.to) {
-    changes.push({
-      side: "tail",
-      fn: () => {
-        if (!stale()) {
-          dropTail(t, want);
-          syncSpacers(body, t, want);
-        }
-      },
-    });
-  } else if (want.to > have.to) {
-    // The tail extension lands below the reader and runs bare. The pass's own chat, never `getActiveId()`, since the
-    // closure runs at a later frame.
-    changes.push({
-      side: "tail",
-      fn: () => {
-        if (card.isConnected && !hasPendingBuild(t.id) && !stale()) {
-          updateAssistantBody(body, t, chatID, live, want);
-          syncSpacers(body, t, want);
-        }
-      },
-    });
-  }
+  // The pass's own chat, never `getActiveId()`, since the closure runs at a later frame.
+  changes.push(() => {
+    // Re-checked when it runs: a newer plan's pass has already applied itself.
+    const now = wantedWindow.get(t.id);
+    if (now?.from !== plan.from || now.to !== plan.to || !card.isConnected) {
+      return;
+    }
+    if (want.from < have.from) {
+      mountHeadRange(t, want, live);
+    } else if (want.from > have.from) {
+      dropHead(t, want);
+    }
+    if (want.to < have.to) {
+      dropTail(t, want);
+    } else if (want.to > have.to && !hasPendingBuild(t.id)) {
+      updateAssistantBody(body, t, chatID, live, want);
+    }
+    syncSpacers(body, t, mountedWindow(t.id) ?? want);
+  });
   return true;
 }
 
@@ -1534,13 +1522,11 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
     }
     const fresh = turnByID.get(t.id) ?? t;
     if (open && chatID !== "" && card.querySelector(":scope > .turn-body") === null) {
-      // Opening a stub: build it hidden, then unfold through the compensated write, all within this interaction.
+      // Opening a stub: build it hidden, then unfold, all within this interaction.
       mountTurnBody(chatID, t.id)
         .then(() => {
-          preserveReadingPosition(() => {
-            setCardFolded(card, false);
-            syncTurnFace(card, fresh);
-          }, "content-growth");
+          setCardFolded(card, false);
+          syncTurnFace(card, fresh);
           bumpMessages(chatID, "shape");
         })
         .catch((e: unknown) => {
@@ -1548,11 +1534,9 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
         });
       return;
     }
-    // Immediate and compensated: the reader's own action is not deferred but must not move what they read.
-    preserveReadingPosition(() => {
-      setCardFolded(card, !open);
-      syncTurnFace(card, fresh);
-    }, "content-growth");
+    // Immediate: the reader's own action is not deferred.
+    setCardFolded(card, !open);
+    syncTurnFace(card, fresh);
   });
   // The whole header band folds, like the tool and delegate cards; `wireRowToggle` keeps nested clicks and selection.
   wireRowToggle(header, btn);
@@ -1804,7 +1788,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   const plan = wantedWindow.get(t.id);
   if (body !== null && plan !== undefined && !hasPendingBuild(t.id)) {
     // Only the tail extension is reachable here: the renderer renders past `st.window.to` only; head extension is
-    // `mountHeadRange`'s, under the fold pass's compensation.
+    // the fold pass's `mountHeadRange`.
     const range = bodyRange(t, plan);
     updateAssistantBody(body, t, getActiveId(), turnIsLive(t), range);
     syncSpacers(body, t, range);
@@ -1849,7 +1833,7 @@ function unmountTurnBody(card: HTMLElement): void {
   }
   // The header's clamp stays with the card.
   releaseClampsIn(body);
-  // The spacers are the body's siblings, so they leave with it.
+  // The tail spacer is the body's sibling, so it leaves with it.
   for (const space of card.querySelectorAll<HTMLElement>(":scope > .turn-space")) {
     space.remove();
   }
@@ -1887,10 +1871,8 @@ function hasPendingBuild(turnID: string): boolean {
   return coldBuilds.has(turnID) || turnBodyBuilds.has(turnID);
 }
 
-/**
- * Take a cold build's first slice and queue the rest. Once the pass's allowance is spent, build over an empty
- * range so `drainColdBuilds` mounts it off the frame.
- */
+/** Once the pass's allowance is spent, build over an empty range so `drainColdBuilds` mounts it off
+ *  the frame. */
 function startFirstSlice(body: HTMLElement, t: Turn, range: EntryRange): void {
   const take = Math.min(BUILD_BATCH_ENTRIES, Math.max(0, paintSyncEntries));
   const to = Math.min(range.to, range.from + take);
@@ -2062,17 +2044,8 @@ async function buildTurnBodyBatches(chatID: string, turnID: string): Promise<voi
       return;
     }
     const slice = { from: range.from, to };
-    const grow = (): void => {
-      updateAssistantBody(body, t, chatID, turnIsLive(t), slice);
-      syncSpacers(body, t, slice);
-    };
-    // Compensated only where the slice lands above the reader. A body the page skips moves nothing visible, and
-    // measuring it forces a layout of the skipped subtree.
-    if (!geometrySkipped(body) && body.offsetTop < getScrollEl().scrollTop) {
-      preserveReadingPosition(grow, "content-growth");
-    } else {
-      grow();
-    }
+    updateAssistantBody(body, t, chatID, turnIsLive(t), slice);
+    syncSpacers(body, t, slice);
     const after = nextBuildTo(turnID, range);
     if (after === "done") {
       syncTurnBodyless(card);
@@ -2106,6 +2079,7 @@ function headerData(t: Turn): TurnHeaderData {
     ts: t.ts,
     // An empty prompt is not a request; fall through to the system-trigger rendering.
     request: request !== undefined && request.trim() !== "" ? request : undefined,
+    label: t.trigger?.label,
     // From the trigger entry: attachments never appear in the prompt text.
     attachments: t.trigger?.attachments ?? [],
   };
@@ -2181,6 +2155,7 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
     recoveries: led.recoveries,
     steering: led.steering,
     engineErrorClass: led.engineErrorClass,
+    contextBreakdown: led.contextBreakdown,
   };
   const existing = card.querySelector<HTMLDivElement>(":scope > .turn-footer");
   // One predicate, `earnsTurnFooter`; the markdown join is ordered last, so it runs only for a ledger-less turn.
@@ -2232,16 +2207,14 @@ function finalizeStreamingIfNeeded(turns: readonly Turn[]): void {
       continue;
     }
     finalizeTurn(id);
-    disposeStreamingEffect(id);
+    disposeTurnEffects(id);
   }
 }
 
 // --- Helpers ---
 
-/**
- * The row wrapper for a top-level assistant bubble. No avatar, since the card establishes identity; the row stays
- * because the dispatcher mounts into it.
- */
+/** No avatar, since the card establishes identity; the row stays because the dispatcher mounts into
+ *  it. */
 function makeRow(): HTMLDivElement {
   return el("div", { className: "msg-row" }) as HTMLDivElement;
 }

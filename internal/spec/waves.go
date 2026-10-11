@@ -5,14 +5,13 @@ import (
 	"strings"
 )
 
-// maxWaveBytes bounds the fenced body handed to the JSON decoder. The section
-// is agent-authored, so its size is not a promise.
+// The section is agent-authored, so its size is not a promise.
 const maxWaveBytes = 128 << 10
 
 const waveHeadingText = "task dependency graph"
 
-// waveGraph is the fenced body's shape. A task id is the dotted number a task
-// line carries, so the join is on SpecTaskNode.Number verbatim.
+// A task id is the dotted number a task line carries, so the join is on SpecTaskNode.Number
+// verbatim.
 type waveGraph struct {
 	Waves []struct {
 		Tasks []string `json:"tasks"`

@@ -19,7 +19,6 @@ export function createBusMock(extras: Record<string, unknown> = {}): Record<stri
     lookupSSEDecoder: undefined,
     onBus: undefined,
     emitBus: undefined,
-    BUS_TURN_IDLE: undefined,
     BUS_RECONCILE: undefined,
     decodeEnvelope: undefined,
     BUS_PAGE_RESUMED: undefined,
@@ -28,7 +27,7 @@ export function createBusMock(extras: Record<string, unknown> = {}): Record<stri
     BUS_ACTIVATE_CHAT: undefined,
     BUS_RUNS_CHANGED: undefined,
     BUS_TAB_CHANGED: undefined,
-    BUS_EDITOR_FILE_LOADED: undefined,
+    BUS_EDITOR_VIEW_CHANGED: undefined,
     BUS_COMMAND_FAILED: undefined,
     onSSE: vi.fn((event: string, handler: SSEHandler) => {
       sseHandlers.set(event, handler);

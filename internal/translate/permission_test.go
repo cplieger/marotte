@@ -9,7 +9,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// findPermissionNeeded returns the first permission_needed payload broadcast.
 func findPermissionNeeded(t *testing.T, events *[]marotte.ServerEvent) (marotte.PermissionNeededPayload, bool) {
 	t.Helper()
 	for _, e := range *events {
@@ -28,7 +27,8 @@ func findPermissionNeeded(t *testing.T, events *[]marotte.ServerEvent) (marotte.
 // TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID pins the v3 decode: FLAT params
 // and the correlation id on the envelope (a params-wrapped decode reads all zeros).
 func TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID(t *testing.T) {
-	deps, events := newEventCaptureDeps()
+	base, events := newEventCaptureDeps()
+	deps := &pendingCaptureDeps{baseDeps: base}
 	tr := New(rolesOf(deps))
 
 	id := int64(4242)
@@ -47,14 +47,17 @@ func TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID(t *testing.T) {
 			},
 		}),
 	}
-	tr.HandlePermissionRequest(t.Context(), "c1", msg)
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, msg)
 
 	got, ok := findPermissionNeeded(t, events)
 	if !ok {
 		t.Fatal("no permission_needed event broadcast")
 	}
-	if got.RequestID != id {
-		t.Errorf("RequestID = %d, want %d (must come from the envelope, not params)", got.RequestID, id)
+	if len(deps.pendingAdds) != 1 || deps.pendingAdds[0] != id {
+		t.Errorf("registered ACP ids = %v, want [%d] (must come from the envelope, not params)", deps.pendingAdds, id)
+	}
+	if got.RequestID != capturedAskBase+1 {
+		t.Errorf("broadcast RequestID = %d, want the registry's ask id %d", got.RequestID, capturedAskBase+1)
 	}
 	if got.ToolCallID != "tc-9" {
 		t.Errorf("ToolCallID = %q, want tc-9", got.ToolCallID)
@@ -80,7 +83,7 @@ func TestHandlePermissionRequest_MissingIDDropped(t *testing.T) {
 			"toolCall":  map[string]any{"toolCallId": "tc", "title": "x", "kind": "edit"},
 		}),
 	}
-	tr.HandlePermissionRequest(t.Context(), "c1", msg)
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, msg)
 
 	if _, ok := findPermissionNeeded(t, events); ok {
 		t.Fatal("permission_needed broadcast for a request with no id (should be dropped)")
@@ -90,8 +93,6 @@ func TestHandlePermissionRequest_MissingIDDropped(t *testing.T) {
 // Turn approval: an ordinary session/request_permission with the file list in `_meta.kiro`.
 // A missed discriminator renders a bare Allow/Reject, approving a turn the user never saw.
 
-// turnApprovalParams builds a session/request_permission whose _meta marks it a
-// turn approval carrying `files`.
 func turnApprovalParams(t *testing.T, files []map[string]any) []byte {
 	t.Helper()
 	return mustJSON(t, map[string]any{
@@ -130,7 +131,7 @@ func TestHandlePermissionRequest_TurnApprovalCarriesFiles(t *testing.T) {
 			{"path": "/work/src/b.ts", "toolCallId": "act-2"},
 		}),
 	}
-	tr.HandlePermissionRequest(t.Context(), "c1", msg)
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, msg)
 
 	got, ok := findPermissionNeeded(t, events)
 	if !ok {
@@ -165,7 +166,7 @@ func TestHandlePermissionRequest_SharedActionIDPreserved(t *testing.T) {
 			{"path": "/work/new.py", "toolCallId": "ren-1"},
 		}),
 	}
-	tr.HandlePermissionRequest(t.Context(), "c1", msg)
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, msg)
 
 	got, _ := findPermissionNeeded(t, events)
 	if len(got.Files) != 2 {
@@ -198,7 +199,7 @@ func TestHandlePermissionRequest_OrdinaryPermissionHasNoFiles(t *testing.T) {
 			},
 		}),
 	}
-	tr.HandlePermissionRequest(t.Context(), "c1", msg)
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, msg)
 
 	got, ok := findPermissionNeeded(t, events)
 	if !ok {
@@ -242,7 +243,7 @@ func TestHandlePermissionRequest_AbsentConsentIsNotBlocked(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	id := int64(3001)
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
 		ID:     &id,
 		Params: consentParams(t, nil),
 	})
@@ -326,7 +327,7 @@ func TestHandlePermissionRequest_ConsentNamesThePartAsked(t *testing.T) {
 			deps, events := newEventCaptureDeps()
 			tr := New(rolesOf(deps))
 			id := int64(3010)
-			tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{ID: &id, Params: consentParams(t, tc.consent)})
+			tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{ID: &id, Params: consentParams(t, tc.consent)})
 			got, ok := findPermissionNeeded(t, events)
 			if !ok {
 				t.Fatal("no permission_needed event broadcast")
@@ -345,7 +346,7 @@ func TestHandlePermissionRequest_PersistableFalseBlocksAlwaysAllow(t *testing.T)
 	tr := New(rolesOf(deps))
 
 	id := int64(3002)
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
 		ID: &id,
 		Params: consentParams(t, map[string]any{
 			"persistableConsent":       false,
@@ -369,7 +370,7 @@ func TestHandlePermissionRequest_PersistableTrueIsNotBlocked(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	id := int64(3003)
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
 		ID: &id,
 		Params: consentParams(t, map[string]any{
 			"persistableConsent": true,
@@ -391,7 +392,7 @@ func TestHandlePermissionRequest_CarriesVerifiedMCPIdentity(t *testing.T) {
 	tr := New(rolesOf(deps))
 	id := int64(4243)
 
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess_x",
@@ -455,7 +456,7 @@ func TestHandlePermissionRequest_MarksAnAdministratorAsk(t *testing.T) {
 			if tc.scope != "" {
 				params["_meta"] = map[string]any{"kiro": map[string]any{"consent": map[string]any{"scope": tc.scope, "askType": "explicit"}}}
 			}
-			tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{ID: &id, Params: mustJSON(t, params)})
+			tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{ID: &id, Params: mustJSON(t, params)})
 			got, ok := findPermissionNeeded(t, events)
 			if !ok {
 				t.Fatal("no permission_needed event broadcast")
@@ -501,7 +502,7 @@ func TestHandlePermissionRequest_AcceptsRejectionReason(t *testing.T) {
 			deps, events := newEventCaptureDeps()
 			tr := New(rolesOf(deps))
 			id := int64(5)
-			tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+			tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
 				ID: &id,
 				Params: mustJSON(t, map[string]any{
 					"sessionId": "sess_x",

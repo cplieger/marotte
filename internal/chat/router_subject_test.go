@@ -29,7 +29,7 @@ func decodeStamp(t *testing.T, raw any) marotte.SubjectStamp {
 func getChats(t *testing.T, s *Store) map[string]any {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleList(rec, httptest.NewRequest(http.MethodGet, "/api/chats", nil))
+	newRouter(s).handleList(rec, httptest.NewRequest(http.MethodGet, "/api/chats", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/chats = %d, want 200; body = %s", rec.Code, rec.Body.String())
 	}

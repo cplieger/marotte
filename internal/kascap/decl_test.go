@@ -1,6 +1,9 @@
 package kascap
 
 import (
+	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -21,10 +24,10 @@ func TestEveryDeclHasABecause(t *testing.T) {
 	}
 	for _, row := range table {
 		t.Run(rowID(row), func(t *testing.T) {
-			if strings.TrimSpace(row.because) == "" {
+			if strings.TrimSpace(because[rowID(row)]) == "" {
 				t.Errorf("%s has no because; state what the key buys and what breaks without it", rowID(row))
 			}
-			if strings.EqualFold(strings.TrimSpace(row.because), row.key) {
+			if strings.EqualFold(strings.TrimSpace(because[rowID(row)]), row.key) {
 				t.Errorf("%s's because only restates its key", rowID(row))
 			}
 		})
@@ -47,15 +50,15 @@ func TestNoSendWithoutReason(t *testing.T) {
 		}
 		withheld++
 		t.Run(rowID(row), func(t *testing.T) {
-			if len(strings.TrimSpace(row.because)) < withheldReasonFloor {
+			if len(strings.TrimSpace(because[rowID(row)])) < withheldReasonFloor {
 				t.Errorf("%s is withheld on a %d-character reason; say what withholding causes",
-					rowID(row), len(strings.TrimSpace(row.because)))
+					rowID(row), len(strings.TrimSpace(because[rowID(row)])))
 			}
 			if row.value != nil {
 				t.Errorf("%s is withheld but declares a wire value (%v); a value that is never sent will drift",
 					rowID(row), row.value)
 			}
-			if row.gate != nil {
+			if row.gate != nil || row.promptGate != nil {
 				t.Errorf("%s is withheld but declares a gate; the gate can never run", rowID(row))
 			}
 		})
@@ -104,7 +107,6 @@ func TestSessionDoorKeysAbsentFromConnectionDoor(t *testing.T) {
 			resolver: resolverCapability,
 			value:    true,
 			send:     true,
-			because:  "a synthetic duplicate of the connection-door row, to prove this check fires",
 		}
 		bad := doorCollisions(append(append([]decl{}, table...), moved))
 		if len(bad) != 1 || bad[0] != "capability.userInput" {
@@ -120,17 +122,26 @@ func TestDeclIsWellFormed(t *testing.T) {
 	seen := make(map[string]bool)
 	for _, row := range table {
 		t.Run(rowID(row), func(t *testing.T) {
-			if row.door == doorUnset {
+			if row.door == "" {
 				t.Errorf("%s declares no door", rowID(row))
 			}
-			if row.resolver == resolverUnset {
+			if row.resolver == "" {
 				t.Errorf("%s declares no resolver", rowID(row))
 			}
-			if row.send && row.value == nil && row.gate == nil {
+			gated := row.gate != nil || row.promptGate != nil
+			if row.send && row.value == nil && !gated {
 				t.Errorf("%s is sent with neither a value nor a gate, so it would send JSON null", rowID(row))
 			}
-			if row.send && row.value != nil && row.gate != nil {
+			if row.send && row.value != nil && gated {
 				t.Errorf("%s declares both a value and a gate; the gate always wins, so the value is a lie", rowID(row))
+			}
+			// Each projection hands its door's rows only the input that door has, so the other gate
+			// would be called with nil.
+			if row.door == doorPrompt && row.gate != nil {
+				t.Errorf("%s is a prompt-door row with a Spawn gate; use promptGate", rowID(row))
+			}
+			if row.door != doorPrompt && row.promptGate != nil {
+				t.Errorf("%s declares a promptGate off the prompt door", rowID(row))
 			}
 			if seen[rowID(row)+string(row.door)] {
 				t.Errorf("%s is declared twice on the same door", rowID(row))
@@ -178,18 +189,114 @@ mistake or a refusal nobody wrote down. Add it to vetoRows with the reason.`, ro
 	}
 }
 
-// settingValue is one wire value a settings row can produce, with where it came
-// from, so a failure names the state that produced it rather than just the row.
+// valueShapeFault reports why v cannot be a value KAS reads through r, or "" when it can.
+func valueShapeFault(r resolver, v any) string {
+	switch r {
+	case resolverCapability:
+		if _, ok := v.(bool); !ok {
+			return fmt.Sprintf("is %T; KAS compares a capability against true, so it must be a bool", v)
+		}
+	case resolverSetting:
+		obj, ok := v.(map[string]any)
+		if !ok {
+			return fmt.Sprintf("is %T; isSettingEnabled resolves anything but an object to false", v)
+		}
+		if _, ok := obj["enabled"].(bool); !ok {
+			return fmt.Sprintf("is %v; isSettingEnabled needs a bool enabled member", obj)
+		}
+	case resolverObject, resolverSettingObject:
+		if _, ok := v.(map[string]any); !ok {
+			return fmt.Sprintf("is %T; KAS destructures this key, so it must be an object", v)
+		}
+	case resolverEnv:
+		if s, ok := v.(string); !ok || (s != "true" && s != "false") {
+			return fmt.Sprintf("is %#v; KAS's env provider accepts only \"true\" or \"false\"", v)
+		}
+	case resolverEnvJSON:
+		s, ok := v.(string)
+		var obj map[string]any
+		if !ok || json.Unmarshal([]byte(s), &obj) != nil {
+			return fmt.Sprintf("is %#v; KAS JSON-parses a _CONFIG arm, so it must be a JSON object string", v)
+		}
+	case resolverEnum:
+		if s, ok := v.(string); !ok || s == "" {
+			return fmt.Sprintf("is %#v; an enum key is a non-empty option id", v)
+		}
+	case resolverText:
+		if s, ok := v.(string); !ok || s == "" {
+			return fmt.Sprintf("is %#v; a text key is a non-empty string", v)
+		}
+	case resolverEnumList:
+		ids, ok := v.([]string)
+		if !ok || len(ids) == 0 || slices.Contains(ids, "") {
+			return fmt.Sprintf("is %#v; an enum-list key is a non-empty array of non-empty ids", v)
+		}
+	default:
+		return fmt.Sprintf("has no shape rule for resolver %q", r)
+	}
+	return ""
+}
+
+func TestRowValuesMatchTheirResolver(t *testing.T) {
+	t.Run("the real table", func(t *testing.T) {
+		for _, row := range table {
+			if !row.send {
+				continue
+			}
+			t.Run(rowID(row), func(t *testing.T) {
+				for _, v := range settingValuesOf(t, row) {
+					if fault := valueShapeFault(row.resolver, v.value); fault != "" {
+						t.Errorf("%s's value %s %s", rowID(row), v.origin, fault)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("the check catches a mismatched declaration", func(t *testing.T) {
+		for _, tc := range []struct {
+			r resolver
+			v any
+		}{
+			{resolverCapability, "concise"},
+			{resolverSetting, true},
+			{resolverSetting, map[string]any{"enabled": "yes"}},
+			{resolverObject, true},
+			{resolverSettingObject, "on"},
+			{resolverEnv, true},
+			{resolverEnv, "1"},
+			{resolverEnvJSON, "true"},
+			{resolverEnvJSON, map[string]any{"cascadeEnabled": true}},
+			{resolverEnum, true},
+			{resolverEnum, ""},
+			{resolverText, true},
+			{resolverText, ""},
+			{resolverEnumList, "read-all"},
+			{resolverEnumList, []string{}},
+			{"", true},
+		} {
+			if valueShapeFault(tc.r, tc.v) == "" {
+				t.Errorf("valueShapeFault(%q, %#v) = \"\", want a fault", tc.r, tc.v)
+			}
+		}
+	})
+}
+
+// settingValue is one wire value a row can produce, with where it came from, so a failure names
+// the state that produced it rather than just the row.
 type settingValue struct {
 	value  any
 	origin string
 	gated  bool
 }
 
-// settingValuesOf returns every wire value a sent settings row can put on the wire: the compiled
-// one, or the gate's answer in both Spawn states.
+// settingValuesOf returns every wire value a sent row can put on the wire: the compiled one, or
+// the gate's answer in both Spawn or both Prompt states.
 func settingValuesOf(t *testing.T, row decl) []settingValue {
 	t.Helper()
+	if row.promptGate != nil {
+		return promptValuesOf(t, row)
+	}
 	if row.gate == nil {
 		return []settingValue{{value: row.value, origin: "(compiled)", gated: false}}
 	}
@@ -205,9 +312,14 @@ func settingValuesOf(t *testing.T, row decl) []settingValue {
 			Knowledge: true, ToolLoad: true,
 			SpecPlan: "full", SpecAskClarification: true,
 			WorkValidation: "on", InfraSafetyMonitor: "on",
+			AutoRouting: "on", AutoDelegation: "on", ConfigurationState: true,
 			TerminalCommandTimeoutMs: 300000,
 			InlineAgents:             true, SteeringReminders: true,
+			MemoryMode: "read_write", MemoryReflection: true,
+			Workflows:            true,
+			DisableSessionTitles: true, DisableAutoCompaction: true,
 		}},
+		{"with every choice off", Spawn{AutoRouting: "off", AutoDelegation: "off"}},
 	} {
 		if v, present := row.gate(&st.spawn); present {
 			out = append(out, settingValue{value: v, origin: st.name, gated: true})
@@ -215,6 +327,20 @@ func settingValuesOf(t *testing.T, row decl) []settingValue {
 	}
 	if len(out) == 0 {
 		t.Fatalf("%s is sent but its gate withholds in every state, so it can never reach the wire", rowID(row))
+	}
+	return out
+}
+
+func promptValuesOf(t *testing.T, row decl) []settingValue {
+	t.Helper()
+	var out []settingValue
+	for _, st := range promptMatrix {
+		if v, present := row.promptGate(&st.prompt); present {
+			out = append(out, settingValue{value: v, origin: "for prompt " + st.name, gated: true})
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s is sent but its prompt gate withholds in every state, so it can never reach the wire", rowID(row))
 	}
 	return out
 }

@@ -50,7 +50,7 @@ func sessionWrite(t *testing.T, h *Runtime, br *respondingBridge, session, path,
 		Method: marotte.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"sessionId": session, "path": path, "content": content}),
 	}
-	h.inbound.respondFSWrite(t.Context(), "c1", msg)
+	h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
 	return br.response.err
 }
@@ -219,7 +219,7 @@ func TestRespondFSWrite_HooksTheFileAHookPathNamesThroughASymlink(t *testing.T) 
 func raiseTurnApproval(t *testing.T, h *Runtime, chatID marotte.ChatID, session string) {
 	t.Helper()
 	id := int64(41)
-	h.chatHandlers[marotte.MethodRequestPermission](t.Context(), chatID, &marotte.RPCResponse{
+	h.askHandlers[marotte.MethodRequestPermission](t.Context(), chatID, h.originOf(chatID), &marotte.RPCResponse{
 		ID:     &id,
 		Method: marotte.MethodRequestPermission,
 		Params: mustJSON(t, map[string]any{

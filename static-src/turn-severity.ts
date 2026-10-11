@@ -45,7 +45,7 @@ export function isBroken(outcome: TurnOutcome | undefined): boolean {
 }
 
 /** The outcome as ONE WORD, for an accessible NAME read on every focus. Total over `TurnOutcome`.
- *  Lives here because the header dot and the rail marker both read it. Display strings, not part
+ *  Lives here because the header dot and the turn map both read it. Display strings, not part
  *  of the cross-language contract. */
 export const OUTCOME_LABEL: Record<TurnOutcome, string> = {
   running: "Running",

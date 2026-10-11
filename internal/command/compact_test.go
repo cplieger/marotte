@@ -18,7 +18,7 @@ func TestCmdCompact_ReportsAcceptanceNotCompaction(t *testing.T) {
 	buf := captureLogs(t)
 	b := &recordingBridge{result: map[string]any{"success": true}, sessionID: "sess-1"}
 
-	if _, err := CmdCompact(t.Context(), newBridgeHost(testsupport.NewInMemoryChatStore(), b), compactReq("c1")); err != nil {
+	if _, err := cmdCompact(t.Context(), newBridgeHost(testsupport.NewInMemoryChatStore(), b), compactReq("c1")); err != nil {
 		t.Fatalf("CmdCompact: %v", err)
 	}
 
@@ -27,14 +27,14 @@ func TestCmdCompact_ReportsAcceptanceNotCompaction(t *testing.T) {
 	}
 }
 
-// No test asserts this handler records nothing: its BridgeAccess parameter exposes no store or
+// No test asserts this handler records nothing: its bridgeAccess parameter exposes no store or
 // broadcaster, so the narrow type is the assertion.
 
 // TestCmdCompact_SendsTheSessionsWire pins the verb and its params.
 func TestCmdCompact_SendsTheSessionsWire(t *testing.T) {
 	b := &recordingBridge{result: map[string]any{"success": true}, sessionID: "sess-1"}
 
-	if _, err := CmdCompact(t.Context(), newBridgeHost(testsupport.NewInMemoryChatStore(), b), compactReq("c1")); err != nil {
+	if _, err := cmdCompact(t.Context(), newBridgeHost(testsupport.NewInMemoryChatStore(), b), compactReq("c1")); err != nil {
 		t.Fatalf("CmdCompact: %v", err)
 	}
 
@@ -52,7 +52,7 @@ func TestCmdCompact_SendsTheSessionsWire(t *testing.T) {
 func TestCmdCompact_RefusalIs409(t *testing.T) {
 	b := &recordingBridge{result: map[string]any{"success": false}, sessionID: "sess-1"}
 
-	_, err := CmdCompact(t.Context(), newBridgeHost(testsupport.NewInMemoryChatStore(), b), compactReq("c1"))
+	_, err := cmdCompact(t.Context(), newBridgeHost(testsupport.NewInMemoryChatStore(), b), compactReq("c1"))
 	if err == nil {
 		t.Fatal("a refused compaction reported success")
 	}

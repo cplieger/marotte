@@ -235,9 +235,8 @@ const CUSTOM_PROFILE = "custom";
  *  extra confirm rather than correctness. */
 const LOOSEST_PROFILE_HINT = "unrestricted";
 
-/** Human labels, keyed by profile id. Prose for a person, so it lives on the client rather than
- *  travelling with the ladder; an id the client has no label for falls back to the id, which is
- *  ugly but true. */
+/** Prose for a person, so it lives on the client rather than travelling with the ladder; an id the
+ *  client has no label for falls back to the id, which is ugly but true. */
 function profileLabel(id: string): string {
   switch (id) {
     case "guarded":
@@ -255,8 +254,7 @@ function profileLabel(id: string): string {
   }
 }
 
-/** What each profile grants, in the terms a reader decides on. Read-only names that it reads
- *  OUTSIDE the workspace. */
+/** Read-only names that it reads OUTSIDE the workspace. */
 function profileDescription(id: string): string {
   switch (id) {
     case "guarded":
@@ -296,8 +294,7 @@ function shortSource(src: string): string {
 class NativePolicyController {
   private writable = new Set<string>();
   private ctrl: AbortController | null = null;
-  /** The profile ladder and the id in force, both straight from the policy view. Never local
-   *  constants: the ladder decides what one click grants, and policyfile owns it. */
+  /** Never local constants: the ladder decides what one click grants, and policyfile owns it. */
   private profiles: SecurityProfile[] = [];
   private activeProfile = "";
   /** A transient line under the picker: the outcome of a selection, or a note that Custom is
@@ -390,8 +387,8 @@ class NativePolicyController {
   // read-only, or a hand-edit would be a second posture beside the picker's. Customize copies the
   // presets in force into the table; picking Custom from the list copies nothing.
 
-  /** Render the picker. One radio per profile, its own description under the label, because what
-   *  separates two of them is a sentence rather than a word. */
+  /** One radio per profile, its own description under the label, because what separates two of them
+   *  is a sentence rather than a word. */
   private renderProfiles(): void {
     const host = maybeEl("security-profile-list");
     if (host === null) {
@@ -455,7 +452,6 @@ class NativePolicyController {
     status.classList.toggle("native-policy-status-error", this.profileNoteIsError);
   }
 
-  /** Disable every editing affordance in the Active policy table. */
   private lockPolicyTable(locked: boolean): void {
     maybeEl("native-policy-section")?.classList.toggle("native-policy-locked", locked);
     const scope = maybeEl("native-policy-section");
@@ -471,8 +467,8 @@ class NativePolicyController {
     }
   }
 
-  /** Select a profile. The leaving-Custom confirm says the user's own rules SURVIVE, because a
-   *  grant outliving a narrowing is the surprise this screen can produce. */
+  /** The leaving-Custom confirm says the user's own rules SURVIVE, because a grant outliving a
+   *  narrowing is the surprise this screen can produce. */
   private async selectProfile(id: string): Promise<void> {
     if (id === this.activeProfile) {
       return;
@@ -502,9 +498,8 @@ class NativePolicyController {
     await this.applyProfile(id, false);
   }
 
-  /** The extra confirm the loosest profile earns. It is the one that grants `power`, so a power
-   *  installed afterwards runs its author's code at this privilege with nothing asking, and it
-   *  is also the one whose name invites a click. */
+  /** It is the one that grants `power`, so a power installed afterwards runs its author's code at
+   *  this privilege with nothing asking, and it is also the one whose name invites a click. */
   private confirmLoosest(): Promise<boolean> {
     return confirm(
       `Allow every capability without asking? This includes "power", so a power you ` +

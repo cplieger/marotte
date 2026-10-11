@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"maps"
 	"slices"
@@ -210,12 +211,20 @@ type processLive struct {
 	unreadableReported bool
 }
 
+// syncProcessLive gives up once ignorePushTimeout or ctx's deadline passes, whichever is first, across the lock wait and
+// the MCP render alike; what it skipped is retried at the next chat message or settings write.
 func (rt *Runtime) syncProcessLive(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, ignorePushTimeout)
+	defer cancel()
 	p := &rt.processLive
 	if !p.lock.lock(ctx) {
+		warnIfLockWaitTimedOut(ctx, "settings: another live-settings sync held the lock past the bound; "+
+			"the MCP render, log level, notification preferences and the unreadable agent ignore list report are retried at the next "+
+			"chat message or settings write")
 		return
 	}
 	defer p.lock.unlock()
+	deadline, _ := ctx.Deadline()
 	ctx = heldContext(ctx)
 	now := rt.liveSettings(ctx)
 	rt.noteIgnoreReadable(ctx, now.ignoreReadable)
@@ -224,7 +233,14 @@ func (rt *Runtime) syncProcessLive(ctx context.Context) {
 	}
 	if rt.mcpRender != nil {
 		if rendered, known := rt.mcpRender.RenderedWaitForReady(); !known || rendered != now.mcpWaitForReady {
-			if err := rt.mcpRender.RenderKASConfig(ctx); err != nil {
+			rctx, rcancel := context.WithDeadline(ctx, deadline)
+			err := rt.mcpRender.RenderKASConfig(rctx)
+			rcancel()
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				slog.Warn("settings: the MCP render waited past the bound; it is retried at the next chat message or settings write",
+					"error", err)
+			case err != nil:
 				slog.Error("settings: re-rendering the MCP config failed; it is retried at the next chat message or settings write",
 					"error", err)
 			}
@@ -239,16 +255,29 @@ func (rt *Runtime) syncProcessLive(ctx context.Context) {
 }
 
 // reportUnreadableOwed re-reads the ignore list once an open's own process is live, so the report describes the
-// document that process was spawned over rather than the one the pre-spawn sync read.
+// document that process was spawned over rather than the one the pre-spawn sync read. Like syncProcessLive it waits
+// for the lock until ignorePushTimeout or ctx's deadline, whichever is first; a report it skips is owed again at the
+// next open.
 func (rt *Runtime) reportUnreadableOwed(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, ignorePushTimeout)
+	defer cancel()
 	p := &rt.processLive
 	if !p.lock.lock(ctx) {
+		warnIfLockWaitTimedOut(ctx, "settings: another live-settings sync held the lock past the bound; "+
+			"an unreadable agent ignore list is reported at the next chat open")
 		return
 	}
 	defer p.lock.unlock()
 	ctx = heldContext(ctx)
 	_, readable := readAgentIgnoreFiles(ctx, rt.lifecycle.configDir)
 	rt.noteIgnoreReadable(ctx, readable)
+}
+
+// warnIfLockWaitTimedOut logs msg when a lock wait under ctx ended on its deadline; a caller who left needs no line.
+func warnIfLockWaitTimedOut(ctx context.Context, msg string) {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		slog.Warn(msg)
+	}
 }
 
 // noteIgnoreReadable runs under processLive.lock.

@@ -16,7 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// shrinkAdmissionWait shortens a contended wait. Not parallel-safe.
+// Not parallel-safe.
 func shrinkAdmissionWait(t *testing.T, d time.Duration) {
 	t.Helper()
 	prev := command.AdmissionWait
@@ -59,7 +59,7 @@ func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 			chatID := marotte.ChatID("c-admission-" + string(rune('a'+i)))
 			seedChat(t, cs, chatID)
 			if tc.bridged {
-				if _, err := h.coord.OpenBridge(t.Context(), chatID, ""); err != nil {
+				if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
 					t.Fatalf("OpenBridge: %v", err)
 				}
 			}
@@ -122,7 +122,7 @@ func TestReserveTurnForPrompt_ASpawningPromptHolderAnswersBusyAtOnce(t *testing.
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
 	spawned := make(chan error, 1)
 	go func() {
-		_, err := h.coord.OpenBridge(t.Context(), "c1", "")
+		_, err := h.coord.openBridge(t.Context(), "c1", "")
 		spawned <- err
 	}()
 
@@ -530,8 +530,7 @@ func TestPromptTurn_ShutdownDuringTheGraceStaysInterrupted(t *testing.T) {
 	}
 }
 
-// shutdownMidPrompt blocks a prompt in session/prompt, lets arm stage the live turn, then shuts down.
-func shutdownMidPrompt(t *testing.T, arm func(h *Runtime)) (*Runtime, *testChatStore) {
+func shutdownMidPrompt(t *testing.T, arm func(h *Runtime)) *testChatStore {
 	t.Helper()
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
@@ -555,12 +554,12 @@ func shutdownMidPrompt(t *testing.T, arm func(h *Runtime)) (*Runtime, *testChatS
 	if err := h.Shutdown(ctx); err != nil {
 		t.Fatalf("Shutdown = %v", err)
 	}
-	return h, cs
+	return cs
 }
 
 // TestShutdown_RecordsAKASQueuedSteerAsADroppedRestart pins that the skipped death closer would otherwise lose a queued steer.
 func TestShutdown_RecordsAKASQueuedSteerAsADroppedRestart(t *testing.T) {
-	_, cs := shutdownMidPrompt(t, func(h *Runtime) {
+	cs := shutdownMidPrompt(t, func(h *Runtime) {
 		sends, refuse := h.steerQueue.RouteSteer("c1", "s-1", "use tabs",
 			command.SteerHolder{Held: true, PromptClass: true, Live: true})
 		if refuse != "" || len(sends) != 1 {
@@ -606,7 +605,7 @@ func TestShutdown_RecordsAKASQueuedSteerAsADroppedRestart(t *testing.T) {
 
 // TestShutdown_RecordsAParkedSteerWithItsText pins that only this process has its text, so it goes in the dropped row and a Held row.
 func TestShutdown_RecordsAParkedSteerWithItsText(t *testing.T) {
-	_, cs := shutdownMidPrompt(t, func(h *Runtime) {
+	cs := shutdownMidPrompt(t, func(h *Runtime) {
 		if _, refuse := h.steerQueue.RouteSteer("c1", "s-park", "use tabs",
 			command.SteerHolder{Held: true, PromptClass: true}); refuse != "" {
 			t.Fatalf("RouteSteer refused %q", refuse)
@@ -627,7 +626,7 @@ func TestShutdown_RecordsAParkedSteerWithItsText(t *testing.T) {
 // TestShutdown_TheCutTurnNamesTheRestartAsItsCause: the reader cancelled nothing, so
 // the footer must not say they did.
 func TestShutdown_TheCutTurnNamesTheRestartAsItsCause(t *testing.T) {
-	_, cs := shutdownMidPrompt(t, nil)
+	cs := shutdownMidPrompt(t, nil)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 {
@@ -643,7 +642,7 @@ func TestShutdown_TheCutTurnNamesTheRestartAsItsCause(t *testing.T) {
 // one already claimed keeps its word.
 func TestShutdown_AUserCancelCauseOutranksTheShutdownCause(t *testing.T) {
 	const earlier marotte.InterruptCause = "an earlier cause"
-	_, cs := shutdownMidPrompt(t, func(h *Runtime) {
+	cs := shutdownMidPrompt(t, func(h *Runtime) {
 		own, ok := h.coord.turns.ownTurn("c1")
 		if !ok {
 			t.Fatal("no own turn to claim a cause on")
@@ -664,7 +663,7 @@ func TestShutdown_AUserCancelCauseOutranksTheShutdownCause(t *testing.T) {
 func TestTryReserveIdleTurn_RefusesBesideAWireTurnTheBareReserveAdmits(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	h.translateACPEvent("c1", newTurnStartMsg())
+	h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
 	if _, open := ownID(h, "c1"); !open {
 		t.Fatal("setup: a turn_start with nothing pending opened no wire turn")
 	}

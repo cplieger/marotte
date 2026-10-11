@@ -16,28 +16,28 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 )
 
-// FileName is the store's file, beside mcp.json in the config dir.
-const FileName = "schedules.json"
+// fileName is the store's file, beside mcp.json in the config dir.
+const fileName = "schedules.json"
 
-// ErrNotFound means no schedule owns the given id.
-var ErrNotFound = errors.New("schedule not found")
+// errNotFound means no schedule owns the given id.
+var errNotFound = errors.New("schedule not found")
 
-// Status is how a schedule's last slot ended, as far as the server knows.
-type Status string
+// status is how a schedule's last slot ended, as far as the server knows.
+type status string
 
 const (
-	// StatusStarted means the launch took and nothing has reported an ending yet.
-	StatusStarted Status = "started"
+	// statusStarted means the launch took and nothing has reported an ending yet.
+	statusStarted status = "started"
 	// StatusFailed means the launch or the run failed; the reason says why.
-	StatusFailed Status = "failed"
+	StatusFailed status = "failed"
 	// StatusUnknown means the run went away without a terminal signal.
-	StatusUnknown Status = "unknown"
+	StatusUnknown status = "unknown"
 )
 
 // Outcome is one slot's ending. Reason is plain text a person reads, never a
-// prefix-coded value: Status alone carries the classification.
+// prefix-coded value: status alone carries the classification.
 type Outcome struct {
-	Status Status
+	Status status
 	Reason string
 }
 
@@ -45,7 +45,7 @@ type Outcome struct {
 // Launch takes; it is re-validated at launch time rather than trusted here,
 // because it looks like a path.
 type Entry struct {
-	// Anchor is what NextRun measures from: the last fire (or skip), falling
+	// Anchor is what nextRun measures from: the last fire (or skip), falling
 	// back to creation so a new schedule does not immediately fire for every
 	// slot since the epoch.
 	Anchor time.Time `json:"anchor"`
@@ -55,13 +55,13 @@ type Entry struct {
 	ID         string    `json:"id"`
 	Source     string    `json:"source"`
 	Name       string    `json:"name,omitempty"`
-	LastStatus Status    `json:"last_status,omitempty"`
+	LastStatus status    `json:"last_status,omitempty"`
 	LastReason string    `json:"last_reason,omitempty"`
 	Spec       Spec      `json:"spec"`
 	Enabled    bool      `json:"enabled"`
 }
 
-// storedEntry reads an Entry plus the legacy prefix-coded last_result; writes never emit it.
+// Writes never emit it.
 type storedEntry struct {
 	LegacyResult string `json:"last_result,omitempty"`
 	Entry
@@ -70,8 +70,8 @@ type storedEntry struct {
 // legacyOutcome splits an old last_result by the prefixes its writers used.
 // Text with no known prefix was a failure sentence written whole.
 func legacyOutcome(result string) Outcome {
-	if result == string(StatusStarted) {
-		return Outcome{Status: StatusStarted}
+	if result == string(statusStarted) {
+		return Outcome{Status: statusStarted}
 	}
 	if reason, ok := strings.CutPrefix(result, "failed: "); ok {
 		return Outcome{Status: StatusFailed, Reason: reason}
@@ -95,7 +95,7 @@ type Store struct {
 // NewStore opens (or starts) the store at <dir>/schedules.json. A malformed file is a hard
 // error rather than a silent reset of the user's schedules.
 func NewStore(dir string) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, FileName), entries: map[string]Entry{}}
+	s := &Store{path: filepath.Join(dir, fileName), entries: map[string]Entry{}}
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
@@ -126,7 +126,6 @@ func (s *Store) List() []Entry {
 	return s.sortedLocked()
 }
 
-// sortedLocked returns every entry ordered by id.
 func (s *Store) sortedLocked() []Entry {
 	return slices.SortedFunc(maps.Values(s.entries), func(a, b Entry) int {
 		return strings.Compare(a.ID, b.ID)
@@ -142,7 +141,7 @@ func (s *Store) Put(ctx context.Context, e *Entry) error {
 	if e.Source == "" {
 		return errors.New("schedule source is required")
 	}
-	if err := e.Spec.Validate(); err != nil {
+	if err := e.Spec.validate(); err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -179,7 +178,7 @@ func (s *Store) recordFire(ctx context.Context, id string, due time.Time, o Outc
 	defer s.mu.Unlock()
 	e, ok := s.entries[id]
 	if !ok {
-		return ErrNotFound
+		return errNotFound
 	}
 	e.Anchor = due
 	e.LastRunAt = due
@@ -195,7 +194,7 @@ func (s *Store) skipTo(ctx context.Context, id string, to time.Time) error {
 	defer s.mu.Unlock()
 	e, ok := s.entries[id]
 	if !ok {
-		return ErrNotFound
+		return errNotFound
 	}
 	e.Anchor = to
 	s.entries[id] = e
@@ -210,7 +209,7 @@ func (s *Store) RecordOutcome(ctx context.Context, id string, o Outcome) error {
 	defer s.mu.Unlock()
 	e, ok := s.entries[id]
 	if !ok {
-		return ErrNotFound
+		return errNotFound
 	}
 	e.LastStatus, e.LastReason = o.Status, o.Reason
 	s.entries[id] = e

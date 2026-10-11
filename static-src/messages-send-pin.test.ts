@@ -17,7 +17,6 @@ import type { TurnSummary } from "./rail-merge.js";
 // describes take `testTimeoutFor` of this budget or the deadline preempts the wait as a bare timeout.
 const PIN_CONTEST_BUDGET_MS = framesBudgetMs(16);
 
-// The DOM the import graph resolves at load, nested as the page nests it.
 const outer = document.createElement("div");
 outer.id = "messages-wrap-outer";
 outer.style.cssText = "position:relative;";
@@ -48,8 +47,8 @@ for (const [id, tag] of [
 const style = document.createElement("style");
 style.textContent =
   `.turn{block-size:200px}[data-reconcile-key="t3"]{block-size:40px}` +
-  // The rail's marker capacity comes from its measured height, so a boxless rail holds one marker.
-  `.turn-rail{position:absolute;inset-block-start:0;block-size:400px}`;
+  // The turn map's stack, at the height the stylesheet would give it.
+  `.turn-map-stack{display:block;position:relative;block-size:400px}`;
 document.head.appendChild(style);
 
 // The rail's turn index and the pagination door are staged network reads.
@@ -83,7 +82,6 @@ function session(id: string, over: SessionOverrides = {}): Session {
   return makeSession({ id, name: id, ...over });
 }
 
-/** A sealed entry of any kind at `seq`. */
 function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknown): Entry {
   return {
     id: `${turnID}-e${String(at)}`,
@@ -159,7 +157,6 @@ function nextChat(): string {
   return `c${String(seq)}`;
 }
 
-/** The active view's turn cards, in document order. */
 function cards(): HTMLElement[] {
   const root = messages.activeTranscriptView();
   return root === null ? [] : [...root.querySelectorAll<HTMLElement>(":scope > .turn")];
@@ -174,22 +171,30 @@ function cardFor(turnID: string): HTMLElement | null {
 }
 
 function markers(): HTMLElement[] {
-  return [...document.querySelectorAll<HTMLElement>(".turn-rail > .rail-marker")];
+  return [...document.querySelectorAll<HTMLElement>(".turn-map .turn-pill-link")];
+}
+
+/** The turn number a row's link lands, off its `#turn-<n>` href. */
+function turnOf(link: Element | undefined): string {
+  return /#turn-(\d+)$/u.exec(link?.getAttribute("href") ?? "")?.[1] ?? "";
 }
 
 function markerFor(n: number): HTMLElement {
-  const hit = markers().find((m) => m.firstChild?.textContent === String(n));
+  const hit = markers().find((m) => turnOf(m) === String(n));
   if (hit === undefined) {
-    throw new Error(`no rail marker for turn ${String(n)}`);
+    throw new Error(`no turn-map row for turn ${String(n)}`);
   }
   return hit;
 }
 
-/** The markers the rail claims a position with; one of `data-current` / `data-selected` is written per render. */
+/** The rows the map claims a position with. */
 function marked(): HTMLElement[] {
-  return markers().filter(
-    (m) => m.dataset["selected"] !== undefined || m.dataset["current"] !== undefined,
-  );
+  return markers().filter((m) => m.parentElement?.dataset["current"] !== undefined);
+}
+
+/** Whether a row's jump is paging history in, which its preview says. */
+function isPending(link: HTMLElement): boolean {
+  return link.getAttribute("data-tooltip")?.includes("Loading\u2026") ?? false;
 }
 
 function atLiveEdge(): boolean {
@@ -227,7 +232,6 @@ function readerScrollTo(top: number): void {
   wrap.scrollTop = top;
 }
 
-/** Park the reader at `top` with a real gesture, confirming both the listener's verdict and the position. */
 async function park(top: number): Promise<void> {
   await quiet();
   readerScrollTo(top);
@@ -349,7 +353,7 @@ describe(
       off();
 
       expect(cardFor("t1")).not.toBeNull();
-      // Not the exact park offset: a prepend runs inside `preserveReadingPosition`, which moves the number by design.
+      // Not the exact park offset: scroll anchoring holds the reader under the prepend, which moves the number by design.
       expect(atLiveEdge()).toBe(false);
       expect(seen).toHaveBeenCalledTimes(0);
     });
@@ -420,18 +424,15 @@ describe(
       markerFor(3).click();
       // The target card is resident and the jump's `finally` has cleared its pending state.
       await until(
-        () => cardFor("t3") !== null && markers().every((m) => m.dataset["pending"] === undefined),
+        () => cardFor("t3") !== null && markers().every((m) => !isPending(m)),
         "the paged jump to resolve",
       );
       // The landing's own scroll event arrives a frame later, so wait for it.
       await quiet();
 
       expect(vi.mocked(loadMessages)).toHaveBeenCalledTimes(1);
-      expect(marked().map((m) => m.firstChild?.textContent)).toEqual(["3"]);
-      expect(markerFor(3).getAttribute("aria-current")).toBe("true");
-      // `data-selected` marks the pick, `data-current` the offset-derived turn; with the gate deleted only this moves.
-      expect(markerFor(3).dataset["selected"]).toBe("");
-      expect(markerFor(3).dataset["current"]).toBeUndefined();
+      expect(marked().map(turnOf)).toEqual(["3"]);
+      expect(markerFor(3).getAttribute("aria-current")).toBe("location");
     });
 
     it("leaves the clicked turn's top on the reading line once the landing settles", async () => {
@@ -441,7 +442,7 @@ describe(
       markerFor(3).click();
       // Wait for the correction loop's exit: under load the scroller pauses between the two scrolls.
       await until(
-        () => cardFor("t3") !== null && markers().every((m) => m.dataset["pending"] === undefined),
+        () => cardFor("t3") !== null && markers().every((m) => !isPending(m)),
         "the paged jump's correction loop to finish",
       );
       await quiet();

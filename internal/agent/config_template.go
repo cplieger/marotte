@@ -15,14 +15,13 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// configTemplateTimeout bounds the template round-trip, which may start the utility bridge.
-// The client's CATALOG_REQUEST_TIMEOUT_MS (static-src/model-catalog.ts) must stay longer: move them together.
+// The client's CATALOG_REQUEST_TIMEOUT_MS (static-src/model-catalog.ts) must stay longer: move them
+// together.
 const configTemplateTimeout = 45 * time.Second
 
-// kasConfigTemplate is the _kiro/config/template result; the model catalog is the "model" entry.
+// The model catalog is the "model" entry.
 type kasConfigTemplate struct {
 	Modes struct {
-		CurrentModeID  string        `json:"currentModeId"`
 		AvailableModes []kasModeInfo `json:"availableModes"`
 	} `json:"modes"`
 	ConfigOptions []kasConfigOption `json:"configOptions"`
@@ -60,7 +59,7 @@ type configTemplateAssembly struct {
 }
 
 // handleConfigTemplate serves GET /api/config-template: always 200 with non-null lists, and
-// ConfigTemplateResponse.Catalog says which outcome produced them. A live session's lists
+// ConfigTemplateResponse.catalog says which outcome produced them. A live session's lists
 // win: only KAS has resolved workspace agents.
 func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
 	u := rt.utility.get()
@@ -82,7 +81,7 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 			out = templateToResponse(&tpl)
 		}
 	}
-	modes, models, stamp := rt.catalog.ModesModelsStamped()
+	modes, models, stamp := rt.catalog.modesModelsStamped()
 	if len(modes) > 0 {
 		out.response.Modes = modes
 	}
@@ -157,7 +156,6 @@ func templateToResponse(tpl *kasConfigTemplate) *configTemplateAssembly {
 	return out
 }
 
-// flattenTemplateEfforts converts the effortLevel choices into the tier list (a different wire struct from translate's).
 func flattenTemplateEfforts(choices []kasConfigChoice) []marotte.SessionEffortLevel {
 	out := make([]marotte.SessionEffortLevel, 0, len(choices))
 	for i := range choices {

@@ -33,13 +33,11 @@ const idempotencyMaxEntries = 10_000
 // written through but not cached.
 const idempotencyMaxBody = 1 << 20
 
-// maxIdempotencyKeyBytes caps the Idempotency-Key header. Keys are opaque and may contain
-// '/', ':', '->' and spaces.
+// Keys are opaque and may contain '/', ':', '->' and spaces.
 const maxIdempotencyKeyBytes = 256
 
-// idempotentMethod reports whether the method participates in dedup.
-// GET/HEAD/OPTIONS (and anything else) pass straight through: they are
-// either safe/idempotent already or carry no mutation to replay.
+// GET/HEAD/OPTIONS (and anything else) pass straight through: they are either safe/idempotent
+// already or carry no mutation to replay.
 func idempotentMethod(method string) bool {
 	switch method {
 	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
@@ -70,8 +68,7 @@ func idempotencyCompositeKey(method, path, key string) string {
 	return method + "\x00" + path + "\x00" + key
 }
 
-// idempotencyEntry is a single cache slot. An in-flight slot (inflight
-// = true) marks a request currently executing under the key; a
+// An in-flight slot (inflight = true) marks a request currently executing under the key; a
 // completed slot carries the captured response for replay until ts+ttl.
 type idempotencyEntry struct {
 	ts       time.Time
@@ -106,7 +103,7 @@ func newIdempotencyCache(ttl time.Duration) *idempotencyCache {
 	return c
 }
 
-// janitor sweeps expired COMPLETED entries every minute; begin also evicts lazily.
+// begin also evicts lazily.
 func (c *idempotencyCache) janitor() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -125,8 +122,8 @@ func (c *idempotencyCache) stop() {
 	c.stopOnce.Do(func() { close(c.done) })
 }
 
-// sweep removes expired completed entries. In-flight markers are never swept by age: that
-// would open a double-execution window for a long-running handler.
+// In-flight markers are never swept by age: that would open a double-execution window for a
+// long-running handler.
 func (c *idempotencyCache) sweep(now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -185,9 +182,8 @@ func (c *idempotencyCache) abort(key string) {
 	c.mu.Unlock()
 }
 
-// evictOldestCompletedLocked drops the oldest completed entry; callers hold c.mu. In-flight
-// markers are never evicted (a concurrent retry would re-execute), so the map may briefly
-// exceed the cap.
+// Callers hold c.mu. In-flight markers are never evicted (a concurrent retry would re-execute), so
+// the map may briefly exceed the cap.
 func (c *idempotencyCache) evictOldestCompletedLocked() {
 	var oldestKey string
 	var oldestTS time.Time
@@ -204,8 +200,8 @@ func (c *idempotencyCache) evictOldestCompletedLocked() {
 	}
 }
 
-// middleware wraps next with idempotent replay. Non-deduped requests get the real
-// ResponseWriter (streaming stays correct); deduped ones write through and buffer.
+// Non-deduped requests get the real ResponseWriter (streaming stays correct); deduped ones write
+// through and buffer.
 func (c *idempotencyCache) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !idempotentMethod(r.Method) {

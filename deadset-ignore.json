@@ -1,0 +1,16 @@
+{
+  "ignore": [
+    {
+      "code": "DS1601",
+      "symbol": "ts://marotte-web/package.json#stylelint:dev-dependency",
+      "path": "static-src/package.json",
+      "reason": "CI's web-lint step (cplieger/ci ts-ci.yaml) runs npx stylelint over the tracked static-src CSS; no source imports it."
+    },
+    {
+      "code": "DS1601",
+      "symbol": "ts://marotte-web/package.json#stylelint-config-standard:dev-dependency",
+      "path": "static-src/package.json",
+      "reason": ".stylelintrc.json extends it, resolved from static-src/node_modules by CI's web-lint stylelint run; no source imports it."
+    }
+  ]
+}

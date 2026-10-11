@@ -1,7 +1,7 @@
 // The single source of recognized file extensions, read by icons.ts, linkify.ts and highlight.ts.
 
 /** Per-extension metadata. All fields optional — absence means "not applicable". */
-export interface ExtMeta {
+interface ExtMeta {
   /** Internal language key for syntax highlighting (e.g. "go", "ts", "py"). */
   lang?: string;
   /** Icon key into FILE_ICONS (e.g. "go", "ts", "config"). */

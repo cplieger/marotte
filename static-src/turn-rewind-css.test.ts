@@ -88,12 +88,12 @@ describe("Rewind on a narrow row", () => {
     expect(getComputedStyle(glyph).display).not.toBe("none");
   });
 
-  it("centres the glyph, so the hit-target floor cannot leave it off-centre", () => {
-    // The floor lifts this box to `--hit-floor` (61-mcp-tools.css) without
-    // touching its content alignment, which is what renders a floor-widened
-    // icon-only button visibly off-centre.
-    const { btn } = mountRewind(doc);
-    expect(getComputedStyle(btn).justifyContent).toBe("center");
+  it("is a square with its glyph centred", () => {
+    const { btn, glyph } = mountRewind(doc);
+    const b = btn.getBoundingClientRect();
+    const g = glyph.getBoundingClientRect();
+    expect(b.width).toBeCloseTo(b.height, 1);
+    expect(g.left - b.left).toBeCloseTo(b.right - g.right, 1);
   });
 });
 

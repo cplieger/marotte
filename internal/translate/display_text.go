@@ -1,6 +1,6 @@
 package translate
 
-import "github.com/cplieger/runesafe/v2"
+import "github.com/cplieger/runesafe/v3"
 
 // maxDisplayTextBytes bounds one upstream string on its way to a banner, card or tooltip:
 // nothing on the wire bounds them. Above the widest legitimate value measured (303 bytes),

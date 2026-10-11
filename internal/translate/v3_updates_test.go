@@ -484,7 +484,6 @@ func TestHandleConfigOptionUpdate_EffortOnlyFrameKeepsTheModelCatalog(t *testing
 	}
 }
 
-// turnEndWithDetails builds a turn_end frame carrying stopDetails verbatim.
 func turnEndWithDetails(t *testing.T, stop string, details any) json.RawMessage {
 	t.Helper()
 	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
@@ -648,7 +647,7 @@ func TestHandleConfigOptionUpdate_AStepsFrameRefreshesTheCatalogAndWritesNoSessi
 
 	for _, attr := range []FrameAttribution{
 		{Step: true, SessionID: "sess-step", RunID: "wf_1", NodePath: "wf_1/step"},
-		{SubSessionID: "sess-sub", SessionID: "sess-sub"},
+		{Subagent: true, SessionID: "sess-sub"},
 	} {
 		tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "fable", "high"), attr)
 
@@ -862,7 +861,7 @@ func TestHandleSessionInfoUpdate_DisplayErrorIgnoresAForeignFrame(t *testing.T) 
 	tr := New(rolesOf(deps))
 	turn := startedTurn(deps, "c1")
 
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", displayErrorFrame(t, "Sub-agent stalled.", "ge"), FrameAttribution{SubSessionID: "sess-sub"})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", displayErrorFrame(t, "Sub-agent stalled.", "ge"), FrameAttribution{Subagent: true, SessionID: "sess-sub"})
 
 	if got := turn.EngineError(); got != nil {
 		t.Errorf("EngineError() = %+v, want nil for a subagent's frame", got)

@@ -13,8 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// openTestTurn records a prompt turn on reg's lifecycle at the registry alone, with a fresh id per call.
-func openTestTurn(t *testing.T, reg *turnRegistry, chatID marotte.ChatID) *Turn {
+func openTestTurn(t *testing.T, reg *turnRegistry, chatID marotte.ChatID) *activeTurn {
 	t.Helper()
 	id := "t-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	lc := reg.lifecycleFor(chatID)
@@ -95,9 +94,9 @@ func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 		t.Fatal("claiming the open turn must be taken")
 	}
 
-	opened := make(chan *Turn, 1)
+	opened := make(chan *activeTurn, 1)
 	go func() {
-		var next *Turn
+		var next *activeTurn
 		err := reg.withLifecycle(context.WithoutCancel(t.Context()), "c1", func(lc *chatLifecycle) error {
 			next = lc.openLocked("c1", &marotte.Entry{ID: "t-next"}, marotte.TurnSourcePrompt, "", turnlog.Open("t-next", nil))
 			return nil
@@ -170,7 +169,7 @@ func TestTurnRegistry_ForgetDropsTheChat(t *testing.T) {
 	}
 }
 
-// failingUsageStore answers every Mutate with one chosen error; a real persist failure has no store-side seam.
+// A real persist failure has no store-side seam.
 type failingUsageStore struct {
 	bridgeChatRecords
 	err error
@@ -185,7 +184,7 @@ func (s failingUsageStore) Mutate(context.Context, marotte.ChatID, func(*marotte
 func TestMutateUsage_TombstonedRefusalIsNotAnError(t *testing.T) {
 	h, cs, _ := newTestHub()
 	cs.seed(t, "c1", nil)
-	if err := cs.Delete(t.Context(), "c1"); err != nil {
+	if _, err := cs.Delete(t.Context(), "c1"); err != nil {
 		t.Fatalf("Delete(c1) = %v", err)
 	}
 	logs := captureLogs(t)
@@ -203,7 +202,7 @@ func TestMutateUsage_TombstonedRefusalIsNotAnError(t *testing.T) {
 
 // TestMutateUsage_OtherErrorsStillLog pins that matching the sentinel must not swallow a real persist failure.
 func TestMutateUsage_OtherErrorsStillLog(t *testing.T) {
-	bc := &BridgeCoordinator{chatStore: failingUsageStore{err: errors.New("disk full")}, turns: newTurnRegistry()}
+	bc := &bridgeCoordinator{chatStore: failingUsageStore{err: errors.New("disk full")}, turns: newTurnRegistry()}
 	logs := captureLogs(t)
 
 	bc.AccumulateSpend(t.Context(), "c1", 0.5)
@@ -213,8 +212,8 @@ func TestMutateUsage_OtherErrorsStillLog(t *testing.T) {
 	}
 }
 
-// A finish after forget once re-resolved a fresh lifecycle and left the old one in turnFinalizing, parking Forward
-// forever; the turn now carries its lifecycle.
+// A finish after forget settles the turn's OWN lifecycle: re-resolving a fresh one would leave the original in
+// turnFinalizing and park Forward forever.
 func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) {
 	r := newTurnRegistry()
 	ctx := t.Context()

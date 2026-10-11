@@ -1,41 +1,28 @@
-// ---------------------------------------------------------------------------
-// Find in the open file, over the buffer the editor holds (`FileState.current`)
-// and never the disk: an unsaved edit is what the reader sees, and a server-side
-// grep would answer about the saved version.
-//
-// TWO ENGINES, ONE CURSOR. Source (the highlighted pre, the textarea, a
-// conflict) is searched as a STRING through textsearch/scan.ts, each hit a line
-// plus an offset that editor-scroll.ts places and marks. A diff pane, rendered
-// markdown and the conflict overlay are searched as DOM through the shared
-// walker, and its marks join the buffer's hits in ONE list, so what is on
-// screen is findable. An image declines the chord, so native find opens there.
-//
-// A buffer not yet read is not an answer (blank counter, re-run when it lands);
-// one that could not be read is the answer "File not read".
-// ---------------------------------------------------------------------------
+// Find in the open file over the buffer (`FileState.current`), never the disk: an unsaved edit is
+// what the reader sees. Source (the read view, the textarea, a conflict) is searched as a string,
+// each hit placed by editor-scroll.ts; a diff pane, rendered markdown and the conflict overlay are
+// searched as DOM, and both engines' hits share one cursor. An image declines the chord, so
+// native find opens there. A buffer not yet read is no answer (blank counter, re-run when it
+// lands); one that could not be read answers "File not read".
 
 import { el } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
-import { fileStates, getActiveFilePath, rendersMarkdown } from "./editor-types.js";
+import { fileStates, getActiveFilePath } from "./editor-types.js";
 import type { FileState } from "./editor-types.js";
-import {
-  clearEditorMark,
-  flashEditorLine,
-  markEditorSpan,
-  scrollToEditorLine,
-} from "./editor-scroll.js";
+import { clearEditorMark, revealBufferHit } from "./editor-scroll.js";
+import { parseFindQuery } from "./viewer-query.js";
 import { FindEngine } from "./find-engine.js";
 import { createSearchShell, searchIconButton } from "./search-shell.js";
 import type { SearchShell } from "./search-shell.js";
-import { BUS_EDITOR_FILE_LOADED, BUS_TAB_CHANGED, onBus } from "./bus.js";
+import { BUS_EDITOR_VIEW_CHANGED, BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { occurrences, prepare } from "./textsearch/scan.js";
 import { classify, cursorCount, emptyNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
 
 /** One match: the 1-based line it sits on, and its offset within the buffer,
  *  which is what places the mark and the selection. */
-export interface BufferMatch {
+interface BufferMatch {
   readonly line: number;
   readonly offset: number;
 }
@@ -78,7 +65,7 @@ let current = -1;
  *  from "the box says something else now". */
 let searched = "";
 let unsubTab: (() => void) | null = null;
-let unsubLoaded: (() => void) | null = null;
+let unsubView: (() => void) | null = null;
 
 /** What one run produced. The engines hold their own marks, so a result owns
  *  what a later run or the close has to clear. */
@@ -97,7 +84,9 @@ type FindResult =
       readonly overlay: FindEngine | null;
     }
   /** No answer yet, or none possible. */
-  | { readonly engine: "none"; readonly buffer: "not-loaded" | "unreadable" };
+  | { readonly engine: "none"; readonly buffer: "not-loaded" | "unreadable" }
+  /** The query breaks the one grammar every engine shares. */
+  | { readonly engine: "invalid"; readonly message: string };
 
 /** How many matches the cursor can step through. */
 function total(): number {
@@ -147,20 +136,21 @@ function surfaceEngine(): SurfaceEngine | null {
   if (state === undefined) {
     return null;
   }
-  const mode = state.mode.value;
-  if (mode.kind === "image") {
-    return null;
+  const m = state.mode.value;
+  switch (m.kind) {
+    case "image":
+    case "binary":
+    case "large":
+      return null;
+    case "diff":
+      // A git diff with no text base shows a notice, not a pane.
+      return m.diffSource.kind === "git" && m.diffSource.base !== "text" ? null : "dom";
+    case "markdown":
+      return "dom";
+    case "text":
+    case "conflict":
+      return "buffer";
   }
-  if (mode.kind === "diff") {
-    return "dom";
-  }
-  // A `.md` file in READ mode is reflowed prose; the same file in EDIT mode is a
-  // textarea over the source, where a line number means what editor-scroll thinks
-  // it means.
-  if (mode.kind === "edit" && !mode.editing && rendersMarkdown(path)) {
-    return "dom";
-  }
-  return "buffer";
 }
 
 /** The rendered root a `dom` search walks, or null when it is not on screen yet.
@@ -228,6 +218,9 @@ function counterText(query: string): string {
   if (result.engine === "none" && result.buffer === "not-loaded") {
     return "";
   }
+  if (result.engine === "invalid") {
+    return result.message;
+  }
   const n = total();
   if (n > 0) {
     return cursorCount(current + 1, n);
@@ -266,6 +259,7 @@ function reveal(): void {
       revealBufferCursor(result);
       return;
     case "none":
+    case "invalid":
       return;
   }
 }
@@ -283,18 +277,7 @@ function revealBufferCursor(found: Extract<FindResult, { engine: "buffer" }>): v
   if (hit === undefined) {
     return;
   }
-  const end = hit.offset + found.length;
-  if (!$.editorContent.classList.contains("hidden")) {
-    $.editorContent.setSelectionRange(hit.offset, end);
-  }
-  const lineStart = hit.offset === 0 ? 0 : found.text.lastIndexOf("\n", hit.offset - 1) + 1;
-  scrollToEditorLine(hit.line, "instant");
-  flashEditorLine(hit.line);
-  markEditorSpan(
-    hit.line,
-    found.text.slice(lineStart, hit.offset),
-    found.text.slice(hit.offset, end),
-  );
+  revealBufferHit(found.text, hit.offset, found.length, hit.line);
 }
 
 function scrollMarkIntoView(mark: HTMLElement | null): void {
@@ -330,6 +313,10 @@ function step(dir: 1 | -1): void {
 
 function runQuery(query: string, caseSensitive: boolean): FindResult {
   clearMarks();
+  const parsed = parseFindQuery(query);
+  if (parsed.kind === "invalid") {
+    return { engine: "invalid", message: parsed.message };
+  }
   if (surfaceEngine() === "dom") {
     const root = domRoot();
     const find = root === null ? null : new FindEngine(root);
@@ -447,9 +434,14 @@ function ensureBuilt(): void {
       shell.input.value = "";
     }
   });
-  unsubLoaded?.();
-  unsubLoaded = onBus(BUS_EDITOR_FILE_LOADED, ({ path }) => {
-    if (isOpen() && path === getActiveFilePath()) {
+  unsubView?.();
+  unsubView = onBus(BUS_EDITOR_VIEW_CHANGED, ({ path }) => {
+    if (!isOpen() || path !== getActiveFilePath()) {
+      return;
+    }
+    if (surfaceEngine() === null) {
+      closeEditorFind();
+    } else {
       shell?.run();
     }
   });
@@ -518,6 +510,7 @@ export function handleEditorFindHotkey(e: KeyboardEvent): boolean {
 }
 
 /** @internal Test seam. */
+// deadset:ignore DS1004 -- test seam: observes whether the editor find bar is open
 export function _isEditorFindOpen(): boolean {
   return isOpen();
 }

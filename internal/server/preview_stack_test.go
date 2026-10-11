@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/webhttp/v3"
 )
@@ -31,7 +32,7 @@ func previewStack(t *testing.T) (http.Handler, *preview.Handler, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ph := preview.New(ws, signer, slog.New(slog.DiscardHandler))
+	ph := preview.New(ws, filebrowse.Sensitive{}, signer, slog.New(slog.DiscardHandler))
 	mux := http.NewServeMux()
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("spa")) }))
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) { webhttp.Ok(w) })

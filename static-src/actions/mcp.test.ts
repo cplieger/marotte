@@ -135,38 +135,32 @@ describe("summariseImport", () => {
   const cases: { label: string; input: ImportServersResult | null; want: string }[] = [
     {
       label: "one created",
-      input: { results: [{ name: "a", outcome: "created" }] },
+      input: { results: [{ outcome: "created" }] },
       want: "Connected 1 integration.",
     },
     {
       label: "several created",
       input: {
-        results: [
-          { name: "a", outcome: "created" },
-          { name: "b", outcome: "created" },
-        ],
+        results: [{ outcome: "created" }, { outcome: "created" }],
       },
       want: "Connected 2 integrations.",
     },
     {
       label: "a re-paste says so rather than claiming a rewrite",
-      input: { results: [{ name: "a", outcome: "unchanged" }] },
+      input: { results: [{ outcome: "unchanged" }] },
       want: "1 already configured.",
     },
     {
       label: "mixed",
       input: {
-        results: [
-          { name: "a", outcome: "created" },
-          { name: "b", outcome: "unchanged" },
-        ],
+        results: [{ outcome: "created" }, { outcome: "unchanged" }],
       },
       want: "Connected 1 integration. 1 already configured.",
     },
     {
       label: "one note is quoted verbatim, because it names the key",
       input: {
-        results: [{ name: "a", outcome: "created" }],
+        results: [{ outcome: "created" }],
         notes: [`server "a": ignoring "timeout": marotte has no timeout field`],
       },
       want: `Connected 1 integration. server "a": ignoring "timeout": marotte has no timeout field.`,
@@ -174,7 +168,7 @@ describe("summariseImport", () => {
     {
       label: "several notes are counted",
       input: {
-        results: [{ name: "a", outcome: "created" }],
+        results: [{ outcome: "created" }],
         notes: ["one", "two", "three"],
       },
       want: "Connected 1 integration. 3 keys marotte does not store were ignored.",

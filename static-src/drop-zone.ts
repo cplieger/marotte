@@ -1,7 +1,7 @@
 import { announce } from "@cplieger/ui-primitives/announce";
 
 /** Options for installing a drop zone on a container element. */
-export interface DropZoneOptions {
+interface DropZoneOptions {
   /** The element that receives drag events. */
   container: HTMLElement;
   /** The overlay element to show/hide (must have a "hidden" class toggle). */

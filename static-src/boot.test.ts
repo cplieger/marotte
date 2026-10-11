@@ -122,6 +122,7 @@ const m = vi.hoisted(() => {
     requestTurnRange: vi.fn(),
     abortReadsForRevert: vi.fn(),
     registerRunTurnRepair: vi.fn(),
+    registerRunLogObserver: vi.fn(),
     requestRunTurnRange: vi.fn(),
     subagentTabProjectsChat: vi.fn(),
     chatTabFoldsRun: vi.fn(),
@@ -206,6 +207,7 @@ vi.mock("./run-store.js", () => ({
   rebuildLiveRuns: m.rebuildLiveRuns,
   registerRunStateDemand: m.registerRunStateDemand,
   registerRunTurnRepair: m.registerRunTurnRepair,
+  registerRunLogObserver: m.registerRunLogObserver,
 }));
 vi.mock("./run-turn-range.js", () => ({ requestRunTurnRange: m.requestRunTurnRange }));
 vi.mock("./chat-run-dots.js", () => ({ chatTabFoldsRun: m.chatTabFoldsRun }));
@@ -1114,6 +1116,17 @@ describe("the turn-repair registration", () => {
     // The run store's repair, injected likewise; unregistered, a run-log hole is asked of
     // nobody, which no gate can see.
     expect(m.registerRunTurnRepair.mock.calls.flat()).toEqual([m.requestRunTurnRange]);
+  });
+
+  it("hands the run log's steer entries and forgotten runs to the step docks", async () => {
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+    const docks = await import("./run-step-steers.js");
+
+    // Unregistered, a read step message's row would never leave its dock.
+    expect(m.registerRunLogObserver.mock.calls.flat()).toEqual([
+      { steer: docks.retireStepSteers, forget: docks.forgetRunStepSteers },
+    ]);
   });
 });
 

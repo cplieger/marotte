@@ -12,7 +12,7 @@ const compactionFailedTurnBudget = 60 * time.Second
 
 // CompactionFailed bounds a turn that may never get its response after a failed compaction. Backend activity and
 // live tools restart the silence budget.
-func (bc *BridgeCoordinator) CompactionFailed(chatID marotte.ChatID, detail string) {
+func (bc *bridgeCoordinator) CompactionFailed(chatID marotte.ChatID, detail string) {
 	lc := bc.turns.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -28,7 +28,7 @@ func (bc *BridgeCoordinator) CompactionFailed(chatID marotte.ChatID, detail stri
 	bc.armCompactionReapLocked(lc, lc.own, detail)
 }
 
-func (bc *BridgeCoordinator) armCompactionReapLocked(lc *chatLifecycle, turn *Turn, detail string) {
+func (bc *bridgeCoordinator) armCompactionReapLocked(lc *chatLifecycle, turn *activeTurn, detail string) {
 	lc.stopReapLocked(turn)
 	turn.reapArmID++
 	turn.reapArmedSeq = lc.observedSeq
@@ -45,7 +45,7 @@ func (bc *BridgeCoordinator) armCompactionReapLocked(lc *chatLifecycle, turn *Tu
 	})
 }
 
-func (bc *BridgeCoordinator) expireCompactionReap(chatID marotte.ChatID, turnID string, armID, seq, gen uint64, detail string) {
+func (bc *bridgeCoordinator) expireCompactionReap(chatID marotte.ChatID, turnID string, armID, seq, gen uint64, detail string) {
 	lc := bc.turns.lifecycleFor(chatID)
 	lc.mu.Lock()
 	if lc.own == nil || lc.own.ID != turnID || lc.own.finalizing {
@@ -73,7 +73,7 @@ func (bc *BridgeCoordinator) expireCompactionReap(chatID marotte.ChatID, turnID 
 	bc.InterruptTurn(chatID, detail)
 }
 
-func (lc *chatLifecycle) stopReapLocked(turn *Turn) {
+func (*chatLifecycle) stopReapLocked(turn *activeTurn) {
 	if turn.reapTimer == nil {
 		return
 	}

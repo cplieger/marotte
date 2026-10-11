@@ -72,7 +72,7 @@ export interface EntryEstimates {
 
 /**
  * The flex `gap` (`--sp-3`) `.turn-body` puts between entries (css/29-turns.css),
- * tier-invariant. K replaced children carry K−1 gaps; the spacer is a sibling under the
+ * tier-invariant. K replaced children carry K−1 gaps; the tail spacer is a sibling under the
  * gapless `.turn`, so it carries the boundary gap too (`spacerHeight`).
  */
 export const ROW_GAP_PX = 12;
@@ -210,28 +210,70 @@ export function spacerHeight(
   side: "head" | "tail",
   lane: string,
 ): number {
+  let px = 0;
+  let boxes = 0;
+  for (const box of spacerBoxes(t, range, side, lane)) {
+    px += box.px;
+    boxes++;
+  }
+  // The boundary gap: the head spacer is the body's first item, so the body's own `gap` follows it; the tail
+  // spacer sits under the gapless `.turn`, so its gap to the last mounted row comes from here. No boxes, no gap.
+  if (boxes === 0) {
+    return px;
+  }
+  return side === "head" ? px + gapsBetween(boxes) : px + gapsBetween(boxes) + ROW_GAP_PX;
+}
+
+/**
+ * The ordinal a point `px` down one spacer stands for, priced as `spacerHeight` prices it, so a reader dropped
+ * into the spacer anchors where the rows will land. Clamped to the spacer's own ordinals; undefined when it stands
+ * for none.
+ */
+export function spacerOrdinalAt(
+  t: Turn,
+  range: EntryRange,
+  side: "head" | "tail",
+  lane: string,
+  px: number,
+): number | undefined {
+  // The tail spacer's first box sits one boundary gap below its top.
+  let y = side === "tail" ? ROW_GAP_PX : 0;
+  let last: number | undefined;
+  for (const box of spacerBoxes(t, range, side, lane)) {
+    last = box.seq;
+    y += box.px + ROW_GAP_PX;
+    if (px < y) {
+      return box.seq;
+    }
+  }
+  return last;
+}
+
+/** A prose run is one box, keyed by its first `seq`. */
+function* spacerBoxes(
+  t: Turn,
+  range: EntryRange,
+  side: "head" | "tail",
+  lane: string,
+): Generator<{ seq: number; px: number }> {
   const span = turnSpan(t);
   const stood: EntryRange =
     side === "head"
       ? { from: 0, to: Math.min(Math.max(range.from, 0), span) }
       : { from: Math.min(Math.max(range.to, 0), span), to: span };
-  if (stood.from >= stood.to) {
-    return 0;
-  }
   // Resolved ONCE per call: neither can change within one spacer's arithmetic.
   const est = ENTRY_ESTIMATE_PX[tierNow()];
   const results = runResults(t);
   const firstPlan = firstPlanSeq(t, lane);
   const per = entryHeights.get(t.id);
   const rows = rowHeights.get(t.id);
-  let px = 0;
-  let boxes = 0;
   let inRun = false;
   for (let seq = stood.from; seq < stood.to; seq++) {
     const e = entryAt(t, seq);
     if (e === undefined || !entryRenders(e, lane, firstPlan)) {
       continue;
     }
+    let own: number;
     if (e.kind === "text") {
       if (inRun) {
         continue;
@@ -239,26 +281,18 @@ export function spacerHeight(
       inRun = true;
       const run = sliceTurn(t, { from: seq, to: seq + 1 }, lane, firstPlan);
       const measured = rows?.get(seq);
-      const own =
+      own =
         measured?.range.from === run.from && measured.range.to === run.to
           ? measured.px
           : estimateOf(e, est, results);
-      px += own;
-      if (own > 0) {
-        boxes++;
-      }
-      continue;
+    } else {
+      inRun = false;
+      own = per?.get(seq) ?? estimateOf(e, est, results);
     }
-    inRun = false;
-    const own = per?.get(seq) ?? estimateOf(e, est, results);
-    px += own;
     if (own > 0) {
-      boxes++;
+      yield { seq, px: own };
     }
   }
-  // The boundary gap: the spacer sits under the gapless `.turn`, so the gap between the last
-  // replaced box and the first mounted row comes from here. No boxes, no gap.
-  return boxes === 0 ? px : px + gapsBetween(boxes) + ROW_GAP_PX;
 }
 
 /** Drop a turn's cache (view dispose, chat delete). */

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
@@ -15,7 +16,6 @@ import (
 // Runs owns the workflow-run surface: launch, cancel, retry, the durable lease, the deadline and turn-cap
 // arms, and the schedule store. It holds collaborators, not a *Runtime; `mu` guards bounds.
 type Runs struct {
-	// locks answers the governance lock map a run bridge's spawn composes from.
 	locks     func() map[string]marotte.GovernanceLock
 	chats     runChatReader
 	translate runTranslator
@@ -26,9 +26,11 @@ type Runs struct {
 	// log is the run record: one entry log per run under <configDir>/runs, its open step turns and hosts.
 	log     *runLog `wiring:"optional"`
 	bridges *bridgeManager
-	coord   *BridgeCoordinator
+	coord   *bridgeCoordinator
 	// notices queues per launching chat the finished runs whose notice KAS put in its steering buffer (run_notices.go).
 	notices map[marotte.ChatID][]runNotice
+	// plans holds each run's newest plan revision (run_plan.go), under mu.
+	plans runPlans
 	// terminals answers whether a run's carrier waits on a live shell command, which frames cannot show.
 	terminals runTerminalReader `wiring:"optional"`
 	utility   func() *utilityRuntime
@@ -37,12 +39,17 @@ type Runs struct {
 	lifecycle *lifetime
 	// workDir is the root projected diff paths are relative to, a value so step tests need no lifetime.
 	workDir string
+	steers  *stepSteers
 	// asks holds unanswered step questions, its own registry because a run ask outlives its bridge (run_ask.go).
 	asks pendingRunAsks
 	// stepReplays holds the step-transcript reads in flight (step_replay.go), here so the utility session stays workflow-agnostic.
 	stepReplays stepReplays
 	// carriers counts which run carriers a verb holds now (run_host.go).
 	carriers carrierUse
+	// unconfirmed answers a retried step message whose carrier died before replying (run_message.go).
+	unconfirmed unconfirmedSends
+	// life admits every step-session mutation against a Delete (run_lifecycle.go).
+	life runLifecycle
 	// positions serializes a run's positional step-status write with its heal's resume, or a resume between read and write marks another step.
 	positions runLocks
 	// hosts serializes, per run, finding or starting a verb's carrier with entering it (acquireHost).
@@ -61,8 +68,7 @@ type runChatReader interface {
 	ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool)
 }
 
-// recordScheduleOutcome puts a run's ending on the launching schedule's row, the one writer for the four
-// unattended endings. No schedule or no store is a no-op.
+// No schedule or no store is a no-op.
 func (rs *Runs) recordScheduleOutcome(ctx context.Context, scheduleID string, outcome schedule.Outcome) {
 	if rs.schedules == nil || scheduleID == "" {
 		return
@@ -73,7 +79,6 @@ func (rs *Runs) recordScheduleOutcome(ctx context.Context, scheduleID string, ou
 	}
 }
 
-// runTranslator is the translator as the run surface uses it.
 type runTranslator interface {
 	HandleRunStart(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
 	HandleRunComplete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
@@ -82,6 +87,8 @@ type runTranslator interface {
 	ForgetRunSteps(workflowID string)
 	// SessionNotifyAsk derives the ask a `_kiro/session/notify` frame carries, or false.
 	SessionNotifyAsk(msg *marotte.RPCResponse) (marotte.RunInputNeededPayload, bool)
+	// HandleWorkflowMessage records the workflow message a `_kiro/session/notify` frame carries.
+	HandleWorkflowMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
 }
 
 // runTerminalReader asks whether a session a run's own open steps named waits on a live command,
@@ -98,7 +105,7 @@ type runBroadcaster interface {
 // runPermClaimer is the decision tracker as the run surface uses it: claim, drop a run's decisions, name
 // steps owed an answer. Run-scoped because a step's ask is keyed to the launching chat.
 type runPermClaimer interface {
-	TakePendingPerm(chatID marotte.ChatID, requestID int64, settledBy marotte.SettledBy) bool
+	TakePendingPermOn(origin acpResponder, acpID int64, settledBy marotte.SettledBy) (command.AskReply, bool)
 	ClearPendingPermsForRun(workflowID string)
 	PendingDecisionNodesForRun(workflowID string) map[string]struct{}
 }

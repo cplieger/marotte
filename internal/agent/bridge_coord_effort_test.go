@@ -6,8 +6,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// configOptionFrame builds a config_option_update with one effortLevel option. An empty
-// sessionID is the chat's own frame; a sessionID plus workflow marker is a step's.
+// An empty sessionID is the chat's own frame; a sessionID plus workflow marker is a step's.
 func configOptionFrame(t *testing.T, running, sessionID string, workflow bool) *marotte.RPCResponse {
 	t.Helper()
 	update := map[string]any{
@@ -35,7 +34,6 @@ func configOptionFrame(t *testing.T, running, sessionID string, workflow bool) *
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
-// healEffortFixture wires a chat that chose `chose` plus an open bridge.
 func healEffortFixture(t *testing.T, chose string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, cs, br := newTestHub()
@@ -75,7 +73,7 @@ func TestHealEffort_RepairsALevelTheSessionMovedOnItsOwn(t *testing.T) {
 // TestHealEffort_RepairsOncePerBridge pins the latch; it is claimed synchronously, so spending it in the fixture proves the second frame did nothing.
 func TestHealEffort_RepairsOncePerBridge(t *testing.T) {
 	h, br := healEffortFixture(t, "max")
-	sb := h.coord.Bridge("c1")
+	sb := h.coord.bridgeFor("c1")
 	if !sb.claimEffortHeal() {
 		t.Fatal("fixture: the latch was already spent")
 	}

@@ -1,8 +1,6 @@
 import type { Route } from "./route-path.js";
-import { relBeneath, workspaceRoot } from "./workspace.js";
-
-/** The root before the handshake has named it; the container's default. */
-const DEFAULT_ROOT = "/workspace";
+import { knownConfigDir } from "./versions.js";
+import { relBeneath, workspaceRootOrDefault } from "./workspace.js";
 
 /** internal/preview's maxFolderBytes. */
 const MAX_FOLDER_BYTES = 512;
@@ -11,13 +9,15 @@ const folderBytes = new TextEncoder();
 
 /** Whether the preview server would grant `path` (internal/preview `openPageFolder`): an
  *  absolute, clean `.html`/`.htm` path in its own folder beneath the workspace root, with no
- *  component starting with `.` or holding a `\`. `internal/preview/testdata/page-shapes.json`
- *  holds both sides to the same answers. */
+ *  component starting with `.` or holding a `\`, in a folder that neither is nor encloses the
+ *  server's config directory. A folder inside that directory is left to the server's deny list,
+ *  which the client does not hold, so a grant there can still be refused.
+ *  `internal/preview/testdata/page-shapes.json` holds both sides to the same answers. */
 export function isPreviewablePage(path: string): boolean {
   if (!/\.html?$/i.test(path) || path.includes("\0")) {
     return false;
   }
-  const rel = relBeneath(workspaceRoot() || DEFAULT_ROOT, path);
+  const rel = relBeneath(workspaceRootOrDefault(), path);
   if (rel === null) {
     return false;
   }
@@ -27,6 +27,10 @@ export function isPreviewablePage(path: string): boolean {
     return false;
   }
   const folder = path.slice(0, path.lastIndexOf("/"));
+  const configDir = knownConfigDir();
+  if (folder === configDir || relBeneath(folder, configDir) !== null) {
+    return false;
+  }
   return folderBytes.encode(folder).length <= MAX_FOLDER_BYTES;
 }
 

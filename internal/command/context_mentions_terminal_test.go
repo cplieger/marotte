@@ -6,7 +6,6 @@ import (
 	"unicode/utf8"
 )
 
-// fakeShell answers ReadShell with a fixed reading and records the line count asked.
 type fakeShell struct {
 	out    ShellText
 	asked  int
@@ -18,7 +17,7 @@ func (f *fakeShell) ReadShell(maxLines int) (ShellText, bool) {
 	return f.out, !f.notRun
 }
 
-func terminalMention(t *testing.T, token string, sh ShellReader) string {
+func terminalMention(t *testing.T, token string, sh shellReader) string {
 	t.Helper()
 	ws := testWorkspace(t)
 	ws.Terminal = sh
@@ -59,7 +58,7 @@ func TestBuildPromptBlocks_MentionTerminalLineCount(t *testing.T) {
 
 func TestBuildPromptBlocks_MentionTerminalSendsAReason(t *testing.T) {
 	tests := []struct {
-		sh    ShellReader
+		sh    shellReader
 		name  string
 		token string
 		want  string
@@ -103,8 +102,8 @@ func TestBuildPromptBlocks_MentionTerminalOverTheCapKeepsTheNewestLines(t *testi
 
 	got := terminalMention(t, "#[[terminal:]]", sh)
 
-	if n := utf8.RuneCountInString(got); n > MaxMentionChars {
-		t.Errorf("terminal mention is %d characters, want at most %d", n, MaxMentionChars)
+	if n := utf8.RuneCountInString(got); n > maxMentionChars {
+		t.Errorf("terminal mention is %d characters, want at most %d", n, maxMentionChars)
 	}
 	if want := terminalHeader + terminalOmitted + strings.Repeat("é", 9); !strings.HasPrefix(got, want) {
 		t.Errorf("terminal mention starts %q, want the header, the omission note, then a whole line", got[:min(len(got), 80)])

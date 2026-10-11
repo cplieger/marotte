@@ -5,13 +5,14 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 )
 
 // HandleElicitationCreate processes a _kiro/mcp/elicitation request: an MCP server asked for
 // structured input mid-tool-call. The form is surfaced and CmdElicitationResponse answers on
 // msg.ID. On v3 the body is NESTED under "elicitation". The pending-permissions tracker
 // replays it on reconnect. KAS signals no upstream cancel.
-func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte.ChatID, origin AskOrigin, msg *marotte.RPCResponse) {
 	if msg.ID == nil {
 		// No id means no route for the answer: drop rather than show an unanswerable dialog.
 		slog.Warn("elicitation missing id", "chat_id", chatID)
@@ -31,7 +32,7 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte
 	reqID := *msg.ID
 	p, err := decodeParams[elicitParams](msg)
 	if err != nil {
-		t.refuseAsk(ctx, chatID, marotte.MethodElicitationCreate, reqID,
+		refuseAsk(ctx, chatID, origin, marotte.MethodElicitationCreate, reqID,
 			marotte.ElicitationResult{Action: marotte.ElicitationActionCancel}, err)
 		return
 	}
@@ -39,12 +40,12 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte
 	subSessionID := t.deriveSubSession(chatID, p.SessionID)
 
 	step := t.steps.refFor(p.SessionID)
+	message := displayText(p.Elicitation.Message)
 	evt := marotte.NewEvent(marotte.EventElicitationNeeded, chatID, marotte.ElicitationNeededPayload{
-		RequestID: reqID,
-		Mode:      p.Elicitation.Mode,
+		Mode: p.Elicitation.Mode,
 		// The message is what the user accepts or declines, so it gets the permission title's
 		// treatment. Mode, URL and schema are not display text.
-		Message:         displayText(p.Elicitation.Message),
+		Message:         message,
 		URL:             p.Elicitation.URL,
 		ToolCallID:      p.ToolCallID,
 		SubSessionID:    subSessionID,
@@ -52,8 +53,9 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte
 		NodeID:          step.NodeID,
 		RequestedSchema: p.Elicitation.RequestedSchema,
 	})
-	t.bus.Broadcast(ctx, evt)
-	t.pendingPerms.PendingPermsAdd(reqID, evt)
+	t.bus.Broadcast(ctx, t.pendingPerms.PendingPermsAdd(reqID, evt, origin))
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID, marotte.WorkingLabelPayload{Label: marotte.WorkingLabelInput}))
-	t.push.NotifyPush(ctx, "Input needed", marotte.PushKindPermission, chatID)
+	n := notice.Question(t.push.NoticeTarget(ctx, chatID, step.WorkflowID),
+		step.NodeID, message)
+	t.push.Notify(ctx, chatID, &n)
 }

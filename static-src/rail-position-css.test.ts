@@ -1,26 +1,16 @@
-// WHERE THE RAIL PUTS THINGS, measured against the shipped stylesheet.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import {
-  MARKER_FALLBACK_PX,
-  railAt,
-  railMetrics,
-  railSpan,
-  relaxedPitch,
-  maxMarkers,
-  selectMarkers,
-  slotPosition,
-} from "./rail-select.js";
+import { binTurns } from "./rail-select.js";
 import type { TurnSummary } from "./rail-merge.js";
 
-/** Wide enough that the rail is shown and the resume control docks in its column: both turn on
+/** Wide enough that the map is shown and the resume control docks in its column: both turn on
  *  `@container chat-area (width >= 57.5rem)`. */
-const CHAT_PX = 1120;
+const WIDE_PX = 1120;
+const NARROW_PX = 800;
 /** Sub-pixel slack. Every number here is a used value the engine rounds. */
 const EPS = 0.5;
 
-/** Two used values agree to the pixel. */
 function near(actual: number, expected: number, what: string): void {
   expect(
     Math.abs(actual - expected),
@@ -39,31 +29,14 @@ afterAll(() => {
   style.remove();
 });
 
-interface Rail {
-  /** The wrapper both the rail and the resume control position against. */
-  outer: HTMLElement;
-  rail: HTMLElement;
-  resume: HTMLElement;
-  /** The track's own height, which is what every fraction is a fraction of. Read per call,
-   *  because `.turn-rail:empty` hides the rail and a height captured before its first marker is
-   *  0. */
-  track: () => number;
-  markerPx: number;
-  pitchPx: number;
-  /** The PAINTED row box, `--rail-mark`, which both the marker and the docked control take;
-   *  `markerPx` above is the target they grow to. */
-  mark: number;
-  /** The three tokens the reserved foot is made of, in px. */
-  sp2: number;
-  sp3: number;
-  btnH: number;
-}
-
 let area: HTMLElement | undefined;
 
-/** A token in PX. An unregistered custom property's computed value is its own token stream, so
- *  `getPropertyValue("--sp-2")` answers `0.5rem` and a `parseFloat` answers 0.5; assigning it to
- *  a real length property is what absolutizes it. */
+afterEach(() => {
+  area?.remove();
+  area = undefined;
+  delete document.documentElement.dataset["pointer"];
+});
+
 function lengthOf(host: HTMLElement, token: string): number {
   const probe = document.createElement("div");
   probe.style.cssText = `position:absolute;visibility:hidden;block-size:var(${token})`;
@@ -73,31 +46,50 @@ function lengthOf(host: HTMLElement, token: string): number {
   return px;
 }
 
-/** The real nesting, because three separate rules depend on it: the container query needs
- *  `#chat-area` to BE the container, the rail's height comes from `#messages-wrap-outer`'s box
- *  through the view's flex chain, and the reserved foot is only meaningful against a resume
- *  control docked in the same column. */
-function buildRail(tier: "fine" | "coarse"): Rail {
-  if (tier === "coarse") {
-    document.documentElement.dataset["pointer"] = "coarse";
-  }
+interface Map {
+  outer: HTMLElement;
+  nav: HTMLElement;
+  track: HTMLElement;
+  stack: HTMLElement;
+  buttons: HTMLElement[];
+  resume: HTMLElement;
+}
+
+function turn(n: number): TurnSummary {
+  return { id: `m${String(n)}`, n, outcome: "completed", ts: n * 60_000 };
+}
+
+/** The real nesting: `#chat-area` is the container the queries key on, and the map and the resume
+ *  control position against `#messages-wrap-outer`. The rows are laid out the way `render()` lays
+ *  them out, from `binTurns` over the measured track. */
+function buildMap(opts: { turns: number; width?: number; height?: number }): Map {
   area = document.createElement("div");
   area.id = "chat-area";
-  area.style.cssText = `position:fixed;top:0;left:0;width:${String(CHAT_PX)}px;height:600px;`;
+  area.style.cssText = `position:fixed;top:0;left:0;width:${String(opts.width ?? WIDE_PX)}px;height:${String(opts.height ?? 600)}px;display:flex;flex-direction:column`;
+  const toolbar = document.createElement("div");
+  toolbar.className = "chat-toolbar";
   const view = document.createElement("div");
   view.id = "chat-view";
   const outer = document.createElement("div");
   outer.id = "messages-wrap-outer";
   const scroller = document.createElement("div");
   scroller.id = "messages-wrap";
-  const messages = document.createElement("div");
-  messages.id = "messages";
-  scroller.appendChild(messages);
   outer.appendChild(scroller);
 
-  const rail = document.createElement("nav");
-  rail.className = "turn-rail";
-  outer.appendChild(rail);
+  const nav = document.createElement("nav");
+  nav.className = "turn-map";
+  nav.toggleAttribute("data-shown", true);
+  const prev = document.createElement("button");
+  prev.className = "turn-map-step";
+  const stack = document.createElement("ol");
+  stack.className = "turn-map-stack";
+  const track = document.createElement("div");
+  track.className = "turn-map-track";
+  track.appendChild(stack);
+  const next = document.createElement("button");
+  next.className = "turn-map-step";
+  nav.append(prev, track, next);
+  outer.appendChild(nav);
 
   const resume = document.createElement("button");
   resume.id = "scroll-bottom";
@@ -106,288 +98,182 @@ function buildRail(tier: "fine" | "coarse"): Rail {
   outer.appendChild(resume);
 
   view.appendChild(outer);
-  area.appendChild(view);
+  area.append(toolbar, view);
   document.body.appendChild(area);
 
-  const { markerPx, pitchPx } = railMetrics(rail);
-  return {
-    outer,
-    rail,
-    resume,
-    track: () => rail.clientHeight,
-    markerPx,
-    pitchPx,
-    mark: lengthOf(outer, "--rail-mark"),
-    sp2: lengthOf(outer, "--sp-2"),
-    sp3: lengthOf(outer, "--sp-3"),
-    btnH: lengthOf(outer, "--btn-h"),
-  };
-}
-
-afterEach(() => {
-  area?.remove();
-  area = undefined;
-  delete document.documentElement.dataset["pointer"];
-});
-
-/** One marker, positioned the way `render()` positions it: its slot's fraction of the span the
- *  shown set's size resolves to, never a bare 0..1 ramp. */
-function marker(r: Rail, slot: number, slots: number, label = slot + 1): HTMLElement {
-  const btn = document.createElement("button");
-  btn.className = "rail-marker";
-  btn.type = "button";
-  btn.textContent = String(label);
-  btn.style.setProperty("--rail-at", String(railAt(slot, slots, spanFor(r, slots))));
-  r.rail.appendChild(btn);
-  return btn;
-}
-
-/** The track's height, measured through a temporary marker when the rail is still empty:
- *  `.turn-rail:empty` hides the element, so a height read before its first marker is 0 — and a
- *  span resolved against 0 is the stretched one, which is the layout these cases exist to tell
- *  apart. */
-function trackOf(r: Rail): number {
-  if (r.rail.childElementCount > 0) {
-    return r.track();
+  const set = Array.from({ length: opts.turns }, (_, i) => turn(i + 1));
+  const layout = binTurns(set, track.clientHeight);
+  stack.style.setProperty("--turn-map-slots", String(layout.slots));
+  stack.style.setProperty("--turn-map-total", String(layout.total));
+  for (const bin of layout.bins) {
+    const li = document.createElement("li");
+    li.className = "turn-pill";
+    li.style.setProperty("--rail-at", String(bin.at));
+    const a = document.createElement("a");
+    a.className = "turn-pill-link";
+    a.href = `#turn-${String(bin.first.n)}`;
+    li.appendChild(a);
+    stack.appendChild(li);
   }
-  const probe = document.createElement("button");
-  probe.className = "rail-marker";
-  r.rail.appendChild(probe);
-  const px = r.track();
-  probe.remove();
-  return px;
+  return { outer, nav, track, stack, buttons: [prev, next], resume };
 }
 
-/** The span `render()` would resolve for a set of `slots` markers on this track. */
-function spanFor(r: Rail, slots: number): number {
-  return railSpan(slots, trackOf(r), r.markerPx);
+function pills(m: Map): HTMLElement[] {
+  return [...m.stack.querySelectorAll<HTMLElement>(".turn-pill")];
 }
 
-/** A slot count too large to fit at the relaxed pitch, so the set takes the whole travel.
- *  DERIVED from the real track, because the crossover moves with the tier and with the reserved
- *  foot, and a hard-coded count would sit on the wrong side of it after a retune of either. */
-function filledSlots(r: Rail): number {
-  return Math.ceil(trackOf(r) / relaxedPitch(r.markerPx)) + 2;
-}
+describe("the stack is only as tall as its turns need", () => {
+  it("draws a 5-turn chat 40px tall, not track-tall", () => {
+    const m = buildMap({ turns: 5 });
+    near(m.stack.getBoundingClientRect().height, 40, "stack height");
+  });
 
-/** A marker's rendered top, in the track's own frame. */
-function topIn(r: Rail, el: HTMLElement): number {
-  return el.getBoundingClientRect().top - r.rail.getBoundingClientRect().top;
-}
+  it("puts each row at --rail-at times the stack's travel", () => {
+    const m = buildMap({ turns: 5 });
+    const top = m.stack.getBoundingClientRect().top;
+    expect(pills(m).map((p) => Math.round(p.getBoundingClientRect().top - top))).toEqual([
+      0, 8, 16, 24, 32,
+    ]);
+    expect(pills(m).map((p) => Math.round(p.getBoundingClientRect().height))).toEqual([
+      8, 8, 8, 8, 8,
+    ]);
+  });
 
-function turn(n: number): TurnSummary {
-  return { id: `m${String(n)}`, n, outcome: "completed", ts: n * 60_000 };
-}
+  it("centres the stack in its track", () => {
+    const m = buildMap({ turns: 5 });
+    const track = m.track.getBoundingClientRect();
+    const stack = m.stack.getBoundingClientRect();
+    expect(track.height).toBeGreaterThan(stack.height);
+    near(stack.top - track.top, track.bottom - stack.bottom, "space above against space below");
+  });
 
-describe("the two pixel numbers come off the pointer tier", () => {
-  // MEASURED AGAINST A REAL TRACK, and that is the whole point of the cases being here.
-  for (const [tier, floor] of [
-    ["fine", 24],
-    ["coarse", 44],
-  ] as const) {
-    it(`reads a ${tier} pointer's floor as px`, () => {
-      const r = buildRail(tier);
-      expect(railMetrics(r.rail)).toEqual({ markerPx: floor, pitchPx: floor + 4 });
-    });
-  }
+  it("measures a track whose height does not follow the row count", () => {
+    // `render()` bins against this box, so a height that followed the rows would feed the bin
+    // count back into the next layout.
+    const few = buildMap({ turns: 3 }).track.getBoundingClientRect().height;
+    area?.remove();
+    const many = buildMap({ turns: 1000 }).track.getBoundingClientRect().height;
+    near(few, many, "track height for 3 turns against 1000");
+  });
 
-  it("falls back to the fine tier's own floor for a track the token does not reach", () => {
-    // `initial` on a custom property is the guaranteed-invalid value, so every `var(--hit-floor)`
-    // under it is invalid at computed-value time — the pre-layout state, where the fallback is the
-    // fine floor rather than a third number.
-    const r = buildRail("coarse");
-    r.outer.style.setProperty("--hit-floor", "initial");
+  it("paints no axis line down the track", () => {
+    const m = buildMap({ turns: 5 });
+    expect(getComputedStyle(m.nav, "::before").content).toBe("none");
+    expect(getComputedStyle(m.stack, "::before").content).toBe("none");
+  });
 
-    expect(railMetrics(r.rail)).toEqual({
-      markerPx: MARKER_FALLBACK_PX,
-      pitchPx: MARKER_FALLBACK_PX + 4,
-    });
+  it("never gains a scrollbar of its own", () => {
+    const m = buildMap({ turns: 300 });
+    expect(getComputedStyle(m.nav).overflowY).toBe("visible");
+    expect(getComputedStyle(m.stack).overflowY).toBe("visible");
   });
 });
 
-describe("a marker's position is its slot in the shown set", () => {
-  it("turns --rail-at into the top the pure arithmetic computes", () => {
-    const r = buildRail("fine");
-    const els = [0, 1, 2].map((i) => marker(r, i, 3));
-
-    els.forEach((el, i) => {
-      near(topIn(r, el), slotPosition(i, 3, r.track(), r.markerPx), `slot ${String(i)}`);
-    });
-  });
-
-  it("keeps both ends fully inside the track once the set takes the whole travel", () => {
-    // The travel span is the track minus one marker box, which is what stops the last marker
-    // hanging half out of the column.
-    const r = buildRail("fine");
-    const slots = filledSlots(r);
-    // The premise: this many markers cannot fit at the relaxed pitch, so the last one really is
-    // meant to reach the foot of the track.
-    expect(spanFor(r, slots)).toBe(1);
-    const first = marker(r, 0, slots);
-    const last = marker(r, slots - 1, slots);
-
-    near(topIn(r, first), 0, "first marker's top");
-    near(topIn(r, last) + last.getBoundingClientRect().height, r.track(), "last marker's bottom");
-  });
-
-  it("spreads a young session from the top at the relaxed pitch instead", () => {
-    const r = buildRail("fine");
-    const first = marker(r, 0, 2);
-    const second = marker(r, 1, 2);
-
-    near(topIn(r, first), 0, "first marker's top");
-    near(topIn(r, second), relaxedPitch(r.markerPx), "second marker's top");
-    // Stated as a relation rather than a number so the case survives a taller track: what it denies
-    // is the marker reaching the end of the travel.
-    expect(topIn(r, second)).toBeLessThan(r.track() / 2);
-  });
-});
-
-describe("the track's reserved foot clears the resume control", () => {
-  // RED against a foot of `--sp-3 + --hit-floor` alone: the track's bottom edge would land flush on
-  // the control's top edge and the `--sp-2` clearance below would read 0. Reserved UNCONDITIONALLY,
-  // so a marker does not move when the control appears.
-  for (const tier of ["fine", "coarse"] as const) {
-    it(`leaves --sp-2 between the track and the control on a ${tier} pointer`, () => {
-      const r = buildRail(tier);
-      // One marker, because `.turn-rail:empty` hides the rail and a hidden track has no bottom edge
-      // to measure the clearance from.
-      marker(r, 0, 1);
-
-      const railBottom = r.rail.getBoundingClientRect().bottom;
-      // TARGET to target, not paint to paint. The track's own bottom IS the last marker's target
-      // bottom, because the travel is the target's box; the control paints `--rail-mark` with its
-      // target centred on that, so its target's top edge is the overhang above the painted box.
-      const overhang = (r.markerPx - r.mark) / 2;
-      near(r.resume.getBoundingClientRect().top - overhang - railBottom, r.sp2, "clearance");
-    });
-
-    it(`sizes that foot from --hit-floor rather than --btn-h on a ${tier} pointer`, () => {
-      // The premise the reservation is derived from: `#scroll-bottom`'s own box in the rail's
-      // column is the tier's hit floor, so a `--btn-h`-based foot over-reserves by 12px on a fine
-      // pointer.
-      const r = buildRail(tier);
-      marker(r, 0, 1);
-
-      // The control paints the column's row box and grows its target to the floor, so the
-      // reservation clears the target: `--sp-3` plus the paint plus one overhang.
-      near(r.resume.getBoundingClientRect().height, r.mark, "control height");
-      near(
-        r.outer.getBoundingClientRect().bottom - r.rail.getBoundingClientRect().bottom,
-        r.sp3 + (r.markerPx + r.mark) / 2 + r.sp2,
-        "reserved foot",
-      );
-      // Stated as a relation rather than a number, so the case survives a retune of either token
-      // and still fails if the two are conflated.
-      expect(tier === "fine" ? r.btnH !== r.markerPx : r.btnH === r.markerPx).toBe(true);
-    });
-  }
-});
-
-describe("the shown set fills the track at one gap, never overlapping at the tier's floor", () => {
-  // THE COARSE CASE IS THE CONTROL, and the separation is measured against the TARGET resolved from
-  // the token rather than against `railMetrics`' answer: comparing a selection made at one pitch
-  // against that same pitch is a tautology, and it stays green against a hard-coded 28 (measured).
-  for (const tier of ["fine", "coarse"] as const) {
-    it(`on a ${tier} pointer, at the density the track allows`, () => {
-      const r = buildRail(tier);
-      const all = Array.from({ length: 60 }, (_, i) => turn(i + 1));
-      const shown = selectMarkers(all, trackOf(r), r.pitchPx, new Set<number>());
-      const target = lengthOf(r.outer, "--hit-floor");
-
-      expect(shown.length).toBeGreaterThan(2);
-      expect(shown.length).toBeLessThan(all.length);
-      // Every slot the track holds is spent, so a dropped turn cannot leave a hole.
-      expect(shown.length).toBe(maxMarkers(trackOf(r), r.pitchPx));
-
-      const tops = shown.map((s, i) => topIn(r, marker(r, i, shown.length, s.n)));
-      const first = (tops[1] ?? 0) - (tops[0] ?? 0);
-      for (let i = 1; i < tops.length; i++) {
-        const gap = (tops[i] ?? 0) - (tops[i - 1] ?? 0);
-        // STRICTLY greater: two conforming targets need a clear between them, not merely edges that
-        // touch.
-        expect(gap).toBeGreaterThan(target);
-        // EQUIDISTANT: one pitch for every consecutive pair, in rendered pixels.
-        near(gap, first, `gap ${String(i)}`);
+describe("a long chat fills the track at no less than 2px a row", () => {
+  it("tiles 200 rows with no overlap and no gap", () => {
+    const m = buildMap({ turns: 200, height: 900 });
+    const rows = pills(m).map((p) => p.getBoundingClientRect());
+    expect(rows).toHaveLength(200);
+    for (let i = 1; i < rows.length; i++) {
+      const prev = rows[i - 1];
+      const cur = rows[i];
+      if (prev === undefined || cur === undefined) {
+        continue;
       }
-    });
-  }
-});
-
-describe("a marker paints a control rung and grows its target to the tier's floor", () => {
-  // The target is measured by HIT TEST, never a style read: an expander is invisible and
-  // contributes nothing to `getBoundingClientRect`, so a style-read assertion here passes whether
-  // it exists or not.
-  /** One marker mid-track, where its expander cannot run off either end. */
-  function midMarker(r: Rail): HTMLElement {
-    return marker(r, 4, 9);
-  }
-
-  for (const [tier, paint, floor] of [
-    ["fine", 24, 24],
-    ["coarse", 24, 44],
-  ] as const) {
-    it(`paints ${String(paint)}px on a ${tier} pointer`, () => {
-      const r = buildRail(tier);
-      const box = midMarker(r).getBoundingClientRect();
-
-      // Resolved from the token rather than from the literal, so a retune moves the assertion with
-      // the stylesheet; the literal above is the reader's anchor.
-      near(box.height, lengthOf(r.rail, "--rail-mark"), "painted box");
-      near(box.height, paint, "painted box against the recorded value");
-      // The digit's own box, so a marker is a square at one digit and widens at five.
-      near(box.width, paint, "painted width");
-    });
-
-    it(`answers a pointer ${String(floor)}px tall on a ${tier} pointer`, () => {
-      const r = buildRail(tier);
-      const m = midMarker(r);
-      const box = m.getBoundingClientRect();
-      const cx = box.left + box.width / 2;
-      const cy = box.top + box.height / 2;
-      const reach = floor / 2 - 1;
-
-      // Inside the target on both axes, at the extremes the floor promises.
-      for (const [x, y, where] of [
-        [cx, cy, "centre"],
-        [cx, cy - reach, "top edge"],
-        [cx, cy + reach, "bottom edge"],
-        [cx - reach, cy, "leading edge"],
-        [cx + reach, cy, "trailing edge"],
-      ] as const) {
-        expect(document.elementFromPoint(x, y), `${tier} ${where}`).toBe(m);
-      }
-      // And NOT past it, or the target is wider than the tier asks for and two of them could touch
-      // at the pitch `selectMarkers` separates by.
-      expect(document.elementFromPoint(cx, cy - floor / 2 - 1)).not.toBe(m);
-    });
-  }
-
-  it("reaches past the painted box on a coarse pointer, which is the whole point", () => {
-    // THE CONTROL for the pair above, which on a fine pointer passes with the expander deleted
-    // because paint and target are the same 24px there. The band 12px to 22px from the centre is
-    // outside the paint and inside the target.
-    const r = buildRail("coarse");
-    const m = midMarker(r);
-    const box = m.getBoundingClientRect();
-    const cx = box.left + box.width / 2;
-    const cy = box.top + box.height / 2;
-
-    expect(box.height).toBeLessThan(lengthOf(r.outer, "--hit-floor"));
-    for (const dy of [box.height / 2 + 2, 21]) {
-      expect(document.elementFromPoint(cx, cy + dy), `+${String(dy)}px`).toBe(m);
-      expect(document.elementFromPoint(cx, cy - dy), `-${String(dy)}px`).toBe(m);
+      expect(cur.height).toBeGreaterThanOrEqual(2 - EPS);
+      expect(cur.height).toBeLessThanOrEqual(8 + EPS);
+      near(cur.top, prev.bottom, `row ${String(i)} meets the one above`);
     }
   });
 
-  it("paints nothing for that reach, so the asymmetry is unobservable", () => {
-    // An expander a reader can see is the 44px box again under another name.
-    const r = buildRail("coarse");
-    const before = getComputedStyle(midMarker(r), "::before");
+  it("draws 500 binned turns at the 2px pitch, the stack shorter than its track", () => {
+    const m = buildMap({ turns: 500, height: 800 });
+    const track = m.track.getBoundingClientRect().height;
+    expect(track, "a track that bins 500 turns in pairs").toBeGreaterThanOrEqual(500);
+    expect(track, "a track that bins 500 turns in pairs").toBeLessThan(1000);
+    const rows = pills(m).map((p) => p.getBoundingClientRect().height);
+    expect(rows).toHaveLength(250);
+    for (const h of rows) {
+      near(h, 2, "row pitch");
+    }
+    near(m.stack.getBoundingClientRect().height, 500, "stack height");
+  });
 
-    expect(before.content).toBe('""');
-    expect(before.backgroundColor).toBe("rgba(0, 0, 0, 0)");
-    expect(before.borderTopWidth).toBe("0px");
-    expect(before.outlineStyle).toBe("none");
+  it("bins 1000 turns into rows of at least 2px and keeps the last at the foot", () => {
+    const m = buildMap({ turns: 1000 });
+    const stack = m.stack.getBoundingClientRect();
+    const rows = pills(m).map((p) => p.getBoundingClientRect());
+    expect(rows.length).toBeLessThan(1000);
+    expect(rows[0]?.height ?? 0).toBeGreaterThanOrEqual(2 - EPS);
+    near(rows[rows.length - 1]?.bottom ?? 0, stack.bottom, "last row's bottom");
+    near(rows[0]?.top ?? 0, stack.top, "first row's top");
+  });
+});
+
+describe("the map's foot clears the docked resume control", () => {
+  it("leaves --sp-2 between the map and the control's target", () => {
+    const m = buildMap({ turns: 5 });
+    const gap = m.resume.getBoundingClientRect().top - m.nav.getBoundingClientRect().bottom;
+    near(gap, lengthOf(m.outer, "--sp-2"), "clearance");
+  });
+
+  it("sizes the docked control to the hit floor", () => {
+    const m = buildMap({ turns: 5 });
+    near(
+      m.resume.getBoundingClientRect().height,
+      Math.max(lengthOf(m.outer, "--ctl-h-sm"), lengthOf(m.outer, "--hit-floor")),
+      "control height",
+    );
+  });
+
+  it("leaves the control floating at the column's centre on a coarse pointer, with no map", () => {
+    document.documentElement.dataset["pointer"] = "coarse";
+    const m = buildMap({ turns: 5 });
+    const box = m.resume.getBoundingClientRect();
+    const outer = m.outer.getBoundingClientRect();
+    near(box.left + box.width / 2, outer.left + outer.width / 2, "control centre");
+  });
+});
+
+describe("the map draws only where the gutter holds it and a pointer can aim at it", () => {
+  it("shows the map in a wide chat on a fine pointer", () => {
+    const m = buildMap({ turns: 5 });
+    expect(getComputedStyle(m.nav).display).toBe("flex");
+  });
+
+  it("hides the map under 57.5rem of chat area", () => {
+    const m = buildMap({ turns: 5, width: NARROW_PX });
+    expect(getComputedStyle(m.nav).display).toBe("none");
+  });
+
+  it("hides the map on a coarse pointer at any width", () => {
+    document.documentElement.dataset["pointer"] = "coarse";
+    const m = buildMap({ turns: 5 });
+    expect(getComputedStyle(m.nav).display).toBe("none");
+  });
+
+  it("hides a map the renderer has not marked shown, its track still measured", () => {
+    const m = buildMap({ turns: 5 });
+    const shownTrack = m.track.getBoundingClientRect().height;
+    m.nav.removeAttribute("data-shown");
+    expect(getComputedStyle(m.nav).visibility).toBe("hidden");
+    for (const b of m.buttons) {
+      expect(getComputedStyle(b).visibility).toBe("hidden");
+    }
+    expect(m.track.getBoundingClientRect().height).toBe(shownTrack);
+    expect(shownTrack).toBeGreaterThan(0);
+  });
+});
+
+describe("the step buttons meet the hit floor", () => {
+  // Fine tier only: on a coarse pointer the map does not draw. They are the equivalent control
+  // that lets the rows sit under the floor (WCAG 2.5.8).
+  it("on a fine pointer", () => {
+    const m = buildMap({ turns: 5 });
+    const floor = lengthOf(m.outer, "--hit-floor");
+    for (const b of m.buttons) {
+      expect(b.getBoundingClientRect().height).toBeGreaterThanOrEqual(floor - EPS);
+      expect(b.getBoundingClientRect().width).toBeGreaterThanOrEqual(floor - EPS);
+    }
   });
 });

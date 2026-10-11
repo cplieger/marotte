@@ -70,6 +70,36 @@ describe("the tree pane", () => {
     style.remove();
   });
 
+  it("does not restart a nested running row's animation on re-render", async () => {
+    const tree = buildExecTree(vi.fn());
+    host.appendChild(tree.root);
+    const nodes = [step("g", { kind: "sequence", children: [step("k1"), step("k2")] })];
+    tree.render(nodes, "k1");
+
+    const style = document.createElement("style");
+    style.textContent =
+      "@keyframes reseat-spin { to { rotate: 360deg } } .ev-kids .ev-row { animation: reseat-spin 600ms linear infinite }";
+    document.head.appendChild(style);
+    try {
+      const animOf = (): Animation | undefined =>
+        host.querySelector<HTMLElement>('.ev-row[data-path="k2"]')?.getAnimations()[0];
+      const anim = animOf();
+      expect(anim, "the row needs an animation to probe").toBeDefined();
+      anim?.pause();
+      if (anim !== undefined) {
+        anim.currentTime = 250;
+      }
+
+      tree.render(nodes, "k1");
+      await new Promise((r) => requestAnimationFrame(r));
+
+      expect(Number(animOf()?.currentTime), "a re-render must not re-seat the kids box").toBe(250);
+      expect(animOf()?.playState).toBe("paused");
+    } finally {
+      style.remove();
+    }
+  });
+
   it("keeps focus on a row across a re-render", () => {
     const tree = buildExecTree(vi.fn());
     host.appendChild(tree.root);

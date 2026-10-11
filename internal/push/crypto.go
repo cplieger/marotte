@@ -17,7 +17,6 @@ import (
 	"time"
 )
 
-// vapidExpWindow is the JWT expiry window in seconds (12 hours).
 const vapidExpWindow = 12 * 60 * 60
 
 // vapidHeader constructs the VAPID Authorization header (RFC 8292) for

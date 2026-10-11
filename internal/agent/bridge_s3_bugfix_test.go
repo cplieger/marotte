@@ -16,7 +16,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// hubWithBridge wires a runtime whose chat "c1" bridge is br.
 func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Runtime {
 	t.Helper()
 	cs := newTestChatStore()
@@ -29,9 +28,9 @@ func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Runtime {
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
-		t.Fatalf("getOrCreateBridge: %v", err)
+		t.Fatalf("Setup: OpenBridge(c1): %v", err)
 	}
 	sb.bridge = br
 	h.bridge.mgr.mu.Lock()
@@ -40,8 +39,7 @@ func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Runtime {
 	return h
 }
 
-// ctxAwareBridge mimics Bridge.Respond dropping a write on a cancelled ctx; its gate holds
-// Respond until translateACPEvent has returned.
+// Its gate holds Respond until translateACPEvent has returned.
 type ctxAwareBridge struct {
 	*fakeBridge
 	gate      chan struct{}
@@ -96,8 +94,8 @@ func TestTranslateACPEvent_FSReadRespondsAfterEventCtxCancel_C1(t *testing.T) {
 		Params: mustJSON(t, map[string]any{"path": "c1.txt"}),
 	}
 
-	h.translateACPEvent("c1", msg) // returns; defer cancel() has now fired
-	close(br.gate)                 // let Respond observe the (post-cancel) ctx
+	h.translateACPEvent("c1", h.originOf("c1"), msg) // returns; defer cancel() has now fired
+	close(br.gate)                                   // let Respond observe the (post-cancel) ctx
 
 	select {
 	case <-br.done:
@@ -127,7 +125,7 @@ func TestTranslateACPEvent_FSWriteRespondsAfterEventCtxCancel_C1(t *testing.T) {
 		Params: mustJSON(t, map[string]any{"path": "c1-out.txt", "content": "C1-written"}),
 	}
 
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 	close(br.gate)
 
 	select {
@@ -176,6 +174,31 @@ func (b *recordingTermBridge) Respond(_ context.Context, id int64, result any, e
 	return nil
 }
 
+func (b *recordingTermBridge) responseTo(id int64) (recordedResp, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, r := range b.resps {
+		if r.id == id {
+			return r, true
+		}
+	}
+	return recordedResp{}, false
+}
+
+func (b *recordingTermBridge) awaitResponseTo(t *testing.T, id int64) recordedResp {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if r, ok := b.responseTo(id); ok {
+			return r
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no response to request %d within 5s", id)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func (b *recordingTermBridge) lastResponse() (recordedResp, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -197,7 +220,6 @@ func termCreateMsg(t *testing.T, id int64, command string, args []string, env []
 	return &marotte.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, params)}
 }
 
-// singleTerm returns the sole registered agent terminal.
 func singleTerm(t *testing.T, h *Runtime) *agentTerminal {
 	t.Helper()
 	h.agentTerms.mu.Lock()
@@ -225,7 +247,7 @@ func TestTranslateACPEvent_TerminalSurvivesEventCtxCancel_C2(t *testing.T) {
 	h := hubWithBridge(t, work, br)
 	msg := termCreateMsg(t, 1, "sh", []string{"-c", "sleep 0.3; printf ok > c2.txt"}, nil)
 
-	h.translateACPEvent("c1", msg) // per-event ctx cancels on return
+	h.translateACPEvent("c1", h.originOf("c1"), msg) // per-event ctx cancels on return
 
 	term := singleTerm(t, h)
 	waitClosed(t, term.done, "terminal")
@@ -252,7 +274,7 @@ func TestTerminalSignalDeath_ReportsSignalNotExitCodeMinus1_H1(t *testing.T) {
 	h := hubWithBridge(t, work, br)
 	msg := termCreateMsg(t, 1, "sh", []string{"-c", "sleep 30"}, nil)
 
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 	term := singleTerm(t, h)
 	if term.cmd.Process == nil {
 		t.Fatal("process not started")
@@ -297,7 +319,7 @@ func TestTranslateACPEvent_TermOutputUnknownID_RespondsError_H2(t *testing.T) {
 		Params: mustJSON(t, map[string]any{"terminalId": "does-not-exist"}),
 	}
 
-	h.translateACPEvent("c1", msg) // output is synchronous
+	h.translateACPEvent("c1", h.originOf("c1"), msg) // output is synchronous
 
 	select {
 	case <-br.respCh:
@@ -326,7 +348,7 @@ func TestTerminalEnv_PopulatesCommandEnv_M1(t *testing.T) {
 	env := []map[string]string{{"name": "MAROTTE_TEST_ENV", "value": sentinel}}
 	msg := termCreateMsg(t, 1, "sh", []string{"-c", `printf '%s' "$MAROTTE_TEST_ENV" > envout.txt`}, env)
 
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 	term := singleTerm(t, h)
 	waitClosed(t, term.done, "terminal")
 
@@ -348,7 +370,7 @@ func TestTermCreate_RefusesExecutionRedirectingEnv(t *testing.T) {
 	env := []map[string]string{{"name": "LD_PRELOAD", "value": "/tmp/evil.so"}}
 	msg := termCreateMsg(t, 1, "sh", []string{"-c", "true"}, env)
 
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 
 	h.agentTerms.mu.Lock()
 	live := len(h.agentTerms.terms)
@@ -377,7 +399,7 @@ func TestTermCreate_AllowsInertPagerEnv(t *testing.T) {
 	env := []map[string]string{{"name": "GIT_PAGER", "value": "cat"}}
 	msg := termCreateMsg(t, 1, "sh", []string{"-c", "true"}, env)
 
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 
 	term := singleTerm(t, h)
 	waitClosed(t, term.done, "terminal")

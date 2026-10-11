@@ -16,17 +16,15 @@ import (
 // rate-limited).
 const accountUsageTTL = 60 * time.Second
 
-// acctUsageCache is the short-TTL cache plus last-known snapshot for GET /api/account/usage;
-// the snapshot is served stale when a refresh fails.
+// The snapshot is served stale when a refresh fails.
 type acctUsageCache struct {
 	data    *marotte.AccountUsage
 	atNanos int64 // wall-clock UnixNano of the last successful fetch
 	mu      sync.Mutex
 }
 
-// handleAccountUsage serves account/subscription usage for the sidebar
-// footer. Cached for accountUsageTTL; on a fetch failure it serves the
-// last-known snapshot (marked stale) if any, else 503.
+// Cached for accountUsageTTL; on a fetch failure it serves the last-known snapshot (marked stale)
+// if any, else 503.
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	// Gated here, not on the pattern (see ListenAndServe).
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {

@@ -27,8 +27,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// FileName is the store's file, beside the chats directory in the config dir.
-const FileName = "spec-approvals.json"
+// fileName is the store's file, beside the chats directory in the config dir.
+const fileName = "spec-approvals.json"
 
 // fileMode and dirMode are what the file and the config directory must carry.
 // The record names workspace paths and, once marotte knows an identity, who
@@ -38,28 +38,28 @@ const (
 	dirMode  = 0o700
 )
 
-// MaxBytes caps a decoded document, derived from the bounds below, and is enforced on both
+// maxBytes caps a decoded document, derived from the bounds below, and is enforced on both
 // the read and the write, so the store never writes a file its load would refuse.
-const MaxBytes = 256 * 1024
+const maxBytes = 256 * 1024
 
-// MaxSpecs is the DECODE bound: the most specs this store reads or holds.
-const MaxSpecs = 500
+// maxSpecs is the DECODE bound: the most specs this store reads or holds.
+const maxSpecs = 500
 
-// MaxDirBytes caps one spec's key (a workspace-relative directory).
-const MaxDirBytes = 512
+// maxDirBytes caps one spec's key (a workspace-relative directory).
+const maxDirBytes = 512
 
-// MaxUserBytes caps a recorded user. Nothing writes one yet, so it bounds a hand-edited file.
-const MaxUserBytes = 256
+// maxUserBytes caps a recorded user. Nothing writes one yet, so it bounds a hand-edited file.
+const maxUserBytes = 256
 
 // The sentinels this package returns, each wrapped with the offending value.
 var (
-	// ErrBadPhase means the phase is not an approvable one. See Phases.
-	ErrBadPhase = errors.New("not an approvable spec phase")
-	// ErrBadHash means the hash is not a sha256 hex digest.
-	ErrBadHash = errors.New("hash must be a sha256 hex digest")
-	// ErrBadDir means the spec dir is empty or over MaxDirBytes.
-	ErrBadDir = errors.New("bad spec dir")
-	// ErrTooMany means MaxSpecs specs already carry an approval. Approving a
+	// errBadPhase means the phase is not an approvable one. See Phases.
+	errBadPhase = errors.New("not an approvable spec phase")
+	// errBadHash means the hash is not a sha256 hex digest.
+	errBadHash = errors.New("hash must be a sha256 hex digest")
+	// errBadDir means the spec dir is empty or over MaxDirBytes.
+	errBadDir = errors.New("bad spec dir")
+	// ErrTooMany means maxSpecs specs already carry an approval. Approving a
 	// phase of a spec already in the record is never refused by it.
 	ErrTooMany = errors.New("too many specs carry an approval")
 )
@@ -95,7 +95,7 @@ func ValidPhase(phase string) bool {
 	return false
 }
 
-// record is one phase's stored approval. Stale is absent: it is derived per read (Derive).
+// Stale is absent: it is derived per read (Derive).
 type record struct {
 	Hash string    `json:"hash"`
 	At   time.Time `json:"at"`
@@ -123,7 +123,7 @@ type Store struct {
 // usable store; the error is diagnostic (warn and continue). The mode verdict comes BEFORE any
 // read: filemode.EnforceFile refuses a planted symlink and a FIFO that would block boot.
 func NewStore(dir string) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, FileName), specs: map[string]map[string]record{}}
+	s := &Store{path: filepath.Join(dir, fileName), specs: map[string]map[string]record{}}
 	if _, err := filemode.EnforceFile(s.path, fileMode); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return s, nil // first run
@@ -151,23 +151,23 @@ func readBounded(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	data, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > MaxBytes {
-		return nil, fmt.Errorf("over the %d byte decode bound", MaxBytes)
+	if len(data) > maxBytes {
+		return nil, fmt.Errorf("over the %d byte decode bound", maxBytes)
 	}
 	return data, nil
 }
 
 // sanitize drops each entry this store could not have written (intrinsic validity only) and
-// truncates to MaxSpecs, so a bad entry costs one badge, not the whole record.
+// truncates to maxSpecs, so a bad entry costs one badge, not the whole record.
 func sanitize(in map[string]map[string]record) map[string]map[string]record {
-	out := make(map[string]map[string]record, min(len(in), MaxSpecs))
+	out := make(map[string]map[string]record, min(len(in), maxSpecs))
 	// Map order is random, so which specs survive a truncation is unspecified, deliberately.
 	for dir, phases := range in {
-		if len(out) == MaxSpecs {
+		if len(out) == maxSpecs {
 			break
 		}
 		if !validDir(dir) {
@@ -175,7 +175,7 @@ func sanitize(in map[string]map[string]record) map[string]map[string]record {
 		}
 		kept := make(map[string]record, len(phases))
 		for phase, r := range phases {
-			if !ValidPhase(phase) || !sha256Hex.MatchString(r.Hash) || len(r.User) > MaxUserBytes {
+			if !ValidPhase(phase) || !sha256Hex.MatchString(r.Hash) || len(r.User) > maxUserBytes {
 				continue
 			}
 			kept[phase] = r
@@ -188,25 +188,24 @@ func sanitize(in map[string]map[string]record) map[string]map[string]record {
 	return out
 }
 
-// validDir reports whether dir is a usable key.
 func validDir(dir string) bool {
-	return dir != "" && len(dir) <= MaxDirBytes
+	return dir != "" && len(dir) <= maxDirBytes
 }
 
 // Approve records that a human approved phase of the spec at dir, against hash, MERGED into
 // the record under the write lock. Re-approving overwrites. Whether hash still matches the
-// document is the caller's precondition. Returns ErrBadDir, ErrBadPhase, ErrBadHash or
+// document is the caller's precondition. Returns ErrBadDir, ErrBadPhase, errBadHash or
 // ErrTooMany; on any error nothing is applied.
 func (s *Store) Approve(ctx context.Context, dir, phase, hash, user string) error {
 	switch {
 	case !validDir(dir):
-		return fmt.Errorf("%w: %q", ErrBadDir, dir)
+		return fmt.Errorf("%w: %q", errBadDir, dir)
 	case !ValidPhase(phase):
-		return fmt.Errorf("%w: %q", ErrBadPhase, phase)
+		return fmt.Errorf("%w: %q", errBadPhase, phase)
 	case !sha256Hex.MatchString(hash):
-		return fmt.Errorf("%w: %q", ErrBadHash, hash)
-	case len(user) > MaxUserBytes:
-		return fmt.Errorf("%w: %d bytes", ErrBadDir, len(user))
+		return fmt.Errorf("%w: %q", errBadHash, hash)
+	case len(user) > maxUserBytes:
+		return fmt.Errorf("%w: %d bytes", errBadDir, len(user))
 	}
 
 	s.writeMu.Lock()
@@ -214,8 +213,8 @@ func (s *Store) Approve(ctx context.Context, dir, phase, hash, user string) erro
 
 	next := s.snapshot()
 	if _, known := next[dir]; !known {
-		if len(next) >= MaxSpecs {
-			return fmt.Errorf("%w: %d specs, limit %d", ErrTooMany, len(next), MaxSpecs)
+		if len(next) >= maxSpecs {
+			return fmt.Errorf("%w: %d specs, limit %d", ErrTooMany, len(next), maxSpecs)
 		}
 		next[dir] = map[string]record{}
 	}
@@ -278,8 +277,7 @@ func (s *Store) snapshot() map[string]map[string]record {
 	return out
 }
 
-// publish installs a mutated clone. Called only after the clone is durable, so
-// what a reader sees is always what is on disk.
+// Called only after the clone is durable, so what a reader sees is always what is on disk.
 func (s *Store) publish(next map[string]map[string]record) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
@@ -295,7 +293,7 @@ func (s *Store) persist(ctx context.Context, next map[string]map[string]record) 
 	}
 	if _, err := atomicfile.WriteFile(ctx, s.path, data,
 		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
-		atomicfile.WithMaxBytes(MaxBytes)); err != nil {
+		atomicfile.WithMaxBytes(maxBytes)); err != nil {
 		return fmt.Errorf("write %s: %w", s.path, err)
 	}
 	return nil

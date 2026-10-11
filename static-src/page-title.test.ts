@@ -38,7 +38,6 @@ afterEach(() => {
   document.documentElement.removeAttribute("data-pointer");
 });
 
-/** The real bar at a stated chat-area width, on the coarse tier. */
 function mountBar(width: string): HTMLElement {
   styleEl = mountAppCSS();
   app = document.createElement("div");
@@ -78,7 +77,7 @@ describe("the title bar's measured fit", () => {
     // The title's own overflow is not the whole test: the heading is `flex: 1 1 0`, so it
     // contributes no basis to the line, but it is still a flex item and the bar is still charged
     // its 2px GAP — which the row's 44px targets and their gaps cannot spare.
-    const heading = mountBar("320px");
+    const heading = mountBar("240px");
     setPageTitle("Git", "chat");
     expect(heading.classList.contains("sr-only"), "clipped although the title is short").toBe(true);
 
@@ -105,7 +104,7 @@ describe("the title bar's measured fit", () => {
     // The clip is `.sr-only`, a 1x1 absolutely positioned box at every width — so an observer
     // watching only the heading goes silent exactly while the clip is in force, and the clip
     // becomes a latch that only a title change breaks. Measured
-    const heading = mountBar("320px");
+    const heading = mountBar("240px");
     setPageTitle("Git", "chat");
     expect(heading.classList.contains("sr-only"), "clipped while narrow").toBe(true);
     initPageTitleFit();

@@ -20,9 +20,9 @@ const (
 	OriginAgent     Origin = "agent"
 )
 
-// Valid reports whether an origin is one this build understands. An unknown origin
+// valid reports whether an origin is one this build understands. An unknown origin
 // cannot be reasoned about: sweepable and unattended are both unanswerable.
-func (o Origin) Valid() bool {
+func (o Origin) valid() bool {
 	return o == OriginScheduled || o == OriginManual || o == OriginAgent
 }
 
@@ -55,13 +55,6 @@ type Lease struct {
 
 // Bounded reports whether marotte believes the run to be EXECUTING under a deadline it set.
 func (l *Lease) Bounded() bool { return !l.Deadline.IsZero() }
-
-// expired reports whether the deadline has passed; a parked lease never is. Unexported:
-// the monotonic AfterFunc is the real question, and a wall-clock gate would let a backwards
-// clock adjustment refuse a due cancel.
-func (l *Lease) expired(now time.Time) bool {
-	return l.Bounded() && !now.Before(l.Deadline)
-}
 
 // Bounds is the input set NextDeadline composes. A struct, so two same-typed durations
 // cannot be transposed. Field order is govet fieldalignment's.

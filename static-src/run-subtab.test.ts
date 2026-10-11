@@ -17,7 +17,9 @@ const m = {
   launchedBy: new Map<string, string>(),
 };
 
-vi.mock("./tabs.js", () => ({
+vi.mock("./tabs.js", async () => ({
+  // Complete and inert first: the run composer's steer stack reaches the chat notice path too.
+  ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   // Present-but-inert: the run tab renders the run CARD now, whose markdown bubble reaches the
   // linkifier and through it the editor openers, so these names are imported somewhere in this
   // graph. No case here opens a file, closes a tab, or reads which tab is on screen.
@@ -53,7 +55,7 @@ vi.mock("./tabs.js", () => ({
 vi.mock("./decision-dock.js", () => ({
   // The card's second input beside `inspect`: which step is blocked on a person, which no node
   // status can say. None is here.
-  runPendingAsks: vi.fn(() => ({ count: 0, nodes: new Set<string>(), label: "" })),
+  runPendingAsks: vi.fn(() => ({ count: 0, asked: [], label: "" })),
   mountRunDecisionDock: vi.fn(),
   rerenderDocks: vi.fn(),
   hasPendingDecision: vi.fn(() => false),
@@ -76,19 +78,13 @@ vi.mock("./run-store.js", async (importOriginal) => ({
       m.launchedBy.set(id, chatID);
     }
   }),
-  // The rest are the run CARD's, which the tab renders now instead of hand-rolling a node tree.
-  elapsedMs: vi.fn(() => 0),
   // The node PLAN, which the exec view is the first reader of: a repeat's bound and stop condition
   // come from there rather than from the state tree.
   runPlan: vi.fn(() => undefined),
-  leafNodes: vi.fn(() => []),
-  nodePathOf: vi.fn(() => []),
   // The exec-view adapter's own path key: KAS names a repeat's iteration container one way in the
   // state tree and another in a step frame's path, so the tree is translated. Inert here for the
   // same reason as the rest — no state is painted.
   nodePathSegment: vi.fn((node: { nodeId: string }) => node.nodeId),
-  runCounters: vi.fn(() => ({ total: 0, done: 0, failed: 0, current: 0 })),
-  runElapsedMs: vi.fn(() => 0),
   runIsLive: vi.fn(() => false),
   isNeedInputPark: vi.fn(() => false),
   pauseDetailPhrase: vi.fn(() => undefined),
@@ -115,6 +111,11 @@ vi.mock("./actions/runs.js", () => {
     retryRun: stub,
     extendRunRepeat: stub,
     finishRunRepeat: stub,
+    messageRunStep: stub,
+    removeRunStepSteer: stub,
+    clearRunStepSteers: stub,
+    // Linked by the step transcript read; no case here reads a step.
+    runStepURL: undefined,
   };
 });
 

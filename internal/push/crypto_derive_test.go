@@ -21,8 +21,7 @@ import (
 	"time"
 )
 
-// baseKeyMaterial is a fixed, structurally valid input set. Values are
-// distinguishable per field so a transposition shows up as a changed digest.
+// Values are distinguishable per field so a transposition shows up as a changed digest.
 func baseKeyMaterial() keyMaterial {
 	return keyMaterial{
 		Shared:     bytes.Repeat([]byte{0x01}, 32),
@@ -33,8 +32,6 @@ func baseKeyMaterial() keyMaterial {
 	}
 }
 
-// flipFirstByte returns a copy of b with its first byte inverted, used to
-// confirm a derivation actually depends on a given input.
 func flipFirstByte(b []byte) []byte {
 	c := slices.Clone(b)
 	c[0] ^= 0xff

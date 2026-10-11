@@ -40,10 +40,6 @@ type gateFixture struct {
 	subscribed      bool
 }
 
-// listingsInOneDiscoveryInterval runs the poller behind prPollGate for exactly one
-// discovery interval of synthetic time and answers how often it listed (1 when the
-// gate was open at the sweep, 0 when it was closed) and how many of those were
-// present cycles.
 func listingsInOneDiscoveryInterval(t *testing.T, f gateFixture) (listed, present int32) {
 	t.Helper()
 	dir := t.TempDir()
@@ -84,7 +80,7 @@ func listingsInOneDiscoveryInterval(t *testing.T, f gateFixture) (listed, presen
 		}
 
 		src := &countingSource{}
-		poller := forges.NewPRStatusPoller(src, svc, prPollGate(presence, svc))
+		poller := forges.NewPRStatusPoller(src, discardNotices{}, prPollGate(presence, svc))
 		done := make(chan struct{})
 		go func() {
 			poller.Run(ctx)
@@ -98,6 +94,11 @@ func listingsInOneDiscoveryInterval(t *testing.T, f gateFixture) (listed, presen
 	})
 	return listed, present
 }
+
+// discardNotices drops every notification: these tests count sweeps, never what one says.
+type discardNotices struct{}
+
+func (discardNotices) Notify(context.Context, *marotte.NotificationPayload) {}
 
 // TestPollerGate_NoPollWithNobodyConnectedAndPreferenceOff — no poll for a live
 // subscription with the pull-request notice at its default OFF and no page open.

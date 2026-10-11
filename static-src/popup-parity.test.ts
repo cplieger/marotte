@@ -13,11 +13,8 @@ interface Override {
 interface Popup {
   /** The modifier class on the card, "" for the task-list card which has none. */
   readonly cls: string;
-  /** What the reader calls it. */
   readonly name: string;
-  /** Markup that makes the card's own rows measurable. */
   readonly rows: () => HTMLElement[];
-  /** The element whose text is the card's BODY rung. */
   readonly bodyRow: string;
   readonly overrides?: Partial<Record<Prop, Override>>;
 }
@@ -25,7 +22,8 @@ interface Popup {
 type Prop = "paddingTop" | "paddingLeft" | "minInlineSize" | "maxBlockSize" | "bodyFontSize";
 
 /** The shared answer per property, in resolved pixels at the fine tier. --sp-2 is 8px, 14rem is
- *  224px, --fs-base is 13px. `maxBlockSize` is `min(var(--pill-max-block, 26rem), 60dvh)`, and
+ *  224px, --fs-base is 13px. `maxBlockSize` is `min(var(--pill-max-block, 26rem), 60dvh)` (the
+ *  second term is `--pill-shape-block`'s fallback), and
  *  416px is the 26rem FALLBACK rung: these cases mount a card directly, so `clampToViewport`
  *  never runs and the measured room is unset. 26rem wins over 60dvh because the browser
  *  project's viewport is a fixed 1280x720, where 60dvh is 432px. */
@@ -273,6 +271,14 @@ describe("every popup answers one geometry", () => {
         "expandable-pill pattern exists to avoid; measured, the mode list rendered " +
         "839px tall from y=12 with the room as the only bound",
     ).toBe("432px");
+  });
+
+  it("lets the chat-actions card take the whole measured room", () => {
+    // A fixed list of rows: under the shape bound a short screen scrolled its last row away.
+    document.documentElement.dataset["pointer"] = "fine";
+    const card = mount({ cls: "chat-options-card", name: "", bodyRow: "", rows: () => [] });
+    card.style.setProperty("--pill-max-block", "600px");
+    expect(getComputedStyle(card).maxBlockSize).toBe("600px");
   });
 
   it("caps every card's height WITH a way to reach what the cap hides", () => {

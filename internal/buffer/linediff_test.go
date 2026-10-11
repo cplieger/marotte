@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// bigFile builds an n-line file, one "line <i>\n" per line.
 func bigFile(n int) string {
 	var b strings.Builder
 	for i := range n {
@@ -18,7 +17,6 @@ func bigFile(n int) string {
 	return b.String()
 }
 
-// itoa is a local decimal formatter for bigFile.
 func itoa(n int) string {
 	if n == 0 {
 		return "0"
@@ -33,7 +31,6 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
-// replaceLine returns text with its 0-based idx'th line replaced by want.
 func replaceLine(text string, idx int, want string) string {
 	lines := strings.Split(text, "\n")
 	lines[idx] = want

@@ -25,15 +25,12 @@ const { toolResultID } = await import("./entry-ids.js");
 const { clearAllEntrySigs, toolCallSigs } = await import("./store-signals.js");
 const { setActive } = await import("./store.js");
 
-/** The chat every render here belongs to. It is part of the per-tool signal key, and it must be
- *  the store's ACTIVE chat: the live-anchor scan only considers the active chat's renders. */
+/** It is part of the per-tool signal key, and it must be the store's ACTIVE chat: the live-anchor
+ *  scan only considers the active chat's renders. */
 const CHAT_ID = "c-prose-run";
 setActive(CHAT_ID);
 
 initBlockRenderer({
-  pushStreamingEffect: (): void => {
-    /* noop: messages.ts owns the effect registry, and no case here reads it */
-  },
   pushEntryEffect: (): void => {
     /* noop */
   },

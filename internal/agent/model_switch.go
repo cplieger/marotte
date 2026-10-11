@@ -16,7 +16,6 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
-// resolveSwitchModel returns the effective model after the optional payload override.
 func resolveSwitchModel(chat *marotte.Chat, p marotte.SwitchModelCommand) (model string, isSwitch bool) {
 	model = chat.Model
 	if p.Model == "" || p.Model == modelAuto || p.Model == model {
@@ -25,14 +24,12 @@ func resolveSwitchModel(chat *marotte.Chat, p marotte.SwitchModelCommand) (model
 	return p.Model, true
 }
 
-// responseOK2 is the success body for commands routed through h.respond.
 var responseOK2 = map[string]bool{"ok": true}
 
 // errModelNotServed is the 409 body for a pick the account cannot run.
 var errModelNotServed = errors.New("that model is not available on this account")
 
-// cmdSwitchModel records the pick as pending_model and applies it when the chat is
-// idle. A request resolving to the model already set answers ok and writes nothing.
+// A request resolving to the model already set answers ok and writes nothing.
 func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 	if cmd.ChatID == "" {
 		return nil, command.StatusError(http.StatusBadRequest, command.ErrMissingChatID)
@@ -93,8 +90,8 @@ func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID)
 		return
 	}
 	// Resolved once: PersistModelSwitch clears Chat.Effort, so a second read would forget the tier.
-	effort := rt.coord.EffortForSwitch(ctx, model)
-	if !rt.coord.ApplyModelSwitch(ctx, chatID, model, effort) {
+	effort := rt.coord.effortForSwitch(ctx, model)
+	if !rt.coord.applyModelSwitch(ctx, chatID, model, effort) {
 		rt.clearPendingModel(ctx, chatID)
 		rt.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
 			Code:    marotte.ErrCodeSwitchFailed,
@@ -102,11 +99,10 @@ func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID)
 		}))
 		return
 	}
-	rt.coord.PersistModelSwitch(ctx, chatID,
+	rt.coord.persistModelSwitch(ctx, chatID,
 		marotte.EntryModelSwitched{From: from, To: model, Effort: effort}, chat.Usage.ContextSize)
 }
 
-// errSwitchRefused is what the reader sees when the session declined the swap.
 var errSwitchRefused = errors.New("the session refused the model switch. Try again later")
 
 // clearPendingModel drops a pick the session refused, so the badge stops pulsing.

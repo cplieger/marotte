@@ -4,7 +4,7 @@
 import { ActionError, defineAction, IDEMPOTENCY_COMMAND_FIELD } from "./index.js";
 import { send as transportSend, type SendResult } from "../transport.js";
 
-export interface ApproveSpecPhaseArgs {
+interface ApproveSpecPhaseArgs {
   /** The workspace-relative spec directory, the tab's own ref. */
   dir: string;
   /** One of `requirements` | `design` | `tasks`. */

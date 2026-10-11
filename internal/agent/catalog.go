@@ -8,10 +8,10 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 )
 
-// Catalog is the workspace's mode and model catalog as KAS reported it, held once rather than
+// catalog is the workspace's mode and model catalog as KAS reported it, held once rather than
 // per chat; a chat owns only its choice. Mode shadowing arrives already resolved; a client
 // must not re-derive it.
-type Catalog struct {
+type catalog struct {
 	// versions holds the `catalog` counter, bumped under mu on any change; nil defaults to a private registry.
 	versions *subject.Versions
 	modes    []marotte.SessionMode
@@ -19,17 +19,17 @@ type Catalog struct {
 	mu       sync.Mutex
 }
 
-// registry returns the versions the catalog mints into. Callers hold mu.
-func (c *Catalog) registry() *subject.Versions {
+// Callers hold mu.
+func (c *catalog) registry() *subject.Versions {
 	if c.versions == nil {
 		c.versions = &subject.Versions{}
 	}
 	return c.versions
 }
 
-// SetModes replaces the mode vocabulary, reporting whether it changed. An empty list is
+// setModes replaces the mode vocabulary, reporting whether it changed. An empty list is
 // ignored: session/load routinely omits it, and modes have no repair channel.
-func (c *Catalog) SetModes(modes []marotte.SessionMode) bool {
+func (c *catalog) setModes(modes []marotte.SessionMode) bool {
 	if len(modes) == 0 {
 		return false
 	}
@@ -44,7 +44,7 @@ func (c *Catalog) SetModes(modes []marotte.SessionMode) bool {
 }
 
 // SetModels replaces the model catalog, reporting whether it changed; empty is ignored as in SetModes.
-func (c *Catalog) SetModels(models []marotte.SessionModel) bool {
+func (c *catalog) SetModels(models []marotte.SessionModel) bool {
 	if len(models) == 0 {
 		return false
 	}
@@ -58,16 +58,16 @@ func (c *Catalog) SetModels(models []marotte.SessionModel) bool {
 	return true
 }
 
-// ModesModelsStamped returns both lists with the `catalog` stamp (counter read first) under one lock.
-func (c *Catalog) ModesModelsStamped() (modes []marotte.SessionMode, models []marotte.SessionModel, stamp *marotte.SubjectStamp) {
+// modesModelsStamped returns both lists with the `catalog` stamp (counter read first) under one lock.
+func (c *catalog) modesModelsStamped() (modes []marotte.SessionMode, models []marotte.SessionModel, stamp *marotte.SubjectStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	version, _ := c.registry().Current(subject.KindCatalog, "")
 	return slices.Clone(c.modes), slices.Clone(c.models), marotte.NewSubjectStamp(string(subject.KindCatalog), "", version)
 }
 
-// DefaultEffortFor returns the model's default reasoning tier, or "" for an unknown model, without cloning the catalog.
-func (c *Catalog) DefaultEffortFor(model string) string {
+// defaultEffortFor returns the model's default reasoning tier, or "" for an unknown model, without cloning the catalog.
+func (c *catalog) defaultEffortFor(model string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i := range c.models {
@@ -78,8 +78,8 @@ func (c *Catalog) DefaultEffortFor(model string) string {
 	return ""
 }
 
-// ThinkingToggleable reports whether the catalog knows the model and lets thinking be turned off.
-func (c *Catalog) ThinkingToggleable(model string) bool {
+// thinkingToggleable reports whether the catalog knows the model and lets thinking be turned off.
+func (c *catalog) thinkingToggleable(model string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i := range c.models {
@@ -90,8 +90,8 @@ func (c *Catalog) ThinkingToggleable(model string) bool {
 	return false
 }
 
-// ThinkingDefaultOff reports whether the catalog knows the model and defaults its thinking off.
-func (c *Catalog) ThinkingDefaultOff(model string) bool {
+// thinkingDefaultOff reports whether the catalog knows the model and defaults its thinking off.
+func (c *catalog) thinkingDefaultOff(model string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i := range c.models {

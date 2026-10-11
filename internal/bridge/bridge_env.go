@@ -45,7 +45,6 @@ func ParseEnvAllowlist(raw string) map[string]struct{} {
 	return out
 }
 
-// isCredentialEnv reports whether name carries a credential by its shape.
 func isCredentialEnv(name string, allowed map[string]struct{}) bool {
 	if _, ok := allowed[name]; ok {
 		return false

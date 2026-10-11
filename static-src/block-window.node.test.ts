@@ -17,7 +17,6 @@ import {
   runCardOwners,
   runResults,
   sliceTurn,
-  turnCost,
   turnOrdinalOf,
   turnSpan,
   type EntryRange,
@@ -105,12 +104,10 @@ function turn(id: string, body: readonly Entry[]): Turn {
   };
 }
 
-/** `n` consecutive `text` entries, the cheapest thing that fills a budget. */
 function texts(n: number): Entry[] {
   return Array.from({ length: n }, (_, i) => text(i + 1));
 }
 
-/** `n` consecutive `tool_call` entries. */
 function calls(n: number): Entry[] {
   return Array.from({ length: n }, (_, i) => call(i + 1, { id: `c${String(i)}` }));
 }
@@ -186,6 +183,7 @@ describe("entryRenders", () => {
     "steer_ack",
     "compaction",
     "model_switched",
+    "model_routed",
     "mode_switched",
     "turn_revert",
   ] as const)("draws a %s at its own position", (kind) => {
@@ -309,31 +307,6 @@ describe("runCardOwners", () => {
 });
 
 // --- What a turn costs -----------------------------------------------------
-
-describe("turnCost", () => {
-  it("counts the entries it draws, and how many of those are tool calls", () => {
-    const t = turn("t1", [text(1), call(2), text(3), call(4)]);
-    expect(turnCost(t)).toEqual({ entries: 4, toolCalls: 2 });
-  });
-
-  it("charges nothing for an entry that renders elsewhere", () => {
-    // The span is 4 and the COST is 1: two questions, hence `turnSpan`.
-    const t = turn("t1", [text(1), entry(2, "tool_result"), entry(3, "turn_close")]);
-    expect(turnCost(t)).toEqual({ entries: 1, toolCalls: 0 });
-    expect(turnSpan(t)).toBe(4);
-  });
-
-  it("charges nothing for a delegate's entries when the view's root is the transcript", () => {
-    const t = turn("t1", [text(1), text(2, "sub-A"), call(3, { lane: "sub-A" })]);
-    expect(turnCost(t)).toEqual({ entries: 1, toolCalls: 0 });
-    expect(turnCost(t, "sub-A")).toEqual({ entries: 2, toolCalls: 1 });
-  });
-
-  it("charges one plan and not the rest", () => {
-    const t = turn("t1", [entry(1, "plan"), entry(2, "plan"), entry(3, "plan")]);
-    expect(turnCost(t)).toEqual({ entries: 1, toolCalls: 0 });
-  });
-});
 
 // --- The prose-run snap ----------------------------------------------------
 

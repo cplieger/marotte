@@ -12,9 +12,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -38,14 +40,13 @@ func TestHandleRun_RejectsAMissingID(t *testing.T) {
 	}
 }
 
-// runReq builds GET /api/runs/{id} with the path value set.
 func runReq(id string) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+id, nil)
 	req.SetPathValue("id", id)
 	return req
 }
 
-// runReply is the decoded run reply; `state` stays raw so a spliced key cannot hide a lost tree.
+// `state` stays raw so a spliced key cannot hide a lost tree.
 type runReply struct {
 	State    json.RawMessage      `json:"state"`
 	OpenAsks []marotte.RunOpenAsk `json:"open_asks"`
@@ -73,11 +74,12 @@ func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
 		h.runs.log = newRunLog(t.TempDir())
-		if _, _, err := h.runs.log.Open(t.Context(), "wf_1", "wf_1/build", "", "c1"); err != nil {
+		build := workflow.PathKey([]string{"wf_1", "build"})
+		if _, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf_1", NodePath: build}, "c1"); err != nil {
 			t.Fatal(err)
 		}
-		h.runs.log.StopReason("wf_1", "wf_1/build", marotte.StopReasonToolUse)
-		if _, _, err := h.runs.log.CloseNode(t.Context(), "wf_1", "wf_1/build", "completed", ""); err != nil {
+		h.runs.log.stopReason("wf_1", build, marotte.StopReasonToolUse)
+		if _, _, err := h.runs.log.closeNode(t.Context(), "wf_1", build, "completed", ""); err != nil {
 			t.Fatal(err)
 		}
 
@@ -94,8 +96,8 @@ func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
 			FailureReason: marotte.ModelCallLimitStepReason,
 			FailureKind:   marotte.FailureKindModelCallLimit,
 		}
-		if got := reply.StepEnds["wf_1/build"]; got != want || len(reply.StepEnds) != 1 {
-			t.Errorf("step_ends = %+v, want only wf_1/build = %+v: %s", reply.StepEnds, want, body)
+		if got := reply.StepEnds[build]; got != want || len(reply.StepEnds) != 1 {
+			t.Errorf("step_ends = %+v, want only %s = %+v: %s", reply.StepEnds, build, want, body)
 		}
 	})
 
@@ -111,12 +113,51 @@ func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
 	})
 }
 
+// TestHandleRun_CarriesTheRunsStepStarts pins `step_starts`: KAS restamps a resumed node's startedAt, so only the
+// run log's turn_open can tell the reader when the step began.
+func TestHandleRun_CarriesTheRunsStepStarts(t *testing.T) {
+	t.Run("an open step is named with its turn_open's time", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+		h.runs.log = newRunLog(t.TempDir())
+		build := workflow.PathKey([]string{"wf_1", "build"})
+		_, opened, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf_1", NodePath: build}, "c1")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, body := getRun(t, h, "wf_1")
+
+		var reply struct {
+			StepStarts map[string]marotte.RunStepStart `json:"step_starts"`
+		}
+		if err := json.Unmarshal([]byte(body), &reply); err != nil {
+			t.Fatalf("decoding the run reply: %s", err)
+		}
+		want := marotte.RunStepStart{StartedAt: time.UnixMilli(opened.Ts).UTC().Format(time.RFC3339Nano)}
+		if got := reply.StepStarts[build]; got != want || len(reply.StepStarts) != 1 {
+			t.Errorf("step_starts = %+v, want only %s = %+v: %s", reply.StepStarts, build, want, body)
+		}
+	})
+
+	t.Run("a run with no log carries an empty object rather than null", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+
+		_, body := getRun(t, h, "wf_1")
+
+		if !strings.Contains(body, `"step_starts":{}`) {
+			t.Errorf("the body = %s, want `\"step_starts\":{}`", body)
+		}
+	})
+}
+
 // TestHandleRun_CarriesTheRunsOpenAsks pins `open_asks`, so an agent handed a deferral can find the question and its ask id.
 func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 	t.Run("an ask carries its id, question and node, and the passthrough survives", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: runChatID("wf_1"),
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "ask_a", NodeID: "review",
@@ -154,13 +195,13 @@ func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 	t.Run("another run's ask does not leak into this reply", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: runChatID("wf_1"),
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "ask_mine", Question: "mine",
 			},
 		})
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: runChatID("wf_2"),
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_2", AskID: "ask_theirs", Question: "theirs",
@@ -194,7 +235,7 @@ func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
 		// The shape reconcileNeedInput mints after a restart.
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: runChatID("wf_1"),
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "reconciled:wf_1/review", NodeID: "review",
@@ -614,7 +655,7 @@ func TestHandleAnswer(t *testing.T) {
 			methodKiroWorkflowList:    parentlessRunList("wf_1"),
 			methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
 		}
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: "run:wf_1",
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
@@ -639,7 +680,7 @@ func TestHandleAnswer(t *testing.T) {
 	t.Run("a run with no bridge is re-hosted and answers 200", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: "run:wf_1",
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
@@ -662,7 +703,7 @@ func TestHandleAnswer(t *testing.T) {
 			t.Fatalf("Setup: warming the utility session: %s", err)
 		}
 		br.startErr = errors.New("fork/exec: no such file or directory")
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: "run:wf_1",
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
@@ -680,7 +721,7 @@ func TestHandleAnswer(t *testing.T) {
 			t.Errorf("the body = %s, want a generic sentinel", rec.Body.String())
 		}
 		// Hosting precedes the claim, so a failed spawn leaves the card.
-		if !h.runs.asks.HasRun("wf_1") {
+		if !h.runs.asks.hasRun("wf_1") {
 			t.Error("the ask was consumed by a failure that never reached KAS, so the card " +
 				"is gone from every surface with the question still open")
 		}
@@ -689,7 +730,7 @@ func TestHandleAnswer(t *testing.T) {
 	t.Run("the happy path answers 200", func(t *testing.T) {
 		h, _, br := newTestHub()
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: "run:wf_1",
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
@@ -703,7 +744,6 @@ func TestHandleAnswer(t *testing.T) {
 	})
 }
 
-// pauseReq builds the request the pause route takes.
 func pauseReq(id string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+id+"/pause", nil)
 	req.SetPathValue("id", id)
@@ -823,7 +863,7 @@ func TestHandleStepStatus_SplitsAValidationRefusalFromAStartFailure(t *testing.T
 	})
 }
 
-// stepTargetInspect is a run parked at one step. Every node carries `type`: KAS's resolver considers `step` only.
+// Every node carries `type`: KAS's resolver considers `step` only.
 func stepTargetInspect(t *testing.T, workflowID, nodeID string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
@@ -844,7 +884,6 @@ func stepTargetInspect(t *testing.T, workflowID, nodeID string) json.RawMessage 
 	return raw
 }
 
-// addressableStep parks the run on nodeID and warms the utility session.
 func addressableStep(t *testing.T, h *Runtime, br *fakeBridge, workflowID, nodeID string) {
 	t.Helper()
 	br.setCallResult(methodKiroWorkflowInspect, stepTargetInspect(t, workflowID, nodeID))
@@ -860,18 +899,18 @@ func TestSetStepStatus(t *testing.T) {
 		h, _, br := newTestHub()
 		addressableStep(t, h, br, "wf_1", "review")
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: "run:wf_1",
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", NodeID: "review",
 			},
 		})
 
-		if err := h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepRunning); err != nil {
+		if err := h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepRunning); err != nil {
 			t.Fatalf("SetStepStatus(running) = %v, want nil", err)
 		}
 		// `running` re-drives the step with its default continuation, so the ask is moot.
-		if h.runs.asks.HasRun("wf_1") {
+		if h.runs.asks.hasRun("wf_1") {
 			t.Error("continuing the step left its question live")
 		}
 		settled := settledPayloads(t, h)
@@ -887,7 +926,7 @@ func TestSetStepStatus(t *testing.T) {
 	t.Run("an unknown status is still refused", func(t *testing.T) {
 		h, _, br := newTestHub()
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-		if err := h.runs.SetStepStatus(t.Context(), "wf_1", "review", "paused"); err == nil {
+		if err := h.runs.setStepStatus(t.Context(), "wf_1", "review", "paused"); err == nil {
 			t.Error("SetStepStatus(paused) = nil, want a refusal")
 		}
 	})
@@ -906,7 +945,7 @@ func TestSetStepStatus(t *testing.T) {
 			methodKiroWorkflowInspect: stepTargetInspect(t, "wf_1", "review"),
 		}
 
-		if err := h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepCompleted); err != nil {
+		if err := h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepCompleted); err != nil {
 			t.Errorf("SetStepStatus on an agent-launched run = %v, want nil", err)
 		}
 	})
@@ -1009,7 +1048,7 @@ func TestSetStepStatus_WithholdsAMistargetedWrite(t *testing.T) {
 			}
 			h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
-			err := h.runs.SetStepStatus(t.Context(), "wf_1", tc.nodeID, runStepCompleted)
+			err := h.runs.setStepStatus(t.Context(), "wf_1", tc.nodeID, runStepCompleted)
 			if tc.wantErr == nil {
 				if err != nil {
 					t.Fatalf("SetStepStatus(%q) = %v, want nil", tc.nodeID, err)
@@ -1044,7 +1083,7 @@ func TestSetStepStatus_ParamsAreFlat(t *testing.T) {
 	addressableStep(t, h, br, "wf_1", "review")
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepCompleted); err != nil {
+	if err := h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepCompleted); err != nil {
 		t.Fatalf("SetStepStatus = %v, want nil", err)
 	}
 	params := br.paramsFor(methodKiroWorkflowUpdate)
@@ -1115,7 +1154,7 @@ func TestSetStepStatus_ReadsTheReply(t *testing.T) {
 				methodKiroWorkflowInspect: stepTargetInspect(t, "wf_1", "review"),
 			}
 
-			err := h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepCompleted)
+			err := h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepCompleted)
 			if !tc.wantErr {
 				if err != nil {
 					t.Fatalf("SetStepStatus = %v, want nil", err)

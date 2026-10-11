@@ -10,6 +10,7 @@ import {
   classifyFetchError,
   withTimeout,
 } from "./index.js";
+import type { ActionErrorLike } from "./index.js";
 import { exportFilename } from "../export-filename.js";
 import { join as joinKey } from "@cplieger/keyenc";
 import { errorAbout, successAbout } from "./subject.js";
@@ -48,7 +49,6 @@ import {
 } from "../store.js";
 import { send as transportSend, type SendResult } from "../transport.js";
 
-/** The chat an action's arguments address, for its notification's subject. */
 const onChat = ({ chatID }: { readonly chatID: string }): string => chatID;
 
 // `opID` is a dispatch argument (never minted in `run()`) so a retry past the Idempotency-Key TTL
@@ -330,6 +330,97 @@ export const compactChat = transportAction<{ chatID: string }>({
   error: errorAbout(onChat, "Compact failed"),
 });
 
+/** A refused send as the ActionError a custom runner throws: the envelope's `reason` is its code,
+ *  else the transport's failure class, so a caller branches on a value. */
+function refusalOf(r: SendResult, fallback: string): ActionError {
+  const opts: { status: number; code?: string } = { status: r.status };
+  const code = r.reason ?? r.code;
+  if (code !== undefined) {
+    opts.code = code;
+  }
+  return new ActionError(r.error ?? fallback, opts);
+}
+
+/** Where one merge op stands, as the merge reply and the status read answer it
+ *  (`internal/command/tangent_merge_record.go`). */
+export type MergeAnswer =
+  | { readonly state: "admitting" | "running" | "absent" }
+  | { readonly state: "succeeded"; readonly parentChatID: string }
+  | { readonly state: "failed"; readonly message: string };
+
+/** Throws on a state it does not know and on a terminal answer missing what that state needs, so
+ *  a malformed answer fails the read and leaves the merge for the next one. */
+function decodeMergeAnswer(v: unknown): MergeAnswer {
+  const rec = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+  const state = rec["state"];
+  const text = (key: string): string => {
+    const value = rec[key];
+    if (typeof value !== "string" || value === "") {
+      throw new TypeError(`merge answer: a ${String(state)} merge carries no ${key}`);
+    }
+    return value;
+  };
+  switch (state) {
+    case "admitting":
+    case "running":
+    case "absent":
+      return { state };
+    case "succeeded":
+      return { state, parentChatID: text("parent_chat_id") };
+    case "failed":
+      return { state, message: text("message") };
+    default:
+      throw new TypeError(`merge answer: unknown state ${JSON.stringify(state)}`);
+  }
+}
+
+/** A lost reply, a transient status, or the op's first attempt still being admitted: a resend
+ *  of the same op_id answers that attempt's state rather than starting another merge. */
+function retryMerge(err: ActionErrorLike): boolean {
+  return retryNetwork(err) || err.code === "in_progress";
+}
+
+/** Whether a failed merge was refused before the server accepted it: a 4xx no retry can change.
+ *  Any other failure may be an accepted merge whose answer was lost. */
+export function mergeRefused(err: ActionErrorLike): boolean {
+  return err.status !== undefined && err.status >= 400 && err.status < 500 && !retryMerge(err);
+}
+
+/** A custom runner so the envelope's `reason` reaches {@link retryMerge}. No Idempotency-Key:
+ *  the server's op_id record is what makes a resend safe. `error: false`: `mergeTangentChat`
+ *  owns what the outcome tells the user. */
+export const mergeTangent = defineAction<{ chatID: string; opID: string }, MergeAnswer>({
+  name: "chat.merge_tangent",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  retryable: retryMerge,
+  retry: RETRY_STANDARD,
+  run: async ({ chatID, opID }, signal) => {
+    const r: SendResult = await transportSend(
+      { type: "merge_tangent", chat_id: chatID, payload: { op_id: opID } },
+      { signal, reportSendState: false },
+    );
+    if (!r.ok) {
+      throw refusalOf(r, `merge failed (${String(r.status)})`);
+    }
+    return decodeMergeAnswer(r.body);
+  },
+  error: false,
+});
+
+/** The server's word on one merge op, for an admission whose answer never arrived. */
+export const readMergeStatus = apiAction<{ chatID: string; opID: string }, MergeAnswer>({
+  name: "chat.merge_status",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  request: ({ chatID, opID }) => ({
+    method: "GET",
+    path: `/api/chats/${encodeURIComponent(chatID)}/merges/${encodeURIComponent(opID)}`,
+  }),
+  decode: decodeMergeAnswer,
+  error: false,
+});
+
 /** Delivers a message into the running turn (`_session/steer`). Optimistic; a refusal un-draws
  *  the row and restores the composer text. A custom runner: it adopts the 200's authoritative
  *  `steer_id` so the chip confirms without `steer_queued`, and lifts `reason` into the
@@ -357,12 +448,7 @@ export const steerChat = defineAction<
     }
     const r: SendResult = await transportSend(cmd, { signal, reportSendState: false });
     if (!r.ok) {
-      const opts: { status: number; code?: string } = { status: r.status };
-      const code = r.reason ?? r.code;
-      if (code !== undefined) {
-        opts.code = code;
-      }
-      throw new ActionError(r.error ?? `send failed with status ${String(r.status)}`, opts);
+      throw refusalOf(r, `send failed with status ${String(r.status)}`);
     }
     const steerID = steerIDOf(r.body);
     if (steerID !== "") {
@@ -395,7 +481,13 @@ function steerIDOf(body: unknown): string {
  *  from the server's header broadcast, so every device shows one list. Lifts `reason` like
  *  `steerChat`; `error: false`. */
 export const queuePrompt = defineAction<
-  { chatID: string; text: string; messageID: string; attachments?: readonly AttachedFile[] },
+  {
+    chatID: string;
+    text: string;
+    messageID: string;
+    attachments?: readonly AttachedFile[];
+    displayText?: string;
+  },
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- run consumes the POST body itself, no result for a caller
   void
 >({
@@ -405,13 +497,14 @@ export const queuePrompt = defineAction<
   dedupe: (args) => joinKey("chat.queue_prompt", args.chatID, args.messageID),
   idempotencyKey: true,
   error: false,
-  run: async ({ chatID, text, messageID, attachments }, signal, ctx) => {
+  run: async ({ chatID, text, messageID, attachments, displayText }, signal, ctx) => {
     const cmd: Parameters<typeof transportSend>[0] = {
       type: "queue_prompt",
       chat_id: chatID,
       payload: {
         text,
         message_id: messageID,
+        ...(displayText !== undefined ? { display_text: displayText } : {}),
         ...(attachments !== undefined && attachments.length > 0
           ? { attachments: attachments.map((a) => ({ path: a.path, name: a.name })) }
           : {}),
@@ -422,12 +515,7 @@ export const queuePrompt = defineAction<
     }
     const r: SendResult = await transportSend(cmd, { signal, reportSendState: false });
     if (!r.ok) {
-      const opts: { status: number; code?: string } = { status: r.status };
-      const code = r.reason ?? r.code;
-      if (code !== undefined) {
-        opts.code = code;
-      }
-      throw new ActionError(r.error ?? `send failed (${String(r.status)})`, opts);
+      throw refusalOf(r, `send failed (${String(r.status)})`);
     }
   },
 });
@@ -486,12 +574,7 @@ export const removeSteer = defineAction<{ chatID: string; steerID: string }, voi
       { signal, reportSendState: false },
     );
     if (!r.ok) {
-      const opts: { status: number; code?: string } = { status: r.status };
-      const code = r.reason ?? r.code;
-      if (code !== undefined) {
-        opts.code = code;
-      }
-      throw new ActionError(r.error ?? `delete failed (${String(r.status)})`, opts);
+      throw refusalOf(r, `delete failed (${String(r.status)})`);
     }
   },
 });
@@ -539,34 +622,6 @@ export const loadSessions = apiAction<
   request: () => ({ method: "GET", path: "/api/sessions" }),
   decode: decodeSessionListResponse,
   error: "Could not load previous sessions",
-});
-
-// Adopts a listed KAS session as a NEW chat; the transcript arrives from session/load replay.
-// `opID` matters more than for a create: minting per attempt binds two chats to one session.
-
-export const resumeSession = defineAction<
-  { opID: string; sessionID: string; name: string },
-  CreatedChat | null
->({
-  name: "chat.resume_session",
-  networkMode: "always",
-  idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  run: async ({ opID, sessionID, name }, signal, ctx) => {
-    const r = await transportSend(
-      {
-        type: "resume_session",
-        payload: { session_id: sessionID, name, op_id: opID },
-        ...(ctx?.idempotencyKey === undefined
-          ? {}
-          : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
-      },
-      { signal, reportSendState: false },
-    );
-    return chatFromReply(r, signal, "resume a session");
-  },
-  error: "Could not resume that session",
 });
 
 // The server resumes the parent's bridge and calls `session/fork`; nothing is copied client-side.
@@ -690,6 +745,8 @@ interface SendPromptArgs {
   messageID: string;
   model: string;
   attachments?: readonly unknown[];
+  /** The label of a message marotte writes on the user's behalf; never set on a typed one. */
+  displayText?: string;
 }
 
 export const sendPrompt = defineAction<
@@ -710,7 +767,7 @@ export const sendPrompt = defineAction<
     }
   },
   run: async (args, signal, ctx) => {
-    const { chatID, text, messageID, model, attachments } = args;
+    const { chatID, text, messageID, model, attachments, displayText } = args;
     const r = await transportSend(
       {
         type: "prompt",
@@ -724,6 +781,7 @@ export const sendPrompt = defineAction<
           text,
           message_id: messageID,
           model,
+          display_text: displayText,
           attachments:
             attachments !== undefined && attachments.length > 0 ? attachments : undefined,
         },
@@ -764,14 +822,15 @@ export const sendPrompt = defineAction<
  *  constant exists for a command error body. */
 const ALREADY_ANSWERED = "already_answered";
 
-/** The refusal code of an always answer whose rule could not be saved: the ask is still
- *  pending server-side, so its card is offered again. */
-export const ALWAYS_RULE_NOT_SAVED = "always_rule_not_saved";
+/** The Go sentinel `errAskWithdrawn`, served as 410 `{"error":"ask_withdrawn"}`. Matched by value,
+ *  like `ALREADY_ANSWERED`. */
+const ASK_WITHDRAWN = "ask_withdrawn";
 
 /** Answered, `superseded` (another surface answered first; the server takes one answer per id,
- *  so intent was met; silent, as decision-dock.ts announces it), or failed. A custom runner,
- *  because `transportAction`'s `run()` throws on every `!ok`. */
-type DecisionAnswer = "answered" | "superseded";
+ *  so intent was met; silent, as decision-dock.ts announces it), `withdrawn` (the ask settled
+ *  before the answer reached the agent; its own settlement retires the card), or failed. A custom
+ *  runner, because `transportAction`'s `run()` throws on every `!ok`. */
+type DecisionAnswer = "answered" | "superseded" | "withdrawn";
 
 async function answerDecision(
   cmd: { type: string; chat_id: string; payload: Record<string, unknown> },
@@ -789,6 +848,9 @@ async function answerDecision(
   }
   if (r.status === 409 && r.error === ALREADY_ANSWERED) {
     return "superseded";
+  }
+  if (r.status === 410 && r.error === ASK_WITHDRAWN) {
+    return "withdrawn";
   }
   const code = r.reason ?? r.code;
   throw new ActionError(r.error ?? `send failed with status ${String(r.status)}`, {

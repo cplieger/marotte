@@ -40,7 +40,7 @@ func TestSyncProcessLive_TogglesReadBeforeAHandEditCannotLandAfterTheOpenThatRea
 		rewriteConfigByHand(t, configDir, `{"notify_pr_status":false}`)
 		opened := make(chan error, 1)
 		go func() {
-			_, err := h.coord.OpenBridge(t.Context(), "c1", "")
+			_, err := h.coord.openBridge(t.Context(), "c1", "")
 			opened <- err
 		}()
 		synctest.Wait()
@@ -96,7 +96,7 @@ func TestOpenBridge_TwoConcurrentOpensOfOneChatPushOnce(t *testing.T) {
 		var wg sync.WaitGroup
 		for range 2 {
 			wg.Go(func() {
-				if _, err := h.coord.OpenBridge(context.Background(), "c1", ""); err != nil {
+				if _, err := h.coord.openBridge(context.Background(), "c1", ""); err != nil {
 					t.Errorf("OpenBridge: %v", err)
 				}
 			})
@@ -122,14 +122,14 @@ func TestOpenBridge_AWedgedPushToOneChatDoesNotDelayOpeningAnother(t *testing.T)
 		wedgedDone := make(chan struct{})
 		go func() {
 			defer close(wedgedDone)
-			_, _ = h.coord.OpenBridge(context.Background(), "c1", "")
+			_, _ = h.coord.openBridge(context.Background(), "c1", "")
 		}()
 		synctest.Wait()
 
 		otherDone := make(chan struct{})
 		go func() {
 			defer close(otherDone)
-			_, _ = h.coord.OpenBridge(context.Background(), "c2", "")
+			_, _ = h.coord.openBridge(context.Background(), "c2", "")
 		}()
 		synctest.Wait()
 		select {
@@ -175,7 +175,7 @@ func TestRunBridge_AnEditLandingDuringItsSpawnReachesItOnceStarted(t *testing.T)
 				methodKiroWorkflowList:        json.RawMessage(`{"runs":[]}`),
 			},
 			start: func(t *testing.T, h *Runtime) {
-				if _, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil); err != nil {
+				if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
 					t.Fatalf("Launch: %v", err)
 				}
 			},
@@ -225,7 +225,7 @@ func TestOpenBridge_AHandEditReachesALiveRunBridgeFromAChatOpen(t *testing.T) {
 			br.callResults = replies
 			return br
 		})
-		if _, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil); err != nil {
+		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
 			t.Fatalf("Launch: %v", err)
 		}
 		run := h.bridge.mgr.get(runChatID("wf_9"))

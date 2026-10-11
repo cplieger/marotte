@@ -10,8 +10,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// headerFileName is the record inside a chat's directory; a directory without one
-// is not a chat.
+// A directory without one is not a chat.
 const headerFileName = "chat.json"
 
 // RetentionHeader is the projection of a chat a retention decision reads. Nothing

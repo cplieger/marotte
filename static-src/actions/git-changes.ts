@@ -14,10 +14,9 @@ interface GitRepoFilesArgs extends GitRepoArgs {
 }
 
 /** Result envelope of every /api/git mutation. decodeGitResult throws on the error arm, so a
- *  RESOLVED dispatch is a genuine success and `error` is never set on returned values. */
+ *  RESOLVED dispatch is a genuine success. */
 export interface GitCmdResult {
   output?: string;
-  error?: string;
 }
 
 function liftOutput(parsed: unknown): GitCmdResult {

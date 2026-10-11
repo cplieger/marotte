@@ -36,14 +36,14 @@ func ParseACPArgs(raw string) []string {
 	if len(fields) == 0 {
 		return nil
 	}
-	kept := FilterACPArgs(fields)
+	kept := filterACPArgs(fields)
 	slog.Info("appending extra kiro-cli acp flags",
 		"acp_args_count", len(kept), "refused_count", len(fields)-len(kept))
 	return kept
 }
 
-// FilterACPArgs drops flags owned by marotte's wire and session configuration.
-func FilterACPArgs(fields []string) []string {
+// filterACPArgs drops flags owned by marotte's wire and session configuration.
+func filterACPArgs(fields []string) []string {
 	kept := make([]string, 0, len(fields))
 	skipValue := false
 	for _, f := range fields {

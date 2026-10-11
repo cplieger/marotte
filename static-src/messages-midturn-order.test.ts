@@ -75,7 +75,6 @@ function bodyRows(): string[] {
     .map((row) => row.dataset["entryId"] ?? "open");
 }
 
-/** Every element carrying the streaming caret, resolved to the row it sits in. */
 function streamingRows(): string[] {
   return [...viewRoot().querySelectorAll<HTMLElement>(".streaming")].map(
     (elm) => elm.closest<HTMLElement>(".turn-body > *")?.dataset["entryId"] ?? "open",

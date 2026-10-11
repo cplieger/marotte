@@ -12,6 +12,7 @@ import {
   invalidateRunControls,
   noteRunChat,
   noteRunLabel,
+  noteRunResumed,
   noteRunLive,
   noteRunSettled,
   hasLiveRunForChat,
@@ -21,7 +22,7 @@ import {
   runLabelOf,
   sealRunEntry,
 } from "../run-store.js";
-import { submitPrompt } from "../submit.js";
+import { submitLabelled } from "../submit.js";
 import { isBroken } from "../turn-severity.js";
 import { payloadOf } from "../turns.js";
 import { isThinking } from "../store.js";
@@ -33,16 +34,15 @@ import {
   dropTurnDecisions,
 } from "../decision-dock.js";
 import { answerRunInput, continueRunStep } from "../actions/runs.js";
-import { closeNotificationsFor, notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
+import { closeNotificationsFor } from "../notify.js";
 import { runTarget } from "../push-subject.js";
 
 // Toasts at each end of a run. A START only for a SCHEDULED run (manual and agent launches already
 // have attention); a COMPLETION for any run. `scheduled` must come from the server: a manual launch
 // is parentless too.
 
-/** Runs whose start has already been announced. `run_start` re-fires on
- *  every resume, so without this a scheduled run produces duplicate
- *  toasts. Cleared when the run reports finished. */
+/** `run_start` re-fires on every resume, so without this a scheduled run produces duplicate toasts.
+ *  Cleared when the run reports finished. */
 const announcedStarts = new Set<string>();
 
 function runLabel(workflowID: string, name: string | undefined): string {
@@ -83,6 +83,7 @@ onSSE("run_started", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
   noteRunLabel(p.workflow_id, p.name);
+  noteRunResumed(p.workflow_id, p.initiator ?? "", p.initiator_reason ?? "");
   // A start frame is proof of execution: it fires on the launch and again on every
   // resume, so it is exactly the moment frames begin arriving into this chat.
   noteRunLive(p.workflow_id, chatID, true);
@@ -182,7 +183,6 @@ onSSE("turn_closed", (_chatID, p) => {
   }
 });
 
-/** The workflow id a run-scoped frame carries, or `""` for a chat's own log. */
 function forRun(p: { workflow_id?: string }): string {
   return p.workflow_id ?? "";
 }
@@ -196,14 +196,20 @@ async function deferToParentAgent(chatID: string, workflowID: string): Promise<v
     `Please answer the open question on workflow run ${workflowID}.\n` +
     `Read it with GET /api/runs/${workflowID} (its open_asks), then ` +
     `POST /api/runs/${workflowID}/answer with {"ask_id": "<that ask's id>", "text": "<your answer>"}.`;
-  if ((await submitPrompt(chatID, text)) === "failed") {
+  if (
+    (await submitLabelled(
+      chatID,
+      text,
+      `Deferred the open question on workflow run ${workflowID}`,
+    )) === "failed"
+  ) {
     throw new Error(`the deferral prompt for run ${workflowID} was refused`);
   }
 }
 
 // A workflow STEP asked a person and its run is parked; a payload, not an invalidation, because
 // KAS's pause reason says nothing of the question. The ENVELOPE's chat id puts one Decision in the
-// parent tab's dock and the run tab's. `notifyIfHidden`: it blocks the run indefinitely.
+// parent tab's dock and the run tab's. Its notification is the server's `notification` frame.
 onSSE("run_input_needed", (chatID, p) => {
   trackRun(p.workflow_id);
   // After a reload the replayed ask can be the FIRST frame for a run; without the chat the footer
@@ -216,11 +222,6 @@ onSSE("run_input_needed", (chatID, p) => {
   // Live but PARKED: `executing` false, so the row's mark withholds. `parentChat` already refused
   // both spellings of "no launching chat".
   noteRunLive(p.workflow_id, parentChat, false);
-  notifyIfHidden(
-    NOTIFY_TITLE,
-    "A workflow step is waiting for your answer",
-    runTarget(p.workflow_id),
-  );
   pushDecision({
     kind: "run_input",
     chatID,

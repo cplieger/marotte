@@ -34,12 +34,13 @@ import {
 import { beginAdopt, adoptCommitted, opFailed } from "./tabs-sync.js";
 import { hasPendingDecision, dropDecisions } from "./decision-dock.js";
 import { forgetDeferredCue } from "./agent-finished-cue.js";
-import { submitPrompt } from "./submit.js";
+import { submitLabelled, submitPrompt } from "./submit.js";
 import { chatSkeleton, paintPlaceholder } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import {
   mountChatView,
   setLoadMore,
+  rebaseLoadMore,
   loadTurnRail,
   pointTurnRail,
   activeTranscriptView,
@@ -164,10 +165,7 @@ function paintChatLoadError(message: string, id: string): void {
   (activeTranscriptView() ?? $.messages).appendChild(box);
 }
 
-/**
- * Re-read the chat list for a tab whose chat the store lacks and re-activate if it appears.
- * One attempt per activation; the generation check makes fire-and-forget safe.
- */
+/** One attempt per activation; the generation check makes fire-and-forget safe. */
 async function healMissingChat(id: string, gen: number): Promise<void> {
   if (!(await loadList())) {
     return;
@@ -312,6 +310,7 @@ function setupLoadMore(chatID: string): void {
             return;
           }
           void loadMessages(chatID, oldest).then(() => {
+            rebaseLoadMore();
             // scroll.ts watches for this removal as the "load complete" signal.
             // Scoped to this chat's view: parked views keep the id resident too.
             transcriptViewFor(chatID)?.querySelector(`[id="load-more-skeleton"]`)?.remove();
@@ -554,6 +553,22 @@ export async function createPlannerSession(): Promise<void> {
     return;
   }
   void setMode.dispatch({ chatID: id, modeID: "plan" });
+}
+
+/**
+ * A new chat in the "spec" mode, then `prompt`, shown in the transcript as `displayText`. A
+ * refused mode switch sends nothing; its action has already raised the error.
+ */
+export async function createSpecSession(prompt: string, displayText: string): Promise<void> {
+  const id = await createSession();
+  if (id === "") {
+    return;
+  }
+  const switched = await setMode.dispatch({ chatID: id, modeID: "spec" }).outcome;
+  if (switched.status !== "success") {
+    return;
+  }
+  void submitLabelled(id, prompt, displayText);
 }
 
 /**

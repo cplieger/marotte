@@ -139,7 +139,7 @@ function mountToolsDOM(): void {
   add("div", "tool-search-results").className = "list-container tool-search-results";
 }
 
-function addPill(id: string, label: string, aria: string): HTMLButtonElement {
+function addPill(id: string, label: string, aria: string): void {
   const btn = document.createElement("button");
   btn.id = id;
   btn.type = "button";
@@ -150,7 +150,6 @@ function addPill(id: string, label: string, aria: string): HTMLButtonElement {
   span.textContent = label;
   btn.appendChild(span);
   document.body.appendChild(btn);
-  return btn;
 }
 
 function tool(overrides: Partial<ToolInfo> & { name: string }): ToolInfo {

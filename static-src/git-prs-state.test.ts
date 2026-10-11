@@ -88,7 +88,6 @@ function shape(): string[] {
   );
 }
 
-/** The contributions elsewhere as `forge path#number`, in their order. */
 function elsewhere(): string[] {
   return getElsewherePRs().map((r) => `${r.forge_id} ${r.pr.repo}#${String(r.pr.number)}`);
 }
@@ -127,7 +126,6 @@ describe("the groups an inventory derives", () => {
       owner: "org",
       name: "repo",
       forge_kind: "github",
-      forge_host: "github.com",
     });
   });
 
@@ -214,7 +212,7 @@ describe("the contributions elsewhere", () => {
     });
     expect(shape()).toEqual(["github:github.com org/repo: 5"]);
     expect(elsewhere()).toEqual(["github:github.com else/where#77"]);
-    expect(getElsewherePRs()[0]).toMatchObject({ forge_kind: "github", forge_host: "github.com" });
+    expect(getElsewherePRs()[0]).toMatchObject({ forge_id: "github:github.com" });
   });
 
   it("lists an authored row under a listed owner in its repository's group before that owner's walk reaches it", () => {

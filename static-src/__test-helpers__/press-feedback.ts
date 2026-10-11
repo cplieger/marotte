@@ -54,7 +54,6 @@ export function outcomesOf(btn: HTMLElement): string[] {
   return seen;
 }
 
-/** Let every queued microtask and one task run. */
 export async function settle(): Promise<void> {
   await new Promise((r) => setTimeout(r, 0));
 }

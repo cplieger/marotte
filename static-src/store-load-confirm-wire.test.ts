@@ -37,7 +37,6 @@ vi.mock("./actions/index.js", async (importOriginal) => ({
 /** Every URL the stub was asked for, so a case can assert the request as well as the verdict. */
 let asked: string[] = [];
 
-/** Answer the next fetch with a real Response. */
 function answerWith(status: number, body: string | null, contentType = "application/json"): void {
   vi.stubGlobal("fetch", (url: unknown) => {
     asked.push(String(url));

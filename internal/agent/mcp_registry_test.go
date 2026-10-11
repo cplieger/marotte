@@ -17,8 +17,8 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// fakeMCPConfig is the filter tests' name census. The sets are independent so a test can stage a
-// configured-but-disabled name; enabledConfig builds the nested shape.
+// The sets are independent so a test can stage a configured-but-disabled name; enabledConfig builds
+// the nested shape.
 type fakeMCPConfig struct {
 	enabled    map[string]struct{}
 	configured map[string]struct{}
@@ -58,7 +58,7 @@ func newHubWithMCPConfig(cfg mcpNameSets) *Runtime {
 func TestMCPRegistry_RecordConnectedPopulatesSnapshot(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "github", marotte.MCPSource{}, nil, nil, nil, nil)
-	snap := h.mcpRegistry.Snapshot()
+	snap := h.mcpRegistry.snapshot()
 	if len(snap) != 1 {
 		t.Fatalf("snapshot = %+v, want 1 server", snap)
 	}
@@ -72,7 +72,7 @@ func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
 	h.mcpRegistry.RecordConnected(t.Context(), "linear", marotte.MCPSource{}, nil, nil, nil, nil)
 	h.mcpRegistry.RecordOAuth(t.Context(), "linear", marotte.MCPSource{}, "https://oauth.example/auth")
 
-	snap := h.mcpRegistry.Snapshot()
+	snap := h.mcpRegistry.snapshot()
 	if len(snap) != 1 {
 		t.Fatalf("snapshot = %+v", snap)
 	}
@@ -89,7 +89,7 @@ func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
 	before := h.bus.fanout.Position().Head
 	h.mcpRegistry.RecordInitFailure(t.Context(), "broken", marotte.MCPSource{}, "connection refused")
 
-	snap := h.mcpRegistry.Snapshot()
+	snap := h.mcpRegistry.snapshot()
 	if len(snap) != 1 || snap[0].Name != "broken" {
 		t.Fatalf("snapshot = %+v", snap)
 	}
@@ -119,7 +119,7 @@ func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 	before := h.bus.fanout.Position().Head
 	h.mcpRegistry.clearAll(t.Context())
 
-	if len(h.mcpRegistry.Snapshot()) != 0 {
+	if len(h.mcpRegistry.snapshot()) != 0 {
 		t.Error("clearAll left entries in registry")
 	}
 	types := extractTypes(t, bufferedSince(h, before))
@@ -180,7 +180,7 @@ func TestMCPRegistry_RecordsUnconfiguredServerWithOrigin(t *testing.T) {
 			h := newHubWithMCPConfig(enabledConfig("mine"))
 			h.mcpRegistry.RecordConnected(t.Context(), "theirs", tc.src, []string{"do_thing"}, nil, nil, nil)
 
-			snap := h.mcpRegistry.Snapshot()
+			snap := h.mcpRegistry.snapshot()
 			if len(snap) != 1 {
 				t.Fatalf("snapshot = %+v, want the unconfigured server recorded", snap)
 			}
@@ -206,7 +206,7 @@ func TestMCPRegistry_WireOriginBeatsTheName(t *testing.T) {
 	src := marotte.MCPSource{Origin: "workspace", Root: "/workspace/app"}
 	h.mcpRegistry.RecordConnected(t.Context(), "github", src, nil, nil, nil, nil)
 
-	snap := h.mcpRegistry.Snapshot()
+	snap := h.mcpRegistry.snapshot()
 	if len(snap) != 1 {
 		t.Fatalf("snapshot = %+v, want one row", snap)
 	}
@@ -223,7 +223,7 @@ func TestMCPRegistry_RecordsAWorkspaceServerShadowingADisabledOne(t *testing.T) 
 	src := marotte.MCPSource{Origin: "workspace", Root: "/workspace/app"}
 	h.mcpRegistry.RecordConnected(t.Context(), "github", src, nil, nil, nil, nil)
 
-	snap := h.mcpRegistry.Snapshot()
+	snap := h.mcpRegistry.snapshot()
 	if len(snap) != 1 {
 		t.Fatalf("snapshot = %+v, want the workspace server recorded", snap)
 	}
@@ -243,12 +243,12 @@ func TestMCPRegistry_UserStampOnADisabledOwnedNameIsMarottes(t *testing.T) {
 			cfg.configured["github"] = struct{}{}
 			h := newHubWithMCPConfig(cfg)
 			h.mcpRegistry.RecordConnected(t.Context(), "github", src, nil, nil, nil, nil)
-			snap := h.mcpRegistry.Snapshot()
+			snap := h.mcpRegistry.snapshot()
 			if len(snap) != 1 || snap[0].Origin != marotte.OriginUser || snap[0].Shadows {
 				t.Fatalf("after RecordConnected: snapshot = %+v, want one user row with no shadow mark", snap)
 			}
 			h.mcpRegistry.RecordInitFailure(t.Context(), "github", src, "x")
-			snap = h.mcpRegistry.Snapshot()
+			snap = h.mcpRegistry.snapshot()
 			if len(snap) != 1 || snap[0].Origin != marotte.OriginUser || snap[0].State != mcpStateFailed {
 				t.Errorf("after RecordInitFailure: snapshot = %+v, want one failed user row", snap)
 			}
@@ -261,7 +261,7 @@ func TestMCPRegistry_NoMetaFallsBackToTheName(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("github"))
 	h.mcpRegistry.RecordConnected(t.Context(), "github", marotte.MCPSource{}, nil, nil, nil, nil)
 
-	snap := h.mcpRegistry.Snapshot()
+	snap := h.mcpRegistry.snapshot()
 	if len(snap) != 1 || snap[0].Origin != marotte.OriginUser || snap[0].Shadows {
 		t.Errorf("snapshot = %+v, want one user row with no shadow mark", snap)
 	}
@@ -280,7 +280,7 @@ func TestMCPRegistry_UserStampOnlyAttributesANameMarotteHolds(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newHubWithMCPConfig(enabledConfig("github"))
 			h.mcpRegistry.RecordConnected(t.Context(), tc.server, marotte.MCPSource{Origin: "user"}, nil, nil, nil, nil)
-			snap := h.mcpRegistry.Snapshot()
+			snap := h.mcpRegistry.snapshot()
 			if len(snap) != 1 {
 				t.Fatalf("snapshot = %+v, want one row", snap)
 			}
@@ -297,11 +297,11 @@ func TestMCPRegistry_StampsUserOriginOnConfiguredServers(t *testing.T) {
 	ctx := t.Context()
 	h.mcpRegistry.RecordConnected(ctx, "github", marotte.MCPSource{}, nil, nil, nil, nil)
 	h.mcpRegistry.RecordOAuth(ctx, "github", marotte.MCPSource{}, "https://oauth.example/auth")
-	if got := h.mcpRegistry.Snapshot()[0].Origin; got != marotte.OriginUser {
+	if got := h.mcpRegistry.snapshot()[0].Origin; got != marotte.OriginUser {
 		t.Errorf("origin after recordOAuth = %q, want %q", got, marotte.OriginUser)
 	}
 	h.mcpRegistry.RecordInitFailure(ctx, "github", marotte.MCPSource{}, "boom")
-	if got := h.mcpRegistry.Snapshot()[0].Origin; got != marotte.OriginUser {
+	if got := h.mcpRegistry.snapshot()[0].Origin; got != marotte.OriginUser {
 		t.Errorf("origin after recordInitFailure = %q, want %q", got, marotte.OriginUser)
 	}
 }
@@ -341,7 +341,7 @@ func TestMCPRegistry_RecordDisabled(t *testing.T) {
 			h := newHubWithMCPConfig(tc.cfg())
 			h.mcpRegistry.RecordDisabled(t.Context(), "mine", tc.src)
 
-			snap := h.mcpRegistry.Snapshot()
+			snap := h.mcpRegistry.snapshot()
 			if !tc.wantRow {
 				if len(snap) != 0 {
 					t.Fatalf("snapshot = %+v, want no row", snap)
@@ -424,7 +424,7 @@ func TestMCPRegistry_SnapshotIsStableAlphabetically(t *testing.T) {
 	h.mcpRegistry.RecordConnected(t.Context(), "mike", marotte.MCPSource{}, nil, nil, nil, nil)
 
 	names := make([]string, 0)
-	for _, s := range h.mcpRegistry.Snapshot() {
+	for _, s := range h.mcpRegistry.snapshot() {
 		names = append(names, s.Name)
 	}
 	if !slices.IsSorted(names) {
@@ -437,7 +437,7 @@ func TestMCPRegistry_OnChangeFiresOutsideLock(t *testing.T) {
 	var mu sync.Mutex
 	count := 0
 	done := make(chan struct{}, 10)
-	h.mcpRegistry.SetOnChange(func() {
+	h.mcpRegistry.setOnChange(func() {
 		mu.Lock()
 		count++
 		mu.Unlock()
@@ -483,7 +483,7 @@ func TestMCPRegistry_SignalsInsideOneWindowFireOneCallback(t *testing.T) {
 		start := time.Now()
 		var mu sync.Mutex
 		var firedAt []time.Duration
-		h.mcpRegistry.SetOnChange(func() {
+		h.mcpRegistry.setOnChange(func() {
 			mu.Lock()
 			firedAt = append(firedAt, time.Since(start))
 			mu.Unlock()
@@ -512,7 +512,7 @@ func TestMCPRegistry_SignalsBeyondTheWindowFireSeparateCallbacks(t *testing.T) {
 		defer close(h.lifecycle.done) // see the sibling test for why not t.Cleanup
 		var mu sync.Mutex
 		calls := 0
-		h.mcpRegistry.SetOnChange(func() {
+		h.mcpRegistry.setOnChange(func() {
 			mu.Lock()
 			calls++
 			mu.Unlock()
@@ -574,7 +574,7 @@ func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 			}
 			b.ResetTimer()
 			for b.Loop() {
-				_ = h.mcpRegistry.Snapshot()
+				_ = h.mcpRegistry.snapshot()
 			}
 		})
 	}
@@ -655,7 +655,6 @@ func TestMCPRegistry_PoolChangesAreAnnounced(t *testing.T) {
 	}
 }
 
-// filterTypes keeps the entries of types equal to want.
 func filterTypes(types []string, want string) []string {
 	var out []string
 	for _, ty := range types {
@@ -666,8 +665,6 @@ func filterTypes(types []string, want string) []string {
 	return out
 }
 
-// onPoolSelected runs fn between the pool endpoint's bridge selection and its
-// pool read, for the rest of the test.
 func onPoolSelected(t *testing.T, fn func()) {
 	t.Helper()
 	prev := poolSelected

@@ -9,15 +9,13 @@ type runRoutes struct {
 	epoch func() string
 }
 
-// register mounts every run and schedule endpoint.
 func (rr *runRoutes) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/runs/{id}", rr.handleRun)
 	mux.HandleFunc("GET /api/runs/{id}/controls", rr.handleControls)
 	mux.HandleFunc("GET /api/runs/live", rr.handleLiveRuns)
-	// The exact form beside the subtree, or ServeMux 307s it to the slash form, which canonicalAPIPath cannot see.
-	mux.HandleFunc("GET /api/runs/{id}/steps", rr.handleStepTranscript)
-	// A trailing wildcard: node paths contain "/", and canonicalAPIPath refuses an encoded one.
-	mux.HandleFunc("GET /api/runs/{id}/steps/{path...}", rr.handleStepTranscript)
+	// {path} is one percent-encoded workflow.PathKey: ServeMux splits the ESCAPED path, so a node id's "/"
+	// travels as %2F inside the segment.
+	mux.HandleFunc("GET /api/runs/{id}/steps/{path}", rr.handleStepTranscript)
 	mux.HandleFunc("GET /api/runs/{id}/turns/{turn}", rr.handleTurnRange)
 	mux.HandleFunc("POST /api/runs", rr.handleLaunch)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", rr.handleCancel)
@@ -29,6 +27,7 @@ func (rr *runRoutes) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/runs/{id}/extend", rr.handleExtend)
 	mux.HandleFunc("POST /api/runs/{id}/finish-loop", rr.handleFinishLoop)
 	mux.HandleFunc("POST /api/runs/{id}/answer", rr.handleAnswer)
+	mux.HandleFunc("POST /api/runs/{id}/steps/{path}/{verb}", rr.handleStepPost)
 	mux.HandleFunc("GET /api/recipes", rr.handleRecipes)
 	rr.registerSchedule(mux)
 }

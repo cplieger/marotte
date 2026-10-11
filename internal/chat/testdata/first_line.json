@@ -1,0 +1,55 @@
+{
+  "_comment": [
+    "A turn's first_line: its prompt's first line, cut at the first newline, split on Unicode",
+    "White_Space (Go's strings.Fields), rejoined with one space and capped at 120 runes plus an",
+    "ellipsis. Hand-written: this file is the rule, not a recording of either side.",
+    "",
+    "The server writes it into the session index (entrylog.go firstLineOf) and the client",
+    "derives it for a turn still in the store's window (rail-merge.ts firstLine). They must",
+    "agree, or a turn's preview changes as it pages in or out of that window.",
+    "TestEntryLog_RailRowFirstLineContract (Go) and rail-merge.node.test.ts (TypeScript) both",
+    "read every case."
+  ],
+  "cases": [
+    {
+      "name": "collapses whitespace in the first line and drops the rest",
+      "prompt": "  fix   the\trail  \nplease",
+      "first_line": "fix the rail"
+    },
+    {
+      "name": "a NEL is white space",
+      "prompt": "a\u0085b",
+      "first_line": "a b"
+    },
+    {
+      "name": "a no-break space is white space",
+      "prompt": "a\u00a0b",
+      "first_line": "a b"
+    },
+    {
+      "name": "an ideographic space is white space",
+      "prompt": "a\u3000b",
+      "first_line": "a b"
+    },
+    {
+      "name": "a byte order mark inside the line is not white space",
+      "prompt": "a\ufeffb",
+      "first_line": "a\ufeffb"
+    },
+    {
+      "name": "a byte order mark at the start is not trimmed",
+      "prompt": "\ufeffab",
+      "first_line": "\ufeffab"
+    },
+    {
+      "name": "a first line of white space alone is empty",
+      "prompt": " \u0085\t\nsecond line",
+      "first_line": ""
+    },
+    {
+      "name": "caps a long line at 120 runes plus an ellipsis",
+      "prompt": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+      "first_line": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé…"
+    }
+  ]
+}

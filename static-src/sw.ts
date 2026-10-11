@@ -7,7 +7,12 @@
 import { type PrecacheManifest, isPreviewPath, isShellPath, parseManifest } from "./precache.js";
 import { buildPath } from "./route-path.js";
 import type { Route } from "./route-path.js";
-import { parsePushTarget, pushTargetRoute, pushTargetTag } from "./push-subject.js";
+import {
+  type PushPageMessage,
+  parsePushTarget,
+  pushTargetRoute,
+  pushTargetTag,
+} from "./push-subject.js";
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
@@ -37,7 +42,6 @@ async function fetchManifest(): Promise<PrecacheManifest | null> {
   }
 }
 
-/** The sync in flight, if any. */
 let syncing: Promise<boolean> | null = null;
 
 /** Bring the cache in line with the current build; reports whether it moved. ONE SYNC AT A TIME:
@@ -142,27 +146,14 @@ sw.addEventListener("fetch", ((event: FetchEvent) => {
   );
 }) as EventListener);
 
-/** The server's push payload (internal/push/send.go pushPayload; marotte.PushSubject). At most ONE
- *  subject field: `chat_id`, or `subject` (a kind-prefixed non-chat target); the page owns routes. */
+/** The push is marotte.NotificationPayload as internal/notice wrote it: shown as sent, with at
+ *  most ONE subject field (`chat_id`, or a kind-prefixed `subject`); the page owns routes. */
 interface PushData {
   title?: string;
   body?: string;
+  kind?: string;
   chat_id?: string;
   subject?: string;
-  chat_name?: string;
-}
-
-/** Message to an open page: the SUBJECT (the page owns routes) and whether the user asked to go
- *  there, is being told, or must re-derive its presence tag. */
-interface PushPageMessage {
-  type: "push";
-  reason: "clicked" | "arrived" | "subscription_changed";
-  chatId: string;
-  subject: string;
-  /** The chat's name when the push was sent, for a page that has dropped its row. */
-  chatName?: string;
-  title: string;
-  body: string;
 }
 
 /** Read one string field off a notification's `data` bag. The bag is whatever the
@@ -205,13 +196,15 @@ sw.addEventListener("push", ((event: PushEvent) => {
   }
   const title = data.title ?? "Marotte";
   const body = data.body ?? "";
+  const kind = data.kind ?? "";
   const chatID = data.chat_id ?? "";
   const subject = data.subject ?? "";
 
   event.waitUntil(
     (async () => {
-      // A focused page gets a message instead of a tray banner: the one sanctioned exception to
-      // userVisibleOnly (Chrome would substitute a generic notice).
+      // A focused page delivers it as its own `notification` frame (only the page knows which tab
+      // is on screen): the one sanctioned exception to userVisibleOnly (Chrome would substitute a
+      // generic notice).
       const clients = await windowClients();
       if (clients.some((c) => c.focused)) {
         for (const c of clients) {
@@ -220,10 +213,10 @@ sw.addEventListener("push", ((event: PushEvent) => {
             reason: "arrived",
             chatId: chatID,
             subject,
-            chatName: data.chat_name ?? "",
+            kind,
             title,
             body,
-          } satisfies PushPageMessage);
+          } satisfies Required<PushPageMessage>);
         }
         return;
       }
@@ -233,9 +226,8 @@ sw.addEventListener("push", ((event: PushEvent) => {
           icon: "/favicon.svg",
           badge: "/icon-192.png",
           tag: pushTargetTag(parsePushTarget({ chatId: chatID, subject })),
-          // Re-alert on a replacement. A same-tag replacement is silent by
-          // default, and here a replacement always means the chat moved to
-          // something else worth a glance.
+          // A same-tag replacement is silent by default, and here a replacement always means the
+          // chat moved to something else worth a glance.
           renotify: true,
           // Read back in notificationclick; the only place the target lives.
           data: { chatId: chatID, subject },
@@ -275,9 +267,10 @@ sw.addEventListener("notificationclick", ((event: NotificationEvent) => {
             reason: "clicked",
             chatId: chatID,
             subject,
+            kind: "",
             title: event.notification.title,
             body: event.notification.body,
-          } satisfies PushPageMessage);
+          } satisfies Required<PushPageMessage>);
           await target.focus();
           return;
         }
@@ -309,9 +302,10 @@ sw.addEventListener("pushsubscriptionchange", ((event: PushSubscriptionChangeEve
             reason: "subscription_changed",
             chatId: "",
             subject: "",
+            kind: "",
             title: "",
             body: "",
-          } satisfies PushPageMessage);
+          } satisfies Required<PushPageMessage>);
         }
       })
       .catch((err: unknown) => {

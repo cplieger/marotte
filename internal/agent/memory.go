@@ -55,7 +55,7 @@ type memoryRow struct {
 	Scopes     []string        `json:"scopes"`
 }
 
-// memoryListResponse is the GET /api/memory body; Cap feeds the "N of 1,000" label.
+// Cap feeds the "N of 1,000" label.
 type memoryListResponse struct {
 	Memories []memoryRow `json:"memories"`
 	Cap      int         `json:"cap"`
@@ -65,7 +65,7 @@ type memoryOneResponse struct {
 	Memory memoryRow `json:"memory"`
 }
 
-// memoryUpdateReq is the PATCH body; an absent field is left unchanged.
+// An absent field is left unchanged.
 type memoryUpdateReq struct {
 	Title      *string `json:"title"`
 	Summary    *string `json:"summary"`
@@ -84,14 +84,13 @@ func rowFromKAS(m *kasMemory) memoryRow {
 	}
 }
 
-// memoryCall issues one _kiro/memory/* request on the utility bridge.
 func (st *Settings) memoryCall(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
 	cctx, cancel := context.WithTimeout(ctx, memoryCallTimeout)
 	defer cancel()
 	return st.utility().session.memoryRaw(cctx, method, params)
 }
 
-// memoryList walks the store; one page normally covers it.
+// One page normally covers it.
 func (st *Settings) memoryList(ctx context.Context) ([]memoryRow, error) {
 	out := []memoryRow{}
 	params := map[string]any{"limit": memoryStoreCap}

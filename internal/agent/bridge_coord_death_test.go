@@ -1,12 +1,16 @@
 package agent
 
 import (
+	"cmp"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -111,27 +115,101 @@ func TestForward_BridgeExitedNamesSessionAndWhetherItEndedItself(t *testing.T) {
 	}
 }
 
-// A dead bridge's asks are unanswerable, and a stale entry would hold a crashed run's idle window open.
-func TestForward_ClearsTheDeadBridgesPendingDecisions(t *testing.T) {
-	h, _, br := newTestHub()
-	h.bus.PendingPermsAdd(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
-		marotte.PermissionNeededPayload{RequestID: 7, RunID: "wf_1", NodeID: "a"}))
-	h.bus.PendingPermsAdd(8, marotte.NewEvent(marotte.EventPermissionNeeded, "c2",
-		marotte.PermissionNeededPayload{RequestID: 8}))
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+// A bridge's end retires the asks it carried, each announced as ended so a card on screen says why,
+// and nothing else: a successor's asks on the same chat stay answerable however the bridge ended,
+// even under the ACP ids the old bridge used, since every bridge mints them from zero. A stale entry
+// would also hold a crashed run's idle window open.
+func TestBridgeEnd_RetiresTheAsksItCarriedAsEnded(t *testing.T) {
+	for name, endedItself := range map[string]bool{"endedItself": true, "replacedBySuccessor": false} {
+		t.Run(name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			successor := newFakeBridge()
+			oldPerm := requestIDOf(t, h.bus.PendingPermsAdd(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+				marotte.PermissionNeededPayload{RunID: "wf_1", NodeID: "a"}), br))
+			oldQuestion := requestIDOf(t, h.bus.PendingPermsAdd(8, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
+				marotte.UserInputNeededPayload{}), br))
+			// The successor reuses both ids: 7 for the same kind, 8 for another.
+			succPerm := requestIDOf(t, h.bus.PendingPermsAdd(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+				marotte.PermissionNeededPayload{Options: []marotte.PermissionOption{{OptionID: "allow"}}}), successor))
+			succElicit := requestIDOf(t, h.bus.PendingPermsAdd(8, marotte.NewEvent(marotte.EventElicitationNeeded, "c1",
+				marotte.ElicitationNeededPayload{}), successor))
+			registered := ACPBridge(successor)
+			if endedItself {
+				registered = br
+			}
+			h.bridge.mgr.insert("c1", &sharedBridge{bridge: registered, state: bridgeIdle})
+			head := h.bus.fanout.Position().Head
 
-	br.endStream()
-	h.coord.Forward("c1", br)
+			br.endStream()
+			h.coord.Forward("c1", br)
 
-	if got := h.bus.pendingPerms.List("c1"); len(got) != 0 {
-		t.Errorf("the dead bridge's chat still holds %d decisions, want none", len(got))
-	}
-	if got := h.bus.pendingPerms.List("c2"); len(got) != 1 {
-		t.Errorf("another chat holds %d decisions after c1's bridge died, want its own 1", len(got))
+			var left []int64
+			for _, e := range h.bus.pendingPerms.list("c1") {
+				left = append(left, requestIDOf(t, e))
+			}
+			if want := []int64{succPerm, succElicit}; !slices.Equal(left, want) {
+				t.Errorf("asks pending after the bridge ended = %v, want only the successor's %v", left, want)
+			}
+			got := settledEvents(t, bufferedSince(h, head))
+			slices.SortFunc(got, func(a, b marotte.DecisionSettledPayload) int { return cmp.Compare(a.RequestID, b.RequestID) })
+			want := []marotte.DecisionSettledPayload{
+				{RequestID: oldPerm, Kind: marotte.DecisionKindPermission, SettledBy: marotte.SettledByEnded},
+				{RequestID: oldQuestion, Kind: marotte.DecisionKindUserInput, SettledBy: marotte.SettledByEnded},
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("decision_settled after the bridge ended = %+v, want %+v", got, want)
+			}
+
+			for _, cmd := range []marotte.ClientCommand{
+				answerCmd(marotte.CmdPermissionResponse, `{"request_id":`+strconv.FormatInt(succPerm, 10)+`,"option_id":"allow"}`),
+				answerCmd(marotte.CmdElicitationResponse, `{"request_id":`+strconv.FormatInt(succElicit, 10)+`,"action":"decline"}`),
+			} {
+				if rec := postCmd(t, h, cmd); rec.Code != http.StatusOK {
+					t.Fatalf("%s to the successor = %d (%s), want 200", cmd.Type, rec.Code, rec.Body.String())
+				}
+			}
+			if got := successor.answeredIDs(); !slices.Equal(got, []int64{7, 8}) {
+				t.Errorf("successor answered ACP ids %v, want its own [7 8]", got)
+			}
+		})
 	}
 }
 
-// mcpStatusFrame is a _kiro/mcp/status frame whose connected servers each offer the one resource in uris.
+// Closing or deleting a tab ends its bridge, and that end is what retires the bridge's asks: each
+// card is told it went because its session ended, exactly once.
+func TestChatTeardown_RetiresTheBridgesAsksAsEnded(t *testing.T) {
+	teardowns := map[string]func(h *Runtime){
+		"close":  func(h *Runtime) { h.CloseChatState(t.Context(), "c1") },
+		"delete": func(h *Runtime) { h.DeleteChatStateByChain(t.Context(), "c1", nil, command.RunStopTabClosed) },
+	}
+	for name, teardown := range teardowns {
+		t.Run(name, func(t *testing.T) {
+			h, cs, br := newTestHub()
+			if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+				t.Fatalf("seed the chat: %v", err)
+			}
+			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+				t.Fatalf("OpenBridge: %v", err)
+			}
+			askID := requestIDOf(t, h.bus.PendingPermsAdd(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+				marotte.PermissionNeededPayload{}), br))
+			head := h.bus.fanout.Position().Head
+
+			teardown(h)
+			joinInflight(t, h)
+
+			if left := h.bus.pendingPerms.list("c1"); len(left) != 0 {
+				t.Errorf("asks pending after the %s = %v, want none", name, left)
+			}
+			got := settledEvents(t, bufferedSince(h, head))
+			want := []marotte.DecisionSettledPayload{{RequestID: askID, Kind: marotte.DecisionKindPermission, SettledBy: marotte.SettledByEnded}}
+			if !slices.Equal(got, want) {
+				t.Errorf("decision_settled after the %s = %+v, want %+v", name, got, want)
+			}
+		})
+	}
+}
+
 func mcpStatusFrame(t *testing.T, uris map[string]string) *marotte.RPCResponse {
 	t.Helper()
 	servers := []map[string]any{}
@@ -148,7 +226,6 @@ func mcpStatusFrame(t *testing.T, uris map[string]string) *marotte.RPCResponse {
 	return &marotte.RPCResponse{Method: methodV3MCPStatus, Params: params}
 }
 
-// poolBody is GET /api/mcp/pool?chat_id=<chatID>'s body.
 func poolBody(t *testing.T, h *Runtime, chatID string) string {
 	t.Helper()
 	rec := httptest.NewRecorder()

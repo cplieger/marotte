@@ -25,13 +25,13 @@ const FORCE = "plan-metrics-force-render";
  *  estimate is what the first reading is made of. */
 const PROBE = "plan-metrics-probe-estimate";
 
-/** The probe's content height. Far from every real card height, so the shift it produces cannot
- *  be confused with a rounding difference. */
+/** Far from every real card height, so the shift it produces cannot be confused with a rounding
+ *  difference. */
 const PROBE_PX = 300;
 
-/** Per-case timeout. A case's cost here is SIX rAF turns, and a loaded `npm test` prices a turn
- *  at hundreds of ms whatever the list holds -- measured on `files-row-metrics.test.ts`, whose
- *  cases run 86-280ms cold in isolation and ~4.1s inside a full run. */
+/** A case's cost here is SIX rAF turns, and a loaded `npm test` prices a turn at hundreds of ms
+ *  whatever the list holds -- measured on `files-row-metrics.test.ts`, whose cases run 86-280ms cold
+ *  in isolation and ~4.1s inside a full run. */
 const LOADED_BUDGET_MS = 30_000;
 
 let style: HTMLStyleElement;
@@ -121,7 +121,6 @@ async function frame(): Promise<void> {
   });
 }
 
-/** Jump every entry animation to its end. */
 function finishAnimations(root: Element): void {
   for (const anim of root.getAnimations({ subtree: true })) {
     anim.finish();
@@ -129,12 +128,10 @@ function finishAnimations(root: Element): void {
 }
 
 interface Metrics {
-  /** The container's height with every off-screen card on the estimate. */
   readonly listSkipped: number;
   /** The same, with the estimate replaced by `PROBE_PX`. The harness's own sensitivity check --
    *  see `expectContentBoxEstimate`. */
   readonly listProbe: number;
-  /** Its height with every card genuinely rendered. */
   readonly listRendered: number;
   /** The declared fallback in px: the CONTENT height a skipped card resolves to. */
   readonly estimatePx: number;
@@ -190,7 +187,6 @@ async function measure(): Promise<Metrics> {
   };
 }
 
-/** Set the pointer tier the way `pointer-tier.ts` does. */
 function tier(name: "fine" | "coarse"): void {
   document.documentElement.dataset["pointer"] = name;
 }

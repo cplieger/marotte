@@ -12,9 +12,8 @@ import (
 	"github.com/cplieger/slogx"
 )
 
-// levelVar is the shared LevelVar the installed handler follows. Pre-initialized so no exported
-// call can nil-deref before Install (FuzzSetDebug trips that directly); a pre-Install Set lands on
-// this throwaway, and Install swaps in slogx's.
+// Pre-initialized so no exported call can nil-deref before Install (FuzzSetDebug trips that
+// directly); a pre-Install Set lands on this throwaway, and Install swaps in slogx's.
 var levelVar = new(slog.LevelVar)
 
 // Install wires the shared LevelVar into slog's default logger and reads the initial level from

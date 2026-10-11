@@ -2,7 +2,7 @@ package prewarm
 
 import "testing"
 
-// FuzzRingBuffer exercises the prewarm RingBuffer with arbitrary write
+// FuzzRingBuffer exercises the prewarm ringBuffer with arbitrary write
 // sequences, verifying capacity invariants and data consistency.
 func FuzzRingBuffer(f *testing.F) {
 	f.Add([]byte("hello"), []byte(" world"), 8)
@@ -14,7 +14,7 @@ func FuzzRingBuffer(f *testing.F) {
 		if cap < 1 || cap > 4096 {
 			return
 		}
-		r := &RingBuffer{Cap: cap}
+		r := &ringBuffer{Cap: cap}
 
 		n1, err1 := r.Write(first)
 		if err1 != nil || n1 != len(first) {

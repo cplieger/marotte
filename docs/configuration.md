@@ -26,7 +26,7 @@ Variables go in the `environment:` block of `compose.yaml` and are read at start
 
 ## Host allowlist (`ALLOWED_HOSTS`)
 
-Set it to the exact hostnames and IPs you open marotte at, for example `ALLOWED_HOSTS: "localhost,192.168.1.10,marotte.example.com"`. A request with any other `Host` header is answered with `403`.
+Set it to the exact hostnames and IPs you open marotte at, for example `ALLOWED_HOSTS: "localhost,192.0.2.10,marotte.example.com"`. A request with any other `Host` header is answered with `403`.
 
 Set it on any server that stays up. It blocks DNS rebinding, where a website you visit points its own hostname at your marotte address. The browser then treats your marotte as that website, so the usual same-origin check passes. The attack runs through your own browser, so it also reaches a marotte that only listens on your network. Requests from inside the container are always allowed, so the image's healthcheck keeps working. Left unset, marotte accepts every `Host` and logs a warning at startup.
 
@@ -109,7 +109,7 @@ Files you attach to a message, by drag and drop, paste or the `+` menu, are writ
 | `/config/chats/` | Chat history, one folder per chat |
 | `/config/home/` | The container's home folder: sign-ins, SSH keys, git settings, build caches |
 | `/config/home/.kiro/` | kiro-cli's sessions, settings, steering, agents and logs |
-| `/config/tools/` | Installed tools. `bin/` is on `PATH` |
+| `/config/tools/` | Installed tools. `bin/` and `go/bin/` are on `PATH`, so link any other binary into `bin/` |
 | `/config/*.json` | marotte's settings, the tools list and its state, and the MCP server list |
 
 ## OS packages

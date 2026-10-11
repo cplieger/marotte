@@ -66,8 +66,7 @@ func (s *Store) Remove(chatID marotte.ChatID) (string, error) {
 	return s.versions.BumpCounter(subject.KindChats, ""), nil
 }
 
-// markDeleted records that chatID was just deleted. Mutate calls for
-// the same id within tombstoneTTL will refuse to auto-create.
+// Mutate calls for the same id within tombstoneTTL will refuse to auto-create.
 func (s *Store) markDeleted(chatID marotte.ChatID, name string) {
 	now := time.Now()
 	s.tombMu.Lock()
@@ -95,7 +94,6 @@ func (s *Store) liveTombstone(chatID marotte.ChatID) (tombstone, bool) {
 	return t, true
 }
 
-// isTombstoned reports whether chatID was deleted within tombstoneTTL.
 func (s *Store) isTombstoned(chatID marotte.ChatID) bool {
 	_, ok := s.liveTombstone(chatID)
 	return ok
@@ -108,26 +106,75 @@ func (s *Store) DepartedName(chatID marotte.ChatID) (string, bool) {
 	return t.name, ok
 }
 
-// Exists reports whether chatID is a chat this store serves: its header is present
-// and it was not deleted within tombstoneTTL. It takes NO per-chat mutex — a
-// stat and the tombstone set's own lock — so the digest resolver can ask it
-// without parking behind a Mutate's header rewrite.
-func (s *Store) Exists(chatID marotte.ChatID) bool {
+// Presence is what the store can say about a chat id's record.
+type Presence int
+
+const (
+	// PresenceAbsent is a record that does not exist: never written, removed, or deleted within
+	// tombstoneTTL.
+	PresenceAbsent Presence = iota
+	// PresencePresent is a header that exists (Presence) or loads (PublishIfPresent).
+	PresencePresent
+	// PresenceUnreadable is a header the store could not stat, or for PublishIfPresent could not load: a storage
+	// fault, not an absence.
+	PresenceUnreadable
+)
+
+// Presence reports chatID's record. It takes NO per-chat mutex (a stat and the tombstone set's
+// own lock), so the digest resolver can ask it without parking behind a Mutate's header rewrite.
+func (s *Store) Presence(chatID marotte.ChatID) Presence {
 	if _, err := s.pathFor(chatID); err != nil || s.isTombstoned(chatID) {
-		return false
+		return PresenceAbsent
 	}
-	return s.headerExists(chatID)
+	switch err := s.headerErr(chatID); {
+	case err == nil:
+		return PresencePresent
+	case errors.Is(err, os.ErrNotExist):
+		return PresenceAbsent
+	default:
+		return PresenceUnreadable
+	}
 }
 
-// headerExists reports whether chat.json is on disk for chatID. No lock.
-func (s *Store) headerExists(chatID marotte.ChatID) bool {
+// PublishIfPresent runs publish iff chatID's record loads, holding the chat's lock across the
+// load and publish, so no Delete or purge lands between them; a header that exists but does not
+// decode is PresenceUnreadable. publish must not call the store: the lock is not reentrant.
+func (s *Store) PublishIfPresent(ctx context.Context, chatID marotte.ChatID, publish func()) Presence {
+	m := s.lock(chatID)
+	m.Lock()
+	defer m.Unlock()
+	p := s.loadedPresence(ctx, chatID)
+	if p == PresencePresent {
+		publish()
+	}
+	return p
+}
+
+// loadedPresence is Presence by a full header load rather than a stat. The caller holds the chat's lock.
+func (s *Store) loadedPresence(ctx context.Context, chatID marotte.ChatID) Presence {
+	if _, err := s.pathFor(chatID); err != nil || s.isTombstoned(chatID) {
+		return PresenceAbsent
+	}
+	switch _, err := s.load(ctx, chatID); {
+	case err == nil:
+		return PresencePresent
+	case errors.Is(err, os.ErrNotExist):
+		return PresenceAbsent
+	default:
+		return PresenceUnreadable
+	}
+}
+
+// headerErr is the header's stat: nil when present, os.ErrNotExist when absent, else the fault.
+// No lock.
+func (s *Store) headerErr(chatID marotte.ChatID) error {
 	dir, err := s.pathFor(chatID)
 	if err != nil {
-		return false
+		return err
 	}
 	//nolint:gosec,nolintlint // G703: the path is <root>/<id>/... over an id a door already admitted (ids.ValidChatID for a chat, runLog.dir for a run)
 	_, err = os.Stat(filepath.Join(dir, headerFileName))
-	return err == nil
+	return err
 }
 
 // pathFor is the chat's DIRECTORY.
@@ -141,14 +188,12 @@ func (s *Store) pathFor(chatID marotte.ChatID) (string, error) {
 	return filepath.Join(s.dir, id), nil
 }
 
-// header is the chat's header file. The id is validated by every caller's pathFor;
-// this is the one place the two file names meet.
+// The id is validated by every caller's pathFor; this is the one place the two file names meet.
 func (s *Store) header(chatID marotte.ChatID) EntryHeader {
 	return NewEntryHeader(filepath.Join(s.dir, string(chatID)))
 }
 
-// load reads a chat's header into memory. Returns os.ErrNotExist if the chat has
-// no header.
+// Returns os.ErrNotExist if the chat has no header.
 func (s *Store) load(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, error) {
 	if _, err := s.pathFor(chatID); err != nil {
 		return nil, err
@@ -156,9 +201,8 @@ func (s *Store) load(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat,
 	return s.header(chatID).Read(ctx)
 }
 
-// save stamps the chat's last-activity time and writes its header. Every
-// mutation except a composer autosave goes through here, since every other
-// mutation IS activity.
+// Every mutation except a composer autosave goes through here, since every other mutation IS
+// activity.
 func (s *Store) save(ctx context.Context, chatID marotte.ChatID, chat *marotte.Chat) error {
 	chat.UpdatedAt = time.Now().UnixMilli()
 	return s.writeHeader(ctx, chatID, chat)
@@ -178,5 +222,5 @@ func (s *Store) writeHeader(ctx context.Context, chatID marotte.ChatID, chat *ma
 	if chat.ID != string(chatID) {
 		return errChatIDMismatch(chatID, chat.ID)
 	}
-	return s.header(chatID).Write(ctx, chat)
+	return s.header(chatID).write(ctx, chat)
 }

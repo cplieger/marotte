@@ -13,7 +13,6 @@ import type * as Shell from "./shell.js";
 /** Cache-buster for the re-imports below. */
 let bootSeq = 0;
 
-/** The per-test spies and elements the mock factories below read. */
 interface Live {
   createTerminal: (root: HTMLElement, opts: CreateTerminalOptions) => TerminalHandle;
   localScrollbackStorage: (opts: unknown) => unknown;
@@ -48,6 +47,7 @@ vi.mock("@cplieger/web-terminal-ui/features/mobile-toolbar", () => ({
   mobileToolbar: (...args: unknown[]): unknown => live.mobileToolbar(...args),
 }));
 vi.mock("./messages.js", () => ({ getScrollEl: (): HTMLElement => live.getScrollEl() }));
+vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 vi.mock("./code-blocks.js", () => ({
   setShellRunCallback: (cb: (cmd: string) => void): void => live.setShellRunCallback(cb),
 }));
@@ -107,7 +107,6 @@ interface Harness {
   restartDispatch: ReturnType<typeof vi.fn>;
   confirmMock: ReturnType<typeof vi.fn>;
   getRunCb: () => ((cmd: string) => void) | null;
-  /** Report the definitive process-exited close, as the kernel does. */
   endSession: () => void;
   /** Deliver a screen frame on the feature bus, as the kernel does on every frame it renders;
    *  `rows` is the row count the frame carries. */

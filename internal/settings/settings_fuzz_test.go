@@ -73,10 +73,10 @@ func FuzzSettingsReadBytes(f *testing.F) {
 			return
 		}
 
-		// A successful read round-trips exactly, capped at MaxBytes.
+		// A successful read round-trips exactly, capped at maxBytes.
 		expected := data
-		if len(expected) > MaxBytes {
-			expected = expected[:MaxBytes]
+		if len(expected) > maxBytes {
+			expected = expected[:maxBytes]
 		}
 		if !bytes.Equal(got, expected) {
 			t.Errorf("readBytes content mismatch: got %d bytes, want %d", len(got), len(expected))

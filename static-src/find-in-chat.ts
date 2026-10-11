@@ -44,6 +44,8 @@ let rerunTimer: ReturnType<typeof setTimeout> | undefined;
 function findRoot(): HTMLElement {
   return $.messages.querySelector<HTMLElement>(":scope > .transcript-view.is-active") ?? $.messages;
 }
+/** The identity `stampEntry` (messages-blocks.ts) writes on every entry element: a re-rendered entry keeps its hit's character position. */
+const ENTRY_HOLDER = ["data-entry-turn", "data-entry-id"] as const;
 /** Unregister for the re-run's ride on scroll.ts's shared MutationObserver; null while closed. */
 let unobserveTranscript: (() => void) | null = null;
 /** Engine ops in flight whose own writes must not re-trigger the re-run; a counter so nested calls stay safe. */
@@ -127,7 +129,7 @@ function ensureBuilt(): void {
   if (overlayEl !== null) {
     return;
   }
-  engine = new FindEngine(findRoot());
+  engine = new FindEngine(findRoot(), ENTRY_HOLDER);
 
   // A div with `search-status`: the counter is a line under the controls (24-find.css) that collapses while empty.
   const count = el("div", {
@@ -177,9 +179,7 @@ function ensureBuilt(): void {
         return null;
       }
       // The local pass runs first and synchronously; the server pre-pass makes the count honest (the walker prunes hidden content).
-      applyEngine(() => {
-        engine?.search(query, ctx.caseSensitive);
-      });
+      searchNow(query, ctx.caseSensitive);
       updateCounter(query);
       // Not while a handoff's landing is pending: that open is going elsewhere.
       if (!landOnResume) {
@@ -209,9 +209,7 @@ function ensureBuilt(): void {
         return;
       }
       // Re-run over the revealed DOM so marks and count cover the opened turns.
-      applyEngine(() => {
-        engine?.search(query, shell?.caseSensitive ?? false);
-      });
+      searchNow(query, shell?.caseSensitive ?? false);
       updateCounter(query);
       const target = land ? stepOrder[hitCursor] : undefined;
       if (target !== undefined) {
@@ -256,7 +254,7 @@ function ensureBuilt(): void {
         applyEngine(() => {
           engine?.clear();
         });
-        engine = new FindEngine(findRoot());
+        engine = new FindEngine(findRoot(), ENTRY_HOLDER);
       }
       startObserving();
       // aria-pressed: find is a toggle, and `.active` means "this singleton tab is active" (tabs.ts).
@@ -292,10 +290,7 @@ function ensureBuilt(): void {
 function teardown(): void {
   stopObserving();
   shell?.cancel();
-  if (rerunTimer !== undefined) {
-    clearTimeout(rerunTimer);
-    rerunTimer = undefined;
-  }
+  cancelRerun();
   applyEngine(() => {
     engine?.clear();
   });
@@ -637,9 +632,7 @@ async function landOrNotice(walkTarget: HTMLElement, hit: Hit, narrowed: boolean
 
 /** The walk makes marks exist inside content that only just became visible. */
 function walkAndPick(target: HTMLElement, hit: Hit): number {
-  applyEngine(() => {
-    engine?.search(shell?.value ?? "", shell?.caseSensitive ?? false);
-  });
+  searchNow(shell?.value ?? "", shell?.caseSensitive ?? false);
   return pickNearestMark(target, hit);
 }
 
@@ -764,7 +757,6 @@ function activateQuietly(control: HTMLElement): void {
   }
 }
 
-/** Open every closed disclosure between the element and its turn body, through each control's real path. */
 function openDisclosureChain(target: HTMLElement, hit: Hit): void {
   for (let cur: HTMLElement | null = target; cur !== null; cur = cur.parentElement) {
     if (cur instanceof HTMLDetailsElement && !cur.open) {
@@ -963,24 +955,39 @@ function stopObserving(): void {
   unobserveTranscript = null;
 }
 
-/** Re-run so the counter stays honest, preserving the index and not scrolling. */
-function scheduleRerun(): void {
+/** Walk the transcript now, superseding a pending re-run: this walk already sees the mutations that scheduled it. */
+function searchNow(query: string, caseSensitive: boolean): void {
+  cancelRerun();
+  applyEngine(() => {
+    engine?.search(query, caseSensitive);
+  });
+}
+
+function cancelRerun(): void {
   if (rerunTimer !== undefined) {
     clearTimeout(rerunTimer);
+    rerunTimer = undefined;
   }
+}
+
+/** Re-run so the counter stays honest, keeping the current hit and not scrolling. */
+function scheduleRerun(): void {
+  cancelRerun();
   rerunTimer = setTimeout(() => {
     rerunTimer = undefined;
-    if (!isOpen() || engine === null || shell === null) {
-      return;
-    }
-    const prevIndex = engine.currentIndex;
-    const query = shell.value;
-    applyEngine(() => {
-      engine?.search(query, shell?.caseSensitive ?? false);
-      engine?.setCurrent(prevIndex);
-    });
-    updateCounter(query);
+    rerun();
   }, RERUN_DEBOUNCE_MS);
+}
+
+function rerun(): void {
+  if (!isOpen() || engine === null || shell === null) {
+    return;
+  }
+  const query = shell.value;
+  applyEngine(() => {
+    engine?.refresh(query, shell?.caseSensitive ?? false);
+  });
+  updateCounter(query);
 }
 
 function openFindInChat(): void {
@@ -1013,7 +1020,6 @@ export function openChatFindAt(query: string, hit: Hit): void {
  * Close the search with the full teardown. Idempotent.
  *
  * @internal Test seam.
- * @knipignore The test loads this module through a cache-busting dynamic specifier.
  */
 export function closeChatFind(): void {
   popup?.hide();
@@ -1069,10 +1075,8 @@ export function handleFindHotkey(e: KeyboardEvent): void {
   openFindInChat();
 }
 
-/**
- * @internal Test seam: whether the search is open.
- * @knipignore The test loads this module through a cache-busting dynamic specifier.
- */
+/** @internal Test seam: whether the search is open. */
+// deadset:ignore DS1004 -- test seam: observes whether the chat find bar is open
 export function _isChatFindOpen(): boolean {
   return isOpen();
 }

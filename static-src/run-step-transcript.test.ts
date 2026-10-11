@@ -2,7 +2,8 @@
 // GRADES a failure, and what it commits to the run store.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Entry, OpenEntry, RunStepTranscript } from "./types.js";
+import type { Entry, OpenEntry } from "./types.js";
+import type { RunStepTranscript } from "./wire/types.gen.js";
 
 const apiGetTypedOrError = vi.fn<(url: string, decode: unknown) => Promise<unknown>>();
 
@@ -14,7 +15,6 @@ vi.mock("./api-client.js", () => ({
   apiGetOrError: vi.fn(),
   apiGetTyped: vi.fn(),
   apiPost: vi.fn(),
-  apiDelete: vi.fn(),
 }));
 
 const {
@@ -69,7 +69,6 @@ function turnOpen(turn: string, nodePath: string): Entry {
   };
 }
 
-/** One sealed `text` entry at the position its own `seq` claims. */
 function text(turn: string, seq: number, body: string): Entry {
   return { id: `${turn}-${String(seq)}`, turn, kind: "text", seq, ts: 0, payload: { text: body } };
 }
@@ -79,13 +78,11 @@ function tail(turn: string, body: string): OpenEntry {
   return { turn, id: `${turn}-tail`, kind: "text", text: body, n: 1 };
 }
 
-/** The entries of one turn of a run's log, by id, in file order. */
 function entryIDs(workflowID: string, turnID: string): string[] {
   const found = runTurns(workflowID).find(([id]) => id === turnID);
   return (found?.[1].entries ?? []).map((e) => e.id);
 }
 
-/** Ask, then wait for the answer that was queued for this call. */
 async function ask(workflowID: string, nodePath: string, answer: unknown): Promise<void> {
   apiGetTypedOrError.mockResolvedValueOnce(answer);
   requestStepTranscript(workflowID, nodePath);
@@ -111,19 +108,28 @@ beforeEach(() => {
 });
 
 describe("run-step-transcript: the URL", () => {
-  it("keeps the separators raw and encodes each segment", async () => {
-    await ask("wf_1", "wf_1/loop/iter-0/build", ok());
+  it("names the run once and sends the node path key as one segment", async () => {
+    await ask("wf_1", "wf_1:loop:iter-0:build", ok());
     expect(apiGetTypedOrError.mock.calls[0]?.[0]).toBe(
-      "/api/runs/wf_1/steps/wf_1/loop/iter-0/build",
+      "/api/runs/wf_1/steps/wf_1%3Aloop%3Aiter-0%3Abuild",
     );
   });
 
-  // The one encoding rule this route has. A raw `#` would truncate the path at the fragment; an
-  // encoded "/" would be refused by the server's canonical-path gate, which compares the DECODED
-  // path against what its router would match.
-  it("encodes a segment's own metacharacters without encoding the separators", async () => {
-    await ask("wf_1", "wf_1/a b#0/build", ok());
-    expect(apiGetTypedOrError.mock.calls[0]?.[0]).toBe("/api/runs/wf_1/steps/wf_1/a%20b%230/build");
+  // A raw `#` would truncate the path at the fragment.
+  it("encodes a key's own metacharacters", async () => {
+    await ask("wf_1", "wf_1:a b#0:build", ok());
+    expect(apiGetTypedOrError.mock.calls[0]?.[0]).toBe(
+      "/api/runs/wf_1/steps/wf_1%3Aa%20b%230%3Abuild",
+    );
+  });
+
+  it("asks for two different URLs for two steps a slash join spells alike", async () => {
+    await ask("wf_1", "wf_1:a/b:c", ok());
+    await ask("wf_1", "wf_1:a:b/c", ok());
+    expect(apiGetTypedOrError.mock.calls.map((c) => c[0])).toEqual([
+      "/api/runs/wf_1/steps/wf_1%3Aa%2Fb%3Ac",
+      "/api/runs/wf_1/steps/wf_1%3Aa%3Ab%2Fc",
+    ]);
   });
 });
 
@@ -197,7 +203,7 @@ describe("run-step-transcript: when it asks", () => {
   });
 
   // A 4xx is the SERVER refusing the address: 404 is `errStepUnknown` (this run has no step at that
-  // path) and 400 is the first-segment assertion. Asking again fails identically, so the verdict is
+  // path) and 400 is the canonical-path refusal. Asking again fails identically, so the verdict is
   // settled and the reader is offered no retry — which is the whole point of the state.
   it.each([404, 400])("records a %i as the settled unaddressable verdict", async (status) => {
     await ask("wf_1", "wf_1/a", fail(status));

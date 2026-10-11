@@ -485,6 +485,10 @@
   align-items: center;
 }
 
+.fb-toolbar {
+  container: fb-toolbar / inline-size;
+}
+
 .view-toolbar-inner {
   display: flex;
   align-items: center;
@@ -524,6 +528,43 @@
   &:not(:read-only) {
     border-color: var(--c-accent);
     color: var(--c-text-primary);
+  }
+}
+
+/* The path takes its own row once one row would leave it under 12rem. Query
+   conditions cannot read `var()`, so each threshold is 12rem plus the row's other
+   content: nine `--btn-h` buttons, five `--sp-2` gaps and margins, and five
+   0.125rem gaps in `.fb-actions` (23.375rem fine, 27.875rem coarse). A button added
+   to the bar moves both; `fb-toolbar-css.test.ts` fails until they follow. */
+@container fb-toolbar (width < 35.375rem) {
+  .fb-toolbar .view-toolbar-inner {
+    flex-wrap: wrap;
+    row-gap: var(--sp-1);
+  }
+
+  .fb-toolbar .fb-path {
+    order: -1;
+    flex-basis: 100%;
+  }
+
+  .fb-toolbar .fb-actions {
+    margin-inline-start: auto;
+  }
+}
+
+@container fb-toolbar (width < 39.875rem) {
+  :root[data-pointer="coarse"] .fb-toolbar .view-toolbar-inner {
+    flex-wrap: wrap;
+    row-gap: var(--sp-1);
+  }
+
+  :root[data-pointer="coarse"] .fb-toolbar .fb-path {
+    order: -1;
+    flex-basis: 100%;
+  }
+
+  :root[data-pointer="coarse"] .fb-toolbar .fb-actions {
+    margin-inline-start: auto;
   }
 }
 

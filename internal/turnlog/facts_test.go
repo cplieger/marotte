@@ -14,7 +14,6 @@ var approvalOptions = []AskOption{
 	{ID: "reject", Kind: "reject_once", Name: "No"},
 }
 
-// resultInteraction is the interaction the tool_result at entry k carries.
 func resultInteraction(t *testing.T, rec *recorder, k int) *marotte.ToolInteraction {
 	t.Helper()
 	var res marotte.EntryToolResult
@@ -101,11 +100,15 @@ func TestAbortedResultCarriesTheAnswer(t *testing.T) {
 func TestCloseCarriesTheCompletionFacts(t *testing.T) {
 	ctx := t.Context()
 	turn, rec := open(t)
-	turn.NoteTurnCompletion([]string{"r1", "r2"}, []string{"empty"},
-		&marotte.TurnThroughput{EstimatedTokens: 100, ActiveStreamingMs: 1000})
-	turn.NoteTurnCompletion([]string{"r2", "r3", ""}, []string{"empty", "truncation"},
-		&marotte.TurnThroughput{EstimatedTokens: 50, ActiveStreamingMs: 500})
-	turn.NoteTurnCompletion(nil, nil, nil)
+	turn.NoteTurnCompletion(&Completion{
+		RequestIDs: []string{"r1", "r2"}, Recoveries: []string{"empty"},
+		Throughput: &marotte.TurnThroughput{EstimatedTokens: 100, ActiveStreamingMs: 1000},
+	})
+	turn.NoteTurnCompletion(&Completion{
+		RequestIDs: []string{"r2", "r3", ""}, Recoveries: []string{"empty", "truncation"},
+		Throughput: &marotte.TurnThroughput{EstimatedTokens: 50, ActiveStreamingMs: 500},
+	})
+	turn.NoteTurnCompletion(&Completion{})
 	turn.NoteSteering([]string{"file:///w/.kiro/steering/a.md", "file:///w/.kiro/steering/a.md"})
 	turn.NoteSteering([]string{"file:///w/.kiro/steering/b.md"})
 	rec.seal(turn.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}))
@@ -125,6 +128,26 @@ func TestCloseCarriesTheCompletionFacts(t *testing.T) {
 	}
 	if want := []string{"file:///w/.kiro/steering/a.md", "file:///w/.kiro/steering/b.md"}; !slices.Equal(footer.Steering, want) {
 		t.Errorf("steering = %v, want %v", footer.Steering, want)
+	}
+}
+
+// The newest context breakdown is the turn's: it measures the last request, and a later frame
+// carrying none does not clear it.
+func TestCloseCarriesTheNewestContextBreakdown(t *testing.T) {
+	turn, rec := open(t)
+	first := &marotte.ContextBreakdown{TotalChars: 10, Categories: []marotte.ContextCategory{{Key: "history", Chars: 10}}}
+	last := &marotte.ContextBreakdown{TotalChars: 30, Categories: []marotte.ContextCategory{{Key: "steering", Chars: 30}}}
+	turn.NoteTurnCompletion(&Completion{ContextBreakdown: first})
+	turn.NoteTurnCompletion(&Completion{ContextBreakdown: last})
+	turn.NoteTurnCompletion(&Completion{RequestIDs: []string{"r9"}})
+	rec.seal(turn.Close(t.Context(), marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}))
+
+	var footer marotte.EntryTurnClose
+	if err := json.Unmarshal(rec.entries[0].Payload, &footer); err != nil {
+		t.Fatalf("parse turn_close: %v", err)
+	}
+	if footer.ContextBreakdown == nil || footer.ContextBreakdown.TotalChars != 30 {
+		t.Errorf("context_breakdown = %+v, want the newest (30 chars) kept through a frame carrying none", footer.ContextBreakdown)
 	}
 }
 

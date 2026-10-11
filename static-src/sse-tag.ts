@@ -24,7 +24,7 @@ export function persistedTag(): string {
   return tag;
 }
 
-/** The presence tag of a push subscription: the twin of push.TagOf. */
+/** The presence tag of a push subscription: the twin of push.tagOf. */
 export async function derivedTag(endpoint: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(endpoint));
   return base64url(new Uint8Array(digest)).slice(0, TAG_LEN);

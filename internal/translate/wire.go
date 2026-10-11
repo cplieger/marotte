@@ -11,21 +11,21 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// ACPChunkWire is the wire shape for agent_message_chunk and agent_thought_chunk
+// acpChunkWire is the wire shape for agent_message_chunk and agent_thought_chunk
 // session updates. A nested subagent's chunks ride the parent session id and carry
 // _meta.kiro.agentSubtaskId naming the tool call they belong to.
-type ACPChunkWire struct {
+type acpChunkWire struct {
 	Content struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
-	Meta ACPKiroMeta `json:"_meta"`
+	Meta acpKiroMeta `json:"_meta"`
 }
 
-// ACPToolCallContentBlock is one element in a tool_call or tool_call_update's content
+// acpToolCallContentBlock is one element in a tool_call or tool_call_update's content
 // array. On a diff block, KAS's edit tools send whole-file OldText/NewText (others a hunk
 // pair), so a line count must diff the two sides.
-type ACPToolCallContentBlock struct {
+type acpToolCallContentBlock struct {
 	Type    string `json:"type"`
 	Path    string `json:"path"`
 	OldText string `json:"oldText"`
@@ -38,28 +38,28 @@ type ACPToolCallContentBlock struct {
 	} `json:"content"`
 }
 
-// ACPKiroMeta is the top-level `_meta` carrying a `kiro` block. Kind=="agent-subtask"
+// acpKiroMeta is the top-level `_meta` carrying a `kiro` block. Kind=="agent-subtask"
 // marks a subagent card, AgentSubtaskID links it to its nested chunk deltas. Kiro.HookAsk
 // marks a pre-tool-use hook's ask card (KAS has no ToolKind "hook"); it gates nothing.
-type ACPKiroMeta struct {
-	Kiro ACPKiroBlock `json:"kiro"`
+type acpKiroMeta struct {
+	Kiro acpKiroBlock `json:"kiro"`
 }
 
-// ACPKiroBlock is the `kiro` object inside an `_meta`, named so it can carry the census.
-type ACPKiroBlock struct {
+// acpKiroBlock is the `kiro` object inside an `_meta`, named so it can carry the census.
+type acpKiroBlock struct {
 	// Refusal is present only on the agent_message_chunk carrying a model-refusal
 	// explanation. The turn then ends with core stopReason "refusal".
-	Refusal *ACPRefusalMeta `json:"refusal"`
+	Refusal *acpRefusalMeta `json:"refusal"`
 	// DisclosedContext identifies the skill or steering document a `disclose_context` call
 	// loaded. KAS persists it, so the activation renders as itself after a reload.
-	DisclosedContext *ACPDisclosedContext `json:"disclosedContext,omitempty"`
+	DisclosedContext *acpDisclosedContext `json:"disclosedContext,omitempty"`
 	// PolicyDenial is KAS's persisted reason for a tool call the Cedar policy refused, so a
 	// refusal is not mistaken for a broken command.
-	PolicyDenial *ACPPolicyDenial   `json:"policyDenial,omitempty"`
-	Checkpoint   *ACPCheckpointMeta `json:"checkpoint"`
+	PolicyDenial *acpPolicyDenial   `json:"policyDenial,omitempty"`
+	Checkpoint   *acpCheckpointMeta `json:"checkpoint"`
 	// OutputTransformation rides the terminal tool_call_update, live and replayed, when KAS
 	// offloaded an output of 30,000+ characters to a file.
-	OutputTransformation *ACPOutputTransformation `json:"outputTransformation,omitempty"`
+	OutputTransformation *acpOutputTransformation `json:"outputTransformation,omitempty"`
 	Kind                 string                   `json:"kind"`
 	AgentSubtaskID       string                   `json:"agentSubtaskId"`
 	// ToolID is KAS's machine name for a tool call (`execute_bash`, `user_input`). Not model-
@@ -88,6 +88,8 @@ type ACPKiroBlock struct {
 		// Status is KAS's severity for a notification-kind row; only a REPLAY carries it here (the
 		// live frame uses notificationSeverity), so a replayed step note keeps its label.
 		Status string `json:"status"`
+		// Sender is "parent" or "step" on a workflow message's row (send_message).
+		Sender string `json:"sender"`
 	} `json:"notification"`
 	// Workflow is on every frame of a workflow STEP's session and is the only mark of one.
 	// Nested at `params.update._meta.kiro.workflow`, not `params._meta`.
@@ -99,12 +101,12 @@ type ACPKiroBlock struct {
 }
 
 // acpKiroBlockShadow strips the UnmarshalJSON method so the real decode does not recurse.
-type acpKiroBlockShadow ACPKiroBlock
+type acpKiroBlockShadow acpKiroBlock
 
 // UnmarshalJSON decodes the block and reports any member KAS sent that this type does not
 // read. The census runs here because encoding/json hands this method just the
 // `_meta.kiro` bytes. It contributes no error.
-func (b *ACPKiroBlock) UnmarshalJSON(data []byte) error {
+func (b *acpKiroBlock) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*acpKiroBlockShadow)(b)); err != nil {
 		return err
 	}
@@ -114,35 +116,35 @@ func (b *ACPKiroBlock) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ACPDisclosedContext is _meta.kiro.disclosedContext on a disclose_context call.
-type ACPDisclosedContext struct {
+// acpDisclosedContext is _meta.kiro.disclosedContext on a disclose_context call.
+type acpDisclosedContext struct {
 	// Type is "skill" or "steering".
 	Type        string `json:"type"`
 	DisplayName string `json:"displayName"`
 	URI         string `json:"uri"`
 }
 
-// ACPOutputTransformation is _meta.kiro.outputTransformation; "offloaded" is the
+// acpOutputTransformation is _meta.kiro.outputTransformation; "offloaded" is the
 // only kind KAS emits.
-type ACPOutputTransformation struct {
+type acpOutputTransformation struct {
 	Kind        string `json:"kind"`
 	AbsFilePath string `json:"absFilePath"`
 	TotalChars  int    `json:"totalChars"`
 }
 
-// ACPPolicyDenial is _meta.kiro.policyDenial on a tool call Cedar refused. MatchedRule
+// acpPolicyDenial is _meta.kiro.policyDenial on a tool call Cedar refused. MatchedRule
 // names the rule the user owns. The outer `effect` is always "deny" and not decoded; the
 // inner rule's effect can be deny or ask.
-type ACPPolicyDenial struct {
-	MatchedRule *ACPPolicyRule `json:"matchedRule"`
+type acpPolicyDenial struct {
+	MatchedRule *acpPolicyRule `json:"matchedRule"`
 	Capability  string         `json:"capability"`
 	Resource    string         `json:"resource"`
 	Scope       string         `json:"scope"`
 	Source      string         `json:"source"`
 }
 
-// ACPPolicyRule is the matched rule inside a policy denial.
-type ACPPolicyRule struct {
+// acpPolicyRule is the matched rule inside a policy denial.
+type acpPolicyRule struct {
 	Capability string   `json:"capability"`
 	Effect     string   `json:"effect"`
 	Match      []string `json:"match,omitempty"`
@@ -153,38 +155,34 @@ type ACPPolicyRule struct {
 // attribution keys on NodePath (two iterations share a NodeID). Its `iter-<n>` segment
 // is the FRAME spelling; inspect's state tree names it `<repeatId>#<n>`.
 type ACPWorkflowMeta struct {
-	WorkflowID   string   `json:"workflowId"`
-	WorkflowName string   `json:"workflowName"`
-	NodeID       string   `json:"nodeId"`
-	Type         string   `json:"type"`
-	BranchID     string   `json:"branchId"`
-	NodePath     []string `json:"nodePath"`
-	Iteration    int      `json:"iteration"`
+	WorkflowID string   `json:"workflowId"`
+	NodeID     string   `json:"nodeId"`
+	NodePath   []string `json:"nodePath"`
 }
 
-// ACPCheckpointMeta is the _meta.kiro.checkpoint object on a file-writing
+// acpCheckpointMeta is the _meta.kiro.checkpoint object on a file-writing
 // tool_call_update. Every field is independently optional, so it merges per field (see
 // marotte.ToolCheckpoint).
-type ACPCheckpointMeta struct {
+type acpCheckpointMeta struct {
 	Original string `json:"original"`
 	Modified string `json:"modified"`
 	Local    string `json:"local"`
 }
 
-// ACPRefusalMeta is the _meta.kiro.refusal block on a refusal explanation chunk. The
+// acpRefusalMeta is the _meta.kiro.refusal block on a refusal explanation chunk. The
 // chunk's text is kept OUT of the assistant entry, so this block, flowing into
 // marotte.RefusalInfo, is where the explanation survives.
-type ACPRefusalMeta struct {
+type acpRefusalMeta struct {
 	Category         string `json:"category"`
 	Explanation      string `json:"explanation"`
 	RecommendedModel string `json:"recommendedModel"`
 }
 
-// ACPConsentMeta is the _meta.kiro.consent object on a session/request_permission: what the
+// acpConsentMeta is the _meta.kiro.consent object on a session/request_permission: what the
 // ask is about, present whenever KAS offers to persist an answer. PersistableConsent is a
 // pointer because absent means yes. One compound command asks once per unapproved part, and
 // TriggeringResource names that part; Resource is the whole command.
-type ACPConsentMeta struct {
+type acpConsentMeta struct {
 	PersistableConsent       *bool  `json:"persistableConsent"`
 	PersistableConsentReason string `json:"persistableConsentReason"`
 	// Scope is the policy scope that asked; "administration" (managed settings) needs a person.
@@ -194,13 +192,13 @@ type ACPConsentMeta struct {
 	TriggeringResource string `json:"triggeringResource"`
 }
 
-type acpConsentMetaShadow ACPConsentMeta
+type acpConsentMetaShadow acpConsentMeta
 
 // UnmarshalJSON decodes the block and reports any member it does not read. askType needs no
 // reader (KAS offers no Always allow on an explicit ask); matchedRule and source name the rule
 // that asked, which the card does not show; KAS falls back to the request's own workspaceRoot
 // when an answer omits it.
-func (c *ACPConsentMeta) UnmarshalJSON(data []byte) error {
+func (c *acpConsentMeta) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*acpConsentMetaShadow)(c)); err != nil {
 		return err
 	}
@@ -209,27 +207,27 @@ func (c *ACPConsentMeta) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Subject is the part of the command this ask is about.
-func (c *ACPConsentMeta) Subject() string {
+// subject is the part of the command this ask is about.
+func (c *acpConsentMeta) subject() string {
 	return cmp.Or(c.TriggeringResource, c.Resource)
 }
 
-// ACPPermissionMeta is the `_meta` on a session/request_permission, named because it
+// acpPermissionMeta is the `_meta` on a session/request_permission, named because it
 // multiplexes three concerns on the one human APPROVAL surface.
-type ACPPermissionMeta struct {
-	Kiro ACPPermissionKiroBlock `json:"kiro"`
+type acpPermissionMeta struct {
+	Kiro acpPermissionKiroBlock `json:"kiro"`
 }
 
-// ACPPermissionKiroBlock is the `kiro` object inside a permission request's `_meta`.
+// acpPermissionKiroBlock is the `kiro` object inside a permission request's `_meta`.
 // Field order is fieldalignment's: Consent leads as the only pointer.
-type ACPPermissionKiroBlock struct {
+type acpPermissionKiroBlock struct {
 	// WorkflowWatch names the run and node a watch command polls for; the ask arrives on the
 	// LAUNCHING session, so the step registry cannot name them.
-	WorkflowWatch *ACPWorkflowWatch `json:"workflowWatch"`
+	WorkflowWatch *acpWorkflowWatch `json:"workflowWatch"`
 	// Consent names what the ask is about and whether an always answer can persist.
-	Consent ACPConsentMeta `json:"consent"`
+	Consent acpConsentMeta `json:"consent"`
 	// MCPTool carries the identity KAS verified for an MCP-backed tool.
-	MCPTool ACPMCPToolWire `json:"mcpTool"`
+	MCPTool acpmcpToolWire `json:"mcpTool"`
 	// Type marks a TURN APPROVAL ("turn_approval"), the only thing distinguishing it from a
 	// tool approval on session/request_permission.
 	Type string `json:"type"`
@@ -237,22 +235,22 @@ type ACPPermissionKiroBlock struct {
 	ToolID string `json:"toolId"`
 	// Files is the turn approval's staged file list: ABSOLUTE paths and a `toolCallId` action
 	// id, both renamed on the way out.
-	Files []ACPApprovalFile `json:"files"`
+	Files []acpApprovalFile `json:"files"`
 	// ConsentRound counts KAS's asks for one tool call, from 1.
 	ConsentRound int `json:"consentRound"`
 }
 
-// ACPWorkflowWatch is `_meta.kiro.workflowWatch` on a watch command's ask.
-type ACPWorkflowWatch struct {
+// acpWorkflowWatch is `_meta.kiro.workflowWatch` on a watch command's ask.
+type acpWorkflowWatch struct {
 	WorkflowID string `json:"workflowId"`
 	NodeID     string `json:"nodeId"`
 }
 
-type acpPermissionKiroBlockShadow ACPPermissionKiroBlock
+type acpPermissionKiroBlockShadow acpPermissionKiroBlock
 
 // UnmarshalJSON decodes the block and reports any member KAS sent that it does not read;
 // the declined ones are read elsewhere or belong to asks this frame does not render.
-func (b *ACPPermissionKiroBlock) UnmarshalJSON(data []byte) error {
+func (b *acpPermissionKiroBlock) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*acpPermissionKiroBlockShadow)(b)); err != nil {
 		return err
 	}
@@ -262,54 +260,56 @@ func (b *ACPPermissionKiroBlock) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ACPMCPToolWire is the verified MCP identity attached to a permission request.
-type ACPMCPToolWire struct {
+// acpmcpToolWire is the verified MCP identity attached to a permission request.
+type acpmcpToolWire struct {
 	Identity struct {
 		ServerName string `json:"serverName"`
 		ToolName   string `json:"toolName"`
 	} `json:"identity"`
 }
 
-// ACPApprovalFile is one entry of a turn approval's `files` array.
-type ACPApprovalFile struct {
+// acpApprovalFile is one entry of a turn approval's `files` array.
+type acpApprovalFile struct {
 	Path        string `json:"path"`
 	SnapshotURI string `json:"snapshotUri"`
 	ToolCallID  string `json:"toolCallId"`
 }
 
-// ACPToolCallWire is the wire shape for tool_call session updates.
-type ACPToolCallWire struct {
+// acpToolCallWire is the wire shape for tool_call session updates.
+type acpToolCallWire struct {
 	ToolCallID string                    `json:"toolCallId"`
 	Title      string                    `json:"title"`
 	Kind       marotte.ToolKind          `json:"kind"`
 	Status     marotte.ToolStatus        `json:"status"`
 	RawInput   json.RawMessage           `json:"rawInput"`
 	Locations  []marotte.ToolLocation    `json:"locations"`
-	Content    []ACPToolCallContentBlock `json:"content"`
-	// Meta trails: ACPKiroBlock ends in a bool and fieldalignment counts leading pointer bytes.
-	Meta ACPKiroMeta `json:"_meta"`
+	Content    []acpToolCallContentBlock `json:"content"`
+	// Meta trails: acpKiroBlock ends in a bool and fieldalignment counts leading pointer bytes.
+	Meta acpKiroMeta `json:"_meta"`
 }
 
-// ACPToolCallUpdateWire is the wire shape for tool_call_update session updates. rawOutput
+// acpToolCallUpdateWire is the wire shape for tool_call_update session updates. rawOutput
 // stays opaque except for the workflow link and the narrow text fallbacks.
-type ACPToolCallUpdateWire struct {
+type acpToolCallUpdateWire struct {
 	ToolCallID string                    `json:"toolCallId"`
 	Title      string                    `json:"title"`
 	Kind       marotte.ToolKind          `json:"kind"`
 	Status     marotte.ToolStatus        `json:"status"`
 	RawOutput  json.RawMessage           `json:"rawOutput"`
 	Locations  []marotte.ToolLocation    `json:"locations"`
-	Content    []ACPToolCallContentBlock `json:"content"`
-	// Meta trails: ACPKiroBlock ends in a bool and fieldalignment counts leading pointer bytes.
-	Meta ACPKiroMeta `json:"_meta"`
+	Content    []acpToolCallContentBlock `json:"content"`
+	// Meta trails: acpKiroBlock ends in a bool and fieldalignment counts leading pointer bytes.
+	Meta acpKiroMeta `json:"_meta"`
 }
 
-// ACPRawOutput is the object shape read out of a tool call's `rawOutput` (KAS: `unknown`).
+// acpRawOutput is the object shape read out of a tool call's `rawOutput` (KAS: `unknown`).
 // WorkflowID is run_workflow's link to its run; Error and Message are failure fallbacks
-// (Message also unwraps a stringified copy); Updated is update_workflow's own verdict, a
-// pointer because absent means TAKEN. Kept narrow so success payloads stay off the card.
-type ACPRawOutput struct {
+// (Message also unwraps a stringified copy); Updated is update_workflow's own verdict and
+// Saved save_workflow_definition's, pointers because absent means TAKEN. Kept narrow so
+// success payloads stay off the card.
+type acpRawOutput struct {
 	Updated    *bool  `json:"updated"`
+	Saved      *bool  `json:"saved"`
 	WorkflowID string `json:"workflowId"`
 	Error      string `json:"error"`
 	Message    string `json:"message"`
@@ -322,26 +322,42 @@ func rawOutputWorkflowID(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	var out ACPRawOutput
+	var out acpRawOutput
 	if json.Unmarshal(raw, &out) != nil {
 		return ""
 	}
 	return out.WorkflowID
 }
 
-// rawOutputUpdate reports a workflow-update tool's own verdict and whether it stated one.
-// present is false for an absent, non-object or malformed rawOutput and for one with no
-// `updated` key (only one tool's object carries it), so absent means TAKEN, as in
-// agent's stepStatusRefusal.
-func rawOutputUpdate(raw json.RawMessage) (updated, present bool) {
+// rawOutputStatesUpdate reports whether a workflow-update tool stated its own verdict. It is
+// false for an absent, non-object or malformed rawOutput and for one with no `updated` key (only
+// one tool's object carries it), so absent means TAKEN, as in agent's stepStatusRefusal.
+func rawOutputStatesUpdate(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var out acpRawOutput
+	return json.Unmarshal(raw, &out) == nil && out.Updated != nil
+}
+
+// rawOutputVerdict reports a workflow tool's own verdict (`updated`, else `saved`) and whether
+// it stated one, with rawOutputStatesUpdate's absent-means-taken rule.
+func rawOutputVerdict(raw json.RawMessage) (accepted, present bool) {
 	if len(raw) == 0 {
 		return false, false
 	}
-	var out ACPRawOutput
-	if json.Unmarshal(raw, &out) != nil || out.Updated == nil {
+	var out acpRawOutput
+	if json.Unmarshal(raw, &out) != nil {
 		return false, false
 	}
-	return *out.Updated, true
+	switch {
+	case out.Updated != nil:
+		return *out.Updated, true
+	case out.Saved != nil:
+		return *out.Saved, true
+	default:
+		return false, false
+	}
 }
 
 // rawOutputString extracts rawOutput only when it is a bare JSON string, KAS's shape when
@@ -360,7 +376,7 @@ func rawOutputString(raw json.RawMessage) string {
 // stringifiedRawOutputMessage returns message only when content encodes the same
 // multi-field object as rawOutput; a different content block remains canonical.
 func stringifiedRawOutputMessage(raw json.RawMessage, content string) string {
-	var out ACPRawOutput
+	var out acpRawOutput
 	var rawObject map[string]any
 	var contentObject map[string]any
 	if json.Unmarshal(raw, &out) != nil || json.Unmarshal(raw, &rawObject) != nil || len(rawObject) < 2 {
@@ -400,13 +416,11 @@ func mcpEnvelopeResponse(raw json.RawMessage, content string) string {
 	return strings.TrimSpace(response)
 }
 
-// rawOutputFailureText extracts the reason a failed tool call reports, or "" when
-// rawOutput is absent, malformed, neither a string nor an object, or carries no text.
 func rawOutputFailureText(raw json.RawMessage) string {
 	if text := rawOutputString(raw); text != "" {
 		return text
 	}
-	var out ACPRawOutput
+	var out acpRawOutput
 	if json.Unmarshal(raw, &out) != nil {
 		return ""
 	}
@@ -416,14 +430,14 @@ func rawOutputFailureText(raw json.RawMessage) string {
 	return strings.TrimSpace(out.Message)
 }
 
-// ACPPlanWire is the wire shape for plan session updates.
-type ACPPlanWire struct {
+// acpPlanWire is the wire shape for plan session updates.
+type acpPlanWire struct {
 	Entries []marotte.PlanEntry `json:"entries"`
 }
 
-// ACPModeUpdateWire is the current_mode_update sub-kind. The mode is `currentModeId`, NOT
+// acpModeUpdateWire is the current_mode_update sub-kind. The mode is `currentModeId`, NOT
 // `modeId` (the outbound set_mode field): the wrong one drops agent mode changes.
-type ACPModeUpdateWire struct {
+type acpModeUpdateWire struct {
 	ModeID string `json:"currentModeId"`
 }
 
@@ -449,13 +463,13 @@ type ACPSessionUpdateBase struct {
 	} `json:"_meta"`
 }
 
-// ContentTypeContent is the ACP content-block type discriminator value "content".
+// contentTypeContent is the ACP content-block type discriminator value "content".
 // Distinct from jsonFieldContent, which is the JSON field *name* "content".
-const ContentTypeContent = "content"
+const contentTypeContent = "content"
 
-// ContentTypeDiff is the ACP content-block type for file-change diffs.
-const ContentTypeDiff = "diff"
+// contentTypeDiff is the ACP content-block type for file-change diffs.
+const contentTypeDiff = "diff"
 
-// ContentTypeTerminal is the content-block type naming the terminal running an execute
+// contentTypeTerminal is the content-block type naming the terminal running an execute
 // tool call; its terminalId finds the card's output stream.
-const ContentTypeTerminal = "terminal"
+const contentTypeTerminal = "terminal"

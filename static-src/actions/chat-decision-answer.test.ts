@@ -1,6 +1,7 @@
 // The three asks share one answer path; "somebody else answered first" (409
-// {"error":"already_answered"}, internal/command/validate.go) is not a failure and raises no
-// toast, because decision-dock.ts already explains it.
+// {"error":"already_answered"}) and "the ask settled first" (410 {"error":"ask_withdrawn"},
+// internal/command/validate.go) are not failures and raise no toast, because decision-dock.ts
+// already explains them.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -75,13 +76,20 @@ beforeEach(() => {
   mockToastError.mockReset();
 });
 
-describe("answering an ask: the three outcomes", () => {
+describe("answering an ask: the four outcomes", () => {
   for (const ask of asks) {
     it(`${ask.name}: a 409 already_answered is 'superseded' and raises NO error toast`, async () => {
       mockSend.mockResolvedValue({ ok: false, status: 409, error: "already_answered" });
       const result = await ask.dispatch();
       expect(result).toBe("superseded");
       // The dock owns this explanation, so this layer is silent.
+      expect(mockToastError).not.toHaveBeenCalled();
+    });
+
+    it(`${ask.name}: a 410 ask_withdrawn is 'withdrawn' and raises NO error toast`, async () => {
+      mockSend.mockResolvedValue({ ok: false, status: 410, error: "ask_withdrawn" });
+      await expect(ask.dispatch()).resolves.toBe("withdrawn");
+      // The settlement that won owns the card's explanation, so this layer is silent.
       expect(mockToastError).not.toHaveBeenCalled();
     });
 

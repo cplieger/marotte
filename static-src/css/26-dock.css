@@ -818,7 +818,7 @@
 
    So the box is reserved and only its CONTENTS change, for a reason this rule owns
    rather than borrows: a row that changes the transcript's height also moves
-   `#messages`' `scrollHeight`, which is what the timeline rail reads to decide
+   `#messages`' `scrollHeight`, which is what the turn map reads to decide
    whether it has anywhere to navigate.
 
    THE CROSS-REFERENCE THAT USED TO SIT HERE IS GONE. It cited `.turn-elapsed`

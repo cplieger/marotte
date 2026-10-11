@@ -1,6 +1,6 @@
 // Policy lint: user-initiated mutations go through the actions framework (defineAction /
 // apiAction / transportAction); background reads, cleanup and infrastructure stay silent. A
-// write-shaped call (`void|await apiPost/apiDelete`, `await apiPutOrError`, `void|await
+// write-shaped call (`void|await apiPost`, `void|await
 // transport.send`/`transportSend`) outside actions/, api-client.ts, transport.ts, tests and
 // BACKGROUND_ALLOWLIST fails. A new mutation is an action in actions/<area>.ts.
 
@@ -27,14 +27,11 @@ const BACKGROUND_ALLOWLIST = new Set<string>([
 /** Forbidden patterns: `void apiX(` (fire-and-forget) and `await apiX(` (bypassing the framework). */
 const PATTERNS: { name: string; re: RegExp }[] = [
   { name: "void apiPost", re: /\bvoid\s+apiPost\s*[<(]/g },
-  { name: "void apiDelete", re: /\bvoid\s+apiDelete\s*[<(]/g },
   { name: "void transport.send", re: /\bvoid\s+transport\.send\s*\(/g },
   { name: "await transport.send", re: /\bawait\s+transport\.send\s*\(/g },
   { name: "void transportSend", re: /\bvoid\s+transportSend\s*\(/g },
   { name: "await transportSend", re: /\bawait\s+transportSend\s*\(/g },
   { name: "await apiPost", re: /\bawait\s+apiPost\s*[<(]/g },
-  { name: "await apiDelete", re: /\bawait\s+apiDelete\s*[<(]/g },
-  { name: "await apiPutOrError", re: /\bawait\s+apiPutOrError\s*[<(]/g },
 ];
 
 function listTSFiles(dir: string, out: string[] = []): string[] {

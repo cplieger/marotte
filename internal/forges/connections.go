@@ -116,13 +116,11 @@ const (
 	KindCodeberg Kind = "codeberg" // synonym for KindGitea, host=codeberg.org
 )
 
-// kindMetaEntry holds the per-kind metadata used by the lookup methods.
 type kindMetaEntry struct {
 	DefaultHost string
 }
 
-// kindMeta holds every valid kind's metadata; a kind is valid exactly when it
-// has an entry.
+// A kind is valid exactly when it has an entry.
 var kindMeta = map[Kind]kindMetaEntry{
 	KindGitHub:   {DefaultHost: "github.com"},
 	KindGitLab:   {DefaultHost: "gitlab.com"},
@@ -130,34 +128,34 @@ var kindMeta = map[Kind]kindMetaEntry{
 	KindGitea:    {DefaultHost: ""},
 }
 
-// Valid reports whether k is a known forge kind.
-func (k Kind) Valid() bool {
+// valid reports whether k is a known forge kind.
+func (k Kind) valid() bool {
 	_, ok := kindMeta[k]
 	return ok
 }
 
-// DefaultHost returns the canonical hostname for the kind, or "" if
+// defaultHost returns the canonical hostname for the kind, or "" if
 // no default exists (self-hosted Gitea/Forgejo).
-func (k Kind) DefaultHost() string {
+func (k Kind) defaultHost() string {
 	return kindMeta[k].DefaultHost
 }
 
-// AllKinds returns every supported forge kind. Stable ordering for
+// allKinds returns every supported forge kind. Stable ordering for
 // UI rendering.
-func AllKinds() []Kind {
+func allKinds() []Kind {
 	return []Kind{KindGitHub, KindGitLab, KindCodeberg, KindGitea}
 }
 
-// ErrNotLoggedIn signals a forge with no usable connection.
-var ErrNotLoggedIn = errors.New("forges: not logged in")
+// errNotLoggedIn signals a forge with no usable connection.
+var errNotLoggedIn = errors.New("forges: not logged in")
 
-// ErrNotSupported signals the forge has no mechanism for the requested
+// errNotSupported signals the forge has no mechanism for the requested
 // operation: not a failure to reach it, but an absent capability. The HTTP
 // layer answers 501 so the client can hide the control instead of offering one
 // that always fails.
-var ErrNotSupported = errors.New("forges: operation not supported by this forge")
+var errNotSupported = errors.New("forges: operation not supported by this forge")
 
-// family is the forgeapi family that serves k; codeberg is a Gitea instance.
+// codeberg is a Gitea instance.
 func (k Kind) family() forgeapi.Family {
 	switch k {
 	case KindGitHub:
@@ -170,17 +168,15 @@ func (k Kind) family() forgeapi.Family {
 	return forgeapi.FamilyUnknown
 }
 
-// connectionStore is the connection record file. Every change is one
-// read-modify-write under mu, so concurrent writers (a connect, the keeper's
+// Every change is one read-modify-write under mu, so concurrent writers (a connect, the keeper's
 // cursor write-back) cannot lose each other's update.
 type connectionStore struct {
 	path string
 	mu   sync.Mutex
 }
 
-// load answers the records on disk. A missing file holds none, and so does an
-// unparseable one, which is moved aside first. A file whose mode cannot be
-// verified answers what it holds together with an errConnectionsUnverified
+// A missing file holds none, and so does an unparseable one, which is moved aside first. A file
+// whose mode cannot be verified answers what it holds together with an errConnectionsUnverified
 // verdict; any other read failure answers the failure alone.
 func (s *connectionStore) load() ([]connectionRecord, error) {
 	s.mu.Lock()
@@ -188,8 +184,7 @@ func (s *connectionStore) load() ([]connectionRecord, error) {
 	return s.loadLocked()
 }
 
-// update applies fn to the records and writes the result. It refuses to write
-// when the load did not succeed, so a file it cannot read is never replaced.
+// It refuses to write when the load did not succeed, so a file it cannot read is never replaced.
 func (s *connectionStore) update(ctx context.Context, fn func([]connectionRecord) []connectionRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -238,7 +233,7 @@ func validRecords(recs []connectionRecord) []connectionRecord {
 	for i := range recs {
 		r := &recs[i]
 		dup := slices.ContainsFunc(out, func(o connectionRecord) bool { return o.ID == r.ID })
-		if !r.Kind.Valid() || r.Host == "" || r.ID != MakeID(r.Kind, r.Host) || dup {
+		if !r.Kind.valid() || r.Host == "" || r.ID != MakeID(r.Kind, r.Host) || dup {
 			slog.Warn("forges: dropping an invalid connection record", "id", r.ID, "kind", r.Kind, "host", r.Host)
 			continue
 		}

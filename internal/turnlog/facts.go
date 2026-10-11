@@ -38,25 +38,39 @@ type ask struct {
 // NOT safe for concurrent use: a Turn guards its own.
 type Facts struct {
 	throughput *marotte.TurnThroughput
+	breakdown  *marotte.ContextBreakdown
 	asks       map[string]*ask
 	requestIDs []string
 	recoveries []string
 	steering   []string
 }
 
-// NoteTurnCompletion folds one turn_completion's request ids, throughput and
-// recoveries in. Tokens and streaming time sum across frames.
-func (f *Facts) NoteTurnCompletion(requestIDs, recoveries []string, tp *marotte.TurnThroughput) {
-	f.requestIDs = appendDistinct(f.requestIDs, requestIDs, maxRequestIDs)
-	f.recoveries = appendDistinct(f.recoveries, recoveries, maxRecoveries)
-	if tp == nil {
+// Completion is what one turn_completion frame says about the turn.
+type Completion struct {
+	Throughput *marotte.TurnThroughput
+	// ContextBreakdown measures the frame's last model request.
+	ContextBreakdown *marotte.ContextBreakdown
+	RequestIDs       []string
+	Recoveries       []string
+}
+
+// NoteTurnCompletion folds one turn_completion in. Ids and recoveries accumulate, tokens and
+// streaming time sum across frames, and the newest context breakdown wins (an absent one keeps
+// the last).
+func (f *Facts) NoteTurnCompletion(c *Completion) {
+	f.requestIDs = appendDistinct(f.requestIDs, c.RequestIDs, maxRequestIDs)
+	f.recoveries = appendDistinct(f.recoveries, c.Recoveries, maxRecoveries)
+	if c.ContextBreakdown != nil {
+		f.breakdown = c.ContextBreakdown
+	}
+	if c.Throughput == nil {
 		return
 	}
 	if f.throughput == nil {
 		f.throughput = &marotte.TurnThroughput{}
 	}
-	f.throughput.EstimatedTokens += tp.EstimatedTokens
-	f.throughput.ActiveStreamingMs += tp.ActiveStreamingMs
+	f.throughput.EstimatedTokens += c.Throughput.EstimatedTokens
+	f.throughput.ActiveStreamingMs += c.Throughput.ActiveStreamingMs
 }
 
 // NoteSteering records steering documents KAS added to the turn's context.
@@ -121,6 +135,7 @@ func (f *Facts) Stamp(footer *marotte.EntryTurnClose) {
 	footer.RequestIDs = f.requestIDs
 	footer.Recoveries = f.recoveries
 	footer.Steering = f.steering
+	footer.ContextBreakdown = f.breakdown
 }
 
 // EngineClass is an engine error's class for a broken turn, when it is a class a
@@ -133,10 +148,10 @@ func EngineClass(errorType string, outcome marotte.TurnOutcome) string {
 }
 
 // NoteTurnCompletion folds one turn_completion's facts into the turn.
-func (t *Turn) NoteTurnCompletion(requestIDs, recoveries []string, tp *marotte.TurnThroughput) {
+func (t *Turn) NoteTurnCompletion(c *Completion) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.agg.facts.NoteTurnCompletion(requestIDs, recoveries, tp)
+	t.agg.facts.NoteTurnCompletion(c)
 }
 
 // NoteSteering records steering documents KAS added to the turn's context.

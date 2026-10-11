@@ -11,17 +11,15 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// bridgeState represents the lifecycle state of a sharedBridge.
 type bridgeState int
 
 const (
 	bridgeIdle      bridgeState = iota // ready for a new prompt
-	bridgeStarting                     // bridge.Start in progress (held during getOrCreateBridge)
+	bridgeStarting                     // bridge.Start in progress (held during spawnGeneration)
 	bridgePrompting                    // prompt in flight
 )
 
-// sharedBridge wraps an ACP bridge with the runtime's per-chat state; mu guards the fields
-// and state encodes the lifecycle phase.
+// mu guards the fields and state encodes the lifecycle phase.
 type sharedBridge struct {
 	bridge ACPBridge
 	// revertStarting runs before a checkpoint revert with the session it reverts; nil on a run carrier.
@@ -32,6 +30,9 @@ type sharedBridge struct {
 	// the cause tells an expired grace from other cancellations.
 	promptCancel context.CancelCauseFunc
 	cancelTimer  *time.Timer
+	// settled is the generation's readiness from the spawn's first instant: openBridge hands sb to
+	// no caller before it settles. Nil for a carrier that never loads a session.
+	settled *sessionSettle
 
 	// liveLock serializes every live push to this process and guards live (syncLive).
 	liveLock surfaceLock
@@ -39,7 +40,7 @@ type sharedBridge struct {
 	turnGen  uint64
 	mu       sync.Mutex
 	state    bridgeState
-	// effortHealed latches the one reactive effort repair (BridgeCoordinator.healEffort).
+	// effortHealed latches the one reactive effort repair (bridgeCoordinator.healEffort).
 	effortHealed bool
 	retire       bool
 	// runVerbs counts the run verbs that ever held this carrier, so a failed verb can tell a sole carrier from a shared one.
@@ -53,7 +54,6 @@ func (sb *sharedBridge) current() ACPBridge {
 	return sb.bridge
 }
 
-// swapBridge installs next and returns the bridge it replaced.
 func (sb *sharedBridge) swapBridge(next ACPBridge) ACPBridge {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -74,7 +74,6 @@ func (sb *sharedBridge) tryAcquireForPrompt() bool {
 	return true
 }
 
-// releaseAfterPrompt transitions from prompting back to idle.
 func (sb *sharedBridge) releaseAfterPrompt() {
 	sb.mu.Lock()
 	sb.state = bridgeIdle
@@ -82,8 +81,7 @@ func (sb *sharedBridge) releaseAfterPrompt() {
 	sb.mu.Unlock()
 }
 
-// startedPastSpawn reports whether Start finished; the manager registers the record before
-// Start, so map presence is not liveness.
+// The manager registers the record before Start, so map presence is not liveness.
 func (sb *sharedBridge) startedPastSpawn() bool {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -97,7 +95,7 @@ func (sb *sharedBridge) setIdle() {
 	sb.mu.Unlock()
 }
 
-// stopCancelTimerLocked disarms a pending cancel-grace timer. Caller holds mu.
+// Caller holds mu.
 func (sb *sharedBridge) stopCancelTimerLocked() {
 	if sb.cancelTimer != nil {
 		sb.cancelTimer.Stop()
@@ -192,9 +190,8 @@ func (sb *sharedBridge) ArmCancelGrace(gen uint64, d time.Duration) bool {
 	return true
 }
 
-// shouldTripCancelGrace reports whether an expired grace still applies to its turn, returning
-// that turn's cancel func. It refuses when the chat is no longer prompting, the generation
-// moved on, or no prompt context is registered.
+// It refuses when the chat is no longer prompting, the generation moved on, or no prompt context is
+// registered.
 func (sb *sharedBridge) shouldTripCancelGrace(gen uint64) (context.CancelCauseFunc, bool) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()

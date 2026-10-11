@@ -9,7 +9,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// hubWithRealStore builds a runtime over an on-disk chat store seeded with chat c1.
 func hubWithRealStore(t *testing.T) (*Runtime, *testChatStore) {
 	t.Helper()
 	cs := newTestChatStore()
@@ -20,17 +19,15 @@ func hubWithRealStore(t *testing.T) (*Runtime, *testChatStore) {
 	return h, cs
 }
 
-// seedTerminal registers a live agent terminal holding raw bytes, as the pump would.
 func seedTerminal(h *Runtime, id string, chatID marotte.ChatID, raw string) {
 	term := newAgentTerminal(nil, chatID, 1<<20)
-	term.output.Write([]byte(raw))
+	term.output.write([]byte(raw))
 	h.agentTerms.mu.Lock()
 	defer h.agentTerms.mu.Unlock()
 	h.agentTerms.terms[id] = term
 	h.agentTerms.byChatID[chatID] = append(h.agentTerms.byChatID[chatID], id)
 }
 
-// sessionUpdate wraps one ACP session/update frame the way the bridge does.
 func sessionUpdate(t *testing.T, raw string) *marotte.RPCResponse {
 	t.Helper()
 	return &marotte.RPCResponse{
@@ -39,7 +36,6 @@ func sessionUpdate(t *testing.T, raw string) *marotte.RPCResponse {
 	}
 }
 
-// storedToolResult re-reads chat c1's log from disk and returns its one tool_result.
 func storedToolResult(t *testing.T, cs *testChatStore) marotte.EntryToolResult {
 	t.Helper()
 	results := toolResultsOf(t, logOf(t, cs, "c1"))
@@ -49,14 +45,13 @@ func storedToolResult(t *testing.T, cs *testChatStore) marotte.EntryToolResult {
 	return results[0]
 }
 
-// runTerminalTurn drives a terminal-backed tool call to a settled turn end, which seals the result into the log.
 func runTerminalTurn(t *testing.T, h *Runtime, frames ...string) {
 	t.Helper()
 	turnID, _ := h.stagePromptTurn(t, "c1")
-	h.translateACPEvent("c1", sessionUpdate(t,
+	h.translateACPEvent("c1", h.originOf("c1"), sessionUpdate(t,
 		`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"bash","kind":"execute","status":"pending"}`))
 	for _, f := range frames {
-		h.translateACPEvent("c1", sessionUpdate(t, f))
+		h.translateACPEvent("c1", h.originOf("c1"), sessionUpdate(t, f))
 	}
 	h.SettleTurnOnResponse(t.Context(), "c1", turnID, 0, &marotte.RPCResponse{})
 }
@@ -71,13 +66,13 @@ func TestPersistedToolCall_CarriesTerminalOutputAndSpans(t *testing.T) {
 	seedTerminal(h, "term-1", "c1", "\x1b[31mred\x1b[0m output\n")
 
 	turnID, _ := h.stagePromptTurn(t, "c1")
-	h.translateACPEvent("c1", sessionUpdate(t,
+	h.translateACPEvent("c1", h.originOf("c1"), sessionUpdate(t,
 		`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"bash","kind":"execute","status":"pending"}`))
 	// KAS releases before it reports the result; the test reproduces that order.
-	if _, released := h.agentTerms.release("term-1"); !released {
+	if _, released := h.agentTerms.release("c1", "term-1"); !released {
 		t.Fatal("release reported the terminal was not present")
 	}
-	h.translateACPEvent("c1", sessionUpdate(t, completedWithTerminal))
+	h.translateACPEvent("c1", h.originOf("c1"), sessionUpdate(t, completedWithTerminal))
 	h.SettleTurnOnResponse(t.Context(), "c1", turnID, 0, &marotte.RPCResponse{})
 
 	tr := storedToolResult(t, cs)
@@ -96,6 +91,41 @@ func TestPersistedToolCall_CarriesTerminalOutputAndSpans(t *testing.T) {
 	}
 	if s.End > len(tr.Output) {
 		t.Errorf("span end %d exceeds persisted text length %d", s.End, len(tr.Output))
+	}
+}
+
+// TestPersistedToolCall_KASsFailedAfterTheReadersStopRecordsAborted pins the stop grade through
+// the real turn registry: a failure that lands after the reader's stop persists as `aborted`,
+// one that landed before it stays `failed`.
+func TestPersistedToolCall_KASsFailedAfterTheReadersStopRecordsAborted(t *testing.T) {
+	const failed = `{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"failed",` +
+		`"rawOutput":"This tool was interrupted before it reported a result, so it may or may not have taken effect."}`
+	for _, tt := range []struct {
+		name      string
+		want      marotte.ToolStatus
+		stopFirst bool
+	}{
+		{name: "after the stop", stopFirst: true, want: marotte.ToolAborted},
+		{name: "before the stop", want: marotte.ToolFailed},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h, cs := hubWithRealStore(t)
+			turnID, _ := h.stagePromptTurn(t, "c1")
+			h.translateACPEvent("c1", h.originOf("c1"), sessionUpdate(t,
+				`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"bash","kind":"execute","status":"pending"}`))
+			if tt.stopFirst {
+				h.coord.RequestStop("c1")
+			}
+			h.translateACPEvent("c1", h.originOf("c1"), sessionUpdate(t, failed))
+			if !tt.stopFirst {
+				h.coord.RequestStop("c1")
+			}
+			h.SettleTurnOnResponse(t.Context(), "c1", turnID, 0, &marotte.RPCResponse{})
+
+			if got := storedToolResult(t, cs).Status; got != tt.want {
+				t.Errorf("persisted Status = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -136,7 +166,7 @@ func TestPersistedToolCall_SurvivesTheTurnBoundary(t *testing.T) {
 	h, cs := hubWithRealStore(t)
 	seedTerminal(h, "term-1", "c1", "kept\n")
 	// Without the release nothing enters `retired` and the eviction assertion is vacuous.
-	if _, ok := h.agentTerms.release("term-1"); !ok {
+	if _, ok := h.agentTerms.release("c1", "term-1"); !ok {
 		t.Fatal("Setup: release found no terminal, so nothing is retired to evict")
 	}
 

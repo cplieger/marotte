@@ -63,7 +63,6 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 	writeCloneStreamLine(w, rc, map[string]string{jsonKeyOutput: clientBlock(out)})
 }
 
-// progressInterval throttles the progress lines the clone stream forwards.
 // A var so the handler test does not have to pace a fake git in real time.
 var progressInterval = 500 * time.Millisecond
 
@@ -97,9 +96,8 @@ func (h *Handler) clone(ctx context.Context, remote string, onProgress func(stri
 	}
 	dir := filepath.Join(h.workDir, name)
 	if dir == h.workDir {
-		// Unreachable through cloneDirName, which refuses "." and "..".
-		// Kept so a future change there cannot turn the workspace root
-		// into an adoption target.
+		// Unreachable while cloneDirName refuses "." and ".."; the workspace
+		// root must never become an adoption target.
 		return runTransfer(ctx, h.workDir, onProgress, "clone", "--progress", "--", remote)
 	}
 	switch inspectCloneDest(ctx, dir) {
@@ -181,24 +179,19 @@ func (h *Handler) discardCloneDebris(dir, name string, sweepAll bool) {
 	}
 }
 
-// destState describes what occupies a clone destination.
 type destState int
 
 const (
 	// destAbsent is nothing at the name, or something that is not a
 	// directory. Both are git's to report.
 	destAbsent destState = iota
-	// destEmpty is an existing directory with no entries.
 	destEmpty
-	// destRepo is an existing git repository.
 	destRepo
-	// destOccupied is an existing directory holding other content.
 	destOccupied
 )
 
-// inspectCloneDest reports what sits at dir. A symlink reads as
-// destAbsent deliberately: adopting one would write through it to a
-// target the caller never named, so it stays git's error to report.
+// A symlink reads as destAbsent deliberately: adopting one would write through it to a target the
+// caller never named, so it stays git's error to report.
 func inspectCloneDest(ctx context.Context, dir string) destState {
 	fi, err := os.Lstat(dir)
 	if err != nil || !fi.IsDir() {
@@ -311,7 +304,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git reclone starting", "repo", body.Repo)
 	// Delete after resolving the URL, through the pinned parent (see removeRepoDir).
 	if rmErr := h.removeRepoDir(dir); rmErr != nil {
-		if errors.Is(rmErr, ErrUnsafeRepoPath) {
+		if errors.Is(rmErr, errUnsafeRepoPath) {
 			slog.Warn("git reclone: refused", "repo", body.Repo, "error", rmErr)
 			httpreply.BadRequest(w, "that repo path is not inside the workspace")
 			return

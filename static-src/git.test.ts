@@ -12,7 +12,7 @@ const H = vi.hoisted(() => ({
   refreshPRsDispatch: vi.fn(),
   changesClose: vi.fn(),
   prsClose: vi.fn(),
-  /** The sub-tab the panel is on. `getGitTab` is the only reader that matters here. */
+  /** `getGitTab` is the only reader that matters here. */
   tab: { current: "changes" as string },
   /** The subscriber `initGitTabs` would notify. Captured so a case can fire it. */
   listener: { fn: null as ((tab: string) => void) | null },

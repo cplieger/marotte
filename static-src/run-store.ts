@@ -1,16 +1,25 @@
-// The one owner of a workflow run's state: refetched on invalidation, cached verbatim, never
-// accumulated from an SSE payload.
+// The one owner of a workflow run's state: refetched on invalidation, cached as read but for each
+// node's start (`attemptStart`), never accumulated from an SSE payload.
 
 import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
+import { nodePathKey } from "./run-node-key.js";
 import { forgetSubject, observeStamp } from "./subject-versions.js";
+import { turnOpenOf } from "./turns.js";
+import { settleWorkflowMessages } from "./workflow-delivery.js";
 import type { Entry, OpenEntry, TurnState } from "./types.js";
-import { decodeLiveRunsResponse, decodeRunControlsResponse } from "./wire/decoders.gen.js";
+import {
+  decodeLiveRunsResponse,
+  decodeRunControlsResponse,
+  decodeRunPlanUpdate,
+} from "./wire/decoders.gen.js";
 import type {
   ConnectedPayload,
   LiveRun,
   RunControlsResponse,
+  RunPlanUpdate,
   RunStepEnd,
+  RunStepStart,
 } from "./wire/types.gen.js";
 import {
   classifyRunNodeStatus,
@@ -23,12 +32,17 @@ import {
 /** One node of KAS's execution tree, from `state.root`. */
 export interface RunNode {
   nodeId: string;
-  type: "step" | "sequence" | "repeat" | "parallel" | "watch";
+  /** Open: KAS adds node types between releases (`run-exec-source.ts` `kindOf` maps one it does not
+   *  know onto a container). */
+  type: string;
   status: ClassifiedRunNodeStatus;
   agentName?: string;
   modelId?: string;
   effortLevel?: string;
   sessionId?: string;
+  /** When the node's current attempt began: the run log's where it holds the current one
+   *  (`attemptStart`), the earliest of its own and its children's for a container it holds none
+   *  for, else KAS's own stamp, which a resume moves. */
   startedAt?: string;
   endedAt?: string;
   iteration?: number;
@@ -38,8 +52,16 @@ export interface RunNode {
   capturedOutput?: string;
   watchTerminal?: boolean;
   failureReason?: string;
+  /** This store's, from the live frames KAS persists nothing for: why the step paused, and why a
+   *  running step is waiting to retry. A start clears both. */
+  pauseReason?: string;
+  retryReason?: string;
   completionSignal?: "success" | "need_input" | "error";
   continuationAttempts?: number;
+  /** This store's, not KAS's: orders this node's current execution against every other of every
+   *  run. A later execution carries a larger value, and an execution keeps its value however each
+   *  source re-reports it. Absent on a node with no start. */
+  startGen?: number;
 }
 
 /** A run's whole state. `runLabel` is the name a launcher gave this execution and `workflowName`
@@ -61,22 +83,47 @@ export interface RunState {
   /** A pause asked for that lands at the end of the current step. */
   pausePending?: { initiator?: string; reason?: string; requestedAt?: string };
   parentSessionId?: string;
+  /** marotte's, from the reply's `plan_update`: the run's newest queued plan revision. */
+  planUpdate?: RunPlanUpdate;
 }
 
-/** The alert a person's own stop or pause reads, or undefined when no person stopped the run.
- *  The reason is set only when the cause was not the button. */
-export function userStopSentence(state: RunState): string | undefined {
-  if (state.stopInitiator !== "user") {
+/** The alert an attributed stop or pause reads, or undefined when KAS names no initiator. KAS's
+ *  initiator and reason are shown as given: an orchestrator's pause reaches here as `user` with
+ *  KAS's own sentence saying so. */
+export function stopSentence(state: RunState): string | undefined {
+  const who = state.stopInitiator ?? "";
+  if (who === "") {
     return undefined;
   }
   const lead =
     state.status === "completed"
-      ? "Marked complete by you"
+      ? `Marked complete by ${who}`
       : state.status === "paused"
-        ? "Paused by you"
-        : "Stopped by you";
+        ? `Paused by ${who}`
+        : `Stopped by ${who}`;
   const why = state.stopReason ?? "";
   return why === "" ? lead : `${lead}: ${why}`;
+}
+
+/** KAS's attribution on each run's newest resume, verbatim: `run_start` carries it and no read does. */
+const resumedBy = new Map<string, { initiator: string; reason: string }>();
+
+/** Record a `run_start`'s attribution; a start naming no initiator (a launch) clears it. */
+export function noteRunResumed(workflowID: string, initiator: string, reason: string): void {
+  if (initiator === "") {
+    resumedBy.delete(workflowID);
+    return;
+  }
+  resumedBy.set(workflowID, { initiator, reason });
+}
+
+/** The alert a running run's attributed resume reads, as given. */
+export function resumeSentence(state: RunState): string | undefined {
+  const r = resumedBy.get(state.workflowId);
+  if (r === undefined || state.status !== "running") {
+    return undefined;
+  }
+  return r.reason === "" ? `Resumed by ${r.initiator}` : `Resumed by ${r.initiator}: ${r.reason}`;
 }
 
 /** The alert for a pause that has been asked for and not landed yet. */
@@ -86,9 +133,7 @@ export function pausePendingSentence(state: RunState): string | undefined {
     : undefined;
 }
 
-export interface RunInspect {
-  workflowId: string;
-  state?: RunState;
+interface RunInspect {
   /** KAS's node PLAN, forwarded verbatim. `unknown` because the client walks it structurally, so
    *  typing it would re-model a structure marotte does not own; `run-exec-source.ts` narrows it
    *  at the point of use. */
@@ -107,8 +152,23 @@ interface RawRunState extends Omit<RunState, "status" | "root"> {
 
 interface RawRunInspect extends Omit<RunInspect, "state"> {
   state?: RawRunState;
+  plan_update?: unknown;
   /** marotte's own key beside KAS's reply: the steps whose newest turn in the run's log closed broken. */
   step_ends?: Record<string, RunStepEnd>;
+  /** marotte's own key beside KAS's reply: when each node's current attempt began in the run's log. */
+  step_starts?: Record<string, RunStepStart>;
+}
+
+/** The reply's plan revision, or undefined for none or one this build cannot read. */
+function planUpdateOf(raw: unknown): RunPlanUpdate | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  try {
+    return decodeRunPlanUpdate(raw);
+  } catch {
+    return undefined;
+  }
 }
 
 function classifyRunNode(node: RawRunNode): RunNode {
@@ -120,7 +180,7 @@ function classifyRunNode(node: RawRunNode): RunNode {
   return out;
 }
 
-function classifyRunState(state: RawRunState): RunState {
+function classifyRunState(state: RawRunState, starts: StepStarts): RunState {
   const { status, root, ...rest } = state;
   const out: RunState = { ...rest };
   const classified = classifyRunStatus(status);
@@ -128,20 +188,86 @@ function classifyRunState(state: RawRunState): RunState {
     out.status = classified;
   }
   if (root !== undefined) {
-    out.root = classifyRunNode(root);
+    out.root = withAttemptStarts(classifyRunNode(root), undefined, [], starts);
   }
   return out;
 }
 
-/** Per-run signals, created on demand. A signal per run rather than one version counter so a
- *  card re-renders for its OWN run only: a workspace running four scheduled workflows would
- *  otherwise repaint every card on every frame of any of them. */
+/** The run log's attempt starts by node path, the server's `workflow.PathKey`. */
+type StepStarts = ReadonlyMap<string, RunStepStart>;
+
+/** `node`'s subtree with each start its attempt's (`RunNode.startedAt`). */
+function withAttemptStarts(
+  node: RunNode,
+  parent: RunNode | undefined,
+  trail: readonly string[],
+  starts: StepStarts,
+): RunNode {
+  const path = [...trail, nodePathSegment(node, parent)];
+  const out: RunNode = { ...node };
+  const log = starts.get(nodePathKey(path));
+  let startedAt = attemptStart(node.startedAt, node.status, log);
+  if (node.children !== undefined) {
+    const kids = node.children.map((k) => withAttemptStarts(k, node, path, starts));
+    out.children = kids;
+    // A repeat's pass opens no turn, yet KAS restamps it on a resume; a container cannot start after its
+    // first child, whose start the log keeps.
+    if (log === undefined && startedAt !== undefined) {
+      for (const k of kids) {
+        startedAt = earlier(startedAt, k.startedAt);
+      }
+    }
+  }
+  if (startedAt !== undefined) {
+    out.startedAt = startedAt;
+  }
+  return out;
+}
+
+/** The earlier stamp, compared as instants: KAS's and the log's RFC 3339 spellings differ in their fraction. */
+function earlier(a: string, b: string | undefined): string {
+  return b !== undefined && Date.parse(b) < Date.parse(a) ? b : a;
+}
+
+/** When a node's current attempt began. KAS restamps `startedAt` each time it re-enters a node, a resume
+ *  included, so its stamp alone restarts every clock at zero; the run log's turn_open does not move. KAS's
+ *  stamp stands only where the log holds no attempt, or an ENDED one under a node KAS shows in flight, which
+ *  is a new attempt (a retry) the log has not opened yet. Paused time counts, as in the run's own window
+ *  (`exec-view/model.ts` `window`): KAS records no pause spans. */
+function attemptStart(
+  kas: string | undefined,
+  status: ClassifiedRunNodeStatus,
+  log: RunStepStart | undefined,
+): string | undefined {
+  if (kas === undefined || log === undefined) {
+    return kas;
+  }
+  return log.ended && nodeInFlight(status) ? kas : log.started_at;
+}
+
+function nodeInFlight(status: ClassifiedRunNodeStatus): boolean {
+  switch (status) {
+    case "pending":
+    case "running":
+    case "paused":
+    case "unknown":
+      return true;
+    case "completed":
+    case "failed":
+    case "aborted":
+    case "skipped":
+      return false;
+  }
+}
+
+/** A signal per run rather than one version counter so a card re-renders for its OWN run only: a
+ *  workspace running four scheduled workflows would otherwise repaint every card on every frame of
+ *  any of them. */
 const cells = new Map<string, Signal<RunState | undefined>>();
 
-/** Runs with a fetch in flight, and runs invalidated while one was. Together they collapse an
- *  event storm into at most two requests: KAS emits a `run_progress` per node event, and the
- *  state that matters is the one AFTER the last of them. `stale` carries the CAUSE the trailing
- *  fetch will run under, so the token below survives a coalesce. */
+/** Together they collapse an event storm into at most two requests: KAS emits a `run_progress` per
+ *  node event, and the state that matters is the one AFTER the last of them. `stale` carries the
+ *  CAUSE the trailing fetch will run under, so the token below survives a coalesce. */
 const inFlight = new Set<string>();
 const stale = new Map<string, string>();
 
@@ -172,8 +298,96 @@ const runRetries = new Map<string, RunRetry>();
 /** Per-run node plans, beside the signal rather than inside it. */
 const plans = new Map<string, unknown>();
 
+/** One path's current execution, identified by the step session both sources report: the second
+ *  `node_start` announces it and the run read carries it. A changed session or an observed end
+ *  makes a new execution; a repeated frame or a read of the same session keeps this one. */
+interface Execution {
+  gen: number;
+  /** Absent until a source names it. Only a step leaf has one; a container never does. */
+  session?: string;
+  ended: boolean;
+}
+
+interface RunExecutions {
+  readonly paths: Map<string, Execution>;
+  /** Counts every frame that changed the cached tree. A read issued at an older count may predate
+   *  one of them, so it is discarded and read again rather than written over the newer tree. */
+  frames: number;
+}
+
+/** Per run, by frame path. Kept across reads, because executions are told apart across them. */
+const executions = new Map<string, RunExecutions>();
+
+/** Module-wide rather than per run, so a forgotten run read again still counts upward. */
+let lastStartGen = 0;
+
+function executionsOf(workflowID: string): RunExecutions {
+  let run = executions.get(workflowID);
+  if (run === undefined) {
+    run = { paths: new Map(), frames: 0 };
+    executions.set(workflowID, run);
+  }
+  return run;
+}
+
+/** Two sessions that are both known and differ: the one rule both sources use to tell executions
+ *  apart. A missing side says nothing. */
+function otherSession(known: string | undefined, seen: string | undefined): boolean {
+  return known !== undefined && seen !== undefined && known !== seen;
+}
+
+/** Stamp a freshly read tree's executions. A path showing another session, or a live start after
+ *  an end, holds a new execution. KAS's persisted time is read only to rank several new
+ *  executions this one read found. */
+function stampStarts(workflowID: string, root: RunNode): void {
+  const run = executionsOf(workflowID);
+  const fresh: { node: RunNode; path: string; at: string; session: string | undefined }[] = [];
+  const walk = (n: RunNode, parent: RunNode | undefined, trail: readonly string[]): void => {
+    const path = [...trail, nodePathSegment(n, parent)];
+    const key = nodePathKey(path);
+    const at = nonEmpty(n.startedAt);
+    const ex = run.paths.get(key);
+    if (at === undefined) {
+      // A node back to `pending` is between executions, so its next start is a new one.
+      if (ex !== undefined) {
+        ex.ended = true;
+      }
+    } else {
+      const live = holdsLiveStart(n);
+      const session = nonEmpty(n.sessionId);
+      if (ex === undefined || (ex.ended && live) || otherSession(ex.session, session)) {
+        fresh.push({ node: n, path: key, at, session });
+      } else {
+        if (session !== undefined) {
+          ex.session ??= session;
+        }
+        ex.ended = !live;
+        n.startGen = ex.gen;
+      }
+    }
+    for (const k of n.children ?? []) {
+      walk(k, n, path);
+    }
+  };
+  walk(root, undefined, []);
+  // Stable, so equal times keep plan order.
+  fresh.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || 0);
+  for (const f of fresh) {
+    lastStartGen++;
+    run.paths.set(f.path, {
+      gen: lastStartGen,
+      ...(f.session === undefined ? {} : { session: f.session }),
+      ended: !holdsLiveStart(f.node),
+    });
+    f.node.startGen = lastStartGen;
+  }
+}
+
 /** Per-run step ends by node path, beside the signal for the plan's reason. */
 const stepEnds = new Map<string, ReadonlyMap<string, RunStepEnd>>();
+
+/** Per-run attempt starts by node path, replaced by each read and moved by each landed frame (`frameAttempt`). */
+const stepStarts = new Map<string, StepStarts>();
 
 function cell(workflowID: string): Signal<RunState | undefined> {
   let c = cells.get(workflowID);
@@ -203,7 +417,7 @@ export function peekRunState(workflowID: string): RunState | undefined {
  *  missed the start), or the path addresses a node this tree does not hold yet (a step inside a
  *  freshly-created iteration container). */
 export function applyRunProgress(p: RunProgressFrame): boolean {
-  if (p.workflow_id === "" || p.node_path === undefined || p.node_path === "") {
+  if (p.workflow_id === "" || p.node_path === undefined || p.node_path.length === 0) {
     return false;
   }
   const c = cells.get(p.workflow_id);
@@ -211,9 +425,45 @@ export function applyRunProgress(p: RunProgressFrame): boolean {
   if (c === undefined || root === undefined) {
     return false;
   }
-  const next = patchNode(root, undefined, p.node_path.split("/"), p);
+  const key = nodePathKey(p.node_path);
+  const starts = stepStarts.get(p.workflow_id);
+  const log = starts?.get(key);
+  const attempt = frameAttempt(log, nonEmpty(p.started_at), nonEmpty(p.ended_at));
+  const run = executionsOf(p.workflow_id);
+  const ex = run.paths.get(key);
+  const session = nonEmpty(p.session_id);
+  // KAS sends `node_start` twice per step, the second naming the session, and a read can land
+  // before the frame it races, so a start opens an execution only where the path holds none, it
+  // ended, or it ran another session.
+  const opens =
+    nonEmpty(p.started_at) !== undefined &&
+    (ex === undefined || ex.ended || otherSession(ex.session, session));
+  const leaf = (node: RunNode): RunNode => {
+    const out = patchedLeaf(node, p, opens, attempt);
+    if (opens) {
+      lastStartGen++;
+      run.paths.set(key, {
+        gen: lastStartGen,
+        ...(session === undefined ? {} : { session }),
+        ended: !holdsLiveStart(out),
+      });
+      out.startGen = lastStartGen;
+    } else if (ex !== undefined) {
+      if (session !== undefined) {
+        ex.session ??= session;
+      }
+      if (!holdsLiveStart(out)) {
+        ex.ended = true;
+      }
+    }
+    return out;
+  };
+  const next = patchNode(root, undefined, p.node_path, leaf);
   if (next === undefined) {
     return false;
+  }
+  if (attempt !== log && attempt !== undefined) {
+    stepStarts.set(p.workflow_id, new Map(starts).set(key, attempt));
   }
   if (next === root) {
     // The frame addressed a node this tree holds and moved nothing about it: a watch poll
@@ -224,20 +474,24 @@ export function applyRunProgress(p: RunProgressFrame): boolean {
   if (state === undefined) {
     return false;
   }
+  run.frames++;
   c.value = { ...state, root: next };
   return true;
 }
 
 /** The fields of a `run_progress` payload this store reads. Declared here rather than imported
- *  from the generated type so the store's contract is the four fields it applies, and a test can
+ *  from the generated type so the store's contract is the fields it applies, and a test can
  *  hand it a literal. */
 export interface RunProgressFrame {
   workflow_id: string;
-  node_path?: string;
+  node_path?: readonly string[];
   status?: string;
   started_at?: string;
   ended_at?: string;
   failure_reason?: string;
+  pause_reason?: string;
+  retry_reason?: string;
+  session_id?: string;
 }
 
 /** Rebuild `node`'s subtree with the addressed descendant patched, or `undefined` when this tree
@@ -245,22 +499,22 @@ export interface RunProgressFrame {
 function patchNode(
   node: RunNode,
   parent: RunNode | undefined,
-  trail: string[],
-  p: RunProgressFrame,
+  trail: readonly string[],
+  leaf: (node: RunNode) => RunNode,
 ): RunNode | undefined {
   const [head, ...rest] = trail;
   if (head === undefined || nodePathSegment(node, parent) !== head) {
     return undefined;
   }
   if (rest.length === 0) {
-    return patchedLeaf(node, p);
+    return leaf(node);
   }
   const kids = node.children;
   if (kids === undefined) {
     return undefined;
   }
   for (const [i, k] of kids.entries()) {
-    const patched = patchNode(k, node, rest, p);
+    const patched = patchNode(k, node, rest, leaf);
     if (patched === k) {
       // Found, and unchanged. Rebuilding the spine over an identical child would hand
       // `applyRunProgress` a new root for a tree that did not move.
@@ -273,30 +527,94 @@ function patchNode(
   return undefined;
 }
 
+/** The path's attempt once a frame lands, as the server's run log folds its turns: a start opens a new attempt
+ *  unless the current one has not ended (a resume, or a duplicate frame), and an end stamp ends it whatever
+ *  status word KAS sent beside it. Kept current per frame because a landed frame triggers no refetch, and a
+ *  retry read against a stale open attempt would carry the previous attempt's start. */
+function frameAttempt(
+  log: RunStepStart | undefined,
+  framedStart: string | undefined,
+  framedEnd: string | undefined,
+): RunStepStart | undefined {
+  if (framedStart !== undefined && (log === undefined || log.ended)) {
+    return { started_at: framedStart, ended: false };
+  }
+  if (log !== undefined && !log.ended && framedEnd !== undefined) {
+    return { ...log, ended: true };
+  }
+  return log;
+}
+
 /** The addressed node with the frame's fields written over it, or the SAME node when the frame
  *  moves none of them. Every field is set only when the frame carries it, because a frame states
  *  what changed: `node_complete` carries no `started_at` and must not lose the one node_start
- *  left. */
-function patchedLeaf(node: RunNode, p: RunProgressFrame): RunNode {
+ *  left. `opens` says the frame's `started_at` begins a new execution, whose start is the attempt's: the
+ *  frame's is the server's arrival stamp. */
+function patchedLeaf(
+  node: RunNode,
+  p: RunProgressFrame,
+  opens: boolean,
+  attempt: RunStepStart | undefined,
+): RunNode {
   const status = nodeStatus(p.status);
-  const startedAt = nonEmpty(p.started_at);
+  const framed = opens ? nonEmpty(p.started_at) : undefined;
+  const startedAt = framed === undefined ? undefined : (attempt?.started_at ?? framed);
   const endedAt = nonEmpty(p.ended_at);
   const failureReason = nonEmpty(p.failure_reason);
+  const sessionId = nonEmpty(p.session_id);
+  const pauseReason = nonEmpty(p.pause_reason);
+  const retryReason = nonEmpty(p.retry_reason);
+  // A frame that is not a retry wait ends one: KAS re-sends node_start after the wait.
+  const retryEnds = retryReason === undefined && node.retryReason !== undefined;
   const moved =
     (status !== undefined && status !== node.status) ||
-    (startedAt !== undefined && startedAt !== node.startedAt) ||
+    startedAt !== undefined ||
     (endedAt !== undefined && endedAt !== node.endedAt) ||
-    (failureReason !== undefined && failureReason !== node.failureReason);
+    (failureReason !== undefined && failureReason !== node.failureReason) ||
+    (sessionId !== undefined && sessionId !== node.sessionId) ||
+    (pauseReason !== undefined && pauseReason !== node.pauseReason) ||
+    (retryReason !== undefined && retryReason !== node.retryReason) ||
+    retryEnds;
   if (!moved) {
     return node;
   }
-  return {
+  const out: RunNode = {
     ...node,
     ...(status === undefined ? {} : { status }),
-    ...(startedAt === undefined ? {} : { startedAt }),
     ...(endedAt === undefined ? {} : { endedAt }),
     ...(failureReason === undefined ? {} : { failureReason }),
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(pauseReason === undefined ? {} : { pauseReason }),
+    ...(retryReason === undefined ? {} : { retryReason }),
   };
+  if (retryEnds) {
+    delete out.retryReason;
+  }
+  if (status !== undefined && status !== "paused") {
+    delete out.pauseReason;
+  }
+  if (startedAt !== undefined) {
+    out.startedAt = startedAt;
+    // A new execution has not ended, whatever the previous one left, and runs no earlier session.
+    if (endedAt === undefined) {
+      delete out.endedAt;
+    }
+    if (failureReason === undefined) {
+      delete out.failureReason;
+    }
+    if (sessionId === undefined) {
+      delete out.sessionId;
+    }
+  }
+  return out;
+}
+
+function holdsLiveStart(node: RunNode): boolean {
+  return (
+    nonEmpty(node.startedAt) !== undefined &&
+    node.endedAt === undefined &&
+    (node.status === "running" || node.status === "paused")
+  );
 }
 
 /** The value, or `undefined` for absent and for the empty string — which is what an omitted
@@ -362,10 +680,16 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
   // so no number of retries can change it. 0 (no request) and every other status are worth
   // re-asking.
   let failed = 0;
+  const issued = executionsOf(workflowID).frames;
   try {
     const r = await apiGetOrError<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
     const d = r.data;
-    if (d?.state !== undefined) {
+    if (d?.state !== undefined && executionsOf(workflowID).frames !== issued) {
+      // A frame changed the tree while this read was out, so the answer may predate it. Only a
+      // read issued after the frame can say which side of it KAS is on.
+      stale.set(workflowID, stale.get(workflowID) ?? cause);
+      answered = true;
+    } else if (d?.state !== undefined) {
       // The plan and the step ends BEFORE the state, because the state assignment is what wakes
       // every reader: a subscriber that re-rendered between them would draw a repeat's bound from
       // the previous plan.
@@ -374,8 +698,18 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
       } else {
         plans.set(workflowID, d.nodePlan);
       }
+      const starts = new Map(Object.entries(d.step_starts ?? {}));
+      const state = classifyRunState(d.state, starts);
+      const planUpdate = planUpdateOf(d.plan_update);
+      if (planUpdate !== undefined) {
+        state.planUpdate = planUpdate;
+      }
+      if (state.root !== undefined) {
+        stampStarts(workflowID, state.root);
+      }
       stepEnds.set(workflowID, new Map(Object.entries(d.step_ends ?? {})));
-      cell(workflowID).value = classifyRunState(d.state);
+      stepStarts.set(workflowID, starts);
+      cell(workflowID).value = state;
       answered = true;
     } else {
       failed = r.status;
@@ -406,7 +740,6 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
   }
 }
 
-/** Re-ask for a run whose read produced nothing, bounded. */
 function scheduleRunRetry(workflowID: string, cause: string, status: number): void {
   // The CONTINUATION as well as the door: its one caller is that `finally`, reached by the first
   // failed read and by every rung's, so the count is KEPT rather than reset, or the ladder would
@@ -484,14 +817,18 @@ export function forgetRun(workflowID: string): void {
   answeredCause.delete(workflowID);
   cancelRunRetry(workflowID);
   plans.delete(workflowID);
+  executions.delete(workflowID);
   stepEnds.delete(workflowID);
+  stepStarts.delete(workflowID);
   controlCells.delete(workflowID);
   controlsInFlight.delete(workflowID);
   controlsStale.delete(workflowID);
   launchedBy.delete(workflowID);
   frameLabels.delete(workflowID);
+  resumedBy.delete(workflowID);
   runLogs.delete(workflowID);
   logVersions.delete(workflowID);
+  logObserver?.forget(workflowID);
 }
 
 /** What this run is CALLED, or `""` when nothing has been fetched for it yet: the launcher's
@@ -557,9 +894,9 @@ async function fetchRunControls(workflowID: string): Promise<void> {
   }
 }
 
-/** A run's node plan, read WITHOUT subscribing. Untracked deliberately: its only reader is the
- *  exec-view adapter, which runs inside a pass the state signal already woke, so a tracked read
- *  would add a dependency that can never fire independently. */
+/** A run's node plan, read WITHOUT subscribing. Untracked deliberately: every reader hands it to
+ *  `runToExec` inside a pass the state signal already woke, so a tracked read would add a
+ *  dependency that can never fire independently. */
 export function runPlan(workflowID: string): unknown {
   return plans.get(workflowID);
 }
@@ -599,7 +936,7 @@ export function runChatID(workflowID: string): string {
  *  EXECUTING as opposed to parked. `executing` is read by the chat row's workflow mark as its
  *  floor for a run whose fetched cell has not arrived (`chat-run-dots.ts`); every other reader
  *  takes the whole row. */
-export interface LiveRunRow {
+interface LiveRunRow {
   readonly chat: string;
   readonly executing: boolean;
 }
@@ -607,7 +944,7 @@ export interface LiveRunRow {
 /** A row handed OUT, carrying the workflow id the map holds it under. The id is the map's KEY
  *  rather than a field of the row, so a reader given the row alone cannot name the run it
  *  describes. */
-export interface LiveRunEntry extends LiveRunRow {
+interface LiveRunEntry extends LiveRunRow {
   readonly id: string;
 }
 
@@ -679,8 +1016,8 @@ export function liveRunIDsForChat(chatID: string): string[] {
   return liveRunsForChat(chatID).map((r) => r.id);
 }
 
-/** The scan both readers share. Not an index: the single-run rule bounds live runs to a handful,
- *  and a second map keyed by chat would be one more thing the rebuild could leave inconsistent. */
+/** Not an index: the single-run rule bounds live runs to a handful, and a second map keyed by chat
+ *  would be one more thing the rebuild could leave inconsistent. */
 function anyRunForChat(chatID: string, pass: (r: LiveRunRow) => boolean): boolean {
   if (chatID === "") {
     return false;
@@ -717,7 +1054,7 @@ export async function rebuildLiveRuns(cause = "", signal?: AbortSignal): Promise
 }
 
 /** Adopt an inventory somebody else already read. */
-export function adoptLiveRuns(rows: readonly LiveRun[], cause?: string): void {
+function adoptLiveRuns(rows: readonly LiveRun[], cause?: string): void {
   liveRunChats.clear();
   for (const r of rows) {
     if (r.workflow_id !== "") {
@@ -856,6 +1193,20 @@ export function registerRunTurnRepair(
   repairRunTurn = fn;
 }
 
+/** Who keeps state derived from a run's log: told of each `steer` entry the log takes and of the log
+ *  being forgotten. Injected, because that owner (`run-step-steers.ts`) is a leaf this module must
+ *  not import. */
+interface RunLogObserver {
+  steer(workflowID: string, nodePath: string, entry: Entry): void;
+  forget(workflowID: string): void;
+}
+
+let logObserver: RunLogObserver | undefined;
+
+export function registerRunLogObserver(o: RunLogObserver): void {
+  logObserver = o;
+}
+
 /** Mark a turn this client cannot complete from the stream, and ask for the repair. */
 function markRunHole(workflowID: string, turnID: string): void {
   log(workflowID).holes.add(turnID);
@@ -896,6 +1247,12 @@ export function appendRunEntry(workflowID: string, entry: Entry): void {
     return;
   }
   state.entries.push(entry);
+  if (entry.kind === "steer") {
+    logObserver?.steer(workflowID, turnOpenOf(state)?.node_path ?? "", entry);
+  }
+  if (entry.kind === "steer" || entry.kind === "steer_delivered") {
+    settleWorkflowMessages(l.turns.values());
+  }
   if (entry.kind === "turn_close") {
     state.closeAt = entry.seq;
     // The step's turn is settled, so its ref no longer exists: dropping the stamp is what stops the
@@ -1008,29 +1365,6 @@ export function sealRunEntry(
 // Derived reads: functions over the cached value, never stored beside it — a second copy of "how
 // many steps finished" is a second thing that can be wrong.
 
-/** The run's LEAF nodes in plan order — the steps and watches a reader thinks of as "the work".
- *  A `sequence`, `repeat` or `parallel` node is scaffolding: it has no agent, no duration of its
- *  own and nothing to read, so the card renders the leaves and lets the containers contribute
- *  only their iteration and branch labels through the leaves beneath them. */
-export function leafNodes(root: RunNode | undefined): RunNode[] {
-  if (root === undefined) {
-    return [];
-  }
-  const out: RunNode[] = [];
-  const walk = (n: RunNode): void => {
-    const kids = n.children ?? [];
-    if (kids.length === 0) {
-      out.push(n);
-      return;
-    }
-    for (const k of kids) {
-      walk(k);
-    }
-  };
-  walk(root);
-  return out;
-}
-
 /** A repeat child carrying no `iteration` falls back to its `nodeId`: a row in the wrong place
  *  beats content that vanishes, the same call the server's own `runNodePath` makes when a frame
  *  carries no path. */
@@ -1041,145 +1375,19 @@ export function nodePathSegment(node: RunNode, parent: RunNode | undefined): str
   return node.nodeId;
 }
 
-export interface NodeAddress {
-  /** The joined segments, in the spelling the server joins into a step's subtask id
-   *  (`wf:<workflowId>:<a/b/c>`). */
-  readonly path: string[];
-  /** Whether the walk PLACED the target in this tree. False means `path` is the bare `nodeId`
-   *  fallback below rather than an address. */
-  readonly placed: boolean;
-}
-
-/** A leaf's stable address within its run, plus whether the walk placed it. */
-export function nodeAddressOf(root: RunNode | undefined, target: RunNode): NodeAddress {
-  const found: string[] = [];
-  const walk = (n: RunNode, parent: RunNode | undefined, trail: string[]): boolean => {
-    const here = [...trail, nodePathSegment(n, parent)];
-    if (n === target) {
-      found.push(...here);
-      return true;
+/** Every node of `type` in the tree, depth-first in plan order, every pass included. */
+export function nodesOfType(root: RunNode | undefined, type: string): RunNode[] {
+  const out: RunNode[] = [];
+  const walk = (n: RunNode): void => {
+    if (n.type === type) {
+      out.push(n);
     }
-    for (const k of n.children ?? []) {
-      if (walk(k, n, here)) {
-        return true;
-      }
-    }
-    return false;
+    (n.children ?? []).forEach(walk);
   };
   if (root !== undefined) {
-    walk(root, undefined, []);
+    walk(root);
   }
-  if (found.length > 0) {
-    return { path: found, placed: true };
-  }
-  // An UNPLACED node keeps the bare id, which `placed: false` stops a consumer spending as an
-  // address (its first segment is a leaf id where the endpoint asserts the run id). A row still
-  // needs a key, so the value stays.
-  return { path: [target.nodeId], placed: false };
-}
-
-/** The address's path alone, for a consumer that only needs a render key. Kept as the thin
- *  wrapper because that is the whole of what a row KEY wants; anything that puts the value on
- *  the wire reads `nodeAddressOf` instead. */
-export function nodePathOf(root: RunNode | undefined, target: RunNode): string[] {
-  return nodeAddressOf(root, target).path;
-}
-
-export interface RunCounters {
-  total: number;
-  done: number;
-  failed: number;
-  /** The 1-based position of the RUNNING leaf, or 0 when none is — the header's "step N of M",
-   *  and not `done + 1`. */
-  current: number;
-}
-
-export function runCounters(state: RunState | undefined): RunCounters {
-  const leaves = leafNodes(state?.root);
-  let done = 0;
-  let failed = 0;
-  let current = 0;
-  for (const [i, n] of leaves.entries()) {
-    switch (n.status) {
-      case "completed":
-      case "skipped":
-        done++;
-        break;
-      case "failed":
-      case "aborted":
-        failed++;
-        break;
-      case "running":
-      case "paused":
-      case "unknown":
-        if (current === 0) {
-          current = i + 1;
-        }
-        break;
-      case "pending":
-        break;
-    }
-  }
-  return { total: leaves.length, done, failed, current };
-}
-
-/** Wall-clock milliseconds a node or run has been going, or ran for. `endedAt` when it finished,
- *  `now` while it runs, and 0 when it never started — a pending step must read as nothing rather
- *  than as "started at the epoch", which is what `Date.parse(undefined)` would give. */
-export function elapsedMs(startedAt: string | undefined, endedAt: string | undefined): number {
-  if (startedAt === undefined || startedAt === "") {
-    return 0;
-  }
-  const from = Date.parse(startedAt);
-  if (Number.isNaN(from)) {
-    return 0;
-  }
-  const to = endedAt === undefined || endedAt === "" ? Date.now() : Date.parse(endedAt);
-  if (Number.isNaN(to)) {
-    return 0;
-  }
-  return Math.max(0, to - from);
-}
-
-/** The run's own span, from its first leaf's start to its last leaf's end. Derived rather than
- *  read, because `WorkflowState` carries no run-level timestamps: only the nodes do. */
-export function runElapsedMs(state: RunState | undefined): number {
-  const leaves = leafNodes(state?.root);
-  let first = Number.POSITIVE_INFINITY;
-  let last = 0;
-  let running = false;
-  for (const n of leaves) {
-    if (n.startedAt !== undefined && n.startedAt !== "") {
-      const t = Date.parse(n.startedAt);
-      if (!Number.isNaN(t)) {
-        first = Math.min(first, t);
-      }
-    }
-    if (n.endedAt !== undefined && n.endedAt !== "") {
-      const t = Date.parse(n.endedAt);
-      if (!Number.isNaN(t)) {
-        last = Math.max(last, t);
-      }
-    } else {
-      switch (n.status) {
-        case "running":
-        case "paused":
-        case "unknown":
-          running = true;
-          break;
-        case "pending":
-        case "completed":
-        case "failed":
-        case "aborted":
-        case "skipped":
-          break;
-      }
-    }
-  }
-  if (!Number.isFinite(first)) {
-    return 0;
-  }
-  return Math.max(0, (running || last === 0 ? Date.now() : last) - first);
+  return out;
 }
 
 /** Whether a run is still this process's to finish. Drives the elapsed clock and the card's
@@ -1206,8 +1414,7 @@ export function isNeedInputPause(reason: string | undefined): boolean {
   );
 }
 
-/** The paused node whose own completion signal says it is waiting on a person. Depth-first,
- *  first match wins. */
+/** Depth-first, first match wins. */
 function needInputNode(n: RunNode | undefined): RunNode | undefined {
   if (n === undefined) {
     return undefined;

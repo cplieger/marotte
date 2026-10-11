@@ -205,3 +205,345 @@ describe("the fold", () => {
     expect(marks(host)[0]?.textContent).toBe("\u0130stanbul");
   });
 });
+
+function twoFrames(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  });
+}
+
+function currentHolder(eng: FindEngine): string | null {
+  return eng.currentMark()?.closest("p")?.id ?? null;
+}
+
+/** A hidden early match ahead of three, so that un-hiding it renumbers every later hit. */
+function threeParagraphs(): string {
+  return (
+    `<div hidden><p id="early">an early needle</p></div><p id="first">the first needle</p>` +
+    `<p id="second">the second needle</p><p id="third">the third needle</p>`
+  );
+}
+
+function paragraph(id: string, text: string): HTMLParagraphElement {
+  const p = document.createElement("p");
+  p.id = id;
+  p.textContent = text;
+  return p;
+}
+
+function currentOn(host: HTMLElement, index: number): FindEngine {
+  const eng = new FindEngine(host);
+  eng.search("needle");
+  eng.setCurrent(index);
+  return eng;
+}
+
+const AUTO_BOX = "content-visibility:auto;contain-intrinsic-size:auto 40px";
+
+/** The 4000px gaps keep at most one of `rows` rendered in the 300px viewport. */
+function tallScroller(...rows: string[]): string {
+  return `<div style="height:300px;overflow:auto">${rows.join(`<div style="height:4000px"></div>`)}</div>`;
+}
+
+async function awayFromTop(host: HTMLElement): Promise<FindEngine> {
+  const scroller = host.firstElementChild as HTMLElement;
+  await twoFrames();
+  const eng = new FindEngine(host);
+  expect(eng.search("needle")).toBe(1);
+  expect(currentHolder(eng)).toBe("top");
+  scroller.scrollTop = scroller.scrollHeight;
+  await twoFrames();
+  expect(host.querySelector("#top")?.checkVisibility({ contentVisibilityAuto: true })).toBe(false);
+  return eng;
+}
+
+describe("refresh", () => {
+  it("keeps the current hit when an earlier match becomes searchable", () => {
+    const host = mount(
+      `<div hidden><p id="early">an early needle</p></div>` +
+        `<p id="first">the first needle</p><p id="second">the second needle</p>`,
+    );
+    const eng = new FindEngine(host);
+    eng.search("needle");
+    eng.setCurrent(1);
+    host.querySelector("div")?.removeAttribute("hidden");
+    expect(eng.refresh("needle")).toBe(3);
+    expect(currentHolder(eng)).toBe("second");
+  });
+
+  it("keeps the current hit among several in its paragraph", () => {
+    const host = mount(
+      `<div hidden><p id="early">an early needle</p></div>` +
+        `<p id="both">one needle, then a second needle</p>`,
+    );
+    const eng = new FindEngine(host);
+    eng.search("needle");
+    eng.setCurrent(1);
+    host.querySelector("div")?.removeAttribute("hidden");
+    expect(eng.refresh("needle")).toBe(3);
+    expect(eng.currentIndex).toBe(2);
+  });
+
+  it("keeps the current hit when an earlier match in its own paragraph becomes searchable", () => {
+    const host = mount(
+      `<p id="both"><span hidden>an early needle, </span>one needle, then a second needle</p>`,
+    );
+    const eng = new FindEngine(host);
+    eng.search("needle");
+    eng.setCurrent(1);
+    host.querySelector("span")?.removeAttribute("hidden");
+    expect(eng.refresh("needle")).toBe(3);
+    expect(eng.currentMark()?.previousSibling?.textContent).toBe(", then a second ");
+  });
+
+  it("keeps the current hit once text before it merges into one node", () => {
+    const host = mount(threeParagraphs());
+    const eng = currentOn(host, 1);
+    const second = host.querySelector("#second");
+    second?.insertBefore(document.createTextNode("old "), eng.currentMark());
+    second?.normalize();
+    host.querySelector("div")?.removeAttribute("hidden");
+    expect(eng.refresh("needle")).toBe(4);
+    expect(currentHolder(eng)).toBe("second");
+  });
+
+  it("makes the copy's hit current when the current hit's paragraph is replaced by a copy", () => {
+    const host = mount(threeParagraphs());
+    const eng = currentOn(host, 1);
+    const copy = paragraph("second", "the second needle");
+    host.querySelector("#second")?.replaceWith(copy);
+    host.querySelector("div")?.removeAttribute("hidden");
+    expect(eng.refresh("needle")).toBe(4);
+    expect(eng.currentMark()?.parentElement).toBe(copy);
+  });
+
+  it("makes the next hit current once the current hit's paragraph is replaced without it", () => {
+    const host = mount(threeParagraphs());
+    const eng = currentOn(host, 1);
+    host.querySelector("#second")?.replaceWith(paragraph("second", "no match left"));
+    host.querySelector("div")?.removeAttribute("hidden");
+    expect(eng.refresh("needle")).toBe(3);
+    expect(currentHolder(eng)).toBe("third");
+  });
+
+  it("makes the next hit current once the current hit's box folds", () => {
+    const host = mount(
+      `<div hidden><p id="early">an early needle</p></div><p id="first">the first needle</p>` +
+        `<div id="fold"><p id="second">the second needle</p></div><p id="third">the third needle</p>`,
+    );
+    const eng = currentOn(host, 1);
+    host.querySelector<HTMLElement>("#fold")?.style.setProperty("content-visibility", "hidden");
+    host.querySelector("div")?.removeAttribute("hidden");
+    expect(eng.refresh("needle")).toBe(3);
+    expect(currentHolder(eng)).toBe("third");
+  });
+
+  it("wraps to the first hit once the vanished current hit was the last", () => {
+    const host = mount(threeParagraphs());
+    const eng = currentOn(host, 2);
+    host.querySelector("#third")?.remove();
+    host.querySelector("div")?.removeAttribute("hidden");
+    expect(eng.refresh("needle")).toBe(3);
+    expect(currentHolder(eng)).toBe("early");
+  });
+
+  it("has no current hit once no hits remain", () => {
+    const host = mount(`<p id="only">the only needle</p>`);
+    const eng = currentOn(host, 0);
+    host.querySelector("#only")?.replaceWith(paragraph("only", "no match left"));
+    expect(eng.refresh("needle")).toBe(0);
+    expect({ index: eng.currentIndex, mark: eng.currentMark() }).toEqual({ index: -1, mark: null });
+  });
+
+  it.each(["clearCurrent", "clear"] as const)(
+    "starts from the first hit when refreshed after %s",
+    (drop) => {
+      const host = mount(threeParagraphs());
+      const eng = currentOn(host, 1);
+      eng[drop]();
+      expect(eng.refresh("needle")).toBe(3);
+      expect(currentHolder(eng)).toBe("first");
+    },
+  );
+
+  // A skipped `content-visibility: auto` box is pruned, so the reader scrolling away from the current hit would take it
+  // out of the next walk; every other skipped box stays pruned.
+  it("walks the current hit's skipped box and no other", async () => {
+    const host = mount(
+      tallScroller(
+        `<div style="${AUTO_BOX}"><p id="top">a needle at the top</p></div>`,
+        `<div style="${AUTO_BOX}"><p id="middle">a needle in the middle</p></div>`,
+        `<div style="${AUTO_BOX}"><p id="bottom">a needle at the bottom</p></div>`,
+      ),
+    );
+    const eng = await awayFromTop(host);
+    expect({ total: eng.refresh("needle"), current: currentHolder(eng) }).toEqual({
+      total: 2,
+      current: "top",
+    });
+  });
+
+  // A transcript row nests automatic boxes (a card inside a `.msg-row`'s bubble); the outer one's skip hides
+  // everything between the two.
+  it("walks the outermost skipped box around the current hit", async () => {
+    const host = mount(
+      tallScroller(
+        `<div style="${AUTO_BOX}"><div><div style="${AUTO_BOX}"><p id="top">a needle at the top</p></div></div></div>`,
+        `<div style="${AUTO_BOX}"><p id="bottom">a needle at the bottom</p></div>`,
+      ),
+    );
+    const eng = await awayFromTop(host);
+    expect({ total: eng.refresh("needle"), current: currentHolder(eng) }).toEqual({
+      total: 2,
+      current: "top",
+    });
+  });
+
+  it("leaves content hidden inside the current hit's skipped box unsearched", async () => {
+    const host = mount(
+      tallScroller(
+        `<div style="${AUTO_BOX}">` +
+          `<p id="top">a needle at the top<span style="display:none"> a needle</span>` +
+          `<span style="visibility:hidden"> a needle</span></p>` +
+          `<div style="content-visibility:hidden"><p>a folded needle</p></div>` +
+          `</div>`,
+        `<div style="${AUTO_BOX}"><p id="bottom">a needle at the bottom</p></div>`,
+      ),
+    );
+    const eng = await awayFromTop(host);
+    expect({ total: eng.refresh("needle"), current: currentHolder(eng) }).toEqual({
+      total: 2,
+      current: "top",
+    });
+  });
+});
+
+const HOLDER = ["data-entry-turn", "data-entry-id"];
+
+function entry(id: string, inner: string): HTMLElement {
+  const box = document.createElement("div");
+  box.dataset["entryTurn"] = "t1";
+  box.dataset["entryId"] = id;
+  box.innerHTML = inner;
+  return box;
+}
+
+const OUTPUT = "a needle, b needle, c needle";
+
+function commandEntries(): HTMLElement {
+  const host = mount("");
+  host.append(
+    entry("e1", `<p>the first needle</p>`),
+    entry("e2", `<div class="title">run</div><div class="out"><pre>${OUTPUT}</pre></div>`),
+  );
+  return host;
+}
+
+function stampedEl(host: HTMLElement, id: string): HTMLElement {
+  const found = host.querySelector<HTMLElement>(`[data-entry-id="${id}"]`);
+  if (found === null) {
+    throw new Error(`no entry ${id}`);
+  }
+  return found;
+}
+
+/** The current hit's text with the characters before it in its `<pre>`, which tells the output's three apart. */
+function currentInOutput(eng: FindEngine): string {
+  const mark = eng.currentMark();
+  const pre = mark?.closest("pre");
+  if (mark === null || pre === null || pre === undefined) {
+    return "";
+  }
+  const before = document.createRange();
+  before.selectNodeContents(pre);
+  before.setEndBefore(mark);
+  return before.toString() + (mark.textContent ?? "");
+}
+
+describe("refresh with holder attributes", () => {
+  it("keeps the third hit of a holder re-rendered as a copy", () => {
+    const host = commandEntries();
+    const eng = new FindEngine(host, HOLDER);
+    eng.search("needle");
+    eng.setCurrent(3);
+    const copy = entry(
+      "e2",
+      `<div class="title">run</div><div class="out"><pre>${OUTPUT}</pre></div>`,
+    );
+    stampedEl(host, "e2").replaceWith(copy);
+    expect(eng.refresh("needle")).toBe(4);
+    expect({ index: eng.currentIndex, inCopy: copy.contains(eng.currentMark()) }).toEqual({
+      index: 3,
+      inCopy: true,
+    });
+  });
+
+  it("keeps the hit when an element between its holder and it is replaced", () => {
+    const host = commandEntries();
+    const eng = new FindEngine(host, HOLDER);
+    eng.search("needle");
+    eng.setCurrent(3);
+    const grown = document.createElement("pre");
+    grown.textContent = `${OUTPUT}, d needle`;
+    stampedEl(host, "e2").querySelector(".out")?.replaceChildren(grown);
+    expect(eng.refresh("needle")).toBe(5);
+    expect(currentInOutput(eng)).toBe(OUTPUT);
+  });
+
+  it("keeps the hit when text before it in its holder changes length", () => {
+    const host = commandEntries();
+    const eng = new FindEngine(host, HOLDER);
+    eng.search("needle");
+    eng.setCurrent(3);
+    const title = stampedEl(host, "e2").querySelector(".title");
+    if (title !== null) {
+      title.textContent = "run a command with a longer title";
+    }
+    expect(eng.refresh("needle")).toBe(4);
+    expect(currentInOutput(eng)).toBe(OUTPUT);
+  });
+
+  it("makes the next entry's hit current once the holder is removed", () => {
+    const host = mount("");
+    host.append(
+      entry("e1", `<p>first needle</p>`),
+      entry("e2", `<p>one needle, then another needle here</p>`),
+      entry("e3", `<p>last needle</p>`),
+    );
+    const eng = new FindEngine(host, HOLDER);
+    eng.search("needle");
+    eng.setCurrent(2);
+    stampedEl(host, "e2").remove();
+    expect(eng.refresh("needle")).toBe(2);
+    expect(eng.currentMark()?.closest("[data-entry-id]")).toBe(stampedEl(host, "e3"));
+  });
+
+  it.each(["clearCurrent", "clear"] as const)(
+    "starts from the first hit when refreshed after %s",
+    (drop) => {
+      const host = commandEntries();
+      const eng = new FindEngine(host, HOLDER);
+      eng.search("needle");
+      eng.setCurrent(3);
+      eng[drop]();
+      expect(eng.refresh("needle")).toBe(4);
+      expect(eng.currentIndex).toBe(0);
+    },
+  );
+
+  it("without holder attributes, places a re-rendered holder's hit where its element stood", () => {
+    const host = commandEntries();
+    const eng = new FindEngine(host);
+    eng.search("needle");
+    eng.setCurrent(3);
+    stampedEl(host, "e2").replaceWith(
+      entry("e2", `<div class="title">run</div><div class="out"><pre>${OUTPUT}</pre></div>`),
+    );
+    expect(eng.refresh("needle")).toBe(4);
+    expect(eng.currentIndex).toBe(1);
+  });
+});

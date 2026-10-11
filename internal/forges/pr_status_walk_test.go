@@ -9,15 +9,12 @@ import (
 	"github.com/cplieger/forgeapi"
 )
 
-// walkPage is one page a walkSource serves.
 type walkPage struct {
 	err  error
 	next forgeapi.Cursor
-	prs  []WatchedPR
+	prs  []watchedPR
 }
 
-// walkSource serves one connection's authored pages by the cursor the poller
-// hands it, as a forge does, and records every cursor it was handed.
 type walkSource struct {
 	pages  map[forgeapi.Cursor]walkPage
 	afters []forgeapi.Cursor
@@ -30,7 +27,7 @@ func newWalkSource() *walkSource {
 	return &walkSource{conn: testConn, pages: map[forgeapi.Cursor]walkPage{}}
 }
 
-func (w *walkSource) serve(after, next forgeapi.Cursor, prs ...WatchedPR) {
+func (w *walkSource) serve(after, next forgeapi.Cursor, prs ...watchedPR) {
 	w.pages[after] = walkPage{prs: prs, next: next}
 }
 
@@ -44,7 +41,7 @@ func (w *walkSource) Read(_ context.Context, _ bool, after func(PRConnection, Sc
 	if !ok {
 		page = walkPage{err: &forgeapi.Error{Kind: forgeapi.KindUnknown, Code: forgeapi.CodeCursorInvalid}}
 	}
-	return []ConnectionRead{authoredRead(w.conn, ScopePage{Err: page.err, Next: page.next}, page.prs)}
+	return []ConnectionRead{authoredRead(w.conn, scopePage{Err: page.err, Next: page.next}, page.prs)}
 }
 
 // TestSweep_ContinuesTheWalkOnTheNextCycle: a continuation is resumed only by
@@ -84,7 +81,7 @@ func TestSweep_NoPruneBetweenPagesOfOneWalk(t *testing.T) {
 	src.serve("", "c2", pr(1, checkPassing))
 	p.sweep(t.Context())
 
-	if len(n.sent) != 1 || !strings.Contains(n.sent[0].body, "#1 checks passed") {
+	if len(n.sent) != 1 || !strings.HasSuffix(n.sent[0].title, " #1") || !strings.HasPrefix(n.sent[0].body, "Checks passed") {
 		t.Errorf("sent %+v after #1 went green on the walk's next first page, want one notice for #1", n.sent)
 	}
 }
@@ -133,7 +130,7 @@ func TestSweep_CursorInvalidRestartsWithoutPruning(t *testing.T) {
 	if want := []forgeapi.Cursor{"", "c2", ""}; !slices.Equal(src.afters, want) {
 		t.Errorf("cursors = %q, want %q: the sweep after the refusal starts from the first page", src.afters, want)
 	}
-	if len(n.sent) != 1 || !strings.Contains(n.sent[0].body, "#1 checks failed") {
+	if len(n.sent) != 1 || !strings.HasSuffix(n.sent[0].title, " #1") || !strings.HasPrefix(n.sent[0].body, "Checks failed") {
 		t.Errorf("sent %+v, want one notice for #1 turning red", n.sent)
 	}
 }
@@ -157,8 +154,6 @@ func TestSweep_AFailedCallKeepsTheWalksPosition(t *testing.T) {
 	}
 }
 
-// multiSource answers each walk source's page in one sweep, as several
-// connections do.
 type multiSource []*walkSource
 
 func (m multiSource) Read(ctx context.Context, present bool, after func(PRConnection, Scope) forgeapi.Cursor) []ConnectionRead {

@@ -22,7 +22,6 @@ const badge = (text: string): HTMLElement => {
 
 const noop = (): void => undefined;
 
-/** The shapes docs.ts builds, including a document with no description. */
 const SPECS: readonly EntryRowSpec[] = [
   {
     key: "spec",

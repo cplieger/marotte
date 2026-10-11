@@ -29,8 +29,7 @@ const kasServerKey = "mcpServers"
 // and writeKASConfig preserves it verbatim.
 const kasPowersKey = "powers"
 
-// kasFileMaxBytes bounds the re-read of the existing file. The file is a handful
-// of server declarations; a larger one is not something to merge into.
+// The file is a handful of server declarations; a larger one is not something to merge into.
 const kasFileMaxBytes = 4 << 20
 
 // kasServer is one entry of KAS's `mcpServers` map, matching its
@@ -128,7 +127,7 @@ type kasRenderPolicy struct {
 // pairsRecord flattens ordered KeyPairs into KAS's record shape. Later entries
 // win on a duplicate name, which is the same resolution the inline path's own
 // record build produced.
-func pairsRecord(in []KeyPair) map[string]string {
+func pairsRecord(in []keyPair) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}
@@ -143,8 +142,8 @@ func pairsRecord(in []KeyPair) map[string]string {
 // every top-level key it does not own. An unreadable existing file is replaced
 // rather than fatal, or the agent would stay on a stale server set the UI
 // cannot fix. The wait setting is read per write, which is how a settings
-// flip reaches the file. MUST be called with s.mu held for writing, or before
-// New returns: it records the wait value the file now holds.
+// flip reaches the file. MUST be called on the write turn, or before New
+// returns: it records the wait value the file now holds.
 func (s *Store) writeKASConfig(ctx context.Context, servers []*Server) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -163,14 +162,14 @@ func (s *Store) writeKASConfigWith(ctx context.Context, servers []*Server, polic
 	if err := s.writeKASDoc(ctx, doc); err != nil {
 		return err
 	}
-	s.rendered = renderedWait{waitForReady: policy.waitAll, known: true}
+	s.rendered.Store(&renderedWait{waitForReady: policy.waitAll, known: true})
 	return nil
 }
 
 func renderServersKey(servers []*Server, policy kasRenderPolicy) (json.RawMessage, error) {
 	rendered, err := json.Marshal(renderKASServers(servers, policy))
 	if err != nil {
-		return nil, fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
+		return nil, fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
 	}
 	return rendered, nil
 }
@@ -180,11 +179,11 @@ func renderServersKey(servers []*Server, policy kasRenderPolicy) (json.RawMessag
 func (s *Store) writeKASDoc(ctx context.Context, doc map[string]json.RawMessage) error {
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
+		return fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
 	}
 	if _, err := atomicfile.WriteFile(ctx, s.kasPath, data,
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
-		return fmt.Errorf("%w: %w", ErrPersistWrite, err)
+		return fmt.Errorf("%w: %w", errPersistWrite, err)
 	}
 	return nil
 }
@@ -193,14 +192,13 @@ func (s *Store) writeKASDoc(ctx context.Context, doc map[string]json.RawMessage)
 // Powers, keeping every other key, and reports whether the file changed. An
 // unchanged block is not rewritten, because every write makes KAS reload its MCP
 // servers. An empty set removes the member, and `powers` with it when nothing
-// else is left in it. The write lock excludes persist and RenderKASConfig, which
+// else is left in it. The write turn excludes persist and RenderKASConfig, which
 // rewrite the same file.
 func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.RawMessage) (bool, error) {
-	if ctx.Err() != nil {
-		return false, ctx.Err()
+	if err := s.acquireWrite(ctx); err != nil {
+		return false, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.releaseWrite()
 	doc, docOK := s.readKASDoc()
 	rawBlock, hasBlock := doc[kasPowersKey]
 	block := objectOrEmpty(rawBlock)
@@ -223,7 +221,7 @@ func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.
 	} else {
 		rendered, err := json.Marshal(servers)
 		if err != nil {
-			return false, fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
+			return false, fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
 		}
 		block[kasServerKey] = rendered
 	}
@@ -232,7 +230,7 @@ func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.
 	} else {
 		rendered, err := json.Marshal(block)
 		if err != nil {
-			return false, fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
+			return false, fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
 		}
 		doc[kasPowersKey] = rendered
 	}
@@ -240,7 +238,7 @@ func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.
 		return true, err
 	}
 	if resent != nil {
-		s.rendered = *resent
+		s.rendered.Store(resent)
 	}
 	return true, nil
 }
@@ -286,15 +284,15 @@ func sameServers(a, b map[string]json.RawMessage) bool {
 
 // RenderKASConfig re-renders KAS's config file from the stored servers, for an
 // mcp_wait_for_ready flip: KAS hot-reloads the file, so running chats take the
-// change now rather than at their next start. It reads the setting under the
-// write lock, so it renders the newest stored value; a setting that cannot be
-// read writes nothing and leaves RenderedWaitForReady as it was.
+// change now rather than at their next start. It reads the setting on the write
+// turn, so it renders the newest stored value; a setting that cannot be read
+// writes nothing and leaves RenderedWaitForReady as it was. It waits for the turn
+// only while ctx lasts, returning ctx's error and writing nothing.
 func (s *Store) RenderKASConfig(ctx context.Context) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if err := s.acquireWrite(ctx); err != nil {
+		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.releaseWrite()
 	policy, readable := s.renderPolicy(ctx)
 	if !readable {
 		return nil
@@ -303,11 +301,11 @@ func (s *Store) RenderKASConfig(ctx context.Context) error {
 }
 
 // RenderedWaitForReady reports the mcp_wait_for_ready value KAS's config file
-// was last written with; known is false until a write of it succeeds.
+// was last written with; known is false until a write of it succeeds. It takes
+// no lock, so it answers while a render or a persist holds the store.
 func (s *Store) RenderedWaitForReady() (waitForReady, known bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.rendered.waitForReady, s.rendered.known
+	r := s.renderedState()
+	return r.waitForReady, r.known
 }
 
 // readKASConfig returns the existing document's top-level keys minus

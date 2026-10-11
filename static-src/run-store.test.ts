@@ -1,6 +1,7 @@
 // The run store: the fetch discipline, and the derived reads over one state.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { nodePathKey } from "./run-node-key.js";
 import type { RunNode, RunState } from "./run-store.js";
 import type { RunControlsResponse } from "./wire/types.gen.js";
 
@@ -17,10 +18,14 @@ let responses: (
       workflowName?: string;
       /** The reply's top-level `step_ends`, moved off the state when the mock answers. */
       stepEnds?: Record<string, { outcome: string; failure_reason?: string }>;
+      /** The reply's top-level `step_starts`, likewise. */
+      stepStarts?: Record<string, { started_at: string; ended: boolean }>;
     }
   | undefined
 )[] = [];
 let resolvers: (() => void)[] = [];
+// Top-level keys marotte splices beside `state`, for the next read only.
+let replyExtra: Record<string, unknown> = {};
 // The HTTP status each FAILED read answers with, in order. 502 by default — a read that never
 // reached the engine, which is what every case predating the status means by an absent response,
 // and the arm that keeps the retry ladder.
@@ -42,7 +47,9 @@ vi.mock("./api-client.js", () => ({
     if (state === undefined) {
       return { ok: false, status: failStatuses.shift() ?? 502, data: null, error: "" };
     }
-    const { stepEnds, ...kasState } = state;
+    const extra = replyExtra;
+    replyExtra = {};
+    const { stepEnds, stepStarts, ...kasState } = state;
     return {
       ok: true,
       status: 200,
@@ -50,6 +57,8 @@ vi.mock("./api-client.js", () => ({
         workflowId: state.workflowId,
         state: kasState,
         ...(stepEnds === undefined ? {} : { step_ends: stepEnds }),
+        ...(stepStarts === undefined ? {} : { step_starts: stepStarts }),
+        ...extra,
       },
       error: "",
     };
@@ -72,7 +81,6 @@ vi.mock("./api-client.js", () => ({
 
 const store = await import("./run-store.js");
 
-/** Let every pending fetch resolve, then drain the microtask queue. */
 async function settle(): Promise<void> {
   for (const r of resolvers.splice(0)) {
     r();
@@ -175,19 +183,220 @@ describe("the reply's step ends travel beside the state", () => {
       {
         workflowId: "r1",
         status: "completed",
-        stepEnds: { "r1/build": { outcome: "failed", failure_reason: "stopped" } },
+        stepEnds: { "r1:build": { outcome: "failed", failure_reason: "stopped" } },
       },
       { workflowId: "r1", status: "completed" },
     ];
     store.invalidateRun("r1");
     await settle();
     expect([...store.runStepEnds("r1")]).toEqual([
-      ["r1/build", { outcome: "failed", failure_reason: "stopped" }],
+      ["r1:build", { outcome: "failed", failure_reason: "stopped" }],
     ]);
 
     store.invalidateRun("r1");
     await settle();
     expect(store.runStepEnds("r1").size).toBe(0);
+  });
+});
+
+// KAS restamps a node's `startedAt` each time it re-enters it, so after a pause and a resume its own
+// stamp would restart every clock on the run at zero. The run log's attempt start does not move.
+describe("a node's start is its attempt's, from the run log", () => {
+  const BUILD = nodePathKey(["r1", "build"]);
+  const OPENED = "2026-03-04T05:00:00Z";
+  const RESUMED = "2026-03-04T05:30:00Z";
+
+  function runWith(build: RunNode, logStart?: { started_at: string; ended: boolean }) {
+    return {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "r1",
+        type: "sequence",
+        status: "running",
+        startedAt: RESUMED,
+        children: [build],
+      },
+      ...(logStart === undefined ? {} : { stepStarts: { [BUILD]: logStart } }),
+    };
+  }
+
+  async function read(build: RunNode, logStart?: { started_at: string; ended: boolean }) {
+    responses = [runWith(build, logStart)];
+    store.invalidateRun("r1");
+    await settle();
+    return store.peekRunState("r1")?.root;
+  }
+
+  it("keeps a resumed step's start at its attempt's open", async () => {
+    const root = await read(step("build", { status: "running", startedAt: RESUMED }), {
+      started_at: OPENED,
+      ended: false,
+    });
+    expect(root?.children?.[0]?.startedAt).toBe(OPENED);
+  });
+
+  it("keeps KAS's stamp on a leaf the log holds no attempt for", async () => {
+    const root = await read(step("build", { status: "running", startedAt: RESUMED }));
+    expect(root?.children?.[0]?.startedAt).toBe(RESUMED);
+  });
+
+  it("keeps a step that finished after a resume at its attempt's open", async () => {
+    const root = await read(
+      step("build", { status: "completed", startedAt: RESUMED, endedAt: "2026-03-04T06:00:00Z" }),
+      { started_at: OPENED, ended: true },
+    );
+    expect(root?.children?.[0]?.startedAt).toBe(OPENED);
+  });
+
+  it("takes KAS's start for a step in flight past an ended attempt, which is a retry", async () => {
+    const root = await read(step("build", { status: "running", startedAt: RESUMED }), {
+      started_at: OPENED,
+      ended: true,
+    });
+    expect(root?.children?.[0]?.startedAt).toBe(RESUMED);
+  });
+
+  it("gives a step KAS has not started no start", async () => {
+    const root = await read(step("build"), { started_at: OPENED, ended: true });
+    expect(root?.children?.[0]?.startedAt).toBeUndefined();
+  });
+
+  it("joins a resume's node_start frame like a read", async () => {
+    await read(step("build", { status: "paused", startedAt: OPENED }), {
+      started_at: OPENED,
+      ended: false,
+    });
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["r1", "build"],
+      status: "running",
+      started_at: RESUMED,
+    });
+    const build = store.peekRunState("r1")?.root?.children?.[0];
+    expect(build?.status).toBe("running");
+    expect(build?.startedAt).toBe(OPENED);
+  });
+
+  it("takes a retry's node_start frame start past an ended attempt", async () => {
+    await read(step("build", { status: "failed", startedAt: OPENED, endedAt: OPENED }), {
+      started_at: OPENED,
+      ended: true,
+    });
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["r1", "build"],
+      status: "running",
+      started_at: RESUMED,
+    });
+    expect(store.peekRunState("r1")?.root?.children?.[0]?.startedAt).toBe(RESUMED);
+  });
+
+  it("takes a retry's start after a landed node_complete, with no read between them", async () => {
+    await read(step("build", { status: "running", startedAt: OPENED }), {
+      started_at: OPENED,
+      ended: false,
+    });
+    expect(
+      store.applyRunProgress({
+        workflow_id: "r1",
+        node_path: ["r1", "build"],
+        status: "failed",
+        ended_at: "2026-03-04T05:10:00Z",
+      }),
+    ).toBe(true);
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["r1", "build"],
+      status: "running",
+      started_at: RESUMED,
+    });
+    expect(store.peekRunState("r1")?.root?.children?.[0]?.startedAt).toBe(RESUMED);
+    expect(fetches).toHaveLength(1);
+  });
+
+  it("ends an attempt on a node_complete whose status word this client does not know", async () => {
+    await read(step("build", { status: "running", startedAt: OPENED }), {
+      started_at: OPENED,
+      ended: false,
+    });
+    expect(
+      store.applyRunProgress({
+        workflow_id: "r1",
+        node_path: ["r1", "build"],
+        status: "future-terminal",
+        ended_at: "2026-03-04T05:10:00Z",
+      }),
+    ).toBe(true);
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["r1", "build"],
+      status: "running",
+      started_at: RESUMED,
+    });
+    expect(store.peekRunState("r1")?.root?.children?.[0]?.startedAt).toBe(RESUMED);
+  });
+
+  it("keeps a step opened by a frame at that frame's start when a later frame resumes it", async () => {
+    await read(step("build"));
+    const LATER = "2026-03-04T06:00:00Z";
+    for (const at of [OPENED, LATER]) {
+      store.applyRunProgress({
+        workflow_id: "r1",
+        node_path: ["r1", "build"],
+        status: "running",
+        started_at: at,
+      });
+    }
+    expect(store.peekRunState("r1")?.root?.children?.[0]?.startedAt).toBe(OPENED);
+  });
+
+  it("starts a repeat's pass, which the log holds no attempt for, at its earliest child's", async () => {
+    const CODE = nodePathKey(["r1", "loop", "iter-0", "code"]);
+    responses = [
+      {
+        workflowId: "r1",
+        status: "running",
+        root: {
+          nodeId: "r1",
+          type: "sequence",
+          status: "running",
+          startedAt: RESUMED,
+          children: [
+            {
+              nodeId: "loop",
+              type: "repeat",
+              status: "running",
+              startedAt: RESUMED,
+              children: [
+                {
+                  nodeId: "iter-0",
+                  type: "iteration",
+                  status: "running",
+                  iteration: 0,
+                  startedAt: RESUMED,
+                  children: [step("code", { status: "running", startedAt: RESUMED })],
+                },
+              ],
+            },
+          ],
+        },
+        stepStarts: {
+          [nodePathKey(["r1", "loop"])]: { started_at: "2026-03-04T04:59:59.5Z", ended: false },
+          [CODE]: { started_at: "2026-03-04T05:00:00.000000001Z", ended: false },
+        },
+      },
+    ];
+    store.invalidateRun("r1");
+    await settle();
+    const root = store.peekRunState("r1")?.root;
+    const loop = root?.children?.[0];
+    const pass = loop?.children?.[0];
+    expect(pass?.children?.[0]?.startedAt).toBe("2026-03-04T05:00:00.000000001Z");
+    expect(pass?.startedAt).toBe("2026-03-04T05:00:00.000000001Z");
+    // A logged container keeps the log's own start, not its child's.
+    expect(loop?.startedAt).toBe("2026-03-04T04:59:59.5Z");
+    expect(root?.startedAt).toBe("2026-03-04T04:59:59.5Z");
   });
 });
 
@@ -311,279 +520,70 @@ describe("one cause costs one request per run", () => {
   });
 });
 
-describe("leafNodes walks to the work and skips the scaffolding", () => {
-  it("returns the steps of a nested plan in plan order", () => {
-    const root: RunNode = {
-      nodeId: "root",
-      type: "sequence",
-      status: "running",
-      children: [
-        step("lint", { status: "completed" }),
-        {
-          nodeId: "loop",
-          type: "repeat",
-          status: "running",
-          children: [
-            { nodeId: "iter", type: "sequence", status: "completed", children: [step("work")] },
-            { nodeId: "iter", type: "sequence", status: "running", children: [step("work")] },
-          ],
-        },
-        step("publish"),
-      ],
-    };
-    expect(store.leafNodes(root).map((n) => n.nodeId)).toEqual(["lint", "work", "work", "publish"]);
-  });
-
-  it("treats a childless container as a leaf, so nothing vanishes", () => {
-    // A `parallel` whose branches KAS has not expanded yet has no children. It is still a row a
-    // reader must see, or the plan silently shrinks.
-    const root: RunNode = { nodeId: "fan", type: "parallel", status: "pending" };
-    expect(store.leafNodes(root).map((n) => n.nodeId)).toEqual(["fan"]);
-  });
-
-  it("is empty for a run with no tree", () => {
-    expect(store.leafNodes(undefined)).toEqual([]);
-  });
-});
-
 // KAS describes one node two ways: a repeat's iteration container is `<repeatId>#<n>` in the state
 // tree these fixtures reproduce and `iter-<n>` in the `nodePath` it stamps on a step FRAME.
-describe("nodePathOf separates two iterations that share a node id", () => {
-  it("builds the same path the server joins into a step's subtask id", () => {
-    const first = step("work");
-    const second = step("work");
-    const root: RunNode = {
-      nodeId: "wf",
-      type: "sequence",
-      status: "running",
-      children: [
-        {
-          nodeId: "loop",
-          type: "repeat",
-          status: "running",
-          children: [
-            {
-              nodeId: "loop#0",
-              type: "sequence",
-              status: "completed",
-              iteration: 0,
-              children: [first],
-            },
-            {
-              nodeId: "loop#1",
-              type: "sequence",
-              status: "running",
-              iteration: 1,
-              children: [second],
-            },
-          ],
-        },
-      ],
-    };
-    expect(store.nodePathOf(root, first)).toEqual(["wf", "loop", "iter-0", "work"]);
-    expect(store.nodePathOf(root, second)).toEqual(["wf", "loop", "iter-1", "work"]);
-  });
+describe("nodePathSegment spells a node the way a step frame addresses it", () => {
+  const loop: RunNode = { nodeId: "loop", type: "repeat", status: "running" };
 
-  it("falls back to the node id for a node that is not in the tree", () => {
-    expect(store.nodePathOf(undefined, step("orphan"))).toEqual(["orphan"]);
+  it("names a repeat's pass by its iteration, so two passes of one id differ", () => {
+    const first: RunNode = {
+      nodeId: "loop#0",
+      type: "sequence",
+      status: "completed",
+      iteration: 0,
+    };
+    const second: RunNode = { ...first, nodeId: "loop#1", iteration: 1 };
+    expect(store.nodePathSegment(first, loop)).toBe("iter-0");
+    expect(store.nodePathSegment(second, loop)).toBe("iter-1");
   });
 
   it("falls back to a repeat child's own id when it carries no iteration", () => {
-    // Every one of the 27 iteration containers on this machine's real runs carries an `iteration`,
-    // so this is the unobserved branch: it must degrade to a row in the wrong place rather than to
-    // `iter-undefined`, which is the same call the server's own runNodePath makes for a frame with
-    // no path.
-    const target = step("work");
-    const root: RunNode = {
-      nodeId: "wf",
-      type: "repeat",
-      status: "running",
-      children: [{ nodeId: "loop#0", type: "sequence", status: "running", children: [target] }],
-    };
-    expect(store.nodePathOf(root, target)).toEqual(["wf", "loop#0", "work"]);
+    // Every iteration container on real runs carries an `iteration`, so this is the unobserved
+    // branch: it must degrade to a row in the wrong place rather than to `iter-undefined`, which is
+    // the same call the server's own runNodePath makes for a frame with no path.
+    expect(store.nodePathSegment(step("loop#0"), loop)).toBe("loop#0");
   });
 
-  it("leaves a parallel BRANCH container spelled as its own id", () => {
+  it("leaves a parallel BRANCH spelled as its own id", () => {
     // Real data: a parallel's branches are named `plan-a`…`plan-d` on both sides and match
-    // byte-for-byte today, so rewriting one would break a working case. The rule is a repeat's, not
-    // every container's.
-    const target = step("plan-a", { branchId: "plan-a" });
+    // byte-for-byte today. The rule is a repeat's, not every container's.
+    const fan: RunNode = { nodeId: "investigate", type: "parallel", status: "running" };
+    expect(store.nodePathSegment(step("plan-a", { branchId: "plan-a" }), fan)).toBe("plan-a");
+  });
+
+  it("rewrites a step sitting DIRECTLY under a repeat", () => {
+    // The rule keys on the PARENT's type, not on the node being a container.
+    expect(store.nodePathSegment(step("work", { iteration: 2 }), loop)).toBe("iter-2");
+  });
+
+  it("uses the bare id at the root", () => {
+    expect(store.nodePathSegment(step("wf"), undefined)).toBe("wf");
+  });
+});
+
+describe("nodesOfType", () => {
+  it("finds a type at any depth, every pass included, in plan order", () => {
     const root: RunNode = {
       nodeId: "wf",
       type: "sequence",
       status: "running",
       children: [
-        { nodeId: "investigate", type: "parallel", status: "running", children: [target] },
+        step("a"),
+        {
+          nodeId: "loop",
+          type: "repeat",
+          status: "running",
+          children: [
+            { nodeId: "loop#0", type: "sequence", status: "completed", children: [step("b")] },
+            { nodeId: "loop#1", type: "sequence", status: "running", children: [step("b")] },
+          ],
+        },
+        { nodeId: "w", type: "watch", status: "pending" },
       ],
     };
-    expect(store.nodePathOf(root, target)).toEqual(["wf", "investigate", "plan-a"]);
-  });
-
-  it("rewrites a step sitting DIRECTLY under a repeat", () => {
-    // The rule keys on the PARENT's type, not on the node being a container, so a repeat whose body
-    // is one bare step is addressed the same way KAS addresses it.
-    const target = step("work", { iteration: 2 });
-    const root: RunNode = {
-      nodeId: "wf",
-      type: "repeat",
-      status: "running",
-      children: [target],
-    };
-    expect(store.nodePathOf(root, target)).toEqual(["wf", "iter-2"]);
-  });
-});
-
-// The FALLBACK above is a well-formed value and not an address: its first segment is a LEAF id
-// where the endpoint asserts the run id, so a read of it is refused.
-describe("nodeAddressOf reports whether the walk PLACED the target", () => {
-  it("reports placed for a node the tree holds", () => {
-    const target = step("work");
-    const root: RunNode = {
-      nodeId: "wf",
-      type: "sequence",
-      status: "running",
-      children: [target],
-    };
-    expect(store.nodeAddressOf(root, target)).toEqual({ path: ["wf", "work"], placed: true });
-  });
-
-  it("reports NOT placed for a node the tree does not hold", () => {
-    const root: RunNode = { nodeId: "wf", type: "sequence", status: "running", children: [] };
-    expect(store.nodeAddressOf(root, step("orphan"))).toEqual({
-      path: ["orphan"],
-      placed: false,
-    });
-  });
-
-  it("reports NOT placed when there is no tree at all", () => {
-    expect(store.nodeAddressOf(undefined, step("orphan"))).toEqual({
-      path: ["orphan"],
-      placed: false,
-    });
-  });
-
-  // The wrapper's contract did not move: a row still gets a key for an unplaceable node, because "a
-  // row in the wrong place beats content that vanishes".
-  it("keeps nodePathOf answering the same path either way", () => {
-    const target = step("work");
-    const root: RunNode = {
-      nodeId: "wf",
-      type: "sequence",
-      status: "running",
-      children: [target],
-    };
-    expect(store.nodePathOf(root, target)).toEqual(["wf", "work"]);
-    expect(store.nodePathOf(root, step("orphan"))).toEqual(["orphan"]);
-  });
-});
-
-describe("runCounters answers the header's counter", () => {
-  const state = (...kids: RunNode[]): RunState => ({
-    workflowId: "r1",
-    root: { nodeId: "wf", type: "sequence", status: "running", children: kids },
-  });
-
-  it("names the RUNNING position, not done + 1", () => {
-    // A skipped leaf would shift a `done + 1` counter, and a parallel node has several in flight —
-    // so "step 3 of 5" has to mean the running one.
-    const c = store.runCounters(
-      state(
-        step("a", { status: "completed" }),
-        step("b", { status: "skipped" }),
-        step("c", { status: "running" }),
-        step("d"),
-        step("e"),
-      ),
-    );
-    expect(c).toEqual({ total: 5, done: 2, failed: 0, current: 3 });
-  });
-
-  it("counts a paused leaf as the current one: it is where the run is", () => {
-    const c = store.runCounters(
-      state(step("a", { status: "completed" }), step("b", { status: "paused" })),
-    );
-    expect(c.current).toBe(2);
-  });
-
-  it("counts an unknown leaf as current rather than finished or not started", () => {
-    const c = store.runCounters(state(step("a", { status: "unknown" })));
-    expect(c).toEqual({ total: 1, done: 0, failed: 0, current: 1 });
-  });
-
-  it("reports no current step for a finished run", () => {
-    const c = store.runCounters(
-      state(step("a", { status: "completed" }), step("b", { status: "failed" })),
-    );
-    expect(c).toEqual({ total: 2, done: 1, failed: 1, current: 0 });
-  });
-
-  it("is all zeros with no tree, rather than throwing", () => {
-    expect(store.runCounters(undefined)).toEqual({ total: 0, done: 0, failed: 0, current: 0 });
-  });
-});
-
-describe("the clocks", () => {
-  it("measures a finished span between its own stamps", () => {
-    expect(store.elapsedMs("2026-01-01T00:00:00Z", "2026-01-01T00:00:12Z")).toBe(12_000);
-  });
-
-  it("reads a pending step as nothing, not as the epoch", () => {
-    // Date.parse(undefined) is NaN and Date.parse("") is NaN; either arriving as a number would
-    // render a step that never ran as having taken 56 years.
-    expect(store.elapsedMs(undefined, undefined)).toBe(0);
-    expect(store.elapsedMs("", "")).toBe(0);
-    expect(store.elapsedMs("not a date", undefined)).toBe(0);
-  });
-
-  it("runs a live span to now", () => {
-    const started = new Date(Date.now() - 5_000).toISOString();
-    expect(store.elapsedMs(started, undefined)).toBeGreaterThanOrEqual(4_900);
-  });
-
-  it("spans the RUN from its first start to its last end", () => {
-    const state: RunState = {
-      workflowId: "r1",
-      status: "completed",
-      root: {
-        nodeId: "wf",
-        type: "sequence",
-        status: "completed",
-        children: [
-          step("a", {
-            status: "completed",
-            startedAt: "2026-01-01T00:00:00Z",
-            endedAt: "2026-01-01T00:00:30Z",
-          }),
-          step("b", {
-            status: "completed",
-            startedAt: "2026-01-01T00:00:30Z",
-            endedAt: "2026-01-01T00:02:00Z",
-          }),
-        ],
-      },
-    };
-    expect(store.runElapsedMs(state)).toBe(120_000);
-  });
-
-  it("runs to NOW while any leaf is still going, whatever the others ended at", () => {
-    const state: RunState = {
-      workflowId: "r1",
-      status: "running",
-      root: {
-        nodeId: "wf",
-        type: "sequence",
-        status: "running",
-        children: [
-          step("a", {
-            status: "completed",
-            startedAt: new Date(Date.now() - 60_000).toISOString(),
-            endedAt: new Date(Date.now() - 50_000).toISOString(),
-          }),
-          step("b", { status: "running", startedAt: new Date(Date.now() - 50_000).toISOString() }),
-        ],
-      },
-    };
-    expect(store.runElapsedMs(state)).toBeGreaterThanOrEqual(59_000);
+    expect(store.nodesOfType(root, "step").map((n) => n.nodeId)).toEqual(["a", "b", "b"]);
+    expect(store.nodesOfType(root, "watch").map((n) => n.nodeId)).toEqual(["w"]);
+    expect(store.nodesOfType(undefined, "step")).toEqual([]);
   });
 });
 
@@ -963,7 +963,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
 
     const landed = store.applyRunProgress({
       workflow_id: "r1",
-      node_path: "seq/coder",
+      node_path: ["seq", "coder"],
       status: "running",
       started_at: "2026-03-04T05:06:07Z",
     });
@@ -1008,7 +1008,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     expect(
       store.applyRunProgress({
         workflow_id: "r1",
-        node_path: "loop/iter-1/body",
+        node_path: ["loop", "iter-1", "body"],
         status: "running",
       }),
     ).toBe(true);
@@ -1018,13 +1018,64 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     expect(iters[0]?.children?.[0]?.status).toBe("completed");
   });
 
+  it("addresses a slash-bearing node id by its own segments", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "r",
+        type: "sequence",
+        status: "running",
+        children: [
+          { nodeId: "a/b", type: "sequence", status: "running", children: [step("c")] },
+          {
+            nodeId: "a",
+            type: "sequence",
+            status: "running",
+            children: [{ nodeId: "b", type: "sequence", status: "running", children: [step("c")] }],
+          },
+        ],
+      },
+    });
+
+    const landed = store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["r", "a/b", "c"],
+      status: "completed",
+    });
+
+    expect(landed).toBe(true);
+    const [slashed, nested] = store.peekRunState("r1")?.root?.children ?? [];
+    expect(slashed?.children?.[0]?.status).toBe("completed");
+    expect(nested?.children?.[0]?.children?.[0]?.status).toBe("pending");
+  });
+
+  it("addresses a node whose path is too long for an unhashed key", async () => {
+    // Past keyenc's 8 KiB component limit a path's key is a hash, so the frame names segments.
+    const long = "x".repeat(9 * 1024);
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "r", type: "sequence", status: "running", children: [step(long)] },
+    });
+
+    const landed = store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["r", long],
+      status: "completed",
+    });
+
+    expect(landed).toBe(true);
+    expect(store.peekRunState("r1")?.root?.children?.[0]?.status).toBe("completed");
+  });
+
   it("is idempotent, because KAS duplicates progress frames across a resume", async () => {
     await seedRun("r1", {
       workflowId: "r1",
       status: "running",
       root: { nodeId: "coder", type: "step", status: "pending" },
     });
-    const frame = { workflow_id: "r1", node_path: "coder", status: "completed", ended_at: "T1" };
+    const frame = { workflow_id: "r1", node_path: ["coder"], status: "completed", ended_at: "T1" };
     store.applyRunProgress(frame);
     const once = store.peekRunState("r1")?.root;
     store.applyRunProgress(frame);
@@ -1040,13 +1091,13 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
       root: { nodeId: "w", type: "watch", status: "running", startedAt: "T0" },
     });
 
-    store.applyRunProgress({ workflow_id: "r1", node_path: "w" });
+    store.applyRunProgress({ workflow_id: "r1", node_path: ["w"] });
     expect(store.peekRunState("r1")?.root?.status).toBe("running");
     expect(store.peekRunState("r1")?.root?.startedAt).toBe("T0");
 
     store.applyRunProgress({
       workflow_id: "r1",
-      node_path: "w",
+      node_path: ["w"],
       status: "completed",
       ended_at: "T9",
     });
@@ -1063,7 +1114,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
       status: "running",
       root: { nodeId: "coder", type: "step", status: "running" },
     });
-    store.applyRunProgress({ workflow_id: "r1", node_path: "coder", status: "quantum" });
+    store.applyRunProgress({ workflow_id: "r1", node_path: ["coder"], status: "quantum" });
     expect(store.peekRunState("r1")?.root?.status).toBe("running");
   });
 
@@ -1081,7 +1132,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     const before = store.peekRunState("r1");
     const untouchedSibling = before?.root?.children?.[1];
 
-    store.applyRunProgress({ workflow_id: "r1", node_path: "seq/a", status: "running" });
+    store.applyRunProgress({ workflow_id: "r1", node_path: ["seq", "a"], status: "running" });
 
     const after = store.peekRunState("r1");
     expect(after).not.toBe(before);
@@ -1109,7 +1160,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     // The watch_poll shape: the node's path and the status it already holds.
     const landed = store.applyRunProgress({
       workflow_id: "r1",
-      node_path: "seq/w",
+      node_path: ["seq", "w"],
       status: "running",
     });
 
@@ -1134,7 +1185,7 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     });
     const root = store.peekRunState("r1")?.root;
 
-    store.applyRunProgress({ workflow_id: "r1", node_path: "seq/w", status: "running" });
+    store.applyRunProgress({ workflow_id: "r1", node_path: ["seq", "w"], status: "running" });
 
     expect(store.peekRunState("r1")?.root).toBe(root);
   });
@@ -1151,13 +1202,86 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
 
     store.applyRunProgress({
       workflow_id: "r1",
-      node_path: "w",
+      node_path: ["w"],
       status: "running",
       started_at: "T1",
     });
 
     expect(store.peekRunState("r1")).not.toBe(before);
     expect(store.peekRunState("r1")?.root?.startedAt).toBe("T1");
+  });
+
+  // KAS sends `node_start` twice per step, each stamped on arrival.
+  it("keeps the start a running node holds when that start is announced again", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "coder", type: "step", status: "running", startedAt: "2026-10-08T10:00:00Z" },
+    });
+    const gen = store.peekRunState("r1")?.root?.startGen;
+
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["coder"],
+      status: "running",
+      started_at: "2026-10-08T10:00:01Z",
+    });
+
+    const root = store.peekRunState("r1")?.root;
+    expect([root?.startedAt, root?.startGen]).toEqual(["2026-10-08T10:00:00Z", gen]);
+  });
+
+  it("starts a finished node afresh, without the end its last execution left", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "coder",
+        type: "step",
+        status: "failed",
+        startedAt: "2026-10-08T10:00:00Z",
+        endedAt: "2026-10-08T10:00:05Z",
+        failureReason: "boom",
+        sessionId: "sess-a",
+      },
+    });
+    const gen = store.peekRunState("r1")?.root?.startGen ?? 0;
+
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["coder"],
+      status: "running",
+      started_at: "2026-10-08T10:01:00Z",
+    });
+
+    const root = store.peekRunState("r1")?.root;
+    expect(root?.startedAt).toBe("2026-10-08T10:01:00Z");
+    expect(root?.startGen).toBeGreaterThan(gen);
+    expect([root?.endedAt, root?.failureReason, root?.sessionId]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("writes the session the second node_start names onto the execution the first opened", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "coder", type: "step", status: "running", startedAt: "2026-10-08T10:00:00Z" },
+    });
+    const gen = store.peekRunState("r1")?.root?.startGen;
+
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["coder"],
+      status: "running",
+      started_at: "2026-10-08T10:00:01Z",
+      session_id: "sess-a",
+    });
+
+    const root = store.peekRunState("r1")?.root;
+    expect([root?.sessionId, root?.startGen]).toEqual(["sess-a", gen]);
   });
 });
 
@@ -1169,11 +1293,11 @@ describe("applyRunProgress refuses what it cannot express, so the caller refetch
       root: { nodeId: "coder", type: "step", status: "running" },
     });
     expect(store.applyRunProgress({ workflow_id: "r1" })).toBe(false);
-    expect(store.applyRunProgress({ workflow_id: "r1", node_path: "" })).toBe(false);
+    expect(store.applyRunProgress({ workflow_id: "r1", node_path: [] })).toBe(false);
   });
 
   it("refuses a run it holds no state for", () => {
-    expect(store.applyRunProgress({ workflow_id: "r4", node_path: "coder" })).toBe(false);
+    expect(store.applyRunProgress({ workflow_id: "r4", node_path: ["coder"] })).toBe(false);
   });
 
   it("refuses a path this tree does not hold, which is a freshly-created container", async () => {
@@ -1182,8 +1306,8 @@ describe("applyRunProgress refuses what it cannot express, so the caller refetch
       status: "running",
       root: { nodeId: "seq", type: "sequence", status: "running", children: [step("a")] },
     });
-    expect(store.applyRunProgress({ workflow_id: "r1", node_path: "seq/b" })).toBe(false);
-    expect(store.applyRunProgress({ workflow_id: "r1", node_path: "other/a" })).toBe(false);
+    expect(store.applyRunProgress({ workflow_id: "r1", node_path: ["seq", "b"] })).toBe(false);
+    expect(store.applyRunProgress({ workflow_id: "r1", node_path: ["other", "a"] })).toBe(false);
   });
 });
 
@@ -1498,5 +1622,80 @@ describe("forgetRun asks the registered demands before it drops anything", () =>
     store.forgetRun("r1");
 
     expect(store.peekRunState("r1")).toBeUndefined();
+  });
+});
+
+describe("a step's live pause and retry reasons", () => {
+  it("keeps a retry wait running with KAS's sentence, until the step starts again", async () => {
+    await seedRun("r-retry", {
+      workflowId: "r-retry",
+      status: "running",
+      root: {
+        nodeId: "seq",
+        type: "sequence",
+        status: "running",
+        children: [step("coder", { status: "running", startedAt: "T0" })],
+      },
+    });
+
+    store.applyRunProgress({
+      workflow_id: "r-retry",
+      node_path: ["seq", "coder"],
+      status: "running",
+      retry_reason: "Waiting 30s to retry after a network error.",
+    });
+    let leaf = store.peekRunState("r-retry")?.root?.children?.[0];
+    expect(leaf?.status).toBe("running");
+    expect(leaf?.retryReason).toBe("Waiting 30s to retry after a network error.");
+
+    store.applyRunProgress({
+      workflow_id: "r-retry",
+      node_path: ["seq", "coder"],
+      status: "running",
+      started_at: "T1",
+    });
+    leaf = store.peekRunState("r-retry")?.root?.children?.[0];
+    expect(leaf?.retryReason).toBeUndefined();
+  });
+
+  it("records a pause's reason and drops it when the step runs again", async () => {
+    await seedRun("r-pause", {
+      workflowId: "r-pause",
+      status: "running",
+      root: { nodeId: "coder", type: "step", status: "running", startedAt: "T0" },
+    });
+
+    store.applyRunProgress({
+      workflow_id: "r-pause",
+      node_path: ["coder"],
+      status: "paused",
+      pause_reason: "Step 'coder' was paused via update_status.",
+    });
+    expect(store.peekRunState("r-pause")?.root?.pauseReason).toBe(
+      "Step 'coder' was paused via update_status.",
+    );
+
+    store.applyRunProgress({ workflow_id: "r-pause", node_path: ["coder"], status: "running" });
+    expect(store.peekRunState("r-pause")?.root?.pauseReason).toBeUndefined();
+  });
+});
+
+describe("the run read's plan revision", () => {
+  it("rides the state with any outcome word KAS sends, and a malformed one is left out", async () => {
+    replyExtra = { plan_update: { outcome: "rejected", pending: 2, reason: "unknown agent" } };
+    await seedRun("r-plan", { workflowId: "r-plan", status: "running" });
+    expect(store.peekRunState("r-plan")?.planUpdate).toEqual({
+      outcome: "rejected",
+      pending: 2,
+      reason: "unknown agent",
+    });
+
+    replyExtra = { plan_update: { outcome: "superseded", pending: 1 } };
+    await seedRun("r-plan", { workflowId: "r-plan", status: "running" });
+    expect(store.peekRunState("r-plan")?.planUpdate).toEqual({ outcome: "superseded", pending: 1 });
+
+    replyExtra = { plan_update: { outcome: 7 } };
+    await seedRun("r-plan", { workflowId: "r-plan", status: "running" });
+    expect(store.peekRunState("r-plan")?.planUpdate).toBeUndefined();
   });
 });

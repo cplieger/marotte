@@ -9,12 +9,10 @@ import { signal } from "@cplieger/reactive";
 import { LS_DISMISSED_BANNERS_KEY } from "./ls-keys.js";
 import type * as BannerStack from "./banner-stack.js";
 
-/**
- * Cache-buster for the re-imports below. `vi.resetModules()` does not re-evaluate a module
- * in Browser Mode (the map is URL-keyed), so busting the specifier mints a fresh instance.
- * The `.ts` extension matters for coverage attribution. Only the module under test is
- * busted, so `vi.mock` still intercepts its dependencies.
- */
+/** `vi.resetModules()` does not re-evaluate a module in Browser Mode (the map is URL-keyed), so
+ *  busting the specifier mints a fresh instance. The `.ts` extension matters for coverage
+ *  attribution. Only the module under test is busted, so `vi.mock` still intercepts its
+ *  dependencies. */
 let bootSeq = 0;
 
 interface MiniSession {
@@ -258,7 +256,7 @@ describe("banner-stack: severity carries a shape, not colour alone", () => {
     const glyphs = [...container.querySelectorAll(".banner-glyph")].map((g) => g.textContent);
     expect(glyphs).toHaveLength(3);
     // Three banners, three DIFFERENT characters. A shared glyph would leave the
-    // level readable only by hue again, which is the failure being fixed.
+    // level readable only by hue.
     expect(new Set(glyphs).size).toBe(3);
   });
 

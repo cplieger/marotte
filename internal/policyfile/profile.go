@@ -14,10 +14,10 @@ import "slices"
 // down at its first prompt rather than quietly granting less.
 const (
 	PresetReadWorkspace = "read-workspace"
-	PresetReadOnlyShell = "read-only-shell"
-	PresetReadAll       = "read-all"
-	PresetEditWorkspace = "edit-workspace"
-	PresetDevShell      = "dev-shell"
+	presetReadOnlyShell = "read-only-shell"
+	presetReadAll       = "read-all"
+	presetEditWorkspace = "edit-workspace"
+	presetDevShell      = "dev-shell"
 	PresetAllowAll      = "allow-all"
 )
 
@@ -60,7 +60,7 @@ var profiles = []Profile{
 		// bundled with web access; a read-only profile that prompted for reads would contradict
 		// itself, so the picker's description says where it reaches.
 		ID:      ProfileReadOnly,
-		Presets: []string{PresetReadWorkspace, PresetReadOnlyShell, PresetReadAll},
+		Presets: []string{PresetReadWorkspace, presetReadOnlyShell, presetReadAll},
 	},
 	{
 		// Edit inside the workspace and run ordinary development commands. The
@@ -68,8 +68,8 @@ var profiles = []Profile{
 		// rather than ours.
 		ID: ProfileTrusted,
 		Presets: []string{
-			PresetReadWorkspace, PresetReadOnlyShell, PresetReadAll,
-			PresetEditWorkspace, PresetDevShell,
+			PresetReadWorkspace, presetReadOnlyShell, presetReadAll,
+			presetEditWorkspace, presetDevShell,
 		},
 	},
 	{

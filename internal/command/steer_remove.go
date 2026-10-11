@@ -59,10 +59,10 @@ func steerRefusal(reason string) error {
 	}
 }
 
-// CmdSteerRemove deletes one dock row the user sent. Once the target is deleted the
+// cmdSteerRemove deletes one dock row the user sent. Once the target is deleted the
 // answer is success whatever became of the resubmit: the server keeps custody of the
 // kept rows, and their frames say where they went.
-func CmdSteerRemove(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
+func cmdSteerRemove(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -75,31 +75,43 @@ func CmdSteerRemove(ctx context.Context, roles *promptRoles, cmd *marotte.Client
 		return nil, StatusError(http.StatusServiceUnavailable, err)
 	}
 	defer unlock()
+	if err := RemoveSteerFrom(ctx, roles.steerTarget(cmd.ChatID), p.SteerID, func(opID string) {
+		endSteerOp(ctx, roles, cmd.ChatID, opID)
+	}); err != nil {
+		return nil, err
+	}
+	return removed(p.SteerID), nil
+}
+
+// RemoveSteerFrom deletes the row steerID from t's buffer: a row KAS cannot hold goes at once, else
+// one clear and one combined resubmit of the kept rows. endOp ends the op under the steer lock the
+// caller holds; it runs only when a clear was issued.
+func RemoveSteerFrom(ctx context.Context, t SteerTarget, steerID string, endOp func(opID string)) error {
 	opID := ids.NewMessageID()
-	needsClear, refuse := roles.queue.BeginRemove(cmd.ChatID, p.SteerID, opID)
+	needsClear, refuse := t.Queue.BeginRemove(t.Key, steerID, opID)
 	if refuse != "" {
-		return nil, steerRefusal(refuse)
+		return steerRefusal(refuse)
 	}
 	if !needsClear {
-		return removed(p.SteerID), nil
+		return nil
 	}
 	rpcCtx, cancel := context.WithTimeout(durable.Context(ctx), steerRemoveBudget)
 	defer cancel()
-	defer endSteerOp(ctx, roles, cmd.ChatID, opID)
-	cleared, landed := clearSteerBuffer(rpcCtx, roles, cmd.ChatID)
-	res := roles.queue.RemoveCleared(cmd.ChatID, opID, cleared, landed)
+	defer endOp(opID)
+	cleared, landed := clearSteerBuffer(rpcCtx, t)
+	res := t.Queue.RemoveCleared(t.Key, opID, cleared, landed)
 	if res.Reason != "" && res.Reason != SteerRefuseConsumed {
-		return nil, steerRefusal(res.Reason)
+		return steerRefusal(res.Reason)
 	}
 	if res.Resend != nil {
-		_ = issueSteers(rpcCtx, roles, cmd.ChatID, []SteerSend{*res.Resend}, "", func(s SteerSend, queued bool, err error) {
-			roles.queue.OpSent(cmd.ChatID, opID, s, queued, err)
+		_ = issueSteers(rpcCtx, t, []SteerSend{*res.Resend}, "", func(s SteerSend, queued bool, err error) {
+			t.Queue.OpSent(t.Key, opID, s, queued, err)
 		})
 	}
 	if res.Reason == SteerRefuseConsumed {
-		return nil, steerRefusal(res.Reason)
+		return steerRefusal(res.Reason)
 	}
-	return removed(p.SteerID), nil
+	return nil
 }
 
 func removed(key string) map[string]any {
@@ -139,9 +151,7 @@ func runSteerJobs(roles *promptRoles) func(SteerJob) {
 }
 
 func flushSteers(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) {
-	_ = issueSteers(ctx, roles, chatID, roles.jobs.PlanFlush(chatID), "", func(s SteerSend, queued bool, err error) {
-		roles.queue.SteerSent(chatID, s, queued, err)
-	})
+	SendPlanned(ctx, roles.steerTarget(chatID), roles.jobs.PlanFlush(chatID))
 }
 
 // EndFacts is what resolving a chat's pending ends learned about bridge deaths:
@@ -151,11 +161,11 @@ type EndFacts struct {
 	Undrained bool
 }
 
-// ResolveEnds settles every pending turn end whose turn opened at or before upTo,
+// resolveEnds settles every pending turn end whose turn opened at or before upTo,
 // oldest first, leaving each end's rows unsent and unowned. A newer close's end is
 // left for that close. The caller holds the steer lock; nothing is written to any
 // store, so resolving cannot fail.
-func ResolveEnds(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, upTo uint64) EndFacts {
+func resolveEnds(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, upTo uint64) EndFacts {
 	var facts EndFacts
 	for _, e := range roles.jobs.Ends(chatID) {
 		if e.End.TurnSeq > upTo {
@@ -220,7 +230,7 @@ func settleStrays(ctx context.Context, roles *promptRoles, chatID marotte.ChatID
 		roles.jobs.Release(chatID, owner, true)
 		return
 	}
-	if _, landed := clearSteerBuffer(ctx, roles, chatID); landed {
+	if _, landed := clearSteerBuffer(ctx, roles.steerTarget(chatID)); landed {
 		roles.jobs.StraysCleared(chatID, owner, nil, true)
 	} else {
 		roles.jobs.Release(chatID, owner, true)
@@ -247,7 +257,7 @@ func resolveAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.C
 		return EndFacts{}
 	}
 	defer unlock()
-	facts := ResolveEnds(ctx, roles, chatID, fence.Seq)
+	facts := resolveEnds(ctx, roles, chatID, fence.Seq)
 	routeIntoStartedPrompt(ctx, roles, chatID)
 	return facts
 }

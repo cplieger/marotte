@@ -15,8 +15,8 @@ function textOf(root: HTMLElement, sel: string): string | null {
   return root.querySelector(sel)?.textContent ?? null;
 }
 
-/** Any control at all. The note carries none in either state: an undelivered message is
- *  the server's to resend, and the CLAMP's opener is the one button the note may hold. */
+/** The note carries none in either state: an undelivered message is the server's to resend, and the
+ *  CLAMP's opener is the one button the note may hold. */
 function controls(root: HTMLElement): HTMLButtonElement[] {
   return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).filter(
     (b) => !b.classList.contains("steer-note-more"),
@@ -67,8 +67,7 @@ describe("the read state", () => {
 });
 
 describe("the dropped state", () => {
-  // The label states only what is known: the agent never read it (not the resend, a turn it
-  // cannot see).
+  // The label states only what is known: the agent never read it.
   it("says it was not read, and keeps the text", () => {
     const n = note({ text: "never read this", dropped: true });
 
@@ -78,7 +77,7 @@ describe("the dropped state", () => {
     expect(n.getAttribute("aria-label")).toBe("Not read: never read this");
   });
 
-  // A record, not an offer: the resend already carries the text into the next turn.
+  // A record, not an offer.
   it("carries no control, so the mark is a record rather than an offer", () => {
     const n = note({ text: "never read this", dropped: true });
     expect(controls(n)).toEqual([]);
@@ -95,7 +94,7 @@ describe("the dropped state", () => {
   });
 });
 
-// `boundary` is what marotte's translator writes: KAS clears its buffer at every turn boundary.
+// A user steer's `boundary` is the close's note: the tab closed while it was unread.
 describe("the reason clause", () => {
   it("words the boundary drop, so the label says what ended the turn", () => {
     const n = note({ text: "use tabs", dropped: true, reason: "boundary" });
@@ -151,6 +150,33 @@ describe("whose words the note holds", () => {
     expect(glyph(mine)).toBeDefined();
     expect(glyph(theirs)).toBeDefined();
     expect(glyph(mine)).not.toBe(glyph(theirs));
+  });
+
+  // A step transcript sourced from KAS's replay holds the launching chat's send_message, which
+  // reports no result: the note names whose words they are.
+  it("names the main agent's message to a step as the main agent's, never a workflow result", () => {
+    const n = note({ text: "Weigh this design input.", origin: "parent" });
+
+    expect(n.dataset["origin"]).toBe("parent");
+    expect(textOf(n, ".steer-note-label")).toBe("Message from the main agent");
+    expect(n.getAttribute("aria-label")).toBe(
+      "Message from the main agent: Weigh this design input.",
+    );
+  });
+
+  it("says the main agent's message was not delivered, in its own words", () => {
+    const n = note({ text: "weigh this", origin: "parent", dropped: true });
+    expect(textOf(n, ".steer-note-label")).toBe("Message from the main agent not delivered");
+  });
+
+  it("gives the main agent's message a glyph of its own", () => {
+    const glyph = (n: HTMLElement): string | undefined =>
+      n.querySelector(".tool-icon svg path")?.getAttribute("d") ?? undefined;
+    const parent = glyph(note({ origin: "parent" }));
+
+    expect(parent).toBeDefined();
+    expect(parent).not.toBe(glyph(note()));
+    expect(parent).not.toBe(glyph(note({ origin: "agent" })));
   });
 });
 

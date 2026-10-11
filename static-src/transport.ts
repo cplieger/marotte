@@ -26,7 +26,7 @@ type CommandType =
   | "set_mode"
   | "rewind_chat";
 
-export interface Command {
+interface Command {
   type: CommandType;
   chat_id?: string;
   payload?: Record<string, unknown>;
@@ -36,7 +36,7 @@ export interface Command {
 // Provides compile-time payload validation for each command type.
 // The wire format is unchanged (JSON.stringify produces the same output).
 
-export type TypedCommand =
+type TypedCommand =
   | {
       type: "prompt";
       chat_id: string;
@@ -45,11 +45,13 @@ export type TypedCommand =
         attachments?: readonly unknown[];
         message_id?: string;
         model?: string;
+        display_text?: string | undefined;
       };
     }
   // `lead` is the send-now arrow's row, ordered first by the turn-end resend.
   | { type: "cancel"; chat_id: string; payload?: { lead: string } }
   | { type: "delete_chat"; chat_id: string }
+  | { type: "merge_tangent"; chat_id: string; payload: { op_id: string } }
   | { type: "switch_model"; chat_id: string; payload: { model: string } }
   | { type: "set_supervised_mode"; chat_id: string; payload: { enabled: boolean } }
   | {
@@ -93,6 +95,7 @@ export type TypedCommand =
       payload: {
         text: string;
         message_id: string;
+        display_text?: string;
         attachments?: readonly { path: string; name: string }[];
       };
     }
@@ -157,8 +160,7 @@ interface SendOptions {
   reportSendState?: boolean;
 }
 
-/** Read the key an action attached to its command, if any. It becomes the
- *  HEADER, never a body field: the server's envelope has no such member. */
+/** It becomes the HEADER, never a body field: the server's envelope has no such member. */
 function idempotencyKeyOf(cmd: TypedCommand | Command): string | undefined {
   const v = (cmd as Record<string, unknown>)[IDEMPOTENCY_COMMAND_FIELD];
   return typeof v === "string" && v !== "" ? v : undefined;
@@ -199,8 +201,7 @@ const COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
 
 const inflight = new Set<AbortController>();
 
-/** Abort every in-flight command started here. The global unload cleanup calls it so
- *  navigating away does not leak request handles. */
+/** The global unload cleanup calls it so navigating away does not leak request handles. */
 function cancelInflight(): void {
   for (const ctrl of inflight) {
     ctrl.abort();

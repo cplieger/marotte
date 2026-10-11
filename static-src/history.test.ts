@@ -72,7 +72,7 @@ const asking = signal<ReadonlySet<string>>(new Set());
 vi.mock("./decision-dock.js", () => ({
   runPendingAsks: (id: string) => ({
     count: asking.value.has(id) ? 1 : 0,
-    nodes: new Set<string>(),
+    asked: [],
     label: "",
   }),
 }));
@@ -181,7 +181,7 @@ async function freshModule(): Promise<typeof ModHistory> {
 async function render(payload: unknown): Promise<HTMLElement> {
   const view = mountView();
   dispatch.mockResolvedValue(payload);
-  // The pair `activateTabQuietly` runs; `toggleHistoryView` toggles the tab and paints nothing here.
+  // The pair `activateTabQuietly` runs; `openTab` opens the tab and paints nothing here.
   const { loadHistoryView, refreshHistoryView } = await freshModule();
   loadHistoryView();
   refreshHistoryView();
@@ -1614,6 +1614,23 @@ describe("history: the row's subtitle and time", () => {
     });
     expect(sub("r:wf_timed")).toBe("15m");
     expect(sub("r:wf_untimed")).toBe("");
+  });
+
+  it("times a resumed run from its creation, because a resume restamps its start", async () => {
+    await render({
+      sessions: [],
+      runs: [
+        {
+          workflow_id: "wf_resumed",
+          name: "nightly",
+          status: "completed",
+          created_at: 1000,
+          started_at: 841000,
+          updated_at: 901000,
+        },
+      ],
+    });
+    expect(sub("r:wf_resumed")).toBe("15m");
   });
 
   it("names the recipe only when the label is not already the recipe", async () => {

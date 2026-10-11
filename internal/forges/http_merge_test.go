@@ -57,8 +57,6 @@ func (c *mergeCore) merges() []forgeapi.MergeRequest {
 	return slices.Clone(c.requests)
 }
 
-// mergeRow is one connection the route is driven on, with the repository its
-// path addresses.
 type mergeRow struct {
 	rec    connectionRecord
 	repoID string
@@ -89,14 +87,12 @@ func codebergMergeRow() mergeRow {
 	}
 }
 
-// mergePath is pull request n's merge route on row.
 func (row mergeRow) mergePath(n string) string {
 	return "/api/forges/" + url.PathEscape(row.rec.ID) + "/repos/" + row.repoID + "/prs/" + n + "/merge"
 }
 
-// mergeMux serves the forge routes over a manager holding row's connection on core.
-// Each manager registers its helper in a git config of its own, so the package's
-// shared one does not grow with every case.
+// Each manager registers its helper in a git config of its own, so the package's shared one does
+// not grow with every case.
 func mergeMux(t *testing.T, row mergeRow, core forgeapi.Core) *http.ServeMux {
 	t.Helper()
 	isolateGit(t)

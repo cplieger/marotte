@@ -137,6 +137,8 @@ export const ICON_ALERT = svg(
 );
 // Lucide `arrow-up`, a direction primitive: the dock's send-now control.
 export const ICON_ARROW_UP = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
+// Go to line (Lucide "hash").
+export const ICON_GOTO_LINE = svg("ui", '<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>');
 export const ICON_GIT_DOWN_ARROW = svg("ui", '<path d="M12 5v14M5 12l7 7 7-7"/>');
 /**
  * Lucide `rotate-cw` with the head's leg moved to y=9, on the 3-unit grid; the last curve ends on the head's 45°
@@ -402,6 +404,11 @@ export const ICON_SUBAGENT_TASK = svg(
 export const ICON_SUBAGENT_CREATOR = svg(
   "ui",
   '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><path d="M12 9v6M9 12h6"/>',
+);
+// Semantic Reviewer, a bundled agent (Lucide "scan-eye"): the plain eye is `ICON_EXEC_WATCH`, a magnifier the gatherer.
+export const ICON_TAB_REVIEW = svg(
+  "ui",
+  '<path d="M3 7V5a2 2 0 012-2h2"/><path d="M17 3h2a2 2 0 012 2v2"/><path d="M21 17v2a2 2 0 01-2 2h-2"/><path d="M7 21H5a2 2 0 01-2-2v-2"/><circle cx="12" cy="12" r="1"/><path d="M18.944 12.33a1 1 0 000-.66 7.5 7.5 0 00-13.888 0 1 1 0 000 .66 7.5 7.5 0 0013.888 0"/>',
 );
 // Model-refusal callout (Lucide "octagon-alert").
 export const ICON_REFUSAL = svg(

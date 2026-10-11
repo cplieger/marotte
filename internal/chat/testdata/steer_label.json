@@ -9,21 +9,24 @@
     "`triples` is SCANNED from the producers, never listed: the scan walks every non-test",
     "Go file under internal/, resolves each marotte.EntrySteer construction and mutation",
     "against internal/marotte's own constants, and expands an origin that comes from data",
-    "to both members of the closed enum. `sites` is the scan's own evidence, so a NEW",
+    "to every member of the closed enum. `sites` is the scan's own evidence, so a NEW",
     "producer moves this golden and the fixture has to be read before it is regenerated.",
     "",
     "`label` is the SERVER's statement of the client's words (parts joined with ' · ');",
     "the reason clause is worded only on a dropped row, which is labelFor's own rule.",
-    "steer-label-contract.test.ts renders every `compared` row through buildSteerNote in",
-    "chromium and asserts the label matches.",
+    "steer-label-contract.test.ts renders every row through buildSteerNote in chromium",
+    "and asserts the label matches.",
     "",
-    "ONE DECLARED EDGE, carried as `compared: false` with its reason: the replay",
-    "projection leaves State unset, and no client reader sees that value — the merge",
-    "stamps dropped/restart on a projected steer the record never held before any reader",
-    "is served. Asserting a label for it would assert a render that cannot happen."
+    "An unset state is the replay projection's and a workflow message's. A chat's merge",
+    "stamps a projected steer dropped/restart, but a step transcript read from KAS's replay",
+    "serves it as is, and a workflow message's delivery is its own steer_delivered entry.",
+    "The client renders anything but dropped as the read note, so the row carries the",
+    "read label."
   ],
   "origins": [
     "agent",
+    "parent",
+    "step",
     "user"
   ],
   "states": [
@@ -36,11 +39,9 @@
       "state": "dropped",
       "reason": "boundary",
       "label": "Workflow result not delivered · the turn ended first",
-      "compared": true,
       "sites": [
-        "internal/agent/command_chat_ops.go:57",
-        "internal/translate/steering.go:101",
-        "internal/translate/steering.go:110"
+        "internal/translate/steering.go:133",
+        "internal/translate/steering.go:146"
       ]
     },
     {
@@ -48,10 +49,10 @@
       "state": "dropped",
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
-      "compared": true,
       "sites": [
-        "internal/agent/bridge_coord.go:1190",
-        "internal/agent/entry_merge.go:493"
+        "internal/agent/bridge_coord.go:1325",
+        "internal/agent/entry_merge.go:560",
+        "internal/agent/runtime.go:698"
       ]
     },
     {
@@ -59,23 +60,101 @@
       "state": "read",
       "reason": "",
       "label": "Workflow result",
-      "compared": true,
       "sites": [
-        "internal/agent/run_appender.go:89",
-        "internal/agent/run_bounds.go:352",
-        "internal/translate/steering.go:165",
-        "internal/translate/steering.go:82"
+        "internal/agent/run_appender.go:99",
+        "internal/agent/run_bounds.go:349",
+        "internal/agent/run_plan.go:95",
+        "internal/translate/steering.go:114",
+        "internal/translate/steering.go:204",
+        "internal/translate/workflow_message.go:39"
       ]
     },
     {
       "origin": "agent",
       "state": "",
       "reason": "",
-      "label": "",
-      "compared": false,
-      "edge": "the replay projection's unset state: the merge stamps dropped/restart before any reader is served, so no render exists to pin",
+      "label": "Workflow result",
       "sites": [
-        "internal/translate/projection_entries.go:216"
+        "internal/translate/projection_entries.go:216",
+        "internal/translate/workflow_message.go:34"
+      ]
+    },
+    {
+      "origin": "parent",
+      "state": "dropped",
+      "reason": "boundary",
+      "label": "Message from the main agent not delivered · the turn ended first",
+      "sites": [
+        "internal/translate/steering.go:133"
+      ]
+    },
+    {
+      "origin": "parent",
+      "state": "dropped",
+      "reason": "restart",
+      "label": "Message from the main agent not delivered · the session restarted",
+      "sites": [
+        "internal/agent/entry_merge.go:560"
+      ]
+    },
+    {
+      "origin": "parent",
+      "state": "read",
+      "reason": "",
+      "label": "Message from the main agent",
+      "sites": [
+        "internal/translate/steering.go:114",
+        "internal/translate/steering.go:204",
+        "internal/translate/workflow_message.go:39"
+      ]
+    },
+    {
+      "origin": "parent",
+      "state": "",
+      "reason": "",
+      "label": "Message from the main agent",
+      "sites": [
+        "internal/translate/projection_entries.go:216",
+        "internal/translate/workflow_message.go:34"
+      ]
+    },
+    {
+      "origin": "step",
+      "state": "dropped",
+      "reason": "boundary",
+      "label": "Message to the main agent not delivered · the turn ended first",
+      "sites": [
+        "internal/translate/steering.go:133"
+      ]
+    },
+    {
+      "origin": "step",
+      "state": "dropped",
+      "reason": "restart",
+      "label": "Message to the main agent not delivered · the session restarted",
+      "sites": [
+        "internal/agent/entry_merge.go:560"
+      ]
+    },
+    {
+      "origin": "step",
+      "state": "read",
+      "reason": "",
+      "label": "Message to the main agent",
+      "sites": [
+        "internal/translate/steering.go:114",
+        "internal/translate/steering.go:204",
+        "internal/translate/workflow_message.go:39"
+      ]
+    },
+    {
+      "origin": "step",
+      "state": "",
+      "reason": "",
+      "label": "Message to the main agent",
+      "sites": [
+        "internal/translate/projection_entries.go:216",
+        "internal/translate/workflow_message.go:34"
       ]
     },
     {
@@ -83,11 +162,10 @@
       "state": "dropped",
       "reason": "boundary",
       "label": "Not read · the turn ended first",
-      "compared": true,
       "sites": [
-        "internal/agent/command_chat_ops.go:57",
-        "internal/agent/steer_buffer.go:304",
-        "internal/translate/steering.go:101"
+        "internal/agent/command_chat_ops.go:59",
+        "internal/agent/steer_buffer.go:332",
+        "internal/translate/steering.go:133"
       ]
     },
     {
@@ -95,9 +173,8 @@
       "state": "dropped",
       "reason": "deleted",
       "label": "Not read · you deleted it",
-      "compared": true,
       "sites": [
-        "internal/agent/steer_buffer.go:298"
+        "internal/agent/steer_buffer.go:326"
       ]
     },
     {
@@ -105,10 +182,9 @@
       "state": "dropped",
       "reason": "restart",
       "label": "Not read · the session restarted",
-      "compared": true,
       "sites": [
-        "internal/agent/entry_merge.go:493",
-        "internal/agent/runtime.go:671"
+        "internal/agent/entry_merge.go:560",
+        "internal/agent/runtime.go:693"
       ]
     },
     {
@@ -116,76 +192,105 @@
       "state": "read",
       "reason": "",
       "label": "Mid-turn message",
-      "compared": true,
       "sites": [
-        "internal/translate/steering.go:165",
-        "internal/translate/steering.go:82"
+        "internal/agent/run_appender.go:215",
+        "internal/agent/run_message.go:466",
+        "internal/translate/steering.go:114",
+        "internal/translate/steering.go:204",
+        "internal/translate/workflow_message.go:39"
       ]
     },
     {
       "origin": "user",
       "state": "",
       "reason": "",
-      "label": "",
-      "compared": false,
-      "edge": "the replay projection's unset state: the merge stamps dropped/restart before any reader is served, so no render exists to pin",
+      "label": "Mid-turn message",
       "sites": [
-        "internal/translate/projection_entries.go:216"
+        "internal/translate/projection_entries.go:216",
+        "internal/translate/workflow_message.go:34"
       ]
     }
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1190",
+      "site": "internal/agent/bridge_coord.go:1325",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/command_chat_ops.go:57",
+      "site": "internal/agent/command_chat_ops.go:59",
       "form": "literal",
-      "origin": "",
+      "origin": "user",
       "state": "dropped",
       "reason": "boundary"
     },
     {
-      "site": "internal/agent/entry_merge.go:493",
+      "site": "internal/agent/entry_merge.go:560",
       "form": "mutation",
       "origin": "",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/run_appender.go:89",
+      "site": "internal/agent/run_appender.go:215",
+      "form": "literal",
+      "origin": "user",
+      "state": "read",
+      "reason": ""
+    },
+    {
+      "site": "internal/agent/run_appender.go:99",
       "form": "literal",
       "origin": "agent",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/agent/run_bounds.go:352",
+      "site": "internal/agent/run_bounds.go:349",
       "form": "literal",
       "origin": "agent",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:671",
+      "site": "internal/agent/run_message.go:466",
+      "form": "literal",
+      "origin": "user",
+      "state": "read",
+      "reason": ""
+    },
+    {
+      "site": "internal/agent/run_plan.go:95",
+      "form": "literal",
+      "origin": "agent",
+      "state": "read",
+      "reason": ""
+    },
+    {
+      "site": "internal/agent/runtime.go:693",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/steer_buffer.go:298",
+      "site": "internal/agent/runtime.go:698",
+      "form": "mutation",
+      "origin": "agent",
+      "state": "dropped",
+      "reason": "restart"
+    },
+    {
+      "site": "internal/agent/steer_buffer.go:326",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "deleted"
     },
     {
-      "site": "internal/agent/steer_buffer.go:304",
+      "site": "internal/agent/steer_buffer.go:332",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
@@ -199,29 +304,43 @@
       "reason": ""
     },
     {
-      "site": "internal/translate/steering.go:101",
-      "form": "literal",
-      "origin": "",
-      "state": "dropped",
-      "reason": "boundary"
-    },
-    {
-      "site": "internal/translate/steering.go:110",
-      "form": "literal",
-      "origin": "agent",
-      "state": "dropped",
-      "reason": "boundary"
-    },
-    {
-      "site": "internal/translate/steering.go:165",
+      "site": "internal/translate/steering.go:114",
       "form": "literal",
       "origin": "",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/translate/steering.go:82",
+      "site": "internal/translate/steering.go:133",
       "form": "literal",
+      "origin": "",
+      "state": "dropped",
+      "reason": "boundary"
+    },
+    {
+      "site": "internal/translate/steering.go:146",
+      "form": "literal",
+      "origin": "agent",
+      "state": "dropped",
+      "reason": "boundary"
+    },
+    {
+      "site": "internal/translate/steering.go:204",
+      "form": "literal",
+      "origin": "",
+      "state": "read",
+      "reason": ""
+    },
+    {
+      "site": "internal/translate/workflow_message.go:34",
+      "form": "literal",
+      "origin": "",
+      "state": "",
+      "reason": ""
+    },
+    {
+      "site": "internal/translate/workflow_message.go:39",
+      "form": "mutation",
       "origin": "",
       "state": "read",
       "reason": ""

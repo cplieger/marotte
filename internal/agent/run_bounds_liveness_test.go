@@ -14,14 +14,13 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// terminalsAnswering gives one fixed answer per chat, for refill arithmetic; scoping is terminalsBySession's.
+// Scoping is terminalsBySession's.
 type terminalsAnswering map[marotte.ChatID]bool
 
 func (t terminalsAnswering) LiveTerminalForSession(chatID marotte.ChatID, sessions map[string]struct{}) bool {
 	return len(sessions) > 0 && t[chatID]
 }
 
-// stagedExpiry leases, arms and stages a past deadline, returning it.
 func stagedExpiry(t *testing.T, rs *Runs, id string, launch launchOrigin) time.Time {
 	t.Helper()
 	rs.grantLease(t.Context(), id, "publish", launch)
@@ -40,7 +39,7 @@ func TestCancelExpired_ALiveTerminalRefillsTheWindow(t *testing.T) {
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.terminals = terminalsAnswering{runChatID(id): true}
 	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, "root/a", "step-session-a")
+	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 
 	h.runs.cancelExpired(id, deadline)
@@ -65,7 +64,7 @@ func TestCancelExpired_AnAgentRunsCarrierIsTheLaunchingChat(t *testing.T) {
 	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.terminals = terminalsAnswering{"c1": true}
 	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, "root/a", "step-session-a")
+	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
 	deadline := stagedExpiry(t, h.runs, id, launchOrigin{origin: runlease.OriginAgent, chatID: "c1"})
 
 	h.runs.cancelExpired(id, deadline)
@@ -105,7 +104,7 @@ func TestCancelExpired_ASpentBackstopOutranksALiveTerminal(t *testing.T) {
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.terminals = terminalsAnswering{runChatID(id): true}
 	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, "root/a", "step-session-a")
+	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 	h.runs.mu.Lock()
 	h.runs.bounds.executed = map[string]time.Duration{id: runBackstop}
@@ -127,7 +126,7 @@ func TestCancelExpired_ARefillInsideTheBackstopsLastMinuteStillBounds(t *testing
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.terminals = terminalsAnswering{runChatID(id): true}
 	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, "root/a", "step-session-a")
+	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 	h.runs.mu.Lock()
 	h.runs.bounds.armedAt[id] = time.Now().Add(-runBackstop + 30*time.Second)
@@ -167,7 +166,7 @@ func TestRequestPermission_AStepsAskRefillsTheWindow(t *testing.T) {
 		"toolCall":  map[string]any{"toolCallId": "tc-1", "title": "Run tests", "kind": "execute"},
 		"options":   []map[string]any{{"optionId": "allow", "kind": "allow_once"}},
 	})
-	h.chatHandlers[marotte.MethodRequestPermission](t.Context(), chatID, &marotte.RPCResponse{
+	h.askHandlers[marotte.MethodRequestPermission](t.Context(), chatID, h.originOf(chatID), &marotte.RPCResponse{
 		ID: &reqID, Method: marotte.MethodRequestPermission, Params: params,
 	})
 

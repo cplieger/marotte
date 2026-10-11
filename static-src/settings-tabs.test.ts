@@ -11,9 +11,8 @@ const { swapViewsSpy, route } = vi.hoisted(() => ({
   swapViewsSpy: vi.fn((fn: () => HTMLElement | null) => {
     fn();
   }),
-  /** What the strip says is on screen. The subscriber's second gate reads it, and this suite
-   *  runs the REAL tabs.ts otherwise — where no row exists, so it would answer `null` and refuse
-   *  every load. */
+  /** The subscriber's second gate reads it, and this suite runs the REAL tabs.ts otherwise — where
+   *  no row exists, so it would answer `null` and refuse every load. */
   route: { current: { kind: "settings" } as { readonly kind: string } | null },
 }));
 

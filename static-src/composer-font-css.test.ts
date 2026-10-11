@@ -21,8 +21,12 @@ function composerMarkup(): string {
 }
 
 describe("the declarations, read from source", () => {
-  const inputRule = allRules(loadCSS("15-input.css")).find(
-    (r) => r.selector === '[id="prompt-input"]',
+  // The run tab's composer shares this rule (`[id="run-composer-input"]`), so membership, not equality.
+  const inputRule = allRules(loadCSS("15-input.css")).find((r) =>
+    r.selector
+      .split(",")
+      .map((sel) => sel.trim())
+      .includes('[id="prompt-input"]'),
   );
 
   it("reads the type scale's own rung, never a literal", () => {

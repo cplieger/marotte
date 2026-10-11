@@ -70,6 +70,17 @@ type PushSubject struct {
 	Key    string `json:"subject,omitempty"`
 }
 
+// NotificationPayload is the payload for type="notification", and the Web Push payload's
+// content: one notification as both channels show it. internal/notice is its only
+// producer, so Title, Body and the subject (the tag and the click target) cannot differ
+// between the tray and the page.
+type NotificationPayload struct {
+	PushSubject
+	Kind  PushKind `json:"kind"`
+	Title string   `json:"title"`
+	Body  string   `json:"body"`
+}
+
 // ChatSubject is the subject of a notification about one chat. Pass a zero
 // PushSubject (or ChatSubject("")) for a workspace-global one.
 func ChatSubject(id ChatID) PushSubject { return PushSubject{ChatID: id} }

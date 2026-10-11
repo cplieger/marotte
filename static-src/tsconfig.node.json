@@ -6,5 +6,8 @@
     "module": "ESNext",
     "moduleResolution": "bundler"
   },
-  "include": ["vitest.config.ts", "**/*.test.ts"]
+  // The base config excludes the vitest configs, so this one resets exclude;
+  // the test files are tsconfig.test.json's.
+  "include": ["vitest.config.ts", "vitest.stryker.config.ts"],
+  "exclude": []
 }

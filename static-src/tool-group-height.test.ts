@@ -60,7 +60,6 @@ afterEach(() => {
 
 const FILES = ["auth.go", "runtime.go", "translate.go"];
 
-/** A settled read card, as `messages-tools.ts` builds one. */
 function card(i: number): HTMLDivElement {
   return buildToolCard({
     id: `t${String(i)}`,
@@ -72,13 +71,10 @@ function card(i: number): HTMLDivElement {
   });
 }
 
-/**
- * Wait for Chromium to decide the cards are near the viewport. Until then a card's OWN box IS the
- * 40px `contain-intrinsic-size` fallback while descendants report real geometry, so the
- * bare-vs-standalone case compared two copies of one estimate and stayed GREEN with its defect
- * planted. The decision lands on the second frame and never while the host is off-screen; three
- * lifecycle passes for margin.
- */
+/** Until then a card's OWN box IS the 40px `contain-intrinsic-size` fallback while descendants
+ *  report real geometry, so the bare-vs-standalone case compared two copies of one estimate and
+ *  stayed GREEN with its defect planted. The decision lands on the second frame and never while the
+ *  host is off-screen; three lifecycle passes for margin. */
 async function rendered(): Promise<void> {
   for (let i = 0; i < 3; i++) {
     await new Promise<void>((resolve) => {

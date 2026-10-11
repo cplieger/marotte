@@ -17,8 +17,8 @@ func TestPresetIDs_MatchKAS(t *testing.T) {
 		"read-workspace",
 	}
 	got := []string{
-		PresetAllowAll, PresetDevShell, PresetEditWorkspace,
-		PresetReadAll, PresetReadOnlyShell, PresetReadWorkspace,
+		PresetAllowAll, presetDevShell, presetEditWorkspace,
+		presetReadAll, presetReadOnlyShell, PresetReadWorkspace,
 	}
 	slices.Sort(got)
 	if !slices.Equal(got, want) {
@@ -31,8 +31,8 @@ func TestPresetIDs_MatchKAS(t *testing.T) {
 // start a session at all.
 func TestProfiles_OnlyNameKnownPresets(t *testing.T) {
 	known := []string{
-		PresetAllowAll, PresetDevShell, PresetEditWorkspace,
-		PresetReadAll, PresetReadOnlyShell, PresetReadWorkspace,
+		PresetAllowAll, presetDevShell, presetEditWorkspace,
+		presetReadAll, presetReadOnlyShell, PresetReadWorkspace,
 	}
 	for _, p := range Profiles() {
 		for _, id := range p.Presets {

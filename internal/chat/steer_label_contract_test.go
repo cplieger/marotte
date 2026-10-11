@@ -17,7 +17,7 @@ import (
 // steerLabelFixture is testdata/steer_label.json: every (origin, state, reason) triple production can stamp on a steer
 // entry, with the client's words for it. The triples are scanned from producers, not listed: a hand list was already
 // two sites short. Each marotte.EntrySteer construction or mutation under internal/ is resolved against internal/marotte's
-// constants; a data-driven origin expands to both members, and an unresolvable state or reason stops the test. The
+// constants; a data-driven origin expands to every member, and an unresolvable state or reason stops the test. The
 // labels are this side's contract; steer-label-contract.test.ts renders each row through buildSteerNote and compares.
 type steerLabelFixture struct {
 	Comment []string         `json:"_comment"`
@@ -27,18 +27,15 @@ type steerLabelFixture struct {
 	Sites   []steerLabelSite `json:"sites"`
 }
 
-// steerLabelRow is one producible triple. Compared is false for a triple no client reader sees; Edge says why.
+// steerLabelRow is one producible triple and the words the client renders for it.
 type steerLabelRow struct {
-	Origin   string   `json:"origin"`
-	State    string   `json:"state"`
-	Reason   string   `json:"reason"`
-	Label    string   `json:"label"`
-	Compared bool     `json:"compared"`
-	Edge     string   `json:"edge,omitempty"`
-	Sites    []string `json:"sites"`
+	Origin string   `json:"origin"`
+	State  string   `json:"state"`
+	Reason string   `json:"reason"`
+	Label  string   `json:"label"`
+	Sites  []string `json:"sites"`
 }
 
-// steerLabelSite is one producer, at the path a failure should name.
 type steerLabelSite struct {
 	Site   string `json:"site"`
 	Form   string `json:"form"`
@@ -57,18 +54,19 @@ var steerLabelFixtureComment = []string{
 	"`triples` is SCANNED from the producers, never listed: the scan walks every non-test",
 	"Go file under internal/, resolves each marotte.EntrySteer construction and mutation",
 	"against internal/marotte's own constants, and expands an origin that comes from data",
-	"to both members of the closed enum. `sites` is the scan's own evidence, so a NEW",
+	"to every member of the closed enum. `sites` is the scan's own evidence, so a NEW",
 	"producer moves this golden and the fixture has to be read before it is regenerated.",
 	"",
 	"`label` is the SERVER's statement of the client's words (parts joined with ' · ');",
 	"the reason clause is worded only on a dropped row, which is labelFor's own rule.",
-	"steer-label-contract.test.ts renders every `compared` row through buildSteerNote in",
-	"chromium and asserts the label matches.",
+	"steer-label-contract.test.ts renders every row through buildSteerNote in chromium",
+	"and asserts the label matches.",
 	"",
-	"ONE DECLARED EDGE, carried as `compared: false` with its reason: the replay",
-	"projection leaves State unset, and no client reader sees that value — the merge",
-	"stamps dropped/restart on a projected steer the record never held before any reader",
-	"is served. Asserting a label for it would assert a render that cannot happen.",
+	"An unset state is the replay projection's and a workflow message's. A chat's merge",
+	"stamps a projected steer dropped/restart, but a step transcript read from KAS's replay",
+	"serves it as is, and a workflow message's delivery is its own steer_delivered entry.",
+	"The client renders anything but dropped as the read note, so the row carries the",
+	"read label.",
 }
 
 // steerLabels is the base label per (origin, state), the client's contract, total over both enums: a triple with no
@@ -82,6 +80,14 @@ var steerLabels = map[marotte.SteerOrigin]map[marotte.SteerState]string{
 		marotte.SteerStateRead:    "Workflow result",
 		marotte.SteerStateDropped: "Workflow result not delivered",
 	},
+	marotte.SteerOriginParent: {
+		marotte.SteerStateRead:    "Message from the main agent",
+		marotte.SteerStateDropped: "Message from the main agent not delivered",
+	},
+	marotte.SteerOriginStep: {
+		marotte.SteerStateRead:    "Message to the main agent",
+		marotte.SteerStateDropped: "Message to the main agent not delivered",
+	},
 }
 
 // steerReasonClauses is the wording for each reason a producer writes, which the client's REASONS table must match.
@@ -91,17 +97,13 @@ var steerReasonClauses = map[marotte.SteerReason]string{
 	marotte.SteerReasonDeleted:  "you deleted it",
 }
 
-// steerProjectionEdge is the one triple no client reader can see.
-const steerProjectionEdge = "the replay projection's unset state: the merge stamps " +
-	"dropped/restart before any reader is served, so no render exists to pin"
-
 func TestSteerLabelContract(t *testing.T) {
 	consts := steerPackageConsts(t)
 	origins := steerEnumMembers(t, consts, "SteerOrigin")
 	states := steerEnumMembers(t, consts, "SteerState")
-	if strings.Join(origins, ",") != "agent,user" {
+	if strings.Join(origins, ",") != "agent,parent,step,user" {
 		t.Fatalf("SteerOrigin membership moved to %v; the fixture and its client reader "+
-			"cover the two it had, so extend both before regenerating", origins)
+			"cover the four it had, so extend both before regenerating", origins)
 	}
 	if strings.Join(states, ",") != "dropped,read" {
 		t.Fatalf("SteerState membership moved to %v; the fixture and its client reader "+
@@ -140,12 +142,6 @@ func TestSteerLabelContract(t *testing.T) {
 		row := rows[key]
 		sort.Strings(row.Sites)
 		row.Sites = steerDedupe(row.Sites)
-		if row.State == "" {
-			row.Compared = false
-			row.Edge = steerProjectionEdge
-			fx.Triples = append(fx.Triples, *row)
-			continue
-		}
 		label, ok := steerLabelFor(row.Origin, row.State, row.Reason)
 		if !ok {
 			t.Errorf("producible triple (%s, %s, reason %q) from %v has no contract "+
@@ -154,7 +150,6 @@ func TestSteerLabelContract(t *testing.T) {
 			continue
 		}
 		row.Label = label
-		row.Compared = true
 		fx.Triples = append(fx.Triples, *row)
 	}
 
@@ -163,11 +158,14 @@ func TestSteerLabelContract(t *testing.T) {
 }
 
 // steerLabelFor is the contract: the base label, plus the reason clause on a dropped row only; false where no words
-// exist.
+// exist. An unset state takes the read label, as labelFor words every row that is not dropped.
 func steerLabelFor(origin, state, reason string) (string, bool) {
 	byState, ok := steerLabels[marotte.SteerOrigin(origin)]
 	if !ok {
 		return "", false
+	}
+	if state == "" {
+		state = string(marotte.SteerStateRead)
 	}
 	base, ok := byState[marotte.SteerState(state)]
 	if !ok {
@@ -183,18 +181,15 @@ func steerLabelFor(origin, state, reason string) (string, bool) {
 	return base + " · " + clause, true
 }
 
-// steerAssertNonTautological refuses a fixture a constant reader could satisfy: both states, both origins, a reason
-// clause and a bare row must occur among compared rows, each with words.
+// steerAssertNonTautological refuses a fixture a constant reader could satisfy: every state, every origin, a reason
+// clause and a bare row must occur, each with words.
 func steerAssertNonTautological(t *testing.T, rows []steerLabelRow, origins, states []string) {
 	t.Helper()
 	pairs := map[string]bool{}
 	reasoned, bare := 0, 0
 	for _, r := range rows {
-		if !r.Compared {
-			continue
-		}
 		if r.Label == "" {
-			t.Errorf("compared triple (%s, %s, reason %q) carries no label", r.Origin, r.State, r.Reason)
+			t.Errorf("triple (%s, %s, reason %q) carries no label", r.Origin, r.State, r.Reason)
 		}
 		pairs[r.Origin+"|"+r.State] = true
 		if r.Reason == "" {
@@ -206,18 +201,18 @@ func steerAssertNonTautological(t *testing.T, rows []steerLabelRow, origins, sta
 	for _, o := range origins {
 		for _, s := range states {
 			if !pairs[o+"|"+s] {
-				t.Errorf("no compared triple for (%s, %s); the label table is total over "+
+				t.Errorf("no triple for (%s, %s); the label table is total over "+
 					"the enums, so a missing pair means the scan lost a producer", o, s)
 			}
 		}
 	}
 	if reasoned == 0 || bare == 0 {
-		t.Errorf("compared rows carry %d reasoned and %d bare; both must occur or the "+
+		t.Errorf("rows carry %d reasoned and %d bare; both must occur or the "+
 			"client reader cannot tell a worded clause from a missing one", reasoned, bare)
 	}
 }
 
-// steerSiteOrigins expands a site's origin: the stated one, or both members where it comes from data, as every
+// steerSiteOrigins expands a site's origin: the stated one, or every member where it comes from data, as every
 // unresolved site reads it off a payload or id.
 func steerSiteOrigins(s steerLabelSite, origins []string) []string {
 	if s.Origin != "" {
@@ -236,8 +231,6 @@ func steerDedupe(in []string) []string {
 	return out
 }
 
-// steerPackageConsts reads internal/marotte's steer and entry declarations and returns every string constant by name
-// with its declared type.
 func steerPackageConsts(t *testing.T) map[string]steerConst {
 	t.Helper()
 	out := map[string]steerConst{}
@@ -285,7 +278,6 @@ type steerConst struct {
 	Value string
 }
 
-// steerEnumMembers answers the sorted values of one closed enum.
 func steerEnumMembers(t *testing.T, consts map[string]steerConst, typeName string) []string {
 	t.Helper()
 	var out []string
@@ -301,8 +293,6 @@ func steerEnumMembers(t *testing.T, consts map[string]steerConst, typeName strin
 	return out
 }
 
-// steerProducerSites scans every non-test Go file under internal/ for a marotte.EntrySteer construction or mutation
-// and returns what each stamps.
 func steerProducerSites(t *testing.T, consts map[string]steerConst) []steerLabelSite {
 	t.Helper()
 	var out []steerLabelSite
@@ -329,62 +319,68 @@ func steerProducerSites(t *testing.T, consts map[string]steerConst) []steerLabel
 	return out
 }
 
-// steerSitesInFile is the per-file half: composite literals, then the mutation form (a value whose State and Reason
-// are assigned).
+// steerSitesInFile is the per-file half: composite literals, then the mutation form (a declared value whose Origin,
+// State or Reason is assigned). A mutation starts from its declaration's literal fields, the zero value for a bare var.
 func steerSitesInFile(t *testing.T, consts map[string]steerConst, path string) []steerLabelSite {
 	t.Helper()
 	file, fset := steerParse(t, path)
 	var out []steerLabelSite
 	mutated := map[string]*steerLabelSite{}
-	declared := map[string]bool{}
+	declared := map[string]steerLabelSite{}
 
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.CompositeLit:
-			if !steerIsEntrySteer(node.Type) {
-				return true
+			if lit, ok := steerLiteral(node); ok {
+				out = append(out, steerLiteralSite(t, consts, fset, path, lit))
 			}
-			site := steerLabelSite{Site: steerSiteName(fset, path, node.Pos()), Form: "literal"}
-			for _, elt := range node.Elts {
-				kv, ok := elt.(*ast.KeyValueExpr)
-				if !ok {
-					continue
-				}
-				key, ok := kv.Key.(*ast.Ident)
-				if !ok {
-					continue
-				}
-				steerSetField(t, consts, &site, key.Name, kv.Value)
-			}
-			out = append(out, site)
 		case *ast.ValueSpec:
-			if steerIsEntrySteer(node.Type) {
-				for _, name := range node.Names {
-					declared[name.Name] = true
+			for i, name := range node.Names {
+				var lit *ast.CompositeLit
+				if i < len(node.Values) {
+					lit, _ = steerLiteral(node.Values[i])
+				}
+				switch {
+				case lit != nil:
+					declared[name.Name] = steerLiteralSite(t, consts, fset, path, lit)
+				case steerIsEntrySteer(node.Type):
+					declared[name.Name] = steerLabelSite{}
 				}
 			}
 		case *ast.AssignStmt:
-			for _, lhs := range node.Lhs {
+			paired := len(node.Rhs) == len(node.Lhs)
+			for i, lhs := range node.Lhs {
+				rhs := node.Rhs[0]
+				if paired {
+					rhs = node.Rhs[i]
+				}
+				if id, ok := lhs.(*ast.Ident); ok && node.Tok == token.DEFINE && paired {
+					if lit, ok := steerLiteral(rhs); ok {
+						declared[id.Name] = steerLiteralSite(t, consts, fset, path, lit)
+					}
+					continue
+				}
 				sel, ok := lhs.(*ast.SelectorExpr)
 				if !ok {
 					continue
 				}
 				base, ok := sel.X.(*ast.Ident)
-				if !ok || !declared[base.Name] {
+				if !ok {
 					continue
 				}
-				if sel.Sel.Name != "State" && sel.Sel.Name != "Reason" {
+				from, isSteer := declared[base.Name]
+				if !isSteer || !steerStampedField(sel.Sel.Name) {
 					continue
 				}
 				site, seen := mutated[base.Name]
 				if !seen {
 					site = &steerLabelSite{
-						Site: steerSiteName(fset, path, node.Pos()),
-						Form: "mutation",
+						Site: steerSiteName(fset, path, node.Pos()), Form: "mutation",
+						Origin: from.Origin, State: from.State, Reason: from.Reason,
 					}
 					mutated[base.Name] = site
 				}
-				steerSetField(t, consts, site, sel.Sel.Name, node.Rhs[0])
+				steerSetField(t, consts, site, sel.Sel.Name, rhs)
 			}
 		}
 		return true
@@ -401,15 +397,18 @@ func steerSitesInFile(t *testing.T, consts map[string]steerConst, path string) [
 	return out
 }
 
-// steerSetField resolves one stamped field. An unresolvable Origin stays empty and expands to the whole enum; an
+// steerStampedField reports whether a field is one of the triple's three.
+func steerStampedField(name string) bool {
+	return name == "Origin" || name == "State" || name == "Reason"
+}
+
+// An unresolvable Origin becomes empty and expands to the whole enum, a mutation's included; an
 // unresolvable State or Reason stops the test, since widening would cover values the code does not write.
 func steerSetField(t *testing.T, consts map[string]steerConst, site *steerLabelSite, field string, value ast.Expr) {
 	t.Helper()
 	switch field {
 	case "Origin":
-		if v, ok := steerResolve(consts, value); ok {
-			site.Origin = v
-		}
+		site.Origin, _ = steerResolve(consts, value)
 	case "State":
 		v, ok := steerResolve(consts, value)
 		if !ok {
@@ -427,7 +426,6 @@ func steerSetField(t *testing.T, consts map[string]steerConst, site *steerLabelS
 	}
 }
 
-// steerResolve answers a string literal, or a marotte constant by name.
 func steerResolve(consts map[string]steerConst, e ast.Expr) (string, bool) {
 	switch v := e.(type) {
 	case *ast.BasicLit:
@@ -459,6 +457,31 @@ func steerResolve(consts map[string]steerConst, e ast.Expr) (string, bool) {
 	return "", false
 }
 
+// steerLiteral answers e as a marotte.EntrySteer composite literal, bare or under &.
+func steerLiteral(e ast.Expr) (*ast.CompositeLit, bool) {
+	if u, ok := e.(*ast.UnaryExpr); ok && u.Op == token.AND {
+		e = u.X
+	}
+	lit, ok := e.(*ast.CompositeLit)
+	return lit, ok && steerIsEntrySteer(lit.Type)
+}
+
+// steerLiteralSite resolves the fields one literal stamps.
+func steerLiteralSite(t *testing.T, consts map[string]steerConst, fset *token.FileSet, path string, lit *ast.CompositeLit) steerLabelSite {
+	t.Helper()
+	site := steerLabelSite{Site: steerSiteName(fset, path, lit.Pos()), Form: "literal"}
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		if key, ok := kv.Key.(*ast.Ident); ok {
+			steerSetField(t, consts, &site, key.Name, kv.Value)
+		}
+	}
+	return site
+}
+
 func steerIsEntrySteer(e ast.Expr) bool {
 	sel, ok := e.(*ast.SelectorExpr)
 	if !ok {
@@ -468,7 +491,6 @@ func steerIsEntrySteer(e ast.Expr) bool {
 	return ok && pkg.Name == "marotte" && sel.Sel.Name == "EntrySteer"
 }
 
-// steerSiteName is the site as a reader of the repo would write it.
 func steerSiteName(fset *token.FileSet, path string, pos token.Pos) string {
 	return "internal/" + filepath.ToSlash(strings.TrimPrefix(filepath.Clean(path), "../")) +
 		":" + strconv.Itoa(fset.Position(pos).Line)

@@ -75,7 +75,6 @@ function tag<T extends HTMLElement>(name: string, id: string): T {
   return e;
 }
 
-/** init + the lazy first load, as wired in production. */
 async function mount(v: PolicyView): Promise<void> {
   mocks.apiGet.mockResolvedValue(v);
   initNativePolicyUI();
@@ -90,8 +89,8 @@ async function reload(v: PolicyView): Promise<void> {
   await flush();
 }
 
-/** The rendered row for one capability. Read out of the DOM, because what a reader gets is the
- *  rendered row rather than the builder's return. */
+/** Read out of the DOM, because what a reader gets is the rendered row rather than the builder's
+ *  return. */
 function rowFor(capability: string): HTMLElement {
   const rows = [...byId("native-policy-list").querySelectorAll<HTMLElement>(".native-rule")];
   const found = rows.find((r) => r.querySelector(".native-rule-cap")?.textContent === capability);

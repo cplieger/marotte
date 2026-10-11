@@ -163,12 +163,15 @@ func TestRenderChatMarkdown_OmitsWhatTheTurnDoesNotCarry(t *testing.T) {
 	}
 }
 
-// A read user steer, a dropped one and an agent note each get their own heading, and every steer's text survives.
+// A read user steer, a dropped one, an agent note and the main agent's message to a step each get their own heading,
+// and every steer's text survives.
 func TestRenderChatMarkdown_DistinguishesASteerAndItsDeliveryState(t *testing.T) {
 	entries, _ := chatOf(openTurn("t-1", 1, prompt("m-1", "go")).
 		add("", "steer-1", marotte.EntryKindSteer, marotte.EntrySteer{Text: "use tabs", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead}).
 		add("", "steer-2", marotte.EntryKindSteer, marotte.EntrySteer{Text: "actually target main", Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped}).
-		add("", "notify-1", marotte.EntryKindSteer, marotte.EntrySteer{Text: "the run finished", Origin: marotte.SteerOriginAgent, State: marotte.SteerStateRead, Severity: "info"}))
+		add("", "notify-1", marotte.EntryKindSteer, marotte.EntrySteer{Text: "the run finished", Origin: marotte.SteerOriginAgent, State: marotte.SteerStateRead, Severity: "info"}).
+		add("", "notify-2", marotte.EntryKindSteer, marotte.EntrySteer{Text: "weigh this input", Origin: marotte.SteerOriginParent, State: marotte.SteerStateRead, Severity: "info"}).
+		add("", "notify-3", marotte.EntryKindSteer, marotte.EntrySteer{Text: "and this one", Origin: marotte.SteerOriginParent, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonRestart}))
 
 	md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Steered"}, entries)
 
@@ -177,6 +180,28 @@ func TestRenderChatMarkdown_DistinguishesASteerAndItsDeliveryState(t *testing.T)
 		"**User (mid-turn)**\n\nuse tabs",
 		"**User (mid-turn, not delivered)**\n\nactually target main",
 		"**Agent note**\n\nthe run finished",
+		"**Main agent (mid-turn)**\n\nweigh this input",
+		"**Main agent (mid-turn, not delivered)**\n\nand this one",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown missing %q\n---\n%s", want, md)
+		}
+	}
+}
+
+// A workflow message names the step on its far end in the launching chat's log, and the main agent in the step's own.
+func TestRenderChatMarkdown_NamesAWorkflowMessagesFarEnd(t *testing.T) {
+	entries, _ := chatOf(openTurn("t-1", 1, prompt("m-1", "go")).
+		add("", "notify-1", marotte.EntryKindSteer, marotte.EntrySteer{Text: "weigh this", Origin: marotte.SteerOriginParent, Step: "review"}).
+		add("", "notify-2", marotte.EntryKindSteer, marotte.EntrySteer{Text: "part 1 done", Origin: marotte.SteerOriginStep, Step: "build"}).
+		add("", "notify-3", marotte.EntryKindSteer, marotte.EntrySteer{Text: "need a decision", Origin: marotte.SteerOriginStep}))
+
+	md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Orchestrated"}, entries)
+
+	for _, want := range []string{
+		"**Message to step `review`**\n\nweigh this",
+		"**Message from step `build`**\n\npart 1 done",
+		"**Message to the main agent**\n\nneed a decision",
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("markdown missing %q\n---\n%s", want, md)

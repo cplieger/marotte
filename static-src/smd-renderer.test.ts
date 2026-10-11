@@ -5,6 +5,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vite
 import { domRenderer } from "./smd-renderer.js";
 import { createMarkdownStream, renderMarkdownInto } from "./markdown.js";
 import { initLinkifyCallbacks } from "./linkify.js";
+import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 import {
   PARAGRAPH,
   HEADING_1,
@@ -211,7 +212,6 @@ describe("the streaming caret attribute", () => {
 
 // Unwrapping an inline element whose token never closed.
 
-/** Open `token`, add `text`, then close it unresolved with `delim`. */
 function renderUnresolved(
   token: Token,
   text: string,
@@ -345,6 +345,7 @@ describe("unwrapping does not re-mount the per-chunk fade spans", () => {
     for (const h of hosts.splice(0)) {
       h.remove();
     }
+    resetWorkspace();
   });
 
   function nextFrame(): Promise<void> {
@@ -397,9 +398,8 @@ describe("unwrapping does not re-mount the per-chunk fade spans", () => {
   });
 
   it("marks the spans a label with no destination unwraps", async () => {
-    // The same mechanism now carries a second caller: a `[label]` that closes with no destination
-    // is unwrapped rather than left as an href-less anchor, so its streamed spans are re-parented
-    // too.
+    // A `[label]` that closes with no destination is unwrapped rather than left as an href-less
+    // anchor, so its streamed spans are re-parented too.
     const container = document.createElement("div");
     container.className = `${ANIM}-scope`;
     document.body.append(container);
@@ -430,6 +430,46 @@ describe("unwrapping does not re-mount the per-chunk fade spans", () => {
     const moved = [...container.querySelectorAll("[data-vk-chunk-enter]")];
     // Identity: the unwrap MOVES the spans rather than recreating them.
     expect(moved.filter((s) => before.includes(s))).toEqual(before);
+    expect(before.every((s) => s.hasAttribute("data-vk-chunk-settled"))).toBe(true);
+    for (const span of before) {
+      expect(started.filter((t) => t === span)).toHaveLength(1);
+    }
+  });
+
+  it("marks the spans of a streamed file link that a later root change rebuilds", async () => {
+    setWorkspaceRoot("/workspace");
+    const container = document.createElement("div");
+    container.className = `${ANIM}-scope`;
+    document.body.append(container);
+    hosts.push(container);
+    const started: EventTarget[] = [];
+    container.addEventListener("animationstart", (e) => {
+      started.push(e.target as EventTarget);
+    });
+
+    const r = createMarkdownStream(container, { flushIntervalMs: 0 });
+    r.writeDelta("see [the ");
+    r.writeDelta("notes](/srv/proj/docs/notes.md) done");
+    r.end();
+    const link = container.querySelector("a");
+    const before = [...container.querySelectorAll("a [data-vk-chunk-enter]")];
+    expect(before.length).toBeGreaterThan(0);
+    await vi.waitFor(() => {
+      expect(started.length).toBeGreaterThanOrEqual(before.length);
+    });
+
+    setWorkspaceRoot("/srv/proj");
+    await nextFrame();
+
+    const rebuilt = container.querySelector("a");
+    // The premise: the new root routed the link, so its label really moved into a fresh anchor.
+    expect(rebuilt).not.toBe(link);
+    expect(rebuilt?.getAttribute("href")).toBe("/file//srv/proj/docs/notes.md");
+    const moved = [...container.querySelectorAll("a [data-vk-chunk-enter]")];
+    expect(moved).toHaveLength(before.length);
+    moved.forEach((span, i) => {
+      expect(span).toBe(before[i]);
+    });
     expect(before.every((s) => s.hasAttribute("data-vk-chunk-settled"))).toBe(true);
     for (const span of before) {
       expect(started.filter((t) => t === span)).toHaveLength(1);

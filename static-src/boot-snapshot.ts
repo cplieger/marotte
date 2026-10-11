@@ -54,10 +54,7 @@ const DB_VERSION = 1;
 const STORE_NAME = "snapshot";
 const RECORD_KEY = "current";
 
-/**
- * One chat row, bounded to what the strip and context bar paint. Not a `ChatHeader`, whose
- * required timestamps a `Session` does not carry.
- */
+/** Not a `ChatHeader`, whose required timestamps a `Session` does not carry. */
 interface SnapshotChat {
   readonly id: string;
   readonly name: string;
@@ -65,10 +62,7 @@ interface SnapshotChat {
   readonly current_mode_id: string;
   readonly turn_count: number;
   readonly usage: Usage;
-  /**
-   * How this chat's newest finished turn ended and when it last moved, for the row's dot and
-   * its age. OPTIONAL, so an older record still paints.
-   */
+  /** OPTIONAL, so an older record still paints. */
   readonly last_turn_outcome?: TurnOutcome;
   readonly updated_at?: number;
 }
@@ -132,11 +126,8 @@ export function paintBootSnapshot(snap: BootSnapshot | null): boolean {
   return true;
 }
 
-/**
- * A chat row and, where carried, its window. `residency` stays unset so `transcriptStale`
- * reads true and the activation refetches; `provisional` covers rows the server answer does
- * not name (see `Session.provisional`).
- */
+/** `residency` stays unset so `transcriptStale` reads true and the activation refetches;
+ *  `provisional` covers rows the server answer does not name (see `Session.provisional`). */
 function toProvisionalSession(c: SnapshotChat, win: SnapshotWindow | undefined): Session {
   const window =
     win === undefined
@@ -165,8 +156,7 @@ function toProvisionalSession(c: SnapshotChat, win: SnapshotWindow | undefined):
 }
 
 let pending: ReturnType<typeof setTimeout> | undefined;
-/** The capture's effect, or undefined while nothing is capturing. Production
- *  disposes it on a sign-out; a test that drives two boots does too. */
+/** Production disposes it on a sign-out; a test that drives two boots does too. */
 let disposeCapture: (() => void) | undefined;
 /** Lifetime of the capture's DOM listener, so `clearBootSnapshot` can revoke it. */
 let captureAbort: AbortController | undefined;
@@ -570,6 +560,7 @@ async function writeRecord(snap: BootSnapshot): Promise<void> {
  * Forget the pending write, capture effect and connection, for tests driving two boots. The
  * connection is DROPPED, not closed, keeping this reset synchronous.
  */
+// deadset:ignore DS1004 -- test seam: resets the pending save timer, capture and database handle
 export function _resetForTest(): void {
   clearTimeout(pending);
   pending = undefined;

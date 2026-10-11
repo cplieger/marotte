@@ -14,32 +14,23 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// steerTTL is how long a recorded steer id answers "the user's". Not the turn's length: nothing
-// tells the ledger when a turn ends, and turns can run for hours.
+// Not the turn's length: nothing tells the ledger when a turn ends, and turns can run for hours.
 const steerTTL = 30 * time.Minute
 
 // maxSteerOps bounds the map against a pathological producer; the live population is single digits.
 const maxSteerOps = 512
 
-// steerKey addresses one steer. A STRUCT key rather than a joined string: a
-// steer id is KAS's, so composing one would put a separator inside a value
-// marotte does not own the shape of.
+// A STRUCT key rather than a joined string: a steer id is KAS's, so composing one would put a
+// separator inside a value marotte does not own the shape of.
 type steerKey struct {
 	chat marotte.ChatID
 	id   string
 }
 
-// sentSteer is what the ledger holds per steer this server sent: when the record
-// expires, and the dropped steers whose text it re-sends.
-type sentSteer struct {
-	expires time.Time
-	resends []string
-}
-
-// SteerLedger records the steers this server sent. Safe for concurrent use.
-// Construct with NewSteerLedger.
+// SteerLedger records the steers this server sent, each until it expires. Safe for
+// concurrent use. Construct with NewSteerLedger.
 type SteerLedger struct {
-	sent map[steerKey]sentSteer
+	sent map[steerKey]time.Time
 	now  func() time.Time
 	ttl  time.Duration
 	maxN int
@@ -49,17 +40,16 @@ type SteerLedger struct {
 // NewSteerLedger returns an empty ledger.
 func NewSteerLedger() *SteerLedger {
 	return &SteerLedger{
-		sent: make(map[steerKey]sentSteer),
+		sent: make(map[steerKey]time.Time),
 		now:  time.Now,
 		ttl:  steerTTL,
 		maxN: maxSteerOps,
 	}
 }
 
-// RecordUserSteer records that this server sent steerID for chatID, re-sending the dropped steers
-// resends names (nil for an ordinary steer). KAS builds its own steer id from the messageId, so
-// steerID matches every later frame.
-func (l *SteerLedger) RecordUserSteer(chatID marotte.ChatID, steerID string, resends []string) {
+// RecordUserSteer records that this server sent steerID for chatID. KAS builds its own steer id
+// from the messageId, so steerID matches every later frame.
+func (l *SteerLedger) RecordUserSteer(chatID marotte.ChatID, steerID string) {
 	if l == nil || steerID == "" {
 		return
 	}
@@ -67,22 +57,7 @@ func (l *SteerLedger) RecordUserSteer(chatID marotte.ChatID, steerID string, res
 	defer l.mu.Unlock()
 	now := l.now()
 	l.sweep(now)
-	l.sent[steerKey{chat: chatID, id: steerID}] = sentSteer{expires: now.Add(l.ttl), resends: resends}
-}
-
-// SteerResends answers the dropped steers the steer re-sends, as recorded when
-// this server sent it; nil for an unrecorded or expired id. Same lifetime as
-// SteerOrigin, so a steer read past the TTL is labelled a plain steer.
-func (l *SteerLedger) SteerResends(chatID marotte.ChatID, steerID string) []string {
-	if l == nil || steerID == "" {
-		return nil
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if s, ok := l.sent[steerKey{chat: chatID, id: steerID}]; ok && l.now().Before(s.expires) {
-		return s.resends
-	}
-	return nil
+	l.sent[steerKey{chat: chatID, id: steerID}] = now.Add(l.ttl)
 }
 
 // SteerOrigin answers whose words the steer is: a recorded, unexpired id is the user's, everything
@@ -93,7 +68,7 @@ func (l *SteerLedger) SteerOrigin(chatID marotte.ChatID, steerID string) marotte
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if s, ok := l.sent[steerKey{chat: chatID, id: steerID}]; ok && l.now().Before(s.expires) {
+	if expires, ok := l.sent[steerKey{chat: chatID, id: steerID}]; ok && l.now().Before(expires) {
 		return marotte.SteerOriginUser
 	}
 	return marotte.SteerOriginAgent
@@ -117,17 +92,17 @@ func (l *SteerLedger) ForgetChat(chatID marotte.ChatID) {
 // sweep drops expired entries and, if still full, the entry closest to expiry, so a full map costs
 // one mislabelled note. Caller holds l.mu.
 func (l *SteerLedger) sweep(now time.Time) {
-	for k, s := range l.sent {
-		if !now.Before(s.expires) {
+	for k, expires := range l.sent {
+		if !now.Before(expires) {
 			delete(l.sent, k)
 		}
 	}
 	for len(l.sent) >= l.maxN {
 		var oldest steerKey
 		var found time.Time
-		for k, s := range l.sent {
-			if found.IsZero() || s.expires.Before(found) {
-				oldest, found = k, s.expires
+		for k, expires := range l.sent {
+			if found.IsZero() || expires.Before(found) {
+				oldest, found = k, expires
 			}
 		}
 		if found.IsZero() {

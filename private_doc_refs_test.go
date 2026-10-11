@@ -509,7 +509,8 @@ func sourceFiles(t *testing.T) []string {
 	var files []string
 	if out, err := exec.CommandContext(t.Context(), "git", "ls-files", "-z").Output(); err == nil {
 		for p := range bytes.SplitSeq(out, []byte{0}) {
-			if len(p) > 0 && !skip(string(p)) {
+			// ls-files lists a tracked file the working tree has deleted until the deletion is staged.
+			if _, statErr := os.Lstat(string(p)); len(p) > 0 && !skip(string(p)) && statErr == nil {
 				files = append(files, string(p))
 			}
 		}

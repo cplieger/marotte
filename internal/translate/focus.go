@@ -59,8 +59,7 @@ func (t *Translator) adoptOrRefuseTitle(ctx context.Context, chatID marotte.Chat
 	}
 }
 
-// applyFocusTitle writes an agent-authored title onto the chat. The derivation
-// filter reads the log's prompts ahead of the header write; Mutate broadcasts
+// The derivation filter reads the log's prompts ahead of the header write; Mutate broadcasts
 // chat_updated on change, which is what flips the tab label live.
 func (t *Translator) applyFocusTitle(ctx context.Context, chatID marotte.ChatID, title string) {
 	prompts, err := t.chats.PromptTexts(ctx, chatID)

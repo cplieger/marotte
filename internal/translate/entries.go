@@ -34,12 +34,10 @@ func scopeOf(chatID marotte.ChatID, attr FrameAttribution) entryScope {
 	return chatScope(chatID)
 }
 
-// event wraps a payload in the scope's envelope.
 func (sc entryScope) event(kind marotte.EventType, payload any) marotte.ServerEvent {
 	return marotte.NewEvent(kind, sc.chatID, payload)
 }
 
-// publishSealed announces what one accumulator step froze under sc's scope.
 func (t *Translator) publishSealed(ctx context.Context, sc entryScope, sealed []turnlog.Sealed) {
 	PublishSealed(ctx, t.bus, sc.chatID, sc.runID, sealed)
 }
@@ -51,7 +49,6 @@ func (t *Translator) publishSealedRefused(ctx context.Context, sc entryScope, se
 	broadcastSealed(ctx, t.bus, sc.chatID, sc.runID, sealed, refusal)
 }
 
-// publishAppended announces one born-sealed entry under sc's scope.
 func (t *Translator) publishAppended(ctx context.Context, sc entryScope, e *marotte.Entry) {
 	PublishAppended(ctx, t.bus, sc.chatID, sc.runID, e)
 }

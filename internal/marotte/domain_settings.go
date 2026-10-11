@@ -1,5 +1,14 @@
 package marotte
 
+// KiroDefault is kiro-cli's own resolution of a setting marotte leaves unset: the value and the
+// configuration layer that set it. An empty Layer is KAS's built-in default, which no layer
+// states; LayerName is KAS's display name for Layer.
+type KiroDefault struct {
+	Value     string `json:"value"`
+	Layer     string `json:"layer"`
+	LayerName string `json:"layer_name"`
+}
+
 // EffectiveSettings is what GET /api/settings answers: every marotte-owned preference the client
 // renders, resolved against config.json rather than echoed from it. The PATCH body is its partial.
 // NO FIELD CARRIES omitempty: wiregen then emits a REQUIRED TypeScript field, so the client cannot
@@ -11,6 +20,10 @@ type EffectiveSettings struct {
 	// One level for the whole app cannot express that: a pick on any chat retracts
 	// every other model's remembered level (settings.KeyLastEffortByModel).
 	LastEffortByModel map[string]string `json:"last_effort_by_model"`
+	// KiroDefaults is what an UNSET three-state setting resolves to in kiro-cli, keyed by the
+	// marotte setting key; a key is absent while that is unknown, and never present for a key the
+	// user has set.
+	KiroDefaults map[string]KiroDefault `json:"kiro_defaults"`
 	// Theme is "", "dark", "light" or "system". The empty string is a REAL value
 	// meaning nothing has been chosen, which the client resolves to the OS
 	// preference; it is deliberately not normalised to "system" here, because the
@@ -31,10 +44,13 @@ type EffectiveSettings struct {
 	MemoryMode string `json:"memory_mode"`
 	// SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli.
 	SpecPlanning string `json:"spec_planning"`
-	// WorkValidation and CloudFormationSafetyCheck are "", "on" or "off". The
-	// empty string is a real value: marotte sends nothing and kiro-cli decides.
+	// WorkValidation, CloudFormationSafetyCheck, AutoRouting and AutoDelegation
+	// are "", "on" or "off". The empty string is a real value: marotte sends
+	// nothing and kiro-cli decides.
 	WorkValidation            string `json:"work_validation"`
 	CloudFormationSafetyCheck string `json:"cloudformation_safety_check"`
+	AutoRouting               string `json:"auto_routing"`
+	AutoDelegation            string `json:"auto_delegation"`
 	// OutputStyle is "default" or "concise".
 	OutputStyle string `json:"output_style"`
 	// AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
@@ -64,7 +80,7 @@ type EffectiveSettings struct {
 	// ContentCollection is the stored content-collection choice, default off. An
 	// organization's lock overrides what marotte sends, not this value.
 	ContentCollection bool `json:"content_collection_enabled"`
-	// GuardPayloadLinks defaults to settings.DefaultGuardPayloadLinks; no server path
+	// GuardPayloadLinks defaults to settings.defaultGuardPayloadLinks; no server path
 	// reads it.
 	GuardPayloadLinks bool `json:"guard_payload_links"`
 	// ToolSearchEnabled defaults off, matching kiro-cli.

@@ -66,7 +66,7 @@ const { effect } = await import("@cplieger/reactive");
 const store = await import("./store.js");
 const { setCatalogEfforts } = await import("./effort.js");
 const { refreshContextUI } = await import("./context-ui.js");
-const { configure, configureTransport } = await import("./actions/index.js");
+const { configure, configureTransport } = await import("@cplieger/actions");
 const { initModelSwitcher } = await import("./model-switcher.js");
 
 // `configure({})` is the framework's silent mode; the transport must answer or the rollback undoes the optimistic write.

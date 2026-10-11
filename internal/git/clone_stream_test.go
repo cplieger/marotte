@@ -196,7 +196,6 @@ func TestForwardProgress_ReportsTheReadErrorAndKeepsTheTail(t *testing.T) {
 	}
 }
 
-// errReader fails every read, for the read-error paths above.
 type errReader struct{ err error }
 
 func (e errReader) Read([]byte) (int, error) { return 0, e.err }

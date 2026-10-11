@@ -19,7 +19,6 @@ interface BranchEntry {
 }
 interface BranchesResponse {
   branches: BranchEntry[];
-  current: string;
 }
 
 let openPopover: HTMLDivElement | null = null;

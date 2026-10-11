@@ -18,8 +18,7 @@ const FLASH_CLEAR_MS = 2500;
 /** Per target, so re-flashing cancels the previous deadline instead of being stripped by it. */
 const flashTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
 
-/** Is the element laid out, i.e. can it actually be scrolled to? False while
- *  its panel still carries `.hidden`. */
+/** False while its panel still carries `.hidden`. */
 function isLaidOut(e: HTMLElement): boolean {
   return e.offsetParent !== null || e.getClientRects().length > 0;
 }

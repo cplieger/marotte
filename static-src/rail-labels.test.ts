@@ -1,13 +1,10 @@
-// What a rail row says, pinned string by string. NOT a `*.node.test.ts`: that suffix is for a test
-// needing genuine Node capabilities, not for a pure subject that happens not to want a browser.
 import { describe, it, expect } from "vitest";
 
-import { markerLabel, railLabel, type MarkerSubject } from "./rail-labels.js";
+import { binLabel, markerLabel, type MarkerSubject } from "./rail-labels.js";
 import type { TurnOutcome } from "./turns.js";
 
-/** Every member of the wire union, so the sweeps below are a partition rather than a sample.
- *  Spelled out here for the same reason as the clauses: importing a list from the module under
- *  test proves nothing about its completeness. */
+/** Every member of the wire union, spelled out here: importing a list from the module under test
+ *  proves nothing about its completeness. */
 const ALL_OUTCOMES: TurnOutcome[] = [
   "running",
   "completed",
@@ -16,268 +13,133 @@ const ALL_OUTCOMES: TurnOutcome[] = [
   "refused",
   "unknown",
   "failed",
+  "empty",
 ];
 
-/** The sentence each outcome contributes to a TOOLTIP, hardcoded. `completed` contributes
- *  nothing, which is the rule the whole design rests on. */
-const TOOLTIP_CLAUSE: Record<TurnOutcome, string> = {
-  running: "This turn is still running",
-  completed: "",
-  cancelled: "You stopped this turn",
-  interrupted: "This turn was interrupted before it finished",
-  refused: "The model declined to continue",
-  unknown: "This turn's end could not be read",
-  failed: "This turn failed",
-  empty: "The agent ended this turn without answering",
+/** The word each outcome contributes to the preview, hardcoded. */
+const PREVIEW_WORD: Record<TurnOutcome, string> = {
+  running: "Running",
+  completed: "Completed",
+  cancelled: "Cancelled",
+  interrupted: "Interrupted",
+  refused: "Refused",
+  unknown: "Unknown",
+  failed: "Failed",
+  empty: "Empty",
 };
 
-/** The word each outcome contributes to an accessible NAME, hardcoded. */
-const NAME_CLAUSE: Record<TurnOutcome, string> = {
-  running: "running",
-  completed: "",
-  cancelled: "cancelled",
-  interrupted: "interrupted",
-  refused: "refused",
-  unknown: "unknown",
-  failed: "failed",
-  empty: "empty",
-};
+const QUIET = { pending: false, hit: false };
 
 function subject(over: Partial<MarkerSubject> = {}): MarkerSubject {
-  return { n: 14, outcome: "completed", ...over };
+  return { n: 14, outcome: "completed", first_line: "fix the login redirect", ...over };
 }
 
-describe("a marker's tooltip names its state", () => {
-  // One row per outcome, both triggers, with the transient flags off — so every entry in both
-  // tables above is asserted exactly once against a full string.
-  const cases: {
-    name: string;
-    subject: MarkerSubject;
-    tooltip: string;
-    ariaLabel: string;
-  }[] = [
-    {
-      name: "a clean user turn says only what it was about",
-      subject: subject({ outcome: "completed", first_line: "add a health endpoint" }),
-      tooltip: "add a health endpoint",
-      ariaLabel: "Go to turn 14",
-    },
-    {
-      name: "a running user turn",
-      subject: subject({ outcome: "running", first_line: "add a health endpoint" }),
-      tooltip: "add a health endpoint \u00b7 This turn is still running",
-      ariaLabel: "Go to turn 14, running",
-    },
-    {
-      name: "a cancelled user turn",
-      subject: subject({ outcome: "cancelled", first_line: "add a health endpoint" }),
-      tooltip: "add a health endpoint \u00b7 You stopped this turn",
-      ariaLabel: "Go to turn 14, cancelled",
-    },
-    {
-      name: "an interrupted user turn",
-      subject: subject({ outcome: "interrupted", first_line: "add a health endpoint" }),
-      tooltip: "add a health endpoint \u00b7 This turn was interrupted before it finished",
-      ariaLabel: "Go to turn 14, interrupted",
-    },
-    {
-      name: "a refused user turn",
-      subject: subject({ outcome: "refused", first_line: "add a health endpoint" }),
-      tooltip: "add a health endpoint \u00b7 The model declined to continue",
-      ariaLabel: "Go to turn 14, refused",
-    },
-    {
-      name: "a user turn whose end could not be read",
-      subject: subject({ outcome: "unknown", first_line: "add a health endpoint" }),
-      tooltip: "add a health endpoint \u00b7 This turn's end could not be read",
-      ariaLabel: "Go to turn 14, unknown",
-    },
-    {
-      name: "a failed user turn",
-      subject: subject({ outcome: "failed", first_line: "add a health endpoint" }),
-      tooltip: "add a health endpoint \u00b7 This turn failed",
-      ariaLabel: "Go to turn 14, failed",
-    },
-    {
-      name: "a clean agent-initiated turn",
-      subject: subject({ outcome: "completed", agent_initiated: true }),
-      tooltip: "Agent-initiated turn",
-      ariaLabel: "Go to turn 14, agent-initiated",
-    },
-    {
-      name: "a running agent-initiated turn",
-      subject: subject({ outcome: "running", agent_initiated: true }),
-      tooltip: "Agent-initiated turn \u00b7 This turn is still running",
-      ariaLabel: "Go to turn 14, running, agent-initiated",
-    },
-    {
-      name: "a cancelled agent-initiated turn",
-      subject: subject({ outcome: "cancelled", agent_initiated: true }),
-      tooltip: "Agent-initiated turn \u00b7 You stopped this turn",
-      ariaLabel: "Go to turn 14, cancelled, agent-initiated",
-    },
-    {
-      name: "an interrupted agent-initiated turn",
-      subject: subject({ outcome: "interrupted", agent_initiated: true }),
-      tooltip: "Agent-initiated turn \u00b7 This turn was interrupted before it finished",
-      ariaLabel: "Go to turn 14, interrupted, agent-initiated",
-    },
-    {
-      name: "a refused agent-initiated turn",
-      subject: subject({ outcome: "refused", agent_initiated: true }),
-      tooltip: "Agent-initiated turn \u00b7 The model declined to continue",
-      ariaLabel: "Go to turn 14, refused, agent-initiated",
-    },
-    {
-      name: "an agent-initiated turn whose end could not be read",
-      subject: subject({ outcome: "unknown", agent_initiated: true }),
-      tooltip: "Agent-initiated turn \u00b7 This turn's end could not be read",
-      ariaLabel: "Go to turn 14, unknown, agent-initiated",
-    },
-    {
-      name: "a failed agent-initiated turn",
-      subject: subject({ outcome: "failed", agent_initiated: true }),
-      tooltip: "Agent-initiated turn \u00b7 This turn failed",
-      ariaLabel: "Go to turn 14, failed, agent-initiated",
-    },
-  ];
-
-  for (const c of cases) {
-    it(c.name, () => {
-      expect(markerLabel(c.subject, { pending: false, hit: false })).toEqual({
-        tooltip: c.tooltip,
-        ariaLabel: c.ariaLabel,
-      });
-    });
-  }
-
-  it("falls back to the turn number when a user turn has no first line", () => {
-    // A user turn CAN reach this: the server records `first_line` from the opening message, and an
-    // empty prompt or a whitespace-only one leaves it blank. Saying "Agent-initiated turn" there
-    // would be a claim about the trigger that is false.
-    expect(markerLabel(subject({ first_line: "   " }), { pending: false, hit: false })).toEqual({
-      tooltip: "Turn 14",
-      ariaLabel: "Go to turn 14",
-    });
-  });
-});
-
-describe("a marker's transient state", () => {
-  const s = subject({ outcome: "failed", first_line: "rename the module" });
-
-  it("says the jump is loading history in", () => {
-    expect(markerLabel(s, { pending: true, hit: false }).tooltip).toBe(
-      "rename the module \u00b7 This turn failed \u00b7 Loading this turn\u2026",
-    );
+describe("a turn's preview", () => {
+  it("leads with the number, the outcome and the duration, then the prompt", () => {
+    const label = markerLabel(subject({ outcome: "failed", elapsed_ms: 192_000 }), QUIET);
+    expect(label.preview).toBe("#14 \u00b7 Failed \u00b7 3m 12s\nfix the login redirect");
   });
 
-  it("says the turn holds a search match", () => {
-    expect(markerLabel(s, { pending: false, hit: true }).tooltip).toBe(
-      "rename the module \u00b7 This turn failed \u00b7 Contains a search match",
-    );
-  });
-
-  it("orders identity, outcome, pending, hit", () => {
-    expect(markerLabel(s, { pending: true, hit: true }).tooltip).toBe(
-      "rename the module \u00b7 This turn failed \u00b7 Loading this turn\u2026 \u00b7 Contains a search match",
-    );
-  });
-
-  it("keeps both transient facts out of the accessible NAME", () => {
-    // The name is read on every focus, so it stays the turn's identity plus its durable state.
-    // Pending is a fetch in flight and a hit belongs to a search the reader started; neither is a
-    // property of the turn.
-    expect(markerLabel(s, { pending: true, hit: true }).ariaLabel).toBe("Go to turn 14, failed");
-  });
-});
-
-describe("the marker vocabulary is total over TurnOutcome", () => {
-  it("gives every outcome a tooltip", () => {
+  it("names the outcome word for every outcome, completed included", () => {
     for (const outcome of ALL_OUTCOMES) {
-      const label = markerLabel(subject({ outcome, first_line: "do the thing" }), {
-        pending: false,
-        hit: false,
-      });
-      expect(label.tooltip, outcome).not.toBe("");
-      expect(label.ariaLabel, outcome).toContain("Go to turn 14");
+      const first = markerLabel(subject({ outcome }), QUIET).preview.split("\n")[0];
+      expect(first, outcome).toBe(`#14 \u00b7 ${PREVIEW_WORD[outcome]}`);
     }
   });
 
-  it("names the state for every outcome except completed", () => {
-    // The case that fails when the wire adds an eighth outcome — the same guard
-    // `turn-outcome-css.test.ts` gives the stylesheet. A value with no clause would paint a marker
-    // whose only channel is colour, which is where this started.
-    for (const outcome of ALL_OUTCOMES) {
-      const label = markerLabel(subject({ outcome, first_line: "do the thing" }), {
-        pending: false,
-        hit: false,
-      });
-      const clause = TOOLTIP_CLAUSE[outcome];
-      const word = NAME_CLAUSE[outcome];
-      if (outcome === "completed") {
-        expect(clause, "the test's own table agrees completed says nothing").toBe("");
-        expect(label.tooltip).toBe("do the thing");
-        expect(label.ariaLabel).toBe("Go to turn 14");
-        continue;
-      }
-      expect(label.tooltip, outcome).toBe(`do the thing \u00b7 ${clause}`);
-      expect(label.ariaLabel, outcome).toBe(`Go to turn 14, ${word}`);
-    }
+  it("states a duration only when the turn has one", () => {
+    expect(markerLabel(subject({ elapsed_ms: 0 }), QUIET).preview).toBe(
+      "#14 \u00b7 Completed\nfix the login redirect",
+    );
+    expect(markerLabel(subject({ elapsed_ms: 4_500 }), QUIET).preview).toBe(
+      "#14 \u00b7 Completed \u00b7 4.5s\nfix the login redirect",
+    );
   });
 
-  it("composes every combination of the two transient flags, for every outcome", () => {
-    // The cross-product, expectations built from the test's OWN clause tables. It is the
-    // reachability half: any combination a live rail can produce composes into exactly these
-    // strings, in this order.
-    for (const outcome of ALL_OUTCOMES) {
-      for (const agentInitiated of [false, true]) {
-        for (const pending of [false, true]) {
-          for (const hit of [false, true]) {
-            const s = subject(
-              agentInitiated ? { outcome, agent_initiated: true } : { outcome, first_line: "ask" },
-            );
-            const parts = [agentInitiated ? "Agent-initiated turn" : "ask"];
-            if (TOOLTIP_CLAUSE[outcome] !== "") {
-              parts.push(TOOLTIP_CLAUSE[outcome]);
-            }
-            if (pending) {
-              parts.push("Loading this turn\u2026");
-            }
-            if (hit) {
-              parts.push("Contains a search match");
-            }
-            const names = ["Go to turn 14"];
-            if (NAME_CLAUSE[outcome] !== "") {
-              names.push(NAME_CLAUSE[outcome]);
-            }
-            if (agentInitiated) {
-              names.push("agent-initiated");
-            }
-            const label = markerLabel(s, { pending, hit });
-            const where = `${outcome}/${String(agentInitiated)}/${String(pending)}/${String(hit)}`;
-            expect(label.tooltip, where).toBe(parts.join(" \u00b7 "));
-            expect(label.ariaLabel, where).toBe(names.join(", "));
-          }
-        }
-      }
-    }
+  it("cuts a long prompt at 90 code points, counting an astral character once", () => {
+    const long = "\u{1F600}" + "a".repeat(120);
+    const second = markerLabel(subject({ first_line: long }), QUIET).preview.split("\n")[1] ?? "";
+    expect(Array.from(second)).toHaveLength(91);
+    expect(second.startsWith("\u{1F600}a")).toBe(true);
+    expect(second.endsWith("\u2026")).toBe(true);
+  });
+
+  it("keeps a prompt of exactly 90 code points whole", () => {
+    const exact = "b".repeat(90);
+    expect(markerLabel(subject({ first_line: exact }), QUIET).preview.split("\n")[1]).toBe(exact);
+  });
+
+  it("says what an agent-initiated turn is instead of inventing a prompt", () => {
+    const label = markerLabel({ n: 3, outcome: "completed", agent_initiated: true }, QUIET);
+    expect(label.preview).toBe("#3 \u00b7 Completed\nAgent-initiated turn");
+  });
+
+  it("is one line for a user turn with no readable prompt", () => {
+    expect(markerLabel({ n: 3, outcome: "completed", first_line: "  " }, QUIET).preview).toBe(
+      "#3 \u00b7 Completed",
+    );
+  });
+
+  it("keeps the transient facts on the first line, loading before the match", () => {
+    expect(markerLabel(subject(), { pending: true, hit: true }).preview).toBe(
+      "#14 \u00b7 Completed \u00b7 Loading\u2026 \u00b7 Search match\nfix the login redirect",
+    );
+    expect(markerLabel(subject(), { pending: false, hit: true }).preview).toBe(
+      "#14 \u00b7 Completed \u00b7 Search match\nfix the login redirect",
+    );
   });
 });
 
-describe("the rail's own accessible name", () => {
-  it("states the dropped count once the set is smaller than the session", () => {
-    expect(railLabel(27, 412)).toBe("Turn timeline, showing 27 of 412 turns");
+describe("a turn's accessible name", () => {
+  it("is the number, the outcome and the prompt", () => {
+    expect(markerLabel(subject({ outcome: "failed" }), QUIET).ariaLabel).toBe(
+      "Turn 14, failed: fix the login redirect",
+    );
   });
 
-  it("says nothing about a set it shows whole", () => {
-    // Promising a row per turn is the claim to avoid, in both directions: a rail showing every turn
-    // has nothing to disclose, and one that somehow reports MORE shown than the session holds must
-    // not state a count either.
-    expect(railLabel(6, 6)).toBe("Turn timeline");
-    expect(railLabel(7, 6)).toBe("Turn timeline");
+  it("omits completed, and names every other outcome in lower case", () => {
+    for (const outcome of ALL_OUTCOMES) {
+      const name = markerLabel(subject({ outcome }), QUIET).ariaLabel;
+      const expected =
+        outcome === "completed"
+          ? "Turn 14: fix the login redirect"
+          : `Turn 14, ${PREVIEW_WORD[outcome].toLowerCase()}: fix the login redirect`;
+      expect(name, outcome).toBe(expected);
+    }
   });
 
-  it("says nothing for a session with no turns", () => {
-    expect(railLabel(0, 0)).toBe("Turn timeline");
+  it("marks an agent-initiated turn and carries no prompt for it", () => {
+    expect(markerLabel({ n: 3, outcome: "failed", agent_initiated: true }, QUIET).ariaLabel).toBe(
+      "Turn 3, failed, agent-initiated",
+    );
+  });
+
+  it("keeps the transient facts and the duration out of the name", () => {
+    expect(
+      markerLabel(subject({ elapsed_ms: 9_000 }), { pending: true, hit: true }).ariaLabel,
+    ).toBe("Turn 14: fix the login redirect");
+  });
+});
+
+describe("a binned row's labels", () => {
+  it("names the range and the worst outcome", () => {
+    const label = binLabel({ first: 120, last: 124, worst: "failed" }, QUIET);
+    expect(label.preview).toBe("Turns 120-124 \u00b7 Failed");
+    expect(label.ariaLabel).toBe("Turns 120 to 124, worst failed");
+  });
+
+  it("names a clean range by its range alone", () => {
+    const label = binLabel({ first: 1, last: 5, worst: "completed" }, QUIET);
+    expect(label.preview).toBe("Turns 1-5 \u00b7 Completed");
+    expect(label.ariaLabel).toBe("Turns 1 to 5");
+  });
+
+  it("says a member holds a search match, in the preview only", () => {
+    const label = binLabel(
+      { first: 6, last: 10, worst: "completed" },
+      { pending: false, hit: true },
+    );
+    expect(label.preview).toBe("Turns 6-10 \u00b7 Completed \u00b7 Search match");
+    expect(label.ariaLabel).toBe("Turns 6 to 10");
   });
 });

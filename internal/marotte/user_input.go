@@ -26,7 +26,7 @@ type UserInputOption struct {
 // UserInputNeededPayload is the payload for type="user_input_needed": the
 // agent asked a structured question and awaits an answer. An empty Options
 // slice means a free-form question (the client renders a text field).
-// RequestID is the JSON-RPC id the user_input_response command echoes back.
+// RequestID is the user_input_response command's echo (PermissionNeededPayload.RequestID).
 type UserInputNeededPayload struct {
 	Question     string `json:"question"`
 	ToolCallID   string `json:"tool_call_id,omitempty"`

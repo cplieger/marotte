@@ -47,7 +47,6 @@ type stubSent struct {
 
 func newStubSteerQueue() *stubSteerQueue { return &stubSteerQueue{} }
 
-// clearingQueue answers every op as one that needs a clear.
 func clearingQueue() *stubSteerQueue { return &stubSteerQueue{needsClear: true} }
 
 var (
@@ -226,7 +225,6 @@ func (q *stubSteerQueue) SetSteerLead(_ marotte.ChatID, key string) func() {
 	return func() { q.log("lead-undone " + key) }
 }
 
-// steerRolesOf wires a host double and a queue into the steer commands' roles.
 func steerRolesOf(host hostDouble, ledger *SteerLedger, q SteerQueue) *promptRoles {
 	roles := promptRolesOf(host)
 	roles.steers = ledger

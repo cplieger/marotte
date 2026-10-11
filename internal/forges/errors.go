@@ -13,7 +13,6 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// kindStatus is the HTTP status of each forgeapi failure class.
 var kindStatus = map[forgeapi.ErrorKind]int{
 	forgeapi.KindUnauthorized: http.StatusUnauthorized,
 	forgeapi.KindForbidden:    http.StatusForbidden,
@@ -44,7 +43,6 @@ var localRefusals = map[string]bool{
 	forgeapi.CodeBudgetInvalid:         true,
 }
 
-// statusFor is the HTTP status a forgeapi failure answers.
 func statusFor(e *forgeapi.Error) int {
 	switch e.Code {
 	// capability_unsupported arrives as KindForbidden, but it says the instance
@@ -65,7 +63,6 @@ func statusFor(e *forgeapi.Error) int {
 	return http.StatusInternalServerError
 }
 
-// errorEnvelope is the body of every forge route's failure answer.
 type errorEnvelope struct {
 	Successor   *RepoSuccessor  `json:"successor,omitempty"`
 	Capability  *capabilityWire `json:"capability,omitempty"`
@@ -85,8 +82,7 @@ type capabilityWire struct {
 	Detail  string `json:"detail"`
 }
 
-// envelopeFor builds e's envelope. The message carries upstream text, so it is
-// sanitized and bounded before it reaches a client.
+// The message carries upstream text, so it is sanitized and bounded before it reaches a client.
 func envelopeFor(e *forgeapi.Error) errorEnvelope {
 	env := errorEnvelope{
 		Error:       logsafe.Field(e.Error()),
@@ -116,9 +112,8 @@ func retryAfterSeconds(e *forgeapi.Error) int64 {
 	return int64(math.Ceil(e.RetryAfter.Seconds()))
 }
 
-// writeForgeAPIError answers e. The wait also travels as Retry-After, but the
-// client's action layer cannot read a header off a non-2xx, so the body carries
-// it too.
+// The wait also travels as Retry-After, but the client's action layer cannot read a header off a
+// non-2xx, so the body carries it too.
 func writeForgeAPIError(w http.ResponseWriter, e *forgeapi.Error) {
 	env := envelopeFor(e)
 	if env.RetryAfterS > 0 {

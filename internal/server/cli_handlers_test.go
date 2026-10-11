@@ -11,7 +11,6 @@ import (
 	"testing"
 )
 
-// fakeCLIRunner is an in-memory CLIRunner recording which method the handler invoked.
 type fakeCLIRunner struct {
 	stdout    string
 	truncated bool
@@ -23,7 +22,7 @@ type fakeCLIRunner struct {
 	gotArgs     []string
 }
 
-var _ CLIRunner = (*fakeCLIRunner)(nil)
+var _ cliRunner = (*fakeCLIRunner)(nil)
 
 func (f *fakeCLIRunner) Run(context.Context, ...string) ([]byte, error) {
 	f.runCalls++
@@ -46,7 +45,7 @@ func (f *fakeCLIRunner) RunStdoutCapped(_ context.Context, limit int, args ...st
 	return []byte(out), trunc, nil
 }
 
-func postDiagnostics(t *testing.T, runner CLIRunner) *httptest.ResponseRecorder {
+func postDiagnostics(t *testing.T, runner cliRunner) *httptest.ResponseRecorder {
 	t.Helper()
 	s := &Server{cliRunner: runner, cliTimeouts: defaultCLITimeouts()}
 	req := httptest.NewRequest(http.MethodPost, "/api/diagnostics", nil)

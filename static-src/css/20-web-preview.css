@@ -61,29 +61,7 @@
   text-align: center;
 }
 
-/* The path truncates from its START so the file name stays visible: an RTL
-   block puts the ellipsis on the left, and the inner <bdi> keeps the path's
-   own left-to-right order. `left`, not `start`, which is the right edge in RTL:
-   a path that fits sits where the editor's file name does. */
-.web-path {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-block-size: var(--btn-h);
-  padding: 0 var(--sp-3);
-  line-height: calc(var(--btn-h) - 2px);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-  color: var(--c-text-primary);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  direction: rtl;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* `.web-path` is the editor's path box (20-editor.css `.editor-filename`). */
 
 .web-actions {
   flex: none;

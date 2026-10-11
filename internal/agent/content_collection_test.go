@@ -36,7 +36,7 @@ func spawnSites() []spawnSite {
 	return []spawnSite{
 		{name: "chat_new", spawn: func(t *testing.T, h *Runtime, cs *testChatStore, _ *fakeBridge) {
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-			if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 		}},
@@ -46,14 +46,14 @@ func spawnSites() []spawnSite {
 				c.ACPSessionID = "sess_resume_probe"
 				return true
 			})
-			if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 		}},
 		{name: "run_launch", spawn: func(t *testing.T, h *Runtime, _ *testChatStore, br *fakeBridge) {
 			br.callResults = workflowReplies
 			br.callResults[methodKiroWorkflowList] = json.RawMessage(`{"runs":[]}`)
-			if _, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil); err != nil {
+			if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
 				t.Fatalf("Launch: %v", err)
 			}
 		}},

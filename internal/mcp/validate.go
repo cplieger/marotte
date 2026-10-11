@@ -11,66 +11,61 @@ import (
 )
 
 // Package-level errors. All HTTP handlers map these to 4xx responses;
-// anything else is a 500. ErrPersist wraps the underlying filesystem
+// anything else is a 500. errPersist wraps the underlying filesystem
 // error from SaveJSON's temp+rename so writeErr can route mutator
 // failures to 500 with a generic body (no filesystem path leaked to
 // the browser) while the full error still shows up in slog.
 var (
-	ErrNotFound     = errors.New("server not found")
-	ErrNameConflict = errors.New("server name already exists")
-	ErrPersist      = errors.New("persist failed")
+	errNotFound     = errors.New("server not found")
+	errNameConflict = errors.New("server name already exists")
+	errPersist      = errors.New("persist failed")
 
-	// ErrPersistMarshal and ErrPersistWrite are typed sub-sentinels for
-	// ErrPersist. Callers can still match the parent via
-	// errors.Is(err, ErrPersist); the sub-sentinels let the HTTP layer
-	// log at different levels (marshal = programmer bug, write = transient infra).
-	ErrPersistMarshal = fmt.Errorf("%w: marshal", ErrPersist)
-	ErrPersistWrite   = fmt.Errorf("%w: write", ErrPersist)
+	// ErrPersistMarshal and ErrPersistWrite sub-classify errPersist (errors.Is still matches it), so
+	// the HTTP layer logs a marshal bug and a transient write failure at different levels.
+	errPersistMarshal = fmt.Errorf("%w: marshal", errPersist)
+	errPersistWrite   = fmt.Errorf("%w: write", errPersist)
 )
 
-// NameMaxLen is the byte bound on a server name.
+// nameMaxLen is the byte bound on a server name.
 //
 // The name becomes the agent's tool prefix (mcp_<name>_<tool>), so the bound is
 // a property of that namespace rather than of any one admission door — which is
 // why it is exported beside the validator instead of appearing as a literal in
 // each caller.
-const NameMaxLen = 64
+const nameMaxLen = 64
 
-// NameLeadRune reports whether r may open a name. Deliberately ASCII-only: the
+// nameLeadRune reports whether r may open a name. Deliberately ASCII-only: the
 // name becomes the agent's tool prefix, and a non-ASCII prefix is not something
 // the tool namespace accepts.
 //
-// This and NameAllowedRune are the ONLY executable statement of the charset in the
+// This and nameAllowedRune are the ONLY executable statement of the charset in the
 // package: a second copy (a regexp, a hard-coded grammar string) drifts from it.
-func NameLeadRune(r rune) bool {
+func nameLeadRune(r rune) bool {
 	return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z'
 }
 
-// NameAllowedRune reports whether r may appear anywhere in a name (position 2
-// onward). The leading position is narrower — see NameLeadRune.
-func NameAllowedRune(r rune) bool {
-	return NameLeadRune(r) || r >= '0' && r <= '9' || r == '_' || r == '-'
+// nameAllowedRune reports whether r may appear anywhere in a name (position 2
+// onward). The leading position is narrower — see nameLeadRune.
+func nameAllowedRune(r rune) bool {
+	return nameLeadRune(r) || r >= '0' && r <= '9' || r == '_' || r == '-'
 }
 
-// nameGrammar describes the rule for the person reading the rejection.
-//
-// PROSE, deliberately, built from NameMaxLen. It replaced a regex literal
-// that was a second executable grammar in all but enforcement, restating
-// the charset and hard-coding the bound.
+// nameGrammar is prose built from nameMaxLen, so it cannot drift into a second grammar restating
+// the charset or the bound.
 func nameGrammar() string {
 	return "a letter, then letters, digits, underscores or hyphens, up to " +
-		strconv.Itoa(NameMaxLen) + " characters"
+		strconv.Itoa(nameMaxLen) + " characters"
 }
 
-// ValidateName is the ONE admission rule for a server name, implemented
+// validateName is the ONE admission rule for a server name, implemented
 // directly from the rune predicates and the length constant.
 //
-// Three doors reach a name and they must agree: Validate, ParseServerID,
+// Three doors reach a name and they must agree: Validate, parseServerID,
 // and paste.go's sanitizeName (which REPAIRS rather than rejects). All
 // three read the same two predicates, so agreement is structural.
-func ValidateName(name string) error {
+func validateName(name string) error {
 	if err := checkName(name); err != nil {
-		return &FieldError{Field: fieldName, Msg: err.Error()}
+		return &fieldError{Field: fieldName, Msg: err.Error()}
 	}
 	return nil
 }
@@ -81,13 +76,13 @@ func checkName(name string) error {
 	if name == "" {
 		return fmt.Errorf("name must be %s: %q", nameGrammar(), name)
 	}
-	if len(name) > NameMaxLen {
-		return fmt.Errorf("name too long: %d bytes (max %d)", len(name), NameMaxLen)
+	if len(name) > nameMaxLen {
+		return fmt.Errorf("name too long: %d bytes (max %d)", len(name), nameMaxLen)
 	}
 	for i, r := range name {
-		ok := NameAllowedRune(r)
+		ok := nameAllowedRune(r)
 		if i == 0 {
-			ok = NameLeadRune(r)
+			ok = nameLeadRune(r)
 		}
 		if !ok {
 			return fmt.Errorf("name must be %s: %q", nameGrammar(), name)
@@ -96,10 +91,8 @@ func checkName(name string) error {
 	return nil
 }
 
-// keyRe is the character set for env var names and HTTP header names.
-// Permissive enough for both (env disallows "-", headers disallow "_"
-// on paper; in practice both fly everywhere and we let the server/
-// kiro-cli be the final judge).
+// Permissive enough for both (env disallows "-", headers disallow "_" on paper; in practice both
+// fly everywhere and we let the server/ kiro-cli be the final judge).
 var keyRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,127}$`)
 
 // Length caps on user-supplied fields. These are defense-in-depth
@@ -117,9 +110,8 @@ const (
 	maxHeaderEntries = 32
 	disabledToolMax  = 128
 	maxDisabledTools = 256
-	// oauthClientIDMax bounds the OAuth 2.0 client_id length. Real-world
-	// client IDs are typically 20–80 chars (UUID-ish or app-id-ish);
-	// 256 leaves headroom and rejects clearly-malformed input.
+	// Real-world client IDs are typically 20–80 chars (UUID-ish or app-id-ish); 256 leaves headroom
+	// and rejects clearly-malformed input.
 	oauthClientIDMax = 256
 	// oauthRedirectMinPort is the OAuth relay's own floor (agent relayMinPort):
 	// a privileged pin installs, then fails at the relay's paste-back step.
@@ -129,13 +121,11 @@ const (
 // oauthRedirectHosts are the loopback hosts KAS serves its OAuth callback on.
 var oauthRedirectHosts = []string{"localhost", "127.0.0.1"}
 
-// transportValidators maps each supported transport to its validation
-// function. Adding a new transport requires only a map entry, not a
-// control-flow change. The init() below validates that every known
-// transport has a registered validator, preventing nil-call panics.
-// TransportSSE shares validateRemote with TransportHTTP: both are remote
-// transports whose wire shape is url + headers (+ optional oauth), differing
-// only in the ACP `type` discriminator emitted at export time.
+// Adding a new transport requires only a map entry, not a control-flow change. The init() below
+// validates that every known transport has a registered validator, preventing nil-call panics.
+// TransportSSE shares validateRemote with TransportHTTP: both are remote transports whose wire
+// shape is url + headers (+ optional oauth), differing only in the ACP `type` discriminator emitted
+// at export time.
 var transportValidators = map[Transport]func(*Server) error{
 	TransportStdio:    validateStdio,
 	TransportHTTP:     validateRemote,
@@ -172,16 +162,16 @@ const (
 	fieldOAuthRedirectURI       = "oauth_redirect_uri"
 )
 
-// FieldError is one validation failure, attributed to the wire field it
+// fieldError is one validation failure, attributed to the wire field it
 // came from. Msg is unchanged from what the check always said — an
 // indexed message like `headers[1]: duplicate name "X"` keeps its
 // index.
-type FieldError struct {
+type fieldError struct {
 	Field string `json:"field"`
 	Msg   string `json:"message"`
 }
 
-func (e *FieldError) Error() string { return e.Msg }
+func (e *fieldError) Error() string { return e.Msg }
 
 // maxFieldErrors bounds one response's error list: accumulation turns a
 // per-entry check into a per-entry ALLOCATION, so a paste naming
@@ -203,7 +193,7 @@ func (c *fieldErrs) addf(field, format string, args ...any) {
 	if len(c.errs) >= maxFieldErrors {
 		return
 	}
-	c.errs = append(c.errs, &FieldError{Field: field, Msg: fmt.Sprintf(format, args...)})
+	c.errs = append(c.errs, &fieldError{Field: field, Msg: fmt.Sprintf(format, args...)})
 }
 
 func (c *fieldErrs) merge(err error) {
@@ -229,23 +219,23 @@ func (c *fieldErrs) any() bool { return len(c.errs) > 0 }
 // working through a wrap).
 func (c *fieldErrs) join() error { return errors.Join(c.errs...) }
 
-// FieldErrors flattens an error tree into the field failures it carries,
+// fieldErrors flattens an error tree into the field failures it carries,
 // for a caller that wants to mark inputs rather than print a paragraph.
 //
 // It walks BOTH wrap shapes: errors.Join's Unwrap() []error, and
 // fmt.Errorf("%w")'s Unwrap() error.
-func FieldErrors(err error) []FieldError {
-	var out []FieldError
+func fieldErrors(err error) []fieldError {
+	var out []fieldError
 	var walk func(error)
 	walk = func(e error) {
 		if e == nil || len(out) >= maxFieldErrors {
 			return
 		}
 		// The concrete type, deliberately, and not errors.As: As descends the
-		// whole tree and would return the FIRST FieldError under a join, so the
+		// whole tree and would return the FIRST fieldError under a join, so the
 		// walk below would never run and a three-field failure would report one.
-		// A FieldError wraps nothing, so this branch terminates.
-		if fe, ok := e.(*FieldError); ok {
+		// A fieldError wraps nothing, so this branch terminates.
+		if fe, ok := e.(*fieldError); ok {
 			out = append(out, *fe)
 			return
 		}
@@ -262,12 +252,12 @@ func FieldErrors(err error) []FieldError {
 	return out
 }
 
-// Validate checks a fully-populated Server record before every create or update persists, the
+// validate checks a fully-populated Server record before every create or update persists, the
 // single source of truth. It ACCUMULATES problems, short-circuiting only on an unknown transport,
 // whose per-transport check cannot run.
-func Validate(s *Server) error {
+func validate(s *Server) error {
 	var errs fieldErrs
-	errs.merge(ValidateName(s.Name))
+	errs.merge(validateName(s.Name))
 	errs.merge(validateTransportChain(s))
 	errs.merge(validateToolNames(fieldDisabledTools, s.DisabledTools))
 	if s.TimeoutMS < 0 || s.TimeoutMS > maxTimeoutMS {
@@ -276,26 +266,24 @@ func Validate(s *Server) error {
 	return errs.join()
 }
 
-// maxTimeoutMS is ten minutes. KAS clamps a larger timeout silently, so a value
-// past it would be stored as one number and enforced as another.
+// KAS clamps a larger timeout silently, so a value past it would be stored as one number and
+// enforced as another.
 const maxTimeoutMS = 600_000
 
 // validateTransportChain is the dependent run: each step's input is the previous
 // step's verdict, so a failure ends the chain instead of joining a list.
 func validateTransportChain(s *Server) error {
 	if s.Transport == "" {
-		return &FieldError{Field: fieldTransport, Msg: "transport required"}
+		return &fieldError{Field: fieldTransport, Msg: "transport required"}
 	}
-	if !s.Transport.Valid() {
-		return &FieldError{Field: fieldTransport, Msg: fmt.Sprintf("unknown transport: %q", s.Transport)}
+	if !s.Transport.valid() {
+		return &fieldError{Field: fieldTransport, Msg: fmt.Sprintf("unknown transport: %q", s.Transport)}
 	}
 	fn, ok := transportValidators[s.Transport]
 	if !ok {
-		// Unreachable in practice: init() panics at boot if any known transport
-		// lacks a validator, and the check above has already refused anything
-		// unknown. Kept as the belt to that braces — it is not an accumulation
-		// candidate, because it describes a state the process cannot reach.
-		return &FieldError{
+		// Unreachable: init() panics on a known transport with no validator, and Valid refused the
+		// rest. Not accumulated, since it describes a state the process cannot reach.
+		return &fieldError{
 			Field: fieldTransport,
 			Msg:   fmt.Sprintf("no validator registered for transport %q", s.Transport),
 		}
@@ -347,11 +335,8 @@ func validateToolNames(field string, tools []string) error {
 func validateStdio(s *Server) error {
 	var errs fieldErrs
 	errs.merge(validateCommand(s.Command))
-	// ONE ERROR PER PRESENT FIELD. These are independent presence checks — the
-	// transport is already known, so nothing sequences them — and the whole reason
-	// attribution exists is to mark the input that is wrong. Grouping them named
-	// `url` and left `headers` unmarked, so a record carrying both got one message
-	// and one highlighted box out of two mistakes.
+	// One error per present field: the checks are independent, and attribution exists to mark
+	// every wrong input, not one of them.
 	if s.URL != "" {
 		errs.addf(fieldURL, "stdio transport cannot have url")
 	}
@@ -377,7 +362,7 @@ func validateStdio(s *Server) error {
 // those two have nothing to say about a value that is not there.
 func validateCommand(command string) error {
 	if strings.TrimSpace(command) == "" {
-		return &FieldError{Field: fieldCommand, Msg: "command required for stdio transport"}
+		return &fieldError{Field: fieldCommand, Msg: "command required for stdio transport"}
 	}
 	var errs fieldErrs
 	if hasCtl(command) {
@@ -433,10 +418,8 @@ func validateRegistry(s *Server) error {
 
 func validateRemote(s *Server) error {
 	var errs fieldErrs
-	// Three independent presence checks, three attributions — same reason as the
-	// stdio pair above. The grouped form named `command` and left `args` and `env`
-	// unmarked, which is exactly the case a pasted stdio block hits when its
-	// transport is switched to remote.
+	// One attribution per field, as in validateStdio: a pasted stdio block switched to remote
+	// hits all three.
 	if s.Command != "" {
 		errs.addf(fieldCommand, "remote transport cannot have command")
 	}
@@ -454,11 +437,10 @@ func validateRemote(s *Server) error {
 	return errs.join()
 }
 
-// validateRemoteURL is the url field's own chain. The length and control-char
-// checks are independent of each other and accumulate; everything after them is
-// SEQUENTIAL by necessity — url.Parse has to succeed before Scheme, Host and User
-// can be read, and a control character makes Parse fail with a message about
-// syntax rather than about the character.
+// The length and control-char checks are independent of each other and accumulate; everything after
+// them is SEQUENTIAL by necessity — url.Parse has to succeed before Scheme, Host and User can be
+// read, and a control character makes Parse fail with a message about syntax rather than about the
+// character.
 func validateRemoteURL(raw string) error {
 	var errs fieldErrs
 	if len(raw) > urlMax {
@@ -472,13 +454,13 @@ func validateRemoteURL(raw string) error {
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		return &FieldError{
+		return &fieldError{
 			Field: fieldURL,
 			Msg:   fmt.Sprintf("url must be an absolute http(s) URL: %q", raw),
 		}
 	}
 	if u.Scheme != schemeHTTP && u.Scheme != "https" {
-		return &FieldError{
+		return &fieldError{
 			Field: fieldURL,
 			Msg:   fmt.Sprintf("url scheme must be http or https: %q", u.Scheme),
 		}
@@ -488,7 +470,7 @@ func validateRemoteURL(raw string) error {
 	// browser and anyone dumping mcp.json would see the token. Reject
 	// at the boundary; users get a clean 400 pointing them at Headers.
 	if u.User != nil {
-		return &FieldError{
+		return &fieldError{
 			Field: fieldURL,
 			Msg:   "url must not contain userinfo. Use Headers for auth",
 		}
@@ -508,7 +490,7 @@ func validateOAuthMetadataURL(raw string) error {
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.Path == "" || u.Path == "/" {
-		return &FieldError{
+		return &fieldError{
 			Field: fieldOAuthClientMetadataURL,
 			Msg:   fmt.Sprintf("oauth_client_metadata_url must be an https URL with a path: %q", raw),
 		}
@@ -544,13 +526,12 @@ func validateOAuthRedirectURI(raw string) error {
 		}
 	}
 	if msg != "" {
-		return &FieldError{Field: fieldOAuthRedirectURI, Msg: "oauth_redirect_uri " + msg}
+		return &fieldError{Field: fieldOAuthRedirectURI, Msg: "oauth_redirect_uri " + msg}
 	}
 	return nil
 }
 
-// splitOAuthRedirectURI takes v apart into host and port; a non-empty msg is the
-// refusal. A ":port" form keeps the loopback default host.
+// A non-empty msg is the refusal. A ":port" form keeps the loopback default host.
 func splitOAuthRedirectURI(v, raw string) (host, port, msg string) {
 	shape := fmt.Sprintf(`must be "host:port", ":port", or an http URL: %q`, raw)
 	switch {
@@ -598,7 +579,7 @@ func validateOAuthField(field, value string, maxLen int) error {
 // follow the "<kind>[i]: ..." format both call sites relied on, so the
 // existing validate_test.go assertions continue to match substring-
 // wise. See validateStdio / validateRemote for the call sites.
-func validateKeyPairs(kind string, pairs []KeyPair, maxEntries, maxValue int, caseInsensitiveDedup bool) error {
+func validateKeyPairs(kind string, pairs []keyPair, maxEntries, maxValue int, caseInsensitiveDedup bool) error {
 	var errs fieldErrs
 	if len(pairs) > maxEntries {
 		errs.addf(kind, "%s: too many entries (%d, max %d)",
@@ -606,11 +587,8 @@ func validateKeyPairs(kind string, pairs []KeyPair, maxEntries, maxValue int, ca
 	}
 	seen := make(map[string]struct{}, len(pairs))
 	for i, kv := range pairs {
-		// Per-entry accumulation, and the duplicate check accumulates WITH it:
-		// duplicate detection is per index, so entry 3 being a repeat of entry 1
-		// says nothing about entry 4. A bad name is still recorded in `seen`
-		// under its own spelling, so a repeated bad name reports both problems
-		// rather than hiding the second behind the first.
+		// Every check accumulates per index, the duplicate check included. A bad name still lands
+		// in `seen` under its own spelling, so a repeated bad name reports both problems.
 		if !keyRe.MatchString(kv.Name) {
 			errs.addf(kind, "%s[%d]: bad name %q", kind, i, kv.Name)
 		}

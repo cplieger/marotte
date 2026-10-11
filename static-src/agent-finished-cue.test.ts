@@ -6,13 +6,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { signal, touch } from "@cplieger/reactive";
 import type { Session } from "./types.js";
+import type { NotificationPayload } from "./wire/types.gen.js";
+
+/** The server's notification for a finished turn on `chatID`. */
+function finished(body: string, chatID = "c1"): NotificationPayload {
+  return { chat_id: chatID, kind: "agent_finished", title: "test", body };
+}
 
 // The live-runs rebuild answers the EMPTY inventory: a run that ended during an outage.
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(async () => null),
   apiGetTyped: vi.fn(async (path: string) => (path === "/api/runs/live" ? { runs: [] } : null)),
-  // The run store's own read. Status 0 is a read that never left, which is what a null
-  // answered before the store started spending a failed read's status.
+  // Status 0 is a read that never left, which is what a null answered before the store started
+  // spending a failed read's status.
   apiGetOrError: vi.fn(async () => ({ ok: false, status: 0, data: null, error: "" })),
 }));
 
@@ -32,10 +38,9 @@ const notify = vi.hoisted(() => ({
   enabled: true,
 }));
 vi.mock("./notify.js", () => ({
-  NOTIFY_TITLE: "Marotte",
   isAgentFinishedEnabled: () => notify.enabled,
-  notifyIfHidden: (_title: string, body: string, _target: unknown) => {
-    notify.raised.push(body);
+  notifyOffScreen: (n: NotificationPayload) => {
+    notify.raised.push(n.body);
     return true;
   },
 }));
@@ -91,7 +96,7 @@ afterEach(() => {
 
 describe("a settled chat raises immediately", () => {
   it("raises the turn's own body", () => {
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
     expect(notify.raised).toEqual(["Agent finished"]);
     expect(cue.hasDeferredCue("c1")).toBe(false);
   });
@@ -99,26 +104,20 @@ describe("a settled chat raises immediately", () => {
   // The immediate and deferred raises share ONE dedup map, which a reconnect's replayed
   // `turn_closed` burst needs.
   it("keeps the dedup window across a replayed burst", () => {
-    cue.noteAgentFinished("c1", "Agent finished");
-    cue.noteAgentFinished("c1", "Agent finished");
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
+    cue.noteAgentFinished("c1", finished("Agent finished"));
+    cue.noteAgentFinished("c1", finished("Agent finished"));
     expect(notify.raised).toEqual(["Agent finished"]);
   });
 
-  it("says nothing for a turn with no body of its own", () => {
-    cue.noteAgentFinished("c1", "");
-    expect(notify.raised).toEqual([]);
-    expect(cue.hasDeferredCue("c1")).toBe(false);
-  });
-
   it("says nothing for an empty chat id", () => {
-    cue.noteAgentFinished("", "Agent finished");
+    cue.noteAgentFinished("", finished("Agent finished", ""));
     expect(notify.raised).toEqual([]);
   });
 
   it("refuses when the per-kind switch is off", () => {
     notify.enabled = false;
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
     expect(notify.raised).toEqual([]);
     expect(cue.hasDeferredCue("c1")).toBe(false);
   });
@@ -128,7 +127,7 @@ describe("a chat with a live run defers, then fires on settle", () => {
   // `run_workflow` returns at the turn's end, long before the run is done.
   it("raises nothing while the run is live", () => {
     runStore.noteRunLive("wf-a", "c1", true);
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
 
     expect(notify.raised).toEqual([]);
     expect(cue.hasDeferredCue("c1")).toBe(true);
@@ -136,7 +135,7 @@ describe("a chat with a live run defers, then fires on settle", () => {
 
   it("fires exactly once with the TURN's own body when the run terminates", () => {
     runStore.noteRunLive("wf-a", "c1", true);
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
     expect(notify.raised).toEqual([]);
 
     runStore.noteRunSettled("wf-a");
@@ -149,7 +148,7 @@ describe("a chat with a live run defers, then fires on settle", () => {
   // cue parked forever.
   it("releases on a run that FAILED just as on one that completed", () => {
     runStore.noteRunLive("wf-a", "c1", true);
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
     // handlers/run.ts calls noteRunSettled for every non-paused terminal status, so
     // failed, aborted and cancelled reach the release through this one call.
     runStore.noteRunSettled("wf-a");
@@ -160,7 +159,7 @@ describe("a chat with a live run defers, then fires on settle", () => {
   // "finished" notification must not claim is over.
   it("stays parked while the run is merely PAUSED", () => {
     runStore.noteRunLive("wf-a", "c1", true);
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
     runStore.noteRunLive("wf-a", "c1", false); // paused, still live
     expect(notify.raised).toEqual([]);
     expect(cue.hasDeferredCue("c1")).toBe(true);
@@ -169,7 +168,7 @@ describe("a chat with a live run defers, then fires on settle", () => {
   it("waits for the LAST of several runs", () => {
     runStore.noteRunLive("wf-a", "c1", true);
     runStore.noteRunLive("wf-b", "c1", true);
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
 
     runStore.noteRunSettled("wf-a");
     expect(notify.raised).toEqual([]);
@@ -181,7 +180,7 @@ describe("a chat with a live run defers, then fires on settle", () => {
   // A `BUS_RECONCILE` rebuild that drops the run releases the cue with no lifecycle frame.
   it("releases when the run disappears from the inventory", () => {
     runStore.noteRunLive("wf-a", "c1", true);
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
     runStore.rebuildLiveRuns();
     expect(notify.raised).toEqual([]); // the rebuild is async
 
@@ -192,7 +191,7 @@ describe("a chat with a live run defers, then fires on settle", () => {
 
   it("still fires when the chat's own turn state is what was outstanding", () => {
     store.setTurnOpen("c1", true);
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
     expect(cue.hasDeferredCue("c1")).toBe(true);
 
     store.setTurnOpen("c1", false);
@@ -202,7 +201,7 @@ describe("a chat with a live run defers, then fires on settle", () => {
   it("still fires when an ASK is what was outstanding", () => {
     pendingChats.add("c1");
     pendingVersion.value = pendingVersion.peek() + 1;
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
     expect(cue.hasDeferredCue("c1")).toBe(true);
 
     pendingChats.delete("c1");
@@ -213,8 +212,8 @@ describe("a chat with a live run defers, then fires on settle", () => {
   it("does not release one chat's cue for another chat settling", () => {
     runStore.noteRunLive("wf-a", "c1", true);
     runStore.noteRunLive("wf-b", "c2", true);
-    cue.noteAgentFinished("c1", "Agent finished on c1");
-    cue.noteAgentFinished("c2", "Agent finished on c2");
+    cue.noteAgentFinished("c1", finished("Agent finished on c1"));
+    cue.noteAgentFinished("c2", finished("Agent finished on c2", "c2"));
 
     runStore.noteRunSettled("wf-b");
 
@@ -228,9 +227,9 @@ describe("the deferral cannot double-fire or fire wrongly", () => {
   // cannot produce two cues for one turn.
   it("a repeated park is one cue", () => {
     runStore.noteRunLive("wf-a", "c1", true);
-    cue.noteAgentFinished("c1", "Agent finished");
-    cue.noteAgentFinished("c1", "Agent finished");
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
+    cue.noteAgentFinished("c1", finished("Agent finished"));
+    cue.noteAgentFinished("c1", finished("Agent finished"));
 
     runStore.noteRunSettled("wf-a");
 
@@ -241,7 +240,7 @@ describe("the deferral cannot double-fire or fire wrongly", () => {
   // deferral can outlive the reader's decision to be told.
   it("refuses at release when the switch was turned off meanwhile", () => {
     runStore.noteRunLive("wf-a", "c1", true);
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
 
     notify.enabled = false;
     runStore.noteRunSettled("wf-a");
@@ -255,7 +254,7 @@ describe("the deferral cannot double-fire or fire wrongly", () => {
   // A cue for a conversation that no longer exists can never be acted on.
   it("forgetDeferredCue means it never fires", () => {
     runStore.noteRunLive("wf-a", "c1", true);
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
 
     cue.forgetDeferredCue("c1");
     expect(cue.hasDeferredCue("c1")).toBe(false);
@@ -278,7 +277,7 @@ describe("the subscriber wakes on the FIRST park", () => {
     // beforeEach installed the subscriber over an empty set, so its first pass read
     // no chat's signals at all.
     runStore.noteRunLive("wf-a", "c1", true);
-    cue.noteAgentFinished("c1", "Agent finished");
+    cue.noteAgentFinished("c1", finished("Agent finished"));
     runStore.noteRunSettled("wf-a");
 
     expect(notify.raised).toEqual(["Agent finished"]);

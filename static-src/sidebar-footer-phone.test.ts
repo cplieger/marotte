@@ -109,7 +109,7 @@ function tokenPx(name: string): number {
 }
 
 /** Every claim the footer makes, at whatever viewport and tier is in force. */
-function assertFooter(label: string, floor: number): Footer {
+function assertFooter(label: string, floor: number): void {
   const f = mountFooter();
   const footerBox = f.footer.getBoundingClientRect();
   const btnBox = f.btn.getBoundingClientRect();
@@ -155,8 +155,6 @@ function assertFooter(label: string, floor: number): Footer {
     f.logout.getBoundingClientRect().left,
     `${label}: the trigger does not reach over the logout button`,
   ).toBeGreaterThanOrEqual(btnBox.right);
-
-  return f;
 }
 
 describe("360x800 — a phone in portrait", () => {

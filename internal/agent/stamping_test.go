@@ -4,7 +4,7 @@ package agent
 // Version came from a later read is a hole no behavioural test reliably reaches. (i) Every SubjectStamp takes
 // its Version from a parameter or an allowlisted minting call; chats-kind on chat_created/updated/deleted,
 // chat-kind on subject_changed/draft_changed; a Mutate caller stamps chat at most once. (ii) Only emit and
-// streamInitialState publish, reaching versions only through MergeStamped or the snapshot helpers.
+// streamInitialState publish, reaching versions only through mergeStamped or the snapshot helpers.
 
 import (
 	"go/ast"
@@ -16,7 +16,6 @@ import (
 	"testing"
 )
 
-// stampWalkPackages are the directories the two tests walk, relative to this one.
 var stampWalkPackages = []string{
 	".",
 	"../chat",
@@ -32,18 +31,18 @@ var versionSources = []string{
 	"SetSteerCarry", "AppendCodeReferences", "SetModel", "SetRefusal",
 	"AppendTextDelta", "AppendThinkingDelta", "AppendToolUseBlock",
 	"TrackFileChanges", "RecordToolStart", "ComputeDuration", "MarkInFlightToolsAborted",
-	"MergeStamped", "SnapshotStamped", "pendingSnapshotStamped", "pendingSnapshot",
-	"liveRunRowsStamped", "ModesModelsStamped", "ListStamped",
+	"mergeStamped", "snapshotStamped", "pendingSnapshotStamped", "pendingSnapshot",
+	"liveRunRowsStamped", "modesModelsStamped", "listStamped",
 }
 
 // mintingBodies are the critical sections themselves, exempted while their callers are checked. The four page
 // builders read their stamps under the lock serving the entries; live_turn and run_turn versions are newest served seqs.
 var mintingBodies = []string{
 	"Mutate", "broadcastMutation", "setComposer", "Remove",
-	"MergeStamped", "SnapshotStamped", "registry", "statusStamp",
-	"pendingSnapshot", "liveRunRowsStamped", "ModesModelsStamped", "mintPending",
-	"ClearWaiting", "Clear", "SetModes", "SetModels",
-	"Page", "TurnPage", "stepTurns", "turnRange",
+	"mergeStamped", "snapshotStamped", "registry", "statusStamp",
+	"pendingSnapshot", "liveRunRowsStamped", "modesModelsStamped", "mintPending",
+	"clearWaiting", "clear", "setModes", "SetModels",
+	"page", "TurnPage", "stepTurns", "turnRange",
 }
 
 // versionReads are the registry reads a stamping function may not perform itself.
@@ -115,7 +114,6 @@ func kindOf(expr ast.Expr) string {
 	return ""
 }
 
-// stampExpr recognises NewSubjectStamp(kind, ref, version) or a SubjectStamp literal, returning (kind, version, ok).
 func stampExpr(expr ast.Expr) (kind string, version ast.Expr, ok bool) {
 	if u, isAddr := expr.(*ast.UnaryExpr); isAddr && u.Op == token.AND {
 		expr = u.X
@@ -145,7 +143,6 @@ func stampExpr(expr ast.Expr) (kind string, version ast.Expr, ok bool) {
 	return "", nil, false
 }
 
-// definitions maps each identifier a body defines to its defining expression (positional), plus parameter names.
 type definitions struct {
 	params map[string]bool
 	defs   map[string][]ast.Expr
@@ -258,7 +255,6 @@ func frameEventsOf(x ast.Expr, d definitions) []string {
 	return out
 }
 
-// collectStampSites finds every stamp a function constructs or assigns.
 func collectStampSites(file string, fn *ast.FuncDecl, d definitions) []stampSite {
 	var sites []stampSite
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -349,8 +345,8 @@ func TestStamping_EveryVersionComesFromItsMint(t *testing.T) {
 						}
 					default:
 						// The whole stamp came from an allowlisted call or a parameter's field.
-						if honest, _ := stampFromHonestSource(site.from, d); !honest {
-							t.Errorf("%s: %s assigns Subject from an expression that is neither a stamp construction, a parameter nor an allowlisted call", file, fn.Name.Name)
+						if honest, why := stampFromHonestSource(site.from, d); !honest {
+							t.Errorf("%s: %s assigns Subject from an expression that is neither a stamp construction, a parameter nor an allowlisted call: %s", file, fn.Name.Name, why)
 						}
 					}
 					if site.kind == "chat" && site.built != nil {
@@ -458,18 +454,18 @@ func TestStamping_OnlyEmitAndTheConnectHookPublish(t *testing.T) {
 		t.Errorf("emit publishes at %d sites and streamInitialState writes at %d, want both non-zero", len(publishers["emit"]), len(publishers["streamInitialState"]))
 	}
 	if reads := callsAny(emitBody.Body, versionReads); len(reads) > 0 {
-		t.Errorf("emit reads the registry (%v); its one version source is MergeStamped", reads)
+		t.Errorf("emit reads the registry (%v); its one version source is mergeStamped", reads)
 	}
 	for _, src := range callsAny(emitBody.Body, versionSources) {
-		if src != "MergeStamped" {
-			t.Errorf("emit obtains a version through %s; MergeStamped is its one exception", src)
+		if src != "mergeStamped" {
+			t.Errorf("emit obtains a version through %s; mergeStamped is its one exception", src)
 		}
 	}
 	if reads := callsAny(hookBody.Body, versionReads); len(reads) > 0 {
 		t.Errorf("streamInitialState reads the registry (%v); it reaches versions only through the stamped snapshot helpers", reads)
 	}
-	if srcs := callsAny(hookBody.Body, versionSources); !slices.Contains(srcs, "pendingSnapshotStamped") || !slices.Contains(srcs, "SnapshotStamped") {
-		t.Errorf("streamInitialState reaches versions through %v, want pendingSnapshotStamped and SnapshotStamped", srcs)
+	if srcs := callsAny(hookBody.Body, versionSources); !slices.Contains(srcs, "pendingSnapshotStamped") || !slices.Contains(srcs, "snapshotStamped") {
+		t.Errorf("streamInitialState reaches versions through %v, want pendingSnapshotStamped and snapshotStamped", srcs)
 	}
 }
 

@@ -31,7 +31,6 @@ import {
   _setPendingTargetForTest,
 } from "./settings-highlight.js";
 
-/** Drive the rAF retry loop the primitive uses to wait for a laid-out target. */
 async function frames(n = 3): Promise<void> {
   for (let i = 0; i < n; i++) {
     await new Promise((r) => {
@@ -58,12 +57,11 @@ afterEach(() => {
   _setPendingTargetForTest(null);
 });
 
-function control(id: string): HTMLInputElement {
+function control(id: string): void {
   const e = document.createElement("input");
   e.id = id;
   e.type = "checkbox";
   document.body.appendChild(e);
-  return e;
 }
 
 describe("highlightControl", { timeout: testTimeoutFor(framesBudgetMs(25)) }, () => {

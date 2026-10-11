@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
@@ -25,9 +26,8 @@ const (
 	// maxFolderBytes keeps a token, which appears in nine CSP source lists, well
 	// under a proxy's header limit.
 	maxFolderBytes = 512
-	// maxHostBytes is the longest DNS name plus a port. The Host is repeated in
-	// nine CSP source lists, so an unbounded one multiplies the request's header
-	// allowance into the response.
+	// maxHostBytes is the longest DNS name plus a port. The Host is repeated in nine CSP source lists,
+	// so an unbounded one multiplies the request's header allowance into the response.
 	maxHostBytes = 253 + len(":65535")
 	maxFileBytes = 64 << 20
 	maxHTMLBytes = 8 << 20
@@ -44,23 +44,36 @@ type Handler struct {
 	signer  *Signer
 	log     *slog.Logger
 	workDir string
+	// realWorkDir is workDir with its symlinks resolved. Every open beneath
+	// workFD follows no symlink, so realWorkDir joined with a relative path is
+	// the path the kernel opens.
+	realWorkDir string
+	sensitive   filebrowse.Sensitive
 	// workFD is the workspace root every resolution starts from; -1 means it
 	// could not be opened and every route answers 503.
 	workFD     int
 	resolveLog sync.Once
 }
 
-// New returns a Handler confined to workDir. A workspace that cannot be opened
-// is logged once and leaves every route answering 503.
-func New(workDir string, s *Signer, log *slog.Logger) *Handler {
-	h := &Handler{signer: s, log: log, workDir: filepath.Clean(workDir), workFD: -1}
+// New returns a Handler confined to workDir that refuses any folder sensitive
+// reports exposed. A workspace that cannot be opened is logged once and leaves
+// every route answering 503.
+func New(workDir string, sensitive filebrowse.Sensitive, s *Signer, log *slog.Logger) *Handler {
+	h := &Handler{signer: s, log: log, sensitive: sensitive, workDir: filepath.Clean(workDir), workFD: -1}
 	fd, err := unix.Open(h.workDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		log.Warn("preview: workspace root could not be opened; previews are unavailable",
 			"work_dir", h.workDir, "error", err)
 		return h
 	}
-	h.workFD = fd
+	resolved, err := evalSymlinks(h.workDir)
+	if err != nil {
+		_ = unix.Close(fd)
+		log.Warn("preview: workspace root could not be resolved; previews are unavailable",
+			"work_dir", h.workDir, "error", err)
+		return h
+	}
+	h.realWorkDir, h.workFD = resolved, fd
 	return h
 }
 
@@ -99,17 +112,16 @@ type page struct {
 // openPage resolves the folder and file through the kernel's no-follow
 // resolution, so the folder a grant names is the folder on disk. The caller
 // closes folderFD.
-func (h *Handler) openPage(p string) (*page, []byte, error) {
+func (h *Handler) openPage(p string) (*page, error) {
 	pg, err := h.openPageFolder(p)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	head, err := h.readHead(pg)
-	if err != nil {
+	if _, err := h.readHead(pg); err != nil {
 		_ = unix.Close(pg.folderFD)
-		return nil, nil, err
+		return nil, err
 	}
-	return pg, head, nil
+	return pg, nil
 }
 
 func (h *Handler) openPageFolder(p string) (*page, error) {
@@ -143,7 +155,7 @@ func (h *Handler) openPageFolder(p string) (*page, error) {
 	return &page{folder: folder, name: path.Base(p), folderFD: folderFD}, nil
 }
 
-// readHead reads the first hintScanBytes of the page. It leaves folderFD open.
+// It leaves folderFD open.
 func (h *Handler) readHead(pg *page) ([]byte, error) {
 	fd, _, err := openRegular(pg.folderFD, pg.name)
 	if err != nil {
@@ -162,6 +174,10 @@ func (h *Handler) openFolder(folder string) (int, error) {
 	rel, ok := relBeneath(h.workDir, folder)
 	if !ok {
 		return -1, refuse(http.StatusForbidden, "the granted folder is outside the workspace")
+	}
+	if h.sensitive.ExposedBy(folder) || h.sensitive.ExposedBy(filepath.Join(h.realWorkDir, rel)) {
+		return -1, refuse(http.StatusForbidden,
+			"This folder would expose marotte's own configuration or credentials, so it cannot be previewed.")
 	}
 	fd, err := openDir(h.workFD, rel)
 	if err != nil {
@@ -203,12 +219,12 @@ func (h *Handler) Grant(p string, exp time.Time) (marotte.PreviewGrant, error) {
 	if err != nil {
 		return marotte.PreviewGrant{}, err
 	}
-	base := PathPrefix + h.signer.Mint(pg.folder, exp) + "/"
+	base := PathPrefix + h.signer.mint(pg.folder, exp) + "/"
 	return marotte.PreviewGrant{
 		URL:       base + url.PathEscape(pg.name),
 		Base:      base,
 		ExpiresAt: exp.UTC(),
-		Epoch:     h.signer.Epoch(),
+		Epoch:     h.signer.currentEpoch(),
 		Hint:      extractHint(head),
 		Stamp:     stamp,
 	}, nil
@@ -217,6 +233,10 @@ func (h *Handler) Grant(p string, exp time.Time) (marotte.PreviewGrant, error) {
 // grantStamped runs between a grant's folder stamp and its head read, so a test
 // can rewrite the page inside that window.
 var grantStamped = func() {}
+
+// evalSymlinks resolves the workspace root once it opened; a test fails it, since
+// only a root removed between the open and the resolve reaches that arm.
+var evalSymlinks = filepath.EvalSymlinks
 
 func (h *Handler) handleGrant(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.RequireMethod(w, r, http.MethodPost) {
@@ -238,7 +258,7 @@ func (h *Handler) handleStamp(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
-	pg, _, err := h.openPage(r.URL.Query().Get("path"))
+	pg, err := h.openPage(r.URL.Query().Get("path"))
 	if err != nil {
 		writePageError(w, err)
 		return
@@ -250,6 +270,6 @@ func (h *Handler) handleStamp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webhttp.WriteJSON(w, marotte.PreviewStamp{
-		Stamp: stamp, Entries: n, Truncated: truncated, Epoch: h.signer.Epoch(),
+		Stamp: stamp, Entries: n, Truncated: truncated, Epoch: h.signer.currentEpoch(),
 	})
 }

@@ -1,6 +1,6 @@
 // Tests for the run tab: its control row, its structure, its outputs and its empty-step notes.
 
-import { vi, describe, it, expect, beforeEach, beforeAll, afterAll, afterEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
 import type * as RunStore from "./run-store.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
@@ -31,7 +31,6 @@ interface OpenedTab {
   opts?: { parent?: string; owns?: boolean; activate?: boolean } | undefined;
 }
 
-/** What `GET /api/runs/{id}/controls` answers. */
 interface ControlsReply {
   verbs: string[];
   refused?: Record<string, string>;
@@ -79,7 +78,6 @@ const m = vi.hoisted(() => ({
   /** Every path a settled-looking turn was RE-READ for. The second arm: a turn with no
    *  `turn_close` is a client that missed the close, and re-reading is the repair. */
   reread: [] as string[],
-  /** How many times the page dropped every read. */
   cleared: { count: 0 },
 }));
 
@@ -99,7 +97,9 @@ vi.mock("./api-client.js", () => ({
 // runtime and stops here.
 vi.mock("./chat.js", () => ({ refreshChatView: vi.fn() }));
 
-vi.mock("./tabs.js", () => ({
+vi.mock("./tabs.js", async () => ({
+  // Complete and inert first: the run composer's steer stack reaches the chat notice path too.
+  ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   // The spec is the FACTORY's now, so there is no onShow and no onClose to capture: what a door
   // decides is `owns` (does the × stop the run) and `parent` (which chat it nests under), both
   // subject fields.
@@ -114,7 +114,7 @@ vi.mock("./tabs.js", () => ({
   // to paint.
   tabIdFor: vi.fn(() => ""),
   tabSetVersion: vi.fn(() => 0),
-  // The open run tabs run-dots seeds run state for. Empty keeps the seed inert.
+  // Empty keeps the seed inert.
   openRunRefs: vi.fn(() => []),
   // A run's tab row is renamed once its state arrives (run-dots.ts). Inert here; a Browser-Mode
   // mock is linked as real ESM, so a name any module in the graph reaches has to exist on it.
@@ -128,11 +128,11 @@ vi.mock("./tabs.js", () => ({
   openEditorView: vi.fn(),
   setTabDirty: vi.fn(),
   openGitView: vi.fn(),
-  // The launching chat a run tab nests under, read off the persisted subject. The cases below drive
-  // it directly, because the alternative is a whole tab projection for one string.
+  // The cases below drive it directly, because the alternative is a whole tab projection for one
+  // string.
   parentChatRef: vi.fn(() => m.parentChat.current),
-  // The eviction exemption's own reader, and the affordance's door. `hasTab` answers off a set the
-  // cases drive; `openTab` records so the link's dispatch is observable.
+  // `hasTab` answers off a set the cases drive; `openTab` records so the link's dispatch is
+  // observable.
   hasTab: vi.fn((kind: string, ref: string) => m.tabsOpen.has(`${kind}:${ref}`)),
   openTab: vi.fn((args: { kind: string; ref?: string }) => {
     m.tabbed.push({ kind: args.kind, ...(args.ref === undefined ? {} : { ref: args.ref }) });
@@ -167,7 +167,7 @@ vi.mock("./decision-dock.js", () => ({
   hasPendingDecision: vi.fn(() => false),
   // The card's second input beside `inspect`: which step is blocked on a person, which no node
   // status can say. None is, in every case here.
-  runPendingAsks: vi.fn(() => ({ count: 0, nodes: new Set<string>(), label: "" })),
+  runPendingAsks: vi.fn(() => ({ count: 0, asked: [], label: "" })),
 }));
 
 vi.mock("./actions/runs.js", () => {
@@ -187,6 +187,10 @@ vi.mock("./actions/runs.js", () => {
     retryRun: stub("retry"),
     extendRunRepeat: stub("extend"),
     finishRunRepeat: stub("finish_loop"),
+    // Linked by the run composer and the step's pending-message stack.
+    messageRunStep: stub("message"),
+    removeRunStepSteer: stub("steer_remove"),
+    clearRunStepSteers: stub("steer_clear"),
   };
 });
 
@@ -275,8 +279,6 @@ const CONTROLS_FOR: Record<string, ControlsReply> = {
   aborted: { verbs: ["retry"], parent_chat_id: "" },
 };
 
-/** Open a run through one of the two doors and let its first paint settle. Returns the control
- *  labels on screen, in order. */
 async function paint(
   door: (id: string, name: string) => void,
   status: string,
@@ -285,10 +287,10 @@ async function paint(
     /** Answer the affordance fetch with nothing, which is what a failed fetch and the moment
      *  before the first one resolves both look like to the store. */
     noControls?: boolean;
-    /** The run id to paint. Defaults to `wf_1`; a case that needs a run this client holds
-     *  NOTHING for names its own, because the store's caches live for the module's lifetime and
-     *  there is no reset that a subscribed view survives (forgetting a run drops the very signal
-     *  the view's effect is watching). */
+    /** Defaults to `wf_1`; a case that needs a run this client holds NOTHING for names its own,
+     *  because the store's caches live for the module's lifetime and there is no reset that a
+     *  subscribed view survives (forgetting a run drops the very signal the view's effect is
+     *  watching). */
     id?: string;
     /** Whether the run was launched MANUALLY. */
     parentless?: boolean;
@@ -383,9 +385,9 @@ function logStep(
   }
 }
 
-/** Let a clamp's ResizeObserver deliver its post-layout verdict. A callback is delivered after
- *  layout and before paint, so ONE frame is the settle; the second is margin for the cold-cache
- *  full-suite run, not a second mechanism (measured: every clamp case here passes at one frame). */
+/** A callback is delivered after layout and before paint, so ONE frame is the settle; the second is
+ *  margin for the cold-cache full-suite run, not a second mechanism (measured: every clamp case here
+ *  passes at one frame). */
 async function settleClamp(): Promise<void> {
   for (let i = 0; i < 2; i++) {
     await new Promise<void>((resolve) => {
@@ -618,7 +620,7 @@ function resultStep(
 }
 
 /** A sequence root over the steps, which is the shape KAS sends: `runToExec` unwraps it, so each
- *  step is a top-level node addressed `wf_1/<nodeId>`. */
+ *  step is a top-level node addressed `wf_1:<nodeId>`. */
 function resultPlan(...steps: unknown[]): unknown {
   return { nodeId: "wf_1", type: "sequence", status: "running", children: steps };
 }
@@ -627,7 +629,6 @@ function resultKeys(body: HTMLElement): (string | null)[] {
   return [...body.querySelectorAll(".ev-r-item-key")].map((n) => n.textContent);
 }
 
-/** Click a tree row, which is how a reader changes the region's subject. */
 function selectRow(body: HTMLElement, path: string): void {
   body.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
 }
@@ -647,7 +648,7 @@ describe("run view step results", () => {
     expect(body.querySelector(".ev-r-text")?.textContent).toContain("built it");
     expect(body.querySelector(".ev-r-text")?.textContent).not.toContain("reviewed it");
 
-    selectRow(body, "wf_1/review");
+    selectRow(body, "wf_1:review");
     expect(body.querySelector(".ev-d-title")?.textContent).toBe("review");
     expect(body.querySelector(".ev-r-text")?.textContent).toContain("reviewed it");
     expect(body.querySelector(".ev-r-text")?.textContent).not.toContain("built it");
@@ -1135,7 +1136,7 @@ describe("run view structure", () => {
     expect(names).toEqual(["a", "b"]);
     // Overlapping steps overlap on screen, which is the whole point: `b` starts a third of the way
     // into the window rather than after `a`.
-    const bar = body.querySelector<HTMLElement>('.ev-tl-lane[data-path$="/b"] .ev-tl-bar');
+    const bar = body.querySelector<HTMLElement>('.ev-tl-lane[data-path$=":b"] .ev-tl-bar');
     expect(parseFloat(bar?.style.insetInlineStart ?? "0")).toBeGreaterThan(0);
     expect(parseFloat(bar?.style.insetInlineStart ?? "100")).toBeLessThan(50);
   });
@@ -1160,9 +1161,9 @@ describe("run view structure", () => {
     expect(top.map((r) => r.classList.contains("ev-group"))).toEqual([true, false]);
   });
 
-  // A direct child of a group needs no marker — the box says whose it is. A sub-sub-item gets the
-  // `↳` glyph plus one step of indent.
-  it("marks a sub-sub-item with the nesting glyph and not a direct child", async () => {
+  // One indent step per level, so a child's dot sits under its parent's; every child row carries
+  // the guide lines (31-exec-view.css) instead of a nesting glyph.
+  it("indents one step per level and marks every child row for guides", async () => {
     const { body } = await paint(openRunView, "running", {
       root: {
         nodeId: "wf_1",
@@ -1185,22 +1186,16 @@ describe("run view structure", () => {
         ],
       },
     });
-    const nestVisible = (id: string): boolean => {
-      const row = body.querySelector<HTMLElement>(`.ev-row[data-path$="/${id}"]`);
-      return row?.querySelector<HTMLElement>(":scope > .ev-row-main > .ev-nest")?.hidden === false;
-    };
-    // depth 0 (the group), depth 1 (its direct child), depth 2 (the sub-sub-item).
-    expect([nestVisible("outer"), nestVisible("inner"), nestVisible("coder")]).toEqual([
-      false,
-      false,
-      true,
+    const row = (id: string): HTMLElement | null =>
+      body.querySelector<HTMLElement>(`.ev-row[data-path$=":${id}"]`);
+    const depthOf = (id: string): string => row(id)?.style.getPropertyValue("--ev-depth") ?? "";
+    expect([depthOf("outer"), depthOf("inner"), depthOf("coder")]).toEqual(["0", "1", "2"]);
+    expect(["outer", "inner", "coder"].map((id) => row(id)?.dataset["guides"])).toEqual([
+      undefined,
+      "through-dot",
+      "",
     ]);
-    // Depth 0 and 1 both indent by zero; only depth 2 steps in.
-    const depthOf = (id: string): string =>
-      body
-        .querySelector<HTMLElement>(`.ev-row[data-path$="/${id}"]`)
-        ?.style.getPropertyValue("--ev-depth") ?? "";
-    expect([depthOf("outer"), depthOf("inner"), depthOf("coder")]).toEqual(["0", "0", "1"]);
+    expect(body.querySelector(".ev-nest")).toBeNull();
   });
 
   // STEPS MUST NOT BECOME COLLAPSIBLE. A childless row has no disclosure at all, and the grouping
@@ -1245,7 +1240,7 @@ describe("run view structure", () => {
   it("gives the top-level box a fold and a container inside it none", async () => {
     const { body } = await paint(openRunView, "running", { root: nested });
     const row = (id: string): HTMLElement =>
-      body.querySelector<HTMLElement>(`.ev-row[data-path$="/${id}"]`)!;
+      body.querySelector<HTMLElement>(`.ev-row[data-path$=":${id}"]`)!;
     const twistHidden = (id: string) =>
       row(id).querySelector<HTMLElement>(":scope > .ev-row-main > .ev-twist")?.hidden;
 
@@ -1263,10 +1258,10 @@ describe("run view structure", () => {
 
   it("still folds the box on its own twist, and the loop stays open under it", async () => {
     const { body } = await paint(openRunView, "running", { root: nested });
-    const box = body.querySelector<HTMLElement>('.ev-row[data-path$="/outer"]')!;
+    const box = body.querySelector<HTMLElement>('.ev-row[data-path$=":outer"]')!;
     const kidsOf = (row: HTMLElement): HTMLElement =>
       row.querySelector<HTMLElement>(":scope > .ev-kids")!;
-    const inner = body.querySelector<HTMLElement>('.ev-row[data-path$="/inner"]')!;
+    const inner = body.querySelector<HTMLElement>('.ev-row[data-path$=":inner"]')!;
 
     box.querySelector<HTMLElement>(":scope > .ev-row-main > .ev-twist")!.click();
     expect(kidsOf(box).hidden).toBe(true);
@@ -1326,55 +1321,55 @@ describe("run view door focus", () => {
   it("selects the node the door named, not the one the page would follow", async () => {
     // The auto-follow would pick `build` (it is running), so the door has to name the OTHER step
     // for this to say anything.
-    const { body } = await paint(rowDoor("wf_1/lint"), "running", {
+    const { body } = await paint(rowDoor("wf_1:lint"), "running", {
       root: plan(["build", "running"], ["lint", "pending"]),
     });
-    expect(selectedPath(body)).toBe("wf_1/lint");
+    expect(selectedPath(body)).toBe("wf_1:lint");
     expect(body.querySelector(".ev-d-title")?.textContent).toBe("lint");
   });
 
   it("re-selects the same node after the reader has moved off it", async () => {
     const two = plan(["build", "running"], ["lint", "pending"]);
-    const { body } = await paint(rowDoor("wf_1/build"), "running", { root: two });
-    expect(selectedPath(body)).toBe("wf_1/build");
+    const { body } = await paint(rowDoor("wf_1:build"), "running", { root: two });
+    expect(selectedPath(body)).toBe("wf_1:build");
 
     // The reader moves in the tree, and a frame lands meanwhile — which is the render that carries
     // no focus.
-    body.querySelector<HTMLElement>('.ev-row[data-path="wf_1/lint"] > .ev-row-main')?.click();
-    expect(selectedPath(body)).toBe("wf_1/lint");
+    body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:lint"] > .ev-row-main')?.click();
+    expect(selectedPath(body)).toBe("wf_1:lint");
     await invalidated(two);
-    expect(selectedPath(body)).toBe("wf_1/lint");
+    expect(selectedPath(body)).toBe("wf_1:lint");
 
     // The same row again. Without the watermark reset this stays on `lint`.
-    openRunView("wf_1", "nightly", "", "wf_1/build");
+    openRunView("wf_1", "nightly", "", "wf_1:build");
     await invalidated(two);
-    expect(selectedPath(body)).toBe("wf_1/build");
+    expect(selectedPath(body)).toBe("wf_1:build");
   });
 
   it("focuses the node a `#node=` URL named, decoded by the router", async () => {
     // The COLD-DEEP-LINK chain, end to end minus one line: parseRoute reads the fragment,
-    // openRunView records it, ExecRun.focus spends it. The node path carries a `/`, which is why
-    // the route spells it as a fragment rather than a path segment.
-    const r = parseRoute("/run/wf_1", "#node=wf_1%2Flint");
+    // openRunView records it, ExecRun.focus spends it. A node path key may carry a `/` from a node
+    // id, which is why the route spells it as a fragment rather than a path segment.
+    const r = parseRoute("/run/wf_1", "#node=wf_1%3Alint");
     const node = r.kind === "run" ? (r.node ?? "") : "";
     // The auto-follow would pick the running `build`, so a lost fragment shows up as that step
     // being selected instead.
     const { body } = await paint((id, name) => openRunView(id, name, "", node), "running", {
       root: plan(["build", "running"], ["lint", "pending"]),
     });
-    expect(selectedPath(body)).toBe("wf_1/lint");
+    expect(selectedPath(body)).toBe("wf_1:lint");
   });
 
   it("holds a pick the plan does not describe yet rather than losing it", async () => {
     // The click-beats-fetch race: the row was clicked before `inspect` answered, so the first paint
     // has no such node and the request must survive to the next one.
-    const { body } = await paint(rowDoor("wf_1/lint"), "running", {
+    const { body } = await paint(rowDoor("wf_1:lint"), "running", {
       root: plan(["build", "running"], ["publish", "pending"]),
     });
-    expect(selectedPath(body)).toBe("wf_1/build");
+    expect(selectedPath(body)).toBe("wf_1:build");
 
     await invalidated(plan(["build", "running"], ["publish", "pending"], ["lint", "pending"]));
-    expect(selectedPath(body)).toBe("wf_1/lint");
+    expect(selectedPath(body)).toBe("wf_1:lint");
   });
 });
 
@@ -1417,7 +1412,7 @@ describe("run view empty step notes", () => {
   // false for a chat-parented one.
   it("says a gone transcript is no longer stored, on either route", async () => {
     for (const parentless of [true, false]) {
-      m.reads.set("wf_1/coder", { state: "gone" });
+      m.reads.set("wf_1:coder", { state: "gone" });
       const text = await note("completed", { parentless, root: settled("completed") });
       expect(text).toContain("no longer stored");
       expect(text).toContain("captureOutput");
@@ -1428,7 +1423,7 @@ describe("run view empty step notes", () => {
   // `unavailable` is the transient verdict, and it must not read as `gone`: the read could not be
   // COMPLETED, so it is worth asking again, where a gone transcript never will be.
   it("says an unavailable transcript could not be read, not that it is gone", async () => {
-    m.reads.set("wf_1/coder", { state: "unavailable" });
+    m.reads.set("wf_1:coder", { state: "unavailable" });
     const text = await note("completed", { root: settled("completed") });
     expect(text).toContain("could not be read");
     expect(text).not.toContain("no longer stored");
@@ -1438,7 +1433,7 @@ describe("run view empty step notes", () => {
   // A `ready` read reaches the NOTE only with the slice empty and the read holding no blocks, which
   // is its own fact rather than a failure: the step ran and wrote nothing.
   it("says a ready read with no blocks means the step wrote nothing", async () => {
-    m.reads.set("wf_1/coder", { state: "ready" });
+    m.reads.set("wf_1:coder", { state: "ready" });
     const text = await note("completed", { root: settled("completed") });
     expect(text).toContain("without producing a transcript");
     expect(text).not.toContain("captureOutput");
@@ -1448,7 +1443,7 @@ describe("run view empty step notes", () => {
   // While the read is in flight the pane says so rather than showing one of the settled answers,
   // which would be a verdict nothing has reached yet.
   it("says the transcript is loading while the read is in flight", async () => {
-    m.reads.set("wf_1/coder", { state: "loading" });
+    m.reads.set("wf_1:coder", { state: "loading" });
     expect(await note("completed", { root: settled("completed") })).toContain("Loading this step");
   });
 
@@ -1465,7 +1460,7 @@ describe("run view empty step notes", () => {
   // The FOURTH arm, and the only one that is not the endpoint's own verdict: a 4xx means the server
   // refused the ADDRESS itself.
   it("says an unaddressable transcript is not named by the plan, not that it failed", async () => {
-    m.reads.set("wf_1/coder", { state: "unaddressable" });
+    m.reads.set("wf_1:coder", { state: "unaddressable" });
     const text = await note("completed", { root: settled("completed") });
     expect(text).toContain("the run's plan does not name it");
     expect(text).not.toContain("could not be read");
@@ -1549,15 +1544,15 @@ describe("run view step transcripts", () => {
   }
 
   it("renders a step's own entries in its own body", async () => {
-    logStep("wf_1", "wf_1/build", "compiling");
+    logStep("wf_1", "wf_1:build", "compiling");
     const { body } = await paint(openRunView, "running", { root: steps("build", "verify") });
-    await painted("wf_1/build");
+    await painted("wf_1:build");
 
-    const host = body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/build"]');
+    const host = body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1:build"]');
     expect(host?.childElementCount).toBeGreaterThan(0);
     // One turn, two body entries (the text and the close). The `turn_open` is the turn's identity
     // rather than a row, which is why it is not among them.
-    expect(host?.querySelector(".step-marker")?.textContent).toBe("wf_1/build:1:2");
+    expect(host?.querySelector(".step-marker")?.textContent).toBe("wf_1:build:1:2");
     // The host has content, so no empty-note copy may claim anything about it.
     expect(body.querySelector<HTMLElement>(".ev-d-empty")?.hidden).toBe(true);
   });
@@ -1565,34 +1560,34 @@ describe("run view step transcripts", () => {
   // The no-orphan-host rule: a step the log holds no turn for gets no host minted for it, or the
   // pane would carry an empty region per unstarted step.
   it("mints a host only for a step the log holds a turn for", async () => {
-    logStep("wf_1", "wf_1/lint", "linting");
+    logStep("wf_1", "wf_1:lint", "linting");
     const { body } = await paint(openRunView, "running", { root: steps("lint", "unstarted") });
-    await painted("wf_1/lint");
+    await painted("wf_1:lint");
 
-    expect(m.paint.has("wf_1/lint")).toBe(true);
-    expect(m.paint.has("wf_1/unstarted")).toBe(false);
-    expect(body.querySelector('.ev-d-body[data-path="wf_1/unstarted"]')).toBeNull();
+    expect(m.paint.has("wf_1:lint")).toBe(true);
+    expect(m.paint.has("wf_1:unstarted")).toBe(false);
+    expect(body.querySelector('.ev-d-body[data-path="wf_1:unstarted"]')).toBeNull();
   });
 
   // A turn whose path names no node of THIS plan is dropped, so no orphan host is minted for it.
   // Two runs of one recipe share every path, so a log carrying a path this plan does not have is
   // the ordinary case rather than an edge.
   it("drops a turn whose node path this plan does not name", async () => {
-    logStep("wf_1", "wf_1/mine", "mine");
-    logStep("wf_1", "wf_1/absent", "not in this plan");
+    logStep("wf_1", "wf_1:mine", "mine");
+    logStep("wf_1", "wf_1:absent", "not in this plan");
     const { body } = await paint(openRunView, "running", { root: steps("mine", "other") });
-    await painted("wf_1/mine");
+    await painted("wf_1:mine");
 
-    expect(m.paint.has("wf_1/mine")).toBe(true);
-    expect(m.paint.has("wf_1/absent")).toBe(false);
-    expect(body.querySelector('.ev-d-body[data-path="wf_1/absent"]')).toBeNull();
+    expect(m.paint.has("wf_1:mine")).toBe(true);
+    expect(m.paint.has("wf_1:absent")).toBe(false);
+    expect(body.querySelector('.ev-d-body[data-path="wf_1:absent"]')).toBeNull();
   });
 
   // A CONTAINER hosts nothing (`transcript !== true`), so it is out by construction rather than by
   // a filter — and a host minted for one would be a region the pane can never fill.
   it("mints no host for a container", async () => {
-    logStep("wf_1", "wf_1/loop", "container work");
-    logStep("wf_1", "wf_1/loop/inner", "leaf work");
+    logStep("wf_1", "wf_1:loop", "container work");
+    logStep("wf_1", "wf_1:loop:inner", "leaf work");
     const { body } = await paint(openRunView, "completed", {
       root: {
         nodeId: "wf_1",
@@ -1608,61 +1603,61 @@ describe("run view step transcripts", () => {
         ],
       },
     });
-    await painted("wf_1/loop/inner");
+    await painted("wf_1:loop:inner");
 
-    expect(m.paint.has("wf_1/loop/inner")).toBe(true);
-    expect(m.paint.has("wf_1/loop")).toBe(false);
-    expect(body.querySelector('.ev-d-body[data-path="wf_1/loop"]')).toBeNull();
+    expect(m.paint.has("wf_1:loop:inner")).toBe(true);
+    expect(m.paint.has("wf_1:loop")).toBe(false);
+    expect(body.querySelector('.ev-d-body[data-path="wf_1:loop"]')).toBeNull();
   });
 
   // SEVERAL turns at one path is the normal answer for a healed step rather than an edge case: a
   // resume after a restart re-opens the same path as a NEW turn, so the log carries one closed turn
   // per attempt and the pane renders every one.
   it("paints every attempt of a healed step, not just the newest", async () => {
-    logStep("wf_1", "wf_1/heal", "first attempt", { attempt: 1 });
-    logStep("wf_1", "wf_1/heal", "second attempt", { attempt: 2 });
+    logStep("wf_1", "wf_1:heal", "first attempt", { attempt: 1 });
+    logStep("wf_1", "wf_1:heal", "second attempt", { attempt: 2 });
     const { body } = await paint(openRunView, "running", { root: steps("heal", "after") });
-    await painted("wf_1/heal");
+    await painted("wf_1:heal");
 
-    expect(m.paint.get("wf_1/heal")?.turns).toBe(2);
+    expect(m.paint.get("wf_1:heal")?.turns).toBe(2);
     expect(
-      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/heal"] .step-marker')
+      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1:heal"] .step-marker')
         ?.textContent,
-    ).toBe("wf_1/heal:2:4");
+    ).toBe("wf_1:heal:2:4");
   });
 
   // `live` is each turn's OWN `turn_close` absence and never the run's status, so one node's caret
   // says nothing about its siblings': a `parallel` node holds several open turns in one log, and a
   // settled step inside a running run is settled.
   it("marks a turn live from its own close, not from the run's status", async () => {
-    logStep("wf_1", "wf_1/open", "still going", { live: true });
+    logStep("wf_1", "wf_1:open", "still going", { live: true });
     await paint(openRunView, "running", { root: steps("open", "after") });
-    await painted("wf_1/open");
-    expect(m.paint.get("wf_1/open")?.live).toEqual([true]);
+    await painted("wf_1:open");
+    expect(m.paint.get("wf_1:open")?.live).toEqual([true]);
 
     // The SAME running run, with a step whose own turn is closed: `live` follows the turn's
     // `turn_close` and not the run's status, which is what makes a settled step inside a running
     // run render settled.
     m.paint.clear();
     m.projected.length = 0;
-    logStep("wf_1", "wf_1/closed", "finished");
+    logStep("wf_1", "wf_1:closed", "finished");
     await paint(openRunView, "running", { root: steps("closed", "after") });
-    await painted("wf_1/closed");
-    expect(m.paint.get("wf_1/closed")?.live).toEqual([false]);
+    await painted("wf_1:closed");
+    expect(m.paint.get("wf_1:closed")?.live).toEqual([false]);
   });
 
   // A step's prose GROWS after the first paint, and the pane has to follow it or the transcript is
   // only correct for entries that arrived before the tab was opened. The run log's own version
   // signal is what `installViewEffect` reads, so an append is the whole trigger.
   it("re-projects a step when an entry lands in its turn", async () => {
-    logStep("wf_1", "wf_1/grow", "compiling", { live: true });
+    logStep("wf_1", "wf_1:grow", "compiling", { live: true });
     const { body } = await paint(openRunView, "running", { root: steps("grow", "after") });
-    await painted("wf_1/grow");
+    await painted("wf_1:grow");
     const first = m.projected.length;
 
     appendRunEntry("wf_1", {
-      id: "t-wf_1-wf_1/grow-1-2",
-      turn: "t-wf_1-wf_1/grow-1",
+      id: "t-wf_1-wf_1:grow-1-2",
+      turn: "t-wf_1-wf_1:grow-1",
       lane: "",
       kind: "text",
       payload: { text: "linking" },
@@ -1673,13 +1668,13 @@ describe("run view step transcripts", () => {
 
     expect(m.projected.length).toBeGreaterThan(first);
     expect(
-      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/grow"] .step-marker')
+      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1:grow"] .step-marker')
         ?.textContent,
-    ).toBe("wf_1/grow:1:2");
+    ).toBe("wf_1:grow:1:2");
   });
 });
 
-// THE STEP READ: `GET /api/runs/{id}/steps/{path...}`, the fallback for a step whose turn the run's
+// THE STEP READ: `GET /api/runs/{id}/steps/{path}`, the fallback for a step whose turn the run's
 // log does not hold — a step that opened and closed entirely inside a connection gap, or a client
 // that missed its close.
 
@@ -1711,7 +1706,7 @@ describe("run view step reads", () => {
   // turn for is exactly what the read exists for.
   it("arms a read for a settled step with no turn in the log", async () => {
     await paint(openRunView, "completed", { root: oneStep("completed") });
-    expect(m.requested).toEqual(["wf_1/coder"]);
+    expect(m.requested).toEqual(["wf_1:coder"]);
     expect(m.reread).toEqual([]);
   });
 
@@ -1744,7 +1739,7 @@ describe("run view step reads", () => {
 
     // The reader's own gesture. A row is an ordinary `treeitem` whose click selects it
     // (`exec-view/tree.ts`), so this is the real pin rather than a reach into state.
-    body.querySelector<HTMLElement>('.ev-row[data-path="wf_1/coder"] > .ev-row-main')?.click();
+    body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:coder"] > .ev-row-main')?.click();
     await Promise.resolve();
     expect(m.requested).toEqual([]);
 
@@ -1763,14 +1758,14 @@ describe("run view step reads", () => {
     expect(body.querySelector<HTMLElement>(".ev-d-title")?.textContent).toBe("coder");
     // EXACTLY one, which is the other half: arming per repaint would re-ask on every frame of a
     // live run, and `unavailable` is a verdict a repeat ask retries.
-    expect(m.requested).toEqual(["wf_1/coder"]);
+    expect(m.requested).toEqual(["wf_1:coder"]);
   });
 
   // GATE 3, and the one that makes the log the SOURCE rather than a preference: the turn is already
   // held and settled, so asking would fetch a second copy of what is on screen. Neither verb fires
   // — not the request, and not the re-read either.
   it("arms nothing when the log already holds the step's settled turn", async () => {
-    logStep("wf_1", "wf_1/held", "compiled");
+    logStep("wf_1", "wf_1:held", "compiled");
     await paint(openRunView, "completed", { root: oneNamedStep("held", "completed") });
     expect(m.requested).toEqual([]);
     expect(m.reread).toEqual([]);
@@ -1779,9 +1774,9 @@ describe("run view step reads", () => {
   // THE SECOND ARM: a turn the log holds with NO `turn_close` while `inspect` reports the node
   // settled is a client that missed the close, and it would otherwise read live for the tab's life.
   it("re-reads a settled step whose turn is missing its close", async () => {
-    logStep("wf_1", "wf_1/reopen", "no close arrived", { live: true });
+    logStep("wf_1", "wf_1:reopen", "no close arrived", { live: true });
     await paint(openRunView, "completed", { root: oneNamedStep("reopen", "completed") });
-    expect(m.reread).toEqual(["wf_1/reopen"]);
+    expect(m.reread).toEqual(["wf_1:reopen"]);
     expect(m.requested).toEqual([]);
   });
 
@@ -1805,9 +1800,9 @@ describe("run view step reads", () => {
     });
     m.requested.length = 0;
 
-    // The root sequence is the run's own header rather than a row, so `wf_1/loop` is the container
+    // The root sequence is the run's own header rather than a row, so `wf_1:loop` is the container
     // on screen.
-    const head = body.querySelector<HTMLElement>('.ev-row[data-path="wf_1/loop"] > .ev-row-main');
+    const head = body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:loop"] > .ev-row-main');
     expect(head).not.toBeNull();
     head?.click();
     await Promise.resolve();
@@ -1823,7 +1818,7 @@ describe("run view step reads", () => {
       "Loading this step",
     );
 
-    m.reads.set("wf_1/coder", { state: "ready" });
+    m.reads.set("wf_1:coder", { state: "ready" });
     stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
     for (let i = 0; i < 20; i++) {
       await Promise.resolve();
@@ -2033,22 +2028,8 @@ describe("the page's scroll position", () => {
   }
 
   beforeEach(() => {
-    document.body.replaceChildren();
-    const view = document.createElement("div");
-    view.id = "run-view";
-    view.style.cssText = "display:flex;flex-direction:column;height:300px;width:900px";
-    const content = document.createElement("div");
-    content.className = "page-content";
-    content.style.cssText = "flex:1 1 0;min-height:0;overflow-y:auto";
-    const body = document.createElement("div");
-    body.id = "run-body";
-    content.appendChild(body);
-    view.appendChild(content);
-    const dock = document.createElement("div");
-    dock.id = "run-dock";
-    document.body.append(view, dock);
     const replies = new Map(
-      ["wf_scroll_a", "wf_scroll_b"].map((id) => [
+      ["wf_scroll_a", "wf_scroll_b", "wf_shrink_a", "wf_shrink_b"].map((id) => [
         `/api/runs/${id}`,
         { workflowId: id, state: { workflowId: id, status: "completed", root: steps(id) } },
       ]),
@@ -2063,22 +2044,127 @@ describe("the page's scroll position", () => {
     });
   });
 
-  afterEach(() => {
+  // ONCE for the block: the module binds its follower to the first page it finds, as the app's one
+  // page, so a page rebuilt per case would leave every later case scrolling a detached box.
+  beforeAll(() => {
+    document.body.replaceChildren();
+    const view = document.createElement("div");
+    view.id = "run-view";
+    view.style.cssText = "display:flex;flex-direction:column;height:300px;width:900px";
+    const content = document.createElement("div");
+    content.className = "page-content";
+    content.style.cssText = "flex:1 1 0;min-height:0;overflow-y:auto";
+    const body = document.createElement("div");
+    body.id = "run-body";
+    content.appendChild(body);
+    view.appendChild(content);
+    const resume = document.createElement("button");
+    resume.id = "run-scroll-bottom";
+    resume.className = "hidden";
+    // Out of flow, as the app's stylesheet places it, so its own show and hide resize nothing.
+    resume.style.position = "absolute";
+    resume.appendChild(document.createElement("span"));
+    content.appendChild(resume);
+    const dock = document.createElement("div");
+    dock.id = "run-dock";
+    document.body.append(view, dock);
+  });
+
+  afterAll(() => {
     document.body.replaceChildren();
   });
 
-  it("is per run: A, then B, then A lands each where it was left", async () => {
+  /** The reader's own scroll: the wheel says whose it is, then the position it reaches. */
+  function readerScrollTo(top: number): void {
+    scroller().dispatchEvent(
+      new WheelEvent("wheel", { deltaY: top < scroller().scrollTop ? -1 : 1 }),
+    );
+    scroller().scrollTop = top;
+  }
+
+  function bottom(): number {
+    return scroller().scrollHeight - scroller().clientHeight;
+  }
+
+  // Autoscroll like the chat: a run opens at its live edge, and a reader who scrolled up is put back
+  // where they were.
+  it("opens each run at its live edge and lands a reader where they left it", async () => {
     await activate("wf_scroll_a");
+    await frames();
     expect(scroller().scrollHeight).toBeGreaterThan(scroller().clientHeight + 800);
-    scroller().scrollTop = 700;
+    expect(scroller().scrollTop).toBe(bottom());
+    readerScrollTo(300);
     await frames();
     await activate("wf_scroll_b");
-    expect(scroller().scrollTop).toBe(0);
-    scroller().scrollTop = 300;
     await frames();
+    expect(scroller().scrollTop).toBe(bottom());
     await activate("wf_scroll_a");
-    expect(scroller().scrollTop).toBe(700);
-    await activate("wf_scroll_b");
+    await frames();
     expect(scroller().scrollTop).toBe(300);
+    expect(document.getElementById("run-scroll-bottom")?.classList.contains("hidden")).toBe(false);
+    await activate("wf_scroll_b");
+    await frames();
+    expect(scroller().scrollTop).toBe(bottom());
+  });
+
+  // A shrink that brings the end to the reader returns them to Following with no scroll event, so
+  // the state a run parks with has to come from the follower, not from the last scroll.
+  it("keeps a run that shrank back to Following across a run switch", async () => {
+    await activate("wf_shrink_a");
+    await frames();
+    const body = document.getElementById("run-body");
+    if (body === null) {
+      throw new Error("no #run-body");
+    }
+    const spacer = document.createElement("div");
+    spacer.style.height = "250px";
+    body.appendChild(spacer);
+    await new Promise((r) => setTimeout(r, 800));
+    await frames();
+    // Inside the live-edge band once the spacer goes, outside it while the spacer stands.
+    const parkedAt = bottom() - 300;
+    readerScrollTo(parkedAt);
+    await frames();
+    const resume = document.getElementById("run-scroll-bottom");
+    expect(resume?.classList.contains("hidden")).toBe(false);
+    // Past the reader's own control window, so the layout may release them.
+    await new Promise((r) => setTimeout(r, 350));
+    let scrolls = 0;
+    const count = (): void => {
+      scrolls++;
+    };
+    scroller().addEventListener("scroll", count);
+    spacer.remove();
+    await frames();
+    await frames();
+    scroller().removeEventListener("scroll", count);
+    // The premise: Following again, reached without moving or scrolling the box.
+    expect([scroller().scrollTop, scrolls, resume?.classList.contains("hidden")]).toEqual([
+      parkedAt,
+      0,
+      true,
+    ]);
+
+    await activate("wf_shrink_b");
+    await frames();
+    // Every state the control passes through, since a stale Reading shows it before a later
+    // mutation can release it again.
+    const shown: boolean[] = [];
+    const watch = new MutationObserver(() => {
+      shown.push(resume?.classList.contains("hidden") === false);
+    });
+    if (resume !== null) {
+      watch.observe(resume, { attributes: true, attributeFilter: ["class"] });
+    }
+    await activate("wf_shrink_a");
+    await frames();
+    watch.disconnect();
+    expect(shown).not.toContain(true);
+    // Following: new output carries the view to the end.
+    const more = document.createElement("div");
+    more.style.height = "400px";
+    body.appendChild(more);
+    await frames();
+    expect(scroller().scrollTop).toBe(bottom());
   });
 });

@@ -8,7 +8,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// agentRewrite writes out.txt at perm, rewrites it through fs/write_text_file and returns the resulting mode.
 func agentRewrite(t *testing.T, perm os.FileMode) os.FileMode {
 	t.Helper()
 	work := t.TempDir()
@@ -26,7 +25,7 @@ func agentRewrite(t *testing.T, perm os.FileMode) os.FileMode {
 		Method: marotte.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "out.txt", "content": "new"}),
 	}
-	h.inbound.respondFSWrite(t.Context(), "c1", msg)
+	h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
 	if br.response.err != nil {
 		t.Fatalf("fs/write_text_file over a %#o file: %v", perm, br.response.err)

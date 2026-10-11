@@ -13,30 +13,28 @@ import (
 	_ "golang.org/x/image/webp" // registers the WebP decoder for image.Decode
 )
 
-// MaxImageEdgePx is the long edge an inlined image is fitted to. The backend
+// maxImageEdgePx is the long edge an inlined image is fitted to. The backend
 // refuses a request carrying more than about 20 images when any one is over
 // 2000px, and tool-returned images persist into the replayed history uncounted
-// by MaxHistoryInlineImages, so that rule can bind on any chat.
-const MaxImageEdgePx = 2000
+// by maxHistoryInlineImages, so that rule can bind on any chat.
+const maxImageEdgePx = 2000
 
-// MinImageEdgePx is the smallest long edge the shrink loop will produce before
+// minImageEdgePx is the smallest long edge the shrink loop will produce before
 // it gives up and the image goes as a path reference.
-const MinImageEdgePx = 256
+const minImageEdgePx = 256
 
-// MaxImageSourcePixels bounds what is fully decoded: past it the image goes as a
+// maxImageSourcePixels bounds what is fully decoded: past it the image goes as a
 // path reference, read off the header alone, so a crafted file cannot claim
 // gigabytes of decode memory.
-const MaxImageSourcePixels = 64_000_000
+const maxImageSourcePixels = 64_000_000
 
-// jpegQuality is the re-encode quality for a JPEG source.
 const jpegQuality = 85
 
 // shrinkStep is the factor the long edge drops by each time an encoding is still
 // over the encoded cap.
 const shrinkStep = 0.75
 
-// imageFormatMIME names the MIME type for each format image.Decode can answer
-// here; a format outside it is one the model is not sent.
+// A format outside it is one the model is not sent.
 var imageFormatMIME = map[string]string{
 	"png":  mimePNG,
 	"jpeg": mimeJPEG,
@@ -65,8 +63,8 @@ func fitImage(data []byte, maxEdge, maxEncoded int) (out []byte, outMime, reason
 	if !ok {
 		return nil, "", "its format (" + format + ") is not one the model accepts"
 	}
-	if int64(cfg.Width)*int64(cfg.Height) > MaxImageSourcePixels {
-		return nil, "", "it is larger than " + strconv.Itoa(MaxImageSourcePixels/1_000_000) + " megapixels"
+	if int64(cfg.Width)*int64(cfg.Height) > maxImageSourcePixels {
+		return nil, "", "it is larger than " + strconv.Itoa(maxImageSourcePixels/1_000_000) + " megapixels"
 	}
 	long := max(cfg.Width, cfg.Height)
 	if long <= maxEdge && base64.StdEncoding.EncodedLen(len(data)) <= maxEncoded {
@@ -81,10 +79,10 @@ func fitImage(data []byte, maxEdge, maxEncoded int) (out []byte, outMime, reason
 
 // shrinkToFit encodes img with its long edge at edge, stepping the edge down by
 // shrinkStep until the encoding fits maxEncoded or would drop under
-// MinImageEdgePx. A JPEG source stays JPEG; everything else becomes PNG, since
+// minImageEdgePx. A JPEG source stays JPEG; everything else becomes PNG, since
 // the standard library has no WebP encoder and keeps only a GIF's first frame.
 func shrinkToFit(img image.Image, asJPEG bool, edge, maxEncoded int) (out []byte, outMime, reason string) {
-	for edge >= MinImageEdgePx {
+	for edge >= minImageEdgePx {
 		scaled := scaleToEdge(img, edge, !asJPEG)
 		var buf bytes.Buffer
 		var err error
@@ -104,7 +102,7 @@ func shrinkToFit(img image.Image, asJPEG bool, edge, maxEncoded int) (out []byte
 		}
 		edge = int(float64(edge) * shrinkStep)
 	}
-	return nil, "", "it stays over the inline size limit even at " + strconv.Itoa(MinImageEdgePx) + "px"
+	return nil, "", "it stays over the inline size limit even at " + strconv.Itoa(minImageEdgePx) + "px"
 }
 
 // scaleToEdge resamples img so its long edge is edge, keeping the aspect ratio.

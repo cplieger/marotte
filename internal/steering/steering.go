@@ -128,9 +128,8 @@ func (g *Generator) Generate(ctx context.Context) {
 	slog.Info("steering: wrote", "path", steeringFile, "bytes", len(content))
 }
 
-// render produces the whole document for the given snapshots. hasMCP and
-// hasForges say whether a snapshot callback was wired at all, which is what
-// decides whether the MCP and forge sections appear.
+// hasMCP and hasForges say whether a snapshot callback was wired at all, which decides whether the
+// MCP and forge sections appear.
 func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, forges ForgeSnapshot, hasForges bool) []byte {
 	var b strings.Builder
 	writeIntro(&b, g.workDir)
@@ -155,7 +154,6 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 	return []byte(b.String())
 }
 
-// chatSteeringName is the client steering document's name on the session door.
 const chatSteeringName = "marotte"
 
 // ChatDocs renders the chat-only steering a chat bridge sends on the session door, writing
@@ -175,7 +173,6 @@ func (g *Generator) ChatDocs(context.Context) []marotte.ClientSteeringDoc {
 	}}
 }
 
-// renderChat produces the chat-only document.
 func (g *Generator) renderChat(forges ForgeSnapshot) string {
 	var b strings.Builder
 	b.WriteString("# Marotte chat\n\n")
@@ -189,11 +186,10 @@ func (g *Generator) renderChat(forges ForgeSnapshot) string {
 	return b.String()
 }
 
-// readCappedFile reads at most limit bytes from path, for untrusted workspace input; errors
-// are log-and-omit. It opens with atomicfile.OpenRegular: a FIFO would hang Generate, which
-// runs synchronously before every bridge spawn, and a symlinked README would copy whatever it
-// names (an MCP credential, measured) into authoritative agent context. Truncation is kept:
-// only the head matters.
+// Errors are log-and-omit. It opens with atomicfile.OpenRegular: a FIFO would hang Generate, which
+// runs synchronously before every bridge spawn, and a symlinked README would copy whatever it names
+// (an MCP credential, measured) into authoritative agent context. Truncation is kept: only the head
+// matters.
 func readCappedFile(path string, limit int64) ([]byte, error) {
 	f, _, err := atomicfile.OpenRegular(path)
 	if err != nil {
@@ -204,7 +200,7 @@ func readCappedFile(path string, limit int64) ([]byte, error) {
 }
 
 // CustomPath returns the path to the custom.md steering file in the kiro home directory.
-func (g *Generator) CustomPath() string {
+func (*Generator) CustomPath() string {
 	return workspace.KiroSteeringPath("custom.md")
 }
 
@@ -251,8 +247,6 @@ func writeTools(b *strings.Builder, data []byte) {
 	b.WriteString("\n")
 }
 
-// writeMCP emits the "Connected integrations" section listing every
-// currently-connected MCP server.
 func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 	if len(snap.Servers) == 0 {
 		return
@@ -272,9 +266,8 @@ func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 	b.WriteString("\n")
 }
 
-// writeForges renders the connected forge providers. Git over HTTPS through marotte's own
-// credential helper is the one authenticated path, so the section offers no forge CLI and
-// must never claim no auth is needed.
+// Git over HTTPS through marotte's own credential helper is the one authenticated path, so the
+// section offers no forge CLI and must never claim no auth is needed.
 func writeForges(w io.Writer, snap ForgeSnapshot) {
 	if len(snap.Providers) == 0 {
 		return

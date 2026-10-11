@@ -13,10 +13,15 @@ import (
 
 // cappedStoreWithTurn is a store under capBytes holding one open turn, with the
 // store's slog captured. Serial: the capture swaps the process-global default.
+// withChatFileCap overrides the derived per-chat-file cap; n <= 0 is unlimited.
+func withChatFileCap(n int64) StoreOption {
+	return func(s *Store) { s.fileCap = chatFileCap(n) }
+}
+
 func cappedStoreWithTurn(t *testing.T, capBytes int64) (*Store, string, func() string) {
 	t.Helper()
 	logged := captureStoreSlog(t)
-	s, err := NewStore(t.TempDir(), WithChatFileCap(capBytes))
+	s, err := NewStore(t.TempDir(), withChatFileCap(capBytes))
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}

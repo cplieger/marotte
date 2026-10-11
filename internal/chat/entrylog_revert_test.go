@@ -14,7 +14,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// revertRecord appends one turn_revert into carrier naming the window from..through, with the store's id shape.
 func revertRecord(f *logFixture, carrier, from, through string, fromN uint64) {
 	f.t.Helper()
 	f.append(carrier, "", from+":revert", marotte.EntryKindTurnRevert, marotte.EntryTurnRevert{
@@ -22,7 +21,6 @@ func revertRecord(f *logFixture, carrier, from, through string, fromN uint64) {
 	})
 }
 
-// railIDs returns the rail index's turns, the surviving view.
 func railIDs(l *EntryLog) []string {
 	rows := l.RailRows()
 	ids := make([]string, 0, len(rows))
@@ -75,17 +73,17 @@ func TestRevert_SkipRuleTakesTheWindowAndSparesTheCarrier(t *testing.T) {
 		if got, want := turnsIn(mustAll(f.t, f.log)), []string{a, b}; strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Errorf("%s: All() holds turns %v, want %v", when, got, want)
 		}
-		count, _ := f.log.Counters()
+		count, _ := counters(f.log)
 		if want := f.log.turns[b].n; count != want {
 			t.Errorf("%s: turn_count is %d, want the surviving high-water %d", when, count, want)
 		}
-		if _, err := f.log.TurnRange(c, 0); !errors.Is(err, ErrTurnNotInLog) {
+		if _, err := turnRange(f.log, c, 0); !errors.Is(err, ErrTurnNotInLog) {
 			t.Errorf("%s: TurnRange(%q) = %v, want ErrTurnNotInLog", when, c, err)
 		}
-		if _, err := f.log.Window(10, c); err == nil {
+		if _, err := f.log.window(10, c); err == nil {
 			t.Errorf("%s: Window(10, %q) returned no error, want the refusal the route renders as 400", when, c)
 		}
-		w, err := f.log.Window(10, "")
+		w, err := f.log.window(10, "")
 		if err != nil {
 			t.Fatalf("%s: Window(10, \"\"): %v", when, err)
 		}
@@ -132,14 +130,14 @@ func TestRevert_CarrierSurvivesItsOwnWindow(t *testing.T) {
 		if got, want := turnsIn(mustAll(f.t, f.log)), []string{carrier}; strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Errorf("%s: All() holds turns %v, want the carrier alone %v", when, got, want)
 		}
-		count, _ := f.log.Counters()
+		count, _ := counters(f.log)
 		if want := f.log.turns[carrier].n; count != want {
 			t.Errorf("%s: turn_count is %d, want the carrier's own n %d", when, count, want)
 		}
 		if open := f.log.openTurnsLocked(); len(open) != 0 {
 			t.Errorf("%s: openTurnsLocked() names %v, want none", when, open)
 		}
-		if _, err := f.log.TurnRange(a, 0); !errors.Is(err, ErrTurnNotInLog) {
+		if _, err := turnRange(f.log, a, 0); !errors.Is(err, ErrTurnNotInLog) {
 			t.Errorf("%s: TurnRange(%q) = %v, want ErrTurnNotInLog", when, a, err)
 		}
 	}
@@ -161,7 +159,7 @@ func TestRevert_IncompleteCarrierIsRevertedAndSynthesizesNoCloser(t *testing.T) 
 	if got, want := turnsIn(mustAll(t, f.log)), []string{a}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("All() holds turns %v, want the pre-revert view %v", got, want)
 	}
-	count, _ := f.log.Counters()
+	count, _ := counters(f.log)
 	if want := f.log.turns[a].n; count != want {
 		t.Errorf("turn_count is %d, want the pre-revert %d", count, want)
 	}
@@ -358,7 +356,7 @@ func TestRevert_ASecondRevertsRecordIsVisible(t *testing.T) {
 		if records != 2 {
 			t.Errorf("%s: the surviving view holds %d turn_revert entries, want both records visible", when, records)
 		}
-		w, err := f.log.Window(10, "")
+		w, err := f.log.window(10, "")
 		if err != nil {
 			t.Fatalf("%s: Window(10, \"\"): %v", when, err)
 		}
@@ -409,7 +407,7 @@ func TestRevert_NoSurvivorMintsAClosedCarrierAtOrdinalOne(t *testing.T) {
 			t.Errorf("%s: the carrier is closed=%v unterminated=%v, want a completed close", when, st.closed, st.unterminated)
 		}
 		// The carrier is the only survivor, so the chat reads as having run nothing.
-		if count, last := f.log.Counters(); count != 1 || last != "" {
+		if count, last := counters(f.log); count != 1 || last != "" {
 			t.Errorf("%s: Counters() = (%d, %q), want (1, \"\")", when, count, last)
 		}
 		if open := f.log.openTurnsLocked(); len(open) != 0 {
@@ -433,7 +431,7 @@ func TestRevert_BetweenTurnsAppendLandsInASurvivingTurn(t *testing.T) {
 	}
 
 	e := entryOf("", "", "", marotte.EntryKindModeSwitched, marotte.EntryModeSwitched{To: "spec"})
-	minted, err := f.log.AppendBetweenTurns(t.Context(), e)
+	minted, err := f.log.appendBetweenTurns(t.Context(), e)
 	if err != nil {
 		t.Fatalf("AppendBetweenTurns(): %v", err)
 	}
@@ -454,7 +452,7 @@ func TestRevert_BetweenTurnsAppendLandsInASurvivingTurn(t *testing.T) {
 	if !found(mustAll(t, f.log)) {
 		t.Error("All() does not hold the between-turns entry: it landed where no reader looks")
 	}
-	w, err := f.log.Window(10, "")
+	w, err := f.log.window(10, "")
 	if err != nil {
 		t.Fatalf("Window(10, \"\"): %v", err)
 	}
@@ -467,7 +465,7 @@ func TestRevert_BetweenTurnsAppendLandsInASurvivingTurn(t *testing.T) {
 		t.Fatalf("second Revert(): %v", err)
 	}
 	e2 := entryOf("", "", "", marotte.EntryKindModeSwitched, marotte.EntryModeSwitched{To: "vibe"})
-	if minted, err := f.log.AppendBetweenTurns(t.Context(), e2); err != nil || len(minted) != 0 {
+	if minted, err := f.log.appendBetweenTurns(t.Context(), e2); err != nil || len(minted) != 0 {
 		t.Fatalf("AppendBetweenTurns() = (%v, %v), want it to join the surviving carrier", minted, err)
 	}
 	if !found(mustAll(t, f.log)) {
@@ -487,7 +485,6 @@ func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	return n, err
 }
 
-// bytesOfTurns sums the set's own byte ranges from the file, newlines included.
 func bytesOfTurns(t *testing.T, path string, want map[string]struct{}) int64 {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -537,7 +534,7 @@ func TestRevert_WindowReadsOnePreadPerRange(t *testing.T) {
 	}
 	t.Cleanup(func() { readEntries = restore })
 
-	w, err := f.log.Window(10, "")
+	w, err := f.log.window(10, "")
 	if err != nil {
 		t.Fatalf("Window(10, \"\"): %v", err)
 	}
@@ -629,7 +626,7 @@ func TestRevert_AnIncompleteCarrierIsRevertedAtEitherInterruptionPoint(t *testin
 			a, b := f.prompt("a"), f.prompt("b")
 			f.closeTurn(a, marotte.TurnOutcomeCompleted)
 			f.closeTurn(b, marotte.TurnOutcomeCompleted)
-			wantCount, _ := f.log.Counters()
+			wantCount, _ := counters(f.log)
 			wantRail := strings.Join(railIDs(f.log), ",")
 
 			boom := errors.New("no space left on device")
@@ -674,7 +671,7 @@ func TestRevert_AnIncompleteCarrierIsRevertedAtEitherInterruptionPoint(t *testin
 			if got := strings.Join(railIDs(f.log), ","); got != wantRail {
 				t.Errorf("RailRows() names %q after the failed revert, want the pre-revert rail %q", got, wantRail)
 			}
-			if got, _ := f.log.Counters(); got != wantCount {
+			if got, _ := counters(f.log); got != wantCount {
 				t.Errorf("turn_count is %d after the failed revert, want the pre-revert %d", got, wantCount)
 			}
 			if err := f.log.Append(t.Context(), entryOf(b, "", "say-later", marotte.EntryKindText,
@@ -695,7 +692,7 @@ func TestRevert_AnIncompleteCarrierIsRevertedAtEitherInterruptionPoint(t *testin
 			if got, want := turnsIn(mustAll(t, f.log)), []string{a, b}; strings.Join(got, ",") != strings.Join(want, ",") {
 				t.Errorf("a fresh open answers turns %v, want the pre-revert view %v", got, want)
 			}
-			if got, _ := f.log.Counters(); got != wantCount {
+			if got, _ := counters(f.log); got != wantCount {
 				t.Errorf("a fresh open answers turn_count %d, want the pre-revert %d", got, wantCount)
 			}
 			if open := f.log.openTurnsLocked(); len(open) != 0 {
@@ -708,7 +705,7 @@ func TestRevert_AnIncompleteCarrierIsRevertedAtEitherInterruptionPoint(t *testin
 	}
 }
 
-// kindsOfTurn reads one turn's kinds past the surviving view; TurnRange refuses reverted turns.
+// TurnRange refuses reverted turns.
 func kindsOfTurn(t *testing.T, l *EntryLog, turn string) []marotte.EntryKind {
 	t.Helper()
 	all, _, err := l.AllWithReverted()
@@ -834,7 +831,6 @@ func turnOrderIn(entries []marotte.Entry) []string {
 	return order
 }
 
-// ordinalOfTurnIn is one turn's stored n out of a flat read.
 func ordinalOfTurnIn(t *testing.T, entries []marotte.Entry, turn string) uint64 {
 	t.Helper()
 	for i := range entries {

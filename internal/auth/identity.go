@@ -44,9 +44,9 @@ func NewIdentity(cliPath func() string, env func() []string, retire func()) *Ide
 	}
 }
 
-// Observe adopts fp and retires live sessions when a known identity changes. Empty never replaces the baseline and
+// observe adopts fp and retires live sessions when a known identity changes. Empty never replaces the baseline and
 // retires only when the next probe is empty too, so one transient reading does not stop every bridge and step.
-func (id *Identity) Observe(fp string) {
+func (id *Identity) observe(fp string) {
 	if id == nil {
 		return
 	}
@@ -75,9 +75,9 @@ func (id *Identity) Observe(fp string) {
 	}
 }
 
-// SignedOut records a sign-out marotte performed: there is no reading to debounce, so live sessions retire at once.
+// signedOut records a sign-out marotte performed: there is no reading to debounce, so live sessions retire at once.
 // Absent still never becomes the baseline.
-func (id *Identity) SignedOut() {
+func (id *Identity) signedOut() {
 	if id == nil {
 		return
 	}
@@ -121,7 +121,7 @@ func (id *Identity) EnsureCurrent(ctx context.Context) {
 		slog.Debug("identity probe failed open", "error", err)
 		return
 	}
-	id.Observe(fp)
+	id.observe(fp)
 }
 
 func probeIdentity(ctx context.Context, cliPath func() string, env func() []string) (string, error) {

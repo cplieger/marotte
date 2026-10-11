@@ -17,7 +17,7 @@ export const isIOS: boolean =
 
 // A duplicate dispatch replays one gesture within a few ms; no deliberate human input falls under
 // 50 ms (fastest sustained clicking is ~60 ms+ apart).
-export const GHOST_CLICK_MS = 50;
+const GHOST_CLICK_MS = 50;
 
 /** A keyboard activation (detail 0 / no pointerType) always dispatches. `now` is a test seam. */
 export function guardDuplicateActivation(

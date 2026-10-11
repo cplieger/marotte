@@ -1,0 +1,13 @@
+{
+  "target": {
+    "kind": "application"
+  },
+  "ts": {
+    "entry_files": [
+      "static-src/app.ts",
+      "static-src/prepaint.ts",
+      "static-src/sse-worker.ts",
+      "static-src/sw.ts"
+    ]
+  }
+}

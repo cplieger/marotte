@@ -8,22 +8,23 @@ import { $ } from "./dom.js";
 import { watchActiveId } from "./store.js";
 import {
   liveRunIDsForChat,
-  runCounters,
-  runElapsedMs,
   runIsLive,
+  runPlan,
   runState,
+  runStepEnds,
   invalidateRun,
   type RunState,
 } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
+import { runToExec } from "./run-exec-source.js";
+import { counters, window as execWindow, type ExecNode } from "./exec-view/model.js";
 import { holdRunClock, releaseRunClock, type RunClockHolder } from "./messages-blocks.js";
 import { openRunView } from "./run-view.js";
 import { STATE_WORD, stateOf, withAsk, type ExecState } from "./exec-view/status.js";
 import type { TabRunDotStatus } from "./tabs.js";
 import { formatElapsed } from "./strings.js";
 
-/** The state a row paints when nothing has been fetched for its run yet. NOT
- *  `stateOf(undefined)`, which is `pending` and reads "not started" — a run in the live
+/** NOT `stateOf(undefined)`, which is `pending` and reads "not started" — a run in the live
  *  inventory has demonstrably started, so that word would be false. */
 const UNKNOWN_STATE = "unknown";
 
@@ -31,8 +32,8 @@ const UNKNOWN_STATE = "unknown";
  *  and a row with no name at all is unclickable in practice. */
 const FALLBACK_NAME = "Workflow run";
 
-/** A row's clock hold. The element is re-pointed on every render rather than re-registered, so
- *  the refcount in `messages-blocks.ts` sees one holder per run for as long as the bar shows it. */
+/** The element is re-pointed on every render rather than re-registered, so the refcount in
+ *  `messages-blocks.ts` sees one holder per run for as long as the bar shows it. */
 interface Hold extends RunClockHolder {
   clock: HTMLElement | null;
 }
@@ -72,7 +73,7 @@ function key(): string {
   for (const id of liveRunIDsForChat(chatID)) {
     const st = runState(id);
     const asks = runPendingAsks(id);
-    const c = runCounters(st);
+    const c = counters(execNodes(id, st));
     parts.push(
       [
         id,
@@ -180,7 +181,7 @@ function paintRow(row: HTMLElement, id: string): void {
   const state = execStateOf(st, runPendingAsks(id).count > 0);
   const name = runName(st);
   const word = state === UNKNOWN_STATE ? "" : STATE_WORD[state];
-  const steps = stepText(st);
+  const steps = stepText(id, st);
 
   row.dataset["state"] = state;
   const mark = runMarkStatus(state);
@@ -198,7 +199,7 @@ function paintRow(row: HTMLElement, id: string): void {
   setText(btn, ".run-bar-name", name);
   setText(btn, ".run-bar-state", word);
   setText(btn, ".run-bar-steps", steps);
-  setText(btn, ".run-bar-clock", elapsedText(st));
+  setText(btn, ".run-bar-clock", elapsedText(id, st));
   // The visible state is a glyph plus a word, both visual, so the name has to carry it too. The
   // step counter rides along because it is the row's other non-textual claim about progress.
   btn.setAttribute("aria-label", accessibleName(name, word, steps));
@@ -250,9 +251,16 @@ function runName(st: RunState | undefined): string {
   return name === "" ? FALLBACK_NAME : name;
 }
 
+/** The run tab's model of a run, which the card and the page count from as well. */
+function execNodes(id: string, st: RunState | undefined): readonly ExecNode[] {
+  return st === undefined
+    ? []
+    : runToExec(id, st, runPlan(id), runPendingAsks(id), "", runStepEnds(id)).nodes;
+}
+
 /** The step counter, in the card's own wording so the two surfaces agree. */
-function stepText(st: RunState | undefined): string {
-  const c = runCounters(st);
+function stepText(id: string, st: RunState | undefined): string {
+  const c = counters(execNodes(id, st));
   if (c.total === 0) {
     return "";
   }
@@ -261,8 +269,8 @@ function stepText(st: RunState | undefined): string {
     : `${String(c.done)} of ${String(c.total)}`;
 }
 
-function elapsedText(st: RunState | undefined): string {
-  const ms = runElapsedMs(st);
+function elapsedText(id: string, st: RunState | undefined): string {
+  const ms = execWindow(execNodes(id, st), runIsLive(st))?.span ?? 0;
   return ms > 0 ? formatElapsed(ms) : "";
 }
 
@@ -297,7 +305,7 @@ function reconcileHolds(ids: readonly string[]): void {
           // A tracked read is inert here: a setInterval callback runs outside any effect's eval
           // context, so nothing subscribes.
           if (hold.clock !== null) {
-            hold.clock.textContent = elapsedText(runState(id));
+            hold.clock.textContent = elapsedText(id, runState(id));
           }
         },
       };
@@ -316,6 +324,7 @@ function reconcileHolds(ids: readonly string[]): void {
  *  of it is module state, and the browser project's module registry is URL-keyed, so
  *  `vi.resetModules()` does not re-evaluate this file. Stopping the effect is the load-bearing
  *  half. */
+// deadset:ignore DS1004 -- test seam: resets the render effect, run clock holds and previous counts
 export function _resetRunBarForTest(): void {
   stopRender?.();
   stopRender = null;

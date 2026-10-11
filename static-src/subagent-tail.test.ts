@@ -2,7 +2,7 @@
 // tail, and that ONE delta repaints ONE card. The binding half uses the real store.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { subagentTail, bindSubagentTail, TAIL_LINES } from "./subagent-tail.js";
+import { bindSubagentTail, TAIL_LINES } from "./subagent-tail.js";
 import { makeToolCall } from "./__test-helpers__/model.js";
 import {
   appendEntry,
@@ -53,7 +53,6 @@ function turnOpen(turnID: string): Entry {
   };
 }
 
-/** A sealed entry at `seq`. `lane` absent is the chat's own lane. */
 function sealed(seq: number, kind: Entry["kind"], payload: unknown, lane?: string): Entry {
   const base: Entry = {
     id: `${TURN}-e${String(seq)}`,
@@ -100,7 +99,16 @@ function seed(entries: readonly Entry[]): void {
   }
 }
 
-/** The lane's open entry, seated with `n` deltas already folded in. */
+/** The lines a bound card paints first, read through the production binding. */
+function subagentTail(chatID: string, subtaskID: string): string[] {
+  let got: string[] = [];
+  const dispose = bindSubagentTail(chatID, subtaskID, (lines) => {
+    got = lines;
+  });
+  dispose();
+  return got;
+}
+
 function open(lane: string, body: string, id = `${TURN}-live-${lane}`): void {
   openEntry(CHAT, { turn: TURN, id, lane, kind: "text", text: body, n: 1 });
 }
@@ -115,11 +123,9 @@ describe("subagentTail reads the lane", () => {
     expect(subagentTail(CHAT, SUB)).toEqual(["three", "four", "five"]);
   });
 
-  it("caps at TAIL_LINES by default and honours an explicit want", () => {
+  it("caps at TAIL_LINES", () => {
     seed([text(1, "a\nb\nc\nd", SUB)]);
     expect(subagentTail(CHAT, SUB)).toHaveLength(TAIL_LINES);
-    expect(subagentTail(CHAT, SUB, 1)).toEqual(["d"]);
-    expect(subagentTail(CHAT, SUB, 0)).toEqual([]);
   });
 
   // A body's `textContent` carries no separator between rendered blocks, so a DOM walk

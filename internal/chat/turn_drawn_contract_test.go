@@ -9,10 +9,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The server half of the shared drawn-predicate oracle. The fixture is the contract and
-// static-src/turn-drawn-contract.node.test.ts is the other reader; each builds its own
-// rows from the same cases, so a divergence between drawnBy and turnIsDrawn fails here or
-// there rather than reaching a reader as a card with no rail row.
+// The fixture is the contract and static-src/turn-drawn-contract.node.test.ts is the other reader;
+// each builds its own rows from the same cases, so a divergence between drawnBy and turnIsDrawn
+// fails here or there rather than reaching a reader as a card with no rail row.
 const turnDrawnFixture = "testdata/turn_drawn.json"
 
 type drawnCase struct {
@@ -28,7 +27,6 @@ type drawnCase struct {
 		Lane           string `json:"lane"`
 		AgentSubtaskID string `json:"agent_subtask_id"`
 	} `json:"body"`
-	OpenEntries []string `json:"open_entries"`
 }
 
 func TestTurnDrawnContract_ServerHalf(t *testing.T) {

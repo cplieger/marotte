@@ -1,51 +1,23 @@
-// ---------------------------------------------------------------------------
-// Tool schema: a single table of everything the client needs to know about
-// each tool kind/name. Replaces the stringly typed `kind === "edit" || "write"`
-// checks and the handful of input-key probes (`path`, `targetFile`,
-// `sourcePath`) that were scattered across the rendering code.
-//
-// Adding support for a new kiro-cli tool is a one-line entry here; the
-// rendering pipeline picks it up automatically. Unknown kinds fall through
-// to the generic profile.
-// ---------------------------------------------------------------------------
+// The one owner of what the client knows about each tool kind and name.
 
 import type { ToolDenial, ToolDisclosed, ToolKind, ToolStatus } from "./types.js";
 import { humanName, truncate } from "./strings.js";
 export type { ToolKind };
 
-/** What a tool card reveals when you open it — its "depth 1".
- *
- *  This REPLACED a three-value display tier (simple / medium / complex), and the
- *  replacement is the point rather than a rename. The tier decided three
- *  unrelated things at once from one axis: whether the card got a disclosure
- *  toggle at all (`simple` got none, so an edit could not be expanded), whether
- *  its output was an always-visible unwindowed box (`complex`), and it said
- *  nothing about WHAT to show. Depth is per KIND because the answer is
- *  per kind: a diff for an edit, a windowed output for a command, nothing at all
- *  for a read.
- *
- *  - `none`     claim-only. There is no second level; the card has no toggle.
- *  - `diff`     the change itself, unified and windowed to whole hunks.
- *  - `output`   first and last N lines with a truncation marker; complete at depth 2.
- *  - `search`   match count per file and the first matching lines.
- *  - `move`     `from -> to`, two facts the claim line cannot carry.
- *  - `fetch`    resolved URL, response status, the head of the body.
- *  - `mcp`      server badge, formatted input, output.
- *  - `generic`  the raw input/output block, for kinds with nothing better. */
+/** What a tool card reveals when opened ("depth 1"), per KIND. `none` is claim-only (no
+ *  toggle); `diff` is windowed to whole hunks; `output` is the first and last N lines;
+ *  `search` per-file counts and first matches; `move` from -> to; `fetch` URL, status and
+ *  body head; `mcp` server badge, input, output; `generic` the raw input/output block. */
 export type ToolDepth1 =
   "none" | "diff" | "output" | "search" | "move" | "fetch" | "mcp" | "generic";
 
-/** Depth-1 content per kind. Record<ToolKind, ToolDepth1> enforces
- *  exhaustiveness at the type level — a new ToolKind without an entry is a
- *  compile error, which is what keeps a new tool from silently landing in a
- *  generic card. */
+/** Depth-1 content per kind; the Record type makes a new ToolKind without an entry a
+ *  compile error. */
 const TOOL_DEPTH1: Readonly<Record<ToolKind, ToolDepth1>> = {
-  // Claim-only, and measured: `read` is 20.2% of 33,156 real tool calls, median
-  // 1 per turn but p99 75 and max 190. A card each is exactly where a transcript
-  // collapses, so reads carry their fact on the claim line and group (tool-group).
+  // Claim-only: reads arrive in bursts, so they carry their fact on the claim line and
+  // group (tool-group).
   read: "none",
-  // Also claim-only, for the opposite reason: `delete_file` takes ONE targetFile,
-  // so a "path list" would be a one-item list restating the claim.
+  // `delete_file` takes ONE targetFile, which the claim already names.
   delete: "none",
   hook: "none",
   think: "none",
@@ -71,9 +43,7 @@ export function toolDepth1(kind: ToolKind): ToolDepth1 {
   return TOOL_DEPTH1[kind];
 }
 
-/** Whether a kind has anything to reveal. A card with no depth 1 gets no
- *  disclosure toggle — a control that opens an empty region is worse than no
- *  control. */
+/** Whether a kind has anything to reveal; a card with no depth 1 gets no toggle. */
 export function hasDepth1(kind: ToolKind): boolean {
   return TOOL_DEPTH1[kind] !== "none";
 }
@@ -94,19 +64,12 @@ export interface ToolRenderInfo {
   fileBasename: string;
   /** Source pair for a diff render, or null when not applicable. */
   diffSources: { oldText: string; newText: string } | null;
-  /** MCP server and tool names, extracted from the mangled title if
-   *  this is an MCP tool call (kind === "mcp"). null otherwise. Used
-   *  for legible rendering of what would otherwise be "mcp__github__
-   *  create_issue". */
+  /** MCP server and tool names for an MCP call, else null. */
   mcp: { server: string; tool: string } | null;
-  /** The skill or steering document this call loaded into context, or null.
-   *  Set only on a `disclose_context` call, and it is the only signal that a
-   *  skill's body actually reached the model, so the card names it instead of
-   *  showing a generic tool row. */
+  /** The skill or steering doc a `disclose_context` call loaded, or null. */
   disclosed: ToolDisclosed | null;
-  /** The policy verdict that refused this call, or null. Present makes the card
-   *  read as a refusal rather than a failure: the two want opposite reactions,
-   *  edit the rule or debug the tool. */
+  /** The policy verdict that refused this call, or null; the card then reads as a
+   *  refusal, not a failure. */
   denial: ToolDenial | null;
 }
 
@@ -140,16 +103,14 @@ const TITLE_PROFILES: Readonly<Record<string, ToolProfile>> = {
   webFetch: { kind: "fetch", writesFile: false },
   remote_web_search: { kind: "fetch", writesFile: false },
 
-  // Deferred MCP tool discovery. tool_search is the older mode and stays for
-  // transcripts that carry it.
+  // Deferred MCP tool discovery (tool_search is the older mode).
   tool_load: { kind: "search", writesFile: false },
   "Tool Load": { kind: "search", writesFile: false },
   tool_search: { kind: "search", writesFile: false },
   "Tool Search": { kind: "search", writesFile: false },
 };
 
-/** Fallback profile keyed on the ACP-provided kind string. Covers tools
- *  the client doesn't explicitly know. */
+/** Fallback profile keyed on the ACP kind, for titles the client does not know. */
 const KIND_FALLBACK: Readonly<Record<string, ToolProfile>> = {
   read: { kind: "read", writesFile: false },
   edit: { kind: "edit", writesFile: true },
@@ -158,10 +119,8 @@ const KIND_FALLBACK: Readonly<Record<string, ToolProfile>> = {
   move: { kind: "move", writesFile: false },
   search: { kind: "search", writesFile: false },
   execute: { kind: "execute", writesFile: false },
-  // v3 never emits shell (execute covers it), but persisted PRE-v3 chats carry
-  // it — keep the mapping so a legacy tool card renders in its proper tier
-  // instead of falling to OTHER. hook is minted server-side for the synthetic
-  // `Hook fired` card; KAS's own hook ASK still arrives as kind:"other".
+  // KAS never emits shell, but older chats carry it. hook is minted server-side for the
+  // `Hook fired` card; KAS's own hook ASK arrives as kind:"other".
   shell: { kind: "shell", writesFile: false },
   hook: { kind: "hook", writesFile: false },
   command: { kind: "command", writesFile: false },
@@ -173,12 +132,9 @@ const KIND_FALLBACK: Readonly<Record<string, ToolProfile>> = {
 
 const OTHER: ToolProfile = { kind: "other", writesFile: false };
 
-/** Set of tool kinds that mutate the workspace (create, modify, or remove
- *  files). Used by the git badge and any other "repo dirty" indicator. */
 const REPO_MUTATING_KINDS: ReadonlySet<string> = new Set(["edit", "write", "delete", "move"]);
 
-/** Reports whether a tool kind mutates the workspace (single source of truth
- *  for the "modifies repo" concept). */
+/** Reports whether a tool kind mutates the workspace. */
 export function isRepoMutatingKind(kind: string): boolean {
   return REPO_MUTATING_KINDS.has(kind);
 }
@@ -193,10 +149,8 @@ export function isToolDone(s: ToolStatus): boolean {
   return s === "completed" || s === "failed" || s === "aborted";
 }
 
-/** Resolve the profile for (title, kind) pair. Title wins when it matches
- *  a known entry; otherwise we fall back to the ACP kind. MCP-prefixed
- *  titles (mcp__<server>__<tool> or mcp:<server>:<tool>) resolve to the
- *  synthetic "mcp" kind so renderers can special-case them. */
+/** Resolve the profile for a (title, kind) pair: a known title wins, else the ACP kind.
+ *  MCP-prefixed titles resolve to the synthetic "mcp" kind. */
 export function profileFor(title: string, kind: string): ToolProfile {
   if (mcpToolInfo(title) !== null) {
     return { kind: "mcp", writesFile: false };
@@ -204,25 +158,14 @@ export function profileFor(title: string, kind: string): ToolProfile {
   return TITLE_PROFILES[title] ?? KIND_FALLBACK[kind] ?? OTHER;
 }
 
-// --- MCP name parsing ---
-//
-// Ecosystem conventions for MCP tool names vary slightly:
-//   Claude Code / Anthropic SDK: `mcp__<server>__<tool>`  (double underscore)
-//   Zed editor:                  `mcp:<server>:<tool>`    (colon)
-//   kiro-cli:                    not publicly documented, but almost
-//                                certainly one of the above since kiro
-//                                follows the ACP/MCP conventions
-//
-// We accept either form. The parser is strict about structure (exactly
-// two separators) so a user-authored built-in tool happening to contain
-// a double underscore won't be misidentified.
+// MCP tool names come as `mcp__<server>__<tool>` or `mcp:<server>:<tool>`. Exactly two
+// separators, so a built-in name containing `__` is not misread.
 
 const MCP_UNDERSCORE_RE = /^mcp__([A-Za-z0-9][A-Za-z0-9_.-]*)__([A-Za-z0-9][A-Za-z0-9_.-]*)$/;
 const MCP_COLON_RE = /^mcp:([A-Za-z0-9][A-Za-z0-9_.-]*):([A-Za-z0-9][A-Za-z0-9_.-]*)$/;
 
-/** Extract the server and tool names from an MCP-prefixed tool title.
- *  Returns null for non-MCP titles. Title is passed verbatim from the
- *  wire (no "Running: " prefix — that's stripped at call site). */
+/** The server and tool names of an MCP-prefixed title, else null. The caller strips any
+ *  "Running: " prefix. */
 export function mcpToolInfo(title: string): { server: string; tool: string } | null {
   const u = MCP_UNDERSCORE_RE.exec(title);
   if (u !== null) {
@@ -274,10 +217,8 @@ function deferredMCPCall(
   return { server, tool: m[2]! };
 }
 
-/** Format an MCP tool for display in a card/summary. Underscores become
- *  spaces so `create_issue` reads as `create issue`. The server name
- *  stays verbatim — users choose their own server names and we don't
- *  want to butcher them. */
+/** Format an MCP tool name for display: underscores become spaces. A server name stays
+ *  verbatim, because the user chose it. */
 export function formatMCPToolName(tool: string): string {
   return tool.replace(/_/g, " ");
 }
@@ -347,9 +288,7 @@ function pickDiffSources(
   if (typeof os === "string" && typeof ns === "string") {
     return { oldText: os, newText: ns };
   }
-  // fsWrite / fsAppend use `text` for the full new content; prior content
-  // isn't on the wire. Render as pure-add — still useful for new files and
-  // informative for overwrites.
+  // fsWrite / fsAppend carry only the new `text`, so render a pure add.
   const t = input["text"];
   if (typeof t === "string") {
     return { oldText: "", newText: t };
@@ -357,8 +296,7 @@ function pickDiffSources(
   return null;
 }
 
-/** Build the combined rendering info for a tool call. Single entry point
- *  used by every rendering path so they all agree. */
+/** The rendering info for a tool call; every rendering path goes through it. */
 export function renderInfoFor(
   title: string,
   kind: string,
@@ -389,19 +327,15 @@ export function renderInfoFor(
   };
 }
 
-/** The claim line for a disclose_context call. The agent activating a skill is
- *  the moment its body enters the prompt, so the card says which document rather
- *  than naming the tool that fetched it. */
+/** The claim line for a disclose_context call: which document, not the tool. */
 export function disclosedClaim(d: ToolDisclosed): string {
   const kindWord = d.type === "steering" ? "steering" : "skill";
   return `Loaded ${kindWord}: ${d.display_name}`;
 }
 
-/** The tool call that OPENS a subagent (vs. one of its nested tool calls). Matched by
- *  title only — the nested calls share the same `agent_subtask_id` but never carry these
- *  invocation titles. `Orchestrate Sub-agent` is deliberately NOT here: it is the PIPELINE
- *  driver's title, and one title with two owners makes a classification unpredictable.
- *  A leaf, because the STORE asks it and roles.ts would drag icons.ts in ahead of it. */
+/** The tool call that OPENS a subagent, matched by title: nested calls share its
+ *  `agent_subtask_id` but never these titles. `Orchestrate Sub-agent` is the PIPELINE
+ *  driver's and stays out. Here, not roles.ts, so the store does not import icons.ts. */
 export function isSubagentInvocation(tc: { readonly title: string }): boolean {
   const t = tc.title;
   return (
@@ -412,17 +346,12 @@ export function isSubagentInvocation(tc: { readonly title: string }): boolean {
   );
 }
 
-/** Display titles of KAS-internal bookkeeping announced as tool calls — the
- *  session-boot cloud-config fetch is the one member. The server drops these
- *  frames at translate keyed on `_meta.kiro.toolId` (the machine name), so this
- *  list exists only for transcripts persisted BEFORE that suppression, whose
- *  fragments carry a card stuck at in_progress forever. The persisted ToolCall
- *  has no tool id, so the title — a KAS constant, not model text — is the only
- *  key legacy data offers. */
+/** Display titles of KAS-internal bookkeeping announced as tool calls. translate drops
+ *  them by `_meta.kiro.toolId`; this list catches persisted ones, which carry no tool id,
+ *  so the KAS-constant title is the only key. */
 const INTERNAL_TOOL_TITLES: ReadonlySet<string> = new Set(["Fetching your cloud config"]);
 
-/** Whether a persisted tool call is internal engine bookkeeping the transcript
- *  never renders. See INTERNAL_TOOL_TITLES. */
+/** Whether a persisted tool call is engine bookkeeping the transcript never renders. */
 export function isInternalToolTitle(title: string): boolean {
   return INTERNAL_TOOL_TITLES.has(title);
 }

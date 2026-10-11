@@ -5,8 +5,7 @@ import (
 	"testing"
 )
 
-// fakeEnv substitutes lookupEnv for the test's life. Unset names answer
-// (_, false), so a test can pin absence as well as presence.
+// Unset names answer (_, false), so a test can pin absence as well as presence.
 func fakeEnv(t *testing.T, env map[string]string) {
 	t.Helper()
 	prev := lookupEnv

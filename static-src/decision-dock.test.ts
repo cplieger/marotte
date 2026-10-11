@@ -37,6 +37,7 @@ import {
   DOCK_PHASE_MS,
   runPendingAsks,
   _resetForTest,
+  type AnswerOutcome,
 } from "./decision-dock.js";
 import { BUS_USER_INPUT_ANSWERED, onBus } from "./bus.js";
 import { RUN_INPUT_FALLBACK } from "./dock-ask.js";
@@ -47,6 +48,7 @@ import { clampObservationCount } from "./clamp-text.js";
 import cssManifest from "./css/MANIFEST?raw";
 import { setSessions, setActive } from "./store.js";
 import type { PermissionNeededPayload, RunInputNeededPayload, Session } from "./types.js";
+import type { PermissionAnswer } from "./permission.js";
 
 function session(id: string): Session {
   return {
@@ -88,7 +90,39 @@ function perm(over: Partial<PermissionNeededPayload> = {}): PermissionNeededPayl
   };
 }
 
-function pushPerm(chatID: string, requestID: number, submit = vi.fn()): typeof submit {
+/** The server's side of a delivered answer, in its order: `decision_settled` lands, then the command answers. */
+function deliveredHere(
+  chatID: string,
+  kind: "permission" | "elicitation" | "user_input",
+  requestID: number,
+) {
+  return vi.fn((): Promise<AnswerOutcome> => {
+    collapseSettledDecision(chatID, kind, requestID, "user");
+    return Promise.resolve("answered");
+  });
+}
+
+/** An answer still on its way: the test decides what the server makes of it. */
+function inFlight() {
+  let settle: (outcome: AnswerOutcome) => void = () => undefined;
+  const submit = vi.fn(
+    () =>
+      new Promise<AnswerOutcome>((resolve) => {
+        settle = resolve;
+      }),
+  );
+  return { submit, answer: (outcome: AnswerOutcome) => settle(outcome) };
+}
+
+function pushPerm(
+  chatID: string,
+  requestID: number,
+  submit: (answer: PermissionAnswer) => Promise<AnswerOutcome> = deliveredHere(
+    chatID,
+    "permission",
+    requestID,
+  ),
+): typeof submit {
   pushDecision({
     kind: "permission",
     chatID,
@@ -238,7 +272,7 @@ describe("turn approval", () => {
   ];
 
   it("sends a decision for every offered action, because an omitted id is a rollback", () => {
-    const submit = vi.fn();
+    const submit = deliveredHere("c1", "permission", 5);
     pushDecision({
       kind: "permission",
       chatID: "c1",
@@ -254,7 +288,7 @@ describe("turn approval", () => {
   });
 
   it("an unchecked row becomes a false decision, not an absent one", () => {
-    const submit = vi.fn();
+    const submit = deliveredHere("c1", "permission", 5);
     pushDecision({
       kind: "permission",
       chatID: "c1",
@@ -273,7 +307,7 @@ describe("turn approval", () => {
   });
 
   it("groups files sharing one action id into a single undividable row", () => {
-    const submit = vi.fn();
+    const submit = deliveredHere("c1", "permission", 6);
     pushDecision({
       kind: "permission",
       chatID: "c1",
@@ -300,7 +334,7 @@ describe("turn approval", () => {
   });
 
   it("Roll back all answers with the reject option and no map", () => {
-    const submit = vi.fn();
+    const submit = deliveredHere("c1", "permission", 5);
     pushDecision({
       kind: "permission",
       chatID: "c1",
@@ -399,7 +433,7 @@ describe("the run tab's dock", () => {
     setActive("c1");
     const runHost = mountRunHost(() => "wf_2");
 
-    const submit = vi.fn();
+    const submit = deliveredHere("c1", "permission", 5);
     pushDecision({
       kind: "permission",
       chatID: "c1",
@@ -469,7 +503,7 @@ describe("the run tab's dock", () => {
       });
       const a = runPendingAsks("wf_1");
       expect(a.count).toBe(2);
-      expect([...a.nodes].sort()).toEqual(["build", "test"]);
+      expect(a.asked.map((x) => x.nodeID).sort()).toEqual(["build", "test"]);
       expect(a.label).toBe("Run git push");
     });
 
@@ -483,7 +517,7 @@ describe("the run tab's dock", () => {
       });
       const a = runPendingAsks("wf_1");
       expect(a.count).toBe(1);
-      expect(a.nodes.size).toBe(0);
+      expect(a.asked).toEqual([{ nodeID: "", sessionID: "", answer: false }]);
     });
 
     it("ignores a chat's own ask and another run's", () => {
@@ -512,7 +546,7 @@ describe("the run tab's dock", () => {
         chatID: "run:wf_1",
         requestID: 6,
         payload: perm({ request_id: 6, node_id: "build" }),
-        submit: vi.fn(),
+        submit: deliveredHere("run:wf_1", "permission", 6),
       });
       expect(runPendingAsks("wf_1").count).toBe(1);
       host.querySelector<HTMLButtonElement>("button")?.click();
@@ -521,14 +555,14 @@ describe("the run tab's dock", () => {
   });
 
   it("lets the run tab answer an ask sitting BEHIND the chat's own head", () => {
-    // Settle guards on membership, not head position: each request id is its own JSON-RPC exchange, so answering out of
-    // queue order is correct and refusing it would leave a dead button in the run tab.
+    // An answer guards on membership, not head position: each request id is its own JSON-RPC exchange, so answering out
+    // of queue order is correct and refusing it would leave a dead button in the run tab.
     setSessions([session("c1")]);
     setActive("c1");
     const runHost = mountRunHost(() => "wf_4");
 
     const chatSubmit = pushPerm("c1", 20);
-    const stepSubmit = vi.fn();
+    const stepSubmit = deliveredHere("c1", "permission", 21);
     pushDecision({
       kind: "permission",
       chatID: "c1",
@@ -603,19 +637,22 @@ describe("a workflow step's question", () => {
     expect(liveCard()?.textContent).toContain("reviewer \u00b7 step review");
   });
 
-  it("renders a PARENTLESS run's ask too, keyed to the synthetic run chat", () => {
-    // A manual or scheduled run has no launching chat, so its ask is keyed `run:<workflowId>` and the run tab is its surface.
+  it("takes no card on the run tab, where the run composer answers it", () => {
+    // A manual or scheduled run's ask is keyed `run:<workflowId>`; the run tab's composer is its surface
+    // (`run-composer.ts`), so neither dock draws it and the run still counts it.
     const runHost = mountRunHost(() => "wf_1");
     pushAsk("run:wf_1");
     expect(host().classList.contains("hidden")).toBe(true);
-    expect(liveCard(runHost)).not.toBeNull();
+    expect(runHost.classList.contains("hidden")).toBe(true);
+    expect(liveCard(runHost)).toBeNull();
+    expect(runPendingAsks("wf_1").count).toBe(1);
   });
 
-  it("shows one ask in BOTH hosts and one answer clears both", () => {
+  it("shows a launched run's ask in the chat only, and the chat's answer settles it", () => {
     const runHost = mountRunHost(() => "wf_1");
     const submit = pushAsk("c1");
     expect(liveCard()).not.toBeNull();
-    expect(liveCard(runHost)).not.toBeNull();
+    expect(liveCard(runHost)).toBeNull();
 
     const box = textarea();
     if (box !== null) {
@@ -625,7 +662,14 @@ describe("a workflow step's question", () => {
     expect(submit).toHaveBeenCalledWith("yes, ship it");
     settleMotion();
     expect(host().classList.contains("hidden")).toBe(true);
-    expect(runHost.classList.contains("hidden")).toBe(true);
+    expect(runPendingAsks("wf_1").count).toBe(0);
+  });
+
+  it("still shows the run tab's other decisions", () => {
+    // Only the step's question moved into the composer; a permission keyed to the run stays a card.
+    const runHost = mountRunHost(() => "wf_1");
+    pushPerm("run:wf_1", 3);
+    expect(liveCard(runHost)).not.toBeNull();
   });
 
   it("sends null for continue-without-answering", () => {
@@ -740,12 +784,11 @@ describe("a workflow step's question", () => {
     });
 
     it("offers no deferral for an ask the decision carries none for", () => {
-      // A parentless run has no launching agent; the callback passes through verbatim.
-      const runHost = mountRunHost(() => "wf_1");
-      pushAsk("run:wf_1");
-      const labels = [
-        ...(liveCard(runHost)?.querySelectorAll(".dock-ask-actions button") ?? []),
-      ].map((b) => b.textContent);
+      // The callback passes through verbatim: no callback, no button.
+      pushAsk("c1");
+      const labels = [...(liveCard()?.querySelectorAll(".dock-ask-actions button") ?? [])].map(
+        (b) => b.textContent,
+      );
       expect(labels).toEqual(["Send answer", "Continue without answering"]);
     });
   });
@@ -779,7 +822,8 @@ describe("a workflow step's question", () => {
       pushAsk("run:wf_1", { ask_id: "notify:2", node_id: "build" });
       const a = runPendingAsks("wf_1");
       expect(a.count).toBe(2);
-      expect([...a.nodes].sort()).toEqual(["build", "review"]);
+      expect(a.asked.map((x) => x.nodeID).sort()).toEqual(["build", "review"]);
+      expect(a.asked.every((x) => x.answer)).toBe(true);
       expect(a.label).toBe("Ship it?");
     });
 
@@ -790,14 +834,13 @@ describe("a workflow step's question", () => {
     });
 
     it("clears once the ask is answered", () => {
-      const runHost = mountRunHost(() => "wf_1");
-      pushAsk("run:wf_1");
+      pushAsk("c1");
       expect(runPendingAsks("wf_1").count).toBe(1);
-      const box = textarea(runHost);
+      const box = textarea();
       if (box !== null) {
         box.value = "done";
       }
-      clickButton("Send answer", runHost);
+      clickButton("Send answer");
       expect(runPendingAsks("wf_1").count).toBe(0);
     });
   });
@@ -928,6 +971,19 @@ describe("a decision another surface answered", () => {
     );
   });
 
+  it("says why when the bridge the ask came from ended", () => {
+    // Nobody answered: the card must not claim an answer, and must say nothing can receive one now.
+    const submit = pushPerm("c1", 4);
+    collapseSettledDecision("c1", "permission", 4, "ended");
+    settleMotion();
+
+    expect(host().children.length).toBe(0);
+    expect(submit).not.toHaveBeenCalled();
+    expect(mockToastInfo).toHaveBeenCalledWith(
+      "c1: The permission request was closed because the agent session that asked it ended, so nothing is listening for an answer.",
+    );
+  });
+
   it("stays quiet about a card the reader never saw", () => {
     const head = pushPerm("c1", 1);
     pushPerm("c1", 2);
@@ -942,7 +998,7 @@ describe("a decision another surface answered", () => {
   });
 
   it("ignores a request it is not holding", () => {
-    // The answering surface finds nothing to remove (answering splices first); it must not announce or disturb another ask.
+    // A settlement for an ask this surface does not hold must not announce or disturb another ask.
     pushPerm("c1", 1);
     collapseSettledDecision("c1", "permission", 999, "user");
     collapseSettledDecision("c-unknown", "permission", 1, "user");
@@ -969,7 +1025,7 @@ describe("a decision another surface answered", () => {
   });
 
   it("matches on kind as well as request id", () => {
-    // Request ids are per-bridge JSON-RPC ids, so one id can name a permission and an elicitation.
+    // A card is keyed by kind too, so a settlement of another kind collapses nothing.
     const submit = pushPerm("c1", 1);
     collapseSettledDecision("c1", "elicitation", 1, "user");
 
@@ -1001,10 +1057,147 @@ describe("a decision another surface answered", () => {
   });
 });
 
+describe("an answer the server has not settled yet", () => {
+  // Only the server knows whether the answer reached the agent, so the card stays until it says.
+
+  it("keeps the card on screen, inert, and takes no second answer", () => {
+    const { submit } = inFlight();
+    pushPerm("c1", 1, submit);
+    settleMotion();
+
+    clickButton("Allow");
+    clickButton("Allow");
+
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(liveCard()?.inert).toBe(true);
+    expect(liveCard()?.getAttribute("aria-busy")).toBe("");
+    expect(host().dataset["dockPhase"]).toBeUndefined();
+  });
+
+  it("retires it on the server's settlement without telling this surface it answered elsewhere", () => {
+    const { submit, answer } = inFlight();
+    pushPerm("c1", 1, submit);
+    clickButton("Allow");
+
+    collapseSettledDecision("c1", "permission", 1, "user");
+    answer("answered");
+    settleMotion();
+
+    expect(host().children.length).toBe(0);
+    expect(mockToastInfo).not.toHaveBeenCalled();
+  });
+
+  it("says why when the session that asked ended while the answer was in flight", () => {
+    const { submit } = inFlight();
+    pushPerm("c1", 1, submit);
+    clickButton("Allow");
+
+    collapseSettledDecision("c1", "permission", 1, "ended");
+    settleMotion();
+
+    expect(host().children.length).toBe(0);
+    expect(mockToastInfo).toHaveBeenCalledWith(
+      "c1: The permission request was closed because the agent session that asked it ended, so nothing is listening for an answer.",
+    );
+  });
+
+  it("hands the card back, answerable, when the answer did not reach the agent", async () => {
+    const first = inFlight();
+    const submit = vi.fn(first.submit);
+    pushPerm("c1", 1, submit);
+    clickButton("Allow");
+
+    first.answer("failed");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(liveCard()?.inert).toBe(false);
+    expect(liveCard()?.hasAttribute("aria-busy")).toBe(false);
+    clickButton("Reject");
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit).toHaveBeenLastCalledWith({ optionID: "reject_once" });
+  });
+
+  it("keeps the words typed into a card whose answer failed", async () => {
+    const { submit, answer } = inFlight();
+    pushDecision({
+      kind: "user_input",
+      chatID: "c1",
+      requestID: 3,
+      payload: { request_id: 3, question: "Which region?" },
+      submit,
+    });
+    const box = liveCard()?.querySelector<HTMLTextAreaElement>(".dock-ask-text");
+    if (box === null || box === undefined) {
+      throw new Error("no answer box");
+    }
+    box.value = "eu-west-3";
+    clickButton("Send");
+
+    answer("failed");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(liveCard()?.querySelector<HTMLTextAreaElement>(".dock-ask-text")).toBe(box);
+    expect(box.value).toBe("eu-west-3");
+  });
+
+  it("keeps a withdrawn answer's card inert until the settlement that won retires it", async () => {
+    const { submit, answer } = inFlight();
+    pushPerm("c1", 1, submit);
+    clickButton("Allow");
+
+    answer("withdrawn");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(liveCard()?.inert).toBe(true);
+    collapseSettledDecision("c1", "permission", 1, "ended");
+    settleMotion();
+    expect(host().children.length).toBe(0);
+    expect(mockToastInfo).toHaveBeenCalledWith(
+      "c1: The permission request was closed because the agent session that asked it ended, so nothing is listening for an answer.",
+    );
+  });
+
+  it("retires the card at once when another surface holds the ask", async () => {
+    const { submit, answer } = inFlight();
+    pushPerm("c1", 1, submit);
+    clickButton("Allow");
+
+    answer("superseded");
+    await Promise.resolve();
+    await Promise.resolve();
+    settleMotion();
+
+    expect(host().children.length).toBe(0);
+    expect(mockToastInfo).not.toHaveBeenCalled();
+  });
+
+  it("marks an in-flight card inert on a host that renders it later", () => {
+    const { submit } = inFlight();
+    pushPerm("c2", 1, submit);
+    setActive("c2");
+    clickButton("Allow");
+    setActive("c1");
+    settleMotion();
+
+    setActive("c2");
+
+    expect(liveCard()?.inert).toBe(true);
+  });
+});
+
 describe("an answered agent question on the bus", () => {
   // Announces rather than calls: `spec-view.ts` imports this module, so the reverse edge would close a cycle.
 
-  function pushAsk(chatID = "c1", submit = vi.fn()): typeof submit {
+  function pushAsk(
+    chatID = "c1",
+    submit: (
+      action: "answered" | "dismissed",
+      answer?: string,
+    ) => Promise<AnswerOutcome> = deliveredHere(chatID, "user_input", 7),
+  ): typeof submit {
     pushDecision({
       kind: "user_input",
       chatID,
@@ -1031,7 +1224,7 @@ describe("an answered agent question on the bus", () => {
     btn?.click();
   }
 
-  it("carries the chat and the answer verbatim, after the answer went out", () => {
+  it("carries the chat and the answer verbatim, once the agent has it", async () => {
     const seen: { chatID: string; answer: string }[] = [];
     const order: string[] = [];
     const off = onBus(BUS_USER_INPUT_ANSWERED, (p) => {
@@ -1042,10 +1235,14 @@ describe("an answered agent question on the bus", () => {
     setActive("c2");
     const submit = pushAsk(
       "c2",
-      vi.fn(() => order.push("submit")),
+      vi.fn((): Promise<AnswerOutcome> => {
+        order.push("submit");
+        return Promise.resolve("answered");
+      }),
     );
 
     clickOption("Run required and optional tasks");
+    await Promise.resolve();
     off();
 
     // Verbatim: the spec page matches the option's own title.
@@ -1055,21 +1252,54 @@ describe("an answered agent question on the bus", () => {
     expect(order).toEqual(["submit", "bus"]);
   });
 
-  it("announces nothing for a dismissal", () => {
+  it("announces nothing for an answer that did not reach the agent", async () => {
+    const seen: unknown[] = [];
+    const off = onBus(BUS_USER_INPUT_ANSWERED, (p) => seen.push(p));
+    pushAsk(
+      "c1",
+      vi.fn((): Promise<AnswerOutcome> => Promise.resolve("failed")),
+    );
+
+    clickOption("Run required tasks");
+    await Promise.resolve();
+    await Promise.resolve();
+    off();
+
+    expect(seen).toEqual([]);
+  });
+
+  it("announces nothing for an answer the ask was withdrawn under", async () => {
+    const seen: unknown[] = [];
+    const off = onBus(BUS_USER_INPUT_ANSWERED, (p) => seen.push(p));
+    pushAsk(
+      "c1",
+      vi.fn((): Promise<AnswerOutcome> => Promise.resolve("withdrawn")),
+    );
+
+    clickOption("Run required tasks");
+    await Promise.resolve();
+    await Promise.resolve();
+    off();
+
+    expect(seen).toEqual([]);
+  });
+
+  it("announces nothing for a dismissal", async () => {
     const seen: unknown[] = [];
     const off = onBus(BUS_USER_INPUT_ANSWERED, (p) => seen.push(p));
     const submit = pushAsk();
 
     clickButton("Skip");
+    await Promise.resolve();
     off();
 
     expect(submit).toHaveBeenCalledWith("dismissed", undefined);
     expect(seen).toEqual([]);
   });
 
-  it("announces once however many times the answered card is clicked", () => {
-    // The emit sits inside the callback `settle` guards: an answered card keeps its listeners for the leaving phase, so a
-    // hoisted emit would send a second Run all.
+  it("announces once however many times the answered card is clicked", async () => {
+    // The emit follows the one answer the in-flight guard lets through: an answered card keeps its listeners for the
+    // leaving phase, so a hoisted emit would send a second Run all.
     const seen: unknown[] = [];
     const off = onBus(BUS_USER_INPUT_ANSWERED, (p) => seen.push(p));
     const submit = pushAsk();
@@ -1082,6 +1312,7 @@ describe("an answered agent question on the bus", () => {
 
     btn.click();
     btn.click();
+    await Promise.resolve();
     off();
 
     expect(btn.isConnected).toBe(true);
@@ -1217,7 +1448,7 @@ describe("the dispatch is never gated on the animation", () => {
     settleMotion();
 
     clickButton("Allow");
-    // `settle` splices, dispatches and bumps synchronously in the click handler; the animation's effect runs after.
+    // The click dispatches synchronously; the server's settlement starts the animation, never the reverse.
     expect(submit).toHaveBeenCalledTimes(1);
     expect(submit).toHaveBeenCalledWith({ optionID: "allow_once" });
     expect(host().dataset["dockPhase"]).toBe("leaving");
@@ -1293,8 +1524,8 @@ describe("interruption and cleanup", () => {
 
     const allow = liveCard()?.querySelector<HTMLButtonElement>("button");
     allow?.click();
-    // A scripted click dispatches through `inert`, so `settle`'s membership check is the guard; `user-input.ts` keeps no
-    // reporter in module state so the outgoing card cannot answer the incoming decision.
+    // A scripted click dispatches through `inert`, so the answer's membership check is the guard; `user-input.ts` keeps
+    // no reporter in module state so the outgoing card cannot answer the incoming decision.
     allow?.click();
     expect(first).toHaveBeenCalledTimes(1);
     expect(second).not.toHaveBeenCalled();

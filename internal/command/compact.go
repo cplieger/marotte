@@ -29,7 +29,7 @@ type CompactBridge interface {
 // nothing, so a caller must never synthesize the transcript boundary from the result. KAS answers
 // after the summary commits, bounded at 300 s on its side, so ctx bounds only a wedged bridge.
 func Compact(ctx context.Context, bridge CompactBridge) (bool, error) {
-	resp, err := bridge.Call(ctx, marotte.MethodSessionCompact, SessionParams(bridge))
+	resp, err := bridge.Call(ctx, marotte.MethodSessionCompact, sessionParams(bridge))
 	if err != nil {
 		return false, err
 	}
@@ -42,13 +42,13 @@ func Compact(ctx context.Context, bridge CompactBridge) (bool, error) {
 	return result.Success, nil
 }
 
-// CmdCompact compacts the chat's context through KAS's native verb. Requires
+// cmdCompact compacts the chat's context through KAS's native verb. Requires
 // a live resident session, since compaction operates on the session's own
 // message log.
 //
-// The narrow BridgeAccess parameter is deliberate: no store and no broadcaster,
+// The narrow bridgeAccess parameter is deliberate: no store and no broadcaster,
 // so a synthesized compaction boundary is not expressible here.
-func CmdCompact(ctx context.Context, bridges BridgeAccess, cmd *marotte.ClientCommand) (any, error) {
+func cmdCompact(ctx context.Context, bridges bridgeAccess, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}

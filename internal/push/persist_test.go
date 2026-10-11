@@ -25,10 +25,10 @@ import (
 func TestNew_PersistsAndReloadsKeys(t *testing.T) {
 	dir := t.TempDir()
 	s1 := New(t.Context(), dir, "mailto:test@example.com")
-	key1 := s1.PublicKey()
+	key1 := s1.publicKey()
 
 	s2 := New(t.Context(), dir, "mailto:test@example.com")
-	if s2.PublicKey() != key1 {
+	if s2.publicKey() != key1 {
 		t.Error("reloaded key differs from original")
 	}
 }
@@ -227,10 +227,10 @@ func TestLoadKeys_ReportsUnusableStoredKeys(t *testing.T) {
 				t.Errorf("replacement reason = %q (found=%v), want one naming %q",
 					why, ok, tc.wantWhy)
 			}
-			if s.PublicKey() == "" || !s.healthy || s.vapidPriv == nil {
+			if s.publicKey() == "" || !s.healthy || s.vapidPriv == nil {
 				t.Errorf("after replacing an unusable keys file: publicKey=%q healthy=%v signingKey=%v, "+
 					"want a fresh keypair the service can sign with",
-					s.PublicKey(), s.healthy, s.vapidPriv != nil)
+					s.publicKey(), s.healthy, s.vapidPriv != nil)
 			}
 		})
 	}
@@ -405,5 +405,26 @@ func TestDecodeVAPIDPrivateKey_WrongLength(t *testing.T) {
 
 	if _, err := s.decodeVAPIDPrivateKey(); err == nil {
 		t.Fatal("decodeVAPIDPrivateKey with 16-byte key = nil error, want error")
+	}
+}
+
+// flushSaves blocks until any pending async save completes by sending
+// a synchronous no-op through the write loop.
+func (s *Service) flushSaves() {
+	done := make(chan struct{})
+	s.mu.Lock()
+	subs := make([]marotte.PushSubscription, 0, len(s.subs))
+	for _, sub := range s.subs {
+		subs = append(subs, sub)
+	}
+	s.mu.Unlock()
+	select {
+	case s.saveCh <- saveRequest{subs: subs, done: done}:
+		// The lifetime guard saveSubs explains.
+		select {
+		case <-done:
+		case <-s.lifetime.Done():
+		}
+	case <-s.lifetime.Done():
 	}
 }

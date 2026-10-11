@@ -47,9 +47,8 @@ interface MergePRArgs extends PinnedPRArgs {
   strategy: string;
 }
 
-/** The merge body for the dialog's choice. GitHub and the Gitea family name the
- *  strategy, because their default intent is a merge commit. GitLab refuses any
- *  strategy and merges by the project's own method, so its choice is an intent:
+/** GitHub and the Gitea family name the strategy, because their default intent is a merge commit.
+ *  GitLab refuses any strategy and merges by the project's own method, so its choice is an intent:
  *  squash, or that method without squashing. */
 function mergeBody(args: MergePRArgs, auto: boolean): Record<string, unknown> {
   return { ...mergeChoice(args), head_sha: args.head_sha, ...(auto ? { auto: true } : {}) };

@@ -4,7 +4,7 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-import { buildUserInputCard, _resetForTest } from "./user-input.js";
+import { buildUserInputCard } from "./user-input.js";
 import type { UserInputNeededPayload } from "./types.js";
 
 function payload(over: Partial<UserInputNeededPayload> = {}): UserInputNeededPayload {
@@ -20,7 +20,6 @@ function mount(p: UserInputNeededPayload, onSubmit: (a: string, b?: string) => v
 
 beforeEach(() => {
   document.body.replaceChildren();
-  _resetForTest();
 });
 
 describe("buildUserInputCard", () => {

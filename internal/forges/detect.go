@@ -67,9 +67,8 @@ func (h *HTTPHandler) handleDetect(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, Detection{Kind: detectedKind(family, rec.Host)})
 }
 
-// detect is the family whose connection read establishes it at rec, asked with
-// token held in memory. No client is kept: families.Open closes the candidates
-// it rejects and detect closes the one that answered.
+// No client is kept: families.Open closes the candidates it rejects and detect closes the one that
+// answered.
 func (f *clientFactory) detect(ctx context.Context, rec *connectionRecord, token string) (forgeapi.Family, error) {
 	opts := f.options(rec)
 	// With no source at all the constructors refuse anonymous_refused before
@@ -85,7 +84,6 @@ func (f *clientFactory) detect(ctx context.Context, rec *connectionRecord, token
 	return family, nil
 }
 
-// detectedKind is the kind a connection to family at host is made under.
 func detectedKind(family forgeapi.Family, host string) Kind {
 	switch family {
 	case forgeapi.FamilyGitHub:
@@ -93,7 +91,7 @@ func detectedKind(family forgeapi.Family, host string) Kind {
 	case forgeapi.FamilyGitLab:
 		return KindGitLab
 	case forgeapi.FamilyGitea:
-		if host == KindCodeberg.DefaultHost() {
+		if host == KindCodeberg.defaultHost() {
 			return KindCodeberg
 		}
 		return KindGitea

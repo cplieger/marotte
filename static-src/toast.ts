@@ -6,7 +6,7 @@ import { toast, _resetForTest as uipResetToast } from "@cplieger/ui-primitives/t
 import type { ToastLevel, ToastRetry } from "@cplieger/ui-primitives/toast";
 import type { NoticeLevel } from "./wire/types.gen.js";
 
-export type { ToastLevel, ToastRetry };
+export type { ToastRetry };
 
 /** Show an info-level toast. Auto-dismisses after 4s (paused on hover/focus). */
 export function info(message: string): () => void {
@@ -29,8 +29,8 @@ const ERROR_DURATION_MS = 12_000;
  *  three chats raise three copies. */
 const MAX_STICKY = 2;
 
-/** The sticky toasts raised here, oldest first. An entry leaves only by being dismissed, which is
- *  the whole bound; a hand-dismissed toast stays and costs a no-op eviction. */
+/** An entry leaves only by being dismissed, which is the whole bound; a hand-dismissed toast stays
+ *  and costs a no-op eviction. */
 const sticky: (() => void)[] = [];
 
 /** The library has no warning level, so `info` and `warning` notices ride its info
@@ -161,6 +161,7 @@ export function showToast(
 }
 
 /** Test-only: clear all visible + queued toasts and remove the stack. */
+// deadset:ignore DS1004 -- test seam: resets the sticky and owed toasts and the stack
 export function _resetForTest(): void {
   sticky.length = 0;
   owed.length = 0;

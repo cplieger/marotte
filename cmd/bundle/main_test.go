@@ -10,8 +10,7 @@ import (
 	"testing"
 )
 
-// stageCSS lays out buildCSS's two manifest sources and chdirs to their parent. A part
-// key is "wtui/<file>" or "app/<file>". t.Chdir is process-wide: no caller may be parallel.
+// A part key is "wtui/<file>" or "app/<file>". t.Chdir is process-wide: no caller may be parallel.
 func stageCSS(t *testing.T, wtuiManifest, appManifest string, parts map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -308,7 +307,6 @@ func writeWorker(t *testing.T, dir, body string) {
 	}
 }
 
-// workerChunks lists the sse-worker scripts under static/chunks/, sourcemaps excluded.
 func workerChunks(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(dir, outDir, "chunks"))

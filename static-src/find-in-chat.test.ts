@@ -1856,7 +1856,7 @@ describe("server-hit navigation", () => {
         segment_len: 0,
       }),
     ]);
-    vi.mocked(storeLoad.loadMessages).mockImplementation((_chatID, _beforeID) => {
+    vi.mocked(storeLoad.loadMessages).mockImplementation(() => {
       prependTurn(session, "u1");
       session.has_more = false;
       return Promise.resolve(true);

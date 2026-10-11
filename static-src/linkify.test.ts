@@ -1,10 +1,11 @@
 // Drives the real linkifyPaths() against a live DOM, so a change to the pattern, extension list or walk is caught.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fc from "fast-check";
 
 import { linkifyPaths, initLinkifyCallbacks } from "./linkify.js";
 import { FILE_EXTS } from "./file-extensions.js";
+import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 
 // The opener is injected, so the wiring is asserted against the app's handler. A plain closure re-injected per test:
 // `mockReset: true` resets implementations between tests.
@@ -126,6 +127,57 @@ describe("linkifyPaths: absolute paths", () => {
     const root = linkify("open /workspace/out/shot.png now");
     links(root)[0]!.click();
     expect(opened).toEqual([["/workspace/out/shot.png", undefined]]);
+  });
+});
+
+// The linkable absolute roots are the mounts the file routes open, and the work dir's follows the live root.
+describe("linkifyPaths: the live workspace root", () => {
+  afterEach(() => {
+    resetWorkspace();
+  });
+
+  it("linkifies a custom work dir's absolute paths, and no longer /workspace's", () => {
+    setWorkspaceRoot("/srv/proj");
+    expect(links(linkify("see /srv/proj/src/a.ts"))[0]?.title).toBe("/srv/proj/src/a.ts");
+    expect(links(linkify("see /workspace/src/b.ts"))).toHaveLength(0);
+  });
+
+  it("links only the config and uploads mounts under a / work dir", () => {
+    setWorkspaceRoot("/");
+    expect(links(linkify("see /srv/src/a.ts"))).toHaveLength(0);
+    expect(links(linkify("see /config/tools.json"))[0]?.title).toBe("/config/tools.json");
+  });
+
+  it("treats a dot in the work dir as a literal character", () => {
+    setWorkspaceRoot("/srv/my.proj");
+    expect(links(linkify("see /srv/myxproj/a.ts"))).toHaveLength(0);
+    expect(links(linkify("see /srv/my.proj/a.ts"))[0]?.title).toBe("/srv/my.proj/a.ts");
+  });
+
+  it("re-links prose linkified before the handshake against the root it names", () => {
+    const root = linkify("see /srv/proj/src/a.ts:3:9 and /workspace/src/b.ts:4 too");
+    expect(links(root).map((b) => b.title)).toEqual(["/workspace/src/b.ts:4"]);
+    setWorkspaceRoot("/srv/proj");
+    expect(links(root).map((b) => b.title)).toEqual(["/srv/proj/src/a.ts:3"]);
+    expect(root.textContent).toBe("see a.ts:3 and /workspace/src/b.ts:4 too");
+  });
+
+  it("leaves prose linkified before the handshake alone when the root is the default", () => {
+    const root = linkify("see /workspace/src/b.ts");
+    const before = links(root)[0];
+    setWorkspaceRoot("/workspace");
+    expect(links(root)[0]).toBe(before);
+  });
+
+  it("re-links prose at every later root change, not only the first", () => {
+    setWorkspaceRoot("/workspace");
+    const root = linkify("see /srv/proj/src/a.ts and /workspace/src/b.ts:4 too");
+    expect(links(root).map((b) => b.title)).toEqual(["/workspace/src/b.ts:4"]);
+    setWorkspaceRoot("/srv/proj");
+    expect(links(root).map((b) => b.title)).toEqual(["/srv/proj/src/a.ts"]);
+    setWorkspaceRoot("/workspace");
+    expect(links(root).map((b) => b.title)).toEqual(["/workspace/src/b.ts:4"]);
+    expect(root.textContent).toBe("see /srv/proj/src/a.ts and b.ts:4 too");
   });
 });
 

@@ -15,7 +15,6 @@ import (
 // and so lists no MCP prompts. Each setter reports whether the list changed.
 type SlashCatalog interface {
 	SetFromChat(cmds []marotte.SlashCommand) bool
-	SetFromUtility(cmds []marotte.SlashCommand) bool
 }
 
 // SteeringIssues holds KAS's per-document steering configuration issues. Set
@@ -24,8 +23,7 @@ type SteeringIssues interface {
 	Set(issues map[string][]marotte.SteeringIssue) bool
 }
 
-// kasAvailableCommand is one availableCommands[] entry. KAS has already
-// normalised name to the spelling its resolver matches.
+// KAS has already normalised name to the spelling its resolver matches.
 type kasAvailableCommand struct {
 	Input *struct {
 		Hint string `json:"hint"`
@@ -75,8 +73,7 @@ func ReadSlashCatalog(update json.RawMessage) (cmds []marotte.SlashCommand, ok b
 	return cmds, true
 }
 
-// slashCommandOf sanitizes one kept entry; ok is false when its name is empty
-// once sanitized.
+// Ok is false when its name is empty once sanitized.
 func slashCommandOf(c *kasAvailableCommand, kind marotte.SlashCommandKind) (marotte.SlashCommand, bool) {
 	name := displayText(c.Name)
 	if name == "" {
@@ -124,8 +121,7 @@ func (t *Translator) HandleAvailableCommandsUpdate(ctx context.Context, _ marott
 	}
 }
 
-// kasSteeringDocuments is _kiro/steering/documents_changed's params. A document
-// carries its content too; it is not decoded.
+// A document carries its content too; it is not decoded.
 type kasSteeringDocuments struct {
 	Status    string `json:"status"`
 	Documents []struct {
@@ -138,10 +134,10 @@ type kasSteeringDocuments struct {
 	} `json:"documents"`
 }
 
-// ReadSteeringIssues decodes a documents_changed frame into issues keyed by
+// readSteeringIssues decodes a documents_changed frame into issues keyed by
 // KiroDoc.Path. ok is false for a failed or undecodable frame, which carries no
 // document list and must not clear the map.
-func ReadSteeringIssues(params json.RawMessage) (issues map[string][]marotte.SteeringIssue, ok bool) {
+func readSteeringIssues(params json.RawMessage) (issues map[string][]marotte.SteeringIssue, ok bool) {
 	var p kasSteeringDocuments
 	if json.Unmarshal(params, &p) != nil || p.Status != "success" {
 		return nil, false
@@ -187,7 +183,7 @@ func (t *Translator) ApplySteeringDocuments(ctx context.Context, params json.Raw
 	if t.steeringIssues == nil {
 		return
 	}
-	issues, ok := ReadSteeringIssues(params)
+	issues, ok := readSteeringIssues(params)
 	if !ok {
 		slog.Debug("steering documents_changed: not a success frame")
 		return

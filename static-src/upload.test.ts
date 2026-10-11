@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { batchFailureMessage, resolvePaths, uploadedNames } from "./upload.js";
 
-/** A FileList over the given names, which is all these helpers read. */
 function fileList(...names: string[]): FileList {
   const files = names.map((n) => new File(["x"], n));
   return {

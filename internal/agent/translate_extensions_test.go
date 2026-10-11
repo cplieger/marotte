@@ -65,10 +65,10 @@ func TestTranslateMCPStatus(t *testing.T) {
 			h, _, _ := newTestHub()
 			before := h.bus.fanout.Position().Head
 			msg := &marotte.RPCResponse{Method: "_kiro/mcp/status", Params: mustJSON(t, tc.params)}
-			h.translateACPEvent("", msg)
+			h.translateACPEvent("", h.originOf(""), msg)
 
 			if tc.wantSnap != nil {
-				tc.wantSnap(t, h.mcpRegistry.Snapshot())
+				tc.wantSnap(t, h.mcpRegistry.snapshot())
 			}
 			if len(tc.wantEvents) > 0 {
 				types := extractTypes(t, bufferedSince(h, before))
@@ -99,8 +99,8 @@ func TestTranslateV3_AvailableCommandsUpdateFeedsTheCatalog(t *testing.T) {
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	before := h.bus.fanout.Position().Head
 
-	h.translateACPEvent("c1", availableCommandsFrame(t))
-	h.translateACPEvent("c1", availableCommandsFrame(t))
+	h.translateACPEvent("c1", h.originOf("c1"), availableCommandsFrame(t))
+	h.translateACPEvent("c1", h.originOf("c1"), availableCommandsFrame(t))
 
 	types := extractTypes(t, bufferedSince(h, before))
 	if !slices.Equal(types, []string{string(marotte.EventSlashCommandsChanged)}) {
@@ -134,14 +134,14 @@ func TestSteeringDocumentsChanged_ProducesIssuesKeyedByDocsPath(t *testing.T) {
 		})}
 	}
 
-	h.translateACPEvent("c1", frame("success"))
-	h.translateACPEvent("c1", frame("failed"))
+	h.translateACPEvent("c1", h.originOf("c1"), frame("success"))
+	h.translateACPEvent("c1", h.originOf("c1"), frame("failed"))
 
 	types := extractTypes(t, bufferedSince(h, before))
 	if !slices.Equal(types, []string{string(marotte.EventSteeringIssuesChanged)}) {
 		t.Errorf("events = %v, want one steering_issues_changed", types)
 	}
-	got := h.steeringIssues.Snapshot()
+	got := h.steeringIssues.snapshot()
 	issues := got["workspace/.kiro/steering/a.md"]
 	if len(got) != 1 || len(issues) != 1 || issues[0].Code != "contextReferenceUnresolved" || issues[0].Remediation != "Fix it." {
 		t.Errorf("issues = %+v, want one contextReferenceUnresolved keyed workspace/.kiro/steering/a.md", got)
@@ -155,16 +155,16 @@ func TestSlashCatalog_UtilityNeverOverwritesChat(t *testing.T) {
 	utility := []marotte.SlashCommand{{Name: "u", Kind: marotte.SlashKindPrompt}}
 	chat := []marotte.SlashCommand{{Name: "c", Kind: marotte.SlashKindPrompt}}
 
-	if !c.SetFromUtility(utility) {
+	if !c.setFromUtility(utility) {
 		t.Fatal("SetFromUtility on an empty catalog = false, want true")
 	}
 	if !c.SetFromChat(chat) {
 		t.Fatal("SetFromChat over a utility list = false, want true")
 	}
-	if c.SetFromUtility(utility) {
+	if c.setFromUtility(utility) {
 		t.Error("SetFromUtility after a chat frame = true, want false")
 	}
-	if got, _ := c.Snapshot(); len(got) != 1 || got[0].Name != "c" {
+	if got, _ := c.snapshot(); len(got) != 1 || got[0].Name != "c" {
 		t.Errorf("Snapshot() = %+v, want the chat's list", got)
 	}
 }
@@ -172,13 +172,13 @@ func TestSlashCatalog_UtilityNeverOverwritesChat(t *testing.T) {
 // Not ready until KAS sends a catalog; an empty one still counts, letting the client release unknown names.
 func TestSlashCatalog_ReadyOnlyAfterAKASCatalog(t *testing.T) {
 	var c slashCatalog
-	if cmds, ready := c.Snapshot(); ready || len(cmds) != 0 {
+	if cmds, ready := c.snapshot(); ready || len(cmds) != 0 {
 		t.Fatalf("Snapshot() before any frame = (%+v, %v), want ([], false)", cmds, ready)
 	}
 	if !c.SetFromChat([]marotte.SlashCommand{}) {
 		t.Error("SetFromChat(empty) on an unready catalog = false, want true so clients refetch")
 	}
-	if cmds, ready := c.Snapshot(); !ready || len(cmds) != 0 {
+	if cmds, ready := c.snapshot(); !ready || len(cmds) != 0 {
 		t.Errorf("Snapshot() after an empty catalog = (%+v, %v), want ([], true)", cmds, ready)
 	}
 	if c.SetFromChat([]marotte.SlashCommand{}) {
@@ -190,16 +190,16 @@ func TestSlashCatalog_ReadyOnlyAfterAKASCatalog(t *testing.T) {
 func TestSlashCatalog_UtilitySeedIsNotReady(t *testing.T) {
 	var c slashCatalog
 	seed := []marotte.SlashCommand{{Name: "review", Kind: marotte.SlashKindPrompt}}
-	if !c.SetFromUtility(seed) {
+	if !c.setFromUtility(seed) {
 		t.Fatal("SetFromUtility(seed) on an empty catalog = false, want true so clients refetch")
 	}
-	if cmds, ready := c.Snapshot(); ready || len(cmds) != 1 {
+	if cmds, ready := c.snapshot(); ready || len(cmds) != 1 {
 		t.Errorf("Snapshot() after a utility seed = (%+v, %v), want one command, not ready", cmds, ready)
 	}
 	if !c.SetFromChat(seed) {
 		t.Error("SetFromChat(same list) after a utility seed = false, want true: readiness changed")
 	}
-	if _, ready := c.Snapshot(); !ready {
+	if _, ready := c.snapshot(); !ready {
 		t.Error("Snapshot() after a chat frame: ready = false, want true")
 	}
 }
@@ -239,7 +239,7 @@ func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
 			},
 		}),
 	}
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 
 	types := extractTypes(t, bufferedSince(h, before))
 	if missing := missingEvents(types, "compaction_started"); len(missing) > 0 {
@@ -264,7 +264,7 @@ func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
 			},
 		}),
 	}
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 
 	// Between turns on an empty log, the compaction joins the closed event carrier the store mints.
 	entries := logOf(t, cs, "c1")
@@ -308,7 +308,7 @@ func TestTranslateV3_UsageUpdatePersistsContextPct(t *testing.T) {
 			},
 		}),
 	}
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 
 	chat, _ := cs.Get(t.Context(), "c1")
 	if chat.Usage.ContextPct != 25 {
@@ -331,7 +331,7 @@ func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 			"fallbackAgent":  "vibe",
 		}),
 	}
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if c.CurrentModeID != "vibe" {
@@ -354,7 +354,7 @@ func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
 			"error": "invalid YAML frontmatter",
 		}),
 	}
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 	types := extractTypes(t, bufferedSince(h, before))
 	if missing := missingEvents(types, "error"); len(missing) > 0 {
 		t.Errorf("missing events %v; got %v", missing, types)
@@ -371,7 +371,7 @@ func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 			"message": "Rate limit exceeded, try again in 30s",
 		}),
 	}
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 	types := extractTypes(t, bufferedSince(h, before))
 	if missing := missingEvents(types, "error"); len(missing) > 0 {
 		t.Errorf("missing events %v; got %v", missing, types)
@@ -384,7 +384,7 @@ func TestTranslateKnowledgeIndexing_ReachesTheTranslator(t *testing.T) {
 			h, cs, _ := newTestHub()
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 			before := h.bus.fanout.Position().Head
-			h.translateACPEvent("c1", &marotte.RPCResponse{
+			h.translateACPEvent("c1", h.originOf("c1"), &marotte.RPCResponse{
 				Method: method,
 				Params: mustJSON(t, map[string]any{"sessionId": "sess-1", "name": "docs", "fileCount": 2, "status": "success"}),
 			})
@@ -410,7 +410,7 @@ func systemNotifyMsg(t *testing.T) *marotte.RPCResponse {
 func TestTranslateSystemNotify_EmitsASystemNoticeNotAnError(t *testing.T) {
 	h, _, _ := newTestHub()
 	before := h.bus.fanout.Position().Head
-	h.translateACPEvent("c1", systemNotifyMsg(t))
+	h.translateACPEvent("c1", h.originOf("c1"), systemNotifyMsg(t))
 	types := extractTypes(t, bufferedSince(h, before))
 	if missing := missingEvents(types, "system_notice"); len(missing) > 0 {
 		t.Errorf("missing events %v; got %v", missing, types)
@@ -423,7 +423,7 @@ func TestTranslateSystemNotify_EmitsASystemNoticeNotAnError(t *testing.T) {
 func TestTranslateSystemNotify_ARunBridgeNamesItsRun(t *testing.T) {
 	h, _, _ := newTestHub()
 	before := h.bus.fanout.Position().Head
-	h.translateACPEvent(runChatID("wf_1"), systemNotifyMsg(t))
+	h.translateACPEvent(runChatID("wf_1"), h.originOf(runChatID("wf_1")), systemNotifyMsg(t))
 	var got []marotte.ChatID
 	for _, e := range bufferedSince(h, before) {
 		var msg marotte.ServerEvent

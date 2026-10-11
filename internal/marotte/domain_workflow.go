@@ -35,10 +35,15 @@ const (
 // launch path knows: a manual launch is parentless too, so events cannot separate
 // the two. It drives the client's start signal — a manual launch already has the
 // user's attention, a scheduled one began with nobody looking.
+//
+// Initiator and InitiatorReason are KAS's attribution on the `run_start` a resume emits, verbatim;
+// a launch carries neither.
 type RunStartedPayload struct {
-	WorkflowID string `json:"workflow_id"`
-	Name       string `json:"name,omitempty"`
-	Scheduled  bool   `json:"scheduled,omitempty"`
+	WorkflowID      string `json:"workflow_id"`
+	Name            string `json:"name,omitempty"`
+	Initiator       string `json:"initiator,omitempty"`
+	InitiatorReason string `json:"initiator_reason,omitempty"`
+	Scheduled       bool   `json:"scheduled,omitempty"`
 }
 
 // RunProgressPayload is the payload for type="run_progress": an INVALIDATION
@@ -49,23 +54,56 @@ type RunStartedPayload struct {
 type RunProgressPayload struct {
 	WorkflowID string `json:"workflow_id"`
 	NodeID     string `json:"node_id,omitempty"`
-	// NodePath addresses ONE execution of a node, joined with "/", spelling an
-	// iteration container `iter-<n>` as the run's entry log does. Empty on the
-	// run-level and shape-changing kinds, which is what tells the client to
-	// refetch instead.
-	NodePath string `json:"node_path,omitempty"`
 	// Status is the node's status after this frame, in KAS's own NodeState
 	// vocabulary so it drops straight onto the cached tree.
 	Status string `json:"status,omitempty"`
 	// StartedAt and EndedAt are RFC 3339, stamped by the SERVER at frame arrival:
 	// KAS puts no timestamp on either lifecycle frame. A later refetch overwrites
-	// both with KAS's own values.
+	// both.
 	StartedAt string `json:"started_at,omitempty"`
 	EndedAt   string `json:"ended_at,omitempty"`
 	// FailureReason is KAS's own explanation for a node that failed. Empty on
 	// every other outcome.
-	FailureReason string          `json:"failure_reason,omitempty"`
-	Kind          RunProgressKind `json:"kind"`
+	FailureReason string `json:"failure_reason,omitempty"`
+	// PauseReason is KAS's sentence for a node that paused; RetryReason is its sentence for a
+	// node waiting out a transient failure, which stays running (`node_paused` with kind
+	// `retry-wait`). Each is empty on every other frame.
+	PauseReason string `json:"pause_reason,omitempty"`
+	RetryReason string `json:"retry_reason,omitempty"`
+	// Initiator and InitiatorReason are KAS's attribution on a run-level `paused`, verbatim.
+	Initiator       string `json:"initiator,omitempty"`
+	InitiatorReason string `json:"initiator_reason,omitempty"`
+	// SessionID is the step session a `node_start` announces (KAS sends it on
+	// the second of a step's two), the execution identity a client shares with
+	// the run read. Empty on every other frame.
+	SessionID string          `json:"session_id,omitempty"`
+	Kind      RunProgressKind `json:"kind"`
+	// NodePath addresses ONE execution of a node by its path segments, spelling
+	// an iteration container `iter-<n>`. Empty on the run-level and
+	// shape-changing kinds, which is what tells the client to refetch instead.
+	NodePath []string `json:"node_path,omitempty"`
+}
+
+// RunPlanOutcome is where a queued plan revision stands, in KAS's `steps_queued` words. Open on
+// the wire: an outcome KAS adds later reaches the run tab as its own word.
+type RunPlanOutcome string
+
+// The outcomes marotte branches on: queued until KAS applies ("applied"), rejects or drops
+// ("dropped") the revision.
+const (
+	RunPlanQueued   RunPlanOutcome = "queued"
+	RunPlanRejected RunPlanOutcome = "rejected"
+)
+
+// RunPlanUpdate is a run's newest queued plan revision, under `plan_update` in GET
+// /api/runs/{id}. Pending counts the top-level steps queued and After names the top-level step
+// they replace the plan after; Reason is KAS's sentence for a rejection. Held in memory, as the
+// IDE holds it: a restart forgets it.
+type RunPlanUpdate struct {
+	After   string         `json:"after,omitempty"`
+	Reason  string         `json:"reason,omitempty"`
+	Outcome RunPlanOutcome `json:"outcome"`
+	Pending int            `json:"pending"`
 }
 
 // RunFinishedPayload is the payload for type="run_finished": terminal. Status is
@@ -81,7 +119,7 @@ type RunFinishedPayload struct {
 	Name       string `json:"name,omitempty"`
 }
 
-// RunStepTranscriptState is the verdict GET /api/runs/{id}/steps/{path...} answers
+// RunStepTranscriptState is the verdict GET /api/runs/{id}/steps/{path} answers
 // with. A registered wire enum, so the three values have one definition across both
 // languages and a client's branch over them is total. Three rather than a
 // 200-with-an-empty-list, because flattening the outcomes makes every client policy
@@ -101,36 +139,36 @@ const (
 	RunStepTranscriptUnavailable RunStepTranscriptState = "unavailable"
 )
 
-// RunStepTranscriptSource names where a step transcript was read from. A registered
+// runStepTranscriptSource names where a step transcript was read from. A registered
 // wire enum: the two sources answer a LIVE step differently (the log answers `ready`
 // with the turn's sealed entries and its open tails; the replay answers
 // `unavailable`, because session/load on a live session fails), and the pane reads
 // the source to know which it got.
-type RunStepTranscriptSource string
+type runStepTranscriptSource string
 
 // The two step-transcript sources.
 const (
 	// RunStepTranscriptSourceLog: the run's own entry log, the primary read for
 	// every run written after the cutover.
-	RunStepTranscriptSourceLog RunStepTranscriptSource = "log"
+	RunStepTranscriptSourceLog runStepTranscriptSource = "log"
 	// RunStepTranscriptSourceReplay: KAS's replay of the step's own session,
 	// projected into the same shape. The fallback for a path the log holds no turn
 	// for: a run predating the cutover, or one launched from the TUI. Lossy (no
 	// diffs, no terminal blocks, no model id).
-	RunStepTranscriptSourceReplay RunStepTranscriptSource = "replay"
+	RunStepTranscriptSourceReplay runStepTranscriptSource = "replay"
 )
 
-// RunStepTranscript is GET /api/runs/{id}/steps/{path...}'s reply: every turn of the run's log at
+// RunStepTranscript is GET /api/runs/{id}/steps/{path}'s reply: every turn of the run's log at
 // that node path in file order, with open tails, or KAS's replay projected into the same shape when
 // the log holds none. No `omitempty` anywhere, so the generated fields are required and a client
 // cannot assume a verdict.
 type RunStepTranscript struct {
-	// WorkflowID and NodePath echo the request, so a client holding several reads in
-	// flight tells the answers apart without correlating.
+	// WorkflowID and NodePath (the step's workflow.PathKey) echo the request, so a
+	// client holding several reads in flight tells the answers apart without correlating.
 	WorkflowID string                  `json:"workflow_id"`
 	NodePath   string                  `json:"node_path"`
 	State      RunStepTranscriptState  `json:"state"`
-	Source     RunStepTranscriptSource `json:"source"`
+	Source     runStepTranscriptSource `json:"source"`
 	// Entries is the step's transcript. Empty on any state but ready, and
 	// legitimately empty on ready.
 	Entries []Entry `json:"entries"`
@@ -202,6 +240,16 @@ type RunStepEnd struct {
 	FailureKind   FailureKind `json:"failure_kind,omitempty"`
 }
 
+// RunStepStart is when a node's current attempt began in the run's own log, under `step_starts` in GET /api/runs/{id}
+// keyed by node path. KAS restamps a node's startedAt each time it re-enters it (a resume, a restart), so its tree
+// cannot say this. Ended is true once the attempt's newest turn closed for any reason but an interruption: a node KAS
+// shows in flight past an ended attempt is on a new one.
+type RunStepStart struct {
+	// StartedAt is RFC 3339.
+	StartedAt string `json:"started_at"`
+	Ended     bool   `json:"ended"`
+}
+
 // RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.
 //
 // Empty Text is a 400 rather than a waive. Continuing without an answer is a
@@ -211,6 +259,56 @@ type RunAnswerRequest struct {
 	AskID string `json:"ask_id"`
 	Text  string `json:"text"`
 }
+
+// RunStepMessageRequest is POST /api/runs/{id}/steps/{path}/message's body: the user's words for
+// the step at that node path (the wire path, `iter-<n>` included, each segment escaped). MessageID is
+// the client's message id; a steer's id derives from it (SteerIDFor).
+type RunStepMessageRequest struct {
+	Text      string `json:"text"`
+	MessageID string `json:"message_id"`
+}
+
+// RunStepSteerRequest is POST /api/runs/{id}/steps/{path}/steer-remove's body: the unread row to
+// delete. Its sibling /steer-clear, every unread row of the step, takes no body.
+type RunStepSteerRequest struct {
+	SteerID string `json:"steer_id"`
+}
+
+// RunStepMessageVerb is how the server delivered a step message, picked from the step's live state.
+type RunStepMessageVerb string
+
+const (
+	// RunStepMessageSteer means the step was running, so the words joined its turn as a steer.
+	RunStepMessageSteer RunStepMessageVerb = "steer"
+	// RunStepMessageAnswer means the step had asked, so the words answered its question.
+	RunStepMessageAnswer RunStepMessageVerb = "answer"
+	// RunStepMessagePrompt means the step was paused with no question, so the words resumed it.
+	RunStepMessagePrompt RunStepMessageVerb = "prompt"
+)
+
+// RunStepMessageResponse is the message route's reply. SteerID is set for the steer verb only:
+// the dock row's id.
+type RunStepMessageResponse struct {
+	Verb    RunStepMessageVerb `json:"verb"`
+	SteerID string             `json:"steer_id,omitempty"`
+}
+
+// RunStepMessageRefusal is the machine `reason` of a 409 from the message route, for the client to
+// word.
+type RunStepMessageRefusal string
+
+const (
+	// RunStepNotStarted means the step has no session yet.
+	RunStepNotStarted RunStepMessageRefusal = "not_started"
+	// RunStepFinished means the step, or its whole run, has ended.
+	RunStepFinished RunStepMessageRefusal = "finished"
+	// RunStepRunPaused means the run is paused while this step is not, so Resume is the way on.
+	RunStepRunPaused RunStepMessageRefusal = "run_paused"
+	// RunStepBusy means the step is between states (a resume in flight); retry.
+	RunStepBusy RunStepMessageRefusal = "busy"
+	// RunStepFull means too many unread messages are waiting for the step.
+	RunStepFull RunStepMessageRefusal = "full"
+)
 
 // RunLaunchRequest is POST /api/runs's body: launch one recipe, PARENTLESS.
 //

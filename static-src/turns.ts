@@ -22,7 +22,7 @@ import type {
   TurnState,
   TurnThroughput,
 } from "./types.js";
-import type { TurnOutcome } from "./wire/types.gen.js";
+import type { ContextBreakdown, TurnOutcome } from "./wire/types.gen.js";
 
 /** A turn's result, as scannable colour down the transcript. Re-exported from the generated wire
  *  types (the rule exists in both languages). `running` is the member no `turn_close` carries: a
@@ -32,8 +32,8 @@ export type { TurnOutcome };
 // --- Reading an entry ---
 
 /** Narrow an entry to its kind. The wire types `payload` as `unknown`, because Go's
- *  own field is an `any` chosen by `Kind`, so this is the ONE place the client makes
- *  that choice — every other module asks by kind and gets a typed payload. */
+ *  own field is an `any` chosen by `Kind`; every other module asks by kind and gets a
+ *  typed payload. */
 export function isEntryKind<K extends EntryKind>(e: Entry, kind: K): e is KindedEntry<K> {
   return e.kind === kind;
 }
@@ -44,8 +44,8 @@ export function payloadOf<K extends EntryKind>(e: Entry, kind: K): EntryPayload[
 }
 
 /** The entry as a discriminated union, so a dispatcher's switch is total by type.
- *  The one cast in the client's entry path, and it is a cast rather than a decode
- *  because the generated decoder has already validated the payload per kind. */
+ *  The one unchecked kind-to-payload cast in the client's entry path: `decodeEntry`
+ *  validates the envelope and leaves `payload` as the server wrote it. */
 export function entryUnion(e: Entry): AnyEntry {
   return e as AnyEntry;
 }
@@ -242,7 +242,7 @@ function nextTrigger(src: TurnSource, at: number): EntryPrompt | undefined {
 
 /** Per-turn ledger inputs: what `turn_close` carries plus the turn's tool totals. `changedFiles` is
  *  the close's cumulative map verbatim; one turn has one close, so nothing merges. */
-export interface TurnLedger {
+interface TurnLedger {
   credits: number;
   elapsedMs: number;
   changedFiles: Record<string, FileChange>;
@@ -280,6 +280,7 @@ export interface TurnLedger {
   recoveries: string[];
   steering: string[];
   engineErrorClass: string;
+  contextBreakdown: ContextBreakdown | undefined;
 }
 
 /** Tool kinds that mean "a command ran". `execute` and `shell` are the two KAS
@@ -312,6 +313,7 @@ export function turnLedger(t: Turn): TurnLedger {
     recoveries: close?.recoveries ?? [],
     steering: close?.steering ?? [],
     engineErrorClass: close?.engine_error_class ?? "",
+    contextBreakdown: close?.context_breakdown,
   };
   const delegateCalls = new Set<string>();
   const noteModel = (m: string): void => {
@@ -394,6 +396,7 @@ export function turnFoldHides(t: Turn): boolean {
       case "compaction_failed":
       case "safety_blocked":
       case "model_switched":
+      case "model_routed":
       case "mode_switched":
         return true;
       case "text":

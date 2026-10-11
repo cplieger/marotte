@@ -26,7 +26,6 @@ type replayDrain struct {
 	loaded bool
 }
 
-// noteConsumed records that the consumer has folded the frame at `at`.
 func (d *replayDrain) noteConsumed(at drainPoint) {
 	if at.gen < d.gen {
 		return // a straggler from an attachment already replaced
@@ -39,7 +38,6 @@ func (d *replayDrain) noteConsumed(at drainPoint) {
 	}
 }
 
-// markLoadedAt records the position the `session/load` response arrived at.
 func (d *replayDrain) markLoadedAt(at drainPoint) {
 	if at.gen < d.gen {
 		return // a load whose attachment is already gone bounds nothing
@@ -55,8 +53,8 @@ func (d *replayDrain) reattach(gen uint64) {
 	d.gen, d.observed, d.loadSeq, d.loaded = gen, 0, 0, false
 }
 
-// complete reports whether the replay may settle from the attachment at gen. `sealed` (bridge exit)
-// bypasses the position, never the load: a load that never returned is discarded.
+// `sealed` (bridge exit) bypasses the position, never the load: a load that never returned is
+// discarded.
 func (d *replayDrain) complete(gen uint64, sealed bool) bool {
 	if gen != d.gen {
 		return false // this caller is not the attachment the positions describe

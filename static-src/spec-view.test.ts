@@ -13,7 +13,7 @@ const m = vi.hoisted(() => ({
    *  the queue is drained. */
   replies: [] as { status: number; data: unknown; etag: string }[],
   requests: [] as { path: string; etag: string }[],
-  sent: [] as { chat: string; text: string }[],
+  sent: [] as { chat: string; text: string; label?: string | undefined }[],
   sendResult: { current: "sent" as string },
   opened: [] as string[],
   reparented: [] as { id: string; parent: string }[],
@@ -78,8 +78,8 @@ vi.mock("./chat-commands.js", async (importOriginal) => {
   const actual = await importOriginal<typeof ChatCommandsModule>();
   return {
     ...actual,
-    sendPromptTo: vi.fn(async (chat: string, text: string) => {
-      m.sent.push({ chat, text });
+    sendPromptTo: vi.fn(async (chat: string, text: string, opts?: { displayText?: string }) => {
+      m.sent.push({ chat, text, label: opts?.displayText });
       return m.sendResult.current;
     }),
   };
@@ -169,8 +169,8 @@ async function settle(): Promise<void> {
   }
 }
 
-/** Drain the microtask queue. `settle`'s twin for the one case that runs on the fake clock,
- *  where a `setTimeout` would never resolve. */
+/** `settle`'s twin for the one case that runs on the fake clock, where a `setTimeout` would never
+ *  resolve. */
 async function flush(): Promise<void> {
   for (let i = 0; i < 12; i++) {
     await Promise.resolve();
@@ -468,6 +468,7 @@ describe("dispatch", () => {
     expect(m.sent).toHaveLength(1);
     expect(m.sent[0]?.chat).toBe("c1");
     expect(m.sent[0]?.text.startsWith("Execute the following task from spec 'demo'")).toBe(true);
+    expect(m.sent[0]?.label).toBe('Run task "Pending one" of spec demo');
     expect(body().querySelector(".spec-node")?.classList.contains("spec-dispatched")).toBe(true);
     expect(view._stateOf(DIR)?.fastUntil).toBeGreaterThan(Date.now());
   });
@@ -577,6 +578,7 @@ describe("phase checkpoints", () => {
     expect(m.sent).toHaveLength(1);
     expect(m.sent[0]?.chat).toBe("c1");
     expect(m.sent[0]?.text).toBe(view.runAllPrompt({ name: "demo", dir: DIR }, "required"));
+    expect(m.sent[0]?.label).toBe("Run the required tasks of spec demo");
     expect(view._stateOf(DIR)?.armedRunAll).toBeUndefined();
   });
 
@@ -600,6 +602,7 @@ describe("phase checkpoints", () => {
     await settle();
     expect(m.sent).toHaveLength(1);
     expect(m.sent[0]?.text).toBe(view.runAllPrompt({ name: "demo", dir: DIR }, "all"));
+    expect(m.sent[0]?.label).toBe("Run all tasks of spec demo, optional ones included");
     expect(view._stateOf(DIR)?.armedRunAll).toBeUndefined();
   });
 

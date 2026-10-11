@@ -5,8 +5,8 @@
 // transcript unless contained.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { loadCSS, mountAppCSS, ruleBody, ruleContaining } from "./__test-helpers__/css-rules.js";
+import scrollSource from "./scroll-controller.ts?raw";
 
-/** The selectors that carry the bulk, and the file each is authored in. */
 const BULK: readonly { selector: string; file: string }[] = [
   { selector: ".msg-row", file: "13-messages.css" },
   { selector: ".tool-call", file: "14-tools.css" },
@@ -36,10 +36,18 @@ describe("transcript containment", () => {
     const body = ruleBody(loadCSS("14-tools.css"), ".subagent-block.collapsed > .subagent-body");
     expect(body).toMatch(/content-visibility:\s*hidden\s*;/u);
   });
+
+  it("is the set scroll-controller.ts lays out ahead of the scrollport", () => {
+    // A box missing there first takes its real size on screen in WebKit, where anchoring cannot hide it.
+    const declared = /const SKIPPABLE = "([^"]+)";/u.exec(scrollSource)?.[1]?.split(", ") ?? [];
+    expect(declared.toSorted()).toEqual(BULK.map((b) => b.selector).toSorted());
+  });
 });
 
 describe("composer layout independence", () => {
-  const form = (): string => ruleBody(loadCSS("15-input.css"), '[id="prompt-form"]');
+  // `ruleContaining`: the rule is a selector list shared with the run tab's composer.
+  const form = (): string =>
+    ruleContaining(loadCSS("15-input.css"), '[id="prompt-form"]', "top").body;
 
   it("declares LAYOUT containment, and only that", () => {
     // Not `paint`/`content`/`strict`: pill cards open UPWARD out of this bar and paint containment
@@ -68,7 +76,7 @@ describe("composer layout independence", () => {
   it("does not put the containment on the bottom bar every view shares", () => {
     // `.bottom-bar` is also the editor, files and run toolbars; none of them
     // sits beside a live transcript, and containing them would be a claim about
-    // three surfaces this finding never measured.
+    // three surfaces nothing here measures.
     expect(ruleBody(loadCSS("19-files.css"), ".bottom-bar")).not.toMatch(/contain:/u);
   });
 });
@@ -137,6 +145,26 @@ describe("against real layout", () => {
     );
     return { scrollEl: wrap, edge: edge as HTMLElement };
   }
+
+  it("lays a skippable box out once it is marked near, with the containment `auto` applies", () => {
+    const wrap = document.createElement("div");
+    wrap.id = "messages-wrap";
+    stage.appendChild(wrap);
+    const seen = BULK.map(({ selector }) => {
+      const box = document.createElement("div");
+      box.className = selector.slice(1);
+      wrap.appendChild(box);
+      const far = getComputedStyle(box).contentVisibility;
+      box.toggleAttribute("data-near", true);
+      const near = getComputedStyle(box);
+      return { selector, far, near: near.contentVisibility, contain: near.contain };
+    });
+    wrap.remove();
+
+    expect(seen).toEqual(
+      BULK.map(({ selector }) => ({ selector, far: "auto", near: "visible", contain: "content" })),
+    );
+  });
 
   /** How far the marker's bottom sits above the scroller's content bottom, which is
    *  the figure `isAtBottom()` and the edge observer have to agree on. */

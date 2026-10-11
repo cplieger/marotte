@@ -189,6 +189,7 @@ describe("what one entry is worth", () => {
     "compaction_failed",
     "safety_blocked",
     "model_switched",
+    "model_routed",
     "mode_switched",
   ] as const)("prices the %s event at one row", (kind) => {
     expect(stood(turn("t", [entry(1, kind, {})]))).toBe(48 + GAP_PX);
@@ -313,7 +314,7 @@ describe("which ordinals a spacer stands in for", () => {
   const four = (): Turn => turn("t", [call(1), call(2), call(3), call(4)]);
 
   it("prices the ordinals BEFORE the mounted range for the head spacer", () => {
-    expect(spacerHeight(four(), { from: 3, to: 5 }, "head", "")).toBe(2 * 38 + GAP_PX + GAP_PX);
+    expect(spacerHeight(four(), { from: 3, to: 5 }, "head", "")).toBe(2 * 38 + GAP_PX);
   });
 
   it("prices the ordinals AFTER the mounted range for the tail spacer", () => {
@@ -328,15 +329,17 @@ describe("which ordinals a spacer stands in for", () => {
   it("clamps a range that overruns the turn instead of walking past it", () => {
     // The head spacer of a range starting past the span stands for the whole turn; the tail
     // spacer of the same range stands for nothing, because there is nothing above the span.
-    expect(spacerHeight(four(), { from: 99, to: 99 }, "head", "")).toBe(
-      4 * 38 + 3 * GAP_PX + GAP_PX,
-    );
+    expect(spacerHeight(four(), { from: 99, to: 99 }, "head", "")).toBe(4 * 38 + 3 * GAP_PX);
     expect(spacerHeight(four(), { from: 99, to: 99 }, "tail", "")).toBe(0);
   });
 
   it("charges K−1 gaps between the boxes it replaces PLUS the boundary one", () => {
-    // The boundary gap: the spacer sits under the gapless `.turn`.
+    // The boundary gap: the tail spacer sits under the gapless `.turn`.
     expect(spacerHeight(four(), { from: 0, to: 1 }, "tail", "")).toBe(4 * 38 + 3 * GAP_PX + GAP_PX);
+  });
+
+  it("charges the head spacer no boundary gap, since it is the body's first item", () => {
+    expect(spacerHeight(four(), { from: 4, to: 5 }, "head", "")).toBe(3 * 38 + 2 * GAP_PX);
   });
 });
 

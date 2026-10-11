@@ -8,7 +8,6 @@ import (
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
-// lookupEnv is the environment seam the runtime section reads through.
 var lookupEnv = os.LookupEnv
 
 func writeIntro(b *strings.Builder, workDir string) {
@@ -161,11 +160,12 @@ func writeGitPanel(b *strings.Builder, workDir string, connected bool) {
 func writeUIGuide(b *strings.Builder) {
 	b.WriteString("## UI guide\n\n")
 	b.WriteString("Where things are, so you can direct a user. Quoted words are the exact labels on screen.\n\n")
-	b.WriteString("- Sidebar: \"New chat\"; the tab list; footer: the account button (plan, usage meter, ")
+	b.WriteString("- Sidebar: \"New chat\" with a square \"History\" button beside it; the tab list; ")
+	b.WriteString("footer: the account button (plan, usage meter, ")
 	b.WriteString("\"Overages on/off\") and \"Log out\"; \"Toggle theme\" lives here, not in Settings; a ")
 	b.WriteString("\"Touch mode\" toggle appears on desktops that have seen a touchscreen\n")
 	b.WriteString("- Chat toolbar (top right): \"Search (Ctrl+F)\", \"File browser\", \"Toggle git\", ")
-	b.WriteString("\"Toggle shell\", \"Kiro docs\", \"History\", \"Settings\". On a phone the ☰ \"Menu\" button ")
+	b.WriteString("\"Toggle shell\", \"Kiro docs\", \"Settings\". On a phone the ☰ \"Menu\" button ")
 	b.WriteString("opens the sidebar\n")
 	b.WriteString("- Tabs: the strip is server-owned and shared across every device (max 48). Eleven kinds: ")
 	b.WriteString("chat, editor, files, run, subagent, spec, settings, git, docs, history, web. Drag to reorder; × or ")
@@ -216,8 +216,11 @@ func writeUIGuide(b *strings.Builder) {
 	b.WriteString("\"Download\", \"New file\", \"New folder\", \"Rename (F2)\", \"Delete\"; a search mode; a git ")
 	b.WriteString("status letter per row that opens the change; drag files onto it to upload. Opening a file ")
 	b.WriteString("gives the editor (`/file/<path>#L<line>`; a page in its own workspace folder opens its Preview ")
-	b.WriteString("tab instead): \"Edit\" / \"Save\" / \"Stop editing\", \"View as ")
-	b.WriteString("diff (vs saved)\", \"View diff vs HEAD\", markdown rendered until Edit, merge markers get ")
+	b.WriteString("tab instead): \"Edit\" / \"Save\" / \"Stop editing\", ")
+	b.WriteString("\"View diff vs saved\", \"View diff vs HEAD\" (headed \"Git revision\"), \"Go to line\" (Ctrl+G), \"Download\", ")
+	b.WriteString("and \"Switch to live refresh\" / \"Pause live refresh\" once the file changes on disk; ")
+	b.WriteString("markdown rendered until Edit; a file over 2 MiB shows only \"File is too large to display. ")
+	b.WriteString("Download it to view.\" and \"Download\"; merge markers get ")
 	b.WriteString("per-hunk \"Ours\" / \"Theirs\" / \"Both\" plus \"Suggest\"\n")
 	b.WriteString("- \"Toggle shell\" (Ctrl+/): one bottom-docked `bash --login` for the whole workspace, ")
 	b.WriteString("shared by every tab and kept across reloads; header \"Key toolbar\", \"Restart shell\", ")

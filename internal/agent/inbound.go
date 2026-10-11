@@ -7,11 +7,9 @@ import (
 	"github.com/cplieger/marotte/internal/spec"
 )
 
-// inbound answers the requests the agent makes of marotte over ACP.
 type inbound struct {
 	lifetime *lifetime
-	coord    *BridgeCoordinator
-	chats    runChatReader
+	coord    *bridgeCoordinator
 	bus      *bus
 	// specs is the workspace-global spec_changed coalescer every spec-directory write marks.
 	specs   *spec.Notifier

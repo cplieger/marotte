@@ -7,6 +7,7 @@ import { uploadLimitHint } from "./upload-policy.js";
 const {
   openFilePicker,
   openTangentChat,
+  mergeTangentChat,
   openRunView,
   setSupervisedDispatch,
   setInterruptDispatch,
@@ -42,6 +43,7 @@ const {
   toastError: vi.fn(),
   chatNotice: vi.fn(),
   collapseAll: vi.fn(),
+  mergeTangentChat: vi.fn(),
 }));
 
 let activeID = "";
@@ -49,6 +51,7 @@ let supervised: boolean | undefined;
 let interruptMode: "steer" | "queue" | undefined;
 let thinking = false;
 let messageCount = 3;
+let tangent = false;
 
 /** The active chat as the menu sees it; `message_count` unlocks the tangent row. */
 function session():
@@ -58,6 +61,7 @@ function session():
       supervised_mode: boolean | undefined;
       interrupt_mode: "steer" | "queue" | undefined;
       message_count: number;
+      tangent: boolean;
     }
   | undefined {
   return activeID === ""
@@ -68,6 +72,7 @@ function session():
         supervised_mode: supervised,
         interrupt_mode: interruptMode,
         message_count: messageCount,
+        tangent,
       };
 }
 
@@ -90,6 +95,7 @@ vi.mock("./store.js", () => ({
 vi.mock("./pill-expand.js", () => ({ makeExpandable: vi.fn(), collapseAll }));
 vi.mock("./files-picker.js", () => ({ openFilePicker }));
 vi.mock("./chat.js", () => ({ openTangentChat }));
+vi.mock("./tangent-merge.js", () => ({ mergeTangentChat }));
 vi.mock("./run-view.js", () => ({ openRunView }));
 vi.mock("./toast.js", () => ({ error: toastError, success: vi.fn(), info: vi.fn() }));
 // A refusal about the active chat is named for it through the notice door.
@@ -171,12 +177,10 @@ async function mountMenu(): Promise<{ card: HTMLElement; mod: typeof ChatOptions
   return { card: document.getElementById("chat-options-card") as HTMLElement, mod };
 }
 
-/** Click the row whose visible name matches. */
 function clickRow(card: HTMLElement, name: string): void {
   rowButton(card, name).click();
 }
 
-/** The button of the row whose visible name matches. */
 function rowButton(card: HTMLElement, name: string): HTMLButtonElement {
   for (const btn of Array.from(card.querySelectorAll<HTMLButtonElement>(".chat-opt-btn"))) {
     if (btn.querySelector(".chat-opt-name")?.textContent === name) {
@@ -193,6 +197,7 @@ beforeEach(() => {
   interruptMode = undefined;
   thinking = false;
   messageCount = 3;
+  tangent = false;
   // Left armed: a regression reaching the recipe list proceeds to the explicit negative.
   recipesDispatch.mockResolvedValue({
     recipes: [
@@ -203,32 +208,30 @@ beforeEach(() => {
 });
 
 describe("the chat-actions menu", () => {
-  // Seven rows, the switch last: an addition or loss shows here; the interrupt choices are
-  // rows of their own.
-  it("holds exactly seven entries, the switch last", async () => {
+  // Six actions, then the two switches: an addition or loss shows here.
+  it("holds exactly eight entries, the switches last", async () => {
     const { card } = await mountMenu();
     const names = Array.from(card.querySelectorAll(".chat-opt-name")).map((n) => n.textContent);
     expect(names).toEqual([
       "Attach a file",
       "Set a goal",
       "Start a tangent",
+      "Merge into parent chat",
       "Compact the context",
       "Rename chat",
-      "Steer",
-      "Queue",
+      "Queue messages",
       "Supervised mode",
     ]);
   });
 
-  // The switch is a label with a checkbox; the rest are buttons.
-  it("renders the switch as a label with a checkbox and the rest as buttons", async () => {
+  // The switches are labels with a checkbox; the rest are buttons.
+  it("renders the switches as labels with a checkbox and the rest as buttons", async () => {
     const { card } = await mountMenu();
-    expect(card.querySelectorAll(".chat-opt-btn")).toHaveLength(5);
-    const row = card.querySelector<HTMLLabelElement>(
-      'label.chat-opt-row[for="chat-opt-supervised"]',
-    );
-    expect(row?.htmlFor).toBe("chat-opt-supervised");
-    expect(row?.querySelector<HTMLInputElement>("input")?.type).toBe("checkbox");
+    expect(card.querySelectorAll(".chat-opt-btn")).toHaveLength(6);
+    for (const id of ["chat-opt-queue", "chat-opt-supervised"]) {
+      const row = card.querySelector<HTMLLabelElement>(`label.chat-opt-row[for="${id}"]`);
+      expect(row?.querySelector<HTMLInputElement>("input")?.type, id).toBe("checkbox");
+    }
   });
 
   // A card of buttons inside its trigger <button> is invalid HTML (as in pill-expand.test.ts).
@@ -362,6 +365,38 @@ describe("attach a file", () => {
   });
 });
 
+describe("merge into parent chat", () => {
+  function mergeRowOf(card: HTMLElement): HTMLElement | null {
+    return rowButton(card, "Merge into parent chat").closest(".chat-opt-entry");
+  }
+
+  it("is offered on a tangent only", async () => {
+    const plain = await mountMenu();
+    expect(mergeRowOf(plain.card)?.classList.contains("hidden")).toBe(true);
+    tangent = true;
+    const forked = await mountMenu();
+    expect(mergeRowOf(forked.card)?.classList.contains("hidden")).toBe(false);
+  });
+
+  it("merges the active tangent", async () => {
+    tangent = true;
+    const { card } = await mountMenu();
+    clickRow(card, "Merge into parent chat");
+    expect(mergeTangentChat).toHaveBeenCalledWith("c-active");
+  });
+
+  it("is unavailable mid-turn and says what unlocks it", async () => {
+    tangent = true;
+    thinking = true;
+    const { card } = await mountMenu();
+    const btn = rowButton(card, "Merge into parent chat");
+    expect(btn.disabled).toBe(true);
+    expect(btn.querySelector(".chat-opt-hint")?.textContent).toBe(
+      "Wait for this turn to finish, then merge",
+    );
+  });
+});
+
 describe("start a tangent", () => {
   it("opens a tangent off the active chat", async () => {
     const { card } = await mountMenu();
@@ -418,7 +453,6 @@ describe("start a tangent", () => {
 });
 
 describe("set a goal", () => {
-  /** Open the goal form on the row. */
   function openForm(card: HTMLElement): HTMLFormElement {
     clickRow(card, "Set a goal");
     const form = card.querySelector<HTMLFormElement>(".chat-opt-form");
@@ -697,50 +731,44 @@ describe("supervised mode", () => {
   });
 });
 
-// What Send means while a turn runs: a per-chat radio pair, Steer the default.
+// What Send means while a turn runs: a per-chat switch, on for queue, off (steer) the default.
 describe("the interrupt mode", () => {
-  function radio(card: HTMLElement, mode: "steer" | "queue"): HTMLInputElement {
-    const el = card.querySelector<HTMLInputElement>(`#chat-opt-interrupt-${mode}`);
+  function box(card: HTMLElement): HTMLInputElement {
+    const el = card.querySelector<HTMLInputElement>("#chat-opt-queue");
     if (el === null) {
-      throw new Error(`no ${mode} radio`);
+      throw new Error("no queue switch");
     }
     return el;
   }
 
-  it("selects Steer for a chat that has recorded no mode", async () => {
+  it("is off for a chat that has recorded no mode", async () => {
     const { card } = await mountMenu();
-    expect(radio(card, "steer").checked).toBe(true);
-    expect(radio(card, "queue").checked).toBe(false);
+    expect(box(card).checked).toBe(false);
   });
 
   it("mirrors the active chat's recorded mode", async () => {
     interruptMode = "queue";
     const { card } = await mountMenu();
-    expect(radio(card, "queue").checked).toBe(true);
-    expect(radio(card, "steer").checked).toBe(false);
+    expect(box(card).checked).toBe(true);
   });
 
-  it("dispatches the mode for the active chat when a choice is picked", async () => {
+  it("dispatches queue when switched on and steer when switched off", async () => {
     const { card } = await mountMenu();
-    radio(card, "queue").checked = true;
-    radio(card, "queue").dispatchEvent(new Event("change"));
-    expect(setInterruptDispatch).toHaveBeenCalledWith({ chatID: "c-active", mode: "queue" });
+    box(card).checked = true;
+    box(card).dispatchEvent(new Event("change"));
+    expect(setInterruptDispatch).toHaveBeenLastCalledWith({ chatID: "c-active", mode: "queue" });
+    box(card).checked = false;
+    box(card).dispatchEvent(new Event("change"));
+    expect(setInterruptDispatch).toHaveBeenLastCalledWith({ chatID: "c-active", mode: "steer" });
   });
 
-  it("names the group for assistive tech", async () => {
-    const { card } = await mountMenu();
-    const group = card.querySelector('[role="radiogroup"]');
-    const label = document.getElementById(group?.getAttribute("aria-labelledby") ?? "");
-    expect(label?.textContent).toBe("While the agent works, Send\u2026");
-  });
-
-  it("records nothing and selects nothing with no active chat", async () => {
+  it("records nothing and resets the visual with no active chat", async () => {
     activeID = "";
     const { card } = await mountMenu();
-    radio(card, "queue").checked = true;
-    radio(card, "queue").dispatchEvent(new Event("change"));
+    box(card).checked = true;
+    box(card).dispatchEvent(new Event("change"));
     expect(setInterruptDispatch).not.toHaveBeenCalled();
-    expect(radio(card, "queue").checked).toBe(false);
+    expect(box(card).checked).toBe(false);
   });
 });
 

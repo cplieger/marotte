@@ -37,7 +37,7 @@ func TestHandleVAPIDKey_ReturnsPublicKey(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200", rec.Code)
 	}
-	want := `"publicKey":"` + s.PublicKey() + `"`
+	want := `"publicKey":"` + s.publicKey() + `"`
 	if !strings.Contains(rec.Body.String(), want) {
 		t.Errorf("body = %q, want substring %q", rec.Body.String(), want)
 	}

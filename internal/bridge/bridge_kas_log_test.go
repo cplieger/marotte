@@ -23,11 +23,8 @@ func TestInitialize_DecodesKASLogging(t *testing.T) {
 	}
 
 	const dir = "/config/home/.kiro/logs/2026-10-05T01-02-03Z"
-	if got := b.KASLogDir(); got != dir {
+	if got := b.kasLogDir(); got != dir {
 		t.Errorf("KASLogDir() = %q, want %q", got, dir)
-	}
-	if got := b.AgentKiroCapabilities().Logging.LogDir; got != dir {
-		t.Errorf("AgentKiroCapabilities().Logging.LogDir = %q, want %q", got, dir)
 	}
 }
 
@@ -37,10 +34,10 @@ func TestInitialize_MalformedKASLoggingKeepsTheHandshake(t *testing.T) {
 	if _, err := driveSessionCall(t, b, resp, b.initialize); err != nil {
 		t.Fatalf("initialize = %v, want nil (a bad logging block is diagnostic only)", err)
 	}
-	if got := b.KASLogDir(); got != "" {
+	if got := b.kasLogDir(); got != "" {
 		t.Errorf("KASLogDir() = %q, want empty", got)
 	}
-	if !b.AgentKiroCapabilities().ReplayMarking {
+	if !b.agentKiro.Load().ReplayMarking {
 		t.Error("ReplayMarking = false, want the rest of the block decoded")
 	}
 }

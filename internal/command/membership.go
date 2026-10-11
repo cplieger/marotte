@@ -24,11 +24,10 @@ import (
 
 // The coordinator's own refusals.
 var (
-	// errTabsFull is the 409 for an open at MaxOpenTabs.
 	errTabsFull = errors.New("too many tabs are open. Close a tab first")
-	// ErrTabsUnavailable is the 503 for a build with no tab store wired; every
+	// errTabsUnavailable is the 503 for a build with no tab store wired; every
 	// HTTP door adds the status.
-	ErrTabsUnavailable = errors.New("the tab store is unavailable")
+	errTabsUnavailable = errors.New("the tab store is unavailable")
 	// errOpenChatUnknown is the 404 for an open_tab, or a fresh create, naming a chat
 	// that is gone — the delete-ordering gate's refusal.
 	errOpenChatUnknown = errors.New("that chat no longer exists")
@@ -58,13 +57,13 @@ type TabSet interface {
 	Subtree(id string) []marotte.TabSubject
 }
 
-// RunOwner is the run surface as the coordinator uses it: which chat's agent
+// runOwner is the run surface as the coordinator uses it: which chat's agent
 // launched a run. Declared here, at the consumer; *agent.Runs satisfies it.
 //
 // `ok` is false for a run with no lease — one this server never put on the
 // wire, or one whose lease was released when it ended — so a finished run's
 // parent is unknown here and History supplies it instead.
-type RunOwner interface {
+type runOwner interface {
 	RunChat(workflowID string) (chatID marotte.ChatID, ok bool)
 }
 
@@ -77,17 +76,8 @@ type chatCloser func(ctx context.Context, chatID marotte.ChatID)
 // escalation has already erased; the captured session chain travels in.
 type chatDeleter func(ctx context.Context, chatID marotte.ChatID, sessionChain []string)
 
-// retentionRead answers whether a closed chat's record is kept. A nil read means
-// retention on — the fail-toward-keeping direction.
+// A nil read means retention on — the fail-toward-keeping direction.
 type retentionRead func(ctx context.Context) bool
-
-// doomedChat is one chat a retention-off close will delete, captured under the
-// lock while the record was still readable: nothing after the record delete may
-// re-read it.
-type doomedChat struct {
-	chatID marotte.ChatID
-	chain  []string
-}
 
 // closeTeardownBudget bounds the close escalation's post-commit work, which runs
 // detached from the request so a client walking away cannot cancel roll-forward.
@@ -96,20 +86,20 @@ const closeTeardownBudget = time.Minute
 // Membership owns every operation that spans the chat store and the tab set.
 //
 // Safe for concurrent use; the zero value is not usable, construct with
-// NewMembership. A nil TabSet means no tab store was wired: the chat half
+// newMembership. A nil TabSet means no tab store was wired: the chat half
 // of every operation still runs and the tab half reports
-// ErrTabsUnavailable.
+// errTabsUnavailable.
 type Membership struct {
-	chats      ChatStore
+	chats      chatStore
 	tabs       TabSet
-	bus        Broadcaster
-	teardown   ChatTeardown
+	bus        broadcaster
+	teardown   chatTeardown
 	closeChat  chatCloser
 	deleteChat chatDeleter
 	retention  retentionRead
 	// runs resolves a run's launching chat when a client sends no parent. May
 	// be nil, in which case no parent is filled and a run tab opens top level.
-	runs RunOwner
+	runs runOwner
 	// retentionWake asks the purge scheduler for a pass now; nil leaves its timer.
 	retentionWake func()
 	// supervisedDefault reads the workspace-wide Supervised default a fresh
@@ -121,7 +111,7 @@ type Membership struct {
 	ops *createLedger
 	// sessions is the fresh session-chain read AdmitRunPurge decides on. Nil spares
 	// every run that names a parent session.
-	sessions SessionClaims
+	sessions sessionClaims
 	// purgingRuns holds the runs AdmitRunPurge admitted and whose delete has not
 	// returned; OpenTab refuses them. purgingSessions counts those runs' parent
 	// sessions; CreateChatAndOpen refuses to bind one. Both guarded by mu.
@@ -132,14 +122,14 @@ type Membership struct {
 	mu sync.Mutex
 }
 
-// MembershipDeps is Membership's constructor argument. Every field is required
+// membershipDeps is Membership's constructor argument. Every field is required
 // except Tabs, DeleteChat, Retention and SupervisedDefault, which default to
 // the safe direction.
-type MembershipDeps struct {
-	Chats      ChatStore
+type membershipDeps struct {
+	Chats      chatStore
 	Tabs       TabSet
-	Bus        Broadcaster
-	Teardown   ChatTeardown
+	Bus        broadcaster
+	Teardown   chatTeardown
 	CloseChat  chatCloser
 	DeleteChat chatDeleter
 	Retention  retentionRead
@@ -147,14 +137,14 @@ type MembershipDeps struct {
 	// A function so the coordinator keeps no filesystem knowledge and cannot disagree with the
 	// prompt path's reader; nil is false.
 	SupervisedDefault func(context.Context) bool
-	Runs              RunOwner
+	Runs              runOwner
 	// Sessions answers the run purge's claim check. Nil spares every run with a
 	// parent session (the fail-toward-keeping direction).
-	Sessions SessionClaims
+	Sessions sessionClaims
 }
 
-// NewMembership builds the coordinator.
-func NewMembership(deps *MembershipDeps) *Membership {
+// newMembership builds the coordinator.
+func newMembership(deps *membershipDeps) *Membership {
 	return &Membership{
 		chats:             deps.Chats,
 		tabs:              deps.Tabs,
@@ -300,11 +290,11 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (Cha
 	return ChatOpened{Chat: c, Subject: opened.Subject, Version: opened.Version, Replay: replay}, nil
 }
 
-// ResolvedChat reports the chat an op_id has already created, without minting
+// resolvedChat reports the chat an op_id has already created, without minting
 // one. Exists for fork_chat: a fork's record cannot be built until KAS answers
 // session/fork, and that round trip must not happen under the operation lock
 // (a bridge Call has no client-side timeout).
-func (m *Membership) ResolvedChat(opID string) (marotte.ChatID, bool) {
+func (m *Membership) resolvedChat(opID string) (marotte.ChatID, bool) {
 	return m.ops.peek(opID)
 }
 
@@ -313,7 +303,7 @@ func (m *Membership) ResolvedChat(opID string) (marotte.ChatID, bool) {
 // ordering — with the check and the open in one critical section.
 func (m *Membership) OpenTab(ctx context.Context, spec marotte.OpenTab, opID string) (TabOpened, error) {
 	if m.tabs == nil {
-		return TabOpened{}, StatusError(http.StatusServiceUnavailable, ErrTabsUnavailable)
+		return TabOpened{}, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -349,17 +339,17 @@ func (m *Membership) fillRunParent(spec marotte.OpenTab) string {
 	return m.tabForChat(chatID)
 }
 
-// CloseTab closes a tab and its descendants, then tears down what an owned tab
+// closeTab closes a tab and its descendants, then tears down what an owned tab
 // showed — and, with retention off, deletes each chat the close left tabless. An id
 // that is not open closes nothing and is not an error: two devices can close one.
 //
-// Escalation, ordered, under the operation lock: decide the doomed set, capturing
-// each chat's {id, session chain} while its record is still readable; then
-// tabs.Close, the COMMIT POINT; then chats.Delete each doomed record. Past the
-// commit there is no rollback, only roll-forward on a detached context.
-func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []marotte.TabSubject, version uint64, err error) {
+// Escalation, ordered, under the operation lock: decide the doomed set; then
+// tabs.Close, the COMMIT POINT; then chats.Delete each doomed record, which answers
+// the session chain the teardown runs from. Past the commit there is no rollback,
+// only roll-forward on a detached context.
+func (m *Membership) closeTab(ctx context.Context, id, opID string) (closed []marotte.TabSubject, version uint64, err error) {
 	if m.tabs == nil {
-		return nil, 0, StatusError(http.StatusServiceUnavailable, ErrTabsUnavailable)
+		return nil, 0, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
 	}
 	m.mu.Lock()
 	doomed := m.doomedChats(ctx, id)
@@ -387,7 +377,7 @@ func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []ma
 
 	// After the lock: the teardown's session/cancel has no client-side timeout, so one wedged
 	// process would block every tab mutation. One grade per chat: delete grade for a record this
-	// close took (from the captured chain), close grade for every other chat tab, including a
+	// close took (from the chain its delete answered), close grade for every other chat tab, including a
 	// doomed chat whose delete failed.
 	if m.tearDownClosed(rollCtx, closed, deleted) {
 		// The closed tab may have been what held an expired chat or finished run outside the age
@@ -427,13 +417,11 @@ func (m *Membership) tearDownClosed(ctx context.Context, closed []marotte.TabSub
 }
 
 // doomedChats decides what a retention-off close of id will delete: every chat whose
-// open tabs all lie inside the closing subtree and whose record exists, with the session
-// chain captured off that record before the commit, since nothing after the record delete
-// may re-read it. A recordless chat is skipped — no chat_deleted for an id no device
-// knows.
+// open tabs all lie inside the closing subtree and whose record exists. A recordless chat
+// is skipped — no chat_deleted for an id no device knows.
 //
 // Caller holds mu.
-func (m *Membership) doomedChats(ctx context.Context, id string) []doomedChat {
+func (m *Membership) doomedChats(ctx context.Context, id string) []marotte.ChatID {
 	if m.deleteChat == nil || m.retention == nil {
 		// Escalation unwired: a close can only close. Retention defaults
 		// on — the fail-toward-keeping direction.
@@ -443,20 +431,17 @@ func (m *Membership) doomedChats(ctx context.Context, id string) []doomedChat {
 	if len(refs) == 0 || m.retention(ctx) {
 		return nil
 	}
-	doomed := make([]doomedChat, 0, len(refs))
+	doomed := make([]marotte.ChatID, 0, len(refs))
 	for _, ref := range refs {
 		chatID := marotte.ChatID(ref)
-		c, ok := m.chats.Get(ctx, chatID)
-		if !ok {
-			continue
+		if _, ok := m.chats.Get(ctx, chatID); ok {
+			doomed = append(doomed, chatID)
 		}
-		doomed = append(doomed, doomedChat{chatID: chatID, chain: c.SessionChain()})
 	}
 	return doomed
 }
 
-// tablessChatRefs returns the chat refs the close of this subtree leaves
-// with no open tab. Caller holds mu.
+// Caller holds mu.
 func (m *Membership) tablessChatRefs(subtree []marotte.TabSubject) []string {
 	if len(subtree) == 0 {
 		return nil
@@ -490,32 +475,33 @@ func (m *Membership) tablessChatRefs(subtree []marotte.TabSubject) []string {
 // of the result, demoting that chat to the close-grade teardown.
 //
 // Caller holds mu; ctx is the detached roll-forward context.
-func (m *Membership) deleteDoomedRecords(ctx context.Context, doomed []doomedChat) map[marotte.ChatID][]string {
+func (m *Membership) deleteDoomedRecords(ctx context.Context, doomed []marotte.ChatID) map[marotte.ChatID][]string {
 	if len(doomed) == 0 {
 		return nil
 	}
 	deleted := make(map[marotte.ChatID][]string, len(doomed))
-	for _, d := range doomed {
-		if err := m.chats.Delete(ctx, d.chatID); err != nil {
+	for _, chatID := range doomed {
+		chain, err := m.chats.Delete(ctx, chatID)
+		if err != nil {
 			slog.Error("close: retention-off record delete failed after the tab close committed; the record survives with close-grade teardown",
-				"chat_id", d.chatID, keyError, err)
+				"chat_id", chatID, keyError, err)
 			continue
 		}
-		slog.Info("chat deleted on close (retention off)", "chat_id", d.chatID)
-		deleted[d.chatID] = d.chain
+		slog.Info("chat deleted on close (retention off)", "chat_id", chatID)
+		deleted[chatID] = chain
 	}
 	return deleted
 }
 
-// ReorderTabs replaces the order. ids must name every open tab exactly
+// reorderTabs replaces the order. ids must name every open tab exactly
 // once; tabs.ErrOrderMismatch maps to 409.
 //
 // No base-version precondition: the exact-set check is the precondition,
 // and a version one would discard a valid drag whenever an unrelated pin
 // landed first.
-func (m *Membership) ReorderTabs(ctx context.Context, ids []string, opID string) (uint64, error) {
+func (m *Membership) reorderTabs(ctx context.Context, ids []string, opID string) (uint64, error) {
 	if m.tabs == nil {
-		return 0, StatusError(http.StatusServiceUnavailable, ErrTabsUnavailable)
+		return 0, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -532,14 +518,14 @@ func (m *Membership) ReorderTabs(ctx context.Context, ids []string, opID string)
 	return version, nil
 }
 
-// SetPinned pins or unpins one tab. Idempotent in both directions.
+// setPinned pins or unpins one tab. Idempotent in both directions.
 //
 // An id that is not open is errTabUnknown (404), unlike a close: a pin is
 // a statement about a tab, so success would tell the caller its tab is
 // pinned when it is not.
-func (m *Membership) SetPinned(ctx context.Context, id string, pinned bool, opID string) (uint64, error) {
+func (m *Membership) setPinned(ctx context.Context, id string, pinned bool, opID string) (uint64, error) {
 	if m.tabs == nil {
-		return 0, StatusError(http.StatusServiceUnavailable, ErrTabsUnavailable)
+		return 0, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -559,16 +545,16 @@ func (m *Membership) SetPinned(ctx context.Context, id string, pinned bool, opID
 	return version, nil
 }
 
-// Reparent hangs one open tab under an open chat tab and returns the subject
+// reparent hangs one open tab under an open chat tab and returns the subject
 // as it now reads. Idempotent when the parent is unchanged: nothing commits,
 // nothing is emitted.
 //
 // errTabUnknown (404) for an id that is not open, like a pin; 409 when parent
 // is not an open TabKindChat tab or sits inside the tab's own subtree. The
 // frame carries Order beside Changed because the row moved.
-func (m *Membership) Reparent(ctx context.Context, id, parent, opID string) (marotte.TabSubject, uint64, error) {
+func (m *Membership) reparent(ctx context.Context, id, parent, opID string) (marotte.TabSubject, uint64, error) {
 	if m.tabs == nil {
-		return marotte.TabSubject{}, 0, StatusError(http.StatusServiceUnavailable, ErrTabsUnavailable)
+		return marotte.TabSubject{}, 0, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -596,27 +582,37 @@ func (m *Membership) Reparent(ctx context.Context, id, parent, opID string) (mar
 	return changed, version, nil
 }
 
-// DeleteChatAndCloseTabs is the delete path: tear the chat's work down, remove the
-// record, then close its tabs. Once the record is gone every later open is refused, and
-// any open that landed before it has its tab in the set closeTabsFor then walks. The
-// teardown runs before the lock, because the run cancel must precede the bridge going
-// down and it reaches the bridge.
+// DeleteChatAndCloseTabs is the delete path: remove the record and close its tabs in one
+// critical section, then tear the chat's work down from the session chain the removed
+// record held. The record is the admission barrier: once it is gone every later open is
+// refused and a bridge opening on it settles ErrChatGone, and the teardown after it closes
+// any bridge that opened before. A failed delete tears nothing down, so the chat keeps
+// working. The teardown runs after the lock: its KAS calls have no client-side timeout,
+// so one wedged process would block every tab mutation.
 func (m *Membership) DeleteChatAndCloseTabs(ctx context.Context, chatID marotte.ChatID, opID string) error {
-	m.teardown.DeleteChatState(ctx, chatID)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if err := m.chats.Delete(ctx, chatID); err != nil {
+	chain, err := m.deleteRecordAndCloseTabs(ctx, chatID, opID)
+	if err != nil {
 		return StatusError(http.StatusInternalServerError, err)
 	}
-	slog.Info("chat deleted", "chat_id", chatID)
-	m.closeTabsFor(ctx, chatID, opID)
+	m.teardown.DeleteChatStateByChain(ctx, chatID, chain, RunStopChatDeleted)
 	return nil
 }
 
+func (m *Membership) deleteRecordAndCloseTabs(ctx context.Context, chatID marotte.ChatID, opID string) (sessionChain []string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sessionChain, err = m.chats.Delete(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("chat deleted", "chat_id", chatID)
+	m.closeTabsFor(ctx, chatID, opID)
+	return sessionChain, nil
+}
+
 // RetentionClose tears down the work of a chat the retention purge already removed, then closes its
-// tabs. By-chain grade, because a record-reading teardown would no-op. The teardown runs before the
-// operation lock, as in DeleteChatAndCloseTabs: the run cancel must precede the bridge going down.
-// Tabs to close here mean one was opened between HasOpenTab and the remove.
+// tabs. The teardown runs outside the operation lock, as in DeleteChatAndCloseTabs. Tabs to close
+// here mean one was opened between HasOpenTab and the remove.
 func (m *Membership) RetentionClose(ctx context.Context, chatID marotte.ChatID, sessionChain []string) {
 	m.teardown.DeleteChatStateByChain(ctx, chatID, sessionChain, RunStopRetention)
 	m.mu.Lock()
@@ -638,7 +634,6 @@ func (m *Membership) SetRetentionWake(wake func()) {
 // no tab shows is purgeable from that moment.
 func (m *Membership) WakeRetention() { m.wakeRetention() }
 
-// wakeRetention asks the purge to reconsider, if a scheduler is wired.
 func (m *Membership) wakeRetention() {
 	m.mu.Lock()
 	wake := m.retentionWake
@@ -687,7 +682,7 @@ func (m *Membership) AdmitRunPurge(ctx context.Context, workflowID, parentSessio
 	}, true
 }
 
-// runTabOpen reports whether a tab shows workflowID. Caller holds mu.
+// Caller holds mu.
 func (m *Membership) runTabOpen(workflowID string) bool {
 	if m.tabs == nil {
 		return false
@@ -711,8 +706,7 @@ func (m *Membership) sessionUnclaimed(ctx context.Context, sessionID string) boo
 	return !claimed && complete
 }
 
-// sessionPurging reports whether a run the purge is deleting was launched from
-// sessionID. Caller holds mu.
+// Caller holds mu.
 func (m *Membership) sessionPurging(sessionID string) bool {
 	return m.purgingSessions[sessionID] > 0
 }
@@ -843,8 +837,7 @@ func (m *Membership) subject(id string) (marotte.TabSubject, bool) {
 	return marotte.TabSubject{}, false
 }
 
-// emit broadcasts one aggregate frame. Workspace-global: the arrangement
-// is not per chat.
+// Workspace-global: the arrangement is not per chat.
 func (m *Membership) emit(ctx context.Context, p *marotte.TabsChangedPayload) {
 	if m.bus == nil {
 		return
@@ -852,7 +845,6 @@ func (m *Membership) emit(ctx context.Context, p *marotte.TabsChangedPayload) {
 	m.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventTabsChanged, "", *p))
 }
 
-// tabStatus maps the tab store's sentinels onto HTTP statuses.
 func tabStatus(err error) error {
 	switch {
 	case errors.Is(err, tabs.ErrTooMany):
@@ -867,7 +859,6 @@ func tabStatus(err error) error {
 	return StatusError(http.StatusInternalServerError, err)
 }
 
-// tabsForChat returns every tab showing chatID.
 func tabsForChat(open []marotte.TabSubject, chatID marotte.ChatID) []marotte.TabSubject {
 	var out []marotte.TabSubject
 	for _, t := range open {
@@ -878,8 +869,6 @@ func tabsForChat(open []marotte.TabSubject, chatID marotte.ChatID) []marotte.Tab
 	return out
 }
 
-// subjectIDs projects subjects onto their ids, which is what both removed_ids
-// and order carry.
 func subjectIDs(subjects []marotte.TabSubject) []string {
 	out := make([]string, 0, len(subjects))
 	for _, t := range subjects {
@@ -888,7 +877,6 @@ func subjectIDs(subjects []marotte.TabSubject) []string {
 	return out
 }
 
-// indexOfTab returns the position of the tab with this id, or -1.
 func indexOfTab(open []marotte.TabSubject, id string) int {
 	return slices.IndexFunc(open, func(t marotte.TabSubject) bool { return t.ID == id })
 }

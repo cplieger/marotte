@@ -1,12 +1,11 @@
-// Two states plus hidden: red is broken, amber is modified, the hues `.git-st-*` and VS Code use per file. `behind`
-// is no state (nothing fetches, so it is stale by construction). Derivation and stylesheet are one decision, so both
-// are pinned here: pinning one alone lets the other disagree.
+// One state plus hidden: amber is modified, the hue `.git-st-*` and VS Code use per file. `behind` is no state
+// (nothing fetches, so it is stale by construction). Derivation and stylesheet are one decision, so both are pinned
+// here: pinning one alone lets the other disagree.
 
 import { describe, expect, it } from "vitest";
 import { deriveState, deriveTooltip } from "./git-badge.js";
 import { allRules, loadCSS, manifestSheets, ruleContaining } from "./__test-helpers__/css-rules.js";
 import type { GitRepoStatusBadge } from "./git-types.js";
-import type { ConfiguredForge } from "./wire/types.gen.js";
 
 function repo(over: Partial<GitRepoStatusBadge> = {}): GitRepoStatusBadge {
   return {
@@ -20,26 +19,15 @@ function repo(over: Partial<GitRepoStatusBadge> = {}): GitRepoStatusBadge {
   };
 }
 
-function forge(over: Partial<ConfiguredForge> = {}): ConfiguredForge {
-  return {
-    id: "github:github.com",
-    kind: "github",
-    host: "github.com",
-    connected: true,
-    reconnect_required: false,
-    ...over,
-  };
-}
-
 describe("git badge state", () => {
-  it("hides when every repo is clean and no forge is broken", () => {
-    expect(deriveState({ repos: [repo(), repo({ repo: "lib" })] }, [forge()])).toEqual({
+  it("hides when every repo is clean", () => {
+    expect(deriveState({ repos: [repo(), repo({ repo: "lib" })] })).toEqual({
       kind: "none",
     });
   });
 
   it("is dirty when a repo has an uncommitted change", () => {
-    expect(deriveState({ repos: [repo({ has_dirty: true })] }, [])).toEqual({
+    expect(deriveState({ repos: [repo({ has_dirty: true })] })).toEqual({
       kind: "dirty",
       dirtyCount: 1,
     });
@@ -47,7 +35,7 @@ describe("git badge state", () => {
 
   it("is dirty when a repo's only change is an unpushed commit", () => {
     // An unpushed commit is local work the reader still owns, so `ahead` is dirty on a clean tree.
-    expect(deriveState({ repos: [repo({ ahead: 2 })] }, [])).toEqual({
+    expect(deriveState({ repos: [repo({ ahead: 2 })] })).toEqual({
       kind: "dirty",
       dirtyCount: 1,
     });
@@ -55,63 +43,35 @@ describe("git badge state", () => {
 
   it("stays HIDDEN for a repo that is only behind origin", () => {
     // `behind` never reaches the badge: nothing fetches, so the number is stale.
-    expect(deriveState({ repos: [repo({ behind: 7 })] }, [])).toEqual({ kind: "none" });
+    expect(deriveState({ repos: [repo({ behind: 7 })] })).toEqual({ kind: "none" });
   });
 
   it("reports dirty-AND-behind as plain dirty, with no blended state", () => {
     // One repo dirty, another behind: the input that once produced a blended state.
     expect(
-      deriveState({ repos: [repo({ has_dirty: true }), repo({ repo: "lib", behind: 3 })] }, []),
+      deriveState({ repos: [repo({ has_dirty: true }), repo({ repo: "lib", behind: 3 })] }),
     ).toEqual({ kind: "dirty", dirtyCount: 1 });
   });
 
   it("counts each dirty repo once, however many ways it is dirty", () => {
-    expect(deriveState({ repos: [repo({ has_dirty: true, ahead: 4, behind: 9 })] }, [])).toEqual({
+    expect(deriveState({ repos: [repo({ has_dirty: true, ahead: 4, behind: 9 })] })).toEqual({
       kind: "dirty",
       dirtyCount: 1,
     });
   });
 
   it("skips a path that is not a repo", () => {
-    expect(deriveState({ repos: [repo({ is_repo: false, has_dirty: true })] }, [])).toEqual({
+    expect(deriveState({ repos: [repo({ is_repo: false, has_dirty: true })] })).toEqual({
       kind: "none",
     });
   });
 
-  it("lets a broken forge outrank dirty repos", () => {
-    expect(
-      deriveState({ repos: [repo({ has_dirty: true })] }, [forge({ last_error: "bad token" })]),
-    ).toEqual({ kind: "error", forgeIds: ["github:github.com"] });
-  });
-
-  it("is not an error for a forge that is merely disconnected", () => {
-    expect(
-      deriveState({ repos: [] }, [forge({ connected: false, last_error: "bad token" })]),
-    ).toEqual({ kind: "none" });
-  });
-
-  it("is not an error for an empty last_error", () => {
-    expect(deriveState({ repos: [] }, [forge({ last_error: "" })])).toEqual({ kind: "none" });
-  });
-
   it("tolerates an absent repo list", () => {
-    expect(deriveState({}, [])).toEqual({ kind: "none" });
+    expect(deriveState({})).toEqual({ kind: "none" });
   });
 });
 
 describe("git badge tooltip", () => {
-  it("names the one broken forge", () => {
-    expect(deriveTooltip({ kind: "error", forgeIds: ["gitlab:gitlab.com"] })).toBe(
-      "Forge auth issue: gitlab:gitlab.com",
-    );
-  });
-
-  it("counts several broken forges rather than listing them", () => {
-    expect(deriveTooltip({ kind: "error", forgeIds: ["a", "b", "c"] })).toBe(
-      "3 forges with auth issues",
-    );
-  });
-
   it("says local changes rather than uncommitted, because ahead is committed", () => {
     expect(deriveTooltip({ kind: "dirty", dirtyCount: 1 })).toBe("1 repo with local changes");
     expect(deriveTooltip({ kind: "dirty", dirtyCount: 4 })).toBe("4 repos with local changes");
@@ -129,24 +89,20 @@ describe("git badge paint", () => {
     );
   }
 
-  it("declares exactly one state arm, and it is the error one", () => {
+  it("declares no state arm, because dirty is its one state", () => {
     const arms = badgeRules()
       .map((r) => r.selector)
       .filter((s) => s.includes("[data-state="));
-    expect(arms).toEqual(['.git-badge[data-state="error"]']);
+    expect(arms).toEqual([]);
   });
 
-  it("paints red for error and amber for the dirty default", () => {
-    const sheet = loadCSS("14-tools.css");
-    const rules = allRules(sheet);
-    const base = rules.find((r) => r.selector === ".git-badge");
-    const error = rules.find((r) => r.selector === '.git-badge[data-state="error"]');
+  it("paints amber", () => {
+    const base = allRules(loadCSS("14-tools.css")).find((r) => r.selector === ".git-badge");
     expect(base?.body).toContain("background: var(--c-yellow)");
-    expect(error?.body).toContain("background: var(--c-red)");
   });
 
   it("reaches for the state inks, never the destructive-action palette", () => {
-    // --c-danger / --c-warning are the delete-confirm palette; a status mark takes --c-red / --c-yellow.
+    // --c-danger / --c-warning are the delete-confirm palette; a status mark takes the state ink --c-yellow.
     const offenders = badgeRules().filter(
       (r) => r.body.includes("--c-danger") || r.body.includes("--c-warning"),
     );

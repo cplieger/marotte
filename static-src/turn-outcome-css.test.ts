@@ -26,32 +26,21 @@ const OUTCOMES: TurnOutcome[] = [
   "empty",
 ];
 
-/** The four MARK surfaces: the severity arms' selector prefix plus the mark descendant.
+/** The MARK surfaces: the severity arms' selector prefix plus the mark descendant.
  *  `.turn-notice` carries ink, not a mark, and is asserted at the foot. */
 const SURFACES = [
   { name: "header dot", sel: (attr: string) => `.turn-header[${attr}] .turn-dot` },
   { name: "footer wash", sel: (attr: string) => `.turn-footer[${attr}]` },
   { name: "footer glyph", sel: (attr: string) => `.turn-footer[${attr}] .turn-ledger-glyph` },
-  { name: "rail marker", sel: (attr: string) => `.rail-marker[${attr}]` },
+  {
+    name: "turn-map mark",
+    sel: (attr: string) => `.turn-pill[${attr}] > .turn-pill-link > .turn-pill-mark`,
+  },
 ] as const;
 
-/** The rail marker's RESTING declarations. TWO top-level rules list `.rail-marker` and
- *  `ruleContaining` demands exactly one match, so the lookup names the declaration it wants. */
-function restingMarkerRule(): string {
-  const hits = allRules(turns).filter(
-    (r) =>
-      r.selector
-        .split(",")
-        .map((s) => s.trim())
-        .includes(".rail-marker") && /color:/u.test(r.body),
-  );
-  expect(hits, "exactly one rule sets the resting marker ink").toHaveLength(1);
-  return hits[0]?.body ?? "";
-}
-
 /** Which severities a surface paints a MARK for. `clean` and `running` paint
- *  nothing on three of the four (absence IS the clean mark, and the footer reports
- *  how a turn ENDED), and the rail leaves both to the resting ink. */
+ *  nothing on the dot, the glyph and the map's lane (absence IS the clean mark, the footer reports
+ *  how a turn ENDED, and the map outlines a running bar instead). */
 const MARKED: TurnSeverity[] = ["stopped", "broken"];
 
 describe("hue comes off the severity table, on every surface", () => {
@@ -59,8 +48,9 @@ describe("hue comes off the severity table, on every surface", () => {
     for (const surface of SURFACES) {
       for (const severity of MARKED) {
         const rule = ruleContaining(turns, surface.sel(`data-severity="${severity}"`));
+        // A ring is an inset `box-shadow` (the turn map's stopped mark).
         expect(rule.body, `${surface.name} / ${severity} declares a colour`).toMatch(
-          /(background|border-color|color):/u,
+          /(background|border-color|color|box-shadow):/u,
         );
       }
     }
@@ -79,9 +69,12 @@ describe("hue comes off the severity table, on every surface", () => {
     );
     expect(glyph.body, "a broken glyph is filled, not a ring").toMatch(/background:/u);
 
-    const marker = ruleContaining(turns, '.rail-marker[data-severity="broken"]');
-    expect(marker.body, "a broken marker re-colours").not.toMatch(
-      /color:\s*var\(--c-text-tertiary\)/u,
+    const mark = ruleContaining(
+      turns,
+      '.turn-pill[data-severity="broken"] > .turn-pill-link > .turn-pill-mark',
+    );
+    expect(mark.body, "a broken turn-map mark is a filled red disc").toMatch(
+      /background:\s*var\(--c-red\)/u,
     );
 
     const wash = ruleContaining(turns, '.turn-footer[data-severity="broken"]');
@@ -116,7 +109,7 @@ describe("hue comes off the severity table, on every surface", () => {
     expect(glyph.selector).toContain('.turn-footer[data-severity="running"] .turn-ledger-glyph');
     expect(glyph.body).not.toMatch(/border-color:/u);
 
-    // The wash and the rail have no clean arm at all: both fall through to a resting
+    // The wash and the turn map have no clean arm at all: both fall through to a resting
     // state authored for exactly that case, so an arm restating it would be dead.
     expect(
       allRules(turns).filter((r) => r.selector.includes('.turn-footer[data-severity="clean"]:not')),
@@ -129,9 +122,13 @@ describe("hue comes off the severity table, on every surface", () => {
     expect(dot.body).toContain("var(--c-dot-working)");
     expect(dot.body).not.toContain("--c-accent");
 
-    const marker = ruleContaining(turns, '.rail-marker[data-severity="running"]');
-    expect(marker.body).toContain("var(--c-dot-working)");
-    expect(marker.body).not.toContain("--c-accent");
+    const bar = ruleContaining(
+      turns,
+      '.turn-pill[data-severity="running"]:not([data-current]) > .turn-pill-link::before',
+    );
+    expect(bar.body).toContain("var(--c-dot-working)");
+    expect(bar.body).not.toContain("--c-accent");
+    expect(bar.body, "no beat on the map").not.toContain("animation");
   });
 
   it("keeps the header dot breathing, since motion is its second channel", () => {
@@ -183,7 +180,8 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
 
   it("leaves `unknown` as the ONLY per-outcome colour rule, and states its ink", () => {
     // The one exception: `unknown` and `cancelled` are both `stopped`, but an end marotte could not read
-    // has no honest hue. FIVE rules, one per surface; the rail's is its markers.
+    // has no honest hue. FOUR rules, one per surface. The turn map takes none: it grades by
+    // severity alone, so `unknown` draws the stopped ring and its words say which stop it was.
     const rules = outcomeColourRules();
     expect(
       [...new Set(rules.map((r) => r.outcome))].sort(),
@@ -193,9 +191,8 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
     const bySelector = new Map(rules.map((r) => [r.selector, r.body]));
     expect(
       [...bySelector.keys()].sort(),
-      "one unknown override per surface, all five named",
+      "one unknown override per surface, all four named",
     ).toEqual([
-      '.rail-marker[data-outcome="unknown"]',
       '.turn-footer[data-outcome="unknown"]',
       '.turn-footer[data-outcome="unknown"] .turn-ledger-glyph',
       '.turn-header[data-outcome="unknown"] .turn-dot',
@@ -210,18 +207,6 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
       }
       expect(body, `${selector} paints the neutral ink`).toMatch(/var\(--c-text-tertiary\)/u);
     }
-  });
-
-  it("places the rail's unknown override BEFORE the selection fill", () => {
-    // Both are (0,2,0), so source order is the whole tiebreak — and the wrong order
-    // is silent: the rail would simply stop marking the reader's position on an
-    // unknown turn, which is the only surface that says where they are.
-    const rules = allRules(turns).map((r) => r.selector);
-    const override = rules.findIndex((s) => s.includes('.rail-marker[data-outcome="unknown"]'));
-    const fill = rules.findIndex((s) => s.includes(".rail-marker[data-current]"));
-    expect(override, "the unknown override exists").toBeGreaterThan(-1);
-    expect(fill, "the selection fill exists").toBeGreaterThan(-1);
-    expect(override, "unknown must not outrank the selection fill").toBeLessThan(fill);
   });
 
   it("places each other unknown override AFTER its surface's severity rules", () => {
@@ -246,15 +231,6 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
     expect(idx('.turn-notice[data-outcome="unknown"]')).toBeGreaterThan(
       idx('.turn-notice[data-severity="stopped"]'),
     );
-  });
-
-  it("keeps the marker's words as the channel colour cannot carry", () => {
-    // `unknown` and `completed` share an ink, so `rail-labels.ts`'s label is the separation.
-    expect(restingMarkerRule(), "the resting ink is the premise of this case").toMatch(
-      /color:\s*var\(--c-text-tertiary\)/u,
-    );
-    const rule = ruleContaining(turns, '.rail-marker[data-outcome="unknown"]');
-    expect(rule.body).toMatch(/color:\s*var\(--c-text-tertiary\)/u);
   });
 
   it("grades every outcome, so the sweep above is a partition rather than a sample", () => {

@@ -61,6 +61,11 @@ function declaration(body: string, property: string): string | null {
   return null;
 }
 
+/** A selector list's members; the run tab's composer shares the box's rules (`run-composer.ts`). */
+function members(selector: string): string[] {
+  return selector.split(",").map((sel) => sel.trim());
+}
+
 describe("the height's declarations, read from source", () => {
   const css = loadCSS("15-input.css");
 
@@ -74,7 +79,7 @@ describe("the height's declarations, read from source", () => {
     const writers = allRules(css)
       .filter((r) => /--composer-ctl-h:/.test(r.body))
       .map((r) => r.selector);
-    expect(writers).toEqual(['[id="prompt-form"]']);
+    expect(writers.map(members)).toEqual([['[id="prompt-form"]', '[id="run-composer"]']]);
   });
 
   it("derives the textarea's resting band from that height and the row's own inset", () => {
@@ -142,7 +147,7 @@ describe("the height's declarations, read from source", () => {
     const writers = allRules(css)
       .filter((r) => /--composer-rest-h:/.test(r.body))
       .map((r) => r.selector);
-    expect(writers).toEqual(['[id="prompt-input"]']);
+    expect(writers.map(members)).toEqual([['[id="prompt-input"]', '[id="run-composer-input"]']]);
   });
 });
 

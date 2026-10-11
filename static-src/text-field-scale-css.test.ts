@@ -14,7 +14,6 @@ import { iconEl } from "./icon-el.js";
 
 import { allRules, loadCSS, manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-/** Every control this sweeps. */
 const CONTROLS = "input, textarea, select";
 
 /** The type scale's own token names, in rung order. */
@@ -285,6 +284,7 @@ describe("the controls, measured over the shipped markup", () => {
     // The PEER consumers are a closed set: two of the three rows are built by JS, so the measured case
     // cannot reach them and this source contract is the only guard.
     expect(formTierSelectors("--fs-form-peer").sort()).toEqual([
+      ".editor-goto .editor-goto-submit",
       ".filepicker-footer .btn-save",
       ".knowledge-add-form .btn-small",
       ".native-rule-effect",
@@ -374,7 +374,7 @@ describe("the controls, measured over the shipped markup", () => {
     // Only those the shipped markup renders; `.knowledge-add-form` is guarded by the closed set above.
     await mountPage(w, h, p);
     const mismatched: string[] = [];
-    for (const sel of [".filepicker-footer", ".rule-form"]) {
+    for (const sel of [".editor-goto", ".filepicker-footer", ".rule-form"]) {
       const rows = [...document.querySelectorAll<HTMLElement>(sel)];
       expect(rows.length, `${sel} is not in the shipped markup`).toBeGreaterThan(0);
       for (const row of rows) {

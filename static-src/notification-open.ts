@@ -26,6 +26,7 @@ export function openPushTarget(target: PushTarget): void {
 }
 
 /** Drop the registration. Test isolation only; production never unregisters. */
+// deadset:ignore DS1004 -- test seam: resets the registered notification opener
 export function _resetNotificationOpenerForTest(): void {
   opener = null;
 }

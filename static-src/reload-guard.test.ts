@@ -43,8 +43,8 @@ function throwingStore(): Storage {
   };
 }
 
-/** One boot. A busted specifier is what mints a new module instance; the `.ts` extension is
- *  load-bearing for coverage attribution. */
+/** A busted specifier is what mints a new module instance; the `.ts` extension is load-bearing for
+ *  coverage attribution. */
 let seq = 0;
 async function boot(): Promise<typeof Guard> {
   seq++;

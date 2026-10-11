@@ -98,7 +98,6 @@ func TestToolCallDelta_RoundTripsOverAFoldSequence(t *testing.T) {
 	})
 }
 
-// foldStep applies one of the mutations the server's fold performs.
 func foldStep(rt *rapid.T, tc *marotte.ToolCall) {
 	switch rapid.IntRange(0, 9).Draw(rt, "step") {
 	case 0:

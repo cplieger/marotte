@@ -49,8 +49,8 @@ func inspectPaused(t *testing.T, workflowID, reason string) json.RawMessage {
 	return inspectReply(t, workflowID, marotte.RunStatusPaused, reason)
 }
 
-// inspectPausedWithDetail adds `state.pauseDetail`; reason and detail are separate since they can disagree.
-// `occurredAt` is written because KAS sends it.
+// reason and detail are separate since they can disagree. `occurredAt` is written because KAS sends
+// it.
 func inspectPausedWithDetail(t *testing.T, workflowID, reason string, d pauseDetail) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{

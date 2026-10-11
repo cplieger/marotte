@@ -23,7 +23,7 @@ export const OVERSCAN_ENTRIES = 24;
  * A paint budget, and the shape `turnCost` reports. Both fields count only what a view
  * RENDERS; the `seq` SPAN is `turnSpan`.
  */
-export interface TurnCost {
+interface TurnCost {
   readonly entries: number;
   readonly toolCalls: number;
 }
@@ -88,6 +88,7 @@ export function entryRenders(e: Entry, lane: string, firstPlan: number): boolean
     case "turn_bind":
     case "tool_result":
     case "reconciled":
+    case "steer_delivered":
       return false;
     case "plan":
       return firstPlan === e.seq;
@@ -157,24 +158,6 @@ export function runCardOwners(turns: readonly Turn[], lane = ""): ReadonlyMap<st
     }
   }
   return out;
-}
-
-/** What mounting `t`'s body costs this view: the entries it draws, and how many of those
- *  are tool calls. */
-export function turnCost(t: Turn, lane = ""): TurnCost {
-  const firstPlan = firstPlanSeq(t, lane);
-  let entries = 0;
-  let toolCalls = 0;
-  for (const e of t.body) {
-    if (!entryRenders(e, lane, firstPlan)) {
-      continue;
-    }
-    entries++;
-    if (e.kind === "tool_call") {
-      toolCalls++;
-    }
-  }
-  return { entries, toolCalls };
 }
 
 /**

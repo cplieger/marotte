@@ -113,7 +113,6 @@ func TestConfigFromEnv_RemovedOverridesAreIgnored(t *testing.T) {
 	}
 }
 
-// containsIP reports whether any network in nets contains ipStr.
 func containsIP(nets []*net.IPNet, ipStr string) bool {
 	ip := net.ParseIP(ipStr)
 	for _, n := range nets {
@@ -567,6 +566,27 @@ func TestLogBridgeEnvPosture(t *testing.T) {
 			if got := strings.Contains(logs.String(), identityMsg); got != tc.wantWarn {
 				t.Errorf("logBridgeEnvPosture(keySet=%t, allow=%q) warned = %t, want %t; logs:\n%s",
 					tc.keySet, tc.allow, got, tc.wantWarn, logs.String())
+			}
+		})
+	}
+}
+
+func TestConfigFromEnv_KASNodePathResolvesAsKiroCLIDoes(t *testing.T) {
+	cases := []struct {
+		name, override, dataHome, home, want string
+	}{
+		{"override_wins", "/opt/node", "/data", "/home/u", "/opt/node"},
+		{"xdg_data_home", "", "/data", "/home/u", "/data/kiro-cli/node"},
+		{"home_fallback", "", "", "/home/u", "/home/u/.local/share/kiro-cli/node"},
+		{"neither", "", "", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("KIRO_KAS_NODE_PATH", tc.override)
+			t.Setenv("XDG_DATA_HOME", tc.dataHome)
+			t.Setenv("HOME", tc.home)
+			if got := ConfigFromEnv().KASNodePath; got != tc.want {
+				t.Errorf("KASNodePath = %q, want %q", got, tc.want)
 			}
 		})
 	}

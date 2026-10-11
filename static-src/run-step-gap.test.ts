@@ -45,7 +45,7 @@ import { decodeRunStepTranscript } from "./wire/decoders.gen.js";
 import { createScriptedFetch, json, type ScriptedFetch } from "./__test-helpers__/sse-fetch.js";
 
 const EPOCH = "0123456789abcdef";
-const PATH = "root/step-b";
+const PATH = "root:step-b";
 const TURN = "t-b";
 
 /** A fresh run id per case: `run-store.ts` has no test reset, so a shared id would carry one
@@ -255,7 +255,7 @@ describe("a step that opened and closed entirely inside the gap", () => {
     await vi.waitFor(() => {
       expect(stepRead(runID, PATH)?.state).toBe("ready");
     });
-    expect(stepReads()).toEqual([`/api/runs/${runID}/steps/root/step-b`]);
+    expect(stepReads()).toEqual([`/api/runs/${runID}/steps/root%3Astep-b`]);
     // Equality against the server's own log is the claim, so an entry seated at the wrong position
     // fails here: the closer included, and the turn reads settled.
     expect(heldFold()).toEqual(serverFold());

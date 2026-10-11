@@ -69,37 +69,28 @@ func (k TabKind) Singleton() bool { return tabKinds[k] }
 // its view spec from (Kind, Ref) with a total factory, so no behaviour lives here. No Order field:
 // the slice position is the order. Field order is fieldalignment's.
 type TabSubject struct {
-	// ID is opaque and server-minted (tabs.Store mints it at open). Opaque
-	// because nothing should be able to branch on it: Kind and Ref name the
-	// subject, so an id encoding its kind in a prefix would be a second
-	// representation parsed in three places. It also keeps the API path
-	// unambiguous under a reverse proxy that normalizes %2F.
+	// ID is opaque and server-minted (tabs.Store mints it at open): Kind and Ref name the
+	// subject, so nothing may branch on the id. Opacity also keeps the API path unambiguous
+	// under a reverse proxy that normalizes %2F.
 	ID string `json:"id"`
 	// Kind and Ref are the subject's identity: at most one tab exists per
 	// (Kind, Ref) pair, which is what makes an open idempotent.
 	Kind TabKind `json:"kind"`
-	// Ref is a chat id, an absolute path, a run id, or a subagent's
-	// `<chatID>/<agentSubtaskID>` pair — empty for a singleton.
-	// The store treats it as opaque text: whether it is a VALID chat id or a
-	// path inside a granted root is the command boundary's question, because
-	// that is where ids.ValidChatID and the file-browser roots live.
+	// Ref is a chat id, an absolute path, a run id, or a subagent's `<chatID>/<agentSubtaskID>`
+	// pair; empty for a singleton. The store treats it as opaque: validity is the command
+	// boundary's check (ids.ValidChatID, the file-browser roots).
 	Ref string `json:"ref"`
-	// Parent is the tab this one hangs under, empty for a top-level tab.
-	//
-	// Set at open, and reassigned by exactly ONE mutation, reparent_tab, which
-	// accepts only an open CHAT tab as the new parent. A chat tab is never a
-	// child of a non-chat tab, so a chain still cannot close on itself and no
-	// general cycle check is needed.
+	// Parent is the tab this one hangs under, empty for a top-level tab. Only reparent_tab
+	// reassigns it, and only to an open CHAT tab, so a chain cannot close on itself and no
+	// cycle check is needed.
 	Parent string `json:"parent"`
 	// Pinned sorts a tab ahead of every unpinned one. The partition is applied
 	// by the client when it renders (applyPinOrder); the stored slice keeps the
 	// order it was given.
 	Pinned bool `json:"pinned"`
-	// Owns means closing this tab tears down what it shows, and it exists
-	// because two tabs can otherwise be indistinguishable while differing in
-	// authority: a run REVIEW opened from History and a launcher-OWNED run share
-	// (Kind, Ref), and closing the owned one cancels the run. Set at open, like
-	// Parent, so the authority cannot change under a reader.
+	// Owns means closing this tab tears down what it shows: a run REVIEW from History and a
+	// launcher-OWNED run share (Kind, Ref), and closing the owned one cancels the run. Set at
+	// open, so the authority cannot change under a reader.
 	Owns bool `json:"owns"`
 }
 
@@ -123,7 +114,7 @@ type OpenTab struct {
 }
 
 // TabList is the answer to GET /api/tabs: the open set in order plus the version it reflects,
-// captured together by tabs.Store.List so a stale set cannot pair with a fresh version. Tabs is
+// captured together by tabs.Store.list so a stale set cannot pair with a fresh version. Tabs is
 // never omitted: an empty arrangement is a real state.
 type TabList struct {
 	// Subject is the `tabs` digest stamp with the hub epoch: the same Version

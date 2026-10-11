@@ -6,9 +6,6 @@ import { allRules, loadCSS, ruleContaining } from "./__test-helpers__/css-rules.
 
 vi.mock("./scroll.js", () => ({
   setUserScrolledUp: vi.fn(),
-  preserveReadingPosition: (fn: () => void) => {
-    fn();
-  },
 }));
 
 import { buildReasoning } from "./fundamentals/reasoning.js";

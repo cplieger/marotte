@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -83,10 +85,9 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// statusScope resolves `?paths=` into the repository names owning those paths; scoped
-// reports whether this read is a scoped one at all. A COLD read carrying paths is not
-// scoped: publishing a two-repo result into no snapshot leaves a partial scan later
-// reads cannot tell from a whole one. An unowned path is dropped.
+// scoped reports whether this read is a scoped one at all. A COLD read carrying paths is not
+// scoped: publishing a two-repo result into no snapshot leaves a partial scan later reads cannot
+// tell from a whole one. An unowned path is dropped.
 func (h *Handler) statusScope(r *http.Request, snap *statusSnapshot) (scoped bool, only map[string]struct{}) {
 	raw := r.URL.Query().Get("paths")
 	if raw == "" || snap == nil {
@@ -133,7 +134,7 @@ type statusAllResp struct {
 // coldWait is how long this read may wait for the scan in flight: nothing for an
 // ordinary poll with a snapshot, the cold budget for a process's first read, and the
 // whole-scan budget for a forced refresh.
-func (h *Handler) coldWait(snap *statusSnapshot, doFetch bool) time.Duration {
+func (*Handler) coldWait(snap *statusSnapshot, doFetch bool) time.Duration {
 	switch {
 	case doFetch:
 		return statusScanBudget
@@ -247,28 +248,71 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			// Not a failure: no committed revision to show, so the client renders an
 			// all-add diff against an empty base.
-			writeGitError(w, KindNotInRepo, "")
+			writeGitError(w, kindNotInRepo, "")
 			return
 		}
 		repo, file = owner, inRepo
 	}
 	dir := h.repoDir(repo)
 	// gitShowCmd carries --no-textconv, so the raw-blob pin is inherited here.
-	out, err := gitShowCmd(r.Context(), dir, ref, file)
+	blob, stderr, err := gitShowCmd(r.Context(), dir, ref, file, h.showMax)
 	if err != nil {
-		if errors.Is(err, ErrPathNotInRef) {
+		switch {
+		case errors.Is(err, errPathNotInRef):
 			// Absent at ref: empty content renders as an all-add diff, and the marker stops the
 			// base pane being captioned with the ref. Emitted only here, so its presence is the
 			// answer.
-			webhttp.WriteJSON(w, map[string]any{"content": "", "absent": true})
-			return
+			webhttp.WriteJSON(w, ShowResponse{Absent: true})
+		case errors.Is(err, errBlobTooLarge):
+			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+				ShowRefusal{Error: "revision too large to diff", Code: ShowTooLarge})
+		default:
+			slog.Warn("git show failed", "repo", logsafe.Field(dir), "ref", ref, "path", logsafe.Field(file), "error", logsafe.Field(err.Error()), "out", logField(stderr))
+			writeGitError(w, kindShowFailed, clientBlock(stderr))
 		}
-		slog.Warn("git show failed", "repo", logsafe.Field(dir), "ref", ref, "path", logsafe.Field(file), "error", logsafe.Field(err.Error()), "out", logField(out))
-		writeGitError(w, KindShowFailed, clientBlock(out))
 		return
 	}
-	webhttp.WriteJSON(w, map[string]string{"content": out})
+	// Classified before it becomes a JSON string, which would turn a NUL-bearing or malformed
+	// blob into U+FFFD text the diff pane cannot tell from the real bytes.
+	switch {
+	case bytes.IndexByte(blob[:min(len(blob), binarySniffN)], 0) >= 0:
+		webhttp.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
+			ShowRefusal{Error: "binary revision", Code: ShowBinary})
+	case !utf8.Valid(blob):
+		webhttp.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
+			ShowRefusal{Error: "revision is not UTF-8 text", Code: ShowNotUTF8})
+	default:
+		webhttp.WriteJSON(w, ShowResponse{Content: string(blob)})
+	}
 }
+
+// ShowResponse is GET /api/git/show's success reply. Absent marks a path the ref does not
+// hold, whose Content is legitimately empty.
+type ShowResponse struct {
+	Content string `json:"content"`
+	Absent  bool   `json:"absent,omitempty"`
+}
+
+// ShowRefusalCode is the machine-readable reason on a ShowRefusal.
+type ShowRefusalCode string
+
+const (
+	// ShowTooLarge is a revision over the show cap, answered 413.
+	ShowTooLarge ShowRefusalCode = "too_large"
+	// ShowBinary is a revision with a NUL in its first 8 KiB, answered 415.
+	ShowBinary ShowRefusalCode = "binary"
+	// ShowNotUTF8 is a revision that is not valid UTF-8, answered 415.
+	ShowNotUTF8 ShowRefusalCode = "not_utf8"
+)
+
+// ShowRefusal is a refused GET /api/git/show's body; it carries no content.
+type ShowRefusal struct {
+	Error string          `json:"error"`
+	Code  ShowRefusalCode `json:"code"`
+}
+
+// binarySniffN is the NUL-sniff window, the same 8 KiB the file routes read.
+const binarySniffN = 8192
 
 func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -403,7 +447,7 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.removeRepoDir(dir); err != nil {
-		if errors.Is(err, ErrUnsafeRepoPath) {
+		if errors.Is(err, errUnsafeRepoPath) {
 			slog.Warn("git remove: refused", "repo", body.Repo, "error", err)
 			httpreply.BadRequest(w, "that repo path is not inside the workspace")
 			return
@@ -427,7 +471,7 @@ func (h *Handler) removeRepoDir(dir string) error {
 	defer func() { _ = root.Close() }()
 	rel, err := workspace.RelPath(h.workDir, dir)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrUnsafeRepoPath, err)
+		return fmt.Errorf("%w: %w", errUnsafeRepoPath, err)
 	}
 	parent, base, err := atomicfile.OpenParentInRoot(root, rel)
 	if err != nil {
@@ -436,7 +480,7 @@ func (h *Handler) removeRepoDir(dir string) error {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("%w: %w", ErrUnsafeRepoPath, err)
+		return fmt.Errorf("%w: %w", errUnsafeRepoPath, err)
 	}
 	defer func() { _ = parent.Close() }()
 	return parent.RemoveAll(base)

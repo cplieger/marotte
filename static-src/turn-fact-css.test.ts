@@ -11,7 +11,6 @@ let style: HTMLStyleElement;
 let frame: HTMLIFrameElement;
 let phone: Document;
 
-/** The card this helper last mounted, per document. */
 const mounted = new WeakMap<Document, HTMLElement>();
 
 /** A fact that no phone-width track can hold, so the ellipsis has to fire. */
@@ -25,8 +24,6 @@ interface Mounted {
   rewind: HTMLElement | null;
 }
 
-/** A turn card with the footer parts that decide the row's layout, as
- *  `buildTurnFooter`, `mountTurnActions` and `mountRewind` assemble one. */
 function mountCard(
   doc: Document,
   opts: { fact: string; word?: string; actions?: boolean; rewind?: boolean },
@@ -104,7 +101,6 @@ function mountCard(
   return { footer, ledger, slot, actions, rewind };
 }
 
-/** The delegate card's copy of the row, nested in `.subagent-foot`. */
 function mountDelegate(doc: Document, fact: string): Mounted {
   const delegate = doc.createElement("div");
   delegate.className = "subagent-block";
@@ -310,8 +306,7 @@ describe("at 360px with a finger", () => {
 
 describe("the slot is WITHHELD where the track cannot hold a whole fact", () => {
   /** Squeeze one card until its footer's CONTENT box is `cq` px, which is what the
-   *  query measures — 12px under the footer's own `clientWidth`, the row carrying a
-   *  trailing gutter and no leading one. */
+   *  query measures: the footer's own `clientWidth` less its inset on both edges. */
   function atContainerWidth(cq: number, opts: { word: string; rewind: boolean }): HTMLElement {
     const m = mountCard(phone, {
       fact: LONG_FACT,
@@ -323,15 +318,16 @@ describe("the slot is WITHHELD where the track cannot hold a whole fact", () => 
     if (card === null) {
       throw new Error("footer has no card");
     }
-    const gutter = parseFloat(cs(m.footer).paddingInlineEnd);
+    const f = cs(m.footer);
+    const gutter = parseFloat(f.paddingInlineStart) + parseFloat(f.paddingInlineEnd);
     card.style.inlineSize = `${String(cq + gutter)}px`;
     return m.slot;
   }
 
-  // 302.9px (18.93rem) is the threshold where a coarse slot reaches the 24.2px floor. ABOVE brackets
+  // 287.3px (17.96rem) is the threshold where a coarse slot reaches the 24.2px floor. ABOVE brackets
   // it within 4px: only the query decides `display`, so a widened threshold fails.
-  const BELOW = 300;
-  const ABOVE = 306;
+  const BELOW = 284;
+  const ABOVE = 290;
 
   it("withholds it on a non-clean turn with Rewind, and not one pixel wider", () => {
     expect(cs(atContainerWidth(BELOW, { word: "Outcome unknown", rewind: true })).display).toBe(

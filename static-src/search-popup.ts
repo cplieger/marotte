@@ -10,12 +10,12 @@ import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import type { FindKind, PageFind } from "./find-registry.js";
 
-/** The toolbar magnifier. One button, one popup group, so opening a page's search closes
- *  whatever else was open — including the transcript's, which shares this group. */
+/** One button, one popup group, so opening a page's search closes whatever else was open — including
+ *  the transcript's, which shares this group. */
 const TRIGGER_ID = "find-btn";
 const GROUP = "app-search";
 
-export interface SearchPopupSpec<R> {
+interface SearchPopupSpec<R> {
   /** Element id prefix. The input becomes `<id>-input`, the note `<id>-note`. */
   id: string;
   /** Search or filter: decides the glyph and the control wording, nothing structural.
@@ -44,7 +44,6 @@ export interface SearchPopupSpec<R> {
 export interface SearchPopup extends PageFind {
   /** The shell, for a caller that needs the field itself. Null until the first open builds it. */
   readonly shell: SearchShell | null;
-  isOpen: () => boolean;
   /** Open, or refocus an already-open box. False means there was no host to build into, so the
    *  caller leaves Ctrl-F to the browser's native find. */
   open: () => boolean;
@@ -193,7 +192,6 @@ export function createSearchPopup<R>(spec: SearchPopupSpec<R>): SearchPopup {
       return shell;
     },
     kind: () => spec.kind,
-    isOpen,
     open,
     close,
     reset(): void {

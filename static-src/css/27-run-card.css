@@ -210,6 +210,71 @@
   min-width: 0;
 }
 
+/* A CONTAINER (a loop, a parallel, a nested sequence) is structure, not work, so it
+   is a plain label over its members rather than another step box: no state mark, no
+   clock, no rail. Its members hang off a 1px rule under the kind glyph, which is the
+   one seam (a fill step here would be a fifth rung inside the card). */
+.run-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+/* The inline padding is `.run-step-head`'s plus its 1px border, so the kind glyph
+   sits in the same column as the step marks beside it. */
+.run-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) calc(var(--sp-2) + 1px) 0;
+  min-width: 0;
+}
+
+.run-group-glyph {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  min-inline-size: 1rem;
+  color: var(--c-text-tertiary);
+}
+
+.run-group-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-group-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+/* The rule lands under the glyph's centre: the head's inline padding plus half the
+   1rem glyph column. */
+.run-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+  margin-inline-start: calc(var(--sp-2) + 1px + 0.5rem);
+  padding-inline-start: calc(var(--sp-2) + 0.5rem);
+  border-inline-start: 1px solid var(--c-border);
+}
+
+.run-group-body:empty {
+  display: none;
+}
+
 .run-step {
   border: 1px solid var(--c-border);
   border-radius: var(--r);
@@ -379,9 +444,10 @@
   white-space: nowrap;
 }
 
-/* Agent, model, iteration, branch, retries, failure reason — the facts KAS
-   reports per step, in one line that ellipsizes rather than wrapping, because a
-   step row that grows to two lines makes a ten-step run unscannable. */
+/* Agent, model, retries, failure reason — the facts KAS reports per step (the
+   pass and the branch are the enclosing group's), in one line that ellipsizes
+   rather than wrapping, because a step row that grows to two lines makes a
+   ten-step run unscannable. */
 .run-step-meta {
   flex: 1;
   min-width: 0;

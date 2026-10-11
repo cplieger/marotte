@@ -39,7 +39,7 @@ func (f *fakePowers) Catalog(context.Context) ([]powers.Entry, error) {
 	return f.catalog, f.catalogErr
 }
 
-func (f *fakePowers) Servers(_ context.Context, name string) ([]string, bool, error) {
+func (*fakePowers) Servers(_ context.Context, name string) ([]string, bool, error) {
 	if name == "unknown" {
 		return nil, false, powers.ErrUnknownPower
 	}
@@ -489,12 +489,12 @@ func itemsChangedMsg(status string) *marotte.RPCResponse {
 func TestPowersItemsChanged_FromAChatBridgeSyncsAndBroadcasts(t *testing.T) {
 	backend := &fakePowers{}
 	h, _ := newPowersHub(t, backend)
-	h.translateACPEvent("c1", itemsChangedMsg("success"))
+	h.translateACPEvent("c1", h.originOf("c1"), itemsChangedMsg("success"))
 	waitFor(t, func() bool { return powersChangedCount(t, h) == 1 })
 	if backend.syncCount() != 1 {
 		t.Errorf("after items_changed: %d syncs, want 1", backend.syncCount())
 	}
-	h.translateACPEvent("c1", itemsChangedMsg("failed"))
+	h.translateACPEvent("c1", h.originOf("c1"), itemsChangedMsg("failed"))
 	if len(h.powers.wake) != 0 {
 		t.Errorf("a failed scan queued a sync")
 	}
@@ -567,7 +567,7 @@ func TestPowers_TheLockKeepsInstalledServersOutOfEveryRender(t *testing.T) {
 	wantMode("GET /api/powers", powers.ServersSuppressed)
 
 	syncs := backend.syncCount()
-	h.translateACPEvent("c1", itemsChangedMsg("success"))
+	h.translateACPEvent("c1", h.originOf("c1"), itemsChangedMsg("success"))
 	waitFor(t, func() bool { return backend.syncCount() == syncs+1 })
 	wantMode("items_changed", powers.ServersSuppressed)
 
