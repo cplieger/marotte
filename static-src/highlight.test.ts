@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   highlightByLang,
-  highlight,
   detectLang,
   normalizeLang,
   resolveLangHint,
@@ -562,9 +561,8 @@ describe("language routing", () => {
     expect(highlightByLang("if you want", "md")).toBe("if you want");
   });
 
-  // highlight() lowercases the extension before the lookup.
   it("detects the language from an uppercase extension", () => {
-    const spans = extractSpans(highlight("func f()", "MAIN.GO"));
+    const spans = extractSpans(highlightByLang("func f()", detectLang("MAIN.GO")));
     expect(spans).toEqual([
       { type: "keyword", value: "func" },
       { type: "punctuation", value: "(" },
@@ -575,7 +573,9 @@ describe("language routing", () => {
   // A Dockerfile has no extension, so the whole name maps to "docker"; detectLang returning it proves nothing, so this
   // asserts the rendered spans.
   it("highlights a Dockerfile opened by filename", () => {
-    const spans = extractSpans(highlight("# install deps\nRUN npm ci", "Dockerfile"));
+    const spans = extractSpans(
+      highlightByLang("# install deps\nRUN npm ci", detectLang("Dockerfile")),
+    );
     expect(spans).toEqual([
       { type: "comment", value: "# install deps" },
       { type: "keyword", value: "RUN" },

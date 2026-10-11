@@ -1483,6 +1483,7 @@ export function createFollowScroller(
 
 /** @internal Test seam: set how long the next bottom pin re-asserts the live edge.
  *  A pin already armed keeps its own deadline. Returns the previous value. */
+// deadset:ignore DS1004 -- test seam: sets the bottom pin's settle window
 export function setPinSettleMs(ms: number): number {
   const prev = pinSettleMs;
   pinSettleMs = ms;

@@ -32,6 +32,7 @@ export function initSettingsTracking(s: EffectiveSettings): void {
 }
 
 /** @internal Reset module state for tests. */
+// deadset:ignore DS1004 -- test seam: resets the patch dedup tracker, queue, resolvers, key generations and debounce timer
 export function __testResetTracking(): void {
   lastSentPatch = {};
   patchQueue = {};
