@@ -67,7 +67,7 @@ import type { RunControlsResponse } from "./wire/types.gen.js";
 import { refreshRunDots, trackRun } from "./run-dots.js";
 import { buildPath } from "./route-path.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_EXTERNAL } from "./icons.js";
+import { ICON_CANCEL, ICON_EXTERNAL, ICON_PAUSE, ICON_PLAY, ICON_REFRESH } from "./icons.js";
 
 /** The two verbs a repeat paused at its iteration cap offers. They address the paused NODE as
  *  well as the run, so they cannot share the one-argument table. */
@@ -84,6 +84,14 @@ const RUN_ACTION: Record<
   resume: resumeRun,
   cancel: cancelRun,
   retry: retryRun,
+};
+
+/** The glyph each one-argument verb leads with. On a phone it is the whole face (18-pages.css). */
+const RUN_ACTION_ICON: Record<Exclude<RunVerb, RepeatVerb>, string> = {
+  pause: ICON_PAUSE,
+  resume: ICON_PLAY,
+  cancel: ICON_CANCEL,
+  retry: ICON_REFRESH,
 };
 
 /** The run this view is currently showing, so an SSE invalidation knows whether it is about the
@@ -836,11 +844,16 @@ function renderControls(workflowID: string, answer: RunControlsResponse): HTMLEl
       continue;
     }
     const action = RUN_ACTION[verb];
+    const label = CONTROL_LABEL[verb];
     const btn = el(
       "button",
       {
         type: "button",
-        className: verb === "cancel" ? "btn btn-sm btn-danger" : "btn btn-sm",
+        className:
+          verb === "cancel" ? "btn btn-sm btn-danger run-control" : "btn btn-sm run-control",
+        // The name once a phone drops the word. No tooltip: on desktop it would repeat the visible
+        // word (and announce it twice through aria-describedby), and a phone has no hover.
+        "aria-label": label,
         onclick: () => {
           // No optimistic state flip. Every one of these verbs settles at a NODE boundary, so the
           // run is still `running` when the reply arrives and a flipped label would be a lie for as
@@ -848,7 +861,8 @@ function renderControls(workflowID: string, answer: RunControlsResponse): HTMLEl
           void action.dispatch(workflowID);
         },
       },
-      CONTROL_LABEL[verb],
+      iconEl(RUN_ACTION_ICON[verb]),
+      el("span", { className: "run-control-label" }, label),
       // `el` answers HTMLElement; the pending binding needs the `disabled` property, which only the
       // concrete button type declares.
     ) as HTMLButtonElement;
