@@ -427,7 +427,25 @@ var table = []decl{
 		send:     false,
 	},
 	{
+		key:      "KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
+		key:      "KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
 		key:      "KIRO_FEATURE_SESSION_TITLE_LLM_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
+		key:      "KIRO_FEATURE_SKILL_NAME_QUALIFIERS_ENABLED",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
 		send:     false,
@@ -464,6 +482,12 @@ var table = []decl{
 	},
 	{
 		key:      "KIRO_FEATURE_VALIDATION_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
+		key:      "KIRO_FEATURE_VIBE_TO_DEFAULT_V2_ROUTING_ENABLED",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
 		send:     false,

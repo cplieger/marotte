@@ -223,7 +223,6 @@ export function dispatch(evt: ServerEvent): void {
 
 // --- Typed bus event constants ---
 
-export const BUS_TURN_IDLE = "turn:idle" as const;
 /**
  * Every claim this client holds is void and the projection is re-read: a new hub epoch or a
  * `must_refetch` digest. The payload carries the revalidation's signal for every fetch.
@@ -267,7 +266,6 @@ export const BUS_USER_INPUT_ANSWERED = "user-input:answered" as const;
 
 /** Payload shape per bus event. Events with no payload use `undefined`. */
 interface BusPayloads {
-  readonly [BUS_TURN_IDLE]: string; // chatID
   readonly [BUS_RECONCILE]: { readonly cause: string; readonly signal: AbortSignal };
   readonly [BUS_PAGE_RESUMED]: undefined;
   readonly [BUS_KEYS_ESCAPE]: undefined;

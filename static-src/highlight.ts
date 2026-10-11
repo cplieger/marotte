@@ -230,12 +230,6 @@ export function highlightRuns(code: string, filename: string): HighlightRuns | n
   };
 }
 
-/** Highlight source code by filename (extension-based language detection). */
-export function highlight(code: string, filename: string): string {
-  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-  return highlightByLang(code, extToLang(ext));
-}
-
 /**
  * Highlight source and mark character ranges with `markClass` (the diff pane's word changes). A token straddling a
  * mark is split and each piece keeps its class. Ranges are half-open, ascending, non-overlapping and non-empty

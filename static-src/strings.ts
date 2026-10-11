@@ -40,7 +40,7 @@ export function rateLabel(rate: number | undefined): string {
 const OUTPUT_WINDOW_LINES = 20;
 
 /** One source range kept by a window, and where it landed in the result. */
-export interface KeptRange {
+interface KeptRange {
   /** Inclusive start offset in the source text. */
   from: number;
   /** Exclusive end offset in the source text. */
@@ -51,7 +51,7 @@ export interface KeptRange {
 
 /** A windowed output: the text, how many lines it dropped, and the source
  *  ranges it kept so style spans can be mapped onto it. */
-export interface OutputWindow {
+interface OutputWindow {
   text: string;
   elided: number;
   kept: KeptRange[];

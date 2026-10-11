@@ -6,22 +6,8 @@
 
 import { deliverNotification } from "../agent-finished-cue.js";
 import { openPushTarget } from "../notification-open.js";
-import { parsePushTarget } from "../push-subject.js";
+import { type PushPageMessage, parsePushTarget } from "../push-subject.js";
 import type { NotificationPayload, PushKind } from "../wire/types.gen.js";
-
-interface PushPageMessage {
-  type: "push";
-  reason: "clicked" | "arrived" | "subscription_changed";
-  chatId: string;
-  /** The notification's subject when it has no chat behind it: a run or a pull request,
-   *  kind-prefixed so the route is keyed on what the subject IS. */
-  subject?: string;
-  /** The notification's kind on an arrival, "" otherwise. */
-  kind?: string;
-  /** The notification's title: the name of the tab its click opens, as the push was sent. */
-  title?: string;
-  body?: string;
-}
 
 /** Every kind `marotte.PushKind` sends, a missing one a type error; an arrival of any other is
  *  not delivered. */

@@ -14,7 +14,7 @@
   ],
   "project": ["**/*.ts", "!**/*.d.ts", "!node_modules/**"],
   "ignore": ["wire/*.gen.ts"],
-  "ignoreDependencies": ["html-validate", "stylelint", "stylelint-config-standard"],
+  "ignoreDependencies": ["stylelint", "stylelint-config-standard"],
   "ignoreMembers": [
     "active",
     "element",

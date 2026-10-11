@@ -5,8 +5,8 @@ import {
   onBus,
   emitBus,
   BUS_KEYS_ESCAPE,
+  BUS_EDITOR_VIEW_CHANGED,
   BUS_RECONCILE,
-  BUS_TURN_IDLE,
   decodeEnvelope,
   registerSSEDecoder,
 } from "./bus.js";
@@ -215,7 +215,7 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
     const unsub = onBus(BUS_KEYS_ESCAPE, handler);
     try {
       // Emit an unrelated event; handler must stay quiet.
-      emitBus(BUS_TURN_IDLE, "c1");
+      emitBus(BUS_EDITOR_VIEW_CHANGED, { path: "a.ts" });
       expect(handler).not.toHaveBeenCalled();
     } finally {
       unsub();
@@ -225,12 +225,12 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
   it("multiple subscribers all fire", () => {
     const h1 = vi.fn();
     const h2 = vi.fn();
-    const unsub1 = onBus(BUS_TURN_IDLE, h1);
-    const unsub2 = onBus(BUS_TURN_IDLE, h2);
+    const unsub1 = onBus(BUS_EDITOR_VIEW_CHANGED, h1);
+    const unsub2 = onBus(BUS_EDITOR_VIEW_CHANGED, h2);
     try {
-      emitBus(BUS_TURN_IDLE, "c1");
-      expect(h1).toHaveBeenCalledWith("c1");
-      expect(h2).toHaveBeenCalledWith("c1");
+      emitBus(BUS_EDITOR_VIEW_CHANGED, { path: "a.ts" });
+      expect(h1).toHaveBeenCalledWith({ path: "a.ts" });
+      expect(h2).toHaveBeenCalledWith({ path: "a.ts" });
     } finally {
       unsub1();
       unsub2();
@@ -239,9 +239,9 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
 
   it("unsubscribe removes handler", () => {
     const handler = vi.fn();
-    const unsub = onBus(BUS_TURN_IDLE, handler);
+    const unsub = onBus(BUS_EDITOR_VIEW_CHANGED, handler);
     unsub();
-    emitBus(BUS_TURN_IDLE, "c1");
+    emitBus(BUS_EDITOR_VIEW_CHANGED, { path: "a.ts" });
     expect(handler).not.toHaveBeenCalled();
   });
 
