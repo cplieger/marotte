@@ -46,7 +46,7 @@ RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 
 # The @cplieger libraries publish TS source only; each is extracted into
 # static-src/node_modules/@cplieger/<lib>/ for tsc and cmd/bundle to resolve.
 # renovate: datasource=npm depName=@cplieger/actions
-ARG CPLIEGER_ACTIONS_VERSION=3.1.7
+ARG CPLIEGER_ACTIONS_VERSION=3.2.0-dev.2
 RUN mkdir -p static-src/node_modules/@cplieger/actions && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/actions/-/actions-${CPLIEGER_ACTIONS_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/actions --strip-components=1
