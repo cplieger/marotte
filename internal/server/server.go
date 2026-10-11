@@ -367,7 +367,7 @@ func (s *Server) ListenAndServe() error {
 	// DNS rebinding rides the victim's BROWSER, so it reaches even a loopback bind.
 	if !s.hostPolicy.Active() {
 		slog.Warn("ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
-			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,marotte.example.com)")
+			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.0.2.5,marotte.example.com)")
 	}
 
 	// The pre-drain hook keeps the agent-before-server order: readiness flips, the runtime stops

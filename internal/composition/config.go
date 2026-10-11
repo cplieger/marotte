@@ -221,7 +221,7 @@ func parseAllowedHosts(raw string) *webhttp.HostPolicy {
 	if len(invalid) > 0 {
 		slog.Warn("config: dropping malformed ALLOWED_HOSTS entries; they cannot match any browser-sent Host",
 			"entries", invalid,
-			"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.168.1.5,marotte.example.com")
+			"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.0.2.5,marotte.example.com")
 	}
 	if policy.Active() && policy.Size() == 0 {
 		slog.Warn("config: ALLOWED_HOSTS has no usable entries; rejecting every non-loopback request (fail closed)",
