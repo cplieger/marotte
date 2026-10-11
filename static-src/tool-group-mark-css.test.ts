@@ -47,6 +47,7 @@ afterAll(() => {
 
 afterEach(() => {
   host.replaceChildren();
+  host.style.inlineSize = "760px";
 });
 
 type Status = "in_progress" | "completed" | "failed";
@@ -210,6 +211,44 @@ describe("the mark sits on the header's own centre line", () => {
       );
     },
   );
+
+  /** Centre of the summary's FIRST line box, read off the text itself so padding on the label
+   *  cannot stand in for the glyphs. */
+  const firstLineCentreY = (label: Element): number => {
+    const range = document.createRange();
+    range.selectNodeContents(label);
+    const r = range.getClientRects()[0]!;
+    return r.y + r.height / 2;
+  };
+
+  it.each([
+    ["fine", "760px"],
+    ["coarse", "760px"],
+    ["fine", "9rem"],
+    ["coarse", "9rem"],
+  ] as const)(
+    "puts the summary's first line on the chevron's and the mark's centre line (%s pointer, %s column)",
+    (tier, width) => {
+      document.documentElement.dataset["pointer"] = tier;
+      host.style.inlineSize = width;
+      const header = settled().closest<HTMLElement>(".tool-group-header")!;
+      const label = header.querySelector(".tool-group-count")!;
+      expect(lineCount(label) > 1, "only the narrow column wraps the summary").toBe(
+        width === "9rem",
+      );
+      const chevron = header.querySelector(".disclosure-chevron")!;
+      const mark = header.querySelector(".tool-group-icon")!;
+      expect(firstLineCentreY(label), "label vs chevron").toBeCloseTo(centreY(chevron), 0);
+      expect(firstLineCentreY(label), "label vs mark").toBeCloseTo(centreY(mark), 0);
+    },
+  );
+
+  /** Line boxes the label's text occupies. */
+  function lineCount(label: Element): number {
+    const range = document.createRange();
+    range.selectNodeContents(label);
+    return new Set([...range.getClientRects()].map((r) => Math.round(r.y))).size;
+  }
 
   it("puts the running ring on that same centre line, so the mark does not jump on settle", () => {
     document.documentElement.dataset["pointer"] = "coarse";
