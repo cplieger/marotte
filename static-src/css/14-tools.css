@@ -139,8 +139,8 @@
      summary would put far from the row they act on. */
   align-items: flex-start;
 
-  /* The row's ONE-LINE content box (`min-height` less `padding-block` twice); the leading
-     controls centre their glyph on it, so an unwrapped row renders as plain centring. */
+  /* The row's ONE-LINE content box (`min-height` less `padding-block` twice). The
+     chevron, the mark and the label each centre their first line in it below. */
   --row-first-line: calc(var(--btn-h) - 2 * var(--sp-2));
 
   /* The SAME gap a member card's `.tool-header` uses, so header and rows are one density.
@@ -191,6 +191,11 @@
 
 .tool-group-header > .tool-group-icon {
   margin-block-start: calc((var(--row-first-line) - var(--icon-ui)) / 2);
+}
+
+/* Both edges, so a one-line row keeps its height and a wrapped one stays balanced. */
+.tool-group-header > .tool-group-count {
+  padding-block: calc((var(--row-first-line) - 1lh) / 2);
 }
 
 .tool-summary {
