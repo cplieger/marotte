@@ -176,7 +176,7 @@ describe("the served cell is the cell the glyphs are drawn for", () => {
   // The pairing no single release can check: the `.term` cell comes from the ARG-pinned library and
   // the glyphs from the ARG-pinned overlay release, so two independent Renovate PRs decide whether
   // they agree, and a cell move reopens the row gap behind a green build.
-  const CELL_JSON_RELEASE = "v1.1.7";
+  const CELL_JSON_RELEASE = "v1.1.9";
   const CELL = { fontSize: "14px", lineHeight: "17px" } as const;
 
   const libraryCSS = read("node_modules/@cplieger/web-terminal-ui/css/02-terminal.css");

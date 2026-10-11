@@ -277,8 +277,8 @@ func (m *Manager) evictRepo(forgeID, repoID string) {
 }
 
 type listRequest struct {
-	opts []forgeapi.ListOption
 	set  forgeapi.ListSettings
+	opts []forgeapi.ListOption
 }
 
 // resolveList checks opts through the library, which refuses an unknown state
