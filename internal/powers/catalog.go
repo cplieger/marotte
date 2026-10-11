@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // RegistryURL is the catalogue the Kiro IDE and `kiro-cli powers install` read.

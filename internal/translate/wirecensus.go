@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // maxCensusObjectBytes skips the probe for an oversized `_meta.kiro` object, so a block

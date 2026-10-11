@@ -22,7 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 	"github.com/cplieger/webhttp/v3"
 	"golang.org/x/sync/singleflight"
 	"pgregory.net/rapid"

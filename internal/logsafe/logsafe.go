@@ -7,7 +7,7 @@
 // internal/sanitize's.
 package logsafe
 
-import "github.com/cplieger/runesafe/v2"
+import "github.com/cplieger/runesafe/v3"
 
 // MaxFieldBytes bounds one sanitized attribute. Long enough for a workspace
 // path or an upstream error sentence, short enough that a hostile value cannot

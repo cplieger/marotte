@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 	"github.com/cplieger/webhttp/v3"
 )
 

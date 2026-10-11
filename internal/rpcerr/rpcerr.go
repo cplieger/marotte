@@ -10,7 +10,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // maxTextBytes bounds one error string on its way to a user surface: Details' last

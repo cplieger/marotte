@@ -4,7 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // KAS emits it for every approval it resolves; outcome "cancelled" means the asker ended and KAS

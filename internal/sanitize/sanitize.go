@@ -12,7 +12,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // ansiRe matches the ANSI sequences kiro-cli and its subprocesses produce: CSI, OSC,
