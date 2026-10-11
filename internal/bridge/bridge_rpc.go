@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 const jsonRPCVersion = "2.0"

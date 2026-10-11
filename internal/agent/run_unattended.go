@@ -15,7 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // unattendedApprovalBudget is how long a scheduled run's request waits before refusal: 180s, as KiroCrew's

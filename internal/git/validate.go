@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // --- path validation ---

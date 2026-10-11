@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 	"golang.org/x/sync/errgroup"
 )
 

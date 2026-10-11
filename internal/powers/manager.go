@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/procgroup"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 const (

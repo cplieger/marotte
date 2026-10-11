@@ -17,7 +17,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 func validatePromptPayload(cmd *marotte.ClientCommand) (marotte.PromptCommand, int, error) {

@@ -4,7 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // displayErrorBlock is the kind=="display_error" sub-block: the engine's own
