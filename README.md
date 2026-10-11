@@ -58,7 +58,7 @@ services:
 1. Create the folders with `sudo mkdir -p /opt/appdata/marotte/config /opt/appdata/marotte/workspace /opt/appdata/marotte/uploads`.
 2. Give them to user 1000 with `sudo chown -R 1000:1000 /opt/appdata/marotte`. If you set `PUID` and `PGID` in `.env`, use those numbers.
 3. Run `docker compose up -d`.
-4. Open `http://<server>:9847`, where `<server>` is the address of the server on your network, for example `http://192.168.1.10:9847`.
+4. Open `http://<server>:9847`, where `<server>` is the address of the server on your network, for example `http://192.0.2.10:9847`.
 5. Sign in with your Kiro account when the page asks. Chats use that account's plan and credits, which the sidebar shows.
 
 The first start downloads kiro-cli, about 530 MB, which can take a few minutes. The page, files, git and the terminal work in the meantime, and chats say kiro-cli is still installing. Amazon publishes kiro-cli under the AWS Customer Agreement. marotte downloads it instead of shipping it in the image, so starting the container means you accept that agreement.
