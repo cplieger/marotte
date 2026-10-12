@@ -259,11 +259,7 @@ func (rec *steerRecord) beginRemoveLocked(key, opID string, edit bool, fx *steer
 	ev := deleteEvent(w.state)
 	switch rowRuleFor(w.state, ev) {
 	case rDeleted:
-		note := deletedSteer(w)
-		if edit {
-			note = nil
-		}
-		retire(w, note, fx)
+		retire(w, deletedUnlessEdited(w, edit), fx)
 		if channelRule(rec.channel, ev) == cOwed && rec.probe == "" && len(rec.unownedWaiting()) == 0 {
 			rec.channel = chanUnconfirmed
 		}
@@ -282,6 +278,14 @@ func (rec *steerRecord) beginRemoveLocked(key, opID string, edit bool, fx *steer
 	case rUnhandled, rImpossible, rKeep, rRead, rCleared, rDiscarded, rCollect, rJoinProbe, rRoute, rDrop, rPark:
 	}
 	return false, ""
+}
+
+// deletedUnlessEdited is the entry a row deleted at once leaves: none when it was taken back to edit.
+func deletedUnlessEdited(w *dockRow, edit bool) *marotte.EntrySteer {
+	if edit {
+		return nil
+	}
+	return deletedSteer(w)
 }
 
 func deleteEvent(s rowState) steerEvent {
