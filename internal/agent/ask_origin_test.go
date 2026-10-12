@@ -197,7 +197,8 @@ func TestAskAnswer_AFailedWriteOnALiveBridgeRefusesTheAnswerAndReoffersTheAsk(t 
 			if got := h.bus.pendingPerms.list("c1"); len(got) != 1 || requestIDOf(t, got[0]) != askID {
 				t.Errorf("asks pending after the failed write = %d, want ask %d again", len(got), askID)
 			}
-			if _, ok := h.bus.TakePendingPerm("c1", askID, marotte.SettledByUser); !ok {
+			kind, _ := marotte.DecisionKindForEvent(tc.event)
+			if _, ok := h.bus.TakePendingPerm("c1", askID, kind, marotte.SettledByUser); !ok {
 				t.Error("the reopened ask cannot be claimed again")
 			}
 		})
@@ -296,7 +297,7 @@ func TestAskAnswer_ATerminalTransitionDuringTheWriteSettlesTheClaimOnce(t *testi
 					marotte.UserInputNeededPayload{ToolCallID: toolCallID, RunID: workflowID}), br))
 				head := h.bus.fanout.Position().Head
 
-				reply, ok := h.bus.TakePendingPerm("c1", askID, marotte.SettledByUser)
+				reply, ok := h.bus.TakePendingPerm("c1", askID, marotte.DecisionKindUserInput, marotte.SettledByUser)
 				if !ok {
 					t.Fatal("TakePendingPerm refused a pending ask")
 				}
@@ -318,7 +319,7 @@ func TestAskAnswer_ATerminalTransitionDuringTheWriteSettlesTheClaimOnce(t *testi
 				if left := h.bus.pendingPerms.list(""); len(left) != 0 {
 					t.Errorf("%s during a %s write left asks pending = %v, want none", name, write, left)
 				}
-				if _, ok := h.bus.TakePendingPerm("c1", askID, marotte.SettledByUser); ok {
+				if _, ok := h.bus.TakePendingPerm("c1", askID, marotte.DecisionKindUserInput, marotte.SettledByUser); ok {
 					t.Errorf("%s during a %s write: the settled ask could be claimed again", name, write)
 				}
 			})

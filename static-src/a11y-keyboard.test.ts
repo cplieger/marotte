@@ -82,25 +82,8 @@ describe("a11y: tool-group header keyboard and aria", () => {
 });
 
 // The other folded kinds keep `aria-expanded` in sync with an auto collapse, the one path
-// with no user gesture behind it. Bodies are POPULATED: an empty container withdraws its
-// control.
+// with no user gesture behind it.
 describe("a11y: an auto-collapse keeps aria-expanded in sync", () => {
-  it("an auto-collapsed pipeline reports aria-expanded=false", async () => {
-    const { buildSubagentContainer } = await import("./fundamentals/subagent-block.js");
-    const box = buildSubagentContainer("Subagent pipeline · 2 stages", "completed");
-    box.body.appendChild(document.createElement("div")).textContent = "a stage card";
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 0);
-    });
-    const header = box.root.querySelector(".subagent-header")!;
-    expect(header.getAttribute("role")).toBe("button");
-    expect(header.getAttribute("aria-expanded")).toBe("true");
-
-    box.setSuperseded(true);
-    expect(box.root.classList.contains("collapsed")).toBe(true);
-    expect(header.getAttribute("aria-expanded")).toBe("false");
-  });
-
   it("an auto-collapsed run card reports aria-expanded=false", async () => {
     const { buildRunCard } = await import("./fundamentals/run-card.js");
     const card = buildRunCard("wf_1", "Workflow run", () => {

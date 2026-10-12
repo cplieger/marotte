@@ -2093,7 +2093,7 @@ done
 		// Each settings key is asserted separately: an exact substring breaks on additions and once hid two missing keys,
 		// and each key gates a different KAS subsystem, silently when absent. `workflows` is per session and lives on the
 		// session door.
-		for _, key := range []string{"codeIntelligence", "knowledge", "subagentOrchestration", "goal"} {
+		for _, key := range []string{"codeIntelligence", "knowledge", "goal"} {
 			if !strings.Contains(got, `"`+key+`":{"enabled":true}`) {
 				t.Errorf("initialize missing the %s settings opt-in; got: %s", key, got)
 			}
@@ -2845,7 +2845,7 @@ var initGateCases = []struct {
 	{"knowledge on", marotte.AgentFeatures{}, false, false, false, true, false},
 	// Proves spawn() copies StartOpts.Features.
 	{"agent capabilities on", marotte.AgentFeatures{
-		InlineAgents: true, SteeringReminders: true,
+		SteeringReminders:  true,
 		InfraSafetyMonitor: "on", TerminalCommandTimeoutMs: 300000,
 	}, false, true, false, false, false},
 	{"telemetry off", marotte.AgentFeatures{}, false, false, false, false, true},

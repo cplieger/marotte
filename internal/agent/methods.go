@@ -23,6 +23,7 @@ const (
 	methodV3Powers               = "_kiro/powers/items_changed"              // installed Powers moved: re-render the legacy block, broadcast powers_changed
 	methodV3CodeReferences       = "_kiro/code_references"                   // licensed-code attributions → per-turn chip (HandleCodeReferences)
 	methodKiroConfigurationState = "_kiro/configuration/state"               // utility bridge only (configurationState declared): Settings' kiro_defaults
+	methodKiroConfigurationGet   = "_kiro/configuration/getState"            // C→A request: {observer, roots?} → the same composed view; the picker's custom agents
 )
 
 // KAS native Cedar policy methods: list/explain are utility-bridge requests for the read-only

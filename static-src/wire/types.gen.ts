@@ -10,7 +10,7 @@ export type ContentKind = "text" | "binary" | "not_utf8" | "too_large";
 
 export type DecisionKind = "permission" | "elicitation" | "user_input";
 
-export type EntryKind = "turn_open" | "turn_bind" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
+export type EntryKind = "turn_open" | "turn_bind" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
 
@@ -737,17 +737,20 @@ export interface EffectiveSettings {
  * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
  * unattended run's permission ask at its deadline and is fail-closed by
  * decision. DebugLogs raises the log level. All three default off.
- * SpecPlanningAskFirst, InlineAgents and SteeringReminders default off,
- * matching kiro-cli. WorkflowsEnabled defaults ON (user's choice, where the
- * TUI's default is off).
+ * SpecPlanningAskFirst and SteeringReminders default off, matching kiro-cli.
+ * WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
  */
   spec_planning_ask_first: boolean;
-  inline_agents_enabled: boolean;
   steering_reminders_enabled: boolean;
   workflows_enabled: boolean;
   supervised_default: boolean;
   scheduled_auto_approve: boolean;
   debug_logs: boolean;
+  /**
+ * ModelFallback defaults off, matching kiro-cli: on, KAS may retry a turn its model refused or
+ * could not serve on the next model of its fallback chain, or record why it declined to.
+ */
+  model_fallback_enabled: boolean;
 }
 
 /**
@@ -828,7 +831,7 @@ export interface Entry {
 /**
  * EntryAppendedPayload is the payload for type="entry_appended": a born-sealed
  * entry (turn_bind, tool_call, tool_result, steer, steer_ack, plan, compaction,
- * compaction_failed, safety_blocked, model_switched, model_routed), or a text entry opened and
+ * compaction_failed, safety_blocked, model_switched, model_routed, model_fallback), or a text entry opened and
  * sealed in one step, which never had an entry_opened and so travels as one frame.
  */
 export interface EntryAppendedPayload {
@@ -869,6 +872,21 @@ export interface EntryModeSwitched {
   from: string;
   to: string;
   source: ModeSwitchSource;
+}
+
+/**
+ * EntryModelFallback is the model_fallback payload: KAS's fallback decision after From refused a
+ * turn or was unavailable. A non-empty Reason marks a decline; KAS's notice for a retry carries To
+ * and Scope and no Reason. Every string is KAS's open vocabulary, display-sanitized; Subagent marks
+ * a sub-agent's fallback, which never moves the chat's model.
+ */
+export interface EntryModelFallback {
+  from: string;
+  to?: string;
+  scope?: string;
+  trigger: string;
+  reason?: string;
+  subagent?: boolean;
 }
 
 /**
@@ -3103,6 +3121,11 @@ export interface SessionMode {
   name: string;
   description?: string;
   source?: string;
+  /**
+ * Shadows is the Source of the mode this custom agent replaces under the same id, set only on
+ * GET /api/config-template's catalog; empty when it replaces nothing.
+ */
+  shadows?: string;
 }
 
 /**

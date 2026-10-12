@@ -4,14 +4,17 @@ package agent
 // _kiro/config/template, over the utility bridge.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/modeltext"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -59,8 +62,9 @@ type configTemplateAssembly struct {
 }
 
 // handleConfigTemplate serves GET /api/config-template: always 200 with non-null lists, and
-// ConfigTemplateResponse.catalog says which outcome produced them. A live session's lists
-// win: only KAS has resolved workspace agents.
+// ConfigTemplateResponse.catalog says which outcome produced them. A live session's lists win
+// over the template, and the custom agents KAS would load for the workspace are merged over
+// either, so the picker lists them before any session has run.
 func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
 	u := rt.utility.get()
 	cctx, cancel := context.WithTimeout(r.Context(), configTemplateTimeout)
@@ -85,6 +89,7 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 	if len(modes) > 0 {
 		out.response.Modes = modes
 	}
+	out.response.Modes = mergeCustomAgents(out.response.Modes, workspaceAgents(cctx, u.session, rt.lifecycle.workDir))
 	if len(models) > 0 {
 		out.response.Models = models
 	}
@@ -92,6 +97,41 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 	stamp.Epoch = rt.Epoch()
 	out.response.Subject = stamp
 	webhttp.WriteJSON(w, withCatalogVerdict(out))
+}
+
+// workspaceAgents is KAS's custom-agent list for workDir, or nil when getState fails: the catalog
+// then serves its base modes alone, under the same verdict.
+func workspaceAgents(ctx context.Context, us *utilitySession, workDir string) []marotte.SessionMode {
+	raw, err := us.workspaceConfigurationRaw(ctx, []string{workDir})
+	if err != nil {
+		slog.Warn("workspace configuration failed", "error", err)
+		return nil
+	}
+	agents, ok := translate.DecodeCustomAgents(raw)
+	if !ok {
+		slog.Warn("workspace configuration decode failed")
+	}
+	return agents
+}
+
+// mergeCustomAgents lays agents over base: an agent replaces the base mode of its id in place and
+// names that mode's source in Shadows when it differs from its own, and a new id is appended.
+// A base mode with no source is bundled, as the template reports the built-in ones.
+func mergeCustomAgents(base, agents []marotte.SessionMode) []marotte.SessionMode {
+	out := slices.Clone(base)
+	for _, a := range agents {
+		i := slices.IndexFunc(out, func(m marotte.SessionMode) bool { return m.ID == a.ID })
+		if i < 0 {
+			out = append(out, a)
+			continue
+		}
+		replaced := cmp.Or(out[i].Source, "bundled")
+		if replaced != a.Source {
+			a.Shadows = replaced
+		}
+		out[i] = a
+	}
+	return out
 }
 
 // withCatalogVerdict is the only conversion from an assembled catalog to its response. A live

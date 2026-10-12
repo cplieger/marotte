@@ -94,6 +94,8 @@ export function entryRenders(e: Entry, lane: string, folds: TurnFolds): boolean 
       return folds.plan === e.seq;
     case "turn_revert":
       return folds.revert === e.seq;
+    case "model_switched":
+      return !folds.fellBack.has(e.seq);
     default:
       return true;
   }
@@ -103,41 +105,68 @@ export function entryRenders(e: Entry, lane: string, folds: TurnFolds): boolean 
  *  `plan` (a later one replaces its card's state) and the NEWEST `turn_revert` (rewinding to the
  *  same turn again replaces its "Rewound to here" row). `readDrop` holds the turn's dropped agent
  *  notes whose id the same turn read, as a read note or a take-up's `kas_id`: KAS's boundary clear
- *  names what the turn injected, and that is no loss to show. */
+ *  names what the turn injected, and that is no loss to show. `fellBack` holds the `seq` of each
+ *  `model_switched{reason: "unavailable"}` whose next entry in the lane is the chat's own (not a
+ *  sub-agent's) `model_fallback` to the same model, per `fallsBackFrom`: KAS re-pins before it
+ *  sends the notice, so the switch row's guessed cause is the notice's to state. */
 export interface TurnFolds {
   readonly plan: number;
   readonly revert: number;
   readonly readDrop: ReadonlySet<string>;
+  readonly fellBack: ReadonlySet<number>;
 }
 
 /** `entries`' folds per lane. Hoisted ONCE per turn per pass, since a long turn holds several
  *  plans; takes a `TurnState`'s entries or a `Turn`'s body alike. */
 export function foldsByLane(entries: readonly Entry[]): Map<string, TurnFolds> {
   const readDrop = readDrops(entries);
-  const out = new Map<string, { plan: number; revert: number; readDrop: ReadonlySet<string> }>();
-  for (const e of entries) {
-    if (e.kind !== "plan" && e.kind !== "turn_revert") {
-      continue;
-    }
-    const lane = e.lane ?? "";
+  const out = new Map<
+    string,
+    { plan: number; revert: number; readDrop: ReadonlySet<string>; fellBack: Set<number> }
+  >();
+  const fold = (lane: string) => {
     let f = out.get(lane);
     if (f === undefined) {
-      f = { plan: -1, revert: -1, readDrop };
+      f = { plan: -1, revert: -1, readDrop, fellBack: new Set() };
       out.set(lane, f);
     }
-    if (e.kind === "plan" && f.plan < 0) {
-      f.plan = e.seq;
+    return f;
+  };
+  const prevInLane = new Map<string, Entry>();
+  for (const e of entries) {
+    const lane = e.lane ?? "";
+    const prev = prevInLane.get(lane);
+    prevInLane.set(lane, e);
+    if (e.kind === "plan") {
+      const f = fold(lane);
+      if (f.plan < 0) {
+        f.plan = e.seq;
+      }
     } else if (e.kind === "turn_revert") {
-      f.revert = e.seq;
+      fold(lane).revert = e.seq;
+    } else if (e.kind === "model_fallback" && prev !== undefined && fallsBackFrom(prev, e)) {
+      fold(lane).fellBack.add(prev.seq);
     }
   }
   if (readDrop.size > 0 && !out.has("")) {
-    out.set("", { plan: -1, revert: -1, readDrop });
+    out.set("", { plan: -1, revert: -1, readDrop, fellBack: new Set() });
   }
   return out;
 }
 
+/** Whether `fallback` names the move `prev` recorded as an unexplained re-pin. A sub-agent's
+ *  fallback never moves the chat's model, so it explains no chat re-pin. */
+function fallsBackFrom(prev: Entry, fallback: Entry): boolean {
+  const switched = payloadOf(prev, "model_switched");
+  const fb = payloadOf(fallback, "model_fallback");
+  const to = fb?.to ?? "";
+  return (
+    switched?.reason === "unavailable" && fb?.subagent !== true && to !== "" && switched.to === to
+  );
+}
+
 const NONE: ReadonlySet<string> = new Set();
+const NO_SEQS: ReadonlySet<number> = new Set();
 
 /** The ids of `entries`' dropped agent notes the same entries read (`TurnFolds.readDrop`). */
 function readDrops(entries: readonly Entry[]): ReadonlySet<string> {
@@ -161,8 +190,8 @@ function readDrops(entries: readonly Entry[]): ReadonlySet<string> {
   return out.length === 0 ? NONE : new Set(out);
 }
 
-/** The folds of a lane that holds neither kind. */
-export const NO_FOLDS: TurnFolds = { plan: -1, revert: -1, readDrop: NONE };
+/** The folds of a lane that holds no folding kind. */
+export const NO_FOLDS: TurnFolds = { plan: -1, revert: -1, readDrop: NONE, fellBack: NO_SEQS };
 
 /** `t`'s folds in `lane`. */
 export function turnFolds(t: Turn, lane: string): TurnFolds {
@@ -231,7 +260,8 @@ export function rendersNothing(t: Turn, lane = ""): boolean {
     if (plan < 0 && e.kind === "plan" && (e.lane ?? "") === lane) {
       plan = e.seq;
     }
-    // Any revert in the lane answers: the newest one renders, whichever that is.
+    // Any revert in the lane answers: the newest one renders, whichever that is. A switch row a
+    // fallback folds answers too, since the fallback after it renders.
     const renders =
       e.kind === "turn_revert"
         ? (e.lane ?? "") === lane
@@ -240,6 +270,7 @@ export function rendersNothing(t: Turn, lane = ""): boolean {
             revert: -1,
             readDrop:
               payloadOf(e, "steer")?.state === "dropped" ? (readDrop ??= readDrops(t.body)) : NONE,
+            fellBack: NO_SEQS,
           });
     if (renders) {
       return false;

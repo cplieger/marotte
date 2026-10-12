@@ -397,6 +397,7 @@ export function turnFoldHides(t: Turn): boolean {
       case "safety_blocked":
       case "model_switched":
       case "model_routed":
+      case "model_fallback":
       case "mode_switched":
         return true;
       case "text":

@@ -30,13 +30,6 @@ describe("transcript containment", () => {
     });
   }
 
-  it("leaves the collapsed subagent body on `hidden`, keyed on its own state", () => {
-    // The block's `auto` keys on viewport relevancy, the BODY's on the disclosure; 14-tools.css says why
-    // they must not be "aligned".
-    const body = ruleBody(loadCSS("14-tools.css"), ".subagent-block.collapsed > .subagent-body");
-    expect(body).toMatch(/content-visibility:\s*hidden\s*;/u);
-  });
-
   it("is the set scroll-controller.ts lays out ahead of the scrollport", () => {
     // A box missing there first takes its real size on screen in WebKit, where anchoring cannot hide it.
     const declared = /const SKIPPABLE = "([^"]+)";/u.exec(scrollSource)?.[1]?.split(", ") ?? [];

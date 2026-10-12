@@ -334,8 +334,8 @@ export function disclosedClaim(d: ToolDisclosed): string {
 }
 
 /** The tool call that OPENS a subagent, matched by title: nested calls share its
- *  `agent_subtask_id` but never these titles. `Orchestrate Sub-agent` is the PIPELINE
- *  driver's and stays out. Here, not roles.ts, so the store does not import icons.ts. */
+ *  `agent_subtask_id` but never these titles. Here, not roles.ts, so the store does not
+ *  import icons.ts. */
 export function isSubagentInvocation(tc: { readonly title: string }): boolean {
   const t = tc.title;
   return (

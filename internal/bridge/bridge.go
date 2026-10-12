@@ -15,6 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/kascap"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/modeltext"
+	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/version"
 )
 
@@ -122,6 +123,8 @@ type Bridge struct {
 	presets []string
 	// startIgnoreFiles and startTerminalTimeoutMs are what Start left KAS holding (StartLive). Guarded by mu.
 	startIgnoreFiles []string
+	// engineGroups are the process groups below kiro-cli's own (noteEngineGroups). Guarded by mu.
+	engineGroups []procgroup.Group
 	// memory is the session-door memory preference; its reflection half is re-asserted after session/load. Immutable
 	// after Start.
 	memory marotte.MemoryPreference
@@ -463,9 +466,9 @@ func (b *Bridge) spawn() *kascap.Spawn {
 		AutoRouting:              b.features.AutoRouting,
 		AutoDelegation:           b.features.AutoDelegation,
 		TerminalCommandTimeoutMs: b.features.TerminalCommandTimeoutMs,
-		InlineAgents:             b.features.InlineAgents,
 		SteeringReminders:        b.features.SteeringReminders,
 		Workflows:                b.features.Workflows,
+		ModelFallback:            b.features.ModelFallback,
 		DisableTelemetry:         b.disableTelemetry,
 	}
 }
@@ -546,6 +549,8 @@ func (b *Bridge) initialize(ctx context.Context) error {
 		return fmt.Errorf("initialize result: %w", err)
 	}
 	b.agentKiro.Store(&caps)
+	// The engine answered, so it exists, and the relay still links it.
+	b.noteEngineGroups()
 	// Start()'s "bridge started" is the authoritative line; elapsed_ms isolates the initialize round trip.
 	slog.Debug("ACP initialize RPC completed",
 		"version", version.Build,

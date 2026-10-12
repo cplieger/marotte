@@ -49,13 +49,14 @@ var spawnMatrix = []struct {
 	{"auto compaction off", Spawn{DisableAutoCompaction: true}},
 	{"spec planning quick", Spawn{SpecPlan: "quick"}},
 	{"spec planning full, ask first", Spawn{SpecPlan: "full", SpecAskClarification: true}},
-	{"inline agents and steering reminders on", Spawn{InlineAgents: true, SteeringReminders: true}},
+	{"steering reminders on", Spawn{SteeringReminders: true}},
 	{"work validation and safety check on", Spawn{WorkValidation: "on", InfraSafetyMonitor: "on"}},
 	{"work validation and safety check off", Spawn{WorkValidation: "off", InfraSafetyMonitor: "off"}},
 	{"auto routing and smart helpers on", Spawn{AutoRouting: "on", AutoDelegation: "on"}},
 	{"auto routing and smart helpers off", Spawn{AutoRouting: "off", AutoDelegation: "off"}},
 	{"shell timeout set", Spawn{TerminalCommandTimeoutMs: 300000}},
 	{"workflows on", Spawn{Workflows: true}},
+	{"model fallback on", Spawn{ModelFallback: true}},
 	{"telemetry off", Spawn{DisableTelemetry: true}},
 	{"utility bridge configuration state", Spawn{ConfigurationState: true}},
 	{"every gate on", Spawn{
@@ -66,9 +67,9 @@ var spawnMatrix = []struct {
 		SpecPlan: "full", SpecAskClarification: true,
 		WorkValidation: "on", InfraSafetyMonitor: "on",
 		AutoRouting: "on", AutoDelegation: "on",
-		TerminalCommandTimeoutMs: 300000,
-		InlineAgents:             true, SteeringReminders: true,
+		TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
 		Workflows: true, DisableTelemetry: true, ConfigurationState: true,
+		ModelFallback: true,
 	}},
 }
 
@@ -273,6 +274,50 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 	}
 	if settings, _ := SessionMeta(&Spawn{AutoRouting: "on"})[settingsKey].(map[string]any); settings["cascade"] != nil {
 		t.Errorf("SessionMeta(AutoRouting=on) sends settings.cascade = %#v; the env arm carries the choice", settings["cascade"])
+	}
+}
+
+// TestChildEnv_ModelFallbackSendsBothFlagsOnlyWhenOn pins that off writes neither flag: an explicit
+// false would override KAS's default and any server-side ramp.
+func TestChildEnv_ModelFallbackSendsBothFlagsOnlyWhenOn(t *testing.T) {
+	for _, tc := range []struct {
+		want []string
+		on   bool
+	}{
+		{on: false, want: []string{"KIRO_FEATURE_TOOL_LOAD_ENABLED=false"}},
+		{on: true, want: []string{
+			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
+			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
+			"KIRO_FEATURE_TOOL_LOAD_ENABLED=false",
+		}},
+	} {
+		if got := ChildEnv(&Spawn{ModelFallback: tc.on}); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("ChildEnv(ModelFallback=%v) = %q, want %q", tc.on, got, tc.want)
+		}
+	}
+}
+
+// OwnsEnv claims the environment rows a Settings control decides, a withheld arm included, and
+// leaves a spawn-fact row, a row marotte never sends and every other name to the operator.
+func TestOwnsEnv_ClaimsOnlyTheSettingOwnedRows(t *testing.T) {
+	for _, tc := range []struct {
+		kv   string
+		want bool
+	}{
+		{kv: "KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true", want: true},
+		{kv: "KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=", want: true},
+		{kv: `KIRO_FEATURE_CASCADE_CONFIG={"cascadeEnabled":true}`, want: true},
+		{kv: `KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={}`, want: true},
+		{kv: "KIRO_FEATURE_TOOL_LOAD_ENABLED=true", want: true},
+		{kv: "KIRO_DISABLE_SESSION_TITLE_LLM=true", want: false},
+		{kv: "KIRO_FEATURE_VALIDATION_ENABLED=true", want: false},
+		{kv: "KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED_X=true", want: false},
+		{kv: "telemetryEnabled=true", want: false},
+		{kv: "PATH=/usr/bin", want: false},
+	} {
+		if got := OwnsEnv(tc.kv); got != tc.want {
+			t.Errorf("OwnsEnv(%q) = %v, want %v", tc.kv, got, tc.want)
+		}
 	}
 }
 

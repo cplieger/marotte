@@ -643,7 +643,7 @@ func TestPermission_RejectsOptionNotOfferedByRequest(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "option_not_offered") {
 		t.Errorf("off-list permission response body = %q, want a nonsensitive option_not_offered error", rec.Body.String())
 	}
-	if _, ok := h.bus.pendingPerms.takeIfPresent("c1", askID); !ok {
+	if _, ok := h.bus.pendingPerms.takeIfPresent("c1", askID, marotte.DecisionKindPermission); !ok {
 		t.Error("off-list permission response consumed the pending request")
 	}
 }

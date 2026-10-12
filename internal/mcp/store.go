@@ -118,7 +118,10 @@ type Store struct {
 	writeTurn chan struct{}
 	path      string
 	kasPath   string
-	onChange  func(context.Context)
+	// kasRefused keys the last KAS file state readKASDoc refused, so a retry over it is not
+	// reported again; written on the write turn.
+	kasRefused string
+	onChange   func(context.Context)
 	// waitForReady answers the global mcp_wait_for_ready setting. Read on every
 	// write rather than captured at construction, because the user changes it
 	// while the store is alive.
@@ -160,7 +163,8 @@ func New(ctx context.Context, configDir string, onChange func(context.Context), 
 	}
 	// Boot reconcile, before anything can race on the store. A failure must not stop the server:
 	// the user needs the UI to fix the path or disk, and a stale KAS file keeps the previous set.
-	if err := s.writeKASConfig(ctx, s.servers); err != nil {
+	// readKASDoc has already reported an ErrKASUnreadable refusal.
+	if err := s.writeKASConfig(ctx, s.servers); err != nil && !errors.Is(err, ErrKASUnreadable) {
 		slog.Error("mcp: initial kas config write failed; the agent may use a stale server set",
 			"path", s.kasPath, "error", err)
 	}
@@ -240,6 +244,10 @@ func (s *Store) load() error {
 	if _, chErr := filemode.EnforceFile(s.path, 0o600); chErr != nil {
 		slog.Warn("mcp: mcp.json is not 0600 and could not be made 0600; the API keys in it may be readable by other users on this host",
 			"path", s.path, "error", chErr)
+	}
+	data, empty := decodeUserJSON(data)
+	if empty {
+		return nil
 	}
 	var f file
 	if uErr := json.Unmarshal(data, &f); uErr != nil {

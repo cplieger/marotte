@@ -133,8 +133,7 @@ type Spawn struct {
 	// send; the disableAutoCompaction row is value-gated so false is sent too.
 	DisableAutoCompaction bool
 	SpecAskClarification  bool
-	// InlineAgents and SteeringReminders are value-gated settings, always sent.
-	InlineAgents      bool
+	// SteeringReminders is a value-gated setting, always sent.
 	SteeringReminders bool
 	// Workflows gives the agent its workflow tools; value-gated, always sent on
 	// both session doors.
@@ -142,6 +141,8 @@ type Spawn struct {
 	// DisableTelemetry sends telemetryEnabled false at initialize; the zero value
 	// is KAS's own default, on.
 	DisableTelemetry bool
+	// ModelFallback writes both KIRO_FEATURE_MODEL_FALLBACK_*_ENABLED=true; false writes neither.
+	ModelFallback bool
 }
 
 // Prompt carries the per-prompt facts the prompt door's rows read.
@@ -189,4 +190,7 @@ type decl struct {
 	// row for a key it omits. Such a row must say why in table_because_test.go,
 	// which TestNoSendWithoutReason enforces.
 	send bool
+
+	// settingOwned marks a sent environment row a Settings control decides in every state (OwnsEnv).
+	settingOwned bool
 }

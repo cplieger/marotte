@@ -47,11 +47,11 @@ func TestPendingPermsTracker_EveryMutationMovesTheSharedCounter(t *testing.T) {
 	mustMove(t, v, "Add second", func() { tr.add(2, perm("c1", 2, "wf-1"), nil) })
 	mustMove(t, v, "Add third", func() { tr.add(3, perm("c2", 3, ""), nil) })
 	mustMove(t, v, "TakeIfPresent", func() {
-		if _, ok := tr.takeIfPresent("c1", 1); !ok {
+		if _, ok := tr.takeIfPresent("c1", 1, marotte.DecisionKindPermission); !ok {
 			t.Fatal("TakeIfPresent(c1, 1) = false, want the tracked request")
 		}
 	})
-	mustHold(t, v, "TakeIfPresent on a missing request", func() { tr.takeIfPresent("c1", 1) })
+	mustHold(t, v, "TakeIfPresent on a missing request", func() { tr.takeIfPresent("c1", 1, marotte.DecisionKindPermission) })
 	mustHold(t, v, "TakePermissionOption with an off-list option", func() {
 		if _, pending, offered := tr.takePermissionOption("c1", 2, "nope"); !pending || offered {
 			t.Fatalf("TakePermissionOption(off-list) = (pending %v, offered %v), want (true, false)", pending, offered)

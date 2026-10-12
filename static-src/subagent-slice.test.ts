@@ -1,17 +1,13 @@
-// The group projection as pure values: which member an entry lands in, which turn a lane lives in,
-// whose liveness a member reports, and the stage/driver join parsed from the tool-call ID
-// (`invoke_subagent_<driver>_stage_<name>`), which breaks silently into an unrelated delegate.
+// The delegate projection as pure values: which lane an entry lands in, which turn a lane lives in,
+// and whose liveness a delegate reports.
 
 import { describe, it, expect } from "vitest";
 import {
   blockShape,
   findSubagentInvocation,
-  resolveGroup,
-  pipelineOf,
   readLane,
   shapeExtends,
-  sliceSubagentGroup,
-  stageName,
+  sliceSubagent,
   turnHoldingLane,
 } from "./subagent-slice.js";
 import { toolResultID } from "./entry-ids.js";
@@ -126,9 +122,9 @@ function openEntry(turnID: string, lane: string, body: string): OpenEntry {
 const STAGE_A = "invoke_subagent_orc_1_stage_plan";
 const STAGE_B = "invoke_subagent_orc_1_stage_review";
 
-/** A two-stage pipeline in one turn: the driver and both invocations in the chat's
- *  lane, each stage's work in its own. Stage A settled through its result while its
- *  create frame still reads `in_progress`; stage B is still running. */
+/** What an older engine's two-stage pipeline left in one turn: the driver and both stage-shaped
+ *  invocations in the chat's lane, each stage's work in its own. Stage A settled through its
+ *  result while its create frame still reads `in_progress`; stage B is still running. */
 function pipeline(): TurnSource {
   return source([
     [
@@ -155,109 +151,25 @@ function prose(entries: readonly Entry[] | undefined): string[] {
     .map((e) => (e.payload as { text: string }).text);
 }
 
-describe("the stage/driver join", () => {
-  it("reads a driver id out of a stage-shaped tool-call id", () => {
-    expect(pipelineOf("invoke_subagent_orc_42_stage_review")).toBe("orc_42");
-    expect(stageName("invoke_subagent_orc_42_stage_review")).toBe("review");
-  });
-
-  it("reports no pipeline for a plain invocation id", () => {
-    expect(pipelineOf("tooluse_abc")).toBe("");
-    expect(stageName("tooluse_abc")).toBe("");
-  });
-
-  // Both halves empty rather than a partial answer: an id that is prefixed but carries
-  // no name on one side names no pipeline, and treating it as one would put a delegate
-  // under a driver that does not exist.
-  it("refuses a truncated stage id", () => {
-    expect(pipelineOf("invoke_subagent__stage_x")).toBe("");
-    expect(pipelineOf("invoke_subagent_orc_stage_")).toBe("");
-  });
-
-  it("finds every sibling stage of the pipeline a delegate belongs to", () => {
-    const src = source([
-      [
-        "t1",
-        [
-          turnOpen("t1", 1),
-          toolCall("t1", 1, driver("orc_1")),
-          toolCall("t1", 2, invocation(STAGE_A, "sub_a")),
-          toolCall("t1", 3, invocation(STAGE_B, "sub_b")),
-          // A different pipeline's stage, and a plain delegate. Neither is a sibling.
-          toolCall("t1", 4, invocation("invoke_subagent_orc_2_stage_plan", "sub_c")),
-          toolCall("t1", 5, invocation("tooluse_plain", "sub_d")),
-        ],
-      ],
-    ]);
-    const group = resolveGroup(src, "sub_b").group;
-    expect(group.pipeline).toBe("orc_1");
-    expect(group.driver?.id).toBe("orc_1");
-    expect(group.members.map((m) => m.subtaskID)).toEqual(["sub_a", "sub_b"]);
-    expect(group.members.map((m) => m.stage)).toEqual(["plan", "review"]);
-  });
-
-  it("reports no group for a delegate that is not a stage", () => {
-    const src = source([
-      ["t1", [turnOpen("t1", 1), toolCall("t1", 1, invocation("tooluse_plain", "sub_d"))]],
-    ]);
-    expect(resolveGroup(src, "sub_d").group).toEqual({
-      pipeline: "",
-      driver: undefined,
-      members: [],
-    });
+describe("a stage-shaped delegate is an ordinary delegate", () => {
+  // Replay of an older engine's pipeline: each former stage is its own delegate, and the id
+  // shape pulls in neither a sibling nor the driver.
+  it("projects the asked stage alone", () => {
+    const slice = sliceSubagent(pipeline(), "sub_b", false);
+    expect(slice.invocation?.id).toBe(STAGE_B);
+    expect(prose(slice.entries)).toEqual(["stage B wrote this"]);
+    expect(slice.entries.some((e) => (e.lane ?? "") !== "sub_b")).toBe(false);
   });
 });
 
-describe("one walk answers for every member", () => {
-  it("projects a slice per stage of the pipeline, keyed by subtask id", () => {
-    const p = sliceSubagentGroup(pipeline(), "sub_a", false);
-    expect([...p.slices.keys()].sort()).toEqual(["sub_a", "sub_b"]);
-    expect(p.group.pipeline).toBe("orc_1");
-    expect(p.group.driver?.id).toBe("orc_1");
-  });
-
-  // A stage's page shows the WHOLE pipeline, so asking for either stage answers for both.
-  it("answers for the sibling whichever member is asked about", () => {
-    for (const asked of ["sub_a", "sub_b"]) {
-      const p = sliceSubagentGroup(pipeline(), asked, false);
-      expect(prose(p.slices.get("sub_a")?.entries)).toEqual(["stage A wrote this"]);
-      expect(prose(p.slices.get("sub_b")?.entries)).toEqual(["stage B wrote this"]);
-    }
-  });
-
-  // The join reads the FIRST separator: driver ids are machine-minted, stage names author-supplied,
-  // so only the right half can contain one.
-  it("groups a stage whose name contains the separator", () => {
-    expect(pipelineOf("invoke_subagent_orc_1_stage_run_stage_two")).toBe("orc_1");
-    expect(stageName("invoke_subagent_orc_1_stage_run_stage_two")).toBe("run_stage_two");
-    const odd = invocation("invoke_subagent_orc_1_stage_run_stage_two", "sub_odd");
-    const src = source([
-      [
-        "t1",
-        [
-          turnOpen("t1", 1),
-          toolCall("t1", 1, driver("orc_1")),
-          toolCall("t1", 2, invocation(STAGE_A, "sub_a")),
-          toolCall("t1", 3, odd),
-          text("t1", 4, "odd stage", "sub_odd"),
-        ],
-      ],
-    ]);
-    const p = sliceSubagentGroup(src, "sub_odd", false);
-    expect(p.group.pipeline).toBe("orc_1");
-    expect([...p.slices.keys()].sort()).toEqual(["sub_a", "sub_odd"]);
-  });
-});
-
-describe("a member's entries are its lane's, uncopied", () => {
-  // The chat's own prose is lane "" and a sibling's is the sibling's; either leaking
+describe("a delegate's entries are its lane's, uncopied", () => {
+  // The chat's own prose is lane "" and another delegate's is that delegate's; either leaking
   // renders one agent's work inside another's page.
-  it("keeps the chat's entries and each sibling's out of the other's", () => {
-    const p = sliceSubagentGroup(pipeline(), "sub_a", false);
-    const a = p.slices.get("sub_a");
-    expect(a?.entries.map((e) => e.seq)).toEqual([4, 5, 6]);
-    expect(prose(a?.entries)).toEqual(["stage A wrote this"]);
-    expect(p.slices.get("sub_b")?.entries.map((e) => e.seq)).toEqual([8]);
+  it("keeps the chat's entries and another delegate's out", () => {
+    const a = sliceSubagent(pipeline(), "sub_a", false);
+    expect(a.entries.map((e) => e.seq)).toEqual([4, 5, 6]);
+    expect(prose(a.entries)).toEqual(["stage A wrote this"]);
+    expect(sliceSubagent(pipeline(), "sub_b", false).entries.map((e) => e.seq)).toEqual([8]);
   });
 
   // Nothing is copied and no lane is cleared: a view renders the REAL turn with the
@@ -266,30 +178,32 @@ describe("a member's entries are its lane's, uncopied", () => {
   it("hands back the store's own entries with their lane intact", () => {
     const src = pipeline();
     const stored = src.turns.get("t1")?.entries[4];
-    const projected = sliceSubagentGroup(src, "sub_a", false).slices.get("sub_a")?.entries[0];
+    const projected = sliceSubagent(src, "sub_a", false).entries[0];
     expect(projected).toBe(stored);
     expect(projected?.lane).toBe("sub_a");
   });
 
-  it("files a tool call and its result under the member whose lane holds them", () => {
-    const p = sliceSubagentGroup(pipeline(), "sub_a", false);
-    expect(p.slices.get("sub_a")?.entries.map((e) => e.id)).toEqual([
+  it("files a tool call and its result under the delegate whose lane holds them", () => {
+    expect(sliceSubagent(pipeline(), "sub_a", false).entries.map((e) => e.id)).toEqual([
       "t1-e4",
       "read_1",
       toolResultID("read_1"),
     ]);
-    expect(p.slices.get("sub_b")?.entries.some((e) => e.id === "read_1")).toBe(false);
+    expect(sliceSubagent(pipeline(), "sub_b", false).entries.some((e) => e.id === "read_1")).toBe(
+      false,
+    );
   });
 });
 
 describe("the invocation is the issuer's tool_call naming the lane", () => {
-  it("finds each member's invocation in the issuer's lane and keeps it out of the entries", () => {
-    const p = sliceSubagentGroup(pipeline(), "sub_a", false);
-    expect(p.slices.get("sub_a")?.invocation?.id).toBe(STAGE_A);
-    expect(p.slices.get("sub_b")?.invocation?.id).toBe(STAGE_B);
-    for (const id of ["sub_a", "sub_b"]) {
-      const slice = p.slices.get(id);
-      expect(slice?.entries.some((e) => e.id === slice.invocation?.id)).toBe(false);
+  it("finds the invocation in the issuer's lane and keeps it out of the entries", () => {
+    for (const [id, call] of [
+      ["sub_a", STAGE_A],
+      ["sub_b", STAGE_B],
+    ] as const) {
+      const slice = sliceSubagent(pipeline(), id, false);
+      expect(slice.invocation?.id).toBe(call);
+      expect(slice.entries.some((e) => e.id === call)).toBe(false);
     }
   });
 
@@ -321,15 +235,15 @@ describe("the turn a lane lives in", () => {
   // The tail subscribes on `laneSig(turn, lane)`, so the slice has to name the turn the
   // projection actually rendered: the one the invocation was issued in.
   it("projects the turn holding the lane", () => {
-    const p = sliceSubagentGroup(pipeline(), "sub_a", false);
-    expect(p.slices.get("sub_a")?.turn?.id).toBe("t1");
-    expect(p.slices.get("sub_a")?.turn?.n).toBe(1);
+    const slice = sliceSubagent(pipeline(), "sub_a", false);
+    expect(slice.turn?.id).toBe("t1");
+    expect(slice.turn?.n).toBe(1);
   });
 
   // A window can hold a delegate's output with its dispatching call paged out.
   it("falls back to the turn whose lane holds entries when the invocation is not resident", () => {
     const src = source([["t7", [turnOpen("t7", 7), text("t7", 1, "orphan work", "sub_gone")]]]);
-    const slice = sliceSubagentGroup(src, "sub_gone", false).slices.get("sub_gone");
+    const slice = sliceSubagent(src, "sub_gone", false);
     expect(slice?.invocation).toBeUndefined();
     expect(slice?.turn?.id).toBe("t7");
     expect(prose(slice?.entries)).toEqual(["orphan work"]);
@@ -347,7 +261,7 @@ describe("the turn a lane lives in", () => {
         open,
       ],
     ]);
-    const slice = sliceSubagentGroup(src, "sub_live", false).slices.get("sub_live");
+    const slice = sliceSubagent(src, "sub_live", false);
     expect(slice?.open).toBe(true);
     expect(slice?.entries).toEqual([]);
     expect(slice?.live).toBe(true);
@@ -366,7 +280,7 @@ describe("the turn a lane lives in", () => {
     expect(lane.turnID).toBe("t3");
     expect(lane.open?.text).toBe("typing…");
     expect(lane.entries).toEqual([]);
-    const slice = sliceSubagentGroup(src, "sub_live", false).slices.get("sub_live");
+    const slice = sliceSubagent(src, "sub_live", false);
     expect(slice?.turn?.id).toBe("t3");
     expect(slice?.open).toBe(true);
   });
@@ -386,27 +300,24 @@ describe("the turn a lane lives in", () => {
   });
 });
 
-describe("live is per member", () => {
-  // A stage can finish while its siblings and the conversation carry on. Reading the
-  // chat's flag would leave a settled stage under a streaming caret.
-  it("reads each member's own settled status, not the chat's", () => {
-    const p = sliceSubagentGroup(pipeline(), "sub_a", true);
-    expect(p.slices.get("sub_a")?.live).toBe(false);
-    expect(p.slices.get("sub_b")?.live).toBe(true);
+describe("live is the delegate's own", () => {
+  // A delegate can finish while the conversation carries on. Reading the chat's flag would leave a
+  // settled delegate under a streaming caret.
+  it("reads the delegate's own settled status, not the chat's", () => {
+    expect(sliceSubagent(pipeline(), "sub_a", true).live).toBe(false);
+    expect(sliceSubagent(pipeline(), "sub_b", true).live).toBe(true);
   });
 
-  it("falls back to the chat while a member's invocation is not resident", () => {
+  it("falls back to the chat while the invocation is not resident", () => {
     const src = source([["t1", [turnOpen("t1", 1), text("t1", 1, "orphan work", "sub_gone")]]]);
     for (const chatLive of [true, false]) {
-      expect(sliceSubagentGroup(src, "sub_gone", chatLive).slices.get("sub_gone")?.live).toBe(
-        chatLive,
-      );
+      expect(sliceSubagent(src, "sub_gone", chatLive).live).toBe(chatLive);
     }
   });
 });
 
-describe("a delegate that is not a stage", () => {
-  it("reports no pipeline and projects itself alone", () => {
+describe("a delegate with little resident", () => {
+  it("projects its invocation and its lane", () => {
     const src = source([
       [
         "t1",
@@ -418,31 +329,22 @@ describe("a delegate that is not a stage", () => {
         ],
       ],
     ]);
-    const p = sliceSubagentGroup(src, "sub_solo", false);
-    expect(p.group).toEqual({ pipeline: "", driver: undefined, members: [] });
-    expect([...p.slices.keys()]).toEqual(["sub_solo"]);
-    expect(prose(p.slices.get("sub_solo")?.entries)).toEqual(["solo work"]);
-    expect(p.slices.get("sub_solo")?.invocation?.id).toBe("tooluse_plain");
+    const slice = sliceSubagent(src, "sub_solo", false);
+    expect(prose(slice.entries)).toEqual(["solo work"]);
+    expect(slice.invocation?.id).toBe("tooluse_plain");
   });
 
-  // The requested id ALWAYS has an entry: "not projected" and "projected and empty" are
-  // different answers and the page says different things for each.
+  // "Not projected" and "projected and empty" are different answers and the page says different
+  // things for each.
   it("still answers for a delegate with nothing resident", () => {
     const src = source([["t1", [turnOpen("t1", 1), text("t1", 1, "parent")]]]);
-    const slice = sliceSubagentGroup(src, "sub_missing", false).slices.get("sub_missing");
-    expect(slice).toEqual({
+    expect(sliceSubagent(src, "sub_missing", false)).toEqual({
       invocation: undefined,
       turn: undefined,
       entries: [],
       open: false,
       live: false,
     });
-  });
-
-  it("projects nothing at all for the empty id", () => {
-    const p = sliceSubagentGroup(pipeline(), "", false);
-    expect(p.slices.size).toBe(0);
-    expect(p.group.pipeline).toBe("");
   });
 });
 

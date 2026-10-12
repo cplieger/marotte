@@ -69,7 +69,7 @@ func TestTakePendingPerm_AnnouncesTheDeliveredDecision(t *testing.T) {
 			head := h.bus.fanout.Position().Head
 			askID := requestIDOf(t, h.bus.pendingPerms.add(9, marotte.NewEvent(tc.event, "c1", marotte.PermissionNeededPayload{}), newFakeBridge()))
 
-			reply, ok := h.bus.TakePendingPerm("c1", askID, tc.settledBy)
+			reply, ok := h.bus.TakePendingPerm("c1", askID, tc.wantKind, tc.settledBy)
 			if !ok {
 				t.Fatal("TakePendingPerm refused a pending request")
 			}
@@ -97,7 +97,7 @@ func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
 	h, _, _ := newTestHub()
 	askID := requestIDOf(t, h.bus.pendingPerms.add(9, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{}), newFakeBridge()))
-	reply, ok := h.bus.TakePendingPerm("c1", askID, marotte.SettledByUser)
+	reply, ok := h.bus.TakePendingPerm("c1", askID, marotte.DecisionKindPermission, marotte.SettledByUser)
 	if !ok {
 		t.Fatal("first claim refused")
 	}
@@ -106,7 +106,7 @@ func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
 	}
 
 	head := h.bus.fanout.Position().Head
-	if _, ok := h.bus.TakePendingPerm("c1", askID, marotte.SettledByUser); ok {
+	if _, ok := h.bus.TakePendingPerm("c1", askID, marotte.DecisionKindPermission, marotte.SettledByUser); ok {
 		t.Error("second claim on one request id succeeded, want refused")
 	}
 	if got := settledEvents(t, bufferedSince(h, head)); len(got) != 0 {
@@ -164,7 +164,7 @@ func TestTakePendingPerm_RetractsTheAsksOwnSubject(t *testing.T) {
 			h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 			cs.wire(h)
 			askID := requestIDOf(t, h.bus.pendingPerms.add(9, marotte.ServerEvent{Type: marotte.EventPermissionNeeded, ChatID: tc.chatID, Payload: tc.payload}, newFakeBridge()))
-			reply, ok := h.bus.TakePendingPerm(tc.chatID, askID, marotte.SettledByUser)
+			reply, ok := h.bus.TakePendingPerm(tc.chatID, askID, marotte.DecisionKindPermission, marotte.SettledByUser)
 			if !ok {
 				t.Fatal("TakePendingPerm refused a pending request")
 			}

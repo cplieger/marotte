@@ -185,6 +185,7 @@ describe("entryRenders", () => {
     "compaction",
     "model_switched",
     "model_routed",
+    "model_fallback",
     "mode_switched",
   ] as const)("draws a %s at its own position", (kind) => {
     expect(entryRenders(entry(1, kind), "", NO_FOLDS)).toBe(true);
@@ -244,6 +245,64 @@ describe("turnFolds", () => {
     const t = turn("t1", [entry(1, "plan", {}, { lane: "sub-A" }), entry(2, "plan")]);
     expect(turnFolds(t, "").plan).toBe(2);
     expect(turnFolds(t, "sub-A").plan).toBe(1);
+  });
+
+  // KAS re-pins the model before it sends the fallback notice, so the guessed "not available"
+  // switch row the re-pin wrote is the notice's to explain.
+  describe("a model fallback folds the re-pin row it explains", () => {
+    const repin = (seq: number, to = "sonnet-5"): Entry =>
+      entry(seq, "model_switched", { from: "opus-5", to, reason: "unavailable" });
+    const fallback = (seq: number, to = "sonnet-5"): Entry =>
+      entry(seq, "model_fallback", { from: "opus-5", to, trigger: "refusal", scope: "session" });
+
+    it("hides the switch row the next entry falls back from", () => {
+      const t = turn("t1", [text(1), repin(2), fallback(3)]);
+      const folds = turnFolds(t, "");
+      expect([...folds.fellBack]).toEqual([2]);
+      expect(t.body.filter((e) => entryRenders(e, "", folds)).map((e) => e.kind)).toEqual([
+        "text",
+        "model_fallback",
+      ]);
+    });
+
+    it.each([
+      ["moved to another model", [repin(1), fallback(2, "haiku-5")]],
+      ["was not the entry right before", [repin(1), text(2), fallback(3)]],
+      [
+        "named no reason",
+        [entry(1, "model_switched", { from: "opus-5", to: "sonnet-5" }), fallback(2)],
+      ],
+      [
+        "was a sub-agent's",
+        [
+          repin(1),
+          entry(2, "model_fallback", {
+            from: "opus-5",
+            to: "sonnet-5",
+            trigger: "availability",
+            scope: "session",
+            subagent: true,
+          }),
+        ],
+      ],
+      [
+        "was declined, naming no model",
+        [
+          repin(1),
+          entry(2, "model_fallback", {
+            from: "opus-5",
+            trigger: "availability",
+            reason: "chainExhausted",
+          }),
+        ],
+      ],
+    ] as const)("keeps a switch row whose fallback %s", (_why, body) => {
+      const t = turn("t1", [...body]);
+      expect(turnFolds(t, "").fellBack.size).toBe(0);
+      expect(
+        t.body.filter((e) => entryRenders(e, "", turnFolds(t, ""))).map((e) => e.kind),
+      ).toContain("model_switched");
+    });
   });
 
   it("answers -1 for a turn holding neither kind, which no seq can equal", () => {

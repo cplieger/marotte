@@ -268,7 +268,6 @@ describe("setting locks", () => {
     ["flag-content-collection", "content_collection_enabled"],
     ["flag-telemetry", "telemetry.enabled"],
     ["flag-workflows", "workflows_enabled"],
-    ["flag-inline-agents", "inline_agents_enabled"],
   ] as const;
 
   describe.each(lockable)("%s", (inputID, key) => {

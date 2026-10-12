@@ -848,6 +848,15 @@ func TestSearch_CompactionFailedAndSafetyBlockedAreContentSegments(t *testing.T)
 	})
 }
 
+// A model fallback's models and KAS's codes are one content segment, so find-in-chat lands on its row.
+func TestSearch_ModelFallbackIsAContentSegment(t *testing.T) {
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		add("", "fb-1", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "opus-5", Trigger: "availability", Reason: "chainExhausted"}))
+	assertHits(t, searchHits(entries, drawn, "exhausted"), []wantHit{
+		{entry: "fb-1", kind: SegmentContent, offset: 25, segmentLen: 34},
+	})
+}
+
 // Attachments are searched by name, not by the path in the pill's `title` attribute; both directions asserted.
 func TestSearch_AttachmentNameIsSearchedAndPathIsNot(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, &marotte.EntryPrompt{

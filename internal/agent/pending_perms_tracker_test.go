@@ -129,7 +129,7 @@ func TestPendingPermsTracker_ClearForChat_DropsOnlyThatChat(t *testing.T) {
 		t.Errorf("List(\"chat-2\") = %v after ClearForChat(\"chat-1\"), want %v", got, chat2)
 	}
 	// The surviving chat's answers are still accepted.
-	if _, ok := tracker.takeIfPresent("chat-2", chat2[0]); !ok {
+	if _, ok := tracker.takeIfPresent("chat-2", chat2[0], marotte.DecisionKindPermission); !ok {
 		t.Errorf("TakeIfPresent(\"chat-2\", %d) = false: another chat's clear took chat-2's entry", chat2[0])
 	}
 }
@@ -180,7 +180,8 @@ func TestPendingPermsTracker_ReusedACPIDsAreSeparateAsks(t *testing.T) {
 			if len(ended) != 1 || ended[0].id != oldID || ended[0].evt.Type != tc.oldKind {
 				t.Errorf("EndOrigin(old) = %+v, want only the old bridge's ask %d", ended, oldID)
 			}
-			ask, ok := tracker.takeIfPresent(tc.succChat, succID)
+			succKind, _ := marotte.DecisionKindForEvent(tc.succKind)
+			ask, ok := tracker.takeIfPresent(tc.succChat, succID, succKind)
 			if !ok {
 				t.Fatalf("the successor's ask %d is no longer answerable after the old bridge ended", succID)
 			}
@@ -221,11 +222,28 @@ func TestPendingPermsTracker_TakeIfPresent_RefusesAnotherChatsAsk(t *testing.T) 
 	tracker := newPendingPermsTracker()
 	id := requestIDOf(t, tracker.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-3",
 		marotte.PermissionNeededPayload{}), nil))
-	if _, ok := tracker.takeIfPresent("chat-4", id); ok {
+	if _, ok := tracker.takeIfPresent("chat-4", id, marotte.DecisionKindPermission); ok {
 		t.Errorf("TakeIfPresent(\"chat-4\", %d) succeeded against chat-3's ask", id)
 	}
 	if _, _, offered := tracker.takePermissionOption("chat-4", id, ""); offered {
 		t.Errorf("TakePermissionOption(\"chat-4\", %d) succeeded against chat-3's ask", id)
+	}
+}
+
+// A user-input or elicitation answer naming a permission ask's id claims nothing: its result
+// would reach session/request_permission past the advertised-option check.
+func TestPendingPermsTracker_TakeIfPresent_RefusesAnotherKindsAsk(t *testing.T) {
+	t.Parallel()
+	tracker := newPendingPermsTracker()
+	id := requestIDOf(t, tracker.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-3",
+		marotte.PermissionNeededPayload{Options: []marotte.PermissionOption{{OptionID: "allow_once"}}}), nil))
+	for _, kind := range []marotte.DecisionKind{marotte.DecisionKindUserInput, marotte.DecisionKindElicitation} {
+		if _, ok := tracker.takeIfPresent("chat-3", id, kind); ok {
+			t.Errorf("TakeIfPresent(%q) claimed a permission ask", kind)
+		}
+	}
+	if _, _, offered := tracker.takePermissionOption("chat-3", id, "allow_once"); !offered {
+		t.Error("the permission ask was not left pending for its own answer")
 	}
 }
 

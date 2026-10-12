@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -212,38 +211,6 @@ func TestStripCodeFence(t *testing.T) {
 	}
 }
 
-func TestParseSteeringInclusion(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{"standard front-matter", "---\ninclusion: manual\ndescription: test\n---\n# Doc", "manual"},
-		{"always inclusion", "---\ninclusion: always\n---\n# Doc", "always"},
-		{"fileMatch inclusion", "---\ninclusion: fileMatch\nfileMatchPattern: \"**/*.go\"\n---\n# Doc", "fileMatch"},
-		{"no front-matter defaults to always", "# Just a heading\nSome content", "always"},
-		{"empty file defaults to always", "", "always"},
-		{"front-matter without inclusion defaults to always", "---\ndescription: no inclusion key\n---\n# Doc", "always"},
-		{"unclosed front-matter defaults to always", "---\ninclusion: manual\n# No closing fence", "always"},
-		{"inclusion with extra whitespace", "---\ninclusion:   manual  \n---\n# Doc", "manual"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseSteeringInclusion([]byte(tt.content))
-			if got != tt.want {
-				t.Errorf("parseSteeringInclusion() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseSteeringInclusion_NilData(t *testing.T) {
-	got := parseSteeringInclusion(nil)
-	if got != "always" {
-		t.Errorf("parseSteeringInclusion(nil) = %q, want %q", got, "always")
-	}
-}
-
 func TestSpaHandler(t *testing.T) {
 	tests := []struct {
 		fs         fstest.MapFS
@@ -346,106 +313,6 @@ func findSubstring(s, sub string) bool {
 		}
 	}
 	return false
-}
-
-func FuzzParseSteeringInclusion(f *testing.F) {
-	seeds := []string{
-		"---\ninclusion: manual\ndescription: test\n---\n# Doc",
-		"---\ninclusion: always\n---\n# Doc",
-		"---\ninclusion: fileMatch\nfileMatchPattern: \"**/*.go\"\n---\n# Doc",
-		"# Just a heading\nSome content",
-		"",
-		"---\ndescription: no inclusion key\n---\n# Doc",
-		"---\ninclusion: manual\n# No closing fence",
-		"---\ninclusion:   manual  \n---\n# Doc",
-		"---\n---\n",
-		"---\n\n---\n",
-		"---\n---",
-		string([]byte{0x00, 0x01, 0x02}),
-		"---\n" + strings.Repeat("a", 10000) + "\n---\n",
-	}
-	for _, s := range seeds {
-		f.Add(s)
-	}
-	f.Fuzz(func(t *testing.T, content string) {
-		_ = parseSteeringInclusion([]byte(content))
-	})
-}
-
-func BenchmarkScanKiroDirFS(b *testing.B) {
-	makeDocs := func(n int) fstest.MapFS {
-		m := fstest.MapFS{
-			"steering":  &fstest.MapFile{Mode: fs.ModeDir},
-			"skills":    &fstest.MapFile{Mode: fs.ModeDir},
-			"skills/s1": &fstest.MapFile{Mode: fs.ModeDir},
-			"agents":    &fstest.MapFile{Mode: fs.ModeDir},
-			"agents/a.md": &fstest.MapFile{
-				Data: []byte("---\ninclusion: always\n---\n# Agent"),
-			},
-		}
-		for i := range n {
-			// strconv.Itoa: a 26-letter suffix collided past 26 entries.
-			name := "steering/doc" + strconv.Itoa(i) + ".md"
-			m[name] = &fstest.MapFile{
-				Data: []byte("---\ninclusion: manual\ndescription: benchmark doc\n---\n# Heading\nContent here for realism.\n"),
-			}
-		}
-		return m
-	}
-
-	// The axis FLATTENS at maxSteeringPerDir (20): the 50 case measures the capped path.
-	for _, count := range []int{5, 20, 50} {
-		b.Run(strconv.Itoa(count)+"_docs", func(b *testing.B) {
-			m := makeDocs(count)
-			ctx := b.Context()
-			b.ReportAllocs()
-			for b.Loop() {
-				_ = scanKiroDirFS(ctx, m, "test/.kiro")
-			}
-		})
-	}
-}
-
-func FuzzScanKiroDirFS(f *testing.F) {
-	f.Add("normal.md", "other.md", "skill1")
-	f.Add("has-dash.md", "agent.md", "sk")
-	f.Add("", ".hidden.md", "")
-	f.Add("a.txt", "b.md", "dir")
-
-	f.Fuzz(func(t *testing.T, steeringName, agentName, skillName string) {
-		m := fstest.MapFS{
-			"steering": &fstest.MapFile{Mode: fs.ModeDir},
-			"agents":   &fstest.MapFile{Mode: fs.ModeDir},
-			"skills":   &fstest.MapFile{Mode: fs.ModeDir},
-		}
-		if steeringName != "" {
-			m["steering/"+steeringName] = &fstest.MapFile{
-				Data: []byte("---\ninclusion: always\n---\n# Doc"),
-			}
-		}
-		if agentName != "" {
-			m["agents/"+agentName] = &fstest.MapFile{
-				Data: []byte("# Agent"),
-			}
-		}
-		if skillName != "" {
-			m["skills/"+skillName] = &fstest.MapFile{Mode: fs.ModeDir}
-		}
-
-		items := scanKiroDirFS(t.Context(), m, "prefix/.kiro")
-
-		for _, item := range items {
-			if strings.Contains(item.Path, "\x00") {
-				t.Errorf("item.Path contains null byte: %q", item.Path)
-			}
-			if item.Type != "steering" && item.Type != "skill" && item.Type != "agent" {
-				t.Errorf("item.Type = %q, want steering|skill|agent", item.Type)
-			}
-			if item.Name == "" {
-				t.Errorf("item.Name is empty for path %q", item.Path)
-			}
-		}
-	})
 }
 
 // TestHandleHealth_envelopeMatchesTheLibrary pins the two wire properties shared with
@@ -619,40 +486,6 @@ func TestNotifyPermissionKeyIsUnreachable(t *testing.T) {
 	unknown := settings.WarnUnknownKeys([]string{"notify_permission"}, "TestNotifyPermissionKeyIsUnreachable")
 	if len(unknown) != 1 || unknown[0] != "notify_permission" {
 		t.Errorf("WarnUnknownKeys([notify_permission]) = %v, want [notify_permission]", unknown)
-	}
-}
-
-func hasKiroConfigItem(items []kiroConfigItem, typ, name string) bool {
-	for _, it := range items {
-		if it.Type == typ && it.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// TestScanKiroDirFS_returnsAllSections pins an item from every section of one scan.
-func TestScanKiroDirFS_returnsAllSections(t *testing.T) {
-	mfs := fstest.MapFS{
-		"steering":            &fstest.MapFile{Mode: fs.ModeDir},
-		"steering/foo.md":     &fstest.MapFile{Data: []byte("---\ninclusion: manual\n---\n# Foo")},
-		"skills":              &fstest.MapFile{Mode: fs.ModeDir},
-		"skills/bar":          &fstest.MapFile{Mode: fs.ModeDir},
-		"skills/bar/SKILL.md": &fstest.MapFile{Data: []byte("# Bar")},
-		"agents":              &fstest.MapFile{Mode: fs.ModeDir},
-		"agents/baz.md":       &fstest.MapFile{Data: []byte("# Baz")},
-	}
-
-	items := scanKiroDirFS(t.Context(), mfs, "P/.kiro")
-
-	if !hasKiroConfigItem(items, "steering", "foo") {
-		t.Errorf("scanKiroDirFS missing steering item 'foo'; got %+v", items)
-	}
-	if !hasKiroConfigItem(items, "skill", "bar") {
-		t.Errorf("scanKiroDirFS missing skill item 'bar'; got %+v", items)
-	}
-	if !hasKiroConfigItem(items, "agent", "baz") {
-		t.Errorf("scanKiroDirFS missing agent item 'baz'; got %+v", items)
 	}
 }
 

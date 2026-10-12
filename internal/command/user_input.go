@@ -31,7 +31,7 @@ func cmdUserInputResponse(ctx context.Context, perms pendingPermAccess, cmd *mar
 	// Take before responding, as cmdPermission does: the agent advances
 	// on the first answer it receives, so a second tab's answer is both
 	// discarded and invisible.
-	reply, ok := perms.TakePendingPerm(cmd.ChatID, p.RequestID, marotte.SettledByUser)
+	reply, ok := perms.TakePendingPerm(cmd.ChatID, p.RequestID, marotte.DecisionKindUserInput, marotte.SettledByUser)
 	if !ok {
 		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}

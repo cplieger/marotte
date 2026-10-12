@@ -326,6 +326,41 @@ func TestRenderChatMarkdown_SaysWhichModelSwitchedTriggerFired(t *testing.T) {
 	}
 }
 
+// A fallback line carries KAS's trigger, both models, a decline's code and the sub-agent marker.
+func TestRenderChatMarkdown_NamesAModelFallbacksDecision(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload marotte.EntryModelFallback
+		want    string
+	}{
+		{
+			name:    "retried",
+			payload: marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Scope: "session", Trigger: "refusal"},
+			want:    "**Event: model_fallback** refusal: opus-5 → sonnet-5\n",
+		},
+		{
+			name:    "declined",
+			payload: marotte.EntryModelFallback{From: "opus-5", Trigger: "availability", Reason: "chainExhausted"},
+			want:    "**Event: model_fallback** availability: opus-5, declined: chainExhausted\n",
+		},
+		{
+			name:    "subagent",
+			payload: marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Trigger: "availability", Subagent: true},
+			want:    "**Event: model_fallback** availability: opus-5 → sonnet-5, for a sub-agent\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, _ := chatOf(openTurn("t-1", 1, nil).
+				add("", "fb-1", marotte.EntryKindModelFallback, tc.payload))
+			md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Fallback"}, entries)
+			if !strings.Contains(md, tc.want) {
+				t.Errorf("renderChatMarkdown(%+v) missing %q\n---\n%s", tc.payload, tc.want, md)
+			}
+		})
+	}
+}
+
 // A tool_result folds into its call's block with the settled status and output; an orphaned result renders alone.
 func TestRenderChatMarkdown_FoldsAResultIntoItsCallAndRendersAnOrphanAlone(t *testing.T) {
 	tf := openTurn("t-1", 1, nil).

@@ -102,7 +102,6 @@ func TestWritePowersServers_AnEmptySetNormalizesEveryLeftoverShape(t *testing.T)
 		{name: "empty member", seed: `{"powers":{"mcpServers":{}}}`},
 		{name: "null member", seed: `{"powers":{"mcpServers":null}}`},
 		{name: "non-object member", seed: `{"powers":{"mcpServers":[],"other":1}}`, wantPowers: `{"other":1}`},
-		{name: "invalid document", seed: `{not json`, wantOwnServers: true},
 		{name: "null document", seed: `null`, wantOwnServers: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

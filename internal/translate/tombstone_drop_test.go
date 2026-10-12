@@ -23,7 +23,7 @@ func headerWrites() map[string]lateWrite {
 			tr.HandleModeUpdate(ctx, id, mustJSONCtx(map[string]any{"currentModeId": "spec"}))
 		},
 		"focus title: persist": func(tr *Translator, ctx context.Context, id marotte.ChatID) {
-			tr.handleFocusUpdate(ctx, id, &focusUpdate{Title: "Agent picked this"})
+			tr.handleFocusUpdate(ctx, id, &focusUpdate{Title: "Agent picked this"}, nil)
 		},
 		"agent_not_found: persist fallback": func(tr *Translator, ctx context.Context, id marotte.ChatID) {
 			tr.HandleAgentNotFound(ctx, id, &marotte.RPCResponse{
@@ -208,7 +208,7 @@ func TestHandleFocusUpdate_ADeletedChatsPromptReadIsNotAnError(t *testing.T) {
 	deps, _, store := refusingDeps(chat.ErrChatNotFound, nil)
 	tr := New(rolesOf(deps))
 
-	tr.handleFocusUpdate(t.Context(), "c1", &focusUpdate{Title: "Agent picked this"})
+	tr.handleFocusUpdate(t.Context(), "c1", &focusUpdate{Title: "Agent picked this"}, nil)
 
 	if strings.Contains(logs.String(), "level=ERROR") {
 		t.Errorf("a deleted chat's prompt read logged an error:\n%s", logs.String())

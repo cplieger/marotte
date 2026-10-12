@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -377,8 +378,9 @@ type segment struct {
 }
 
 // entrySegments lists an entry's searchable spans in rendered order: text; tool_call title and input; tool_result
-// claim, diff, denial and output; steer text; plan entries; compaction_failed or safety_blocked text; turn_close
-// failure reason; turn_open prompt and attachment names. Empty spans add nothing.
+// claim, diff, denial and output; steer text; plan entries; compaction_failed or safety_blocked text; model_routed's
+// message; model_fallback's models and codes; turn_close failure reason; turn_open prompt and attachment names. Empty
+// spans add nothing.
 func entrySegments(e *marotte.Entry, t *searchTurn) []segment {
 	switch e.Kind {
 	case marotte.EntryKindText:
@@ -405,6 +407,11 @@ func entrySegments(e *marotte.Entry, t *searchTurn) []segment {
 	case marotte.EntryKindModelRouted:
 		var p marotte.EntryModelRouted
 		return oneSegment(SegmentContent, decodeText(e.Payload, &p, func() string { return p.Message }))
+	case marotte.EntryKindModelFallback:
+		var p marotte.EntryModelFallback
+		return oneSegment(SegmentContent, decodeText(e.Payload, &p, func() string {
+			return strings.Join(slices.DeleteFunc([]string{p.From, p.To, p.Trigger, p.Reason}, func(s string) bool { return s == "" }), " ")
+		}))
 	case marotte.EntryKindTurnClose:
 		var p marotte.EntryTurnClose
 		return oneSegment(SegmentTurnFailure, decodeText(e.Payload, &p, func() string { return p.FailureReason }))

@@ -50,7 +50,6 @@ func agentFeatures(ctx context.Context, configDir string, locks map[string]marot
 		f.SpecPlan = plan
 	}
 	f.SpecAskClarification = settingBool(ctx, configDir, settings.KeySpecPlanningAskFirst)
-	f.InlineAgents = lockedBool(locks, marotte.LockInlineAgents, settingBool(ctx, configDir, settings.KeyInlineAgents))
 	f.SteeringReminders = settingBool(ctx, configDir, settings.KeySteeringReminders)
 	f.Workflows = settings.DefaultWorkflowsEnabled
 	var workflows bool
@@ -62,6 +61,7 @@ func agentFeatures(ctx context.Context, configDir string, locks map[string]marot
 	f.InfraSafetyMonitor = settingString(ctx, configDir, settings.KeyCloudFormationSafety, settings.ValidFeatureChoice)
 	f.AutoRouting = settingString(ctx, configDir, settings.KeyAutoRouting, settings.ValidFeatureChoice)
 	f.AutoDelegation = settingString(ctx, configDir, settings.KeyAutoDelegation, settings.ValidFeatureChoice)
+	f.ModelFallback = settingBool(ctx, configDir, settings.KeyModelFallback)
 	f.TerminalCommandTimeoutMs = terminalCommandTimeoutMs(ctx, configDir)
 	return f
 }

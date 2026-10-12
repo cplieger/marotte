@@ -222,9 +222,6 @@ function update(r: Render, entries: Entry[], live = false): void {
 function shape(body: HTMLElement): string[] {
   return [...body.children].map((e) => {
     const h = e as HTMLElement;
-    if (h.classList.contains("subagent-container")) {
-      return `pipeline(${String(h.dataset["pipeline"])})`;
-    }
     if (h.classList.contains("subagent-block")) {
       return `card(${String(h.dataset["subtask"])})`;
     }
@@ -687,7 +684,8 @@ describe("an event kind renders a row at its own seq", () => {
       sealed("t", 4, "safety_blocked", { reason: "blocked" }),
       sealed("t", 5, "model_switched", { from: "a", to: "b" }),
       sealed("t", 6, "model_routed", { message: "Switched to it." }),
-      text("t", 7, "after"),
+      sealed("t", 7, "model_fallback", { from: "a", trigger: "availability", reason: "raceLost" }),
+      text("t", 8, "after"),
     ]);
     expect(shape(r.body)).toEqual([
       "text(before)",
@@ -696,8 +694,35 @@ describe("an event kind renders a row at its own seq", () => {
       "event(safety_blocked)",
       "event(model_switched)",
       "event(model_routed)",
+      "event(model_fallback)",
       "text(after)",
     ]);
+  });
+
+  // KAS re-pins before it sends the notice, so the switch row's "not available" guess is folded
+  // into the fallback row, on replay and on live arrival alike.
+  const repin = (seq: number): Entry =>
+    sealed("t", seq, "model_switched", { from: "opus-5", to: "sonnet-5", reason: "unavailable" });
+  const fallback = (seq: number): Entry =>
+    sealed("t", seq, "model_fallback", {
+      from: "opus-5",
+      to: "sonnet-5",
+      scope: "session",
+      trigger: "refusal",
+    });
+
+  it("folds the re-pin row a fallback explains when both are in the log", () => {
+    const r = render([text("t", 1, "tried"), repin(2), fallback(3)]);
+    expect(shape(r.body)).toEqual(["text(tried)", "event(model_fallback)"]);
+  });
+
+  it("removes the mounted re-pin row when its fallback arrives live", () => {
+    const before = [text("t", 1, "tried"), repin(2)];
+    const r = render(before, { live: true });
+    expect(shape(r.body)).toEqual(["text(tried)", "event(model_switched)"]);
+    update(r, [...before, fallback(3)], true);
+    expect(shape(r.body)).toEqual(["text(tried)", "event(model_fallback)"]);
+    expect(blockElement(r.turnID, 2)).toBeUndefined();
   });
 
   it("breaks a prose run, because it renders at its own position", () => {
@@ -913,185 +938,41 @@ describe("a body mounts an entry RANGE, and the grouping is derived", () => {
   });
 });
 
-describe("a pipeline's stages render inside the orchestrate call that started them", () => {
-  /** An `orchestrate_subagent` driver. `declared` is the `input.stages` length, a floor on the stage count. */
-  function driver(seq: number, id: string, declared: number, status = "completed"): Entry {
-    return callEntry(
-      "t",
-      seq,
-      toolCall(id, {
-        title: "Orchestrate Sub-agent",
-        status: status as EntryToolCall["status"],
-        input: { stages: Array.from({ length: declared }, (_, i) => ({ name: `s${String(i)}` })) },
-      }),
-    );
-  }
-
-  /** One stage of `driverID`; its tool-call id embeds the driver's, which is the whole join. */
-  function stage(seq: number, driverID: string, name: string, subtask: string): Entry {
-    return callEntry(
-      "t",
-      seq,
-      toolCall(`invoke_subagent_${driverID}_stage_${name}`, {
-        title: `Sub-agent: ${name}`,
-        agent_subtask_id: subtask,
-      }),
-    );
-  }
-
-  const box = (r: Render, pipelineID: string): HTMLElement =>
-    r.body.querySelector(`.subagent-container[data-pipeline="${pipelineID}"]`) as HTMLElement;
-
-  const inside = (r: Render, pipelineID: string): string[] =>
-    shape(box(r, pipelineID).querySelector(".subagent-body") as HTMLElement);
-
-  it("nests every stage's card inside the driver's box", () => {
+// An older engine's `orchestrate_subagent` pipeline, replayed: nothing groups it any more.
+describe("a replayed pipeline renders as ordinary cards", () => {
+  it("draws the driver as a tool card and each stage as a top-level delegate card", () => {
     const r = render([
-      driver(1, "orc-1", 2),
-      stage(2, "orc-1", "review", "sub-A"),
-      stage(3, "orc-1", "apply", "sub-B"),
+      callEntry(
+        "t",
+        1,
+        toolCall("orc-1", {
+          title: "Orchestrate Sub-agent",
+          input: { stages: [{ name: "a" }, { name: "b" }] },
+        }),
+      ),
+      callEntry(
+        "t",
+        2,
+        toolCall("invoke_subagent_orc-1_stage_a", {
+          title: "Sub-agent: a",
+          agent_subtask_id: "sub-A",
+        }),
+      ),
+      callEntry(
+        "t",
+        3,
+        toolCall("invoke_subagent_orc-1_stage_b", {
+          title: "Sub-agent: b",
+          agent_subtask_id: "sub-B",
+        }),
+      ),
     ]);
-    expect(shape(r.body)).toEqual(["pipeline(orc-1)"]);
-    expect(inside(r, "orc-1")).toEqual(["card(sub-A)", "card(sub-B)"]);
-  });
-
-  it("labels the box by its DECLARED count, which knows a stage still on its way", () => {
-    const r = render([driver(1, "orc-1", 3), stage(2, "orc-1", "review", "sub-A")]);
-    expect(box(r, "orc-1").querySelector(".subagent-name")?.textContent).toBe(
-      "Subagent pipeline · 3 stages",
-    );
-  });
-
-  it("places a stage whose invocation arrives BEFORE its driver", () => {
-    // `indexPipelines` reads the whole tool-call array, so neither arrival order strands a stage.
-    const r = render([
-      stage(1, "orc-1", "review", "sub-A"),
-      driver(2, "orc-1", 2),
-      stage(3, "orc-1", "apply", "sub-B"),
-    ]);
-    expect(shape(r.body)).toEqual(["pipeline(orc-1)"]);
-    expect(inside(r, "orc-1")).toEqual(["card(sub-A)", "card(sub-B)"]);
-  });
-
-  it("PROMOTES a lone stage: no container over one card", () => {
-    const r = render([driver(1, "orc-1", 1), stage(2, "orc-1", "only", "sub-A")]);
-    expect(shape(r.body)).toEqual(["card(sub-A)"]);
-    expect(r.body.querySelectorAll(".subagent-container")).toHaveLength(0);
-  });
-
-  it("upgrades a promoted stage into a container when a sibling arrives, KEEPING the card", () => {
-    // A re-parent, not a rebuild: the node carries its disclosure, observers and effects.
-    const first = [driver(1, "orc-1", 1), stage(2, "orc-1", "one", "sub-A")];
-    const r = render(first);
-    const card = blockElement(r.turnID, 2);
-    expect(shape(r.body)).toEqual(["card(sub-A)"]);
-    update(r, [...first, stage(3, "orc-1", "two", "sub-B")]);
-    expect(shape(r.body)).toEqual(["pipeline(orc-1)"]);
-    expect(inside(r, "orc-1")).toEqual(["card(sub-A)", "card(sub-B)"]);
-    expect(blockElement(r.turnID, 2)).toBe(card);
-  });
-
-  it("keeps the box for a driver that SETTLED having dispatched no stage", () => {
-    const r = render([driver(1, "orc-1", 1)]);
-    expect(shape(r.body)).toEqual(["pipeline(orc-1)"]);
-    expect(inside(r, "orc-1")).toEqual([]);
-  });
-
-  it("withholds that box while the driver is still RUNNING", () => {
-    // Deferring to the settle stops the fallback box displacing a live stage about to be promoted.
-    const r = render([driver(1, "orc-1", 1, "in_progress")]);
-    expect(shape(r.body)).toEqual([]);
-  });
-
-  it("resolves a stage whose NAME carries the separator to its own driver", () => {
-    // `indexOf`, not `lastIndexOf`: the driver half is machine-minted, the stage name author-supplied.
-    const r = render([driver(1, "orc-1", 2), stage(2, "orc-1", "run_stage_two", "sub-A")]);
-    expect(inside(r, "orc-1")).toEqual(["card(sub-A)"]);
-  });
-
-  it("leaves a delegate whose id is not stage-shaped OUT of the pipeline", () => {
-    const r = render([driver(1, "orc-1", 2), invocation("t", 2, "sub-A")]);
-    expect(shape(r.body)).toEqual(["pipeline(orc-1)", "card(sub-A)"]);
-    expect(inside(r, "orc-1")).toEqual([]);
+    expect(shape(r.body)).toEqual(["group(1)", "card(sub-A)", "card(sub-B)"]);
+    expect(r.body.querySelector(".subagent-container")).toBeNull();
   });
 });
 
 describe("the newest top-level box renders expanded", () => {
-  function driver(seq: number, id: string, declared: number): Entry {
-    return callEntry(
-      "t",
-      seq,
-      toolCall(id, {
-        title: "Orchestrate Sub-agent",
-        input: { stages: Array.from({ length: declared }, (_, i) => ({ name: `s${String(i)}` })) },
-      }),
-    );
-  }
-
-  function stage(seq: number, driverID: string, name: string, subtask: string): Entry {
-    return callEntry(
-      "t",
-      seq,
-      toolCall(`invoke_subagent_${driverID}_stage_${name}`, {
-        title: `Sub-agent: ${name}`,
-        agent_subtask_id: subtask,
-      }),
-    );
-  }
-
-  const pipeline = (r: Render): HTMLElement =>
-    r.body.querySelector(".subagent-container") as HTMLElement;
-
-  /** The disclosure settles on a microtask and its own MutationObserver, so the verdict is readable a task later. */
-  const settled = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
-
-  it("leaves a pipeline box open while it is the newest top-level element", async () => {
-    const r = render([driver(1, "orc-1", 2), stage(2, "orc-1", "a", "sub-A")]);
-    await settled();
-    expect(pipeline(r).classList.contains("collapsed")).toBe(false);
-  });
-
-  it("is BORN folded when the range already holds the entry after it", async () => {
-    // The verdict precedes the box, so a superseded box is built closed rather than animated shut.
-    const r = render([
-      driver(1, "orc-1", 2),
-      stage(2, "orc-1", "a", "sub-A"),
-      text("t", 3, "and so"),
-    ]);
-    await settled();
-    expect(pipeline(r).classList.contains("collapsed")).toBe(true);
-  });
-
-  it("folds when the entry after it ARRIVES, on the next pass", async () => {
-    const before = [driver(1, "orc-1", 2), stage(2, "orc-1", "a", "sub-A")];
-    const r = render(before);
-    await settled();
-    expect(pipeline(r).classList.contains("collapsed")).toBe(false);
-    update(r, [...before, text("t", 3, "and so")]);
-    await settled();
-    expect(pipeline(r).classList.contains("collapsed")).toBe(true);
-  });
-
-  it("refuses that fold while the driver is still RUNNING", async () => {
-    // A refusal to collapse, not a reason to expand: an open box with work in flight stays open.
-    const running = callEntry(
-      "t",
-      1,
-      toolCall("orc-1", {
-        title: "Orchestrate Sub-agent",
-        status: "in_progress",
-        input: { stages: [{ name: "a" }, { name: "b" }] },
-      }),
-    );
-    const before = [running, stage(2, "orc-1", "a", "sub-A")];
-    const r = render(before);
-    await settled();
-    expect(pipeline(r).classList.contains("collapsed")).toBe(false);
-    update(r, [...before, text("t", 3, "and so")]);
-    await settled();
-    expect(pipeline(r).classList.contains("collapsed")).toBe(false);
-  });
-
   it("gives a box whose HOST is another box no expanded verdict of its own", () => {
     // Only the view's root lane earns the newest-element verdict, so a delegate page's trace never does.
     const turnID = nextTurnID();
@@ -1118,17 +999,6 @@ describe("blockElement resolves an entry's own element", () => {
     const cards = r.body.querySelectorAll(".tool-call");
     expect(blockElement(r.turnID, 1)).toBe(cards[0]);
     expect(blockElement(r.turnID, 2)).toBe(cards[1]);
-  });
-
-  it("answers the pipeline box for the driver that opened it", () => {
-    const r = render([
-      callEntry(
-        "t",
-        1,
-        toolCall("orc-1", { title: "Orchestrate Sub-agent", input: { stages: [] } }),
-      ),
-    ]);
-    expect(blockElement(r.turnID, 1)).toBe(r.body.querySelector(".subagent-container"));
   });
 
   it("answers undefined for a seq the turn does not hold", () => {
@@ -1173,7 +1043,8 @@ describe("a delegate card's status follows its invocation CALL", () => {
     expect(head.getAttribute("aria-label")).toContain("failed");
   });
 
-  it("shows an inline helper's model and effort on its card", () => {
+  // kiro-cli no longer reads `inlineAgent`, so its input marks nothing on the card.
+  it("shows no inline mark or model for an inlineAgent input", () => {
     const r = render([
       callEntry(
         "t",
@@ -1185,8 +1056,8 @@ describe("a delegate card's status follows its invocation CALL", () => {
         }),
       ),
     ]);
-    expect(cardOf(r).querySelector(".subagent-name")?.textContent).toBe("x (inline agent)");
-    expect(cardOf(r).querySelector(".subagent-detail")?.textContent).toBe("m · high");
+    expect(cardOf(r).querySelector(".subagent-name")?.textContent).toBe("x");
+    expect(cardOf(r).querySelector(".subagent-detail")?.textContent).toBe("");
   });
 
   it("shows the category a saved agent was asked to run on as its card's detail", () => {
@@ -1204,32 +1075,6 @@ describe("a delegate card's status follows its invocation CALL", () => {
     expect(cardOf(r).querySelector(".subagent-detail")?.textContent).toBe(
       "Category: auto-balanced",
     );
-  });
-
-  it("re-binds a pipeline box whose driver entry the window dropped", () => {
-    // The box outlives the entry that opened it, so without the rebind its header freezes.
-    const driverCall = toolCall("orc-1", {
-      title: "Orchestrate Sub-agent",
-      status: "in_progress",
-      input: { stages: [{ name: "a" }, { name: "b" }] },
-    });
-    const r = render([
-      callEntry("t", 1, driverCall),
-      callEntry(
-        "t",
-        2,
-        toolCall("invoke_subagent_orc-1_stage_a", {
-          title: "Sub-agent: a",
-          agent_subtask_id: "sub-A",
-        }),
-      ),
-    ]);
-    dropHead(r.turn, { from: 2, to: 3 });
-    const box = r.body.querySelector(".subagent-container") as HTMLElement;
-    expect(box).not.toBeNull();
-    const sig = ensureToolCallSig(CHAT_ID, "orc-1", driverCall);
-    sig.value = { ...driverCall, status: "completed", duration_ms: 1234 };
-    expect(box.querySelector(".subagent-icon")?.classList.contains("is-ok")).toBe(true);
   });
 });
 

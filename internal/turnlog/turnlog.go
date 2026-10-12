@@ -518,6 +518,13 @@ func (t *Turn) ModelRouted(ctx context.Context, p marotte.EntryModelRouted) ([]S
 	return t.laneless(ctx, marotte.EntryKindModelRouted, t.mintID(), p)
 }
 
+// ModelFallback appends KAS's in-turn model fallback notice at its position in the turn.
+func (t *Turn) ModelFallback(ctx context.Context, p *marotte.EntryModelFallback) ([]Sealed, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.laneless(ctx, marotte.EntryKindModelFallback, t.mintID(), *p)
+}
+
 // ModeSwitched appends an applied mode switch, with ModelSwitched's position rule. Takes the
 // payload so From and To cannot be transposed.
 func (t *Turn) ModeSwitched(ctx context.Context, p marotte.EntryModeSwitched) ([]Sealed, error) {

@@ -46,7 +46,6 @@ import {
   clearEntryTextSig,
   ensureEntryTextSig,
   ensureToolCallSig,
-  peekToolCallSig,
   toolCallSigKey,
   toolCallSigs,
 } from "./store-signals.js";
@@ -68,9 +67,7 @@ import {
 } from "./workflow-delivery.js";
 import {
   buildSubagentCard,
-  buildSubagentContainer,
   type SubagentCard,
-  type SubagentContainer,
   type SubagentOpener,
 } from "./fundamentals/subagent-block.js";
 import { bindSubagentTail } from "./subagent-tail.js";
@@ -205,9 +202,6 @@ function pruneContainers(st: TurnRender): void {
   for (const tc of st.calls) {
     openContainers.delete(`tool:${tc.call.id}`);
   }
-  for (const pipelineID of st.pipelines.keys()) {
-    openContainers.delete(`pipe:${pipelineID}`);
-  }
   for (const runID of st.runs.keys()) {
     openContainers.delete(`run:${runID}`);
   }
@@ -272,14 +266,6 @@ interface TurnRender {
   openTail: OpenTail | null;
   /** Subtask id to its delegate card, minted by the delegate's invocation, the only block of it this render draws. */
   subagents: Map<string, SubagentCard>;
-  /** Orchestrate tool-call id to the pipeline container it opened. */
-  pipelines: Map<string, SubagentContainer>;
-  /** Stage subtask id to its orchestrate tool-call id, built by `indexPipelines`. */
-  stagePipeline: Map<string, string>;
-  /** orchestrate tool-call id → its stage subtask ids, in first-seen order. */
-  pipelineStages: Map<string, string[]>;
-  /** Orchestrate tool-call id to its declared `stages` length, `0` when absent; a floor (`pipelineStageCount`). */
-  pipelineDeclared: Map<string, number>;
   /** Workflow id to the run card this render hosts; the owner rule names one entry per run. */
   runs: Map<string, RunCardView>;
   /**
@@ -412,10 +398,6 @@ function buildBody(
     runHead: new Map(),
     openTail: null,
     subagents: new Map(),
-    pipelines: new Map(),
-    stagePipeline: new Map(),
-    pipelineStages: new Map(),
-    pipelineDeclared: new Map(),
     runs: new Map(),
     runEffects: new Map(),
     disposers: new Map(),
@@ -524,7 +506,6 @@ function refreshTurn(st: TurnRender, turn: Turn): void {
   st.callByTool = byTool;
   st.laneTail = laneTail;
   st.newestPlan = newestPlan;
-  indexPipelines(st);
 }
 
 /** A render no chat owns (a run step's, chat "") is its cards' only writer: no store publishes a `tool_result` at a
@@ -709,15 +690,10 @@ function updateBody(
 }
 
 function updatePass(st: TurnRender, turn: Turn, want: EntryRange, streaming: boolean): void {
-  // Every pass: out-of-order SSE can deliver a stage's entries before its invocation, and only `indexPipelines` maps
-  // stages to pipelines.
   refreshTurn(st, turn);
   publishUnownedCalls(st);
-  // The index leads: `rehomeStages` can create a box via `stageHostFor`, and a creation site reading a stale
-  // `st.boxExpanded` would force the collapse sync to open things.
+  // The index leads: a creation site reading a stale `st.boxExpanded` would force the collapse sync to open things.
   const idx = indexGroups(st);
-  // Before the range, so an adopted box precedes what this pass mounts.
-  rehomeStages(st, streaming);
   if (want.to > st.window.to) {
     renderRange(st, st.window.to, want.to, streaming, idx);
   }
@@ -774,10 +750,15 @@ function syncFolds(st: TurnRender, live: boolean, idx: GroupIndex): void {
       mountPlan(st, st.bodyEl, first);
     }
   }
-  // A newer `turn_revert` replaces the mounted one's row: the range placed the new row and never revisits the old.
-  const superseded = [...st.entryEls.keys()].filter(
-    (seq) => seq !== st.folds.revert && entryAt(st.turn, seq)?.kind === "turn_revert",
-  );
+  // A newer `turn_revert` replaces the mounted one's row, and a `model_fallback` the switch row it explains: the
+  // range placed the new row and never revisits the old.
+  const superseded = [...st.entryEls.keys()].filter((seq) => {
+    const kind = entryAt(st.turn, seq)?.kind;
+    return (
+      (kind === "turn_revert" && seq !== st.folds.revert) ||
+      (kind === "model_switched" && st.folds.fellBack.has(seq))
+    );
+  });
   for (const seq of superseded) {
     dropEntry(st, seq);
   }
@@ -1225,14 +1206,13 @@ function resolveRunCardFate(st: TurnRender, runID: string, card: RunCardView): v
 }
 
 /**
- * Whether `el` sits in a subtree the page is not rendering (folded body, parked view, collapsed pipeline). A
- * `closest()` test, since a geometry read would force that render.
+ * Whether `el` sits in a subtree the page is not rendering (folded body, parked view). A `closest()` test, since a
+ * geometry read would force that render.
  */
 export function geometrySkipped(el: Element): boolean {
   return (
     el.closest(".turn[data-folded] > .turn-body:not([data-fold-closing])") !== null ||
-    el.closest(".transcript-view:not(.is-active)") !== null ||
-    el.closest(".subagent-block.collapsed > .subagent-body") !== null
+    el.closest(".transcript-view:not(.is-active)") !== null
   );
 }
 
@@ -1340,11 +1320,6 @@ function forgetSubagentCard(st: TurnRender, el: HTMLElement): void {
 function isContainerRoot(st: TurnRender, el: HTMLElement, card: RunCardView | undefined): boolean {
   if (el === card?.root) {
     return true;
-  }
-  for (const box of st.pipelines.values()) {
-    if (box.root === el) {
-      return true;
-    }
   }
   for (const sa of st.subagents.values()) {
     if (sa.root === el) {
@@ -1454,16 +1429,6 @@ function seatAbove(
  * header freezes. Status follows the invocation call, which the store holds all turn.
  */
 function rebindSurvivingBoxes(st: TurnRender): void {
-  for (const pipelineID of st.pipelines.keys()) {
-    const inv = callByToolID(st, pipelineID);
-    if (
-      inv !== undefined &&
-      isPipelineInvocation(inv.call) &&
-      !st.boxBindings.has(`pipe:${pipelineID}`)
-    ) {
-      bindPipeline(st, inv.call, false, inv.seq);
-    }
-  }
   for (const [subtask, sa] of st.subagents) {
     const inv = st.calls.find(
       (c) => (c.call.agent_subtask_id ?? "") === subtask && isSubagentInvocation(c.call),
@@ -1474,10 +1439,7 @@ function rebindSurvivingBoxes(st: TurnRender): void {
   }
 }
 
-/**
- * Remove every tool group shell left without a card. Separate because `syncFolds` must not prune a legitimately
- * empty pipeline box.
- */
+/** Remove every tool group shell left without a card. */
 function pruneEmptyToolGroups(st: TurnRender): void {
   for (const [key, bucket] of st.toolGroups) {
     for (const [runStart, group] of bucket) {
@@ -1495,14 +1457,6 @@ function pruneEmptyToolGroups(st: TurnRender): void {
 /** Remove every container the drop left empty with its state; its `openContainers` key stays. */
 function pruneEmptyContainers(st: TurnRender): void {
   pruneEmptyToolGroups(st);
-  for (const [pipelineID, box] of st.pipelines) {
-    if (box.body.firstElementChild === null) {
-      releaseBox(st, `pipe:${pipelineID}`);
-      st.openReasoning.delete(box.body);
-      box.root.remove();
-      st.pipelines.delete(pipelineID);
-    }
-  }
 }
 
 /**
@@ -1521,7 +1475,7 @@ function sealLiveBubble(st: TurnRender): void {
 
 /**
  * Get or build a delegate's card, created only from its invocation entry, since the delegate's own entries are in
- * its lane. A stage's host pipeline is `st.stagePipeline`'s.
+ * its lane.
  */
 function subagentCardFor(st: TurnRender, subtask: string, live: boolean): SubagentCard {
   const existing = st.subagents.get(subtask);
@@ -1545,9 +1499,8 @@ function subagentCardFor(st: TurnRender, subtask: string, live: boolean): Subage
   if (inv !== undefined) {
     bindSubagent(st, subtask, sa, inv, invocationIndex(st, inv.id));
   }
-  // In its host, at the `seq` that establishes it, where `indexGroups` prices its run break.
-  const host = stageHostFor(st, subtask, live);
-  placeContainer(st, host, sa.root, st.containerAt.get(`sub:${subtask}`));
+  // At the `seq` that establishes it, where `indexGroups` prices its run break.
+  placeContainer(st, st.bodyEl, sa.root, st.containerAt.get(`sub:${subtask}`));
   return sa;
 }
 
@@ -1582,100 +1535,6 @@ function subagentOpenerFor(st: TurnRender, subtask: string): { open?: SubagentOp
       },
     },
   };
-}
-
-/** Whether this pipeline's box is, or will be by the pass's end, in this render; an existing box outranks the count. */
-function hostsPipelineBox(st: TurnRender, pipelineID: string): boolean {
-  return st.pipelines.has(pipelineID) || pipelineHasContainer(st, pipelineID);
-}
-
-/**
- * Where a stage's box goes: its pipeline's body when that pipeline has a container, else the top level, so both
- * arrival orders match. The existing-container check is first, since the count can rise later.
- */
-function stageHostFor(st: TurnRender, subtask: string, live: boolean): HTMLElement {
-  const pipelineID = st.stagePipeline.get(subtask);
-  if (pipelineID === undefined) {
-    return st.bodyEl;
-  }
-  const existing = st.pipelines.get(pipelineID);
-  if (existing !== undefined) {
-    return existing.body;
-  }
-  if (!pipelineHasContainer(st, pipelineID)) {
-    return st.bodyEl;
-  }
-  return pipelineBoxFor(st, pipelineID, live).body;
-}
-
-/**
- * Re-derive every mounted delegate card's host and move those out of place: a lone stage was promoted on a stage
- * count that is only a lower bound. Idempotent, since an in-place re-append would replay the animation.
- */
-function rehomeStages(st: TurnRender, live: boolean): void {
-  for (const [subtask, sa] of st.subagents) {
-    const host = stageHostFor(st, subtask, live);
-    if (sa.root.parentElement !== host) {
-      host.appendChild(sa.root);
-    }
-  }
-}
-
-/** Write the driver's header onto its box: label from the stage count, status and ledger from the driver's call. */
-function paintPipeline(st: TurnRender, box: SubagentContainer, driver: ToolCall): void {
-  box.setName(pipelineLabel(st, driver.id));
-  box.setStatus(driver.status);
-  box.setSummary(pipelineSummary(st, driver));
-}
-
-/** Get or build the pipeline box for an orchestrate call, adopting its top-level stages by re-parent, never rebuild. */
-function pipelineBoxFor(st: TurnRender, pipelineID: string, live: boolean): SubagentContainer {
-  const existing = st.pipelines.get(pipelineID);
-  if (existing !== undefined) {
-    return existing;
-  }
-  const key = `pipe:${pipelineID}`;
-  const box = buildSubagentContainer(
-    pipelineLabel(st, pipelineID),
-    live ? "in_progress" : "completed",
-    st.detached
-      ? {}
-      : {
-          // The reader's state first, then this pass's verdict; `indexGroups` runs ahead, so the fallback is a floor.
-          startOpen: containerOpen(key) ?? st.boxExpanded.get(key) ?? true,
-          userDecided: containerOpen(key) !== undefined,
-          onOpenChange: (open: boolean): void => {
-            setContainerOpen(key, open);
-          },
-        },
-  );
-  box.root.dataset["pipeline"] = pipelineID;
-  st.pipelines.set(pipelineID, box);
-  // Same-pass adoption; `rehomeStages` is the general case.
-  const promoted = (st.pipelineStages.get(pipelineID) ?? [])
-    .map((subtask) => st.subagents.get(subtask))
-    .filter((v): v is SubagentCard => v?.root.parentElement === st.bodyEl);
-  const first = promoted[0];
-  if (first === undefined) {
-    placeContainer(st, st.bodyEl, box.root, st.containerAt.get(`pipe:${pipelineID}`));
-  } else {
-    // Where the first adopted stage sat, keeping order; a swap posts nothing after an open trace.
-    first.root.replaceWith(box.root);
-  }
-  for (const v of promoted) {
-    box.body.appendChild(v.root);
-  }
-  // A stage-built box paints itself: a settled driver's effect never re-runs.
-  const driver = peekToolCallSig(st.chatID, pipelineID);
-  if (driver !== undefined) {
-    paintPipeline(st, box, driver);
-  }
-  // Bind too, as the subagent box does: its invocation entry may never mount.
-  const inv = callByToolID(st, pipelineID);
-  if (inv !== undefined && isPipelineInvocation(inv.call)) {
-    bindPipeline(st, inv.call, live, inv.seq);
-  }
-  return box;
 }
 
 /**
@@ -1963,6 +1822,7 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
     case "safety_blocked":
     case "model_switched":
     case "model_routed":
+    case "model_fallback":
     case "mode_switched":
     case "turn_revert": {
       const row = cbs.makeEvent(u);
@@ -1987,11 +1847,6 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
       if (subtask === "" && held.runID !== "" && ownsRunCard(st, held.runID, e.id)) {
         // Stamped, so a search hit on the launch resolves to its card.
         stampEntry(st, bindRunCard(st, held.runID, tc), seq);
-        return;
-      }
-      // A pipeline launch becomes its box, ahead of the subtask checks for the same reason.
-      if (subtask === "" && isPipelineInvocation(tc)) {
-        bindPipeline(st, tc, live, seq);
         return;
       }
       // The invocation becomes the delegate's card, stamped ahead of the bind so a hit resolves to it.
@@ -2454,49 +2309,6 @@ function mountToolCard(
   });
 }
 
-/**
- * Wire the pipeline invocation's shape and header onto its box and its ledger onto the stages' members. A promoted
- * pipeline paints nothing (`driverNeedsBox`); separate from `bindSubagent` since it sums across stages.
- */
-function bindPipeline(st: TurnRender, tc: ToolCall, live: boolean, seq: number): void {
-  const key = `pipe:${tc.id}`;
-  if (st.boxBindings.has(key)) {
-    return;
-  }
-  // Reserved before the first paint, which binds the box it builds and would otherwise re-enter and leak.
-  let dispose: (() => void) | null = null;
-  const release = (): void => {
-    if (st.boxBindings.get(key) !== release) {
-      return;
-    }
-    st.boxBindings.delete(key);
-    dispose?.();
-    releaseToolSig(st, tc.id);
-  };
-  st.boxBindings.set(key, release);
-  const paint = (next: ToolCall): void => {
-    if (!driverNeedsBox(st, next)) {
-      return;
-    }
-    const box = pipelineBoxFor(st, tc.id, live);
-    // Stamped here: the box an upgrade builds replaces the node, so the stamp follows the current box.
-    stampEntry(st, box.root, seq);
-    paintPipeline(st, box, next);
-  };
-  paint(tc);
-  const sig = ensureToolCallSig(st.chatID, tc.id, tc);
-  let last = tc;
-  dispose = effect(() => {
-    const next = sig.value;
-    if (next === last) {
-      return;
-    }
-    paint(next);
-    last = next;
-  });
-  pushLifetimeEffect(st, seq, release);
-}
-
 /** The footer outcome a settled invocation earns; `aborted` stays its own, since a stopped delegate produced nothing. */
 function delegateOutcome(status: ToolStatus): TurnOutcome {
   switch (status) {
@@ -2507,49 +2319,6 @@ function delegateOutcome(status: ToolStatus): TurnOutcome {
     default:
       return "completed";
   }
-}
-
-/** The pipeline's ledger, summed over stages; files merge by path so one file is not double-counted. */
-function pipelineSummary(st: TurnRender, invocation: ToolCall): TurnSummaryData {
-  let toolMs = 0;
-  let delegateCount = 0;
-  let delegateMs = 0;
-  const kindCounts: Partial<Record<ToolKind, number>> = {};
-  const changed: Record<string, FileChange> = {};
-  for (const subtask of st.pipelineStages.get(invocation.id) ?? []) {
-    const stage = subagentSummary(st, subtask, invocation);
-    toolMs += stage.toolMs ?? 0;
-    for (const [kind, n] of Object.entries(stage.kindCounts ?? {}) as [ToolKind, number][]) {
-      kindCounts[kind] = (kindCounts[kind] ?? 0) + n;
-    }
-    // Stages are this pipeline's delegates; grandchildren are not folded in, so the count means one thing.
-    delegateCount++;
-    delegateMs += stage.elapsedMs ?? 0;
-    for (const [path, ch] of Object.entries(stage.changedFiles ?? {})) {
-      const cur = changed[path] ?? { lines_added: 0, lines_removed: 0 };
-      changed[path] = {
-        lines_added: cur.lines_added + ch.lines_added,
-        lines_removed: cur.lines_removed + ch.lines_removed,
-      };
-    }
-  }
-  const out: TurnSummaryData = {
-    changedFiles: changed,
-    toolMs,
-    kindCounts,
-    delegateCount,
-    delegateMs,
-    startedAt: invocation.ts,
-  };
-  if (!isToolActive(invocation.status)) {
-    out.outcome = delegateOutcome(invocation.status);
-    const elapsed = invocation.duration_ms ?? 0;
-    if (elapsed > 0) {
-      out.elapsedMs = elapsed;
-      out.endedAt = invocation.ts + elapsed;
-    }
-  }
-  return out;
 }
 
 /** `live` is the chat's turn liveness: an `in_progress` call with no live turn is a stale spinner
@@ -2780,7 +2549,7 @@ function reseatInserted(st: TurnRender, container: HTMLElement, el: HTMLElement)
 
 /**
  * Place a lazily created container where the store puts it: above the first mounted ordinal after `at`. By range
- * it would split one run into two groups. `at` absent appends; later reseats are `runCardFor`'s and `pipelineBoxFor`'s.
+ * it would split one run into two groups. `at` absent appends; later reseats are `runCardFor`'s.
  */
 function placeContainer(
   st: TurnRender,
@@ -2884,24 +2653,13 @@ function indexGroups(st: TurnRender): GroupIndex {
     const tc = held.call;
     const subtask = tc.agent_subtask_id ?? "";
     if (subtask !== "") {
-      // The delegate's card, priced at its invocation, hosted by its pipeline's box if any.
-      const pipelineID = st.stagePipeline.get(subtask);
-      let host = "";
-      if (pipelineID !== undefined && hostsPipelineBox(st, pipelineID)) {
-        host = `pipe:${pipelineID}`;
-        openBox(host, "", e.seq);
-      }
-      openBox(`sub:${subtask}`, host, e.seq);
+      // The delegate's card, priced at its invocation.
+      openBox(`sub:${subtask}`, "", e.seq);
       continue;
     }
     if (held.runID !== "" && ownsRunCard(st, held.runID, e.id)) {
       // Gated on the owner, as `placeEntry` is: a later mention mounts a tool row and must not post a break.
       openBox(`run:${held.runID}`, "", e.seq);
-    } else if (isPipelineInvocation(tc)) {
-      // At the driver's entry, where the box stands; the box outlives a count of 1.
-      if (hostsPipelineBox(st, tc.id) || driverNeedsBox(st, tc)) {
-        openBox(`pipe:${tc.id}`, "", e.seq);
-      }
     } else {
       post(st.lane, e.seq, false);
     }
@@ -2964,9 +2722,6 @@ function syncContainerCollapse(st: TurnRender, idx: GroupIndex): void {
       }
     }
   }
-  for (const [pipelineID, box] of st.pipelines) {
-    box.setSuperseded(st.boxExpanded.get(`pipe:${pipelineID}`) === false);
-  }
   for (const [workflowID, card] of st.runs) {
     card.setSuperseded(st.boxExpanded.get(`run:${workflowID}`) === false);
   }
@@ -2989,96 +2744,4 @@ function mountPlan(st: TurnRender, container: HTMLElement, e: Entry): void {
   }
   // What the card shows, which `syncFolds` compares against.
   st.planFrom = newest.seq;
-}
-
-// Subagent classification / parsing
-
-/** KAS's prefix on a pipeline stage's tool-call id: `invoke_subagent_<orchestrateToolCallId>_stage_<stageName>`. */
-const STAGE_PREFIX = "invoke_subagent_";
-const STAGE_SEP = "_stage_";
-
-/** `indexOf`, since the stage name is author-supplied; parsed the same way in `subagent-slice.ts`. */
-function stagePipelineID(tc: ToolCall): string {
-  const id = tc.id;
-  if (!id.startsWith(STAGE_PREFIX)) {
-    return "";
-  }
-  const rest = id.slice(STAGE_PREFIX.length);
-  const sep = rest.indexOf(STAGE_SEP);
-  if (sep <= 0 || sep + STAGE_SEP.length >= rest.length) {
-    return "";
-  }
-  return rest.slice(0, sep);
-}
-
-function isPipelineInvocation(tc: ToolCall): boolean {
-  return tc.title === "Orchestrate Sub-agent";
-}
-
-/**
- * Learn each stage's pipeline and each driver's declared count from the tool-call array, so arrival order does not
- * matter. A stage keeps its first pipeline.
- */
-function indexPipelines(st: TurnRender): void {
-  for (const held of st.calls) {
-    const tc = held.call;
-    if (isPipelineInvocation(tc)) {
-      st.pipelineDeclared.set(tc.id, declaredStageCount(tc));
-      continue;
-    }
-    const subtask = tc.agent_subtask_id ?? "";
-    if (subtask === "") {
-      continue;
-    }
-    const pipelineID = stagePipelineID(tc);
-    if (pipelineID === "" || st.stagePipeline.has(subtask)) {
-      continue;
-    }
-    st.stagePipeline.set(subtask, pipelineID);
-    const stages = st.pipelineStages.get(pipelineID);
-    if (stages === undefined) {
-      st.pipelineStages.set(pipelineID, [subtask]);
-    } else {
-      stages.push(subtask);
-    }
-  }
-}
-
-/** The pipeline box's label, kind plus stage count; matches `subagent-exec-source.ts`'s `ExecRun.label`. */
-function pipelineLabel(st: TurnRender, pipelineID: string): string {
-  const n = pipelineStageCount(st, pipelineID);
-  return n > 1 ? `Subagent pipeline · ${String(n)} stages` : "Subagent pipeline";
-}
-
-function declaredStageCount(tc: ToolCall): number {
-  const input = tc.input;
-  if (input !== undefined && input !== null && typeof input === "object") {
-    const stages = (input as Record<string, unknown>)["stages"];
-    if (Array.isArray(stages)) {
-      return stages.length;
-    }
-  }
-  return 0;
-}
-
-/** The greater of the declared and observed stage counts, both lower bounds. */
-function pipelineStageCount(st: TurnRender, pipelineID: string): number {
-  const declared = st.pipelineDeclared.get(pipelineID) ?? 0;
-  return Math.max(declared, (st.pipelineStages.get(pipelineID) ?? []).length);
-}
-
-/**
- * Whether this pipeline renders a container: one stage is promoted instead, every other count keeps it, zero
- * included.
- */
-function pipelineHasContainer(st: TurnRender, pipelineID: string): boolean {
-  return pipelineStageCount(st, pipelineID) !== 1;
-}
-
-/** Whether the driver's own block has a box: a driver that settled with no stage would otherwise be invisible. */
-function driverNeedsBox(st: TurnRender, tc: ToolCall): boolean {
-  if (pipelineHasContainer(st, tc.id)) {
-    return true;
-  }
-  return !isToolActive(tc.status) && (st.pipelineStages.get(tc.id)?.length ?? 0) === 0;
 }

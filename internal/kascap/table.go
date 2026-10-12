@@ -66,6 +66,15 @@ func jsonChoice(choice string, on, off map[string]any) (any, bool) {
 	return string(b), true
 }
 
+// envTrueIf writes an env row as "true" when on and withholds it otherwise, so off leaves KAS's
+// own default (and any ramp) in force rather than pinning "false".
+func envTrueIf(on bool) (any, bool) {
+	if !on {
+		return nil, false
+	}
+	return "true", true
+}
+
 // table is every capability key marotte knows about, sent or withheld.
 //
 // Row order is presentation only. Both builders emit maps, and encoding/json
@@ -224,13 +233,6 @@ var table = []decl{
 		send:     true,
 	},
 	{
-		key:      "subagentOrchestration",
-		door:     doorConnection,
-		resolver: resolverSetting,
-		value:    enabled(),
-		send:     true,
-	},
-	{
 		key:      "session_title_llm",
 		door:     doorConnection,
 		resolver: resolverSetting,
@@ -247,13 +249,6 @@ var table = []decl{
 		door:     doorSession,
 		resolver: resolverSetting,
 		gate:     func(s *Spawn) (any, bool) { return specPlanValue(s), true },
-		send:     true,
-	},
-	{
-		key:      "inlineAgents",
-		door:     doorConnection,
-		resolver: resolverSetting,
-		gate:     func(s *Spawn) (any, bool) { return enabledIf(s.InlineAgents), true },
 		send:     true,
 	},
 	{
@@ -427,16 +422,20 @@ var table = []decl{
 		send:     false,
 	},
 	{
-		key:      "KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED",
-		door:     doorEnvironment,
-		resolver: resolverEnv,
-		send:     false,
+		key:          "KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED",
+		door:         doorEnvironment,
+		resolver:     resolverEnv,
+		gate:         func(s *Spawn) (any, bool) { return envTrueIf(s.ModelFallback) },
+		send:         true,
+		settingOwned: true,
 	},
 	{
-		key:      "KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED",
-		door:     doorEnvironment,
-		resolver: resolverEnv,
-		send:     false,
+		key:          "KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED",
+		door:         doorEnvironment,
+		resolver:     resolverEnv,
+		gate:         func(s *Spawn) (any, bool) { return envTrueIf(s.ModelFallback) },
+		send:         true,
+		settingOwned: true,
 	},
 	{
 		key:      "KIRO_FEATURE_SESSION_TITLE_LLM_ENABLED",
@@ -513,7 +512,8 @@ var table = []decl{
 				map[string]any{"cascadeEnabled": true, "cascadeClientNotificationEnabled": true},
 				map[string]any{"cascadeEnabled": false})
 		},
-		send: true,
+		send:         true,
+		settingOwned: true,
 	},
 	{
 		key:      "cascade",
@@ -530,7 +530,8 @@ var table = []decl{
 				map[string]any{"delegationEnabled": true},
 				map[string]any{"delegationEnabled": false})
 		},
-		send: true,
+		send:         true,
+		settingOwned: true,
 	},
 	{
 		key:      "contextBreakdown",
@@ -561,22 +562,18 @@ var table = []decl{
 		},
 	},
 	{
-		key:      "KIRO_FEATURE_TOOL_LOAD_ENABLED",
-		door:     doorEnvironment,
-		resolver: resolverEnv,
-		gate:     func(s *Spawn) (any, bool) { return strconv.FormatBool(s.ToolLoad), true },
-		send:     true,
+		key:          "KIRO_FEATURE_TOOL_LOAD_ENABLED",
+		door:         doorEnvironment,
+		resolver:     resolverEnv,
+		gate:         func(s *Spawn) (any, bool) { return strconv.FormatBool(s.ToolLoad), true },
+		send:         true,
+		settingOwned: true,
 	},
 	{
 		key:      "KIRO_DISABLE_SESSION_TITLE_LLM",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
-		gate: func(s *Spawn) (any, bool) {
-			if !s.DisableSessionTitles {
-				return nil, false
-			}
-			return "true", true
-		},
-		send: true,
+		gate:     func(s *Spawn) (any, bool) { return envTrueIf(s.DisableSessionTitles) },
+		send:     true,
 	},
 }

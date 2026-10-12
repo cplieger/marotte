@@ -1607,10 +1607,6 @@ func TestToolCallTitle_IsTreatedAtTheDecodeDoor(t *testing.T) {
 			in:   "Read \u001b]0;pwn\u0007file",
 			want: "Read  ]0;pwn file",
 		},
-		"the pipeline driver's title is byte-identical": {
-			in:   "Orchestrate Sub-agent",
-			want: "Orchestrate Sub-agent",
-		},
 		"a delegate invocation's title is byte-identical": {
 			in:   "Sub-agent: context-gatherer",
 			want: "Sub-agent: context-gatherer",

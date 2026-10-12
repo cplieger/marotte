@@ -10,7 +10,6 @@ const a11y = loadCSS("40-a11y.css");
 /** Every focusable the inset offset is declared for, as `40-a11y.css` spells it. */
 const MEMBERS = [
   "a.subagent-header",
-  ".subagent-container.has-disclosure > .subagent-header",
   ".subagent-foot > .subagent-footer > .turn-ledger-summary",
   ".pill-account",
   ".run-head",
@@ -215,17 +214,6 @@ function subagentCard(opts: { foot: boolean }): {
   const clipper = node("div", "subagent-block");
   clipper.append(head, tail, foot);
   return { clipper: mount(clipper), head, ledger };
-}
-
-/** The container: the head is the disclosure's own `role="button"`. */
-function subagentContainer(): { clipper: HTMLElement; head: HTMLElement } {
-  const head = node("div", "subagent-header", { role: "button", tabindex: "0" });
-  head.append(node("span", "subagent-icon tool-icon"), node("span", "subagent-name"));
-  const body = node("div", "subagent-body");
-  body.appendChild(node("div", "subagent-block")).textContent = "a stage card";
-  const clipper = node("div", "subagent-block subagent-container has-disclosure");
-  clipper.append(head, body, node("div", "subagent-foot"));
-  return { clipper: mount(clipper), head };
 }
 
 /** Plus one step so the head's bottom edge is not the card's. */
@@ -632,13 +620,6 @@ describe("the ring is painted inside the card that clips it", () => {
     expectRingInside("foot ledger", ledger, clipper);
   });
 
-  it("on a pipeline CONTAINER's head, the disclosure shape on that same class", async () => {
-    // One class, two focusable shapes: an anchor head and a `role="button"` head.
-    const { clipper, head } = subagentContainer();
-    await focusByTab(head);
-    expectRingInside("container head", head, clipper);
-  });
-
   it("on a run card's head", async () => {
     const { clipper, head } = runCard();
     await focusByTab(head);
@@ -731,7 +712,6 @@ describe("the inset band clears the content it now sits over", () => {
     // All four edges: the band lands at the same depth everywhere.
     const builders: [string, () => HTMLElement][] = [
       ["leaf head", () => subagentCard({ foot: false }).head],
-      ["container head", () => subagentContainer().head],
       ["run head", () => runCard().head],
       ["run step head", () => runStep().head],
       ["tool group header", () => toolGroup().head],

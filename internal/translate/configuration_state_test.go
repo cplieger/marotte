@@ -73,3 +73,54 @@ func TestDecodeConfigurationState_KeepsAnUnknownLayerAndTreatsItsText(t *testing
 		t.Errorf("decoded %v, want the resource krn skipped", got)
 	}
 }
+
+func workspaceConfigurationFixture(t *testing.T) json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "configuration_getstate_workspace.json"))
+	if err != nil {
+		t.Fatalf("read configuration_getstate_workspace.json: %v", err)
+	}
+	return data
+}
+
+func TestDecodeCustomAgents_KeepsCustomLayersWithRealDescriptions(t *testing.T) {
+	got, ok := DecodeCustomAgents(workspaceConfigurationFixture(t))
+	if !ok {
+		t.Fatal("DecodeCustomAgents(fixture) ok = false, want true")
+	}
+	byID := map[string]marotte.SessionMode{}
+	for _, m := range got {
+		byID[m.ID] = m
+	}
+	if _, listed := byID["wf-auto-researcher"]; listed {
+		t.Errorf("modes = %+v, list KAS's own helper agent as a mode", got)
+	}
+	want := marotte.SessionMode{ID: "scribe", Name: "scribe", Description: "Writes release notes from the git log", Source: "global"}
+	if byID["scribe"] != want {
+		t.Errorf("scribe = %+v, want %+v", byID["scribe"], want)
+	}
+	if len(got) != 3 {
+		t.Errorf("decoded %d agents (%+v), want scribe, dup and semantic_reviewer", len(got), got)
+	}
+}
+
+func TestDecodeCustomAgents_LaterLayerAndLaterRootWin(t *testing.T) {
+	got, _ := DecodeCustomAgents(workspaceConfigurationFixture(t))
+	byID := map[string]marotte.SessionMode{}
+	for _, m := range got {
+		byID[m.ID] = m
+	}
+	// The ~/.kiro statement of dup comes last in the list but from an earlier layer.
+	if d := byID["dup"]; d.Description != "dup from r2" || d.Source != "workspace" {
+		t.Errorf("dup = %+v, want the second root's workspace statement", d)
+	}
+	if r := byID["semantic_reviewer"]; r.Description != "override from r1" || r.Source != "workspace" {
+		t.Errorf("semantic_reviewer = %+v, want the workspace override", r)
+	}
+}
+
+func TestDecodeCustomAgents_AnUndecodableFrameIsNotOK(t *testing.T) {
+	if got, ok := DecodeCustomAgents(json.RawMessage(`["not a configuration"]`)); ok || got != nil {
+		t.Errorf("DecodeCustomAgents(array) = %+v, %v; want nil, false", got, ok)
+	}
+}

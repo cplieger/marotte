@@ -1129,3 +1129,99 @@ func TestImportServers_AcceptsExactlyTheCap(t *testing.T) {
 			maxImportServers, len(results), maxImportServers)
 	}
 }
+
+// corruptSiblings lists the mcp.json.corrupt.* files load moved aside in dir.
+func corruptSiblings(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "mcp.json.corrupt.") {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
+func TestLoad_BOMPrefixedRecordLoadsItsServers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcp.json")
+	record := `{"version":1,"servers":[{"id":"abc","name":"bom","transport":"stdio","command":"bash","enabled":true}]}`
+	if err := os.WriteFile(path, append([]byte{0xEF, 0xBB, 0xBF}, record...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kas := filepath.Join(dir, "kas-mcp.json")
+
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if list := s.list(t.Context()); len(list) != 1 || list[0].Name != "bom" {
+		t.Errorf("list = %#v, want the BOM-prefixed record's one server", list)
+	}
+	if got := corruptSiblings(t, dir); len(got) != 0 {
+		t.Errorf("a BOM-prefixed record was moved aside as corrupt: %v", got)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("mcp.json is gone after load: %v", err)
+	}
+	if _, ok := readKASServers(t, kas)["bom"]; !ok {
+		t.Errorf("KAS's file lacks the record's server: %s", readKAS(t, kas)[kasServerKey])
+	}
+}
+
+// Not parallel: it swaps the process-wide slog default.
+func TestLoad_EmptyRecordIsNoServersNotCorrupt(t *testing.T) {
+	for _, tc := range []struct{ name, content string }{
+		{name: "zero bytes", content: ""},
+		{name: "spaces", content: "  "},
+		{name: "json whitespace", content: " \t\r\n"},
+		{name: "bom only", content: "\xEF\xBB\xBF\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureSlog(t)
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			s, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if n := len(s.list(t.Context())); n != 0 {
+				t.Errorf("list has %d servers, want none", n)
+			}
+			if got := corruptSiblings(t, dir); len(got) != 0 {
+				t.Errorf("an empty record was moved aside: %v", got)
+			}
+			if strings.Contains(logs.String(), "level=WARN") || strings.Contains(logs.String(), "level=ERROR") {
+				t.Errorf("an empty record logged a warning:\n%s", logs.String())
+			}
+		})
+	}
+}
+
+// \v and \f are whitespace to unicode.IsSpace but not to JSON, so a file of
+// only them is garbage and keeps the corrupt-aside path.
+func TestLoad_VerticalTabOnlyRecordStaysCorrupt(t *testing.T) {
+	for _, tc := range []struct{ name, content string }{
+		{name: "vertical tab", content: "\x0b"},
+		{name: "form feed", content: "\x0c"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if got := corruptSiblings(t, dir); len(got) != 1 {
+				t.Errorf("corrupt siblings = %v, want the %q-only record moved aside", got, tc.content)
+			}
+		})
+	}
+}

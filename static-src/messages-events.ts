@@ -1,7 +1,12 @@
-// The boundary rows seven entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
+// The boundary rows eight entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
 // `makeEvent`, so the block renderer declares no event vocabulary.
 
-import type { KindedEntry, ModelSwitchReason, TurnRevertCause } from "./types.js";
+import type {
+  EntryModelFallback,
+  KindedEntry,
+  ModelSwitchReason,
+  TurnRevertCause,
+} from "./types.js";
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
 import { wireDetailsSlide } from "./disclosure-row.js";
@@ -15,12 +20,13 @@ type EventEntryKind =
   | "safety_blocked"
   | "model_switched"
   | "model_routed"
+  | "model_fallback"
   | "mode_switched"
   | "turn_revert";
 
 /**
- * The seven entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
- * seven: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
+ * The eight entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
+ * eight: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
  */
 export type EventEntry = { [K in EventEntryKind]: KindedEntry<K> }[EventEntryKind];
 
@@ -43,6 +49,9 @@ export function buildEvent(e: EventEntry): HTMLElement {
         "\u21bb",
         message === "" ? "Auto moved to a stronger model" : message,
       );
+    }
+    case "model_fallback": {
+      return boundary("switched", "\u21bb", fallbackLabel(e.payload));
     }
     case "mode_switched": {
       // One boundary row for both switches, so a reader learns one shape whichever thing moved.
@@ -111,6 +120,40 @@ const SWITCH_REASONS: Record<
 > = {
   unavailable: (p) => `Switched from ${p.from} to ${p.to} · not available for this account`,
 };
+
+/**
+ * KAS's fallback notice. A non-empty `reason` is a decline whatever `to` holds; without one the trigger says why the
+ * turn moved. Model ids stay raw, as `switchedLabel` shows them.
+ */
+function fallbackLabel(p: EntryModelFallback): string {
+  const scope = p.subagent === true ? " for a sub-agent" : "";
+  const reason = p.reason ?? "";
+  if (reason !== "") {
+    const why = DECLINE_REASONS.get(reason) ?? reason;
+    return `${p.from} was unavailable, no fallback model available${scope} \u00b7 ${why}`;
+  }
+  const to = p.to ?? "";
+  if (to === "") {
+    return `Model changed from ${p.from}${scope}`;
+  }
+  switch (p.trigger) {
+    case "refusal":
+      return `${p.from} declined this request, retried on ${to}${scope}`;
+    case "availability":
+      return `${p.from} was unavailable, retried on ${to}${scope}`;
+    default:
+      return `Model changed from ${p.from} to ${to}${scope}`;
+  }
+}
+
+/** KAS's decline codes the row words; any other code shows as sent. A Map, since the key is KAS's
+ *  text and an object would answer an inherited name. */
+const DECLINE_REASONS: ReadonlyMap<string, string> = new Map([
+  ["noServedTarget", "none of its fallback models is offered to this account"],
+  ["chainExhausted", "every fallback model was already tried"],
+  ["unsafeToReissue", "the turn had already run tools, so a retry could repeat them"],
+  ["raceLost", "the model changed while Kiro was switching"],
+]);
 
 function switchedBase(p: {
   readonly to: string;

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -310,5 +311,77 @@ func TestHandleConfigTemplate_EveryBodyKeepsItsArraysNonNull(t *testing.T) {
 				t.Errorf("body carries a null: %s", body)
 			}
 		})
+	}
+}
+
+const getStateReply = `{
+  "layers": [{"id": "kiro-agent-defaults"}, {"id": "user-local"}, {"id": "workspace"}],
+  "resources": [{"type": "agent", "items": [
+    {"layer": "kiro-agent-defaults", "value": {"id": "wf-coder", "name": "wf-coder", "description": "step agent"}},
+    {"layer": "workspace", "value": {"id": "reviewer", "name": "reviewer", "description": "Reviews the diff"}},
+    {"layer": "workspace", "value": {"id": "semantic_reviewer", "name": "semantic_reviewer", "description": "ours"}}
+  ]}]
+}`
+
+const templateWithReviewer = `{
+  "modes": {"availableModes": [
+    {"id": "vibe", "name": "Default", "_meta": {"kiro": {"source": "bundled"}}},
+    {"id": "semantic_reviewer", "name": "Semantic Reviewer", "_meta": {"kiro": {"source": "bundled"}}}
+  ]},
+  "configOptions": [{"id": "model", "currentValue": "m", "options": [{"value": "m", "name": "M"}]}]
+}`
+
+func serveConfigTemplate(t *testing.T, h *Runtime) marotte.ConfigTemplateResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.handleConfigTemplate(rec, httptest.NewRequest(http.MethodGet, "/api/config-template", nil))
+	var got marotte.ConfigTemplateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode reply %q: %v", rec.Body.String(), err)
+	}
+	return got
+}
+
+func TestConfigTemplate_CarriesWorkspaceAgentsBeforeAnySession(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroConfigTemplate:   json.RawMessage(templateWithReviewer),
+		methodKiroConfigurationGet: json.RawMessage(getStateReply),
+	}
+
+	got := serveConfigTemplate(t, h)
+
+	want := []marotte.SessionMode{
+		{ID: "vibe", Name: "Default", Source: "bundled"},
+		{ID: "semantic_reviewer", Name: "semantic_reviewer", Description: "ours", Source: "workspace", Shadows: "bundled"},
+		{ID: "reviewer", Name: "reviewer", Description: "Reviews the diff", Source: "workspace"},
+	}
+	if !slices.Equal(got.Modes, want) {
+		t.Errorf("modes = %+v, want %+v", got.Modes, want)
+	}
+	br.mu.Lock()
+	params := br.lastParams[methodKiroConfigurationGet]
+	br.mu.Unlock()
+	if params["observer"] != "workspace" || !slices.Equal(params["roots"].([]string), []string{h.lifecycle.workDir}) {
+		t.Errorf("getState params = %v, want a workspace observer of %q", params, h.lifecycle.workDir)
+	}
+}
+
+func TestConfigTemplate_GetStateFailureServesBaseModes(t *testing.T) {
+	logs := captureLogs(t)
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroConfigTemplate: json.RawMessage(templateWithReviewer)}
+	br.callErrs = map[string]error{methodKiroConfigurationGet: errors.New("kas gone")}
+
+	got := serveConfigTemplate(t, h)
+
+	if len(got.Modes) != 2 || got.Modes[1].ID != "semantic_reviewer" || got.Modes[1].Shadows != "" {
+		t.Errorf("modes = %+v, want the template's two modes unchanged", got.Modes)
+	}
+	if got.Catalog != marotte.CatalogReady {
+		t.Errorf("catalog = %q, want %q: the agent list failing is not the catalog failing", got.Catalog, marotte.CatalogReady)
+	}
+	if out := logs.String(); !strings.Contains(out, `"msg":"workspace configuration failed"`) {
+		t.Errorf("a failed getState said nothing: %s", out)
 	}
 }

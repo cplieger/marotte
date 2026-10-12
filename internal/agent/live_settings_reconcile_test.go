@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/settings"
 )
 
@@ -25,6 +27,26 @@ func TestReconcileSessionSettings_AFailedMCPRenderIsLogged(t *testing.T) {
 
 	if !strings.Contains(logs.String(), "re-rendering the MCP config failed") {
 		t.Errorf("a failed MCP render logged nothing; the operator learns the wait setting did not apply only there:\n%s", logs.String())
+	}
+}
+
+// The store logs a refused KAS file once per file state; the retry on every message adds nothing.
+func TestReconcileSessionSettings_AnUnreadableKASFileIsNotLoggedAgain(t *testing.T) {
+	logs := captureLogs(t)
+	refused := func(context.Context, int) (bool, error) {
+		return false, fmt.Errorf("%w: parse", mcp.ErrKASUnreadable)
+	}
+	render := &fakeMCPRender{render: refused}
+	h, configDir := reopenFixture(t, WithKASMCPRenderer(render))
+
+	writeSetting(t, configDir, settings.KeyMCPWaitForReady, true)
+	h.ReconcileSessionSettings(t.Context())
+
+	if render.count() == 0 {
+		t.Fatal("Setup: the sync never asked for a render")
+	}
+	if strings.Contains(logs.String(), "re-rendering the MCP config failed") {
+		t.Errorf("a refused KAS file was logged again by the settings sync:\n%s", logs.String())
 	}
 }
 

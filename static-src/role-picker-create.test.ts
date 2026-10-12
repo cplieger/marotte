@@ -75,7 +75,7 @@ beforeEach(() => {
 describe("picking a mode with no active chat", () => {
   it("addresses set_mode to the chat the create returned", async () => {
     const list = mountPill();
-    initRolePicker();
+    initRolePicker(vi.fn());
 
     pickFirstMode(list);
     // The dispatch is in the create's continuation, so it has not happened yet.
@@ -98,7 +98,7 @@ describe("picking a mode with no active chat", () => {
       }),
     );
     const list = mountPill();
-    initRolePicker();
+    initRolePicker(vi.fn());
 
     pickFirstMode(list);
     getActiveMock.mockReturnValue({ id: "c-somewhere-else" });
@@ -114,7 +114,7 @@ describe("picking a mode with no active chat", () => {
   it("dispatches nothing when the create is refused", async () => {
     createSessionMock.mockResolvedValue("");
     const list = mountPill();
-    initRolePicker();
+    initRolePicker(vi.fn());
 
     pickFirstMode(list);
     await Promise.resolve();
@@ -128,7 +128,7 @@ describe("picking a mode on a chat that already exists", () => {
   it("creates nothing and dispatches straight away", () => {
     getActiveMock.mockReturnValue({ id: "c-live", current_mode_id: "" });
     const list = mountPill();
-    initRolePicker();
+    initRolePicker(vi.fn());
 
     pickFirstMode(list);
 

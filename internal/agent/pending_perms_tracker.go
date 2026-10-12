@@ -103,13 +103,17 @@ func (t *pendingPermsTracker) pendingLocked(id int64) *askEntry {
 	return nil
 }
 
-// takeIfPresent claims one chat's ask, false when someone else answered. One lock spans lookup and
-// claim, so two tabs or a human racing the unattended floor cannot both answer.
-func (t *pendingPermsTracker) takeIfPresent(chatID marotte.ChatID, id int64) (pendingAsk, bool) {
+// takeIfPresent claims one chat's ask of kind, false when someone else answered or the ask is of
+// another kind: an answer shaped for one kind is no valid result for another. One lock spans lookup
+// and claim, so two tabs or a human racing the unattended floor cannot both answer.
+func (t *pendingPermsTracker) takeIfPresent(chatID marotte.ChatID, id int64, kind marotte.DecisionKind) (pendingAsk, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e := t.pendingLocked(id)
 	if e == nil || e.ask.evt.ChatID != chatID {
+		return pendingAsk{}, false
+	}
+	if k, _ := marotte.DecisionKindForEvent(e.ask.evt.Type); k != kind {
 		return pendingAsk{}, false
 	}
 	t.claimLocked(e)
@@ -330,8 +334,8 @@ func (b *bus) ClearPendingPermsForRun(workflowID string) {
 // TakePendingPerm claims an unanswered decision for exactly one surface, false when beaten. Take
 // first, then answer kiro-cli through the reply: a loser must send nothing, and the reply's write
 // decides the decision_settled the other surfaces get.
-func (b *bus) TakePendingPerm(chatID marotte.ChatID, askID int64, settledBy marotte.SettledBy) (command.AskReply, bool) {
-	ask, ok := b.pendingPerms.takeIfPresent(chatID, askID)
+func (b *bus) TakePendingPerm(chatID marotte.ChatID, askID int64, kind marotte.DecisionKind, settledBy marotte.SettledBy) (command.AskReply, bool) {
+	ask, ok := b.pendingPerms.takeIfPresent(chatID, askID, kind)
 	if !ok {
 		return nil, false
 	}

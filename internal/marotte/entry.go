@@ -29,6 +29,7 @@ const (
 	EntryKindSafetyBlocked    EntryKind = "safety_blocked"
 	EntryKindModelSwitched    EntryKind = "model_switched"
 	EntryKindModelRouted      EntryKind = "model_routed"
+	EntryKindModelFallback    EntryKind = "model_fallback"
 	EntryKindModeSwitched     EntryKind = "mode_switched"
 	EntryKindTurnRevert       EntryKind = "turn_revert"
 	EntryKindReconciled       EntryKind = "reconciled"
@@ -324,6 +325,19 @@ type EntryModelSwitched struct {
 // KAS's own notice text, treated at the decode door.
 type EntryModelRouted struct {
 	Message string `json:"message"`
+}
+
+// EntryModelFallback is the model_fallback payload: KAS's fallback decision after From refused a
+// turn or was unavailable. A non-empty Reason marks a decline; KAS's notice for a retry carries To
+// and Scope and no Reason. Every string is KAS's open vocabulary, display-sanitized; Subagent marks
+// a sub-agent's fallback, which never moves the chat's model.
+type EntryModelFallback struct {
+	From     string `json:"from"`
+	To       string `json:"to,omitempty"`
+	Scope    string `json:"scope,omitempty"`
+	Trigger  string `json:"trigger"`
+	Reason   string `json:"reason,omitempty"`
+	Subagent bool   `json:"subagent,omitempty"`
 }
 
 // ModelSwitchReason says why KAS moved a chat off its model. A closed enum

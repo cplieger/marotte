@@ -26,10 +26,10 @@ const EXPECTED_KEYS = [
   // Agent capabilities (settings.ts agentCapabilities)
   "knowledge_enabled",
   "tool_search_enabled",
+  "model_fallback_enabled",
   "memory_mode",
   "spec_planning",
   "spec_planning_ask_first",
-  "inline_agents_enabled",
   "steering_reminders_enabled",
   "workflows_enabled",
   "work_validation",

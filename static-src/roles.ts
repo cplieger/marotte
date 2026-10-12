@@ -62,12 +62,11 @@ const BUILTIN_MODES: readonly SessionMode[] = [
   },
 ];
 
-/** The WORKSPACE mode catalog, served once by /api/config-template: the bundled modes + bundled
- *  agents + the user's global ~/.kiro/agents, with real names/descriptions/source tags, and —
- *  once any session has run — the live list KAS reported, which additionally carries the
- *  workspace agents with the shadowing already resolved. A signal rather than a plain binding
- *  because the label call sites are inside reactive effects, and the catalog arrives after the
- *  first paint. */
+/** The WORKSPACE mode catalog, served by /api/config-template: the bundled modes and agents (or,
+ *  once any session has run, the live list KAS reported) with the custom agents kiro-cli loads for
+ *  the workspace merged over them, each carrying the source of any mode it shadows. A signal
+ *  rather than a plain binding because the label call sites are inside reactive effects, and the
+ *  catalog arrives after the first paint. */
 const catalogModes = signal<readonly SessionMode[]>([]);
 
 export function setCatalogModes(modes: readonly SessionMode[]): void {
@@ -79,54 +78,6 @@ export function setCatalogModes(modes: readonly SessionMode[]): void {
 export function catalogBaseModes(): readonly SessionMode[] {
   const modes = catalogModes.value;
   return modes.length > 0 ? modes : BUILTIN_MODES;
-}
-
-/** One offered mode plus what the pre-session merge had to DECIDE about it. */
-export interface PickerMode {
-  mode: SessionMode;
-  /** The SOURCE of the catalog entry this workspace agent shadows (`global` or `bundled`), when
-   *  it shadows one. Absent when nothing is shadowed. */
-  shadowed?: string;
-}
-
-/** The description a workspace agent carries before a session can supply its own. Exported so a
- *  test can assert the merge's output shape without pinning the sentence. */
-export const WORKSPACE_AGENT_DESC = "Custom agent from your workspace .kiro/agents/ folder.";
-
-/** Merge the pre-session catalog with the workspace agents, MODELLING the collision instead of
- *  deduping it away. The rule is KAS's own last-write-wins: when a workspace agent and a catalog
- *  entry (a bundled mode, or the user's global ~/.kiro/agents) share an id, the WORKSPACE
- *  definition is what a session loads. */
-export function mergeCatalogAndWorkspace(
-  base: readonly SessionMode[],
-  workspaceAgents: readonly string[],
-): PickerMode[] {
-  const workspace = new Set(workspaceAgents);
-  const out: PickerMode[] = [];
-  for (const m of base) {
-    if (workspace.has(m.id)) {
-      continue; // shadowed by the workspace definition appended below
-    }
-    out.push({ mode: m });
-  }
-  for (const name of workspaceAgents) {
-    const shadows = base.find((m) => m.id === name);
-    // A `workspace` value is the entry shadowing ITSELF: ids are unique within one .kiro/agents
-    // tree, and handleConfigTemplate serves KAS's live availableModes once any session has run,
-    // which already carries these.
-    const shadowedSource = shadows === undefined ? undefined : (shadows.source ?? "bundled");
-    out.push({
-      mode: {
-        id: name,
-        name,
-        description: WORKSPACE_AGENT_DESC,
-        source: "workspace",
-      },
-      ...(shadowedSource !== undefined &&
-        shadowedSource !== "workspace" && { shadowed: shadowedSource }),
-    });
-  }
-  return out;
 }
 
 /** Whether a mode's `source` puts it under the picker's "Custom agents" divider rather than in
@@ -213,27 +164,7 @@ export function subagentName(tc: ToolCall): string {
       return nm;
     }
   }
-  // KAS names an unnamed inline agent this, so the label agrees with its own.
-  return inlineAgentOf(tc) === null ? "" : INLINE_AGENT_NAME;
-}
-
-const INLINE_AGENT_NAME = "inline_agent";
-
-/** The model and effort the parent chose for an inline helper (the invocation's `inlineAgent`
- *  input, kiro-cli 2.27), or null for a saved agent. Values are passed through as given; KAS
- *  resolves shorthand model ids itself. */
-export function inlineAgentOf(tc: ToolCall): { model: string; effort: string } | null {
-  const input = tc.input;
-  if (input === undefined || input === null || typeof input !== "object") {
-    return null;
-  }
-  const inline = (input as Record<string, unknown>)["inlineAgent"];
-  if (inline === undefined || inline === null || typeof inline !== "object") {
-    return null;
-  }
-  const rec = inline as Record<string, unknown>;
-  const str = (v: unknown): string => (typeof v === "string" ? v : "");
-  return { model: str(rec["model"]), effort: str(rec["effort"]) };
+  return "";
 }
 
 /** The Auto model category the parent asked a delegate to run on (`modelCategory`, kiro-cli 2.28
@@ -249,26 +180,15 @@ export function modelCategoryOf(tc: ToolCall): string {
   return category === "auto" ? "" : category;
 }
 
-/** A delegate's model line for its card, or "": an inline helper's model and effort, and the
- *  requested category unless an inline model overrides it. */
+/** A delegate's model line for its card, or "": the requested category. */
 export function delegateDetail(tc: ToolCall): string {
-  const inline = inlineAgentOf(tc);
-  const model = inline?.model ?? "";
-  const category = model === "" ? modelCategoryOf(tc) : "";
-  return [model, inline?.effort ?? "", category === "" ? "" : `Category: ${category}`]
-    .filter((v) => v !== "")
-    .join(" · ");
+  const category = modelCategoryOf(tc);
+  return category === "" ? "" : `Category: ${category}`;
 }
 
 /** A delegate's display name: the invocation's own `Sub-agent: <name>` title first, then its
- *  declared id humanized, then whatever title it carries. An inline helper is marked as one,
- *  since its name is only a label. */
+ *  declared id humanized, then whatever title it carries. */
 export function subagentLabel(tc: ToolCall): string {
-  const base = baseSubagentLabel(tc);
-  return inlineAgentOf(tc) === null ? base : `${base} (inline agent)`;
-}
-
-function baseSubagentLabel(tc: ToolCall): string {
   const title = tc.title;
   if (title.startsWith("Sub-agent:")) {
     const name = title.slice("Sub-agent:".length).trim();

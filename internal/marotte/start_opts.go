@@ -134,11 +134,12 @@ type AgentFeatures struct {
 	// TerminalCommandTimeoutMs is the shell tool's default timeout; 0 is unset.
 	TerminalCommandTimeoutMs int
 	SpecAskClarification     bool
-	InlineAgents             bool
 	SteeringReminders        bool
 	// Workflows gives the agent its workflow tools; the utility bridge's zero
 	// value withholds them.
 	Workflows bool
+	// ModelFallback sends KAS's refusal and availability fallback flags.
+	ModelFallback bool
 }
 
 // MemoryPreference mirrors KAS's `settings.memory` object field for field.

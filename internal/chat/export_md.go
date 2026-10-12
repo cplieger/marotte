@@ -177,7 +177,7 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 		}
 	case marotte.EntryKindCompaction, marotte.EntryKindCompactionFailed,
 		marotte.EntryKindSafetyBlocked, marotte.EntryKindModelSwitched, marotte.EntryKindModelRouted,
-		marotte.EntryKindModeSwitched:
+		marotte.EntryKindModelFallback, marotte.EntryKindModeSwitched:
 		writeEventMarkdown(b, e)
 	case marotte.EntryKindTurnClose:
 		writeTurnCloseEntry(b, e)
@@ -198,6 +198,8 @@ func writeEventMarkdown(b *strings.Builder, e *marotte.Entry) {
 		writeModelSwitchedMarkdown(b, e)
 	case marotte.EntryKindModelRouted:
 		writeModelRoutedMarkdown(b, e)
+	case marotte.EntryKindModelFallback:
+		writeModelFallbackMarkdown(b, e)
 	case marotte.EntryKindModeSwitched:
 		writeModeSwitchedMarkdown(b, e)
 	}
@@ -319,6 +321,26 @@ func writeModelRoutedMarkdown(b *strings.Builder, e *marotte.Entry) {
 		return
 	}
 	fmt.Fprintf(b, "**Event: model_routed** %s\n\n", oneLine(p.Message))
+}
+
+// writeModelFallbackMarkdown names KAS's decision in its own codes, as the log stores them: the
+// transcript's wording is the client's.
+func writeModelFallbackMarkdown(b *strings.Builder, e *marotte.Entry) {
+	var p marotte.EntryModelFallback
+	if !decodePayload(e, &p) {
+		return
+	}
+	line := "**Event: model_fallback** " + oneLine(p.Trigger) + ": " + oneLine(p.From)
+	if p.To != "" {
+		line += " → " + oneLine(p.To)
+	}
+	if p.Reason != "" {
+		line += ", declined: " + oneLine(p.Reason)
+	}
+	if p.Subagent {
+		line += ", for a sub-agent"
+	}
+	fmt.Fprintf(b, "%s\n\n", line)
 }
 
 func writeModeSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {

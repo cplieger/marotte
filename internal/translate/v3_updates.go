@@ -45,6 +45,8 @@ type sessionInfoKiroBlock struct {
 	} `json:"contextUsage"`
 	// Focus is the kind=="focus_update" block (see focus.go).
 	Focus *focusUpdate `json:"focus"`
+	// Activity rides the engine's own focus_update, FLAT beside Kind (see focus.go).
+	Activity *focusActivity `json:"activity"`
 	// Hook is the kind=="hook_update" block, one per hook execution (see hook_status.go).
 	Hook *hookUpdateBlock `json:"hook"`
 	// DisplayError is the kind=="display_error" block (see display_error.go).
@@ -74,6 +76,7 @@ type sessionInfoKiroBlock struct {
 	// Message is model_routed's notice, FLAT beside Kind; display_error and interaction frames
 	// spread one too, read from their blocks instead.
 	Message string `json:"message"`
+	modelFallbackFields
 	// RequestIDs, Throughput and Recoveries ride turn_completion FLAT beside Kind.
 	RequestIDs []string        `json:"requestIds"`
 	Throughput *turnThroughput `json:"throughput"`
@@ -160,9 +163,10 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	if attr.Subagent {
 		return
 	}
-	// A step's frame stops here: only its metering and credits reach the chat.
+	// A step's frame stops here: its model fallback and metering go to its run turn, and only its
+	// credits reach the chat.
 	if attr.Step {
-		t.billStepMetering(ctx, chatID, attr, &u.Meta.Kiro)
+		t.handleStepFrame(ctx, chatID, attr, &u.Meta.Kiro)
 		return
 	}
 	if h := u.Meta.Kiro.Hook; h != nil {
@@ -184,7 +188,7 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	}
 	// Adoption rules for an agent focus title are focus.go's.
 	if f := u.Meta.Kiro.Focus; f != nil {
-		t.handleFocusUpdate(ctx, chatID, f)
+		t.handleFocusUpdate(ctx, chatID, f, u.Meta.Kiro.Activity)
 		return
 	}
 	if s := u.Meta.Kiro.Summarization; s != nil && s.Status != "" {
@@ -201,9 +205,15 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	t.handleContextUsage(ctx, chatID, &u.Meta.Kiro)
 }
 
+func (t *Translator) handleStepFrame(ctx context.Context, chatID marotte.ChatID, attr FrameAttribution, k *sessionInfoKiroBlock) {
+	if !t.stepModelFallback(ctx, chatID, attr, k) {
+		t.billStepMetering(ctx, chatID, attr, k)
+	}
+}
+
 // HandleStepInfoUpdate is the parentless run bridge's reading of a step's
-// session_info_update: the run turn's metering, the withdrawal of an ask filed under
-// `run:<id>`, and the step's own steering frames. It never reaches a chat header.
+// session_info_update: the run turn's metering and model fallback, the withdrawal of an ask
+// filed under `run:<id>`, and the step's own steering frames. It never reaches a chat header.
 func (t *Translator) HandleStepInfoUpdate(ctx context.Context, key marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
@@ -214,6 +224,9 @@ func (t *Translator) HandleStepInfoUpdate(ctx context.Context, key marotte.ChatI
 		return
 	}
 	if stepSteering(attr) && t.handleSteeringUpdate(ctx, stepSteerScope(attr), &u) {
+		return
+	}
+	if t.stepModelFallback(ctx, key, attr, &u.Meta.Kiro) {
 		return
 	}
 	t.stepMetering(ctx, attr, &u.Meta.Kiro)
@@ -285,6 +298,9 @@ func (t *Translator) handleTurnEvent(ctx context.Context, chatID marotte.ChatID,
 		return true
 	case k.Kind == infoKindModelRouted:
 		t.handleModelRouted(ctx, chatID, k)
+		return true
+	case k.Kind == infoKindModelFallback:
+		t.handleModelFallback(ctx, chatID, k)
 		return true
 	}
 	return false

@@ -66,9 +66,9 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		// choice sends nothing, so kiro-cli's experiment decides.
 		SpecPlanning:              defaultSpecPlanning,
 		SpecPlanningAskFirst:      defaultSpecPlanningAskFirst,
-		InlineAgents:              defaultInlineAgents,
 		SteeringReminders:         defaultSteeringReminders,
 		WorkflowsEnabled:          DefaultWorkflowsEnabled,
+		ModelFallback:             defaultModelFallback,
 		WorkValidation:            defaultWorkValidation,
 		CloudFormationSafetyCheck: defaultCloudFormationSafety,
 		AutoRouting:               defaultAutoRouting,
@@ -164,9 +164,9 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 			return decodeChecked(&out.SpecPlanning, r, KeySpecPlanning, ValidSpecPlanning)
 		},
 		KeySpecPlanningAskFirst: func(r json.RawMessage) error { return decodeInto(&out.SpecPlanningAskFirst, r) },
-		KeyInlineAgents:         func(r json.RawMessage) error { return decodeInto(&out.InlineAgents, r) },
 		KeySteeringReminders:    func(r json.RawMessage) error { return decodeInto(&out.SteeringReminders, r) },
 		KeyWorkflowsEnabled:     func(r json.RawMessage) error { return decodeInto(&out.WorkflowsEnabled, r) },
+		KeyModelFallback:        func(r json.RawMessage) error { return decodeInto(&out.ModelFallback, r) },
 		KeyWorkValidation: func(r json.RawMessage) error {
 			return decodeChecked(&out.WorkValidation, r, KeyWorkValidation, ValidFeatureChoice)
 		},

@@ -66,3 +66,44 @@ func TestMergeEntries_AReplayOnlyModelRoutedIsInserted(t *testing.T) {
 		t.Error("changed = false, want true: the replay held a route the record missed")
 	}
 }
+
+func fallbackRow(id string) entryRow {
+	return entryRow{kind: marotte.EntryKindModelFallback, id: id, payload: marotte.EntryModelFallback{From: "a", To: "b", Trigger: "refusal"}}
+}
+
+// Each notice kind keeps its own ordinal, so two fallbacks interleaved with a route all pair and
+// a session/load duplicates none of them.
+func TestMergeEntries_ModelFallbackPairsByOrdinal(t *testing.T) {
+	record := []recordTurn{recTurn(t, "T1",
+		openRow("T1", 1, nil),
+		textRow("S", "", "first"),
+		fallbackRow("T1:e1"),
+		routedRow("T1:e2"),
+		textRow("S2", "", "second"),
+		fallbackRow("T1:e3"),
+		liveClose("T1:e4", marotte.TurnOutcomeCompleted, "end_turn"),
+	)}
+	projected := []translate.ProjectedTurn{projTurn(t, "P1",
+		openRow("P1", 0, nil),
+		textRow("S", "", "first"),
+		fallbackRow("m7"),
+		routedRow("m8"),
+		textRow("S2", "", "second"),
+		fallbackRow("m9"),
+		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
+	)}
+
+	merged, changed := mergeEntries(record, projected, "sid-1")
+	if len(merged) != 1 {
+		t.Fatalf("merged %d turns, want 1:\n%s", len(merged), dumpMerged(merged))
+	}
+	if got := countKind(merged[0], marotte.EntryKindModelFallback); got != 2 {
+		t.Errorf("merged turn holds %d model_fallback, want the record's 2:\n%s", got, dumpMerged(merged))
+	}
+	if got := countKind(merged[0], marotte.EntryKindModelRouted); got != 1 {
+		t.Errorf("merged turn holds %d model_routed, want the record's 1:\n%s", got, dumpMerged(merged))
+	}
+	if changed {
+		t.Errorf("changed = true, want false: every notice pairs with the record's:\n%s", dumpMerged(merged))
+	}
+}

@@ -14,8 +14,8 @@ import (
 // of that group owned by the TEST, and returns the group id and the member.
 //
 // The member is a direct child of the test binary, not a descendant forked inside the
-// head: a descendant orphans the moment the head exits, leaving its reaping to the
-// ambient reaper, and marotte is PID 1 with no reaper.
+// head: a descendant orphans the moment the head exits, leaving its reaping to
+// whichever process adopts it, which the test can neither wait on nor control.
 func startGroupWithMember(t *testing.T) (pgid int, member *exec.Cmd) {
 	t.Helper()
 	head := exec.Command("sh", "-c", "echo $$; exec sleep 60")
@@ -97,9 +97,9 @@ func TestWaitGone_ReturnsWhenTheGroupEmpties(t *testing.T) {
 }
 
 // A ZOMBIE member counts as gone. An exited-but-unreaped process is still signallable, so
-// the null-signal probe answers "present" for as long as nothing reaps it — and marotte is
-// PID 1 with no reaper, so that probe would burn the full budget on every teardown that
-// WORKED.
+// the null-signal probe answers "present" for as long as nothing reaps it, and a bridge's
+// head stays unreaped until its Wait, which runs after the group wait, so that probe would
+// burn the full budget on every teardown that WORKED.
 func TestWaitGone_AnUnreapedMemberCountsAsGone(t *testing.T) {
 	pgid, member := startGroupWithMember(t)
 	pid := member.Process.Pid
@@ -109,8 +109,8 @@ func TestWaitGone_AnUnreapedMemberCountsAsGone(t *testing.T) {
 	// Wait for the member to actually reach Z, without reaping it.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		_, state, ok := statPgrpState(pid)
-		if ok && state == 'Z' {
+		st, ok := readStat(pid)
+		if ok && st.state == 'Z' {
 			break
 		}
 		if !time.Now().Before(deadline) {
@@ -188,10 +188,10 @@ func TestGroupOf(t *testing.T) {
 	}
 }
 
-// statPgrpState counts its fields from the last ')' because field 2 is the executable name
+// readStat counts its fields from the last ')' because field 2 is the executable name
 // in parentheses and may itself contain spaces and parens. A whitespace split puts state
 // and pgrp at the wrong index, and the symptom is a group that never reports gone.
-func TestStatPgrpState_ReadsPastAnExecutableNameWithSpacesAndParens(t *testing.T) {
+func TestReadStat_ReadsPastAnExecutableNameWithSpacesAndParens(t *testing.T) {
 	// comm is the basename of the path handed to execve(2), truncated to 15 bytes, so
 	// executing a LINK whose name carries parens puts them in comm and LEAVES them
 	// there. A #!/bin/sh script that execs another binary cannot serve as the subject:
@@ -230,14 +230,56 @@ func TestStatPgrpState_ReadsPastAnExecutableNameWithSpacesAndParens(t *testing.T
 		t.Fatalf("Setup: stat comm is not the parenthesised name this test needs: %q", comm)
 	}
 
-	pgrp, state, ok := statPgrpState(pid)
+	st, ok := readStat(pid)
 	if !ok {
-		t.Fatal("statPgrpState = ok:false for a live process")
+		t.Fatal("readStat = ok:false for a live process")
 	}
-	if pgrp != pid {
-		t.Errorf("statPgrpState(%d) pgrp = %d, want %d (the leader's own pid)", pid, pgrp, pid)
+	if st.pgrp != pid {
+		t.Errorf("readStat(%d) pgrp = %d, want %d (the leader's own pid)", pid, st.pgrp, pid)
 	}
-	if state == 'Z' || state == 0 {
-		t.Errorf("statPgrpState(%d) state = %q, want a live state; a misread field makes a live group look empty", pid, state)
+	if st.ppid != os.Getpid() {
+		t.Errorf("readStat(%d) ppid = %d, want the test binary %d", pid, st.ppid, os.Getpid())
+	}
+	if st.state == 'Z' || st.state == 0 {
+		t.Errorf("readStat(%d) state = %q, want a live state; a misread field makes a live group look empty", pid, st.state)
+	}
+}
+
+// The start time is what tells a group from a later one reusing its id, so it must be stat field
+// 22: it orders two processes started apart, and it lies between the test binary's start and now.
+// USER_HZ is 100 on every Linux architecture Go supports.
+func TestReadStat_StartTimeOrdersProcessesByStart(t *testing.T) {
+	startSleep := func() int {
+		cmd := exec.Command("sleep", "60")
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("Setup: start sleep: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		})
+		return cmd.Process.Pid
+	}
+	first := startSleep()
+	time.Sleep(50 * time.Millisecond) // the fixture: two start times at least one 10 ms tick apart
+	second := startSleep()
+
+	self, okSelf := readStat(os.Getpid())
+	a, okA := readStat(first)
+	b, okB := readStat(second)
+	if !okSelf || !okA || !okB {
+		t.Fatalf("readStat ok = %v %v %v, want all true for live processes", okSelf, okA, okB)
+	}
+	raw, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		t.Fatalf("Setup: read uptime: %v", err)
+	}
+	up, err := strconv.ParseFloat(strings.Fields(string(raw))[0], 64)
+	if err != nil {
+		t.Fatalf("Setup: parse uptime %q: %v", raw, err)
+	}
+	if !(self.start <= a.start && a.start < b.start && float64(b.start) <= up*100+1) {
+		t.Errorf("start times: test %d, first %d, second %d, uptime %.0f ticks; want test <= first < second <= uptime",
+			self.start, a.start, b.start, up*100)
 	}
 }

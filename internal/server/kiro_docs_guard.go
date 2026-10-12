@@ -7,6 +7,7 @@ package server
 
 import (
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/steering"
 )
 
 // docVerdict is the guard's answer about one entry: whether the scan may read it, and
@@ -99,7 +101,7 @@ func (g *rootGuard) inRoot(resolved string) bool {
 var errRefused = errors.New("kiro docs: path refused by the scan guard")
 
 // readGuardedFS is readCappedFS with the guard in front, returning the verdict with the bytes
-// so the caller need not resolve again. The entity scanner shares readCappedFS unguarded.
+// so the caller need not resolve again.
 func readGuardedFS(root fs.FS, name string, guard pathGuard) ([]byte, docVerdict, error) {
 	v := docVerdict{allowed: true}
 	if guard != nil {
@@ -119,4 +121,15 @@ func readGuardedDir(root fs.FS, name string, guard pathGuard) ([]fs.DirEntry, er
 		return nil, errRefused
 	}
 	return fs.ReadDir(root, name)
+}
+
+// readCappedFS reads at most steering.FrontMatterReadCap bytes of name from root (an
+// fs.FS twin of internal/steering's readCappedFile).
+func readCappedFS(root fs.FS, name string) ([]byte, error) {
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, steering.FrontMatterReadCap))
 }

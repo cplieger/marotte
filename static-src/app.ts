@@ -480,7 +480,9 @@ function setupInput(): void {
   // announce.
   initModelPicker(pickModel, () => fetchCatalog());
   // The role picker owns the prompt-bar role pill (expand, list, selection).
-  initRolePicker();
+  initRolePicker(() => {
+    void fetchCatalog();
+  });
   // Queued-prompt chips (pending sends buffered while a turn is in flight).
   initPendingSteers();
   // The composer band's live-run rows; a pure projection of the run store.

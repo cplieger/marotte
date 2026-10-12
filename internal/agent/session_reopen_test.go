@@ -216,11 +216,11 @@ var configWrites = []struct {
 	// Read only while planning is on: TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn.
 	{key: settings.KeySpecPlanningAskFirst, value: true, reach: reachNoChat},
 	{key: settings.KeyWorkValidation, value: settings.FeatureOff, reach: reachReopen},
-	{key: settings.KeyInlineAgents, value: true, reach: reachReopen},
 	{key: settings.KeySteeringReminders, value: true, reach: reachReopen},
 	{key: settings.KeyCloudFormationSafety, value: settings.FeatureOn, reach: reachReopen},
 	{key: settings.KeyAutoRouting, value: settings.FeatureOff, reach: reachReopen},
 	{key: settings.KeyAutoDelegation, value: settings.FeatureOff, reach: reachReopen},
+	{key: settings.KeyModelFallback, value: true, reach: reachReopen},
 	{key: settings.KeyKnowledgeEnabled, value: false, reach: reachReopen},
 	{key: settings.KeyToolSearchEnabled, value: true, reach: reachReopen},
 	{key: settings.KeyAutoCompactionEnabled, value: false, reach: reachReopen},
@@ -445,12 +445,7 @@ func TestGovernanceLockChange_ReopensOpenChatsOnlyWhenASpawnMoves(t *testing.T) 
 		{name: "organization_on_matches_the_switch", lock: orgAnalytics(true)},
 		{name: "denied_subagents_turn_workflows_off", lock: denySubagents, wantReopen: true},
 		{
-			name:   "denied_subagents_turn_inline_agents_off",
-			stored: map[string]any{settings.KeyWorkflowsEnabled: false, settings.KeyInlineAgents: true},
-			lock:   denySubagents, wantReopen: true,
-		},
-		{
-			name:   "denied_subagents_over_both_already_off",
+			name:   "denied_subagents_over_workflows_already_off",
 			stored: map[string]any{settings.KeyWorkflowsEnabled: false},
 			lock:   denySubagents,
 		},

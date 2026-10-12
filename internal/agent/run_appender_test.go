@@ -100,8 +100,8 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 	if steer.OriginRun != id {
 		t.Errorf("note provenance = run %q, want %q", steer.OriginRun, id)
 	}
-	// The reader sees the step's segments joined with "/", never the key's own spelling.
-	for _, want := range []string{"nightly", "step wf_1/loop/iter-1/build was declined", "policy", "I will not continue with this request."} {
+	// The note names the step by its workflow.PathKey.
+	for _, want := range []string{"nightly", "step wf_1:loop:iter-1:build was declined", "policy", "I will not continue with this request."} {
 		if !strings.Contains(steer.Text, want) {
 			t.Errorf("note text = %q, want it to carry %q", steer.Text, want)
 		}
@@ -146,7 +146,7 @@ func TestRunNodeComplete_AStepStoppedAtTheModelCallLimitTellsTheLaunchingChat(t 
 	if err := json.Unmarshal(entries[i].Payload, &steer); err != nil {
 		t.Fatalf("decode the steer: %v", err)
 	}
-	if want := "nightly step wf_1/build stopped early. " + marotte.ModelCallLimitStepReason; steer.Text != want {
+	if want := "nightly step wf_1:build stopped early. " + marotte.ModelCallLimitStepReason; steer.Text != want {
 		t.Errorf("note text = %q, want %q", steer.Text, want)
 	}
 	if steer.Severity != "warning" || steer.OriginRun != id {
@@ -247,5 +247,17 @@ func TestRunNodeComplete_ARefusalIsNotedOnce(t *testing.T) {
 
 	if steers := chatSteers(t, cs, chatID); len(steers) != 1 {
 		t.Errorf("got %d notes for one refusal, want one", len(steers))
+	}
+}
+
+// An included step's id carries its include's id and a '/', so a '/' join of its path reads
+// wf_1/inc/inc/a, the same text as a four-deep path; its key wf_1:inc:inc/a is not wf_1:inc:inc:a.
+func TestStepNoteText_KeepsAnIncludedStepsPathUnambiguous(t *testing.T) {
+	path := []string{"wf_1", "inc", "inc/a"}
+	if got, want := stepModelCallLimitNoteText("nightly", path), "nightly step wf_1:inc:inc/a stopped early. "+marotte.ModelCallLimitStepReason; got != want {
+		t.Errorf("model-call-limit note = %q, want %q", got, want)
+	}
+	if got := stepRefusalNoteText("nightly", path, nil); !strings.HasPrefix(got, "nightly step wf_1:inc:inc/a was declined by the model.") {
+		t.Errorf("refusal note = %q, want it to name the step's path", got)
 	}
 }

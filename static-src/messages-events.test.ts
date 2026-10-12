@@ -35,6 +35,7 @@ describe("the row a kind draws", () => {
       [event("model_switched", { from: "a", to: "b" }), "boundary-switched"],
       [event("mode_switched", { from: "spec", to: "vibe", source: "user" }), "boundary-switched"],
       [event("model_routed", { message: "" }), "boundary-switched"],
+      [event("model_fallback", { from: "a", to: "b", trigger: "refusal" }), "boundary-switched"],
       [event("compaction", { summary: "" }), "boundary-compacted"],
       [event("compaction_failed", { reason: "" }), "boundary-failed"],
       [event("safety_blocked", { properties: [] }), "boundary-blocked"],
@@ -56,6 +57,70 @@ describe("model_routed", () => {
   it("says what happened when KAS sent no notice text", () => {
     expect(labelOf(buildEvent(event("model_routed", { message: "" })))).toBe(
       "Auto moved to a stronger model",
+    );
+  });
+});
+
+describe("model_fallback", () => {
+  const label = (payload: KindedEntry<"model_fallback">["payload"]): string =>
+    labelOf(buildEvent(event("model_fallback", payload)));
+
+  it("says a refused request was retried on the next model", () => {
+    expect(label({ from: "opus-5", to: "sonnet-5", scope: "session", trigger: "refusal" })).toBe(
+      "opus-5 declined this request, retried on sonnet-5",
+    );
+  });
+
+  it("says an unavailable model was replaced by the next one", () => {
+    expect(label({ from: "opus-5", to: "sonnet-5", trigger: "availability" })).toBe(
+      "opus-5 was unavailable, retried on sonnet-5",
+    );
+  });
+
+  it.each([
+    ["noServedTarget", "none of its fallback models is offered to this account"],
+    ["chainExhausted", "every fallback model was already tried"],
+    ["unsafeToReissue", "the turn had already run tools, so a retry could repeat them"],
+    ["raceLost", "the model changed while Kiro was switching"],
+  ])("words the %s decline", (reason, why) => {
+    expect(label({ from: "opus-5", trigger: "availability", reason })).toBe(
+      `opus-5 was unavailable, no fallback model available \u00b7 ${why}`,
+    );
+  });
+
+  // KAS's decline log carries the model it would have tried; the notice decides on `reason` alone.
+  it("reads a reason as a decline even when a model is named", () => {
+    expect(
+      label({ from: "opus-5", to: "sonnet-5", trigger: "availability", reason: "raceLost" }),
+    ).toBe(
+      "opus-5 was unavailable, no fallback model available \u00b7 the model changed while Kiro was switching",
+    );
+  });
+
+  it("shows a decline code it does not know as sent, and an inherited name as a code", () => {
+    expect(label({ from: "opus-5", trigger: "availability", reason: "quotaGone" })).toBe(
+      "opus-5 was unavailable, no fallback model available \u00b7 quotaGone",
+    );
+    expect(label({ from: "opus-5", trigger: "availability", reason: "constructor" })).toBe(
+      "opus-5 was unavailable, no fallback model available \u00b7 constructor",
+    );
+  });
+
+  it("names both models for a trigger it does not know, and the source alone with no target", () => {
+    expect(label({ from: "opus-5", to: "sonnet-5", trigger: "latency" })).toBe(
+      "Model changed from opus-5 to sonnet-5",
+    );
+    expect(label({ from: "opus-5", trigger: "refusal" })).toBe("Model changed from opus-5");
+  });
+
+  it("marks a sub-agent's fallback", () => {
+    expect(label({ from: "opus-5", to: "sonnet-5", trigger: "refusal", subagent: true })).toBe(
+      "opus-5 declined this request, retried on sonnet-5 for a sub-agent",
+    );
+    expect(
+      label({ from: "opus-5", trigger: "availability", reason: "chainExhausted", subagent: true }),
+    ).toBe(
+      "opus-5 was unavailable, no fallback model available for a sub-agent \u00b7 every fallback model was already tried",
     );
   });
 });

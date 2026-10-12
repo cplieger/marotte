@@ -611,6 +611,19 @@
                   <p class="section-hint">Off (default), the agent sees every MCP tool's description on every message, which uses context. On, it sees only tool names and loads the ones it needs, which is worth it if you have many tools.</p>
                 </div>
               </div>
+              <div class="section-option">
+                <label class="toggle">
+                  <input type="checkbox" id="flag-model-fallback" aria-label="Model fallback" aria-describedby="flag-model-fallback-hint">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">Model fallback</span>
+                    <span class="settings-save-status hidden" data-save-status="model_fallback_enabled" aria-live="polite"></span>
+                  </div>
+                  <p class="section-hint" id="flag-model-fallback-hint">When a model declines a request or is unavailable, Kiro retries the turn on another model from its fallback chain, and the chat may move to that model unless you picked one. Off by default, as in Kiro.</p>
+                </div>
+              </div>
               <div class="section-option section-option-fixed">
                 <div class="section-field">
                   <div class="section-title-status-row">
@@ -679,19 +692,6 @@
               </div>
               <div class="section-option">
                 <label class="toggle">
-                  <input type="checkbox" id="flag-inline-agents" aria-label="Inline helper agents">
-                  <span class="toggle-slider"></span>
-                </label>
-                <div>
-                  <div class="section-title-status-row">
-                    <span class="section-option-label">Inline helper agents</span>
-                    <span class="settings-save-status hidden" data-save-status="inline_agents_enabled" aria-live="polite"></span>
-                  </div>
-                  <p class="section-hint">Lets the agent hand part of a task to a one-off helper with a model and effort it picks, instead of only to your saved agents. Off by default. Helpers have the agent's own permissions and tools.</p>
-                </div>
-              </div>
-              <div class="section-option">
-                <label class="toggle">
                   <input type="checkbox" id="flag-steering-reminders" aria-label="Steering reminders">
                   <span class="toggle-slider"></span>
                 </label>
@@ -729,7 +729,7 @@
                     <option value="on">On</option>
                     <option value="off">Off</option>
                   </select>
-                  <p class="section-hint" id="auto-routing-hint">In a chat on Auto, Kiro may move to a stronger model partway through when a task needs it, and the chat notes where it did. Default follows Kiro; choose Off to keep a chat on the model it started with.</p>
+                  <p class="section-hint" id="auto-routing-hint">In a chat on Auto, Kiro may move to a stronger model partway through when a task needs it, and the chat notes where it did. Default follows Kiro; choose Off to keep a chat on the model it started with. Choosing On or Off also replaces Kiro's server-tuned context hand-off wording with its built-in one.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -761,7 +761,7 @@
               </div>
               <div class="section-option">
                 <label class="toggle">
-                  <input type="checkbox" id="flag-workflows" aria-label="Workflows" checked>
+                  <input type="checkbox" id="flag-workflows" aria-label="Workflows" aria-describedby="flag-workflows-hint" checked>
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
@@ -769,7 +769,7 @@
                     <span class="section-option-label">Workflows</span>
                     <span class="settings-save-status hidden" data-save-status="workflows_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Lets the agent start and manage multi-step workflow runs. Runs you start from Docs &gt; Workflows work either way. On by default.</p>
+                  <p class="section-hint" id="flag-workflows-hint">On: the agent hands work to workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Runs you start from Docs &gt; Workflows work either way. On by default.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
