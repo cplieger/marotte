@@ -40,8 +40,8 @@
       "reason": "boundary",
       "label": "Workflow result not delivered · the turn ended first",
       "sites": [
-        "internal/translate/steering.go:133",
-        "internal/translate/steering.go:146"
+        "internal/translate/steering.go:140",
+        "internal/translate/steering.go:153"
       ]
     },
     {
@@ -64,8 +64,8 @@
         "internal/agent/run_appender.go:99",
         "internal/agent/run_bounds.go:424",
         "internal/agent/run_plan.go:95",
-        "internal/translate/steering.go:114",
-        "internal/translate/steering.go:204",
+        "internal/translate/steering.go:117",
+        "internal/translate/steering.go:212",
         "internal/translate/workflow_message.go:39"
       ]
     },
@@ -85,7 +85,7 @@
       "reason": "boundary",
       "label": "Message from the main agent not delivered · the turn ended first",
       "sites": [
-        "internal/translate/steering.go:133"
+        "internal/translate/steering.go:140"
       ]
     },
     {
@@ -103,8 +103,8 @@
       "reason": "",
       "label": "Message from the main agent",
       "sites": [
-        "internal/translate/steering.go:114",
-        "internal/translate/steering.go:204",
+        "internal/translate/steering.go:117",
+        "internal/translate/steering.go:212",
         "internal/translate/workflow_message.go:39"
       ]
     },
@@ -124,7 +124,7 @@
       "reason": "boundary",
       "label": "Message to the main agent not delivered · the turn ended first",
       "sites": [
-        "internal/translate/steering.go:133"
+        "internal/translate/steering.go:140"
       ]
     },
     {
@@ -142,8 +142,8 @@
       "reason": "",
       "label": "Message to the main agent",
       "sites": [
-        "internal/translate/steering.go:114",
-        "internal/translate/steering.go:204",
+        "internal/translate/steering.go:117",
+        "internal/translate/steering.go:212",
         "internal/translate/workflow_message.go:39"
       ]
     },
@@ -164,8 +164,8 @@
       "label": "Not read · the turn ended first",
       "sites": [
         "internal/agent/command_chat_ops.go:59",
-        "internal/agent/steer_buffer.go:332",
-        "internal/translate/steering.go:133"
+        "internal/agent/steer_buffer.go:343",
+        "internal/translate/steering.go:140"
       ]
     },
     {
@@ -174,7 +174,7 @@
       "reason": "deleted",
       "label": "Not read · you deleted it",
       "sites": [
-        "internal/agent/steer_buffer.go:326"
+        "internal/agent/steer_buffer.go:337"
       ]
     },
     {
@@ -195,8 +195,8 @@
       "sites": [
         "internal/agent/run_appender.go:215",
         "internal/agent/run_message.go:466",
-        "internal/translate/steering.go:114",
-        "internal/translate/steering.go:204",
+        "internal/translate/steering.go:117",
+        "internal/translate/steering.go:212",
         "internal/translate/workflow_message.go:39"
       ]
     },
@@ -283,14 +283,14 @@
       "reason": "restart"
     },
     {
-      "site": "internal/agent/steer_buffer.go:326",
+      "site": "internal/agent/steer_buffer.go:337",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "deleted"
     },
     {
-      "site": "internal/agent/steer_buffer.go:332",
+      "site": "internal/agent/steer_buffer.go:343",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
@@ -304,28 +304,28 @@
       "reason": ""
     },
     {
-      "site": "internal/translate/steering.go:114",
+      "site": "internal/translate/steering.go:117",
       "form": "literal",
       "origin": "",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/translate/steering.go:133",
+      "site": "internal/translate/steering.go:140",
       "form": "literal",
       "origin": "",
       "state": "dropped",
       "reason": "boundary"
     },
     {
-      "site": "internal/translate/steering.go:146",
+      "site": "internal/translate/steering.go:153",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
       "reason": "boundary"
     },
     {
-      "site": "internal/translate/steering.go:204",
+      "site": "internal/translate/steering.go:212",
       "form": "literal",
       "origin": "",
       "state": "read",

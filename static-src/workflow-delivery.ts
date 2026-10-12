@@ -1,3 +1,9 @@
+import { el } from "@cplieger/reactive";
+import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
+import { chevronEl } from "./chevron.js";
+import { CHROME_ATTR } from "./chrome-attr.js";
+import { iconEl } from "./icon-el.js";
+import { ICON_TAB_RUN } from "./icons.js";
 import { payloadOf } from "./turns.js";
 import type { EntrySteer, EntrySteerDelivered, TurnState } from "./types.js";
 
@@ -79,26 +85,29 @@ export function settleWorkflowMessages(turns: Iterable<TurnState>): void {
 }
 
 /** Group a container's consecutive workflow updates as Kiro does: a run of two or more step
- *  messages gets one toggle reading "N updates from M workflows". The run at the container's tail
- *  starts open, every other one closed, until the reader picks. */
+ *  messages or workflow results moves into one box whose header counts them, the tool group's
+ *  box-in-box shape. The run at the container's tail starts open, every other one closed, until the
+ *  reader picks. Idempotent: a row already seated in its box is never re-seated, so its focus and
+ *  its entry animation survive the next pass. */
 export function groupWorkflowUpdates(container: HTMLElement): void {
-  for (const stale of container.querySelectorAll(":scope > .steer-group-toggle")) {
-    stale.remove();
-  }
-  const kids = Array.from(container.children) as HTMLElement[];
   let run: HTMLElement[] = [];
+  let boxes: HTMLElement[] = [];
   const flush = (atTail: boolean): void => {
     if (run.length >= 2) {
-      mountGroup(container, run, atTail);
+      seatGroup(container, run, boxes, atTail);
     } else {
-      for (const n of run) {
-        n.hidden = false;
+      for (const box of boxes) {
+        unseatGroup(box);
       }
     }
     run = [];
+    boxes = [];
   };
-  for (const kid of kids) {
-    if (isWorkflowUpdate(kid)) {
+  for (const kid of Array.from(container.children)) {
+    if (kid instanceof HTMLElement && kid.classList.contains(GROUP_CLASS)) {
+      boxes.push(kid);
+      run.push(...groupRows(kid));
+    } else if (kid instanceof HTMLElement && isWorkflowUpdate(kid)) {
       run.push(kid);
     } else {
       flush(false);
@@ -107,32 +116,131 @@ export function groupWorkflowUpdates(container: HTMLElement): void {
   flush(true);
 }
 
-/** Selects what `isWorkflowUpdate` accepts, for finding the containers to regroup. */
-export const WORKFLOW_UPDATE_SELECTOR = '.steer-note[data-origin="step"][data-step]';
+/** Selects what `isWorkflowUpdate` accepts, for finding the containers to regroup: a step's message
+ *  and every agent note, which the transcript labels a workflow result. */
+export const WORKFLOW_UPDATE_SELECTOR =
+  '.steer-note[data-origin="step"][data-step], .steer-note[data-origin="agent"]';
+
+const GROUP_CLASS = "steer-group";
+
+/** The container a workflow-update row is grouped in: its box's host when a box holds it. */
+export function workflowUpdateHost(row: HTMLElement): HTMLElement | null {
+  const parent = row.parentElement;
+  return parent?.classList.contains("steer-group-body") === true
+    ? (parent.parentElement?.parentElement ?? null)
+    : parent;
+}
 
 function isWorkflowUpdate(el: HTMLElement): boolean {
   return el.matches(WORKFLOW_UPDATE_SELECTOR);
 }
 
-function mountGroup(container: HTMLElement, rows: HTMLElement[], atTail: boolean): void {
+interface GroupView {
+  count: HTMLElement;
+  body: HTMLElement;
+  ctl: DisclosureController;
+  /** The reader's pick rides the lead row, so a box rebuilt around it keeps the choice. */
+  lead: () => HTMLElement | undefined;
+}
+
+const groups = new WeakMap<HTMLElement, GroupView>();
+
+function groupBodyOf(box: HTMLElement): HTMLElement | null {
+  return box.querySelector<HTMLElement>(":scope > .steer-group-body");
+}
+
+function groupRows(box: HTMLElement): HTMLElement[] {
+  const body = groupBodyOf(box);
+  return body === null
+    ? []
+    : Array.from(body.children).filter(
+        (r): r is HTMLElement => r instanceof HTMLElement && isWorkflowUpdate(r),
+      );
+}
+
+function seatGroup(
+  container: HTMLElement,
+  rows: HTMLElement[],
+  boxes: HTMLElement[],
+  atTail: boolean,
+): void {
   const lead = rows[0];
   if (lead === undefined) {
     return;
   }
   const picked = lead.dataset["groupOpen"];
   const open = picked === undefined ? atTail : picked === "true";
-  const runs = new Set(rows.map((r) => r.dataset["run"] ?? ""));
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.className = "steer-group-toggle";
-  toggle.textContent = `${String(rows.length)} updates from ${String(runs.size)} ${runs.size === 1 ? "workflow" : "workflows"}`;
-  toggle.setAttribute("aria-expanded", String(open));
-  toggle.addEventListener("click", () => {
-    lead.dataset["groupOpen"] = String(toggle.getAttribute("aria-expanded") !== "true");
-    groupWorkflowUpdates(container);
-  });
-  container.insertBefore(toggle, lead);
-  for (const r of rows) {
-    r.hidden = !open;
+  const [keep, ...extra] = boxes;
+  const box = keep ?? buildGroup(open);
+  const view = groups.get(box);
+  if (view === undefined) {
+    return;
   }
+  if (keep === undefined) {
+    container.insertBefore(box, lead);
+  }
+  rows.forEach((row, i) => {
+    if (view.body.children[i] !== row) {
+      view.body.insertBefore(row, view.body.children[i] ?? null);
+    }
+  });
+  for (const stale of extra) {
+    stale.remove();
+  }
+  view.count.textContent = groupLabel(rows);
+  view.lead = () => lead;
+  if (open !== view.ctl.isOpen) {
+    if (open) {
+      view.ctl.open();
+    } else {
+      view.ctl.close();
+    }
+  }
+}
+
+/** The box's header: the runs counted only when every row names its own, so the count never undercounts. */
+function groupLabel(rows: readonly HTMLElement[]): string {
+  const runs = rows.map((r) => r.dataset["run"] ?? "");
+  if (runs.includes("")) {
+    return `${String(rows.length)} workflow updates`;
+  }
+  const n = new Set(runs).size;
+  return `${String(rows.length)} updates from ${String(n)} ${n === 1 ? "workflow" : "workflows"}`;
+}
+
+/** A box whose run fell under two rows hands its rows back to the container, in place. */
+function unseatGroup(box: HTMLElement): void {
+  for (const row of groupRows(box)) {
+    box.before(row);
+  }
+  box.remove();
+}
+
+function buildGroup(open: boolean): HTMLElement {
+  const count = el("span", { className: "steer-group-count" });
+  const head = el(
+    "div",
+    { className: "steer-group-header", [CHROME_ATTR]: "" },
+    chevronEl(),
+    el("span", { className: "steer-group-icon tool-icon" }, iconEl(ICON_TAB_RUN)),
+    count,
+  );
+  const body = el("div", { className: "steer-group-body" });
+  const box = el("div", { className: GROUP_CLASS }, head, body);
+  const view: GroupView = {
+    count,
+    body,
+    lead: () => undefined,
+    ctl: createDisclosure(head, body, {
+      open,
+      onToggle: (open, source) => {
+        const lead = view.lead();
+        if (source === "user" && lead !== undefined) {
+          lead.dataset["groupOpen"] = String(open);
+        }
+      },
+    }),
+  };
+  groups.set(box, view);
+  return box;
 }

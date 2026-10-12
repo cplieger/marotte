@@ -590,21 +590,35 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 		if !httpreply.DecodeJSON(w, r, &body) {
 			return
 		}
-		if err := rr.runs.removeStepSteer(r.Context(), id, nodePath, body.SteerID); err != nil {
+		if err := rr.runs.removeStepSteer(r.Context(), id, nodePath, body.SteerID, body.Edit); err != nil {
 			rr.writeStepErr(w, "steer remove", id, nodePath, err)
 			return
 		}
 		webhttp.WriteJSON(w, map[string]string{"deleted": body.SteerID})
 	case "steer-clear":
-		if err := rr.runs.clearStepSteers(r.Context(), id, nodePath); err != nil {
-			rr.writeStepErr(w, "steer clear", id, nodePath, err)
-			return
-		}
-		webhttp.Ok(w)
+		rr.handleStepSteerClear(w, r, id, nodePath)
 	default:
 		// The step itself, which only GET reads.
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 	}
+}
+
+// handleStepSteerClear discards every unread row of the step. The body is optional: with Edit set,
+// SteerID names the row taken back to edit, which leaves no entry.
+func (rr *runRoutes) handleStepSteerClear(w http.ResponseWriter, r *http.Request, id, nodePath string) {
+	var body marotte.RunStepSteerRequest
+	if r.ContentLength != 0 && !httpreply.DecodeJSON(w, r, &body) {
+		return
+	}
+	edit := ""
+	if body.Edit {
+		edit = body.SteerID
+	}
+	if err := rr.runs.clearStepSteers(r.Context(), id, nodePath, edit); err != nil {
+		rr.writeStepErr(w, "steer clear", id, nodePath, err)
+		return
+	}
+	webhttp.Ok(w)
 }
 
 // A refusal keeps its status and reason; a failed read or re-host is graded as the run verbs grade it.

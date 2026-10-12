@@ -79,7 +79,7 @@ func TestSteerTables_ADeleteFollowsItsCell(t *testing.T) {
 				rec.rows = append(rec.rows, dockRow{key: "steer-a", kasID: "steer-a", text: "a", state: st})
 			})
 
-			needsClear, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-a")
+			needsClear, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-a", false)
 
 			rule := rowRuleFor(st, deleteEvent(st))
 			_, live := s.state("steer-a")

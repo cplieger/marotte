@@ -86,8 +86,10 @@
 }
 
 /* Uncapped and unindented — see .tool-call. The GROUP is the box (border, fill, radius);
- * its members are separator-ruled rows inside it. */
-.tool-group {
+ * its members are separator-ruled rows inside it. A run of workflow updates
+ * (`.steer-group`, workflow-delivery.ts) is the same box. */
+.tool-group,
+.steer-group {
   display: flex;
   flex-direction: column;
   background: var(--c-bg-secondary);
@@ -98,7 +100,8 @@
 
 /* Cards live in the body region (a uip-disclosure-region: the primitive
  * animates its height and marks it aria-hidden + inert when collapsed). */
-.tool-group-body {
+.tool-group-body,
+.steer-group-body {
   display: flex;
   flex-direction: column;
 }
@@ -123,7 +126,8 @@
   padding-block: var(--sp-1);
 }
 
-.tool-group-header {
+.tool-group-header,
+.steer-group-header {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
@@ -169,7 +173,8 @@
    (01-tokens.css). Gated on `any-hover`, so a tap does not latch `:hover`; touch takes
    the press from 03-base.css. The ink lift is this header's own. */
 @media (any-hover: hover) {
-  .tool-group-header:hover {
+  .tool-group-header:hover,
+  .steer-group-header:hover {
     color: var(--c-text-primary);
     background: var(--c-hover);
   }
@@ -177,24 +182,28 @@
 
 /* Open: the chevron turns down. Keyed on `aria-expanded`, the one flag both collapse
    classes keep true-or-false. */
-.tool-group-header[aria-expanded="true"] > .disclosure-chevron {
+.tool-group-header[aria-expanded="true"] > .disclosure-chevron,
+.steer-group-header[aria-expanded="true"] > .disclosure-chevron {
   --chev-turn: 0deg;
 }
 
 /* OPTICAL ALIGNMENT TO THE FIRST LINE: the margin centres each glyph within the label's
    first line. A margin, not a `min-block-size`, because growing the declared verdict
    slot would move the mark inside it (`tool-group-mark-css.test.ts`). */
-.tool-group-header > .disclosure-chevron {
+.tool-group-header > .disclosure-chevron,
+.steer-group-header > .disclosure-chevron {
   color: var(--c-text-tertiary);
   margin-block-start: calc((var(--row-first-line) - var(--chev-size)) / 2);
 }
 
-.tool-group-header > .tool-group-icon {
+.tool-group-header > .tool-group-icon,
+.steer-group-header > .steer-group-icon {
   margin-block-start: calc((var(--row-first-line) - var(--icon-ui)) / 2);
 }
 
 /* Both edges, so a one-line row keeps its height and a wrapped one stays balanced. */
-.tool-group-header > .tool-group-count {
+.tool-group-header > .tool-group-count,
+.steer-group-header > .steer-group-count {
   padding-block: calc((var(--row-first-line) - 1lh) / 2);
 }
 

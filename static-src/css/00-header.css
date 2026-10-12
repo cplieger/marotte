@@ -57,12 +57,6 @@
   initial-value: 1;
 }
 
-@property --turn-map-total {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 1;
-}
-
 /* WHERE A ROTATING RING'S ARC IS, and the reason no ring rotates its own box.
  *
  *  A bordered circle under `transform: rotate()` is composited into a raster the

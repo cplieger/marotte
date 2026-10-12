@@ -19,13 +19,15 @@ import {
   effectiveRunID,
   entryAt,
   entryRenders,
-  firstPlanSeq,
+  NO_FOLDS,
+  turnFolds,
   proseRunAt,
   runResults,
   turnOrdinalOf,
   turnSpan,
   type EntryRange,
   type RunResults,
+  type TurnFolds,
 } from "./block-window.js";
 import { steerAckID, toolResultID } from "./entry-ids.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
@@ -59,7 +61,11 @@ import {
 } from "./fundamentals/text-bubble.js";
 import { buildReasoning, type ReasoningView } from "./fundamentals/reasoning.js";
 import { buildSteerNote, type SteerNoteData } from "./fundamentals/steer-note.js";
-import { groupWorkflowUpdates, WORKFLOW_UPDATE_SELECTOR } from "./workflow-delivery.js";
+import {
+  groupWorkflowUpdates,
+  WORKFLOW_UPDATE_SELECTOR,
+  workflowUpdateHost,
+} from "./workflow-delivery.js";
 import {
   buildSubagentCard,
   buildSubagentContainer,
@@ -328,11 +334,11 @@ interface TurnRender {
    */
   lane: string;
   /**
-   * This turn plus three facts hoisted per pass: the lane's first `plan` seq, workflow-bearing results, and the
-   * joined calls. Held because lazy container creators run from a range that may lack the invocation.
+   * This turn plus three facts hoisted per pass: the lane's `turnFolds`, workflow-bearing results, and the joined
+   * calls. Held because lazy container creators run from a range that may lack the invocation.
    */
   turn: Turn;
-  firstPlan: number;
+  folds: TurnFolds;
   results: RunResults;
   calls: readonly TurnToolCall[];
   /** The joins keyed by `tool_call` entry id and by tool id (`callByToolID`), so per-call lookups are not quadratic. */
@@ -427,7 +433,7 @@ function buildBody(
     turnID: turn.id,
     lane,
     turn,
-    firstPlan: -1,
+    folds: NO_FOLDS,
     results: new Map(),
     calls: [],
     callByEntry: new Map(),
@@ -470,7 +476,7 @@ function guardPass(st: TurnRender, pass: () => void): void {
 /** Adopt this pass's turn and re-hoist its facts in one walk, rather than a quadratic scan per question. */
 function refreshTurn(st: TurnRender, turn: Turn): void {
   st.turn = turn;
-  st.firstPlan = firstPlanSeq(turn, st.lane);
+  st.folds = turnFolds(turn, st.lane);
   st.results = runResults(turn);
   const settled = new Map<string, EntryToolResult>();
   for (const e of turn.body) {
@@ -762,11 +768,21 @@ function syncMountedText(st: TurnRender): void {
  */
 function syncFolds(st: TurnRender, live: boolean, idx: GroupIndex): void {
   // A later `plan` replaces the card's entries in place; `st.planFrom` is what the card shows.
-  if (st.firstPlan >= 0 && st.entryEls.has(st.firstPlan) && st.newestPlan.seq !== st.planFrom) {
-    const first = entryAt(st.turn, st.firstPlan);
+  if (st.folds.plan >= 0 && st.entryEls.has(st.folds.plan) && st.newestPlan.seq !== st.planFrom) {
+    const first = entryAt(st.turn, st.folds.plan);
     if (first !== undefined) {
       mountPlan(st, st.bodyEl, first);
     }
+  }
+  // A newer `turn_revert` replaces the mounted one's row: the range placed the new row and never revisits the old.
+  const superseded = [...st.entryEls.keys()].filter(
+    (seq) => seq !== st.folds.revert && entryAt(st.turn, seq)?.kind === "turn_revert",
+  );
+  for (const seq of superseded) {
+    dropEntry(st, seq);
+  }
+  if (superseded.length > 0) {
+    cbs.disposeEntryEffects(st.turnID, superseded);
   }
   // The entry first supplying the effective workflow id re-dispatches its `tool_call`, so the row becomes the card.
   for (const held of st.calls) {
@@ -938,10 +954,10 @@ function groupRange(st: TurnRender, from: number, to: number): Placement[] {
       // The store returned the rows whose take-up the rewind took to waiting (`releaseWorkflowTakeUps`).
       redrawSettledRows((_id, steer) => steer.origin === "parent" || steer.origin === "step");
     }
-    if (e === undefined || !entryRenders(e, st.lane, st.firstPlan)) {
+    if (e === undefined || !entryRenders(e, st.lane, st.folds)) {
       continue;
     }
-    const run = proseRunAt(st.turn, seq, st.lane, st.firstPlan);
+    const run = proseRunAt(st.turn, seq, st.lane, st.folds);
     if (run === null) {
       out.push({ run: -1, seqs: [seq] });
       continue;
@@ -949,7 +965,7 @@ function groupRange(st: TurnRender, from: number, to: number): Placement[] {
     const seqs: number[] = [];
     for (let i = seq; i < Math.min(run.to, to); i++) {
       const m = entryAt(st.turn, i);
-      if (m?.kind === "text" && entryRenders(m, st.lane, st.firstPlan)) {
+      if (m?.kind === "text" && entryRenders(m, st.lane, st.folds)) {
         seqs.push(i);
       }
     }
@@ -1167,9 +1183,15 @@ function dropEntryRange(st: TurnRender, keep: EntryRange): void {
 /** Once per pass, after every child is seated: a group's tail state turns on rows mounted after it. */
 function regroupWorkflowUpdates(st: TurnRender): void {
   const hosts = new Set<HTMLElement>();
+  for (const box of st.bodyEl.querySelectorAll<HTMLElement>(".steer-group")) {
+    if (box.parentElement !== null) {
+      hosts.add(box.parentElement);
+    }
+  }
   for (const row of st.bodyEl.querySelectorAll<HTMLElement>(WORKFLOW_UPDATE_SELECTOR)) {
-    if (row.parentElement !== null) {
-      hosts.add(row.parentElement);
+    const host = workflowUpdateHost(row);
+    if (host !== null) {
+      hosts.add(host);
     }
   }
   for (const host of hosts) {
@@ -1208,7 +1230,7 @@ function resolveRunCardFate(st: TurnRender, runID: string, card: RunCardView): v
  */
 export function geometrySkipped(el: Element): boolean {
   return (
-    el.closest(".turn[data-folded] > .turn-body") !== null ||
+    el.closest(".turn[data-folded] > .turn-body:not([data-fold-closing])") !== null ||
     el.closest(".transcript-view:not(.is-active)") !== null ||
     el.closest(".subagent-block.collapsed > .subagent-body") !== null
   );
@@ -2198,7 +2220,7 @@ function mountOpenProse(st: TurnRender, open: OpenEntry, live: boolean): void {
     // The lane's tail is paged out; it mounts when the window reaches its seal.
     return;
   }
-  const run = tailSeq < 0 ? null : proseRunAt(st.turn, tailSeq, st.lane, st.firstPlan);
+  const run = tailSeq < 0 ? null : proseRunAt(st.turn, tailSeq, st.lane, st.folds);
   const view =
     (run === null ? undefined : st.proseRuns.get(run.from)) ??
     buildProseRun(st, st.bodyEl, -1, open.text, live);
@@ -2297,7 +2319,7 @@ function releaseOpenTail(st: TurnRender): void {
 function lastRenderedSeq(st: TurnRender): number {
   for (let seq = turnSpan(st.turn) - 1; seq > 0; seq--) {
     const e = entryAt(st.turn, seq);
-    if (e !== undefined && entryRenders(e, st.lane, st.firstPlan)) {
+    if (e !== undefined && entryRenders(e, st.lane, st.folds)) {
       return seq;
     }
   }
@@ -2357,7 +2379,6 @@ function redrawSettledRows(pick: (id: string, steer: EntrySteer) => boolean): vo
       if (picked !== undefined) {
         note.dataset["groupOpen"] = picked;
       }
-      note.hidden = old.hidden;
       stampEntry(st, note, seq);
       old.replaceWith(note);
       regroupWorkflowUpdates(st);
@@ -2849,7 +2870,7 @@ function indexGroups(st: TurnRender): GroupIndex {
   // Every entry this view draws at its own position posts into the root lane at its `seq` and closes the tool-card
   // run unless it is a tool card, so any rendering kind breaks a run. A delegate posts only its card.
   for (const e of st.turn.body) {
-    if (!entryRenders(e, st.lane, st.firstPlan)) {
+    if (!entryRenders(e, st.lane, st.folds)) {
       continue;
     }
     if (e.kind !== "tool_call") {

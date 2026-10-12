@@ -83,6 +83,12 @@ export const ICON_DIFF =
 export const ICON_PLAY = svg("ui", '<polygon points="5 3 19 12 5 21 5 3"/>');
 export const ICON_CHEVRON_DOWN = svg("ui", '<path d="M6 9l6 6 6-6"/>');
 export const ICON_CHEVRON_UP = svg("ui", '<path d="M18 15l-6-6-6 6"/>');
+/**
+ * The turn map's steps draw one chevron of the 10×5 pair `#scroll-bottom` stacks in `static/index.html`, so the two
+ * navigators at the map's foot read as one set (`icon-step-chevron.test.ts`).
+ */
+export const ICON_STEP_PREV = svg("ui", '<path d="M7 14.5l5-5 5 5"/>');
+export const ICON_STEP_NEXT = svg("ui", '<path d="M7 9.5l5 5 5-5"/>');
 export const ICON_SEND = svg("ui", PATH_SEND);
 // The AI-generate glyph (Lucide "sparkles") for buttons that ask a model to fill a field. Not an emoji: a colour
 // font beside a stroked arrow renders at its own weight and baseline.

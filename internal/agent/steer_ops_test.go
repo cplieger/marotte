@@ -539,7 +539,7 @@ func TestCmdSteerRemove_ATurnStartingUnderADeleteWaitsAndLaterDeletesAreRefused(
 		}
 		late, _ := s.q.RouteSteer("c1", "steer-c", "c", promptHolder)
 		s.kas(late)
-		if _, refuse := s.q.BeginRemove("c1", "steer-c", "op-late"); refuse != command.SteerRefuseStarting {
+		if _, refuse := s.q.BeginRemove("c1", "steer-c", "op-late", false); refuse != command.SteerRefuseStarting {
 			t.Errorf("a delete after StartTurn = %q, want starting", refuse)
 		}
 

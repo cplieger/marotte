@@ -74,7 +74,12 @@ function paintTurns(chat: string, turnRows: Entry[][]): void {
 }
 
 const CSS = `
-  .ct-text { font: 16px/20px monospace; overflow-wrap: anywhere; }
+  .ct-text {
+    font: 16px/20px monospace;
+    overflow-wrap: anywhere;
+    --uip-disclosure-duration: 200ms;
+    --uip-disclosure-easing: ease;
+  }
   .ct-text[data-clamped] {
     display: -webkit-box;
     -webkit-line-clamp: 3;
@@ -142,6 +147,25 @@ async function observerRuns(): Promise<void> {
   });
 }
 
+/** The height slide's two ends on `box`. */
+function slideFrames(box: Element): { from: number; to: number } {
+  const [anim] = box.getAnimations();
+  const frames = (anim?.effect as KeyframeEffect | null)?.getKeyframes() ?? [];
+  return {
+    from: parseFloat(String(frames[0]?.["blockSize"])),
+    to: parseFloat(String(frames.at(-1)?.["blockSize"])),
+  };
+}
+
+async function finishSlides(box: Element): Promise<void> {
+  const anims = box.getAnimations();
+  for (const a of anims) {
+    a.finish();
+  }
+  await Promise.all(anims.map((a) => a.finished));
+  await Promise.resolve();
+}
+
 const ONE_LINE = "target main";
 const LONG = "the quick brown fox jumps over the lazy dog ".repeat(12);
 
@@ -200,9 +224,53 @@ describe("opening and closing", () => {
     expect(p.more.getAttribute("aria-expanded")).toBe("true");
 
     p.more.click();
+    await finishSlides(p.text);
     expect(p.text.hasAttribute("data-clamped")).toBe(true);
     expect(p.more.textContent).toBe("Show more");
     expect(p.more.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("slides open from the clamped height to the whole text, and shut again", async () => {
+    const p = mount(LONG, 400);
+    await settles(p, false, "offered");
+    const shut = p.text.getBoundingClientRect().height;
+    p.more.click();
+    const open = slideFrames(p.text);
+    expect(open.from).toBeCloseTo(shut, 1);
+    await finishSlides(p.text);
+    expect(open.to).toBeCloseTo(p.text.getBoundingClientRect().height, 1);
+    expect(open.to).toBeGreaterThan(shut);
+
+    p.more.click();
+    const close = slideFrames(p.text);
+    expect(close.from).toBeCloseTo(open.to, 1);
+    expect(close.to).toBeCloseTo(shut, 1);
+  });
+
+  it("keeps the text whole while it slides shut, a resize mid-slide included", async () => {
+    const p = mount(LONG, 400);
+    await settles(p, false, "offered");
+    p.more.click();
+    await finishSlides(p.text);
+    p.more.click();
+    expect(p.more.textContent, "the label flips at once").toBe("Show more");
+    host.style.inlineSize = "380px";
+    await observerRuns();
+    expect(p.text.getAnimations(), "still sliding").not.toHaveLength(0);
+    expect(p.text.hasAttribute("data-clamped"), "unclamped until the slide ends").toBe(false);
+    await finishSlides(p.text);
+    expect(p.text.hasAttribute("data-clamped")).toBe(true);
+  });
+
+  it("collapse() snaps shut, cancelling a slide still running", async () => {
+    const p = mount(LONG, 400);
+    await settles(p, false, "offered");
+    const handle = attachClamp(p.text, p.more);
+    p.more.click();
+    expect(p.text.getAnimations()).not.toHaveLength(0);
+    handle.collapse();
+    expect(p.text.getAnimations()).toHaveLength(0);
+    expect(p.text.hasAttribute("data-clamped")).toBe(true);
   });
 
   it("leaves an expansion alone when the box resizes under it", async () => {

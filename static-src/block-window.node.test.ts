@@ -11,7 +11,8 @@ import {
   effectiveRunID,
   entryAt,
   entryRenders,
-  firstPlanSeq,
+  NO_FOLDS,
+  turnFolds,
   planResidency,
   proseRunAt,
   runCardOwners,
@@ -171,7 +172,7 @@ describe("entryRenders", () => {
     "refuses a %s, which renders elsewhere",
     (kind) => {
       // Header, footer, nothing, and its call's own card: exported so budget and spacer agree.
-      expect(entryRenders(entry(1, kind), "", -1)).toBe(false);
+      expect(entryRenders(entry(1, kind), "", NO_FOLDS)).toBe(false);
     },
   );
 
@@ -185,38 +186,68 @@ describe("entryRenders", () => {
     "model_switched",
     "model_routed",
     "mode_switched",
-    "turn_revert",
   ] as const)("draws a %s at its own position", (kind) => {
-    expect(entryRenders(entry(1, kind), "", -1)).toBe(true);
+    expect(entryRenders(entry(1, kind), "", NO_FOLDS)).toBe(true);
   });
 
   it("draws only the FIRST plan of the lane, every later one folding into its card", () => {
-    expect(entryRenders(entry(3, "plan"), "", 3)).toBe(true);
-    expect(entryRenders(entry(7, "plan"), "", 3)).toBe(false);
+    expect(entryRenders(entry(3, "plan"), "", { ...NO_FOLDS, plan: 3 })).toBe(true);
+    expect(entryRenders(entry(7, "plan"), "", { ...NO_FOLDS, plan: 3 })).toBe(false);
+  });
+
+  it("draws only the NEWEST revert of the lane, which replaces an earlier one's row", () => {
+    expect(entryRenders(entry(3, "turn_revert"), "", { ...NO_FOLDS, revert: 7 })).toBe(false);
+    expect(entryRenders(entry(7, "turn_revert"), "", { ...NO_FOLDS, revert: 7 })).toBe(true);
   });
 
   it("refuses an entry of any lane but the VIEW's root", () => {
     // `lane` is the view's root: `""` for the transcript, a delegate's uuid for its own page.
-    expect(entryRenders(text(1, "sub-A"), "", -1)).toBe(false);
-    expect(entryRenders(text(1, "sub-A"), "sub-A", -1)).toBe(true);
-    expect(entryRenders(text(1), "sub-A", -1)).toBe(false);
+    expect(entryRenders(text(1, "sub-A"), "", NO_FOLDS)).toBe(false);
+    expect(entryRenders(text(1, "sub-A"), "sub-A", NO_FOLDS)).toBe(true);
+    expect(entryRenders(text(1), "sub-A", NO_FOLDS)).toBe(false);
   });
 });
 
-describe("firstPlanSeq", () => {
-  it("names the first plan of the given lane", () => {
-    const t = turn("t1", [text(1), entry(2, "plan"), entry(3, "plan")]);
-    expect(firstPlanSeq(t, "")).toBe(2);
+describe("turnFolds", () => {
+  it("names the first plan and the newest revert of the given lane", () => {
+    const t = turn("t1", [
+      text(1),
+      entry(2, "plan"),
+      entry(3, "turn_revert"),
+      entry(4, "plan"),
+      entry(5, "turn_revert"),
+    ]);
+    expect(turnFolds(t, "")).toMatchObject({ plan: 2, revert: 5 });
+  });
+
+  it("hides a dropped agent note the same turn read, as a note or a take-up, and no other drop", () => {
+    const drop = (seq: number, id: string): Entry => ({
+      ...entry(seq, "steer", { text: "", origin: "agent", state: "dropped", reason: "boundary" }),
+      id,
+    });
+    const t = turn("t1", [
+      entry(1, "steer_delivered", { steer_id: "wfmsg-1", kas_id: "notify-a", read_ts: 1 }),
+      { ...entry(2, "steer", { text: "done", origin: "agent", state: "read" }), id: "notify-b" },
+      drop(3, "notify-a"),
+      drop(4, "notify-b"),
+      drop(5, "notify-c"),
+    ]);
+    const folds = turnFolds(t, "");
+    expect([...folds.readDrop].sort()).toEqual(["notify-a", "notify-b"]);
+    expect(t.body.filter((e) => entryRenders(e, "", folds)).map((e) => e.id)).toEqual([
+      "notify-b",
+      "notify-c",
+    ]);
   });
 
   it("is per LANE, so a delegate's plan is not the transcript's first", () => {
     const t = turn("t1", [entry(1, "plan", {}, { lane: "sub-A" }), entry(2, "plan")]);
-    expect(firstPlanSeq(t, "")).toBe(2);
-    expect(firstPlanSeq(t, "sub-A")).toBe(1);
+    expect(turnFolds(t, "").plan).toBe(2);
+    expect(turnFolds(t, "sub-A").plan).toBe(1);
   });
 
-  it("answers -1 for a turn holding no plan, which no seq can equal", () => {
-    expect(firstPlanSeq(turn("t1", [text(1)]), "")).toBe(-1);
+  it("answers -1 for a turn holding neither kind, which no seq can equal", () => {
+    expect(turnFolds(turn("t1", [text(1)]), "")).toEqual(NO_FOLDS);
   });
 });
 
@@ -355,32 +386,35 @@ describe("sliceTurn", () => {
     expect(sliceTurn(t, { from: 1, to: 3 })).toEqual({ from: 1, to: 3 });
   });
 
-  it("takes a hoisted firstPlan, so a caller in a loop needs no re-scan", () => {
+  it("takes hoisted folds, so a caller in a loop needs no re-scan", () => {
     // The plan at seq 2 renders, so it bounds the run either way; what the parameter proves
     // is that the caller's own answer is the one used.
     const t = turn("t1", [text(1), entry(2, "plan"), text(3)]);
-    expect(sliceTurn(t, { from: 3, to: 4 }, "", 2)).toEqual({ from: 3, to: 4 });
+    expect(sliceTurn(t, { from: 3, to: 4 }, "", { ...NO_FOLDS, plan: 2 })).toEqual({
+      from: 3,
+      to: 4,
+    });
   });
 });
 
 describe("proseRunAt", () => {
   it("answers the run's whole range for one of its members", () => {
     const t = turn("t1", [text(1), text(2), call(3)]);
-    expect(proseRunAt(t, 2, "", -1)).toEqual({ from: 1, to: 3 });
+    expect(proseRunAt(t, 2, "", NO_FOLDS)).toEqual({ from: 1, to: 3 });
   });
 
   it("answers null for a seq that is not prose this view draws", () => {
     // The MOUNT's door onto the same rule the window snap applies, so an edge and a bubble
     // cannot disagree about where a run begins.
     const t = turn("t1", [text(1), call(2), text(3, "sub-A")]);
-    expect(proseRunAt(t, 2, "", -1)).toBeNull();
-    expect(proseRunAt(t, 3, "", -1)).toBeNull();
-    expect(proseRunAt(t, 0, "", -1)).toBeNull();
+    expect(proseRunAt(t, 2, "", NO_FOLDS)).toBeNull();
+    expect(proseRunAt(t, 3, "", NO_FOLDS)).toBeNull();
+    expect(proseRunAt(t, 0, "", NO_FOLDS)).toBeNull();
   });
 
   it("agrees with sliceTurn on the run it names", () => {
     const t = turn("t1", texts(5));
-    const run = proseRunAt(t, 3, "", -1) as EntryRange;
+    const run = proseRunAt(t, 3, "", NO_FOLDS) as EntryRange;
     expect(sliceTurn(t, { from: 3, to: 4 })).toEqual(run);
   });
 
@@ -392,8 +426,9 @@ describe("proseRunAt", () => {
       entry(2, "turn_revert", { from: "t-9", from_n: 9, through: "t-9", cause: "rewind" }),
       text(3),
     ]);
-    expect(proseRunAt(cut, 1, "", -1)).toEqual({ from: 1, to: 2 });
-    expect(proseRunAt(cut, 3, "", -1)).toEqual({ from: 3, to: 4 });
+    const folds = turnFolds(cut, "");
+    expect(proseRunAt(cut, 1, "", folds)).toEqual({ from: 1, to: 2 });
+    expect(proseRunAt(cut, 3, "", folds)).toEqual({ from: 3, to: 4 });
 
     // The control: a turn_bind renders nothing, so the walk steps over it and keeps ONE run.
     const bound = turn("t1", [
@@ -401,7 +436,7 @@ describe("proseRunAt", () => {
       entry(2, "turn_bind", { kas_message_id: "kas-1", session_id: "sess-1" }),
       text(3),
     ]);
-    expect(proseRunAt(bound, 1, "", -1)).toEqual({ from: 1, to: 4 });
+    expect(proseRunAt(bound, 1, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
   });
 });
 

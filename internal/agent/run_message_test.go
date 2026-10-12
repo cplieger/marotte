@@ -90,7 +90,12 @@ func messageHub(t *testing.T, run marotte.RunStatus, step marotte.RunNodeStatus)
 
 func stepSteersIn(t *testing.T, h *Runtime) []marotte.EntrySteer {
 	t.Helper()
-	l, err := h.runs.log.log(t.Context(), "wf_1")
+	return stepSteersAt(t, h, "wf_1")
+}
+
+func stepSteersAt(t *testing.T, h *Runtime, workflowID string) []marotte.EntrySteer {
+	t.Helper()
+	l, err := h.runs.log.log(t.Context(), workflowID)
 	if err != nil || l == nil {
 		t.Fatalf("Setup: the run log is unreadable: %v", err)
 	}
@@ -274,7 +279,7 @@ func TestRemoveStepSteer_DeletesARowKASHolds(t *testing.T) {
 	br.mu.Unlock()
 	h.coord.turns.observe(runChatID("wf_1"), gen, 3)
 
-	if err := h.runs.removeStepSteer(t.Context(), "wf_1", reviewPath, "steer-m-7"); err != nil {
+	if err := h.runs.removeStepSteer(t.Context(), "wf_1", reviewPath, "steer-m-7", false); err != nil {
 		t.Fatalf("RemoveStepSteer = %v, want nil", err)
 	}
 	if params := br.paramsFor(marotte.MethodSessionSteerClear); params["sessionId"] != marotte.SessionID("sess_step") {
@@ -286,9 +291,30 @@ func TestRemoveStepSteer_DeletesARowKASHolds(t *testing.T) {
 	}
 }
 
+// An edit takes the row back to change it, so the step's log gets no note for it.
+func TestRemoveStepSteer_AnEditLeavesNoNote(t *testing.T) {
+	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-7"); err != nil {
+		t.Fatalf("Setup: MessageStep = %v", err)
+	}
+	br.setCallResult(marotte.MethodSessionSteerClear, json.RawMessage(`{"messageIds":["steer-m-7"]}`))
+	gen := h.coord.turns.attachForward(runChatID("wf_1")).gen
+	br.mu.Lock()
+	br.deliveredSeq = 3
+	br.mu.Unlock()
+	h.coord.turns.observe(runChatID("wf_1"), gen, 3)
+
+	if err := h.runs.removeStepSteer(t.Context(), "wf_1", reviewPath, "steer-m-7", true); err != nil {
+		t.Fatalf("RemoveStepSteer = %v, want nil", err)
+	}
+	if got := stepSteersIn(t, h); len(got) != 0 {
+		t.Errorf("run log steers = %+v, want none for an edited row", got)
+	}
+}
+
 func TestRemoveStepSteer_AStepWithNoRowsIsNotWaiting(t *testing.T) {
 	h, _, _ := newTestHub()
-	err := h.runs.removeStepSteer(t.Context(), "wf_1", reviewPath, "steer-x")
+	err := h.runs.removeStepSteer(t.Context(), "wf_1", reviewPath, "steer-x", false)
 	rec := httptest.NewRecorder()
 	h.runRoutes.writeStepErr(rec, "steer remove", "wf_1", reviewPath, err)
 	if rec.Code != http.StatusNotFound || reasonOf(t, rec.Body.Bytes()) != command.SteerRefuseNotWaiting {

@@ -1,27 +1,12 @@
 // Context bar update, from chat.ts's active-session effect: only the active session (and switches) refresh it.
 
-import type { Session, MeteringItem, TurnState } from "./types.js";
+import type { Session, MeteringItem } from "./types.js";
 import { updateContextBar } from "./status.js";
 import { effortPillLabel } from "./effort.js";
 import { getCachedModels } from "./picker.js";
 import { getLastEffortFor } from "./session-context.js";
 import { compactionPoint, compactionPolicy } from "./context-ring.js";
-import { entryRenders } from "./block-window.js";
-
-/**
- * Each lane's first `plan` seq, the one that renders, shared by both counts. block-window.ts's `firstPlanSeq`
- * answers the same over a projected turn's `body`, and the two must agree.
- */
-function firstPlanByLane(t: TurnState): Map<string, number> {
-  const firstPlan = new Map<string, number>();
-  for (const e of t.entries) {
-    const lane = e.lane ?? "";
-    if (e.kind === "plan" && !firstPlan.has(lane)) {
-      firstPlan.set(lane, e.seq);
-    }
-  }
-  return firstPlan;
-}
+import { entryRenders, foldsByLane, NO_FOLDS } from "./block-window.js";
 
 /**
  * Reachable entries the watermark covers, or undefined when this window cannot say. Counted over `entryRenders`' set
@@ -39,10 +24,10 @@ function summarizedCount(s: Session): number | undefined {
     if (t === undefined) {
       continue;
     }
-    const firstPlan = firstPlanByLane(t);
+    const folds = foldsByLane(t.entries);
     for (const e of t.entries) {
       const lane = e.lane ?? "";
-      if (entryRenders(e, lane, firstPlan.get(lane) ?? -1)) {
+      if (entryRenders(e, lane, folds.get(lane) ?? NO_FOLDS)) {
         seen++;
       }
       if (e.id === watermark) {
@@ -64,10 +49,10 @@ export function refreshContextUI(s: Session): void {
     if (t === undefined) {
       continue;
     }
-    const firstPlan = firstPlanByLane(t);
+    const folds = foldsByLane(t.entries);
     for (const e of t.entries) {
       const lane = e.lane ?? "";
-      if (!entryRenders(e, lane, firstPlan.get(lane) ?? -1)) {
+      if (!entryRenders(e, lane, folds.get(lane) ?? NO_FOLDS)) {
         continue;
       }
       entryCount++;

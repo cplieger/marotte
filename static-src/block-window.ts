@@ -69,15 +69,15 @@ export function turnSpan(t: Turn): number {
 
 /**
  * Whether this view renders anything AT THIS ENTRY'S OWN POSITION; the budget and the price
- * must answer identically. `lane` is the VIEW's root; `firstPlan` is that lane's
- * `firstPlanSeq`. `turn_open`, `turn_close`, `tool_result`, `turn_bind` and `reconciled`
- * render elsewhere or nowhere.
+ * must answer identically. `lane` is the VIEW's root; `folds` is that lane's `turnFolds`.
+ * `turn_open`, `turn_close`, `tool_result`, `turn_bind` and `reconciled` render elsewhere or
+ * nowhere.
  */
-export function entryRenders(e: Entry, lane: string, firstPlan: number): boolean {
+export function entryRenders(e: Entry, lane: string, folds: TurnFolds): boolean {
   if (e.kind === "steer") {
     // A steer is the READER's words, so it renders in the parent's flow whichever lane consumed
     // it; the lane reaches the note as a marker (`buildSteerNote`).
-    return lane === "";
+    return lane === "" && !(folds.readDrop.has(e.id) && payloadOf(e, "steer")?.state === "dropped");
   }
   if ((e.lane ?? "") !== lane) {
     return false;
@@ -91,23 +91,82 @@ export function entryRenders(e: Entry, lane: string, firstPlan: number): boolean
     case "steer_delivered":
       return false;
     case "plan":
-      return firstPlan === e.seq;
+      return folds.plan === e.seq;
+    case "turn_revert":
+      return folds.revert === e.seq;
     default:
       return true;
   }
 }
 
-/**
- * The `seq` of the turn's first `plan` in `lane`, or -1: the one that renders. Hoisted ONCE
- * per turn per pass for `entryRenders`, since a long turn holds several plans.
- */
-export function firstPlanSeq(t: Turn, lane: string): number {
-  for (const e of t.body) {
-    if (e.kind === "plan" && (e.lane ?? "") === lane) {
-      return e.seq;
+/** The one entry of each folding kind that renders in a lane, by `seq`, -1 for none: the FIRST
+ *  `plan` (a later one replaces its card's state) and the NEWEST `turn_revert` (rewinding to the
+ *  same turn again replaces its "Rewound to here" row). `readDrop` holds the turn's dropped agent
+ *  notes whose id the same turn read, as a read note or a take-up's `kas_id`: KAS's boundary clear
+ *  names what the turn injected, and that is no loss to show. */
+export interface TurnFolds {
+  readonly plan: number;
+  readonly revert: number;
+  readonly readDrop: ReadonlySet<string>;
+}
+
+/** `entries`' folds per lane. Hoisted ONCE per turn per pass, since a long turn holds several
+ *  plans; takes a `TurnState`'s entries or a `Turn`'s body alike. */
+export function foldsByLane(entries: readonly Entry[]): Map<string, TurnFolds> {
+  const readDrop = readDrops(entries);
+  const out = new Map<string, { plan: number; revert: number; readDrop: ReadonlySet<string> }>();
+  for (const e of entries) {
+    if (e.kind !== "plan" && e.kind !== "turn_revert") {
+      continue;
+    }
+    const lane = e.lane ?? "";
+    let f = out.get(lane);
+    if (f === undefined) {
+      f = { plan: -1, revert: -1, readDrop };
+      out.set(lane, f);
+    }
+    if (e.kind === "plan" && f.plan < 0) {
+      f.plan = e.seq;
+    } else if (e.kind === "turn_revert") {
+      f.revert = e.seq;
     }
   }
-  return -1;
+  if (readDrop.size > 0 && !out.has("")) {
+    out.set("", { plan: -1, revert: -1, readDrop });
+  }
+  return out;
+}
+
+const NONE: ReadonlySet<string> = new Set();
+
+/** The ids of `entries`' dropped agent notes the same entries read (`TurnFolds.readDrop`). */
+function readDrops(entries: readonly Entry[]): ReadonlySet<string> {
+  const read = new Set<string>();
+  const dropped: string[] = [];
+  for (const e of entries) {
+    const steer = payloadOf(e, "steer");
+    if (steer?.origin === "agent") {
+      if (steer.state === "dropped") {
+        dropped.push(e.id);
+      } else {
+        read.add(e.id);
+      }
+    }
+    const d = payloadOf(e, "steer_delivered");
+    if (d !== undefined && d.dropped !== true && d.kas_id !== undefined && d.kas_id !== "") {
+      read.add(d.kas_id);
+    }
+  }
+  const out = dropped.filter((id) => read.has(id));
+  return out.length === 0 ? NONE : new Set(out);
+}
+
+/** The folds of a lane that holds neither kind. */
+export const NO_FOLDS: TurnFolds = { plan: -1, revert: -1, readDrop: NONE };
+
+/** `t`'s folds in `lane`. */
+export function turnFolds(t: Turn, lane: string): TurnFolds {
+  return foldsByLane(t.body).get(lane) ?? NO_FOLDS;
 }
 
 /**
@@ -165,12 +224,24 @@ export function runCardOwners(turns: readonly Turn[], lane = ""): ReadonlyMap<st
  * the first drawn entry. The lane's first `plan` is resolved on arrival, in `seq` order.
  */
 export function rendersNothing(t: Turn, lane = ""): boolean {
-  let firstPlan = -1;
+  // The whole body is read only for a dropped agent note, whose answer turns on entries anywhere in the body.
+  let readDrop: ReadonlySet<string> | undefined;
+  let plan = -1;
   for (const e of t.body) {
-    if (firstPlan < 0 && e.kind === "plan" && (e.lane ?? "") === lane) {
-      firstPlan = e.seq;
+    if (plan < 0 && e.kind === "plan" && (e.lane ?? "") === lane) {
+      plan = e.seq;
     }
-    if (entryRenders(e, lane, firstPlan)) {
+    // Any revert in the lane answers: the newest one renders, whichever that is.
+    const renders =
+      e.kind === "turn_revert"
+        ? (e.lane ?? "") === lane
+        : entryRenders(e, lane, {
+            plan,
+            revert: -1,
+            readDrop:
+              payloadOf(e, "steer")?.state === "dropped" ? (readDrop ??= readDrops(t.body)) : NONE,
+          });
+    if (renders) {
       return false;
     }
   }
@@ -202,9 +273,9 @@ export function sliceTurn(
   t: Turn,
   range: EntryRange,
   lane = "",
-  // The lane's `firstPlanSeq`, resolved below only for a caller that holds none: a caller
-  // inside a per-item loop already has it (`firstPlanSeq` states why one is hoisted).
-  firstPlan?: number,
+  // The lane's `turnFolds`, resolved below only for a caller that holds none: a caller
+  // inside a per-item loop already has them (`foldsByLane` states why they are hoisted).
+  folds?: TurnFolds,
 ): EntryRange {
   const span = turnSpan(t);
   const from = Math.min(Math.max(range.from, 0), span);
@@ -212,8 +283,8 @@ export function sliceTurn(
   if (from >= to) {
     return { from, to };
   }
-  const plan = firstPlan ?? firstPlanSeq(t, lane);
-  return { from: runStart(t, from, lane, plan), to: runEnd(t, to - 1, lane, plan) + 1 };
+  const f = folds ?? turnFolds(t, lane);
+  return { from: runStart(t, from, lane, f), to: runEnd(t, to - 1, lane, f) + 1 };
 }
 
 /**
@@ -224,24 +295,24 @@ export function proseRunAt(
   t: Turn,
   seq: number,
   lane: string,
-  firstPlan: number,
+  folds: TurnFolds,
 ): EntryRange | null {
-  if (!inProseRun(t, seq, lane, firstPlan)) {
+  if (!inProseRun(t, seq, lane, folds)) {
     return null;
   }
-  return { from: runStart(t, seq, lane, firstPlan), to: runEnd(t, seq, lane, firstPlan) + 1 };
+  return { from: runStart(t, seq, lane, folds), to: runEnd(t, seq, lane, folds) + 1 };
 }
 
 /** Whether `seq` is a `text` entry this view draws — a prose run's member. */
-function inProseRun(t: Turn, seq: number, lane: string, firstPlan: number): boolean {
+function inProseRun(t: Turn, seq: number, lane: string, folds: TurnFolds): boolean {
   const e = entryAt(t, seq);
-  return e?.kind === "text" && entryRenders(e, lane, firstPlan);
+  return e?.kind === "text" && entryRenders(e, lane, folds);
 }
 
 /** The first `seq` of the prose run `seq` sits in, or `seq` when it is not in one. An entry
  *  that renders nothing does not break a run, so the walk steps over it. */
-function runStart(t: Turn, seq: number, lane: string, firstPlan: number): number {
-  if (!inProseRun(t, seq, lane, firstPlan)) {
+function runStart(t: Turn, seq: number, lane: string, folds: TurnFolds): number {
+  if (!inProseRun(t, seq, lane, folds)) {
     return seq;
   }
   let first = seq;
@@ -250,9 +321,9 @@ function runStart(t: Turn, seq: number, lane: string, firstPlan: number): number
     if (e === undefined) {
       break;
     }
-    if (inProseRun(t, i, lane, firstPlan)) {
+    if (inProseRun(t, i, lane, folds)) {
       first = i;
-    } else if (entryRenders(e, lane, firstPlan)) {
+    } else if (entryRenders(e, lane, folds)) {
       break;
     }
   }
@@ -260,8 +331,8 @@ function runStart(t: Turn, seq: number, lane: string, firstPlan: number): number
 }
 
 /** The last `seq` of the prose run `seq` sits in, or `seq` when it is not in one. */
-function runEnd(t: Turn, seq: number, lane: string, firstPlan: number): number {
-  if (!inProseRun(t, seq, lane, firstPlan)) {
+function runEnd(t: Turn, seq: number, lane: string, folds: TurnFolds): number {
+  if (!inProseRun(t, seq, lane, folds)) {
     return seq;
   }
   let last = seq;
@@ -271,9 +342,9 @@ function runEnd(t: Turn, seq: number, lane: string, firstPlan: number): number {
     if (e === undefined) {
       break;
     }
-    if (inProseRun(t, i, lane, firstPlan)) {
+    if (inProseRun(t, i, lane, folds)) {
       last = i;
-    } else if (entryRenders(e, lane, firstPlan)) {
+    } else if (entryRenders(e, lane, folds)) {
       break;
     }
   }
@@ -299,16 +370,16 @@ export function planResidency(
   // one flat pass mints the sequence and the flags together.
   const isTool: boolean[] = [];
   const isFree: boolean[] = [];
-  // Kept per turn so the final loop hands it to `sliceTurn` instead of re-scanning the body.
-  const firstPlans: number[] = [];
+  // Kept per turn so the final loop hands them to `sliceTurn` instead of re-scanning the body.
+  const turnFoldsAt: TurnFolds[] = [];
   for (const t of turns) {
     const base = isTool.length;
     const span = turnSpan(t);
-    const firstPlan = firstPlanSeq(t, lane);
-    firstPlans.push(firstPlan);
+    const folds = turnFolds(t, lane);
+    turnFoldsAt.push(folds);
     for (let seq = 0; seq < span; seq++) {
       const e = entryAt(t, seq);
-      const free = e === undefined || !entryRenders(e, lane, firstPlan);
+      const free = e === undefined || !entryRenders(e, lane, folds);
       isFree.push(free);
       isTool.push(!free && e.kind === "tool_call");
     }
@@ -379,7 +450,7 @@ export function planResidency(
     const from = Math.max(lo, base);
     const to = Math.min(hi, base + (spans[i] ?? 0));
     if (from < to) {
-      plan.set(t.id, sliceTurn(t, { from: from - base, to: to - base }, lane, firstPlans[i]));
+      plan.set(t.id, sliceTurn(t, { from: from - base, to: to - base }, lane, turnFoldsAt[i]));
     }
   }
   return plan;

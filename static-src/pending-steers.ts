@@ -27,7 +27,7 @@ export interface SteerStackSource {
   /** Edit: put the row's words in the box, then delete the row. */
   edit(steer: PendingSteer): Promise<void>;
   /** Edit beside a workflow's row, where the only removal is the whole buffer. */
-  editByClear(text: string): Promise<void>;
+  editByClear(steer: PendingSteer): Promise<void>;
   remove(steerID: string): Promise<void>;
   discard(waiting: number): Promise<void>;
   /** The live-region words, which name what the rows are waiting for. */
@@ -310,7 +310,7 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
         "Edit this message",
         "Take it back and put it in the message box",
         () => {
-          void src.editByClear(steer.text);
+          void src.editByClear(steer);
         },
       ),
     );
@@ -390,7 +390,7 @@ async function editSteer(steer: PendingSteer): Promise<void> {
   setComposerValue(steer.text);
   $.promptInput.focus();
   announce("Message taken back for editing");
-  const outcome = await removeSteer.dispatch({ chatID, steerID: steer.id }).outcome;
+  const outcome = await removeSteer.dispatch({ chatID, steerID: steer.id, edit: true }).outcome;
   if (outcome.status !== "error") {
     return;
   }
@@ -429,15 +429,15 @@ function reportRefusal(chatID: string, name: string, message: string): void {
 
 /** Edit beside a workflow result: the only removal is the whole buffer. The box is filled BEFORE
  *  the clear is dispatched, so a failed clear leaves the text there. */
-async function editSteerByClear(text: string): Promise<void> {
+async function editSteerByClear(steer: PendingSteer): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "") {
     return;
   }
-  setComposerValue(text);
+  setComposerValue(steer.text);
   $.promptInput.focus();
   announce("Message taken back for editing");
-  await clearSteers.dispatch({ chatID });
+  await clearSteers.dispatch({ chatID, edit: steer.id });
 }
 
 /** Drop every steer the agent has not read. Confirms only when more than one would go: with a

@@ -1,7 +1,7 @@
 import { el, KEY_ATTR, reconcile } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { apiGet } from "./api-client.js";
-import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
+import { ICON_STEP_NEXT, ICON_STEP_PREV } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import {
   atLiveEdgeNow,
@@ -27,10 +27,6 @@ import { binTurns } from "./rail-select.js";
 import type { TurnBin, TurnMapLayout } from "./rail-select.js";
 import { activeTurnAt, buildOffsets, markerSlotFor, turnsInView } from "./rail-activation.js";
 import type { CardTop, TurnOffsets } from "./rail-activation.js";
-
-/** One row of the session-wide turn index. Declared by the module that MERGES the
- *  set, which is a pure leaf, and re-exported here because this is where the map's
- *  consumers already read it from. */
 
 /** How far the transcript must scroll before the map appears: a threshold, not `> 0`, so a few
  *  pixels of settling overflow do not flicker it. Equal to `BOTTOM_TOLERANCE_PX` by coincidence;
@@ -208,7 +204,7 @@ function stepButton(dir: "prev" | "next"): HTMLButtonElement {
     "aria-label": label,
     "data-tooltip": label,
   }) as HTMLButtonElement;
-  btn.appendChild(iconEl(dir === "prev" ? ICON_CHEVRON_UP : ICON_CHEVRON_DOWN));
+  btn.appendChild(iconEl(dir === "prev" ? ICON_STEP_PREV : ICON_STEP_NEXT));
   return btn;
 }
 
@@ -568,19 +564,13 @@ function paintMap(
   m.nav.toggleAttribute("data-shown", visible);
   setAttr(m.nav, "aria-busy", pending.size > 0 ? "true" : null);
   m.stack.style.setProperty("--turn-map-slots", String(Math.max(1, layout.slots)));
-  m.stack.style.setProperty("--turn-map-total", String(Math.max(1, layout.total)));
   reconcile(m.stack, rows, { key: (r) => r.bin.key, mount: mountPill, update: paintPill });
   m.prev.disabled = current <= 0;
   m.next.disabled = current >= rows.length - 1;
 }
 
 function mountPill(r: PillView): HTMLElement {
-  const link = el(
-    "a",
-    { className: "turn-pill-link" },
-    el("span", { className: "turn-pill-mark" }),
-    el("span", { className: "turn-pill-hit" }),
-  );
+  const link = el("a", { className: "turn-pill-link" }, el("span", { className: "turn-pill-hit" }));
   const li = el("li", { className: "turn-pill" }, link);
   paintPill(li, r);
   return li;

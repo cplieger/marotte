@@ -229,6 +229,36 @@ func TestWorkflowMessage_IdenticalMessagesAreTakenUpOldestFirst(t *testing.T) {
 	}
 }
 
+// TestWorkflowMessage_ATakenUpMessageTheTurnsClearNamesStaysDelivered pins the frames of a chat's turn whose step
+// report was taken up and whose boundary clear then named the take-up's id: the row stays delivered, the clear writes
+// no "Workflow result not delivered" row, and it settles no other waiting message dropped.
+func TestWorkflowMessage_ATakenUpMessageTheTurnsClearNamesStaysDelivered(t *testing.T) {
+	deps, tr := messageDeps(t)
+	tr.HandleWorkflowMessage(t.Context(), testChat,
+		workflowNotify("step", testStep, testParent, "success", "Report written to report.md."))
+	tr.HandleWorkflowMessage(t.Context(), testChat,
+		workflowNotify("step", testStep, testParent, "success", "A later report."))
+	deps.turns.chatTurn(testChat)
+	tr.HandleSessionInfoUpdate(t.Context(), testChat, steerFrame(t, "steering_injected", map[string]any{
+		"messageId":            "notify-feedda60",
+		"content":              "[notification/success] Report written to report.md.",
+		"notificationSeverity": "success",
+	}), FrameAttribution{})
+
+	tr.HandleSessionInfoUpdate(t.Context(), testChat, steerFrame(t, "steering_cleared", map[string]any{
+		"messageIds": []string{"notify-feedda60"},
+	}), FrameAttribution{})
+
+	rows := steerRows(t, deps, testChat)
+	if len(rows) != 2 {
+		t.Fatalf("chat rows = %+v, want the two reports' rows and nothing the clear wrote", rows)
+	}
+	d := deliveredOf(t, deps.chatEntries(testChat))
+	if len(d) != 1 || d[0].SteerID != rows[0].ID || d[0].Dropped || d[0].KASID != "notify-feedda60" {
+		t.Errorf("chat stamps = %+v, want only the first report's take-up, delivered", d)
+	}
+}
+
 func TestWorkflowMessage_AClearedMessageIsSettledDroppedWithNoNewRow(t *testing.T) {
 	deps, tr := messageDeps(t)
 	tr.HandleWorkflowMessage(t.Context(), testChat,

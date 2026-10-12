@@ -60,7 +60,11 @@ var entryFoldFixtureComment = []string{
 	"(the export writes a rule plus \"Rewound to here\"; the client draws the boundary",
 	"row), and because it renders it BREAKS a prose run — block-window.node.test.ts pins",
 	"that half over a synthetic turn, which is the shape this log cannot produce (a",
-	"record always lands at the file's tail, never between two text entries).",
+	"record always lands at the file's tail, never between two text entries). A second",
+	"rewind to the same survivor appends a second record there, and only the NEWEST",
+	"renders on both sides: it replaces the first's row. A dropped agent note whose id",
+	"the same turn read (notify-1) renders on neither side: KAS's boundary clear names",
+	"the notes the turn injected, which is no loss to report.",
 	"",
 	"Every tool_result here is PAIRED with a tool_call in its own turn, deliberately:",
 	"writeUnpairedResult RENDERS a result whose call the turn does not hold, while the",
@@ -118,20 +122,30 @@ func entryFoldLog(t *testing.T) []marotte.Entry {
 	}})
 	f.append(one, "", "cmp-1", marotte.EntryKindCompaction,
 		marotte.EntryCompaction{Summary: "The retry work so far."})
+	// KAS's boundary clear names the agent note the turn injected: the dropped twin renders on neither side.
+	f.append(one, "", "notify-1", marotte.EntryKindSteer, marotte.EntrySteer{
+		Text: "a workflow finished", Origin: marotte.SteerOriginAgent, State: marotte.SteerStateRead,
+	})
+	f.append(one, "", "notify-1", marotte.EntryKindSteer, marotte.EntrySteer{
+		Origin: marotte.SteerOriginAgent, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
+	})
 	f.closeTurn(two, marotte.TurnOutcomeCompleted)
 	f.closeTurn(one, marotte.TurnOutcomeCompleted)
 
-	// The revert is over a throwaway turn: reverting takes every turn from its target to the newest in file order. The
-	// record lands in the newest survivor, so the boundary renders in a surviving turn.
-	gone := f.openTurn(&TurnSpec{Source: marotte.TurnOpenNameEvent})
-	f.closeTurn(gone, marotte.TurnOutcomeCompleted)
-	_, minted, err := f.log.Revert(t.Context(), gone, marotte.TurnRevertCauseRewind, "kas-revert")
-	if err != nil {
-		t.Fatalf("revert %s: %v", gone, err)
-	}
-	if len(minted) != 0 {
-		t.Fatalf("the revert minted a carrier; a surviving turn is what this fixture " +
-			"reverts into, so step 3 must not fire")
+	// Each revert is over a throwaway turn: reverting takes every turn from its target to the newest in file order. The
+	// record lands in the newest survivor, so the boundary renders in a surviving turn; twice, so that survivor holds
+	// two records and only the newest renders.
+	for range 2 {
+		gone := f.openTurn(&TurnSpec{Source: marotte.TurnOpenNameEvent})
+		f.closeTurn(gone, marotte.TurnOutcomeCompleted)
+		_, minted, err := f.log.Revert(t.Context(), gone, marotte.TurnRevertCauseRewind, "kas-revert")
+		if err != nil {
+			t.Fatalf("revert %s: %v", gone, err)
+		}
+		if len(minted) != 0 {
+			t.Fatalf("the revert minted a carrier; a surviving turn is what this fixture " +
+				"reverts into, so step 3 must not fire")
+		}
 	}
 
 	entries, err := f.log.All()
@@ -175,8 +189,7 @@ func normalizeFoldEntries(entries []marotte.Entry) []marotte.Entry {
 // foldRows derives one turn's rows from the export path: writeEntry per entry with one turnRender per turn, so the
 // plan-once fold is the writer's own.
 func foldRows(turn []marotte.Entry) []entryFoldRow {
-	results, calls := indexResults(turn)
-	r := turnRender{results: results, calls: calls, plan: newestPlan(turn)}
+	r := newTurnRender(turn)
 	rows := make([]entryFoldRow, 0, len(turn))
 	for i := range turn {
 		var b strings.Builder

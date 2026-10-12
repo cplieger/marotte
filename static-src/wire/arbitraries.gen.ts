@@ -2002,6 +2002,7 @@ const arbModel = fc.letrec<{
   RunStepSteerRequest: fc.record(
     {
       steer_id: fc.string(),
+      edit: fc.boolean(),
     },
     { requiredKeys: ["steer_id"] },
   ),

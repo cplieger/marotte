@@ -37,7 +37,7 @@ import { error as toastError } from "../toast.js";
 import { recordSteerSent, recordSteerQueued, forgetSteer } from "../store.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { IDEMPOTENCY_COMMAND_FIELD } from "./index.js";
-import { removeSteer, steerChat } from "./chat.js";
+import { clearSteers, removeSteer, steerChat } from "./chat.js";
 
 const mockSend = vi.mocked(transportSend);
 
@@ -149,6 +149,19 @@ describe("steerChat — the command on the wire", () => {
 });
 
 describe("removeSteer — one row out of the buffer", () => {
+  it("marks an edit's row, so it leaves no transcript entry", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: {} });
+
+    await removeSteer.dispatch({ chatID: "c1", steerID: "steer-m2", edit: true }).outcome;
+
+    const [cmd] = mockSend.mock.calls[0] ?? [];
+    expect(cmd).toEqual({
+      type: "steer_remove",
+      chat_id: "c1",
+      payload: { steer_id: "steer-m2", edit: true },
+    });
+  });
+
   it("sends steer_remove naming the row, with transport's own failure notice off", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200, body: {} });
 
@@ -188,5 +201,20 @@ describe("removeSteer — one row out of the buffer", () => {
     expect(recordSteerSent).not.toHaveBeenCalled();
     expect(forgetSteer).not.toHaveBeenCalled();
     expect(recordSteerQueued).not.toHaveBeenCalled();
+  });
+});
+
+describe("clearSteers — the whole buffer", () => {
+  it("names no row for a plain discard, and the edited row for an edit", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: {} });
+
+    await clearSteers.dispatch({ chatID: "c1" }).outcome;
+    await clearSteers.dispatch({ chatID: "c1", edit: "steer-m2" }).outcome;
+
+    expect(mockSend.mock.calls.map(([cmd]) => cmd)).toMatchObject([
+      { type: "steer_clear", chat_id: "c1" },
+      { type: "steer_clear", chat_id: "c1", payload: { edit: "steer-m2" } },
+    ]);
+    expect(mockSend.mock.calls[0]?.[0]).not.toHaveProperty("payload");
   });
 });

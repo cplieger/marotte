@@ -4,6 +4,7 @@
 import type { KindedEntry, ModelSwitchReason, TurnRevertCause } from "./types.js";
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
+import { wireDetailsSlide } from "./disclosure-row.js";
 import { effortLabel } from "./effort.js";
 import { renderMarkdownInto } from "./markdown.js";
 import { labelForMode } from "./roles.js";
@@ -153,24 +154,30 @@ function compactionBreak(icon: string, label: string, summary: string): HTMLElem
   const root = el("details", { className: "compaction" }) as HTMLDetailsElement;
   // `.message assistant` is the app's markdown-prose skin.
   const body = el("div", { className: "compaction-body message assistant" });
-  root.append(
-    el(
-      "summary",
-      { className: "compaction-head" },
-      // Leads the row because it discloses: a disclosing chevron comes first and rotates, a navigating one trails.
-      chevronEl(),
-      el("span", { className: "compaction-icon" }, icon),
-      el("span", { className: "compaction-label" }, label),
-    ),
-    body,
+  const head = el(
+    "summary",
+    { className: "compaction-head" },
+    // Leads the row because it discloses: a disclosing chevron comes first and rotates, a navigating one trails.
+    chevronEl(),
+    el("span", { className: "compaction-icon" }, icon),
+    el("span", { className: "compaction-label" }, label),
   );
+  root.append(head, body);
   let rendered = false;
-  root.addEventListener("toggle", () => {
-    if (!root.open || rendered) {
+  const render = (): void => {
+    if (rendered) {
       return;
     }
     rendered = true;
     renderMarkdownInto(body, summary);
+  };
+  // Ahead of the slide's listener, which measures the open height: `toggle` fires a task too late for it.
+  head.addEventListener("click", render);
+  wireDetailsSlide(root);
+  root.addEventListener("toggle", () => {
+    if (root.open) {
+      render();
+    }
   });
   return root;
 }

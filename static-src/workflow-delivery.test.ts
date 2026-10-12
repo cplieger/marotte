@@ -159,34 +159,99 @@ describe("the update group", () => {
     return c;
   }
 
-  it("folds consecutive step updates under one toggle naming the count and the runs", () => {
+  function box(c: HTMLElement): HTMLElement | null {
+    return c.querySelector<HTMLElement>(":scope > .steer-group");
+  }
+
+  function header(c: HTMLElement): HTMLElement | null {
+    return c.querySelector<HTMLElement>(":scope > .steer-group > .steer-group-header");
+  }
+
+  function body(c: HTMLElement): HTMLElement | null {
+    return c.querySelector<HTMLElement>(":scope > .steer-group > .steer-group-body");
+  }
+
+  it("moves consecutive step updates into one box whose header names the count and the runs", () => {
     const rows = [
       note({ step: "a", run: "wf_1" }),
       note({ step: "b", run: "wf_1" }),
       note({ step: "c", run: "wf_2" }),
     ];
-    const c = container(document.createElement("p"), ...rows);
+    const lead = document.createElement("p");
+    const c = container(lead, ...rows);
     groupWorkflowUpdates(c);
 
-    const toggles = c.querySelectorAll(".steer-group-toggle");
-    expect(toggles).toHaveLength(1);
-    expect(toggles[0]?.textContent).toBe("3 updates from 2 workflows");
-    expect(toggles[0]?.nextElementSibling).toBe(rows[0]);
-    expect(toggles[0]?.getAttribute("aria-expanded")).toBe("true");
-    expect(rows.every((r) => !r.hidden)).toBe(true);
+    expect(c.querySelectorAll(".steer-group")).toHaveLength(1);
+    expect(box(c)?.previousElementSibling).toBe(lead);
+    expect(header(c)?.textContent).toBe("3 updates from 2 workflows");
+    expect(header(c)?.getAttribute("role")).toBe("button");
+    expect(header(c)?.getAttribute("aria-expanded")).toBe("true");
+    expect([...(body(c)?.children ?? [])]).toEqual(rows);
+    expect(c.querySelector(":scope > button")).toBeNull();
   });
 
-  it("closes a group that is not the tail, and the toggle opens it", () => {
+  it("closes a box that is not the tail, and its header opens it", () => {
     const rows = [note({ step: "a", run: "wf_1" }), note({ step: "b", run: "wf_1" })];
     const c = container(...rows, document.createElement("p"));
     groupWorkflowUpdates(c);
-    expect(rows.every((r) => r.hidden)).toBe(true);
+    expect(header(c)?.getAttribute("aria-expanded")).toBe("false");
+    expect(body(c)?.getAttribute("aria-hidden")).toBe("true");
 
-    c.querySelector<HTMLButtonElement>(".steer-group-toggle")?.click();
+    header(c)?.click();
 
-    expect(rows.every((r) => !r.hidden)).toBe(true);
-    expect(c.querySelectorAll(".steer-group-toggle")).toHaveLength(1);
-    expect(c.querySelector(".steer-group-toggle")?.textContent).toBe("2 updates from 1 workflow");
+    expect(header(c)?.getAttribute("aria-expanded")).toBe("true");
+    expect(body(c)?.getAttribute("aria-hidden")).toBe("false");
+    expect(rows[0]?.dataset["groupOpen"], "the pick rides the lead row").toBe("true");
+  });
+
+  it("keeps a seated row where it is on the next pass, and takes a later update in", () => {
+    const rows = [note({ step: "a", run: "wf_1" }), note({ step: "b", run: "wf_1" })];
+    const c = container(...rows);
+    groupWorkflowUpdates(c);
+    const held = box(c);
+    const seated = rows[0]?.parentElement;
+    let moved = 0;
+    const watch = new MutationObserver((records) => {
+      moved += records.filter((r) => r.removedNodes.length > 0).length;
+    });
+    if (seated !== null && seated !== undefined) {
+      watch.observe(seated, { childList: true });
+    }
+
+    const later = note({ step: "c", run: "wf_1" });
+    c.appendChild(later);
+    groupWorkflowUpdates(c);
+    watch.takeRecords();
+    watch.disconnect();
+
+    expect(box(c)).toBe(held);
+    expect([...(body(c)?.children ?? [])]).toEqual([...rows, later]);
+    expect(moved, "no seated row was re-inserted").toBe(0);
+    expect(header(c)?.textContent).toBe("3 updates from 1 workflow");
+  });
+
+  it("hands the rows back and drops the box once its run falls under two", () => {
+    const rows = [note({ step: "a", run: "wf_1" }), note({ step: "b", run: "wf_1" })];
+    const c = container(...rows);
+    groupWorkflowUpdates(c);
+    rows[1]?.remove();
+
+    groupWorkflowUpdates(c);
+
+    expect(box(c)).toBeNull();
+    expect([...c.children]).toEqual([rows[0]]);
+  });
+
+  it("groups a run of workflow results with the step updates, counting runs only when all name one", () => {
+    const rows = [
+      note({ origin: "agent", run: "wf_1" }),
+      note({ origin: "agent" }),
+      note({ step: "a", run: "wf_1" }),
+    ];
+    const c = container(...rows);
+    groupWorkflowUpdates(c);
+    expect([...(body(c)?.children ?? [])]).toEqual(rows);
+    expect(header(c)?.textContent).toBe("3 workflow updates");
   });
 
   it("leaves a lone update, a parent's message and the user's words ungrouped", () => {
@@ -196,6 +261,6 @@ describe("the update group", () => {
       note({ origin: "user" }),
     );
     groupWorkflowUpdates(c);
-    expect(c.querySelector(".steer-group-toggle")).toBeNull();
+    expect(box(c)).toBeNull();
   });
 });

@@ -5,6 +5,7 @@
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
+import { slideBox } from "../disclosure-row.js";
 import { linkifyPaths } from "../linkify.js";
 import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
 // The dot's words, shared with the turn map — see turn-severity.ts.
@@ -136,10 +137,13 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
 const LABEL_SHOW = "Show full message";
 const LABEL_HIDE = "Hide full message";
 
-function setFullShown(more: HTMLElement, full: HTMLElement, on: boolean): void {
+/** Slides `req`, the request block, since the full text has no box to slide while it is hidden. */
+function setFullShown(req: HTMLElement, more: HTMLElement, full: HTMLElement, on: boolean): void {
   more.setAttribute("aria-expanded", on ? "true" : "false");
   more.textContent = on ? LABEL_HIDE : LABEL_SHOW;
-  full.classList.toggle("hidden", !on);
+  slideBox(req, on, (open) => {
+    full.classList.toggle("hidden", !open);
+  });
 }
 
 /** A labelled request's full text behind its opener, both siblings of the text so the folded clamp
@@ -163,7 +167,7 @@ function syncFullText(header: HTMLElement, body: string | undefined): void {
     );
     const shown = el("div", { className: "turn-req-full hidden" });
     opener.addEventListener("click", () => {
-      setFullShown(opener, shown, opener.getAttribute("aria-expanded") !== "true");
+      setFullShown(req, opener, shown, opener.getAttribute("aria-expanded") !== "true");
     });
     // After the text and before the attachments, in reading order.
     req.querySelector(":scope > .turn-req-text")?.after(opener, shown);

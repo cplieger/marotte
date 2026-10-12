@@ -174,21 +174,23 @@ export const messageRunStep = apiAction<
 export const removeRunStepSteer = apiAction<StepAddress & RunStepSteerRequest, { deleted: string }>(
   {
     name: "runs.remove_step_steer",
-    request: ({ workflowID, nodePath, steer_id }) => ({
+    request: ({ workflowID, nodePath, steer_id, edit }) => ({
       method: "POST",
       path: `${runStepURL(workflowID, nodePath)}/steer-remove`,
-      body: { steer_id },
+      body: edit === true ? { steer_id, edit } : { steer_id },
     }),
     error: false,
   },
 );
 
-/** Discard every unread row of a step's dock (the chat's steer_clear, on the step's session). */
-export const clearRunStepSteers = apiAction<StepAddress, { ok: boolean }>({
+/** Discard every unread row of a step's dock (the chat's steer_clear, on the step's session).
+ *  `edit` is the row the reader took back to change, which leaves no transcript entry. */
+export const clearRunStepSteers = apiAction<StepAddress & { edit?: string }, { ok: boolean }>({
   name: "runs.clear_step_steers",
-  request: ({ workflowID, nodePath }) => ({
+  request: ({ workflowID, nodePath, edit }) => ({
     method: "POST",
     path: `${runStepURL(workflowID, nodePath)}/steer-clear`,
+    ...(edit === undefined ? {} : { body: { steer_id: edit, edit: true } }),
   }),
   error: errorAbout(
     ({ workflowID }: { workflowID: string }) => onRun(workflowID),

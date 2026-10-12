@@ -5,7 +5,7 @@ import {
   effectiveRunID,
   entryAt,
   entryRenders,
-  firstPlanSeq,
+  turnFolds,
   runResults,
   sliceTurn,
   turnSpan,
@@ -264,13 +264,13 @@ function* spacerBoxes(
   // Resolved ONCE per call: neither can change within one spacer's arithmetic.
   const est = ENTRY_ESTIMATE_PX[tierNow()];
   const results = runResults(t);
-  const firstPlan = firstPlanSeq(t, lane);
+  const folds = turnFolds(t, lane);
   const per = entryHeights.get(t.id);
   const rows = rowHeights.get(t.id);
   let inRun = false;
   for (let seq = stood.from; seq < stood.to; seq++) {
     const e = entryAt(t, seq);
-    if (e === undefined || !entryRenders(e, lane, firstPlan)) {
+    if (e === undefined || !entryRenders(e, lane, folds)) {
       continue;
     }
     let own: number;
@@ -279,7 +279,7 @@ function* spacerBoxes(
         continue;
       }
       inRun = true;
-      const run = sliceTurn(t, { from: seq, to: seq + 1 }, lane, firstPlan);
+      const run = sliceTurn(t, { from: seq, to: seq + 1 }, lane, folds);
       const measured = rows?.get(seq);
       own =
         measured?.range.from === run.from && measured.range.to === run.to

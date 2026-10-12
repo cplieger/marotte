@@ -63,26 +63,12 @@ const MARKS: [string, () => string][] = [
       ).replace(/^inset 0 0 0 1px /u, ""),
   ],
   [
-    "broken disc",
-    () =>
-      decl(
-        ruleContaining(
-          turns,
-          '.turn-pill[data-severity="broken"] > .turn-pill-link > .turn-pill-mark',
-        ).body,
-        "background",
-      ),
+    "broken bar",
+    () => decl(ruleContaining(turns, '.turn-pill[data-severity="broken"]').body, "--pill-ink"),
   ],
   [
-    "stopped ring",
-    () =>
-      decl(
-        ruleContaining(
-          turns,
-          '.turn-pill[data-severity="stopped"] > .turn-pill-link > .turn-pill-mark',
-        ).body,
-        "box-shadow",
-      ).replace(/^inset 0 0 0 1\.5px /u, ""),
+    "stopped bar",
+    () => decl(ruleContaining(turns, '.turn-pill[data-severity="stopped"]').body, "--pill-ink"),
   ],
   [
     "search-hit square",

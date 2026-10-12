@@ -106,7 +106,7 @@ var lifecycleOps = []lifecycleOp{
 			h.coord.turns.observe(runChatID("wf_1"), gen, 3)
 		},
 		do: func(ctx context.Context, h *Runtime) error {
-			return h.runs.removeStepSteer(ctx, "wf_1", reviewPath, "steer-m-a")
+			return h.runs.removeStepSteer(ctx, "wf_1", reviewPath, "steer-m-a", false)
 		},
 	},
 }

@@ -72,6 +72,23 @@ describe.each(stepRoutes)("the step actions for $id", (c) => {
     expect(sent()).toEqual({ url: `${c.step_url}/steer-remove`, body: { steer_id: "steer-m-1" } });
   });
 
+  it("mark an edit's row on the delete and on the clear", async () => {
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ deleted: "steer-m-1" }), { status: 200 })),
+    );
+    await removeRunStepSteer.dispatch({ ...at, steer_id: "steer-m-1", edit: true }).outcome;
+    expect(sent()).toEqual({
+      url: `${c.step_url}/steer-remove`,
+      body: { steer_id: "steer-m-1", edit: true },
+    });
+    mockFetch.mockClear();
+    await clearRunStepSteers.dispatch({ ...at, edit: "steer-m-1" }).outcome;
+    expect(sent()).toEqual({
+      url: `${c.step_url}/steer-clear`,
+      body: { steer_id: "steer-m-1", edit: true },
+    });
+  });
+
   it("clear the step's rows at its own address", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     await clearRunStepSteers.dispatch(at).outcome;

@@ -100,6 +100,8 @@ export class ScrollController {
   private contentResizeListeners: (() => void)[] = [];
   /** Callbacks fired when a view takes the scroller; `onAttach` owns the contract. */
   private attachListeners: (() => void)[] = [];
+  /** `onLiveEdgeRequest` owns the contract. */
+  private liveEdgeListeners: (() => void)[] = [];
   /** Dispatched for the controller's OWN writes too: a `jumpTo` from the rail or from find-in-chat
    *  moves the reader a long way and the residency window has to follow, whichever side of the self
    *  marker that write falls on. */
@@ -785,6 +787,19 @@ export class ScrollController {
     };
   }
 
+  /** Register `cb` for the reader asking for the live edge (the resume control, a send), called
+   *  in Following BEFORE the landing write, so what it mounts is laid out by the frame the reader
+   *  lands in; returns the unregister. */
+  onLiveEdgeRequest(cb: () => void): () => void {
+    this.liveEdgeListeners.push(cb);
+    return () => {
+      const at = this.liveEdgeListeners.indexOf(cb);
+      if (at >= 0) {
+        this.liveEdgeListeners.splice(at, 1);
+      }
+    };
+  }
+
   /** Register `cb` for a view TAKING the scroller; returns the unregister. */
   onAttach(cb: () => void): () => void {
     this.attachListeners.push(cb);
@@ -948,6 +963,9 @@ export class ScrollController {
     // latch left standing — a drag whose pointerup never arrived — would kill the pin on its first
     // frame and leave the resume control looking dead.
     this.forgetReaderGesture();
+    for (const cb of [...this.liveEdgeListeners]) {
+      cb();
+    }
     this.pinUntil = Date.now() + pinSettleMs;
     this.pinLiveEdgeNow();
     this.queuePinFrame();

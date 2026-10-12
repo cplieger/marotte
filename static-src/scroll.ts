@@ -105,6 +105,9 @@ export function onTranscriptMutate(cb: () => void): () => void {
 export function onReaderGesture(cb: () => void): () => void {
   return getInstance().onReaderGesture(cb);
 }
+export function onLiveEdgeRequest(cb: () => void): () => void {
+  return getInstance().onLiveEdgeRequest(cb);
+}
 /** Register `cb` for a scroll that has settled into one frame; returns the unregister. */
 export function onViewportChange(cb: () => void): () => void {
   return getInstance().onViewportChange(cb);

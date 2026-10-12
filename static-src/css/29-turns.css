@@ -233,18 +233,11 @@
   padding: var(--sp-3);
   min-width: 0;
 
-  /* The fold is a two-beat choreography (user spec, 2026-08-31), keeping LAYOUT animation
-   * away from a RENDERED subtree: sliding a body of hundreds of tool cards shut while its
-   * content renders repaints everything below per frame — the reported freeze. OPEN slides
-   * first with the content transparent, then fades it in; `content-visibility` flips at the
-   * START because the slide needs the intrinsic height as its target. The clip is on THIS
-   * rule: an expand runs after `[data-folded]` is gone and would paint over the footer. */
+  /* The fold's slide length. Its two beats (`slideTurnFold`, disclosure-row.ts) keep the
+   * content transparent while the box slides, since sliding a body of hundreds of rendered
+   * tool cards repaints everything below per frame. The clip is on THIS rule: an open
+   * slides after `[data-folded]` is gone and would paint over the footer. */
   overflow: clip;
-  transition:
-    block-size var(--fold-slide) var(--ease-standard),
-    padding-block var(--fold-slide) var(--ease-standard),
-    opacity var(--dur-standard) var(--ease-enter) var(--fold-slide),
-    content-visibility 0s allow-discrete;
 }
 
 /* An empty body (a prompt whose turn has not started) must leave no padded void. */
@@ -305,13 +298,11 @@
      concentric radius. */
   --footer-inset: var(--sp-2);
 
-  min-height: max(var(--hit-floor), var(--ctl-h-dense));
+  /* Row 1's TRACK, never the box's floor, which stops binding row 1 once the info panel opens
+     beneath it. No `gap`: a column gap is charged beside an EMPTY Rewind track, and the inline
+     spacing is Rewind's own margin. */
+  grid-template-rows: max(var(--hit-floor), var(--ctl-h-dense));
   transition: opacity var(--dur-enter) var(--ease-enter);
-
-  /* ROW gap only. A column gap is charged between the tracks even when the second is EMPTY
-     — `auto` resolves to 0px, the gap beside it does not — so every footer without a Rewind
-     held its readout 8px off the card's gutter. The inline spacing is Rewind's own margin. */
-  row-gap: var(--sp-1);
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
 
@@ -584,35 +575,19 @@
   color: var(--c-text-primary);
 }
 
-/* The footer's own `--footer-inset` is already outside this grid area (`1 / -1`), so the
- * inline padding is the rest of `--sp-3`. `padding-block` is ANIMATED with the height,
- * because `box-sizing: border-box` is universal and a constant one makes the closed end
- * 24px tall. `display: none` at rest: a 0-height item charges row-gap. */
+/* The footer's own `--footer-inset` is already outside this grid area (`1 / -1`), so the inline
+ * padding is the rest of `--sp-3`. The open/close slide is the footer's own (`slideBox`). */
 .turn-info-panel {
   display: none;
-  block-size: 0;
   overflow: clip;
   padding-inline: calc(var(--sp-3) - var(--footer-inset));
-  padding-block: 0;
+  padding-block: var(--sp-3);
   text-align: left;
-  transition:
-    display var(--dur-standard) allow-discrete,
-    block-size var(--dur-standard) var(--ease-standard),
-    padding-block var(--dur-standard) var(--ease-standard);
 }
 
 .turn-footer[data-info="open"] .turn-info-panel {
   display: grid;
   gap: var(--sp-2);
-  block-size: auto;
-  padding-block: var(--sp-3);
-}
-
-@starting-style {
-  .turn-footer[data-info="open"] .turn-info-panel {
-    block-size: 0;
-    padding-block: 0;
-  }
 }
 
 .turn-info-section {
@@ -878,24 +853,23 @@
   justify-content: center;
 }
 
-/* Pitch `clamp(2px, track/total, 8px)`, in whole pixels: with the rows' rounded tops every bar
- * snaps the same way, so the 1px gap between bars survives at the 2px floor. `binTurns` keeps
- * `slots × 2px` inside the track; the max bounds the frame between a track shrink and its
- * ResizeObserver delivery. */
+/* Pitch `min(track / slots, 8px)`, unrounded, so a long chat fills its whole track (`binTurns`
+ * keeps `slots × 2px` inside it); a short chat stops at 8px a row and centres in the track. */
 .turn-map-stack {
   position: relative;
   flex: none;
-  block-size: calc(
-    var(--turn-map-slots) * round(down, clamp(2px, 100cqh / var(--turn-map-total), 8px), 1px)
-  );
-  max-block-size: 100%;
+  block-size: min(100cqh, var(--turn-map-slots) * 8px);
   inline-size: 100%;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-/* One row short of the stack's full travel, so both ends sit inside it. */
+/* A row spans its slot, `[slot, slot + 1) × pitch`, each edge snapped to a whole pixel by the same
+ * expression, so a row's bottom IS the next slot's top and the rows tile the stack at any pitch:
+ * a strip between rows would drop the hover fisheye and the tooltip. `--pill-slot` recovers the
+ * integer slot from `--rail-at` (`turnFraction`). The bar is one pixel short of the floored pitch
+ * on every row, so bars stay one height and one pixel of ground apart at the 2px floor. */
 .turn-pill {
   --pill-ink: var(--c-text-tertiary);
 
@@ -904,25 +878,30 @@
   --pill-hover: 0;
   --pill-focus: 0;
   --pill-current: 0;
+  --pill-slot: round(var(--rail-at) * (var(--turn-map-slots) - 1), 1);
+  --pill-pitch: round(down, min(100cqh, var(--turn-map-slots) * 8px) / var(--turn-map-slots), 1px);
+  --pill-bar: clamp(1px, var(--pill-pitch) - 1px, 3px);
 
   position: absolute;
   inset-inline: 0;
-  top: round(var(--rail-at) * (100% - 100% / var(--turn-map-slots)), 1px);
-  block-size: calc(100% / var(--turn-map-slots));
+  top: round(var(--pill-slot) * 100% / var(--turn-map-slots), 1px);
+
+  /* The max is `binTurns`' 2px floor, which a float `track / slots` can land a hair under. */
+  block-size: max(
+    2px,
+    round((var(--pill-slot) + 1) * 100% / var(--turn-map-slots), 1px) -
+      round(var(--pill-slot) * 100% / var(--turn-map-slots), 1px)
+  );
 }
 
-/* The link IS the row's box, so the rows tile the stack and native hit-testing maps pointer Y to
- * a turn. Under the hit floor on purpose: WCAG 2.5.8's equivalent exception, since the step
- * buttons reach every row at the floor. */
+/* The link IS the row's box, so native hit-testing maps pointer Y to a turn. Under the hit floor
+ * on purpose: WCAG 2.5.8's equivalent exception, since the step buttons reach every row at the
+ * floor. The bar starts at the chat's side of the column and the search-hit square takes the far
+ * end, clear of a full-width bar. */
 .turn-pill-link {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center end;
-
-  /* 2px clear of the hit lane (`.turn-pill-hit`); the full 24px then ends 3px clear of the
-   * severity lane in `--rail-w`. */
-  padding-inline-end: 8px;
+  display: block;
   min-inline-size: 0;
   min-block-size: 0;
   border-radius: var(--r-sm);
@@ -930,15 +909,19 @@
 
 /* Width moves by `transform` alone, so reduced motion is 40-a11y.css's sweep. The scale is the
  * LARGEST of rest, fisheye and current, never their product, under which a current
- * agent-initiated turn draws at rest width. It grows from the scrollbar side toward the transcript.
- * One pixel short of the row at a dense pitch, so neighbouring bars never touch into one column. */
+ * agent-initiated turn draws at rest width. It grows from the chat's side outward. Its inset is
+ * one whole-pixel value for the map, not the row's own centre: rows alternate the floored and the
+ * ceiled pitch, and a per-row centre would wobble the spacing and blur the bar at 1x. */
 .turn-pill-link::before {
   content: "";
+  position: absolute;
+  inset-inline-start: 4px;
+  top: round(down, (var(--pill-pitch) - var(--pill-bar)) / 2, 1px);
   inline-size: 1.5rem;
-  block-size: clamp(1px, 100% - 1px, 3px);
+  block-size: var(--pill-bar);
   border-radius: var(--r-pill);
   background: var(--pill-ink);
-  transform-origin: right;
+  transform-origin: left;
   transform: scaleX(
     max(var(--pill-rest), var(--pill-hover), var(--pill-focus), var(--pill-current))
   );
@@ -954,20 +937,35 @@
   --pill-ink: var(--c-text-secondary);
 }
 
-.turn-pill[data-current] {
-  --pill-ink: var(--c-text-primary);
-  --pill-current: 1;
-}
-
 .turn-pill[data-trigger="system"] {
   --pill-rest: calc(5 / 24);
 }
 
+/* SEVERITY COLOURS THE BAR AND LENGTHENS IT, so it never rests on hue alone (WCAG 1.4.1): broken
+ * rests at 16px, stopped at 13px, clean at 10px. After the trigger rule, so an agent-initiated
+ * failure keeps its length, and the tooltip and accessible name carry the outcome word. */
+.turn-pill[data-severity="stopped"] {
+  --pill-ink: var(--c-yellow);
+  --pill-rest: calc(13 / 24);
+}
+
+.turn-pill[data-severity="broken"] {
+  --pill-ink: var(--c-red);
+  --pill-rest: calc(16 / 24);
+}
+
+/* The current turn is the one accent bar, full width, whatever its outcome. */
+.turn-pill[data-current] {
+  --pill-ink: var(--c-accent);
+  --pill-current: 1;
+}
+
 /* An outline with its middle third cut, so it stays hollow at every pitch: at the 2px floor the
  * outline alone is a filled bar, and a run of running rows would be a solid column told from clean
- * by hue alone (WCAG 1.4.1). The current row keeps its primary bar and says running in the lane. */
+ * by hue alone (WCAG 1.4.1). */
 .turn-pill[data-severity="running"]:not([data-current]) > .turn-pill-link::before {
-  block-size: clamp(1px, 100% - 1px, 4px);
+  --pill-bar: clamp(1px, var(--pill-pitch) - 1px, 4px);
+
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--c-dot-working);
   mask-image: linear-gradient(to right, #000 35%, transparent 35% 65%, #000 65%);
@@ -1007,36 +1005,7 @@
   --pill-focus: calc(12 / 24);
 }
 
-/* SEVERITY IS A SHAPE, never colour alone (WCAG 1.4.1): broken a filled disc, stopped a ring, clean
- * nothing, in a lane left of the bar. The tab dot's silhouette (`--dot-size`, 12-tabs.css). At bin
- * density neighbouring discs overlap into a column, which is why the lane takes no pointer. */
-.turn-pill-mark {
-  inline-size: var(--dot-size);
-  block-size: var(--dot-size);
-  border-radius: 50%;
-  position: absolute;
-  inset-inline-start: 1px;
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-
-.turn-pill[data-severity="broken"] > .turn-pill-link > .turn-pill-mark {
-  background: var(--c-red);
-}
-
-.turn-pill[data-severity="stopped"] > .turn-pill-link > .turn-pill-mark {
-  box-shadow: inset 0 0 0 1.5px var(--c-yellow);
-}
-
-/* The map's running bar, as a capsule at the dot's width: never the stopped ring's circle. */
-.turn-pill[data-current][data-severity="running"] .turn-pill-mark {
-  block-size: calc(var(--dot-size) / 2);
-  border-radius: var(--r-pill);
-  box-shadow: inset 0 0 0 1px var(--c-dot-working);
-}
-
-/* The find highlight's solid ink (`mark.find-hit-current`, 24-find.css). */
+/* The find highlight's solid ink (`mark.find-hit-current`, 24-find.css), at the column's far end. */
 .turn-pill-hit {
   position: absolute;
   inset-inline-end: 2px;
@@ -1097,21 +1066,13 @@
 /* The folded turn: the OPEN card with the body swapped for the face, header and ledger
    footer unchanged — so collapsing changes how much a turn shows, never how a turn reads. */
 
-.turn[data-folded] > .turn-body {
+/* Withheld while `[data-fold-closing]` lets the close fade and slide the still-rendered body:
+ * `content-visibility: hidden` would hide the fade and zero the slide's start height. */
+.turn[data-folded] > .turn-body:not([data-fold-closing]) {
   block-size: 0;
   padding-block: 0;
   content-visibility: hidden;
   opacity: 0;
-
-  /* CLOSE (user spec, 2026-08-31): the content fades out first, the slide starts just
-   * before the fade ends, and `content-visibility` flips TO hidden at the END of the
-   * combined duration — earlier would zero the intrinsic size mid-slide and snap the box
-   * shut. The content being invisible for the whole slide removes the mid-animation repaint. */
-  transition:
-    opacity var(--dur-exit) var(--ease-exit),
-    block-size var(--fold-slide) var(--ease-standard) calc(var(--dur-exit) * 0.8),
-    padding-block var(--fold-slide) var(--ease-standard) calc(var(--dur-exit) * 0.8),
-    content-visibility 0s allow-discrete calc(var(--dur-exit) * 0.8 + var(--fold-slide));
 }
 
 /* A bare hit target holding the shared `.disclosure-chevron` (chevron.ts). The rotation

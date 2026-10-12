@@ -302,6 +302,7 @@ type Translator struct {
 	// steps maps a workflow step's ACP session id to its run and node, fed from the
 	// wire (node_start) and from an inspect read.
 	steps   *stepRegistry
+	read    *readSteers
 	workDir string // last for fieldalignment, as in Roles
 }
 
@@ -332,6 +333,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		turnInterrupt:  r.TurnInterrupt,
 		metering:       r.Metering,
 		steps:          newStepRegistry(),
+		read:           newReadSteers(),
 	}
 	for _, o := range opts {
 		o(t)

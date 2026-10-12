@@ -384,6 +384,26 @@ describe("the coarse tier collapses at a width a fine pointer does not", () => {
     );
   });
 
+  it("fades the menu in on open, at the context menu's enter motion", async () => {
+    await at(896, "coarse");
+    const menu = mountCard("m1");
+    const group = menu.querySelector<HTMLElement>(".turn-actions-group");
+    if (group === null) {
+      throw new Error("no group");
+    }
+    menu.open = true;
+    const fades = group
+      .getAnimations()
+      .filter((a) => a instanceof CSSTransition && a.transitionProperty === "opacity");
+    expect(fades, "one opacity entry").toHaveLength(1);
+    const root = getComputedStyle(document.documentElement);
+    const want = root.getPropertyValue("--uip-popover-enter-duration").trim();
+    expect(fades[0]?.effect?.getTiming().duration).toBe(
+      want.endsWith("ms") ? parseFloat(want) : parseFloat(want) * 1000,
+    );
+    menu.open = false;
+  });
+
   it("keeps the actions inline at the same width on a fine pointer", async () => {
     await at(896, "fine");
     const menu = mountCard("m1");

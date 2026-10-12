@@ -3,8 +3,8 @@ import type { TurnSummary } from "./rail-merge.js";
 import { severityOf } from "./turn-severity.js";
 import type { TurnSeverity } from "./turn-severity.js";
 
-/** The thinnest row the map draws, in CSS px: 29-turns.css's `clamp(2px, …)` relies on no layout
- *  asking for thinner. */
+/** The thinnest row the map draws, in CSS px: 29-turns.css's `track / slots` pitch fills the track
+ *  and relies on no layout asking for thinner. */
 const MIN_PITCH_PX = 2;
 
 export interface TurnBin {
@@ -20,7 +20,7 @@ export interface TurnBin {
 }
 
 export interface TurnMapLayout {
-  /** The session's last turn number, which sets the row pitch `clamp(2px, track/total, 8px)`. */
+  /** The session's last turn number. */
   readonly total: number;
   readonly slots: number;
   readonly bins: readonly TurnBin[];

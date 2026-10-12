@@ -768,6 +768,14 @@ function openDisclosureChain(target: HTMLElement, hit: Hit): void {
         activateQuietly(header);
       }
     }
+    if (cur.classList.contains("steer-group")) {
+      const header = cur.querySelector<HTMLElement>(
+        ':scope > .steer-group-header[aria-expanded="false"]',
+      );
+      if (header !== null) {
+        activateQuietly(header);
+      }
+    }
     if (cur.classList.contains("turn-body")) {
       break;
     }

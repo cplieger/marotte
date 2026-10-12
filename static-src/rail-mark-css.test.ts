@@ -75,7 +75,6 @@ function buildMap(rows: [string, Attrs][] = ROWS): Fixture {
   const stack = document.createElement("ol");
   stack.className = "turn-map-stack";
   stack.style.setProperty("--turn-map-slots", String(rows.length));
-  stack.style.setProperty("--turn-map-total", String(rows.length));
   const track = document.createElement("div");
   track.className = "turn-map-track";
   track.appendChild(stack);
@@ -93,11 +92,9 @@ function buildMap(rows: [string, Attrs][] = ROWS): Fixture {
     const a = document.createElement("a");
     a.className = "turn-pill-link";
     a.href = `#turn-${String(i + 1)}`;
-    const mark = document.createElement("span");
-    mark.className = "turn-pill-mark";
     const hit = document.createElement("span");
     hit.className = "turn-pill-hit";
-    a.append(mark, hit);
+    a.append(hit);
     li.appendChild(a);
     stack.appendChild(li);
     byName.set(name, li);
@@ -168,6 +165,13 @@ function distance(a: readonly number[], b: readonly number[]): number {
   return Math.hypot(...a.slice(0, 3).map((v, i) => v - (b[i] ?? 0)));
 }
 
+/** The bar's vertical middle in viewport px. */
+function barMid(li: HTMLElement): number {
+  return (
+    li.getBoundingClientRect().top + parseFloat(bar(li).top) + parseFloat(bar(li).blockSize) / 2
+  );
+}
+
 function scaleX(li: HTMLElement): number {
   return new DOMMatrixReadOnly(bar(li).transform).a;
 }
@@ -175,14 +179,16 @@ function scaleX(li: HTMLElement): number {
 /** The bar's painted span in viewport px: a `::before` has no rect of its own. */
 function barSpan(li: HTMLElement): { left: number; right: number } {
   const box = link(li).getBoundingClientRect();
-  const right = box.right - parseFloat(getComputedStyle(link(li)).paddingInlineEnd);
-  return { left: right - parseFloat(bar(li).width) * scaleX(li), right };
+  const left = box.left + parseFloat(bar(li).left);
+  return { left, right: left + parseFloat(bar(li).width) * scaleX(li) };
 }
 
 const FULL = 1;
 const NEAR = 16 / 24;
 const NEXT = 12 / 24;
 const REST = 10 / 24;
+const STOPPED_REST = 13 / 24;
+const BROKEN_REST = 16 / 24;
 
 /** A stack of clean rows named r0, r1, … at the 8px pitch. */
 function ladderMap(count: number, extra: Record<number, Attrs> = {}): Fixture {
@@ -206,7 +212,7 @@ function expectLadder(got: number[], want: number[]): void {
   });
 }
 
-describe("the position marks are ink steps and width, never an accent fill", () => {
+describe("the position marks are ink steps and width, the current turn the one accent", () => {
   it("draws a resting bar in tertiary ink", () => {
     const f = buildMap();
     expect(bar(f.row("plain")).backgroundColor).toBe(probe("color", "--c-text-tertiary"));
@@ -217,9 +223,9 @@ describe("the position marks are ink steps and width, never an accent fill", () 
     expect(bar(f.row("inView")).backgroundColor).toBe(probe("color", "--c-text-secondary"));
   });
 
-  it("draws the current turn full width in primary ink", () => {
+  it("draws the current turn full width in the accent", () => {
     const f = buildMap();
-    expect(bar(f.row("current")).backgroundColor).toBe(probe("color", "--c-text-primary"));
+    expect(bar(f.row("current")).backgroundColor).toBe(probe("color", "--c-accent"));
     expect(bar(f.row("current")).width).toBe("24px");
     expect(scaleX(f.row("current"))).toBe(FULL);
     expect(scaleX(f.row("plain"))).toBeCloseTo(REST, 4);
@@ -230,10 +236,10 @@ describe("the position marks are ink steps and width, never an accent fill", () 
     expect(scaleX(f.row("currentAgent"))).toBe(scaleX(f.row("current")));
   });
 
-  it("gives no mark the accent and the current row no fill box", () => {
+  it("gives no other bar the accent and the current row no fill box", () => {
     const f = buildMap();
     const accent = probe("color", "--c-accent");
-    for (const name of ["plain", "inView", "current"]) {
+    for (const name of ["plain", "inView", "broken", "stopped", "agent"]) {
       expect(bar(f.row(name)).backgroundColor, name).not.toBe(accent);
     }
     expect(getComputedStyle(link(f.row("current"))).backgroundColor).toBe("rgba(0, 0, 0, 0)");
@@ -248,18 +254,14 @@ describe("the position marks are ink steps and width, never an accent fill", () 
     expect(offenders).toEqual([]);
   });
 
-  it("keeps a running current turn's bar full width in primary ink and says running in the lane", () => {
+  it("draws a running current turn as the same solid accent bar, with no second mark", () => {
     const f = buildMap();
     const b = bar(f.row("currentRunning"));
-    expect(b.backgroundColor).toBe(probe("color", "--c-text-primary"));
+    expect(b.backgroundColor).toBe(probe("color", "--c-accent"));
     expect(b.boxShadow).toBe("none");
     expect(b.maskImage).toBe("none");
     expect(scaleX(f.row("currentRunning"))).toBe(scaleX(f.row("current")));
-
-    const mark = part(f.row("currentRunning"), "turn-pill-mark");
-    expect(mark.boxShadow).toContain(probe("color", "--c-dot-working"));
-    expect(parseFloat(mark.height)).toBeLessThan(parseFloat(mark.width));
-    expect(part(f.row("current"), "turn-pill-mark").boxShadow).toBe("none");
+    expect(link(f.row("currentRunning")).children).toHaveLength(1);
   });
 
   it("draws an agent-initiated turn at half width", () => {
@@ -268,28 +270,37 @@ describe("the position marks are ink steps and width, never an accent fill", () 
   });
 });
 
-describe("severity is a shape", () => {
-  it("fills a disc for a broken turn", () => {
+describe("severity colours the bar and lengthens it", () => {
+  it("draws a broken turn's bar red, at the longest rest", () => {
     const f = buildMap();
-    const mark = part(f.row("broken"), "turn-pill-mark");
-    expect(mark.backgroundColor).toBe(probe("color", "--c-red"));
-    expect(mark.borderRadius).toBe("50%");
-    expect(mark.boxShadow).toBe("none");
+    expect(bar(f.row("broken")).backgroundColor).toBe(probe("color", "--c-red"));
+    expect(scaleX(f.row("broken"))).toBeCloseTo(BROKEN_REST, 4);
   });
 
-  it("draws a ring with a transparent middle for a stopped turn", () => {
+  it("draws a stopped turn's bar amber, between broken and clean", () => {
     const f = buildMap();
-    const mark = part(f.row("stopped"), "turn-pill-mark");
-    expect(mark.backgroundColor).toBe("rgba(0, 0, 0, 0)");
-    expect(mark.boxShadow).toContain("inset");
-    expect(mark.boxShadow).toContain(probe("color", "--c-yellow"));
+    expect(bar(f.row("stopped")).backgroundColor).toBe(probe("color", "--c-yellow"));
+    expect(scaleX(f.row("stopped"))).toBeCloseTo(STOPPED_REST, 4);
+    expect(STOPPED_REST).toBeGreaterThan(REST);
+    expect(STOPPED_REST).toBeLessThan(BROKEN_REST);
   });
 
-  it("draws no mark for a clean turn", () => {
+  it("keeps a failure's length on an agent-initiated turn", () => {
+    const f = buildMap([
+      ["agentBroken", { "data-severity": "broken", "data-trigger": "system" }],
+      ["spare", { "data-severity": "clean" }],
+    ]);
+    expect(scaleX(f.row("agentBroken"))).toBeCloseTo(BROKEN_REST, 4);
+  });
+
+  it("draws a row's bar as its only mark, so no dots stack down the column", () => {
     const f = buildMap();
-    const mark = part(f.row("plain"), "turn-pill-mark");
-    expect(mark.backgroundColor).toBe("rgba(0, 0, 0, 0)");
-    expect(mark.boxShadow).toBe("none");
+    for (const [name] of ROWS) {
+      expect(
+        link(f.row(name)).querySelectorAll(":scope > :not(.turn-pill-hit)"),
+        name,
+      ).toHaveLength(0);
+    }
   });
 
   it("outlines a running bar in the in-flight violet, with no beat", () => {
@@ -312,7 +323,6 @@ describe("severity is a shape", () => {
     // The densest layout binning allows: one row per 2px of track, consecutive in mid-stack.
     const slots = Math.floor(f.track.getBoundingClientRect().height / 2);
     f.stack.style.setProperty("--turn-map-slots", String(slots));
-    f.stack.style.setProperty("--turn-map-total", String(slots * 2));
     const mid = Math.floor(slots / 2);
     names.forEach((n, i) => {
       f.row(n).style.setProperty("--rail-at", String((mid + i) / (slots - 1)));
@@ -324,7 +334,7 @@ describe("severity is a shape", () => {
       const r = f.row(n).getBoundingClientRect();
       expect(r.height, n).toBeCloseTo(2, 1);
       const b = barSpan(f.row(n));
-      const y = r.top + r.height / 2 - box.top;
+      const y = barMid(f.row(n)) - box.top;
       const cx = (b.left + b.right) / 2 - box.left;
       const ground = shot(b.left - box.left - 4, y);
       const inked = (x: number): boolean => distance(shot(x, y), ground) > 40;
@@ -346,7 +356,6 @@ describe("severity is a shape", () => {
       f.track.style.blockSize = "600px";
       const slots = 600 / pitch;
       f.stack.style.setProperty("--turn-map-slots", String(slots));
-      f.stack.style.setProperty("--turn-map-total", String(slots));
       const mid = Math.floor(slots / 2);
       names.forEach((n, i) => {
         f.row(n).style.setProperty("--rail-at", String((mid + i) / (slots - 1)));
@@ -354,9 +363,8 @@ describe("severity is a shape", () => {
       const shot = await pixels(f.stack);
       const box = f.stack.getBoundingClientRect();
       const centre = (n: string): number => {
-        const r = f.row(n).getBoundingClientRect();
-        expect(r.height, n).toBeCloseTo(pitch, 1);
-        return r.top + r.height / 2 - box.top;
+        expect(f.row(n).getBoundingClientRect().height, n).toBeCloseTo(pitch, 1);
+        return barMid(f.row(n)) - box.top;
       };
       const b = barSpan(f.row("a"));
       const cx = (b.left + b.right) / 2 - box.left;
@@ -387,13 +395,12 @@ describe("severity is a shape", () => {
     expect(part(f.row("plain"), "turn-pill-hit").backgroundColor).toBe("rgba(0, 0, 0, 0)");
   });
 
-  it("keeps the lanes out of the pointer's way", () => {
+  it("keeps the hit square out of the pointer's way", () => {
     const f = buildMap();
-    expect(part(f.row("broken"), "turn-pill-mark").pointerEvents).toBe("none");
     expect(part(f.row("hit"), "turn-pill-hit").pointerEvents).toBe("none");
   });
 
-  it("keeps both lanes clear of a full-width bar", async () => {
+  it("keeps the hit square clear of a full-width bar, the bar against the chat's side", async () => {
     const f = buildMap([
       ["full", { "data-severity": "broken", "data-current": "", "data-hit": "" }],
       ["spare", { "data-severity": "clean" }],
@@ -416,8 +423,9 @@ describe("severity is a shape", () => {
         runs.push([x, x]);
       }
     }
-    expect(runs, "disc, bar and hit as three separate runs").toHaveLength(3);
-    const [, painted] = runs;
+    expect(runs, "bar and hit as two separate runs").toHaveLength(2);
+    const [painted] = runs;
+    expect(painted?.[0] ?? 99, "the bar starts at the column's chat side").toBeLessThan(6);
     const width = (painted?.[1] ?? 0) - (painted?.[0] ?? 0) + 0.5;
     expect(Math.abs(width - 24), `painted bar ${String(width)}px`).toBeLessThanOrEqual(1.5);
   });
@@ -429,10 +437,10 @@ describe("the fisheye moves width by transform alone, behind a hover gate", () =
     expect(bar(f.row("plain")).transitionProperty).toBe("transform");
   });
 
-  it("grows the bar from its inline end", () => {
+  it("grows the bar from its inline start, the chat's side of the column", () => {
     const f = buildMap();
     const [x] = bar(f.row("plain")).transformOrigin.split(" ");
-    expect(x).toBe(bar(f.row("plain")).width);
+    expect(x).toBe("0px");
   });
 
   it("draws the pointed row full width and its neighbours at 2/3 and 1/2", async () => {

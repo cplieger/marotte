@@ -104,7 +104,6 @@ function buildMap(opts: { turns: number; width?: number; height?: number }): Map
   const set = Array.from({ length: opts.turns }, (_, i) => turn(i + 1));
   const layout = binTurns(set, track.clientHeight);
   stack.style.setProperty("--turn-map-slots", String(layout.slots));
-  stack.style.setProperty("--turn-map-total", String(layout.total));
   for (const bin of layout.bins) {
     const li = document.createElement("li");
     li.className = "turn-pill";
@@ -122,13 +121,35 @@ function pills(m: Map): HTMLElement[] {
   return [...m.stack.querySelectorAll<HTMLElement>(".turn-pill")];
 }
 
+/** Every row 2px to 8px tall, each starting exactly where the one above ends, the first at the
+ *  stack's top and the last at its foot. */
+function expectTiled(m: Map): void {
+  const stack = m.stack.getBoundingClientRect();
+  const rows = pills(m).map((p) => p.getBoundingClientRect());
+  const count = rows.length;
+  expect(count).toBeGreaterThan(1);
+  near(rows[0]?.top ?? -1, stack.top, `${String(count)} rows: first row's top`);
+  near(rows.at(-1)?.bottom ?? -1, stack.bottom, `${String(count)} rows: last row's bottom`);
+  rows.forEach((cur, i) => {
+    expect(cur.height, `row ${String(i)} height`).toBeGreaterThanOrEqual(2 - EPS);
+    expect(cur.height, `row ${String(i)} height`).toBeLessThanOrEqual(8 + EPS);
+    const prev = rows[i - 1];
+    if (prev !== undefined) {
+      expect(
+        cur.top - prev.bottom,
+        `${String(count)} rows: row ${String(i)} against the one above`,
+      ).toBe(0);
+    }
+  });
+}
+
 describe("the stack is only as tall as its turns need", () => {
   it("draws a 5-turn chat 40px tall, not track-tall", () => {
     const m = buildMap({ turns: 5 });
     near(m.stack.getBoundingClientRect().height, 40, "stack height");
   });
 
-  it("puts each row at --rail-at times the stack's travel", () => {
+  it("puts each row at its slot times the row pitch", () => {
     const m = buildMap({ turns: 5 });
     const top = m.stack.getBoundingClientRect().top;
     expect(pills(m).map((p) => Math.round(p.getBoundingClientRect().top - top))).toEqual([
@@ -170,23 +191,55 @@ describe("the stack is only as tall as its turns need", () => {
 });
 
 describe("a long chat fills the track at no less than 2px a row", () => {
-  it("tiles 200 rows with no overlap and no gap", () => {
+  it("tiles 200 rows in whole pixels, with no overlap and no gap", () => {
     const m = buildMap({ turns: 200, height: 900 });
-    const rows = pills(m).map((p) => p.getBoundingClientRect());
-    expect(rows).toHaveLength(200);
-    for (let i = 1; i < rows.length; i++) {
-      const prev = rows[i - 1];
-      const cur = rows[i];
-      if (prev === undefined || cur === undefined) {
-        continue;
-      }
-      expect(cur.height).toBeGreaterThanOrEqual(2 - EPS);
-      expect(cur.height).toBeLessThanOrEqual(8 + EPS);
-      near(cur.top, prev.bottom, `row ${String(i)} meets the one above`);
+    expect(pills(m)).toHaveLength(200);
+    expectTiled(m);
+  });
+
+  // 198 turns on this track is a 2.9px pitch: rows alternate 2px and 3px.
+  it("tiles the stack at a fractional pitch, with no overlap and no gap", () => {
+    for (const turns of [75, 120, 198, 351]) {
+      const m = buildMap({ turns, height: 700 });
+      const pitch = m.stack.getBoundingClientRect().height / pills(m).length;
+      expect(Number.isInteger(pitch), `${String(turns)} turns: a fractional pitch`).toBe(false);
+      expectTiled(m);
+      area?.remove();
     }
   });
 
-  it("draws 500 binned turns at the 2px pitch, the stack shorter than its track", () => {
+  it("hands every pixel of the stack to a row, so the pointer never falls between two", () => {
+    const m = buildMap({ turns: 198, height: 700 });
+    const box = m.stack.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const orphans: number[] = [];
+    for (let y = Math.ceil(box.top) + 0.25; y < box.bottom; y += 1) {
+      if (document.elementFromPoint(x, y)?.closest(".turn-pill") === null) {
+        orphans.push(y - box.top);
+      }
+    }
+    expect(orphans, "stack pixels no row covers").toEqual([]);
+  });
+
+  it("keeps the bars one height and one pixel of ground apart at a fractional pitch", () => {
+    const m = buildMap({ turns: 198, height: 700 });
+    const bars = pills(m).map((p) => {
+      const link = p.querySelector<HTMLElement>(".turn-pill-link");
+      const cs = getComputedStyle(link ?? p, "::before");
+      const top = p.getBoundingClientRect().top + parseFloat(cs.top);
+      return { top, bottom: top + parseFloat(cs.blockSize), h: parseFloat(cs.blockSize) };
+    });
+    expect(new Set(bars.map((b) => b.h)).size, "one bar height down the map").toBe(1);
+    for (let i = 1; i < bars.length; i++) {
+      const gap = (bars[i]?.top ?? 0) - (bars[i - 1]?.bottom ?? 0);
+      expect(gap, `ground above bar ${String(i)}`).toBeGreaterThanOrEqual(1 - EPS);
+      const offset = (bars[i]?.top ?? 0) - m.stack.getBoundingClientRect().top;
+      near(offset, Math.round(offset), `bar ${String(i)} on a whole pixel`);
+    }
+  });
+
+  it("fills the track with binned turns, at no less than 2px a row", () => {
+    // The pitch follows the ROW count: 500 turns binned in pairs make 250 rows over the whole track.
     const m = buildMap({ turns: 500, height: 800 });
     const track = m.track.getBoundingClientRect().height;
     expect(track, "a track that bins 500 turns in pairs").toBeGreaterThanOrEqual(500);
@@ -194,9 +247,23 @@ describe("a long chat fills the track at no less than 2px a row", () => {
     const rows = pills(m).map((p) => p.getBoundingClientRect().height);
     expect(rows).toHaveLength(250);
     for (const h of rows) {
-      near(h, 2, "row pitch");
+      expect(h).toBeGreaterThanOrEqual(2 - EPS);
     }
-    near(m.stack.getBoundingClientRect().height, 500, "stack height");
+    near(m.stack.getBoundingClientRect().height, track, "stack height");
+  });
+
+  it("fills the track whatever the pitch's fraction, at every turn count past 8px a row", () => {
+    for (const turns of [75, 120, 198, 351]) {
+      const m = buildMap({ turns, height: 700 });
+      const track = m.track.getBoundingClientRect();
+      const stack = m.stack.getBoundingClientRect();
+      expect(track.height / turns, `${String(turns)} turns outgrow 8px a row`).toBeLessThan(8);
+      near(stack.height, track.height, `${String(turns)} turns: stack height`);
+      const rows = pills(m).map((p) => p.getBoundingClientRect());
+      near(rows[0]?.top ?? 0, track.top, `${String(turns)} turns: first row's top`);
+      near(rows.at(-1)?.bottom ?? 0, track.bottom, `${String(turns)} turns: last row's bottom`);
+      area?.remove();
+    }
   });
 
   it("bins 1000 turns into rows of at least 2px and keeps the last at the foot", () => {

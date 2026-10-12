@@ -5,7 +5,7 @@
 
 import type { Turn } from "./turns.js";
 import { payloadOf } from "./turns.js";
-import { entryRenders, firstPlanSeq } from "./block-window.js";
+import { entryRenders, turnFolds } from "./block-window.js";
 import { ICON_COPY, ICON_COPY_MD, ICON_LINK } from "./icons.js";
 import { getActiveId } from "./store.js";
 import { copyClipboard } from "./actions/messages.js";
@@ -239,7 +239,7 @@ function turnCopyMarkdown(t: Turn): string {
 export function turnMarkdown(t: Turn): string {
   const parts: string[] = [];
   let run = "";
-  const firstPlan = firstPlanSeq(t, "");
+  const folds = turnFolds(t, "");
   const flush = (): void => {
     if (run.trim() !== "") {
       parts.push(run);
@@ -247,7 +247,7 @@ export function turnMarkdown(t: Turn): string {
     run = "";
   };
   for (const e of t.body) {
-    if (!entryRenders(e, "", firstPlan)) {
+    if (!entryRenders(e, "", folds)) {
       continue;
     }
     const text = payloadOf(e, "text");
