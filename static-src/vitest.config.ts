@@ -7,9 +7,9 @@
 // browser, not headless-shell: `npx playwright install --with-deps chromium`.
 import { configDefaults, defineConfig, type TestProjectInlineConfiguration } from "vitest/config";
 import { resolve } from "node:path";
+import { playwright } from "@vitest/browser-playwright";
 import { msw } from "msw/vite";
 
-import { alwaysOnInterception } from "./__test-helpers__/always-on-interception.js";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 
 const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist/src");
@@ -52,19 +52,20 @@ function browserProject(
       // is resolving a `vi.mock` factory can end the vitest process
       // (https://github.com/vitest-dev/vitest/issues/11467).
       ...(hasTouch ? { sequence: { groupOrder: 1 } } : {}),
-      // Merged with the root list (`extends: true` merges arrays). Browser-only: the gate reads `window`,
+      // Merged with the root list (`extends: true` merges arrays). Browser-only: both read `window`,
       // and a `ResizeObserver` loop is a real engine's verdict.
-      setupFiles: ["./ro-loop-gate.ts"],
+      setupFiles: ["./ro-loop-gate.ts", "./page-lifecycle-setup.ts"],
       // One test file at a time: the mocker's routes live on the shared Playwright CONTEXT and are
       // unrouted at each file end, so a still-resolving mock gets auto-continued (`route.fulfill: Route
-      // is already handled!`, https://github.com/vitest-dev/vitest/issues/8339). The anchor route below
-      // closes the zero-crossing; drop this only after a parallel run measures clean.
+      // is already handled!`, https://github.com/vitest-dev/vitest/issues/8339). vitest 5.0.4's
+      // interception probe (https://github.com/vitest-dev/vitest/pull/11083) closes the zero-crossing;
+      // drop this only after a parallel run measures clean.
       fileParallelism: false,
       browser: {
         enabled: true,
         headless: true,
         traceView,
-        provider: alwaysOnInterception({
+        provider: playwright({
           ...(hasTouch ? { contextOptions: { hasTouch } } : {}),
           launchOptions: {
             channel: "chromium",
