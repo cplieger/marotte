@@ -6,6 +6,7 @@
     "fc-strict-setup.ts",
     "waitfor-budget-setup.ts",
     "ro-loop-gate.ts",
+    "page-lifecycle-setup.ts",
     "**/__test-helpers__/**",
     "**/*.test.ts",
     "**/*.fuzz.test.ts",
