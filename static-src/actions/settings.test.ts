@@ -194,7 +194,6 @@ describe("a lockable switch crossing a lock", () => {
     ["flag-telemetry", "telemetry.enabled", save.kiro],
     ["flag-content-collection", "content_collection_enabled", save.marotte],
     ["flag-workflows", "workflows_enabled", save.marotte],
-    ["flag-inline-agents", "inline_agents_enabled", save.marotte],
   ] as const;
 
   const govState = (lockKey?: string) => ({

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -131,11 +132,13 @@ func waitStatus(err error) string {
 }
 
 // Stop's caller already closed stdin. The group, not the head: on 2.18.0 a head-only kill left
-// kiro-cli-chat and its node child alive at about 250 MB (procgroup.Kill).
+// kiro-cli-chat and its node child alive at about 250 MB (procgroup.Kill). That group is the
+// wrapper's only; the engine's own is swept after it (sweepEngineGroups).
 func (b *Bridge) reapProcess() {
 	sessionID := b.SessionID()
 	// Before the signal empties it (procgroup.GroupOf).
 	pgid, owns := procgroup.GroupOf(b.cmd.Process)
+	b.noteEngineGroups()
 	termErr := procgroup.Kill(b.cmd.Process, syscall.SIGTERM)
 	// Already gone means kiro-cli ended on its own, so the wait status is the only record of why.
 	endedItself := procgroup.AlreadyGone(termErr)
@@ -166,6 +169,56 @@ func (b *Bridge) reapProcess() {
 			"session_id", sessionID,
 			"pgid", pgid,
 			"grace_ms", bridgeGroupGrace.Milliseconds())
+	}
+	b.sweepEngineGroups(sessionID)
+}
+
+// noteEngineGroups adds the groups below the wrapper to engineGroups. kiro-cli's node engine leads
+// its own group, which its stdio MCP servers join, so the wrapper's group kill misses them. It runs
+// after initialize and again at reap: once the relay dies they are init's, and no walk finds them.
+func (b *Bridge) noteEngineGroups() {
+	if b.cmd == nil || b.cmd.Process == nil {
+		return
+	}
+	found := procgroup.GroupsBelow(b.cmd.Process.Pid)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, g := range found {
+		// The newer stamp wins: an id found again may now name a later group below the wrapper.
+		if i := slices.IndexFunc(b.engineGroups, func(n procgroup.Group) bool { return n.ID == g.ID }); i >= 0 {
+			b.engineGroups[i] = g
+		} else {
+			b.engineGroups = append(b.engineGroups, g)
+		}
+	}
+}
+
+// sweepEngineGroups gives each noted group bridgeGroupGrace to empty after the wrapper's, then
+// kills what is left: an MCP server that ignores stdin EOF outlives an abrupt bridge death, and
+// tini reaps zombies but signals no live orphan.
+func (b *Bridge) sweepEngineGroups(sessionID marotte.SessionID) {
+	b.mu.Lock()
+	groups := slices.Clone(b.engineGroups)
+	b.mu.Unlock()
+	for _, g := range groups {
+		// A stale id's members are a later group's, so neither its wait nor its refusal is ours.
+		if g.Stale() || procgroup.WaitGone(g.ID, bridgeGroupGrace) {
+			continue
+		}
+		survivors := procgroup.LiveMembers(g.ID)
+		if err := procgroup.KillGroup(g, syscall.SIGKILL); err != nil {
+			// A group that emptied since the wait is refused or ESRCH, and that is the outcome wanted.
+			if !g.Stale() && procgroup.LiveMembers(g.ID) > 0 {
+				slog.Error("kill kiro-cli engine group", "session_id", sessionID, "pgid", g.ID, "error", err)
+			}
+			continue
+		}
+		slog.Warn("killed MCP/engine survivors after the bridge ended",
+			"session_id", sessionID, "pgid", g.ID, "count", survivors, "grace_ms", bridgeGroupGrace.Milliseconds())
+		if !procgroup.WaitGone(g.ID, bridgeGroupGrace) {
+			slog.Error("kiro-cli process group outlived its bridge; it still holds any workflow lease it owned",
+				"session_id", sessionID, "pgid", g.ID, "grace_ms", bridgeGroupGrace.Milliseconds())
+		}
 	}
 }
 
@@ -240,8 +293,9 @@ func localeEnv() []string {
 	return []string{localeEnvVar + "=C.UTF-8"}
 }
 
-// buildACPArgs assembles the kiro-cli ACP invocation. The relay owns authentication, so KAS never asks marotte for
-// the access token.
+// buildACPArgs assembles the kiro-cli ACP invocation. The constant `--auth-method cli` is why KAS never asks marotte
+// for the access token: the relay answers from the CLI login, while `client` would send `_kiro/auth/getAccessToken`
+// to marotte, which routes no handler for it.
 func buildACPArgs(engine string) []string {
 	if engine == "" {
 		engine = marotte.AgentEngineV3
@@ -266,7 +320,8 @@ func (b *Bridge) startProcess(engine string) error {
 	// Env is always set: a nil Env inherits the parent implicitly, which would bypass the credential screen.
 	// b.extraEnv still lands last, so the active version wins PATH.
 	env, dropped := screenBridgeEnv(os.Environ(), b.extraEnv, b.envAllow)
-	// After the screen, so kascap's KIRO_FEATURE_* door wins over anything inherited or overlaid.
+	// A setting decides these even when it withholds them (kascap.OwnsEnv), so no inherited value survives.
+	env = slices.DeleteFunc(env, kascap.OwnsEnv)
 	env = append(env, kascap.ChildEnv(b.spawn())...)
 	// After the screen and the door: os/exec keeps a key's last value.
 	env = append(env, localeEnv()...)
@@ -277,9 +332,9 @@ func (b *Bridge) startProcess(engine string) error {
 			"variables", strings.Join(dropped, ","),
 			"hint", "keep credentials out of the server environment, or allow the name via "+EnvAllowVar)
 	}
-	// Backstop when lifecycleCtx ends before Stop: the reapProcess ladder (close stdin, SIGTERM the group, SIGKILL after
-	// bridgeTeardownGrace). The tree shares marotte's pipe, so EOF reaches it all. A second Close is expected after Stop,
-	// so its error is dropped.
+	// Backstop when lifecycleCtx ends before Stop: the reapProcess ladder (close stdin, SIGTERM the wrapper's group,
+	// SIGKILL after bridgeTeardownGrace); the engine's group is Stop's to sweep. The tree shares marotte's pipe, so EOF
+	// reaches it all. A second Close is expected after Stop, so its error is dropped.
 	b.cmd.Cancel = func() error {
 		if p := b.stdin.Load(); p != nil {
 			_ = p.w.Close()

@@ -52,18 +52,16 @@ func TestComposeLocks(t *testing.T) {
 			name:  "admin_denies_subagent",
 			rules: []marotte.PolicyRule{adminRule("subagent", "deny")},
 			want: map[string]marotte.GovernanceLock{
-				marotte.LockWorkflows:    {Source: marotte.LockSourceAdministrator, Reason: lockReasonSubagents},
-				marotte.LockInlineAgents: {Source: marotte.LockSourceAdministrator, Reason: lockReasonSubagents},
+				marotte.LockWorkflows: {Source: marotte.LockSourceAdministrator, Reason: lockReasonSubagents},
 			},
 		},
 		{
 			name:  "admin_denies_builtin_group",
 			rules: []marotte.PolicyRule{adminRule("builtin", "deny", "**")},
 			want: map[string]marotte.GovernanceLock{
-				marotte.LockWorkflows:    {Source: marotte.LockSourceAdministrator, Reason: lockReasonSubagents},
-				marotte.LockInlineAgents: {Source: marotte.LockSourceAdministrator, Reason: lockReasonSubagents},
-				marotte.LockWebTools:     {Source: marotte.LockSourceAdministrator, Reason: lockReasonWebTools},
-				marotte.LockPowers:       {Source: marotte.LockSourceAdministrator, Reason: lockReasonPowers},
+				marotte.LockWorkflows: {Source: marotte.LockSourceAdministrator, Reason: lockReasonSubagents},
+				marotte.LockWebTools:  {Source: marotte.LockSourceAdministrator, Reason: lockReasonWebTools},
+				marotte.LockPowers:    {Source: marotte.LockSourceAdministrator, Reason: lockReasonPowers},
 			},
 		},
 		{
@@ -192,7 +190,7 @@ func TestGovernanceLocks_ColdCacheCarriesAdminLocks(t *testing.T) {
 // Once the managed file fails to load, the lock map fails closed until a reload reports it healthy.
 func TestPolicyChanged_FatalAdministrationErrorFailsClosed(t *testing.T) {
 	fatal := []marotte.PolicyErrorItem{{Scope: "administration", Message: "parse", Fatal: true}}
-	allLocked := []string{marotte.LockWorkflows, marotte.LockInlineAgents, marotte.LockWebTools, marotte.LockPowers, marotte.LockMCP}
+	allLocked := []string{marotte.LockWorkflows, marotte.LockWebTools, marotte.LockPowers, marotte.LockMCP}
 	assertFailedClosed := func(t *testing.T, st *Settings) {
 		t.Helper()
 		locks := st.GovernanceLocks()
@@ -277,13 +275,12 @@ func TestContentCollectionEnabled(t *testing.T) {
 }
 
 func TestAgentFeatures_SubagentLockWins(t *testing.T) {
-	dir := writeSettings(t, `{"inline_agents_enabled":true,"workflows_enabled":true}`)
+	dir := writeSettings(t, `{"workflows_enabled":true}`)
 	locks := composeLocks(nil, reduceAdminRules([]marotte.PolicyRule{adminRule("subagent", "deny")}))
-	got := agentFeatures(t.Context(), dir, locks)
-	if got.InlineAgents || got.Workflows {
-		t.Errorf("agentFeatures(stored on, subagent denied) = inline %v workflows %v, want both false", got.InlineAgents, got.Workflows)
+	if got := agentFeatures(t.Context(), dir, locks); got.Workflows {
+		t.Error("agentFeatures(stored on, subagent denied) = workflows on, want off")
 	}
-	if got := agentFeatures(t.Context(), dir, nil); !got.InlineAgents || !got.Workflows {
-		t.Errorf("agentFeatures(stored on, no lock) = inline %v workflows %v, want both true", got.InlineAgents, got.Workflows)
+	if got := agentFeatures(t.Context(), dir, nil); !got.Workflows {
+		t.Error("agentFeatures(stored on, no lock) = workflows off, want on")
 	}
 }

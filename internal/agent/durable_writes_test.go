@@ -177,6 +177,11 @@ var abandonableWriteSites = []durableSite{{
 	calls:   []string{"appendLaneless"},
 	because: "KAS's Auto routing notice, which KAS persists and replays, so the next load's merge restores it",
 }, {
+	file:    "internal/translate/model_fallback.go",
+	fn:      "handleModelFallback",
+	calls:   []string{"appendLaneless"},
+	because: "KAS's model fallback notice, which KAS persists and replays, so the next load's merge restores it",
+}, {
 	file:    "internal/translate/focus.go",
 	fn:      "applyFocusTitle",
 	calls:   []string{"Mutate"},

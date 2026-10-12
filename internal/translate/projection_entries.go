@@ -499,6 +499,12 @@ func (p *EntryProjection) ingestInfo(raw json.RawMessage) {
 		p.sealLanes()
 		p.appendEntry(marotte.EntryKindModelRouted, p.newID(), "", p.frameTS(""),
 			modelRoutedPayload(u.Meta.Kiro.Message))
+	case infoKindModelFallback:
+		p.flushUser()
+		p.ensureTurn(marotte.TurnOpenNameEvent)
+		p.sealLanes()
+		p.appendEntry(marotte.EntryKindModelFallback, p.newID(), "", p.frameTS(""),
+			modelFallbackPayload(&u.Meta.Kiro.modelFallbackFields))
 	}
 }
 

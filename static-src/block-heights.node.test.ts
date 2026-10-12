@@ -113,21 +113,18 @@ function stood(t: Turn, lane = ""): number {
   return spacerHeight(t, { from: 0, to: 0 }, "tail", lane);
 }
 
-/** A pipeline's DRIVER id, and one STAGE id per stage in the shape KAS mints —
- *  `invoke_subagent_<driverId>_stage_<name>`, which is how a stage names its parent. */
-const DRIVER_ID = "orc-1";
-const STAGE_NAMES = ["plan", "build", "review"] as const;
-
-function stageID(name: string): string {
-  return `invoke_subagent_${DRIVER_ID}_stage_${name}`;
-}
-
-/** The driver's entry followed by one stage INVOCATION per stage. A stage's own output
- *  entries are the delegate's lane and are priced by that view, not by this one. */
-function pipeline(stages: number): Entry[] {
-  const out: Entry[] = [call(1, { id: DRIVER_ID, title: "Orchestrate Sub-agent" })];
-  for (const name of STAGE_NAMES.slice(0, stages)) {
-    out.push(call(2, { id: stageID(name), title: `Sub-agent: ${name}`, subtask: `sub-${name}` }));
+/** What an older engine's pipeline left: its driver's entry, then one stage-shaped INVOCATION
+ *  per stage (`invoke_subagent_<driverId>_stage_<name>`). */
+function oldPipeline(stages: number): Entry[] {
+  const out: Entry[] = [call(1, { id: "orc-1", title: "Orchestrate Sub-agent" })];
+  for (const name of ["plan", "build", "review"].slice(0, stages)) {
+    out.push(
+      call(2, {
+        id: `invoke_subagent_orc-1_stage_${name}`,
+        title: `Sub-agent: ${name}`,
+        subtask: `sub-${name}`,
+      }),
+    );
   }
   return out;
 }
@@ -190,6 +187,7 @@ describe("what one entry is worth", () => {
     "safety_blocked",
     "model_switched",
     "model_routed",
+    "model_fallback",
     "mode_switched",
   ] as const)("prices the %s event at one row", (kind) => {
     expect(stood(turn("t", [entry(1, kind, {})]))).toBe(48 + GAP_PX);
@@ -235,45 +233,11 @@ describe("what a tool call MOUNTS AS", () => {
     expect(stood(turn("t", [call(1, { subtask: "sub-1" })]))).toBe(71 + GAP_PX);
   });
 
-  it("prices a PIPELINE DRIVER at the box it mounts, not at a tool row", () => {
-    // A driver mounts a `.subagent-container` resting at a card's height. `Orchestrate
-    // Sub-agent` is absent from the delegate predicate, so this keeps a driver off 38.
-    expect(stood(turn("t", [call(1, { id: DRIVER_ID, title: "Orchestrate Sub-agent" })]))).toBe(
-      71 + GAP_PX,
-    );
-  });
-
-  it("prices a pipeline STAGE at nothing, its driver holding the price", () => {
-    // Inside a rendered container a stage's card sits at height 0. The control that stops this
-    // collapsing into "any delegate invocation is free" is the plain-delegate case above.
-    const t = turn("t", [
-      call(1, { id: stageID("plan"), title: "Sub-agent: plan", subtask: "sub-plan" }),
-    ]);
-    expect(stood(t)).toBe(0);
-  });
-
-  it("prices a `Sub-agent:`-TITLED call with no stage id at a full card", () => {
-    // Keyed on the ID, not the title: some delegate invocations lack the `_stage_` id shape
-    // and sit at the TOP LEVEL, where they cost a whole card.
-    const id = `invoke_subagent_${DRIVER_ID}-sub-agent-start`;
-    const t = turn("t", [call(1, { id, title: "Sub-agent: wf-coder", subtask: "sub-flat" })]);
-    expect(stood(t)).toBe(71 + GAP_PX);
-  });
-
-  it("prices a whole PIPELINE at ONE card, its three stages included", () => {
-    // A pipeline's price is its DRIVER's alone; a stage names its driver in its call id, is
-    // not a box, and adds no gap.
-    expect(stood(turn("t", pipeline(3)))).toBe(71 + GAP_PX);
-  });
-
-  it("prices a PROMOTED single-stage pipeline at one card too", () => {
-    // One stage: the renderer promotes its card, swapping the two prices; the TOTAL is exact.
-    expect(stood(turn("t", pipeline(1)))).toBe(71 + GAP_PX);
-  });
-
-  it("charges no GAP for a pipeline's zero-priced stages", () => {
-    const t = turn("t", [text(1), ...pipeline(2), text(2)]);
-    expect(stood(t)).toBe(48 + GAP_PX + 71 + GAP_PX + 48 + GAP_PX);
+  // Replay of an older engine's pipeline: the driver is an ordinary tool row and each stage an
+  // ordinary delegate card, as the renderer draws them.
+  it("prices an old pipeline's driver as a tool row and each stage as a card", () => {
+    expect(stood(turn("t", oldPipeline(0)))).toBe(38 + GAP_PX);
+    expect(stood(turn("t", oldPipeline(3)))).toBe(38 + GAP_PX + 3 * (71 + GAP_PX));
   });
 });
 

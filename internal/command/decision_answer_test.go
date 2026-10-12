@@ -32,6 +32,8 @@ type takeDeps struct {
 	// takeChats is the chat each claim named, so a handler that drops it is
 	// visible: an id-only claim can retire another chat's card.
 	takeChats []marotte.ChatID
+	// takeKinds is the decision kind each claim named.
+	takeKinds []marotte.DecisionKind
 	takeOK    bool
 }
 
@@ -49,8 +51,9 @@ func (r bridgeReply) Respond(ctx context.Context, result any) (AnswerOutcome, er
 	return AnswerDelivered, nil
 }
 
-func (d *takeDeps) TakePendingPerm(chatID marotte.ChatID, requestID int64, _ marotte.SettledBy) (AskReply, bool) {
+func (d *takeDeps) TakePendingPerm(chatID marotte.ChatID, requestID int64, kind marotte.DecisionKind, _ marotte.SettledBy) (AskReply, bool) {
 	d.takes = append(d.takes, requestID)
+	d.takeKinds = append(d.takeKinds, kind)
 	d.takeChats = append(d.takeChats, chatID)
 	if !d.takeOK {
 		return nil, false
@@ -152,6 +155,27 @@ func TestDecisionHandlers_WonClaimAnswersOnce(t *testing.T) {
 			// cannot settle this one's ask.
 			if !slices.Equal(deps.takeChats, []marotte.ChatID{"c1"}) {
 				t.Errorf("claimed chats = %v, want [c1]", deps.takeChats)
+			}
+		})
+	}
+}
+
+// A claim names the kind its answer is shaped for, so the tracker can refuse an answer naming
+// another kind's ask.
+func TestDecisionHandlers_ClaimNamesTheAnswersKind(t *testing.T) {
+	want := map[string]marotte.DecisionKind{"elicitation": marotte.DecisionKindElicitation, "user_input": marotte.DecisionKindUserInput}
+	for _, tc := range decisionCases(t) {
+		kind, ok := want[tc.name]
+		if !ok {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: &countingBridge{}, takeOK: true}
+			if _, err := tc.run(deps); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if !slices.Equal(deps.takeKinds, []marotte.DecisionKind{kind}) {
+				t.Errorf("claimed kinds = %v, want [%s]", deps.takeKinds, kind)
 			}
 		})
 	}

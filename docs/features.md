@@ -15,12 +15,12 @@ You can also search inside a chat, export a chat, search across chats, and brows
 
 ## Agent control
 
-- Switch modes: Default, Spec, Quick Spec, Bug Fix, Plan and Autonomous, or the bundled Semantic Reviewer agent, plus your own agents from `.kiro/agents/` in the workspace.
+- Switch modes: Default, Spec, Quick Spec, Bug Fix, Plan and Autonomous, or the bundled Semantic Reviewer agent, plus your own agents from `.kiro/agents/` in the workspace or in your home folder.
 - Switch models during a conversation, and set reasoning effort from low to max.
 - Answer permission requests, the agent's questions and the forms an MCP server asks you to fill in.
 - Fork a tangent, a new chat that starts with this chat's context and leaves the original untouched. **Merge into parent chat** in the composer's `+` menu, or `/tangent merge`, sends a summary of the tangent's findings back to the chat it came from.
 
-Work handed to a subagent shows as a card you can open on its own page. The agent's own terminals show their output on the tool card that started them.
+The **Workflows** switch in Settings decides how the agent hands work off. On: the agent hands work to workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Either kind of handed-off work shows as a card you can open on its own page. The agent's own terminals show their output on the tool card that started them.
 
 ## Files, editor and terminal
 

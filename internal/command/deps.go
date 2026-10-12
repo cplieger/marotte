@@ -204,10 +204,10 @@ type chatTeardown interface {
 type pendingPermAccess interface {
 	ClearPendingPermsForChat(chatID marotte.ChatID)
 	// TakePendingPerm claims the request before its answer is sent, reporting false
-	// when another surface already answered it, its bridge ended, or it is not chatID's.
-	// settledBy travels with the claim because the delivered answer is broadcast to the
-	// surfaces that lost, and their card says who answered.
-	TakePendingPerm(chatID marotte.ChatID, requestID int64, settledBy marotte.SettledBy) (AskReply, bool)
+	// when another surface already answered it, its bridge ended, or it is not a
+	// kind ask of chatID's. settledBy travels with the claim because the delivered
+	// answer is broadcast to the surfaces that lost, and their card says who answered.
+	TakePendingPerm(chatID marotte.ChatID, requestID int64, kind marotte.DecisionKind, settledBy marotte.SettledBy) (AskReply, bool)
 	// TakePendingPermissionOption retains an off-list request and reports it as
 	// pending but not offered. A successful result validates and claims in one
 	// operation, so another surface cannot answer between those steps.

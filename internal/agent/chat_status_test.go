@@ -100,6 +100,44 @@ func TestChatStatusCache(t *testing.T) {
 	}
 }
 
+// A waiting_on_user the engine stated for the live turn's own ask goes with the turn, even when
+// marotte closes it without the engine's reverting frames.
+func TestClearAtTurnEnd_DropsEngineAskWaiting(t *testing.T) {
+	c := newChatStatusCache()
+	c.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, TurnScoped: true})
+	c.clearAtTurnEnd("c1")
+	if got := c.Get("c1"); got.Status != "" {
+		t.Errorf("turn-scoped waiting_on_user survived turn end: %+v", got)
+	}
+	if rows, _ := c.snapshotStamped(nil); len(rows.Rows) != 0 {
+		t.Errorf("status_snapshot rows = %+v, want none", rows.Rows)
+	}
+}
+
+// The newest status-bearing frame decides: the engine's turn-end restatement of a declaration
+// (turnActive false) is the agent's claim again and outlives the turn.
+func TestMerge_TurnEndRestatementRetainsDeclaration(t *testing.T) {
+	c := newChatStatusCache()
+	c.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, TurnScoped: true})
+	c.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
+	c.clearAtTurnEnd("c1")
+	if got := c.Get("c1"); got.Status != marotte.ChatStatusWaitingOnUser {
+		t.Errorf("a declaration restated at turn end was dropped: %+v", got)
+	}
+}
+
+func TestMerge_DescriptionOnlyKeepsTurnScoped(t *testing.T) {
+	c := newChatStatusCache()
+	c.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, TurnScoped: true})
+	if got := c.Merge("c1", marotte.ChatStatusPayload{Description: "approve the curl call"}); !got.TurnScoped {
+		t.Errorf("merged payload = %+v, want a description-only frame to keep TurnScoped", got)
+	}
+	c.clearAtTurnEnd("c1")
+	if got := c.Get("c1"); got.Status != "" {
+		t.Errorf("turn-scoped waiting_on_user survived turn end after a description-only frame: %+v", got)
+	}
+}
+
 // TestDischargeWaiting_BroadcastsTheClear pins that other devices need the empty chat_status frame,
 // published only when the claim actually went.
 func TestDischargeWaiting_BroadcastsTheClear(t *testing.T) {

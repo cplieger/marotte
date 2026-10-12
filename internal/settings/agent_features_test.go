@@ -2,6 +2,7 @@ package settings
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
 	"testing"
 )
@@ -35,10 +36,11 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 		{name: "timeout over ceiling", key: KeyTerminalCommandTimeoutMs, raw: `1800001`, wantErr: true},
 		{name: "timeout null", key: KeyTerminalCommandTimeoutMs, raw: `null`, wantErr: true},
 		{name: "ask first bool", key: KeySpecPlanningAskFirst, raw: `false`},
-		{name: "inline agents string", key: KeyInlineAgents, raw: `"yes"`, wantErr: true},
 		{name: "reminders null", key: KeySteeringReminders, raw: `null`, wantErr: true},
 		{name: "workflows off", key: KeyWorkflowsEnabled, raw: `false`},
 		{name: "workflows string", key: KeyWorkflowsEnabled, raw: `"off"`, wantErr: true},
+		{name: "model fallback on", key: KeyModelFallback, raw: `true`},
+		{name: "model fallback string", key: KeyModelFallback, raw: `"on"`, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,7 +66,6 @@ func TestEffective_AgentCapabilityDefaults(t *testing.T) {
 	}{
 		{"SpecPlanning", d.SpecPlanning, defaultSpecPlanning},
 		{"SpecPlanningAskFirst", d.SpecPlanningAskFirst, defaultSpecPlanningAskFirst},
-		{"InlineAgents", d.InlineAgents, defaultInlineAgents},
 		{"SteeringReminders", d.SteeringReminders, defaultSteeringReminders},
 		{"WorkflowsEnabled", d.WorkflowsEnabled, DefaultWorkflowsEnabled},
 		{"WorkValidation", d.WorkValidation, defaultWorkValidation},
@@ -73,6 +74,7 @@ func TestEffective_AgentCapabilityDefaults(t *testing.T) {
 		{"AutoDelegation", d.AutoDelegation, FeatureFollowKiro},
 		{"OutputStyle", d.OutputStyle, defaultOutputStyle},
 		{"TerminalCommandTimeoutMs", d.TerminalCommandTimeoutMs, defaultTerminalCommandTimeoutMs},
+		{"ModelFallback", d.ModelFallback, defaultModelFallback},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -93,8 +95,36 @@ func TestEffective_AgentCapabilityDefaultsAreKiroCLIs(t *testing.T) {
 	if !DefaultWorkflowsEnabled {
 		t.Error("DefaultWorkflowsEnabled = false, want true")
 	}
+	// kiro-cli ships both model-fallback flags off.
+	if defaultModelFallback {
+		t.Error("defaultModelFallback = true, want false")
+	}
 	if defaultOutputStyle != OutputStyleDefault || defaultTerminalCommandTimeoutMs != 0 {
 		t.Errorf("style/timeout defaults = (%q, %d), want (default, 0)", defaultOutputStyle, defaultTerminalCommandTimeoutMs)
+	}
+}
+
+// A config.json an older build wrote still loads: the key has no setter now, so it is inert.
+func TestEffective_IgnoresAStoredInlineAgentsKey(t *testing.T) {
+	got, rejected := EffectiveFrom(map[string]json.RawMessage{"inline_agents_enabled": json.RawMessage(`true`)})
+	if len(rejected) != 0 {
+		t.Errorf("rejected = %v, want none", rejected)
+	}
+	if !reflect.DeepEqual(got, EffectiveDefaults()) {
+		t.Error("a stored inline_agents_enabled changed the effective settings")
+	}
+	if _, known := KnownKeys["inline_agents_enabled"]; known {
+		t.Error("inline_agents_enabled is still a known key")
+	}
+	if err := ValidateAgentPatch(map[string]json.RawMessage{"inline_agents_enabled": json.RawMessage(`"yes"`)}); err != nil {
+		t.Errorf("ValidateAgentPatch(inline_agents_enabled) = %v, want the client's patch tolerated", err)
+	}
+}
+
+func TestEffective_ReadsAStoredModelFallback(t *testing.T) {
+	got, rejected := EffectiveFrom(map[string]json.RawMessage{KeyModelFallback: json.RawMessage(`true`)})
+	if len(rejected) != 0 || !got.ModelFallback {
+		t.Errorf("EffectiveFrom(model_fallback_enabled: true) = %t, rejected %v; want true, none", got.ModelFallback, rejected)
 	}
 }
 

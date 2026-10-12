@@ -3,6 +3,7 @@ package kascap
 import (
 	"maps"
 	"slices"
+	"strings"
 )
 
 // settingsKey is the container every resolverSetting row lands in. KAS reads
@@ -31,8 +32,8 @@ func SessionMeta(s *Spawn) map[string]any { return buildDoor(doorSession, s, nil
 func PromptMeta(p *Prompt) map[string]any { return buildDoor(doorPrompt, nil, p) }
 
 // ChildEnv returns the environment-door rows as KEY=value assignments, sorted
-// by name, for the bridge to append AFTER its credential screen so they win
-// over anything inherited.
+// by name, for the bridge to append after its credential screen and the
+// OwnsEnv drop, so they win over anything inherited.
 func ChildEnv(s *Spawn) []string {
 	vars := buildDoor(doorEnvironment, s, nil)
 	out := make([]string, 0, len(vars))
@@ -42,6 +43,25 @@ func ChildEnv(s *Spawn) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// ownedEnv is every settingOwned row's name (OwnsEnv).
+var ownedEnv = func() map[string]bool {
+	out := map[string]bool{}
+	for i := range table {
+		if table[i].settingOwned {
+			out[table[i].key] = true
+		}
+	}
+	return out
+}()
+
+// OwnsEnv reports whether kv, a KEY=value assignment, names a variable a marotte setting decides.
+// The bridge drops such names from the inherited environment before appending ChildEnv, so a
+// withheld arm leaves KAS's own default in force. Every other name stays the operator's to set.
+func OwnsEnv(kv string) bool {
+	name, _, _ := strings.Cut(kv, "=")
+	return ownedEnv[name]
 }
 
 func buildDoor(d door, s *Spawn, p *Prompt) map[string]any {

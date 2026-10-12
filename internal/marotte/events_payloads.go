@@ -428,7 +428,6 @@ const (
 	LockContentCollection = "content_collection_enabled"
 	LockTelemetry         = "telemetry.enabled"
 	LockWorkflows         = "workflows_enabled"
-	LockInlineAgents      = "inline_agents_enabled"
 	LockWebTools          = "web_tools"
 	LockPowers            = "powers"
 	LockMCP               = "mcp"
@@ -555,11 +554,15 @@ type CompactionStartedPayload struct{}
 type ChatStatusPayload struct {
 	Status      string `json:"status,omitempty"`
 	Description string `json:"description,omitempty"`
+	// TurnScoped marks a status the engine's activity tracker stated during a live turn
+	// (`activity.turnActive`), its only source. Server-side only.
+	TurnScoped bool `json:"-"`
 }
 
 // ChatStatusWaitingOnUser is the one Status value the server branches on, as KAS's
-// focus_update channel spells it: the only status whose meaning OUTLIVES its turn, so the
-// only one the connect-time replay retains. Every other value travels through opaque.
+// focus_update channel spells it: the only status whose meaning can OUTLIVE its turn, when it
+// is not TurnScoped, so the only one the connect-time replay retains. Every other value
+// travels through opaque.
 const ChatStatusWaitingOnUser = "waiting_on_user"
 
 // PendingSnapshotPayload is the payload for type="pending_snapshot": every

@@ -542,7 +542,7 @@
    * --c-text-control is the semantically right token for a control's label and
    * is currently an ALIAS of --c-text-secondary, so adopting it here would have
    * changed nothing on the pixel. Moving the token's own value instead would
-   * move `.list-row-btn` and `.subagent-toggle` with it — a system decision,
+   * move `.list-row-btn` and `.subagent-head-chevron` with it — a system decision,
    * not this row's. */
   color: var(--c-text-primary);
   font-size: var(--fs-xs);

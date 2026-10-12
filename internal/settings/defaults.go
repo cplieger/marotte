@@ -74,16 +74,17 @@ const (
 	// internal/agent's agentFeatures (values in agent_features.go).
 	// KeyWorkValidation, KeyCloudFormationSafety, KeyAutoRouting and
 	// KeyAutoDelegation are three-state: empty sends nothing, so kiro-cli's own
-	// experiment decides.
+	// experiment decides. KeyModelFallback on sends KAS's two model-fallback
+	// flags; off sends nothing, leaving kiro-cli's default (off) in force.
 	KeySpecPlanning         = "spec_planning"
 	KeySpecPlanningAskFirst = "spec_planning_ask_first"
-	KeyInlineAgents         = "inline_agents_enabled"
 	KeySteeringReminders    = "steering_reminders_enabled"
 	KeyWorkflowsEnabled     = "workflows_enabled"
 	KeyWorkValidation       = "work_validation"
 	KeyCloudFormationSafety = "cloudformation_safety_check"
 	KeyAutoRouting          = "auto_routing"
 	KeyAutoDelegation       = "auto_delegation"
+	KeyModelFallback        = "model_fallback_enabled"
 
 	// KeyOutputStyle rides each chat prompt as _meta.kiro.outputStyle.
 	// KeyTerminalCommandTimeoutMs is the shell tool's default timeout (0 = KAS's
@@ -124,7 +125,6 @@ var KnownKeys = map[string]struct{}{
 	KeyChatRetentionDays:        {},
 	KeyCloudFormationSafety:     {},
 	KeyDebugLogs:                {},
-	KeyInlineAgents:             {},
 	KeyOutputStyle:              {},
 	KeySpecPlanning:             {},
 	KeySpecPlanningAskFirst:     {},
@@ -135,6 +135,7 @@ var KnownKeys = map[string]struct{}{
 	KeyFBPath:                   {},
 	KeyGuardPayloadLinks:        {},
 	KeyKnowledgeEnabled:         {},
+	KeyModelFallback:            {},
 	KeyContentCollectionEnabled: {},
 	KeyLastEffortByModel:        {},
 	KeyLastMergeMethod:          {},

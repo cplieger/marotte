@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/marotte/internal/settings"
 )
@@ -240,6 +241,8 @@ func (rt *Runtime) syncProcessLive(ctx context.Context) {
 			case errors.Is(err, context.DeadlineExceeded):
 				slog.Warn("settings: the MCP render waited past the bound; it is retried at the next chat message or settings write",
 					"error", err)
+			case errors.Is(err, mcp.ErrKASUnreadable):
+				// The store reports each unreadable file state once.
 			case err != nil:
 				slog.Error("settings: re-rendering the MCP config failed; it is retried at the next chat message or settings write",
 					"error", err)

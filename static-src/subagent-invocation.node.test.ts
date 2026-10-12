@@ -14,7 +14,7 @@ import {
   sealEntry,
   setSessions,
 } from "./store.js";
-import { findSubagentInvocation, sliceSubagentGroup } from "./subagent-slice.js";
+import { findSubagentInvocation, sliceSubagent } from "./subagent-slice.js";
 import { payloadOf, turnIsDrawn, type TurnSource } from "./turns.js";
 import type { Session, TurnState } from "./types.js";
 import type { Entry, OpenEntry } from "./wire/types.gen.js";
@@ -247,23 +247,14 @@ describe("the invocation is the issuer's", () => {
   });
 
   it("yields the invocation exactly once, and never inside the lane it dispatched", () => {
-    const p = sliceSubagentGroup(source(), LANE, false);
-    expect([...p.slices.keys()]).toEqual([LANE]);
-    const slice = p.slices.get(LANE);
-    expect(slice?.invocation?.id).toBe(CALL);
-    expect(slice?.entries.map((e) => e.id)).toEqual(
+    const slice = sliceSubagent(source(), LANE, false);
+    expect(slice.invocation?.id).toBe(CALL);
+    expect(slice.entries.map((e) => e.id)).toEqual(
       entriesOf(TURN)
         .filter((e) => laneOf(e) === LANE)
         .map((e) => e.id),
     );
-    const yielded = [...p.slices.values()].reduce(
-      (n, s) =>
-        n +
-        (s.invocation?.id === CALL ? 1 : 0) +
-        s.entries.filter((e) => payloadOf(e, "tool_call")?.id === CALL).length,
-      0,
-    );
-    expect(yielded).toBe(1);
+    expect(slice.entries.filter((e) => payloadOf(e, "tool_call")?.id === CALL)).toHaveLength(0);
     expect(findSubagentInvocation(source(), LANE)?.id).toBe(CALL);
   });
 });

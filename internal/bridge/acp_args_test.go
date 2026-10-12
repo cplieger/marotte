@@ -97,7 +97,7 @@ func TestFilterACPArgs(t *testing.T) {
 
 func TestFilterACPArgs_RefusesAuthMethod(t *testing.T) {
 	// kiro-cli exits 2 before initialize on an invalid value:
-	// error: invalid value 'bogus' for '--auth-method <METHOD>' [possible values: cli]
+	// error: invalid value 'bogus' for '--auth-method <METHOD>' [possible values: cli, client]
 	cases := map[string][]string{
 		"long_separate":  {"--auth-method", "bogus", "-v"},
 		"long_inline":    {"--auth-method=bogus", "-v"},

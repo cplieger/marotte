@@ -3,7 +3,7 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import goldenRaw from "../internal/chat/testdata/delegate_dot.json?raw";
-import type { SubagentProjection } from "./subagent-slice.js";
+import type { SubagentSlice } from "./subagent-slice.js";
 import type { ExecState } from "./exec-view/status.js";
 import type { ExecRun } from "./exec-view/model.js";
 import type { SubagentCard } from "./fundamentals/subagent-block.js";
@@ -46,11 +46,7 @@ const SUBTASK = "sa-1";
 let subagentStatusFor: (status: ToolStatus | undefined, turnLive?: boolean) => string;
 let delegateStatusFor: (status: ToolStatus, turnLive: boolean) => ToolStatus;
 let buildSubagentCard: (name: string, status: ToolStatus) => SubagentCard;
-let subagentToExec: (
-  subtaskID: string,
-  projection: SubagentProjection,
-  turnLive?: boolean,
-) => ExecRun;
+let subagentToExec: (subtaskID: string, slice: SubagentSlice, turnLive?: boolean) => ExecRun;
 let stateWordOf: Readonly<Record<ExecState, string>>;
 let isToolActive: (s: ToolStatus) => boolean;
 let isToolDone: (s: ToolStatus) => boolean;
@@ -83,21 +79,13 @@ function invocationAt(status: ToolStatus): ToolCall {
 }
 
 /** Built as a value: under test is the status fold, not the lane walk. */
-function projectionAt(status: ToolStatus): SubagentProjection {
+function sliceAt(status: ToolStatus): SubagentSlice {
   return {
-    group: { pipeline: "", driver: undefined, members: [] },
-    slices: new Map([
-      [
-        SUBTASK,
-        {
-          invocation: invocationAt(status),
-          turn: undefined,
-          entries: [],
-          open: false,
-          live: isToolActive(status),
-        },
-      ],
-    ]),
+    invocation: invocationAt(status),
+    turn: undefined,
+    entries: [],
+    open: false,
+    live: isToolActive(status),
   };
 }
 
@@ -135,7 +123,7 @@ describe("the delegate dot contract", () => {
     });
 
     it(`${row.status}: the page is ${row.page_state}, announced as ${row.page_word}`, () => {
-      const run = subagentToExec(SUBTASK, projectionAt(status));
+      const run = subagentToExec(SUBTASK, sliceAt(status));
       expect(run.nodes).toHaveLength(1);
       const leaf = run.nodes[0];
       if (leaf === undefined) {
@@ -174,7 +162,7 @@ describe("the delegate dot contract", () => {
       expect(subagentStatusFor(status, row.turn_live)).toBe(row.dot);
       expect(cardWordAt(folded)).toBe(row.card_word);
       // Raw status and liveness, as `subagent-view.ts` passes them: the page makes the fold.
-      const run = subagentToExec(SUBTASK, projectionAt(status), row.turn_live);
+      const run = subagentToExec(SUBTASK, sliceAt(status), row.turn_live);
       const leaf = run.nodes[0];
       if (leaf === undefined) {
         throw new Error("subagentToExec produced no leaf for the folded status");

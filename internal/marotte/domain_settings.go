@@ -100,14 +100,15 @@ type EffectiveSettings struct {
 	// SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
 	// unattended run's permission ask at its deadline and is fail-closed by
 	// decision. DebugLogs raises the log level. All three default off.
-	// SpecPlanningAskFirst, InlineAgents and SteeringReminders default off,
-	// matching kiro-cli. WorkflowsEnabled defaults ON (user's choice, where the
-	// TUI's default is off).
+	// SpecPlanningAskFirst and SteeringReminders default off, matching kiro-cli.
+	// WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
 	SpecPlanningAskFirst bool `json:"spec_planning_ask_first"`
-	InlineAgents         bool `json:"inline_agents_enabled"`
 	SteeringReminders    bool `json:"steering_reminders_enabled"`
 	WorkflowsEnabled     bool `json:"workflows_enabled"`
 	SupervisedDefault    bool `json:"supervised_default"`
 	ScheduledAutoApprove bool `json:"scheduled_auto_approve"`
 	DebugLogs            bool `json:"debug_logs"`
+	// ModelFallback defaults off, matching kiro-cli: on, KAS may retry a turn its model refused or
+	// could not serve on the next model of its fallback chain, or record why it declined to.
+	ModelFallback bool `json:"model_fallback_enabled"`
 }

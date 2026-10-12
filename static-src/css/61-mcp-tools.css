@@ -61,12 +61,6 @@
    Wave 1: Animations + reasoning blocks + tool duration
    --------------------------------------------------------------------------- */
 
-/* The `.thinking-dots` / `.thinking-dot` pair and the `.working-label` beside it
-   were deleted in 2026-08: authored together, never wired from TypeScript (a grep
-   for all three returned CSS only). The dots are now `.activity-dots` in
-   03-base.css with a real consumer — the delegated-work card's collapsed busy
-   indicator. The label had no replacement because nothing wanted one. */
-
 /* Reasoning / thought blocks: the BLOCK and its summary are styled in
    13-messages.css (`.reasoning-block`, `.reasoning-summary`, `.reasoning-body`).
    A duplicate set lived here — `.reasoning-block` with its own accent

@@ -31,7 +31,7 @@ func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
 
 	wg.Go(func() {
 		for i := range N {
-			tracker.takeIfPresent("chat-1", int64(i))
+			tracker.takeIfPresent("chat-1", int64(i), marotte.DecisionKindPermission)
 		}
 	})
 
@@ -68,7 +68,7 @@ func TestPendingPermsTracker_TakeIfPresent_OneWinnerPerRequest(t *testing.T) {
 		for range answerers {
 			wg.Go(func() {
 				<-start
-				got, ok := tracker.takeIfPresent("chat-1", id)
+				got, ok := tracker.takeIfPresent("chat-1", id, marotte.DecisionKindPermission)
 				if !ok {
 					return
 				}
@@ -85,7 +85,7 @@ func TestPendingPermsTracker_TakeIfPresent_OneWinnerPerRequest(t *testing.T) {
 		if n := wins.Load(); n != 1 {
 			t.Fatalf("round %d: %d answerers claimed one request, want exactly 1", round, n)
 		}
-		if _, ok := tracker.takeIfPresent("chat-1", id); ok {
+		if _, ok := tracker.takeIfPresent("chat-1", id, marotte.DecisionKindPermission); ok {
 			t.Fatalf("round %d: request still claimable after being taken", round)
 		}
 	}

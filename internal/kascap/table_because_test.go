@@ -292,26 +292,6 @@ Harmless to send meanwhile: initialize reads _meta.kiro as a plain object
 (no schema, no strict()), so an unread key is ignored. If this row ever
 needs to be false, the WITHHOLDING is what expresses it — an absent key
 reads as false at every one of the sites above.`,
-	"setting.subagentOrchestration": `subagentOrchestration swaps the agent's delegation tool: absent
-gives one-shot invoke_sub_agent, present gives
-orchestrate_subagent, which wraps the same invoke config and adds
-pipeline stages with depends_on and bounded loops. Same
-absent-means-false resolver as the two keys above, and kiro-cli's
-own TUI sends it, so withholding it diverged marotte's agent from
-the reference client's for no stated reason. The exception is a
-default-v2 session: KAS ignores the key there (subagentOrchestrationActive),
-so it gets invoke_sub_agent, or at top level with workflows on no chat
-delegation tool at all, and delegates through the run tool.
-
-The cost this does NOT remove, recorded because it is the reason to
-think twice before reaching for a pipeline: a subagent has no
-session of its own, so its whole run lands in the PARENT
-transcript and every later turn re-bills it: a trivial delegation
-costs roughly sixteen times the transcript bytes of the same work
-as a workflow step. So this key makes pipelines
-expressible, not cheap; real fan-out still belongs in a workflow
-run, and A4.2's tool-output cap is what bounds the damage when the
-agent chooses otherwise.`,
 	"setting.session_title_llm": `WITHHELD because it is INERT, and it was sent for a year on a
 premise measurement refuted. session_title_llm names KAS's LLM session
 title: one fire-and-forget call to its fast model (qdev::simple-task) on a
@@ -408,14 +388,6 @@ falls back to the persisted specPlanEnabled, so withholding false would keep a
 chat created while the setting was on planning through specs forever. KAS's
 defaults are workflow quick and skipClarification true; the checkbox maps to
 skipClarification false.`,
-	"setting.inlineAgents": `SENT from "Inline helper agents" (inline_agents_enabled, default off,
-matching kiro-cli's yf("inlineAgents","off")). Read once at initialize
-(isSettingEnabled on the initialize settings) to add an inlineAgent parameter
-to the delegation tool, so the agent can define a one-off helper with a model
-and effort it picks instead of only a registered agent. The helper inherits the
-parent's permissions and tools, so the permission surface is unchanged. Never in
-spec mode, which builds its tools with inline agents off. Value-gated so off is
-an explicit pin rather than an absence.`,
 	"setting.steeringReminders": `SENT from "Steering reminders" (steering_reminders_enabled, default off,
 matching kiro-cli). The live key is the un-underscored one: the schema declares
 _steeringReminders, but the reader is Ty("steeringReminders") through the
@@ -581,8 +553,8 @@ Five sibling keys are in the same state and share this row's reasoning rather th
 getting one each: thinking, tangentMode, checkpoint, _subagent and _delegate are
 all declared in KAS's schema with zero readers. chat.enableCheckpoint's marotte
 toggle is deleted; chat.enableTodoList's went too, and its todoList key left the
-schema at 2.27.0. _subagent's live counterpart is subagentOrchestration, which
-this table already sends, so behaviour there is correct today.`,
+schema at 2.27.0. _subagent's former counterpart, subagentOrchestration, has
+no reader either, so this table sends neither.`,
 	"setting-object.memory": `SENT on both session doors, from the Memory dropdown (settings.KeyMemoryMode),
 always explicit. KAS reads it through U$ (data.memory), not isSettingEnabled, so its
 value is {mode, reflection} and not the {enabled} object. mode is disabled, read_only
@@ -720,14 +692,14 @@ anything is sent is the telemetryEnabled row, which the Data sharing switch driv
 The external memory eligibility arm. marotte used to write it from the memory
 setting; the session-door memory row's explicit mode replaces that, and mode
 "disabled" holds whatever the arm says.`,
-	"env.KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
-(decision: pin only where a marotte setting owns the behaviour).
-Lets a turn whose model is unavailable move to the next model of the chain
-getModelFallbacks serves.`,
-	"env.KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
-(decision: pin only where a marotte setting owns the behaviour).
-Lets a turn whose model refused move to the next model of the chain
-getModelFallbacks serves.`,
+	"env.KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED": `SENT as "true" only when "Model fallback" (model_fallback_enabled, default off as in
+kiro-cli) is on; off writes nothing, so KAS's default and any ramp stay in force rather than an
+explicit off. Lets a turn whose model is unavailable move to the next model of the chain
+getModelFallbacks serves; marotte records the move as a model_fallback entry.`,
+	"env.KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED": `SENT as "true" only when "Model fallback" (model_fallback_enabled, default off as in
+kiro-cli) is on; off writes nothing. Lets a turn whose model refused move to the next model of
+the chain getModelFallbacks serves, and KAS then pins the chat to that model unless the user
+picked a different one explicitly.`,
 	"env.KIRO_FEATURE_SESSION_TITLE_LLM_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 The LLM session title on chat bridges. Run bridges turn the title off through
@@ -773,7 +745,10 @@ so the cascade_config experiment decides as in kiro-cli's own TUI. Auto routing 
 Auto up a model category mid-session. The env JSON outranks the experiment and REPLACES its whole
 config, so "on" runs KAS's built-in probe schedule and adds the client notification (default off)
 that marotte renders as a model_routed entry; "off" is the only veto, because settings.cascade is
-ORed with the config and its false cannot turn a ramped experiment off.`,
+ORed with the config and its false cannot turn a ramped experiment off. The same variable is the
+first source of KAS's context-overflow hand-off config (lWc: env, then server_cascade_config, then
+built-in), so a chosen value also replaces a server-tuned hand-off with KAS's built-in one; no
+other door carries the routing choice with the notification, so the two cannot be split.`,
 	"setting.cascade": `WITHHELD: KIRO_FEATURE_CASCADE_CONFIG carries the user's choice. KAS ORs this setting with
 the config, so {"enabled": false} cannot veto a ramp, and {"enabled": true} turns routing on with
 the client notification off, so the chat would move silently.`,

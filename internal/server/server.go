@@ -302,7 +302,6 @@ func (s *Server) routes() *http.ServeMux {
 	s.files.RegisterRoutes(mux)
 	mux.HandleFunc("/api/settings", s.handleSettings)
 	mux.HandleFunc("/api/tabs", s.handleTabs)
-	mux.HandleFunc("/api/workspace/kiro-config", s.handleKiroConfig)
 	mux.HandleFunc("/api/workspace/kiro-docs", s.handleKiroDocs)
 	mux.HandleFunc("/api/workspace/kiro-docs/new", s.handleKiroDocNew)
 	mux.HandleFunc("/api/specs/{dir}", s.handleSpec)

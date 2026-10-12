@@ -56,6 +56,16 @@ func TestParseSteeringFrontmatter(t *testing.T) {
 			want: docEntry{Inclusion: "always"},
 		},
 		{
+			name: "front-matter without an inclusion key",
+			in:   "---\ndescription: no inclusion key\n---\n# Doc",
+			want: docEntry{Inclusion: "always", Description: "no inclusion key"},
+		},
+		{
+			name: "inclusion value padded with spaces",
+			in:   "---\ninclusion:   manual  \n---\n# Doc",
+			want: docEntry{Inclusion: "manual"},
+		},
+		{
 			name: "CRLF line endings",
 			in:   "---\r\ninclusion: manual\r\ndescription: runbook\r\n---\r\nbody",
 			want: docEntry{Inclusion: "manual", Description: "runbook"},
@@ -76,30 +86,6 @@ func TestParseSteeringFrontmatter(t *testing.T) {
 			got := parseSteeringFrontmatter([]byte(tc.in))
 			if got != tc.want {
 				t.Errorf("parseSteeringFrontmatter() = %+v, want %+v", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestParseInclusion covers the exported wrapper shared with the REST
-// kiro-config scanner: valid values pass through, unknown/absent fold to
-// "always", and a BOM+CRLF-authored file is tolerated.
-func TestParseInclusion(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"absent defaults to always", "# no frontmatter", "always"},
-		{"manual", "---\ninclusion: manual\n---\n", "manual"},
-		{"fileMatch", "---\ninclusion: fileMatch\n---\n", "fileMatch"},
-		{"unknown folds to always", "---\ninclusion: bogus\n---\n", "always"},
-		{"CRLF+BOM tolerated", "\ufeff---\r\ninclusion: manual\r\n---\r\n", "manual"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := ParseInclusion([]byte(tc.in)); got != tc.want {
-				t.Errorf("ParseInclusion(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}

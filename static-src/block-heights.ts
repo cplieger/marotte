@@ -12,9 +12,6 @@ import {
   type EntryRange,
   type RunResults,
 } from "./block-window.js";
-// The stage-to-driver join, off the stage's own tool-call id. Imported rather than
-// re-derived, because that id format has two owners already and this leaf adds no DOM.
-import { pipelineOf } from "./subagent-slice.js";
 import type { Entry, EntryToolCall } from "./types.js";
 import { payloadOf, type Turn } from "./turns.js";
 // Type-only, so this costs no import edge at runtime: `tierNow` below reads the
@@ -34,7 +31,7 @@ export const ENTRY_ESTIMATE_PX: Readonly<Record<PointerTier, EntryEstimates>> = 
     thinking: 25, // NO reserve: a sealed trace's own `<summary>` row
     runCard: 71, // 27-run-card.css `.run-card` — `auto var(--run-card-content)` + 2px
     toolCard: 38, // 14-tools.css `.tool-call` — `auto var(--btn-h)` + 2px
-    subagentCard: 71, // `.subagent-block` — a delegate's card AND a pipeline's container
+    subagentCard: 71, // `.subagent-block` — a delegate's card
     planCard: 70, // `.plan-message` — `auto 2.75rem` + `--sp-3` twice + 2px
     steerNote: 62, // NO reserve: a one-line note, head + one text line + padding
     row: 48, // 13-messages.css `.msg-row` — an event row
@@ -105,15 +102,6 @@ const entryHeights = new Map<string, Map<number, number>>();
  */
 const rowHeights = new Map<string, Map<number, { range: EntryRange; px: number }>>();
 
-/**
- * The tool call that OPENS a subagent pipeline, mounting the pipeline's BOX. Kept out of
- * `isSubagentInvocation`. Local: `messages-blocks.ts` owns the twin and its graph reaches
- * `router.ts`, which needs `window`; the fix is the predicate living in `tool-schema.ts`.
- */
-function isPipelineDriver(call: EntryToolCall): boolean {
-  return call.title === "Orchestrate Sub-agent";
-}
-
 /** What one `tool_call` entry mounts as, in pixels. `results` is the turn's own index, so
  *  the run test costs one lookup rather than a walk over the body per call. */
 function callEstimate(
@@ -127,15 +115,7 @@ function callEstimate(
   if (effectiveRunID(e, results) !== "") {
     return est.runCard;
   }
-  // A pipeline is worth ONE card at its DRIVER's entry: stages inside a collapsed body add
-  // nothing. A promoted single stage swaps the two prices.
-  if (isPipelineDriver(call)) {
-    return est.subagentCard;
-  }
-  if ((call.agent_subtask_id ?? "") !== "") {
-    return pipelineOf(call.id) === "" ? est.subagentCard : 0;
-  }
-  return est.toolCard;
+  return (call.agent_subtask_id ?? "") === "" ? est.toolCard : est.subagentCard;
 }
 
 /** What one entry mounts as, in pixels, for an entry this view draws. A `text` entry is

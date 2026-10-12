@@ -3,6 +3,8 @@ package mcp
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -339,9 +341,9 @@ func TestWriteKASConfig_RemoteWithoutOAuthCarriesNoBlock(t *testing.T) {
 
 // The size cap bounds the RE-READ of a file marotte shares with KAS, so its two
 // sides have different consequences: a file at the cap is still merged with (its
-// foreign keys survive a write), and one past it is skipped — silently, because
-// being too big to merge is not a stat failure and reporting it as one sends the
-// reader looking for a broken path.
+// foreign keys survive a write), and one past it is left untouched, logged as
+// oversized rather than as a stat failure, which would send the reader looking
+// for a broken path.
 //
 // Not parallel: it swaps the process-wide slog default.
 func TestReadKASConfig_SizeCapIsInclusive(t *testing.T) {
@@ -384,11 +386,239 @@ func TestReadKASConfig_SizeCapIsInclusive(t *testing.T) {
 		if _, err := New(t.Context(), filepath.Dir(kas), nil, withKASConfigPath(kas)); err != nil {
 			t.Fatalf("New: %v", err)
 		}
-		if _, ok := readKAS(t, kas)[kasPowersKey]; ok {
-			t.Errorf("a file past the %d-byte cap was merged with anyway", kasFileMaxBytes)
+		if info, err := os.Stat(kas); err != nil || info.Size() != kasFileMaxBytes+1 {
+			t.Errorf("a file past the %d-byte cap was rewritten: stat = %v, %v", kasFileMaxBytes, info, err)
 		}
-		if strings.Contains(logs.String(), "stat failed") {
-			t.Errorf("an oversized file was reported as a stat failure:\n%s", logs.String())
+		if !strings.Contains(logs.String(), "merge cap") {
+			t.Errorf("an oversized file's refusal does not name the cap:\n%s", logs.String())
 		}
 	})
+}
+
+func TestReadKASDoc_BOMKeepsForeignKeys(t *testing.T) {
+	s, kas := newIsolatedStore(t)
+	seed := `{"powers":{"mcpServers":{"power-a-b":{"command":"c"}}},"other":1}`
+	if err := os.WriteFile(kas, append([]byte{0xEF, 0xBB, 0xBF}, seed...), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := s.Create(t.Context(), &Server{Name: "mine", Transport: TransportStdio, Command: "x", Enabled: true}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	doc := readKAS(t, kas)
+	if !strings.Contains(string(doc[kasPowersKey]), "power-a-b") {
+		t.Errorf("powers = %s, want the BOM-prefixed file's block kept", doc[kasPowersKey])
+	}
+	if string(doc["other"]) != "1" {
+		t.Errorf("other = %s, want the BOM-prefixed file's foreign key kept", doc["other"])
+	}
+}
+
+// Not parallel: it swaps the process-wide slog default.
+func TestReadKASDoc_EmptyFileIsReplacedQuietly(t *testing.T) {
+	for _, tc := range []struct{ name, content string }{
+		{name: "zero bytes", content: ""},
+		{name: "whitespace", content: " \n\t"},
+		{name: "bom only", content: "\xEF\xBB\xBF"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, kas := newIsolatedStore(t)
+			if _, err := s.Create(t.Context(), &Server{Name: "mine", Transport: TransportStdio, Command: "x", Enabled: true}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			logs := captureSlog(t)
+
+			if err := os.WriteFile(kas, []byte(tc.content), 0o600); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			if changed, err := s.WritePowersServers(t.Context(), nil); err != nil || !changed {
+				t.Fatalf("WritePowersServers over an empty file = %v, %v; want true, nil", changed, err)
+			}
+			if _, ok := readKASServers(t, kas)["mine"]; !ok {
+				t.Errorf("WritePowersServers over an empty file left out marotte's own servers")
+			}
+
+			if err := os.WriteFile(kas, []byte(tc.content), 0o600); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			if _, err := s.Create(t.Context(), &Server{Name: "second", Transport: TransportStdio, Command: "y", Enabled: true}); err != nil {
+				t.Fatalf("Create over an empty file: %v", err)
+			}
+			if _, ok := readKASServers(t, kas)["second"]; !ok {
+				t.Errorf("a persist over an empty file did not render the new server")
+			}
+			if strings.Contains(logs.String(), "level=WARN") || strings.Contains(logs.String(), "level=ERROR") {
+				t.Errorf("an empty KAS file was reported:\n%s", logs.String())
+			}
+		})
+	}
+}
+
+// A file marotte cannot parse may still be valid to KAS (JSONC), so every writer leaves it
+// byte for byte and refuses, rather than replacing it with marotte's key alone. Not parallel:
+// it swaps the process-wide slog default.
+func TestReadKASDoc_UnreadableFileIsKeptAndTheWriteRefused(t *testing.T) {
+	for _, tc := range []struct{ name, content string }{
+		{name: "garbage", content: "{garbage"},
+		{name: "jsonc comment", content: "{\n  // mine\n  \"powers\": {\"mcpServers\": {\"power-a-b\": {\"command\": \"c\"}}}\n}"},
+		{name: "array document", content: `[1]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			kas := filepath.Join(dir, "kas", "mcp.json")
+			s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			record, err := os.ReadFile(filepath.Join(dir, "mcp.json"))
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatalf("read record: %v", err)
+			}
+			if err := os.WriteFile(kas, []byte(tc.content), 0o600); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			logs := captureSlog(t)
+			assertKept := func(t *testing.T, writer string) {
+				t.Helper()
+				got, err := os.ReadFile(kas)
+				if err != nil || string(got) != tc.content {
+					t.Errorf("%s rewrote the unreadable file: %q, %v", writer, got, err)
+				}
+			}
+
+			if _, err := s.Create(t.Context(), &Server{Name: "mine", Transport: TransportStdio, Command: "x", Enabled: true}); !errors.Is(err, ErrKASUnreadable) {
+				t.Errorf("Create = %v, want ErrKASUnreadable", err)
+			}
+			assertKept(t, "persist")
+			if now, err := os.ReadFile(filepath.Join(dir, "mcp.json")); string(now) != string(record) {
+				t.Errorf("marotte's record moved under a refused KAS write: %q, %v", now, err)
+			}
+			if n := len(s.list(t.Context())); n != 0 {
+				t.Errorf("store holds %d servers after a refused Create, want 0", n)
+			}
+			if _, err := s.WritePowersServers(t.Context(), map[string]json.RawMessage{"power-x-y": json.RawMessage(`{"command":"c"}`)}); !errors.Is(err, ErrKASUnreadable) {
+				t.Errorf("WritePowersServers = %v, want ErrKASUnreadable", err)
+			}
+			assertKept(t, "WritePowersServers")
+			if err := s.RenderKASConfig(t.Context()); !errors.Is(err, ErrKASUnreadable) {
+				t.Errorf("RenderKASConfig = %v, want ErrKASUnreadable", err)
+			}
+			assertKept(t, "RenderKASConfig")
+			if !strings.Contains(logs.String(), "level=ERROR") {
+				t.Errorf("a refused write logged no error:\n%s", logs.String())
+			}
+		})
+	}
+}
+
+// The boot reconcile over an unreadable KAS file keeps the file and still starts the store, so the
+// user can reach the UI to fix it.
+func TestNew_BootOverAnUnreadableKASFileKeepsItAndStarts(t *testing.T) {
+	dir := t.TempDir()
+	kas := filepath.Join(dir, "kas-mcp.json")
+	const content = "{\n  // mine\n  \"keep\": true\n}"
+	if err := os.WriteFile(kas, []byte(content), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	record := `{"version":1,"servers":[{"id":"abcdefghij","name":"local","transport":"stdio","command":"x","enabled":true}]}`
+	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(record), 0o600); err != nil {
+		t.Fatalf("seed record: %v", err)
+	}
+	logs := captureSlog(t)
+
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
+	if err != nil {
+		t.Fatalf("New over an unreadable KAS file = %v, want the store to start", err)
+	}
+	if got, err := os.ReadFile(kas); err != nil || string(got) != content {
+		t.Errorf("boot reconcile rewrote the unreadable file: %q, %v", got, err)
+	}
+	if n := len(s.list(t.Context())); n != 1 {
+		t.Errorf("store holds %d servers after boot, want the record's 1", n)
+	}
+	if !strings.Contains(logs.String(), "level=ERROR msg=\"mcp: kas config file is not a readable JSON object") {
+		t.Errorf("boot refusal logged no error:\n%s", logs.String())
+	}
+	if strings.Contains(logs.String(), "initial kas config write failed") {
+		t.Errorf("boot logged the refusal a second time:\n%s", logs.String())
+	}
+}
+
+// A refusal of one file state is reported at Error once; a changed file is reported again.
+func TestReadKASDoc_RefusalOfOneFileStateIsLoggedOnce(t *testing.T) {
+	dir := t.TempDir()
+	kas := filepath.Join(dir, "kas-mcp.json")
+	if err := os.WriteFile(kas, []byte("{garbage"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	logs := captureSlog(t)
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	refusals := func() int {
+		return strings.Count(logs.String(), "level=ERROR msg=\"mcp: kas config file is not a readable JSON object")
+	}
+
+	for range 2 {
+		if err := s.RenderKASConfig(t.Context()); !errors.Is(err, ErrKASUnreadable) {
+			t.Fatalf("RenderKASConfig = %v, want ErrKASUnreadable", err)
+		}
+	}
+	if n := refusals(); n != 1 {
+		t.Errorf("three refusals of one unchanged file logged %d errors, want 1", n)
+	}
+	if err := os.WriteFile(kas, []byte("{garbage, longer"), 0o600); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	if err := s.RenderKASConfig(t.Context()); !errors.Is(err, ErrKASUnreadable) {
+		t.Fatalf("RenderKASConfig = %v, want ErrKASUnreadable", err)
+	}
+	if n := refusals(); n != 2 {
+		t.Errorf("a changed unreadable file logged %d errors in all, want 2", n)
+	}
+
+	// A file fixed and then broken back to the same state, mtime included, is a new refusal.
+	info, err := os.Stat(kas)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if err := os.WriteFile(kas, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	if err := s.RenderKASConfig(t.Context()); err != nil {
+		t.Fatalf("RenderKASConfig over a fixed file = %v, want nil", err)
+	}
+	if err := os.WriteFile(kas, []byte("{garbage, longer"), 0o600); err != nil {
+		t.Fatalf("break again: %v", err)
+	}
+	if err := os.Chtimes(kas, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatalf("restore mtime: %v", err)
+	}
+	if err := s.RenderKASConfig(t.Context()); !errors.Is(err, ErrKASUnreadable) {
+		t.Fatalf("RenderKASConfig = %v, want ErrKASUnreadable", err)
+	}
+	if n := refusals(); n != 3 {
+		t.Errorf("a file broken again after a fix logged %d errors in all, want 3", n)
+	}
+}
+
+func TestReadKASDoc_RefusedSaveAnswers409WithTheHint(t *testing.T) {
+	dir := t.TempDir()
+	kas := filepath.Join(dir, "kas-mcp.json")
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	mux := http.NewServeMux()
+	s.RegisterRoutes(mux)
+	if err := os.WriteFile(kas, []byte("{garbage"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	rec := doJSON(t, mux, http.MethodPost, "/api/mcp", &Server{Transport: TransportStdio, Name: "gh", Command: "bash", Enabled: true})
+	if rec.Code != http.StatusConflict {
+		t.Errorf("POST over an unreadable KAS file = %d, want 409", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "left the file unchanged") {
+		t.Errorf("body = %s, want the hint", rec.Body.String())
+	}
 }

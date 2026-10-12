@@ -87,7 +87,7 @@ func (*benchDeps) CloseBridge(context.Context, marotte.ChatID, marotte.TurnOutco
 
 func (*benchDeps) ClearPendingPermsForChat(marotte.ChatID) {}
 
-func (*benchDeps) TakePendingPerm(marotte.ChatID, int64, marotte.SettledBy) (AskReply, bool) {
+func (*benchDeps) TakePendingPerm(marotte.ChatID, int64, marotte.DecisionKind, marotte.SettledBy) (AskReply, bool) {
 	return nopReply{}, true
 }
 
@@ -204,7 +204,7 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	d.Broadcast(t.Context(), marotte.ServerEvent{})
 	d.CloseBridge(t.Context(), "x", marotte.TurnOutcomeCancelled)
 	d.ClearPendingPermsForChat("x")
-	d.TakePendingPerm("x", 0, marotte.SettledByUser)
+	d.TakePendingPerm("x", 0, marotte.DecisionKindPermission, marotte.SettledByUser)
 	d.InflightAdd(1)
 	d.InflightDone()
 	d.DeleteChatStateByChain(t.Context(), "x", nil, RunStopChatDeleted)
@@ -236,7 +236,7 @@ func TestBenchDeps_Contract(t *testing.T) {
 		d.Broadcast(t.Context(), marotte.ServerEvent{})
 		d.CloseBridge(t.Context(), "x", marotte.TurnOutcomeCancelled)
 		d.ClearPendingPermsForChat("x")
-		d.TakePendingPerm("x", 0, marotte.SettledByUser)
+		d.TakePendingPerm("x", 0, marotte.DecisionKindPermission, marotte.SettledByUser)
 		d.InflightAdd(1)
 		d.InflightDone()
 		d.DeleteChatStateByChain(t.Context(), "x", nil, RunStopChatDeleted)

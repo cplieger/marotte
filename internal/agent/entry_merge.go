@@ -600,9 +600,9 @@ type recordEntryIndex struct {
 	// byInvocation is each subagent invocation's delegate uuid.
 	byInvocation map[string]int
 	messages     *workflowMessageIndex
-	// routed is every model_routed in seq order: neither side's frame carries an id and KAS's
-	// message is constant, so the n-th route of a paired turn is the n-th on the other side.
-	routed []int
+	// notices is every model_routed and model_fallback in seq order, per kind: neither side's
+	// frame carries an id, so the n-th notice of a kind in a paired turn is the n-th on the other side.
+	notices map[marotte.EntryKind][]int
 	// turnOpen and turnClose pair by kind: their ids are minted differently on each side.
 	turnOpen  int
 	turnClose int
@@ -621,6 +621,7 @@ func indexRecordEntries(entries []marotte.Entry) recordEntryIndex {
 		byID:         make(map[string]int, len(entries)),
 		bySay:        make(map[string][]int),
 		byInvocation: make(map[string]int),
+		notices:      make(map[marotte.EntryKind][]int, 2),
 		messages:     &workflowMessageIndex{byWords: map[workflowMessageKey][]int{}, deliveredAs: map[string]string{}},
 		turnOpen:     -1,
 		turnClose:    -1,
@@ -645,8 +646,8 @@ func (idx *recordEntryIndex) add(e *marotte.Entry, i int) {
 		if idx.turnClose < 0 {
 			idx.turnClose = i
 		}
-	case marotte.EntryKindModelRouted:
-		idx.routed = append(idx.routed, i)
+	case marotte.EntryKindModelRouted, marotte.EntryKindModelFallback:
+		idx.notices[e.Kind] = append(idx.notices[e.Kind], i)
 	case marotte.EntryKindSteer, marotte.EntryKindSteerDelivered:
 		idx.messages.add(e, i)
 	case marotte.EntryKindText, marotte.EntryKindThinking:
@@ -786,15 +787,15 @@ func pairEntries(rec, proj []marotte.Entry, idx recordEntryIndex) []entryPairing
 	}
 	// A result pairs through its call, whose twin is always known by then.
 	resultTwin := make(map[string]int, len(proj))
-	routes := 0
+	notices := make(map[marotte.EntryKind]int, 2)
 	for j := range proj {
 		e := &proj[j]
 		switch e.Kind {
-		case marotte.EntryKindModelRouted:
-			if routes < len(idx.routed) {
-				c.claim(j, idx.routed[routes])
+		case marotte.EntryKindModelRouted, marotte.EntryKindModelFallback:
+			if n := notices[e.Kind]; n < len(idx.notices[e.Kind]) {
+				c.claim(j, idx.notices[e.Kind][n])
 			}
-			routes++
+			notices[e.Kind]++
 		case marotte.EntryKindTurnOpen:
 			c.claim(j, idx.turnOpen)
 		case marotte.EntryKindTurnClose:

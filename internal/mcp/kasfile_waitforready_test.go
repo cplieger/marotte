@@ -154,7 +154,7 @@ func TestWriteKASConfig_PerServerWaitForReadySurvivesReRender(t *testing.T) {
 	}
 }
 
-func TestRenderedWaitForReady_FollowsAPowersWriteThatReplacedAnUnreadableFile(t *testing.T) {
+func TestRenderedWaitForReady_FollowsAPowersWriteThatReplacedAnEmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	kasDir := filepath.Join(dir, "kas")
 	kasPath := filepath.Join(kasDir, "mcp.json")
@@ -173,7 +173,7 @@ func TestRenderedWaitForReady_FollowsAPowersWriteThatReplacedAnUnreadableFile(t 
 	if err := os.Mkdir(kasDir, 0o700); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
-	if err := os.WriteFile(kasPath, []byte("{not json"), 0o600); err != nil {
+	if err := os.WriteFile(kasPath, nil, 0o600); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
 	on.Store(true)

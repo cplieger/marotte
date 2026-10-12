@@ -306,7 +306,10 @@ type SessionMode struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	Source      string `json:"source,omitempty"` // "bundled" | "workspace" (v3 _meta.kiro.source)
+	Source      string `json:"source,omitempty"` // "bundled" | "global" | "workspace" (v3 _meta.kiro.source)
+	// Shadows is the Source of the mode this custom agent replaces under the same id, set only on
+	// GET /api/config-template's catalog; empty when it replaces nothing.
+	Shadows string `json:"shadows,omitempty"`
 }
 
 // SessionModel describes one model the running agent can swap to, as declared by

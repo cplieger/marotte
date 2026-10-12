@@ -121,9 +121,9 @@ func turnCloseOf(sealed []turnlog.Sealed) (marotte.EntryTurnClose, bool) {
 	return marotte.EntryTurnClose{}, false
 }
 
-// stepModelCallLimitNoteText names the step and carries the step close's own remedy.
+// stepModelCallLimitNoteText names the step by workflow.PathKey, as an included node's id holds a '/'.
 func stepModelCallLimitNoteText(recipe string, path []string) string {
-	return recipe + " step " + strings.Join(path, "/") + " stopped early. " + marotte.ModelCallLimitStepReason
+	return recipe + " step " + workflow.PathKey(path) + " stopped early. " + marotte.ModelCallLimitStepReason
 }
 
 // stepRefusalNoteText names the step and does not invite a re-run: a refusal is deterministic.
@@ -132,7 +132,7 @@ func stepRefusalNoteText(recipe string, path []string, r *marotte.RefusalInfo) s
 	var b strings.Builder
 	b.WriteString(recipe)
 	b.WriteString(" step ")
-	b.WriteString(strings.Join(path, "/"))
+	b.WriteString(workflow.PathKey(path))
 	b.WriteString(" was declined by the model")
 	if r != nil && r.Category != "" {
 		b.WriteString(" (")

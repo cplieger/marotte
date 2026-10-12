@@ -24,11 +24,11 @@ func TestAgentFeatures_TakesValidValuesAndDefaultsTheRest(t *testing.T) {
 	writeAgentSettings(t, dir, `{
 		"spec_planning": "quick",
 		"spec_planning_ask_first": true,
-		"inline_agents_enabled": true,
 		"work_validation": "off",
 		"cloudformation_safety_check": "enforce",
 		"auto_routing": "on",
 		"auto_delegation": true,
+		"model_fallback_enabled": true,
 		"terminal_command_timeout_ms": 500
 	}`)
 
@@ -37,9 +37,9 @@ func TestAgentFeatures_TakesValidValuesAndDefaultsTheRest(t *testing.T) {
 	want := marotte.AgentFeatures{
 		SpecPlan:             settings.SpecPlanningQuick,
 		SpecAskClarification: true,
-		InlineAgents:         true,
 		WorkValidation:       settings.FeatureOff,
 		AutoRouting:          settings.FeatureOn,
+		ModelFallback:        true,
 		// Absent: workflows default on.
 		Workflows: true,
 		// Invalid values fall back, so KAS's own experiment and 120 s decide.

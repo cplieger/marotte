@@ -143,6 +143,10 @@ func TestDeclIsWellFormed(t *testing.T) {
 			if row.door != doorPrompt && row.promptGate != nil {
 				t.Errorf("%s declares a promptGate off the prompt door", rowID(row))
 			}
+			// OwnsEnv drops an inherited value of the row's name; anywhere else that name is no variable.
+			if row.settingOwned && (row.door != doorEnvironment || !row.send) {
+				t.Errorf("%s is settingOwned but not a sent environment row", rowID(row))
+			}
 			if seen[rowID(row)+string(row.door)] {
 				t.Errorf("%s is declared twice on the same door", rowID(row))
 			}
@@ -313,11 +317,11 @@ func settingValuesOf(t *testing.T, row decl) []settingValue {
 			SpecPlan: "full", SpecAskClarification: true,
 			WorkValidation: "on", InfraSafetyMonitor: "on",
 			AutoRouting: "on", AutoDelegation: "on", ConfigurationState: true,
-			TerminalCommandTimeoutMs: 300000,
-			InlineAgents:             true, SteeringReminders: true,
+			TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
 			MemoryMode: "read_write", MemoryReflection: true,
 			Workflows:            true,
 			DisableSessionTitles: true, DisableAutoCompaction: true,
+			ModelFallback: true,
 		}},
 		{"with every choice off", Spawn{AutoRouting: "off", AutoDelegation: "off"}},
 	} {
@@ -355,6 +359,15 @@ func TestToolSearchSettingIsWithheld(t *testing.T) {
 	}
 	if row.gate != nil || row.value != nil {
 		t.Errorf("%s carries a gate or value; a withheld row has no wire value", rowID(row))
+	}
+}
+
+// No engine reads these two delegation keys, so no row may send or claim them.
+func TestDeadDelegationSettingsAreNotDeclared(t *testing.T) {
+	for _, row := range table {
+		if row.key == "subagentOrchestration" || row.key == "inlineAgents" {
+			t.Errorf("%s is declared; KAS has no reader for it", rowID(row))
+		}
 	}
 }
 

@@ -24,6 +24,7 @@ const KIND_SET: Record<EntryKind, true> = {
   safety_blocked: true,
   model_switched: true,
   model_routed: true,
+  model_fallback: true,
   mode_switched: true,
   turn_revert: true,
   reconciled: true,

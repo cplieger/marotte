@@ -22,6 +22,7 @@ export type {
   // The entry log: one envelope type plus one payload type per kind
   Entry,
   OpenEntry,
+  EntryModelFallback,
   EntryPrompt,
   EntrySteer,
   EntrySteerDelivered,
@@ -143,6 +144,7 @@ import type {
   EntryCompactionFailed,
   EntryKind,
   EntryModeSwitched,
+  EntryModelFallback,
   EntryModelRouted,
   EntryModelSwitched,
   EntryPlan,
@@ -190,6 +192,7 @@ export interface EntryPayload {
   safety_blocked: EntrySafetyBlocked;
   model_switched: EntryModelSwitched;
   model_routed: EntryModelRouted;
+  model_fallback: EntryModelFallback;
   mode_switched: EntryModeSwitched;
   turn_revert: EntryTurnRevert;
   reconciled: EntryReconciled;

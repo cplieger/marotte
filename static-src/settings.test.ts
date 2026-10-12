@@ -443,6 +443,22 @@ describe("the chat-retention row", () => {
   });
 });
 
+// Agent capabilities: the switch paints the stored value and its flip writes the key the server reads.
+describe("the Model fallback switch", () => {
+  it("shows the stored value and writes model_fallback_enabled on a flip", async () => {
+    const { patchSettings } = await import("./persist.js");
+    document.body.innerHTML = `<input type="checkbox" id="flag-model-fallback">`;
+    const box = document.getElementById("flag-model-fallback") as HTMLInputElement;
+    initRetention(settingsPayload({ model_fallback_enabled: true }));
+    expect(box.checked).toBe(true);
+
+    box.checked = false;
+    box.dispatchEvent(new Event("change"));
+
+    expect(patchSettings).toHaveBeenLastCalledWith({ model_fallback_enabled: false }, box);
+  });
+});
+
 describe("the config.json door in Settings > General", () => {
   it("opens config.json from the config directory", () => {
     document.body.innerHTML = `<button type="button" id="settings-open-config">config.json</button>`;

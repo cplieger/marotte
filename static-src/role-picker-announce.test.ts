@@ -22,7 +22,7 @@ const host = document.createElement("div");
 host.innerHTML = new DOMParser().parseFromString(indexHtml, "text/html").body.innerHTML;
 document.body.appendChild(host);
 const { initRolePicker } = await import("./role-picker.js");
-initRolePicker();
+initRolePicker(vi.fn());
 
 afterAll(() => {
   host.remove();

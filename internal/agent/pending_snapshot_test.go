@@ -76,7 +76,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 				rt.bus.pendingPerms.add(9, permNeeded("c1", 9), nil)
 			}
 			if n == resolveAt {
-				rt.bus.pendingPerms.takeIfPresent("c1", resolveID)
+				rt.bus.pendingPerms.takeIfPresent("c1", resolveID, marotte.DecisionKindPermission)
 			}
 		})
 		// The late arms (-1) land after the snapshot, like a queued live frame.
@@ -84,7 +84,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 			rt.bus.pendingPerms.add(9, permNeeded("c1", 9), nil)
 		}
 		if resolveAt == -1 {
-			rt.bus.pendingPerms.takeIfPresent("c1", resolveID)
+			rt.bus.pendingPerms.takeIfPresent("c1", resolveID, marotte.DecisionKindPermission)
 		}
 		server, _ := rt.versions.Current(subject.KindPending, "")
 		client := snapshotKeys(t, payload.Items)

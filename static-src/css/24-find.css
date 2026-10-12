@@ -253,8 +253,8 @@
    opacity at 0.45 by 25ms on `--ease-enter`'s steep front.
 
    `block-size: 0 → auto` interpolates because `interpolate-size:
-   allow-keywords` is set on `:root` (01-tokens.css); 26-dock.css and
-   `.subagent-body` collapse the same way. So no max-height is guessed here and
+   allow-keywords` is set on `:root` (01-tokens.css); 26-dock.css collapses
+   the same way. So no max-height is guessed here and
    then found wrong for the History box's two-line sentence.
 
    THE ENTER ANIMATES AND THE LEAVE DOES NOT, and that asymmetry is a property of

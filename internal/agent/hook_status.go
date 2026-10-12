@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"sync"
@@ -57,6 +58,8 @@ func (c *cachedBoolField) get() bool {
 	if err != nil {
 		return c.defaultVal
 	}
+	// A Windows editor saves UTF-8 with a BOM, which encoding/json rejects.
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 	var raw map[string]json.RawMessage
 	if json.Unmarshal(data, &raw) != nil {
 		return c.defaultVal

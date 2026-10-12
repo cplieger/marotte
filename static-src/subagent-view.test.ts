@@ -1,6 +1,6 @@
-// The subagent page: the eviction exemption its tab earns, the demand that ends its lifetime, and
-// navigation between stages. Release properties are asked of `messages-blocks.ts`'s render
-// registry: a render left registered outlives its DOM.
+// The subagent page: the eviction exemption its tab earns and the demand that ends its lifetime.
+// Release properties are asked of `messages-blocks.ts`'s render registry: a render left registered
+// outlives its DOM.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { signal, touch } from "@cplieger/reactive";
@@ -43,7 +43,7 @@ vi.mock("./chat.js", { spy: true });
 const store = await import("./store.js");
 const { hasTab, openSubagentRefs } = await import("./tabs.js");
 const { subagentRef } = await import("./tab-materialize.js");
-const { sliceSubagentGroup } = await import("./subagent-slice.js");
+const { sliceSubagent } = await import("./subagent-slice.js");
 const { openSubagentTab } = await import("./tabs.js");
 const { subagentTabProjectsChat, showSubagent, refreshSubagent, openSubagentView } =
   await import("./subagent-view.js");
@@ -183,52 +183,12 @@ function invocation(
   });
 }
 
-/** ONE plain delegate: the chat's own prose, the invocation in the ISSUER's lane, and the
- *  delegate's own prose in its lane. The call id is deliberately NOT stage-shaped, so
- *  nothing resolves it into a pipeline. */
+/** ONE delegate: the chat's own prose, the invocation in the ISSUER's lane, and the delegate's
+ *  own prose in its lane. */
 function delegate(chat: string, turn: string, lane: string, body = "delegate work"): void {
   push(chat, turn, "text", { text: "parent prose" });
   push(chat, turn, "tool_call", invocation(`tc-${lane}`, lane), { id: `tc-${lane}` });
   push(chat, turn, "text", { text: body }, { lane });
-}
-
-const DRIVER = "orc_1";
-const PLAN_CALL = `invoke_subagent_${DRIVER}_stage_plan`;
-const REVIEW_CALL = `invoke_subagent_${DRIVER}_stage_review`;
-const PLAN = "st-plan";
-const REVIEW = "st-review";
-
-/** A two-stage `orchestrate_subagent` pipeline in one turn; the stage ids carry the driver (the
- *  join). */
-function pipeline(
-  chat: string,
-  turn: string,
-  opts: { readonly reviewStatus?: EntryToolCall["status"]; readonly reviewText?: string } = {},
-): void {
-  push(chat, turn, "text", { text: "parent prose" });
-  push(
-    chat,
-    turn,
-    "tool_call",
-    {
-      id: DRIVER,
-      title: "Orchestrate Sub-agent",
-      kind: "other",
-      status: "in_progress",
-      ts: 0,
-      input: { task: "review the diff", stages: [{ name: "plan" }, { name: "review" }] },
-    },
-    { id: DRIVER },
-  );
-  push(chat, turn, "tool_call", invocation(PLAN_CALL, PLAN), { id: PLAN_CALL });
-  push(chat, turn, "text", { text: "the plan stage report" }, { lane: PLAN });
-  push(chat, turn, "tool_call", invocation(REVIEW_CALL, REVIEW, opts.reviewStatus ?? "completed"), {
-    id: REVIEW_CALL,
-  });
-  const reviewText = opts.reviewText ?? "the review stage report";
-  if (reviewText !== "") {
-    push(chat, turn, "text", { text: reviewText }, { lane: REVIEW });
-  }
 }
 
 function body(): HTMLElement {
@@ -236,13 +196,6 @@ function body(): HTMLElement {
 }
 function emptyNoteText(): string {
   return body().querySelector(".ev-d-empty")?.textContent ?? "";
-}
-
-/** `.ev-row-main` is the row's own click target; the row element carries the path. */
-function clickRow(path: string): void {
-  const row = body().querySelector<HTMLElement>(`.ev-row[data-path="${path}"] .ev-row-main`);
-  expect(row).not.toBeNull();
-  row?.click();
 }
 
 beforeEach(() => {
@@ -378,278 +331,119 @@ describe("switching delegates releases the page's render", () => {
   });
 });
 
-// Every stage row is selectable, so a click renders the clicked stage IN PLACE.
-describe("selecting a sibling stage in the tree", () => {
-  it("renders that stage's transcript in the same sub-tab", async () => {
-    const chat = "c-nav";
-    const turn = "t-nav";
+// An older engine's pipeline replays as ordinary delegates: a stage's page is its own lane alone.
+describe("a stage-shaped delegate", () => {
+  it("shows its own lane and no sibling's", async () => {
+    const chat = "c-stage";
+    const turn = "t-stage";
     seedChats({ chat, turn });
-    pipeline(chat, turn);
-
-    show(chat, PLAN);
-    await vi.waitFor(() => {
-      expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
+    push(chat, turn, "tool_call", invocation("invoke_subagent_orc_1_stage_plan", "st-plan"), {
+      id: "invoke_subagent_orc_1_stage_plan",
     });
-
-    clickRow(REVIEW);
-
-    // Both hosts stay in the DOM — a delegate's entries are persisted but a mounted
-    // render is not free to rebuild — so which one is SHOWN is the observable.
-    const review = body().querySelector<HTMLElement>(`.ev-d-body[data-path="${REVIEW}"]`);
-    const plan = body().querySelector<HTMLElement>(`.ev-d-body[data-path="${PLAN}"]`);
-    expect(review?.hidden).toBe(false);
-    expect(review?.textContent).toContain("the review stage report");
-    expect(plan?.hidden).toBe(true);
-    // No note at all: the transcript is here.
-    expect(emptyNoteText()).not.toContain("own page");
-    expect(body().querySelector<HTMLElement>(".ev-d-empty")?.hidden).toBe(true);
-  });
-
-  it("keeps the delegate the tab names mounted, so going back costs no rebuild", async () => {
-    const chat = "c-back";
-    const turn = "t-back";
-    seedChats({ chat, turn });
-    pipeline(chat, turn);
-
-    show(chat, PLAN);
-    await vi.waitFor(() => {
-      expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
+    push(chat, turn, "text", { text: "the plan stage report" }, { lane: "st-plan" });
+    push(chat, turn, "tool_call", invocation("invoke_subagent_orc_1_stage_review", "st-review"), {
+      id: "invoke_subagent_orc_1_stage_review",
     });
-    clickRow(REVIEW);
-    clickRow(PLAN);
+    push(chat, turn, "text", { text: "the review stage report" }, { lane: "st-review" });
 
-    const plan = body().querySelector<HTMLElement>(`.ev-d-body[data-path="${PLAN}"]`);
-    expect(plan?.hidden).toBe(false);
-    expect(plan?.textContent).toContain("the plan stage report");
-    expect(body().querySelector<HTMLElement>(`.ev-d-body[data-path="${REVIEW}"]`)?.hidden).toBe(
-      true,
-    );
-  });
-
-  // A sibling that has produced nothing yet is the one case the note is still FOR, and
-  // its two sentences are the whole vocabulary: the projection covers the stage either
-  // way, so the note answers "nothing yet" rather than "not here".
-  it("says what an empty sibling is doing rather than sending the reader away", async () => {
-    for (const [status, sentence] of [
-      ["completed", "This delegate finished without producing any transcript."],
-      ["in_progress", "Waiting for this delegate to produce output\u2026"],
-    ] as const) {
-      const chat = `c-empty-${status}`;
-      const turn = `t-empty-${status}`;
-      seedChats({ chat, turn });
-      pipeline(chat, turn, { reviewText: "", reviewStatus: status });
-
-      show(chat, PLAN);
-      await vi.waitFor(() => {
-        expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
-      });
-      clickRow(REVIEW);
-
-      expect(emptyNoteText()).toBe(sentence);
-      // Nothing is mounted for it, which is what leaves the note on screen.
-      expect(body().querySelector(`.ev-d-body[data-path="${REVIEW}"]`)).toBeNull();
-      expect(memberIsMounted(turn, REVIEW)).toBe(false);
-    }
-  });
-
-  // The routing property: an entry lands in the render of the member whose LANE it
-  // names, and in no other.
-  it("routes a later entry to the selected sibling's own render", async () => {
-    const chat = "c-nav-stream";
-    const turn = "t-nav-stream";
-    seedChats({ chat, turn });
-    pipeline(chat, turn);
-
-    show(chat, PLAN);
+    show(chat, "st-plan");
     await vi.waitFor(() => {
-      expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
+      expect(body().textContent).toContain("the plan stage report");
     });
-    clickRow(REVIEW);
-    const review = body().querySelector<HTMLElement>(`.ev-d-body[data-path="${REVIEW}"]`);
-    expect(review?.textContent).toContain("the review stage report");
-
-    laneText(chat, turn, REVIEW, "and one more finding");
-
-    await vi.waitFor(() => {
-      expect(review?.textContent).toContain("and one more finding");
-    });
-    // And into the sibling's render, not the tab's own.
-    expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)?.textContent).not.toContain(
-      "and one more finding",
-    );
-  });
-
-  // A hidden mounted body must stay current, or revisiting shows a stale snapshot.
-  it("keeps a mounted-but-hidden stage up to date", async () => {
-    const chat = "c-bg";
-    const turn = "t-bg";
-    seedChats({ chat, turn });
-    pipeline(chat, turn);
-
-    show(chat, PLAN);
-    await vi.waitFor(() => {
-      expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
-    });
-    // Mount the review stage, then leave it: it stays in the DOM, hidden.
-    clickRow(REVIEW);
-    clickRow(PLAN);
-    const review = body().querySelector<HTMLElement>(`.ev-d-body[data-path="${REVIEW}"]`);
-    expect(review?.hidden).toBe(true);
-
-    laneText(chat, turn, REVIEW, "a late finding");
-
-    await vi.waitFor(() => {
-      expect(review?.textContent).toContain("a late finding");
-    });
-  });
-
-  // The release property, extended to the multi-body map: a switch to another chat
-  // disposes EVERY member's render, not just the one the outgoing tab named.
-  it("releases every mounted stage when the reader switches chat", async () => {
-    const chat = "c-nav-drop";
-    const turn = "t-nav-drop";
-    seedChats({ chat, turn }, { chat: "c-other", turn: "t-other" });
-    pipeline(chat, turn);
-    delegate("c-other", "t-other", "st-other");
-
-    // Both tabs open across the switch, for the reason the delegate-switch case above
-    // states: leaving only the incoming tab open would have the demand effect drop the
-    // outgoing page, which is not the release this case is about.
-    setSubagentTabs([subagentRef(chat, PLAN), subagentRef("c-other", "st-other")]);
-    showSubagent(chat, PLAN);
-    await vi.waitFor(() => {
-      expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
-    });
-    clickRow(REVIEW);
-    expect(memberIsMounted(turn, PLAN)).toBe(true);
-    expect(memberIsMounted(turn, REVIEW)).toBe(true);
-
-    showSubagent("c-other", "st-other");
-    await vi.waitFor(() => {
-      expect(body().textContent).toContain("delegate work");
-    });
-
-    expect(memberIsMounted(turn, PLAN)).toBe(false);
-    expect(memberIsMounted(turn, REVIEW)).toBe(false);
+    expect(body().textContent).not.toContain("the review stage report");
+    expect(body().querySelectorAll(".ev-d-body")).toHaveLength(1);
   });
 });
 
-// DEMAND IS AN INPUT: an effect over the open-tab set releases the page; the membership test makes
-// the shared-group case structural.
-describe("demand for the mounted page", () => {
-  /** Both members of the pipeline, because a release that reached one render and not the
-   *  other is exactly the shape a hand-written reset produces. */
-  function neitherStageIsMounted(turn: string): void {
-    expect(memberIsMounted(turn, PLAN)).toBe(false);
-    expect(memberIsMounted(turn, REVIEW)).toBe(false);
-  }
+// A delegate that has produced nothing yet: the note's two sentences are the whole vocabulary,
+// and it answers "nothing yet" rather than "not here".
+describe("a delegate with no output", () => {
+  it.each([
+    ["completed", "This delegate finished without producing any transcript."],
+    ["in_progress", "Waiting for this delegate to produce output\u2026"],
+  ] as const)("says what a %s delegate is doing", async (status, sentence) => {
+    const chat = `c-empty-${status}`;
+    const turn = `t-empty-${status}`;
+    seedChats({ chat, turn });
+    push(chat, turn, "tool_call", invocation(`tc-${status}`, "st-quiet", status), {
+      id: `tc-${status}`,
+    });
 
-  it("drops the page and every body it mounted when the last subagent tab closes", async () => {
+    show(chat, "st-quiet");
+    await vi.waitFor(() => {
+      expect(emptyNoteText()).toBe(sentence);
+    });
+    // Nothing is mounted for it, which is what leaves the note on screen.
+    expect(body().querySelector('.ev-d-body[data-path="st-quiet"]')).toBeNull();
+    expect(memberIsMounted(turn, "st-quiet")).toBe(false);
+  });
+});
+
+// DEMAND IS AN INPUT: an effect over the open-tab set releases the page.
+describe("demand for the mounted page", () => {
+  it("drops the page and its body when the last subagent tab closes", async () => {
     const chat = "c-close";
     const turn = "t-close";
     seedChats({ chat, turn });
-    pipeline(chat, turn);
+    delegate(chat, turn, "st-1");
 
-    show(chat, PLAN);
+    show(chat, "st-1");
     await vi.waitFor(() => {
-      expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
+      expect(body().textContent).toContain("delegate work");
     });
-    // TWO bodies mounted, which is what makes "every body" a claim with content.
-    clickRow(REVIEW);
-    expect(memberIsMounted(turn, PLAN)).toBe(true);
-    expect(memberIsMounted(turn, REVIEW)).toBe(true);
+    expect(memberIsMounted(turn, "st-1")).toBe(true);
 
     closeSubagentTabs();
 
     // The page LEFT the host, so "no page mounted" and "the host holds no page" agree.
     expect(body().querySelector(".ev-page")).toBeNull();
-    neitherStageIsMounted(turn);
+    expect(memberIsMounted(turn, "st-1")).toBe(false);
   });
 
-  // Two stage tabs share ONE page; the membership test (`Map.has` on the projection) keeps it.
-  it("keeps the page when one of two stage tabs sharing its group closes", async () => {
-    const chat = "c-sibling";
-    const turn = "t-sibling";
-    seedChats({ chat, turn });
-    pipeline(chat, turn);
-
-    setSubagentTabs([subagentRef(chat, PLAN), subagentRef(chat, REVIEW)]);
-    showSubagent(chat, PLAN);
-    await vi.waitFor(() => {
-      expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
-    });
-    clickRow(REVIEW);
-    const page = body().querySelector(".ev-page");
-    expect(page).not.toBeNull();
-
-    // PLAN's tab closes; REVIEW's stays open, and it names a member of the same group.
-    setSubagentTabs([subagentRef(chat, REVIEW)]);
-
-    // The SAME element, not a rebuilt one: the page was never dropped, so the bodies
-    // mounted into it are still the reader's.
-    expect(body().querySelector(".ev-page")).toBe(page);
-    // And a member whose OWN tab is the one that closed is still rendered and still
-    // refreshed: the page is the unit of demand, not the tab.
-    expect(memberIsMounted(turn, PLAN)).toBe(true);
-    laneText(chat, turn, PLAN, "still here");
-    await vi.waitFor(() => {
-      expect(
-        body().querySelector<HTMLElement>(`.ev-d-body[data-path="${PLAN}"]`)?.textContent,
-      ).toContain("still here");
-    });
-  });
-
-  // The chat compare in the membership test, and the id compare, each on their own. A
-  // subtask id is only unique WITHIN a chat, which `subagentTabProjectsChat`'s own
-  // cases already pin from the other side.
+  // The chat compare and the id compare, each on their own. A subtask id is only unique WITHIN a
+  // chat, which `subagentTabProjectsChat`'s own cases already pin from the other side.
   it.each([
     {
       what: "a tab for the same subtask id in a different chat",
       chat: "c-outside-chat",
       turn: "t-outside-chat",
-      ref: subagentRef("c-elsewhere", PLAN),
+      ref: subagentRef("c-elsewhere", "st-1"),
     },
     {
-      what: "a tab for a non-member subtask of the same chat",
+      what: "a tab for another delegate of the same chat",
       chat: "c-outside-member",
       turn: "t-outside-member",
-      ref: subagentRef("c-outside-member", "st-not-a-member"),
+      ref: subagentRef("c-outside-member", "st-other"),
     },
   ])("does not count $what as demand", async ({ chat, turn, ref }) => {
     seedChats({ chat, turn });
-    pipeline(chat, turn);
+    delegate(chat, turn, "st-1");
 
-    show(chat, PLAN);
+    show(chat, "st-1");
     await vi.waitFor(() => {
-      expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
+      expect(body().textContent).toContain("delegate work");
     });
-    clickRow(REVIEW);
 
     setSubagentTabs([ref]);
 
     expect(body().querySelector(".ev-page")).toBeNull();
-    neitherStageIsMounted(turn);
+    expect(memberIsMounted(turn, "st-1")).toBe(false);
   });
 
   // Superseding is the other release path: the tab set does not move, so `mountPage`'s own release
   // is under test.
-  it("still supersedes: mounting another group's page releases the previous one", async () => {
+  it("still supersedes: mounting another delegate's page releases the previous one", async () => {
     const chat = "c-supersede";
     const turn = "t-supersede";
     seedChats({ chat, turn }, { chat: "c-super-other", turn: "t-super-other" });
-    pipeline(chat, turn);
+    delegate(chat, turn, "st-1", "first delegate");
     delegate("c-super-other", "t-super-other", "st-other");
 
-    setSubagentTabs([
-      subagentRef(chat, PLAN),
-      subagentRef(chat, REVIEW),
-      subagentRef("c-super-other", "st-other"),
-    ]);
-    showSubagent(chat, PLAN);
+    setSubagentTabs([subagentRef(chat, "st-1"), subagentRef("c-super-other", "st-other")]);
+    showSubagent(chat, "st-1");
     await vi.waitFor(() => {
-      expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
+      expect(body().textContent).toContain("first delegate");
     });
-    clickRow(REVIEW);
     const page = body().querySelector(".ev-page");
 
     showSubagent("c-super-other", "st-other");
@@ -658,7 +452,7 @@ describe("demand for the mounted page", () => {
     });
 
     expect(body().querySelector(".ev-page")).not.toBe(page);
-    neitherStageIsMounted(turn);
+    expect(memberIsMounted(turn, "st-1")).toBe(false);
   });
 
   // The drop writes `shown`: the paint effect depends on `shown` and the chat's version, so the next
@@ -667,13 +461,12 @@ describe("demand for the mounted page", () => {
     const chat = "c-resurrect";
     const turn = "t-resurrect";
     seedChats({ chat, turn });
-    pipeline(chat, turn);
+    delegate(chat, turn, "st-1");
 
-    show(chat, PLAN);
+    show(chat, "st-1");
     await vi.waitFor(() => {
-      expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
+      expect(body().textContent).toContain("delegate work");
     });
-    clickRow(REVIEW);
     closeSubagentTabs();
     expect(body().querySelector(".ev-page")).toBeNull();
 
@@ -685,30 +478,30 @@ describe("demand for the mounted page", () => {
     expect(version.peek()).not.toBe(before);
 
     expect(body().querySelector(".ev-page")).toBeNull();
-    neitherStageIsMounted(turn);
+    expect(memberIsMounted(turn, "st-1")).toBe(false);
   });
 
   // A SECOND effect: taking the tab set in the paint effect would re-project on every tab mutation.
-  it("does not re-project the group on a tab-set change that leaves the demand alone", async () => {
+  it("does not re-project the delegate on a tab-set change that leaves the demand alone", async () => {
     const chat = "c-churn";
     const turn = "t-churn";
     seedChats({ chat, turn });
-    pipeline(chat, turn);
+    delegate(chat, turn, "st-1");
 
-    show(chat, PLAN);
+    show(chat, "st-1");
     await vi.waitFor(() => {
-      expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
+      expect(body().textContent).toContain("delegate work");
     });
 
-    const projections = vi.mocked(sliceSubagentGroup).mock.calls.length;
+    const projections = vi.mocked(sliceSubagent).mock.calls.length;
     const page = body().querySelector(".ev-page");
     expect(page).not.toBeNull();
 
     // A new tab-set version carrying the SAME demand: the strip moved (a pin, a
-    // reorder, a tab of another kind opening), this page's group did not.
-    setSubagentTabs([subagentRef(chat, PLAN)]);
+    // reorder, a tab of another kind opening), this page's delegate did not.
+    setSubagentTabs([subagentRef(chat, "st-1")]);
 
-    expect(vi.mocked(sliceSubagentGroup).mock.calls.length).toBe(projections);
+    expect(vi.mocked(sliceSubagent).mock.calls.length).toBe(projections);
     expect(body().querySelector(".ev-page")).toBe(page);
   });
 });
@@ -723,7 +516,7 @@ describe("refreshSubagent delegates to the launching chat", () => {
 
     expect(refreshChatView).toHaveBeenCalledTimes(1);
     expect(refreshChatView).toHaveBeenCalledWith("c-launcher");
-    expect(vi.mocked(sliceSubagentGroup)).not.toHaveBeenCalled();
+    expect(vi.mocked(sliceSubagent)).not.toHaveBeenCalled();
   });
 });
 
@@ -751,9 +544,7 @@ describe("the page's own door", () => {
   });
 });
 
-// `.page-content` is ONE scroller for every subagent tab, so each TAB keeps its own
-// offset. Sibling stages of one pipeline share a page, which is the case the offset
-// cannot be keyed by the page for.
+// `.page-content` is ONE scroller for every subagent tab, so each TAB keeps its own offset.
 describe("the page's scroll position", () => {
   const long = Array.from({ length: 150 }, (_, i) => `Paragraph ${String(i)}.`).join("\n\n");
 
@@ -824,39 +615,5 @@ describe("the page's scroll position", () => {
       expect(body().textContent).toContain("first Paragraph 0.");
     });
     expect(scroller().scrollTop).toBe(700);
-  });
-
-  it("is per stage: two sibling stages of one pipeline keep separate offsets", async () => {
-    const chat = "c-scroll-pipe";
-    const turn = "t-scroll-pipe";
-    seedChats({ chat, turn });
-    pipeline(chat, turn, { reviewText: long });
-    laneText(chat, turn, PLAN, long);
-    setSubagentTabs([subagentRef(chat, PLAN), subagentRef(chat, REVIEW)]);
-
-    showSubagent(chat, PLAN);
-    await vi.waitFor(() => {
-      expect(scroller().scrollHeight).toBeGreaterThan(scroller().clientHeight + 800);
-    });
-    scroller().scrollTop = 700;
-    await frames();
-    showSubagent(chat, REVIEW);
-    await vi.waitFor(() => {
-      expect(body().querySelector<HTMLElement>(`.ev-d-body[data-path="${REVIEW}"]`)?.hidden).toBe(
-        false,
-      );
-    });
-    expect(scroller().scrollTop).toBe(0);
-    scroller().scrollTop = 300;
-    await frames();
-    showSubagent(chat, PLAN);
-    await vi.waitFor(() => {
-      expect(body().querySelector<HTMLElement>(`.ev-d-body[data-path="${PLAN}"]`)?.hidden).toBe(
-        false,
-      );
-    });
-    expect(scroller().scrollTop).toBe(700);
-    showSubagent(chat, REVIEW);
-    expect(scroller().scrollTop).toBe(300);
   });
 });

@@ -137,6 +137,13 @@ func (us *utilitySession) configTemplateRaw(ctx context.Context) (json.RawMessag
 	return us.rawCall(ctx, "config template call", methodKiroConfigTemplate, callerParams(nil))
 }
 
+// workspaceConfigurationRaw asks KAS for its composed configuration as a workspace observer of
+// roots: the agents, steering and settings a session opened there would load.
+func (us *utilitySession) workspaceConfigurationRaw(ctx context.Context, roots []string) (json.RawMessage, error) {
+	return us.rawCall(ctx, "configuration getState call", methodKiroConfigurationGet,
+		callerParams(map[string]any{"observer": "workspace", "roots": roots}))
+}
+
 // No triggerHook wrapper: it runs `sh -c` on a command a hook file names.
 
 func (us *utilitySession) renameSessionRaw(ctx context.Context, sessionID, title string) (json.RawMessage, error) {

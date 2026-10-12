@@ -40,9 +40,9 @@ type file struct {
 const fileVersion = 1
 
 // persist writes marotte's own record and then RENDERS KAS's config file
-// from it. Both or neither: a successful marotte write followed by a
-// failed KAS write would leave the UI showing a server the agent cannot
-// see. The caller rolls its in-memory mutation back on error.
+// from it. KAS's file is read first, so one it would refuse to rewrite fails
+// the save before the record changes; a later KAS write failure still leaves
+// the record written. The caller rolls its in-memory mutation back on error.
 //
 // MUST be called on the write turn with s.mu held for writing: sync.RWMutex
 // is not reentrant, and every call site already holds both across its
@@ -50,6 +50,10 @@ const fileVersion = 1
 func (s *Store) persist(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	kasDoc, err := s.readKASConfig()
+	if err != nil {
+		return err
 	}
 	f := file{Version: fileVersion, Servers: s.servers}
 	data, err := json.MarshalIndent(f, "", "  ")
@@ -60,5 +64,6 @@ func (s *Store) persist(ctx context.Context) error {
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("%w: %w", errPersistWrite, err)
 	}
-	return s.writeKASConfig(ctx, s.servers)
+	policy, _ := s.renderPolicy(ctx)
+	return s.writeKASConfigWith(ctx, kasDoc, s.servers, policy)
 }

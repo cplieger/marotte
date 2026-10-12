@@ -347,6 +347,28 @@ func TestStart_SessionTitleSwitchOnlyWhenAsked(t *testing.T) {
 	}
 }
 
+// The setting decides both flags whatever marotte inherited: off must not let an ambient value through.
+// Not parallel: it sets environment variables.
+func TestStart_SpawnEnvCarriesModelFallback(t *testing.T) {
+	flags := []string{"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true", "KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true"}
+	for _, kv := range flags {
+		name, _, _ := strings.Cut(kv, "=")
+		t.Setenv(name, "ambient")
+	}
+	on := spawnEnvDump(t, &marotte.StartOpts{Features: marotte.AgentFeatures{ModelFallback: true}})
+	off := spawnEnvDump(t, &marotte.StartOpts{})
+	for _, want := range flags {
+		if !slices.Contains(on, want) {
+			t.Errorf("child environment with ModelFallback on is missing %q", want)
+		}
+	}
+	for _, line := range off {
+		if strings.HasPrefix(line, "KIRO_FEATURE_MODEL_FALLBACK_") {
+			t.Errorf("child environment with ModelFallback off carries %q; off must leave KAS's default", line)
+		}
+	}
+}
+
 func TestStart_ChildEnvironmentCarriesTheToolLoadLever(t *testing.T) {
 	const toolLoadEnvVar = "KIRO_FEATURE_TOOL_LOAD_ENABLED"
 	t.Setenv(toolLoadEnvVar, "ambient-should-lose")

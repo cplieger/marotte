@@ -88,7 +88,6 @@ export function initGovernance(): void {
 /** A locked switch shows the required value, cannot be flipped, and names who set it. */
 const lockableSwitches: readonly { key: string; inputID: string }[] = [
   { key: "workflows_enabled", inputID: "flag-workflows" },
-  { key: "inline_agents_enabled", inputID: "flag-inline-agents" },
   { key: "content_collection_enabled", inputID: "flag-content-collection" },
   { key: "telemetry.enabled", inputID: "flag-telemetry" },
 ];

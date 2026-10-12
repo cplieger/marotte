@@ -666,8 +666,8 @@ const agentCapabilities: readonly {
   key:
     | "knowledge_enabled"
     | "tool_search_enabled"
+    | "model_fallback_enabled"
     | "spec_planning_ask_first"
-    | "inline_agents_enabled"
     | "steering_reminders_enabled"
     | "workflows_enabled"
     | "content_collection_enabled";
@@ -675,8 +675,8 @@ const agentCapabilities: readonly {
 }[] = [
   { key: "knowledge_enabled", inputID: "flag-knowledge" },
   { key: "tool_search_enabled", inputID: "flag-tool-search" },
+  { key: "model_fallback_enabled", inputID: "flag-model-fallback" },
   { key: "spec_planning_ask_first", inputID: "flag-spec-ask-first" },
-  { key: "inline_agents_enabled", inputID: "flag-inline-agents" },
   { key: "steering_reminders_enabled", inputID: "flag-steering-reminders" },
   { key: "workflows_enabled", inputID: "flag-workflows" },
   { key: "content_collection_enabled", inputID: "flag-content-collection" },

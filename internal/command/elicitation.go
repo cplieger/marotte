@@ -29,7 +29,7 @@ func cmdElicitationResponse(ctx context.Context, perms pendingPermAccess, cmd *m
 	// Take before responding, for the same reason cmdPermission does: an
 	// elicitation form open in two tabs can be submitted twice, and the
 	// second ElicitResult is silently dropped.
-	reply, ok := perms.TakePendingPerm(cmd.ChatID, p.RequestID, marotte.SettledByUser)
+	reply, ok := perms.TakePendingPerm(cmd.ChatID, p.RequestID, marotte.DecisionKindElicitation, marotte.SettledByUser)
 	if !ok {
 		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}

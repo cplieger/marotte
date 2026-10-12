@@ -3,19 +3,12 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import type { SessionMode } from "./types.js";
 
 vi.mock("./chat.js", () => ({ createSession: vi.fn() }));
 vi.mock("./actions/chat.js", () => ({ setMode: { dispatch: vi.fn() } }));
-// Two workspace agents, one of which collides with the global entry seeded below, so the card
-// renders a marked row and an unmarked one — the two the alignment is measured across.
-vi.mock("./api-client.js", () => ({
-  apiGet: vi.fn(async () => ({
-    items: [
-      { name: "reviewer", type: "agent" },
-      { name: "only-here", type: "agent" },
-    ],
-  })),
-}));
+const { apiGet } = vi.hoisted(() => ({ apiGet: vi.fn() }));
+vi.mock("./api-client.js", () => ({ apiGet }));
 vi.mock("./store.js", () => ({
   getActive: vi.fn(() => undefined),
   activeSession: { value: undefined },
@@ -25,8 +18,13 @@ vi.mock("./store.js", () => ({
   tabStatusFor: vi.fn(() => ""),
 }));
 vi.mock("./pill-expand.js", () => ({
-  makeExpandable: (_pill: HTMLElement, _list: HTMLElement, opts: { onExpand: () => void }) => {
+  makeExpandable: (
+    _pill: HTMLElement,
+    _list: HTMLElement,
+    opts: { onExpand: () => void; onCollapse: () => void },
+  ) => {
     expandList = opts.onExpand;
+    collapseList = opts.onCollapse;
   },
   collapseAll: vi.fn(),
 }));
@@ -47,6 +45,8 @@ vi.mock("./dom.js", () => ({
 }));
 
 let expandList: (() => void) | undefined;
+let collapseList: (() => void) | undefined;
+const refreshCatalog = vi.fn();
 
 const { initRolePicker } = await import("./role-picker.js");
 const { setCatalogModes } = await import("./roles.js");
@@ -64,8 +64,7 @@ afterAll(() => {
 });
 
 /** The pill and its card as `static/index.html` mounts them: a `.pill-slot` holding the trigger
- *  and, as its SIBLING, the card that IS `#role-list`. `is-open` is the reveal class, and the
- *  async re-render is gated on it. */
+ *  and, as its SIBLING, the card that IS `#role-list`, open (`is-open`). */
 function mountPill(): HTMLElement {
   document.body.innerHTML = `
     <span class="pill-slot">
@@ -78,14 +77,12 @@ function mountPill(): HTMLElement {
   return document.getElementById("role-list") as HTMLElement;
 }
 
-/** Expand, then wait for the kiro-config seed to land and re-render. */
-async function openList(): Promise<HTMLElement> {
+/** Expand: the card renders the catalog as it stands and reads it only through the injected
+ *  `refreshCatalog`. */
+function openList(): HTMLElement {
   const list = mountPill();
-  initRolePicker();
+  initRolePicker(refreshCatalog);
   expandList?.();
-  await vi.waitFor(() => {
-    expect(list.querySelector(".pill-role-shadow")).not.toBeNull();
-  });
   return list;
 }
 
@@ -97,20 +94,92 @@ function rowFor(list: HTMLElement, label: string): HTMLElement {
   return row as HTMLElement;
 }
 
+const CATALOG: readonly SessionMode[] = [
+  { id: "vibe", name: "Default", description: "General", source: "bundled" },
+  // Two workspace agents, one shadowing a global one, so the card renders a marked row and an
+  // unmarked one: the two the alignment is measured across.
+  { id: "reviewer", name: "reviewer", source: "workspace", shadows: "global" },
+  { id: "only-here", name: "only-here", source: "workspace" },
+  // A row long enough to size the card past its 14rem floor, so the two rows measured below have
+  // real free space in them. Without it the widest row IS a measured row, every auto margin
+  // resolves to 0, and both placements agree.
+  { id: "an-agent-whose-name-runs-past-the-floor-on-its-own", name: "", source: "bundled" },
+];
+
 beforeEach(() => {
-  setCatalogModes([
-    { id: "vibe", name: "Default", description: "General", source: "bundled" },
-    { id: "reviewer", name: "reviewer", description: "The global one", source: "global" },
-    // A row long enough to size the card past its 14rem floor, so the two rows measured below have
-    // real free space in them. Without it the widest row IS a measured row, every auto margin
-    // resolves to 0, and both placements agree.
-    { id: "an-agent-whose-name-runs-past-the-floor-on-its-own", name: "", source: "bundled" },
-  ]);
+  refreshCatalog.mockClear();
+  setCatalogModes(CATALOG);
+});
+
+function rowNames(list: HTMLElement): string[] {
+  return Array.from(list.querySelectorAll(".pill-role-name")).map((n) => n.textContent ?? "");
+}
+
+describe("the mode card's shadow marker", () => {
+  it("marks a catalog mode that shadows another and names both scopes in its tooltip", () => {
+    const row = rowFor(openList(), "Reviewer");
+    expect(row.querySelector(".pill-role-shadow")?.textContent).toBe("shadows global");
+    expect(row.dataset["tooltip"]).toBe(
+      "This workspace agent shadows the global agent of the same name. The workspace definition is the one a run uses.",
+    );
+    expect(rowFor(document.body, "Only Here").querySelector(".pill-role-shadow")).toBeNull();
+  });
+
+  it("reads the catalog only through the injected refresh when it opens", () => {
+    openList();
+    expect(apiGet).not.toHaveBeenCalled();
+    expect(refreshCatalog).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the open mode card and the catalog", () => {
+  it("re-reads the catalog each time it opens", () => {
+    openList();
+    collapseList?.();
+    expandList?.();
+    expect(refreshCatalog).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a custom agent that lands while the card is open", () => {
+    // Opened during startup: no catalog yet, so the card holds the static bundled list.
+    setCatalogModes([]);
+    const list = openList();
+    expect(rowNames(list)).not.toContain("Only Here");
+
+    setCatalogModes(CATALOG);
+    expect(rowNames(list)).toContain("Only Here");
+    expect(list.querySelector(".pill-role-hint")?.textContent).toBe("Custom agents");
+  });
+
+  it("leaves a closed card alone when the catalog changes", () => {
+    const list = openList();
+    collapseList?.();
+    const before = list.querySelector(".pill-role-item");
+    setCatalogModes([...CATALOG, { id: "late", name: "late", source: "workspace" }]);
+    expect(list.querySelector(".pill-role-item")).toBe(before);
+  });
+
+  it("keeps the rows, and the focus on them, when an answer changes nothing", () => {
+    const list = openList();
+    const row = rowFor(list, "Only Here");
+    row.focus();
+    setCatalogModes(CATALOG.map((m) => ({ ...m })));
+    expect(rowFor(list, "Only Here")).toBe(row);
+    expect(document.activeElement).toBe(row);
+  });
+
+  it("keeps focus on the same agent when an answer adds a row", () => {
+    const list = openList();
+    rowFor(list, "Only Here").focus();
+    setCatalogModes([...CATALOG, { id: "late", name: "late", source: "workspace" }]);
+    expect(rowNames(list)).toContain("Late");
+    expect(document.activeElement).toBe(rowFor(list, "Only Here"));
+  });
 });
 
 describe("the mode card's trailing chips", () => {
-  it("builds the shadow badge ahead of the scope chip", async () => {
-    const list = await openList();
+  it("builds the shadow badge ahead of the scope chip", () => {
+    const list = openList();
     const classes = Array.from(rowFor(list, "Reviewer").children).map((c) => c.className);
 
     expect(classes.indexOf("pill-role-shadow")).toBeGreaterThan(-1);
@@ -120,8 +189,8 @@ describe("the mode card's trailing chips", () => {
     ).toBeLessThan(classes.indexOf("pill-role-scope"));
   });
 
-  it("ends every scope chip on one x, badge or no badge", async () => {
-    const list = await openList();
+  it("ends every scope chip on one x, badge or no badge", () => {
+    const list = openList();
     const marked = rowFor(list, "Reviewer").querySelector<HTMLElement>(".pill-role-scope");
     const plain = rowFor(list, "Only Here").querySelector<HTMLElement>(".pill-role-scope");
     expect(marked, "the marked row must render a scope chip").not.toBeNull();
@@ -135,11 +204,11 @@ describe("the mode card's trailing chips", () => {
     ).toBe(right(plain as HTMLElement));
   });
 
-  it("keeps the badge beside the scope chip, not beside the name", async () => {
+  it("keeps the badge beside the scope chip, not beside the name", () => {
     // What the name's `flex-grow` buys that the reorder alone does not: an auto margin on the scope
     // chip would put the row's whole free space BETWEEN the two chips, stranding the badge against
     // the name.
-    const list = await openList();
+    const list = openList();
     const row = rowFor(list, "Reviewer");
     const badge = row.querySelector<HTMLElement>(".pill-role-shadow");
     const scope = row.querySelector<HTMLElement>(".pill-role-scope");

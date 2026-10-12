@@ -1,10 +1,9 @@
-// The subagent adapter, as pure values: which SHAPE a delegate produces (a lone leaf or a driver
-// with stages), and the two facts the page's layout keys on: `nodes.length` and whether any node
-// has children.
+// The subagent adapter, as pure values: a delegate is one leaf, and the two facts the page's layout
+// keys on are `nodes.length` and whether any node has children.
 
 import { describe, it, expect } from "vitest";
 import { subagentToExec, subagentPath } from "./subagent-exec-source.js";
-import { sliceSubagentGroup } from "./subagent-slice.js";
+import { sliceSubagent } from "./subagent-slice.js";
 import type { TurnSource } from "./turns.js";
 import type { TurnState } from "./types.js";
 import type { Entry, EntryToolCall } from "./wire/types.gen.js";
@@ -21,16 +20,6 @@ function invocation(
     kind: "other",
     agent_subtask_id: subtask,
     input: { name: "context-gatherer" },
-    ...extra,
-  });
-}
-
-function driver(id: string, extra: Partial<EntryToolCall> = {}): EntryToolCall {
-  return makeToolCall({
-    id,
-    title: "Orchestrate Sub-agent",
-    status: "in_progress",
-    kind: "other",
     ...extra,
   });
 }
@@ -86,7 +75,7 @@ function source(turns: readonly Entry[][]): TurnSource {
 }
 
 function exec(turns: readonly Entry[][], subtask: string, live = false) {
-  return subagentToExec(subtask, sliceSubagentGroup(source(turns), subtask, live));
+  return subagentToExec(subtask, sliceSubagent(source(turns), subtask, live));
 }
 
 describe("the single-delegate shape", () => {
@@ -132,16 +121,15 @@ describe("the single-delegate shape", () => {
     expect(facts.find((f) => f.label === "Call")?.value).toBe("tooluse_1");
   });
 
-  it("states an inline helper's model and effort, and marks it inline", () => {
+  // kiro-cli no longer reads `inlineAgent`, so an invocation carrying one is an ordinary delegate.
+  it("states no model or effort and no inline mark for an inlineAgent input", () => {
     const inline = invocation("tooluse_1", "sub_1", {
       title: "Sub-agent: x",
       input: { name: "x", inlineAgent: { systemPrompt: "p", model: "m", effort: "high" } },
     });
     const run = exec([msg([inline])], "sub_1");
-    const facts = run.nodes[0]?.facts ?? [];
-    expect(facts.find((f) => f.label === "Model")?.value).toBe("m");
-    expect(facts.find((f) => f.label === "Effort")?.value).toBe("high");
-    expect(run.label).toBe("x (inline agent)");
+    expect((run.nodes[0]?.facts ?? []).map((f) => f.label)).toEqual(["Agent", "Subtask", "Call"]);
+    expect(run.label).toBe("x");
   });
 
   it("states the category a saved agent was asked to run on", () => {
@@ -155,26 +143,13 @@ describe("the single-delegate shape", () => {
   it.each([
     ["auto, which KAS ignores", { name: "x", modelCategory: "auto" }],
     ["blank", { name: "x", modelCategory: "  " }],
-    [
-      "an inline model, which wins",
-      { name: "x", modelCategory: "auto-smart", inlineAgent: { model: "m" } },
-    ],
   ])("states no category for %s", (_name, input) => {
     const facts =
       exec([msg([invocation("tooluse_1", "sub_1", { input })])], "sub_1").nodes[0]?.facts ?? [];
     expect(facts.map((f) => f.label)).not.toContain("Category");
   });
 
-  it("states no model or effort for a saved agent", () => {
-    const run = exec([msg([invocation("tooluse_1", "sub_1")])], "sub_1");
-    const labels = (run.nodes[0]?.facts ?? []).map((f) => f.label);
-    expect(labels).not.toContain("Model");
-    expect(labels).not.toContain("Effort");
-  });
-
-  // The timeline's only input. A tool call carries `ts` in millis plus a duration, so
-  // the window is derivable — without it a pipeline's timeline draws nothing, and
-  // overlap is the one fact a pipeline has that a column cannot show.
+  // A tool call carries `ts` in millis plus a duration, so the node's span is derivable.
   it("derives the node's window from the call's ts and duration", () => {
     const run = exec(
       [msg([invocation("tooluse_1", "sub_1", { ts: 1_700_000_000_000, duration_ms: 5000 })])],
@@ -260,134 +235,21 @@ describe("the single-delegate shape", () => {
   });
 });
 
-describe("the pipeline shape", () => {
-  const messages = [
-    msg(
-      [
-        driver("orc_1", {
-          input: { task: "review the diff", stages: [{ name: "a" }, { name: "b" }] },
-        }),
+describe("a stage-shaped delegate from an older engine", () => {
+  // The driver renders as an ordinary tool card in the transcript; the stage's own page is a
+  // lone leaf like any delegate's.
+  it("is one childless leaf", () => {
+    const old = [
+      msg([
+        makeToolCall({ id: "orc_1", title: "Orchestrate Sub-agent", kind: "other" }),
         invocation("invoke_subagent_orc_1_stage_a", "sub_a"),
-        invocation("invoke_subagent_orc_1_stage_b", "sub_b", { status: "in_progress" }),
-      ],
-      [["sub_b", "working"]],
-    ),
-  ];
-
-  // One root WITH children, which is what makes the page show its tree and its
-  // timeline. A pipeline rendered as a flat leaf would hide the one thing it has that
-  // a single delegate does not.
-  it("nests every stage under the driver", () => {
-    const run = exec(messages, "sub_b");
+        invocation("invoke_subagent_orc_1_stage_b", "sub_b"),
+      ]),
+    ];
+    const run = exec(old, "sub_a");
     expect(run.nodes).toHaveLength(1);
-    const root = run.nodes[0];
-    expect(root?.children.map((c) => c.path)).toEqual([
-      subagentPath("sub_a"),
-      subagentPath("sub_b"),
-    ]);
-    // The row names what it HOLDS, not the object: the header one row up already
-    // reads `Subagent pipeline`, so repeating those words here stutters.
-    expect(root?.label).toBe("Stages");
-    // The EXECUTION's name, not the stage the tab names: the header states the whole
-    // pipeline's progress and elapsed time beside it.
-    expect(run.label).toBe("Subagent pipeline");
-  });
-
-  // Opening a stage's link means "open THIS stage", so the focus names it even though a
-  // sibling might be the one wanting attention. That is the whole reason `ExecRun.focus`
-  // exists.
-  it("focuses the stage the tab names, not the interesting one", () => {
-    expect(exec(messages, "sub_a").focus).toBe(subagentPath("sub_a"));
-    expect(exec(messages, "sub_b").focus).toBe(subagentPath("sub_b"));
-  });
-
-  // The driver's own status says only that something under it is open. What a collapsed
-  // group must still report is the worst outcome beneath it.
-  it("rolls the driver's state up from its stages", () => {
-    expect(exec(messages, "sub_b").nodes[0]?.state).toBe("running");
-    const failed = [
-      msg([
-        driver("orc_1"),
-        invocation("invoke_subagent_orc_1_stage_a", "sub_a", { status: "completed" }),
-        invocation("invoke_subagent_orc_1_stage_b", "sub_b", { status: "failed" }),
-      ]),
-    ];
-    expect(exec(failed, "sub_a").nodes[0]?.state).toBe("fail");
-  });
-
-  // A non-resident driver is `unknown` too (`toolState` owns both absences). Two stages, since one
-  // renders no root row.
-  it("reads an absent driver as unknown rather than running", () => {
-    const noDriver = [
-      msg([
-        invocation("invoke_subagent_orc_1_stage_a", "sub_a", { status: "pending" }),
-        invocation("invoke_subagent_orc_1_stage_b", "sub_b", { status: "pending" }),
-      ]),
-    ];
-    const run = exec(noDriver, "sub_a");
-    expect(run.nodes[0]?.children).toHaveLength(2);
-    expect(run.nodes[0]?.state).toBe("unknown");
-  });
-
-  // The driver declares its stage list up front, so a pipeline can say "two stages, one
-  // running, one not started" from its first frame instead of growing rows as they
-  // arrive.
-  it("adds a declared stage the transcript has not reached", () => {
-    const early = [
-      msg([
-        driver("orc_1", { input: { stages: [{ name: "a" }, { name: "b" }, { name: "c" }] } }),
-        invocation("invoke_subagent_orc_1_stage_a", "sub_a"),
-      ]),
-    ];
-    const kids = exec(early, "sub_a").nodes[0]?.children ?? [];
-    expect(kids).toHaveLength(3);
-    expect(kids.slice(1).map((k) => k.state)).toEqual(["pending", "pending"]);
-    // A stage with no invocation yet hosts nothing, which is what lets the detail pane
-    // say so rather than waiting on content that cannot arrive.
-    expect(kids[1]?.transcript).toBeUndefined();
-  });
-
-  // The task is what the pipeline was ASKED to do, the same slot `state.inputs` fills
-  // for a workflow run.
-  it("renders the driver's task as the run's input", () => {
-    expect(exec(messages, "sub_b").inputs).toEqual({ Task: "review the diff" });
-  });
-
-  // Model-produced `input` of an unknown shape yields no rows rather than throwing. TWO stages, or the
-  // pipeline promotes to the flat shape.
-  it("survives a driver whose input is not the expected shape", () => {
-    for (const bad of [undefined, null, "text", 42, { stages: "nope" }, { stages: [1, null] }]) {
-      const odd = [
-        msg([
-          driver("orc_1", { input: bad } as Partial<EntryToolCall>),
-          invocation("invoke_subagent_orc_1_stage_a", "sub_a"),
-          invocation("invoke_subagent_orc_1_stage_b", "sub_b"),
-        ]),
-      ];
-      const run = exec(odd, "sub_a");
-      expect(run.nodes[0]?.children).toHaveLength(2);
-      expect(run.inputs).toBeUndefined();
-    }
-  });
-
-  // The page's own rule is `run.nodes.length > 1 || any node has children`, so a group
-  // over its only child forces open a tree pane holding one navigable row and one row
-  // that is not navigable at all. Promotion here is the twin of the transcript's.
-  it("promotes a lone stage to the root, rendering no group row", () => {
-    const solo = [
-      msg([
-        driver("orc_solo", { input: { task: "do it", stages: [{ name: "a" }] } }),
-        invocation("invoke_subagent_orc_solo_stage_a", "sub_solo"),
-      ]),
-    ];
-    const run = exec(solo, "sub_solo");
-    expect(run.nodes).toHaveLength(1);
-    expect(run.nodes[0]?.path).toBe(subagentPath("sub_solo"));
+    expect(run.nodes[0]?.path).toBe(subagentPath("sub_a"));
     expect(run.nodes[0]?.children).toHaveLength(0);
-    expect(run.nodes[0]?.transcript).toBe(true);
-    // The pipeline is still named and still states what it was asked to do: both are
-    // ExecRun fields the header renders, not row fields.
-    expect(run.label).toBe("Subagent pipeline");
-    expect(run.inputs).toEqual({ Task: "do it" });
+    expect(run.label).toBe("context-gatherer");
   });
 });
