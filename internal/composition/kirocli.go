@@ -10,11 +10,12 @@ import (
 	"github.com/cplieger/pinstall/v3/kirocli"
 )
 
-// The layout facts marotte brings to the install: where the convenience symlink goes, and
+// The layout facts marotte brings to the install: where the convenience symlinks go, and
 // what its own SHELL-era installer left on the volume.
 const (
-	// kiroLinkDir holds the non-authoritative `docker exec … kiro-cli` symlink. Co-owned
-	// by the toolbelt engine, which is why the legacy sweep names its targets.
+	// kiroLinkDir holds the non-authoritative convenience symlinks a shell resolves kiro-cli
+	// and its sidecars through. Co-owned by the toolbelt engine, which is why the legacy sweep
+	// names its targets.
 	kiroLinkDir = "bin"
 	// legacyStagePrefix prefixed the shell installer's staging trees, so a match is an
 	// orphan its EXIT trap missed. Ends in a dot so it cannot match the install root.

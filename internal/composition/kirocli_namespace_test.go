@@ -277,11 +277,12 @@ func TestLegacySweepSparesToolbeltSymlinks(t *testing.T) {
 }
 
 // TestLegacySweepRunsOncePerVolume pins the once-only marker: the layout the sweep deletes cannot
-// come back.
+// come back. The residue is the term dispatcher because the planted version has no kiro-cli-term,
+// so no convenience link is published at its name to tell a sweep from a publish.
 func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 	env := newNSEnv(t)
 	env.plantOwnVersion()
-	residue := env.plantLegacyResidue(nsTool + "-chat")
+	residue := env.plantLegacyResidue(nsTool + "-term")
 
 	if err := env.manager().Ensure(t.Context()); err != nil {
 		t.Fatalf("first Ensure: %v", err)
@@ -296,7 +297,7 @@ func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 		t.Fatalf("the first boot did not record %s, so every later boot re-runs the sweep: %v", legacyPurgeMarker, err)
 	}
 
-	replanted := env.plantLegacyResidue(nsTool + "-chat")
+	replanted := env.plantLegacyResidue(nsTool + "-term")
 	if err := env.manager().Ensure(t.Context()); err != nil {
 		t.Fatalf("second Ensure: %v", err)
 	}
