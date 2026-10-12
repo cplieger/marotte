@@ -6,7 +6,7 @@ import { iconEl } from "../icon-el.js";
 import { ICON_ALERT, ICON_WARN } from "../icons.js";
 import type { ExecRun } from "./model.js";
 
-export type ExecAlert = NonNullable<ExecRun["alert"]>;
+type ExecAlert = NonNullable<ExecRun["alert"]>;
 
 export function alertGlyph(kind: ExecAlert["kind"]): string {
   return kind === "failed" ? ICON_ALERT : ICON_WARN;
@@ -18,7 +18,7 @@ export function wantsReader(alert: ExecRun["alert"]): alert is ExecAlert {
   return alert !== undefined && alert.kind !== "stopped";
 }
 
-export interface AlertLine {
+interface AlertLine {
   readonly root: HTMLElement;
   paint(alert: ExecAlert): void;
 }
