@@ -353,7 +353,7 @@ var (
 )
 
 func reviewStep(session string) *translate.RunStep {
-	return &translate.RunStep{RunID: "wf_1", NodePath: reviewPath, NodeID: "review", SessionID: session}
+	return &translate.RunStep{RunID: "wf_1", NodePath: reviewPath, SessionID: session}
 }
 
 func runTurnsAt(t *testing.T, h *Runtime, nodePath string) (kinds [][]marotte.EntryKind, prompts []*marotte.EntryPrompt) {

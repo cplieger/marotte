@@ -137,7 +137,7 @@ func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(conte
 				t.steps.record(p.SessionID, p.WorkflowID, node, path)
 			}
 			// The run turn's opening bracket; a path already open is a no-op on the log.
-			t.runs.RunNodeStart(ctx, &RunStep{RunID: p.WorkflowID, NodePath: path, NodeID: node, SessionID: p.SessionID, Path: nodePathOf(p.NodePath, node)}, chatID)
+			t.runs.RunNodeStart(ctx, &RunStep{RunID: p.WorkflowID, NodePath: path, SessionID: p.SessionID, Path: nodePathOf(p.NodePath, node)}, chatID)
 		case marotte.RunProgressNodeComplete:
 			t.runs.RunNodeComplete(ctx, p.WorkflowID, nodePathOf(p.NodePath, node), p.Status, p.Reason)
 		case marotte.RunProgressNodePaused:

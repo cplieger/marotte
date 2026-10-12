@@ -38,7 +38,7 @@ func agentRunOnChat(t *testing.T, id string) (*Runtime, *fakeBridge) {
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	step := &translate.RunStep{RunID: id, NodePath: workflow.PathKey([]string{id, "review"}), NodeID: "review", SessionID: "step-session-a"}
+	step := &translate.RunStep{RunID: id, NodePath: workflow.PathKey([]string{id, "review"}), SessionID: "step-session-a"}
 	if _, _, err := h.runs.log.open(t.Context(), step, parkChat); err != nil {
 		t.Fatalf("open the step: %v", err)
 	}

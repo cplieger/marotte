@@ -95,7 +95,7 @@ func TestRunLog_ANodeStartOpensOneTurnPerStepInstance(t *testing.T) {
 func TestRunLog_ALaterFrameNamesTheSessionOfATurnOpenedWithNone(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	path := workflow.PathKey([]string{"wf1", "a"})
-	step := &translate.RunStep{RunID: "wf1", NodePath: path, NodeID: "a"}
+	step := &translate.RunStep{RunID: "wf1", NodePath: path}
 	if _, _, err := r.open(t.Context(), step, "c-1"); err != nil {
 		t.Fatalf("Open(no session): %v", err)
 	}
@@ -119,7 +119,7 @@ func TestRunLog_ALaterFrameNamesTheSessionOfATurnOpenedWithNone(t *testing.T) {
 // again clears the mark.
 func TestRunLog_HostLostLastsUntilAStepTurnOpens(t *testing.T) {
 	r := newRunLog(t.TempDir())
-	step := &translate.RunStep{RunID: "wf1", NodePath: workflow.PathKey([]string{"wf1", "a"}), NodeID: "a"}
+	step := &translate.RunStep{RunID: "wf1", NodePath: workflow.PathKey([]string{"wf1", "a"})}
 	if _, _, err := r.open(t.Context(), step, "c-1"); err != nil {
 		t.Fatalf("Open: %v", err)
 	}

@@ -651,7 +651,7 @@ func TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock(t *testing.T
 	if !called {
 		t.Fatal("handleSessionUpdate did not invoke the sub-handler (sub-dispatch returned early)")
 	}
-	want := translate.FrameAttribution{SessionID: stepSID, RunID: "wf_1", NodePath: "wf_1/build", NodeID: "build", Step: true}
+	want := translate.FrameAttribution{SessionID: stepSID, RunID: "wf_1", NodePath: "wf_1/build", Step: true}
 	if got != want {
 		t.Errorf("handleSessionUpdate(step session %q, no _meta.kiro.workflow) attribution = %+v, want %+v",
 			stepSID, got, want)

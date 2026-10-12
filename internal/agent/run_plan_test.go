@@ -14,7 +14,7 @@ func TestRunPlanUpdate_TheRunReadCarriesTheRevisionThroughItsOutcome(t *testing.
 	br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
 	h.runs.log = newRunLog(t.TempDir())
 	build := []string{"wf_1", "loop", "iter-0", "build"}
-	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: "wf_1", NodePath: workflow.PathKey(build), NodeID: "build", SessionID: "sess_b", Path: build}, "c1")
+	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: "wf_1", NodePath: workflow.PathKey(build), SessionID: "sess_b", Path: build}, "c1")
 
 	h.runs.RunPlanUpdate(t.Context(), "c1", "wf_1", marotte.RunPlanUpdate{Outcome: marotte.RunPlanQueued, Pending: 3})
 	h.runs.RunPlanUpdate(t.Context(), "c1", "wf_1", marotte.RunPlanUpdate{Outcome: "applied"})

@@ -7,7 +7,6 @@ package translate
 // durable copy, so nothing is persisted here.
 
 import (
-	"cmp"
 	"encoding/json"
 	"sync"
 
@@ -39,8 +38,6 @@ type FrameAttribution struct {
 	// turn (a parallel node is several open turns). Set with Step.
 	RunID    string
 	NodePath string
-	// NodeID is the step's own id, carried beside NodePath because the key is never split back.
-	NodeID string
 	// Subagent reports a SUBAGENT session owns the frame. False never means "the chat": a
 	// step is not a subagent either.
 	Subagent bool
@@ -82,19 +79,18 @@ func (t *Translator) StepAttribution(runID, sessionID string, wf *ACPWorkflowMet
 	return attr
 }
 
-// placeStep sets a step frame's node path and id from its workflow meta, else from the registry,
-// which is cold after a restart. The id prefers the registry's, the one a step's ask is stamped with.
+// placeStep sets a step frame's node path from its workflow meta, else from the registry, which
+// is cold after a restart.
 func (t *Translator) placeStep(attr *FrameAttribution, wf *ACPWorkflowMeta) {
-	ref := t.steps.refFor(attr.SessionID)
 	if wf != nil && wf.WorkflowID != "" {
-		attr.NodePath, attr.NodeID = runNodePath(wf), cmp.Or(ref.NodeID, wf.NodeID)
+		attr.NodePath = runNodePath(wf)
 		return
 	}
-	attr.NodePath, attr.NodeID = ref.NodePath, ref.NodeID
+	attr.NodePath = t.steps.refFor(attr.SessionID).NodePath
 }
 
 func runStepOf(attr *FrameAttribution) *RunStep {
-	return &RunStep{RunID: attr.RunID, NodePath: attr.NodePath, NodeID: attr.NodeID, SessionID: attr.SessionID}
+	return &RunStep{RunID: attr.RunID, NodePath: attr.NodePath, SessionID: attr.SessionID}
 }
 
 // runNodePath is the step's run-log turn key. The PATH, because a repeat's iterations share
