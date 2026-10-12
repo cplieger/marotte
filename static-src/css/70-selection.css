@@ -328,7 +328,9 @@
    specificity cap this file is linted against. */
 .ev-selected > .ev-row-main .ev-sub,
 .ev-selected > .ev-row-main .ev-dur,
+.ev-selected > .ev-row-main .ev-q,
 .ev-tl-lane.ev-selected .ev-tl-name,
+.ev-tl-lane.ev-selected .ev-q,
 .ev-tl-lane.ev-selected .ev-tl-dur {
   color: var(--c-selected-muted-fg);
 }

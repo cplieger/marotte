@@ -18,6 +18,7 @@ import {
 import { formatElapsed } from "../strings.js";
 import { reconcile } from "../reconcile.js";
 import { elapsed, type ExecKind, type ExecNode } from "./model.js";
+import { paintLabel } from "./label.js";
 import { STATE_WORD, paintStateMark, type ExecState } from "./status.js";
 
 /** The kind glyph: a step gets the agent hexagon; a container gets a glyph
@@ -184,7 +185,7 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
   }
 
   function paint(row: Row, node: ExecNode, depth: number, selected: string): void {
-    row.label.textContent = node.label;
+    paintLabel(row.label, node);
     row.sub.textContent = node.subtitle ?? "";
     row.sub.hidden = (node.subtitle ?? "") === "";
     row.root.dataset["state"] = node.state;

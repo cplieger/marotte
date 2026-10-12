@@ -1453,12 +1453,13 @@ func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 
 // `plan` rides through as raw JSON (marotte.Recipe).
 type kasRecipe struct {
-	Inputs      map[string]string `json:"inputs"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	Source      string            `json:"source"`
-	Plan        json.RawMessage   `json:"plan"`
-	BuiltIn     bool              `json:"builtIn"`
+	Inputs          map[string]string `json:"inputs"`
+	Name            string            `json:"name"`
+	Description     string            `json:"description"`
+	ValidationError string            `json:"validationError"`
+	Source          string            `json:"source"`
+	Plan            json.RawMessage   `json:"plan"`
+	BuiltIn         bool              `json:"builtIn"`
 }
 
 func (rs *Runs) listRecipes(ctx context.Context) ([]marotte.Recipe, error) {
@@ -1482,12 +1483,13 @@ func (rs *Runs) listRecipes(ctx context.Context) ([]marotte.Recipe, error) {
 			continue
 		}
 		out = append(out, marotte.Recipe{
-			Name:        r.Name,
-			Description: r.Description,
-			Source:      r.Source,
-			Inputs:      r.Inputs,
-			Plan:        r.Plan,
-			BuiltIn:     r.BuiltIn,
+			Name:            r.Name,
+			Description:     r.Description,
+			ValidationError: r.ValidationError,
+			Source:          r.Source,
+			Inputs:          r.Inputs,
+			Plan:            r.Plan,
+			BuiltIn:         r.BuiltIn,
 		})
 	}
 	return out, nil

@@ -188,6 +188,154 @@ describe("the Run ⇄ Cancel row", () => {
   });
 });
 
+describe("a recipe KAS cannot launch", () => {
+  const reason =
+    "Invalid workflow: include 'review' (./review-seats.workflow.json): recipe was not resolved";
+
+  it("offers no Run, and says why on the row and the button", async () => {
+    recipesReply = { recipes: [{ ...recipe("fix-and-review"), validation_error: reason }] };
+    const panel = await render();
+    const btn = buttonFor(panel, "bundled://fix-and-review");
+    expect(btn?.disabled).toBe(true);
+    expect(btn?.getAttribute("data-tooltip")).toBe(reason);
+    const line = panel.querySelector<HTMLElement>(
+      '[data-recipe="bundled://fix-and-review"] .entry-lines > .entry-sub:nth-child(1)',
+    );
+    expect(line?.textContent).toBe(reason);
+    expect(line?.classList.contains("entry-sub-error")).toBe(true);
+    const sched = panel.querySelector<HTMLButtonElement>(
+      '[data-recipe="bundled://fix-and-review"] .recipe-sched-btn',
+    );
+    expect(sched?.disabled).toBe(true);
+    btn?.click();
+    expect(launchRun.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("offers Run again, with its description, once a re-read finds it fixed", async () => {
+    recipesReply = { recipes: [{ ...recipe("fix-and-review"), validation_error: reason }] };
+    const panel = await render();
+    recipesReply = { recipes: [recipe("fix-and-review")] };
+    dispatch({ type: "recipes_changed", chat_id: "" });
+    await Promise.resolve();
+    await Promise.resolve();
+    const btn = buttonFor(panel, "bundled://fix-and-review");
+    expect(btn?.disabled).toBe(false);
+    expect(btn?.hasAttribute("data-tooltip")).toBe(false);
+    const line = panel.querySelector<HTMLElement>(
+      '[data-recipe="bundled://fix-and-review"] .entry-lines > .entry-sub:nth-child(1)',
+    );
+    expect(line?.textContent).toBe("fix-and-review desc");
+    expect(line?.classList.contains("entry-sub-error")).toBe(false);
+  });
+
+  describe("under an input form opened while it was valid", () => {
+    async function openTypedForm(): Promise<{
+      panel: HTMLElement;
+      form: HTMLFormElement;
+      field: HTMLInputElement;
+      launchBtn: HTMLButtonElement;
+    }> {
+      recipesReply = { recipes: [recipe("fix-and-review", { prompt: "prompt" })] };
+      const panel = await render();
+      // The open form is module state, so an earlier case can leave it open.
+      if (panel.querySelector(".recipe-input-form") === null) {
+        buttonFor(panel, "bundled://fix-and-review")?.click();
+      }
+      const form = panel.querySelector<HTMLFormElement>(".recipe-input-form");
+      if (form === null) {
+        throw new Error("the input form did not open");
+      }
+      const field = form.querySelector<HTMLInputElement>("input");
+      const launchBtn = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+      if (field === null || launchBtn === null) {
+        throw new Error("the input form has no field or no Launch");
+      }
+      field.value = "make the tests pass";
+      return { panel, form, field, launchBtn };
+    }
+
+    async function catalogChanges(next: RecipesResponse): Promise<void> {
+      recipesReply = next;
+      dispatch({ type: "recipes_changed", chat_id: "" });
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+
+    function submit(form: HTMLFormElement): void {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    }
+
+    it("turns Launch off with the reason, keeps what was typed, and refuses a submit", async () => {
+      const { panel, form, field, launchBtn } = await openTypedForm();
+      expect(launchBtn.disabled).toBe(false);
+
+      await catalogChanges({
+        recipes: [{ ...recipe("fix-and-review", { prompt: "prompt" }), validation_error: reason }],
+      });
+
+      expect(panel.querySelector(".recipe-input-form")).toBe(form);
+      expect(field.value).toBe("make the tests pass");
+      expect(launchBtn.disabled).toBe(true);
+      expect(launchBtn.getAttribute("data-tooltip")).toBe(reason);
+      submit(form);
+      expect(launchRun.dispatch).not.toHaveBeenCalled();
+    });
+
+    it("still folds the form from Run, then turns Run off, launching nothing", async () => {
+      const { panel } = await openTypedForm();
+      await catalogChanges({
+        recipes: [{ ...recipe("fix-and-review", { prompt: "prompt" }), validation_error: reason }],
+      });
+      const run = buttonFor(panel, "bundled://fix-and-review");
+      expect(run?.disabled).toBe(false);
+      expect(run?.getAttribute("aria-expanded")).toBe("true");
+      expect(run?.getAttribute("data-tooltip")).toBe(reason);
+
+      run?.click();
+      expect(panel.querySelector(".recipe-input-form")).toBeNull();
+      expect(run?.disabled).toBe(true);
+      expect(run?.getAttribute("aria-expanded")).toBe("false");
+      // Folded for good: a filter round trip does not bring it back.
+      renderRecipesPanel(panel, "no such recipe");
+      renderRecipesPanel(panel, "");
+      expect(panel.querySelector(".recipe-input-form")).toBeNull();
+      expect(launchRun.dispatch).not.toHaveBeenCalled();
+    });
+
+    it("mounts the form again with Launch off when a filter hides and re-shows it", async () => {
+      const { panel } = await openTypedForm();
+      await catalogChanges({
+        recipes: [{ ...recipe("fix-and-review", { prompt: "prompt" }), validation_error: reason }],
+      });
+      renderRecipesPanel(panel, "no such recipe");
+      expect(panel.querySelector(".recipe-input-form")).toBeNull();
+      renderRecipesPanel(panel, "");
+
+      const launchBtn = panel.querySelector<HTMLButtonElement>(
+        '.recipe-input-form button[type="submit"]',
+      );
+      expect(launchBtn?.disabled).toBe(true);
+      expect(launchBtn?.getAttribute("data-tooltip")).toBe(reason);
+    });
+
+    it("launches the typed inputs once a re-read finds it fixed", async () => {
+      const { form, launchBtn } = await openTypedForm();
+      await catalogChanges({
+        recipes: [{ ...recipe("fix-and-review", { prompt: "prompt" }), validation_error: reason }],
+      });
+      await catalogChanges({ recipes: [recipe("fix-and-review", { prompt: "prompt" })] });
+
+      expect(launchBtn.disabled).toBe(false);
+      expect(launchBtn.hasAttribute("data-tooltip")).toBe(false);
+      submit(form);
+      expect(vi.mocked(launchRun.dispatch).mock.calls[0]?.[0]).toEqual({
+        source: "bundled://fix-and-review",
+        inputs: { prompt: "make the tests pass" },
+      });
+    });
+  });
+});
+
 describe("a recipes_changed invalidation", () => {
   it("re-reads the catalog while the list is on screen", async () => {
     recipesReply = { recipes: [recipe("goal")] };

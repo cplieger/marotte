@@ -1,6 +1,6 @@
 // Tests for the run tab: its control row, its structure, its outputs and its empty-step notes.
 
-import { vi, describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { page } from "vitest/browser";
 import type * as RunStore from "./run-store.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -255,6 +255,7 @@ vi.mock("./run-step-transcript.js", async () => {
 // composition root), so it is the seam this suite paints through; a door carries no `onShow` of
 // its own.
 import { openRunTab } from "./tabs.js";
+import { runPendingAsks } from "./decision-dock.js";
 import { openRunView, refreshRun, showRun } from "./run-view.js";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
 // The MOCK's signal, which is the one the view effect subscribes to. Imported so a case can drive
@@ -300,6 +301,8 @@ async function paint(
     nodePlan?: unknown;
     /** The RUN's own answer to "was this launched by an agent". Defaults from `parentless`. */
     parentSessionId?: string;
+    /** Mount the run tab's dock host, as `static/index.html` does. */
+    docked?: boolean;
   } = {},
 ): Promise<{ labels: string[]; refusals: string[]; tab: OpenedTab; body: HTMLElement }> {
   const id = opts.id ?? "wf_1";
@@ -330,6 +333,11 @@ async function paint(
   const dock = document.createElement("div");
   dock.id = "run-dock";
   document.body.append(body, dock);
+  if (opts.docked === true) {
+    const boxes = document.createElement("div");
+    boxes.id = "run-boxes";
+    document.body.append(boxes);
+  }
 
   door(id, "nightly");
   const tab = m.opened.at(-1);
@@ -347,8 +355,8 @@ async function paint(
     await Promise.resolve();
   }
 
-  const labels = [...body.querySelectorAll(".run-controls button")].map((b) =>
-    (b.textContent ?? "").trim(),
+  const labels = [...body.querySelectorAll(".run-controls:not(.run-controls-compact) button")].map(
+    (b) => (b.textContent ?? "").trim(),
   );
   const refusals = [...body.querySelectorAll(".run-control-refusal")].map((n) =>
     (n.textContent ?? "").trim(),
@@ -703,6 +711,339 @@ function resultKeys(body: HTMLElement): (string | null)[] {
 function selectRow(body: HTMLElement, path: string): void {
   body.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
 }
+
+describe("run view compact controls", () => {
+  const live = (status: string): unknown => ({
+    nodeId: "wf_1",
+    type: "sequence",
+    status,
+    children: [{ nodeId: "coder", type: "step", status, children: [] }],
+  });
+  const names = (sel: string): string[] =>
+    [...document.querySelectorAll<HTMLButtonElement>(`${sel} .run-controls-compact button`)].map(
+      (b) => b.getAttribute("aria-label") ?? "",
+    );
+
+  it("puts every offered verb on the dock and pause on the running step", async () => {
+    await paint(openRunView, "running", { root: live("running"), docked: true });
+    expect(names("#run-boxes")).toEqual(["Pause", "Cancel"]);
+    expect(names("#run-body .ev-d-head")).toEqual(["Pause"]);
+    const tip = document.querySelector(
+      '#run-boxes .run-controls-compact button[aria-label="Pause"]',
+    );
+    expect(tip?.getAttribute("data-tooltip")).toBe("Pause the run at the end of its current step");
+  });
+
+  // The stuck Resume: a resume's run_start re-reads only the state, so before the store tied the
+  // verbs to the status, every copy kept Resume after the run was running again.
+  it("turns Resume into Pause on every copy once the resumed run reads running", async () => {
+    await paint(openRunView, "paused", { root: live("paused"), docked: true });
+    expect(names("#run-boxes")).toEqual(["Resume", "Cancel"]);
+    expect(names("#run-body .ev-d-head")).toEqual(["Resume"]);
+
+    m.reply.current = {
+      workflowId: "wf_1",
+      state: { workflowId: "wf_1", status: "running", root: live("running") },
+    } satisfies RunInspectReply;
+    m.controls.current = CONTROLS_FOR["running"];
+    invalidateRun("wf_1");
+    for (let i = 0; i < 20; i++) {
+      await Promise.resolve();
+    }
+    expect(names("#run-boxes")).toEqual(["Pause", "Cancel"]);
+    expect(names("#run-body .ev-d-head")).toEqual(["Pause"]);
+    expect(
+      [...document.querySelectorAll("#run-body .ev-head .run-controls button")].map((b) =>
+        (b.textContent ?? "").trim(),
+      ),
+    ).toEqual(["Pause", "Cancel"]);
+  });
+
+  it("sends the dock's verbs, extend adding one pass to the node the server named", async () => {
+    await paint(openRunView, "paused", {
+      root: live("paused"),
+      docked: true,
+      controls: {
+        verbs: ["extend", "finish_loop", "cancel"],
+        pause_node_id: "loop-1",
+        parent_chat_id: "",
+      },
+    });
+    expect(names("#run-boxes")).toEqual(["Add iterations", "End this loop", "Cancel"]);
+    for (const b of document.querySelectorAll<HTMLButtonElement>(
+      "#run-boxes .run-controls-compact button",
+    )) {
+      b.click();
+    }
+    expect(m.dispatched).toEqual([
+      'extend:{"workflowID":"wf_1","nodeID":"loop-1","iterations":1}',
+      'finish_loop:{"workflowID":"wf_1","nodeID":"loop-1"}',
+      "cancel:wf_1",
+    ]);
+    // The step row carries pause and resume only, and a loop at its cap offers neither.
+    expect(names("#run-body .ev-d-head")).toEqual([]);
+  });
+
+  it("offers the step nothing once it has settled", async () => {
+    await paint(openRunView, "failed", { root: live("failed"), docked: true });
+    expect(names("#run-boxes")).toEqual(["Retry failed steps"]);
+    expect(names("#run-body .ev-d-head")).toEqual([]);
+  });
+
+  it("shows what a running step last printed on the folded Steps row", async () => {
+    logStep("wf_1", "wf_1:printer", "Reading the brief\nChecking the tree", { live: true });
+    await paint(openRunView, "running", {
+      docked: true,
+      root: {
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "printer", type: "step", status: "running", children: [] }],
+      },
+    });
+    expect(document.querySelector("#run-boxes .ev-dock-tail")?.textContent).toBe(
+      "Checking the tree",
+    );
+  });
+
+  // A continuation after a throttled turn opens a new turn that prints nothing for minutes.
+  it("keeps the previous turn's line while the step's newest turn is silent", async () => {
+    logStep("wf_1", "wf_1:resumer", "Running the suite");
+    const turn = "t-wf_1-wf_1:resumer-2";
+    openRunTurn("wf_1", {
+      id: `${turn}-0`,
+      turn,
+      lane: "",
+      kind: "turn_open",
+      payload: { source: "workflow_step", node_path: "wf_1:resumer", n: 1 },
+      seq: 0,
+      ts: 0,
+    });
+    await paint(openRunView, "running", {
+      docked: true,
+      root: {
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "resumer", type: "step", status: "running", children: [] }],
+      },
+    });
+    expect(document.querySelector("#run-boxes .ev-dock-tail")?.textContent).toBe(
+      "Running the suite",
+    );
+  });
+
+  describe("the dock's alert row", () => {
+    const asking = (): unknown => ({
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [{ nodeId: "asker", type: "step", status: "running", children: [] }],
+    });
+    const answerBtn = (): HTMLButtonElement | null =>
+      document.querySelector<HTMLButtonElement>(
+        '#run-boxes .ev-box-alert-act button[aria-label="Answer"]',
+      );
+
+    it("offers Answer for a step waiting on a person, and moves to the ask's field", async () => {
+      vi.mocked(runPendingAsks).mockReturnValue({ count: 1, asked: [], label: "Which branch?" });
+      await paint(openRunView, "running", { docked: true, root: asking() });
+      expect(
+        document.querySelector("#run-boxes .ev-box-alertline .ev-alert-text")?.textContent,
+      ).toBe("Waiting for your answer: Which branch?");
+      // The run's verbs stay beside it.
+      expect(answerBtn()).not.toBeNull();
+      expect(names("#run-boxes")).toEqual(["Pause", "Cancel"]);
+      const dock = document.getElementById("run-dock")!;
+      const remember = Object.assign(document.createElement("input"), { type: "checkbox" });
+      const field = document.createElement("textarea");
+      dock.append(document.createElement("button"), remember, field);
+      answerBtn()?.click();
+      expect(document.activeElement).toBe(field);
+    });
+
+    it("moves to the ask's first button when it has no field", async () => {
+      vi.mocked(runPendingAsks).mockReturnValue({ count: 1, asked: [], label: "" });
+      await paint(openRunView, "running", { docked: true, root: asking() });
+      const dock = document.getElementById("run-dock")!;
+      const hidden = Object.assign(document.createElement("textarea"), { hidden: true });
+      const allow = document.createElement("button");
+      dock.append(hidden, allow);
+      answerBtn()?.click();
+      expect(document.activeElement).toBe(allow);
+    });
+
+    it("offers no Answer for an alert that asks nothing", async () => {
+      await paint(openRunView, "paused", { docked: true, root: asking() });
+      expect(document.querySelector("#run-boxes .ev-box-alertline")).not.toBeNull();
+      expect(answerBtn()).toBeNull();
+      expect(names("#run-boxes")).toEqual(["Resume", "Cancel"]);
+    });
+  });
+
+  describe("a tab opened while parallel steps are printing", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const fan = (seats: readonly string[]): unknown => ({
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [
+        {
+          nodeId: "fan",
+          type: "parallel",
+          status: "running",
+          children: seats.map((nodeId) => ({
+            nodeId,
+            type: "step",
+            status: "running",
+            children: [],
+          })),
+        },
+      ],
+    });
+    const flush = async (): Promise<void> => {
+      for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+      }
+    };
+    const tails = (): string[] =>
+      [...document.querySelectorAll("#run-boxes .ev-dock-tail")]
+        .map((n) => n.textContent ?? "")
+        .sort();
+    /** What `fetchStep`'s `finally` does with an answer: record the verdict, bump the version. */
+    const answer = async (path: string, state: "unavailable" | "ready"): Promise<void> => {
+      m.reads.set(path, { state });
+      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
+      await flush();
+    };
+
+    it("gives every folded row the line its step printed before the tab opened", async () => {
+      const seats = ["late-a", "late-b", "late-c"];
+      const paths = seats.map((s) => `wf_1:fan:${s}`);
+      await paint(openRunView, "running", { docked: true, root: fan(seats) });
+      expect([...m.requested].sort()).toEqual(paths);
+      expect(tails()).toEqual(["", "", ""]);
+
+      // Each read's answer, adopted into the run's log as `fetchStep` does; no live frame follows.
+      for (const path of paths) {
+        logStep("wf_1", path, `started ${path}\nlatest ${path}`, { live: true });
+        await answer(path, "ready");
+      }
+      expect(tails()).toEqual(paths.map((p) => `latest ${p}`));
+
+      vi.advanceTimersByTime(60_000);
+      invalidateRun("wf_1");
+      await flush();
+      expect(m.requested).toHaveLength(3);
+    });
+
+    it("reads nothing for a sibling whose turn the log already holds", async () => {
+      logStep("wf_1", "wf_1:fan:held-b", "already here", { live: true });
+      await paint(openRunView, "running", { docked: true, root: fan(["held-a", "held-b"]) });
+      expect(m.requested).toEqual(["wf_1:fan:held-a"]);
+    });
+
+    it("re-asks a sibling whose catch-up failed, three times at most", async () => {
+      await paint(openRunView, "running", { docked: true, root: fan(["miss-a", "miss-b"]) });
+      // With no start recorded, the first seat is the shown one and settles its own read.
+      const [shown, sibling] = ["wf_1:fan:miss-a", "wf_1:fan:miss-b"];
+      expect(document.querySelector("#run-body .ev-d-title")?.textContent).toBe("miss-a");
+      expect(m.requested).toEqual([shown, sibling]);
+      await answer(shown, "ready");
+      await answer(sibling, "unavailable");
+      vi.advanceTimersByTime(999);
+      expect(m.requested).toHaveLength(2);
+      vi.advanceTimersByTime(1);
+      expect(m.requested).toEqual([shown, sibling, sibling]);
+      for (const delay of [2000, 4000, 8000, 16_000]) {
+        await answer(sibling, "unavailable");
+        vi.advanceTimersByTime(delay);
+      }
+      expect(m.requested).toEqual([shown, sibling, sibling, sibling, sibling]);
+    });
+
+    it("keeps re-asking a sibling after its own output arrives, until a read answers", async () => {
+      await paint(openRunView, "running", { docked: true, root: fan(["moot-a", "moot-b"]) });
+      await answer("wf_1:fan:moot-a", "ready");
+      await answer("wf_1:fan:moot-b", "unavailable");
+      logStep("wf_1", "wf_1:fan:moot-b", "printed meanwhile", { live: true, attempt: 2 });
+      await flush();
+      expect(tails()).toEqual(["", "printed meanwhile"]);
+      vi.advanceTimersByTime(1000);
+      expect(m.requested.filter((p) => p === "wf_1:fan:moot-b")).toHaveLength(2);
+
+      await answer("wf_1:fan:moot-b", "ready");
+      vi.advanceTimersByTime(60_000);
+      expect(m.requested.filter((p) => p === "wf_1:fan:moot-b")).toHaveLength(2);
+    });
+
+    it("reads a sibling the reader picks after it printed over a failed catch-up", async () => {
+      await paint(openRunView, "running", { docked: true, root: fan(["pick-a", "pick-b"]) });
+      await answer("wf_1:fan:pick-a", "ready");
+      await answer("wf_1:fan:pick-b", "unavailable");
+      logStep("wf_1", "wf_1:fan:pick-b", "printed meanwhile", { live: true, attempt: 2 });
+      await flush();
+      document
+        .querySelector<HTMLElement>('.ev-row[data-path="wf_1:fan:pick-b"] > .ev-row-main')
+        ?.click();
+      await flush();
+      expect(document.querySelector("#run-body .ev-d-title")?.textContent).toBe("pick-b");
+      expect(m.requested.filter((p) => p === "wf_1:fan:pick-b")).toHaveLength(2);
+    });
+
+    it("drops a sibling's pending re-ask when the tab shows another run", async () => {
+      await paint(openRunView, "running", { docked: true, root: fan(["gone-a", "gone-b"]) });
+      await answer("wf_1:fan:gone-a", "ready");
+      await answer("wf_1:fan:gone-b", "unavailable");
+      await paint(openRunView, "completed", {
+        id: "wf_other",
+        docked: true,
+        root: { nodeId: "wf_other", type: "sequence", status: "completed", children: [] },
+      });
+      const asked = m.requested.length;
+      vi.advanceTimersByTime(60_000);
+      expect(m.requested).toHaveLength(asked);
+    });
+
+    it("drops a sibling's pending re-ask when the page is rebuilt", async () => {
+      await paint(openRunView, "running", { docked: true, root: fan(["again-a", "again-b"]) });
+      await answer("wf_1:fan:again-a", "ready");
+      await answer("wf_1:fan:again-b", "unavailable");
+      // A fresh run body remounts the same run's page, which asks once afresh and is answered.
+      await paint(openRunView, "running", { docked: true, root: fan(["again-a", "again-b"]) });
+      expect(m.requested.slice(2)).toEqual(["wf_1:fan:again-a", "wf_1:fan:again-b"]);
+      await answer("wf_1:fan:again-b", "ready");
+      const asked = m.requested.length;
+      vi.advanceTimersByTime(60_000);
+      expect(m.requested).toHaveLength(asked);
+    });
+  });
+
+  // The step's copy goes when the step stops being in flight, and its pending binding with it.
+  it("lets go of the step's copy once the shown step settles", async () => {
+    await paint(openRunView, "running", { root: live("running"), docked: true });
+    const stale = document.querySelector<HTMLButtonElement>(
+      '#run-body .ev-d-head .run-controls-compact button[aria-label="Pause"]',
+    )!;
+    m.reply.current = {
+      workflowId: "wf_1",
+      state: { workflowId: "wf_1", status: "running", root: live("completed") },
+    } satisfies RunInspectReply;
+    invalidateRun("wf_1");
+    for (let i = 0; i < 20; i++) {
+      await Promise.resolve();
+    }
+    expect(names("#run-body .ev-d-head")).toEqual([]);
+    expect(stale.isConnected).toBe(false);
+    expect(names("#run-boxes")).toEqual(["Pause", "Cancel"]);
+  });
+});
 
 describe("run view step results", () => {
   // PER-STEP SCOPING. Two settled steps with different captures: only the selected one's is on
@@ -1791,14 +2132,207 @@ describe("run view step reads", () => {
     }
   });
 
-  // GATE 2. A busy session cannot be `session/load`ed, so a live step's read is refused by
-  // construction — and its entries reach the pane on the run's own log meanwhile.
-  it("arms no read for a step still in flight", async () => {
-    for (const status of ["running", "paused"]) {
+  // GATE 2. A live step's later entries reach the pane on the run's own log, but what it printed
+  // before this page held the log arrives only through a read: a step stalled for minutes (a
+  // throttled model) sends no next entry to reveal the gap. The server answers it from the run's
+  // log; a transient miss is retried by the ladder cases below.
+  it("reads a step still in flight once when the page holds none of it", async () => {
+    for (const [i, status] of ["running", "paused"].entries()) {
       m.requested.length = 0;
-      await paint(openRunView, "running", { root: oneStep(status) });
-      expect(m.requested).toEqual([]);
+      await paint(openRunView, "running", { root: oneNamedStep(`live${String(i)}`, status) });
+      expect(m.requested).toEqual([`wf_1:live${String(i)}`]);
     }
+  });
+
+  it("reads nothing for a step in flight whose turn the page holds", async () => {
+    logStep("wf_1", "wf_1:streaming", "working", { live: true });
+    await paint(openRunView, "running", { root: oneNamedStep("streaming", "running") });
+    expect(m.requested).toEqual([]);
+    expect(m.reread).toEqual([]);
+  });
+
+  // A transient miss moves neither the shown path nor its state, so only the ladder asks again.
+  describe("after a transient miss", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** What `fetchStep`'s `finally` does with an answer: record the verdict, bump the version. */
+    async function answer(path: string, state: "unavailable" | "ready"): Promise<void> {
+      m.reads.set(path, { state });
+      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
+      for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+      }
+    }
+
+    it("asks again for a running step whose catch-up failed, until one answers", async () => {
+      await paint(openRunView, "running", { root: oneNamedStep("retry1", "running") });
+      expect(m.requested).toEqual(["wf_1:retry1"]);
+
+      await answer("wf_1:retry1", "unavailable");
+      vi.advanceTimersByTime(999);
+      expect(m.requested).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(m.requested).toEqual(["wf_1:retry1", "wf_1:retry1"]);
+
+      await answer("wf_1:retry1", "ready");
+      vi.advanceTimersByTime(60_000);
+      expect(m.requested).toHaveLength(2);
+
+      // A later miss is a new question, back on the first rung.
+      await answer("wf_1:retry1", "unavailable");
+      vi.advanceTimersByTime(1000);
+      expect(m.requested).toHaveLength(3);
+    });
+
+    it("stops after three retries", async () => {
+      await paint(openRunView, "running", { root: oneNamedStep("retry2", "running") });
+      for (const delay of [1000, 2000, 4000, 8000]) {
+        await answer("wf_1:retry2", "unavailable");
+        vi.advanceTimersByTime(delay);
+      }
+      expect(m.requested).toHaveLength(4);
+    });
+
+    // Output streamed after the tab opened says nothing about what the step printed before it.
+    it("keeps asking for the step's earlier output after new output arrives", async () => {
+      await paint(openRunView, "running", { root: oneNamedStep("retry3", "running") });
+      await answer("wf_1:retry3", "unavailable");
+      logStep("wf_1", "wf_1:retry3", "printed meanwhile", { live: true, attempt: 2 });
+      for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+      }
+      vi.advanceTimersByTime(1000);
+      expect(m.requested).toEqual(["wf_1:retry3", "wf_1:retry3"]);
+
+      await answer("wf_1:retry3", "ready");
+      vi.advanceTimersByTime(60_000);
+      expect(m.requested).toHaveLength(2);
+    });
+
+    // An answered catch-up owes nothing, so the settled step's missing close takes the re-read.
+    it("re-reads a step whose catch-up answered once it settles with its close missing", async () => {
+      await paint(openRunView, "running", { root: oneNamedStep("unclosed", "running") });
+      logStep("wf_1", "wf_1:unclosed", "adopted", { live: true });
+      await answer("wf_1:unclosed", "ready");
+      m.reply.current = {
+        workflowId: "wf_1",
+        state: {
+          workflowId: "wf_1",
+          status: "completed",
+          root: oneNamedStep("unclosed", "completed"),
+        },
+      } satisfies RunInspectReply;
+      invalidateRun("wf_1");
+      for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+      }
+      expect(m.requested).toEqual(["wf_1:unclosed"]);
+      expect(m.reread).toEqual(["wf_1:unclosed"]);
+    });
+
+    it("asks again when the reader returns to a step that printed after its retries ran out", async () => {
+      const { body } = await paint(openRunView, "running", {
+        root: {
+          nodeId: "wf_1",
+          type: "sequence",
+          status: "running",
+          children: [
+            { nodeId: "back", type: "step", status: "running", children: [] },
+            { nodeId: "away", type: "step", status: "completed", children: [] },
+          ],
+        },
+      });
+      await answer("wf_1:back", "unavailable");
+      for (const delay of [1000, 2000, 4000]) {
+        vi.advanceTimersByTime(delay);
+        await answer("wf_1:back", "unavailable");
+      }
+      expect(m.requested).toHaveLength(4);
+      logStep("wf_1", "wf_1:back", "printed meanwhile", { live: true, attempt: 2 });
+      const pick = async (path: string): Promise<void> => {
+        body.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
+        for (let i = 0; i < 20; i++) {
+          await Promise.resolve();
+        }
+      };
+      await pick("wf_1:away");
+      await pick("wf_1:back");
+      expect(m.requested.slice(4)).toEqual(["wf_1:away", "wf_1:back"]);
+    });
+
+    // A new hole is a new question, so its failed repair gets three retries of its own even after
+    // the catch-up's ladder ran out.
+    it("gives a later hole all three retries after the catch-up's ran out", async () => {
+      const turn = "t-wf_1-wf_1:retry5-1";
+      const text = (seq: number): Entry => ({
+        id: `${turn}-${String(seq)}`,
+        turn,
+        lane: "",
+        kind: "text",
+        payload: { text: "more" },
+        seq,
+        ts: 0,
+      });
+      const flush = async (): Promise<void> => {
+        for (let i = 0; i < 20; i++) {
+          await Promise.resolve();
+        }
+      };
+      await paint(openRunView, "running", { root: oneNamedStep("retry5", "running") });
+      await answer("wf_1:retry5", "unavailable");
+      for (const delay of [1000, 2000, 4000]) {
+        vi.advanceTimersByTime(delay);
+        await answer("wf_1:retry5", "unavailable");
+      }
+      expect(m.requested).toHaveLength(4);
+      logStep("wf_1", "wf_1:retry5", "printed meanwhile", { live: true });
+      await flush();
+      for (let seq = 2; seq < 6; seq++) {
+        appendRunEntry("wf_1", text(seq));
+        await flush();
+        vi.advanceTimersByTime(8000);
+      }
+      expect(m.requested).toHaveLength(4);
+
+      // A seq gap holes the turn and its repair read fails: the ladder starts over at three.
+      appendRunEntry("wf_1", text(9));
+      await flush();
+      expect(m.reread).toEqual(["wf_1:retry5"]);
+      await answer("wf_1:retry5", "unavailable");
+      for (const delay of [1000, 2000, 4000]) {
+        vi.advanceTimersByTime(delay);
+        await answer("wf_1:retry5", "unavailable");
+      }
+      expect(m.requested).toHaveLength(7);
+    });
+
+    it("asks nothing for a step the reader has left", async () => {
+      const { body } = await paint(openRunView, "running", {
+        root: {
+          nodeId: "wf_1",
+          type: "sequence",
+          status: "running",
+          children: [
+            { nodeId: "left", type: "step", status: "running", children: [] },
+            { nodeId: "next", type: "step", status: "completed", children: [] },
+          ],
+        },
+      });
+      expect(m.requested).toEqual(["wf_1:left"]);
+      await answer("wf_1:left", "unavailable");
+      // A step that needs its own read, which its selection issues once.
+      body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:next"] > .ev-row-main')?.click();
+      for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+      }
+      vi.advanceTimersByTime(60_000);
+      expect(m.requested).toEqual(["wf_1:left", "wf_1:next"]);
+    });
   });
 
   // ...and gate 2 is a DEFERRAL, not a refusal, which is the half a path-keyed guard loses.
@@ -1806,7 +2340,9 @@ describe("run view step reads", () => {
     const { body } = await paint(openRunView, "running", {
       root: twoLeaves("running", "pending"),
     });
-    expect(m.requested).toEqual([]);
+    // The in-flight read is gate 2's own case.
+    expect(m.requested).toEqual(["wf_1:coder"]);
+    m.requested.length = 0;
 
     // The reader's own gesture. A row is an ordinary `treeitem` whose click selects it
     // (`exec-view/tree.ts`), so this is the real pin rather than a reach into state.

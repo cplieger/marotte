@@ -54,12 +54,16 @@ afterEach(() => {
   dock.remove();
 });
 
-function box(key: string): HTMLDetailsElement {
-  const b = dock.querySelector<HTMLDetailsElement>(`details[data-box="${key}"]`);
+function box(key: string): HTMLElement {
+  const b = dock.querySelector<HTMLElement>(`.ev-box[data-box="${key}"]`);
   if (b === null) {
     throw new Error(`no ${key} box`);
   }
   return b;
+}
+
+function isOpen(key: string): boolean {
+  return box(key).querySelector(".ev-box-toggle")?.getAttribute("aria-expanded") === "true";
 }
 
 function selectedPath(): string {
@@ -70,11 +74,20 @@ function click(path: string): void {
   dock.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
 }
 
+function rowLabels(): string[] {
+  return [...box("steps").querySelectorAll(".ev-dock-row .ev-dock-label")].map(
+    (l) => l.textContent,
+  );
+}
+
 describe("the dock", () => {
   it("holds the timeline and the steps, closed, and no results while the run is live", () => {
     page.render(run([step("plan", "ok", 0, { output: "done" }), step("build", "running", 1)]));
     expect(
-      [...dock.children].map((b) => [b.getAttribute("data-box"), (b as HTMLDetailsElement).open]),
+      [...dock.children].map((b) => [
+        b.getAttribute("data-box"),
+        isOpen(b.getAttribute("data-box")!),
+      ]),
     ).toEqual([
       ["timeline", false],
       ["steps", false],
@@ -88,12 +101,26 @@ describe("the dock", () => {
     expect(page.root.querySelector(".ev-row")).toBeNull();
   });
 
-  it("opens one box at a time", async () => {
+  it("opens one box at a time, from anywhere on its row but its controls", () => {
     page.render(run([step("plan", "ok", 0), step("build", "running", 1)]));
-    box("timeline").querySelector("summary")?.click();
-    box("steps").querySelector("summary")?.click();
-    await new Promise((r) => setTimeout(r, 0));
-    expect([box("timeline").open, box("steps").open]).toEqual([false, true]);
+    box("timeline").querySelector<HTMLElement>(".ev-box-sum")?.click();
+    expect(isOpen("timeline")).toBe(true);
+    box("steps").querySelector<HTMLElement>(".ev-dock-row")?.click();
+    expect([isOpen("timeline"), isOpen("steps")]).toEqual([false, true]);
+    box("steps").querySelector<HTMLElement>(".ev-box-toggle")?.click();
+    expect(isOpen("steps")).toBe(false);
+  });
+
+  it("slides a box with the chat disclosures' height transition", () => {
+    const style = mountAppCSS();
+    page.render(run([step("plan", "ok", 0), step("build", "running", 1)]));
+    const region = box("steps").querySelector<HTMLElement>(".ev-box-region")!;
+    expect(region.classList.contains("uip-disclosure-region")).toBe(true);
+    expect(getComputedStyle(region).transitionProperty).toContain("height");
+    expect(region.inert).toBe(true);
+    box("steps").querySelector<HTMLElement>(".ev-box-toggle")?.click();
+    expect(region.inert).toBe(false);
+    style.remove();
   });
 
   it("adds the results box once the run is done, its row naming the latest step and its time", () => {
@@ -125,10 +152,271 @@ describe("the dock", () => {
     expect(getComputedStyle(panes).gridTemplateColumns.split(" ")).toHaveLength(1);
     style.remove();
   });
+});
 
-  it("names the newest started step on each box's row", () => {
+describe("the folded rows", () => {
+  it("draw the plan as one serial bar, a segment per step in its state, and where the run is", () => {
     page.render(run([step("plan", "ok", 0), step("build", "running", 1), step("ship", "pending")]));
-    expect(box("steps").querySelector(".ev-box-latest")?.textContent).toBe("build");
+    const segs = [...box("timeline").querySelectorAll<HTMLElement>(".ev-mini-seg")];
+    expect(segs.map((s) => s.dataset["state"])).toEqual(["ok", "running", "pending"]);
+    expect(segs[1]?.getAttribute("data-tooltip")).toBe("build, running");
+    expect(box("timeline").querySelector(".ev-box-sum")?.textContent).toBe("step 2 of 3");
+    // No title: the bar and the count say which box this is.
+    expect(box("timeline").querySelector(".ev-box-title")).toBeNull();
+    expect(box("timeline").querySelector(".ev-box-toggle")?.getAttribute("aria-label")).toBe(
+      "Timeline",
+    );
+  });
+
+  it("list every step in flight, with what it last printed", () => {
+    page.render(
+      run([
+        step("plan", "ok", 0),
+        step("seat-a", "running", 1, { tail: "Reading the diff" }),
+        step("seat-b", "input", 2),
+        step("ship", "pending"),
+      ]),
+    );
+    expect(rowLabels()).toEqual(["seat-a", "seat-b"]);
+    const first = box("steps").querySelector<HTMLElement>(".ev-dock-row")!;
+    expect(first.dataset["state"]).toBe("running");
+    expect(first.querySelector(".ev-dock-tail")?.textContent).toBe("Reading the diff");
+    expect(box("steps").querySelector(".ev-box-title")).toBeNull();
+  });
+
+  it("list every step in flight past five, scrolling with half of the sixth in view", () => {
+    const style = mountAppCSS();
+    const seats = Array.from({ length: 7 }, (_, i) => step(`seat-${String(i)}`, "running", i));
+    page.render(run(seats));
+    expect(rowLabels()).toEqual(seats.map((s) => s.label));
+    const list = box("steps").querySelector<HTMLElement>(".ev-box-rows")!;
+    const rowH = box("steps").querySelector<HTMLElement>(".ev-dock-row")!.offsetHeight;
+    expect(rowH).toBeGreaterThan(0);
+    expect(list.clientHeight).toBe(5.5 * rowH);
+    expect(list.scrollHeight).toBe(7 * rowH);
+    expect(getComputedStyle(list).overflowY).toBe("auto");
+    style.remove();
+  });
+
+  it("show the newest step once none is in flight, and the first before any started", () => {
+    page.render(run([step("plan", "pending"), step("build", "pending")]));
+    expect(rowLabels()).toEqual(["plan"]);
+    page.render(run([step("plan", "ok", 0), step("build", "fail", 1)], false));
+    expect(rowLabels()).toEqual(["build"]);
+  });
+
+  it("dim an included step's qualifier, the text staying its id", () => {
+    page.render(run([step("review/advisor", "running", 0, { qualifier: "review/" })]));
+    const label = box("steps").querySelector<HTMLElement>(".ev-dock-label")!;
+    expect(label.textContent).toBe("review/advisor");
+    expect(label.querySelector(".ev-q")?.textContent).toBe("review/");
+  });
+
+  it("mark a stop a person made beside the clock, keeping the summary", () => {
+    page.render({
+      ...run([step("loop", "running", 0)]),
+      alert: { kind: "stopped", text: "Resumed by you" },
+    });
+    const tl = box("timeline");
+    const mark = tl.querySelector<HTMLElement>(".ev-box-alert")!;
+    expect(mark.hidden).toBe(false);
+    expect(mark.getAttribute("aria-label")).toBe("Resumed by you");
+    expect(tl.querySelector<HTMLElement>(".ev-box-summary")!.hidden).toBe(false);
+    expect(tl.querySelector<HTMLElement>(".ev-box-alertline")!.hidden).toBe(true);
+    expect(tl.classList.contains("ev-box-alerting")).toBe(false);
+    page.render(run([step("loop", "running", 0)]));
+    expect(mark.hidden).toBe(true);
+  });
+});
+
+describe("the dock's alert row", () => {
+  const alerts: [string, NonNullable<ExecRun["alert"]>, ExecState][] = [
+    [
+      "a step waiting on an answer",
+      { kind: "input", text: "Waiting for your answer: Which branch?" },
+      "input",
+    ],
+    [
+      "a loop paused on its limit",
+      { kind: "paused", text: "Waiting: review loop reached its 3-pass limit" },
+      "waiting",
+    ],
+    [
+      "an unreachable host",
+      {
+        kind: "paused",
+        text: "Waiting: host unreachable · after a transient error (ECONNREFUSED)",
+      },
+      "waiting",
+    ],
+    ["a pause on its way", { kind: "paused", text: "Pausing after the current step" }, "running"],
+    ["a failure", { kind: "failed", text: "build failed: exit status 2" }, "fail"],
+    [
+      "a validation error",
+      { kind: "failed", text: "plan failed: input 'branch' is required" },
+      "fail",
+    ],
+  ];
+
+  for (const [name, alert, state] of alerts) {
+    it(`replaces the run summary with ${name}, and gives it back once it clears`, () => {
+      page.render({ ...run([step("plan", "ok", 0), step("loop", state, 1)]), alert });
+      const tl = box("timeline");
+      const line = tl.querySelector<HTMLElement>(".ev-box-alertline")!;
+      expect(tl.querySelector<HTMLElement>(".ev-box-summary")!.hidden).toBe(true);
+      expect(line.hidden).toBe(false);
+      expect([tl.classList.contains("ev-box-alerting"), tl.dataset["kind"]]).toEqual([
+        true,
+        alert.kind,
+      ]);
+      expect(line.querySelector(".ev-alert-text")?.textContent).toBe(alert.text);
+      expect(line.getAttribute("data-tooltip")).toBe(alert.text);
+      // The page's alert is the same alert: kind, words and glyph.
+      const top = page.root.querySelector<HTMLElement>(".ev-alert-line")!;
+      expect([top.hidden, top.dataset["kind"], top.textContent]).toEqual([
+        false,
+        alert.kind,
+        alert.text,
+      ]);
+      expect(line.querySelector(".ev-alert-icon")?.innerHTML).toBe(
+        top.querySelector(".ev-alert-icon")?.innerHTML,
+      );
+      // The box still opens on the timeline it summarises.
+      expect(tl.querySelector(".ev-box-toggle")?.getAttribute("aria-label")).toBe("Timeline");
+
+      page.render(run([step("plan", "ok", 0), step("loop", "running", 1)]));
+      expect(tl.querySelector<HTMLElement>(".ev-box-summary")!.hidden).toBe(false);
+      expect(line.hidden).toBe(true);
+      expect([tl.classList.contains("ev-box-alerting"), tl.dataset["kind"]]).toEqual([
+        false,
+        undefined,
+      ]);
+      expect(tl.querySelector(".ev-box-sum")?.textContent).toBe("step 2 of 2");
+    });
+  }
+
+  it("swaps the glyph when the alert's kind moves under the same sentence", () => {
+    const text = "Stopped: the loop ended";
+    page.render({ ...run([step("loop", "waiting", 0)]), alert: { kind: "paused", text } });
+    const icon = box("timeline").querySelector<HTMLElement>(".ev-box-alertline .ev-alert-icon")!;
+    const warnGlyph = icon.innerHTML;
+    page.render({ ...run([step("loop", "fail", 0)]), alert: { kind: "failed", text } });
+    expect(box("timeline").dataset["kind"]).toBe("failed");
+    expect(icon.innerHTML).not.toBe(warnGlyph);
+  });
+
+  it("paints the page alert's edge, wash, mark and ink on the row, per kind", () => {
+    const style = mountAppCSS();
+    for (const kind of ["input", "paused", "failed"] as const) {
+      page.render({ ...run([step("loop", "waiting", 0)]), alert: { kind, text: kind } });
+      const top = getComputedStyle(page.root.querySelector<HTMLElement>(".ev-alert-line")!);
+      const head = getComputedStyle(box("timeline").querySelector<HTMLElement>(".ev-box-head")!);
+      expect(head.borderInlineStartColor).toBe(top.borderInlineStartColor);
+      expect(head.borderInlineStartWidth).toBe(top.borderInlineStartWidth);
+      expect(head.backgroundImage).toContain(top.backgroundColor);
+      const mark = (sel: string): string =>
+        getComputedStyle(document.querySelector<HTMLElement>(sel)!).color;
+      expect(mark(".ev-box-alertline .ev-alert-icon")).toBe(mark(".ev-alert-line .ev-alert-icon"));
+      expect(mark(".ev-box-alertline")).toBe(top.color);
+    }
+    style.remove();
+  });
+
+  it("keeps the row's contents in place as an alert comes and goes", () => {
+    const style = mountAppCSS();
+    const toggleLeft = (): number =>
+      box("timeline").querySelector<HTMLElement>(".ev-box-toggle")!.getBoundingClientRect().left;
+    const headLeft = (): number =>
+      box("timeline").querySelector<HTMLElement>(".ev-box-head")!.getBoundingClientRect().left;
+    page.render(run([step("loop", "running", 0)]));
+    const resting = toggleLeft() - headLeft();
+    page.render({
+      ...run([step("loop", "waiting", 0)]),
+      alert: { kind: "paused", text: "Paused" },
+    });
+    expect(toggleLeft() - headLeft()).toBe(resting);
+    expect(resting).toBe(4);
+    style.remove();
+  });
+
+  it("seats the consumer's alert action beside the verbs, moving nothing on a repaint", () => {
+    const own = document.createElement("div");
+    const answer = document.createElement("button");
+    const verbs = document.createElement("span");
+    const view = buildExecPage({
+      emptyNote: () => "",
+      dock: own,
+      follow: "newest",
+      dockControls: () => verbs,
+      alertAction: (r) => (r.alert?.kind === "input" ? answer : null),
+    });
+    document.body.append(view.root, own);
+    const asking: ExecRun = {
+      ...run([step("ask", "input", 0)]),
+      alert: { kind: "input", text: "Waiting for your answer" },
+    };
+    view.render(asking);
+    const head = own.querySelector<HTMLElement>('.ev-box[data-box="timeline"] .ev-box-head')!;
+    expect(head.querySelector(".ev-box-alert-act")?.firstChild).toBe(answer);
+    expect(head.querySelector(".ev-box-alert-act")?.nextElementSibling?.firstChild).toBe(verbs);
+    answer.focus();
+    view.render(asking);
+    expect(document.activeElement).toBe(answer);
+    view.render(run([step("ask", "running", 0)]));
+    expect(answer.isConnected).toBe(false);
+    view.dispose();
+    view.root.remove();
+    own.remove();
+  });
+});
+
+describe("the controls on the dock and the shown step", () => {
+  it("seat the consumer's compact row on the timeline row and the step's on its name row", () => {
+    const own = document.createElement("div");
+    const dockRow = document.createElement("span");
+    const stepRow = document.createElement("span");
+    const view = buildExecPage({
+      emptyNote: () => "",
+      dock: own,
+      follow: "newest",
+      dockControls: () => dockRow,
+      stepControls: (_run, node) => (node?.state === "running" ? stepRow : null),
+    });
+    document.body.append(view.root, own);
+    view.render(run([step("plan", "ok", 0), step("build", "running", 1)]));
+    expect(own.querySelector('.ev-box[data-box="timeline"] .ev-box-actions')?.firstChild).toBe(
+      dockRow,
+    );
+    expect(view.root.querySelector(".ev-d-head .ev-d-actions")?.firstChild).toBe(stepRow);
+    view.render(run([step("plan", "ok", 0), step("build", "ok", 1)], false));
+    expect(view.root.querySelector(".ev-d-actions")?.childElementCount).toBe(0);
+    view.dispose();
+    view.root.remove();
+    own.remove();
+  });
+});
+
+describe("the docked timeline", () => {
+  it("shows every planned step from the start, empty until it runs", () => {
+    page.render(
+      run([step("plan", "running", 0), step("build", "pending"), step("ship", "pending")]),
+    );
+    const lanes = [...box("timeline").querySelectorAll<HTMLElement>(".ev-tl-lane")];
+    expect(lanes.map((l) => l.dataset["path"])).toEqual(["root/plan", "root/build", "root/ship"]);
+    const bars = lanes.map((l) => l.querySelector<HTMLElement>(".ev-tl-bar")!.hidden);
+    expect(bars).toEqual([false, true, true]);
+    expect(box("timeline").textContent).not.toContain("two steps");
+  });
+
+  it("is not clipped by its own corners inside the box", () => {
+    const style = mountAppCSS();
+    page.render(run([step("plan", "ok", 0), step("build", "running", 1)]));
+    const tl = box("timeline").querySelector<HTMLElement>(".ev-tl")!;
+    const cs = getComputedStyle(tl);
+    expect(cs.borderTopLeftRadius).toBe("0px");
+    expect(cs.borderBottomRightRadius).toBe("0px");
+    expect([cs.overflowX, cs.overflowY]).toEqual(["visible", "visible"]);
+    style.remove();
   });
 });
 

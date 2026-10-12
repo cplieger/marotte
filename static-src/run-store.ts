@@ -681,6 +681,9 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
   // re-asking.
   let failed = 0;
   const issued = executionsOf(workflowID).frames;
+  // A read before the cell holds any answer skips the controls: only a run tab holds them, and its
+  // open reads them itself.
+  const first = cell(workflowID).peek() === undefined;
   try {
     const r = await apiGetOrError<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
     const d = r.data;
@@ -737,6 +740,9 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
   if (next !== undefined) {
     stale.delete(workflowID);
     await fetchRun(workflowID, next);
+  } else if (!first && controlCells.has(workflowID)) {
+    // After the trailing read rather than beside it, so a burst costs one controls read.
+    invalidateRunControls(workflowID);
   }
 }
 
@@ -860,9 +866,10 @@ export function runControls(workflowID: string): RunControlsResponse | undefined
   return controlCell(workflowID).value;
 }
 
-/** Re-read what a run offers. THREE triggers, never one per repaint: a tab open (`run-view.ts`),
- *  that run's own `run_finished` (`handlers/run.ts`), and a retry that succeeded
- *  (`actions/runs.ts`). */
+/** Re-read what a run offers. Never per repaint: a tab open (`run-view.ts`) and every settled
+ *  state read after the first (`fetchRun`), since the verbs also rest on facts the state does not
+ *  carry (`run_affordance.go` `runFacts`: hosting, a pending pause). Every copy of a run's
+ *  controls reads this one cell. */
 export function invalidateRunControls(workflowID: string): void {
   if (workflowID === "") {
     return;
@@ -1214,7 +1221,8 @@ function markRunHole(workflowID: string, turnID: string): void {
 }
 
 /** Create the turn a run-scoped `turn_opened` announced, with its `turn_open` as `entries[0]`.
- *  Idempotent by turn id, like the chat store's. */
+ *  Idempotent by turn id, like the chat store's. Seated by its `turn_open.n`, the run log's own
+ *  ordinal, because a step read can adopt a turn older than one the stream already opened. */
 export function openRunTurn(workflowID: string, entry: Entry): void {
   const l = log(workflowID);
   if (l.turns.has(entry.turn)) {
@@ -1222,9 +1230,23 @@ export function openRunTurn(workflowID: string, entry: Entry): void {
   }
   const state: TurnState = { entries: [entry], openEntries: new Map() };
   l.turns.set(entry.turn, state);
-  l.order.push(entry.turn);
+  const n = runTurnOrdinal(state);
+  const at = l.order.findIndex((id) => {
+    const other = l.turns.get(id);
+    return other !== undefined && runTurnOrdinal(other) > n;
+  });
+  if (at < 0) {
+    l.order.push(entry.turn);
+  } else {
+    l.order.splice(at, 0, entry.turn);
+  }
   stampRunTurn(workflowID, entry.turn, state);
   bumpLog(workflowID);
+}
+
+/** A turn without a readable ordinal sorts last, where a newer turn belongs. */
+function runTurnOrdinal(state: TurnState): number {
+  return turnOpenOf(state)?.n ?? Number.MAX_SAFE_INTEGER;
 }
 
 /** Append one sealed entry of a run's log at the position its `seq` claims. Same three answers

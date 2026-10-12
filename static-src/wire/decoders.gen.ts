@@ -1897,6 +1897,8 @@ export const decodeRecipe: Decoder<Recipe> = (v) => {
   if (o["inputs"] !== undefined && o["inputs"] !== null) out.inputs = decodeRecord(o["inputs"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.recipe.inputs");
   const description = o["description"] === null ? undefined : optStr(o, "description", "$.recipe");
   if (description !== undefined) out.description = description;
+  const validationError = o["validation_error"] === null ? undefined : optStr(o, "validation_error", "$.recipe");
+  if (validationError !== undefined) out.validation_error = validationError;
   if (o["plan"] !== undefined) out.plan = o["plan"] as unknown;
   const builtIn = o["built_in"] === null ? undefined : optBool(o, "built_in", "$.recipe");
   if (builtIn !== undefined) out.built_in = builtIn;

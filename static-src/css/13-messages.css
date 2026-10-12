@@ -1371,31 +1371,30 @@
   overflow-wrap: anywhere;
 }
 
-[id="scroll-bottom"] {
-  position: absolute;
-  bottom: var(--sp-3);
-  left: 50%;
-  transform: translateX(-50%);
-  min-height: var(--btn-h);
-  padding: 0 var(--sp-3);
+/* THE RESUME CONTROL, one component for the chat (`#scroll-bottom`) and the run tab
+   (`#run-scroll-bottom`): a square glyph button in the reading area's end corner, each
+   view placing it. NO DROP SHADOW: the opaque fill separates it from the text under it.
+
+   The painted box is the glyph plus `--sp-2` plus its border, square by construction
+   (the svg is `--icon-ui` on both axes, 03-base.css; the label hidden), so it follows
+   the pointer tier. The TARGET is `--hit-floor`, grown by the `::after` rather than
+   the box; `min(0px, …)` never shrinks a box already past the floor. The app-wide
+   floor (61-mcp-tools.css) sets PHYSICAL `min-width`/`min-height`, so the opt-out is
+   physical too. */
+.scroll-resume {
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--sp-2);
   border-radius: var(--r);
   border: 1px solid var(--c-border);
   background: var(--c-bg-secondary);
   color: var(--c-text-primary);
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  justify-content: center;
-
-  /* NO DROP SHADOW, and the border below is the whole edge. It carried
-   * `--shadow-ambient` (a 1px ring in `--c-border`) on top of that border, so the
-   * edge painted 2px in one colour. Every drop shadow left in the app sits on a
-   * transient overlay or a dragged element — the effort slider's knob was the last
-   * persistent one and took a border instead in 2026-09 — so a persistent control
-   * with a raised layer is now unrepresentable rather than merely rare.
-   * The opaque fill is what separates it from the text it sits over. */
-  z-index: 10;
   opacity: 1;
   transition:
     background var(--dur-micro),
@@ -1403,11 +1402,50 @@
     opacity var(--dur-standard);
   font-size: var(--fs-sm);
   white-space: nowrap;
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset-block: min(0px, calc((100% - var(--hit-floor)) / 2));
+    inset-inline: min(0px, calc((100% - var(--hit-floor)) / 2));
+  }
+
+  & > span {
+    display: none;
+  }
+
+  @media (any-hover: hover) {
+    &:hover {
+      color: var(--c-text-primary);
+      background: var(--c-bg-tertiary);
+    }
+  }
 }
 
-[id="scroll-bottom"]:hover {
-  color: var(--c-text-primary);
-  background: var(--c-bg-tertiary);
+/* BOTH INSETS ARE `--sp-4`: the transcript column and the composer end `--sp-4` from
+   the screen edge (`#messages-wrap`, `.bottom-bar`), and a box docked in a corner
+   reads off-square unless its two insets match. */
+[id="scroll-bottom"] {
+  position: absolute;
+  right: var(--sp-4);
+  bottom: var(--sp-4);
+}
+
+/* Past a phone the chat's control is the labelled pill centred over the transcript
+   ("N new blocks"), unless the turn map's foot takes it below. */
+@media (width > 48rem) {
+  [id="scroll-bottom"] {
+    right: auto;
+    left: 50%;
+    bottom: var(--sp-3);
+    transform: translateX(-50%);
+    min-height: var(--btn-h);
+    padding: 0 var(--sp-3);
+  }
+
+  [id="scroll-bottom"] > span {
+    display: inline;
+  }
 }
 
 /* DOCKED AT THE FOOT OF THE TURN MAP, wherever the map draws: a floating form sits

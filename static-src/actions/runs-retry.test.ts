@@ -6,7 +6,6 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 const m = vi.hoisted(() => ({
   result: { current: undefined as unknown, err: undefined as unknown },
   invalidated: [] as string[],
-  controlsInvalidated: [] as string[],
 }));
 
 // The action is NOT mocked: its decode / notify / onSuccess wiring is the subject, run over a
@@ -21,9 +20,6 @@ vi.mock("../toast.js", () => ({
 vi.mock("../run-store.js", () => ({
   invalidateRun: vi.fn((id: string) => {
     m.invalidated.push(id);
-  }),
-  invalidateRunControls: vi.fn((id: string) => {
-    m.controlsInvalidated.push(id);
   }),
 }));
 
@@ -58,7 +54,6 @@ beforeEach(() => {
   m.result.current = undefined;
   m.result.err = undefined;
   m.invalidated.length = 0;
-  m.controlsInvalidated.length = 0;
   // Re-armed per test: configureApi REPLACES the library's fetch and exports no reset.
   stubFetch();
   // The app's boot notifier, so a refusal's sentence is observable (the headless default drops it).
@@ -102,15 +97,14 @@ describe("retrying a run", () => {
     expect(said).toContain("Nothing to retry");
   });
 
-  // A no-op retry produces no `run_progress` frame, so only this refetch moves the screen.
-  it("refetches the run AND its affordance, even after a no-op", async () => {
+  // A no-op retry produces no `run_progress` frame, so only this refetch moves the screen; the
+  // store re-reads the verbs behind it.
+  it("refetches the run, even after a no-op", async () => {
     for (const nodes of [["phase-c"], []]) {
       m.invalidated.length = 0;
-      m.controlsInvalidated.length = 0;
       m.result.current = { status: "running", retried_node_ids: nodes };
       await retryRun.dispatch("wf_1");
       expect(m.invalidated).toEqual(["wf_1"]);
-      expect(m.controlsInvalidated).toEqual(["wf_1"]);
     }
   });
 

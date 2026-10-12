@@ -40,6 +40,7 @@ import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight, neverRan, settled } from "./exec-view/status.js";
 import { flatten, workNodes, type ExecNode } from "./exec-view/model.js";
 import { runToExec } from "./run-exec-source.js";
+import { lastPrintedLine } from "./run-step-tail.js";
 import type { RunStepPaint, RunStepStream } from "./run-chat-steps.js";
 import {
   clearStepTranscripts,
@@ -67,7 +68,16 @@ import type { RunControlsResponse } from "./wire/types.gen.js";
 import { refreshRunDots, trackRun } from "./run-dots.js";
 import { buildPath } from "./route-path.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_CANCEL, ICON_EXTERNAL, ICON_PAUSE, ICON_PLAY, ICON_REFRESH } from "./icons.js";
+import {
+  ICON_CANCEL,
+  ICON_EXTERNAL,
+  ICON_PAUSE,
+  ICON_PLAY,
+  ICON_PLUS_UI,
+  ICON_REFRESH,
+  ICON_SAVE_OK,
+  ICON_TAB_CHAT,
+} from "./icons.js";
 
 /** The two verbs a repeat paused at its iteration cap offers. They address the paused NODE as
  *  well as the run, so they cannot share the one-argument table. */
@@ -120,24 +130,39 @@ function launchingChatOf(workflowID: string): string {
   return fromTab;
 }
 
-/** The pending bindings on the control row's buttons, dropped when the row that carries them
- *  goes — either replaced by a new one or discarded with the page. `bindLoadingState`
- *  self-disposes only for an element that was ATTACHED the last time its effect ran, and this
- *  row is built before the caller appends it, so a button replaced before its first pending flip
- *  never reaches that path. */
-let controlBindings: (() => void)[] = [];
+/** Where a copy of the run's controls sits: the page header's labelled row, the dock's compact
+ *  icons, or the shown step's inline control. Every copy is drawn from the one `runControls` cell. */
+type ControlSite = "head" | "dock" | "step";
 
-/** The control row on screen and the affordance it was built from, so a render that did not move
- *  the answer hands the SAME row back. */
-let controlRow: HTMLElement | null = null;
+/** One copy and the pending bindings on its buttons, disposed when the copy goes:
+ *  `bindLoadingState` self-disposes only for an element that was ATTACHED the last time its
+ *  effect ran, and a copy is built before its caller appends it, so a button replaced before its
+ *  first pending flip never reaches that path. */
+interface ControlCopy {
+  readonly row: HTMLElement | null;
+  readonly bindings: (() => void)[];
+}
+
+/** The copies on screen and the affordance they were built from, so a render that did not move
+ *  the answer hands the SAME elements back. */
+const controlCopies = new Map<ControlSite, ControlCopy>();
 let controlSig = "";
 
-function dropControlRow(): void {
-  for (const dispose of controlBindings) {
+function dropControlSite(site: ControlSite): void {
+  const copy = controlCopies.get(site);
+  if (copy === undefined) {
+    return;
+  }
+  for (const dispose of copy.bindings) {
     dispose();
   }
-  controlBindings = [];
-  controlRow = null;
+  controlCopies.delete(site);
+}
+
+function dropControlRow(): void {
+  for (const site of [...controlCopies.keys()]) {
+    dropControlSite(site);
+  }
   controlSig = "";
 }
 
@@ -236,6 +261,8 @@ let focusRequest: { workflowID: string; path: string } | undefined;
  *  into this same page rather than a second page. */
 let page: ExecPageView | undefined;
 let pageRun = "";
+/** Whether the page was built with the folded dock, the only reader of its siblings' tails. */
+let pageDocked = false;
 
 let follower: FollowScroller | undefined;
 
@@ -429,7 +456,18 @@ function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
   const built = buildExecPage({
     emptyNote: stepEmptyNote,
     emptyAction: stepEmptyAction,
-    controls: (run) => buildRunControls(run.id),
+    controls: (run) => buildRunControls(run.id, "head"),
+    dockControls: (run) => buildRunControls(run.id, "dock"),
+    alertAction: (run) => (run.alert?.kind === "input" ? answerButton() : null),
+    // The run's pause or resume, on any step still in flight: Pause lands at a step boundary, so
+    // it reads the same from whichever step the reader is on. A settled step gets nothing.
+    stepControls: (run, node) => {
+      if (node?.transcript === true && inFlight(node.state)) {
+        return buildRunControls(run.id, "step");
+      }
+      dropControlSite("step");
+      return null;
+    },
     onShowNode: armStepRead,
     // A page still drawn while another run loads publishes nothing.
     onSelect: (node) => {
@@ -442,6 +480,7 @@ function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
   });
   page = built;
   pageRun = workflowID;
+  pageDocked = boxes !== null;
   stepStream?.dispose();
   stepStream = undefined;
   stepStreamLoading = false;
@@ -454,6 +493,9 @@ function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
   // another run's path, and a stale answer would swallow the first hole here.
   shownNode = undefined;
   holesAnswered = "";
+  cancelStepRetry();
+  cancelDockCatchUps();
+  catchUpsOwed.clear();
   // Beside the other per-run caches, and for their reason: a retarget must not carry another run's
   // pick into the page it is about to build.
   if (focusRequest !== undefined && focusRequest.workflowID !== workflowID) {
@@ -490,25 +532,216 @@ function turnIsLive(state: TurnState): boolean {
 let shownNode: ExecNode | undefined;
 let holesAnswered = "";
 
-/** Ask for the shown step's transcript, on the selection MOVING. TWO conditions here, both keyed
- *  on `inspect` reporting the node settled, because that is what `onShowNode` can observe: it
- *  notifies only when the shown `(path, state)` moves, which is the gate that keeps a repaint
- *  off the wire. A turn WITH a `turn_close` and no hole is settled and is never re-read. A HOLE
- *  is armed from the paint side instead (`armShownStepHole`), because it arrives while the step
- *  is `running` and moves neither the path nor the state. */
+/** Ask for the shown step's transcript, on the selection MOVING, which is all `onShowNode` reports:
+ *  it notifies only when the shown `(path, state)` moves, the gate that keeps a repaint off the
+ *  wire. A turn WITH a `turn_close` and no hole is settled and is never re-read, unless the step's
+ *  catch-up is still owed (`catchUpsOwed`). A HOLE is armed
+ *  from the paint side instead (`armShownStepHole`), because it arrives while the step is `running`
+ *  and moves neither the path nor the state. */
 function armStepRead(node: ExecNode | undefined): void {
   shownNode = node?.transcript === true ? node : undefined;
-  if (node?.transcript !== true || shownRun === "" || !settled(node.state)) {
+  if (node?.transcript !== true || shownRun === "") {
     return;
   }
-  const mine = turnsForStep(runTurns(shownRun), node.path);
+  switch (stepReadVerb(shownRun, node)) {
+    case "request":
+      catchUpsOwed.add(join(shownRun, node.path));
+      requestStepTranscript(shownRun, node.path);
+      return;
+    case "reread":
+      rereadStepTranscript(shownRun, node.path);
+      return;
+    case undefined:
+      return;
+  }
+}
+
+/** The steps whose catch-up read this page started, by run and path, until a read settles them
+ *  (`settleCatchUps`). Held apart from the log because output streamed after the tab opened says
+ *  nothing about what the step printed before it: a step can open a new turn while an older one
+ *  is still unread. */
+const catchUpsOwed = new Set<string>();
+
+/** Retire the catch-ups a read answered for good. Run at the top of every paint, which every
+ *  verdict triggers, so a later hole's re-read cannot drop a settled verdict before it is seen. */
+function settleCatchUps(workflowID: string, nodes: readonly ExecNode[]): void {
+  for (const node of nodes) {
+    const key = join(workflowID, node.path);
+    if (!catchUpsOwed.has(key)) {
+      continue;
+    }
+    const state = stepRead(workflowID, node.path)?.state;
+    if (state === "ready" || state === "gone" || state === "unaddressable") {
+      catchUpsOwed.delete(key);
+    }
+  }
+}
+
+/** Which read the pane is missing for a step, or undefined when what it holds is enough. */
+function stepReadVerb(workflowID: string, node: ExecNode): "request" | "reread" | undefined {
+  if (catchUpsOwed.has(join(workflowID, node.path))) {
+    return "request";
+  }
+  const mine = turnsForStep(runTurns(workflowID), node.path);
+  if (!settled(node.state)) {
+    // Live frames carry only what is appended from now on, and a missed entry is noticed at the
+    // next one, which a stalled step (a model throttled for minutes) never sends: a running step
+    // this page holds nothing of is read once, so what it already printed shows.
+    return inFlight(node.state) && mine.length === 0 ? "request" : undefined;
+  }
   if (mine.length === 0) {
-    requestStepTranscript(shownRun, node.path);
+    return "request";
+  }
+  return mine.some(([, t]) => turnIsLive(t)) ? "reread" : undefined;
+}
+
+const STEP_RETRY_LIMIT = 3;
+const STEP_RETRY_BASE_MS = 1000;
+
+/** The shown step's retry ladder after a transient miss. Keyed on run and path so a new selection
+ *  starts its own three. */
+let stepRetry: { key: string; attempts: number; timer: ReturnType<typeof setTimeout> | undefined } =
+  { key: "", attempts: 0, timer: undefined };
+
+function cancelStepRetry(): void {
+  if (stepRetry.timer !== undefined) {
+    clearTimeout(stepRetry.timer);
+  }
+  stepRetry = { key: "", attempts: 0, timer: undefined };
+}
+
+/** Re-ask, on a backoff, for the shown step whose last read was `unavailable` while the pane still
+ *  lacks it. From the paint side because the verdict moves neither the shown path nor its state, so
+ *  `onShowNode` never fires again for it. */
+function armShownStepRetry(workflowID: string): void {
+  const node = shownNode;
+  const key = node === undefined ? "" : join(workflowID, node.path);
+  if (key !== stepRetry.key) {
+    cancelStepRetry();
+    stepRetry.key = key;
+  }
+  if (node === undefined) {
     return;
   }
-  if (mine.some(([, t]) => turnIsLive(t))) {
-    rereadStepTranscript(shownRun, node.path);
+  const verdict = stepRead(workflowID, node.path)?.state;
+  if (verdict !== "unavailable") {
+    if (verdict !== "loading") {
+      // An answer, or no read: a later miss on this step is a new question.
+      stepRetry.attempts = 0;
+    }
+    return;
   }
+  if (!stepStillMissing(node)) {
+    // The stale verdict outlives what it was about, so the budget is restored here: a later hole
+    // on this step must still get its three.
+    cancelStepRetry();
+    stepRetry.key = key;
+    return;
+  }
+  if (stepRetry.timer !== undefined || stepRetry.attempts >= STEP_RETRY_LIMIT) {
+    return;
+  }
+  const delay = STEP_RETRY_BASE_MS * 2 ** stepRetry.attempts;
+  stepRetry.timer = setTimeout(() => {
+    stepRetry.timer = undefined;
+    const shown = shownNode;
+    if (shown === undefined || join(shownRun, shown.path) !== key || !stepStillMissing(shown)) {
+      return;
+    }
+    stepRetry.attempts++;
+    requestStepTranscript(shownRun, shown.path);
+  }, delay);
+}
+
+/** The folded dock's catch-up reads, per in-flight step path. The shown step's read and ladder are
+ *  `armStepRead`'s and `armShownStepRetry`'s, so this owns only the siblings the dock rows summarise. */
+const dockCatchUps = new Map<
+  string,
+  { attempts: number; timer: ReturnType<typeof setTimeout> | undefined }
+>();
+
+function cancelDockCatchUps(): void {
+  for (const c of dockCatchUps.values()) {
+    if (c.timer !== undefined) {
+      clearTimeout(c.timer);
+    }
+  }
+  dockCatchUps.clear();
+}
+
+/** Read, once per page, each in-flight step the dock summarises that the log holds nothing of, then
+ *  re-ask on the shown step's bounded ladder until a read settles it, live output or not. Live
+ *  frames carry only what is appended from now on, so without it a sibling's row stays blank until
+ *  the step prints again. */
+function catchUpDockSteps(
+  workflowID: string,
+  nodes: readonly ExecNode[],
+  turns: readonly [string, TurnState][],
+): void {
+  if (!pageDocked) {
+    return;
+  }
+  const wanted = new Set<string>();
+  for (const node of nodes) {
+    const path = node.path;
+    const owed = catchUpsOwed.has(join(workflowID, path));
+    if (
+      node.transcript !== true ||
+      !inFlight(node.state) ||
+      path === shownNode?.path ||
+      (!owed && turnsForStep(turns, path).length > 0)
+    ) {
+      continue;
+    }
+    wanted.add(path);
+    const c = dockCatchUps.get(path);
+    if (c === undefined) {
+      dockCatchUps.set(path, { attempts: 0, timer: undefined });
+      catchUpsOwed.add(join(workflowID, path));
+      requestStepTranscript(workflowID, path);
+      continue;
+    }
+    if (stepRead(workflowID, path)?.state !== "unavailable") {
+      // Another read answered or is out, so a rung armed by the last miss would only repeat it.
+      if (c.timer !== undefined) {
+        clearTimeout(c.timer);
+        c.timer = undefined;
+      }
+      continue;
+    }
+    if (c.timer !== undefined || c.attempts >= STEP_RETRY_LIMIT) {
+      continue;
+    }
+    c.timer = setTimeout(
+      () => {
+        c.timer = undefined;
+        // Re-pointing the tab at another run repaints nothing until that run's state lands.
+        if (shownRun !== workflowID) {
+          return;
+        }
+        c.attempts++;
+        requestStepTranscript(workflowID, path);
+      },
+      STEP_RETRY_BASE_MS * 2 ** c.attempts,
+    );
+  }
+  // A step whose catch-up settled, or that settled or became the shown one, needs no rung of this
+  // ladder.
+  for (const [path, c] of dockCatchUps) {
+    if (!wanted.has(path) && c.timer !== undefined) {
+      clearTimeout(c.timer);
+      c.timer = undefined;
+    }
+  }
+}
+
+/** Whether the pane still lacks what a read would bring: a gate of `stepReadVerb`, or a holed turn. */
+function stepStillMissing(node: ExecNode): boolean {
+  if (stepReadVerb(shownRun, node) !== undefined) {
+    return true;
+  }
+  const holes = new Set(runTurnHoles(shownRun));
+  return turnsForStep(runTurns(shownRun), node.path).some(([id]) => holes.has(id));
 }
 
 /** Re-ask for the shown step whose turn the store marked a HOLE, once per hole. The arm the
@@ -532,6 +765,8 @@ function armShownStepHole(workflowID: string, turns: readonly [string, TurnState
   }
   holesAnswered = answered;
   if (holed.length > 0) {
+    // A new hole is a new question, so its repair gets the ladder's full budget.
+    cancelStepRetry();
     rereadStepTranscript(workflowID, node.path);
   }
 }
@@ -671,8 +906,16 @@ function paint(
     focus,
     runStepEnds(workflowID),
   );
+  for (const node of workNodes(run.nodes)) {
+    const tail = lastPrintedLine(turnsForStep(turns, node.path).map(([, t]) => t));
+    if (tail !== "") {
+      node.tail = tail;
+    }
+  }
   // Before the render, whose repaint publishes the selection with them.
   runFlags = { live: run.live, paused: state.status === "paused" };
+  // Before the render too, whose `onShowNode` arms reads from what is still owed.
+  settleCatchUps(workflowID, workNodes(run.nodes));
   view.render(run);
   if (!mounted) {
     // After the first render, or a parked position lands on an empty page and clamps. The replace
@@ -687,6 +930,9 @@ function paint(
   projectStepTranscripts(workflowID, run.nodes, turns);
   // After the projection, so the repair is asked over the entries this frame rendered.
   armShownStepHole(workflowID, turns);
+  armShownStepRetry(workflowID);
+  // After the render, whose `onShowNode` names the shown step this leaves to its own read.
+  catchUpDockSteps(workflowID, workNodes(run.nodes), turns);
 }
 
 function projectStepTranscripts(
@@ -754,20 +1000,30 @@ function leafPaints(
   return out;
 }
 
-/** The run's control row, rendered from the SERVER's answer and rebuilt only when that answer
- *  moved (`controlRow` owns why). */
-function buildRunControls(workflowID: string): HTMLElement | null {
+/** One copy of the run's controls, rendered from the SERVER's answer and rebuilt only when that
+ *  answer moved (`controlCopies` owns why). */
+function buildRunControls(workflowID: string, site: ControlSite): HTMLElement | null {
   const answer = runControls(workflowID);
   const sig = answer === undefined ? "" : controlSignature(workflowID, answer);
-  if (sig === controlSig) {
-    return controlRow;
+  if (sig !== controlSig) {
+    // The answer moved, so every copy on screen is on its way out and its bindings go with it — each
+    // caller replaces its host's children with whatever is returned here.
+    dropControlRow();
+    controlSig = sig;
   }
-  // The answer moved, so the row on screen is on its way out and its bindings go with it — the
-  // caller replaces the host's children with whatever is returned here.
-  dropControlRow();
-  controlSig = sig;
-  controlRow = answer === undefined ? null : renderControls(workflowID, answer);
-  return controlRow;
+  let copy = controlCopies.get(site);
+  if (copy === undefined) {
+    const bindings: (() => void)[] = [];
+    const row =
+      answer === undefined
+        ? null
+        : site === "head"
+          ? renderControls(workflowID, answer, bindings)
+          : renderCompactControls(workflowID, answer, site, bindings);
+    copy = { row, bindings };
+    controlCopies.set(site, copy);
+  }
+  return copy.row;
 }
 
 /** What the row is a function of, and nothing else: the run it acts on, the verbs it draws and
@@ -827,7 +1083,11 @@ function repeatControl(
   return { nodes: [count, btn], btn, name: extendRunRepeat.name };
 }
 
-function renderControls(workflowID: string, answer: RunControlsResponse): HTMLElement | null {
+function renderControls(
+  workflowID: string,
+  answer: RunControlsResponse,
+  bindings: (() => void)[],
+): HTMLElement | null {
   const verbs = offeredVerbs(answer.verbs);
   if (verbs.length === 0) {
     return refusalRow(refusalSentences(answer.refused));
@@ -840,7 +1100,7 @@ function renderControls(workflowID: string, answer: RunControlsResponse): HTMLEl
         continue;
       }
       const control = repeatControl(workflowID, verb, nodeID);
-      controlBindings.push(bindLoadingState(control.name, control.btn));
+      bindings.push(bindLoadingState(control.name, control.btn));
       row.append(...control.nodes);
       continue;
     }
@@ -869,10 +1129,113 @@ function renderControls(workflowID: string, answer: RunControlsResponse): HTMLEl
     ) as HTMLButtonElement;
     // A retry starts a process and can legitimately take tens of seconds, so an unbound button
     // looks dead for the whole handshake and can be clicked again meanwhile.
-    controlBindings.push(bindLoadingState(action.name, btn));
+    bindings.push(bindLoadingState(action.name, btn));
     row.appendChild(btn);
   }
   return row;
+}
+
+/** What each verb's icon says on hover, where no word stands beside it. */
+const COMPACT_TIP: Record<RunVerb, string> = {
+  pause: "Pause the run at the end of its current step",
+  resume: "Resume the run",
+  extend: "Add 1 iteration to the paused loop",
+  finish_loop: "End the paused loop and go on",
+  cancel: "Cancel the run",
+  retry: "Retry the failed steps",
+};
+
+const COMPACT_ICON: Record<RunVerb, string> = {
+  ...RUN_ACTION_ICON,
+  extend: ICON_PLUS_UI,
+  finish_loop: ICON_SAVE_OK,
+};
+
+/** The verbs as icon buttons: every one the server offers on the dock, only pause and resume on the
+ *  step. Extend adds one pass here; the header's count field adds more. A refusal draws nothing,
+ *  since the header states it. */
+function renderCompactControls(
+  workflowID: string,
+  answer: RunControlsResponse,
+  site: Exclude<ControlSite, "head">,
+  bindings: (() => void)[],
+): HTMLElement | null {
+  const verbs = offeredVerbs(answer.verbs).filter(
+    (v) => site === "dock" || v === "pause" || v === "resume",
+  );
+  const nodeID = answer.pause_node_id ?? "";
+  const row = el("span", { className: "run-controls run-controls-compact" });
+  for (const verb of verbs) {
+    let name: string;
+    let dispatch: () => void;
+    if (verb === "extend" || verb === "finish_loop") {
+      if (nodeID === "") {
+        continue;
+      }
+      const action = verb === "extend" ? extendRunRepeat : finishRunRepeat;
+      name = action.name;
+      dispatch =
+        verb === "extend"
+          ? () => void extendRunRepeat.dispatch({ workflowID, nodeID, iterations: 1 })
+          : () => void finishRunRepeat.dispatch({ workflowID, nodeID });
+    } else {
+      const action = RUN_ACTION[verb];
+      name = action.name;
+      dispatch = () => void action.dispatch(workflowID);
+    }
+    const btn = el(
+      "button",
+      {
+        type: "button",
+        className: verb === "cancel" ? "icon-btn run-icon-btn is-danger" : "icon-btn run-icon-btn",
+        "aria-label": CONTROL_LABEL[verb],
+        "data-tooltip": COMPACT_TIP[verb],
+        onclick: dispatch,
+      },
+      iconEl(COMPACT_ICON[verb]),
+    ) as HTMLButtonElement;
+    bindings.push(bindLoadingState(name, btn));
+    row.appendChild(btn);
+  }
+  return row.childElementCount === 0 ? null : row;
+}
+
+/** The dock alert row's Answer for a run waiting on an ask. One element for the module's life, so a
+ *  repaint seats the same node and focus inside it survives. */
+let answerBtn: HTMLButtonElement | undefined;
+
+function answerButton(): HTMLButtonElement {
+  answerBtn ??= el(
+    "button",
+    {
+      type: "button",
+      className: "icon-btn run-icon-btn",
+      "aria-label": "Answer",
+      "data-tooltip": "Answer the step waiting for you",
+      onclick: answerWaitingAsk,
+    },
+    iconEl(ICON_TAB_CHAT),
+  ) as HTMLButtonElement;
+  return answerBtn;
+}
+
+/** Move to the ask in the decision dock below the boxes: its answer field, else its first button. */
+function answerWaitingAsk(): void {
+  const shown = [
+    ...(document
+      .getElementById("run-dock")
+      ?.querySelectorAll<HTMLElement>("textarea:enabled, input:enabled, button:enabled") ?? []),
+  ].filter((n) => n.checkVisibility());
+  const typed = (n: HTMLElement): boolean =>
+    n instanceof HTMLTextAreaElement ||
+    (n instanceof HTMLInputElement && n.type !== "checkbox" && n.type !== "radio");
+  const target = shown.find(typed) ?? shown.find((n) => n instanceof HTMLButtonElement);
+  if (target === undefined) {
+    announce("Nothing is waiting for your answer now");
+    return;
+  }
+  target.scrollIntoView({ block: "nearest" });
+  target.focus();
 }
 
 /** The row a run with no verbs gets: the server's own sentences, in the place a reader is

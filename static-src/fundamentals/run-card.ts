@@ -24,6 +24,7 @@ import {
 } from "../exec-view/model.js";
 import { reconcile } from "../reconcile.js";
 import { kindGlyph } from "../exec-view/tree.js";
+import { paintLabel } from "../exec-view/label.js";
 import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN, ICON_EXTERNAL } from "../icons.js";
@@ -324,7 +325,7 @@ export function buildRunCard(
       g.kind = node.kind;
     }
     g.root.dataset["kind"] = node.kind;
-    g.name.textContent = node.label;
+    paintLabel(g.name, node);
     const meta = groupMeta(node);
     g.meta.textContent = meta;
     g.root.setAttribute("aria-label", meta === "" ? node.label : `${node.label}, ${meta}`);
@@ -335,7 +336,7 @@ export function buildRunCard(
     row.root.dataset["status"] = node.state;
     row.root.dataset["nodeType"] = node.kind;
     paintStateMark(row.glyph, node.state);
-    row.name.textContent = node.label;
+    paintLabel(row.name, node);
     // Via a local, not directly: `undefined` is not a valid value for an
     // optional property under exactOptionalPropertyTypes.
     if (node.start === undefined) {

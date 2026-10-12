@@ -643,10 +643,10 @@ describe("indexPlan tolerance", () => {
         nodeId: "top",
         steps: [{ nodeId: "mid", branches: [{ nodeId: "deep", maxIterations: 3 }] }],
       },
-      { nodeId: "other", nodes: [{ nodeId: "nested", join: "any" }] },
+      { nodeId: "other", nodes: [{ nodeId: "nested", stopCondition: "done" }] },
     ]);
     expect(idx.get("deep")?.maxIterations).toBe(3);
-    expect(idx.get("nested")?.join).toBe("any");
+    expect(idx.get("nested")?.stopCondition).toBe("done");
   });
 
   // `stopWhen` is the other spelling; the engine rejects a node declaring both, so folding them
@@ -1051,5 +1051,152 @@ describe("runToExec reads the run log's step ends", () => {
     );
     expect(run.nodes[0]?.state).toBe("ok");
     expect(run.nodes[0]?.failure).toBeUndefined();
+  });
+});
+
+// KAS expands an `include` into a sequence whose plan entry carries `includedFrom` and prefixes
+// every id inside with `<include id>/`; the state tree's sequence drops `includedFrom`.
+describe("runToExec shows where an included group came from", () => {
+  const seat = (id: string, agent: string, model: string) => ({
+    nodeId: `review/${id}`,
+    type: "step",
+    agentName: agent,
+    modelId: model,
+  });
+  const plan = [
+    { nodeId: "implement", type: "step", agentName: "wf-coder" },
+    {
+      nodeId: "review",
+      type: "sequence",
+      steps: [
+        {
+          nodeId: "review/seats",
+          type: "parallel",
+          branches: [
+            seat("advisor", "advisor", "gpt-5.6-sol"),
+            seat("code-adversary-claude", "code-adversary-claude", "claude-opus-5.5"),
+          ],
+        },
+      ],
+      includedFrom: { name: "review-seats", path: "./review-seats.workflow.json" },
+    },
+    { nodeId: "finalize", type: "step", agentName: "wf-coder" },
+  ];
+  const root = (review: Record<string, unknown>) => ({
+    nodeId: "wf_1",
+    type: "sequence",
+    status: "running",
+    children: [step("implement", "completed"), review, step("finalize", "pending")],
+  });
+  const started = {
+    nodeId: "review",
+    type: "sequence",
+    status: "running",
+    children: [
+      {
+        nodeId: "review/seats",
+        type: "parallel",
+        status: "running",
+        children: [
+          step("review/advisor", "running", { agentName: "advisor" }),
+          step("review/code-adversary-claude", "running"),
+        ],
+      },
+    ],
+  };
+  const fold = (planIn: unknown, review: Record<string, unknown> = started) =>
+    flatten(runToExec("wf_1", stateWith(root(review)), planIn, NO_ASKS).nodes);
+  const byLabel = (nodes: ReturnType<typeof fold>, label: string) => {
+    const n = nodes.find((x) => x.label === label);
+    if (n === undefined) {
+      throw new Error(`no ${label}`);
+    }
+    return n;
+  };
+
+  it("subtitles the group with its recipe and gives it the recipe's name and file", () => {
+    const group = byLabel(fold(plan), "review");
+    expect(group.subtitle).toBe("from review-seats");
+    expect(group.qualifier).toBeUndefined();
+    expect(group.facts).toEqual([
+      { label: "Recipe", value: "review-seats" },
+      { label: "Recipe file", value: "./review-seats.workflow.json", mono: true },
+    ]);
+  });
+
+  it("qualifies every id inside with the include's prefix, keeping the label verbatim", () => {
+    const nodes = fold(plan);
+    for (const label of ["review/seats", "review/advisor", "review/code-adversary-claude"]) {
+      expect(byLabel(nodes, label).qualifier, label).toBe("review/");
+    }
+    expect(byLabel(nodes, "implement").qualifier).toBeUndefined();
+    expect(byLabel(nodes, "finalize").qualifier).toBeUndefined();
+  });
+
+  it("names the recipe among a step's facts, after its structural ones", () => {
+    const facts = byLabel(fold(plan), "review/advisor").facts ?? [];
+    expect(facts.map((f) => f.label)).toEqual(["Agent", "Recipe"]);
+    expect(facts[1]?.value).toBe("review-seats");
+    expect(byLabel(fold(plan), "implement").facts).toBeUndefined();
+  });
+
+  it("shows the same before the include has started, from its plan", () => {
+    const nodes = fold(plan, { nodeId: "review", type: "sequence", status: "pending" });
+    expect(byLabel(nodes, "review").subtitle).toBe("from review-seats");
+    expect(byLabel(nodes, "review/code-adversary-claude").qualifier).toBe("review/");
+  });
+
+  it("reads nothing from an includedFrom it cannot trust", () => {
+    for (const bad of [undefined, "review-seats", { name: 3 }, { name: "" }, ["review-seats"]]) {
+      const planIn = plan.map((n) => (n.nodeId === "review" ? { ...n, includedFrom: bad } : n));
+      const nodes = fold(planIn);
+      const group = byLabel(nodes, "review");
+      expect(group.subtitle, JSON.stringify(bad)).toBeUndefined();
+      expect(group.facts, JSON.stringify(bad)).toBeUndefined();
+      expect(byLabel(nodes, "review/advisor").qualifier, JSON.stringify(bad)).toBeUndefined();
+    }
+  });
+
+  it("keeps a recipe with no path to its name alone", () => {
+    const planIn = plan.map((n) =>
+      n.nodeId === "review" ? { ...n, includedFrom: { name: "review-seats", path: 7 } } : n,
+    );
+    expect(byLabel(fold(planIn), "review").facts).toEqual([
+      { label: "Recipe", value: "review-seats" },
+    ]);
+  });
+
+  it("gives a hand-written id holding a slash no qualifier", () => {
+    const nodes = flatten(
+      runToExec(
+        "wf_1",
+        stateWith({
+          nodeId: "wf_1",
+          type: "sequence",
+          status: "running",
+          children: [
+            {
+              nodeId: "a",
+              type: "sequence",
+              status: "running",
+              children: [step("a/b", "running")],
+            },
+          ],
+        }),
+        undefined,
+        NO_ASKS,
+      ).nodes,
+    );
+    expect(byLabel(nodes, "a/b").qualifier).toBeUndefined();
+  });
+
+  it("degrades to the plain group with no plan", () => {
+    const nodes = fold(undefined);
+    expect(byLabel(nodes, "review").subtitle).toBeUndefined();
+    expect(byLabel(nodes, "review/advisor").qualifier).toBeUndefined();
+  });
+
+  it("says a parallel runs in parallel and no more, since KAS's plan names no join", () => {
+    expect(byLabel(fold(plan), "review/seats").subtitle).toBe("in parallel");
   });
 });

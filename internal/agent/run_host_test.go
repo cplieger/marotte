@@ -275,6 +275,30 @@ func TestLaunchRun_RefusesAnUnknownSource(t *testing.T) {
 	}
 }
 
+// TestListRecipes_CarriesKASsValidationError pins that a recipe KAS cannot launch reaches the
+// client with KAS's reason, and a launchable one with none.
+func TestListRecipes_CarriesKASsValidationError(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[
+			{"name":"fix-and-review","source":"/w/fix-and-review.workflow.json","validationError":"Invalid workflow: include 'review' (./review-seats.workflow.json): recipe was not resolved"},
+			{"name":"publish","source":"bundled://publish"}]}`),
+	}
+	got, err := h.runs.listRecipes(t.Context())
+	if err != nil {
+		t.Fatalf("listRecipes: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("listRecipes = %d recipes, want 2", len(got))
+	}
+	if want := "Invalid workflow: include 'review' (./review-seats.workflow.json): recipe was not resolved"; got[0].ValidationError != want {
+		t.Errorf("invalid recipe ValidationError = %q, want %q", got[0].ValidationError, want)
+	}
+	if got[1].ValidationError != "" {
+		t.Errorf("launchable recipe ValidationError = %q, want empty", got[1].ValidationError)
+	}
+}
+
 // TestLaunchRun_AnAgentSourceGoesStraightToNew pins that agent:// skips listRecipes.
 func TestLaunchRun_AnAgentSourceGoesStraightToNew(t *testing.T) {
 	h, _, br := newTestHub()

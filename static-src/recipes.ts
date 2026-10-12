@@ -314,10 +314,12 @@ function paint(): void {
     key: (e: RecipeEntry) => joinKey(e.kind, e.recipe.source),
     mount: (e: RecipeEntry) => (e.kind === "row" ? recipeRow(e.recipe) : inputForm(e.recipe)),
     update: (node: HTMLElement, e: RecipeEntry) => {
-      // A kept detail is left alone: it holds what the reader has typed.
       if (e.kind === "row") {
         syncButton(node, e.recipe);
         syncSchedule(node, e.recipe);
+      } else {
+        // Only Launch is synced: the fields hold what the reader has typed.
+        syncLaunch(node, e.recipe);
       }
     },
   });
@@ -372,6 +374,38 @@ function recipeRow(r: Recipe): HTMLElement {
   return row;
 }
 
+/** KAS's reason the recipe cannot launch, or "" for one it can. */
+function invalidReason(r: Recipe): string {
+  return (r.validation_error ?? "").trim();
+}
+
+/** The row's first line: KAS's reason a recipe cannot launch outranks its description, since it
+ *  is why Run is off; re-run on every repaint, because a `recipes_changed` refetch can fix or
+ *  break the recipe under a kept row. */
+function syncValidity(row: HTMLElement, r: Recipe): void {
+  const line = row.querySelector<HTMLElement>(".entry-lines > .entry-sub:nth-child(1)");
+  if (line === null) {
+    return;
+  }
+  const reason = invalidReason(r);
+  line.textContent = reason === "" ? (r.description ?? "") : reason;
+  line.classList.toggle("entry-sub-error", reason !== "");
+  const sched = row.querySelector<HTMLButtonElement>(".recipe-sched-btn");
+  if (sched !== null) {
+    sched.disabled = reason !== "";
+    toggleTooltip(sched, reason);
+  }
+}
+
+/** A disabled control still gets hover, so its tooltip says why it is off. */
+function toggleTooltip(btn: HTMLElement, text: string): void {
+  if (text === "") {
+    btn.removeAttribute("data-tooltip");
+  } else {
+    btn.setAttribute("data-tooltip", text);
+  }
+}
+
 /** The row's second line: the schedule's state, then the declared inputs. */
 function scheduleLine(r: Recipe): string {
   const inputs = Object.keys(r.inputs ?? {});
@@ -396,6 +430,17 @@ function syncButton(row: HTMLElement, r: Recipe): void {
     "aria-label",
     live === undefined ? `Run ${r.name}` : `Cancel the running ${r.name}`,
   );
+  // A live run of a recipe KAS now calls invalid can still be cancelled, and an open form still
+  // folds: Run is that form's only close.
+  const reason = live === undefined ? invalidReason(r) : "";
+  btn.disabled = reason !== "" && openForm !== r.source;
+  toggleTooltip(btn, reason);
+  if (live === undefined && Object.keys(r.inputs ?? {}).length > 0) {
+    btn.setAttribute("aria-expanded", String(openForm === r.source));
+  } else {
+    btn.removeAttribute("aria-expanded");
+  }
+  syncValidity(row, r);
 }
 
 function onRunButton(r: Recipe): void {
@@ -404,11 +449,19 @@ function onRunButton(r: Recipe): void {
     void cancelRun.dispatch(live.workflow_id);
     return;
   }
+  if (openForm === r.source) {
+    openForm = null;
+    paint();
+    return;
+  }
+  if (invalidReason(r) !== "") {
+    return;
+  }
   if (Object.keys(r.inputs ?? {}).length === 0) {
     launch(r, {});
     return;
   }
-  openForm = openForm === r.source ? null : r.source;
+  openForm = r.source;
   paint();
 }
 
@@ -428,9 +481,17 @@ function inputForm(r: Recipe): HTMLElement {
     fields.set(key, input);
     form.appendChild(el("label", { className: "recipe-input-label" }, `${key}: `, input));
   }
-  form.appendChild(el("button", { type: "submit", className: "btn-small" }, "Launch"));
+  form.appendChild(
+    el("button", { type: "submit", className: "btn-small recipe-launch-btn" }, "Launch"),
+  );
   form.addEventListener("submit", (e: Event) => {
     e.preventDefault();
+    // Resolved at submit time, like the row's Run: a refetch can invalidate the recipe under a
+    // form kept open across repaints.
+    const current = recipes.find((x) => x.source === r.source);
+    if (current === undefined || invalidReason(current) !== "") {
+      return;
+    }
     const inputs: Record<string, string> = {};
     for (const [key, field] of fields) {
       if (field.value !== "") {
@@ -439,9 +500,22 @@ function inputForm(r: Recipe): HTMLElement {
     }
     openForm = null;
     paint();
-    launch(r, inputs);
+    launch(current, inputs);
   });
-  return entryDetail(form);
+  const detail = entryDetail(form);
+  syncLaunch(detail, r);
+  return detail;
+}
+
+/** The open form's Launch follows the row's Run: off, with KAS's reason, for an invalid recipe. */
+function syncLaunch(detail: HTMLElement, r: Recipe): void {
+  const btn = detail.querySelector<HTMLButtonElement>(".recipe-launch-btn");
+  if (btn === null) {
+    return;
+  }
+  const reason = invalidReason(r);
+  btn.disabled = reason !== "";
+  toggleTooltip(btn, reason);
 }
 
 function launch(r: Recipe, inputs: Record<string, string>): void {

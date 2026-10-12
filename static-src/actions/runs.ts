@@ -3,7 +3,7 @@
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import { retryOutcomeNotice } from "../run-controls.js";
-import { invalidateRun, invalidateRunControls } from "../run-store.js";
+import { invalidateRun } from "../run-store.js";
 import { errorAbout, noticeAbout } from "./subject.js";
 import { decodeRunRetriedResponse, decodeRunStepMessageResponse } from "../wire/decoders.gen.js";
 import type {
@@ -62,6 +62,12 @@ export const launchRun = apiAction<RunLaunchRequest, RunLaunchedResponse>({
   error: (_args, err) => serverSentence(err) ?? "Could not launch",
 });
 
+/** A verb's success can move what the run offers with no frame to say so (a landed Pause only
+ *  sets `pausePending`), so the run is re-read and its verbs behind it (`invalidateRunControls`). */
+function rereadAfterVerb(workflowID: string): void {
+  invalidateRun(workflowID);
+}
+
 /** Ask a run to stop. The reply confirms the ASK — cancel is a node-boundary
  *  verb, so the terminal state (and the run_finished event) follows at the
  *  in-flight node's end. */
@@ -72,6 +78,9 @@ export const cancelRun = apiAction<string, { ok: boolean }>({
     path: `/api/runs/${encodeURIComponent(workflowID)}/cancel`,
   }),
   error: errorAbout(onRun, "Could not cancel the run"),
+  onSuccess: (_res, workflowID) => {
+    rereadAfterVerb(workflowID);
+  },
 });
 
 /** One run-control verb: POST to a sub-path, no body, `{ok:true}` back. */
@@ -83,6 +92,9 @@ function runControl(verb: string, errorText: string) {
       path: `/api/runs/${encodeURIComponent(workflowID)}/${verb}`,
     }),
     error: errorAbout(onRun, errorText),
+    onSuccess: (_res, workflowID) => {
+      rereadAfterVerb(workflowID);
+    },
   });
 }
 
@@ -105,9 +117,8 @@ export const retryRun = apiAction<string, RunRetriedResponse>({
   onSuccess: (res, workflowID) => {
     const notice = retryOutcomeNotice(res.retried_node_ids.length);
     noticeAbout(onRun(workflowID), notice.text, notice.level);
-    // BOTH, even on a zero-node outcome: the status and the verbs it offers can have moved.
-    invalidateRun(workflowID);
-    invalidateRunControls(workflowID);
+    // Even on a zero-node outcome: the status and the verbs it offers can have moved.
+    rereadAfterVerb(workflowID);
   },
 });
 
@@ -240,7 +251,7 @@ export const extendRunRepeat = apiAction<
     (_args, err) => serverSentence(err) ?? "Couldn't add iterations",
   ),
   onSuccess: (_res, { workflowID }) => {
-    invalidateRunControls(workflowID);
+    rereadAfterVerb(workflowID);
   },
 });
 
@@ -256,7 +267,7 @@ export const finishRunRepeat = apiAction<{ workflowID: string; nodeID: string },
     (_args, err) => serverSentence(err) ?? "Couldn't end the loop",
   ),
   onSuccess: (_res, { workflowID }) => {
-    invalidateRunControls(workflowID);
+    rereadAfterVerb(workflowID);
   },
 });
 

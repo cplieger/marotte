@@ -1674,6 +1674,7 @@ const arbModel = fc.letrec<{
       inputs: fc.dictionary(arbMapKey, fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       name: fc.string(),
       description: fc.string(),
+      validation_error: fc.string(),
       source: fc.string(),
       plan: fc.jsonValue(),
       built_in: fc.boolean(),

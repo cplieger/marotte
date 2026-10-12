@@ -1,12 +1,14 @@
 // The exec view's timeline: where the time went and what ran concurrently (a column shows only
-// order). WORK NODES ONLY (steps and watches), since a container's span is its children's. A
-// readout: no axes, ticks or zoom; selectable with the tree's `onSelect` and selected path.
+// order). WORK NODES ONLY (steps and watches), since a container's span is its children's, and
+// every one of them from the plan, so a step not started yet is an empty lane. A readout: no axes,
+// ticks or zoom; selectable with the tree's `onSelect` and selected path.
 
 import { el } from "@cplieger/reactive";
 import { formatElapsed } from "../strings.js";
 import { reconcile } from "../reconcile.js";
 import { elapsed, workNodes, window as execWindow, type ExecNode } from "./model.js";
 import { STATE_WORD } from "./status.js";
+import { paintLabel } from "./label.js";
 
 export interface ExecTimelineView {
   readonly root: HTMLElement;
@@ -17,7 +19,11 @@ export interface ExecTimelineView {
   tick(nodes: readonly ExecNode[], selected: string, live: boolean): void;
 }
 
-export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelineView {
+/** `minLanes` is the fewest work nodes worth a chart; below it the timeline hides. */
+export function buildExecTimeline(
+  onSelect: (path: string) => void,
+  minLanes: number,
+): ExecTimelineView {
   const scale = el("span", { className: "ev-tl-scale" });
   const lanes = el("div", { className: "ev-tl-lanes" });
   const root = el(
@@ -74,20 +80,23 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
    *  the 1s tick drops focus and `:hover`. The geometry is recomputed every pass and written onto
    *  the REUSED element. */
   function paint(nodes: readonly ExecNode[], selected: string, live: boolean): void {
-    const ls = workNodes(nodes).filter((n) => n.start !== undefined);
+    const ls = workNodes(nodes);
     const win = execWindow(nodes, live);
-    // TWO steps minimum: a single bar spanning its own window is always full
-    // width and reports nothing the header's elapsed does not already say.
-    if (win === undefined || ls.length < 2) {
+    if (ls.length < minLanes) {
       root.hidden = true;
       lanes.replaceChildren();
       return;
     }
     root.hidden = false;
-    scale.textContent = formatElapsed(win.span);
+    scale.textContent = win === undefined ? "" : formatElapsed(win.span);
 
     const paintLane = (lane: Lane, n: ExecNode): void => {
       const from = Date.parse(n.start ?? "");
+      lane.bar.hidden = win === undefined || Number.isNaN(from);
+      if (win === undefined || Number.isNaN(from)) {
+        paintText(lane, n);
+        return;
+      }
       const to = n.end === undefined ? win.to : Date.parse(n.end);
       const left = ((from - win.from) / win.span) * 100;
       // Floor of 0.75%: a sub-second step in an hour-long run rounds to zero
@@ -97,7 +106,10 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
       // Clamped so clock skew between the server's stamps and this browser
       // cannot widen the row past the track.
       lane.bar.style.inlineSize = `${Math.min(100 - left, width).toFixed(3)}%`;
+      paintText(lane, n);
+    };
 
+    const paintText = (lane: Lane, n: ExecNode): void => {
       const ms = elapsed(n.start, n.end);
       const durText = ms > 0 ? formatElapsed(ms) : "";
       lane.root.className = n.path === selected ? "ev-tl-lane ev-selected" : "ev-tl-lane";
@@ -106,7 +118,7 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
         "aria-label",
         `${n.label}, ${STATE_WORD[n.state]}${durText === "" ? "" : `, ${durText}`}`,
       );
-      lane.name.textContent = n.label;
+      paintLabel(lane.name, n);
       lane.dur.textContent = durText;
     };
 
