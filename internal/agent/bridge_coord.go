@@ -223,7 +223,7 @@ func (bc *bridgeCoordinator) openBridgeBy(ctx context.Context, chatID marotte.Ch
 			return sb, nil
 		}
 		if stopped {
-			bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID)
+			bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID, sb.current())
 		}
 	}
 }
@@ -720,7 +720,11 @@ func (rt *Runtime) OpenTurns(chatID marotte.ChatID) []chat.OpenTurnTail {
 // closeBridge closes every turn the bridge hosted with outcome, then stops and removes it.
 // The closer runs first, while the record still names the open turns.
 func (bc *bridgeCoordinator) closeBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome) {
-	bc.closeTurnOnBridgeDeath(ctx, chatID, outcome)
+	var dead ACPBridge
+	if sb := bc.bridge.mgr.get(chatID); sb != nil {
+		dead = sb.current()
+	}
+	bc.closeTurnOnBridgeDeath(ctx, chatID, dead, outcome)
 	bc.bridge.mgr.close(chatID)
 }
 
@@ -728,8 +732,8 @@ func (bc *bridgeCoordinator) closeBridge(ctx context.Context, chatID marotte.Cha
 // the utility session. A bridge hosting a live run counts as busy (retireChatBridges).
 func (bc *bridgeCoordinator) retireBridges(reason string) {
 	victims, marked := bc.bridge.mgr.retireChatBridges()
-	for _, chatID := range victims {
-		bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID)
+	for chatID, dead := range victims {
+		bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID, dead)
 	}
 	bc.retireUtility()
 	slog.Info("identity changed; retiring live chat bridges",
@@ -784,7 +788,7 @@ func (bc *bridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge ACPBridge, 
 	if endedItself {
 		// The only site that observes every death; readLoop reaps its own paths only.
 		bridge.Stop()
-		bc.closeTurnOnBridgeDeath(bc.lifecycle.shutdownCtx, chatID, marotte.TurnOutcomeInterrupted)
+		bc.closeTurnOnBridgeDeath(bc.lifecycle.shutdownCtx, chatID, bridge, marotte.TurnOutcomeInterrupted)
 		// A waiting_on_user claim is owed to the agent, which is gone.
 		if bc.dischargeWaiting != nil {
 			bc.dischargeWaiting(bc.lifecycle.shutdownCtx, chatID)
@@ -1263,8 +1267,9 @@ func (bc *bridgeCoordinator) ReviseTurnBinding(ctx context.Context, chatID marot
 
 // closeTurnOnBridgeDeath closes everything the bridge hosted: the chat's own and pending
 // turns, every hosted run's open step turns (run lock taken after the chat's, never
-// nested), then the unread steers. The second claim on a closed turn loses.
-func (bc *bridgeCoordinator) closeTurnOnBridgeDeath(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome) {
+// nested), then the unread steers. The second claim on a closed turn loses. dead is the
+// ended process, which the run park tells apart from a replacement generation's.
+func (bc *bridgeCoordinator) closeTurnOnBridgeDeath(ctx context.Context, chatID marotte.ChatID, dead ACPBridge, outcome marotte.TurnOutcome) {
 	// Detached once for all three steps.
 	ctx = durable.Context(ctx)
 	stop := marotte.StopReasonInterrupted
@@ -1274,21 +1279,21 @@ func (bc *bridgeCoordinator) closeTurnOnBridgeDeath(ctx context.Context, chatID 
 	for _, t := range bc.turns.openTurnIDs(chatID) {
 		bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerBridgeDeath, Stop: stop, Reason: deathInterruptCause, Turn: t.ID})
 	}
-	bc.closeHostedRuns(ctx, chatID, stop)
+	bc.closeHostedRuns(ctx, chatID, dead, stop)
 	bc.dropUnreadSteers(ctx, chatID)
 }
 
 // closeTurnsOnRetire is the death closer for the retire stops, inside a prompt's own
 // openBridge: it closes own only when wire_turn_start, never pending, plus hosted runs;
 // parked steers belong to the unstarted prompt.
-func (bc *bridgeCoordinator) closeTurnsOnRetire(ctx context.Context, chatID marotte.ChatID) {
+func (bc *bridgeCoordinator) closeTurnsOnRetire(ctx context.Context, chatID marotte.ChatID, dead ACPBridge) {
 	if t, ok := bc.turns.ownTurn(chatID); ok && t.Source == marotte.TurnSourceWireTurnStart {
 		bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerBridgeDeath, Stop: marotte.StopReasonInterrupted, Reason: deathInterruptCause, Turn: t.ID})
 	}
-	bc.closeHostedRuns(ctx, chatID, marotte.StopReasonInterrupted)
+	bc.closeHostedRuns(ctx, chatID, dead, marotte.StopReasonInterrupted)
 }
 
-func (bc *bridgeCoordinator) closeHostedRuns(ctx context.Context, chatID marotte.ChatID, stop marotte.StopReason) {
+func (bc *bridgeCoordinator) closeHostedRuns(ctx context.Context, chatID marotte.ChatID, dead ACPBridge, stop marotte.StopReason) {
 	if bc.runs == nil {
 		return
 	}
@@ -1296,7 +1301,7 @@ func (bc *bridgeCoordinator) closeHostedRuns(ctx context.Context, chatID marotte
 		bc.endHostedSteers(ctx, chatID)
 	}
 	c := bc.concludeStop(chatID, stop, deathInterruptCause, "")
-	byRun, err := bc.runs.closeHost(ctx, chatID, c)
+	byRun, err := bc.runs.closeHost(ctx, chatID, dead, c)
 	for runID, sealed := range byRun {
 		translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), "", runID, sealed)
 	}

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"encoding/json"
-	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -20,22 +19,6 @@ func runLoggingHub(t *testing.T) (*Runtime, *testChatStore) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.runs.log = newRunLog(t.TempDir())
 	return h, cs
-}
-
-// A content frame can open a step's turn while the registry is cold; a later fold that knows the id names it.
-func TestRunFoldTarget_ALaterFoldNamesATurnOpenedWithNoNodeID(t *testing.T) {
-	h, _ := runLoggingHub(t)
-	step := &translate.RunStep{RunID: "wf_1", NodePath: workflow.PathKey([]string{"wf_1", "a"}), SessionID: "step-session-a"}
-	if _, ok := h.runs.RunFoldTarget(t.Context(), step, ""); !ok {
-		t.Fatal("Setup: RunFoldTarget(no id) opened no turn")
-	}
-	step.NodeID = "a"
-	if _, ok := h.runs.RunFoldTarget(t.Context(), step, ""); !ok {
-		t.Fatal("RunFoldTarget(with id) found no open turn")
-	}
-	if got := h.runs.log.openNodeIDs("wf_1"); !maps.Equal(got, map[string]struct{}{"a": {}}) {
-		t.Errorf("OpenNodeIDs() after a fold naming the node = %v, want [a]: awaitingAnswer reads the step as not waiting", got)
-	}
 }
 
 func refuseStep(t *testing.T, rs *Runs, runID string, path []string, r *marotte.RefusalInfo) {

@@ -62,7 +62,7 @@ func TestCancelRun_NamesTheRewindAsTheReason(t *testing.T) {
 
 func TestBoundCancel_AttributesNoOne(t *testing.T) {
 	const id = "wf_1"
-	h, br := askFixture(t, id, runChatID(id))
+	h, br := stepFixture(t, id)
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 
 	h.runs.cancelExpired(id, deadline)

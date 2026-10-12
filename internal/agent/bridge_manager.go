@@ -16,7 +16,10 @@ type bridgeManager struct {
 	hostsLiveRun func(marotte.ChatID) bool
 	// revertStarting is told of every checkpoint revert a chat's bridge sends. Nil: nobody listens.
 	revertStarting func(chatID marotte.ChatID, session string)
-	mu             sync.Mutex
+	// hostEnding is told, under mu, of each chat bridge removed ahead of its death closer, so a
+	// replacement registered after the removal reads that host's runs as lost. Nil: nobody listens.
+	hostEnding func(chatID marotte.ChatID, dead ACPBridge)
+	mu         sync.Mutex
 }
 
 func newBridgeManager(factory ACPBridgeFactory) *bridgeManager {
@@ -89,10 +92,18 @@ func (bm *bridgeManager) removeIfBridge(chatID marotte.ChatID, bridge ACPBridge)
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	if sb, ok := bm.bridges[chatID]; ok && sb.bridge == bridge {
+		bm.endingLocked(chatID, bridge)
 		delete(bm.bridges, chatID)
 		return true
 	}
 	return false
+}
+
+// endingLocked is hostEnding with the nil case answered. Caller holds mu.
+func (bm *bridgeManager) endingLocked(chatID marotte.ChatID, dead ACPBridge) {
+	if bm.hostEnding != nil {
+		bm.hostEnding(chatID, dead)
+	}
 }
 
 // carries reports whether origin is still chatID's registered bridge. Nil-safe.
@@ -134,10 +145,11 @@ func (bm *bridgeManager) drain() map[marotte.ChatID]*sharedBridge {
 }
 
 // retireChatBridges stops idle chat bridges, marks busy ones for their next open, and
-// returns the stopped chats so the caller closes their turns. Run bridges, and chat bridges
-// hosting a live run, are not interrupted: they rely on the relay's token refresh.
-func (bm *bridgeManager) retireChatBridges() (closed []marotte.ChatID, marked int) {
+// returns each stopped chat with the process it stopped, so the caller closes their turns. Run
+// bridges, and chat bridges hosting a live run, are not interrupted: they rely on the relay's token refresh.
+func (bm *bridgeManager) retireChatBridges() (closed map[marotte.ChatID]ACPBridge, marked int) {
 	var victims []*sharedBridge
+	closed = make(map[marotte.ChatID]ACPBridge)
 	bm.mu.Lock()
 	for chatID, sb := range bm.bridges {
 		if isRunChat(chatID) {
@@ -145,9 +157,10 @@ func (bm *bridgeManager) retireChatBridges() (closed []marotte.ChatID, marked in
 		}
 		sb.mu.Lock()
 		if sb.state == bridgeIdle && !bm.hostsRun(chatID) {
+			bm.endingLocked(chatID, sb.bridge)
 			delete(bm.bridges, chatID)
 			victims = append(victims, sb)
-			closed = append(closed, chatID)
+			closed[chatID] = sb.bridge
 		} else if !sb.retire {
 			sb.retire = true
 			marked++
@@ -198,6 +211,7 @@ func (bm *bridgeManager) closeIfRetired(chatID marotte.ChatID, sb *sharedBridge)
 	sb.mu.Lock()
 	ready := sb.retire && sb.state == bridgeIdle && !bm.hostsRun(chatID)
 	if ready {
+		bm.endingLocked(chatID, sb.bridge)
 		delete(bm.bridges, chatID)
 	}
 	sb.mu.Unlock()

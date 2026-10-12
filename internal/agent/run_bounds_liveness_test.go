@@ -1,10 +1,11 @@
 package agent
 
-// The idle window measures liveness: any live step frame refills it, a live terminal holds it, and it
-// fires only on a true stall. A genuinely hung shell meets the backstop alone (cancelExpired).
+// The idle window measures liveness: any live step frame refills it, an open step turn holds it, and it
+// fires only on a true stall. A step hung inside its turn meets the backstop alone (cancelExpired).
 
 import (
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -12,14 +13,8 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/workflow"
 )
-
-// Scoping is terminalsBySession's.
-type terminalsAnswering map[marotte.ChatID]bool
-
-func (t terminalsAnswering) LiveTerminalForSession(chatID marotte.ChatID, sessions map[string]struct{}) bool {
-	return len(sessions) > 0 && t[chatID]
-}
 
 func stagedExpiry(t *testing.T, rs *Runs, id string, launch launchOrigin) time.Time {
 	t.Helper()
@@ -32,55 +27,47 @@ func stagedExpiry(t *testing.T, rs *Runs, id string, launch launchOrigin) time.T
 	return deadline
 }
 
-func TestCancelExpired_ALiveTerminalRefillsTheWindow(t *testing.T) {
-	h, _, br := newTestHub()
-	const id = "wf_1"
-	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-	h.runs.terminals = terminalsAnswering{runChatID(id): true}
-	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
-	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
+// KAS says the run is running, yet no step of it is open and its host lives: that is the stall.
+func TestCancelExpired_NoOpenStepTurnIsAStall(t *testing.T) {
+	for name, arrange := range map[string]func(t *testing.T, h *Runtime){
+		"no step ever opened": func(*testing.T, *Runtime) {},
+		"every step closed": func(t *testing.T, h *Runtime) {
+			openStep(t, h, "wf_1", []string{"root", "a"}, "step-session-a")
+			if _, _, err := h.runs.log.closeNode(t.Context(), "wf_1", workflow.PathKey([]string{"root", "a"}), "completed", ""); err != nil {
+				t.Fatalf("close the step: %v", err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			const id = "wf_1"
+			h, br := stepFixture(t, id)
+			br.callResults[methodKiroWorkflowInspect] = inspectReply(t, id, marotte.RunStatusRunning, "")
+			arrange(t, h)
+			deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 
-	h.runs.cancelExpired(id, deadline)
+			h.runs.cancelExpired(id, deadline)
 
-	if got := h.runs.endReason(id); got != "" {
-		t.Errorf("a run waiting on its own shell was cancelled %q; want the window refilled", got)
-	}
-	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
-		t.Errorf("a cancel went out for a run with a live terminal: %v", br.callLog())
-	}
-	l, _ := h.runs.lease(id)
-	if budget := time.Until(l.Deadline); budget < runIdleWindow-time.Second {
-		t.Errorf("the refill left %v of budget, want a full idle window %v", budget.Round(time.Second), runIdleWindow)
-	}
-}
-
-// The carrier for an agent-launched run is the LAUNCHING chat, not run:<id>.
-func TestCancelExpired_AnAgentRunsCarrierIsTheLaunchingChat(t *testing.T) {
-	h, _, br := newTestHub()
-	const id = "wf_1"
-	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
-	h.runs.terminals = terminalsAnswering{"c1": true}
-	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
-	deadline := stagedExpiry(t, h.runs, id, launchOrigin{origin: runlease.OriginAgent, chatID: "c1"})
-
-	h.runs.cancelExpired(id, deadline)
-
-	if got := h.runs.endReason(id); got != "" {
-		t.Errorf("an agent-launched run whose chat holds a live terminal was cancelled %q", got)
+			if got := h.runs.endReason(id); got != runEndStalled {
+				t.Errorf("endReason = %q, want %q", got, runEndStalled)
+			}
+			if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+				t.Errorf("no cancel went out for the stalled run: %v", br.callLog())
+			}
+			if out := logs.String(); !strings.Contains(out, logMsgRunStalled) {
+				t.Errorf("the stall was not logged as one: %s", out)
+			}
+		})
 	}
 }
 
-func TestCancelExpired_NoFrameAndNoShellIsAStall(t *testing.T) {
-	logs := captureLogs(t)
+// An unreadable run keeps the stall verdict: the bound is never lifted by a failed read.
+func TestCancelExpired_AnUnreadableRunWithNoOpenStepIsAStall(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
+	br.callErrs = map[string]error{methodKiroWorkflowInspect: errors.New("utility session unavailable")}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-	h.runs.terminals = terminalsAnswering{runChatID(id): false}
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 
 	h.runs.cancelExpired(id, deadline)
@@ -91,19 +78,12 @@ func TestCancelExpired_NoFrameAndNoShellIsAStall(t *testing.T) {
 	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 		t.Errorf("no cancel went out for the stalled run: %v", br.callLog())
 	}
-	if out := logs.String(); !strings.Contains(out, logMsgRunStalled) {
-		t.Errorf("the stall was not logged as one: %s", out)
-	}
 }
 
-// A live shell holds only the idle window; the backstop fires regardless.
-func TestCancelExpired_ASpentBackstopOutranksALiveTerminal(t *testing.T) {
-	h, _, br := newTestHub()
+// An open step holds only the idle window; the backstop fires regardless.
+func TestCancelExpired_ASpentBackstopOutranksAnOpenStep(t *testing.T) {
 	const id = "wf_1"
-	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-	h.runs.terminals = terminalsAnswering{runChatID(id): true}
-	h.runs.log = newRunLog(t.TempDir())
+	h, _ := stepFixture(t, id)
 	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 	h.runs.mu.Lock()
@@ -113,19 +93,32 @@ func TestCancelExpired_ASpentBackstopOutranksALiveTerminal(t *testing.T) {
 	h.runs.cancelExpired(id, deadline)
 
 	if got := h.runs.endReason(id); got != runEndOverran {
-		t.Errorf("endReason = %q, want %q: a spent backstop is not a stall and a live shell does not lift it", got, runEndOverran)
+		t.Errorf("endReason = %q, want %q: a spent backstop is not a stall and an open step does not lift it", got, runEndOverran)
 	}
 }
 
-// A live terminal inside the backstop's last minute: the refill stamps the backstop instant, so a timer stands and no cancel goes out.
-func TestCancelExpired_ARefillInsideTheBackstopsLastMinuteStillBounds(t *testing.T) {
-	h, _, br := newTestHub()
-	defer shutdownHub(t, h)
+// A manual run's next slot outranks an open step.
+func TestCancelExpired_ASlotOutranksAnOpenStep(t *testing.T) {
 	const id = "wf_1"
-	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-	h.runs.terminals = terminalsAnswering{runChatID(id): true}
-	h.runs.log = newRunLog(t.TempDir())
+	h, br := stepFixture(t, id)
+	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
+	deadline := stagedExpiry(t, h.runs, id, scheduledLaunch("sched-1", time.Now().Add(-2*time.Second)))
+
+	h.runs.cancelExpired(id, deadline)
+
+	if got := h.runs.endReason(id); got != runEndOverran {
+		t.Errorf("endReason = %q, want %q: the slot outranks an open step", got, runEndOverran)
+	}
+	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+		t.Errorf("no cancel went out at the slot: %v", br.callLog())
+	}
+}
+
+// An open step inside the backstop's last minute: the refill stamps the backstop instant, so a timer stands and no cancel goes out.
+func TestCancelExpired_ARefillInsideTheBackstopsLastMinuteStillBounds(t *testing.T) {
+	const id = "wf_1"
+	h, br := stepFixture(t, id)
+	defer shutdownHub(t, h)
 	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 	h.runs.mu.Lock()
@@ -135,7 +128,7 @@ func TestCancelExpired_ARefillInsideTheBackstopsLastMinuteStillBounds(t *testing
 	h.runs.cancelExpired(id, deadline)
 
 	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
-		t.Errorf("a cancel went out for a run with a live terminal: %v", br.callLog())
+		t.Errorf("a cancel went out for a run with an open step: %v", br.callLog())
 	}
 	l, _ := h.runs.lease(id)
 	if budget := time.Until(l.Deadline); budget <= 0 || budget > time.Minute {
@@ -288,6 +281,47 @@ func TestFinishTermination_TellsTheLaunchingChatWhy(t *testing.T) {
 	}
 	if steer.OriginRun != id || steer.ProducedTs < before {
 		t.Errorf("note provenance = run %q at %d, want run %q at or after %d", steer.OriginRun, steer.ProducedTs, id, before)
+	}
+}
+
+// KAS can answer the cancel after the run's terminal frame, whose forgetBounds has already released the
+// lease; the note still reaches the launching chat.
+func TestFinishTermination_NotesTheStopWhenTheTerminalFrameWinsTheRace(t *testing.T) {
+	h, cs, br := newTestHub()
+	defer shutdownHub(t, h)
+	const (
+		id     = "wf_1"
+		chatID = marotte.ChatID("c1")
+	)
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
+		c.Name = "A"
+		return true
+	}); err != nil {
+		t.Fatalf("seed the chat: %v", err)
+	}
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method != methodKiroWorkflowCancel {
+			return nil, nil, false
+		}
+		h.runs.forgetBounds(t.Context(), id)
+		return json.RawMessage(`{}`), nil, true
+	}
+	carrier := &sharedBridge{bridge: br, state: bridgeIdle}
+	h.bridge.mgr.insert(chatID, carrier)
+	h.runs.grantLease(t.Context(), id, "nightly", launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
+
+	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}, carrier); err != nil {
+		t.Fatalf("finishTermination: %v", err)
+	}
+
+	entries, err := cs.All(t.Context(), chatID)
+	if err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if !slices.ContainsFunc(entries, func(e marotte.Entry) bool {
+		return e.Kind == marotte.EntryKindSteer && strings.HasPrefix(e.ID, "notify-"+id+":stopped:")
+	}) {
+		t.Errorf("no stop note reached the launching chat once the terminal frame released the lease first; entries: %+v", entries)
 	}
 }
 
