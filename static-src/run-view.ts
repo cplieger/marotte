@@ -345,6 +345,7 @@ const stepStackSource: SteerStackSource = {
       workflowID: t.workflowID,
       nodePath: t.nodePath,
       steer_id: steer.id,
+      edit: true,
     }).outcome;
     if (outcome.status !== "error") {
       return;
@@ -356,14 +357,14 @@ const stepStackSource: SteerStackSource = {
     }
     stepRefused(t.workflowID, "Could not confirm the message was taken back");
   },
-  editByClear: async (text) => {
+  editByClear: async (steer) => {
     const t = stackTarget.peek();
-    if (takeIntoRunComposer(text) === undefined) {
+    if (takeIntoRunComposer(steer.text) === undefined) {
       stepRefused(t.workflowID, STILL_SENDING);
       return;
     }
     announce("Message taken back for editing");
-    await clearRunStepSteers.dispatch(t).outcome;
+    await clearRunStepSteers.dispatch({ ...t, edit: steer.id }).outcome;
   },
   remove: async (steerID) => {
     const t = stackTarget.peek();

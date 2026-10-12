@@ -8,6 +8,7 @@ import { join } from "@cplieger/keyenc";
 import { copyClipboard } from "../actions/messages.js";
 import { iconEl } from "../icon-el.js";
 import { contextBreakdownRows } from "../context-breakdown.js";
+import { slideBox, targetOpen } from "../disclosure-row.js";
 import { ASK_LABEL, type AskBucket } from "../interaction.js";
 import { ICON_INFO } from "../icons.js";
 import { openAtLine, openChange, openChangeSet } from "../navigate.js";
@@ -139,7 +140,9 @@ export function buildTurnFooter(d: TurnSummaryData): HTMLDivElement {
   summary.appendChild(el("span", { className: "turn-ledger-text" }));
   summary.appendChild(el("span", { className: "turn-fact" }));
   summary.addEventListener("click", () => {
-    setInfoOpen(footer, !infoOpen(footer));
+    slideBox(footer, !targetOpen(footer, infoOpen(footer)), (on) => {
+      setInfoOpen(footer, on);
+    });
   });
   footer.appendChild(summary);
 

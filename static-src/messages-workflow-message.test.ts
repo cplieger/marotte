@@ -163,9 +163,12 @@ describe("a parent's buffered workflow updates", () => {
         `Sent ${clock(SENT)} \u00b7 delivered ${clock(READ)}`,
       );
     }
-    const toggles = view.querySelectorAll(".steer-group-toggle");
-    expect(toggles).toHaveLength(1);
-    expect(toggles[0]?.textContent).toBe("3 updates from 1 workflow");
+    const boxes = view.querySelectorAll(".steer-group");
+    expect(boxes).toHaveLength(1);
+    expect(boxes[0]?.querySelector(".steer-group-header")?.textContent).toBe(
+      "3 updates from 1 workflow",
+    );
+    expect(rows.every((r) => r.parentElement?.parentElement === boxes[0])).toBe(true);
   });
 
   it("redraws a drawn row delivered when its take-up arrives later", async () => {
@@ -237,10 +240,12 @@ describe("a parent's buffered workflow updates", () => {
       ],
     ]);
 
-    const toggle = view.querySelector(".steer-group-toggle");
-    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    const head = view.querySelector(".steer-group > .steer-group-header");
+    expect(head?.getAttribute("aria-expanded")).toBe("false");
     const updates = [...view.querySelectorAll<HTMLElement>('.steer-note[data-origin="step"]')];
     expect(updates).toHaveLength(2);
-    expect(updates.every((r) => r.hidden)).toBe(true);
+    expect(updates.every((r) => r.closest('.steer-group-body[aria-hidden="true"]') !== null)).toBe(
+      true,
+    );
   });
 });

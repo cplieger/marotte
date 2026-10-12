@@ -1119,19 +1119,6 @@
   --chev-turn: 0deg;
 }
 
-/* The slide, in `.compaction::details-content`'s shape (13-messages.css). */
-.mcp-result-disc::details-content {
-  overflow: clip;
-  block-size: 0;
-  transition:
-    block-size var(--dur-standard) var(--ease-standard),
-    content-visibility var(--dur-standard) allow-discrete;
-}
-
-.mcp-result-disc[open]::details-content {
-  block-size: auto;
-}
-
 .mcp-result-body {
   display: flex;
   flex-direction: column;

@@ -616,18 +616,21 @@
     }
 
     /* A workspace audio file the agent presented with `![](…)`. The native
-       player's own chrome is the whole widget; only its width is ours. */
+       player's own chrome is the whole widget; only its width is ours, the
+       column's, like every object in the transcript. */
     & .media-audio {
       display: block;
       width: 100%;
-      max-width: 24rem;
       margin-block: var(--sp-2);
     }
 
     /* The download affordance for a presented file that is neither image nor audio.
-     * A chip rather than a prose link, so it reads as an object in the transcript. */
+     * An object rather than a prose link: a full-width block, so the sentence around
+     * it breaks above and below. */
     & .media-download {
-      display: inline-flex;
+      display: flex;
+      width: 100%;
+      margin-block: var(--sp-2);
       align-items: center;
       gap: 0.35rem;
       padding: var(--sp-1) var(--sp-2);
@@ -636,6 +639,12 @@
       color: var(--c-text-primary);
       font-size: var(--fs-sm);
       text-decoration: none;
+    }
+
+    /* `holdObjectTail` (smd-renderer.ts): the punctuation after a block object,
+     * shown again once the object is an inline link. */
+    & :is(.preview-card, .media-audio, .media-download) + .block-object-tail {
+      display: none;
     }
 
     & .media-download:hover {
@@ -721,26 +730,8 @@
    * opacity is invisible to both contrast gates, so the number the tools reported
    * was never the number on screen. */
 
-  /* No height transition ON THE BLOCK: the streaming bubble's per-chunk flicker
-   * reasoning. The open/close slide lives on ::details-content below, where the
-   * computed block-size only changes at the state flip. */
-}
-
-/* `::details-content` is the platform half of a native <details> (the UA flips
- * its content-visibility), so the close animates: block-size 0<->auto rides
- * interpolate-size and the visibility flip lands at the end of a close via
- * allow-discrete. While OPEN the computed block-size stays `auto`, so streamed
- * growth never retriggers it. */
-.reasoning-block::details-content {
-  overflow: clip;
-  block-size: 0;
-  transition:
-    block-size var(--dur-standard) var(--ease-standard),
-    content-visibility var(--dur-standard) allow-discrete;
-}
-
-.reasoning-block[open]::details-content {
-  block-size: auto;
+  /* No height transition: streamed growth would replay it per chunk. The open/close slide is
+   * `disclosure-row.ts` `slideBox`, which runs only at a state flip. */
 }
 
 /* NO ANIMATION ON A REASONING SELECTOR: a pulsing dot is reserved to tabs and
@@ -1055,19 +1046,6 @@
 
 .compaction[open] .compaction-head > .disclosure-chevron {
   --chev-turn: 0deg;
-}
-
-/* The slide, in `.reasoning-block::details-content`'s shape; the reasoning there. */
-.compaction::details-content {
-  overflow: clip;
-  block-size: 0;
-  transition:
-    block-size var(--dur-standard) var(--ease-standard),
-    content-visibility var(--dur-standard) allow-discrete;
-}
-
-.compaction[open]::details-content {
-  block-size: auto;
 }
 
 /* NO INLINE PADDING, per `.message`: an inset would put this prose right of every
@@ -1687,30 +1665,15 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Kiro's notification group: one row naming a run of workflow updates, which
- * opens and closes them. */
-.steer-group-toggle {
-  align-self: flex-start;
-  min-height: var(--btn-h);
-  padding: 0 var(--sp-3);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-secondary);
-  color: var(--c-text-secondary);
-  font: inherit;
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-
-.steer-group-toggle:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset);
-}
-
-@media (any-hover: hover) {
-  .steer-group-toggle:hover {
-    color: var(--c-accent);
-  }
+/* Kiro's notification group: a run of workflow updates inside one box (14-tools.css
+ * `.steer-group`), flattened the way a tool group's members are: the box owns the chrome and a
+ * hairline rules each row off the one above. No entry slide: a row moves in when its run
+ * reaches two, and re-inserting it would replay the slide. */
+.steer-group-body > .steer-note {
+  border: 0;
+  border-radius: 0;
+  border-top: 1px solid color-mix(in srgb, var(--c-border) 55%, transparent);
+  animation: none;
 }
 
 /* Skinned on `.steer-note-more` (13-messages.css): it is the same control, a text

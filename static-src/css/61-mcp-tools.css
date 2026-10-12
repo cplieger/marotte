@@ -259,6 +259,12 @@
       var(--shadow-ambient),
       0 0.5rem 1.5rem oklch(0% 0 none / 40%);
     color: var(--c-text-secondary);
+    transition: opacity var(--uip-popover-enter-duration) var(--uip-popover-enter-easing);
+
+    /* The context menu's enter fade; a menu leaves at once, as `createPopover`'s do. */
+    @starting-style {
+      opacity: 0;
+    }
   }
 
   .turn-actions-group > .turn-action-btn {
@@ -320,6 +326,12 @@
         var(--shadow-ambient),
         0 0.5rem 1.5rem oklch(0% 0 none / 40%);
       color: var(--c-text-secondary);
+      transition: opacity var(--uip-popover-enter-duration) var(--uip-popover-enter-easing);
+
+      /* The context menu's enter fade; a menu leaves at once, as `createPopover`'s do. */
+      @starting-style {
+        opacity: 0;
+      }
     }
 
     .turn-actions-group > .turn-action-btn {

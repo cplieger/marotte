@@ -590,13 +590,21 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 		if !httpreply.DecodeJSON(w, r, &body) {
 			return
 		}
-		if err := rr.runs.removeStepSteer(r.Context(), id, nodePath, body.SteerID); err != nil {
+		if err := rr.runs.removeStepSteer(r.Context(), id, nodePath, body.SteerID, body.Edit); err != nil {
 			rr.writeStepErr(w, "steer remove", id, nodePath, err)
 			return
 		}
 		webhttp.WriteJSON(w, map[string]string{"deleted": body.SteerID})
 	case "steer-clear":
-		if err := rr.runs.clearStepSteers(r.Context(), id, nodePath); err != nil {
+		var body marotte.RunStepSteerRequest
+		if r.ContentLength != 0 && !httpreply.DecodeJSON(w, r, &body) {
+			return
+		}
+		edit := ""
+		if body.Edit {
+			edit = body.SteerID
+		}
+		if err := rr.runs.clearStepSteers(r.Context(), id, nodePath, edit); err != nil {
 			rr.writeStepErr(w, "steer clear", id, nodePath, err)
 			return
 		}

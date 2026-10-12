@@ -210,6 +210,39 @@ func TestSteeringCleared_ANoteNeverHeldIsDroppedTextless(t *testing.T) {
 	}
 }
 
+// TestSteeringCleared_ANoteInjectedThisTurnStaysRead pins that a boundary clear naming agent notes KAS already
+// injected writes no dropped row beside the read one, and that the next turn's clear judges the id afresh.
+func TestSteeringCleared_ANoteInjectedThisTurnStaysRead(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	for _, id := range []string{"notify-a", "notify-b"} {
+		tr.HandleSessionInfoUpdate(t.Context(), "c1",
+			steerFrame(t, "steering_injected", map[string]any{"messageId": id, "content": "subflux is done"}),
+			FrameAttribution{})
+	}
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{"notify-a", "notify-b"}}),
+		FrameAttribution{})
+
+	rows := steerRows(t, deps, "c1")
+	if len(rows) != 2 {
+		t.Fatalf("steer entries = %+v, want the two read notes alone", rows)
+	}
+	for _, r := range rows {
+		if r.State != marotte.SteerStateRead {
+			t.Errorf("entry %s state = %q, want %q", r.ID, r.State, marotte.SteerStateRead)
+		}
+	}
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{"notify-a"}}),
+		FrameAttribution{})
+	if rows := steerRows(t, deps, "c1"); len(rows) != 3 || rows[2].State != marotte.SteerStateDropped {
+		t.Errorf("after a later turn's clear, steer entries = %+v, want a third, dropped row", rows)
+	}
+}
+
 // TestSteeringCleared_EmptyListIsNotBroadcast pins silence on the normal empty clear.
 func TestSteeringCleared_EmptyListIsNotBroadcast(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")

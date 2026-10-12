@@ -23,7 +23,11 @@
     "(the export writes a rule plus \"Rewound to here\"; the client draws the boundary",
     "row), and because it renders it BREAKS a prose run — block-window.node.test.ts pins",
     "that half over a synthetic turn, which is the shape this log cannot produce (a",
-    "record always lands at the file's tail, never between two text entries).",
+    "record always lands at the file's tail, never between two text entries). A second",
+    "rewind to the same survivor appends a second record there, and only the NEWEST",
+    "renders on both sides: it replaces the first's row. A dropped agent note whose id",
+    "the same turn read (notify-1) renders on neither side: KAS's boundary clear names",
+    "the notes the turn injected, which is no loss to report.",
     "",
     "Every tool_result here is PAIRED with a tool_call in its own turn, deliberately:",
     "writeUnpairedResult RENDERS a result whose call the turn does not hold, while the",
@@ -222,6 +226,31 @@
       "ts": 0
     },
     {
+      "id": "notify-1",
+      "turn": "t-1",
+      "kind": "steer",
+      "payload": {
+        "text": "a workflow finished",
+        "origin": "agent",
+        "state": "read"
+      },
+      "seq": 11,
+      "ts": 0
+    },
+    {
+      "id": "notify-1",
+      "turn": "t-1",
+      "kind": "steer",
+      "payload": {
+        "text": "",
+        "origin": "agent",
+        "state": "dropped",
+        "reason": "boundary"
+      },
+      "seq": 12,
+      "ts": 0
+    },
+    {
       "id": "t-2:close",
       "turn": "t-2",
       "kind": "turn_close",
@@ -238,7 +267,7 @@
       "payload": {
         "outcome": "completed"
       },
-      "seq": 11,
+      "seq": 13,
       "ts": 0
     },
     {
@@ -253,6 +282,20 @@
         "from_n": 3
       },
       "seq": 5,
+      "ts": 0
+    },
+    {
+      "id": "t-4:revert",
+      "turn": "t-2",
+      "kind": "turn_revert",
+      "payload": {
+        "from": "t-4",
+        "through": "t-4",
+        "kas_message_id": "kas-revert",
+        "cause": "rewind",
+        "from_n": 3
+      },
+      "seq": 6,
       "ts": 0
     }
   ],
@@ -340,8 +383,22 @@
           "compared": true
         },
         {
-          "id": "t-1:close",
+          "id": "notify-1",
           "seq": 11,
+          "kind": "steer",
+          "renders": true,
+          "compared": true
+        },
+        {
+          "id": "notify-1",
+          "seq": 12,
+          "kind": "steer",
+          "renders": false,
+          "compared": true
+        },
+        {
+          "id": "t-1:close",
+          "seq": 13,
           "kind": "turn_close",
           "renders": true,
           "compared": false,
@@ -393,6 +450,13 @@
         {
           "id": "t-3:revert",
           "seq": 5,
+          "kind": "turn_revert",
+          "renders": false,
+          "compared": true
+        },
+        {
+          "id": "t-4:revert",
+          "seq": 6,
           "kind": "turn_revert",
           "renders": true,
           "compared": true

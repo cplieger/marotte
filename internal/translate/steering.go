@@ -9,6 +9,7 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -67,9 +68,10 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, sc steerScope, u 
 		}
 		return true
 	case kindSteeringCleared:
-		// KAS clears at EVERY turn boundary, so an empty list is the normal case.
+		// Taken at EVERY clear, the empty one included: KAS clears at every turn boundary, which bounds the set.
+		read := t.read.take(sc.key)
 		if len(k.MessageIDs) > 0 {
-			t.steeringCleared(ctx, sc, k)
+			t.steeringCleared(ctx, sc, k, read)
 		}
 		return true
 	}
@@ -102,6 +104,7 @@ func (t *Translator) steeringQueued(ctx context.Context, sc steerScope, k *sessi
 }
 
 func (t *Translator) steeringInjected(ctx context.Context, sc steerScope, k *sessionInfoKiroBlock) {
+	t.read.add(sc.key, k.MessageID)
 	// The bare text, as KAS persists it, or the merge would see two steers.
 	text := k.Content
 	if k.NotificationSeverity != "" {
@@ -122,13 +125,17 @@ func (t *Translator) steeringInjected(ctx context.Context, sc steerScope, k *ses
 
 // steeringCleared appends a dropped entry for every AGENT row still held (unread). A user row's
 // entry is the host's. An agent note this process never held is recorded TEXT-LESS: the merge
-// fills the missing words.
-func (t *Translator) steeringCleared(ctx context.Context, sc steerScope, k *sessionInfoKiroBlock) {
+// fills the missing words. An id `read` names was injected this turn, and KAS's clear names those
+// too, so it writes nothing: a dropped row beside the read one would contradict it.
+func (t *Translator) steeringCleared(ctx context.Context, sc steerScope, k *sessionInfoKiroBlock, read map[string]struct{}) {
 	held := make(map[string]marotte.SteerQueuedPayload)
 	for _, p := range t.steerBufferCleared(sc.key, k.MessageIDs) {
 		held[p.SteerID] = p
 	}
 	for _, id := range k.MessageIDs {
+		if _, ok := read[id]; ok {
+			continue
+		}
 		if p, ok := held[id]; ok {
 			t.appendSteer(ctx, sc, id, &marotte.EntrySteer{
 				Text: p.Text, Origin: p.Origin, State: marotte.SteerStateDropped,
@@ -201,6 +208,7 @@ func (t *Translator) steerReadByAck(ctx context.Context, chatID marotte.ChatID, 
 		return
 	}
 	p := held[0]
+	t.read.add(chatID, steerID)
 	steer := &marotte.EntrySteer{
 		Text: p.Text, Origin: p.Origin, State: marotte.SteerStateRead, Resends: p.Replaces,
 	}
@@ -274,4 +282,34 @@ func (t *Translator) steerOrigin(chatID marotte.ChatID, steerID string) marotte.
 		return marotte.SteerOriginAgent
 	}
 	return t.steers.SteerOrigin(chatID, steerID)
+}
+
+// readSteers holds, per steer scope, the ids its turn read since the scope's last steering_cleared.
+type readSteers struct {
+	by map[marotte.ChatID]map[string]struct{}
+	mu sync.Mutex
+}
+
+func newReadSteers() *readSteers {
+	return &readSteers{by: make(map[marotte.ChatID]map[string]struct{})}
+}
+
+func (r *readSteers) add(key marotte.ChatID, id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ids := r.by[key]
+	if ids == nil {
+		ids = make(map[string]struct{})
+		r.by[key] = ids
+	}
+	ids[id] = struct{}{}
+}
+
+// take answers the scope's ids and forgets them.
+func (r *readSteers) take(key marotte.ChatID) map[string]struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ids := r.by[key]
+	delete(r.by, key)
+	return ids
 }

@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => {
     cancelDispatch: vi.fn((_args: { chatID: string; lead?: string }) => ({
       outcome: Promise.resolve<{ status: string }>({ status: "success" }),
     })),
-    removeDispatch: vi.fn((_args: { chatID: string; steerID: string }) => ({
+    removeDispatch: vi.fn((_args: { chatID: string; steerID: string; edit?: boolean }) => ({
       outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
     })),
     confirmMock: vi.fn((_message: string) => Promise.resolve(true)),
@@ -540,8 +540,13 @@ describe("the steer stack", () => {
     recordSteerQueued("chat-1", { id: "steer-2", text: "actually target main", origin: "user" });
     clickAction(rowAt(1), "Edit");
 
+    // `edit`, so the row leaves no "you deleted it" entry: the edited text is the next steer.
     await vi.waitFor(() => {
-      expect(removeDispatch).toHaveBeenCalledWith({ chatID: "chat-1", steerID: "steer-2" });
+      expect(removeDispatch).toHaveBeenCalledWith({
+        chatID: "chat-1",
+        steerID: "steer-2",
+        edit: true,
+      });
     });
     expect(setComposerValueMock).toHaveBeenCalledWith("actually target main");
     expect(clearDispatch).not.toHaveBeenCalled();
@@ -602,7 +607,7 @@ describe("the steer stack", () => {
     clickAction(firstRow(), "Edit");
 
     await vi.waitFor(() => {
-      expect(clearDispatch).toHaveBeenCalledWith({ chatID: "chat-1" });
+      expect(clearDispatch).toHaveBeenCalledWith({ chatID: "chat-1", edit: "notify-1" });
     });
     expect(setComposerValueMock).toHaveBeenCalledWith("workflow done");
     expect(removeDispatch).not.toHaveBeenCalled();

@@ -538,15 +538,19 @@ export const unqueuePrompt = transportAction<{ chatID: string; messageID: string
 });
 
 /** Drops every steer KAS still holds (`_session/steer/clear`) without cancelling the turn.
- *  Optimistic. Only CONFIRMED entries go: a `pending` one has no server id to address. */
+ *  Optimistic. Only CONFIRMED entries go: a `pending` one has no server id to address. `edit` is
+ *  the row the reader took back to change, which leaves no transcript entry. */
 export const clearSteers = transportAction<
-  { chatID: string },
+  { chatID: string; edit?: string },
   { chatID: string; removed: readonly PendingSteer[] }
 >({
   name: "chat.clear_steers",
   networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
-  command: ({ chatID }) => ({ type: "steer_clear", chat_id: chatID }),
+  command: ({ chatID, edit }) =>
+    edit === undefined
+      ? { type: "steer_clear", chat_id: chatID }
+      : { type: "steer_clear", chat_id: chatID, payload: { edit } },
   optimistic: ({ chatID }) => ({ chatID, removed: dropConfirmedSteers(chatID) }),
   // The removed entries exist only on the optimistic result; `undefined` means none were taken.
   rollback: (_args, op) => {
@@ -560,17 +564,21 @@ export const clearSteers = transportAction<
 /** Delete ONE dock row. The wire has no per-steer removal, so the server clears KAS's buffer and
  *  resends the kept rows as one steer; nothing is drawn here. A refusal is an `ActionError` with
  *  the server's sentence, status and `reason`, so Edit can tell a refusal from a lost reply.
- *  Deduped per row. */
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
-export const removeSteer = defineAction<{ chatID: string; steerID: string }, void>({
+ *  Deduped per row. An `edit` row, taken back to change, leaves no transcript entry. */
+export const removeSteer = defineAction<
+  { chatID: string; steerID: string; edit?: boolean },
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
+  void
+>({
   name: "chat.remove_steer",
   networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
   dedupe: ({ chatID, steerID }) => joinKey("chat.remove_steer", chatID, steerID),
   error: false,
-  run: async ({ chatID, steerID }, signal) => {
+  run: async ({ chatID, steerID, edit }, signal) => {
+    const payload = edit === true ? { steer_id: steerID, edit } : { steer_id: steerID };
     const r: SendResult = await transportSend(
-      { type: "steer_remove", chat_id: chatID, payload: { steer_id: steerID } },
+      { type: "steer_remove", chat_id: chatID, payload },
       { signal, reportSendState: false },
     );
     if (!r.ok) {

@@ -317,9 +317,18 @@ type SteerCommand struct {
 }
 
 // SteerRemoveCommand is the payload for type="steer_remove". SteerID is the key of
-// a dock row the user sent; the rows they kept are resent together, in order.
+// a dock row the user sent; the rows they kept are resent together, in order. Edit
+// is the reader taking the row back to change it: it leaves the dock and writes no
+// transcript entry, because the edited text arrives as a steer of its own.
 type SteerRemoveCommand struct {
 	SteerID string `json:"steer_id"`
+	Edit    bool   `json:"edit,omitempty"`
+}
+
+// SteerClearCommand is the optional payload for type="steer_clear". Edit is the key
+// of the row the reader took back to change, the one row the discard writes no entry for.
+type SteerClearCommand struct {
+	Edit string `json:"edit,omitempty"`
 }
 
 // CancelCommand is the payload for type="cancel". Lead is the key of the dock row

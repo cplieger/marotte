@@ -16,6 +16,7 @@ import {
 import type { DebouncedDispatch } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { chevronEl } from "./chevron.js";
+import { wireDetailsSlide } from "./disclosure-row.js";
 import { emptyNote, type Nouns } from "./textsearch/copy.js";
 import { configuredServers } from "./mcp-state.js";
 import type { KeyPair, Server } from "./mcp-state.js";
@@ -343,12 +344,9 @@ export function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
     body.appendChild(option.detail);
   }
 
-  const row = el(
-    "div",
-    { className: "mcp-result" },
-    el("details", { className: "mcp-result-disc" }, summary, body),
-    actions,
-  ) as HTMLDivElement;
+  const disc = el("details", { className: "mcp-result-disc" }, summary, body) as HTMLDetailsElement;
+  wireDetailsSlide(disc);
+  const row = el("div", { className: "mcp-result" }, disc, actions) as HTMLDivElement;
   if (status !== "") {
     row.classList.add("mcp-result-deprecated");
   }

@@ -226,7 +226,11 @@ func cmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientC
 		return nil, StatusError(http.StatusServiceUnavailable, err)
 	}
 	defer unlock()
-	cleared, err := ClearSteersIn(ctx, roles.steerTarget(cmd.ChatID), func(opID string) {
+	var p marotte.SteerClearCommand
+	if len(cmd.Payload) > 0 && json.Unmarshal(cmd.Payload, &p) != nil {
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	cleared, err := ClearSteersIn(ctx, roles.steerTarget(cmd.ChatID), p.Edit, func(opID string) {
 		endSteerOp(ctx, roles, cmd.ChatID, opID)
 	})
 	if err != nil {
@@ -236,11 +240,11 @@ func cmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientC
 	return responseWith(map[string]any{"cleared": cleared}), nil
 }
 
-// ClearSteersIn discards every row of t's buffer. endOp ends the op under the steer lock the
-// caller holds; it runs only when a clear was issued.
-func ClearSteersIn(ctx context.Context, t SteerTarget, endOp func(opID string)) ([]string, error) {
+// ClearSteersIn discards every row of t's buffer; the row keyed edit leaves no entry. endOp ends
+// the op under the steer lock the caller holds; it runs only when a clear was issued.
+func ClearSteersIn(ctx context.Context, t SteerTarget, edit string, endOp func(opID string)) ([]string, error) {
 	opID := ids.NewMessageID()
-	needsClear, refuse := t.Queue.BeginDiscard(t.Key, opID)
+	needsClear, refuse := t.Queue.BeginDiscard(t.Key, opID, edit)
 	if refuse != "" {
 		return nil, steerRefusal(refuse)
 	}

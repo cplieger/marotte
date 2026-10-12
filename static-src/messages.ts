@@ -30,6 +30,7 @@ import {
   deferWhileReading,
   fillViewport,
   onReadingStateChange,
+  onLiveEdgeRequest,
   onReaderGesture,
   onViewportChange,
   setAnchorProvider,
@@ -70,7 +71,7 @@ import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
 import { isTurnOpen, isTurnRevealed, setTurnOpen } from "./fold-state.js";
 import {
   entryRenders,
-  firstPlanSeq,
+  turnFolds,
   planResidency,
   rendersNothing,
   runCardOwners,
@@ -83,7 +84,7 @@ import {
   type ResidencyAnchor,
 } from "./block-window.js";
 import { forgetHeights, spacerHeight, spacerOrdinalAt } from "./block-heights.js";
-import { wireRowToggle } from "./disclosure-row.js";
+import { slideTurnFold, wireRowToggle } from "./disclosure-row.js";
 import { initSearchRevealBuilder, searchHitCount } from "./chat-search.js";
 import {
   mountTurnRail,
@@ -547,6 +548,7 @@ export function mountChatView(): void {
   // frame to measure in. `onViewportChange` alone also fires for the anchoring a pass's own mutations cause.
   onReaderGesture(noteReaderMoved);
   onViewportChange(windowPass);
+  onLiveEdgeRequest(mountLiveEdge);
   // The tool layer sits below this module, so the multiplexer injects whether a view is parked and that a resident
   // view's chat must not have its messages evicted.
   initToolViewCallbacks({
@@ -581,9 +583,9 @@ export function mountChatView(): void {
 function entryCount(turns: readonly Turn[]): number {
   let n = 0;
   for (const t of turns) {
-    const firstPlan = firstPlanSeq(t, "");
+    const folds = turnFolds(t, "");
     for (const e of t.body) {
-      if (entryRenders(e, "", firstPlan)) {
+      if (entryRenders(e, "", folds)) {
         n++;
       }
     }
@@ -1046,8 +1048,17 @@ function noteReaderMoved(): void {
 }
 
 /**
+ * Window the live edge in before the reader lands on it: landing first shows the spacers a reading window left there
+ * until the next frame's pass.
+ */
+function mountLiveEdge(): void {
+  demandPin = undefined;
+  windowPass(false);
+}
+
+/**
  * Re-window on a settled scroll frame the reader caused, over the last full pass's projection; `openable` is
- * recomputed since a fold toggle changes it. `fromScroll` false is a build settling.
+ * recomputed since a fold toggle changes it. `fromScroll` false is a build settling or a live-edge request.
  */
 function windowPass(fromScroll = true): void {
   if (inWindowPass) {
@@ -1554,16 +1565,20 @@ function setHitCount(card: HTMLElement, n: number): void {
 }
 
 function setCardFolded(card: HTMLElement, folded: boolean): void {
-  if (folded) {
-    card.setAttribute("data-folded", "");
-  } else {
-    card.removeAttribute("data-folded");
+  const flip = (): void => {
+    card.toggleAttribute("data-folded", folded);
+    const header = card.querySelector<HTMLElement>(":scope > .turn-header");
+    // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
+    header
+      ?.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
+      ?.setAttribute("aria-expanded", folded ? "false" : "true");
+  };
+  const body = card.querySelector<HTMLElement>(":scope > .turn-body");
+  if (body === null || card.hasAttribute("data-folded") === folded) {
+    flip();
+    return;
   }
-  const header = card.querySelector<HTMLElement>(":scope > .turn-header");
-  // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
-  header
-    ?.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
-    ?.setAttribute("aria-expanded", folded ? "false" : "true");
+  slideTurnFold(body, folded, flip);
 }
 
 // A collapsed turn keeps the open layout: header, a face with the final answer prose where the body was, and the

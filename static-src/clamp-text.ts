@@ -1,5 +1,7 @@
 // A text element capped to N lines with a show-more opener. The measurement facts are on `watchClamp`.
 
+import { isSliding, slideBox } from "./disclosure-row.js";
+
 /** Above this, assume overflow when layout cannot be measured. Generous: a false positive costs one frame of opener. */
 const CLAMP_FALLBACK_CHARS = 220;
 
@@ -111,7 +113,7 @@ export function attachClamp(
 
   more.hidden = true;
   more.addEventListener("click", () => {
-    writeExpanded(text, state, !state.isExpanded());
+    writeExpanded(text, state, !state.isExpanded(), true);
   });
   watchClamp(text);
   reviewClamp(text, state);
@@ -120,7 +122,8 @@ export function attachClamp(
 
 /** Measurement decides when layout exists, the character fallback otherwise, so a long text always has an opener. */
 function reviewClamp(text: HTMLElement, s: ClampState): void {
-  if (s.off) {
+  // A slide resizes the box every frame, and a mid-close review would clamp it before the slide ends.
+  if (s.off || isSliding(text)) {
     return;
   }
   if (s.isExpanded()) {
@@ -285,13 +288,17 @@ function snapClampToLine(text: HTMLElement): void {
   text.style.setProperty(CLAMP_H, `${String(height)}px`);
 }
 
-function writeExpanded(text: HTMLElement, s: ClampState, on: boolean): void {
+/** `motion` is the reader's own toggle: a content change collapses at once. */
+function writeExpanded(text: HTMLElement, s: ClampState, on: boolean, motion = false): void {
   s.setExpanded(on);
-  if (on) {
-    text.removeAttribute("data-clamped");
-  } else {
-    text.setAttribute("data-clamped", "");
-  }
+  slideBox(
+    text,
+    on,
+    (open) => {
+      text.toggleAttribute("data-clamped", !open);
+    },
+    motion,
+  );
   s.more.textContent = on ? LABEL_LESS : LABEL_MORE;
   s.more.setAttribute("aria-expanded", on ? "true" : "false");
 }

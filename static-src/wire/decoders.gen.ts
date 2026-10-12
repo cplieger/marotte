@@ -2360,6 +2360,8 @@ export const decodeRunStepSteerRequest: Decoder<RunStepSteerRequest> = (v) => {
   const out: RunStepSteerRequest = {
     steer_id: reqStr(o, "steer_id", "$.run_step_steer_request"),
   };
+  const edit = o["edit"] === null ? undefined : optBool(o, "edit", "$.run_step_steer_request");
+  if (edit !== undefined) out.edit = edit;
   return out;
 };
 

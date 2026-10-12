@@ -24,7 +24,7 @@ const { geometrySkipped } = await import("./messages-blocks.js");
 
 /** The selector strings are the predicate's own, so a drift on either side fails here. */
 const SKIPPED = [
-  { sheet: "29-turns.css", selector: ".turn[data-folded] > .turn-body" },
+  { sheet: "29-turns.css", selector: ".turn[data-folded] > .turn-body:not([data-fold-closing])" },
   { sheet: "13-messages.css", selector: ".transcript-view:not(.is-active)" },
   { sheet: "14-tools.css", selector: ".subagent-block.collapsed > .subagent-body" },
 ] as const;

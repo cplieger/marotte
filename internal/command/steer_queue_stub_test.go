@@ -102,8 +102,12 @@ func (q *stubSteerQueue) SteerSent(_ marotte.ChatID, s SteerSend, queued bool, e
 	q.sent = append(q.sent, stubSent{send: s, queued: queued, err: err})
 }
 
-func (q *stubSteerQueue) BeginRemove(_ marotte.ChatID, key, _ string) (bool, string) {
-	q.log("begin-remove " + key)
+func (q *stubSteerQueue) BeginRemove(_ marotte.ChatID, key, _ string, edit bool) (bool, string) {
+	if edit {
+		q.log("begin-edit " + key)
+	} else {
+		q.log("begin-remove " + key)
+	}
 	return q.needsClear, q.removeRef
 }
 
@@ -119,8 +123,12 @@ func (q *stubSteerQueue) RemoveCleared(_ marotte.ChatID, _ string, cleared []str
 	return q.removeRes
 }
 
-func (q *stubSteerQueue) BeginDiscard(marotte.ChatID, string) (bool, string) {
-	q.log("begin-discard")
+func (q *stubSteerQueue) BeginDiscard(_ marotte.ChatID, _, edit string) (bool, string) {
+	if edit != "" {
+		q.log("begin-discard edit " + edit)
+	} else {
+		q.log("begin-discard")
+	}
 	return q.needsClear, q.discardRef
 }
 

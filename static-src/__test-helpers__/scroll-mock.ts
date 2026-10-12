@@ -29,6 +29,7 @@ export const scrollMock = {
   onTranscriptMutate: vi.fn(() => () => undefined),
   onReaderGesture: vi.fn(() => () => undefined),
   onViewportChange: vi.fn(() => () => undefined),
+  onLiveEdgeRequest: vi.fn(() => () => undefined),
   onContentResize: vi.fn(() => () => undefined),
   onAttach: vi.fn(() => () => undefined),
   setAnchorProvider: vi.fn(),

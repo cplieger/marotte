@@ -1740,6 +1740,10 @@ describe("the card's ceiling keeps the answer row on screen", () => {
     const h = boundedHost();
     longAsk("c1");
     opener(h)?.click();
+    // Show more slides open; the ceiling is a property of the opened card, so read it settled.
+    for (const a of document.getAnimations()) {
+      a.finish();
+    }
     const card = liveCard(h);
     const body = card?.querySelector<HTMLElement>(".dock-ask-body");
     const actions = card?.querySelector<HTMLElement>(".dock-ask-actions");

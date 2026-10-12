@@ -66,7 +66,7 @@ func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 					return
 				}
 				op := "op-" + key
-				needsClear, refuse := s.q.BeginRemove(chat, key, op)
+				needsClear, refuse := s.q.BeginRemove(chat, key, op, false)
 				if refuse != "" || !needsClear {
 					return
 				}
@@ -91,7 +91,7 @@ func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 				s.q.EndOp(chat, op)
 			},
 			"discard": func(rt *rapid.T) {
-				needsClear, refuse := s.q.BeginDiscard(chat, "op-d")
+				needsClear, refuse := s.q.BeginDiscard(chat, "op-d", "")
 				if refuse != "" || !needsClear {
 					return
 				}
