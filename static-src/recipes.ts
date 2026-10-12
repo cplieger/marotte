@@ -397,7 +397,7 @@ function syncValidity(row: HTMLElement, r: Recipe): void {
   }
 }
 
-/** A disabled control still gets hover, so its tooltip says why it is off (`web.md`). */
+/** A disabled control still gets hover, so its tooltip says why it is off. */
 function toggleTooltip(btn: HTMLElement, text: string): void {
   if (text === "") {
     btn.removeAttribute("data-tooltip");
