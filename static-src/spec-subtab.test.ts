@@ -36,6 +36,7 @@ vi.mock("./icons.js", () => ({
   ICON_HOURGLASS: "",
   ICON_ALERT: "",
   ICON_PIN_FILLED: "",
+  ICON_CHEVRON_DOWN: "",
 }));
 vi.mock("./device-view.js", () => {
   let active = "";
