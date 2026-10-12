@@ -45,10 +45,11 @@ interface PlanEntry {
   maxIterations?: number;
   onMaxIterations?: string;
   stopCondition?: string;
-  /** A parallel's join policy: `all` / `allSettled` / `any`. */
-  join?: string;
   /** A watch's handler id. */
   watch?: string;
+  /** On a sequence KAS expanded from an `include`: the included recipe's name and the path the
+   *  include wrote. Only the plan carries it; the state tree's sequence drops it. */
+  includedFrom?: { name: string; path?: string };
   /** A container's planned children, raw: what it will hold before KAS expands it. */
   body?: unknown[];
 }
@@ -86,7 +87,6 @@ export function indexPlan(plan: unknown): Map<string, PlanEntry> {
       for (const [key, field] of [
         ["onMaxIterations", "onMaxIterations"],
         ["stopCondition", "stopCondition"],
-        ["join", "join"],
       ] as const) {
         const v = str(o[key]);
         if (v !== undefined) {
@@ -106,6 +106,15 @@ export function indexPlan(plan: unknown): Map<string, PlanEntry> {
         const handler = str(o["agentName"]);
         if (handler !== undefined) {
           entry.watch = handler;
+        }
+      }
+      const from = o["includedFrom"];
+      if (from !== null && typeof from === "object" && !Array.isArray(from)) {
+        const f = from as Record<string, unknown>;
+        const name = str(f["name"]);
+        if (name !== undefined) {
+          const path = str(f["path"]);
+          entry.includedFrom = path === undefined ? { name } : { name, path };
         }
       }
       const body = PLAN_CHILD_KEYS.flatMap((key) => {
@@ -172,6 +181,7 @@ function stepFacts(
   node: RunNode,
   plan: PlanEntry | undefined,
   watch: WatchResult | undefined,
+  include: Include | undefined,
 ): ExecFact[] {
   const facts: ExecFact[] = [];
   const add = (label: string, value: string | undefined, mono = false): void => {
@@ -192,13 +202,14 @@ function stepFacts(
   }
   add("Pass", node.iteration === undefined ? undefined : String(node.iteration + 1));
   add("Branch", node.branchId);
+  add("Recipe", plan?.includedFrom?.name ?? include?.name);
+  add("Recipe file", plan?.includedFrom?.path, true);
   if (node.watchTerminal === true) {
     add("Watch", "reached a terminal state");
   }
   add("Max passes", plan?.maxIterations === undefined ? undefined : String(plan.maxIterations));
   add("At the cap", plan?.onMaxIterations);
   add("Stops when", plan?.stopCondition, true);
-  add("Join", plan?.join);
   add("Handler", plan?.watch, true);
   if (watch?.kind === "process") {
     // "Signal" is KAS's completion signal above, so a kill is stated as the exit.
@@ -230,7 +241,12 @@ function subtitleOf(
       bits.push(`until ${truncate(plan.stopCondition, 60)}`);
     }
   } else if (kind === "parallel") {
-    bits.push(plan?.join === undefined ? "in parallel" : `in parallel, join ${plan.join}`);
+    bits.push("in parallel");
+  } else if (kind === "sequence") {
+    // Provenance, not a second name: shown even when the recipe is named like the include.
+    if (plan?.includedFrom !== undefined) {
+      bits.push(`from ${truncate(plan.includedFrom.name, 60)}`);
+    }
   } else if (kind === "watch") {
     if (watch !== undefined) {
       bits.push(watchSummary(watch));
@@ -270,6 +286,12 @@ function latestEnd(nodes: readonly ExecNode[]): string | undefined {
     }
   }
   return best;
+}
+
+/** The include a node sits inside: its id (the prefix KAS gave every node in it) and its recipe. */
+interface Include {
+  id: string;
+  name: string;
 }
 
 /** `path` goes through `nodePathSegment`, so a step's tree row is addressed the way KAS addresses
@@ -347,6 +369,7 @@ function toNode(
   trail: readonly string[],
   ctx: FoldContext,
   parent?: RunNode,
+  include?: Include,
 ): ExecNode {
   const path = [...trail, nodePathSegment(node, parent)];
   const address = nodePathKey(path);
@@ -354,7 +377,12 @@ function toNode(
   const kind = kindOf(node.type);
   const actual = node.children ?? [];
   const kids = actual.length > 0 ? actual : plannedChildren(node, plan);
-  const children = kids.map((k) => toNode(k, path, ctx, node));
+  // KAS refuses an include inside an included recipe, so one enclosing include is all there is.
+  const inner =
+    kind === "sequence" && plan?.includedFrom !== undefined
+      ? { id: node.nodeId, name: plan.includedFrom.name }
+      : include;
+  const children = kids.map((k) => toNode(k, path, ctx, node, inner));
   const own = withAsk(stateOf(node.status), ctx.asked.waiting.has(node));
   const work = isWork({ kind });
   const end = work ? ctx.ends.get(address) : undefined;
@@ -365,13 +393,14 @@ function toNode(
     parent?.type === "repeat"
       ? (node.iteration ?? (parent.children ?? []).indexOf(node)) + 1
       : undefined;
-  const out: ExecNode = {
-    path: address,
-    label: pass !== undefined && !work ? `pass ${String(pass)}` : node.nodeId,
-    kind,
-    state,
-    children,
-  };
+  const label = pass !== undefined && !work ? `pass ${String(pass)}` : node.nodeId;
+  const out: ExecNode = { path: address, label, kind, state, children };
+  // KAS prefixes every id inside an include with `<include id>/`; a hand-written id holding a `/`
+  // is not one, so the prefix is matched against the include's id, never split out of the label.
+  const qualifier = include === undefined ? "" : `${include.id}/`;
+  if (qualifier !== "" && label.length > qualifier.length && label.startsWith(qualifier)) {
+    out.qualifier = qualifier;
+  }
   const verb = work ? messageVerb(node, ctx) : undefined;
   if (verb !== undefined) {
     out.verb = verb;
@@ -405,7 +434,7 @@ function toNode(
   if (sub !== "") {
     out.subtitle = sub;
   }
-  const facts = stepFacts(node, plan, watch);
+  const facts = stepFacts(node, plan, watch, include);
   if (facts.length > 0) {
     out.facts = facts;
   }

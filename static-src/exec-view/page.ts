@@ -3,10 +3,13 @@
 // for all of them. It must name no source: a consumer hands it an `ExecRun`.
 
 import { el } from "@cplieger/reactive";
+import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import { attachClamp, releaseClampsIn } from "../clamp-text.js";
 import { chevronEl } from "../chevron.js";
+import { wireRowToggle } from "../disclosure-row.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN } from "../icons.js";
+import { reconcile } from "../reconcile.js";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
 import { formatElapsed } from "../strings.js";
 import {
@@ -19,8 +22,10 @@ import {
   type ExecNode,
   type ExecRun,
 } from "./model.js";
-import { STATE_WORD, settled } from "./status.js";
-import { buildExecTree, nodeAt, attentionRank, type ExecTreeView } from "./tree.js";
+import { STATE_WORD, inFlight, paintStateMark, settled } from "./status.js";
+import { alertGlyph, buildAlertLine, wantsReader } from "./alert.js";
+import { paintLabel } from "./label.js";
+import { buildExecTree, kindGlyph, nodeAt, attentionRank, type ExecTreeView } from "./tree.js";
 import { buildExecTimeline, type ExecTimelineView } from "./timeline.js";
 import {
   buildExecDetail,
@@ -41,6 +46,15 @@ interface ExecPageOpts {
    *  returned last time to say nothing changed — the page then leaves it in place
    *  rather than re-inserting it. */
   controls?: (run: ExecRun) => HTMLElement | null;
+  /** The same verbs as compact icons for the dock's timeline row, under the same contract. Read
+   *  only with a `dock`. */
+  dockControls?: (run: ExecRun) => HTMLElement | null;
+  /** What the dock's alert row offers beside the run's verbs (an ask's Answer), under the same
+   *  contract. Asked on every repaint, alert or not. Read only with a `dock`. */
+  alertAction?: (run: ExecRun) => HTMLElement | null;
+  /** The inline control for the step the detail pane shows, or null, under the same contract;
+   *  the consumer decides which states earn one. Asked with no node too, so it can let go. */
+  stepControls?: (run: ExecRun, node: ExecNode | undefined) => HTMLElement | null;
   /** The header's identity glyph. Defaults to the workflow one; a subagent page
    *  passes the agent hexagon. */
   icon?: string;
@@ -91,12 +105,11 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   const clock = el("span", { className: "ev-h-clock" });
   const controlsHost = el("div", { className: "ev-h-actions" });
   const inputs = el("dl", { className: "ev-inputs" });
-  const alert = el("div", {
-    className: "ev-alert",
-    role: "status",
-    "aria-live": "polite",
-    hidden: true,
-  });
+  const alertLine = buildAlertLine("div", "ev-alert ev-alert-line");
+  const alert = alertLine.root;
+  alert.setAttribute("role", "status");
+  alert.setAttribute("aria-live", "polite");
+  alert.hidden = true;
   const notice = el("p", {
     className: "ev-alert ev-notice",
     role: "status",
@@ -140,7 +153,9 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   let focused = "";
 
   const tree: ExecTreeView = buildExecTree(select);
-  const timeline: ExecTimelineView = buildExecTimeline(select);
+  // Docked, the timeline box is always there, so one planned step is chart enough; on the page a
+  // single bar would say nothing the header's clock does not.
+  const timeline: ExecTimelineView = buildExecTimeline(select, opts.dock === undefined ? 2 : 1);
   const detail: ExecDetailView = buildExecDetail(opts.emptyNote, opts.emptyAction);
 
   const treePane = el("div", { className: "ev-pane ev-pane-tree" }, tree.root);
@@ -169,7 +184,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       : el("div", { className: "ev-page ev-page-docked" }, head, alert, notice, panes);
   if (dock !== undefined) {
     dock.steps.body.append(treePane);
-    dock.timeline.body.append(timeline.root, dock.timelineEmpty);
+    dock.timeline.body.append(timeline.root);
     dock.results.body.append(results, dock.resultsEmpty);
   }
 
@@ -255,14 +270,17 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     timeline.render(run.nodes, selected, run.live);
     if (dock !== undefined) {
       dock.paint(run);
+      dock.setControls(opts.dockControls?.(run) ?? null);
+      dock.setAlertAction(opts.alertAction?.(run) ?? null);
     }
     const node = nodeAt(run.nodes, selected);
     detail.render(node);
+    detail.setControls(opts.stepControls?.(run, node) ?? null);
     // In `repaint` rather than in `render`, because the region is the SELECTED node's:
     // a selection change is a change of subject, and only this path runs on one.
     renderResults(node);
     if (dock !== undefined) {
-      dock.results.box.hidden = run.live;
+      dock.results.root.hidden = run.live;
       dock.resultsEmpty.hidden = !results.hidden;
       dock.resultsEmpty.textContent = node === undefined ? "" : `No results from ${node.label}.`;
     }
@@ -420,12 +438,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       const c = counters(run.nodes);
       // Withheld for a one-node execution: "step 1 of 1" cannot progress, and the
       // state word beside it already says how the node ended.
-      progress.textContent =
-        c.total <= 1
-          ? ""
-          : c.current > 0
-            ? `step ${String(c.current)} of ${String(c.total)}`
-            : `${String(c.done)} of ${String(c.total)}`;
+      progress.textContent = c.total <= 1 ? "" : progressText(c);
       const win = execWindow(run.nodes, run.live);
       clock.textContent = win === undefined ? "" : formatElapsed(win.span);
 
@@ -433,8 +446,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
 
       alert.hidden = run.alert === undefined;
       if (run.alert !== undefined) {
-        alert.dataset["kind"] = run.alert.kind;
-        alert.textContent = run.alert.text;
+        alertLine.paint(run.alert);
       }
       notice.hidden = run.notice === undefined;
       if (run.notice !== undefined) {
@@ -501,80 +513,251 @@ function newestStarted(nodes: readonly ExecNode[]): ExecNode | undefined {
   return best;
 }
 
+/** One dock box: a head row that opens it from anywhere but its own controls, over a region the
+ *  shared disclosure slides, as every chat disclosure does. */
 interface DockBox {
-  readonly box: HTMLDetailsElement;
+  readonly root: HTMLElement;
   readonly body: HTMLElement;
-  readonly latest: HTMLElement;
-  readonly dur: HTMLElement;
+  readonly ctl: DisclosureController;
 }
 
 interface Dock {
   readonly timeline: DockBox;
   readonly steps: DockBox;
   readonly results: DockBox;
-  readonly timelineEmpty: HTMLElement;
   readonly resultsEmpty: HTMLElement;
   paint(run: ExecRun): void;
+  /** Seat the run's compact controls on the timeline row; the same element again moves nothing. */
+  setControls(row: HTMLElement | null): void;
+  /** Seat the alert row's own action, under `setControls`' contract. */
+  setAlertAction(action: HTMLElement | null): void;
   dispose(): void;
 }
 
+let dockIds = 0;
+
+/** One in-flight (or newest) step's line on the folded Steps row. */
+interface DockRow {
+  readonly root: HTMLElement;
+  readonly mark: HTMLElement;
+  readonly kind: HTMLElement;
+  readonly label: HTMLElement;
+  readonly tail: HTMLElement;
+  readonly dur: HTMLElement;
+}
+
 function buildDock(host: HTMLElement): Dock {
-  const mk = (key: string, title: string): DockBox => {
-    const latest = el("span", { className: "ev-box-latest" });
-    const dur = el("span", { className: "ev-box-dur" });
-    const summary = el(
-      "summary",
-      { className: "ev-box-head" },
-      el("span", { className: "ev-box-twist", "aria-hidden": "true" }, chevronEl()),
-      el("span", { className: "ev-box-title" }, title),
-      latest,
-      dur,
+  const boxes: DockBox[] = [];
+  const mk = (key: string, name: string, info: HTMLElement, ...tail: HTMLElement[]): DockBox => {
+    info.id = `ev-dock-${key}-${String(++dockIds)}`;
+    const toggle = el(
+      "button",
+      {
+        type: "button",
+        className: "ev-box-toggle",
+        "aria-label": name,
+        "aria-describedby": info.id,
+      },
+      chevronEl(),
     );
+    const head = el("div", { className: "ev-box-head" }, toggle, info, ...tail);
     const body = el("div", { className: "ev-box-body" });
-    const box = el(
-      "details",
-      { className: "ev-box", "data-box": key },
-      summary,
-      body,
-    ) as HTMLDetailsElement;
-    box.name = "ev-dock";
-    return { box, body, latest, dur };
+    const region = el("div", { className: "ev-box-region" }, body);
+    const root = el("div", { className: "ev-box", "data-box": key }, head, region);
+    const ctl = createDisclosure(toggle, region, {
+      onToggle: (open) => {
+        root.classList.toggle("ev-box-open", open);
+        if (!open) {
+          return;
+        }
+        // One box open at a time, the one leaving sliding shut as the other opens.
+        for (const other of boxes) {
+          if (other.root !== root && other.ctl.isOpen) {
+            other.ctl.close();
+          }
+        }
+      },
+    });
+    wireRowToggle(head, toggle);
+    const box = { root, body, ctl };
+    boxes.push(box);
+    return box;
   };
-  const timeline = mk("timeline", "Timeline");
-  const steps = mk("steps", "Steps");
-  const results = mk("results", "Results");
-  results.box.hidden = true;
-  const timelineEmpty = el(
-    "p",
-    { className: "ev-box-empty" },
-    "The timeline appears once two steps have run.",
+
+  // The timeline row: the plan as one serial bar, where the run stands, its clock and its controls,
+  // so none of them scrolls out of reach. An alert that wants the reader takes the summary's place,
+  // with its own action beside the verbs; a `stopped` one is a mark beside the clock.
+  const mini = el("span", { className: "ev-mini", "aria-hidden": "true" });
+  const progress = el("span", { className: "ev-box-sum" });
+  const clock = el("span", { className: "ev-box-dur" });
+  const alertMark = el("span", { className: "ev-box-alert", role: "img", hidden: true });
+  alertMark.replaceChildren(iconEl(alertGlyph("stopped")));
+  const summary = el("span", { className: "ev-box-summary" }, mini, progress, clock, alertMark);
+  const dockAlert = buildAlertLine("span", "ev-box-alertline");
+  dockAlert.root.hidden = true;
+  const alertActs = el("span", { className: "ev-box-alert-act" });
+  const tlInfo = el("span", { className: "ev-box-info" }, summary, dockAlert.root);
+  const actions = el("span", { className: "ev-box-actions" });
+  const timeline = mk("timeline", "Timeline", tlInfo, alertActs, actions);
+
+  // The steps row: every step in flight, each with its state, agent mark, name and newest line.
+  // The list scrolls inside itself past a few rows (18-pages.css), so a wide fan-out keeps the
+  // composer on screen.
+  const rows = el("span", { className: "ev-box-rows" });
+  const steps = mk("steps", "Steps", el("span", { className: "ev-box-info" }, rows));
+
+  const latest = el("span", { className: "ev-box-latest" });
+  const latestDur = el("span", { className: "ev-box-dur" });
+  const results = mk(
+    "results",
+    "Results",
+    el(
+      "span",
+      { className: "ev-box-info" },
+      el("span", { className: "ev-box-title" }, "Results"),
+      latest,
+      latestDur,
+    ),
   );
+  results.root.hidden = true;
   const resultsEmpty = el("p", { className: "ev-box-empty" });
-  host.replaceChildren(timeline.box, steps.box, results.box);
+  host.replaceChildren(timeline.root, steps.root, results.root);
+
+  const rowParts = new WeakMap<HTMLElement, DockRow>();
+  const buildRow = (): DockRow => {
+    const mark = el("span", { className: "ev-state", "aria-hidden": "true" });
+    const kind = el("span", { className: "ev-kind", "aria-hidden": "true" });
+    const label = el("span", { className: "ev-dock-label" });
+    const tailEl = el("span", { className: "ev-dock-tail" });
+    const dur = el("span", { className: "ev-dock-dur" });
+    const root = el("span", { className: "ev-dock-row" }, mark, kind, label, tailEl, dur);
+    const row = { root, mark, kind, label, tail: tailEl, dur };
+    rowParts.set(root, row);
+    return row;
+  };
+  const paintRow = (row: DockRow, n: ExecNode): void => {
+    if (row.root.dataset["state"] !== n.state) {
+      paintStateMark(row.mark, n.state);
+      row.root.dataset["state"] = n.state;
+    }
+    if (row.root.dataset["kind"] !== n.kind) {
+      row.kind.replaceChildren(kindGlyph(n.kind));
+      row.root.dataset["kind"] = n.kind;
+    }
+    paintLabel(row.label, n);
+    setText(row.tail, n.tail ?? "");
+    const ms = elapsed(n.start, n.end);
+    setText(row.dur, ms > 0 ? formatElapsed(ms) : "");
+  };
+
   return {
     timeline,
     steps,
     results,
-    timelineEmpty,
     resultsEmpty,
     paint(run) {
-      const newest = newestStarted(run.nodes);
-      const ms = newest === undefined ? 0 : elapsed(newest.start, newest.end);
-      const label = newest?.label ?? "";
-      const time = ms > 0 ? formatElapsed(ms) : "";
-      for (const b of [timeline, steps, results]) {
-        if (b.latest.textContent !== label) {
-          b.latest.textContent = label;
-        }
-        if (b.dur.textContent !== time) {
-          b.dur.textContent = time;
+      const work = currentWork(run.nodes);
+      const paintSeg = (seg: HTMLElement, n: ExecNode): void => {
+        seg.dataset["state"] = n.state;
+        seg.setAttribute("data-tooltip", `${n.label}, ${STATE_WORD[n.state]}`);
+      };
+      reconcile(mini, work, {
+        key: (n) => n.path,
+        mount: (n) => {
+          const seg = el("span", { className: "ev-mini-seg" });
+          paintSeg(seg, n);
+          return seg;
+        },
+        update: paintSeg,
+      });
+      setText(progress, progressText(counters(run.nodes)));
+      const win = execWindow(run.nodes, run.live);
+      setText(clock, win === undefined ? "" : formatElapsed(win.span));
+      const wanting = wantsReader(run.alert) ? run.alert : undefined;
+      summary.hidden = wanting !== undefined;
+      dockAlert.root.hidden = wanting === undefined;
+      timeline.root.classList.toggle("ev-box-alerting", wanting !== undefined);
+      if (wanting !== undefined) {
+        timeline.root.dataset["kind"] = wanting.kind;
+        dockAlert.paint(wanting);
+        setTip(dockAlert.root, wanting.text);
+      } else {
+        delete timeline.root.dataset["kind"];
+      }
+      alertMark.hidden = run.alert?.kind !== "stopped";
+      if (run.alert?.kind === "stopped") {
+        setTip(alertMark, run.alert.text);
+        if (alertMark.getAttribute("aria-label") !== run.alert.text) {
+          alertMark.setAttribute("aria-label", run.alert.text);
         }
       }
-      const charted = workNodes(run.nodes).filter((n) => n.start !== undefined).length >= 2;
-      timelineEmpty.hidden = charted;
+
+      const flying = work.filter((n) => inFlight(n.state));
+      const newest = newestStarted(run.nodes);
+      const shown = flying.length > 0 ? flying : [newest ?? work[0]].flatMap((n) => n ?? []);
+      reconcile(rows, shown, {
+        key: (n) => n.path,
+        mount: (n) => {
+          const row = buildRow();
+          paintRow(row, n);
+          return row.root;
+        },
+        update: (rowRoot, n) => {
+          const row = rowParts.get(rowRoot);
+          if (row !== undefined) {
+            paintRow(row, n);
+          }
+        },
+      });
+
+      paintLabel(latest, newest ?? { label: "" });
+      const ms = newest === undefined ? 0 : elapsed(newest.start, newest.end);
+      setText(latestDur, ms > 0 ? formatElapsed(ms) : "");
+    },
+    setControls(row) {
+      seat(actions, row);
+    },
+    setAlertAction(action) {
+      seat(alertActs, action);
     },
     dispose() {
+      for (const b of boxes) {
+        b.ctl.dispose();
+      }
       host.replaceChildren();
     },
   };
+}
+
+/** Make `child` the host's only child, or empty it; the same element again moves nothing, since a
+ *  re-insertion blurs whatever is focused inside and this runs once per progress frame. */
+function seat(host: HTMLElement, child: HTMLElement | null): void {
+  if (child === null) {
+    host.replaceChildren();
+  } else if (host.firstChild !== child || host.childNodes.length !== 1) {
+    host.replaceChildren(child);
+  }
+}
+
+function setTip(target: HTMLElement, text: string): void {
+  if (target.getAttribute("data-tooltip") !== text) {
+    target.setAttribute("data-tooltip", text);
+  }
+}
+
+/** A text write that skips an unchanged value, since the 1s tick repaints every row. */
+function setText(target: HTMLElement, text: string): void {
+  if (target.textContent !== text) {
+    target.textContent = text;
+  }
+}
+
+/** Where the run stands: the in-flight step's position, else how many are done. */
+function progressText(c: ReturnType<typeof counters>): string {
+  if (c.total === 0) {
+    return "";
+  }
+  return c.current > 0
+    ? `step ${String(c.current)} of ${String(c.total)}`
+    : `${String(c.done)} of ${String(c.total)}`;
 }

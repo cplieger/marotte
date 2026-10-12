@@ -338,6 +338,9 @@ type Recipe struct {
 	Inputs      map[string]string `json:"inputs,omitempty"`
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"`
+	// ValidationError is KAS's reason the recipe cannot launch (a schema error, a shadowed name,
+	// an include that fails to expand), verbatim; empty for a launchable recipe.
+	ValidationError string `json:"validation_error,omitempty"`
 	// Source is the launch key: `bundled://<name>` or a workspace
 	// `*.workflow.json` path. Echoed back verbatim in RunLaunchRequest.
 	Source string `json:"source"`

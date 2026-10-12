@@ -229,31 +229,62 @@
    Alert — the only region that speaks about a person's involvement
    -------------------------------------------------------------------------- */
 
+/* The alert's palette per kind, read by the page's alert and the dock's alert row
+   (18-pages.css `.ev-box-alerting`) so the two cannot drift apart. A deliberate stop
+   is not a fault, so it takes the quiet treatment: the reader did this on purpose
+   and the row is a statement rather than a warning. */
+.ev-alert,
+.ev-box-alerting {
+  --ev-alert-edge: var(--c-yellow);
+  --ev-alert-wash: color-mix(in srgb, var(--c-yellow) 10%, transparent);
+  --ev-alert-mark: var(--c-yellow);
+  --ev-alert-ink: var(--c-text-primary);
+
+  &[data-kind="failed"] {
+    --ev-alert-edge: var(--c-red);
+    --ev-alert-wash: color-mix(in srgb, var(--c-red) 10%, transparent);
+    --ev-alert-mark: var(--c-red);
+  }
+
+  &[data-kind="stopped"] {
+    --ev-alert-edge: var(--c-border);
+    --ev-alert-wash: var(--c-bg-secondary);
+    --ev-alert-mark: var(--c-text-tertiary);
+    --ev-alert-ink: var(--c-text-secondary);
+  }
+}
+
 .ev-alert {
   flex: 0 0 auto;
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r);
-  border-inline-start: 0.1875rem solid var(--c-yellow);
-  background: color-mix(in srgb, var(--c-yellow) 10%, transparent);
+  border-inline-start: 0.1875rem solid var(--ev-alert-edge);
+  background: var(--ev-alert-wash);
   font-size: var(--fs-sm);
-  color: var(--c-text-primary);
+  color: var(--ev-alert-ink);
 }
 
 .ev-notice {
   margin: 0;
 }
 
-.ev-alert[data-kind="failed"] {
-  border-inline-start-color: var(--c-red);
-  background: color-mix(in srgb, var(--c-red) 10%, transparent);
+/* The mark sits on the sentence's first line, so a wrapped alert keeps it at the top. */
+.ev-alert-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+
+  &[hidden] {
+    display: none;
+  }
 }
 
-/* A deliberate stop is not a fault, so it takes the quiet treatment: the reader
-   did this on purpose and the row is a statement rather than a warning. */
-.ev-alert[data-kind="stopped"] {
-  border-inline-start-color: var(--c-border);
-  background: var(--c-bg-secondary);
-  color: var(--c-text-secondary);
+.ev-alert-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  block-size: 1lh;
+  color: var(--ev-alert-mark);
 }
 
 /* --------------------------------------------------------------------------
@@ -310,7 +341,9 @@
 
 .ev-tl-lane {
   display: grid;
-  grid-template-columns: minmax(4rem, 9rem) minmax(0, 1fr) 3.5rem;
+  /* 12rem holds an included step's whole id (`review/code-adversary-claude`, 28
+     mono characters at `--fs-xs`); the 40% keeps a phone's track readable. */
+  grid-template-columns: minmax(4rem, min(12rem, 40%)) minmax(0, 1fr) 3.5rem;
   align-items: center;
   gap: var(--sp-2);
   padding: 0.125rem var(--sp-1);
@@ -354,46 +387,48 @@
   background: color-mix(in srgb, var(--c-text-primary) 8%, transparent);
 }
 
-.ev-tl-bar {
-  position: absolute;
-  inset-block: 0;
-  border-radius: var(--r-sm);
-  background: var(--c-accent);
-  min-inline-size: 0.125rem;
+/* One fill per step state, read by a timeline bar and the dock's mini segment alike
+   (18-pages.css). A running one fades toward its growing end rather than carrying a
+   spinner, because the bar's own length is already the readout. */
+:is(.ev-tl-lane, .ev-mini-seg)[data-state="ok"] {
+  --ev-state-fill: var(--c-green);
 }
 
-.ev-tl-lane[data-state="ok"] .ev-tl-bar {
-  background: var(--c-green);
+:is(.ev-tl-lane, .ev-mini-seg)[data-state="fail"] {
+  --ev-state-fill: var(--c-red);
 }
 
-.ev-tl-lane[data-state="fail"] .ev-tl-bar {
-  background: var(--c-red);
+:is(.ev-tl-lane, .ev-mini-seg):is([data-state="warn"], [data-state="input"]) {
+  --ev-state-fill: var(--c-yellow);
 }
 
-.ev-tl-lane[data-state="warn"] .ev-tl-bar,
-.ev-tl-lane[data-state="input"] .ev-tl-bar {
-  background: var(--c-yellow);
+:is(.ev-tl-lane, .ev-mini-seg)[data-state="waiting"] {
+  --ev-state-fill: var(--c-blue);
 }
 
-.ev-tl-lane[data-state="waiting"] .ev-tl-bar {
-  background: var(--c-blue);
+:is(.ev-tl-lane, .ev-mini-seg):is([data-state="skipped"], [data-state="unknown"]) {
+  --ev-state-fill: var(--c-text-tertiary);
 }
 
-.ev-tl-lane[data-state="skipped"] .ev-tl-bar,
-.ev-tl-lane[data-state="unknown"] .ev-tl-bar {
-  background: var(--c-text-tertiary);
-}
-
-/* A running bar is the one that is still growing, and MOTION is this app's
-   in-flight axis — a slow shimmer along the bar rather than a spinner, because the
-   bar's own length is already the readout and a second moving thing beside it
-   would compete with it. */
-.ev-tl-lane[data-state="running"] .ev-tl-bar {
-  background: linear-gradient(
+:is(.ev-tl-lane, .ev-mini-seg)[data-state="running"] {
+  --ev-state-fill: linear-gradient(
     90deg,
     var(--c-accent),
     color-mix(in srgb, var(--c-accent) 45%, transparent)
   );
+}
+
+.ev-tl-bar {
+  position: absolute;
+  inset-block: 0;
+  border-radius: var(--r-sm);
+  background: var(--ev-state-fill, var(--c-accent));
+  min-inline-size: 0.125rem;
+}
+
+/* A step not started yet: its lane is there from the plan, its track empty. */
+.ev-tl-bar[hidden] {
+  display: none;
 }
 
 .ev-tl-dur {
@@ -716,16 +751,20 @@
   color: var(--c-text-tertiary);
 }
 
-.ev-row[data-state="ok"] > .ev-row-main > .ev-state {
+.ev-row[data-state="ok"] > .ev-row-main > .ev-state,
+.ev-dock-row[data-state="ok"] > .ev-state {
   color: var(--c-green);
 }
 
-.ev-row[data-state="fail"] > .ev-row-main > .ev-state {
+.ev-row[data-state="fail"] > .ev-row-main > .ev-state,
+.ev-dock-row[data-state="fail"] > .ev-state {
   color: var(--c-red);
 }
 
 .ev-row[data-state="warn"] > .ev-row-main > .ev-state,
-.ev-row[data-state="input"] > .ev-row-main > .ev-state {
+.ev-row[data-state="input"] > .ev-row-main > .ev-state,
+.ev-dock-row[data-state="warn"] > .ev-state,
+.ev-dock-row[data-state="input"] > .ev-state {
   color: var(--c-yellow);
 }
 
@@ -734,7 +773,10 @@
    A still ring is a node that is open with nothing moving; spinning is work. */
 .ev-row[data-state="running"] > .ev-row-main > .ev-state::before,
 .ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before,
-.ev-row[data-state="unknown"] > .ev-row-main > .ev-state::before {
+.ev-row[data-state="unknown"] > .ev-row-main > .ev-state::before,
+.ev-dock-row[data-state="running"] > .ev-state::before,
+.ev-dock-row[data-state="waiting"] > .ev-state::before,
+.ev-dock-row[data-state="unknown"] > .ev-state::before {
   content: "";
   display: block;
 
@@ -770,7 +812,8 @@
    is neutralised rather than dropped: the still `waiting` and `unknown` rings share
    that rule and DRAW with it, and it also reserves this ring's band inside
    `--dot-size`, which the mask then paints over. */
-.ev-row[data-state="running"] > .ev-row-main > .ev-state::before {
+.ev-row[data-state="running"] > .ev-row-main > .ev-state::before,
+.ev-dock-row[data-state="running"] > .ev-state::before {
   border-color: transparent;
   background: conic-gradient(
       from var(--vk-spin-arc),
@@ -786,7 +829,8 @@
   animation: vk-spin var(--spin-dur) linear infinite;
 }
 
-.ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before {
+.ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before,
+.ev-dock-row[data-state="waiting"] > .ev-state::before {
   border-color: var(--c-blue);
 }
 
@@ -795,7 +839,8 @@
    and neutral ink: it may not spin (nothing says work is moving) and may not be blue
    (that means blocked on a person). Without an arm here it rendered no mark at all,
    which is the colour-alone failure the pending ring below exists to have fixed. */
-.ev-row[data-state="unknown"] > .ev-row-main > .ev-state::before {
+.ev-row[data-state="unknown"] > .ev-row-main > .ev-state::before,
+.ev-dock-row[data-state="unknown"] > .ev-state::before {
   border-color: var(--c-text-tertiary);
 }
 
@@ -807,7 +852,8 @@
    use, and it costs the text nothing.
    Three rings, three meanings, one axis: hollow is not started, still is open with
    nothing moving, spinning is work. */
-.ev-row[data-state="pending"] > .ev-row-main > .ev-state::before {
+.ev-row[data-state="pending"] > .ev-row-main > .ev-state::before,
+.ev-dock-row[data-state="pending"] > .ev-state::before {
   content: "";
   display: block;
   box-sizing: border-box;
@@ -851,8 +897,8 @@
   flex-shrink: 0;
 }
 
-/* A container's own fact — a repeat's bound, a parallel's join, a watch's
-   condition — read straight off `nodePlan`. One line that ellipsizes rather than
+/* A container's own fact — a repeat's bound, a watch's condition, the recipe an
+   include came from — read straight off `nodePlan`. One line that ellipsizes rather than
    wrapping, because a row growing to two lines makes a twenty-node tree
    unscannable. */
 .ev-sub {
@@ -873,6 +919,38 @@
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
   font-variant-numeric: tabular-nums;
+}
+
+/* The scope qualifier of a verbatim id (`label.ts`), in the file-search parent's
+   ink, so the part that tells two included steps apart stands out. */
+.ev-q {
+  color: var(--c-text-tertiary);
+}
+
+/* In a bounded column the qualifier yields first and from its START (rtl over the
+   `bdi`), so its trailing `/` and the leaf survive; the leaf ellipsizes only once
+   the qualifier is down to its floor. A column that never shrinks its label (the
+   tree's `.ev-label`) gets the ink split alone. */
+.ev-qualified {
+  display: flex;
+  min-inline-size: 0;
+
+  & > .ev-q {
+    flex: 0 1000 auto;
+    min-inline-size: 2ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+  }
+
+  & > .ev-leaf {
+    flex: 0 1 auto;
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 /* A GROUP HEAD IS A HOVERED BAND — the tertiary rung under the hover wash — which
@@ -948,6 +1026,18 @@
   gap: var(--sp-2);
   flex-shrink: 0;
   font-size: var(--fs-sm);
+}
+
+/* The shown step's inline control: centred on the row, which is otherwise a baseline
+   row, and no box at all when the step has none. */
+.ev-d-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-self: center;
+
+  &:empty {
+    display: none;
+  }
 }
 
 .ev-d-state {

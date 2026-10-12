@@ -2322,6 +2322,11 @@ export interface Recipe {
   name: string;
   description?: string;
   /**
+ * ValidationError is KAS's reason the recipe cannot launch (a schema error, a shadowed name,
+ * an include that fails to expand), verbatim; empty for a launchable recipe.
+ */
+  validation_error?: string;
+  /**
  * Source is the launch key: `bundled://<name>` or a workspace
  * `*.workflow.json` path. Echoed back verbatim in RunLaunchRequest.
  */

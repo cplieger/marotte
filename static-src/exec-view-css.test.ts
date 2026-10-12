@@ -5,6 +5,7 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { chevronEl } from "./chevron.js";
 import { attachClamp, releaseClampsIn } from "./clamp-text.js";
 import execPageSrc from "./exec-view/page.ts?raw";
+import { buildExecTimeline } from "./exec-view/timeline.js";
 import { buildExecTree } from "./exec-view/tree.js";
 import type { ExecNode } from "./exec-view/model.js";
 
@@ -1159,5 +1160,57 @@ describe("a run step's transcript spaces its blocks the way a chat turn does", (
     expect(css(runCode, "background-color")).toBe(css(chatCode, "background-color"));
     expect(css(runCode, "font-family")).toBe(css(chatCode, "font-family"));
     expect(css(runCode, "font-size")).toBe(css(chatCode, "font-size"));
+  });
+});
+
+// The selected fill hosts primary and secondary ink only (`ink-ramp.node.test.ts`), so an included
+// step's dimmed `review/` in tertiary ink there would fail contrast.
+describe("an included step's qualifier on the selected fill", () => {
+  const included = (id: string): ExecNode => ({
+    path: `wf:${id}`,
+    label: `review/${id}`,
+    qualifier: "review/",
+    kind: "step",
+    state: "ok",
+    children: [],
+    start: "2026-10-07T10:00:00Z",
+    end: "2026-10-07T10:01:00Z",
+  });
+  const nodes = [included("advisor"), included("critic")];
+
+  /** The colour a token resolves to inside `scope`, read off a probe that paints it. */
+  function tokenColor(scope: HTMLElement, token: string): string {
+    const probe = document.createElement("span");
+    probe.style.color = `var(${token})`;
+    scope.appendChild(probe);
+    const out = getComputedStyle(probe).color;
+    probe.remove();
+    return out;
+  }
+
+  function qualifierInk(root: HTMLElement, rowSel: string, path: string): string {
+    const q = root.querySelector<HTMLElement>(`${rowSel}[data-path="${path}"] .ev-q`);
+    expect(q?.textContent).toBe("review/");
+    return getComputedStyle(q!).color;
+  }
+
+  it("takes the selected muted ink on a selected tree row", () => {
+    const tree = buildExecTree(vi.fn());
+    mount(tree.root);
+    tree.render(nodes, "wf:advisor");
+    const muted = tokenColor(tree.root, "--c-selected-muted-fg");
+    expect(qualifierInk(tree.root, ".ev-row", "wf:advisor")).toBe(muted);
+    expect(qualifierInk(tree.root, ".ev-row", "wf:critic")).toBe(
+      tokenColor(tree.root, "--c-text-tertiary"),
+    );
+  });
+
+  it("takes the selected muted ink on a selected timeline lane", () => {
+    const timeline = buildExecTimeline(vi.fn(), 1);
+    mount(timeline.root);
+    timeline.render(nodes, "wf:advisor", false);
+    const muted = tokenColor(timeline.root, "--c-selected-muted-fg");
+    expect(qualifierInk(timeline.root, ".ev-tl-lane", "wf:advisor")).toBe(muted);
+    expect(qualifierInk(timeline.root, ".ev-tl-lane", "wf:critic")).not.toBe(muted);
   });
 });

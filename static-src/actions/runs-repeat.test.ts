@@ -8,7 +8,7 @@ import type * as RunStore from "../run-store.js";
 const m = vi.hoisted(() => ({
   err: undefined as { status: number; body: unknown } | undefined,
   requests: [] as { url: string; method: string; body: unknown }[],
-  controlsInvalidated: [] as string[],
+  reread: [] as string[],
 }));
 
 vi.mock("../toast.js", async (importOriginal) => ({
@@ -20,20 +20,26 @@ vi.mock("../toast.js", async (importOriginal) => ({
 
 vi.mock("../run-store.js", async (importOriginal) => ({
   ...(await importOriginal<typeof RunStore>()),
-  invalidateRun: vi.fn(),
-  invalidateRunControls: vi.fn((id: string) => {
-    m.controlsInvalidated.push(id);
+  invalidateRun: vi.fn((id: string) => {
+    m.reread.push(id);
   }),
 }));
 
 import { configure, configureApi } from "@cplieger/actions";
-import { extendRunRepeat, finishRunRepeat, launchRun } from "./runs.js";
+import {
+  cancelRun,
+  extendRunRepeat,
+  finishRunRepeat,
+  launchRun,
+  pauseRun,
+  resumeRun,
+} from "./runs.js";
 import { error as toastError } from "../toast.js";
 
 beforeEach(() => {
   m.err = undefined;
   m.requests.length = 0;
-  m.controlsInvalidated.length = 0;
+  m.reread.length = 0;
   configureApi({
     fetchFn: (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -71,7 +77,7 @@ describe("the repeat verbs", () => {
         body: { node_id: "loop-1", iterations: 5 },
       },
     ]);
-    expect(m.controlsInvalidated).toEqual(["wf 1"]);
+    expect(m.reread).toEqual(["wf 1"]);
   });
 
   it("POSTs the paused node to the run's finish-loop route", async () => {
@@ -79,20 +85,42 @@ describe("the repeat verbs", () => {
     expect(m.requests).toEqual([
       { url: "/api/runs/wf_1/finish-loop", method: "POST", body: { node_id: "loop-1" } },
     ]);
-    expect(m.controlsInvalidated).toEqual(["wf_1"]);
+    expect(m.reread).toEqual(["wf_1"]);
   });
 
   it("shows an extend refusal as the server's sentence alone", async () => {
     m.err = { status: 409, body: { error: "The loop is not paused." } };
     await extendRunRepeat.dispatch({ workflowID: "wf_1", nodeID: "loop-1", iterations: 1 });
     expect(vi.mocked(toastError)).toHaveBeenCalledWith("The loop is not paused.");
-    expect(m.controlsInvalidated).toEqual([]);
+    expect(m.reread).toEqual([]);
   });
 
   it("shows a finish refusal as the server's sentence alone", async () => {
     m.err = { status: 409, body: { error: "Node loop-1 is not a repeat." } };
     await finishRunRepeat.dispatch({ workflowID: "wf_1", nodeID: "loop-1" });
     expect(vi.mocked(toastError)).toHaveBeenCalledWith("Node loop-1 is not a repeat.");
+  });
+});
+
+// A landed Pause only sets `pausePending`, which no frame reports, so each verb's success re-reads
+// the run, and the store re-reads its verbs behind that.
+describe("the run verbs", () => {
+  it("re-read the run each verb succeeded on", async () => {
+    await pauseRun.dispatch("wf_p");
+    await resumeRun.dispatch("wf_r");
+    await cancelRun.dispatch("wf_c");
+    expect(m.requests.map((r) => r.url)).toEqual([
+      "/api/runs/wf_p/pause",
+      "/api/runs/wf_r/resume",
+      "/api/runs/wf_c/cancel",
+    ]);
+    expect(m.reread).toEqual(["wf_p", "wf_r", "wf_c"]);
+  });
+
+  it("re-read nothing on a refusal", async () => {
+    m.err = { status: 409, body: { error: "Not running." } };
+    await pauseRun.dispatch("wf_p");
+    expect(m.reread).toEqual([]);
   });
 });
 

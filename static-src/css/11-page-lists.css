@@ -313,6 +313,10 @@ button.entry-open {
   font-family: var(--font-mono);
 }
 
+.entry-sub-error {
+  color: var(--c-red);
+}
+
 /* ONE CONTROL HEIGHT PER ROW: every action in the slot reads the
    dense tier, icon or text. `max()` rather than the bare token because the
    universal hit floor (61-mcp-tools.css) scores zero and LOSES to this rule, which

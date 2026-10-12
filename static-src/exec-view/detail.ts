@@ -5,6 +5,7 @@ import { el } from "@cplieger/reactive";
 import { formatElapsed } from "../strings.js";
 import { elapsed, type ExecNode } from "./model.js";
 import { STATE_WORD } from "./status.js";
+import { paintLabel } from "./label.js";
 
 export interface ExecDetailView {
   readonly root: HTMLElement;
@@ -15,6 +16,8 @@ export interface ExecDetailView {
   bodyFor(path: string): HTMLElement;
   /** Advance the duration of a node still running. */
   tick(): void;
+  /** Seat the shown node's inline control on its name row; the same element again moves nothing. */
+  setControls(row: HTMLElement | null): void;
 }
 
 /** What a node with no transcript host says; injected so the consumer owns the wording. */
@@ -28,11 +31,13 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
   const title = el("span", { className: "ev-d-title" });
   const state = el("span", { className: "ev-d-state" });
   const dur = el("span", { className: "ev-d-dur" });
+  const actions = el("span", { className: "ev-d-actions" });
   const head = el(
     "div",
     { className: "ev-d-head" },
     title,
     el("span", { className: "ev-d-meta" }, state, dur),
+    actions,
   );
   const facts = el("dl", { className: "ev-d-facts" });
   const failure = el("div", { className: "ev-d-fail", role: "status" });
@@ -57,7 +62,7 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
     shown = node;
     if (node === undefined) {
       root.dataset["state"] = "pending";
-      title.textContent = "No step selected";
+      paintLabel(title, { label: "No step selected" });
       state.textContent = "";
       dur.textContent = "";
       facts.replaceChildren();
@@ -71,7 +76,7 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
       return;
     }
     root.dataset["state"] = node.state;
-    title.textContent = node.label;
+    paintLabel(title, node);
     state.textContent = STATE_WORD[node.state];
     const ms = elapsed(node.start, node.end);
     dur.textContent = ms > 0 ? formatElapsed(ms) : "";
@@ -131,6 +136,13 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
         emptyAct.hidden = true;
       }
       return host;
+    },
+    setControls(row) {
+      if (row === null) {
+        actions.replaceChildren();
+      } else if (actions.firstChild !== row || actions.childNodes.length !== 1) {
+        actions.replaceChildren(row);
+      }
     },
     tick() {
       if (shown === undefined || shown.end !== undefined) {

@@ -213,16 +213,16 @@ describe("run SSE handlers", () => {
     }
   });
 
-  // The verb set changes only when a run ENDS, so that is the affordance's second and last refetch
-  // (the first is a tab opening); per frame would add a round trip to every node event.
-  it("refetches the affordance when a run ENDS, and never mid-run", () => {
+  // A resume's run_start moves the verb set as much as an ending does, and both reach it through
+  // the state re-read (`run-store.ts` refetches the verbs behind it), so no frame asks for the
+  // affordance itself.
+  it("re-reads the state on a start and an end, and leaves the affordance to that read", () => {
     send("run_progress", { workflow_id: "wf_1", kind: "node_start", node_path: ["seq", "coder"] });
     send("run_started", { workflow_id: "wf_1", name: "x" });
-    expect(invalidateControls).not.toHaveBeenCalled();
-
     send("run_finished", { workflow_id: "wf_1", status: "failed", name: "x" });
-    expect(invalidateControls).toHaveBeenCalledTimes(1);
-    expect(invalidateControls).toHaveBeenLastCalledWith("wf_1");
+
+    expect(invalidate).toHaveBeenLastCalledWith("wf_1");
+    expect(invalidateControls).not.toHaveBeenCalled();
   });
 
   // A notice for the run can arrive before its inspect read settles, so the label
