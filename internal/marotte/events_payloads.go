@@ -228,21 +228,6 @@ func DecisionRunID(payload any) string {
 	}
 }
 
-// DecisionNodeID is DecisionRunID's twin for the step node that raised the decision,
-// "" for a payload that is not one of the three or names no node.
-func DecisionNodeID(payload any) string {
-	switch p := payload.(type) {
-	case PermissionNeededPayload:
-		return p.NodeID
-	case ElicitationNeededPayload:
-		return p.NodeID
-	case UserInputNeededPayload:
-		return p.NodeID
-	default:
-		return ""
-	}
-}
-
 // ErrorCode identifies an SSE error event class.
 type ErrorCode string
 

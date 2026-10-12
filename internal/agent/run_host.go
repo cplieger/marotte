@@ -1567,11 +1567,34 @@ func resumablePause(reason string, detail *pauseDetail) bool {
 	return strings.HasPrefix(reason, networkPausePrefix)
 }
 
-// never resumeAll, which would undo deliberate pauses.
+// orphanResumeDelay is when the resume sweep re-reads a run whose host died but KAS still lists
+// running: KAS judges a run's owner dead 135 s after its last beat (staleAfterMs, 4.5 beats of 30 s)
+// and allows one beat of reader drift (kiro-cli 2.29.1). A var for tests.
+var orphanResumeDelay = 165 * time.Second
+
+// resumeInterruptedRuns resumes the restart-paused runs this chat's session chain launched, and
+// sweeps once more after orphanResumeDelay when KAS has not yet reconciled one; never resumeAll,
+// which would undo deliberate pauses.
 func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID marotte.ChatID) {
+	if !rs.resumeChainRuns(ctx, chatID) {
+		return
+	}
+	slog.Info("rehydrate: a run whose host died is still listed running; re-reading it once KAS reconciles it",
+		"chat_id", chatID, "delay", orphanResumeDelay)
+	// Untracked, as healPaused's: the sweep re-reads and acts only on a run still parked.
+	time.AfterFunc(orphanResumeDelay, func() {
+		hctx, cancel := rs.lifecycle.derivedContext()
+		defer cancel()
+		rs.resumeChainRuns(hctx, chatID)
+	})
+}
+
+// resumeChainRuns is one resume sweep, reporting whether a run whose host died was still listed
+// running.
+func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID) (unreconciled bool) {
 	chat, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
-		return
+		return false
 	}
 	chain := make(map[string]bool, len(chat.PriorACPSessionIDs)+1)
 	chain[chat.ACPSessionID] = true
@@ -1582,15 +1605,21 @@ func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID marotte.ChatID
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		slog.Warn("rehydrate: run list unavailable, skipping resume sweep", "chat_id", chatID, "error", err)
-		return
+		return false
 	}
 	for i := range runs {
 		r := &runs[i]
-		if marotte.RunStatus(r.Status) != marotte.RunStatusPaused || !chain[r.ParentSessionID] {
+		if !chain[r.ParentSessionID] {
 			continue
 		}
-		rs.resumeIfInterrupted(ctx, chatID, r.WorkflowID)
+		switch marotte.RunStatus(r.Status) {
+		case marotte.RunStatusPaused:
+			rs.resumeIfInterrupted(ctx, chatID, r.WorkflowID)
+		case marotte.RunStatusRunning:
+			unreconciled = unreconciled || rs.hostLost(r.WorkflowID)
+		}
 	}
+	return unreconciled
 }
 
 // maxAutoHeals bounds automatic resumes between two pieces of progress; a fourth try against a dead network says nothing.

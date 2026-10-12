@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"maps"
 	"slices"
 	"strconv"
 	"testing"
@@ -306,36 +305,5 @@ func TestClearForRun_RefusesAnEmptyRunID(t *testing.T) {
 
 	if got := len(tracker.list("")); got != 1 {
 		t.Errorf("an empty run id left %d cards, want the chat's own 1", got)
-	}
-}
-
-// TestOpenNodesForRun_NamesTheRunsOwnUnansweredSteps pins the idle window's evidence, across chats and kinds.
-func TestOpenNodesForRun_NamesTheRunsOwnUnansweredSteps(t *testing.T) {
-	t.Parallel()
-	tracker := newPendingPermsTracker()
-	first := requestIDOf(t, tracker.add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
-		marotte.PermissionNeededPayload{RunID: "wf_1", NodeID: "a"}), nil))
-	tracker.add(2, marotte.NewEvent(marotte.EventElicitationNeeded, runChatID("wf_1"),
-		marotte.ElicitationNeededPayload{RequestID: 2, RunID: "wf_1", NodeID: "b"}), nil)
-	tracker.add(3, marotte.NewEvent(marotte.EventUserInputNeeded, "c-parent",
-		marotte.UserInputNeededPayload{RequestID: 3, RunID: "wf_1", NodeID: "c"}), nil)
-	tracker.add(4, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
-		marotte.PermissionNeededPayload{RequestID: 4, RunID: "wf_1"}), nil)
-	tracker.add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
-		marotte.PermissionNeededPayload{RequestID: 5, RunID: "wf_2", NodeID: "d"}), nil)
-
-	got := slices.Sorted(maps.Keys(tracker.openNodesForRun("wf_1")))
-	if want := []string{"a", "b", "c"}; !slices.Equal(got, want) {
-		t.Errorf("OpenNodesForRun(wf_1) = %v, want %v: every kind, any chat, no node-less ask", got, want)
-	}
-
-	if _, ok := tracker.takeIfPresent("c-parent", first); !ok {
-		t.Fatal("node a's ask was not pending")
-	}
-	if _, held := tracker.openNodesForRun("wf_1")["a"]; held {
-		t.Error("an answered decision still names its node")
-	}
-	if got := tracker.openNodesForRun(""); got != nil {
-		t.Errorf("OpenNodesForRun(\"\") = %v, want nil: an empty run would match every chat ask", got)
 	}
 }

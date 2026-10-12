@@ -437,7 +437,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		broadcast:   sseP.Broadcast,
 	}
 	if lc.configDir != "" {
-		runs.log = newRunLog(lc.configDir)
+		runs.useLog(newRunLog(lc.configDir))
 		bridgeP.mgr.hostsLiveRun = runs.hostsLiveRun
 	}
 	h.coord = newBridgeCoordinator(h)
@@ -466,7 +466,6 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.shellMgr = newShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
 	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, sseP.Broadcast, h.coord.turns.currentTurn)
-	runs.terminals = h.agentTerms
 	// A method value on the built Runtime (load_projection.go).
 	h.replay.onProjection = h.replay.swapProjectedTranscript
 	h.replay.underLifecycle = func(ctx context.Context, chatID marotte.ChatID, fn func() error) error {

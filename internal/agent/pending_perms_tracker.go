@@ -297,31 +297,6 @@ func (t *pendingPermsTracker) clearForRun(workflowID string) {
 	t.clearLocked(func(evt marotte.ServerEvent) bool { return marotte.DecisionRunID(evt.Payload) == workflowID })
 }
 
-// openNodesForRun is the node id of every unresolved decision a run raised; nil for an empty
-// workflowID; a decision naming no node is skipped.
-func (t *pendingPermsTracker) openNodesForRun(workflowID string) map[string]struct{} {
-	if workflowID == "" {
-		return nil
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	var out map[string]struct{}
-	for _, e := range t.asks {
-		if e.claimed || marotte.DecisionRunID(e.ask.evt.Payload) != workflowID {
-			continue
-		}
-		node := marotte.DecisionNodeID(e.ask.evt.Payload)
-		if node == "" {
-			continue
-		}
-		if out == nil {
-			out = make(map[string]struct{})
-		}
-		out[node] = struct{}{}
-	}
-	return out
-}
-
 // list snapshots the unresolved decisions, optionally for one chat: exactly what TakeIfPresent
 // still accepts. Order is the contract: ascending ask id, which is ask order.
 func (t *pendingPermsTracker) list(chatFilter marotte.ChatID) []marotte.ServerEvent {
@@ -350,11 +325,6 @@ func (b *bus) ClearPendingPermsForChat(chatID marotte.ChatID) {
 // ClearPendingPermsForRun drops a run's unresolved decisions at its terminal transition, silently (ClearForRun).
 func (b *bus) ClearPendingPermsForRun(workflowID string) {
 	b.pendingPerms.clearForRun(workflowID)
-}
-
-// PendingDecisionNodesForRun is the node id of every decision a run's steps still owe.
-func (b *bus) PendingDecisionNodesForRun(workflowID string) map[string]struct{} {
-	return b.pendingPerms.openNodesForRun(workflowID)
 }
 
 // TakePendingPerm claims an unanswered decision for exactly one surface, false when beaten. Take

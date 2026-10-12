@@ -397,59 +397,6 @@ func TestStepAttribution_SlashBearingNodeIDsKeyDistinctTurns(t *testing.T) {
 	}
 }
 
-// TestRunStep_CarriesTheNodeIDBesideItsKey pins the id both turn openers hand the run log: a hashed
-// path key cannot be split back into it.
-func TestRunStep_CarriesTheNodeIDBesideItsKey(t *testing.T) {
-	t.Parallel()
-	var events []marotte.ServerEvent
-	d := capturing(&events)
-	tr := New(rolesOf(d))
-	ctx := t.Context()
-
-	tr.RunProgressHandler(marotte.RunProgressNodeStart)(ctx, testChat,
-		notif("_kiro/workflow/node_start", map[string]any{
-			"workflowId": "wf_1", "nodeId": "a/b", "sessionId": "sess_ab", "nodePath": []string{"wf_1", "a/b"},
-		}))
-	raw, err := json.Marshal(map[string]any{"content": map[string]any{"type": "text", "text": "hi"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tr.HandleAssistantChunk(ctx, testChat, raw, false, tr.StepAttribution("wf_1", "sess_ab", nil))
-
-	got := map[string][]string{}
-	for _, c := range d.runCalls {
-		got[c.kind] = append(got[c.kind], c.nodeID)
-	}
-	if want := []string{"a/b"}; !slices.Equal(got["node_start"], want) || !slices.Equal(got["fold"], want) {
-		t.Errorf("node ids: node_start %q, content fold %q; want %q for each", got["node_start"], got["fold"], want)
-	}
-}
-
-// A cold registry (after a restart) knows no step; a content frame's own workflow _meta names its node.
-func TestRunStep_TakesTheMetasNodeIDWithAColdRegistry(t *testing.T) {
-	t.Parallel()
-	var events []marotte.ServerEvent
-	d := capturing(&events)
-	tr := New(rolesOf(d))
-	raw, err := json.Marshal(map[string]any{"content": map[string]any{"type": "text", "text": "hi"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wf := &ACPWorkflowMeta{WorkflowID: "wf_1", NodeID: "a/b", NodePath: []string{"wf_1", "a/b"}}
-
-	tr.HandleAssistantChunk(t.Context(), testChat, raw, false, tr.StepAttribution("wf_1", "sess_cold", wf))
-
-	var folds []string
-	for _, c := range d.runCalls {
-		if c.kind == "fold" {
-			folds = append(folds, c.nodeID)
-		}
-	}
-	if want := []string{"a/b"}; !slices.Equal(folds, want) {
-		t.Errorf("content fold node ids = %q, want %q from the frame's meta", folds, want)
-	}
-}
-
 // TestRunComplete_LeavesTheStepSessionsToItsCaller pins that this handler forgets nothing:
 // the status can be `paused`, and the terminal gate is agent.observeComplete's.
 func TestRunComplete_LeavesTheStepSessionsToItsCaller(t *testing.T) {

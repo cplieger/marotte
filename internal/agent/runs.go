@@ -30,10 +30,8 @@ type Runs struct {
 	// notices queues per launching chat the finished runs whose notice KAS put in its steering buffer (run_notices.go).
 	notices map[marotte.ChatID][]runNotice
 	// plans holds each run's newest plan revision (run_plan.go), under mu.
-	plans runPlans
-	// terminals answers whether a run's carrier waits on a live shell command, which frames cannot show.
-	terminals runTerminalReader `wiring:"optional"`
-	utility   func() *utilityRuntime
+	plans   runPlans
+	utility func() *utilityRuntime
 	// runEnded asks the retention purge for a pass when a run ends.
 	runEnded  func() `wiring:"optional"`
 	lifecycle *lifetime
@@ -68,6 +66,16 @@ type runChatReader interface {
 	ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool)
 }
 
+// useLog installs the run record and hands it the host-loss park, so a dead host's agent-launched runs
+// stop their clocks, and has the bridge manager mark a removed host's runs lost as it removes it.
+func (rs *Runs) useLog(l *runLog) {
+	l.hostEnded = rs.parkHostLost
+	rs.log = l
+	if rs.bridges != nil {
+		rs.bridges.hostEnding = l.markHostLost
+	}
+}
+
 // No schedule or no store is a no-op.
 func (rs *Runs) recordScheduleOutcome(ctx context.Context, scheduleID string, outcome schedule.Outcome) {
 	if rs.schedules == nil || scheduleID == "" {
@@ -91,23 +99,16 @@ type runTranslator interface {
 	HandleWorkflowMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
 }
 
-// runTerminalReader asks whether a session a run's own open steps named waits on a live command,
-// session-scoped because a parallel run's steps share one carrier.
-type runTerminalReader interface {
-	LiveTerminalForSession(chatID marotte.ChatID, sessions map[string]struct{}) bool
-}
-
 // runBroadcaster publishes an ask and its settlement, the only run events marotte originates.
 type runBroadcaster interface {
 	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
 
-// runPermClaimer is the decision tracker as the run surface uses it: claim, drop a run's decisions, name
-// steps owed an answer. Run-scoped because a step's ask is keyed to the launching chat.
+// runPermClaimer is the decision tracker as the run surface uses it: claim, and drop a run's decisions.
+// Run-scoped because a step's ask is keyed to the launching chat.
 type runPermClaimer interface {
 	TakePendingPermOn(origin acpResponder, acpID int64, settledBy marotte.SettledBy) (command.AskReply, bool)
 	ClearPendingPermsForRun(workflowID string)
-	PendingDecisionNodesForRun(workflowID string) map[string]struct{}
 }
 
 // Runs exposes the run surface to the composition root (orphan sweep, schedule.Launcher).

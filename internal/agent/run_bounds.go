@@ -21,9 +21,9 @@ import (
 	"github.com/cplieger/marotte/internal/schedule"
 )
 
-// runIdleWindow is the primary, stall bound: progress (a node completing, a tool call starting) rolls
-// it forward, and at expiry it yields to a live shell or an unanswered decision on the run's own
-// open steps. Longer than KAS's 300s stream idle timeout, which retries silently.
+// runIdleWindow is the primary, stall bound: progress (a node completing, a step frame) rolls it
+// forward, and idleVerdict decides what its expiry means. Longer than KAS's 300s stream idle timeout,
+// which retries silently.
 const runIdleWindow = 15 * time.Minute
 
 // runBackstop is the absolute executing-time budget, for a runaway loop that refills the idle
@@ -87,9 +87,21 @@ type runBoundsState struct {
 	// executed is executing time banked across completed stretches, so a parked run spends no backstop.
 	// In memory: a restart grants a fresh backstop.
 	executed map[string]time.Duration
+	// arms is each run's latest armDeadline: a park decided before it must not undo it.
+	arms map[string]runArm
 	// reasons maps a workflow id to why it stopped; order is its FIFO eviction queue.
 	reasons map[string]string
 	order   []string
+	// armSeq numbers every armDeadline call; runArm.seq takes the next.
+	armSeq uint64
+}
+
+// runArm is one armDeadline call. on is the bridge registered for the run's host chat then, nil for
+// none: the death closer's dead bridge is compared with its current process, which a replacement
+// generation for the same chat is not.
+type runArm struct {
+	on  *sharedBridge
+	seq uint64
 }
 
 // stampDeadline is the one transaction armDeadline and refillDeadline share: read the lease, decide,
@@ -118,6 +130,7 @@ func (rs *Runs) stampDeadline(
 		// The lease went away mid-transaction: nothing to bound.
 		delete(rs.bounds.armedAt, workflowID)
 		delete(rs.bounds.executed, workflowID)
+		delete(rs.bounds.arms, workflowID)
 		return false
 	}
 	if err != nil {
@@ -142,9 +155,13 @@ func (rs *Runs) runBoundsLocked(l *runlease.Lease, stretchStart time.Time) runle
 	}
 }
 
-// Idempotent: `run_start` re-fires on resume, so the earliest arm wins.
+// Idempotent: `run_start` re-fires on resume, so the earliest arm wins. Every call on a leased run is
+// recorded as the run's latest arm, stamped or not. A stamp means the run executes again, so it clears
+// a host loss: otherwise the next expiry would park a resumed run that stalled.
 func (rs *Runs) armDeadline(ctx context.Context, workflowID string) {
-	rs.stampDeadline(ctx, workflowID, func(l runlease.Lease, now time.Time) (time.Time, bool) {
+	host := rs.hostChat(workflowID)
+	armed := rs.stampDeadline(ctx, workflowID, func(l runlease.Lease, now time.Time) (time.Time, bool) {
+		rs.noteArmLocked(workflowID, host)
 		if l.Bounded() {
 			return time.Time{}, false
 		}
@@ -154,6 +171,45 @@ func (rs *Runs) armDeadline(ctx context.Context, workflowID string) {
 		rs.bounds.armedAt[workflowID] = now
 		return runlease.NextDeadline(now, rs.runBoundsLocked(&l, now)), true
 	})
+	if armed && rs.log != nil {
+		rs.log.clearHostLost(workflowID)
+	}
+}
+
+// hostChat is the chat whose bridge carries the run's steps, empty before its first step opens.
+func (rs *Runs) hostChat(workflowID string) marotte.ChatID {
+	if rs.log == nil {
+		return ""
+	}
+	return rs.log.hostOf(workflowID)
+}
+
+// noteArmLocked records an arm with the host's registered bridge. Caller holds mu; the bridge
+// manager's lock nests inside it.
+func (rs *Runs) noteArmLocked(workflowID string, host marotte.ChatID) {
+	var on *sharedBridge
+	if host != "" && rs.bridges != nil {
+		on = rs.bridges.get(host)
+	}
+	if rs.bounds.arms == nil {
+		rs.bounds.arms = map[string]runArm{}
+	}
+	rs.bounds.armSeq++
+	rs.bounds.arms[workflowID] = runArm{on: on, seq: rs.bounds.armSeq}
+}
+
+// lastArmSeq is the sequence number of the run's latest arm, zero for none.
+func (rs *Runs) lastArmSeq(workflowID string) uint64 {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.bounds.arms[workflowID].seq
+}
+
+// armedOnLocked reports whether the run's latest arm was on dead's process, or no arm with a
+// registered bridge was recorded. Caller holds mu.
+func (rs *Runs) armedOnLocked(workflowID string, dead ACPBridge) bool {
+	on := rs.bounds.arms[workflowID].on
+	return on == nil || on.current() == dead
 }
 
 // refillDeadline rolls a bounded run's deadline forward on progress, reporting whether it stamped.
@@ -205,6 +261,10 @@ func (rs *Runs) setTimerLocked(workflowID string, deadline time.Time) {
 func (rs *Runs) stopTimer(workflowID string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
+	rs.stopTimerLocked(workflowID)
+}
+
+func (rs *Runs) stopTimerLocked(workflowID string) {
 	t, ok := rs.bounds.timers[workflowID]
 	if !ok {
 		return
@@ -216,28 +276,38 @@ func (rs *Runs) stopTimer(workflowID string) {
 // disarmDeadline parks a run: clears the lease's deadline and stops its timer, reporting whether it
 // had one. A stale lease deadline would fool the step cap and the next re-arm.
 func (rs *Runs) disarmDeadline(ctx context.Context, workflowID string) bool {
+	return rs.disarmUnless(ctx, workflowID, nil)
+}
+
+// disarmUnless is disarmDeadline refused when keep, which runs under mu, says so: the decision and the
+// park share one hold of mu, so an arm cannot land between them and be undone. Lock order as stampDeadline's.
+func (rs *Runs) disarmUnless(ctx context.Context, workflowID string, keep func(l runlease.Lease) bool) bool {
 	if workflowID == "" {
 		return false
 	}
-	l, ok := rs.lease(workflowID)
+	store := rs.leaseStore()
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	l, ok := store.Get(workflowID)
 	if !ok || !l.Bounded() {
 		// A lease released by a terminal frame can still have a timer pending.
-		rs.stopTimer(workflowID)
+		rs.stopTimerLocked(workflowID)
+		return false
+	}
+	if keep != nil && keep(l) {
 		return false
 	}
 	// Bank the stretch before the park, the only moment it is knowable.
-	rs.bankExecuted(workflowID)
-	if err := rs.leaseStore().SetDeadline(ctx, workflowID, time.Time{}); err != nil {
+	rs.bankExecutedLocked(workflowID)
+	if err := store.SetDeadline(ctx, workflowID, time.Time{}); err != nil {
 		slog.Warn("could not park a run's deadline", "workflow_id", workflowID, "error", err)
 	}
-	rs.stopTimer(workflowID)
+	rs.stopTimerLocked(workflowID)
 	return true
 }
 
-// The delete keeps two parks from double-charging.
-func (rs *Runs) bankExecuted(workflowID string) {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
+// The delete keeps two parks from double-charging. Caller holds mu.
+func (rs *Runs) bankExecutedLocked(workflowID string) {
 	start, armed := rs.bounds.armedAt[workflowID]
 	if !armed {
 		return
@@ -249,12 +319,13 @@ func (rs *Runs) bankExecuted(workflowID string) {
 	delete(rs.bounds.armedAt, workflowID)
 }
 
-// clearExecuted drops a run's backstop accounting for good, so a reused workflow id starts fresh.
+// clearExecuted drops a run's backstop and arm accounting for good, so a reused workflow id starts fresh.
 func (rs *Runs) clearExecuted(workflowID string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	delete(rs.bounds.armedAt, workflowID)
 	delete(rs.bounds.executed, workflowID)
+	delete(rs.bounds.arms, workflowID)
 }
 
 // bounded reports whether marotte believes the run is executing under its deadline. Its readers must not clear it.
@@ -313,6 +384,8 @@ func (rs *Runs) releaseTermination(workflowID string) {
 func (rs *Runs) finishTermination(
 	ctx context.Context, workflowID, reason string, stop runStop, carrier *sharedBridge,
 ) error {
+	// Read before the cancel: the terminal frame it can cause may release the lease (forgetBounds) before the call returns.
+	l, held := rs.lease(workflowID)
 	if err := rs.cancelRPC(ctx, workflowID, stop, carrier); err != nil {
 		rs.releaseTermination(workflowID)
 		rs.retryTermination(workflowID, reason, stop)
@@ -320,7 +393,9 @@ func (rs *Runs) finishTermination(
 	}
 	rs.disarmDeadline(ctx, workflowID)
 	rs.recordEnd(workflowID, reason)
-	rs.noteRunEnd(ctx, workflowID, reason)
+	if held {
+		rs.noteRunEnd(ctx, &l, reason)
+	}
 	rs.clearCancelRetries(workflowID)
 	rs.releaseIfOver(ctx, workflowID)
 	return nil
@@ -337,14 +412,14 @@ func runEndNoteID(workflowID string, producedTs int64) string {
 	return "notify-" + workflowID + ":stopped:" + strconv.FormatInt(producedTs, 10)
 }
 
-// noteRunEnd tells the launching chat why a bound stopped its run, as an agent-origin steer: KAS's
-// cancel carries no reason. Here because a cancel landing in KAS's live registry emits no terminal frame.
-func (rs *Runs) noteRunEnd(ctx context.Context, workflowID, reason string) {
+// noteRunEnd tells the launching chat of the run l leases why a bound stopped it, as an agent-origin
+// steer: KAS's cancel carries no reason. Here, not on the terminal frame, which a cancel does not always produce.
+func (rs *Runs) noteRunEnd(ctx context.Context, l *runlease.Lease, reason string) {
 	text, known := runEndNoteText[reason]
-	l, held := rs.lease(workflowID)
-	if !known || !held || l.ChatID == "" || rs.coord == nil {
+	if !known || l.ChatID == "" || rs.coord == nil {
 		return
 	}
+	workflowID := l.WorkflowID
 	producedTs := time.Now().UnixMilli()
 	rs.coord.recordSteer(ctx, marotte.ChatID(l.ChatID), runEndNoteID(workflowID, producedTs), &marotte.EntrySteer{
 		Text:       cmp.Or(l.Recipe, "Workflow run") + " " + text,
@@ -522,18 +597,13 @@ func (rs *Runs) endReason(workflowID string) string {
 
 // cancelExpired stops a run whose deadline (armedFor) ran out and records why. The slot test is "not
 // after the deadline" because the floor can push the deadline past SlotAt. Only the idle window
-// yields to a working or waiting step.
+// consults idleVerdict.
 func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	l, held := rs.lease(workflowID)
 	slotRanOut := held && !l.SlotAt.IsZero() && !l.SlotAt.After(armedFor)
 	backstopSpent := rs.backstopSpent(workflowID)
-	if held && !slotRanOut && !backstopSpent &&
-		(rs.stepWorking(l.ChatID, workflowID) || rs.awaitingAnswer(workflowID)) {
-		ctx, cancel := rs.lifecycle.derivedContext()
-		defer cancel()
-		if rs.refillDeadline(ctx, workflowID) {
-			return
-		}
+	if held && !slotRanOut && !backstopSpent && rs.idleExpiryHandled(workflowID, armedFor) {
+		return
 	}
 	if !rs.claimExpiredDeadline(workflowID, armedFor) {
 		return
@@ -576,39 +646,120 @@ func (rs *Runs) backstopSpent(workflowID string) bool {
 	return spent >= runBackstop
 }
 
-// Scoped to the step's sessions: a parallel run's steps share one carrier. Every absence answers
-// false, so the bound applies.
-func (rs *Runs) stepWorking(leaseChatID, workflowID string) bool {
-	if rs.terminals == nil || rs.log == nil {
-		return false
-	}
-	sessions := rs.log.openSessions(workflowID)
-	if len(sessions) == 0 {
-		return false
-	}
-	carrier := marotte.ChatID(leaseChatID)
-	if carrier == "" {
-		carrier = runChatID(workflowID)
-	}
-	return rs.terminals.LiveTerminalForSession(carrier, sessions)
-}
-
-// Scoped to open steps: the engine abandons a finished step's ask without withdrawing it. Absence
-// answers false.
-func (rs *Runs) awaitingAnswer(workflowID string) bool {
-	if rs.perms == nil || rs.log == nil {
-		return false
-	}
-	asked := rs.perms.PendingDecisionNodesForRun(workflowID)
-	if len(asked) == 0 {
-		return false
-	}
-	for node := range rs.log.openNodeIDs(workflowID) {
-		if _, ok := asked[node]; ok {
-			return true
+// idleExpiryHandled applies idleVerdict to an expired idle window, true when it refilled or parked the
+// run; false leaves cancelExpired to stop it as stalled. A park refused for an arm since the verdict
+// refills instead: the timer that fired was the run's only one.
+func (rs *Runs) idleExpiryHandled(workflowID string, armedFor time.Time) bool {
+	ctx, cancel := rs.lifecycle.derivedContext()
+	defer cancel()
+	seq := rs.lastArmSeq(workflowID)
+	switch rs.idleVerdict(ctx, workflowID) {
+	case idleWorking:
+		return rs.refillDeadline(ctx, workflowID)
+	case idleParked:
+		if !rs.parkExpired(ctx, workflowID, armedFor, seq) {
+			rs.refillDeadline(ctx, workflowID)
 		}
+		return true
+	case idleStalled:
 	}
 	return false
+}
+
+// idleVerdict is what an expired idle window means for a run.
+type idleVerdict int
+
+const (
+	idleStalled idleVerdict = iota
+	idleWorking
+	idleParked
+)
+
+// idleVerdict reads an expired idle window. An open step turn is working: KAS has the step in flight
+// and owns in-turn liveness (stream idle watchdog, stall retries), and neither a KAS-side tool nor a
+// model reasoning silently sends a frame; the backstop bounds a runaway. A run its chat resumes whose
+// host bridge ended (hostLost), or that KAS reports paused, is parked: KAS reconciles a dead owner's
+// run to paused on its next read and emits no frame, so its pause never reached observePaused.
+// Anything else, an unreadable run and a parentless orphan included, is stalled.
+func (rs *Runs) idleVerdict(ctx context.Context, workflowID string) idleVerdict {
+	if rs.log != nil && rs.log.hasOpen(workflowID) {
+		return idleWorking
+	}
+	if !rs.chatResumes(workflowID) {
+		return idleStalled
+	}
+	if rs.hostLost(workflowID) || rs.kasPaused(ctx, workflowID) {
+		return idleParked
+	}
+	return idleStalled
+}
+
+// hostLost reports whether the run's host bridge ended after the run's latest arm: a replacement
+// generation that resumed the run first makes a later mark from the old one inert.
+func (rs *Runs) hostLost(workflowID string) bool {
+	if rs.log == nil {
+		return false
+	}
+	dead := rs.log.lostHost(workflowID)
+	if dead == nil {
+		return false
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.armedOnLocked(workflowID, dead)
+}
+
+// chatResumes reports whether the run's launching chat resumes it once its owner died
+// (resumeInterruptedRuns): an agent-launched run. Nothing resumes a parentless one, which the orphan
+// sweep clears instead (run_orphan.go).
+func (rs *Runs) chatResumes(workflowID string) bool {
+	l, held := rs.lease(workflowID)
+	return held && l.Origin == runlease.OriginAgent
+}
+
+// parkHostLost disarms each run dead carried whose chat resumes it, banking its executing time at the
+// loss, so neither its idle window nor its backstop runs while it waits. A run whose latest arm was
+// on another process, a replacement generation that already resumed it, keeps its clock.
+// runLog.closeHost calls it through hostEnded.
+func (rs *Runs) parkHostLost(ctx context.Context, dead ACPBridge, workflowIDs []string) {
+	for _, id := range workflowIDs {
+		if !rs.chatResumes(id) {
+			continue
+		}
+		rearmed := func(runlease.Lease) bool { return !rs.armedOnLocked(id, dead) }
+		if rs.disarmUnless(ctx, id, rearmed) {
+			slog.Info("a run's host bridge ended; holding the run for its chat's resume",
+				"workflow_id", id)
+		}
+	}
+}
+
+// kasPaused reports whether KAS's own read says the run is paused; false on any RPC or decode failure.
+func (rs *Runs) kasPaused(ctx context.Context, workflowID string) bool {
+	raw, err := rs.rawInspect(ctx, workflowID)
+	if err != nil {
+		return false
+	}
+	var res inspectRunState
+	if !unmarshalKeepingReadable(raw, &res) {
+		return false
+	}
+	return res.WorkflowID == workflowID && res.State.Status == marotte.RunStatusPaused
+}
+
+// parkExpired disarms a run the idle verdict found parked, reporting whether it did. It refuses when
+// the deadline moved since armedFor or an arm landed after seq: a resume in between owns the run's
+// clock. A restart pause is resumed by its chat's return (resumeInterruptedRuns).
+func (rs *Runs) parkExpired(ctx context.Context, workflowID string, armedFor time.Time, seq uint64) bool {
+	resumed := func(l runlease.Lease) bool {
+		return !l.Deadline.Equal(armedFor) || rs.bounds.arms[workflowID].seq != seq
+	}
+	if !rs.disarmUnless(ctx, workflowID, resumed) {
+		return false
+	}
+	slog.Info("a run's idle window ran out while it was parked by its host's end or a KAS pause; "+
+		"holding it for a resume instead of stopping it", "workflow_id", workflowID)
+	return true
 }
 
 // cancelBounded issues cancelExpired's cancel for a caller already holding the claim; the public Cancel

@@ -352,7 +352,7 @@ func (d *baseDeps) lastFold() (foldRecord, bool) {
 
 // The RunAppender half: one open turn per run path, recorded call by call.
 func (d *baseDeps) RunNodeStart(_ context.Context, step *RunStep, chatID marotte.ChatID) {
-	d.runCalls = append(d.runCalls, runCall{kind: "node_start", runID: step.RunID, nodePath: step.NodePath, nodeID: step.NodeID, sessionID: step.SessionID, chat: chatID})
+	d.runCalls = append(d.runCalls, runCall{kind: "node_start", runID: step.RunID, nodePath: step.NodePath, sessionID: step.SessionID, chat: chatID})
 	d.turns.runTurn(step.RunID, step.NodePath)
 }
 
@@ -369,7 +369,7 @@ func (d *baseDeps) RunFoldTarget(_ context.Context, step *RunStep, chatID marott
 	if t, ok := d.turns.runs[runPathKey(step.RunID, step.NodePath)]; ok && d.turns.closed(t) {
 		return nil, false
 	}
-	d.runCalls = append(d.runCalls, runCall{kind: "fold", runID: step.RunID, nodePath: step.NodePath, nodeID: step.NodeID, sessionID: step.SessionID, chat: chatID})
+	d.runCalls = append(d.runCalls, runCall{kind: "fold", runID: step.RunID, nodePath: step.NodePath, sessionID: step.SessionID, chat: chatID})
 	return d.turns.runTurn(step.RunID, step.NodePath), true
 }
 
@@ -440,7 +440,6 @@ type runCall struct {
 	kind      string
 	runID     string
 	nodePath  string
-	nodeID    string
 	sessionID string
 	status    string
 	reason    string

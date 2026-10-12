@@ -58,10 +58,7 @@ type agentTerminal struct {
 	chatID marotte.ChatID
 	signal string
 	// turn is the spawning turn's id, so an interrupt kills only that turn's processes.
-	turn string
-	// session is the ACP session the create named, so run bounds can attribute a waiting
-	// command to a run's own step. Empty answers false everywhere.
-	session  string
+	turn     string
 	exitCode int
 	// pgid is the group the command leads, read right after Start; 0 when none. Guarded by procMu.
 	pgid int
@@ -296,32 +293,6 @@ func (at *agentTerminals) turnOf(chatID marotte.ChatID) string {
 	}
 	turn, _ := at.currentTurn(chatID)
 	return turn
-}
-
-// LiveTerminalForSession reports whether the chat holds a running terminal whose create
-// named one of these sessions. Narrowed by session because a run's steps share the carrier
-// chat; a session-less terminal answers false, so the bound applies.
-func (at *agentTerminals) LiveTerminalForSession(chatID marotte.ChatID, sessions map[string]struct{}) bool {
-	if len(sessions) == 0 {
-		return false
-	}
-	at.mu.Lock()
-	defer at.mu.Unlock()
-	for _, id := range at.byChatID[chatID] {
-		term, ok := at.terms[id]
-		if !ok {
-			continue
-		}
-		if _, named := sessions[term.session]; !named {
-			continue
-		}
-		select {
-		case <-term.done:
-		default:
-			return true
-		}
-	}
-	return false
 }
 
 // KillForTurn kills only the running terminals the chat's current turn created; an idle chat
@@ -580,9 +551,6 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	var params struct {
 		Command string `json:"command"`
 		Cwd     string `json:"cwd"`
-		// SessionID names which workflow step asked; absent decodes to "" so the terminal is
-		// still created, bounded rather than immortal.
-		SessionID string `json:"sessionId"`
 		// Args is a pointer so an explicit `[]` stays distinct from an omitted field.
 		Args *[]string `json:"args"`
 		// Env is the ACP terminal/create env array (KAS zEnvVariable {name,value}).
@@ -683,7 +651,6 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	// ids follow call order, and a client drops output for an unknown terminal id.
 	at.mu.Lock()
 	term.turn = turn
-	term.session = params.SessionID
 	term.origin = origin
 	at.terms[termID] = term
 	at.byChatID[chatID] = append(at.byChatID[chatID], termID)

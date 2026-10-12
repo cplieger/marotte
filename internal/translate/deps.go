@@ -31,12 +31,10 @@ type turnAccess interface {
 	AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) ([]*marotte.Entry, error)
 }
 
-// RunStep names the step a run-log turn opens for: NodePath is its workflow.PathKey
-// and NodeID rides beside it, since the key is never split back.
+// RunStep names the step a run-log turn opens for: NodePath is its workflow.PathKey.
 type RunStep struct {
 	RunID     string
 	NodePath  string
-	NodeID    string
 	SessionID string
 	// Path is NodePath's segments when the opening frame carried them, since the key is never split back.
 	Path []string

@@ -152,7 +152,7 @@ func (rs *Runs) RunFoldTarget(ctx context.Context, step *translate.RunStep, chat
 	if rs.log == nil {
 		return nil, false
 	}
-	if t := rs.log.foldTurn(step); t != nil {
+	if t := rs.log.turn(step.RunID, step.NodePath); t != nil {
 		return t, true
 	}
 	if rs.log.hasClosed(step.RunID, step.NodePath) {
