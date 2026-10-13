@@ -1088,34 +1088,17 @@
   }
 }
 
-/* On a phone the band sits UNDER the toolbar and back IN FLOW, which needs no
- * repositioning: `.chat-toolbar` is `position: static` here and paints its own
- * background as the first in-flow child of `#chat-area`. In flow rather than
- * overlaid because that top band is painted, so no canvas is revealed and the
- * defect above is desktop-only — and a 42px overlay at 390px would sit on top of
- * the live turn. `position: static` makes the insets and the z-index inert. */
+/* On a phone a band that HOLDS a banner goes back in flow under the toolbar, because an
+ * overlay would sit on the live turn. `position: static` makes the insets inert, so the
+ * band's `--sp-2` offset from the bar becomes padding, which `anchor(--notice-band bottom)`
+ * reads like the banner-to-toast gap above.
+ *
+ * An EMPTY band keeps the desktop overlay shape, out of flow at the same offset, so the
+ * scroller meets the toolbar with no canvas strip between them. The box stays laid out
+ * because a lone toast anchors to it. */
 @media (width <= 48rem) {
-  .banner-stack {
+  .banner-stack:not(:empty) {
     position: static;
-
-    /* `position: static` makes the insets inert, and the band's own `--sp-2` OFFSET
-     * from the bar was in one of them — so in flow the band began at the bar's
-     * hairline and BOTH of its rows sat flush against it: a banner directly, and a
-     * lone toast because it anchors to this box's bottom edge. Measured at 390x844
-     * before this rule, 0.00px against the desktop overlay's 8.00px.
-     *
-     * PADDING, not a margin, because the band already charges the banner-to-toast
-     * gap to its own border box for the same reason (`padding-block-end` above):
-     * `anchor(--notice-band bottom)` reads the border box, so one declaration moves
-     * the banner AND the toast under it, and the two cannot drift.
-     *
-     * UNCONDITIONAL, so the EMPTY band carries it too — that box is what a lone
-     * toast anchors to, and the desktop's offset is unconditional in exactly the
-     * same way. The cost is stated rather than hidden: an empty band reserves
-     * `--sp-2` of flow here where the desktop overlay reserves nothing, so the
-     * transcript's scroller is 8px shorter on a phone. Scoping it to
-     * `:not(:empty)` is the shape that looks tidier and reintroduces the defect
-     * for the toast, which is the row that reported it. */
     padding-block-start: var(--sp-2);
     padding-inline: var(--sp-3);
   }
