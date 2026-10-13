@@ -113,10 +113,9 @@ func TestHandleConfigOptionUpdate_PlumbsEffortOption(t *testing.T) {
 	if len(c.EffortLevels) > 0 && c.EffortLevels[0].Name != "Low" {
 		t.Errorf("level name = %q, want Low", c.EffortLevels[0].Name)
 	}
-	// The chat's CHOICE is untouched, or a service default would pin into later sessions
-	// through StartOpts.Effort.
+	// No session is recorded yet: the level is the opening door's to pin.
 	if c.Effort != "" {
-		t.Errorf("Effort = %q, want empty (the option is not a choice)", c.Effort)
+		t.Errorf("Effort = %q, want empty while no session is recorded", c.Effort)
 	}
 }
 
@@ -732,6 +731,41 @@ func TestHandleConfigOptionUpdate_AnUnsolicitedRepinIsRecorded(t *testing.T) {
 	}
 }
 
+// A recorded session's reported level becomes the chat's when the record holds none: a repin
+// drops the old model's tier for the new model's, and a level held already stands.
+func TestHandleConfigOptionUpdate_AdoptsTheRunningLevelWhenTheRecordHoldsNone(t *testing.T) {
+	tests := map[string]struct {
+		model, effort, session string
+		want                   string
+	}{
+		"a session with no level adopts the reported one": {model: "fable", session: "sess-1", want: "medium"},
+		"a repin replaces the old model's tier":           {model: "opus", effort: "max", session: "sess-1", want: "medium"},
+		"a level the record holds stands":                 {model: "fable", effort: "max", session: "sess-1", want: "max"},
+		"a session still opening adopts nothing":          {model: "fable", want: ""},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			deps, _, store := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+			_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+				c.Model, c.Effort = test.model, test.effort
+				c.RecordSession(test.session)
+				return true
+			})
+			raw := mustJSON(t, map[string]any{"configOptions": []map[string]any{
+				{"id": "model", "type": "select", "currentValue": "fable", "options": []map[string]any{{"value": "fable", "name": "fable"}}},
+				{"id": "effortLevel", "type": "select", "currentValue": "medium", "options": []map[string]any{{"value": "medium", "name": "Medium"}}},
+			}})
+
+			tr.HandleConfigOptionUpdate(t.Context(), "c1", raw, FrameAttribution{})
+
+			if c, _ := store.Get(t.Context(), "c1"); c.Effort != test.want {
+				t.Errorf("Effort = %q, want %q", c.Effort, test.want)
+			}
+		})
+	}
+}
+
 func TestHandleConfigOptionUpdate_AMoveWhileTheOldModelIsOfferedIsStillARepin(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -865,5 +899,48 @@ func TestHandleSessionInfoUpdate_DisplayErrorIgnoresAForeignFrame(t *testing.T) 
 
 	if got := turn.EngineError(); got != nil {
 		t.Errorf("EngineError() = %+v, want nil for a subagent's frame", got)
+	}
+}
+
+// The reported tiers, running tier and thinking are the reporting model's: a frame naming a model
+// without an effort option (a tierless one) clears them, a frame naming neither leaves them.
+func TestHandleConfigOptionUpdate_ReportedEffortIsTheNamedModels(t *testing.T) {
+	cases := []struct {
+		name       string
+		model      string
+		frame      func(t *testing.T) []byte
+		wantActive string
+		wantLevels int
+	}{
+		{name: "a move onto auto", model: "opus", frame: func(t *testing.T) []byte {
+			return configModelOffering(t, marotte.ModelAuto, marotte.ModelAuto, "opus")
+		}},
+		{name: "the current model, now tierless", model: "opus", frame: func(t *testing.T) []byte {
+			return configModelOffering(t, "opus", "opus")
+		}},
+		{name: "a frame naming no model", model: "opus", wantActive: "high", wantLevels: 2, frame: func(t *testing.T) []byte {
+			return mustJSON(t, map[string]any{"configOptions": []map[string]any{
+				{"id": "thinking", "type": "select", "currentValue": "on"},
+			}})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, _, store := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+			_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+				c.Model, c.EffortActive = tc.model, "high"
+				c.EffortLevels = []marotte.SessionEffortLevel{{ID: "low"}, {ID: "high"}}
+				return true
+			})
+
+			tr.HandleConfigOptionUpdate(t.Context(), "c1", tc.frame(t), FrameAttribution{})
+
+			c, _ := store.Get(t.Context(), "c1")
+			if c.EffortActive != tc.wantActive || len(c.EffortLevels) != tc.wantLevels {
+				t.Errorf("{EffortActive %q, EffortLevels %v}, want {%q, %d tiers}",
+					c.EffortActive, c.EffortLevels, tc.wantActive, tc.wantLevels)
+			}
+		})
 	}
 }

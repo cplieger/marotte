@@ -344,7 +344,7 @@ func (b *Bridge) loadSession(ctx context.Context, opts *marotte.StartOpts) error
 	sid := string(b.sessionID)
 	b.mu.Unlock()
 
-	// Re-assert effort on resume: Chat.Effort is the user's choice and nothing else heals a lost level.
+	// Re-assert effort on resume: KAS's fork and a model tier mismatch drop it.
 	b.applyThinking(ctx, sid, opts.Thinking)
 	b.applyInitialEffort(ctx, sid, opts.Effort)
 	// KAS's fork copies no `autopilot`, so a supervised chat's tangent would run in autopilot. A no-op when unsupervised.
@@ -520,14 +520,7 @@ func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 			if c.Value == "" {
 				continue
 			}
-			catalog = append(catalog, marotte.SessionModel{
-				ID: c.Value, Name: c.Name, Description: c.Description,
-				RateMultiplier:     c.Meta.Kiro.RateMultiplier,
-				HasEffort:          c.Meta.Kiro.HasEffort,
-				DefaultEffortLevel: c.Meta.Kiro.DefaultEffortLevel,
-				ThinkingToggleable: c.Meta.Kiro.ThinkingToggleable,
-				ThinkingDefaultOff: c.Meta.ThinkingDefaultOff(),
-			})
+			catalog = append(catalog, c.Meta.SessionModel(c.Value, c.Name, c.Description))
 		}
 		b.catalog.Store(&catalog)
 		return

@@ -541,12 +541,13 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID marott
 			return changed
 		}
 		repin = cat.unsolicitedRepin(c)
-		if cat.applyCurrent(c) {
-			changed = true
-		}
 		if repin != nil {
 			// KAS cleared the level when it repinned; the tier was chosen for the old model.
+			// applyCurrent's adoption rule decides whether the frame's tier replaces it.
 			c.Effort = ""
+		}
+		if cat.applyCurrent(c) {
+			changed = true
 		}
 		return changed
 	})
@@ -568,7 +569,7 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID marott
 
 // configCatalog is what one config_option_update says about the model and effortLevel
 // selects. sawEffort is separate because an EMPTY effort list (a model with no tiers)
-// must be applied, while a frame with no effort option leaves the tiers alone.
+// must be applied, while a frame naming neither a model nor effort leaves the tiers alone.
 type configCatalog struct {
 	currentModel    string
 	currentEffort   string
@@ -615,13 +616,15 @@ func readConfigCatalog(opts []configOption) configCatalog {
 func (cat *configCatalog) applyCurrent(c *marotte.Chat) bool {
 	changed := false
 	if cat.currentModel != "" && c.Model != cat.currentModel {
-		c.Model = cat.currentModel
+		c.MoveToModel(cat.currentModel)
 		changed = true
 	}
 	if cat.applyThinking(c) {
 		changed = true
 	}
-	if !cat.sawEffort {
+	// KAS builds every frame naming a model with that model's effort option, omitted for a
+	// tierless one, so such a frame without it clears the tiers.
+	if !cat.sawEffort && cat.currentModel == "" {
 		return changed
 	}
 	if !sameEffortLevels(c.EffortLevels, cat.efforts) {
@@ -630,6 +633,12 @@ func (cat *configCatalog) applyCurrent(c *marotte.Chat) bool {
 	}
 	if c.EffortActive != cat.currentEffort {
 		c.EffortActive = cat.currentEffort
+		changed = true
+	}
+	// A recorded session's level becomes the chat's when the record holds none, so every later
+	// door re-sends it. A session still opening has no id yet: its door pins the chat's level itself.
+	if c.Effort == "" && c.ACPSessionID != "" && marotte.EffortLevel(cat.currentEffort).Valid() {
+		c.Effort = cat.currentEffort
 		changed = true
 	}
 	return changed
@@ -699,21 +708,13 @@ func flattenModelChoices(choices []configChoice) []marotte.SessionModel {
 			continue
 		}
 		meta := choiceMeta(c.Meta)
-		out = append(out, marotte.SessionModel{
-			ID: c.Value, Name: c.Name, Description: c.Description,
-			HasEffort:          meta.Kiro.HasEffort,
-			DefaultEffortLevel: meta.Kiro.DefaultEffortLevel,
-			ThinkingToggleable: meta.Kiro.ThinkingToggleable,
-			ThinkingDefaultOff: meta.ThinkingDefaultOff(),
-			// handleConfigTemplate prefers this live catalog, so an unset multiplier renders `1x`.
-			RateMultiplier: meta.Kiro.RateMultiplier,
-		})
+		out = append(out, meta.SessionModel(c.Value, c.Name, c.Description))
 	}
 	return out
 }
 
 // Absent meta yields the zero value, which the client reads as "not plumbed": no tiers and no
-// credit readout. The tier list belongs to the `effortLevel` option, not to a model choice.
+// credit readout. handleConfigTemplate prefers this live catalog, so an unset multiplier renders `1x`.
 func choiceMeta(raw json.RawMessage) marotte.ModelChoiceMeta {
 	var m marotte.ModelChoiceMeta
 	if len(raw) == 0 {

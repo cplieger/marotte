@@ -85,3 +85,26 @@ func TestModelChoiceMetaThinkingDefaultOff_AbsentMeansOn(t *testing.T) {
 		})
 	}
 }
+
+func TestModelChoiceMetaSessionModel_CapsAsKASDoesForThinkingOff(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		{raw: `{"kiro":{"effortLevels":["low","medium","high","xhigh","max"]}}`, want: "high"},
+		{raw: `{"kiro":{"effortLevels":["low","medium","max"]}}`, want: "medium"},
+		{raw: `{"kiro":{"effortLevels":["xhigh","max"]}}`, want: ""},
+		{raw: `{"kiro":{}}`, want: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.raw, func(t *testing.T) {
+			var m ModelChoiceMeta
+			if err := json.Unmarshal([]byte(tc.raw), &m); err != nil {
+				t.Fatalf("Unmarshal(%s): %v", tc.raw, err)
+			}
+			if got := m.SessionModel("m", "m", "").ThinkingOffEffortCap; got != tc.want {
+				t.Errorf("ModelChoiceMeta(%s).SessionModel().ThinkingOffEffortCap = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}

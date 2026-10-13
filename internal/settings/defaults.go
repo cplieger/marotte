@@ -17,9 +17,9 @@ const (
 	KeyLastModel            = "last_model"
 	KeyNotificationsEnabled = "notifications_enabled"
 
-	// KeyLastEffortByModel maps model id to the effort level last picked under it: the level a
-	// NEW chat on that model opens on. A seed, never written onto the chat record (Chat.Effort
-	// owns the level); both readers (effortSeedFor, getLastEffortFor) look up the chat's model.
+	// KeyLastEffortByModel maps model id to the effort level last picked under it: the preference
+	// a chat holding no level for that model takes, then pinned onto Chat.Effort, which owns it
+	// from there; both readers (effortSeedFor, getLastEffortFor) look up the chat's model.
 	KeyLastEffortByModel = "last_effort_by_model"
 
 	// KeyLastMergeMethod is the PR merge method last picked (forge spelling), the merge dialog's

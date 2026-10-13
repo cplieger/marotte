@@ -90,6 +90,19 @@ func (c *catalog) thinkingToggleable(model string) bool {
 	return false
 }
 
+// capForThinkingOff is level as model runs it while thinking is off, by its catalog tiers; an
+// unknown model, or one with no lower tier, leaves it.
+func (c *catalog) capForThinkingOff(model, level string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.models {
+		if c.models[i].ID == model && c.models[i].ThinkingOffEffortCap != "" {
+			return marotte.CapEffortForThinkingOff(level, []marotte.SessionEffortLevel{{ID: c.models[i].ThinkingOffEffortCap}})
+		}
+	}
+	return level
+}
+
 // thinkingDefaultOff reports whether the catalog knows the model and defaults its thinking off.
 func (c *catalog) thinkingDefaultOff(model string) bool {
 	c.mu.Lock()
