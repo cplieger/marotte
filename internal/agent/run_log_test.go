@@ -91,27 +91,18 @@ func TestRunLog_ANodeStartOpensOneTurnPerStepInstance(t *testing.T) {
 	}
 }
 
-// KAS sends node_start twice per step and only the second names the session; the open turn learns it.
-func TestRunLog_ALaterFrameNamesTheSessionOfATurnOpenedWithNone(t *testing.T) {
+// KAS sends node_start twice per step and only the second names the session; it continues the open turn.
+func TestRunLog_ASecondNodeStartContinuesTheOpenTurn(t *testing.T) {
 	r := newRunLog(t.TempDir())
-	path := workflow.PathKey([]string{"wf1", "a"})
-	step := &translate.RunStep{RunID: "wf1", NodePath: path}
-	if _, _, err := r.open(t.Context(), step, "c-1"); err != nil {
+	step := &translate.RunStep{RunID: "wf1", NodePath: workflow.PathKey([]string{"wf1", "a"})}
+	first, _, err := r.open(t.Context(), step, "c-1")
+	if err != nil {
 		t.Fatalf("Open(no session): %v", err)
 	}
 	step.SessionID = "step-session-a"
-	if _, reopened, err := r.open(t.Context(), step, "c-1"); err != nil || reopened != nil {
-		t.Fatalf("Open(with session) = %v, %v; want the open turn and no second turn_open", reopened, err)
-	}
-	if got := r.openPathOf("wf1", "step-session-a"); got != path {
-		t.Errorf("openPathOf(the step's session) = %q, want %q", got, path)
-	}
-	step.SessionID = "step-session-b"
-	if _, _, err := r.open(t.Context(), step, "c-1"); err != nil {
-		t.Fatalf("Open(another session): %v", err)
-	}
-	if got := r.openPathOf("wf1", "step-session-a"); got != path {
-		t.Errorf("a later frame replaced the learned session: openPathOf = %q, want %q", got, path)
+	again, reopened, err := r.open(t.Context(), step, "c-1")
+	if err != nil || reopened != nil || again != first {
+		t.Fatalf("Open(with session) = %p, %v, %v; want the open turn %p and no second turn_open", again, reopened, err, first)
 	}
 }
 

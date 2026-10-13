@@ -28,9 +28,9 @@ const reasonLeaseAbsent = "no terminal signal was seen and the run stayed absent
 // reasonOrphaned is the schedule row's reason for a run swept after its process died; the next slot is the recovery.
 const reasonOrphaned = "stopped because the server restarted while it was running. Run it again, or wait for the next slot"
 
-// SweepOrphaned clears every lease whose run a dead process left paused. Best-effort: skipping costs a stale
+// sweepOrphaned clears every lease whose run a dead process left paused. Best-effort: skipping costs a stale
 // row, cancelling a live run destroys work. Reports whether it reached KAS.
-func (rs *Runs) SweepOrphaned(ctx context.Context) (reached bool) {
+func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
 	if len(rs.leaseStore().List()) == 0 {
 		// No leases: nothing to ask.
 		return true
@@ -66,6 +66,53 @@ func (rs *Runs) SweepOrphaned(ctx context.Context) (reached bool) {
 		}
 	}
 	return true
+}
+
+// BootSweep is the boot pass: the orphan sweep, then one read of every leased run's asks. The sweep
+// goes first, so the utility is the first process to start and its startup sweep the only one that
+// takes over crashed runs. Reports whether it reached KAS; when it did not, nothing was read.
+func (rs *Runs) BootSweep(ctx context.Context) (reached bool) {
+	if !rs.sweepOrphaned(ctx) {
+		return false
+	}
+	rs.askBootPass(ctx)
+	return true
+}
+
+// askBootPass reads each leased run through the process its lease records, one at a time. A
+// chat-parented run's chat bridge is opened for it, which resumes that chat's restart-paused runs
+// now rather than at the user's return; a parentless run's carrier is started and closed again
+// once its read shows it stopped.
+func (rs *Runs) askBootPass(ctx context.Context) {
+	leases := rs.leaseStore().List()
+	if len(leases) == 0 {
+		return
+	}
+	started := time.Now()
+	read := 0
+	for i := range leases {
+		id := leases[i].WorkflowID
+		c := rs.cellFor(id)
+		if c == nil {
+			continue
+		}
+		host, err := rs.acquireHost(ctx, id, rs.leaseOrigin)
+		if err != nil {
+			slog.Warn("boot: a leased run's host could not be opened, so its questions are unread",
+				"workflow_id", id, "error", err)
+			continue
+		}
+		r, err := rs.readAsks(ctx, c, host.sb)
+		host.release(nil)
+		rs.closeIfStopped(host, r)
+		if err != nil {
+			slog.Warn("boot: a leased run could not be read", "workflow_id", id, "error", err)
+			continue
+		}
+		read++
+	}
+	slog.Info("boot: read every leased run's questions", "leases", len(leases), "read", read,
+		"took", time.Since(started).Round(time.Millisecond))
 }
 
 // releaseIfOver releases a run's lease when KAS says it is over, for a stop with no confirmation. Unknown

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -124,6 +125,7 @@ func (rs *Runs) launchAs(ctx context.Context, source string, inputs map[string]s
 	launched.syncLive(cctx, runChatID(wfID), rs.readLiveSettings)
 	// The run's envelope, before anything can execute (runlease.Lease).
 	rs.grantLease(cctx, wfID, recipe.Name, o)
+	rs.recordParentSession(cctx, wfID, string(parent))
 	rs.coord.goForward(runChatID(wfID), bridge)
 
 	if _, err := bridge.Call(cctx, methodKiroWorkflowInvoke, map[string]any{keyWorkflowID: wfID}); err != nil {
@@ -211,7 +213,11 @@ func (rs *Runs) deleteOn(ctx context.Context, workflowID string, stop runStop, c
 	if err != nil {
 		return err
 	}
-	got, err := rs.deleteCall(ctx, workflowID, stop, carrier)
+	var got kasVerdict
+	rs.stopSerialized(ctx, workflowID, func(sctx context.Context) bool {
+		got, err = rs.deleteCall(sctx, workflowID, stop, carrier)
+		return got != kasRefused
+	})
 	switch got {
 	case kasRefused:
 		d.settle()
@@ -233,7 +239,7 @@ func (rs *Runs) deleteCall(ctx context.Context, workflowID string, stop runStop,
 	params := map[string]any{keyWorkflowID: workflowID}
 	stop.apply(params)
 	if carrier == nil {
-		_, carrier = rs.hostBridgeChat(ctx, workflowID)
+		carrier = rs.hostBridge(ctx, workflowID)
 	}
 	if carrier != nil {
 		resp, err := carrier.bridge.Call(durable.Context(ctx), methodKiroWorkflowDelete, params)
@@ -255,6 +261,7 @@ func (rs *Runs) reconcileDelete(ctx context.Context, d *runDeletion, cause error
 	case runKept:
 		slog.Info("a run whose delete was unconfirmed is still there, so it takes messages again",
 			"workflow_id", d.workflowID)
+		rs.clearStopping(ctx, d.workflowID)
 		d.settle()
 		return cause
 	case runGone:
@@ -296,8 +303,7 @@ func (rs *Runs) readBack(ctx context.Context, workflowID string) readBackVerdict
 		slog.Warn("could not read back a run whose delete was unconfirmed", "workflow_id", workflowID, "error", err)
 		return runUnread
 	}
-	var res workflow.InspectResult
-	if json.Unmarshal(raw, &res) != nil || res.State == nil {
+	if _, err := workflow.DecodeInspect(workflowID, raw); err != nil {
 		return runUnread
 	}
 	return runKept
@@ -385,13 +391,17 @@ func (rs *Runs) retry(
 	// The lease before the verb: retry's `run_start` can beat the reply.
 	minted := false
 	if _, held := rs.lease(workflowID); !held {
-		rs.grantLease(cctx, workflowID, recipe, manualLaunch())
+		rs.grantRetryLease(cctx, workflowID, &aff.origin)
 		minted = true
 	}
-	out, err = rs.retryCall(cctx, host.sb.bridge, workflowID)
+	err = rs.controlSerialized(cctx, workflowID, func(sctx context.Context) error {
+		var cErr error
+		out, cErr = rs.retryCall(sctx, host.sb.bridge, workflowID)
+		return cErr
+	})
 	if errors.Is(err, errRetryOutcomeUnreadable) {
 		// Only the report is lost; tearing down would kill the work mid-node.
-		rs.rearmRetried(cctx, workflowID, recipe)
+		rs.rearmRetried(cctx, workflowID, &aff.origin)
 		return out, err
 	}
 	if err != nil {
@@ -402,7 +412,7 @@ func (rs *Runs) retry(
 		return out, err
 	}
 	// Only on success: a refused retry re-drove nothing.
-	rs.rearmRetried(cctx, workflowID, recipe)
+	rs.rearmRetried(cctx, workflowID, &aff.origin)
 	slog.Info("workflow run retried",
 		"workflow_id", workflowID, "recipe", recipe,
 		"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)
@@ -475,19 +485,23 @@ var errStepStatusUnreadable = fmt.Errorf(
 
 // setStepStatus marks a step completed, failed or running so a wedged run advances. KAS targets
 // positionally, so the tree is read first and the write withheld unless the targets agree.
-func (rs *Runs) setStepStatus(ctx context.Context, workflowID, nodeID, status string) (err error) {
+func (rs *Runs) setStepStatus(ctx context.Context, workflowID string, req marotte.RunStepStatusRequest) (err error) {
+	nodeID, status := req.NodeID, req.Status
 	if nodeID == "" {
 		return errors.New("missing node id")
 	}
 	if !slices.Contains(runStepStatuses, status) {
 		return fmt.Errorf("step status must be one of %v", runStepStatuses)
 	}
-	// Before hostRun: `inspect` runs on the utility session. The position lock spans read and write, since a chat open can heal this run.
+	// The position lock spans read and write, since a chat open can heal this run.
 	release, lockErr := rs.positions.acquire(ctx, workflowID)
 	if lockErr != nil {
 		return lockErr
 	}
 	defer release()
+	if status == runStepRunning {
+		return rs.continueStep(ctx, workflowID, nodeID, req.AskID)
+	}
 	if addrErr := rs.stepStatusAddress(ctx, workflowID, nodeID); addrErr != nil {
 		return addrErr
 	}
@@ -497,6 +511,12 @@ func (rs *Runs) setStepStatus(ctx context.Context, workflowID, nodeID, status st
 	}
 	// A decline releases with a cause too: no run_complete follows.
 	defer func() { host.release(err) }()
+	return rs.controlSerialized(ctx, workflowID, func(cctx context.Context) error {
+		return rs.sendStepStatus(cctx, host, workflowID, status)
+	})
+}
+
+func (rs *Runs) sendStepStatus(ctx context.Context, host *runHost, workflowID, status string) error {
 	resp, callErr := rs.callReclaiming(ctx, host.sb.bridge, workflowID, methodKiroWorkflowUpdate, map[string]any{
 		keyWorkflowID: workflowID,
 		"action":      updateStatusAction,
@@ -509,11 +529,77 @@ func (rs *Runs) setStepStatus(ctx context.Context, workflowID, nodeID, status st
 	if refusal := stepStatusRefusal(resp); refusal != "" {
 		return fmt.Errorf("%w: %s", errStepStatusRefused, refusal)
 	}
-	if status == runStepRunning {
-		// Re-driven without the user's words; SettledByUser because this is the reader's decision.
-		rs.settleAskForNode(ctx, workflowID, nodeID, marotte.SettledByUser)
-	}
 	return nil
+}
+
+// continueStep drives a parked step on without an answer. Its pending registration lasts until the
+// step's turn_start: until then a read can show the node paused with no signal and still awaiting
+// input, which would offer the card again.
+func (rs *Runs) continueStep(ctx context.Context, workflowID, nodeID, askID string) (err error) {
+	c := rs.cellFor(workflowID)
+	if c == nil {
+		return errStepStatusMistargeted
+	}
+	host, err := rs.hostRun(ctx, workflowID)
+	if err != nil {
+		return err
+	}
+	defer func() { host.release(err) }()
+	lease, err := rs.life.admit(workflowID)
+	if err != nil {
+		return errAskStopping
+	}
+	defer lease.end()
+	if aErr := c.acquire(ctx); aErr != nil {
+		return aErr
+	}
+	defer rs.kickCell(c)
+	defer c.release()
+	if refusal := c.holdRefusal(); refusal != nil {
+		return refusal
+	}
+	p := rs.registerPending(ctx, c)
+	r, err := rs.readAsks(ctx, c, host.sb)
+	if err != nil {
+		rs.clearPending(ctx, c, p)
+		return errStepStatusUnreadable
+	}
+	ask, err := continuedAsk(r.asks, nodeID, askID)
+	if err != nil {
+		rs.clearPending(ctx, c, p)
+		if errors.Is(err, errStepStatusMistargeted) {
+			slog.Info("a run is not waiting at the step being continued, so the write was withheld",
+				"workflow_id", workflowID, "node_id", scrubLog(nodeID))
+		}
+		return err
+	}
+	c.sendingPending(p, ask.StepSessionID)
+	if sErr := rs.sendStepStatus(ctx, host, workflowID, runStepRunning); sErr != nil {
+		rs.clearPending(ctx, c, p)
+		return sErr
+	}
+	rs.repliedPending(ctx, c, p)
+	return nil
+}
+
+// continuedAsk is the ask a Continue drives on: the one askID names, else the only ask at nodeID.
+// Fan-out executions share a node id and KAS's `update` targets one of them, so the ask must be
+// that target (CanContinue).
+func continuedAsk(asks []workflow.Ask, nodeID, askID string) (*workflow.Ask, error) {
+	i := slices.IndexFunc(asks, func(a workflow.Ask) bool { return a.NodeID == nodeID })
+	switch {
+	case askID != "":
+		var err error
+		if i, err = namedAsk(asks, askID); err != nil {
+			return nil, err
+		}
+	case i >= 0 && slices.ContainsFunc(asks[i+1:], func(a workflow.Ask) bool { return a.NodeID == nodeID }):
+		return nil, errAskUnnamed
+	}
+	if i < 0 || asks[i].NodeID != nodeID || !asks[i].CanContinue {
+		return nil, errStepStatusMistargeted
+	}
+	return &asks[i], nil
 }
 
 // stepStatusRefusal returns KAS's reason for a declined update, else "". `Updated` is a *bool so absent reads as taken.
@@ -545,17 +631,17 @@ func (rs *Runs) stepStatusAddress(ctx context.Context, workflowID, nodeID string
 			"workflow_id", workflowID, "error", err)
 		return errStepStatusUnreadable
 	}
-	var res askInspect
-	if json.Unmarshal(raw, &res) != nil || res.State == nil {
+	in, err := workflow.DecodeInspect(workflowID, raw)
+	if err != nil {
 		slog.Warn("a run's state did not decode, so its step status was left alone",
-			"workflow_id", workflowID)
+			"workflow_id", workflowID, "error", err)
 		return errStepStatusUnreadable
 	}
-	target := statusUpdateTarget(res.State.Root)
-	if target == nil {
+	target, ok := workflow.StatusUpdateTarget(in.State)
+	if !ok {
 		slog.Info("a run holds no running or paused step, so nothing was marked",
 			"workflow_id", workflowID, "node_id", scrubLog(nodeID),
-			"status", scrubLog(string(res.State.Status)))
+			"status", scrubLog(in.State.Status))
 		return errStepStatusMistargeted
 	}
 	if target.NodeID != nodeID {
@@ -565,43 +651,6 @@ func (rs *Runs) stepStatusAddress(ctx context.Context, workflowID, nodeID string
 		return errStepStatusMistargeted
 	}
 	return nil
-}
-
-// stepNodeType is the state tree's `type` for a step, the only kind KAS's resolver considers.
-const stepNodeType = "step"
-
-// statusUpdateTarget mirrors KAS's resolver: the first running step node in pre-order, else the first paused one.
-func statusUpdateTarget(root *askNode) *askNode {
-	running, paused := stepTargets(root)
-	if running != nil {
-		return running
-	}
-	return paused
-}
-
-// stepTargets is statusUpdateTarget's one pre-order pass, judging each node before its children, returning at the first running step.
-func stepTargets(n *askNode) (running, paused *askNode) {
-	if n == nil {
-		return nil, nil
-	}
-	if n.Type == stepNodeType {
-		if n.Status == marotte.RunNodeStatusRunning {
-			return n, nil
-		}
-		if n.Status == marotte.RunNodeStatusPaused {
-			paused = n
-		}
-	}
-	for i := range n.Children {
-		hitRunning, hitPaused := stepTargets(&n.Children[i])
-		if hitRunning != nil {
-			return hitRunning, nil
-		}
-		if paused == nil {
-			paused = hitPaused
-		}
-	}
-	return nil, paused
 }
 
 // The step statuses a human may set. `running` is continue-without-answering, which plain Resume cannot substitute.
@@ -614,14 +663,10 @@ const (
 // runStepStatuses is the allowlist, in the order the refusal names them.
 var runStepStatuses = []string{runStepCompleted, runStepFailed, runStepRunning}
 
-// The REST layer answers 409.
-var errAskAlreadySettled = errors.New(
-	"that question has already been answered, or the step it belonged to has moved on",
-)
-
-// answerInput answers one parked step with the user's words, as a `session/prompt` to the paused step's
-// own session. Order is the contract: carrier, lease, the run's message gate, claim, address, send; each
-// guards a window the next would open. A failed send restores the claim.
+// answerInput answers one parked step with the user's words, as a `session/prompt` to its own
+// session. The ask is checked against a fresh read of the run's host under the run's serializer,
+// after marotte's own pending send was registered; the serializer is released before the prompt,
+// whose refused arm can last a whole ordinary turn.
 func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string) (err error) {
 	if workflowID == "" || askID == "" {
 		return errors.New("missing workflow id or ask id")
@@ -630,111 +675,69 @@ func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string)
 	if text == "" {
 		return errors.New("an answer cannot be empty")
 	}
+	c := rs.cellFor(workflowID)
+	if c == nil {
+		return errAskGone
+	}
 	host, err := rs.hostRun(ctx, workflowID)
 	if err != nil {
 		return err
 	}
-	// Held from here, not from the Call: the address read is a round trip, and a bound coming due inside
-	// it would close this carrier.
 	defer func() { host.release(err) }()
 	lease, err := rs.life.admit(workflowID)
 	if err != nil {
-		return errRunNotParked
+		// A delete KAS keeps reopens the run, so this is not "gone".
+		return errAskStopping
 	}
 	defer lease.end()
+	defer rs.kickCell(c)
+	if aErr := c.acquire(ctx); aErr != nil {
+		return aErr
+	}
+	held := true
+	release := func() {
+		if held {
+			held = false
+			c.release()
+		}
+	}
+	defer release()
+	if refusal := c.holdRefusal(); refusal != nil {
+		return refusal
+	}
+	p := rs.registerPending(ctx, c)
+	r, err := rs.readAsks(ctx, c, host.sb)
+	if err != nil {
+		rs.clearPending(ctx, c, p)
+		slog.Warn("could not read a run before answering it", "workflow_id", workflowID, "error", err)
+		return errAskUnreadable
+	}
+	ask, err := askByID(r.asks, askID)
+	if err != nil {
+		rs.clearPending(ctx, c, p)
+		return err
+	}
+	at := stepAddr{workflowID: workflowID, nodePath: workflow.PathKey(ask.NodePath), session: ask.StepSessionID}
 	unlock, err := rs.steers.lock(ctx, workflowID)
 	if err != nil {
+		rs.clearPending(ctx, c, p)
 		return err
 	}
 	defer unlock()
-	// Before the claim, so the registry is never empty with no answer in flight.
-	rs.asks.beginAnswer(workflowID)
-	defer rs.asks.endAnswer(workflowID)
-	a, ok := rs.asks.takeIfPresent(workflowID, askID)
-	if !ok {
-		return errAskAlreadySettled
-	}
-	at, verdict := rs.answerAddress(ctx, workflowID, a)
-	switch verdict {
-	case answerMoot:
-		// Moot rather than restored: KAS has stopped waiting on this question.
-		rs.announceSettled(ctx, a, marotte.SettledByMoot)
-		return errAskAlreadySettled
-	case answerBusy:
-		// Early, not stale: the run is between steps, so the card goes back and the reader retries.
-		rs.restoreAsk(ctx, a)
-		return errRunNotParked
-	case answerSend:
-	}
-	return rs.sendAnswer(ctx, host, a, at, text, "answer-"+askID)
-}
-
-// The caller holds the run's message gate.
-func (rs *Runs) sendAnswer(ctx context.Context, host *runHost, a *runAsk, at stepAddr, text, entryID string) error {
-	if at.session == "" {
-		rs.restoreAsk(ctx, a)
-		return errors.New("the step that asked cannot be addressed on this server")
-	}
-	d, err := rs.sendStepWords(ctx, host, at, text, entryID)
-	if d.got == kasRefused {
-		rs.restoreAsk(ctx, a)
+	c.sendingPending(p, ask.StepSessionID)
+	release()
+	got, err := rs.sendStepWords(ctx, host, at, text, "answer-"+askID)
+	if got == kasRefused {
+		rs.clearPending(ctx, c, p)
 		return err
 	}
-	// Words the record keeps answered the question, so a retry finds it settled rather than asks again.
-	rs.announceSettled(durable.Context(ctx), a, marotte.SettledByUser)
+	rs.repliedPending(ctx, c, p)
 	if err != nil {
 		return err
 	}
-	slog.Info("answered a parked workflow step", "workflow_id", at.workflowID,
-		"node_path", scrubLog(at.nodePath), "ask_id", scrubLog(a.payload.AskID))
+	slog.Info("answered a parked workflow step", "workflow_id", workflowID,
+		"node_path", scrubLog(at.nodePath))
 	return nil
-}
-
-// errRunNotParked means the run is executing, with no parked step to reroute into yet. Retryable; the card survives.
-var errRunNotParked = errors.New(
-	"this run is not waiting on an answer right now, so try again in a moment",
-)
-
-type answerVerdict int
-
-const (
-	// answerSend: the ask's own step is parked, so KAS reroutes the prompt into it.
-	answerSend answerVerdict = iota
-	// answerMoot: nothing is waiting on this question any more.
-	answerMoot
-	// answerBusy: the run is BETWEEN steps, so the answer is early rather than stale.
-	answerBusy
-)
-
-// The fresh read leads, since a prompt KAS does not reroute runs as an ordinary turn; an unreadable
-// run falls back to the ask's own address rather than refusing. An ask several parked executions could
-// own answers an empty session, which no send guesses past.
-func (rs *Runs) answerAddress(ctx context.Context, workflowID string, a *runAsk) (stepAddr, answerVerdict) {
-	n, err := rs.readRun(ctx, workflowID)
-	if err != nil {
-		slog.Warn("could not read a parked run's state, so its ask answers to the address it carries",
-			"workflow_id", workflowID, "error", err)
-		session := a.payload.StepSessionID
-		return stepAddr{workflowID: workflowID, nodePath: rs.stepPathOf(workflowID, session), session: session}, answerSend
-	}
-	st, matches := n.askedStep(&a.payload)
-	switch {
-	case matches > 1:
-		return stepAddr{workflowID: workflowID}, answerSend
-	case matches == 1 && marotte.RunNodeStatus(st.Status) == marotte.RunNodeStatusPaused:
-		return n.addrOf(st), answerSend
-	case n.anyPaused():
-		slog.Info("a run is parked at a different step than the one being answered, "+
-			"so the answer was withheld", "workflow_id", workflowID,
-			"asked_node_id", scrubLog(a.payload.NodeID))
-		return stepAddr{}, answerMoot
-	case n.run.Terminal():
-		return stepAddr{}, answerMoot
-	}
-	slog.Info("a run is not parked on any step right now, so its answer was held back "+
-		"rather than discarded", "workflow_id", workflowID,
-		"asked_node_id", scrubLog(a.payload.NodeID), "status", scrubLog(string(n.run)))
-	return stepAddr{}, answerBusy
 }
 
 // hostedControl issues a verb on a process holding the run, never the utility bridge, which denies
@@ -746,7 +749,10 @@ func (rs *Runs) hostedControl(ctx context.Context, workflowID, method string, st
 	}
 	params := map[string]any{keyWorkflowID: workflowID}
 	stop.apply(params)
-	_, callErr := rs.callReclaiming(ctx, host.sb.bridge, workflowID, method, params)
+	callErr := rs.controlSerialized(ctx, workflowID, func(cctx context.Context) error {
+		_, err := rs.callReclaiming(cctx, host.sb.bridge, workflowID, method, params)
+		return err
+	})
 	host.release(callErr)
 	return callErr
 }
@@ -868,7 +874,7 @@ type runHost struct {
 }
 
 func (rs *Runs) hostRun(ctx context.Context, workflowID string) (*runHost, error) {
-	return rs.acquireHost(ctx, workflowID, rs.originOf)
+	return rs.acquireHost(ctx, workflowID, rs.leaseOrigin)
 }
 
 // acquireHost resolves one verb's carrier under the run's host lock (a waiter gives up with its ctx): the
@@ -1091,6 +1097,11 @@ type carrierUse struct {
 // AnswerInput's span includes an `inspect` round trip.
 func (c *carrierUse) enter(sb *sharedBridge) {
 	sb.runVerbs.Add(1)
+	c.hold(sb)
+}
+
+// hold is enter for a read that is no verb, so a failed verb's carrier still reads as its own.
+func (c *carrierUse) hold(sb *sharedBridge) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.held == nil {
@@ -1220,17 +1231,36 @@ func (rs *Runs) closeKeptCarrier(
 			"so the carrier is kept and re-read later", "workflow_id", workflowID)
 		return carrierBusy
 	}
-	res, ok := rs.inspect(rs.lifecycle.shutdownCtx, workflowID)
-	if !ok || res.WorkflowID != workflowID {
-		return carrierSpared
-	}
-	if !res.State.Status.Terminal() && res.State.Status != marotte.RunStatusPaused {
+	stopped, status := rs.keptRunStopped(workflowID, kept)
+	if !stopped {
 		return carrierSpared
 	}
 	slog.Info("closing a run carrier kept for a verb KAS never took",
-		"workflow_id", workflowID, "status", res.State.Status)
+		"workflow_id", workflowID, "status", status)
 	rs.coord.closeBridge(rs.lifecycle.shutdownCtx, chatID, marotte.TurnOutcomeInterrupted)
 	return carrierClosed
+}
+
+// keptRunStopped reports whether a read shows the run no longer executing, with the status it read.
+// A leased run is read through kept, never the utility, whose read can stamp it as the run's owner,
+// and KAS's "no such run" counts as stopped. An unleased run has no cell, so the utility reads it.
+func (rs *Runs) keptRunStopped(workflowID string, kept *sharedBridge) (stopped bool, status string) {
+	ctx := rs.lifecycle.shutdownCtx
+	c := rs.cellFor(workflowID)
+	if c == nil {
+		res, ok := rs.inspect(ctx, workflowID)
+		st := res.State.Status
+		return ok && res.WorkflowID == workflowID && (st.Terminal() || st == marotte.RunStatusPaused), string(st)
+	}
+	r, _ := rs.readAsks(ctx, c, kept)
+	if r.gone {
+		return true, "not found"
+	}
+	if !r.in.OK {
+		return false, ""
+	}
+	st := marotte.RunStatus(r.in.State.Status)
+	return st.Terminal() || st == marotte.RunStatusPaused, string(st)
 }
 
 // isCtxErr reports a cancellation or deadline at any depth, the one condition under which a failed verb keeps its carrier.
@@ -1238,24 +1268,17 @@ func isCtxErr(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// hostBridgeChat resolves the bridge holding the run's registry entry and its chat id, or "": the run's
-// own `run:<id>` bridge, or the launching chat's. The id keys a synthesised ask (askChatID). One
-// `workflow/list` on the second path only.
-func (rs *Runs) hostBridgeChat(
-	ctx context.Context, workflowID string,
-) (marotte.ChatID, *sharedBridge) {
+// hostBridge resolves the bridge holding the run's registry entry, or nil: the run's own `run:<id>`
+// bridge, or the launching chat's. One `workflow/list` on the second path only.
+func (rs *Runs) hostBridge(ctx context.Context, workflowID string) *sharedBridge {
 	if sb := rs.runOwnBridge(workflowID); sb != nil {
-		return runChatID(workflowID), sb
+		return sb
 	}
 	o := rs.originOf(ctx, workflowID)
 	if o.err != nil || o.parent.chat == "" {
-		return "", nil
+		return nil
 	}
-	sb := rs.bridges.get(o.parent.chat)
-	if sb == nil {
-		return "", nil
-	}
-	return o.parent.chat, sb
+	return rs.bridges.get(o.parent.chat)
 }
 
 // runOwnBridge is the process holding the run under its own `run:<id>`, or nil (also while loading).
@@ -1275,7 +1298,7 @@ func (rs *Runs) control(
 	params := map[string]any{keyWorkflowID: workflowID}
 	stop.apply(params)
 	if carrier == nil {
-		_, carrier = rs.hostBridgeChat(ctx, workflowID)
+		carrier = rs.hostBridge(ctx, workflowID)
 	}
 	if carrier != nil {
 		resp, err := carrier.bridge.Call(ctx, method, params)
@@ -1293,9 +1316,9 @@ func (rt *Runtime) dispatch(ctx context.Context, chatID marotte.ChatID, origin a
 		rt.dispatchRequest(ctx, chatID, origin, msg)
 		return
 	}
-	// Before the prefix test. It keeps the run bridge's own chat id: `run:<id>` is the ask's dock key.
+	// Before the prefix test.
 	if msg.Method == methodKiroSessionNotify {
-		rt.runs.handleSessionNotify(ctx, chatID, msg)
+		rt.runs.onNotify(ctx, chatID, msg)
 		return
 	}
 	// Keeps the run's chat id, so the toast names the run.
@@ -1621,6 +1644,8 @@ func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID) (unr
 			unreconciled = unreconciled || rs.hostLost(r.WorkflowID)
 		}
 	}
+	// The chat's bridge is live again, so every run it hosts is read again.
+	rs.kickChat(chatID)
 	return unreconciled
 }
 
@@ -1716,8 +1741,7 @@ func decodePauseFrame(msg *marotte.RPCResponse) pauseFrame {
 	return f
 }
 
-// healProgress refills a run's per-stall budgets when a node completes and retires that node's ask
-// (node-scoped: a sibling branch may still wait), including one answered from the TUI.
+// healProgress refills a run's per-stall budgets when a node completes.
 func (rs *Runs) healProgress(
 	next func(context.Context, marotte.ChatID, *marotte.RPCResponse),
 ) func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
@@ -1728,17 +1752,13 @@ func (rs *Runs) healProgress(
 			rs.clearCancelRetries(f.WorkflowID)
 			// And the idle window. Both run populations reach this: the run bridge reuses chatHandlers for every `_kiro/workflow/*` method.
 			rs.refillDeadline(ctx, f.WorkflowID)
-			// Moot: the frame says only the node moved on.
-			rs.settleAskForNode(ctx, f.WorkflowID, f.NodeID, marotte.SettledByMoot)
 		}
 		next(ctx, chatID, msg)
 	}
 }
 
-// Strict: settleAskForNode needs both ids, so a partial frame would settle the wrong node.
 type nodeFrame struct {
 	WorkflowID string `json:"workflowId"`
-	NodeID     string `json:"nodeId"`
 }
 
 func decodeNodeFrame(msg *marotte.RPCResponse) nodeFrame {
@@ -1766,8 +1786,17 @@ func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID marotte.ChatID, 
 	if sb == nil {
 		return
 	}
-	if _, cErr := rs.callReclaiming(ctx, sb.bridge, workflowID, methodKiroWorkflowResume,
-		map[string]any{keyWorkflowID: workflowID}); cErr != nil {
+	cErr := rs.controlSerialized(ctx, workflowID, func(cctx context.Context) error {
+		_, err := rs.callReclaiming(cctx, sb.bridge, workflowID, methodKiroWorkflowResume,
+			map[string]any{keyWorkflowID: workflowID})
+		return err
+	})
+	if cErr != nil {
+		if _, _, refused := command.StatusOf(cErr); refused {
+			slog.Info("rehydrate: marotte has a send to this run in flight, so the resume waits for the next sweep",
+				"workflow_id", workflowID, "chat_id", chatID, "error", cErr)
+			return
+		}
 		if errors.Is(cErr, workflow.ErrJustClaimed) {
 			slog.Info("rehydrate: another resume of this run is in flight, so the heal left it to that one",
 				"workflow_id", workflowID, "chat_id", chatID)

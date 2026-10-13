@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,8 +46,6 @@ type runTurn struct {
 	// top is the run's top-level step this one sits under ("" when unknown), held because path is never
 	// split back (workflow.PathKey).
 	top string
-	// session is the step's ACP session, learned from the first frame naming one. Held here because the open set is this registry's alone.
-	session string
 	// seq is the newest seq the sink assigned, written on the dispatch goroutine and read by the digest.
 	seq atomic.Uint64
 }
@@ -228,6 +227,69 @@ func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from ui
 	return entries, open, stamps, true, nil
 }
 
+// lastStepMessage is a step path's last words in its newest turn of the run's own record: the newest
+// send_message call's message, else the newest text. "" when the record holds neither or cannot be read.
+func (r *runLog) lastStepMessage(ctx context.Context, workflowID, nodePath string) string {
+	l, err := r.log(ctx, workflowID)
+	if err != nil || l == nil {
+		return ""
+	}
+	r.mu.Lock()
+	all, err := l.All()
+	r.mu.Unlock()
+	if err != nil {
+		return ""
+	}
+	entries, _ := stepEntries(all, nodePath)
+	return lastWords(newestTurn(entries))
+}
+
+// newestTurn is the entries of the newest turn among a path's entries, which follow its turn_open:
+// a later turn of the path opens after it.
+func newestTurn(entries []marotte.Entry) []marotte.Entry {
+	for i, e := range slices.Backward(entries) {
+		if e.Kind == marotte.EntryKindTurnOpen {
+			return entries[i:]
+		}
+	}
+	return nil
+}
+
+func lastWords(turn []marotte.Entry) string {
+	var text string
+	for i := len(turn) - 1; i >= 0; i-- {
+		e := &turn[i]
+		switch e.Kind {
+		case marotte.EntryKindToolCall:
+			if m := sentMessage(e.Payload); m != "" {
+				return m
+			}
+		case marotte.EntryKindText:
+			var t marotte.EntryText
+			if text == "" && json.Unmarshal(e.Payload, &t) == nil {
+				text = strings.TrimSpace(t.Text)
+			}
+		}
+	}
+	return text
+}
+
+// sentMessage is a send_message call's message: an input holding both `message` and `severity`.
+func sentMessage(payload json.RawMessage) string {
+	var call marotte.EntryToolCall
+	if json.Unmarshal(payload, &call) != nil || len(call.Input) == 0 {
+		return ""
+	}
+	var in struct {
+		Message  string `json:"message"`
+		Severity string `json:"severity"`
+	}
+	if json.Unmarshal(call.Input, &in) != nil || in.Severity == "" {
+		return ""
+	}
+	return strings.TrimSpace(in.Message)
+}
+
 func stepEntries(all []marotte.Entry, nodePath string) (entries []marotte.Entry, newest map[string]uint64) {
 	newest = make(map[string]uint64)
 	for i := range all {
@@ -341,21 +403,6 @@ func (r *runLog) hostOf(workflowID string) marotte.ChatID {
 	return ""
 }
 
-func (r *runLog) openPathOf(workflowID, session string) string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	rec, ok := r.runs[workflowID]
-	if !ok || session == "" {
-		return ""
-	}
-	for path, t := range rec.open {
-		if t.session == session {
-			return path
-		}
-	}
-	return ""
-}
-
 // openTops answers, in node path order, the top-level step each of the run's open step turns sits
 // under, skipping a turn whose opening frame carried no path.
 func (r *runLog) openTops(workflowID string) []string {
@@ -390,10 +437,7 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 	}
 	rec.lostHost = nil
 	if t := rec.open[nodePath]; t != nil {
-		// KAS sends node_start twice per step and only the second names the session.
-		if t.session == "" {
-			t.session = step.SessionID
-		}
+		// KAS sends node_start twice per step; the second continues this turn.
 		if t.top == "" {
 			t.top = topStepOf(step)
 		}
@@ -410,7 +454,7 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 		return nil, nil, err
 	}
 	delete(rec.staged, nodePath)
-	t := &runTurn{path: nodePath, top: topStepOf(step), session: step.SessionID}
+	t := &runTurn{path: nodePath, top: topStepOf(step)}
 	t.turn = turnlog.Open(e.ID, runSink{log: rec.log, turn: t})
 	rec.open[nodePath] = t
 	if rec.starts != nil {

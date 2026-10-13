@@ -175,17 +175,24 @@ func TestObserveComplete_LabelFallsBackToTheLeasesRecipe(t *testing.T) {
 	}
 }
 
-// A step's question is notified under its run, naming the step: it parks the run on a person.
-func TestHandleSessionNotify_NotifiesTheStepsQuestion(t *testing.T) {
+// A step's question is notified under its run, naming the step, tagged by its wait's position so a
+// re-park replaces the banner and two parked branches hold two.
+func TestRunAsks_NotifiesTheStepsQuestion(t *testing.T) {
 	h, fp := newRunPushHub(t)
 	h.runs.grantLease(t.Context(), "wf_1", "code-review", manualLaunch())
-	h.runs.notifyAsk(t.Context(), &runAsk{chatID: "run:wf_1", payload: marotte.RunInputNeededPayload{
-		WorkflowID: "wf_1", NodeID: "n1", AgentName: "reviewer", Question: "Merge it?",
-	}})
+	c := h.runs.cellFor("wf_1")
+	ask := marotte.RunAsk{
+		AskID: "a1", NodeID: "n1", NodePath: []string{"wf_1", "n1"}, StepSessionID: "sess_step",
+		AgentName: "reviewer", Text: "Merge it?", TextSource: marotte.RunAskTextAsked,
+	}
+	c.mu.Lock()
+	n := h.runs.publishLocked(t.Context(), c, []marotte.RunAsk{ask}, true)
+	c.mu.Unlock()
+	h.runs.sendNotices(t.Context(), c, n)
 	got := awaitRunPush(t, fp)
 	want := runPushSent{
 		title: "code-review", body: "Input required · reviewer: Merge it?",
-		kind: marotte.PushKindPermission, subject: marotte.RunSubject("wf_1"),
+		kind: marotte.PushKindPermission, subject: marotte.RunAskSubject(askPosition("wf_1", &ask)),
 	}
 	if got != want {
 		t.Errorf("step question pushed %+v, want %+v", got, want)

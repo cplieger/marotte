@@ -81,7 +81,7 @@ func TestCmdResumeSession_SeedsTheSupervisedDefault(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			mem := newSupervisedMembership(t, store, supervisedConfigDir(t, tc.doc))
 
-			if _, err := cmdResumeSession(t.Context(), mem,
+			if _, err := cmdResumeSession(t.Context(), mem, nil,
 				resumeReq(t, "c1", "sess_abc-123", "Earlier work")); err != nil {
 				t.Fatalf("CmdResumeSession = %v", err)
 			}

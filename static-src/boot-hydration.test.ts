@@ -48,8 +48,6 @@ vi.mock("./run-store.js", () => ({
   runState: vi.fn(() => undefined),
   runChatID: vi.fn(() => ""),
   runLabelOf: vi.fn(() => ""),
-  isNeedInputPark: vi.fn(() => false),
-  isNeedInputPause: vi.fn(() => false),
 }));
 vi.mock("./session-catalog.js", () => ({ fetchCatalog: vi.fn() }));
 vi.mock("./send-state.js", () => ({ setSSEStatus: vi.fn() }));

@@ -173,20 +173,18 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 	if err := writeEvent(pendingFrame); err != nil {
 		return err
 	}
+	// A reconnect is a trigger: every run marotte answers for is read again.
+	rt.runs.kickAllAsks()
 	status, statusStamp := rt.bus.chatStatus.snapshotStamped(rt.coord.turns.ownTurns())
 	statusFrame := marotte.NewEvent(marotte.EventStatusSnapshot, "", status)
 	statusFrame.Subject = statusStamp
 	return writeEvent(statusFrame)
 }
 
-// replayLegacyState is the per-item replay v2 decoders know: pending permissions, run asks and steers, then
+// replayLegacyState is the per-item replay v2 decoders know: pending permissions and steers, then
 // waiting statuses of idle chats. Kept while a v2 bundle can exist.
 func (rt *Runtime) replayLegacyState(writeEvent func(marotte.ServerEvent) error) error {
 	if err := rt.replayPendingPermissions(writeEvent); err != nil {
-		return err
-	}
-	// Separate from permissions: different lifetimes (run_ask.go).
-	if err := rt.replayPendingRunAsks(writeEvent); err != nil {
 		return err
 	}
 	// KAS holds the steering buffer and nothing can read it back (replayPendingSteers).
@@ -218,16 +216,6 @@ func (rt *Runtime) replayWaitingStatus(
 // replayPendingPermissions sends every unresolved permission_needed to a new client, however old: KAS holds the request open until answered.
 func (rt *Runtime) replayPendingPermissions(writeFn func(marotte.ServerEvent) error) error {
 	for _, evt := range rt.bus.pendingPerms.list("") {
-		if err := writeFn(evt); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// The dock de-duplicates by ask id.
-func (rt *Runtime) replayPendingRunAsks(writeFn func(marotte.ServerEvent) error) error {
-	for _, evt := range rt.runs.asks.list("") {
 		if err := writeFn(evt); err != nil {
 			return err
 		}

@@ -170,7 +170,7 @@ func TestSetStepStatus_NeverSendsNodeId(t *testing.T) {
 	addressableStep(t, h, br, "wf_1", "review")
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepCompleted); err != nil {
+	if err := h.runs.setStepStatus(t.Context(), "wf_1", marotte.RunStepStatusRequest{NodeID: "review", Status: runStepCompleted}); err != nil {
 		t.Fatalf("SetStepStatus = %v, want nil", err)
 	}
 	if got, ok := br.paramsFor(methodKiroWorkflowUpdate)["nodeId"]; ok {

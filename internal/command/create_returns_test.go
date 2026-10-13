@@ -39,7 +39,7 @@ func TestCmdResumeSession_MintsAndReturnsTheChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newTestHost(t, store)
 
-	body, err := cmdResumeSession(t.Context(), newTestMembership(t, host),
+	body, err := cmdResumeSession(t.Context(), newTestMembership(t, host), nil,
 		resumeReqOp(t, "sess_abc-123", "Earlier work", "op-1"))
 
 	if statusOf(err) != http.StatusOK {
@@ -68,11 +68,11 @@ func TestCmdResumeSession_RepeatOpBindsOneChat(t *testing.T) {
 	host := newTestHost(t, store)
 	ops := newTestMembership(t, host)
 
-	first, err := cmdResumeSession(t.Context(), ops, resumeReqOp(t, "sess_abc", "", "op-same"))
+	first, err := cmdResumeSession(t.Context(), ops, nil, resumeReqOp(t, "sess_abc", "", "op-same"))
 	if err != nil {
 		t.Fatalf("first attempt: %v", err)
 	}
-	second, err := cmdResumeSession(t.Context(), ops, resumeReqOp(t, "sess_abc", "", "op-same"))
+	second, err := cmdResumeSession(t.Context(), ops, nil, resumeReqOp(t, "sess_abc", "", "op-same"))
 	if err != nil {
 		t.Fatalf("retry: %v", err)
 	}

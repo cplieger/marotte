@@ -39,7 +39,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	})
 
 	d.Register(marotte.CmdCreateChat, bind1(mem, cmdCreateChat))
-	d.Register(marotte.CmdResumeSession, bind1(mem, cmdResumeSession))
+	d.Register(marotte.CmdResumeSession, bind2(mem, r.StepSessions, cmdResumeSession))
 	d.Register(marotte.CmdCompact, bind1(r.Bridges, cmdCompact))
 
 	d.Register(marotte.CmdOpenTab, bind1(mem, cmdOpenTab))

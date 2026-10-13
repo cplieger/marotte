@@ -32,15 +32,6 @@ func bufferedEvents(h *Runtime) []bufferedEvent {
 	return out
 }
 
-func marshalPayload(t *testing.T, raw json.RawMessage) map[string]string {
-	t.Helper()
-	var out map[string]string
-	if err := json.Unmarshal(raw, &out); err != nil {
-		t.Fatalf("Setup: decoding the payload: %s", err)
-	}
-	return out
-}
-
 func runNotif(method string, params map[string]any) *marotte.RPCResponse {
 	raw, err := json.Marshal(params)
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -129,6 +130,34 @@ func TestRetry_AddressesTheRunsRealHost(t *testing.T) {
 	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
 		t.Error("a bridge was registered under the run's synthetic id for a run its launching " +
 			"chat already hosts")
+	}
+}
+
+// A retried agent-launched run stays its chat's: the lease the retry mints names the chat and its
+// session, so the run's park is read through the chat's bridge and opening it starts no carrier.
+func TestRetry_AChatParentedRunKeepsItsChatOnTheLease(t *testing.T) {
+	h, br := seedChatParentedRun(t, true, "final-verify")
+
+	if _, err := h.runs.retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1")); err != nil {
+		t.Fatalf("Retry on a chat-parented run = %v, want nil", err)
+	}
+
+	l, held := h.runs.lease("wf_1")
+	if !held || l.ChatID != "c1" || l.ParentSessionID != "sess_owned" || l.Origin != runlease.OriginAgent {
+		t.Errorf("lease = %+v held %v, want the launching chat c1 on sess_owned, agent-launched", l, held)
+	}
+	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
+	h.chatHandlers[methodWFNodePaused](t.Context(), "c1", runNotif(methodWFNodePaused, map[string]any{
+		"workflowId": "wf_1", "nodeId": "review", "reason": "waiting",
+	}))
+	waitFor(t, func() bool { p := lastAsksOf(t, h, "wf_1"); return p.Reachable && len(p.Asks) == 1 })
+	starts := br.startCount()
+	got, body := getRun(t, h, "wf_1")
+	if len(got.OpenAsks) != 1 || !got.AsksReachable {
+		t.Errorf("open_asks = %+v reachable %v, want the parked step: %s", got.OpenAsks, got.AsksReachable, body)
+	}
+	if h.bridge.mgr.get(runChatID("wf_1")) != nil || br.startCount() != starts {
+		t.Error("opening the retried run started a carrier, loading its chat's live session onto a second process")
 	}
 }
 

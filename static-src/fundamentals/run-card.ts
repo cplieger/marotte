@@ -35,7 +35,6 @@ import { formatElapsed, truncate } from "../strings.js";
 import type { ToolStatus } from "../types.js";
 import { watchResult, watchSummary } from "../watch-result.js";
 import {
-  isNeedInputPark,
   nodesOfType,
   pauseDetailPhrase,
   pausePendingSentence,
@@ -54,13 +53,8 @@ interface RunDetail {
   readonly ends?: StepEnds;
 }
 
-/** The pause as a sentence a reader can act on. KAS's two `need_input` literals name a tool and a
- *  mechanism, so they are replaced (the arm above renders the question when the dock has it). Takes
- *  the STATE: for a park inside a parallel branch the run's reason names only a branch. */
+/** The pause as a sentence; a step waiting on a person is the alert's earlier arm. */
 function pauseSentence(state: RunState | undefined): string {
-  if (isNeedInputPark(state)) {
-    return "A step is waiting for your answer";
-  }
   const reason = state?.pauseReason;
   if (reason === undefined || reason === "") {
     return "Waiting";

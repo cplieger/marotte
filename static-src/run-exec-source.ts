@@ -1,10 +1,8 @@
 // The WORKFLOW adapter: KAS's `inspect` reply folded into the exec view's model.
 
-import { nodePathKey } from "./run-node-key.js";
+import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import { truncate } from "./strings.js";
 import {
-  isNeedInputPark,
-  nodePathSegment,
   pauseDetailPhrase,
   pausePendingSentence,
   resumeSentence,
@@ -405,6 +403,10 @@ function toNode(
   if (verb !== undefined) {
     out.verb = verb;
   }
+  const ask = verb === "answer" ? ctx.asked.answerable.get(node) : undefined;
+  if (ask !== undefined && ask !== "") {
+    out.ask = ask;
+  }
   if (pass !== undefined) {
     out.pass = pass;
   }
@@ -495,13 +497,10 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
     return { kind: "stopped", text: resumed };
   }
   if (state.status === "paused") {
-    // The two `need_input` literals are REPLACED rather than quoted.
     const bits = [
-      isNeedInputPark(state)
-        ? "A step is waiting for your answer. Resume alone will park it again"
-        : state.pauseReason === undefined || state.pauseReason === ""
-          ? "Waiting"
-          : `Waiting: ${state.pauseReason}`,
+      state.pauseReason === undefined || state.pauseReason === ""
+        ? "Waiting"
+        : `Waiting: ${state.pauseReason}`,
     ];
     const detail = pauseDetailPhrase(state.pauseDetail);
     if (detail !== undefined) {

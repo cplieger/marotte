@@ -220,7 +220,7 @@ func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 				t.Fatal("the fixture registered a bridge; the sweep must be wrong-by-default without one")
 			}
 
-			h.runs.SweepOrphaned(t.Context())
+			h.runs.sweepOrphaned(t.Context())
 
 			if got := h.runs.endReason("wf_1"); got != "" {
 				t.Errorf("the sweep recorded %q against a run it does not own", got)
@@ -257,7 +257,7 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	var cancelled bool
 	for _, m := range br.callLog() {
@@ -307,7 +307,7 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 		t.Fatalf("Put lease: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	rows := st.List()
 	if len(rows) != 1 {
@@ -339,7 +339,7 @@ func TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately(t *testing.T) {
 				t.Fatalf("Put: %v", err)
 			}
 
-			h.runs.SweepOrphaned(t.Context())
+			h.runs.sweepOrphaned(t.Context())
 
 			if _, held := h.runs.lease("wf_1"); held {
 				t.Error("a terminal run kept its lease")
@@ -365,7 +365,7 @@ func TestSweepOrphanedRuns_AbsenceStartsAClockWithoutReleasing(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	got, held := h.runs.lease("wf_1")
 	if !held {
@@ -432,7 +432,7 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 		t.Fatalf("Put lease: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	if _, held := h.runs.lease("wf_1"); held {
 		t.Error("a lease continuously absent past the budget was not released")
@@ -472,7 +472,7 @@ func TestSweepOrphanedRuns_InspectUnknownReleasesImmediately(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	if _, held := h.runs.lease("wf_1"); held {
 		t.Error("inspect confirmed an unknown workflow, but its lease survived")
@@ -490,7 +490,7 @@ func TestSweepOrphanedRuns_InspectFailureStartsTheClock(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	got, held := h.runs.lease("wf_1")
 	if !held || got.FirstAbsentAt.IsZero() {
@@ -511,7 +511,7 @@ func TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing(t *testing.T) {
 		}
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	if got := len(h.runs.leaseStore().List()); got != 3 {
 		t.Errorf("leases after empty successful list = %d, want 3", got)
@@ -528,7 +528,7 @@ func TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("an unreadable run list released a lease, so a live run's envelope is gone")
@@ -557,7 +557,7 @@ func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("a failed cancel released the lease, stranding a paused KAS row with nothing " +
@@ -987,7 +987,7 @@ func TestSweepOrphaned_ReportsWhetherItReachedKAS(t *testing.T) {
 		}
 		leased(t, h.runs, "wf_1")
 
-		if !h.runs.SweepOrphaned(t.Context()) {
+		if !h.runs.sweepOrphaned(t.Context()) {
 			t.Error("a sweep that read the run list reported unreached, so the caller " +
 				"pays for a retry it does not need")
 		}
@@ -1000,7 +1000,7 @@ func TestSweepOrphaned_ReportsWhetherItReachedKAS(t *testing.T) {
 		}
 		leased(t, h.runs, "wf_1")
 
-		if h.runs.SweepOrphaned(t.Context()) {
+		if h.runs.sweepOrphaned(t.Context()) {
 			t.Error("a sweep that never read the run list reported reached; this is the " +
 				"one failure the caller retries, and it would be silently dropped")
 		}
@@ -1011,7 +1011,7 @@ func TestSweepOrphaned_ReportsWhetherItReachedKAS(t *testing.T) {
 
 	t.Run("no leases at all", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		if !h.runs.SweepOrphaned(t.Context()) {
+		if !h.runs.sweepOrphaned(t.Context()) {
 			t.Error("an empty lease store reported unreached, so every boot with no runs " +
 				"parks a goroutine waiting for an install it has no use for")
 		}

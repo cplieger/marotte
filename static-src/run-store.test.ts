@@ -521,47 +521,6 @@ describe("one cause costs one request per run", () => {
   });
 });
 
-// KAS describes one node two ways: a repeat's iteration container is `<repeatId>#<n>` in the state
-// tree these fixtures reproduce and `iter-<n>` in the `nodePath` it stamps on a step FRAME.
-describe("nodePathSegment spells a node the way a step frame addresses it", () => {
-  const loop: RunNode = { nodeId: "loop", type: "repeat", status: "running" };
-
-  it("names a repeat's pass by its iteration, so two passes of one id differ", () => {
-    const first: RunNode = {
-      nodeId: "loop#0",
-      type: "sequence",
-      status: "completed",
-      iteration: 0,
-    };
-    const second: RunNode = { ...first, nodeId: "loop#1", iteration: 1 };
-    expect(store.nodePathSegment(first, loop)).toBe("iter-0");
-    expect(store.nodePathSegment(second, loop)).toBe("iter-1");
-  });
-
-  it("falls back to a repeat child's own id when it carries no iteration", () => {
-    // Every iteration container on real runs carries an `iteration`, so this is the unobserved
-    // branch: it must degrade to a row in the wrong place rather than to `iter-undefined`, which is
-    // the same call the server's own runNodePath makes for a frame with no path.
-    expect(store.nodePathSegment(step("loop#0"), loop)).toBe("loop#0");
-  });
-
-  it("leaves a parallel BRANCH spelled as its own id", () => {
-    // Real data: a parallel's branches are named `plan-a`…`plan-d` on both sides and match
-    // byte-for-byte today. The rule is a repeat's, not every container's.
-    const fan: RunNode = { nodeId: "investigate", type: "parallel", status: "running" };
-    expect(store.nodePathSegment(step("plan-a", { branchId: "plan-a" }), fan)).toBe("plan-a");
-  });
-
-  it("rewrites a step sitting DIRECTLY under a repeat", () => {
-    // The rule keys on the PARENT's type, not on the node being a container.
-    expect(store.nodePathSegment(step("work", { iteration: 2 }), loop)).toBe("iter-2");
-  });
-
-  it("uses the bare id at the root", () => {
-    expect(store.nodePathSegment(step("wf"), undefined)).toBe("wf");
-  });
-});
-
 describe("nodesOfType", () => {
   it("finds a type at any depth, every pass included, in plan order", () => {
     const root: RunNode = {
@@ -602,74 +561,6 @@ describe("runIsLive counts a pause as live", () => {
     expect(store.runIsLive({ workflowId: "r1", status: "unknown" })).toBe(true);
     expect(store.runIsLive({ workflowId: "r1" })).toBe(false);
     expect(store.runIsLive(undefined)).toBe(false);
-  });
-});
-
-// isNeedInputPause is tested in `run-store-pause.node.test.ts`, NOT here.
-describe("isNeedInputPark answers over the reason AND the node tree", () => {
-  // The plain-step park: KAS writes the matching sentence on the run itself.
-  const byReason: RunState = {
-    workflowId: "r1",
-    status: "paused",
-    pauseReason: "Step requested user input via send_message.",
-    root: { nodeId: "root", type: "sequence", status: "paused" },
-  };
-
-  // The parallel-branch park, verbatim from KAS's executeParallel: the branch runs against a
-  // shallow COPY of the run state, so its own sentence is written to a throwaway object and the run
-  // keeps only this wrapper.
-  const branch = (signal?: RunNode["completionSignal"]): RunState => ({
-    workflowId: "r2",
-    status: "paused",
-    pauseReason: "Parallel 'phase1' is waiting on branch 'verify'.",
-    root: {
-      nodeId: "root",
-      type: "sequence",
-      status: "paused",
-      children: [
-        {
-          nodeId: "phase1",
-          type: "parallel",
-          status: "paused",
-          children: [
-            {
-              nodeId: "verify",
-              type: "step",
-              status: "paused",
-              ...(signal === undefined ? {} : { completionSignal: signal }),
-            },
-          ],
-        },
-      ],
-    },
-  });
-
-  it("recognises a plain step's park from the reason", () => {
-    expect(store.isNeedInputPark(byReason)).toBe(true);
-  });
-
-  // The arm the dot exists for and the reason could never reach: without it a branch parked on a
-  // person paints the ordinary blue waiting dot, so the one pause a reader has to act on is
-  // indistinguishable from a network blip.
-  it("recognises a park inside a parallel branch from the node's own signal", () => {
-    expect(store.isNeedInputPark(branch("need_input"))).toBe(true);
-  });
-
-  // The negative that keeps the arm honest.
-  it("does not fire on a branch parked for any other cause", () => {
-    expect(store.isNeedInputPark(branch(undefined))).toBe(false);
-    expect(store.isNeedInputPark(branch("error"))).toBe(false);
-  });
-
-  // Gated on `paused`, like the dot vocabulary's own arm: a signal outliving its pause must never
-  // paint a finished run as awaiting input.
-  it("withholds it for a run that is no longer paused", () => {
-    expect(store.isNeedInputPark({ ...branch("need_input"), status: "completed" })).toBe(false);
-    expect(store.isNeedInputPark({ ...byReason, status: "running" })).toBe(false);
-  });
-
-  it("answers false for a run this client has not fetched", () => {
-    expect(store.isNeedInputPark(undefined)).toBe(false);
   });
 });
 

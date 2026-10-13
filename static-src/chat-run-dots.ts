@@ -5,9 +5,9 @@
 import { effect } from "@cplieger/reactive";
 import { hasTab, openChatRefs, setTabRunStatus, tabIdFor } from "./tabs.js";
 import type { TabRunDotStatus, TabRunTally } from "./tabs.js";
-import { runStatusFor, type RunPauseClass } from "./store.js";
+import { runStatusFor } from "./store.js";
 import { runPendingAsks } from "./decision-dock.js";
-import { isNeedInputPark, liveRunsForChat, peekLiveRun, runState } from "./run-store.js";
+import { liveRunsForChat, peekLiveRun, runState } from "./run-store.js";
 
 /** The fold's two halves: what the mark paints, and what its phrase says. */
 interface RunFold {
@@ -26,11 +26,10 @@ function foldRuns(chatID: string): RunFold {
   for (const row of liveRunsForChat(chatID)) {
     const asking = runPendingAsks(row.id).count > 0;
     const state = runState(row.id);
-    const pause: RunPauseClass = isNeedInputPark(state) ? "need_input" : "";
     const rowStatus =
       state === undefined
-        ? runStatusFor(row.executing ? "running" : undefined, asking, pause)
-        : runStatusFor(state.status, asking, pause);
+        ? runStatusFor(row.executing ? "running" : undefined, asking)
+        : runStatusFor(state.status, asking);
     switch (rowStatus) {
       case "input":
         input++;

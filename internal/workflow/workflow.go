@@ -20,26 +20,32 @@ import (
 // session. Other fields stay on the wire, passed through by the read endpoint.
 type node struct {
 	// Iteration is the pass of an enclosing `repeat`; a pointer because pass 0 is the first.
-	Iteration *int   `json:"iteration"`
-	NodeID    string `json:"nodeId"`
-	Type      string `json:"type"`
-	SessionID string `json:"sessionId"`
-	Status    string `json:"status"`
-	Children  []node `json:"children"`
+	Iteration *int `json:"iteration"`
+	// AwaitingUserInput is a pointer because absent and false are different answers to W1.
+	AwaitingUserInput *bool  `json:"awaitingUserInput"`
+	NodeID            string `json:"nodeId"`
+	Type              string `json:"type"`
+	SessionID         string `json:"sessionId"`
+	Status            string `json:"status"`
+	AgentName         string `json:"agentName"`
+	CompletionSignal  string `json:"completionSignal"`
+	Children          []node `json:"children"`
 }
 
 // State is the run state `inspect` returns, decoded only as far as step identification
 // needs.
 type State struct {
-	Root       *node  `json:"root"`
-	WorkflowID string `json:"workflowId"`
-	Status     string `json:"status"`
+	Root            *node  `json:"root"`
+	WorkflowID      string `json:"workflowId"`
+	Status          string `json:"status"`
+	ParentSessionID string `json:"parentSessionId"`
 }
 
 // InspectResult is `_kiro/workflow/inspect`'s reply, decoded to the one part
 // marotte reads. `nodePlan` rides through undecoded — see the package comment.
 type InspectResult struct {
-	State *State `json:"state"`
+	State      *State `json:"state"`
+	WorkflowID string `json:"workflowId"`
 }
 
 // StepSession names one step node, its ACP session and its PATH. The path addresses one
@@ -102,7 +108,7 @@ func walk(n, parent *node, trail []string, out *[]StepSession) {
 // pathSegment is what KAS calls this node in a node PATH. A repeat's iteration container
 // is `<repeatId>#<n>` in the tree and `iter-<n>` on the wire, derived from its
 // `iteration`; with none it falls back to the node id. Siblings holding the same
-// translation: translate.runNodePath and run-store.ts.
+// translation: translate.runNodePath and run-node-key.ts.
 func pathSegment(n, parent *node) string {
 	if parent != nil && parent.Type == "repeat" && n.Iteration != nil {
 		return "iter-" + strconv.Itoa(*n.Iteration)

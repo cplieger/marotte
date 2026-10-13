@@ -464,6 +464,30 @@ describe("the box", () => {
     });
   });
 
+  it("names the question an answer is for, and none on a steer", async () => {
+    m.outcome = { status: "success", value: { verb: "answer" } };
+    const node = asking();
+    node.ask = "ask-7";
+    setRunComposerTarget({ workflowID: "wf_1", runLive: true, runPaused: true, step: node });
+    ui.input.value = "the release branch";
+    ui.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(m.sent).toHaveLength(1);
+    });
+    expect(m.sent[0]?.["ask_id"]).toBe("ask-7");
+
+    m.outcome = { status: "success", value: { verb: "steer" } };
+    const running = step("running", "steer");
+    running.ask = "ask-8";
+    setRunComposerTarget({ workflowID: "wf_1", runLive: true, runPaused: false, step: running });
+    ui.input.value = "check the tests";
+    ui.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(m.sent).toHaveLength(2);
+    });
+    expect("ask_id" in (m.sent[1] ?? {})).toBe(false);
+  });
+
   it("keeps a row a frame confirmed before the reply was lost, and gives nothing back", async () => {
     m.during = () => {
       const id = `steer-${String(m.sent[0]?.["message_id"])}`;

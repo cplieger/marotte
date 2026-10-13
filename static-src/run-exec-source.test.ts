@@ -774,37 +774,9 @@ describe("runToExec alert precedence", () => {
     expect(run.alert?.text).not.toContain("transient");
   });
 
-  // The two need-input literals reach the reader as a sentence about THEM rather than verbatim, and
-  // on this page the alert also has to say what the Resume BUTTON beside it will do: KAS's resume
-  // clears the run's pause reason and leaves the step node's own signal, so the next step execution
-  // parks again.
-  it("rewrites a need-input pause and warns that Resume alone re-parks it", () => {
-    for (const reason of [
-      "Step requested user input via send_message.",
-      "Step 'review' is waiting for user input.",
-      "Step 'review' is waiting for the next user message.",
-    ]) {
-      const run = runToExec(
-        "wf_1",
-        stateWith(step("a", "paused"), { status: "paused", pauseReason: reason }),
-        undefined,
-        NO_ASKS,
-      );
-      expect(run.alert?.kind, reason).toBe("paused");
-      expect(run.alert?.text, reason).toBe(
-        "A step is waiting for your answer. Resume alone will park it again",
-      );
-      // The literal itself never reaches the reader: it names a tool and a node id where the reader
-      // needs to know somebody owes an answer.
-      expect(run.alert?.text, reason).not.toContain("send_message");
-    }
-  });
-
-  // The branch arm: KAS composes `Parallel '<id>' is waiting on branch '<branch>'.` onto the run
-  // because the branch's own sentence went to a shallow state copy, so before the node-signal arm
-  // this page quoted a sentence naming a branch at a reader who needed to know somebody owes an
-  // answer.
-  it("recognises a park inside a parallel branch and says the same thing", () => {
+  // Only the run-asks store says a step waits on a person; a need-input park it holds no ask for (the
+  // run was not read yet, or the question was answered) is KAS's pause, quoted like any other.
+  it("leaves a need-input park the store holds no ask for to KAS's own sentence", () => {
     const run = runToExec(
       "wf_1",
       stateWith(
@@ -814,15 +786,13 @@ describe("runToExec alert precedence", () => {
           status: "paused",
           children: [step("verify", "paused", { completionSignal: "need_input" })],
         },
-        { status: "paused", pauseReason: "Parallel 'phase1' is waiting on branch 'verify'." },
+        { status: "paused", pauseReason: "Step 'verify' is waiting for user input." },
       ),
       undefined,
       NO_ASKS,
     );
     expect(run.alert?.kind).toBe("paused");
-    expect(run.alert?.text).toBe(
-      "A step is waiting for your answer. Resume alone will park it again",
-    );
+    expect(run.alert?.text).toBe("Waiting: Step 'verify' is waiting for user input.");
   });
 
   it("quotes any other pause reason verbatim", () => {
@@ -851,36 +821,48 @@ describe("runToExec alert precedence", () => {
 
 describe("runToExec question targeting", () => {
   // The run tab answers where the server would: a repeat's iterations share a node id, so only the
-  // execution the ask resolves to is the one the box's words answer.
-  it("marks only the paused execution of a shared node id as answered", () => {
-    const loop = {
-      nodeId: "loop",
-      type: "repeat",
-      status: "paused",
-      children: [
-        { ...step("review", "completed", { sessionId: "sess_0" }), iteration: 0 },
-        { ...step("review", "paused", { sessionId: "sess_1" }), iteration: 1 },
-      ],
-    };
+  // execution the ask resolves to (by session, else by path) is the one the box's words answer.
+  const loop = {
+    nodeId: "loop",
+    type: "repeat",
+    status: "paused",
+    children: [
+      { ...step("review", "completed", { sessionId: "sess_0" }), iteration: 0 },
+      { ...step("review", "paused", { sessionId: "sess_1" }), iteration: 1 },
+    ],
+  };
+
+  function answered(address: RunAsks["asked"][number]): { path: string; ask?: string }[] {
     const run = runToExec("wf_1", stateWith(loop, { status: "paused" }), undefined, {
       count: 1,
-      asked: [{ nodeID: "review", sessionID: "", answer: true }],
+      asked: [address],
       label: "Which colour?",
     });
-    const answered = workNodes(run.nodes)
+    return workNodes(run.nodes)
       .filter((n) => n.verb === "answer")
-      .map((n) => n.path);
-    expect(answered).toEqual([nodePathKey(["loop", "iter-1"])]);
+      .map((n) => (n.ask === undefined ? { path: n.path } : { path: n.path, ask: n.ask }));
+  }
+
+  it("answers the execution a question's path names, under that question's id", () => {
+    expect(
+      answered({
+        nodeID: "review",
+        sessionID: "",
+        answer: true,
+        path: nodePathKey(["loop", "iter-1"]),
+        askID: "ask-1",
+      }),
+    ).toEqual([{ path: nodePathKey(["loop", "iter-1"]), ask: "ask-1" }]);
   });
 
-  it("answers a question naming no step at the run's only paused step", () => {
-    const run = runToExec(
-      "wf_1",
-      stateWith(step("ask", "paused", { sessionId: "sess_a" }), { status: "paused" }),
-      undefined,
-      { count: 1, asked: [{ nodeID: "", sessionID: "", answer: true }], label: "" },
-    );
-    expect(workNodes(run.nodes).map((n) => n.verb)).toEqual(["answer"]);
+  it("answers the execution a question's session names", () => {
+    expect(
+      answered({ nodeID: "review", sessionID: "sess_1", answer: true, askID: "ask-1" }),
+    ).toEqual([{ path: nodePathKey(["loop", "iter-1"]), ask: "ask-1" }]);
+  });
+
+  it("answers nowhere for a question addressed by a node id alone", () => {
+    expect(answered({ nodeID: "review", sessionID: "", answer: true })).toEqual([]);
   });
 });
 

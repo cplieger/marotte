@@ -9,11 +9,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -37,14 +39,12 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	raw, err := rr.runs.rawInspect(r.Context(), id)
+	read, err := rr.runs.openRun(r.Context(), id)
 	if err != nil {
-		writeInspectErr(w, id, err)
+		writeRunReadErr(w, id, err)
 		return
 	}
-	// A run parked on a person with no ask here gets one reconstructed (the restart path); the response stays
-	// verbatim and the ask travels on `run_input_needed`.
-	rr.runs.reconcileNeedInput(r.Context(), id, raw)
+	raw := read.raw
 	var ends map[string]marotte.RunStepEnd
 	var starts map[string]marotte.RunStepStart
 	if rr.runs.log != nil {
@@ -59,12 +59,11 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 				"workflow_id", logsafe.Field(id), "error", err)
 		}
 	}
-	// After the reconcile, which mints the restart-recovered ask.
 	var plan *marotte.RunPlanUpdate
 	if u, ok := rr.runs.planUpdate(id); ok {
 		plan = &u
 	}
-	out, err := withRunExtras(raw, rr.runs.asks.snapshotRun(id), ends, starts, plan)
+	out, err := withRunExtras(raw, runExtras{asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan})
 	if err != nil {
 		slog.Warn("workflow inspect: the reply could not carry the run's open asks, step ends, step starts and plan update",
 			"workflow_id", logsafe.Field(id), "error", err)
@@ -97,19 +96,131 @@ func writeInspectErr(w http.ResponseWriter, id string, err error) {
 	httpreply.NotFound(w, "workflow run not found")
 }
 
+// errRunUnhosted means no process holding the run could be reached, so neither its state nor its
+// asks were read.
+var errRunUnhosted = errors.New("the workflow run could not be read")
+
+// runRead is GET /api/runs/{id}'s reads: the run's state, and its asks with whether they were read.
+type runRead struct {
+	raw       json.RawMessage
+	asks      []marotte.RunAsk
+	reachable bool
+}
+
+// openRun reads a leased run's state and asks together, through the process its lease records and
+// never the utility, whose read can stamp it as the run's owner: one reply can then never pair a
+// step paused on its question with no asks. Opening a dormant parentless run starts its carrier,
+// closed again once the read shows the run stopped. An unleased run (a TUI launch) has no recorded
+// host, so its state is the utility's and its asks are none, read only when the run is over.
+func (rs *Runs) openRun(ctx context.Context, workflowID string) (runRead, error) {
+	c := rs.cellFor(workflowID)
+	if c == nil {
+		raw, err := rs.rawInspect(ctx, workflowID)
+		if err != nil {
+			return runRead{}, err
+		}
+		in, dErr := workflow.DecodeInspect(workflowID, raw)
+		return runRead{raw: raw, reachable: dErr == nil && marotte.RunStatus(in.State.Status).Terminal()}, nil
+	}
+	host, err := rs.acquireHost(ctx, workflowID, rs.leaseOrigin)
+	if err != nil {
+		rs.markUnreadable(ctx, c, nil)
+		return runRead{}, fmt.Errorf("%w: %w", errRunUnhosted, err)
+	}
+	r, err := rs.readAsks(ctx, c, host.sb)
+	host.release(nil)
+	rs.closeIfStopped(host, r)
+	switch {
+	case err == nil:
+		return runRead{raw: r.raw, asks: wireAsks(r.asks), reachable: true}, nil
+	case r.raw != nil:
+		// The host answered something this build cannot read: the state goes out as KAS gave it.
+		return runRead{raw: r.raw, asks: rs.lastAsks(c), reachable: false}, nil
+	}
+	return runRead{}, err
+}
+
+func (rs *Runs) lastAsks(c *askCell) []marotte.RunAsk {
+	rs.asks.mu.Lock()
+	defer rs.asks.mu.Unlock()
+	return c.last.Asks
+}
+
+// closeIfStopped ends a carrier a read started once that read shows its run not executing, or KAS
+// answered it has no such run. Any other unreadable read says nothing about that, and closing a
+// carrier kills the run it drives, so the carrier is kept and read again (rereadKeptCarrier).
+func (rs *Runs) closeIfStopped(host *runHost, r askRead) {
+	if !host.started {
+		return
+	}
+	switch {
+	case r.gone:
+		rs.closeStoppedCarrier(host.chatID, host.workflowID, host.sb)
+	case !r.in.OK:
+		rs.rereadKeptCarrier(host.chatID, host.workflowID, host.sb)
+	case r.in.State.Status != string(marotte.RunStatusRunning):
+		rs.closeStoppedCarrier(host.chatID, host.workflowID, host.sb)
+	}
+}
+
+// unreadCarrierReread is how long a carrier kept on an unreadable read waits before its run is read
+// through it again. A var for tests.
+var unreadCarrierReread = askRequery
+
+// rereadKeptCarrier reads kept's run through kept after unreadCarrierReread, and decides again as
+// closeIfStopped, while kept is still the run's carrier and the run still leased.
+func (rs *Runs) rereadKeptCarrier(chatID marotte.ChatID, workflowID string, kept *sharedBridge) {
+	time.AfterFunc(unreadCarrierReread, func() {
+		rs.lifecycle.goUnlessDraining(func() {
+			c := rs.cellFor(workflowID)
+			if c == nil || rs.bridges.get(chatID) != kept {
+				return
+			}
+			ctx, cancel := rs.lifecycle.derivedContext()
+			defer cancel()
+			rs.carriers.hold(kept)
+			r, _ := rs.readAsks(ctx, c, kept)
+			rs.carriers.leave(kept)
+			rs.closeIfStopped(&runHost{rs: rs, sb: kept, chatID: chatID, workflowID: workflowID, started: true}, r)
+		})
+	})
+}
+
+// writeRunReadErr grades a failed run read; one that reached no host says its asks are unknown too.
+func writeRunReadErr(w http.ResponseWriter, id string, err error) {
+	if !errors.Is(err, errRunUnhosted) {
+		writeInspectErr(w, id, err)
+		return
+	}
+	slog.Warn("workflow inspect: no process holding the run could be reached",
+		"workflow_id", logsafe.Field(id), "error", err)
+	webhttp.WriteJSONStatus(w, http.StatusBadGateway, struct {
+		Error         string `json:"error"`
+		AsksReachable bool   `json:"asks_reachable"`
+	}{Error: errRunUnhosted.Error()})
+}
+
+// runExtras are marotte's top-level keys on GET /api/runs/{id}.
+type runExtras struct {
+	ends          map[string]marotte.RunStepEnd
+	starts        map[string]marotte.RunStepStart
+	plan          *marotte.RunPlanUpdate
+	asks          []marotte.RunAsk
+	asksReachable bool
+}
+
 // withRunExtras splices marotte's top-level keys into KAS's reply, decoding to raw values so future
 // keys survive and nested values stay byte-identical: `open_asks`, `step_ends` and `step_starts`, never
-// null because an agent could not tell "none" from "unsupported", and `plan_update` when a revision was seen.
-func withRunExtras(
-	raw json.RawMessage, asks []marotte.RunOpenAsk, ends map[string]marotte.RunStepEnd,
-	starts map[string]marotte.RunStepStart, plan *marotte.RunPlanUpdate,
-) (json.RawMessage, error) {
+// null because an agent could not tell "none" from "unsupported", `asks_reachable`, false when
+// `open_asks` is not a statement that nothing waits, and `plan_update` when a revision was seen.
+func withRunExtras(raw json.RawMessage, x runExtras) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, err
 	}
+	asks, ends, starts, plan := x.asks, x.ends, x.starts, x.plan
 	if asks == nil {
-		asks = []marotte.RunOpenAsk{}
+		asks = []marotte.RunAsk{}
 	}
 	if ends == nil {
 		ends = map[string]marotte.RunStepEnd{}
@@ -133,6 +244,9 @@ func withRunExtras(
 		obj = make(map[string]json.RawMessage, 4)
 	}
 	obj["open_asks"] = encodedAsks
+	if obj["asks_reachable"], err = json.Marshal(x.asksReachable); err != nil {
+		return nil, err
+	}
 	obj["step_ends"] = encodedEnds
 	obj["step_starts"] = encodedStarts
 	if plan != nil {
@@ -488,19 +602,16 @@ func (rr *runRoutes) handleStepStatus(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	var body struct {
-		NodeID string `json:"node_id"`
-		Status string `json:"status"`
-	}
+	var body marotte.RunStepStatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpreply.BadRequest(w, "invalid step-status payload")
 		return
 	}
-	// errRunHostStart is a server fault (500), errStepStatusRefused and errLaunchSessionUnavailable are run states (409), anything else 400.
-	err := rr.runs.setStepStatus(r.Context(), id, body.NodeID, body.Status)
+	err := rr.runs.setStepStatus(r.Context(), id, body)
 	switch {
 	case err == nil:
 		webhttp.Ok(w)
+	case writeStatusErr(w, err):
 	case errors.Is(err, errRunNotListed):
 		httpreply.NotFound(w, errRunNotListed.Error())
 	case errors.Is(err, errLaunchSessionUnavailable):
@@ -535,18 +646,13 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		webhttp.Ok(w)
-	case errors.Is(err, errAskAlreadySettled):
-		// Another surface got there first.
-		httpreply.Conflict(w, err.Error())
+	case writeStatusErr(w, err):
 	case errors.Is(err, errStepUnrecorded):
 		// placeStepMessage logged the fault.
 		httpreply.ServerError(w, errStepUnrecorded.Error(), nil)
 	case errors.Is(err, errStepUnconfirmed):
 		// sendStepWords logged the fault.
 		httpreply.ServerError(w, errStepUnconfirmed.Error(), nil)
-	case errors.Is(err, errRunNotParked):
-		// The retryable refusal: the card is back, so the 409 carries the retry sentence.
-		httpreply.Conflict(w, err.Error())
 	case errors.Is(err, errRunNotListed):
 		httpreply.NotFound(w, errRunNotListed.Error())
 	case errors.Is(err, errLaunchSessionUnavailable):
@@ -579,7 +685,7 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 		if !httpreply.DecodeJSON(w, r, &body) {
 			return
 		}
-		out, err := rr.runs.messageStep(r.Context(), id, nodePath, body.Text, body.MessageID)
+		out, err := rr.runs.messageStep(r.Context(), id, nodePath, body.Text, body.MessageID, body.AskID)
 		if err != nil {
 			rr.writeStepErr(w, "message", id, nodePath, err)
 			return
@@ -621,15 +727,25 @@ func (rr *runRoutes) handleStepSteerClear(w http.ResponseWriter, r *http.Request
 	webhttp.Ok(w)
 }
 
+// writeStatusErr answers an error that names its own status, with its machine reason as `code`,
+// reporting whether it did.
+func writeStatusErr(w http.ResponseWriter, err error) bool {
+	status, reason, ok := command.StatusOf(err)
+	if !ok {
+		return false
+	}
+	body := httpreply.ErrorJSON(rpcerr.Text(err))
+	if reason != "" {
+		// `code`, the key a REST client's error reads its machine reason from.
+		body = httpreply.ErrorJSONWithCode(rpcerr.Text(err), reason)
+	}
+	webhttp.WriteJSONStatus(w, status, body)
+	return true
+}
+
 // A refusal keeps its status and reason; a failed read or re-host is graded as the run verbs grade it.
 func (rr *runRoutes) writeStepErr(w http.ResponseWriter, verb, id, nodePath string, err error) {
-	if status, reason, ok := command.StatusOf(err); ok {
-		body := httpreply.ErrorJSON(rpcerr.Text(err))
-		if reason != "" {
-			// `code`, the key a REST client's error reads its machine reason from.
-			body = httpreply.ErrorJSONWithCode(rpcerr.Text(err), reason)
-		}
-		webhttp.WriteJSONStatus(w, status, body)
+	if writeStatusErr(w, err) {
 		return
 	}
 	switch {
@@ -637,8 +753,6 @@ func (rr *runRoutes) writeStepErr(w http.ResponseWriter, verb, id, nodePath stri
 		httpreply.NotFound(w, errStepUnknown.Error())
 	case errors.Is(err, errStepUnreadable):
 		writeInspectErr(w, id, err)
-	case errors.Is(err, errAskAlreadySettled), errors.Is(err, errRunNotParked):
-		httpreply.Conflict(w, err.Error())
 	case errors.Is(err, errStepUnrecorded):
 		// placeStepMessage logged the fault.
 		httpreply.ServerError(w, errStepUnrecorded.Error(), nil)
@@ -729,6 +843,7 @@ const deleteUnconfirmedText = "The delete was sent, but its answer was lost. " +
 // InternalError is for faults that are not the reader's.
 func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err error) {
 	switch {
+	case writeStatusErr(w, err):
 	case errors.Is(err, errRunHostStart):
 		// First: a re-host KAS refused wraps an *RPCError under this sentinel.
 		slog.Warn("run control failed",

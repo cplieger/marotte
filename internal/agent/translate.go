@@ -53,8 +53,8 @@ func (rt *Runtime) initDispatch() {
 		// Wrapped so the run clock (run_bounds.go) sees start/pause/finish; run_start is an agent run's only frame.
 		methodWFRunStart:    rt.runs.observeStart,
 		methodWFRunComplete: rt.runs.observeComplete,
-		// A step's question, its only carrier; also on the run bridge's door ((*Runtime).dispatch).
-		methodKiroSessionNotify: rt.runs.handleSessionNotify,
+		// A step's question text, its only carrier; also on the run bridge's door ((*Runtime).dispatch).
+		methodKiroSessionNotify: rt.runs.onNotify,
 		// An in-process spec write by a spec-mode session (spec_checkpoint.go).
 		methodV3SpecPhaseCheckpoint: rt.handleSpecPhaseCheckpoint,
 		// configIssues for the /docs steering badges.
@@ -85,6 +85,14 @@ func (rt *Runtime) initDispatch() {
 	)
 	// A completed node is the only honest evidence a pause cleared.
 	rt.chatHandlers[methodWFNodeComplete] = rt.runs.healProgress(rt.chatHandlers[methodWFNodeComplete])
+	// Outermost, so a frame is read for asks after its lease and clocks moved.
+	for _, method := range []string{
+		methodWFRunStart, methodWFRunComplete, methodWFNodeStart, methodWFNodeComplete,
+		methodWFNodePaused, methodWFPaused, methodWFLoopIteration, methodWFStepsQueued,
+	} {
+		rt.chatHandlers[method] = rt.runs.asksOnFrame(rt.chatHandlers[method])
+	}
+	rt.chatHandlers[methodWFWatchPoll] = rt.runs.asksOnMotion(rt.chatHandlers[methodWFWatchPoll])
 	// Recognised and ignored, kept out of the Debug log.
 	rt.noopMethods = map[string]struct{}{
 		methodV3SessionsChanged:          {},
@@ -265,6 +273,9 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatI
 
 	// After the replay gate: history is not progress.
 	rt.translator.ReportStepProgress(attr)
+	if attr.Step {
+		rt.runs.askTurnEdge(attr.RunID, env.Params.SessionID, base.Edge())
+	}
 
 	// Unhandled kinds fall through, user_message_chunk deliberately: marotte persists user messages itself.
 	fn, ok := rt.sessionUpdateHandlers()[base.Kind]
@@ -289,6 +300,7 @@ func (rt *Runtime) handleRunStepFrame(ctx context.Context, chatID marotte.ChatID
 	}
 	attr := rt.translator.StepAttribution(workflowIDOf(chatID), env.Params.SessionID, base.Meta.Kiro.Workflow)
 	rt.translator.ReportStepProgress(attr)
+	rt.runs.askTurnEdge(workflowIDOf(chatID), env.Params.SessionID, base.Edge())
 	fn, ok := rt.runStepHandlers[base.Kind]
 	if !ok {
 		return

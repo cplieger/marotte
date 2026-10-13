@@ -7,6 +7,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func healableRun(t *testing.T) (*Runtime, *fakeBridge) {
@@ -27,7 +29,9 @@ func TestResumeIfInterrupted_WaitsOutAStepStatusWrite(t *testing.T) {
 	held := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowUpdate: held}
 	written := make(chan error, 1)
-	go func() { written <- h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepCompleted) }()
+	go func() {
+		written <- h.runs.setStepStatus(t.Context(), "wf_1", marotte.RunStepStatusRequest{NodeID: "review", Status: runStepCompleted})
+	}()
 	waitForCall(t, br, methodKiroWorkflowUpdate)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
@@ -55,7 +59,7 @@ func TestSetStepStatus_WaitsOutAHealsResume(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
-	err := h.runs.setStepStatus(ctx, "wf_1", "review", runStepCompleted)
+	err := h.runs.setStepStatus(ctx, "wf_1", marotte.RunStepStatusRequest{NodeID: "review", Status: runStepCompleted})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("SetStepStatus during a heal's resume = %v, want it to wait until its deadline", err)
 	}

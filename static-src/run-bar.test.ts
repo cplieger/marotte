@@ -63,7 +63,8 @@ vi.mock("./api-client.js", async () => ({
 const { initRunBar, _resetRunBarForTest } = await import("./run-bar.js");
 const { noteRunLive, noteRunSettled, invalidateRun } = await import("./run-store.js");
 const { setSessions, setActive } = await import("./store.js");
-const { pushDecision, dropDecisions } = await import("./decision-dock.js");
+const { dropDecisions } = await import("./decision-dock.js");
+const { applyRunAsks, _resetRunAsksForTest } = await import("./run-asks.js");
 const { apiGetOrError } = await import("./api-client.js");
 
 const bar = document.getElementById("run-bar") as HTMLUListElement;
@@ -119,18 +120,26 @@ function rowText(sel: string): string[] {
   return [...bar.querySelectorAll(sel)].map((n) => n.textContent ?? "");
 }
 
-/** A parked step's ask, the durable kind, keyed under the launching chat with the run stamped on
- *  it — the same shape `handlers/run.ts` enqueues. */
+/** A parked step's question as the run-asks store holds it, keyed to the launching chat. */
 function pushRunAsk(chat: string, runID: string): void {
-  pushDecision({
-    kind: "run_input",
-    chatID: chat,
-    runID,
-    askID: `${runID}:ask-1`,
-    payload: { workflow_id: runID, question: "which branch?" } as never,
-    submit: () => {
-      /* not answered in these cases */
-    },
+  applyRunAsks({
+    workflow_id: runID,
+    chat_id: chat,
+    epoch: "e1",
+    seq: 1,
+    reachable: true,
+    asks: [
+      {
+        ask_id: `${runID}:ask-1`,
+        node_id: "n1",
+        node_path: ["n1"],
+        step_session_id: "",
+        agent_name: "",
+        text: "which branch?",
+        text_source: "asked",
+        can_continue: false,
+      },
+    ],
   });
 }
 
@@ -153,6 +162,7 @@ afterEach(() => {
   for (const c of chats.splice(0)) {
     dropDecisions(c);
   }
+  _resetRunAsksForTest();
   setSessions([]);
   setActive("");
   _resetRunBarForTest();

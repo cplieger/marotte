@@ -18,7 +18,9 @@ import {
 import { refreshActiveView } from "../tabs.js";
 import { dropDecisions, dropRunDecisions } from "../decision-dock.js";
 import { closeNotificationsExcept } from "../notify.js";
-import { askTarget, chatTarget, pushTargetTag, runTarget } from "../push-subject.js";
+import { askTarget, chatTarget, pushTargetTag, runAskTarget } from "../push-subject.js";
+import { dropAllRunAsks, runAskPosition } from "../run-asks.js";
+import { keepRunAskDrafts } from "../run-input.js";
 import { loadList, scheduleListRetry } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { refreshRetention } from "../retention.js";
@@ -28,7 +30,7 @@ import { fetchCatalog } from "../session-catalog.js";
 import { invalidateTurnRails } from "../turn-rail.js";
 import type { SSEPayloads } from "../bus.js";
 import type { ServerEvent } from "../types.js";
-import type { ConnectedPayload, RunInputNeededPayload } from "../wire/types.gen.js";
+import type { ConnectedPayload, RunAsksPayload } from "../wire/types.gen.js";
 
 // The handshake alone states the workspace root (for relative agent paths); recorded here because
 // transport.ts's hook skips a page's first connection.
@@ -146,13 +148,11 @@ onBus(BUS_RECONCILE, ({ cause, signal }) => {
   refreshActiveView();
 });
 
-/** The tag a pending item's banner carries, as its handler computed it: a run ask's run, a
+/** The tag a request-shaped or steer item's banner carries, as its handler computed it: a
  *  request-shaped ask's `askTarget`, else the chat. */
 function liveAskTag(evt: ServerEvent): string {
   const chatID = evt.chat_id ?? "";
   switch (evt.type) {
-    case "run_input_needed":
-      return pushTargetTag(runTarget((evt.payload as RunInputNeededPayload).workflow_id));
     case "permission_needed":
     case "elicitation_needed":
     case "user_input_needed":
@@ -177,9 +177,27 @@ onSSE("pending_snapshot", (_chatID, p) => {
       console.error("sse: pending_snapshot item rejected:", msg);
     }
   }
-  // Every chat or run banner the set does not name comes down, whether or not this
-  // tab ever rendered the ask: the tab that slept through it is the one holding it.
-  void closeNotificationsExcept(new Set(items.map(liveAskTag)));
+  // Every chat, run or step-question banner the set does not name comes down, whether or not
+  // this tab ever rendered the ask: the tab that slept through it is the one holding it. A run
+  // the set names but marotte has not read this epoch keeps its step-question banners.
+  const live = new Set<string>();
+  const unread = new Set<string>();
+  const runs = new Set<string>();
+  for (const evt of items) {
+    if (evt.type !== "run_asks") {
+      live.add(liveAskTag(evt));
+      continue;
+    }
+    const run = evt.payload as RunAsksPayload;
+    runs.add(run.workflow_id);
+    for (const a of run.asks) {
+      live.add(pushTargetTag(runAskTarget(runAskPosition(run.workflow_id, a))));
+    }
+    if (!run.reachable) {
+      unread.add(run.workflow_id);
+    }
+  }
+  void closeNotificationsExcept(live, unread);
   for (const s of getSessions()) {
     dropDecisions(s.id);
     // FORGOTTEN, not promoted: the items below re-offer whatever KAS still buffers.
@@ -188,10 +206,13 @@ onSSE("pending_snapshot", (_chatID, p) => {
   // A run's own asks are keyed to `run:<workflowId>`, which is no chat and so has no
   // session row for the loop above to reach; a run step's dock rows likewise.
   dropRunDecisions();
+  dropAllRunAsks();
   forgetAllStepSteers();
   for (const evt of items) {
     dispatch(evt);
   }
+  // The set names every run marotte still answers for, waiting or not.
+  keepRunAskDrafts(runs);
 });
 
 // The waiting-status set REPLACES every chat's agent status; a later `chat_status` re-sets a

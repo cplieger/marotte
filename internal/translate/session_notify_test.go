@@ -1,6 +1,6 @@
 package translate
 
-// Each case pins a gate: the three non-parking severities must not produce cards.
+// Each case pins a gate: only a step's own warning with words is its question.
 
 import (
 	"testing"
@@ -14,10 +14,8 @@ type notifyParams struct {
 	severity   string
 	workflowID string
 	nodeID     string
-	agentName  string
 	message    string
 	caller     string
-	notifyID   string
 	// sender is "step" when empty; noSender omits the key, as an older engine does.
 	sender string
 }
@@ -32,8 +30,6 @@ func notifyFrame(p notifyParams) *marotte.RPCResponse {
 		"severity":        p.severity,
 		"workflowId":      p.workflowID,
 		"nodeId":          p.nodeID,
-		"agentName":       p.agentName,
-		"notifyId":        p.notifyID,
 	}
 	switch p.sender {
 	case "":
@@ -45,7 +41,7 @@ func notifyFrame(p notifyParams) *marotte.RPCResponse {
 	return notif("_kiro/session/notify", params)
 }
 
-func TestSessionNotifyAsk_Gates(t *testing.T) {
+func TestSessionNotifySignal_Asks(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name   string
@@ -75,11 +71,6 @@ func TestSessionNotifyAsk_Gates(t *testing.T) {
 			params: notifyParams{severity: "error", workflowID: "wf_1", message: "broke"},
 		},
 		{
-			// No run: a cross-session note, nothing to answer into.
-			name:   "no workflow id is a cross-session note, not a run ask",
-			params: notifyParams{severity: "warning", message: "hello"},
-		},
-		{
 			// No question: nothing to act on (the restart path's empty-question ask is separate).
 			name:   "an empty message carries no question",
 			params: notifyParams{severity: "warning", workflowID: "wf_1"},
@@ -102,123 +93,41 @@ func TestSessionNotifyAsk_Gates(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tr := New(rolesOf(newBaseDeps()))
-			got, ok := tr.SessionNotifyAsk(notifyFrame(tc.params))
-			if ok != tc.wantOK {
-				t.Fatalf("SessionNotifyAsk(%+v) ok = %v, want %v", tc.params, ok, tc.wantOK)
+			got, ok := tr.SessionNotifySignal(notifyFrame(tc.params))
+			if !ok {
+				t.Fatalf("SessionNotifySignal(%+v) ok = false, want every frame naming a run read", tc.params)
 			}
-			if !ok && got.WorkflowID != "" {
-				t.Errorf("SessionNotifyAsk(%+v) returned a payload on a dropped frame: %+v",
-					tc.params, got)
+			if got.Asks() != tc.wantOK {
+				t.Errorf("Asks() = %v, want %v", got.Asks(), tc.wantOK)
 			}
 		})
 	}
 }
 
-func TestSessionNotifyAsk_CarriesTheAnswerAddress(t *testing.T) {
+// A frame naming no run is a cross-session note: no run moved.
+func TestSessionNotifySignal_NoRunIsNoSignal(t *testing.T) {
 	t.Parallel()
 	tr := New(rolesOf(newBaseDeps()))
-	got, ok := tr.SessionNotifyAsk(notifyFrame(notifyParams{
-		severity:   "warning",
-		workflowID: "wf_1",
-		nodeID:     "review",
-		agentName:  "reviewer",
-		message:    "which branch should I target?",
-		caller:     testStep,
-		notifyID:   "n1",
+	if _, ok := tr.SessionNotifySignal(notifyFrame(notifyParams{severity: "warning", message: "hello"})); ok {
+		t.Error("SessionNotifySignal(no workflow id) ok = true, want false")
+	}
+}
+
+func TestSessionNotifySignal_CarriesTheCaller(t *testing.T) {
+	t.Parallel()
+	tr := New(rolesOf(newBaseDeps()))
+	got, ok := tr.SessionNotifySignal(notifyFrame(notifyParams{
+		severity: "warning", workflowID: "wf_1", nodeID: "review",
+		message: "which branch should I target?", caller: testStep,
 	}))
 	if !ok {
-		t.Fatal("SessionNotifyAsk(a warning) ok = false, want true")
+		t.Fatal("SessionNotifySignal(a warning) ok = false, want true")
 	}
-	// callerSessionId is where the answer is sent.
-	if got.StepSessionID != testStep {
-		t.Errorf("StepSessionID = %q, want %q", got.StepSessionID, testStep)
+	// The caller is the step session whose turn the question belongs to.
+	if got.CallerSessionID != testStep || got.WorkflowID != "wf_1" {
+		t.Errorf("SessionNotifySignal = %+v, want wf_1 from %s", got, testStep)
 	}
-	if got.WorkflowID != "wf_1" || got.NodeID != "review" || got.AgentName != "reviewer" {
-		t.Errorf("SessionNotifyAsk = %+v, want wf_1/review/reviewer", got)
-	}
-	if got.Question != "which branch should I target?" {
-		t.Errorf("Question = %q, want the message verbatim", got.Question)
-	}
-	if got.AskID == "" {
-		t.Error("AskID = \"\", want an id an answer can name")
-	}
-	if got.AskedAt == "" {
-		t.Error("AskedAt = \"\", want a timestamp")
-	}
-}
-
-func TestSessionNotifyAsk_ResolvesTheNodeFromTheStepRegistry(t *testing.T) {
-	t.Parallel()
-	tr := New(rolesOf(newBaseDeps()))
-	// node_start is the only frame announcing a step's session.
-	tr.RecordStepSession(testStep, "wf_1", "review", "review")
-
-	got, ok := tr.SessionNotifyAsk(notifyFrame(notifyParams{
-		severity:   "warning",
-		workflowID: "wf_1",
-		message:    "which branch?",
-		caller:     testStep,
-	}))
-	if !ok {
-		t.Fatal("SessionNotifyAsk(a warning) ok = false, want true")
-	}
-	if got.NodeID != "review" {
-		t.Errorf("NodeID = %q, want %q resolved from the step registry", got.NodeID, "review")
-	}
-}
-
-func TestSessionNotifyAsk_NoNodeIsStillAnAsk(t *testing.T) {
-	t.Parallel()
-	tr := New(rolesOf(newBaseDeps()))
-	// A cold registry and no nodeId: the ask survives with an empty node.
-	got, ok := tr.SessionNotifyAsk(notifyFrame(notifyParams{
-		severity:   "warning",
-		workflowID: "wf_1",
-		message:    "which branch?",
-		caller:     "sess_unknown",
-	}))
-	if !ok {
-		t.Fatal("SessionNotifyAsk(a warning with no resolvable node) ok = false, want true")
-	}
-	if got.NodeID != "" {
-		t.Errorf("NodeID = %q, want \"\" when nothing can resolve it", got.NodeID)
-	}
-}
-
-func TestSessionNotifyAsk_IDIsStableForOneFrame(t *testing.T) {
-	t.Parallel()
-	tr := New(rolesOf(newBaseDeps()))
-	p := notifyParams{
-		severity: "warning", workflowID: "wf_1", message: "which branch?",
-		caller: testStep, notifyID: "n1",
-	}
-	first, ok1 := tr.SessionNotifyAsk(notifyFrame(p))
-	second, ok2 := tr.SessionNotifyAsk(notifyFrame(p))
-	if !ok1 || !ok2 {
-		t.Fatal("SessionNotifyAsk twice: want both ok")
-	}
-	// Deterministic, so a redelivered frame de-duplicates.
-	if first.AskID != second.AskID {
-		t.Errorf("AskID = %q then %q, want one stable id per frame", first.AskID, second.AskID)
-	}
-	// A different question from the same step gets its own id.
-	p.message = "and which reviewer?"
-	p.notifyID = "n2"
-	third, _ := tr.SessionNotifyAsk(notifyFrame(p))
-	if third.AskID == first.AskID {
-		t.Errorf("two questions share AskID %q, want distinct ids", third.AskID)
-	}
-}
-
-func TestSessionNotifyAsk_IDDistinguishesTwoQuestionsWithoutANotifyID(t *testing.T) {
-	t.Parallel()
-	tr := New(rolesOf(newBaseDeps()))
-	base := notifyParams{severity: "warning", workflowID: "wf_1", caller: testStep}
-	base.message = "which branch?"
-	first, _ := tr.SessionNotifyAsk(notifyFrame(base))
-	base.message = "which reviewer?"
-	second, _ := tr.SessionNotifyAsk(notifyFrame(base))
-	if first.AskID == second.AskID {
-		t.Errorf("two questions share AskID %q with no notifyId, want distinct ids", first.AskID)
+	if got.Message != "which branch should I target?" {
+		t.Errorf("Message = %q, want the message verbatim", got.Message)
 	}
 }

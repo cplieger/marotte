@@ -54,6 +54,9 @@ export interface ExecNode {
   /** What words sent to this execution do now, as the server decides it from the raw state that
    *  `state` folds an ask into; absent where the server would refuse them. */
   verb?: RunStepMessageVerb;
+  /** The id of the question words sent here answer, beside an `answer` verb, so a newer question
+   *  refuses them as stale. */
+  ask?: string;
   /** Whether this node can host a live transcript, so the pane can say "none here" rather than
    *  "none yet". */
   transcript?: boolean;

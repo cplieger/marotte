@@ -197,17 +197,18 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.RunAnswerRequest](),
 	wiregen.TypeRef[marotte.RunStepMessageRequest](),
 	wiregen.TypeRef[marotte.RunStepMessageResponse](),
+	wiregen.TypeRef[marotte.RunStepStatusRequest](),
 	wiregen.TypeRef[marotte.RunStepSteerRequest](),
 	wiregen.TypeRef[marotte.RunExtendRequest](),
 	wiregen.TypeRef[marotte.RunFinishLoopRequest](),
 	wiregen.TypeRef[marotte.RunStartedPayload](),
 	wiregen.TypeRef[marotte.RunProgressPayload](),
 	wiregen.TypeRef[marotte.RunFinishedPayload](),
-	wiregen.TypeRef[marotte.RunInputNeededPayload](),
-	wiregen.TypeRef[marotte.RunInputSettledPayload](),
 	wiregen.TypeRef[marotte.NotificationPayload](),
-	// GET /api/runs/{id}'s `open_asks`, a read reply, so the SSE-binding test exempts it.
-	wiregen.TypeRef[marotte.RunOpenAsk](),
+	// One step waiting on a person: run_asks's element and GET /api/runs/{id}'s `open_asks`, before
+	// the payload that holds it. No `Payload` suffix, so the SSE-binding test exempts it.
+	wiregen.TypeRef[marotte.RunAsk](),
+	wiregen.TypeRef[marotte.RunAsksPayload](),
 	// GET /api/runs/{id}'s `plan_update`, a read reply too.
 	wiregen.TypeRef[marotte.RunPlanUpdate](),
 	// GET /api/runs/{id}'s `step_ends`, a read reply like `open_asks`.
@@ -341,6 +342,10 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// The run composer words the delivery and each refusal, so both folds must be total.
 	"RunStepMessageVerb":    {},
 	"RunStepMessageRefusal": {},
+	// A card labels its text and words its blocker from these, and the answer's refusal from the code.
+	"RunAskText":    {},
+	"RunAskBlocker": {},
+	"RunAskRefusal": {},
 	// Registered for CatalogState's reason below.
 	"RunStepTranscriptState": {},
 	"DecisionKind":           {},
@@ -420,8 +425,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "run_started", TypeName: "RunStartedPayload"},
 	{EventType: "run_progress", TypeName: "RunProgressPayload"},
 	{EventType: "run_finished", TypeName: "RunFinishedPayload"},
-	{EventType: "run_input_needed", TypeName: "RunInputNeededPayload"},
-	{EventType: "run_input_settled", TypeName: "RunInputSettledPayload"},
+	{EventType: "run_asks", TypeName: "RunAsksPayload"},
 	{EventType: "safety_properties", TypeName: "SafetyPropertiesPayload"},
 	{EventType: "safety_status", TypeName: "SafetyStatusPayload"},
 	{EventType: "knowledge_indexing", TypeName: "KnowledgeIndexingPayload"},

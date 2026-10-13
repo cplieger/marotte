@@ -3,15 +3,9 @@
 
 import { effect, signal, touch } from "@cplieger/reactive";
 import { openRunRefs, renameTab, setTabStatus, tabIdFor, tabSetVersion } from "./tabs.js";
-import { runStatusFor, type RunPauseClass } from "./store.js";
+import { runStatusFor } from "./store.js";
 import { runPendingAsks } from "./decision-dock.js";
-import {
-  invalidateRun,
-  isNeedInputPark,
-  registerLiveRunObserver,
-  runLabelOf,
-  runState,
-} from "./run-store.js";
+import { invalidateRun, registerLiveRunObserver, runLabelOf, runState } from "./run-store.js";
 
 /** The runs this client has seen an event for, and the version counter that makes the effect
  *  depend on the set. */
@@ -76,11 +70,7 @@ function repaint(): void {
     // into) is exactly the moment the dot must repaint, and `run_progress` for an already-tracked
     // run bumps nothing else here.
     const state = runState(workflowID);
-    // A park on a PERSON is the yellow dot even with no card in the dock: a client that connected
-    // after the ask was raised holds nothing to join, and the park is the only thing left that says
-    // a human is owed an answer.
-    const pause: RunPauseClass = isNeedInputPark(state) ? "need_input" : "";
-    setTabStatus(id, runStatusFor(state?.status, asking, pause));
+    setTabStatus(id, runStatusFor(state?.status, asking));
     // The name, from the same read. `""` means nothing has been fetched for the run yet, so the row
     // keeps the factory's placeholder.
     const label = runLabelOf(workflowID);
@@ -108,8 +98,8 @@ export function installRunDotSubscriber(): void {
     // Subscribes to the tab SET as well, so a run tab arriving after its run's frames (the open_tab
     // round trip) or restored on boot paints without a fresh run event.
     void tabSetVersion();
-    // Subscribes to the dock queue too: runPendingAsks reads queueVersion, so an ask arriving for a
-    // background run repaints its dot with no run event. And to every tracked run's own cell,
+    // Subscribes to the dock queue and the run-asks store too, through runPendingAsks, so an ask
+    // arriving for a background run repaints its dot with no run event. And to every tracked run's own cell,
     // through repaint's runState reads.
     repaint();
   });

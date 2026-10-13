@@ -37,7 +37,7 @@ func (rt *Runtime) pendingSnapshot(afterRead func(n int)) (marotte.PendingSnapsh
 	step(0)
 	events := rt.bus.pendingPerms.list("")
 	step(1)
-	events = append(events, rt.runs.asks.list("")...)
+	events = append(events, rt.runs.asks.list()...)
 	step(2)
 	events = append(events, rt.bus.steers.list("")...)
 	step(3)

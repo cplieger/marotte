@@ -13,8 +13,6 @@ import (
 
 // In-memory state only; durable state is the delete grade's.
 func (rt *Runtime) cleanupChatState(ctx context.Context, chatID marotte.ChatID) {
-	// The chat's runs end with it, so its step asks are answerable by nobody.
-	rt.runs.asks.clearChat(chatID)
 	// waiting_on_user outlives ClearAtTurnEnd, so clear it here.
 	rt.bus.chatStatus.clear(chatID)
 	rt.beginSteerTeardown(ctx, chatID, false)

@@ -2,6 +2,7 @@
 // pinned here is what the module DECIDES.
 
 import { describe, it, expect } from "vitest";
+import { join } from "@cplieger/keyenc";
 import pushTypesGo from "../internal/marotte/push_types.go?raw";
 import {
   askTarget,
@@ -10,6 +11,8 @@ import {
   prIdentity,
   pushTargetRoute,
   pushTargetTag,
+  runAskOfTag,
+  runAskTarget,
   runTarget,
 } from "./push-subject.js";
 
@@ -103,5 +106,48 @@ describe("the constructors", () => {
     expect(askTarget("c-7", "wf_1")).toEqual({ kind: "run", workflowID: "wf_1" });
     expect(askTarget("c-7", "")).toEqual({ kind: "chat", chatID: "c-7" });
     expect(askTarget("c-7", undefined)).toEqual({ kind: "chat", chatID: "c-7" });
+  });
+});
+
+// One step's wait in a run: the server's `runask:` subject, whose key is the ask's position.
+describe("a step question's subject", () => {
+  const position = join("wf:1", join("wf:1", "review"), "sess-1");
+
+  it("reads the run off the position's first component", () => {
+    expect(parsePushTarget({ chatId: "", subject: `runask:${position}` })).toEqual({
+      kind: "run_ask",
+      workflowID: "wf:1",
+      position,
+    });
+  });
+
+  it("routes to the run's tab, and gives each wait its own tray slot", () => {
+    const target = runAskTarget(position);
+    expect(pushTargetRoute(target)).toEqual({ kind: "run", id: "wf:1" });
+    expect(pushTargetTag(target)).toBe(`marotte:runask:${position}`);
+    expect(pushTargetTag(target)).not.toBe(
+      pushTargetTag(runAskTarget(join("wf:1", join("wf:1", "build"), "sess-2"))),
+    );
+  });
+
+  it("is a different subject from the run's own outcome", () => {
+    expect(parsePushTarget({ chatId: "", subject: "run:wf_1" }).kind).toBe("run");
+  });
+
+  it("names no run for a hashed position, which routes nowhere", () => {
+    const hashed = join("x".repeat(9000));
+    expect(runAskTarget(hashed)).toEqual({ kind: "run_ask", workflowID: "", position: hashed });
+    expect(pushTargetRoute(runAskTarget(hashed))).toEqual({ kind: "chat", id: "" });
+  });
+
+  it("is read back off its tag, and off no other tag", () => {
+    expect(runAskOfTag(`marotte:runask:${position}`)).toEqual(runAskTarget(position));
+    expect(runAskOfTag("marotte:run:wf_1")).toBeUndefined();
+    expect(runAskOfTag("marotte:c1")).toBeUndefined();
+  });
+
+  it("is the prefix marotte.RunAskSubject composes", () => {
+    expect(pushTypesGo).toContain('const runAskSubjectPrefix = "runask:"');
+    expect(pushTypesGo).toContain("PushSubject{Key: runAskSubjectPrefix + position}");
   });
 });

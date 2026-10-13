@@ -85,7 +85,7 @@ func TestRunVerbs_AStampTheUtilitySessionHoldsIsReleased(t *testing.T) {
 		{
 			name: "SetStepStatus", method: methodKiroWorkflowUpdate,
 			verb: func(t *testing.T, h *Runtime, _ *fakeBridge) error {
-				return h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepCompleted)
+				return h.runs.setStepStatus(t.Context(), "wf_1", marotte.RunStepStatusRequest{NodeID: "review", Status: runStepCompleted})
 			},
 		},
 		{

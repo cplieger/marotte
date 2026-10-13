@@ -11,18 +11,19 @@ import { RUN_INPUT_FALLBACK } from "./dock-ask.js";
 import { buildPermissionCard, type PermissionAnswer } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
 import { buildUserInputCard } from "./user-input.js";
-import { buildRunInputCard } from "./run-input.js";
+import { buildRunAskCard, updateRunAskCard, type RunAskCardInput } from "./run-input.js";
 import { info } from "./toast.js";
 import { named, noticeSubject } from "./notice-subject.js";
 import { join } from "@cplieger/keyenc";
-import type { RunAskAddress, RunAsks } from "./run-asks.js";
+import { nodePathKey } from "./run-node-key.js";
+import { allRunAsks, type RunAskAddress, type RunAsks } from "./run-asks.js";
 import type {
   PermissionNeededPayload,
   ElicitationNeededPayload,
   UserInputNeededPayload,
-  RunInputNeededPayload,
   SettledBy,
 } from "./types.js";
+import type { RunAsk } from "./wire/types.gen.js";
 
 /** A permission ask, including the turn-approval variety (payload.files). */
 interface PermissionDecision {
@@ -57,26 +58,23 @@ interface UserInputDecision {
 }
 
 /**
- * A workflow step's question: durable across bridge death and restart, answered by a fresh `session/prompt` to the
- * paused step's session, and carrying a string id (hence `decisionIdentity`). `submit(null)` continues without
- * answering, for the post-restart case where the question text is gone (the ask registry is in memory).
+ * A workflow step's question, never queued: derived on every render from the run-asks store, which alone says whether
+ * the step still waits, so the card leaves exactly when the store drops the ask.
  */
 interface RunInputDecision {
   kind: "run_input";
+  /** The run's envelope chat: the launching chat, else `run:<workflowId>`. */
   chatID: string;
-  runID?: string;
-  /** The ask's identity within its run, server-composed. */
-  askID: string;
-  payload: RunInputNeededPayload;
-  submit: (text: string | null) => void;
-  /** Asks the launching agent to answer, on a chat-parented ask only; its presence puts the Defer button on the card. */
-  defer?: () => void | Promise<void>;
+  runID: string;
+  ask: RunAsk;
+  reachable: boolean;
 }
 
-/** The dock's input; the per-kind shapes are this module's business. */
+/** What a dock renders; the per-kind shapes are this module's business. */
 type Decision = PermissionDecision | ElicitationDecision | UserInputDecision | RunInputDecision;
 
-/** The three request-shaped kinds (an open JSON-RPC request with an int64 id), which `decision_settled` can name. */
+/** The three request-shaped kinds (an open JSON-RPC request with an int64 id), the ones the queue holds and
+ *  `decision_settled` can name. */
 type RequestDecision = PermissionDecision | ElicitationDecision | UserInputDecision;
 
 /**
@@ -97,8 +95,8 @@ function isRequestDecision(d: Decision): d is RequestDecision {
   return d.kind !== "run_input";
 }
 
-/** Per-chat FIFO of unanswered decisions. The head is the one on screen. */
-const queues = new Map<string, Decision[]>();
+/** Per-chat FIFO of unanswered request decisions. A chat's step questions follow its queue. */
+const queues = new Map<string, RequestDecision[]>();
 
 /**
  * The queue key a run owns, twin of `runChatPrefix` in `internal/agent/run_host.go`. Not a chat id: no tab or session
@@ -234,12 +232,10 @@ function activeChatID(): string {
 }
 
 /** Enqueue a decision and show it when its chat is the one on screen. */
-export function pushDecision(d: Decision): void {
+export function pushDecision(d: RequestDecision): void {
   const q = queues.get(d.chatID) ?? [];
-  // SSE connect replays every unanswered permission and parked question, so a re-delivery must not stack. Per-kind
-  // identity, so a string ask id and a request id are never compared.
-  const id = decisionIdentity(d);
-  if (q.some((existing) => existing.kind === d.kind && decisionIdentity(existing) === id)) {
+  // SSE connect replays every unanswered request, so a re-delivery must not stack.
+  if (q.some((existing) => existing.kind === d.kind && existing.requestID === d.requestID)) {
     return;
   }
   q.push(d);
@@ -249,7 +245,7 @@ export function pushDecision(d: Decision): void {
 
 /**
  * Drop every decision keyed to this surface without answering (chat gone, or a transport gap). Never calls submit.
- * Unconditional: `close_chat` / `delete_chat` cancel the chat's runs server-side, so run asks keyed here are dead too.
+ * Unconditional: `close_chat` / `delete_chat` cancel the chat's runs server-side, so a run's requests keyed here are dead too.
  */
 export function dropDecisions(chatID: string): void {
   if (!queues.delete(chatID)) {
@@ -276,18 +272,15 @@ export function dropRunDecisions(): void {
 }
 
 /**
- * Drop every unanswered ask of this run, wherever filed, without answering. All four kinds carry `runID`
- * (handlers/turn.ts, handlers/run.ts), so a step's permission and elicitation have no other remover. Safe: a terminal
- * run has no step to consume an answer, and the server clears its own pending set on the same transition. Same join
- * as `runPendingAsks`. Refuses an empty id.
+ * Drop every request decision of this run, wherever filed, without answering. All three kinds carry `runID`
+ * (handlers/turn.ts), so a step's permission and elicitation have no other remover. Safe: a terminal run has no step to
+ * consume an answer. Same join as `runPendingAsks`. Refuses an empty id.
  */
-export function dropRunAsks(workflowID: string): void {
+export function dropRunRequests(workflowID: string): void {
   if (workflowID === "") {
     return;
   }
   const runKey = `${RUN_CHAT_PREFIX}${workflowID}`;
-  // Includes an ask whose per-ask settle never arrived, which `collapseSettledRunInput` cannot cover.
-  heldAnswers.delete(workflowID);
   let dropped = false;
   for (const [chatID, q] of queues) {
     const rest = q.filter((d) => d.runID !== workflowID && d.chatID !== runKey);
@@ -309,7 +302,7 @@ export function dropRunAsks(workflowID: string): void {
 /**
  * Drop the decisions a turn owned, leaving run asks alone. Triggers: `turn_ended`, and a run's terminal frame while
  * the launching chat is idle (a step's ask can arrive with empty `run_id`). A blocking ask cannot outlive its turn.
- * Run-scoped asks are exempt: an agent-launched run outlives the turn that launched it; `dropRunAsks` ends that.
+ * Run-scoped asks are exempt: an agent-launched run outlives the turn that launched it; `dropRunRequests` ends that.
  */
 export function dropTurnDecisions(chatID: string): void {
   const q = queues.get(chatID);
@@ -329,17 +322,21 @@ export function dropTurnDecisions(chatID: string): void {
 }
 
 /**
- * Whether this chat holds an unanswered decision (the tab dot). Reads `queueVersion.value` so the calling effect
- * subscribes to arrivals and answers. A `run:<id>` key never matches.
+ * Whether this chat holds an unanswered decision or a step of a run it launched waits on a person (the tab dot's
+ * `input`). Subscribes the calling effect to the queue and the run-asks store. A `run:<id>` key never matches a tab.
  */
 export function hasPendingDecision(chatID: string): boolean {
   touch(queueVersion);
-  return (queues.get(chatID)?.length ?? 0) > 0;
+  if ((queues.get(chatID)?.length ?? 0) > 0) {
+    return true;
+  }
+  return allRunAsks().some((r) => r.chat_id === chatID && r.asks.length > 0);
 }
 
 /**
- * What one workflow run waits on a person for (the run card): KAS leaves the run `running` while a step is blocked.
- * Scans every queue (same join as `mountRunDecisionDock`), and reads `queueVersion.value` to subscribe the caller.
+ * What one workflow run waits on a person for (the run card, the exec view, the dots): its steps' questions from the
+ * run-asks store, then its request decisions from every queue (same join as `mountRunDecisionDock`). Subscribes the
+ * caller to both.
  */
 export function runPendingAsks(workflowID: string): RunAsks {
   touch(queueVersion);
@@ -347,35 +344,49 @@ export function runPendingAsks(workflowID: string): RunAsks {
   if (workflowID === "") {
     return { count: 0, asked, label: "" };
   }
-  const runKey = `${RUN_CHAT_PREFIX}${workflowID}`;
-  let count = 0;
   let label = "";
+  for (const r of allRunAsks()) {
+    if (r.workflow_id !== workflowID) {
+      continue;
+    }
+    for (const a of r.asks) {
+      asked.push({
+        nodeID: a.node_id,
+        sessionID: a.step_session_id,
+        answer: true,
+        path: nodePathKey(a.node_path),
+        askID: a.ask_id,
+      });
+      if (label === "") {
+        label = runAskLabel(a);
+      }
+    }
+  }
+  const runKey = `${RUN_CHAT_PREFIX}${workflowID}`;
   for (const q of queues.values()) {
     for (const d of q) {
       if (d.runID !== workflowID && d.chatID !== runKey) {
         continue;
       }
-      count++;
-      asked.push(askAddress(d));
+      asked.push({
+        nodeID: d.payload.node_id ?? "",
+        sessionID: d.payload.sub_session_id ?? "",
+        answer: false,
+      });
       if (label === "") {
-        label = askLabel(d);
+        label = requestLabel(d);
       }
     }
   }
-  return { count, asked, label };
+  return { count: asked.length, asked, label };
 }
 
-/** Either id is absent when the step-session registry never saw the sub-session; the run is blocked either way. */
-function askAddress(d: Decision): RunAskAddress {
-  const nodeID = d.payload.node_id ?? "";
-  if (d.kind === "run_input") {
-    return { nodeID, sessionID: d.payload.step_session_id, answer: true };
-  }
-  return { nodeID, sessionID: d.payload.sub_session_id ?? "", answer: false };
+function runAskLabel(a: RunAsk): string {
+  return a.text === "" ? RUN_INPUT_FALLBACK : a.text;
 }
 
 /** Per-kind and private: the run card takes the sentence, not a payload. */
-function askLabel(d: Decision): string {
+function requestLabel(d: RequestDecision): string {
   switch (d.kind) {
     case "permission":
       return d.payload.title ?? "";
@@ -383,9 +394,6 @@ function askLabel(d: Decision): string {
       return d.payload.message ?? "";
     case "user_input":
       return d.payload.question;
-    case "run_input":
-      // Empty after a restart: the ask registry is in memory, so the server reconstructs the ask without its question.
-      return d.payload.question === "" ? RUN_INPUT_FALLBACK : d.payload.question;
   }
 }
 
@@ -396,14 +404,12 @@ function askLabel(d: Decision): string {
  */
 export function collapseSettledDecision(
   chatID: string,
-  // Request-shaped kinds only: `decision_settled` is keyed by an int64 id; run asks use `collapseSettledRunInput`.
   kind: RequestDecision["kind"],
   requestID: number,
   settledBy: SettledBy,
 ): string | undefined {
   const q = queues.get(chatID);
-  const i =
-    q?.findIndex((d) => d.kind === kind && isRequestDecision(d) && d.requestID === requestID) ?? -1;
+  const i = q?.findIndex((d) => d.kind === kind && d.requestID === requestID) ?? -1;
   if (q === undefined || i < 0) {
     return undefined;
   }
@@ -413,11 +419,7 @@ export function collapseSettledDecision(
   }
   const key = decisionKey(chatID, kind, String(requestID));
   // This surface's own answer, delivered: nothing to explain. An end or a withdrawal still says why.
-  const ownAnswer =
-    settled !== undefined &&
-    isRequestDecision(settled) &&
-    answering.has(settled) &&
-    settledBy === "user";
+  const ownAnswer = settled !== undefined && answering.has(settled) && settledBy === "user";
   if (!ownAnswer && hosts.some((h) => h.renderedKey === key)) {
     // The toast announces itself into the shared live region; a second announce() would read it twice.
     info(named(noticeSubject(chatID), settledMessage(kind, settledBy)));
@@ -432,7 +434,7 @@ export function collapseSettledDecision(
  * the subject moved on, so claiming an answer would be false), `ended` (nobody can: the agent session that asked
  * is gone).
  */
-function settledMessage(kind: Decision["kind"], settledBy: SettledBy): string {
+function settledMessage(kind: RequestDecision["kind"], settledBy: SettledBy): string {
   const subject = settledSubject(kind);
   switch (settledBy) {
     case "unattended":
@@ -449,7 +451,7 @@ function settledMessage(kind: Decision["kind"], settledBy: SettledBy): string {
   }
 }
 
-function settledSubject(kind: Decision["kind"]): string {
+function settledSubject(kind: RequestDecision["kind"]): string {
   switch (kind) {
     case "permission":
       return "The permission request";
@@ -457,88 +459,16 @@ function settledSubject(kind: Decision["kind"]): string {
       return "The input request";
     case "user_input":
       return "The agent's question";
-    case "run_input":
-      return "The workflow step's question";
-    default:
-      kind satisfies never;
-      return "The request";
-  }
-}
-
-/**
- * Retire a run ask answered or waived elsewhere (`run_input_settled`), keyed by string ask id. Scans every queue:
- * the event names only the run.
- */
-export function collapseSettledRunInput(
-  workflowID: string,
-  askID: string,
-  settledBy: SettledBy,
-): void {
-  if (workflowID === "" || askID === "") {
-    return;
-  }
-  // Unconditional: the ask is over whether or not a card is still queued here.
-  forgetHeldAnswer(workflowID, askID);
-  for (const [chatID, q] of queues) {
-    const i = q.findIndex(
-      (d) => d.kind === "run_input" && d.askID === askID && d.payload.workflow_id === workflowID,
-    );
-    if (i < 0) {
-      continue;
-    }
-    q.splice(i, 1);
-    if (q.length === 0) {
-      queues.delete(chatID);
-    }
-    if (hosts.some((h) => h.renderedKey === decisionKey(chatID, "run_input", askID))) {
-      info(named(noticeSubject(chatID), settledMessage("run_input", settledBy)));
-    }
-    bump();
-    return;
-  }
-}
-
-/**
- * A run-input card's typed words, held per ask: `settleRunInput` unqueues before sending, so a retryable refusal
- * (`errRunNotParked`) re-offers the same ask and must return the text. Nested by run because `collapseSettledRunInput`
- * (per ask) and `dropRunAsks` (per run) are every exit, which bounds the map.
- */
-const heldAnswers = new Map<string, Map<string, string>>();
-
-/** The text this ask is holding, or "" — what a rebuilt card seeds its box with. */
-function heldAnswer(d: RunInputDecision): string {
-  return heldAnswers.get(d.payload.workflow_id)?.get(d.askID) ?? "";
-}
-
-/** Hold the words being sent; a `null` text continues without answering, so the hold is dropped instead. */
-function holdAnswer(d: RunInputDecision, text: string | null): void {
-  if (text === null) {
-    forgetHeldAnswer(d.payload.workflow_id, d.askID);
-    return;
-  }
-  const byAsk = heldAnswers.get(d.payload.workflow_id) ?? new Map<string, string>();
-  byAsk.set(d.askID, text);
-  heldAnswers.set(d.payload.workflow_id, byAsk);
-}
-
-function forgetHeldAnswer(workflowID: string, askID: string): void {
-  const byAsk = heldAnswers.get(workflowID);
-  if (byAsk === undefined) {
-    return;
-  }
-  byAsk.delete(askID);
-  if (byAsk.size === 0) {
-    heldAnswers.delete(workflowID);
   }
 }
 
 /** Whether d is still queued; membership, not head position: a run tab may answer an ask queued behind the chat's
  *  own, which is protocol-correct. */
-function isQueued(d: Decision): boolean {
+function isQueued(d: RequestDecision): boolean {
   return queues.get(d.chatID)?.includes(d) ?? false;
 }
 
-function unqueue(d: Decision): void {
+function unqueue(d: RequestDecision): void {
   const q = queues.get(d.chatID);
   const i = q?.indexOf(d) ?? -1;
   if (q === undefined || i < 0) {
@@ -548,17 +478,6 @@ function unqueue(d: Decision): void {
   if (q.length === 0) {
     queues.delete(d.chatID);
   }
-}
-
-/** A run ask retires on send: a retryable refusal comes back as a re-offered ask, which `heldAnswers` refills. */
-function settleRunInput(d: RunInputDecision, run: () => void): void {
-  if (!isQueued(d)) {
-    // A double answer on one ask is worse than a dropped click.
-    return;
-  }
-  unqueue(d);
-  run();
-  bump();
 }
 
 /**
@@ -612,7 +531,8 @@ function markAnswering(card: HTMLElement, on: boolean): void {
   card.toggleAttribute("aria-busy", on);
 }
 
-/** Insertion order across queues is stable enough: a run's asks come from one bridge. */
+/** Request decisions first, in insertion order across queues (a run's asks come from one bridge), since they hold a
+ *  live turn; then the step questions, in the store's order. */
 function matching(h: DockHost): Decision[] {
   const out: Decision[] = [];
   for (const q of queues.values()) {
@@ -622,12 +542,31 @@ function matching(h: DockHost): Decision[] {
       }
     }
   }
+  for (const r of allRunAsks()) {
+    for (const ask of r.asks) {
+      const d: RunInputDecision = {
+        kind: "run_input",
+        chatID: r.chat_id,
+        runID: r.workflow_id,
+        ask,
+        reachable: r.reachable,
+      };
+      if (h.match(d)) {
+        out.push(d);
+      }
+    }
+  }
   return out;
 }
 
-/** Within-kind identity: the server's int64 ask id (`request_id`), or the run ask id. */
+/** Within-kind identity: the server's int64 ask id (`request_id`), or a step question's id with everything the card
+ *  prints but cannot rewrite in place, so a change there rebuilds it. */
 function decisionIdentity(d: Decision): string {
-  return d.kind === "run_input" ? d.askID : String(d.requestID);
+  if (d.kind !== "run_input") {
+    return String(d.requestID);
+  }
+  const a = d.ask;
+  return join(a.ask_id, a.text_source, a.text, a.agent_name, a.node_id);
 }
 
 /** keyenc rather than a template join: a run ask id is arbitrary text, and a separator inside it would merge two keys. */
@@ -647,11 +586,15 @@ function renderHost(h: DockHost): void {
     return;
   }
 
-  // A rebuild would discard the user's typing, so the same decision is a no-op apart from the depth line. MUST NOT start a phase.
+  // A rebuild would discard the user's typing, so the same decision only re-states what can move in place. MUST NOT
+  // start a phase.
   const key = decisionKey(head.chatID, head.kind, decisionIdentity(head));
   const depth = mine.length;
   if (key === h.renderedKey) {
     updateDepth(h, depth);
+    if (head.kind === "run_input" && h.card !== null) {
+      updateRunAskCard(h.card, runAskInput(head));
+    }
     return;
   }
 
@@ -849,6 +792,10 @@ function announcementFor(d: Decision): string {
   }
 }
 
+function runAskInput(d: RunInputDecision): RunAskCardInput {
+  return { workflowID: d.runID, chatID: d.chatID, reachable: d.reachable, ask: d.ask };
+}
+
 function buildCard(d: Decision): HTMLElement {
   switch (d.kind) {
     case "permission":
@@ -873,19 +820,7 @@ function buildCard(d: Decision): HTMLElement {
         );
       });
     case "run_input":
-      // Inside settleRunInput's callback, so an already-answered ask leaves nothing held.
-      return buildRunInputCard(
-        d.payload,
-        heldAnswer(d),
-        (text) => {
-          settleRunInput(d, () => {
-            holdAnswer(d, text);
-            d.submit(text);
-          });
-        },
-        // Unwrapped: a deferral answers nothing, and unqueueing would remove the card while the run is still parked.
-        d.defer,
-      );
+      return buildRunAskCard(runAskInput(d));
     default:
       d satisfies never;
       return el("div");
@@ -900,7 +835,6 @@ export function _resetForTest(): void {
     h.stop();
   }
   queues.clear();
-  heldAnswers.clear();
   hosts.length = 0;
   queueVersion.value = 0;
 }

@@ -78,42 +78,6 @@ func (r *turnRegistry) sealPosition(chatID marotte.ChatID, gen uint64) {
 	lc.wakeLocked()
 }
 
-// folded is how far chatID's forward goroutine has consumed, on its attachment; read during a fold, the
-// position before the frame being folded. Gen 0 is no attachment.
-func (r *turnRegistry) folded(chatID marotte.ChatID) drainPoint {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return drainPoint{}
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	return drainPoint{gen: lc.fwdGen, seq: lc.observedSeq}
-}
-
-// awaitDrained parks until attachment at.gen has consumed at.seq, or until it cannot: an
-// attachment that exited or was replaced never will.
-func (r *turnRegistry) awaitDrained(ctx context.Context, chatID marotte.ChatID, at drainPoint) {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return
-	}
-	lc.mu.Lock()
-	for {
-		if lc.fwdGen != at.gen || lc.observedSeq >= at.seq || lc.forwardGone {
-			lc.mu.Unlock()
-			return
-		}
-		changed := lc.changed
-		lc.mu.Unlock()
-		select {
-		case <-changed:
-		case <-ctx.Done():
-			return
-		}
-		lc.mu.Lock()
-	}
-}
-
 // awaitPosition parks until the folder has consumed everything before this turn's response, reporting whether it
 // got there. It holds no lifecycle mutex and claims nothing: claiming enters turnFinalizing, where a fold waits. It
 // does not stop when the awaited turn finalizes, because the wait also orders the empty-turn gate's later-turn

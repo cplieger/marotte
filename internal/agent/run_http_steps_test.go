@@ -47,7 +47,7 @@ func stepRouteHub(t *testing.T, tc stepRouteCase) (*Runtime, *fakeBridge, *http.
 	h.runs.log = newRunLog(t.TempDir())
 	h.bridge.mgr.insert(runChatID(tc.WorkflowID), &sharedBridge{bridge: br, state: bridgeIdle})
 	br.setCallResult(methodKiroWorkflowInspect,
-		stepTreeInspect(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning, rootID, stepID, "sess_step"))
+		stepTreeInspect(t, tc.WorkflowID, marotte.RunStatusRunning, marotte.RunNodeStatusRunning, rootID, stepID, "sess_step"))
 	br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
 	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: tc.WorkflowID, NodePath: workflow.PathKey(tc.NodePath), SessionID: "sess_step"}, "")
 	mux := http.NewServeMux()

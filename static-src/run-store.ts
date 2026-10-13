@@ -3,7 +3,7 @@
 
 import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
-import { nodePathKey } from "./run-node-key.js";
+import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import { forgetSubject, observeStamp } from "./subject-versions.js";
 import { turnOpenOf } from "./turns.js";
 import { settleWorkflowMessages } from "./workflow-delivery.js";
@@ -1387,16 +1387,6 @@ export function sealRunEntry(
 // Derived reads: functions over the cached value, never stored beside it — a second copy of "how
 // many steps finished" is a second thing that can be wrong.
 
-/** A repeat child carrying no `iteration` falls back to its `nodeId`: a row in the wrong place
- *  beats content that vanishes, the same call the server's own `runNodePath` makes when a frame
- *  carries no path. */
-export function nodePathSegment(node: RunNode, parent: RunNode | undefined): string {
-  if (parent?.type === "repeat" && node.iteration !== undefined) {
-    return `iter-${String(node.iteration)}`;
-  }
-  return node.nodeId;
-}
-
 /** Every node of `type` in the tree, depth-first in plan order, every pass included. */
 export function nodesOfType(root: RunNode | undefined, type: string): RunNode[] {
   const out: RunNode[] = [];
@@ -1418,51 +1408,6 @@ export function nodesOfType(root: RunNode | undefined, type: string): RunNode[] 
 export function runIsLive(state: RunState | undefined): boolean {
   const status = state?.status;
   return status === undefined ? false : runStatusActive(status);
-}
-
-/** Whether a pause REASON means a step is waiting on a person — the reason half of
- *  `isNeedInputPark`, which is the question every surface asks. */
-export function isNeedInputPause(reason: string | undefined): boolean {
-  if (reason === undefined || reason === "") {
-    return false;
-  }
-  if (reason === "Step requested user input via send_message.") {
-    return true;
-  }
-  return (
-    reason.startsWith("Step '") &&
-    (reason.endsWith("' is waiting for user input.") ||
-      reason.endsWith("' is waiting for the next user message."))
-  );
-}
-
-/** Depth-first, first match wins. */
-function needInputNode(n: RunNode | undefined): RunNode | undefined {
-  if (n === undefined) {
-    return undefined;
-  }
-  if (n.status === "paused" && n.completionSignal === "need_input") {
-    return n;
-  }
-  for (const child of n.children ?? []) {
-    const hit = needInputNode(child);
-    if (hit !== undefined) {
-      return hit;
-    }
-  }
-  return undefined;
-}
-
-/** Whether a run is parked on a PERSON — the one pause a reader has to act on. TWO ARMS, because
- *  neither answers alone: the run's own pause reason, which is what a plain step's park writes,
- *  and a paused node's completion signal, which is the only thing left of a park that happened
- *  inside a parallel branch. Gated on `paused`, like the dot vocabulary's own arm: a reason or a
- *  signal outliving its pause must never paint a finished run as awaiting input. */
-export function isNeedInputPark(state: RunState | undefined): boolean {
-  if (state?.status !== "paused") {
-    return false;
-  }
-  return isNeedInputPause(state.pauseReason) || needInputNode(state.root) !== undefined;
 }
 
 /** Only a class whose `pauseReason` does NOT already name its cause earns a label.

@@ -261,11 +261,15 @@ async function submit(): Promise<void> {
   // Every send's settlement goes through run-step-steers.ts by id; a predicted steer also draws its
   // dock row on Send, the one optimistic surface.
   const send = beginStepMessage(workflowID, nodePath, messageID, text, mode.verb === "steer");
+  // An answer names its question, so it reaches this execution of a step whose path a fan-out
+  // shares, and a newer question refuses it as stale.
+  const askID = mode.verb === "answer" ? (t.step.ask ?? "") : "";
   const outcome = await messageRunStep.dispatch({
     workflowID,
     nodePath,
     text,
     message_id: messageID,
+    ...(askID === "" ? {} : { ask_id: askID }),
   }).outcome;
   inFlight.delete(key);
   paint();
