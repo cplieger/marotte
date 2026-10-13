@@ -21,10 +21,19 @@ const showBanner = vi.fn(
   ) => undefined,
 );
 const clearBannerCodes = vi.fn((_chat: string, _codes: string[]) => undefined);
-vi.mock("./banner-stack.js", () => ({ showBanner, clearBannerCodes }));
+vi.mock("./banner-stack.js", async (importOriginal) => ({
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  ...(await importOriginal<typeof import("./banner-stack.js")>()),
+  showBanner,
+  clearBannerCodes,
+}));
 
 const submitLabelled = vi.fn(async (_chat: string, _text: string, _label: string) => "sent");
-vi.mock("./submit.js", () => ({ submitLabelled }));
+vi.mock("./submit.js", async (importOriginal) => ({
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  ...(await importOriginal<typeof import("./submit.js")>()),
+  submitLabelled,
+}));
 
 const store = await import("./store.js");
 const { initWorkflowDeliverNow, waitingWorkflowMessages } =

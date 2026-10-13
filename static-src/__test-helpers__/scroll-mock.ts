@@ -22,6 +22,7 @@ export const scrollMock = {
   readingLineOffset: vi.fn(() => 0),
   resetScrollState: vi.fn(),
   setLoadMore: vi.fn(),
+  noteHistoryEdge: vi.fn(),
   rebaseLoadMore: vi.fn(),
   readingState: vi.fn((): ReadingState => "following"),
   onReadingStateChange: vi.fn(),

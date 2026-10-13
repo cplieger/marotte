@@ -157,6 +157,13 @@ function readerScroll(el: HTMLElement): void {
   el.dispatchEvent(new Event("scroll"));
 }
 
+/** The reader's scroll plus the history-edge observer's report, which fake geometry cannot produce: the edge counts
+ *  as reached within 100px of the top. */
+function readerAtHistoryEdge(h: Harness): void {
+  readerScroll(h.scrollEl);
+  h.scroll.noteHistoryEdge(h.scrollEl.scrollTop < 100);
+}
+
 async function settle(): Promise<void> {
   await new Promise((r) => setTimeout(r, 25));
 }
@@ -222,19 +229,19 @@ async function freshModule(opts: { withExistingRow?: boolean } = {}): Promise<Ha
   const scrollEl = scroll.getScrollEl();
   // TWO ResizeObservers, in construction order: the content one, then the gutter one. Attributed by
   // construction site rather than by target, so a regression that moves a callback between them
-  // names the observer it moved to. TWO IntersectionObservers likewise: the live edge's, then the
-  // near-view one.
+  // names the observer it moved to. THREE IntersectionObservers likewise: the live edge's, the
+  // history edge's (built with the near lead), then the near-view one.
   expect([
     FakeResizeObserver.instances.length,
     FakeIntersectionObserver.instances.length,
     scrollEl,
-  ]).toEqual([2, 2, wrap]);
+  ]).toEqual([2, 3, wrap]);
   return {
     scroll,
     ro: FakeResizeObserver.instances[0]!,
     gutter: FakeResizeObserver.instances[1]!,
     io: FakeIntersectionObserver.instances[0]!,
-    near: FakeIntersectionObserver.instances[1]!,
+    near: FakeIntersectionObserver.instances[2]!,
     messagesEl: messages,
     scrollEl,
     listeners,
@@ -913,20 +920,19 @@ describe("pagination's skeleton", () => {
   /** Wire a fetcher and park the reader at the top so the scroll listener asks for a page. */
   function startLoad(h: Harness, load: () => void): void {
     h.scroll.setLoadMore(load, true);
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
   }
 
-  it("prepends the skeleton when there is no button left to replace", async () => {
-    // The button is consumed by the first fetch and nothing puts it back, so the second fetch of a
-    // session has nothing to swap and must place the skeleton itself — otherwise a reader waiting
-    // for an older page sees no sign of it.
+  it("prepends the skeleton on a second pass too", async () => {
+    // Each pass places its own skeleton above the oldest turn, so a reader waiting for a second
+    // older page sees it as they saw the first.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     startLoad(h, () => undefined);
     document.getElementById("load-more-skeleton")?.remove();
     await settle();
     g.scrollTop = 0;
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     expect(h.messagesEl.firstElementChild?.id).toBe("load-more-skeleton");
   });
 
@@ -961,7 +967,7 @@ describe("pagination's safety timeout", () => {
     const load = vi.fn();
     useLoadTimeout();
     h.scroll.setLoadMore(load, true);
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     expect(document.getElementById("load-more-skeleton")).not.toBeNull();
 
     vi.advanceTimersByTime(15_000);
@@ -969,7 +975,7 @@ describe("pagination's safety timeout", () => {
     // The furniture goes, and the reader is not stuck: the next scroll to the top asks again.
     expect(document.getElementById("load-more-skeleton")).toBeNull();
     g.scrollTop = 0;
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     expect(load).toHaveBeenCalledTimes(2);
   });
 
@@ -981,7 +987,7 @@ describe("pagination's safety timeout", () => {
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     useLoadTimeout();
     h.scroll.setLoadMore(() => undefined, true);
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     g.scrollHeight = 1500;
 
     vi.advanceTimersByTime(15_000);
@@ -998,7 +1004,7 @@ describe("pagination's safety timeout", () => {
     const load = vi.fn();
     useLoadTimeout();
     h.scroll.setLoadMore(load, true);
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     document.getElementById("load-more-skeleton")?.remove();
     g.scrollHeight = 1400;
     await settleFrames();
@@ -1007,7 +1013,7 @@ describe("pagination's safety timeout", () => {
     // deadline falls INSIDE the second load's flight.
     vi.advanceTimersByTime(14_000);
     g.scrollTop = 0;
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     expect(load).toHaveBeenCalledTimes(2);
     expect(document.getElementById("load-more-skeleton")).not.toBeNull();
 
@@ -1016,7 +1022,7 @@ describe("pagination's safety timeout", () => {
     // The second fetch is still the one in flight: its furniture is untouched and nothing else may
     // be started.
     g.scrollTop = 0;
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     expect([
       document.getElementById("load-more-skeleton") === null,
       load.mock.calls.length,
