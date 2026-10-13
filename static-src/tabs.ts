@@ -1585,11 +1585,15 @@ const ACTIVE_BTN: Readonly<Partial<Record<TabKind, () => HTMLButtonElement>>> = 
   git: () => $.gitBtn,
   files: () => $.filesBtn,
   history: () => $.historyBtn,
+  docs: () => $.docsBtn,
 };
 
 function syncSidebarButtons(activeKind: TabKind | null): void {
   for (const [kind, getter] of Object.entries(ACTIVE_BTN)) {
-    getter().classList.toggle("active", kind === activeKind);
+    const on = kind === activeKind;
+    const btn = getter();
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-pressed", String(on));
   }
 }
 
@@ -2216,6 +2220,11 @@ export async function openFilesView(openAt: string): Promise<void> {
     return;
   }
   await openTab({ kind: "files", ref: openAt });
+}
+
+/** Toggle the History tab: the sidebar button closes the page it is showing, like every toolbar toggle. */
+export async function toggleHistoryView(): Promise<void> {
+  await toggleSingleton("history");
 }
 
 /** Switch the History page's pane route. No-op when it isn't open. */

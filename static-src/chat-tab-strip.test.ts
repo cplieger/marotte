@@ -49,10 +49,11 @@ vi.mock("./decision-dock.js", async () => {
 vi.mock("./context-ui.js", () => ({ refreshContextUI: h.refreshContextUI }));
 
 // chat.ts's other first-hop dependencies, inert; never the store, whose signals are the
-// subject. `confirmChatExists` exists so real-ESM linking succeeds.
+// subject. `confirmChatExists` and `loadOlderTurns` exist so real-ESM linking succeeds.
 vi.mock("./store-load.js", () => ({
   loadList: vi.fn(),
   loadMessages: vi.fn(),
+  loadOlderTurns: vi.fn(),
   confirmChatExists: vi.fn(),
 }));
 vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));

@@ -7,6 +7,10 @@ import { ICON_TAB_RUN } from "./icons.js";
 import { payloadOf } from "./turns.js";
 import type { EntrySteer, EntrySteerDelivered, TurnState } from "./types.js";
 
+/** The id prefix of a workflow message marotte logs at its send, which waits for a take-up (twin of
+ *  `marotte.WorkflowMessageIDPrefix`). Any other step notice is logged when KAS reads it. */
+export const WORKFLOW_MESSAGE_ID_PREFIX = "wfmsg-";
+
 /** The row as its take-up settles it: the server's own rule (`WorkflowMessageFold.Settle`). */
 function settledSteer(steer: EntrySteer, d: EntrySteerDelivered): EntrySteer {
   return d.dropped === true

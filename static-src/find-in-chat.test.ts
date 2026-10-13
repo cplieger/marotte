@@ -1856,7 +1856,7 @@ describe("server-hit navigation", () => {
         segment_len: 0,
       }),
     ]);
-    vi.mocked(storeLoad.loadMessages).mockImplementation(() => {
+    vi.mocked(storeLoad.loadOlderTurns).mockImplementation(() => {
       prependTurn(session, "u1");
       session.has_more = false;
       return Promise.resolve(true);
@@ -1876,7 +1876,7 @@ describe("server-hit navigation", () => {
         document.querySelector('[data-entry-id="e1"]')?.classList.contains("find-target-flash"),
       ).toBe(true);
     });
-    expect(vi.mocked(storeLoad.loadMessages)).toHaveBeenCalledExactlyOnceWith("c1", "u9");
+    expect(vi.mocked(storeLoad.loadOlderTurns)).toHaveBeenCalledExactlyOnceWith("c1");
     expect(countText()).toBe("1 of 1");
   });
 
@@ -1890,7 +1890,7 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 1 \u00b7 could not be loaded");
     });
-    expect(vi.mocked(storeLoad.loadMessages)).not.toHaveBeenCalled();
+    expect(vi.mocked(storeLoad.loadOlderTurns)).not.toHaveBeenCalled();
   });
 
   it("states it when the revealed turn still holds no element for the entry", async () => {
@@ -2276,7 +2276,7 @@ describe("server-hit navigation", () => {
     const hits = [...document.querySelectorAll<HTMLElement>("mark.find-hit")];
     expect(hits[0]?.classList.contains("find-hit-current")).toBe(true);
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenCalledWith(hits[0], expect.anything());
-    expect(vi.mocked(storeLoad.loadMessages)).not.toHaveBeenCalled();
+    expect(vi.mocked(storeLoad.loadOlderTurns)).not.toHaveBeenCalled();
     expect(vi.mocked(chatSearch.revealHitTurn)).not.toHaveBeenCalled();
   });
 

@@ -682,9 +682,15 @@ type ResumableSession struct {
 	// Description is the agent's self-declared focus, present on a minority of rows.
 	Description string `json:"description,omitempty"`
 	// ChatID names the marotte chat that already owns this session, if any.
-	ChatID    string `json:"chat_id,omitempty"`
-	UpdatedAt int64  `json:"updated_at"`
-	CreatedAt int64  `json:"created_at,omitempty"`
+	ChatID string `json:"chat_id,omitempty"`
+	// Model, CurrentModeID, TurnCount and Credits are the owning chat's header facts, so the History row states
+	// them without the chat being open in a tab.
+	Model         string  `json:"model,omitempty"`
+	CurrentModeID string  `json:"current_mode_id,omitempty"`
+	Credits       float64 `json:"credits,omitempty"`
+	UpdatedAt     int64   `json:"updated_at"`
+	CreatedAt     int64   `json:"created_at,omitempty"`
+	TurnCount     int     `json:"turn_count,omitempty"`
 }
 
 // ReadState is one list read's outcome on GET /api/sessions. Two-valued: an empty list is
@@ -722,6 +728,9 @@ type WorkflowRun struct {
 	Status RunStatus `json:"status,omitempty"`
 	// ParentChatID is the marotte chat that launched the run, via its session chain.
 	ParentChatID string `json:"parent_chat_id,omitempty"`
+	// ParentChatName is that chat's name from its stored header, so the History row names it without the chat
+	// being open in a tab.
+	ParentChatName string `json:"parent_chat_name,omitempty"`
 	// EndReason says which bound stopped the run ("overran", "stalled", "orphaned"):
 	// KAS reports `cancelled` for a bound and a person alike. In-memory, so a run
 	// stopped before a restart falls back to the plain status.

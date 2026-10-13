@@ -743,9 +743,9 @@ describe("a repo with nothing uncommitted", () => {
 describe("Pull all", () => {
   async function bootToolbar(repos: GitRepoStatus[]): Promise<HTMLButtonElement> {
     document.body.innerHTML = `<div id="git-view">
-      <div class="git-tab-toolbar">
-        <button type="button" id="git-pull-all-btn" class="icon-btn"></button>
-        <button type="button" id="git-refresh-all-btn" class="icon-btn"></button>
+      <div class="page-toolbar">
+        <button type="button" id="git-pull-all-btn" class="action-pill"></button>
+        <button type="button" id="git-refresh-all-btn" class="action-pill"></button>
       </div>
       <div id="git-changes-mount" class="git-multirepo-mount" aria-live="polite"></div>
     </div>`;

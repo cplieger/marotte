@@ -235,6 +235,12 @@
     --c-hover: color-mix(in oklch, var(--c-text-primary) 15%, transparent);
     --c-press: color-mix(in oklch, var(--c-text-primary) 25%, transparent);
     --layer-hover: linear-gradient(var(--c-hover) 0 100%);
+
+    /* --c-hover flattened over --c-bg-tertiary into ONE colour. A control that already
+     * hovers to that rung and sits in a washed row cannot also take --layer-hover: the
+     * image lands in the first frame while the rung fades in over --dur-micro, and the
+     * reader sees two hover states in a row. */
+    --c-hover-raised: color-mix(in srgb, var(--c-text-primary) 15%, var(--c-bg-tertiary));
     --layer-press: linear-gradient(var(--c-press) 0 100%);
     --opacity-disabled: 0.4;
 
@@ -405,6 +411,10 @@
     --ctl-h-sm: 1.5rem;
     --hit-floor: 1.5rem;
     --btn-h: var(--ctl-h);
+
+    /* The page switcher (`.page-header > .seg-bar`): a rung over a control on the
+     * fine pointer, the control's own height once the tier is coarse. */
+    --bar-h: max(2.5rem, var(--ctl-h));
 
     /* ---- List-row heights ------------------------------------------------ *
      * A row's height is a TOKEN, never the sum of its content: content that does

@@ -4,9 +4,7 @@
 import { el } from "@cplieger/reactive";
 import { loadMoreSkeleton } from "./skeleton.js";
 
-const LOAD_MORE_THRESHOLD_PX = 100;
-/** Distance from the bottom still counted as "at the bottom". Independent of
- *  LOAD_MORE_THRESHOLD_PX despite the equal value. */
+/** Distance from the bottom still counted as "at the bottom". */
 const BOTTOM_TOLERANCE_PX = 100;
 /** How long after their last input the reader still owns the scroller. A QUIET PERIOD rather
  *  than a gesture boundary, because `touchend` does not end a touch scroll: iOS momentum keeps
@@ -191,6 +189,13 @@ export class ScrollController {
   private edgeSentinel: HTMLElement | null = null;
   private edgeObserver: IntersectionObserver | null = null;
 
+  /** The history edge's marker, ahead of the oldest loaded turn and watched by `topObserver` with the near lead as
+   *  room above the scrollport: the next older page starts before the reader reaches the top. */
+  private topSentinel: HTMLElement | null = null;
+  private topObserver: IntersectionObserver | null = null;
+  /** Whether the history edge is inside that room, as last published. */
+  private topNear = false;
+
   /** Whether the live edge is in view, as last PUBLISHED rather than measured. Starts true
    *  because a fresh view is at its own bottom, and the state it has to agree with (`following`)
    *  makes the value unobservable until something publishes a real one. */
@@ -364,7 +369,6 @@ export class ScrollController {
         if (!this.epochOpen && !own && !anchored && !this.unmoved(top)) {
           this.publishReaderGesture();
         }
-        this.maybeLoadMore();
         this.lastScrollTop = top;
         this.lastEdgeDistance = edge;
         this.noteViewTop();
@@ -458,6 +462,7 @@ export class ScrollController {
     );
     // Not observed here: `observeView` below is the single owner, because the sentinel is in no
     // view yet and `detach` unobserves it.
+    this.topSentinel = el("div", { className: "transcript-top", "aria-hidden": "true" });
 
     // The one observer that sees a box change with no DOM mutation behind it (zoom, a scrollbar
     // swap, a code block expanding).
@@ -499,6 +504,10 @@ export class ScrollController {
       // parked view must produce no callback at all.
       this.edgeObserver?.observe(this.edgeSentinel);
     }
+    if (this.topSentinel !== null) {
+      view.prepend(this.topSentinel);
+      this.topObserver?.observe(this.topSentinel);
+    }
     this.contentObserver?.disconnect();
     this.contentObserver?.observe(view, {
       childList: true,
@@ -521,6 +530,10 @@ export class ScrollController {
     if (this.edgeSentinel !== null) {
       this.edgeObserver?.unobserve(this.edgeSentinel);
     }
+    if (this.topSentinel !== null) {
+      this.topObserver?.unobserve(this.topSentinel);
+      this.topNear = false;
+    }
     for (const child of this.observedChildren) {
       this.resizeObserver?.unobserve(child);
     }
@@ -538,6 +551,7 @@ export class ScrollController {
       return;
     }
     this.nearMargin = margin;
+    this.fitTopObserver(margin);
     this.nearObserver?.disconnect();
     const observer = new IntersectionObserver(
       (entries) => {
@@ -550,6 +564,39 @@ export class ScrollController {
     this.nearObserver = observer;
     for (const box of this.nearTargets) {
       observer.observe(box);
+    }
+  }
+
+  /** The history edge's observer, rebuilt with the near lead because a rootMargin is fixed for an observer's life. */
+  private fitTopObserver(margin: number): void {
+    this.topObserver?.disconnect();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const last = entries[entries.length - 1];
+        if (last === undefined) {
+          return;
+        }
+        this.noteHistoryEdge(last.isIntersecting);
+      },
+      { root: this.scrollEl, rootMargin: `${String(margin)}px 0px 0px 0px`, threshold: 0 },
+    );
+    this.topObserver = observer;
+    if (this.topSentinel?.isConnected === true) {
+      observer.observe(this.topSentinel);
+    }
+  }
+
+  /** Record whether the history edge is inside the lead, and ask for the next older page when it is. */
+  noteHistoryEdge(near: boolean): void {
+    this.topNear = near;
+    this.pokeTop();
+  }
+
+  /** Ask for the next older page when the history edge is inside the lead; `maybeLoadMore` holds it back while a
+   *  self-scroll flight is open, and `endSelfScroll` asks again when the flight ends. */
+  private pokeTop(): void {
+    if (this.topNear) {
+      this.maybeLoadMore();
     }
   }
 
@@ -599,7 +646,7 @@ export class ScrollController {
     // (and with it an auto-scroll) on every attach, dragging the incoming view to its own bottom.
     const current = new Set<Element>();
     for (const child of this.viewEl.children) {
-      if (child !== this.edgeSentinel) {
+      if (child !== this.edgeSentinel && child !== this.topSentinel) {
         current.add(child);
       }
     }
@@ -711,10 +758,15 @@ export class ScrollController {
   /** Idempotent, because four different closers race for it: `scrollend`, the backstop, reader
    *  input, and a change of owner. */
   endSelfScroll(): void {
+    const wasOpen = this.epochOpen;
     this.epochOpen = false;
     if (this.epochTimer !== null) {
       clearTimeout(this.epochTimer);
       this.epochTimer = null;
+    }
+    // The page the epoch held back is owed now.
+    if (wasOpen) {
+      this.pokeTop();
     }
   }
 
@@ -1073,7 +1125,7 @@ export class ScrollController {
   setLoadMore(fn: (() => void) | null, hasMore: boolean): void {
     this.onLoadMore = fn;
     this.hasMoreMessages = hasMore;
-    this.updateLoadMoreIndicator();
+    this.pokeTop();
   }
 
   rebaseLoadMore(): void {
@@ -1105,6 +1157,7 @@ export class ScrollController {
     this.cancelRevalidate();
     this.forgetReaderGesture();
     this.forgetScrollBaselines();
+    this.topNear = false;
     this.setLoadMore(null, false);
     this.setState("following");
   }
@@ -1352,12 +1405,9 @@ export class ScrollController {
   }
 
   private maybeLoadMore(force = false): void {
-    if (!force && this.scrollEl.scrollTop >= LOAD_MORE_THRESHOLD_PX) {
-      return;
-    }
-    // A smooth flight toward an early turn crosses the threshold on its way, and this pass ends in
+    // A smooth flight toward an early turn crosses the history edge on its way, and this pass ends in
     // a drift correction — a second writer inside one animation. The FORCED call is a caller
-    // stating a need rather than the listener guessing at one, so it still runs.
+    // stating a need rather than the observer guessing at one, so it still runs.
     if (!force && this.epochOpen) {
       return;
     }
@@ -1367,15 +1417,14 @@ export class ScrollController {
     this.loadingMore = true;
     const skel = loadMoreSkeleton();
     skel.id = "load-more-skeleton";
-    // Scoped to the attached view: a parked view keeps its own pagination furniture (it is that
-    // view's DOM), so a document-wide id lookup could find a sibling view's button and mount this
-    // pass's skeleton there.
-    const indicator = this.viewEl.querySelector(`[id="load-more-indicator"]`);
     // The skeleton and then the older messages land ABOVE the reader. Scroll anchoring holds them in
     // place except at offset 0, a suppression trigger (css-scroll-anchoring §2.2.2), so only the
     // drift it left is corrected: the height delta would count the page twice wherever it did anchor.
-    const ref =
-      [...this.viewEl.children].find((c) => c !== indicator && c !== this.edgeSentinel) ?? null;
+    const firstContent = (): Element | null =>
+      [...this.viewEl.children].find(
+        (c) => c !== this.topSentinel && c !== this.edgeSentinel && c !== skel,
+      ) ?? null;
+    const ref = firstContent();
     let refTop = 0;
     let prevTop = 0;
     let prevHeight = 0;
@@ -1395,11 +1444,7 @@ export class ScrollController {
         this.scrollSelfTo(this.scrollEl.scrollTop + drift, "instant");
       }
     };
-    if (indicator !== null) {
-      indicator.replaceWith(skel);
-    } else {
-      this.viewEl.prepend(skel);
-    }
+    this.viewEl.prepend(skel);
     hold();
     // Scrolling never moves `ref` in the scroll frame, so while it stands where the skeleton left it nothing has landed
     // above it, and a re-measure is a baseline from before the landing whatever moved the scroller.
@@ -1417,6 +1462,11 @@ export class ScrollController {
       if (document.getElementById("load-more-skeleton") === null) {
         this.endLoadPass();
         hold();
+        // A page that landed above the reader may leave the edge still inside the lead (a short page); one that
+        // landed nothing stays quiet until the edge leaves and re-enters, or the same failing request would loop.
+        if (firstContent() !== ref) {
+          this.pokeTop();
+        }
       }
     });
     const safetyTimer = setTimeout(() => {
@@ -1447,29 +1497,6 @@ export class ScrollController {
   private abandonLoadPass(): void {
     this.endLoadPass();
     this.viewEl.querySelector(`[id="load-more-skeleton"]`)?.remove();
-  }
-
-  /** A real BUTTON, not inert text. */
-  private updateLoadMoreIndicator(): void {
-    // Scoped to the attached view — see maybeLoadMore: parked views keep their own furniture, and
-    // removing "the" indicator by document id could reach into one of them.
-    const existing = this.viewEl.querySelector(`[id="load-more-indicator"]`);
-    if (!this.hasMoreMessages || this.onLoadMore === null) {
-      existing?.remove();
-      return;
-    }
-    if (existing !== null) {
-      return;
-    }
-    const btn = el(
-      "button",
-      { id: "load-more-indicator", className: "load-more-btn", type: "button" },
-      "Load older messages",
-    );
-    btn.addEventListener("click", () => {
-      this.maybeLoadMore(true);
-    });
-    this.viewEl.prepend(btn);
   }
 }
 

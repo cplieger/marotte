@@ -5,12 +5,7 @@ vi.mock("../toast.js", () =>
 );
 
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import {
-  reconnectServer,
-  getPromptContent,
-  getResourceContent,
-  relayOAuthCallback,
-} from "./mcp.js";
+import { reconnectServer, relayOAuthCallback } from "./mcp.js";
 
 const mockFetch = vi.fn();
 
@@ -39,53 +34,6 @@ describe("reconnectServer", () => {
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ server: "everything" });
     expect(res?.reconnected).toBe(2);
-  });
-});
-
-describe("getPromptContent", () => {
-  it("POSTs server/prompt/arguments to /api/mcp/prompt", async () => {
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ messages: [{ content: { type: "text", text: "hi" } }] }), {
-        status: 200,
-      }),
-    );
-    const res = await getPromptContent.dispatch({
-      server: "everything",
-      prompt: "args-prompt",
-      arguments: { city: "Paris" },
-    });
-    const { url, init } = lastCall();
-    expect(url).toContain("/api/mcp/prompt");
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body as string)).toEqual({
-      server: "everything",
-      prompt: "args-prompt",
-      arguments: { city: "Paris" },
-    });
-    expect(res?.messages?.[0]?.content).toBeDefined();
-  });
-
-  it("defaults arguments to an empty object", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ messages: [] }), { status: 200 }));
-    await getPromptContent.dispatch({ server: "everything", prompt: "simple-prompt" });
-    const { init } = lastCall();
-    expect(JSON.parse(init.body as string).arguments).toEqual({});
-  });
-});
-
-describe("getResourceContent", () => {
-  it("POSTs server/uri to /api/mcp/resource", async () => {
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ contents: [{ uri: "demo://x", text: "body" }] }), {
-        status: 200,
-      }),
-    );
-    const res = await getResourceContent.dispatch({ server: "everything", uri: "demo://x" });
-    const { url, init } = lastCall();
-    expect(url).toContain("/api/mcp/resource");
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body as string)).toEqual({ server: "everything", uri: "demo://x" });
-    expect(res?.contents?.[0]?.text).toBe("body");
   });
 });
 

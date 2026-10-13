@@ -313,14 +313,6 @@
   border-radius: var(--r-sm);
 }
 
-[id="load-more-indicator"] {
-  text-align: center;
-  padding: var(--sp-2);
-  color: var(--c-text-tertiary);
-  font-size: var(--fs-sm);
-  font-style: italic;
-}
-
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--c-border) transparent;

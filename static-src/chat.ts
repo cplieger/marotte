@@ -13,10 +13,11 @@ import {
   removeChat,
   tabStatusFor,
   isEmptyChat,
+  messagesVersionOf,
   transcriptStale,
 } from "./store.js";
-import { loadList, loadMessages, confirmChatExists } from "./store-load.js";
-import { effect, el } from "@cplieger/reactive";
+import { loadList, loadMessages, loadOlderTurns, confirmChatExists } from "./store-load.js";
+import { effect, el, touch } from "@cplieger/reactive";
 import type { ChatHeader } from "./types.js";
 import { ensureBound } from "./banner-stack.js";
 import {
@@ -295,39 +296,36 @@ function seedEmptyChatDraft(id: string): void {
 
 // --- Pagination ---
 
+/** The scroller's history edge follows the session's `has_more`, which any pager (the edge, the turn map, the in-chat
+ *  search) moves, so it is re-read when the window changes rather than captured once. */
+let stopLoadMore: (() => void) | null = null;
+
 function setupLoadMore(chatID: string): void {
-  const session = get(chatID);
-  if (session === undefined) {
-    return;
-  }
-  setLoadMore(
-    session.has_more
-      ? (): void => {
-          // `turn_order` is FILE order with an older page PREPENDED, so its first
-          // id is the oldest resident turn — the cursor the window pages before.
-          const oldest = session.turn_order[0];
-          if (oldest === undefined) {
-            return;
+  stopLoadMore?.();
+  stopLoadMore = effect(() => {
+    touch(messagesVersionOf(chatID));
+    if (getActiveId() !== chatID) {
+      return;
+    }
+    const hasMore = get(chatID)?.has_more === true;
+    setLoadMore(
+      hasMore
+        ? (): void => {
+            pageOlder(chatID);
           }
-          void loadMessages(chatID, oldest).then(() => {
-            rebaseLoadMore();
-            // scroll.ts watches for this removal as the "load complete" signal.
-            // Scoped to this chat's view: parked views keep the id resident too.
-            transcriptViewFor(chatID)?.querySelector(`[id="load-more-skeleton"]`)?.remove();
-            if (getActiveId() !== chatID) {
-              return;
-            }
-            const s = get(chatID);
-            if (s === undefined) {
-              return;
-            }
-            // Store mutations bump version; the chat-view effect re-renders.
-            setupLoadMore(chatID);
-          });
-        }
-      : null,
-    session.has_more,
-  );
+        : null,
+      hasMore,
+    );
+  });
+}
+
+function pageOlder(chatID: string): void {
+  void loadOlderTurns(chatID).then(() => {
+    rebaseLoadMore();
+    // scroll.ts watches for this removal as the "load complete" signal.
+    // Scoped to this chat's view: parked views keep the id resident too.
+    transcriptViewFor(chatID)?.querySelector(`[id="load-more-skeleton"]`)?.remove();
+  });
 }
 
 // --- Sending prompts ---

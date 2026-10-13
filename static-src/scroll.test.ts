@@ -150,15 +150,16 @@ describe("resetScrollState", () => {
     expect(scrollBtn.classList.contains("hidden")).toBe(true);
   });
 
-  it("removes the previous chat's Load-older-messages button", () => {
-    // An unkeyed child of #messages, so the transcript's keyed reconcile never touches it. Left in
-    // place it sat over the next chat still holding the previous chat's callback, so pressing it
-    // fetched the wrong conversation.
-    scroll.setLoadMore(() => undefined, true);
-    expect(document.getElementById("load-more-indicator")).not.toBeNull();
+  it("stops asking for the previous chat's older pages", () => {
+    // The fetcher is the previous chat's closure; left wired, the history edge would page the wrong conversation.
+    const load = vi.fn();
+    fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
+    scroll.setLoadMore(load, true);
 
     scroll.resetScrollState();
-    expect(document.getElementById("load-more-indicator")).toBeNull();
+    scroll.noteHistoryEdge(true);
+
+    expect(load).not.toHaveBeenCalled();
   });
 });
 
@@ -310,7 +311,12 @@ function readerArrivedAt(el: HTMLElement): void {
   const atEdge = el.scrollTop + el.clientHeight >= el.scrollHeight - 100;
   el.dispatchEvent(new WheelEvent("wheel", { deltaY: atEdge ? 1 : -1 }));
   el.dispatchEvent(new Event("scroll"));
+  // The history-edge observer's report, which fake geometry cannot produce: the edge counts as reached within
+  // HISTORY_LEAD_PX of the top.
+  scroll.noteHistoryEdge(el.scrollTop < HISTORY_LEAD_PX);
 }
+
+const HISTORY_LEAD_PX = 100;
 
 /** The legacy touch factories, absent from the DOM lib because they are not standard.
  *  `createTouchList` is typed as the array `TouchEventInit` declares, which is the init that
@@ -378,7 +384,6 @@ async function settle(): Promise<void> {
 async function resetBetween(): Promise<void> {
   scroll.setAnchorProvider(null);
   messagesEl.replaceChildren();
-  document.getElementById("load-more-indicator")?.remove();
   document.getElementById("load-more-skeleton")?.remove();
   scrollBtn.classList.remove("hidden");
   await settle();
@@ -789,8 +794,7 @@ describe("pagination", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
-  // LOAD_MORE_THRESHOLD_PX is 100 and the scroll listener does not force.
-  it("does not fetch while the reader is below the threshold", () => {
+  it("does not fetch while the history edge is out of reach", () => {
     const load = vi.fn();
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 100 });
     scroll.setLoadMore(load, true);
@@ -815,13 +819,59 @@ describe("pagination", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
-  it("swaps the load-more button for the skeleton while fetching", () => {
+  it("shows the skeleton while fetching", () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     scroll.setLoadMore(() => undefined, true);
-    expect(document.getElementById("load-more-indicator")).not.toBeNull();
+    expect(document.getElementById("load-more-skeleton")).toBeNull();
     readerScroll();
-    expect(document.getElementById("load-more-indicator")).toBeNull();
     expect(document.getElementById("load-more-skeleton")).not.toBeNull();
+  });
+
+  it("asks again after a page lands while the history edge is still in reach", async () => {
+    // A page shorter than the lead leaves the edge inside it, where the observer reports no new crossing.
+    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
+    const load = vi.fn(() => {
+      setTimeout(() => {
+        messagesEl.prepend(document.createElement("div"));
+        document.getElementById("load-more-skeleton")?.remove();
+        s.scrollHeight += 100;
+      }, 0);
+    });
+    scroll.setLoadMore(load, true);
+    readerScroll();
+    await settle();
+
+    expect(load.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not ask again after a page that landed nothing, until the edge is reached anew", async () => {
+    // The same failing request would otherwise loop for as long as the edge stays in reach.
+    fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
+    const load = vi.fn(() => {
+      setTimeout(() => {
+        document.getElementById("load-more-skeleton")?.remove();
+      }, 0);
+    });
+    scroll.setLoadMore(load, true);
+    readerScroll();
+    await settle();
+    expect(load).toHaveBeenCalledTimes(1);
+
+    scroll.noteHistoryEdge(false);
+    scroll.noteHistoryEdge(true);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks for the page that was held back once a self-scroll flight ends", async () => {
+    const load = vi.fn();
+    fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
+    scroll.setLoadMore(load, true);
+    scroll.beginSelfScroll();
+    scroll.noteHistoryEdge(true);
+    expect(load).not.toHaveBeenCalled();
+
+    scroll.endSelfScroll();
+    expect(load).toHaveBeenCalledTimes(1);
   });
 
   // The whole point of the module: the older page lands ABOVE the reader, so the scroller has to
@@ -856,35 +906,6 @@ describe("pagination", () => {
     s.scrollTop = 0;
     readerScroll();
     expect(load).toHaveBeenCalledTimes(2);
-  });
-
-  it("offers a button that fetches whatever the reader's position", () => {
-    const load = vi.fn();
-    fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 900 });
-    scroll.setLoadMore(load, true);
-    document.getElementById("load-more-indicator")!.click();
-    expect(load).toHaveBeenCalledTimes(1);
-  });
-
-  it("drops the button when there is nothing older left", () => {
-    fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setLoadMore(() => undefined, true);
-    scroll.setLoadMore(() => undefined, false);
-    expect(document.getElementById("load-more-indicator")).toBeNull();
-  });
-
-  it("drops the button when the caller withdraws the fetcher", () => {
-    fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setLoadMore(() => undefined, true);
-    scroll.setLoadMore(null, true);
-    expect(document.getElementById("load-more-indicator")).toBeNull();
-  });
-
-  it("keeps one button across repeated wiring", () => {
-    fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setLoadMore(() => undefined, true);
-    scroll.setLoadMore(() => undefined, true);
-    expect(document.querySelectorAll("#load-more-indicator")).toHaveLength(1);
   });
 
   // A pagination pass belongs to the chat that started it. Its completion signal does not: the
@@ -1059,6 +1080,7 @@ async function land(ms = 120): Promise<void> {
 function readerScrollTo(wrap: HTMLElement, top: number): void {
   wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: top < wrap.scrollTop ? -1 : 1 }));
   wrap.scrollTop = top;
+  scroll.noteHistoryEdge(top < HISTORY_LEAD_PX);
 }
 
 /** Both real-layout blocks start the same way: no anchor, a real overflowing box, an empty
@@ -1159,21 +1181,25 @@ describe("a large tool card below the streaming block", () => {
     scroll.setAnchorProvider(() => streaming);
     await land();
 
+    let pages = 0;
     scroll.setLoadMore(() => {
       // What the real caller does: fetch, prepend the page, drop the skeleton — all after
-      // maybeLoadMore has returned and its observer is watching.
+      // maybeLoadMore has returned and its observer is watching. One page: the history edge asks again
+      // for as long as it stays in reach.
       setTimeout(() => {
-        const page = document.createElement("div");
-        page.style.cssText = "height:600px;";
-        messagesEl.prepend(page);
+        if (pages++ === 0) {
+          const page = document.createElement("div");
+          page.style.cssText = "height:600px;";
+          messagesEl.prepend(page);
+        }
         document.getElementById("load-more-skeleton")?.remove();
       }, 0);
     }, true);
     await land();
 
-    // The button forces the fetch whatever the reader's position, which is what keeps the anchored
+    // The history edge's report asks whatever the reader's position, which is what keeps the anchored
     // pin — the geometry the defect needs — in place.
-    document.getElementById("load-more-indicator")!.click();
+    scroll.noteHistoryEdge(true);
     await land();
 
     streaming.style.height = "400px";
@@ -2519,35 +2545,18 @@ describe("the self-scroll epoch", () => {
   it("suspends the pagination pass while it is open", async () => {
     realScroller();
     block(3000);
-    const load = vi.fn();
-    scroll.setLoadMore(load, true);
     await land();
+    const load = vi.fn();
 
     scroll.beginSelfScroll();
+    scroll.setLoadMore(load, true);
     scroll.scrollToOffset(0, "instant");
-    await land();
+    scroll.noteHistoryEdge(true);
 
     expect(load).not.toHaveBeenCalled();
   });
 
   it("runs the pagination pass again once it closes", async () => {
-    const wrap = realScroller();
-    block(3000);
-    const load = vi.fn();
-    scroll.setLoadMore(load, true);
-    await land();
-    scroll.beginSelfScroll();
-    scroll.scrollToOffset(0, "instant");
-    await land();
-
-    scroll.endSelfScroll();
-    wrap.dispatchEvent(new Event("scroll"));
-    await land();
-
-    expect(load).toHaveBeenCalledTimes(1);
-  });
-
-  it("still runs the forced pagination call inside it", async () => {
     realScroller();
     block(3000);
     const load = vi.fn();
@@ -2555,9 +2564,25 @@ describe("the self-scroll epoch", () => {
     await land();
     scroll.beginSelfScroll();
     scroll.scrollToOffset(0, "instant");
+    scroll.noteHistoryEdge(true);
     await land();
 
-    document.getElementById("load-more-indicator")!.click();
+    scroll.endSelfScroll();
+    await land();
+
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("still runs the viewport fill inside it", async () => {
+    // A transcript too short to scroll reports no edge crossing, so the fill is the one caller that must not wait.
+    realScroller();
+    block(100);
+    const load = vi.fn();
+    scroll.setLoadMore(load, true);
+    await land();
+    scroll.beginSelfScroll();
+
+    scroll.fillViewport();
 
     expect(load).toHaveBeenCalledTimes(1);
   });
@@ -2782,7 +2807,7 @@ describe("holding what the reader reads", () => {
   }
 
   it("holds the reader where the skeleton left them at offset 0, where nothing anchors, when an older page lands", async () => {
-    // The skeleton is shorter than the button it replaces, and at offset 0 nothing can take that back.
+    // At offset 0 nothing anchors, so only the pass can take back what the skeleton added.
     const wrap = realScroller();
     const rows = Array.from({ length: 20 }, () => block(100));
     await land();
@@ -2955,7 +2980,7 @@ describe("holding what the reader reads", () => {
     const page = heldPage(400);
     scroll.setLoadMore(page.load, true);
     await land();
-    (document.getElementById("load-more-indicator") as HTMLButtonElement).click();
+    scroll.noteHistoryEdge(true);
     await land();
     const was = rows[12]!.getBoundingClientRect().top;
     rows[3]!.style.height = "200px";
@@ -2970,9 +2995,9 @@ describe("holding what the reader reads", () => {
     });
   });
 
-  it("leaves the reader at the top when the older page they pressed for lands there", async () => {
-    // The press drops the reading line, so only the pass can put back what landed above at offset 0, and only
-    // against a measure taken before the page.
+  it("leaves the reader at the top when the older page that was asked for lands there", async () => {
+    // A pointer-down on the transcript drops the reading line, so only the pass can put back what landed above at
+    // offset 0, and only against a measure taken before the page.
     const wrap = realScroller();
     const rows = Array.from({ length: 20 }, () => block(100));
     await land();
@@ -2981,9 +3006,7 @@ describe("holding what the reader reads", () => {
     const page = heldPage(400);
     scroll.setLoadMore(page.load, true);
     await land();
-    const button = document.getElementById("load-more-indicator")!;
-    button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-    button.click();
+    scroll.noteHistoryEdge(true);
     await land();
     const was = rows[0]!.getBoundingClientRect().top;
     page.land();
@@ -3171,6 +3194,43 @@ describe("readingLineOffset", () => {
   });
 });
 
+describe("the history edge's observer", () => {
+  beforeEach(realLayoutReset);
+
+  /** Re-roots the observers on the transcript, which seats the marker `realScroller` emptied it of. */
+  async function seated(): Promise<HTMLElement> {
+    const wrap = realScroller();
+    block(3000);
+    scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    await land();
+    return wrap;
+  }
+
+  it("asks for the next older page while the reader is still a screenful away from the top", async () => {
+    // 400px scrollport: the lead is one and a half of them, 600px.
+    const wrap = await seated();
+    const load = vi.fn();
+    scroll.setLoadMore(load, true);
+    wrap.scrollTop = 2000;
+    await land(60);
+    expect(load).not.toHaveBeenCalled();
+
+    wrap.scrollTop = 500;
+    await land(60);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks nothing once the server has no older page", async () => {
+    const wrap = await seated();
+    const load = vi.fn();
+    scroll.setLoadMore(load, false);
+    wrap.scrollTop = 0;
+    await land(60);
+
+    expect(load).not.toHaveBeenCalled();
+  });
+});
+
 describe("pagination furniture belongs to its own view", () => {
   /** Two sibling transcript views under the scroller, and the scroller attached to the first —
    *  the shape after one chat switch. */
@@ -3210,22 +3270,18 @@ describe("pagination furniture belongs to its own view", () => {
     }).toEqual({ parkedKept: true, activeGone: true });
   });
 
-  it("leaves a parked view's Load-older-messages button alone", () => {
-    // The other half of the same scoping, from the indicator's side: parking wires the button
-    // through the view that owned it, and the incoming view's own reset must not reach it.
+  it("moves the history marker with the attached view", () => {
+    // One marker serves every chat, as the live edge's does: a parked view's own top is not a history edge.
     const { parked, active } = twoViews();
     scroll.attach({ el: parked, scrollTop: 0, readingState: "following" });
-    scroll.setLoadMore(() => undefined, true);
-    const button = parked.querySelector(`[id="load-more-indicator"]`);
-    expect(button).not.toBeNull();
+    expect(parked.querySelector(".transcript-top")).not.toBeNull();
 
     scroll.attach({ el: active, scrollTop: 0, readingState: "following" });
-    scroll.resetScrollState();
 
     expect({
-      parkedKept: button !== null && parked.contains(button),
-      activeHasNone: active.querySelector(`[id="load-more-indicator"]`) === null,
-    }).toEqual({ parkedKept: true, activeHasNone: true });
+      parkedHas: parked.querySelector(".transcript-top") !== null,
+      activeHas: active.querySelector(".transcript-top") !== null,
+    }).toEqual({ parkedHas: false, activeHas: true });
   });
 });
 

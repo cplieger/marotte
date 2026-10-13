@@ -64,42 +64,6 @@ func TestReconnectMCPServer_NoBridgesIsNoOp(t *testing.T) {
 	}
 }
 
-func TestGetMCPPrompt_CallsBridgeAndReturnsResult(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("everything"))
-	b := insertLiveBridge(t, h, "c1")
-
-	res, err := h.mcpRegistry.promptFor(t.Context(), "everything", "simple-prompt", nil)
-	if err != nil {
-		t.Fatalf("promptFor: %v", err)
-	}
-	if !bridgeCalled(b, methodV3MCPGetPrompt) {
-		t.Errorf("bridge did not receive %s", methodV3MCPGetPrompt)
-	}
-	if len(res) == 0 {
-		t.Error("empty result")
-	}
-}
-
-func TestGetMCPResource_CallsBridge(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("everything"))
-	b := insertLiveBridge(t, h, "c1")
-
-	if _, err := h.mcpRegistry.resourceFor(t.Context(), "everything", "demo://x"); err != nil {
-		t.Fatalf("resourceFor: %v", err)
-	}
-	if !bridgeCalled(b, methodV3MCPGetResource) {
-		t.Errorf("bridge did not receive %s", methodV3MCPGetResource)
-	}
-}
-
-func TestMCPFetch_NoLiveBridgeErrors(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("everything"))
-	_, err := h.mcpRegistry.promptFor(t.Context(), "everything", "p", nil)
-	if !errors.Is(err, errNoLiveBridge) {
-		t.Fatalf("err = %v, want errNoLiveBridge", err)
-	}
-}
-
 func TestHandleMCPReconnect_MethodNotAllowed(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp/reconnect", nil)
@@ -175,31 +139,6 @@ func TestHandleMCPReconnect_ReachesAServerKASReportsLive(t *testing.T) {
 	}
 }
 
-func TestHandleMCPGetPrompt_MissingPrompt(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("everything"))
-	rec := postJSON(h.mcpRegistry.handlePrompt, "/api/mcp/prompt", `{"server":"everything"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("code = %d, want 400", rec.Code)
-	}
-}
-
-func TestHandleMCPGetPrompt_NoLiveBridgeConflict(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("everything"))
-	rec := postJSON(h.mcpRegistry.handlePrompt, "/api/mcp/prompt", `{"server":"everything","prompt":"simple-prompt"}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("code = %d, want 409 (%s)", rec.Code, rec.Body.String())
-	}
-}
-
-func TestHandleMCPGetResource_OK(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("everything"))
-	insertLiveBridge(t, h, "c1")
-	rec := postJSON(h.mcpRegistry.handleResource, "/api/mcp/resource", `{"server":"everything","uri":"demo://x"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
-	}
-}
-
 // TestMCPRegistry_RecordConnectedStoresDiscovery pins connect-time prompts, resources and templates in /api/mcp/status.
 func TestMCPRegistry_RecordConnectedStoresDiscovery(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
@@ -267,72 +206,4 @@ func TestReconnectMCPServer_ReportsABridgeThatRefusedTheReset(t *testing.T) {
 			t.Errorf("a reconnect every bridge accepted was reported as failed: %s", out)
 		}
 	})
-}
-
-// TestGetMCPPrompt_SendsAnArgumentsObjectEitherWay pins that `null` fails server validation where `{}`
-// passes, and supplied arguments must not be replaced.
-func TestGetMCPPrompt_SendsAnArgumentsObjectEitherWay(t *testing.T) {
-	cases := []struct {
-		args map[string]any
-		name string
-		want string
-	}{
-		{
-			name: "no arguments become an empty object, never null",
-			args: nil,
-			want: `{}`,
-		},
-		{
-			name: "the caller's arguments travel unchanged",
-			args: map[string]any{"repo": "marotte"},
-			want: `{"repo":"marotte"}`,
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			h := newHubWithMCPConfig(enabledConfig("everything"))
-			b := insertLiveBridge(t, h, "c1")
-
-			if _, err := h.mcpRegistry.promptFor(t.Context(), "everything", "p", c.args); err != nil {
-				t.Fatalf("promptFor: %v", err)
-			}
-			params := b.paramsFor(methodV3MCPGetPrompt)
-			if params == nil {
-				t.Fatal("no getPrompt call was issued, so there are no arguments to inspect")
-			}
-			sent, err := json.Marshal(params["arguments"])
-			if err != nil {
-				t.Fatalf("marshal the arguments the call carried: %v", err)
-			}
-			if string(sent) != c.want {
-				t.Errorf("promptFor(args=%v) sent arguments %s, want %s", c.args, sent, c.want)
-			}
-		})
-	}
-}
-
-// TestWriteMCPResult_AlwaysWritesADecodableObject pins the {} fallback for an empty result only.
-func TestWriteMCPResult_AlwaysWritesADecodableObject(t *testing.T) {
-	cases := []struct {
-		name string
-		res  json.RawMessage
-		want string
-	}{
-		{name: "an absent result becomes an empty object", res: nil, want: `{}`},
-		{name: "an empty result becomes an empty object", res: json.RawMessage(``), want: `{}`},
-		{
-			name: "a real result is relayed verbatim",
-			res:  json.RawMessage(`{"messages":[{"role":"user"}]}`),
-			want: `{"messages":[{"role":"user"}]}`,
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			writeMCPResult(rec, c.res)
-			if got := strings.TrimSpace(rec.Body.String()); got != c.want {
-				t.Errorf("writeMCPResult(%q) wrote %s, want %s", c.res, got, c.want)
-			}
-		})
-	}
 }

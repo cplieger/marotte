@@ -63,8 +63,8 @@ describe("the Sources tab's refresh", () => {
   beforeEach(() => {
     resetActionFramework();
     document.body.innerHTML = `
-      <div class="git-tab-toolbar">
-        <button type="button" id="git-refresh-sources-btn" class="icon-btn" aria-label="Refresh accounts and repositories"></button>
+      <div class="page-toolbar">
+        <button type="button" id="git-refresh-sources-btn" class="action-pill" aria-label="Refresh accounts and repositories"></button>
       </div>
       <div id="git-sources-mount"></div>`;
   });

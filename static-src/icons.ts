@@ -170,8 +170,9 @@ export const ICON_FILTER =
   "</svg>";
 
 /**
- * The find affordance's glyph: a magnifier for a box that reaches past what is on screen, a funnel for one that only
- * narrows loaded rows. One producer, so the toolbar button and its box agree.
+ * The find affordance's glyph: a magnifier for a search, a funnel for a filter. A page keeps one kind across its
+ * panes (History's Runs box narrows loaded rows and still wears the magnifier), so the toolbar button never changes
+ * glyph on a pane switch. One producer, so the toolbar button and its box agree.
  */
 export function findGlyph(kind: "search" | "filter"): string {
   return svg(

@@ -2156,8 +2156,16 @@ export const decodeResumableSession: Decoder<ResumableSession> = (v) => {
   if (description !== undefined) out.description = description;
   const chatId = o["chat_id"] === null ? undefined : optStr(o, "chat_id", "$.resumable_session");
   if (chatId !== undefined) out.chat_id = chatId;
+  const model = o["model"] === null ? undefined : optStr(o, "model", "$.resumable_session");
+  if (model !== undefined) out.model = model;
+  const currentModeId = o["current_mode_id"] === null ? undefined : optStr(o, "current_mode_id", "$.resumable_session");
+  if (currentModeId !== undefined) out.current_mode_id = currentModeId;
+  const credits = o["credits"] === null ? undefined : optNum(o, "credits", "$.resumable_session");
+  if (credits !== undefined) out.credits = credits;
   const createdAt = o["created_at"] === null ? undefined : optNum(o, "created_at", "$.resumable_session");
   if (createdAt !== undefined) out.created_at = createdAt;
+  const turnCount = o["turn_count"] === null ? undefined : optNum(o, "turn_count", "$.resumable_session");
+  if (turnCount !== undefined) out.turn_count = turnCount;
   return out;
 };
 
@@ -3254,6 +3262,8 @@ export const decodeWorkflowRun: Decoder<WorkflowRun> = (v) => {
   if (o["status"] !== undefined && o["status"] !== null) out.status = reqOneOf(o, "status", RUN_STATUSS, "$.workflow_run");
   const parentChatId = o["parent_chat_id"] === null ? undefined : optStr(o, "parent_chat_id", "$.workflow_run");
   if (parentChatId !== undefined) out.parent_chat_id = parentChatId;
+  const parentChatName = o["parent_chat_name"] === null ? undefined : optStr(o, "parent_chat_name", "$.workflow_run");
+  if (parentChatName !== undefined) out.parent_chat_name = parentChatName;
   const endReason = o["end_reason"] === null ? undefined : optStr(o, "end_reason", "$.workflow_run");
   if (endReason !== undefined) out.end_reason = endReason;
   const createdAt = o["created_at"] === null ? undefined : optNum(o, "created_at", "$.workflow_run");

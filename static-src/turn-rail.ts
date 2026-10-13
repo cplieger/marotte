@@ -943,12 +943,10 @@ async function pageIn(s: TurnSummary): Promise<boolean> {
   return loadUntilResident(s, Date.now() + PAGE_BUDGET_MS);
 }
 
-/** Page backwards until the target turn is in the store. Two termination conditions and
- *  a wall-clock bound: the store reports no more history, a page made no progress, or
- *  the budget is spent. `?before=<turn_id>` pages by whole turns, so the oldest resident
- *  turn id is both the residency test and the next page's cursor. */
+/** Page backwards until the target turn is in the store, through the one older-page door. A page that moves nothing
+ *  or a spent wall-clock budget ends it; `?before=<turn_id>` pages by whole turns. */
 async function loadUntilResident(s: TurnSummary, deadline: number): Promise<boolean> {
-  const [{ getActive }, { loadMessages }] = await Promise.all([
+  const [{ getActive }, { loadOlderTurns }] = await Promise.all([
     import("./store.js"),
     import("./store-load.js"),
   ]);
@@ -969,13 +967,7 @@ async function loadUntilResident(s: TurnSummary, deadline: number): Promise<bool
       console.warn("turn map: paging budget spent before the turn became resident", s.n);
       return false;
     }
-    const oldest = session.turn_order[0];
-    if (oldest === undefined) {
-      return false;
-    }
-    await loadMessages(chatID, oldest);
-    const after = getActive();
-    if (after === undefined || after.turn_order[0] === oldest) {
+    if (!(await loadOlderTurns(chatID))) {
       return false;
     }
   }

@@ -62,6 +62,7 @@ import { buildReasoning, type ReasoningView } from "./fundamentals/reasoning.js"
 import { buildSteerNote, type SteerNoteData } from "./fundamentals/steer-note.js";
 import {
   groupWorkflowUpdates,
+  WORKFLOW_MESSAGE_ID_PREFIX,
   WORKFLOW_UPDATE_SELECTOR,
   workflowUpdateHost,
 } from "./workflow-delivery.js";
@@ -2211,6 +2212,7 @@ function steerNoteData(st: TurnRender, e: Entry, steer: EntrySteer): SteerNoteDa
   const workflowMessage = steer.origin === "parent" || steer.origin === "step";
   if (workflowMessage && steer.produced_ts !== undefined) {
     data.sentAt = steer.produced_ts;
+    data.tracked = e.id.startsWith(WORKFLOW_MESSAGE_ID_PREFIX);
     if (steer.read_ts !== undefined) {
       data.deliveredAt = steer.read_ts;
     }

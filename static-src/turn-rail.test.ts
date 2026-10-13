@@ -112,7 +112,10 @@ vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
 // The pagination door `navigateToTurn` walks when its target is off the resident
 // window. Mocked because the real one is a network fetch, and what these cases
 // assert is the rail's own sequencing around it.
-vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
+vi.mock("./store-load.js", () => ({
+  loadOlderTurns: vi.fn(),
+  loadList: vi.fn(),
+}));
 
 import {
   mountTurnRail,
@@ -126,7 +129,7 @@ import {
 } from "./turn-rail.js";
 import type { TurnSummary } from "./rail-merge.js";
 import { apiGet } from "./api-client.js";
-import { loadMessages } from "./store-load.js";
+import { loadOlderTurns } from "./store-load.js";
 import { setSessions, setActive, get } from "./store.js";
 import type { Entry, Session, TurnState } from "./types.js";
 import { KEY_ATTR } from "@cplieger/reactive";
@@ -350,6 +353,22 @@ describe("which chat the map belongs to", () => {
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-a");
     expect(markers()).toEqual(["1", "2"]);
+  });
+
+  it("leaves no empty slot where the index holds no row for a turn number", async () => {
+    // Turn 8 opened and closed with nothing to draw, so the index carries 6, 7, 9, 10.
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(6), turn(7), turn(9), turn(10)] });
+    await loadTurnRail("c-a");
+
+    expect(markers()).toEqual(["6", "7", "9", "10"]);
+    const rows = rowLinks(rail());
+    expect(rows.map((a) => Number(rowOf(a).style.getPropertyValue("--rail-at")))).toEqual([
+      0,
+      1 / 3,
+      2 / 3,
+      1,
+    ]);
+    expect(stackOf(rail()).style.getPropertyValue("--turn-map-slots")).toBe("4");
   });
 
   it("empties itself when handed another chat", async () => {
@@ -1051,7 +1070,7 @@ describe("which card a row jumps to", () => {
     residentCard(1, "m8");
 
     let pendingWhileWaiting = false;
-    vi.mocked(loadMessages).mockImplementation(async () => {
+    vi.mocked(loadOlderTurns).mockImplementation(async () => {
       pendingWhileWaiting = isPending(marker(6));
       const s = get("c-page-in");
       if (s !== undefined) {
@@ -1069,7 +1088,7 @@ describe("which card a row jumps to", () => {
     await settleJump();
 
     expect(pendingWhileWaiting).toBe(true);
-    expect(vi.mocked(loadMessages)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(loadOlderTurns)).toHaveBeenCalledTimes(1);
     // The landing turn's body is built on demand, because a paginated landing is a
     // tier-3 stub — and it is built BEFORE anything scrolls, so the build's own
     // scroller write cannot land mid-animation.
@@ -1096,7 +1115,7 @@ describe("which card a row jumps to", () => {
     await settleJump();
 
     expect(scrollable.landings).toEqual([]);
-    expect(vi.mocked(loadMessages)).not.toHaveBeenCalled();
+    expect(vi.mocked(loadOlderTurns)).not.toHaveBeenCalled();
     // The pending state means a fetch is in flight, so a dead end has to clear it —
     // a marker left pulsing forever is the same silence the state exists to break.
     expect(isPending(marker(1))).toBe(false);
@@ -1120,7 +1139,7 @@ describe("which card a row jumps to", () => {
         resolve();
       };
     });
-    vi.mocked(loadMessages).mockImplementation(async () => {
+    vi.mocked(loadOlderTurns).mockImplementation(async () => {
       await paging;
       return false;
     });
@@ -1173,7 +1192,7 @@ describe("which card a row jumps to", () => {
     setSessions([paged("c-double-click", ["m2"], true)]);
     setActive("c-double-click");
     residentCard(2, "m2");
-    vi.mocked(loadMessages).mockImplementation(async () => {
+    vi.mocked(loadOlderTurns).mockImplementation(async () => {
       const s = get("c-double-click");
       if (s !== undefined) {
         prependTurns(s, ["m1"]);
@@ -1187,7 +1206,7 @@ describe("which card a row jumps to", () => {
     marker(1).click();
     await settleJump();
 
-    expect(vi.mocked(loadMessages)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(loadOlderTurns)).toHaveBeenCalledTimes(1);
     expect(mountedBodies).toEqual(["m1"]);
     expect(scrollable.landings.length).toBeGreaterThan(0);
     expect(
@@ -2004,7 +2023,7 @@ describe("moving through the map", () => {
     setActive("c-busy");
     // Every call's reading: a jump an earlier case left paging can call in after this one settles.
     const busyWhileWaiting: (string | null)[] = [];
-    vi.mocked(loadMessages).mockImplementation(async () => {
+    vi.mocked(loadOlderTurns).mockImplementation(async () => {
       busyWhileWaiting.push(rail.getAttribute("aria-busy"));
       await Promise.resolve();
       return false;
@@ -2012,9 +2031,9 @@ describe("moving through the map", () => {
 
     link(1).click();
     await vi.waitFor(() => {
-      expect(scrollable.epochs.length + vi.mocked(loadMessages).mock.calls.length).toBeGreaterThan(
-        0,
-      );
+      expect(
+        scrollable.epochs.length + vi.mocked(loadOlderTurns).mock.calls.length,
+      ).toBeGreaterThan(0);
     });
     await vi.waitFor(() => {
       expect(rail.getAttribute("aria-busy")).toBeNull();

@@ -28,6 +28,7 @@ export function tabsMock(): Record<string, unknown> {
     toggleFilesView: vi.fn(async () => {}),
     openFilesView: vi.fn(async () => {}),
     toggleDocsView: vi.fn(async () => {}),
+    toggleHistoryView: vi.fn(async () => {}),
 
     adoptSubject: vi.fn(),
     activateTab: vi.fn(),

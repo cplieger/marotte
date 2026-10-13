@@ -80,7 +80,7 @@
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
           New chat
         </button>
-        <button type="button" id="history-btn" class="sidebar-action-btn sidebar-history-btn" data-tooltip="History" aria-label="History">
+        <button type="button" id="history-btn" class="sidebar-action-btn sidebar-history-btn" data-tooltip="History" aria-label="History" aria-pressed="false">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         </button>
       </div>
@@ -207,14 +207,14 @@
         <button type="button" id="find-btn" class="icon-btn" data-tooltip="Search (Ctrl+F)" aria-label="Search" aria-pressed="false">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg>
         </button>
-        <button type="button" id="files-btn" class="icon-btn" data-tooltip="File browser" aria-label="File browser">
+        <button type="button" id="files-btn" class="icon-btn" data-tooltip="File browser" aria-label="File browser" aria-pressed="false">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h3l3 3h6a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z"/></svg>
         </button>
-        <button type="button" id="git-btn" class="icon-btn" data-tooltip="Toggle git" aria-label="Toggle git">
+        <button type="button" id="git-btn" class="icon-btn" data-tooltip="Toggle git" aria-label="Toggle git" aria-pressed="false">
           <svg class="git-btn-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>
           <span id="git-badge" class="git-badge hidden"></span>
         </button>
-        <button type="button" id="shell-btn" class="icon-btn" data-tooltip="Toggle shell" aria-label="Toggle shell">
+        <button type="button" id="shell-btn" class="icon-btn" data-tooltip="Toggle shell" aria-label="Toggle shell" aria-pressed="false">
           <!-- Boxed prompt, DELIBERATELY not the bare `>_` on the shell panel's own
                header and on tool cards: a bare prompt reaches 12 of the grid's 15
                units, so in this row it reads short against its boxed neighbours.
@@ -226,7 +226,7 @@
                inner ink) and sized to 3.75x7.5 to fill the box. -->
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7.5 7.5l3.75 3.75-3.75 3.75"/><path d="M12.75 15h3.75"/></svg>
         </button>
-        <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs">
+        <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs" aria-pressed="false">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5C9 3.5 6 3 4.5 3Q3 3 3 4.5V18Q3 19.5 4.5 19.5C6 19.5 9 20 12 21C15 20 18 19.5 19.5 19.5Q21 19.5 21 18V4.5Q21 3 19.5 3C18 3 15 3.5 12 4.5Z"/><path d="M12 4.5v16.5"/></svg>
         </button>
         <!-- LAST of the persistent buttons, and deliberately not last child: the
@@ -236,7 +236,7 @@
              button exists. Nothing reads this button's parent — settings.ts binds
              its click, tabs.ts puts it in ACTIVE_BTN, app.ts clicks it from the
              keyboard shortcut, and 61-mcp-tools.css rotates its glyph on `.active`. -->
-        <button type="button" id="settings-btn" class="icon-btn" data-tooltip="Settings" aria-label="Settings">
+        <button type="button" id="settings-btn" class="icon-btn" data-tooltip="Settings" aria-label="Settings" aria-pressed="false">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
         <button type="button" id="menu-toggle" class="icon-btn mobile-only" data-tooltip="Menu" aria-label="Menu">
@@ -886,25 +886,23 @@
             <div class="page-section">
               <h2 class="section-title">Tools &amp; runtimes</h2>
               <p class="section-hint">Languages, language servers and CLIs the agent can use, installed into persistent storage. The pin keeps a tool at its current version.</p>
-              <div class="section-actions-row">
-                <div class="action-bar action-bar-inline">
-                  <button type="button" id="tool-update-btn" class="action-pill" aria-label="Update all tools">
-                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-                    <span>Update all</span>
-                  </button>
-                  <button type="button" id="tool-add-btn" class="action-pill" aria-label="Add tool">
-                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-                    <span>Add tool</span>
-                  </button>
-                  <button type="button" id="tool-catalog-refresh-btn" class="action-pill" aria-label="Refresh the tool catalog">
-                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-                    <span>Refresh catalog</span>
-                  </button>
-                  <button type="button" id="tool-cancel-btn" class="action-pill hidden" aria-label="Cancel the running tool job">
-                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                    <span>Cancel</span>
-                  </button>
-                </div>
+              <div class="page-toolbar">
+                <button type="button" id="tool-update-btn" class="action-pill" aria-label="Update all tools">
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                  <span>Update all</span>
+                </button>
+                <button type="button" id="tool-add-btn" class="action-pill" aria-label="Add tool">
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                  <span>Add tool</span>
+                </button>
+                <button type="button" id="tool-catalog-refresh-btn" class="action-pill" aria-label="Refresh the tool catalog">
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                  <span>Refresh catalog</span>
+                </button>
+                <button type="button" id="tool-cancel-btn" class="action-pill hidden" aria-label="Cancel the running tool job">
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                  <span>Cancel</span>
+                </button>
               </div>
               <p id="tool-catalog-meta" class="section-hint hidden" aria-live="polite"></p>
               <div id="tool-update-output" class="rolling-output hidden" role="log" aria-live="polite" aria-label="Tool install output"></div>
@@ -1088,11 +1086,9 @@
             <div class="page-section" id="knowledge-section">
               <h2 class="section-title">Knowledge bases</h2>
               <p class="section-hint">Folders indexed so the agent can search them, which needs <strong>Knowledge base search</strong> on in <strong>General</strong>. Indexing runs in the background.</p>
-              <div class="section-actions-row">
-                <div class="action-bar action-bar-inline">
-                  <button type="button" id="knowledge-add-btn" class="action-pill" data-tooltip="Add knowledge base" aria-label="Add knowledge base"></button>
-                  <button type="button" id="knowledge-clear-btn" class="action-pill hidden" data-tooltip="Remove all" aria-label="Remove all knowledge bases"></button>
-                </div>
+              <div class="page-toolbar">
+                <button type="button" id="knowledge-add-btn" class="action-pill" data-tooltip="Add knowledge base" aria-label="Add knowledge base"></button>
+                <button type="button" id="knowledge-clear-btn" class="action-pill hidden" data-tooltip="Remove all" aria-label="Remove all knowledge bases"></button>
               </div>
               <p id="knowledge-hint" class="section-hint knowledge-hint" hidden>Knowledge is turned off. Enable it in <strong>General</strong> for the agent to use these bases during chats.</p>
               <div id="knowledge-list" class="list-container"><div class="list-empty">No knowledge bases yet. Add your own <code>docs/</code> folder, or a documentation repository cloned into the workspace, such as <code>refs/rust-book/src</code> from rust-lang/book.</div></div>
@@ -1113,48 +1109,46 @@
         <div class="page-shell">
           <header class="page-header">
 
-            <div class="docs-head-row">
-              <nav id="docs-tab-bar" class="seg-bar" role="tablist" aria-label="Kiro document categories">
-                <button type="button" class="seg active" role="tab" aria-selected="true" data-docs-tab="steering" aria-label="Steering">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
-                  <span class="seg-label">Steering</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="skills" aria-label="Skills">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                  <span class="seg-label">Skills</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="prompts" aria-label="Prompts">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M13 8H7"/><path d="M17 12H7"/></svg>
-                  <span class="seg-label">Prompts</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="agents" aria-label="Agents">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/></svg>
-                  <span class="seg-label">Agents</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="specs" aria-label="Specs">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
-                  <span class="seg-label">Specs</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="hooks" aria-label="Hooks">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0020 0h-3"/></svg>
-                  <span class="seg-label">Hooks</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="workflows" aria-label="Workflows">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/></svg>
-                  <span class="seg-label">Workflows</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="memories" aria-label="Memories">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
-                  <span class="seg-label">Memories</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="powers" aria-label="Powers">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
-                  <span class="seg-label">Powers</span>
-                </button>
-              </nav>
-              <div id="docs-new-slot" class="docs-new-slot"></div>
-            </div>
+            <nav id="docs-tab-bar" class="seg-bar" role="tablist" aria-label="Kiro document categories">
+              <button type="button" class="seg active" role="tab" aria-selected="true" data-docs-tab="steering" aria-label="Steering">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+                <span class="seg-label">Steering</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="skills" aria-label="Skills">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span class="seg-label">Skills</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="prompts" aria-label="Prompts">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M13 8H7"/><path d="M17 12H7"/></svg>
+                <span class="seg-label">Prompts</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="agents" aria-label="Agents">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/></svg>
+                <span class="seg-label">Agents</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="specs" aria-label="Specs">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
+                <span class="seg-label">Specs</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="hooks" aria-label="Hooks">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0020 0h-3"/></svg>
+                <span class="seg-label">Hooks</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="workflows" aria-label="Workflows">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/></svg>
+                <span class="seg-label">Workflows</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="memories" aria-label="Memories">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
+                <span class="seg-label">Memories</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="powers" aria-label="Powers">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
+                <span class="seg-label">Powers</span>
+              </button>
+            </nav>
           </header>
+          <div id="docs-new-slot" class="page-toolbar"></div>
           <div data-docs-panel="steering" class="docs-panel"></div>
           <div data-docs-panel="skills" class="docs-panel hidden"></div>
           <div data-docs-panel="prompts" class="docs-panel hidden"></div>
@@ -1192,25 +1186,25 @@
           </header>
           <!-- Changes tab -->
           <div data-git-panel="changes" class="git-panel">
-            <div class="git-tab-toolbar">
-              <button type="button" id="git-pull-all-btn" class="icon-btn" data-tooltip="Pull every repo that can fast-forward" aria-label="Pull every repo that can fast-forward"></button>
-              <button type="button" id="git-refresh-all-btn" class="icon-btn" data-tooltip="Refresh all repos" aria-label="Refresh all repos"></button>
+            <div class="page-toolbar">
+              <button type="button" id="git-pull-all-btn" class="action-pill" data-tooltip="Pull every repo that can fast-forward" aria-label="Pull every repo that can fast-forward"></button>
+              <button type="button" id="git-refresh-all-btn" class="action-pill" data-tooltip="Refresh all repos" aria-label="Refresh all repos"></button>
             </div>
             <div id="git-changes-mount" class="git-multirepo-mount" aria-live="polite"></div>
           </div>
 
           <!-- Pull requests tab -->
           <div data-git-panel="prs" class="git-panel hidden">
-            <div class="git-tab-toolbar">
-              <button type="button" id="git-refresh-prs-btn" class="icon-btn" data-tooltip="Refresh pull requests" aria-label="Refresh pull requests"></button>
+            <div class="page-toolbar">
+              <button type="button" id="git-refresh-prs-btn" class="action-pill" data-tooltip="Refresh pull requests" aria-label="Refresh pull requests"></button>
             </div>
             <div id="git-prs-mount" class="git-multirepo-mount" aria-live="polite"></div>
           </div>
 
           <!-- Sources tab: forge accounts + per-forge cloneable repos -->
           <div data-git-panel="sources" class="git-panel hidden">
-            <div class="git-tab-toolbar">
-              <button type="button" id="git-refresh-sources-btn" class="icon-btn" data-tooltip="Refresh accounts and repositories" aria-label="Refresh accounts and repositories"></button>
+            <div class="page-toolbar">
+              <button type="button" id="git-refresh-sources-btn" class="action-pill" data-tooltip="Refresh accounts and repositories" aria-label="Refresh accounts and repositories"></button>
             </div>
             <div id="git-sources-mount" class="git-sources-mount"></div>
           </div>
