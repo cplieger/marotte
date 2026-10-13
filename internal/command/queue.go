@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/ids"
@@ -208,6 +207,8 @@ func sendNextUserRow(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 
 // sendUnread opens one prompt carrying the unread rows, joined by a blank line, and
 // retires them once its turn_open is appended. A refused open leaves them unsent.
+// The words are the user's own, so the prompt carries no DisplayText: a label would
+// replace them in the transcript and in KAS's replay.
 func sendUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, rows []SteerRow, fence TurnFence) {
 	keys := make([]string, 0, len(rows))
 	texts := make([]string, 0, len(rows))
@@ -215,20 +216,13 @@ func sendUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, 
 		keys = append(keys, r.Key)
 		texts = append(texts, r.Text)
 	}
-	p := &marotte.PromptCommand{Text: strings.Join(texts, "\n\n"), MessageID: ids.NewMessageID(), DisplayText: unreadLabel(len(rows))}
+	p := &marotte.PromptCommand{Text: strings.Join(texts, "\n\n"), MessageID: ids.NewMessageID()}
 	if err := launchPrompt(ctx, roles, chatID, p, launch{resends: keys, fence: fence}); err != nil {
 		logDrainRefused(chatID, p.MessageID, err)
 		return
 	}
 	roles.jobs.Delivered(chatID, keys)
 	slog.Info("unread steers sent as the next prompt", "chat_id", chatID, "steers", len(keys))
-}
-
-func unreadLabel(n int) string {
-	if n == 1 {
-		return "Resending a message the agent had not read"
-	}
-	return "Resending " + strconv.Itoa(n) + " messages the agent had not read"
 }
 
 func logDrainRefused(chatID marotte.ChatID, messageID string, err error) {

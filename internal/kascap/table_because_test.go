@@ -767,7 +767,7 @@ turn_close for the turn footer's info panel.`,
 KAS hands it to the step runner, which stores it as the step's user row label (persistStepUserMessage),
 so every client of the step session shows the user's words; without it KAS keeps a label only when
 its prompt resolver expanded a /name template. SENT on a chat prompt marotte wrote on the user's
-behalf (the unread-steer resend, a spec Run, a deferral, a tangent merge) carrying its label: KAS
+behalf (a spec Run, a deferral, a tangent merge) carrying its label: KAS
 stores it on the user message and its replay gives the label as the message text, as the TUI's
 tangent merge relies on. A typed chat prompt never sends it.`,
 	"enum.outputStyle": `SENT on a prompt when the user picked a non-default output style (output_style).

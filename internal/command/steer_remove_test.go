@@ -557,8 +557,8 @@ func TestDrain_UnreadSteersGoAsOnePromptNamingTheirKeys(t *testing.T) {
 	if p := h.opened[0]; p.Text != "first\n\nsecond" || !slices.Equal(p.Resends, []string{"steer-a", "steer-b"}) {
 		t.Errorf("prompt = %+v, want the rows joined in order, naming both keys", p)
 	}
-	if got, want := h.opened[0].Label, "Resending 2 messages the agent had not read"; got != want {
-		t.Errorf("prompt label = %q, want %q: a resend is a message marotte wrote, so it is labelled", got, want)
+	if got := h.opened[0].Label; got != "" {
+		t.Errorf("prompt label = %q, want none: the words are the user's, so they show as written", got)
 	}
 	if !slices.Equal(q.delivered, []string{"steer-a", "steer-b"}) {
 		t.Errorf("delivered = %v, want both keys retired after the open", q.delivered)
