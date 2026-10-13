@@ -354,8 +354,8 @@ type ModelChoiceMeta struct {
 	} `json:"kiro"`
 }
 
-// ThinkingDefaultOff reads a choice's defaultThinkingEnabled, absent meaning on.
-func (m *ModelChoiceMeta) ThinkingDefaultOff() bool {
+// thinkingDefaultOff reads a choice's defaultThinkingEnabled, absent meaning on.
+func (m *ModelChoiceMeta) thinkingDefaultOff() bool {
 	return m.Kiro.DefaultThinkingEnabled != nil && !*m.Kiro.DefaultThinkingEnabled
 }
 
@@ -368,7 +368,7 @@ func (m *ModelChoiceMeta) SessionModel(id, name, description string) SessionMode
 		RateMultiplier:       m.Kiro.RateMultiplier,
 		HasEffort:            m.Kiro.HasEffort,
 		ThinkingToggleable:   m.Kiro.ThinkingToggleable,
-		ThinkingDefaultOff:   m.ThinkingDefaultOff(),
+		ThinkingDefaultOff:   m.thinkingDefaultOff(),
 	}
 }
 

@@ -79,8 +79,8 @@ func TestModelChoiceMetaThinkingDefaultOff_AbsentMeansOn(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.raw), &m); err != nil {
 				t.Fatalf("Unmarshal(%s): %v", tc.raw, err)
 			}
-			if got := m.ThinkingDefaultOff(); got != tc.want {
-				t.Errorf("ModelChoiceMeta(%s).ThinkingDefaultOff() = %v, want %v", tc.raw, got, tc.want)
+			if got := m.thinkingDefaultOff(); got != tc.want {
+				t.Errorf("ModelChoiceMeta(%s).thinkingDefaultOff() = %v, want %v", tc.raw, got, tc.want)
 			}
 		})
 	}
