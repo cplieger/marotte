@@ -594,6 +594,33 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
   return true;
 }
 
+/** The older page each chat has in flight, so the scroller's edge, the turn map and the in-chat search share one fetch
+ *  instead of aborting each other's (`loadMessages` supersedes a chat's previous load). */
+const olderInFlight = new Map<string, Promise<boolean>>();
+
+/**
+ * Page the chat's window one step older, with the cursor read from the window NOW rather than from whoever asked.
+ * Resolves true when the window's oldest turn changed, false when the chat has no more, the fetch failed or it
+ * moved nothing.
+ */
+export function loadOlderTurns(chatID: string): Promise<boolean> {
+  const held = olderInFlight.get(chatID);
+  if (held !== undefined) {
+    return held;
+  }
+  const oldest = get(chatID)?.turn_order[0];
+  if (oldest === undefined) {
+    return Promise.resolve(false);
+  }
+  const page = loadMessages(chatID, oldest)
+    .then((ok) => ok && get(chatID)?.turn_order[0] !== oldest)
+    .finally(() => {
+      olderInFlight.delete(chatID);
+    });
+  olderInFlight.set(chatID, page);
+  return page;
+}
+
 export async function loadMessages(
   chatID: string,
   beforeTurnID?: string,

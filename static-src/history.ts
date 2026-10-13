@@ -31,7 +31,6 @@ import { runPendingAsks } from "./decision-dock.js";
 import { deleteRun } from "./actions/runs.js";
 import { deleteChat as deleteChatAction } from "./actions/chat.js";
 import { confirm } from "./confirm.js";
-import { get } from "./store.js";
 import { labelForMode } from "./roles.js";
 import { applyOutcome } from "./tool-card.js";
 import type { ToolRenderInfo } from "./tool-schema.js";
@@ -71,28 +70,25 @@ interface HistoryRow {
 }
 
 /**
- * Read from the store, not `/api/sessions`: `/api/chats` already holds every header, so the join costs nothing. An
- * unknown chat yields an empty list, since placeholders would read as fact.
+ * The row's second line when the agent declared no description: the owning chat's facts as `/api/sessions` states
+ * them. Never the client's open chats, which hold only the chats with a tab and so lose a chat the moment it closes.
  */
-function chatFacts(chatID: string): string[] {
-  const s = get(chatID);
-  if (s === undefined) {
-    return [];
-  }
+function chatFacts(s: ResumableSession): string[] {
   const facts: string[] = [];
-  if (s.model !== "") {
-    facts.push(s.model);
+  if ((s.model ?? "") !== "") {
+    facts.push(s.model ?? "");
   }
-  if (s.current_mode_id !== "") {
-    facts.push(labelForMode(s.current_mode_id));
+  if ((s.current_mode_id ?? "") !== "") {
+    facts.push(labelForMode(s.current_mode_id ?? ""));
   }
-  const turns = s.turn_count;
+  const turns = s.turn_count ?? 0;
   if (turns > 0) {
     facts.push(`${String(turns)} ${turns === 1 ? "turn" : "turns"}`);
   }
   // Credits only when metered: 0.00 on every unmetered row is noise.
-  if (s.usage.credits > 0) {
-    facts.push(`${s.usage.credits.toFixed(2)} cr`);
+  const credits = s.credits ?? 0;
+  if (credits > 0) {
+    facts.push(`${credits.toFixed(2)} cr`);
   }
   return facts;
 }
@@ -114,7 +110,7 @@ function runSub(r: WorkflowRun, endReason: string): string {
   if (started > 0 && r.updated_at > started) {
     parts.push(formatDuration(r.updated_at - started));
   }
-  const parent = get(r.parent_chat_id ?? "")?.name ?? "";
+  const parent = r.parent_chat_name ?? "";
   if (parent !== "") {
     parts.push(`from ${parent}`);
   }
@@ -262,7 +258,7 @@ function toRows(sessions: ResumableSession[], runs: WorkflowRun[]): HistoryRow[]
       kind: "chat",
       title: s.title === "" ? "Untitled session" : s.title,
       updatedAt: s.updated_at,
-      sub: description !== "" ? description : chatFacts(s.chat_id ?? "").join(" · "),
+      sub: description !== "" ? description : chatFacts(s).join(" · "),
       outcome: null,
       mark: "",
       runCount: launched.get(s.chat_id ?? "") ?? 0,
@@ -358,23 +354,24 @@ class HistoryController {
   });
   private query = "";
 
-  /** A filter over the loaded list, so the funnel: there is no server-side run search. */
-  readonly filter: SearchPopup = createSearchPopup<null>({
-    id: "hist-filter",
-    kind: "filter",
-    label: "Filter workflow runs",
-    placeholder: "Filter runs by name or recipe\u2026",
+  /** A search by name and recipe over the loaded runs. History has one find kind on both panes, so the
+   *  toolbar button keeps its glyph and its name when the pane switches. */
+  readonly runsFind: SearchPopup = createSearchPopup<null>({
+    id: "hist-run-search",
+    kind: "search",
+    label: "Search workflow runs",
+    placeholder: "Search runs by name or recipe\u2026",
     note: true,
     host: () => document.getElementById("history-view"),
     query: (q) => {
-      this.filterText = q.toLowerCase();
+      this.runQuery = q.toLowerCase();
       return null;
     },
     render: () => {
       this.paintRuns();
     },
   });
-  private filterText = "";
+  private runQuery = "";
 
   /** Written by the constructor's effect, never by `load` directly. */
   private rows: HistoryRow[] = [];
@@ -414,8 +411,8 @@ class HistoryController {
     // reset(), not close(): close's clear would repaint, a fetch no reader needs.
     this.query = "";
     this.search.reset();
-    this.filterText = "";
-    this.filter.reset();
+    this.runQuery = "";
+    this.runsFind.reset();
   }
 
   /** The Chats pane shows the list or search, by the box; the Runs pane is the list either way. */
@@ -504,7 +501,7 @@ class HistoryController {
       return;
     }
     // No misleading empty state on failure: offer a retry. The held answer goes too, or the next tab-set, dock or
-    // filter change repaints it over the Retry.
+    // query change repaints it over the Retry.
     if (d === null) {
       this.verdict.value = null;
       runs.replaceChildren(this.buildError());
@@ -539,23 +536,22 @@ class HistoryController {
       return;
     }
     const all = this.rows.filter((r) => r.kind === "run");
-    const shown =
-      this.filterText === "" ? all : all.filter((r) => matchesFilter(r, this.filterText));
-    this.filter.shell?.setNote(this.runsNote(all.length, shown.length));
+    const shown = this.runQuery === "" ? all : all.filter((r) => matchesRunQuery(r, this.runQuery));
+    this.runsFind.shell?.setNote(this.runsNote(all.length, shown.length));
     this.paintPane(
       runs,
       shown,
-      this.filterText !== ""
-        ? "No workflow runs match the filter."
+      this.runQuery !== ""
+        ? "No workflow runs match the search."
         : d.runs_state === "unavailable"
           ? "Could not read workflow runs."
           : "No previous workflow runs in this workspace.",
     );
   }
 
-  /** Silent with no filter: a count restating the list is noise. */
+  /** Silent with no query: a count restating the list is noise. */
   private runsNote(total: number, shown: number): string {
-    if (this.filterText === "") {
+    if (this.runQuery === "") {
       return "";
     }
     if (shown > 0) {
@@ -619,8 +615,8 @@ class HistoryController {
   }
 }
 
-/** The filter reads what the row shows: title and subtitle. */
-function matchesFilter(row: HistoryRow, needle: string): boolean {
+/** A run is found by what its row shows: title and subtitle. */
+function matchesRunQuery(row: HistoryRow, needle: string): boolean {
   return `${row.title} ${row.sub}`.toLowerCase().includes(needle);
 }
 
@@ -807,7 +803,7 @@ const historyFind: PageFind = {
 
 function activeFind(): SearchPopup {
   // The reactive read, so the toolbar's affordance effect re-runs on a pane switch.
-  return activeTab.value === "runs" ? historyCtrl.filter : historyCtrl.search;
+  return activeTab.value === "runs" ? historyCtrl.runsFind : historyCtrl.search;
 }
 
 let inited = false;

@@ -171,7 +171,7 @@ export function initChangesTab(): void {
   const pullAllBtn = document.getElementById("git-pull-all-btn") as HTMLButtonElement | null;
   if (pullAllBtn !== null) {
     pullAllBtn.innerHTML = ICON_GIT_DOWN_ARROW;
-    const status = el("span", { className: "git-tab-toolbar-error", role: "status" });
+    const status = el("span", { className: "page-toolbar-error", role: "status" });
     pullAllBtn.before(status);
     // The pass's refresh runs once the button settles, so the loading binding and the button's feedback end together.
     pullAllBtn.addEventListener("click", () => {

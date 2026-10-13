@@ -81,9 +81,9 @@ describe("the Changes tab", () => {
     resetActionFramework();
     host = document.createElement("div");
     host.innerHTML = `
-      <div class="git-tab-toolbar">
-        <button type="button" id="git-pull-all-btn" class="icon-btn" aria-label="Pull every repo that can fast-forward"></button>
-        <button type="button" id="git-refresh-all-btn" class="icon-btn" aria-label="Refresh all repos"></button>
+      <div class="page-toolbar">
+        <button type="button" id="git-pull-all-btn" class="action-pill" aria-label="Pull every repo that can fast-forward"></button>
+        <button type="button" id="git-refresh-all-btn" class="action-pill" aria-label="Refresh all repos"></button>
       </div>
       <div id="git-changes-mount"></div>`;
     document.body.appendChild(host);
@@ -493,7 +493,7 @@ describe("the Changes tab", () => {
     await vi.waitFor(() => expect(calls).toHaveLength(2));
     calls[1]!.answer(json({ error: "another pass is running" }, 409));
     await vi.waitFor(() =>
-      expect(host.querySelector(".git-tab-toolbar-error")?.textContent).toBe(
+      expect(host.querySelector(".page-toolbar-error")?.textContent).toBe(
         "Could not pull every repository. another pass is running",
       ),
     );
@@ -501,7 +501,7 @@ describe("the Changes tab", () => {
     expect(toast.error).not.toHaveBeenCalled();
 
     pullAll.click();
-    expect(host.querySelector(".git-tab-toolbar-error")?.textContent).toBe("");
+    expect(host.querySelector(".page-toolbar-error")?.textContent).toBe("");
     await vi.waitFor(() => expect(calls).toHaveLength(3));
     calls[2]!.answer(json({ repos: [] }));
     await vi.waitFor(() => expectIdle(pullAll), { timeout: 3000 });

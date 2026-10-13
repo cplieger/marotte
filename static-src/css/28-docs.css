@@ -441,30 +441,6 @@
   white-space: nowrap;
 }
 
-.docs-head-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-
-  & > .seg-bar {
-    flex: 1;
-    min-inline-size: 0;
-  }
-}
-
-/* Sized on every tab, empty or not, so switching tabs moves nothing. */
-.docs-new-slot {
-  flex: none;
-  inline-size: max(var(--btn-h), var(--hit-floor));
-  display: flex;
-  justify-content: center;
-}
-
-.docs-new-btn {
-  inline-size: 100%;
-  block-size: var(--btn-h);
-}
-
 .docs-new-popover {
   z-index: 100;
   inline-size: min(24rem, 100vw - 2rem);

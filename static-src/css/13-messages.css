@@ -124,6 +124,15 @@
   margin-block-start: calc(var(--sp-4) - var(--sp-3));
 }
 
+/* THE HISTORY EDGE, the live edge's twin at the other end (scroll-controller.ts `topSentinel`). `order: -1` seats it
+ * above every card whatever the DOM order, and the negative margin cancels the column `gap` flex draws below a
+ * zero-height first item, so the first turn sits where it would with no marker. */
+.transcript-top {
+  order: -1;
+  block-size: 0;
+  margin-block-end: calc(-1 * var(--sp-3));
+}
+
 /* A parked view keeps its DOM and rendering state but costs the page nothing.
  * The box's own metrics are zeroed because content-visibility only skips the
  * CONTENTS — its padding and min-height would otherwise stack a viewport of
@@ -679,36 +688,6 @@
     font-size: var(--fs-sm);
     padding: var(--sp-1) var(--sp-3);
   }
-}
-
-/* Load older messages: a real BUTTON, not an instruction. "Scroll up for older
- * messages" is unusable the moment progressive collapse makes the transcript
- * shorter than the viewport — there is nothing to scroll. */
-.load-more-btn {
-  align-self: center;
-  flex-shrink: 0;
-  padding: var(--sp-1) var(--sp-3);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-secondary);
-  color: var(--c-text-secondary);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard),
-    border-color var(--dur-micro) var(--ease-standard);
-}
-
-.load-more-btn:hover {
-  background: var(--c-bg-tertiary);
-  color: var(--c-text-primary);
-  border-color: var(--c-text-tertiary);
-}
-
-.load-more-btn:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset);
 }
 
 /* Reasoning/thinking block (collapsible). NO bar and no indent: the trace sits

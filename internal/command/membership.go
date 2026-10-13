@@ -718,6 +718,7 @@ func (m *Membership) openTab(ctx context.Context, spec marotte.OpenTab, opID str
 		return TabOpened{}, tabStatus(err)
 	}
 	if created {
+		slog.Info("tab opened", "kind", spec.Kind, "ref", spec.Ref)
 		m.emit(ctx, &marotte.TabsChangedPayload{
 			Changed: &subject,
 			Order:   m.order(),

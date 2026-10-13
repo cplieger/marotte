@@ -90,7 +90,16 @@ vi.mock("./api-client.js", async (importOriginal) => {
 
 import { initSidebarHistory } from "./sidebar-history.js";
 import { refreshRetention } from "./retention.js";
-import { openTab, tabIdFor, getActiveTabId, _resetForTest } from "./tabs.js";
+import {
+  openTab,
+  tabIdFor,
+  getActiveTabId,
+  toggleDocsView,
+  toggleGitView,
+  toggleHistoryView,
+  toggleSettingsView,
+  _resetForTest,
+} from "./tabs.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
 import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
@@ -163,10 +172,7 @@ async function settle(): Promise<void> {
 }
 
 describe("the sidebar's History button", () => {
-  it("leaves an open History tab open and active, and closes the phone drawer", async () => {
-    await openTab({ kind: "history" });
-    const id = tabIdFor("history");
-    expect(getActiveTabId(), "precondition: History is the active tab").toBe(id);
+  it("opens History and marks the button active, closing the phone drawer", async () => {
     const sidebar = el("sidebar");
     sidebar.classList.add("open");
 
@@ -174,9 +180,36 @@ describe("the sidebar's History button", () => {
     expect(sidebar.classList.contains("open")).toBe(false);
     await settle();
 
-    expect(tabIdFor("history")).toBe(id);
+    const id = tabIdFor("history");
+    expect(id).not.toBe("");
     expect(getActiveTabId()).toBe(id);
     expect(el("history-view").classList.contains("hidden")).toBe(false);
+    expect(el("history-btn").classList.contains("active")).toBe(true);
+  });
+
+  it("closes the tab it is showing when pressed again, and drops the active mark", async () => {
+    await openTab({ kind: "history" });
+    expect(el("history-btn").classList.contains("active")).toBe(true);
+
+    el("history-btn").click();
+    await settle();
+
+    expect(tabIdFor("history")).toBe("");
+    expect(el("history-btn").classList.contains("active")).toBe(false);
+  });
+
+  it("brings an open but hidden History forward instead of closing it", async () => {
+    await openTab({ kind: "history" });
+    const id = tabIdFor("history");
+    await openTab({ kind: "settings" });
+    expect(getActiveTabId()).not.toBe(id);
+    expect(el("history-btn").classList.contains("active")).toBe(false);
+
+    el("history-btn").click();
+    await settle();
+
+    expect(tabIdFor("history")).toBe(id);
+    expect(getActiveTabId()).toBe(id);
     expect(el("history-btn").classList.contains("active")).toBe(true);
   });
 
@@ -210,5 +243,42 @@ describe("the sidebar's History button", () => {
     m.settings.mockResolvedValue(settingsPayload({ chat_retention_days: 7 }));
     await refreshRetention();
     expect(el("history-btn").classList.contains("hidden")).toBe(false);
+  });
+});
+
+// The toolbar's page toggles share one contract: lit while their page is the one on screen, and a second
+// press closes it. The docs button was the one that never lit.
+describe("the page toggles in the toolbar and sidebar", () => {
+  const toggles = [
+    { button: "docs-btn", kind: "docs", toggle: () => toggleDocsView() },
+    { button: "git-btn", kind: "git", toggle: () => toggleGitView() },
+    { button: "settings-btn", kind: "settings", toggle: () => toggleSettingsView() },
+    { button: "history-btn", kind: "history", toggle: () => toggleHistoryView() },
+  ] as const;
+
+  it.each(toggles)(
+    "$button lights while $kind is shown and closes it on a second press",
+    async (t) => {
+      expect(el(t.button).classList.contains("active")).toBe(false);
+
+      await t.toggle();
+      await settle();
+      expect(el(t.button).classList.contains("active")).toBe(true);
+      expect(el(t.button).getAttribute("aria-pressed")).toBe("true");
+
+      await t.toggle();
+      await settle();
+      expect(el(t.button).classList.contains("active")).toBe(false);
+      expect(el(t.button).getAttribute("aria-pressed")).toBe("false");
+      expect(tabIdFor(t.kind)).toBe("");
+    },
+  );
+
+  it("lights only the button of the page on screen", async () => {
+    await toggleDocsView();
+    await toggleGitView();
+    await settle();
+    expect(el("git-btn").classList.contains("active")).toBe(true);
+    expect(el("docs-btn").classList.contains("active")).toBe(false);
   });
 });

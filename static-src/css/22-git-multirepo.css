@@ -6,45 +6,24 @@
  * tab bar (`.seg-bar` / `.seg`) are the shared page-list system's
  * (11-page-lists.css). We don't redeclare those here. */
 
+/* The toolbar sits as far above its list as the switcher sits above the toolbar: the shell's
+ * own gap, which Docs gets from `.page-shell`. */
 .git-panel {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
-}
-
-/* Buttons only since the filter became a popup (24-find.css `.page-find`), so the
-   row is end-aligned rather than holding a field that stretched across it. */
-.git-tab-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--sp-2);
-  padding-block: var(--sp-2);
+  gap: var(--sp-4);
 }
 
 /* Why the refresh or Pull all beside it did not finish; empty, it takes no gap. */
-.git-tab-toolbar-error {
+.page-toolbar-error {
   font-size: var(--fs-xs);
   color: color-mix(in srgb, var(--c-danger) 90%, var(--c-text-primary));
 
   &:empty {
     display: none;
   }
-}
-
-.git-tab-toolbar .icon-btn {
-  width: 32px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.git-tab-toolbar .icon-btn svg {
-  width: 14px;
-  height: 14px;
 }
 
 .git-multirepo-mount {

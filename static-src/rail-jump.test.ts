@@ -59,7 +59,11 @@ vi.mock("./scroll.js", async (importOriginal) => {
 // are staged; the sequencing around them is what is under test. `apiGetTyped` is the in-chat
 // search's fetch, linked through the rail's hit-turn reader and never asked here.
 vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
-vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
+vi.mock("./store-load.js", () => ({
+  loadOlderTurns: vi.fn(),
+  loadMessages: vi.fn(),
+  loadList: vi.fn(),
+}));
 
 // The DOM the scroll controller resolves at import, nested the way the page nests it: the rail
 // mounts in the positioned OUTER wrapper, `#messages-wrap` is the scroller, and `#messages` holds
@@ -100,7 +104,7 @@ const store = await import("./store.js");
 const scroll = await import("./scroll.js");
 const rail = await import("./turn-rail.js");
 const { apiGet } = await import("./api-client.js");
-const { loadMessages } = await import("./store-load.js");
+const { loadOlderTurns } = await import("./store-load.js");
 
 rail.mountTurnRail(outer);
 
@@ -295,7 +299,7 @@ beforeEach(async () => {
   wrap.scrollTop = 0;
   scroll.resetScrollState();
   probe.reset();
-  vi.mocked(loadMessages).mockReset();
+  vi.mocked(loadOlderTurns).mockReset();
   await until(() => wrap.scrollTop === 0, "the scroller to be back at the top");
 });
 
@@ -368,7 +372,7 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
       () => document.querySelectorAll(".turn-map .turn-pill-link").length === 6,
       "six markers",
     );
-    vi.mocked(loadMessages).mockImplementation((chatID: string) => {
+    vi.mocked(loadOlderTurns).mockImplementation((chatID: string) => {
       const s = store.get(chatID);
       if (s !== undefined) {
         for (const n of [3, 2, 1]) {
@@ -393,7 +397,7 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
     await released();
     await quiet();
 
-    expect(vi.mocked(loadMessages)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(loadOlderTurns)).toHaveBeenCalledTimes(1);
     expect(probe.landings.length).toBeGreaterThan(1);
     expect(probe.landings.slice(1).every((l) => l.behavior === "auto")).toBe(true);
     expect(Math.abs(topOnScreen("u3") - readingLine())).toBeLessThanOrEqual(TOLERANCE_PX);

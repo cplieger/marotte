@@ -95,7 +95,7 @@ const w = (el: HTMLElement): number => px(el.getBoundingClientRect().width);
 
 const PAINTED: Record<Tier, Record<string, [number, number]>> = {
   fine: {
-    segBar: [-1, 36],
+    segBar: [-1, 40],
     iconBtn: [32, 32],
     shellBtn: [24, 24],
     steerAct: [24, 24],

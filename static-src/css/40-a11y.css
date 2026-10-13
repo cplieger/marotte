@@ -172,7 +172,7 @@ a.run-step-head:focus-visible,
  * `:where()` scores ZERO, so this is a floor and not a mandate — the two states
  * that are NOT "unavailable" opt out on their own specificity and say why at
  * their own rule:
- *   - a disabled control that is BUSY (`.conflict-btn`, `.mcp-disc-insert`) dims
+ *   - a disabled control that is BUSY (`.conflict-btn`) dims
  *     less and takes `cursor: progress`, because it is coming back;
  *   - a control disabled because it is a READOUT rather than a refusal
  *     (`.turn-ledger-summary` with no files to list, `.send-btn`) declares
@@ -192,7 +192,7 @@ a.run-step-head:focus-visible,
 /* THE BUSY FACE: a control disabled because its own work is in flight, which is
  * a different state from unavailable and now says so in one place. It was three
  * spellings — `.btn-loading` (0.7 plus a `pointer-events: none` that `disabled`
- * already provides), `.conflict-btn` and `.mcp-disc-insert` (0.6 and
+ * already provides), `.conflict-btn` (0.6 and
  * `cursor: wait`), and the reconnect button (0.7, keyed on the attribute) — and
  * every one of them DIMMED it.
  *

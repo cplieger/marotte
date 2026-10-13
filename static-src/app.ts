@@ -55,6 +55,7 @@ import { initChatAttach } from "./files-drop.js";
 import { initTaskListPill } from "./task-list.js";
 import { initAwaySummary } from "./away-summary.js";
 import { initAttention } from "./attention.js";
+import { initWorkflowDeliverNow } from "./workflow-deliver-now.js";
 import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
 import { guardBackspaceChars } from "./backspace-char.js";
@@ -245,6 +246,7 @@ function init(): void {
   // The out-of-page attention surfaces, folded from the chat tabs' dots. Before any tab
   // is opened, because it captures the served <title> as its base.
   initAttention();
+  initWorkflowDeliverNow();
 
   // No per-session model feed: /api/config-template is the one catalog feed, and the server
   // prefers a live session's report over the template.

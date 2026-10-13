@@ -3,7 +3,7 @@
 
 import { signal, touch } from "@cplieger/reactive";
 
-/** Search reaches past what is on screen; filter narrows loaded rows. Decides glyph and wording. */
+/** Search or filter: decides glyph and wording. */
 export type FindKind = "search" | "filter";
 
 /** A page's answer to the chord and the magnifier: open, focused, kind (and optionally available). */
@@ -13,7 +13,8 @@ export interface PageFind {
   toggle: () => void;
   /** Whether this page's find is open AND holding the caret. */
   focused: () => boolean;
-  /** A function: a sub-tabbed page can differ per tab (the git view). */
+  /** A function so it follows the active pane, but a page keeps ONE kind across its panes: History's runs
+   *  box takes Chats' magnifier, or the toolbar button changes glyph under the pointer on a pane switch. */
   kind: () => FindKind;
   /** Whether the magnifier has a destination here; optional (the git view's Sources tab has none). */
   available?: () => boolean;

@@ -287,54 +287,6 @@ export const reconnectServer = apiAction<{ server: string }, ReconnectResult>({
   error: "Could not reconnect integration",
 });
 
-// The response is the raw MCP result; the UI inserts its text into the prompt bar.
-
-/** One content block of an MCP message (text is the only kind we surface). */
-export interface MCPContentBlock {
-  type?: string;
-  text?: string;
-}
-
-/** Raw MCP GetPromptResult: an ordered list of role-tagged messages. */
-export interface MCPPromptResult {
-  messages?: { role?: string; content?: MCPContentBlock | MCPContentBlock[] }[];
-}
-
-/** Raw MCP ReadResourceResult: one or more resource contents. */
-export interface MCPResourceResult {
-  contents?: { uri?: string; mimeType?: string; text?: string; blob?: string }[];
-}
-
-interface GetPromptArgs {
-  server: string;
-  prompt: string;
-  arguments?: Record<string, string>;
-}
-
-export const getPromptContent = apiAction<GetPromptArgs, MCPPromptResult>({
-  name: "mcp.get_prompt",
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: ({ server, prompt, arguments: args }) => ({
-    method: "POST",
-    path: `${MCP_API}/prompt`,
-    body: { server, prompt, arguments: args ?? {} },
-  }),
-  error: "Could not load prompt",
-});
-
-export const getResourceContent = apiAction<{ server: string; uri: string }, MCPResourceResult>({
-  name: "mcp.get_resource",
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: ({ server, uri }) => ({
-    method: "POST",
-    path: `${MCP_API}/resource`,
-    body: { server, uri },
-  }),
-  error: "Could not load resource",
-});
-
 // Rescues a sign-in whose redirect landed on the wrong machine: KAS binds its OAuth listener on
 // the CONTAINER's localhost, so a remote browser is sent to its own. The user pastes the dead
 // address and the server replays it inward (`internal/hub/mcp_oauth_relay.go`).

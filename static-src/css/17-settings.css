@@ -1400,19 +1400,7 @@
   margin-block-start: var(--sp-2);
 }
 
-.action-bar-inline {
-  padding: 0;
-  margin: 0;
-}
-
-/* Row below a section header holding the Tools tab's action pills
- * (Update, Add), so controls sit under the header/description rather
- * than beside it. */
-.section-actions-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  flex-wrap: wrap;
+.page-section > .page-toolbar {
   margin-block: var(--sp-2);
 }
 
@@ -1649,9 +1637,9 @@ select.native-rule-effect:focus-visible {
 }
 
 /* --- Permissions rule forms (.rule-form) --------------------------------
- * One shared labeled-field-grid vocabulary for the four adders on the
- * Permissions panel (Active policy, Test a decision, Command rules, Agent
- * ignore), sized to the design system's 24px desktop hit floor. */
+ * One shared labeled-field-grid vocabulary for the adders on the
+ * Permissions panel (Active policy, Test a decision, Agent ignore) and a
+ * forge connection's Owner, sized to the design system's 24px desktop hit floor. */
 .rule-form {
   display: grid;
   gap: var(--sp-2) var(--sp-3);
@@ -1663,17 +1651,12 @@ select.native-rule-effect:focus-visible {
 
 /* Scope | Capability | Effect | Match | submit */
 .rule-form[data-rule-form="policy"] {
-  grid-template-columns: 8rem minmax(10rem, 1fr) 6.5rem minmax(14rem, 2fr) auto;
+  grid-template-columns: 8rem minmax(10rem, 1fr) var(--rf-compact-w) minmax(14rem, 2fr) auto;
 }
 
 /* Capability | Resource | Test */
 .rule-form[data-rule-form="explain"] {
   grid-template-columns: minmax(10rem, 1fr) minmax(14rem, 2fr) auto;
-}
-
-/* Mode | Priority | Pattern | Add rule */
-.rule-form[data-rule-form="command"] {
-  grid-template-columns: 6.5rem 6.5rem minmax(14rem, 1fr) auto;
 }
 
 /* Path | Add, and a forge connection's Owner | Add */
@@ -1702,6 +1685,14 @@ select.native-rule-effect:focus-visible {
   opacity: 0.7;
 }
 
+.rule-form,
+.rf-select,
+.rf-input {
+  /* The width a short value gets: the small whole number and the shortest dropdown read as one family.
+     On the form too, because the policy grid sizes its Effect column from it. */
+  --rf-compact-w: 7rem;
+}
+
 /* `max()` for the reason `.rf-submit` below gives: the zero-specificity hit floor loses to this
    rule, and the dense tier is 40px against a 44px floor on a coarse pointer. */
 .rf-select,
@@ -1727,9 +1718,15 @@ select.native-rule-effect:focus-visible {
 /* A small whole number. The native spin arrows stay: these are small-integer tweaks, and
    browsers hide them on type=number unless asked. */
 .rf-number {
-  inline-size: 7rem;
+  inline-size: var(--rf-compact-w);
   font-variant-numeric: tabular-nums;
   appearance: auto;
+}
+
+/* A min, not a width: a select sized to "Default" is 82px, narrower than the number field in the
+   same list, and a long option still grows it. */
+.rf-select {
+  min-inline-size: var(--rf-compact-w);
 }
 
 .rf-select:focus-visible,

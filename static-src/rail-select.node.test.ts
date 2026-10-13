@@ -70,19 +70,26 @@ describe("one row per turn while the track can draw it", () => {
     expect(binTurns(turns(500), 0)).toEqual({ total: 0, slots: 0, bins: [] });
   });
 
-  it("reports the session's last turn number, gaps included", () => {
-    expect(binTurns([turn(1), turn(2), turn(9)], 400).total).toBe(9);
+  it("counts the turns it lays out, not the highest turn number", () => {
+    expect(binTurns([turn(1), turn(2), turn(9)], 400).total).toBe(3);
     expect(binTurns(turns(500), 600).total).toBe(500);
   });
 
-  it("leaves a fraction gap for a turn number the set does not carry", () => {
+  it("holds no slot for a turn number the set does not carry", () => {
     const { slots, bins } = binTurns([turn(1), turn(2), turn(5)], 400);
-    expect(slots).toBe(5);
+    expect(slots).toBe(3);
     expect(bins.map((b) => [b.first.n, b.at])).toEqual([
       [1, 0],
-      [2, 0.25],
+      [2, 0.5],
       [5, 1],
     ]);
+  });
+
+  it("spaces the neighbours of an undrawn turn like any other pair", () => {
+    const { bins } = binTurns([turn(6), turn(7), turn(9), turn(10)], 400);
+    const gaps = bins.slice(1).map((b, i) => b.at - (bins[i]?.at ?? 0));
+    expect(gaps[0]).toBeCloseTo(gaps[1] ?? -1);
+    expect(gaps[1]).toBeCloseTo(gaps[2] ?? -1);
   });
 
   it("answers an empty layout for no turns", () => {

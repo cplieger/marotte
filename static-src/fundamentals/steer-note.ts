@@ -28,8 +28,11 @@ export interface SteerNoteData {
   step?: string;
   /** The run the note came from, which groups a chat's workflow updates. */
   run?: string;
-  /** When a workflow message was sent, epoch ms; set, the note states its delivery too. */
+  /** When a workflow message was sent, epoch ms; set, the note states its send time. */
   sentAt?: number;
+  /** The row has a take-up channel, so it states its delivery too. A row logged only when read (a KAS notice) has
+   *  none: it states when it was sent and nothing about delivery. */
+  tracked?: boolean;
   /** When the receiver took it up, epoch ms; absent while it waits. */
   deliveredAt?: number;
 }
@@ -111,7 +114,9 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   root.appendChild(head);
   if (d.sentAt !== undefined && d.sentAt > 0) {
     head.appendChild(el("span", { className: "steer-note-times" }, ...timesFor(d, d.sentAt)));
-    root.dataset["delivered"] = String(delivered(d));
+    if (d.tracked === true || d.dropped) {
+      root.dataset["delivered"] = String(delivered(d));
+    }
   }
 
   const body = el("div", { className: "steer-note-body" });
@@ -135,7 +140,7 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
  *  has not yet. A dropped message's label already says it was not delivered. */
 function timesFor(d: SteerNoteData, sentAt: number): (string | HTMLElement)[] {
   const sent = ["Sent ", stamp(sentAt)];
-  if (d.dropped) {
+  if (d.dropped || d.tracked !== true) {
     return sent;
   }
   return delivered(d)

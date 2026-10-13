@@ -1,15 +1,11 @@
 package agent
 
-import "github.com/cplieger/marotte/internal/marotte"
-
 // ACP method name constants, centralised so a protocol rename is one edit.
 
 // v3 (KAS) `_kiro/*` notification names; the unhandled ones are noopMethods.
 const (
 	methodV3MCPStatus            = "_kiro/mcp/status"                        // consolidated MCP server state (connected/failed/oauth)
 	methodV3MCPResetServer       = "_kiro/mcp/resetServer"                   // C→A request: reconnect a named server; {serverName, startOAuth?} → {success}
-	methodV3MCPGetPrompt         = "_kiro/mcp/getPrompt"                     // C→A request: resolve a prompt; {serverName, promptName, arguments} → {messages[]}
-	methodV3MCPGetResource       = marotte.MethodMCPGetResource              // C→A request: read a resource; {serverName, uri} → {contents[]}
 	methodV3SessionsChanged      = "_kiro/sessions/changed"                  // session inventory diff (no client consumer on v3)
 	methodV3SpecPhaseCheckpoint  = "_kiro/spec/phaseCheckpoint"              // A→C notification: {sessionId, featureName, phase, artifactPath} per accepted in-process spec-document write (spec_checkpoint.go)
 	methodV3RateLimit            = "_kiro/error/rate_limit"                  // {sessionId, message}

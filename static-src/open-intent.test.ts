@@ -65,11 +65,6 @@ const POPULATION: readonly { readonly name: string; readonly src: string; readon
       src: historySrc,
       why: "the same, and the other place the trap lived: a show* wrapper that toggled",
     },
-    {
-      name: "sidebar-history.ts",
-      src: sidebarHistorySrc,
-      why: "the sidebar's History: a drawer door, so a toggle would close the tab asked for",
-    },
   ];
 
 describe("the source guard", () => {
@@ -85,6 +80,7 @@ describe("the source guard", () => {
     { name: "settings.ts", src: settingsSrc },
     { name: "files.ts", src: filesSrc },
     { name: "app.ts", src: appSrc },
+    { name: "sidebar-history.ts", src: sidebarHistorySrc },
   ])("$name still contains a toggle call, so the pattern matches", ({ src }) => {
     expect.assertions(1);
     expect(src).toMatch(TOGGLE_CALL);

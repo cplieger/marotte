@@ -129,6 +129,30 @@ beforeEach(() => {
   store.setActive("");
 });
 
+describe("a step's notice KAS logged when it read it", () => {
+  it("states when it was sent and nothing about delivery, however long it stays in the log", async () => {
+    const c = "c-wf-notice";
+    const view = await paint(c, [
+      [
+        "t1",
+        [
+          turnOpen("t1"),
+          turnClose("t1", 1),
+          sealed(
+            "t1",
+            2,
+            "steer",
+            { text: "Design tightened.", origin: "step", severity: "success", produced_ts: SENT },
+            "notify-269c88e4",
+          ),
+        ],
+      ],
+    ]);
+
+    expect(view.querySelector(".steer-note-times")?.textContent).toBe(`Sent ${clock(SENT)}`);
+  });
+});
+
 describe("a parent's buffered workflow updates", () => {
   it("are one row each, delivered as the read settled them, the take-ups drawing nothing, and grouped", async () => {
     const c = "c-wf-barrage";

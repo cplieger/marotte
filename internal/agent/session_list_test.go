@@ -417,3 +417,48 @@ func TestHandleSessionList_SaysWhichListFailed(t *testing.T) {
 		})
 	}
 }
+
+// TestWithChatFacts_CopiesHeaderFacts pins that a History row states its chat's model, mode, turns and credits from
+// the stored header, so a chat opened from History and closed again keeps its second line.
+func TestWithChatFacts_CopiesHeaderFacts(t *testing.T) {
+	rows := []marotte.ResumableSession{
+		{SessionID: "s1", ChatID: "c1"},
+		{SessionID: "s2", ChatID: "c-gone"},
+		{SessionID: "s3"},
+	}
+	headers := []marotte.ChatHeader{
+		{ID: "c0", Model: "other", TurnCount: 9},
+		{ID: "c1", Model: "claude-sonnet-5.5", CurrentModeID: "kiro_default", TurnCount: 2, Usage: marotte.Usage{Credits: 4.29}},
+	}
+
+	withChatFacts(rows, headers)
+
+	want := marotte.ResumableSession{SessionID: "s1", ChatID: "c1", Model: "claude-sonnet-5.5", CurrentModeID: "kiro_default", TurnCount: 2, Credits: 4.29}
+	if rows[0] != want {
+		t.Errorf("owned row = %+v, want %+v", rows[0], want)
+	}
+	if rows[1].Model != "" || rows[1].TurnCount != 0 {
+		t.Errorf("a row whose chat has no header gained facts: %+v", rows[1])
+	}
+	if rows[2].Model != "" {
+		t.Errorf("an unclaimed row gained facts: %+v", rows[2])
+	}
+}
+
+// TestWithParentNames_NamesTheLaunchingChat pins that a run row carries its launching chat's stored name.
+func TestWithParentNames_NamesTheLaunchingChat(t *testing.T) {
+	runs := []marotte.WorkflowRun{
+		{WorkflowID: "w1", ParentChatID: "c1"},
+		{WorkflowID: "w2"},
+		{WorkflowID: "w3", ParentChatID: "c-gone"},
+	}
+
+	withParentNames(runs, []marotte.ChatHeader{{ID: "c1", Name: "Fix the rail"}, {ID: "c2", Name: "Other"}})
+
+	if runs[0].ParentChatName != "Fix the rail" {
+		t.Errorf("launched run = %q, want the chat's name", runs[0].ParentChatName)
+	}
+	if runs[1].ParentChatName != "" || runs[2].ParentChatName != "" {
+		t.Errorf("a run with no launching header gained a name: %+v", runs[1:])
+	}
+}

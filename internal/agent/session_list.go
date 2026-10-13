@@ -70,6 +70,7 @@ func (rt *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 		runs = []marotte.WorkflowRun{}
 		out.RunsState = marotte.ReadUnavailable
 	}
+	withParentNames(runs, rt.chatStore.List(r.Context()))
 	out.Sessions = rows
 	out.Runs = runs
 	webhttp.WriteJSON(w, out)
@@ -80,7 +81,40 @@ func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]mar
 	if err != nil {
 		return nil, err
 	}
-	return toResumable(claimed, rows), nil
+	out := toResumable(claimed, rows)
+	withChatFacts(out, rt.chatStore.List(ctx))
+	return out, nil
+}
+
+// withChatFacts copies each owning chat's header facts onto its row. The History line reads them from here
+// rather than from a client's open chats, which hold only the chats with a tab.
+func withChatFacts(rows []marotte.ResumableSession, headers []marotte.ChatHeader) {
+	byID := make(map[string]int, len(headers))
+	for i := range headers {
+		byID[headers[i].ID] = i
+	}
+	for i := range rows {
+		at, ok := byID[rows[i].ChatID]
+		if !ok {
+			continue
+		}
+		h := &headers[at]
+		rows[i].Model = h.Model
+		rows[i].CurrentModeID = h.CurrentModeID
+		rows[i].TurnCount = h.TurnCount
+		rows[i].Credits = h.Usage.Credits
+	}
+}
+
+// withParentNames copies each launching chat's name from its stored header onto the run row.
+func withParentNames(runs []marotte.WorkflowRun, headers []marotte.ChatHeader) {
+	names := make(map[string]string, len(headers))
+	for i := range headers {
+		names[headers[i].ID] = headers[i].Name
+	}
+	for i := range runs {
+		runs[i].ParentChatName = names[runs[i].ParentChatID]
+	}
 }
 
 // workspaceSessionRows is KAS's session/list for this workspace, over the utility session.

@@ -91,7 +91,7 @@ beforeAll(async () => {
         <button type="button" data-docs-tab="hooks"></button>
         <button type="button" data-docs-tab="workflows"></button>
       </nav>
-      <div id="docs-new-slot"></div>
+      <div id="docs-new-slot" class="page-toolbar"></div>
       <div data-docs-panel="steering" class="docs-panel"></div>
       <div data-docs-panel="skills" class="docs-panel hidden"></div>
       <div data-docs-panel="agents" class="docs-panel hidden"></div>

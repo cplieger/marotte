@@ -86,6 +86,7 @@ vi.mock("./store.js", async (importOriginal) => {
 import {
   loadList,
   loadMessages,
+  loadOlderTurns,
   confirmChatExists,
   scheduleListRetry,
   requestTurnRange,
@@ -850,6 +851,47 @@ describe("mergeTurn keeps what landed while the request was in flight", () => {
 
     await loadMessages("c1");
     expect(turnOf("c1", "t1").openEntries.get("sub-1")?.id).toBe("o-sub");
+  });
+});
+
+describe("loadOlderTurns is the one door to an older page", () => {
+  it("pages before the window's oldest turn AS IT STANDS, not as the asker last saw it", async () => {
+    const s = seedSession("c1", { has_more: true });
+    seedTurn(s, "t3", [turnOpen("t3", 3)]);
+    answerPage("c1", { entries: [turnOpen("t2", 2)], has_more: true, header: { turn_count: 3 } });
+    expect(await loadOlderTurns("c1")).toBe(true);
+    expect(mockApiGetTyped.mock.calls.at(-1)?.[0]).toBe("/api/chats/c1?before=t3");
+
+    answerPage("c1", { entries: [turnOpen("t1", 1)], has_more: false, header: { turn_count: 3 } });
+    expect(await loadOlderTurns("c1")).toBe(true);
+    expect(mockApiGetTyped.mock.calls.at(-1)?.[0]).toBe("/api/chats/c1?before=t2");
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2", "t3"]);
+  });
+
+  it("joins a page already in flight instead of aborting it with a second request", async () => {
+    const s = seedSession("c1", { has_more: true });
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)], header: { turn_count: 2 } });
+    mockApiGetTyped.mockClear();
+
+    const [edge, rail] = await Promise.all([loadOlderTurns("c1"), loadOlderTurns("c1")]);
+
+    expect([edge, rail]).toEqual([true, true]);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers false for a page that moved the window's edge nowhere", async () => {
+    const s = seedSession("c1", { has_more: true });
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t2", 2)], has_more: true, header: { turn_count: 2 } });
+
+    expect(await loadOlderTurns("c1")).toBe(false);
+  });
+
+  it("answers false for a chat with nothing resident to page before", async () => {
+    seedSession("c1");
+
+    expect(await loadOlderTurns("c1")).toBe(false);
   });
 });
 

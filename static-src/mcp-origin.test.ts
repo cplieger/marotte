@@ -479,7 +479,7 @@ describe("resource templates after a status fetch", () => {
 });
 
 describe("a configured row's prompts & resources disclosure", () => {
-  it("counts and lists resource templates beside resources, one field per variable", async () => {
+  it("counts and lists prompts, resources and templates as plain rows", async () => {
     const s = configured("tpl-row");
     servers.setAll([s]);
     statusResponse.servers = [
@@ -515,19 +515,11 @@ describe("a configured row's prompts & resources disclosure", () => {
     );
     expect(names).toEqual(["projects", "inbox", "broken"]);
 
-    const inbox = box?.querySelectorAll(".mcp-disc-prompt-wrap")[0];
-    const form = inbox?.querySelector<HTMLFormElement>("form.mcp-disc-arg-form");
-    expect(form?.hidden).toBe(true);
-    inbox?.querySelector<HTMLButtonElement>(".mcp-disc-item .mcp-disc-insert")?.click();
-    expect(form?.hidden).toBe(false);
-    const fields = [...(form?.querySelectorAll(".mcp-disc-arg-name") ?? [])].map(
-      (f) => f.textContent,
-    );
-    expect(fields).toEqual(["agent"]);
-
-    // A template parseTemplate refuses is listed without an action rather than dropped.
+    // Listed, not actionable: the composer reaches them (a slash command, a `#mcp:` mention).
+    expect(box?.querySelectorAll("button, form, input")).toHaveLength(0);
+    const inbox = [...(box?.querySelectorAll(".mcp-disc-item") ?? [])].at(1);
+    expect(inbox?.querySelector(".mcp-disc-item-desc")?.textContent).toBe("One agent's inbox");
     const broken = [...(box?.querySelectorAll(".mcp-disc-item") ?? [])].at(-1);
     expect(broken?.querySelector(".mcp-disc-item-name")?.textContent).toBe("broken");
-    expect(broken?.querySelector(".mcp-disc-insert")).toBeNull();
   });
 });

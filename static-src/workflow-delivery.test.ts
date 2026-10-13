@@ -46,16 +46,16 @@ describe("a workflow message's row", () => {
   });
 
   it("states when it was sent and when it was delivered, or that it waits", () => {
-    expect(times(note({ step: "review", sentAt: SENT }))).toBe(
+    expect(times(note({ step: "review", sentAt: SENT, tracked: true }))).toBe(
       `Sent ${clock(SENT)} \u00b7 not delivered yet`,
     );
-    const delivered = note({ step: "review", sentAt: SENT, deliveredAt: LATER });
+    const delivered = note({ step: "review", sentAt: SENT, deliveredAt: LATER, tracked: true });
     expect(times(delivered)).toBe(`Sent ${clock(SENT)} \u00b7 delivered ${clock(LATER)}`);
     expect(delivered.dataset["delivered"]).toBe("true");
   });
 
   it("tells a take-up apart from its send within the same minute, and keeps each instant", () => {
-    const row = note({ step: "review", sentAt: SENT, deliveredAt: SENT + 50_000 });
+    const row = note({ step: "review", sentAt: SENT, deliveredAt: SENT + 50_000, tracked: true });
     const stamps = [...row.querySelectorAll<HTMLTimeElement>(".steer-note-times time")];
     expect(stamps.map((t) => t.dateTime)).toEqual([
       "2026-10-09T12:00:05.000Z",
@@ -70,6 +70,12 @@ describe("a workflow message's row", () => {
     expect(label(row)).toBe("review, not delivered \u00b7 the turn ended first");
     expect(times(row)).toBe(`Sent ${clock(SENT)}`);
     expect(row.dataset["delivered"]).toBe("false");
+  });
+
+  it("states only when a KAS notice was sent, since it was logged when read and has no take-up to wait for", () => {
+    const row = note({ sentAt: SENT });
+    expect(times(row)).toBe(`Sent ${clock(SENT)}`);
+    expect(row.dataset["delivered"]).toBeUndefined();
   });
 
   it("carries no times when it is no workflow message", () => {

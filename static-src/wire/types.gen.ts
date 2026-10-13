@@ -2557,8 +2557,16 @@ export interface ResumableSession {
   description?: string;
   /** ChatID names the marotte chat that already owns this session, if any. */
   chat_id?: string;
+  /**
+ * Model, CurrentModeID, TurnCount and Credits are the owning chat's header facts, so the History row states
+ * them without the chat being open in a tab.
+ */
+  model?: string;
+  current_mode_id?: string;
+  credits?: number;
   updated_at: number;
   created_at?: number;
+  turn_count?: number;
 }
 
 /**
@@ -4061,6 +4069,11 @@ export interface WorkflowRun {
   status?: RunStatus;
   /** ParentChatID is the marotte chat that launched the run, via its session chain. */
   parent_chat_id?: string;
+  /**
+ * ParentChatName is that chat's name from its stored header, so the History row names it without the chat
+ * being open in a tab.
+ */
+  parent_chat_name?: string;
   /**
  * EndReason says which bound stopped the run ("overran", "stalled", "orphaned"):
  * KAS reports `cancelled` for a bound and a person alike. In-memory, so a run

@@ -847,7 +847,7 @@ describe("the Hooks tab: staying current", () => {
           <button type="button" data-docs-tab="hooks"></button>
           <button type="button" data-docs-tab="workflows"></button>
         </nav>
-        <div id="docs-new-slot"></div>
+        <div id="docs-new-slot" class="page-toolbar"></div>
         <div data-docs-panel="steering" class="docs-panel"></div>
         <div data-docs-panel="hooks" class="docs-panel hidden"></div>
         <div data-docs-panel="specs" class="docs-panel hidden"></div>

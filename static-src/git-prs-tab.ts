@@ -341,7 +341,7 @@ export function initPRsTab(): void {
   const refreshBtn = document.getElementById("git-refresh-prs-btn") as HTMLButtonElement | null;
   if (refreshBtn !== null) {
     refreshBtn.innerHTML = ICON_REFRESH;
-    const status = el("span", { className: "git-tab-toolbar-error", role: "status" });
+    const status = el("span", { className: "page-toolbar-error", role: "status" });
     refreshBtn.before(status);
     refreshBtn.addEventListener("click", () => {
       void withAsyncFeedback(refreshBtn, () => pressRefresh(status));
