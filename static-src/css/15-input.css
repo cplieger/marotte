@@ -100,10 +100,9 @@
   /* HOW MUCH OF THE HOME-INDICATOR INSET THIS BAR HONOURS, and it is a cap rather
      than the whole figure. Apple reserves 34pt at the bottom and asks that no
      control enter it; 50-mobile.css spends this below the CARD, so the number is
-     visible as empty page and the reader has now called 34 and 29 both too large
-     (see that rule for the two reversals). 24px still clears the indicator by a
-     wide margin — the painted pill is a few px tall near the bottom of the band —
-     and it is the one number to turn if it still reads long on a device. */
+     visible as empty page. An installed phone (50-mobile.css, `display-mode:
+     standalone`, `width <= 30rem`) spends the whole inset instead; a browser tab keeps
+     the cap, and an iPad's inset is under it. */
   --composer-inset-cap: 1.5rem;
 
   /* THE ROW'S OWN PADDING PAYS FOR THE EXPANDER'S BLOCK REACH, which is what keeps
@@ -2090,8 +2089,8 @@
 
   /* THE HOME-INDICATOR INSET IS NOT THIS ROW'S: spent inside the card it left 21px
      of card under the buttons on a phone. `50-mobile.css`'s
-     `[id="prompt-form"].bottom-bar` spends it below the card, capped, and
-     `safe-area-inset.test.ts` pins that. */
+     `[id="prompt-form"].bottom-bar` spends it below the card, capped (the whole
+     inset on an installed phone), and `safe-area-inset.test.ts` pins that. */
 
   /* No --composer-rest-h override here any more, and it must not come back on a
      WIDTH query. It used to carry the match between the textarea's band and the

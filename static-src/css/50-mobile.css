@@ -146,6 +146,22 @@
   }
 }
 
+/* AN INSTALLED IPHONE SPENDS THE WHOLE HOME-INDICATOR INSET below the composer card,
+ * not the capped share the rule above spends. Standalone is the mode where the card
+ * sits against the screen edge with no browser toolbar under it, and capping left its
+ * last control inside the indicator band; Apple's safe-area guidance keeps controls out
+ * of it (developer.apple.com/design/human-interface-guidelines/layout).
+ * `width <= 30rem` is a phone held upright (the widest iPhone is 440px). A narrow iPad
+ * window or an installed desktop window can match it too, and renders the same as
+ * before because its bottom inset (20px at most, 0 on a desktop) is under the cap.
+ * The same physical `padding-bottom` at the same specificity as the rule above, so
+ * 19-files.css still wins while the terminal is open. */
+@media (display-mode: standalone) and (width <= 30rem) {
+  [id="prompt-form"].bottom-bar {
+    padding-bottom: max(var(--sp-3), env(safe-area-inset-bottom, 0));
+  }
+}
+
 /* PHONE-SHAPED means narrow OR short: the short arm answers a phone in landscape,
    wider than 48rem; 30rem measures the short edge, which a rotation cannot change.
    Outside the width block above, which is layout. Such a viewport is touch-only

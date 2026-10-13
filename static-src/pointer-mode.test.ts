@@ -460,6 +460,17 @@ describe("the coarse glyph", () => {
       "an extended finger plus a palm is two paths; a hand needs more",
     ).toBeGreaterThanOrEqual(4);
   });
+
+  it("is no wider than the header's other glyphs", () => {
+    // The theme moon and the sidebar's History clock are 18 units across.
+    const btn = mountButton();
+    const hand = btn.querySelector<SVGSVGElement>("svg.pointer-icon-coarse");
+    expect(hand).not.toBeNull();
+    hand?.classList.remove("hidden");
+    const box = hand?.getBBox();
+    expect(box?.width, "the hand's drawn width").toBeLessThanOrEqual(18);
+    expect(box?.height, "the hand's drawn height").toBeLessThanOrEqual(18);
+  });
 });
 
 describe("the ON state's paint", () => {

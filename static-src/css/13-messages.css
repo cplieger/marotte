@@ -244,21 +244,19 @@
   }
 }
 
-/* PHONE: three cards per row, from a grid rather than a wrapping flex line. A
- * `min-width` is what pinned the phone to two, spending one row per two models.
- * `minmax(0, 1fr)` rather than `1fr`, because a grid track's automatic minimum is
- * its content, so a long model name would push its track past its share and the
- * three columns would stop being equal. */
+/* PHONE: exactly three cards per row, a short last row centred like desktop's. A 10rem
+ * card minimum is what pinned the phone to two, spending one row per two models. The
+ * basis is a third of the content box less the two gaps; a grid track would equalise
+ * the columns but cannot centre a partial last row. */
 @media (width <= 48rem) {
   .picker-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
     max-width: none;
     inline-size: 100%;
     padding-inline: var(--sp-3);
   }
 
   .picker-btn {
+    flex: 0 0 calc((100% - 2 * var(--sp-2)) / 3);
     min-width: 0;
     padding: var(--sp-2);
   }
