@@ -42,6 +42,8 @@ import {
   sortEntries,
   initEditablePath,
   FB_ROW,
+  FB_NO_ENTER_ATTR,
+  FB_ENTER_ROWS,
   FB_NAME,
   FB_NAME_LINK,
   FB_CHECK,
@@ -532,9 +534,29 @@ function renderList(opts: { transition?: boolean } = {}): void {
       }
     }
 
+    // Decided when a row mounts, by its rank among the rows this pass mounts: a CSS
+    // `:nth-child` cap would re-evaluate when a row above shifts a settled row across the
+    // boundary, and that row would animate in again. The rank is computed here, front to
+    // back, because reconcile mounts back to front.
+    const present = new Set<string | null>();
+    for (const row of $.fbList.children) {
+      present.add(row.getAttribute(KEY_ATTR));
+    }
+    const mountRank = new Map<FbEntry, number>();
+    for (const e of items) {
+      if (!present.has(fbEntryKey(e))) {
+        mountRank.set(e, mountRank.size);
+      }
+    }
     reconcile($.fbList, items, {
       key: fbEntryKey,
-      mount: mountFbEntry,
+      mount: (e: FbEntry) => {
+        const row = mountFbEntry(e);
+        if ((mountRank.get(e) ?? 0) >= FB_ENTER_ROWS) {
+          row.setAttribute(FB_NO_ENTER_ATTR, "");
+        }
+        return row;
+      },
       update: (row: HTMLElement, e: FbEntry) => {
         if (e.kind !== "entry") {
           return;

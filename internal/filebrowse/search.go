@@ -25,11 +25,15 @@ import (
 )
 
 const (
-	// maxSearchEntries bounds the directory entries one search LISTS, in either mode: names mode
-	// opens no files, so this is what bounds its walk.
+	// maxSearchEntries bounds the directory entries a contents search LISTS; its file and
+	// directory budgets stop it far sooner, so this is the backstop.
 	maxSearchEntries = 1_000_000
-	// maxNameSearchDirs is five times contents mode's: a names walk opens no file per directory.
-	maxNameSearchDirs = 100_000
+	// maxNameSearchEntries bounds a names search's walk. Names mode ranks over the whole walk, so
+	// nothing stops it early and this plus nameSearchDeadline set a wide-scope query's latency:
+	// about 5 to 10 microseconds an entry.
+	maxNameSearchEntries = 100_000
+	// maxNameSearchDirs is above contents mode's: a names walk opens no file per directory.
+	maxNameSearchDirs = 30_000
 	// maxSearchDirs bounds directories visited in contents mode, which maxSearchFiles does not:
 	// a tree of empty directories costs one listing each and never fills the file budget.
 	maxSearchDirs = 20_000
@@ -43,8 +47,20 @@ const (
 	searchReadDirChunk = 256
 )
 
-// searchDeadline bounds one search's walk; a var so a test can set it to zero.
-var searchDeadline = 10 * time.Second
+// searchDeadline bounds a contents search's walk and nameSearchDeadline a names search's, which
+// runs on every keystroke and so must answer in about a second or two even on a cold disk. Both
+// are vars so a test can set them to zero.
+var (
+	searchDeadline     = 10 * time.Second
+	nameSearchDeadline = 2 * time.Second
+)
+
+func deadlineFor(m searchMode) time.Duration {
+	if m == modeNames {
+		return nameSearchDeadline
+	}
+	return searchDeadline
+}
 
 // errSearchDeadline is the cause a search's own deadline carries, which a client's cancel does not.
 var errSearchDeadline = errors.New("filebrowse: search deadline reached")
@@ -100,6 +116,13 @@ const (
 	modeContents
 )
 
+func entryBudget(m searchMode) int {
+	if m == modeNames {
+		return maxNameSearchEntries
+	}
+	return maxSearchEntries
+}
+
 func dirBudget(m searchMode) int {
 	if m == modeNames {
 		return maxNameSearchDirs
@@ -139,21 +162,17 @@ func (h *Handler) handleFilesSearch(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid files filter")
 		return
 	}
-	ctx, cancel := context.WithTimeoutCause(r.Context(), searchDeadline, errSearchDeadline)
+	ctx, cancel := context.WithTimeoutCause(r.Context(), deadlineFor(mode), errSearchDeadline)
 	defer cancel()
 	v, answered := newSearchVisitor(ctx, w, mode, q.Get("q"), caseSensitive, filter)
 	if answered {
 		return
 	}
-	walk := &searchWalk{
-		ctx:           ctx,
-		v:             v,
-		sensitive:     h.sensitive,
-		filter:        filter,
-		caseSensitive: caseSensitive,
-		ignoreRules:   q.Get("ignored") != "1",
-		maxDirs:       dirBudget(mode),
-	}
+	walk := newSearchWalk(ctx, v, mode)
+	walk.sensitive = h.sensitive
+	walk.filter = filter
+	walk.caseSensitive = caseSensitive
+	walk.ignoreRules = q.Get("ignored") != "1"
 	for _, root := range roots {
 		if !walk.addRoot(root) {
 			break
@@ -167,6 +186,12 @@ func (h *Handler) handleFilesSearch(w http.ResponseWriter, r *http.Request) {
 	res := v.result(walk.truncated || ctx.Err() != nil)
 	res.RootIgnored = len(roots) > 0 && walk.hiddenRoots == len(roots)
 	webhttp.WriteJSON(w, res)
+}
+
+// newSearchWalk is a walk holding mode's entry and directory budgets; the handler and the tests
+// build every walk through it.
+func newSearchWalk(ctx context.Context, v searchVisitor, mode searchMode) *searchWalk {
+	return &searchWalk{ctx: ctx, v: v, maxDirs: dirBudget(mode), maxEntries: entryBudget(mode)}
 }
 
 // When answered, newSearchVisitor has written the reply itself and the caller must not walk.
@@ -281,6 +306,7 @@ type searchWalk struct {
 	entries       int
 	dirs          int
 	maxDirs       int
+	maxEntries    int
 	hiddenRoots   int
 	caseSensitive bool
 	// ignoreRules applies .gitignore, .git/info/exclude and the node_modules prune.
@@ -411,7 +437,7 @@ func (w *searchWalk) list(d *walkDir) ([]fs.DirEntry, bool) {
 		}
 		chunk, err := d.f.ReadDir(searchReadDirChunk)
 		w.entries += len(chunk)
-		if w.entries > maxSearchEntries {
+		if w.entries > w.maxEntries {
 			w.truncated = true
 			return nil, false
 		}
