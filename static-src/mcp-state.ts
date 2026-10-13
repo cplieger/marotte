@@ -22,20 +22,6 @@ import {
   type Decoder,
 } from "./validators.js";
 
-const decodePromptArg: Decoder<MCPPromptArg> = (v) => {
-  const o = asObject(v, "$.mcp.prompt.arg");
-  const out: MCPPromptArg = { name: reqStr(o, "name", "$.mcp.prompt.arg") };
-  const d = optStr(o, "description", "$.mcp.prompt.arg");
-  if (d !== undefined) {
-    out.description = d;
-  }
-  const r = optBool(o, "required", "$.mcp.prompt.arg");
-  if (r !== undefined) {
-    out.required = r;
-  }
-  return out;
-};
-
 const decodePromptInfo: Decoder<MCPPromptInfo> = (v) => {
   const o = asObject(v, "$.mcp.prompt");
   const out: MCPPromptInfo = {
@@ -45,9 +31,6 @@ const decodePromptInfo: Decoder<MCPPromptInfo> = (v) => {
   const d = optStr(o, "description", "$.mcp.prompt");
   if (d !== undefined) {
     out.description = d;
-  }
-  if (Array.isArray(o["arguments"])) {
-    out.arguments = decodeArray(o["arguments"], decodePromptArg, "$.mcp.prompt.arguments");
   }
   return out;
 };
@@ -253,23 +236,15 @@ export interface Server {
   updated_at: number;
 }
 
-/** One argument of an MCP prompt (from _kiro/mcp/status discovery). */
-export interface MCPPromptArg {
-  name: string;
-  description?: string;
-  required?: boolean;
-}
-
 /** A prompt a connected MCP server advertises. `prompt_name` is the machine
- *  id passed to the fetch endpoint; `name` is the display title. */
+ *  id; `name` is the display title. */
 export interface MCPPromptInfo {
   name: string;
   prompt_name: string;
   description?: string;
-  arguments?: MCPPromptArg[];
 }
 
-/** A resource a connected MCP server advertises. `uri` is the fetch key. */
+/** A resource a connected MCP server advertises. `uri` is what a `#mcp:` mention names. */
 export interface MCPResourceInfo {
   name: string;
   uri: string;
