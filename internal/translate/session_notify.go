@@ -14,7 +14,6 @@ type kasSessionNotify struct {
 	Message         string `json:"message"`
 	Severity        string `json:"severity"`
 	WorkflowID      string `json:"workflowId"`
-	NodeID          string `json:"nodeId"`
 	// Sender is "step" when a step messages its parent and "parent" when a session
 	// messages a child run's step; only the first is a question to the reader.
 	Sender string `json:"sender"`
@@ -34,7 +33,6 @@ const severityWarning = "warning"
 type NotifySignal struct {
 	WorkflowID      string
 	CallerSessionID string
-	NodeID          string
 	Severity        string
 	Sender          string
 	Message         string
@@ -54,7 +52,7 @@ func (*Translator) SessionNotifySignal(msg *marotte.RPCResponse) (NotifySignal, 
 		return NotifySignal{}, false
 	}
 	return NotifySignal{
-		WorkflowID: p.WorkflowID, CallerSessionID: p.CallerSessionID, NodeID: p.NodeID,
+		WorkflowID: p.WorkflowID, CallerSessionID: p.CallerSessionID,
 		Severity: p.Severity, Sender: p.Sender, Message: p.Message,
 	}, true
 }

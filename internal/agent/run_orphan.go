@@ -28,9 +28,9 @@ const reasonLeaseAbsent = "no terminal signal was seen and the run stayed absent
 // reasonOrphaned is the schedule row's reason for a run swept after its process died; the next slot is the recovery.
 const reasonOrphaned = "stopped because the server restarted while it was running. Run it again, or wait for the next slot"
 
-// SweepOrphaned clears every lease whose run a dead process left paused. Best-effort: skipping costs a stale
+// sweepOrphaned clears every lease whose run a dead process left paused. Best-effort: skipping costs a stale
 // row, cancelling a live run destroys work. Reports whether it reached KAS.
-func (rs *Runs) SweepOrphaned(ctx context.Context) (reached bool) {
+func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
 	if len(rs.leaseStore().List()) == 0 {
 		// No leases: nothing to ask.
 		return true
@@ -72,7 +72,7 @@ func (rs *Runs) SweepOrphaned(ctx context.Context) (reached bool) {
 // goes first, so the utility is the first process to start and its startup sweep the only one that
 // takes over crashed runs. Reports whether it reached KAS; when it did not, nothing was read.
 func (rs *Runs) BootSweep(ctx context.Context) (reached bool) {
-	if !rs.SweepOrphaned(ctx) {
+	if !rs.sweepOrphaned(ctx) {
 		return false
 	}
 	rs.askBootPass(ctx)

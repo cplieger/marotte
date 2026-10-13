@@ -687,7 +687,7 @@ func TestAnswerInput_AnUnreadableRunRefusesRetryably(t *testing.T) {
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
 		t.Error("an answer was sent to a run marotte could not read")
 	}
-	if p := h.runs.pendingOf(h.runs.asks.get("wf_1")); p != nil {
+	if p := h.runs.asks.get("wf_1").pendingOf(); p != nil {
 		t.Error("the refused answer left its pending set, so every card stays disabled")
 	}
 	if lastAsksOf(t, h, "wf_1").Reachable {
@@ -1064,7 +1064,7 @@ func TestRehost_ALaunchingSessionNoCarrierCanHoldRefusesTheVerb(t *testing.T) {
 			if len(tc.chain) > 0 && h.bridge.mgr.get("c1") == nil {
 				t.Error("the refused verb closed the chat's bridge, which belongs to the conversation")
 			}
-			if h.runs.pendingOf(h.runs.asks.get("wf_1")) != nil {
+			if h.runs.asks.get("wf_1").pendingOf() != nil {
 				t.Error("a verb that never reached KAS left the run's answer pending")
 			}
 		})

@@ -124,8 +124,8 @@ func TestSessionNotifySignal_CarriesTheCaller(t *testing.T) {
 		t.Fatal("SessionNotifySignal(a warning) ok = false, want true")
 	}
 	// The caller is the step session whose turn the question belongs to.
-	if got.CallerSessionID != testStep || got.WorkflowID != "wf_1" || got.NodeID != "review" {
-		t.Errorf("SessionNotifySignal = %+v, want wf_1/review from %s", got, testStep)
+	if got.CallerSessionID != testStep || got.WorkflowID != "wf_1" {
+		t.Errorf("SessionNotifySignal = %+v, want wf_1 from %s", got, testStep)
 	}
 	if got.Message != "which branch should I target?" {
 		t.Errorf("Message = %q, want the message verbatim", got.Message)

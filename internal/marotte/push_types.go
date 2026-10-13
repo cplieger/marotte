@@ -117,13 +117,13 @@ func RunSubject(workflowID string) PushSubject {
 	return PushSubject{Key: RunSubjectPrefix + workflowID}
 }
 
-// RunAskSubjectPrefix marks a subject key naming one step's wait in a run. Declared here for
+// runAskSubjectPrefix marks a subject key naming one step's wait in a run. Declared here for
 // PRSubjectPrefix's reason.
-const RunAskSubjectPrefix = "runask:"
+const runAskSubjectPrefix = "runask:"
 
 // RunAskSubject is the subject of a notification about one step's wait. position is the ask's id
 // without its turn marker, so a re-park of the same wait replaces its banner, and two parked
 // branches hold two tray slots.
 func RunAskSubject(position string) PushSubject {
-	return PushSubject{Key: RunAskSubjectPrefix + position}
+	return PushSubject{Key: runAskSubjectPrefix + position}
 }

@@ -58,8 +58,8 @@ func cmdResumeSession(ctx context.Context, mem *Membership, steps stepSessions, 
 	return openedResponse(&opened, nil), nil
 }
 
-// ErrStepSession refuses resuming a workflow step's session as a chat: the step's run still owns it.
-var ErrStepSession = errors.New("this session belongs to a workflow step")
+// errStepSession refuses resuming a workflow step's session as a chat: the step's run still owns it.
+var errStepSession = errors.New("this session belongs to a workflow step")
 
 // refuseStepSession fails closed: a step session loaded into a chat would answer the step's run
 // from a second resident, so an unreadable session list refuses too, retryably.
@@ -77,7 +77,7 @@ func refuseStepSession(ctx context.Context, steps stepSessions, sessionID string
 	case isStep:
 		slog.Info("refused resuming a workflow step's session as a chat",
 			"acp_session", sessionID, "workflow_id", workflowID)
-		return StatusError(http.StatusConflict, ErrStepSession)
+		return StatusError(http.StatusConflict, errStepSession)
 	}
 	return nil
 }

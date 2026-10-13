@@ -459,11 +459,9 @@ type ACPSessionUpdateBase struct {
 			// Workflow is the discriminator the dispatcher classifies a step on.
 			Workflow *ACPWorkflowMeta `json:"workflow"`
 			// TurnStart and TurnEnd are the session's turn bracket on session_info_update.
-			TurnStart *bool `json:"turnStart"`
-			TurnEnd   *struct {
-				StopReason string `json:"stopReason"`
-			} `json:"turnEnd"`
-			Replay bool `json:"replay"`
+			TurnStart *bool     `json:"turnStart"`
+			TurnEnd   *struct{} `json:"turnEnd"`
+			Replay    bool      `json:"replay"`
 		} `json:"kiro"`
 	} `json:"_meta"`
 }

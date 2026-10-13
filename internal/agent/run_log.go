@@ -46,8 +46,6 @@ type runTurn struct {
 	// top is the run's top-level step this one sits under ("" when unknown), held because path is never
 	// split back (workflow.PathKey).
 	top string
-	// session is the step's ACP session, learned from the first frame naming one. Held here because the open set is this registry's alone.
-	session string
 	// seq is the newest seq the sink assigned, written on the dispatch goroutine and read by the digest.
 	seq atomic.Uint64
 }
@@ -405,21 +403,6 @@ func (r *runLog) hostOf(workflowID string) marotte.ChatID {
 	return ""
 }
 
-func (r *runLog) openPathOf(workflowID, session string) string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	rec, ok := r.runs[workflowID]
-	if !ok || session == "" {
-		return ""
-	}
-	for path, t := range rec.open {
-		if t.session == session {
-			return path
-		}
-	}
-	return ""
-}
-
 // openTops answers, in node path order, the top-level step each of the run's open step turns sits
 // under, skipping a turn whose opening frame carried no path.
 func (r *runLog) openTops(workflowID string) []string {
@@ -454,10 +437,7 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 	}
 	rec.lostHost = nil
 	if t := rec.open[nodePath]; t != nil {
-		// KAS sends node_start twice per step and only the second names the session.
-		if t.session == "" {
-			t.session = step.SessionID
-		}
+		// KAS sends node_start twice per step; the second continues this turn.
 		if t.top == "" {
 			t.top = topStepOf(step)
 		}
@@ -474,7 +454,7 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 		return nil, nil, err
 	}
 	delete(rec.staged, nodePath)
-	t := &runTurn{path: nodePath, top: topStepOf(step), session: step.SessionID}
+	t := &runTurn{path: nodePath, top: topStepOf(step)}
 	t.turn = turnlog.Open(e.ID, runSink{log: rec.log, turn: t})
 	rec.open[nodePath] = t
 	if rec.starts != nil {

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/keyenc"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 const (
@@ -90,30 +91,30 @@ func TestOpenAsks_RecordedReplies(t *testing.T) {
 		fixture  string
 		log      RunLog
 		wantN    int
-		wantWait Blocker
-		wantHold Blocker
+		wantWait marotte.RunAskBlocker
+		wantHold marotte.RunAskBlocker
 	}{
 		{name: "a parked step is one ask", fixture: "parked", wantN: 1},
 		{name: "a step not started asks nothing", fixture: "after-invoke"},
 		{
 			name: "the first read after an admitted answer is settling", fixture: "first-after-reply",
-			wantN: 1, wantWait: BlockSettling,
+			wantN: 1, wantWait: marotte.RunAskSettling,
 		},
 		{
 			name: "a settling run nothing moved on is unsettled", fixture: "first-after-reply",
-			log: RunLog{Quiet: true}, wantN: 1, wantWait: BlockUnsettled,
+			log: RunLog{Quiet: true}, wantN: 1, wantWait: marotte.RunAskUnsettled,
 		},
 		{
 			name: "a run whose host died is recovering", fixture: "first-after-reply",
-			log: RunLog{HostLost: true, Quiet: true}, wantN: 1, wantWait: BlockRecovering,
+			log: RunLog{HostLost: true, Quiet: true}, wantN: 1, wantWait: marotte.RunAskRecovering,
 		},
 		{
 			name: "marotte's own pending holds without masking the wait", fixture: "first-after-reply",
-			log: RunLog{Pending: true}, wantN: 1, wantWait: BlockSettling, wantHold: BlockPending,
+			log: RunLog{Pending: true}, wantN: 1, wantWait: marotte.RunAskSettling, wantHold: marotte.RunAskPending,
 		},
 		{
 			name: "a stop outranks a pending answer", fixture: "parked",
-			log: RunLog{Pending: true, Stopping: true}, wantN: 1, wantHold: BlockStopping,
+			log: RunLog{Pending: true, Stopping: true}, wantN: 1, wantHold: marotte.RunAskStopping,
 		},
 		// awaitingUserInput stays true on a running step, so W1's second arm needs `paused`.
 		{name: "an answered step running asks nothing", fixture: "running-after-answer"},
@@ -160,7 +161,7 @@ func TestOpenAsks_TheParentsSendMessageEndsTheAskAndAReparkIsANewOne(t *testing.
 	t.Parallel()
 	first := RunLog{Epoch: "e1", Steps: map[string]StepLog{fixtureSession: {Marker: "m1", Asked: "Which branch?"}}}
 	parked := OpenAsks(decoded(t, fixture(t, "parked")), first)
-	if len(parked) != 1 || parked[0].TextSource != TextAsked || parked[0].Text != "Which branch?" {
+	if len(parked) != 1 || parked[0].TextSource != marotte.RunAskTextAsked || parked[0].Text != "Which branch?" {
 		t.Fatalf("the park = %+v, want one ask carrying the step's question", parked)
 	}
 	resumed := RunLog{Epoch: "e1", Steps: map[string]StepLog{fixtureSession: {Marker: "m2", Open: true, Asked: ""}}}
@@ -200,12 +201,12 @@ func TestOpenAsks_Text(t *testing.T) {
 		name   string
 		step   StepLog
 		want   string
-		source TextSource
+		source marotte.RunAskText
 	}{
-		{"the parking turn's warning", StepLog{Asked: "Q?", Said: "words"}, "Q?", TextAsked},
-		{"no warning falls back to the step's last words", StepLog{Said: "words"}, "words", TextLastMessage},
-		{"an open turn is never the question", StepLog{Asked: "Q?", Said: "words", Open: true}, "words", TextLastMessage},
-		{"nothing seen", StepLog{}, "", TextUnseen},
+		{"the parking turn's warning", StepLog{Asked: "Q?", Said: "words"}, "Q?", marotte.RunAskTextAsked},
+		{"no warning falls back to the step's last words", StepLog{Said: "words"}, "words", marotte.RunAskTextLastMessage},
+		{"an open turn is never the question", StepLog{Asked: "Q?", Said: "words", Open: true}, "words", marotte.RunAskTextLastMessage},
+		{"nothing seen", StepLog{}, "", marotte.RunAskTextUnseen},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -262,7 +263,7 @@ func TestOpenAsks_Branches(t *testing.T) {
 			stepNode("b", "running", other, "", nil),
 		))
 		got := OpenAsks(in, RunLog{Quiet: true})
-		if len(got) != 1 || got[0].Wait != BlockBranchRunning {
+		if len(got) != 1 || got[0].Wait != marotte.RunAskBranchRunning {
 			t.Fatalf("OpenAsks = %+v, want one ask blocked by the running branch even after the settle window", got)
 		}
 	})
@@ -272,7 +273,7 @@ func TestOpenAsks_Branches(t *testing.T) {
 			stepNode("a", "paused", fixtureSession, "need_input", true),
 			map[string]any{"nodeId": "w", "type": "command", "status": "running"},
 		))
-		if got := OpenAsks(in, RunLog{}); got[0].Wait != BlockBranchRunning {
+		if got := OpenAsks(in, RunLog{}); got[0].Wait != marotte.RunAskBranchRunning {
 			t.Errorf("Wait = %q, want branch_running", got[0].Wait)
 		}
 	})
@@ -293,7 +294,7 @@ func TestOpenAsks_Branches(t *testing.T) {
 			t.Errorf("CanContinue = %v, %v; want only KAS's update target, even with marotte's own pending set",
 				got[0].CanContinue, got[1].CanContinue)
 		}
-		if got[0].Wait != "" || got[0].Hold != BlockPending {
+		if got[0].Wait != "" || got[0].Hold != marotte.RunAskPending {
 			t.Errorf("a paused run's ask = wait %q hold %q, want no wait and pending held", got[0].Wait, got[0].Hold)
 		}
 	})
@@ -368,8 +369,8 @@ func TestDecodeInspect_Refuses(t *testing.T) {
 			}
 		})
 	}
-	if _, err := DecodeInspect(fixtureRun, json.RawMessage(cases["another run"])); !errors.Is(err, ErrOtherRun) {
-		t.Errorf("another run's reply = %v, want ErrOtherRun", err)
+	if _, err := DecodeInspect(fixtureRun, json.RawMessage(cases["another run"])); !errors.Is(err, errOtherRun) {
+		t.Errorf("another run's reply = %v, want errOtherRun", err)
 	}
 }
 

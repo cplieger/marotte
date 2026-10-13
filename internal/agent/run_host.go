@@ -1759,7 +1759,6 @@ func (rs *Runs) healProgress(
 
 type nodeFrame struct {
 	WorkflowID string `json:"workflowId"`
-	NodeID     string `json:"nodeId"`
 }
 
 func decodeNodeFrame(msg *marotte.RPCResponse) nodeFrame {

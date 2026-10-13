@@ -5,7 +5,6 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // stepInfoMsg is a step session's session_info_update as KAS composes one: no _meta.kiro.workflow,
@@ -61,18 +60,18 @@ func TestRunAsks_TurnBracketsArriveThroughEitherDoor(t *testing.T) {
 			if a.ID == before {
 				t.Error("the step's turn_start left the ask's id unchanged, so an answer typed before it is not stale")
 			}
-			if a.Text != "Which branch?" || a.TextSource != workflow.TextAsked {
+			if a.Text != "Which branch?" || a.TextSource != marotte.RunAskTextAsked {
 				t.Errorf("ask text = %q (%s), want the warning the turn ended on", a.Text, a.TextSource)
 			}
 
 			if err := h.runs.answerInput(t.Context(), wf, a.ID, "teal"); err != nil {
 				t.Fatalf("answer = %v", err)
 			}
-			if h.runs.pendingOf(c) == nil {
+			if c.pendingOf() == nil {
 				t.Fatal("Setup: the admitted answer left no pending send")
 			}
 			send(stepTurnStart(t, session))
-			if h.runs.pendingOf(c) != nil {
+			if c.pendingOf() != nil {
 				t.Error("the answered step's turn_start left pending set, so the card stays disabled")
 			}
 		})

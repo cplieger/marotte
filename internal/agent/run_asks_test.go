@@ -202,14 +202,14 @@ func TestRunAsks_AnUndecodableReplyKeepsTheAsks(t *testing.T) {
 // a settle window with nothing moving turns that final.
 func TestRunAsks_SettlingTurnsUnsettledOnlyAfterTheQuietWindow(t *testing.T) {
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusRunning, parkedStep("review", "sess_step")))
-	if got := readNow(t, h, "wf_1").asks[0].Wait; got != workflow.BlockSettling {
+	if got := readNow(t, h, "wf_1").asks[0].Wait; got != marotte.RunAskSettling {
 		t.Fatalf("a fresh cell's first read = %q, want settling", got)
 	}
 	c := h.runs.asks.get("wf_1")
 	c.mu.Lock()
 	c.lastMotion = time.Now().Add(-settleQuiet)
 	c.mu.Unlock()
-	if got := readNow(t, h, "wf_1").asks[0].Wait; got != workflow.BlockUnsettled {
+	if got := readNow(t, h, "wf_1").asks[0].Wait; got != marotte.RunAskUnsettled {
 		t.Errorf("after the quiet window = %q, want unsettled, so an agent retrying /answer gets a final code", got)
 	}
 }
@@ -224,7 +224,7 @@ func TestRunAsks_SettlingTurnsUnsettledOnItsOwnTimer(t *testing.T) {
 	c.mu.Lock()
 	c.lastMotion = time.Now()
 	c.mu.Unlock()
-	if got := readNow(t, h, "wf_1").asks[0].Wait; got != workflow.BlockSettling {
+	if got := readNow(t, h, "wf_1").asks[0].Wait; got != marotte.RunAskSettling {
 		t.Fatalf("Setup: the first read = %q, want settling", got)
 	}
 	waitFor(t, func() bool {
@@ -327,11 +327,11 @@ func TestRunAsks_PendingEndsWhenTheStepsTurnStarts(t *testing.T) {
 			t.Fatalf("answer = %v", err)
 		}
 		c := h.runs.asks.get("wf_1")
-		if h.runs.pendingOf(c) == nil {
+		if c.pendingOf() == nil {
 			t.Fatal("the admitted answer cleared pending at its reply, so a second device can answer into the starting loop")
 		}
 		h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
-		if h.runs.pendingOf(c) != nil {
+		if c.pendingOf() != nil {
 			t.Error("the step's turn_start left pending set")
 		}
 	})
@@ -349,7 +349,7 @@ func TestRunAsks_PendingEndsWhenTheStepsTurnStarts(t *testing.T) {
 		if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal"); err != nil {
 			t.Fatalf("answer = %v", err)
 		}
-		if h.runs.pendingOf(h.runs.asks.get("wf_1")) != nil {
+		if h.runs.asks.get("wf_1").pendingOf() != nil {
 			t.Error("a turn_start that beat the reply left pending set until the ceiling")
 		}
 	})
@@ -366,7 +366,7 @@ func TestRunAsks_PendingHasACeiling(t *testing.T) {
 		t.Fatalf("answer = %v", err)
 	}
 	c := h.runs.asks.get("wf_1")
-	waitFor(t, func() bool { return h.runs.pendingOf(c) == nil })
+	waitFor(t, func() bool { return c.pendingOf() == nil })
 	waitFor(t, func() bool {
 		p := lastAsksOf(t, h, "wf_1")
 		return len(p.Asks) == 1 && p.Asks[0].Blocked == ""
@@ -545,7 +545,7 @@ func TestRunAsks_TheParkingTurnsWarningIsTheQuestion(t *testing.T) {
 	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeEnd)
 
 	a := readNow(t, h, "wf_1").asks[0]
-	if a.Text != "Which branch?" || a.TextSource != workflow.TextAsked {
+	if a.Text != "Which branch?" || a.TextSource != marotte.RunAskTextAsked {
 		t.Errorf("ask text = %q (%s), want the step's warning as its question", a.Text, a.TextSource)
 	}
 	if a.ID == markerlessAskID(h, "wf_1", workflow.PathKey([]string{"root", "review"}), "sess_step") {
@@ -737,7 +737,7 @@ func TestRunAsks_AnUnseenQuestionReadsTheStepsLastWords(t *testing.T) {
 	}
 
 	a := readNow(t, h, "wf_1").asks[0]
-	if a.Text != "Which branch should I target?" || a.TextSource != workflow.TextLastMessage {
+	if a.Text != "Which branch should I target?" || a.TextSource != marotte.RunAskTextLastMessage {
 		t.Errorf("ask text = %q (%s), want the step's send_message words labelled as its last message", a.Text, a.TextSource)
 	}
 }

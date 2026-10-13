@@ -7,29 +7,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TextSource says where an ask's text came from; only TextAsked is the step's own question.
-type TextSource string
-
-// The three text sources.
-const (
-	TextAsked       TextSource = "asked"
-	TextLastMessage TextSource = "last_message"
-	TextUnseen      TextSource = "unseen"
-)
-
-// Blocker is why an ask cannot be answered now; "" means it can.
-type Blocker string
-
-// Hold blockers come from marotte's own requests on the run, Wait blockers from KAS's state.
-const (
-	BlockStopping      Blocker = "stopping"
-	BlockPending       Blocker = "pending"
-	BlockRecovering    Blocker = "recovering"
-	BlockBranchRunning Blocker = "branch_running"
-	BlockUnsettled     Blocker = "unsettled"
-	BlockSettling      Blocker = "settling"
-)
-
 // Ask is one step waiting on a person, derived from one inspect reply and marotte's run log.
 type Ask struct {
 	ID            string
@@ -38,12 +15,12 @@ type Ask struct {
 	StepSessionID string
 	AgentName     string
 	Text          string
-	TextSource    TextSource
+	TextSource    marotte.RunAskText
 	// Hold is what marotte's own requests on the run block: stopping or pending.
-	Hold Blocker
+	Hold marotte.RunAskBlocker
 	// Wait is what KAS's state blocks, computed without reading Hold, so a verb that registered its
 	// own pending before its check still sees KAS's refusal conditions.
-	Wait Blocker
+	Wait marotte.RunAskBlocker
 	// AskedAt is display only.
 	AskedAt  string
 	NodePath []string
@@ -53,7 +30,7 @@ type Ask struct {
 }
 
 // Blocked is the one blocker a card and the wire carry.
-func (a *Ask) Blocked() Blocker { return cmp.Or(a.Hold, a.Wait) }
+func (a *Ask) Blocked() marotte.RunAskBlocker { return cmp.Or(a.Hold, a.Wait) }
 
 // RunLog is what marotte itself observed or did on a run, the second input of OpenAsks.
 type RunLog struct {
@@ -143,41 +120,41 @@ func OpenAsks(reply Inspect, log RunLog) []Ask {
 	return out
 }
 
-func askText(step StepLog) (string, TextSource) {
+func askText(step StepLog) (string, marotte.RunAskText) {
 	if step.Asked != "" && !step.Open {
-		return step.Asked, TextAsked
+		return step.Asked, marotte.RunAskTextAsked
 	}
 	if step.Said != "" {
-		return step.Said, TextLastMessage
+		return step.Said, marotte.RunAskTextLastMessage
 	}
-	return "", TextUnseen
+	return "", marotte.RunAskTextUnseen
 }
 
-func hold(log RunLog) Blocker {
+func hold(log RunLog) marotte.RunAskBlocker {
 	switch {
 	case log.Stopping:
-		return BlockStopping
+		return marotte.RunAskStopping
 	case log.Pending:
-		return BlockPending
+		return marotte.RunAskPending
 	}
 	return ""
 }
 
 // wait never reads Stopping or Pending. A container reads running whenever a descendant does, so
 // branch_running counts leaves only; `type` is an open enum, so any running leaf counts.
-func wait(s *State, all []visit, self int, log RunLog) Blocker {
+func wait(s *State, all []visit, self int, log RunLog) marotte.RunAskBlocker {
 	if s.Status == statusPaused {
 		return ""
 	}
 	switch {
 	case log.HostLost:
-		return BlockRecovering
+		return marotte.RunAskRecovering
 	case otherLeafRunning(all, self):
-		return BlockBranchRunning
+		return marotte.RunAskBranchRunning
 	case log.Quiet:
-		return BlockUnsettled
+		return marotte.RunAskUnsettled
 	}
-	return BlockSettling
+	return marotte.RunAskSettling
 }
 
 func otherLeafRunning(all []visit, self int) bool {

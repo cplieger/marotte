@@ -865,7 +865,7 @@ func TestSetStepStatus(t *testing.T) {
 			t.Errorf("after Continue the run publishes %+v, want its ask held as pending", p.Asks)
 		}
 		h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
-		if h.runs.pendingOf(h.runs.asks.get("wf_1")) != nil {
+		if h.runs.asks.get("wf_1").pendingOf() != nil {
 			t.Error("the step's turn_start left Continue's pending set")
 		}
 	})

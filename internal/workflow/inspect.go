@@ -13,8 +13,8 @@ type Inspect struct {
 	OK    bool
 }
 
-// ErrOtherRun means an inspect reply described a run other than the one asked for.
-var ErrOtherRun = errors.New("the inspect reply names another run")
+// errOtherRun means an inspect reply described a run other than the one asked for.
+var errOtherRun = errors.New("the inspect reply names another run")
 
 // DecodeInspect decodes the reply to an inspect of workflowID; the returned State always names
 // workflowID. A syntax error, a type error in any decoded field, a missing state, or a reply naming
@@ -30,11 +30,11 @@ func DecodeInspect(workflowID string, raw json.RawMessage) (Inspect, error) {
 	// KAS names the run on the reply and on its state; each it names must be the run asked for.
 	for _, got := range []string{res.State.WorkflowID, res.WorkflowID} {
 		if got != "" && got != workflowID {
-			return Inspect{}, fmt.Errorf("%w: asked %q, got %q", ErrOtherRun, workflowID, got)
+			return Inspect{}, fmt.Errorf("%w: asked %q, got %q", errOtherRun, workflowID, got)
 		}
 	}
 	if res.State.WorkflowID == "" && res.WorkflowID == "" {
-		return Inspect{}, fmt.Errorf("%w: asked %q, the reply names none", ErrOtherRun, workflowID)
+		return Inspect{}, fmt.Errorf("%w: asked %q, the reply names none", errOtherRun, workflowID)
 	}
 	// Every ask's identity is built from the state's id.
 	res.State.WorkflowID = workflowID

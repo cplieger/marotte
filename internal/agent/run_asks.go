@@ -342,8 +342,8 @@ func wireAsks(asks []workflow.Ask) []marotte.RunAsk {
 		a := &asks[i]
 		out = append(out, marotte.RunAsk{
 			AskID: a.ID, NodeID: a.NodeID, NodePath: a.NodePath, StepSessionID: a.StepSessionID,
-			AgentName: a.AgentName, Text: a.Text, TextSource: marotte.RunAskText(a.TextSource),
-			Blocked: marotte.RunAskBlocker(a.Blocked()), CanContinue: a.CanContinue, AskedAt: a.AskedAt,
+			AgentName: a.AgentName, Text: a.Text, TextSource: a.TextSource,
+			Blocked: a.Blocked(), CanContinue: a.CanContinue, AskedAt: a.AskedAt,
 		})
 	}
 	return out
@@ -476,14 +476,14 @@ func (rs *Runs) readAsks(ctx context.Context, c *askCell, host *sharedBridge) (a
 		return askRead{}, ctx.Err()
 	}
 	// This read serves any trigger owed one, so it takes over that trigger's carrier hold too.
-	held := rs.takeOwed(c)
+	held := c.takeOwed()
 	r, err := rs.refreshCell(ctx, c, host)
 	if held != nil {
 		rs.carriers.leave(held)
 	}
-	if rs.releaseQuery(c) {
+	if c.releaseQuery() {
 		rs.kickCell(c)
-	} else if left := rs.leaveHeld(c); left != nil {
+	} else if left := c.leaveHeld(); left != nil {
 		rs.carriers.leave(left)
 	}
 	return r, err
@@ -521,7 +521,7 @@ func (rs *Runs) kickCellOn(c *askCell, host *sharedBridge) {
 		return
 	}
 	if !rs.lifecycle.goUnlessDraining(func() { rs.refreshLoop(c) }) {
-		if held := rs.leaveHeld(c); held != nil {
+		if held := c.leaveHeld(); held != nil {
 			rs.carriers.leave(held)
 		}
 		<-c.query
@@ -529,7 +529,7 @@ func (rs *Runs) kickCellOn(c *askCell, host *sharedBridge) {
 }
 
 // leaveHeld hands back the carrier a trigger held for the next read, returning it.
-func (rs *Runs) leaveHeld(c *askCell) *sharedBridge {
+func (c *askCell) leaveHeld() *sharedBridge {
 	c.mu.Lock()
 	held := c.held
 	c.held = nil
@@ -539,7 +539,7 @@ func (rs *Runs) leaveHeld(c *askCell) *sharedBridge {
 
 // takeOwed is the start of a read under the query token: it settles every trigger owed a read and
 // returns the carrier one held, which the caller leaves after its read.
-func (rs *Runs) takeOwed(c *askCell) *sharedBridge {
+func (c *askCell) takeOwed() *sharedBridge {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.dirty = false
@@ -553,15 +553,15 @@ func (rs *Runs) refreshLoop(c *askCell) {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 	for {
-		held := rs.takeOwed(c)
+		held := c.takeOwed()
 		if _, err := rs.refreshCell(ctx, c, held); err != nil && !errors.Is(err, errNoAskHost) {
 			slog.Debug("ask core: a background read of a run failed", "workflow_id", c.workflowID, "error", err)
 		}
 		if held != nil {
 			rs.carriers.leave(held)
 		}
-		if !rs.releaseQuery(c) {
-			if left := rs.leaveHeld(c); left != nil {
+		if !c.releaseQuery() {
+			if left := c.leaveHeld(); left != nil {
 				rs.carriers.leave(left)
 			}
 			return
@@ -575,7 +575,7 @@ func (rs *Runs) refreshLoop(c *askCell) {
 }
 
 // releaseQuery frees the query token and reports whether a trigger is still owed a read.
-func (rs *Runs) releaseQuery(c *askCell) bool {
+func (c *askCell) releaseQuery() bool {
 	<-c.query
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -621,7 +621,7 @@ func (rs *Runs) refreshCell(ctx context.Context, c *askCell, host *sharedBridge)
 	c.mu.Lock()
 	c.reply, c.basis, c.hostLost = in, basis, hostLost
 	asks := workflow.OpenAsks(in, c.runLogLocked(basis, rs.asks.epochNow(), hostLost))
-	rs.settleOnReadLocked(c, in, asks)
+	c.settleOnReadLocked(in, asks)
 	// Settling can clear marotte's own holds, which are part of this snapshot.
 	asks = workflow.OpenAsks(in, c.runLogLocked(basis, rs.asks.epochNow(), hostLost))
 	n := rs.publishLocked(ctx, c, wireAsks(asks), true)
@@ -633,7 +633,7 @@ func (rs *Runs) refreshCell(ctx context.Context, c *askCell, host *sharedBridge)
 
 // settleOnReadLocked applies a read to marotte's own request state: a terminal run waits on
 // nothing, and an answer the step took leaves no ask on its session.
-func (rs *Runs) settleOnReadLocked(c *askCell, in workflow.Inspect, asks []workflow.Ask) {
+func (c *askCell) settleOnReadLocked(in workflow.Inspect, asks []workflow.Ask) {
 	if marotte.RunStatus(in.State.Status).Terminal() {
 		c.stopping = false
 		c.clearPendingLocked()
@@ -674,7 +674,7 @@ func (rs *Runs) markUnreadable(ctx context.Context, c *askCell, host *sharedBrid
 func (rs *Runs) armTimersLocked(c *askCell, asks []workflow.Ask) {
 	rs.armRequeryLocked(c, true)
 	stopTimer(c.quiet)
-	if !slices.ContainsFunc(asks, func(a workflow.Ask) bool { return a.Wait == workflow.BlockSettling }) {
+	if !slices.ContainsFunc(asks, func(a workflow.Ask) bool { return a.Wait == marotte.RunAskSettling }) {
 		return
 	}
 	wait := max(settleQuiet-time.Since(c.lastMotion), 0)
@@ -770,7 +770,7 @@ func (rs *Runs) askTurnEdge(workflowID, session string, edge translate.TurnEdge)
 	}
 	c.lastMotion = time.Now()
 	if p := c.pending; p != nil && p.session == session {
-		rs.settleMovedLocked(c, p)
+		c.settleMovedLocked(p)
 	}
 	c.mu.Unlock()
 	rs.kickCell(c)
@@ -778,7 +778,7 @@ func (rs *Runs) askTurnEdge(workflowID, session string, edge translate.TurnEdge)
 
 // settleMovedLocked clears a replied send once its session started a turn after the write: for an
 // admitted answer the answering turn, for a refused one the ordinary turn KAS ran instead.
-func (rs *Runs) settleMovedLocked(c *askCell, p *pendingPrompt) {
+func (c *askCell) settleMovedLocked(p *pendingPrompt) {
 	if p.phase != pendingReplied {
 		return
 	}
@@ -902,11 +902,11 @@ func askRefusal(code marotte.RunAskRefusal, text string) error {
 	return command.StatusErrorReason(http.StatusConflict, string(code), errors.New(text))
 }
 
-var waitRefusal = map[workflow.Blocker]error{
-	workflow.BlockRecovering:    errAskRecovering,
-	workflow.BlockBranchRunning: errAskBranchRunning,
-	workflow.BlockUnsettled:     errAskUnsettled,
-	workflow.BlockSettling:      errAskSettling,
+var waitRefusal = map[marotte.RunAskBlocker]error{
+	marotte.RunAskRecovering:    errAskRecovering,
+	marotte.RunAskBranchRunning: errAskBranchRunning,
+	marotte.RunAskUnsettled:     errAskUnsettled,
+	marotte.RunAskSettling:      errAskSettling,
 }
 
 // holdRefusal refuses a verb on marotte's own requests. The caller holds the serializer.
@@ -1006,7 +1006,7 @@ func (rs *Runs) repliedPending(ctx context.Context, c *askCell, p *pendingPrompt
 		// No turn edge or read reaches a transient cell, and no stop waits on it.
 		c.clearPendingLocked()
 	} else {
-		rs.settleMovedLocked(c, p)
+		c.settleMovedLocked(p)
 	}
 	if c.pending != p {
 		n := rs.republishLocked(ctx, c)
@@ -1057,7 +1057,7 @@ func (rs *Runs) stopSerialized(ctx context.Context, workflowID string, send func
 	held := c.acquire(sctx) == nil
 	rs.setStopping(ctx, c, true)
 	if held {
-		if p := rs.pendingOf(c); p != nil {
+		if p := c.pendingOf(); p != nil {
 			c.release()
 			select {
 			case <-p.done:
@@ -1079,7 +1079,7 @@ func (rs *Runs) stopSerialized(ctx context.Context, workflowID string, send func
 	rs.kickCell(c)
 }
 
-func (rs *Runs) pendingOf(c *askCell) *pendingPrompt {
+func (c *askCell) pendingOf() *pendingPrompt {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.pending
