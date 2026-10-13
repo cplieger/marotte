@@ -216,15 +216,11 @@ func (t *Translator) steerReadByAck(ctx context.Context, chatID marotte.ChatID, 
 	t.appendSteerInLane(ctx, chatID, lane, steerID, steer)
 }
 
-// appendSteerInLane is appendSteer for a steer one lane's own acknowledgement
-// evidenced: in that lane, so the entry says WHICH agent read it, sealing only it.
+// appendSteerInLane is appendSteer for a steer one lane's own acknowledgement evidenced, filed by
+// turnlog.Turn.SteerRead.
 func (t *Translator) appendSteerInLane(
 	ctx context.Context, chatID marotte.ChatID, lane, steerID string, steer *marotte.EntrySteer,
 ) {
-	if lane == "" {
-		t.appendSteer(ctx, chatSteerScope(chatID), steerID, steer)
-		return
-	}
 	ctx = durable.Context(ctx)
 	turn, ok := t.turns.OwnTurn(chatID)
 	if !ok {
@@ -232,7 +228,7 @@ func (t *Translator) appendSteerInLane(
 		t.appendBetweenTurns(ctx, chatID, marotte.EntryKindSteer, steerID, steer)
 		return
 	}
-	sealed, err := turn.SteerInLane(ctx, lane, steerID, steer)
+	sealed, err := turn.SteerRead(ctx, lane, steerID, steer)
 	t.publishSealed(ctx, chatScope(chatID), sealed)
 	if err != nil {
 		appendFailed(chatScope(chatID), string(marotte.EntryKindSteer), err)

@@ -158,7 +158,7 @@ var abandonableWriteSites = []durableSite{{
 	because: "an unqueue_prompt on the REQUEST's context: a request that died never told the reader the row was discarded, and the dock still shows it",
 }, {
 	file:    "internal/translate/streaming_content.go",
-	fn:      "appendSteerAcks",
+	fn:      "appendSteerAck",
 	calls:   []string{"appendBetweenTurns"},
 	because: "a steer acknowledgement stripped from a delta, on the frame's context: it lands or is lost with the delta it came out of",
 }, {

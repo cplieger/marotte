@@ -28,48 +28,50 @@ type steerAck struct {
 	Text    string
 }
 
-// stripSteerAcks removes complete markers from carry+incoming and returns the text safe to
-// emit, the bytes still withheld (always a suffix of the input), and the acks in order. A `[`
-// before a complete marker can never become one, so it is emitted.
-func stripSteerAcks(carry, incoming string) (emit, newCarry string, acks []steerAck) {
+// splitSteerAcks removes complete markers from carry+incoming and returns the text safe to emit
+// in stream order, the acks, and the bytes still withheld (always a suffix of the input). texts has
+// one more element than acks: texts[i] comes before acks[i] and the last element after the last
+// ack, so a caller that seals at each ack files every span on the side of it the stream put it. A
+// `[` before a complete marker can never become one, so it is emitted.
+func splitSteerAcks(carry, incoming string) (texts []string, acks []steerAck, newCarry string) {
 	joined := carry + incoming
-	buf := joined
-	// Everything before settled is followed by a complete marker: finished text.
-	settled := 0
-	if matches := steerAckRe.FindAllStringSubmatchIndex(joined, -1); matches != nil {
-		var b strings.Builder
-		last := 0
-		for _, m := range matches {
-			b.WriteString(joined[last:m[0]])
-			acks = append(acks, steerAck{
-				SteerID: joined[m[2]:m[3]],
-				// Trimmed: rendered as a label, and the marker's separator leaves a leading space.
-				Text: strings.TrimSpace(joined[m[4]:m[5]]),
-			})
-			last = m[1]
-		}
-		settled = b.Len()
-		b.WriteString(joined[last:])
-		buf = b.String()
+	last := 0
+	for _, m := range steerAckRe.FindAllStringSubmatchIndex(joined, -1) {
+		texts = append(texts, joined[last:m[0]])
+		acks = append(acks, steerAck{
+			SteerID: joined[m[2]:m[3]],
+			// Trimmed: rendered as a label, and the marker's separator leaves a leading space.
+			Text: strings.TrimSpace(joined[m[4]:m[5]]),
+		})
+		last = m[1]
 	}
-	// Every complete marker is gone; hold from the first candidate that could still become one.
-	for i := settled; i < len(buf); {
-		j := strings.IndexByte(buf[i:], '[')
+	tail := joined[last:]
+	// Every complete marker is gone; hold from the first candidate after the last one that could
+	// still become a marker.
+	for i := 0; i < len(tail); {
+		j := strings.IndexByte(tail[i:], '[')
 		if j < 0 {
 			break
 		}
 		at := i + j
-		if couldBecomeSteerAck(buf[at:]) {
-			if len(buf)-at > maxSteerCarry {
-				return buf, "", acks
+		if couldBecomeSteerAck(tail[at:]) {
+			if len(tail)-at > maxSteerCarry {
+				break
 			}
 			// `[` is ASCII, so this is a rune boundary and neither side can be a
 			// torn code point.
-			return buf[:at], buf[at:], acks
+			return append(texts, tail[:at]), acks, tail[at:]
 		}
 		i = at + 1
 	}
-	return buf, "", acks
+	return append(texts, tail), acks, ""
+}
+
+// stripSteerAcks is splitSteerAcks for a caller that discards the acks' positions: the emitted
+// text joined, the withheld bytes, and the acks in order.
+func stripSteerAcks(carry, incoming string) (emit, newCarry string, acks []steerAck) {
+	texts, acks, newCarry := splitSteerAcks(carry, incoming)
+	return strings.Join(texts, ""), newCarry, acks
 }
 
 // couldBecomeSteerAck reports whether s (starting at `[`) might still become a complete
