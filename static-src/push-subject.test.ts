@@ -147,7 +147,7 @@ describe("a step question's subject", () => {
   });
 
   it("is the prefix marotte.RunAskSubject composes", () => {
-    expect(pushTypesGo).toContain('const RunAskSubjectPrefix = "runask:"');
-    expect(pushTypesGo).toContain("PushSubject{Key: RunAskSubjectPrefix + position}");
+    expect(pushTypesGo).toContain('const runAskSubjectPrefix = "runask:"');
+    expect(pushTypesGo).toContain("PushSubject{Key: runAskSubjectPrefix + position}");
   });
 });

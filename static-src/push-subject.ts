@@ -10,7 +10,7 @@ const PR_SUBJECT_PREFIX = "pr:";
 /** marotte.RunSubjectPrefix. The ONLY TypeScript copy. */
 const RUN_SUBJECT_PREFIX = "run:";
 
-/** marotte.RunAskSubjectPrefix. The ONLY TypeScript copy. */
+/** marotte.runAskSubjectPrefix. The ONLY TypeScript copy. */
 const RUN_ASK_SUBJECT_PREFIX = "runask:";
 
 /** The tag prefix every subject's tag carries. */
