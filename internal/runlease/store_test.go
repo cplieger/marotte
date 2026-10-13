@@ -458,3 +458,30 @@ func TestStore_ListStampedPairsTheSetWithItsVersion(t *testing.T) {
 		t.Errorf("after releasing a released lease: version = %q, want \"4\" (nothing moved)", v)
 	}
 }
+
+// The parent session survives a restart: after one, it is the only host marotte reads the run's
+// questions through.
+func TestStore_SetParentSessionIDIsDurable(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := s.Put(t.Context(), &Lease{WorkflowID: "wf_1", Origin: OriginAgent}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := s.SetParentSessionID(t.Context(), "wf_1", "sess_parent"); err != nil {
+		t.Fatalf("SetParentSessionID: %v", err)
+	}
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if got, _ := reopened.Get("wf_1"); got.ParentSessionID != "sess_parent" {
+		t.Errorf("after a restart ParentSessionID = %q, want sess_parent", got.ParentSessionID)
+	}
+	if err := s.SetParentSessionID(t.Context(), "wf_gone", "sess_parent"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetParentSessionID on no lease = %v, want ErrNotFound", err)
+	}
+}

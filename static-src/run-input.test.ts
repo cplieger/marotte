@@ -1,40 +1,49 @@
-// Tests for run-input.ts — the card a parked workflow step's question renders as in the interaction
-// dock.
+// Tests for run-input.ts: the card a waiting workflow step renders as in the interaction dock.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 
-import { buildRunInputCard } from "./run-input.js";
-import type { RunInputNeededPayload } from "./types.js";
+import {
+  _resetRunAskDraftsForTest,
+  buildRunAskCard,
+  dropRunAskDrafts,
+  keepRunAskDrafts,
+  registerRunAskVerbs,
+  updateRunAskCard,
+  type RunAskCardInput,
+} from "./run-input.js";
+import type { RunAsk } from "./wire/types.gen.js";
 
-function payload(over: Partial<RunInputNeededPayload> = {}): RunInputNeededPayload {
+function runAsk(over: Partial<RunAsk> = {}): RunAsk {
   return {
-    workflow_id: "wf_1",
     ask_id: "a1",
     node_id: "review",
+    node_path: ["wf_1", "review"],
     step_session_id: "sess_step",
     agent_name: "reviewer",
-    question: "Which branch should I target?",
-    asked_at: "2026-09-03T10:00:00Z",
+    text: "Which branch should I target?",
+    text_source: "asked",
+    can_continue: true,
     ...over,
   };
 }
 
-function mount(
-  p: RunInputNeededPayload,
-  onSubmit: (text: string | null) => void = () => undefined,
-  held = "",
-  onDefer?: () => void | Promise<void>,
-): HTMLElement {
-  const card = buildRunInputCard(p, held, onSubmit, onDefer);
+function input(over: Partial<RunAsk> = {}, run: Partial<RunAskCardInput> = {}): RunAskCardInput {
+  return { workflowID: "wf_1", chatID: "run:wf_1", reachable: true, ask: runAsk(over), ...run };
+}
+
+function mount(d: RunAskCardInput): HTMLElement {
+  const card = buildRunAskCard(d);
   document.body.replaceChildren(card);
   return card;
 }
 
-/** The answer row's buttons, in order. Scoped to `.dock-ask-actions` because the question's own
- *  clamp opener is a button too and belongs to the body. */
+/** The answer row's visible buttons, in order. Scoped to `.dock-ask-actions` because the
+ *  question's own clamp opener is a button too and belongs to the body. */
 function actionLabels(card: HTMLElement): (string | null)[] {
-  return [...card.querySelectorAll(".dock-ask-actions button")].map((b) => b.textContent);
+  return [...card.querySelectorAll(".dock-ask-actions button")]
+    .filter((b) => !b.classList.contains("hidden"))
+    .map((b) => b.textContent);
 }
 
 function button(card: HTMLElement, label: string): HTMLButtonElement {
@@ -45,219 +54,251 @@ function button(card: HTMLElement, label: string): HTMLButtonElement {
   return found;
 }
 
+function box(card: HTMLElement): HTMLTextAreaElement {
+  return card.querySelector("textarea") as HTMLTextAreaElement;
+}
+
+function type(card: HTMLElement, text: string): void {
+  box(card).value = text;
+  box(card).dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function note(card: HTMLElement): HTMLElement {
+  return card.querySelector(".run-input-note") as HTMLElement;
+}
+
+const answer = vi.fn((_workflowID: string, _askID: string, _text: string) => Promise.resolve(true));
+const cont = vi.fn((_workflowID: string, _nodeID: string, _askID: string) => Promise.resolve());
+const defer = vi.fn((_chatID: string, _workflowID: string) => Promise.resolve());
+registerRunAskVerbs({ answer, continueStep: cont, defer });
+
+/** An answer whose reply the test settles: true is taken, false refused. */
+function pending(): { resolve: (ok: boolean) => void } {
+  let resolve: (ok: boolean) => void = () => undefined;
+  answer.mockImplementationOnce(
+    () =>
+      new Promise<boolean>((r) => {
+        resolve = r;
+      }),
+  );
+  return { resolve: (ok) => resolve(ok) };
+}
+
 beforeEach(() => {
   document.body.replaceChildren();
+  _resetRunAskDraftsForTest();
+  answer.mockClear();
+  cont.mockClear();
+  defer.mockClear();
 });
 
-describe("buildRunInputCard", () => {
-  it("renders the question and names the asking step", () => {
-    const card = mount(payload());
+describe("buildRunAskCard", () => {
+  it("renders the step's question and names where the text came from and who asks", () => {
+    const card = mount(input());
     expect(card.querySelector("strong")?.textContent).toBe("Which branch should I target?");
-    // Who is asking, because a run has many steps and answering the wrong one's question is exactly
-    // the mistake this line prevents.
-    expect(card.querySelector(".run-input-step")?.textContent).toBe("reviewer \u00b7 step review");
-  });
-
-  it("omits the step line when the frame could not name one", () => {
-    // Both fields are legitimately absent: KAS puts the node id on the notification only when the
-    // caller is a step. A run blocked by an unnameable step is still blocked, so the row goes
-    // rather than showing a placeholder.
-    const card = mount(payload({ agent_name: "", node_id: "" }));
-    expect(card.querySelector(".run-input-step")).toBeNull();
-  });
-
-  it("falls back to a sentence and says why when the question is gone", () => {
-    // The post-restart case: the registry is in memory, so the server reconstructs an ask from the
-    // run's state with no text on it. A blank heading would read as a broken card rather than as a
-    // recoverable state.
-    const card = mount(payload({ question: "" }));
-    expect(card.querySelector("strong")?.textContent).toBe("A step is waiting for your answer");
-    expect(card.querySelector(".run-input-note")?.textContent).toContain("server restarted");
-  });
-
-  it("does not explain a missing question when there is one", () => {
-    expect(mount(payload()).querySelector(".run-input-note")).toBeNull();
-  });
-
-  it("reports the typed answer on Send", () => {
-    const onSubmit = vi.fn();
-    const card = mount(payload(), onSubmit);
-    const box = card.querySelector("textarea") as HTMLTextAreaElement;
-    box.value = "  the release branch  ";
-    button(card, "Send answer").click();
-    // Trimmed: the server refuses whitespace, and sending it would spend the reader's one claim on
-    // an answer the step cannot use.
-    expect(onSubmit).toHaveBeenCalledWith("the release branch");
-  });
-
-  it("seeds the box with words a previous send is still holding", () => {
-    // The dock splices the card BEFORE the answer goes out, so a retryable refusal re-offers the
-    // question against a fresh element. Without the seed the reader gets their question back with
-    // an empty box and retypes what they just wrote.
-    const card = mount(payload(), () => undefined, "the release branch");
-    expect((card.querySelector("textarea") as HTMLTextAreaElement).value).toBe(
-      "the release branch",
+    expect(card.querySelector(".run-input-step")?.textContent).toBe(
+      "The step asks \u00b7 reviewer \u00b7 step review",
     );
   });
 
-  it("opens empty when nothing is held, which is the ordinary case", () => {
-    expect((mount(payload()).querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
+  it("labels the step's last words as not its question", () => {
+    const card = mount(input({ text: "Done with part one.", text_source: "last_message" }));
+    expect(card.querySelector(".run-input-step")?.textContent).toBe(
+      "The step's last message \u00b7 reviewer \u00b7 step review",
+    );
+  });
+
+  it("says marotte saw nothing when no text came through", () => {
+    const card = mount(input({ text: "", text_source: "unseen", agent_name: "", node_id: "" }));
+    expect(card.querySelector("strong")?.textContent).toBe("A step is waiting for your answer");
+    expect(card.querySelector(".run-input-step")?.textContent).toBe(
+      "marotte did not see what this step said",
+    );
+  });
+
+  it("sends the trimmed words under the card's ask id, inert until the reply", async () => {
+    const card = mount(input());
+    const reply = pending();
+    type(card, "  the release branch  ");
+    button(card, "Send answer").click();
+    expect(answer).toHaveBeenCalledWith("wf_1", "a1", "the release branch");
+    expect(card.inert).toBe(true);
+    reply.resolve(true);
+    await vi.waitFor(() => {
+      expect(card.inert).toBe(false);
+    });
+    expect(box(card).value).toBe("");
+  });
+
+  it("keeps the words in the box when the answer is refused", async () => {
+    const card = mount(input());
+    const reply = pending();
+    type(card, "the release branch");
+    button(card, "Send answer").click();
+    reply.resolve(false);
+    await vi.waitFor(() => {
+      expect(card.inert).toBe(false);
+    });
+    expect(box(card).value).toBe("the release branch");
+    expect(actionLabels(card)).not.toContain("Restore last message");
+  });
+
+  it("offers the last words sent back once the box is empty, for a step that asks again", async () => {
+    const first = mount(input());
+    type(first, "the release branch");
+    button(first, "Send answer").click();
+    await vi.waitFor(() => {
+      expect(actionLabels(first)).toContain("Restore last message");
+    });
+    // The step re-parks: a new ask id at the same wait position, so a new card.
+    const again = mount(input({ ask_id: "a2" }));
+    button(again, "Restore last message").click();
+    expect(box(again).value).toBe("the release branch");
+    expect(actionLabels(again)).not.toContain("Restore last message");
   });
 
   it("refuses an empty Send rather than waiving the question", () => {
-    const onSubmit = vi.fn();
-    const card = mount(payload(), onSubmit);
+    const card = mount(input());
     button(card, "Send answer").click();
-    // Continuing with no answer is a DIFFERENT verb, because it drives the step with KAS's own
-    // continuation instead of the reader's words. An empty box must not reach it.
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(card.querySelector("textarea"));
+    expect(answer).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(box(card));
   });
 
-  it("reports null on Continue without answering", () => {
-    const onSubmit = vi.fn();
-    const card = mount(payload({ question: "" }), onSubmit);
-    button(card, "Continue without answering").click();
-    expect(onSubmit).toHaveBeenCalledWith(null);
-  });
-
-  it("says what Continue does, since the label cannot", () => {
-    const card = mount(payload());
-    expect(button(card, "Continue without answering").getAttribute("data-tooltip")).toContain(
-      "carries on with no answer",
+  it("disables Send with the blocker's reason, and re-enables it in place", () => {
+    const card = mount(input({ blocked: "branch_running" }));
+    type(card, "half an answer");
+    expect(button(card, "Send answer").disabled).toBe(true);
+    expect(note(card).textContent).toBe(
+      "Another step of this run is still running. Answer once it stops.",
     );
+    const keptBox = box(card);
+    updateRunAskCard(card, input());
+    expect(button(card, "Send answer").disabled).toBe(false);
+    expect(note(card).classList.contains("hidden")).toBe(true);
+    expect(box(card)).toBe(keptBox);
+    expect(keptBox.value).toBe("half an answer");
   });
 
-  it("withholds Continue when the ask names no node, whose verb needs one", () => {
-    // `set_step_status` is addressed by node and refuses 400 without one, so the button could only
-    // produce an error toast — with the card already spliced by the dock's settle, which leaves the
-    // reader worse off than never being offered it.
-    const card = mount(payload({ node_id: "" }));
-    // Scoped to the ANSWER ROW, which is the subject: the question's own clamp opener is a button
-    // too, and it belongs to the body rather than to the ways this ask can be answered.
-    expect(
-      [...card.querySelectorAll(".dock-ask-actions button")].map((b) => b.textContent),
-    ).toEqual(["Send answer"]);
+  it("keeps Send on when marotte could not read the run, and says so", () => {
+    const card = mount(input({}, { reachable: false }));
+    expect(button(card, "Send answer").disabled).toBe(false);
+    expect(note(card).textContent).toBe("marotte could not read this run just now.");
   });
 
-  it("still lets such an ask be ANSWERED, since the answer is addressed by session", () => {
-    const onSubmit = vi.fn();
-    const card = mount(payload({ node_id: "" }), onSubmit);
-    const box = card.querySelector("textarea") as HTMLTextAreaElement;
-    box.value = "the release branch";
-    button(card, "Send answer").click();
-    expect(onSubmit).toHaveBeenCalledWith("the release branch");
+  it("keeps the typed words across a rebuilt card at the same wait", () => {
+    const card = mount(input());
+    type(card, "half an answer");
+    expect(box(mount(input({ ask_id: "a2" }))).value).toBe("half an answer");
+    expect(box(mount(input({ step_session_id: "sess_other" }))).value).toBe("");
   });
 
-  describe("a CHAT-PARENTED ask", () => {
-    /** Resolves once the hand-off has settled: the click's own promise chain runs on microtasks,
-     *  so nothing is observable in the same task. */
-    const defer = (): Promise<void> => Promise.resolve();
+  it("forgets a run's words once the run has ended", () => {
+    type(mount(input()), "half an answer");
+    type(mount(input({}, { workflowID: "wf_2" })), "another run");
+    dropRunAskDrafts("wf_1");
+    expect(box(mount(input())).value).toBe("");
+    expect(box(mount(input({}, { workflowID: "wf_2" }))).value).toBe("another run");
+  });
 
-    it("offers the launching agent in place of the waive", () => {
-      const card = mount(payload(), () => undefined, "", defer);
-      expect(actionLabels(card)).toEqual(["Send answer", "Defer to parent agent"]);
+  it("keeps the words of the runs a pending set names, and forgets the rest", () => {
+    type(mount(input()), "half an answer");
+    type(mount(input({}, { workflowID: "wf_2" })), "another run");
+    keepRunAskDrafts(new Set(["wf_2"]));
+    expect(box(mount(input())).value).toBe("");
+    expect(box(mount(input({}, { workflowID: "wf_2" }))).value).toBe("another run");
+  });
+
+  describe("Continue without answering", () => {
+    it("continues the card's own execution", () => {
+      const card = mount(input());
+      button(card, "Continue without answering").click();
+      expect(cont).toHaveBeenCalledWith("wf_1", "review", "a1");
     });
 
-    it("leaves a PARENTLESS ask exactly as it was", () => {
-      // The population that has nobody to defer to: no callback, so the card is today's card and
-      // the waive is still the second button.
-      const card = mount(payload());
+    it("is offered only where the server says Continue reaches this execution", () => {
+      expect(actionLabels(mount(input({ can_continue: false })))).toEqual(["Send answer"]);
+    });
+
+    it("is withdrawn while the ask is blocked, and offered again in place", () => {
+      const card = mount(input({ blocked: "pending" }));
+      expect(actionLabels(card)).toEqual(["Send answer"]);
+      updateRunAskCard(card, input());
       expect(actionLabels(card)).toEqual(["Send answer", "Continue without answering"]);
     });
 
-    it("still offers a deferral when the ask names no node", () => {
-      // The node-id gate belongs to Continue alone, whose verb is addressed by node. A deferral is
-      // addressed by CHAT, so it is available either way.
-      const card = mount(payload({ node_id: "" }), () => undefined, "", defer);
-      expect(actionLabels(card)).toEqual(["Send answer", "Defer to parent agent"]);
+    it("says what it does, since the label cannot", () => {
+      expect(
+        button(mount(input()), "Continue without answering").getAttribute("data-tooltip"),
+      ).toContain("carries on with no answer");
+    });
+  });
+
+  describe("a CHAT-PARENTED ask", () => {
+    const parented = (over: Partial<RunAsk> = {}): RunAskCardInput => input(over, { chatID: "c1" });
+
+    it("offers the launching agent in place of the waive", () => {
+      expect(actionLabels(mount(parented()))).toEqual(["Send answer", "Defer to parent agent"]);
     });
 
-    it("asks once and never routes the deferral through the answer verb", () => {
-      const onSubmit = vi.fn();
-      const onDefer = vi.fn(defer);
-      const card = mount(payload(), onSubmit, "", onDefer);
+    it("asks the launching chat once, and answers nothing itself", async () => {
+      const card = mount(parented());
       const b = button(card, "Defer to parent agent");
       b.click();
-      // Twice, because the guard is the disable and it has to land on the FIRST click: a second
-      // prompt into the launching chat is a second turn.
       b.click();
-      expect(onDefer).toHaveBeenCalledTimes(1);
-      // A deferral answers nothing, so it must not reach `onSubmit` in either of that callback's
-      // meanings — the reader's words, or the waive.
-      expect(onSubmit).not.toHaveBeenCalled();
-    });
-
-    it("settles into a persistent asked state once the hand-off lands", async () => {
-      const card = mount(payload(), () => undefined, "", defer);
-      button(card, "Defer to parent agent").click();
+      expect(defer).toHaveBeenCalledTimes(1);
+      expect(defer).toHaveBeenCalledWith("c1", "wf_1");
+      expect(answer).not.toHaveBeenCalled();
       await vi.waitFor(() => {
-        const b = button(card, "Asked the agent");
-        // Disabled for the card's life rather than for a moment: the agent has been asked, and
-        // asking it again would spend another turn on the same question.
-        expect(b.disabled).toBe(true);
-        expect(b.getAttribute("data-tooltip")).toContain("has been asked to answer");
+        const asked = button(card, "Asked the agent");
+        expect(asked.disabled).toBe(true);
+        expect(asked.getAttribute("data-tooltip")).toContain("has been asked to answer");
       });
     });
 
-    it("keeps the question answerable after a deferral", async () => {
-      // The ask is still OPEN — that is the whole difference from the waive — so the textarea and
-      // Send stay live and the reader can still answer themselves.
-      const onSubmit = vi.fn();
-      const card = mount(payload(), onSubmit, "", defer);
+    it("keeps the Defer button's asked state across a blocker change", async () => {
+      const card = mount(parented());
       button(card, "Defer to parent agent").click();
       await vi.waitFor(() => {
         expect(button(card, "Asked the agent").disabled).toBe(true);
       });
-
-      const box = card.querySelector("textarea") as HTMLTextAreaElement;
-      box.value = "the release branch";
-      button(card, "Send answer").click();
-      expect(onSubmit).toHaveBeenCalledWith("the release branch");
+      updateRunAskCard(card, parented({ blocked: "settling" }));
+      expect(button(card, "Asked the agent").disabled).toBe(true);
     });
 
     it("hands the button back when the hand-off was refused", async () => {
-      // `submit.ts` already reports the refusal through send-state, so the card owes the reader
-      // nothing but a button they can press again — and the label must not claim an agent was
-      // asked.
-      const card = mount(
-        payload(),
-        () => undefined,
-        "",
-        () => Promise.reject(new Error("no")),
-      );
+      defer.mockRejectedValueOnce(new Error("refused"));
+      const card = mount(parented());
       button(card, "Defer to parent agent").click();
       await vi.waitFor(() => {
         expect(button(card, "Defer to parent agent").disabled).toBe(false);
       });
     });
 
-    it("says what the button does, since the label cannot", () => {
-      const card = mount(payload(), () => undefined, "", defer);
-      expect(button(card, "Defer to parent agent").getAttribute("data-tooltip")).toContain(
-        "is asked to answer instead",
-      );
+    it("keeps the question answerable after a deferral", async () => {
+      const card = mount(parented());
+      button(card, "Defer to parent agent").click();
+      await vi.waitFor(() => {
+        expect(button(card, "Asked the agent").disabled).toBe(true);
+      });
+      type(card, "the release branch");
+      button(card, "Send answer").click();
+      expect(answer).toHaveBeenCalledTimes(1);
     });
   });
 
   it("submits on Cmd/Ctrl+Enter and not on a bare Enter", () => {
-    const onSubmit = vi.fn();
-    const card = mount(payload(), onSubmit);
-    const box = card.querySelector("textarea") as HTMLTextAreaElement;
-    box.value = "the release branch";
-
-    // A bare Enter inserts a newline: an answer to a step is prose that may want paragraphs, which
-    // is the call the composer's own textarea makes.
-    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(onSubmit).not.toHaveBeenCalled();
-
-    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
-    expect(onSubmit).toHaveBeenCalledWith("the release branch");
+    const card = mount(input());
+    type(card, "the release branch");
+    box(card).dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(answer).not.toHaveBeenCalled();
+    box(card).dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }),
+    );
+    expect(answer).toHaveBeenCalledTimes(1);
   });
 
   it("labels the touch keyboard's Return as a new line", () => {
-    const card = mount(payload());
-    expect((card.querySelector("textarea") as HTMLTextAreaElement).enterKeyHint).toBe("enter");
+    expect(box(mount(input())).enterKeyHint).toBe("enter");
   });
 
   describe("under a finger", () => {
@@ -267,12 +308,12 @@ describe("buildRunInputCard", () => {
 
     it("continues a list from Return's line break", async () => {
       document.documentElement.setAttribute("data-pointer", "coarse");
-      const box = mount(payload()).querySelector("textarea") as HTMLTextAreaElement;
-      box.focus();
-      box.value = "- first";
-      box.setSelectionRange(7, 7);
+      const b = box(mount(input()));
+      b.focus();
+      b.value = "- first";
+      b.setSelectionRange(7, 7);
       await userEvent.keyboard("{Enter}");
-      expect(box.value).toBe("- first\n- ");
+      expect(b.value).toBe("- first\n- ");
     });
   });
 });

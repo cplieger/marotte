@@ -670,7 +670,8 @@ func TestForgetRunBounds_ClearsTheClaimOnATerminalRun(t *testing.T) {
 	}
 }
 
-// refillingBus refills from inside the teardown through settleAsksForRun's broadcast, its slowest step.
+// refillingBus refills from inside the teardown through endAsks's final run_asks broadcast, which
+// the lease release runs.
 type refillingBus struct {
 	rs      *Runs
 	id      string
@@ -695,9 +696,9 @@ func TestForgetRunBounds_ARefillInsideTheTeardownLeavesNoTimer(t *testing.T) {
 	if err := h.leaseStore().SetDeadline(t.Context(), id, time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("stage a near-expiry deadline: %v", err)
 	}
-	// One unanswered ask, or the teardown broadcasts nothing.
-	if !h.asks.add(askOf("c1", id, "a1", "review")) {
-		t.Fatal("the ask was not recorded, so nothing in the teardown broadcasts")
+	// The run's ask cell, whose end the teardown broadcasts.
+	if h.cellFor(id) == nil {
+		t.Fatal("the leased run has no ask cell, so nothing in the teardown broadcasts")
 	}
 
 	h.forgetBounds(t.Context(), id)
@@ -773,7 +774,7 @@ func TestRearmRetriedRun_GivesAFreshClock(t *testing.T) {
 	h.armDeadline(t.Context(), id)
 	before, _ := h.lease(id)
 
-	h.rearmRetried(t.Context(), id, "publish")
+	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "publish"})
 
 	after, held := h.lease(id)
 	if !held || !after.Bounded() {
@@ -790,7 +791,7 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 	h := &Runs{}
 	const id = "wf_1"
 
-	h.rearmRetried(t.Context(), id, "nightly")
+	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "nightly"})
 
 	l, held := h.lease(id)
 	if !held {
@@ -963,8 +964,8 @@ func (noopRunTranslator) ForgetRunSteps(string)                                 
 func (noopRunTranslator) HandleWorkflowMessage(context.Context, marotte.ChatID, *marotte.RPCResponse) {
 }
 
-func (noopRunTranslator) SessionNotifyAsk(*marotte.RPCResponse) (marotte.RunInputNeededPayload, bool) {
-	return marotte.RunInputNeededPayload{}, false
+func (noopRunTranslator) SessionNotifySignal(*marotte.RPCResponse) (translate.NotifySignal, bool) {
+	return translate.NotifySignal{}, false
 }
 
 type recordingRunTranslator struct {

@@ -12,6 +12,8 @@ import (
 	"testing/synctest"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 type deleteGate struct {
@@ -60,27 +62,25 @@ var lifecycleOps = []lifecycleOp{
 		name: "prompt", method: marotte.MethodPrompt,
 		run: marotte.RunStatusPaused, node: marotte.RunNodeStatusPaused, state: "paused",
 		do: func(ctx context.Context, h *Runtime) error {
-			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "carry on", "m-op")
+			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "carry on", "m-op", "")
 			return err
 		},
 	},
 	{
 		name: "answer", method: marotte.MethodPrompt,
-		run: marotte.RunStatusPaused, node: marotte.RunNodeStatusPaused, state: "paused",
-		setup: func(_ *testing.T, h *Runtime, _ *fakeBridge) {
-			h.runs.asks.add(&runAsk{chatID: runChatID("wf_1"), payload: marotte.RunInputNeededPayload{
-				WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
-			}})
+		run: marotte.RunStatusPaused, node: marotte.RunNodeStatusPaused, state: "asked",
+		setup: func(t *testing.T, h *Runtime, _ *fakeBridge) {
+			leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
 		},
 		do: func(ctx context.Context, h *Runtime) error {
-			return h.runs.answerInput(ctx, "wf_1", "a1", "teal")
+			return h.runs.answerInput(ctx, "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "teal")
 		},
 	},
 	{
 		name: "steer", method: marotte.MethodSessionSteer,
 		run: marotte.RunStatusRunning, node: marotte.RunNodeStatusRunning, state: "running",
 		do: func(ctx context.Context, h *Runtime) error {
-			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "use main", "m-op")
+			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "use main", "m-op", "")
 			return err
 		},
 	},
@@ -91,7 +91,7 @@ var lifecycleOps = []lifecycleOp{
 		setup: func(t *testing.T, h *Runtime, br *fakeBridge) {
 			t.Helper()
 			for _, id := range []string{"m-a", "m-b"} {
-				if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "words "+id, id); err != nil {
+				if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "words "+id, id, ""); err != nil {
 					t.Fatalf("Setup: MessageStep(%s) = %v", id, err)
 				}
 			}
@@ -291,6 +291,8 @@ func deleteFirst(t *testing.T, op *lifecycleOp, out *deleteOutcome) {
 		if err := op.do(t.Context(), h); err != nil {
 			t.Errorf("%s again once the run reopened = %v, want nil", op.name, err)
 		}
+		// The step takes what it was sent; an answer's pending ends on that turn_start.
+		h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
 	}
 	checkRunAfter(t, h, br, op, out)
 }
@@ -312,7 +314,7 @@ func checkRunAfter(t *testing.T, h *Runtime, br *fakeBridge, op *lifecycleOp, ou
 	sends := []string{marotte.MethodPrompt, marotte.MethodSessionSteer}
 	counts := func() []int { return []int{countCalls(br, sends[0]), countCalls(br, sends[1])} }
 	before := counts()
-	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "and then", "m-probe")
+	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "and then", "m-probe", "")
 	switch out.after {
 	case "open":
 		if err != nil {

@@ -15,6 +15,8 @@ export function noticeFor(
       return { chat_id: target.chatID, kind, title, body };
     case "run":
       return { subject: `run:${target.workflowID}`, kind, title, body };
+    case "run_ask":
+      return { subject: `runask:${target.position}`, kind, title, body };
     case "pr":
       return { subject: `pr:${target.identity}`, kind, title, body };
     case "workspace":

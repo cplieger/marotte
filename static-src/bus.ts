@@ -3,7 +3,7 @@
 
 import { createBus } from "@cplieger/reactive";
 
-import type { NotificationPayload } from "./wire/types.gen.js";
+import type { NotificationPayload, RunAsksPayload } from "./wire/types.gen.js";
 import type {
   ServerEvent,
   ChatHeader,
@@ -51,8 +51,6 @@ import type {
   RunStartedPayload,
   RunProgressPayload,
   RunFinishedPayload,
-  RunInputNeededPayload,
-  RunInputSettledPayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
@@ -140,12 +138,9 @@ export interface SSEPayloads {
   readonly run_started: RunStartedPayload;
   readonly run_progress: RunProgressPayload;
   readonly run_finished: RunFinishedPayload;
-  // A workflow STEP asking a question, carrying its payload: KAS parks the run with a fixed
-  // pauseReason and empty pauseDetail, so `inspect` never says what was asked. Keyed to the
+  // One run's steps waiting on a person, replaced whole per (epoch, seq). Keyed to the
   // launching chat, or `run:<workflowId>` when parentless.
-  readonly run_input_needed: RunInputNeededPayload;
-  // Its twin, separate from decision_settled: a run ask is keyed by string, not int64.
-  readonly run_input_settled: RunInputSettledPayload;
+  readonly run_asks: RunAsksPayload;
   // internal/notice's notification: the page shows it while its chat or run is off screen.
   readonly notification: NotificationPayload;
 }

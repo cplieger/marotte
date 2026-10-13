@@ -1,0 +1,55 @@
+{
+ "workflowId": "wf_66658d5c69b1f284",
+ "state": {
+  "workflowId": "wf_66658d5c69b1f284",
+  "workflowName": "askloop",
+  "status": "paused",
+  "inputs": {},
+  "artifacts": {},
+  "capturedOutputs": {},
+  "root": {
+   "nodeId": "wf_66658d5c69b1f284",
+   "type": "sequence",
+   "status": "paused",
+   "children": [
+    {
+     "nodeId": "ask",
+     "type": "step",
+     "status": "paused",
+     "agentName": "asker",
+     "modelId": "claude-sonnet-5.5",
+     "effortLevel": "high",
+     "startedAt": "2026-10-12T00:26:23.542Z",
+     "sessionId": "sess_c8ebb89e-a1ac-41da-aeaa-1aaa24762563",
+     "completionSignal": "need_input",
+     "completionSignalSource": "send_message",
+     "awaitingUserInput": true
+    }
+   ],
+   "startedAt": "2026-10-12T00:26:23.536Z"
+  },
+  "createdAt": "2026-10-12T00:23:14.312Z",
+  "planRevision": 0,
+  "parentSessionId": "sess_b24e223e-fff1-4136-b048-ebf1cfcfcad7",
+  "rootConversationId": "sess_b24e223e-fff1-4136-b048-ebf1cfcfcad7",
+  "workspacePath": "/work",
+  "memoryConfig": {
+   "mode": "read_write",
+   "reflection": true
+  },
+  "memoryConfigSource": "legacy",
+  "backgroundExecution": false,
+  "parentModelId": "claude-sonnet-5.5",
+  "parentEffortLevel": "high",
+  "pauseReason": "Step requested user input via send_message."
+ },
+ "nodePlan": [
+  {
+   "nodeId": "ask",
+   "type": "step",
+   "agentName": "asker",
+   "modelId": "claude-sonnet-5.5",
+   "effortLevel": "high"
+  }
+ ]
+}

@@ -244,7 +244,7 @@ func TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame(t *testing.T) {
 	if got := countType(frames, marotte.EventPendingSnapshot); got != 1 {
 		t.Fatalf("a v3 connect wrote %d pending_snapshot frames, want exactly 1", got)
 	}
-	for _, typ := range []marotte.EventType{marotte.EventPermissionNeeded, marotte.EventRunInputNeeded, marotte.EventSteerQueued, marotte.EventType("turn_state")} {
+	for _, typ := range []marotte.EventType{marotte.EventPermissionNeeded, marotte.EventRunAsks, marotte.EventSteerQueued, marotte.EventType("turn_state")} {
 		if n := countType(frames, typ); n != 0 {
 			t.Errorf("a v3 connect wrote %d per-item %s frames beside the aggregate", n, typ)
 		}
@@ -254,7 +254,7 @@ func TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame(t *testing.T) {
 	if err := reencode(snap.Payload, &payload); err != nil {
 		t.Fatalf("decode pending_snapshot: %v", err)
 	}
-	// 2 permissions, 1 run ask and 1 steer.
+	// The permissions, one run_asks per leased run and 1 steer.
 	if len(payload.Items) != fixturePendingPerms+fixturePendingRunAsks+1 {
 		t.Errorf("pending_snapshot carries %d items, want %d", len(payload.Items), fixturePendingPerms+fixturePendingRunAsks+1)
 	}
@@ -266,8 +266,8 @@ func TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame(t *testing.T) {
 		}
 		kinds[item.Type]++
 	}
-	if kinds[marotte.EventPermissionNeeded] != fixturePendingPerms || kinds[marotte.EventRunInputNeeded] != fixturePendingRunAsks || kinds[marotte.EventSteerQueued] != 1 {
-		t.Errorf("pending_snapshot item kinds = %v, want %d permission_needed, %d run_input_needed, 1 steer_queued",
+	if kinds[marotte.EventPermissionNeeded] != fixturePendingPerms || kinds[marotte.EventRunAsks] != fixturePendingRunAsks || kinds[marotte.EventSteerQueued] != 1 {
+		t.Errorf("pending_snapshot item kinds = %v, want %d permission_needed, %d run_asks, 1 steer_queued",
 			kinds, fixturePendingPerms, fixturePendingRunAsks)
 	}
 	version, _ := rt.versions.Current(subject.KindPending, "")
@@ -364,8 +364,9 @@ func TestConnect_LegacyKeepsThePerItemReplayAndNumericBounds(t *testing.T) {
 	if got := countType(frames, marotte.EventPermissionNeeded); got != fixturePendingPerms {
 		t.Errorf("legacy connect replayed %d permission_needed frames, want %d", got, fixturePendingPerms)
 	}
-	if got := countType(frames, marotte.EventRunInputNeeded); got != fixturePendingRunAsks {
-		t.Errorf("legacy connect replayed %d run_input_needed frames, want %d", got, fixturePendingRunAsks)
+	// A v2 bundle decodes no run_asks, so a legacy connect replays none.
+	if got := countType(frames, marotte.EventRunAsks); got != 0 {
+		t.Errorf("legacy connect replayed %d run_asks frames, want none", got)
 	}
 	if got := countType(frames, marotte.EventSteerQueued); got != 1 {
 		t.Errorf("legacy connect replayed %d steer_queued frames, want 1", got)

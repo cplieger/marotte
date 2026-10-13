@@ -11,8 +11,8 @@ import { attachClamp } from "./clamp-text.js";
 const CLAMP_LINES = 4;
 
 /**
- * What a run ask reads as when its question did not survive, shared by the dock and the card. Declared here: in
- * `decision-dock` it would make `run-input` import its own parent (a cycle).
+ * What a step's question reads as when marotte has no text for it, shared by the dock card and the run's alert. Declared
+ * here: in `decision-dock` it would make `run-input` import its own parent (a cycle).
  */
 export const RUN_INPUT_FALLBACK = "A step is waiting for your answer";
 

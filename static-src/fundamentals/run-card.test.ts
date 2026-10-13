@@ -298,57 +298,18 @@ describe("an unanswered ask", () => {
   });
 });
 
-// A pause reason is KAS's prose shown verbatim, EXCEPT the two literals meaning a person owes an
-// answer; this arm covers the question text never having arrived.
-describe("a pause that means a step is waiting on a person", () => {
+// A pause reason is KAS's prose shown verbatim: only the run-asks store says a step waits on a person.
+describe("a paused run's alert", () => {
   function pausedWith(reason: string): string {
     return alertText(
       buildAndRender({ ...runOf("paused", step("a", "paused")), pauseReason: reason }, asks(0, [])),
     );
   }
 
-  it("replaces the send_message literal with a sentence about the reader", () => {
+  it("quotes a need-input park the store holds no ask for, like any other pause", () => {
     expect(pausedWith("Step requested user input via send_message.")).toBe(
-      "A step is waiting for your answer",
+      "Waiting: Step requested user input via send_message.",
     );
-  });
-
-  it("replaces the re-park literal too, whose node id sits in the middle", () => {
-    // A plain Resume clears the RUN's pause reason and leaves the step node's
-    // signal, so the next step execution parks again under this fallback.
-    expect(pausedWith("Step 'review' is waiting for user input.")).toBe(
-      "A step is waiting for your answer",
-    );
-    expect(pausedWith("Step 'review' is waiting for the next user message.")).toBe(
-      "A step is waiting for your answer",
-    );
-  });
-
-  // The branch arm, which no reason can reach: the run keeps only the wrapper KAS
-  // composes for a parallel, and that same wrapper covers an interruption and a
-  // permanent failure — so the sentence has to come from the node's own signal.
-  it("recognises a park inside a parallel branch", () => {
-    const run: RunState = {
-      workflowId: "wf_1",
-      status: "paused",
-      pauseReason: "Parallel 'phase1' is waiting on branch 'verify'.",
-      root: {
-        nodeId: "wf_1",
-        type: "sequence",
-        status: "running",
-        children: [
-          {
-            nodeId: "phase1",
-            type: "parallel",
-            status: "paused",
-            children: [
-              { nodeId: "verify", type: "step", status: "paused", completionSignal: "need_input" },
-            ],
-          },
-        ],
-      },
-    };
-    expect(alertText(buildAndRender(run, asks(0, [])))).toBe("A step is waiting for your answer");
   });
 
   it("quotes any other reason verbatim, because it is not about the reader", () => {
@@ -363,14 +324,14 @@ describe("a pause that means a step is waiting on a person", () => {
       buildAndRender(
         {
           ...runOf("paused", step("a", "paused")),
-          pauseReason: "Step requested user input via send_message.",
+          pauseReason: "Connection reset.",
           pauseDetail: { code: "ThrottlingException" },
         },
         asks(0, []),
       ),
     );
     expect(text).toBe(
-      "A step is waiting for your answer \u00b7 after a transient error (Throttli" + "ngException)",
+      "Waiting: Connection reset. \u00b7 after a transient error (Throttli" + "ngException)",
     );
   });
 

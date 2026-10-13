@@ -11,6 +11,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // Runs owns the workflow-run surface: launch, cancel, retry, the durable lease, the deadline and turn-cap
@@ -38,8 +39,8 @@ type Runs struct {
 	// workDir is the root projected diff paths are relative to, a value so step tests need no lifetime.
 	workDir string
 	steers  *stepSteers
-	// asks holds unanswered step questions, its own registry because a run ask outlives its bridge (run_ask.go).
-	asks pendingRunAsks
+	// asks is the ask core's per-run cells (run_asks.go).
+	asks runAsks
 	// stepReplays holds the step-transcript reads in flight (step_replay.go), here so the utility session stays workflow-agnostic.
 	stepReplays stepReplays
 	// carriers counts which run carriers a verb holds now (run_host.go).
@@ -67,9 +68,10 @@ type runChatReader interface {
 }
 
 // useLog installs the run record and hands it the host-loss park, so a dead host's agent-launched runs
-// stop their clocks, and has the bridge manager mark a removed host's runs lost as it removes it.
+// stop their clocks and their asks are re-read, and has the bridge manager mark a removed host's runs
+// lost as it removes it.
 func (rs *Runs) useLog(l *runLog) {
-	l.hostEnded = rs.parkHostLost
+	l.hostEnded = rs.hostEnded
 	rs.log = l
 	if rs.bridges != nil {
 		rs.bridges.hostEnding = l.markHostLost
@@ -93,13 +95,13 @@ type runTranslator interface {
 	RecordRunSteps(raw json.RawMessage)
 	// ForgetRunSteps drops a run's step-session entries; the gate is the caller's, since `paused` reaches `run_complete` on a live run.
 	ForgetRunSteps(workflowID string)
-	// SessionNotifyAsk derives the ask a `_kiro/session/notify` frame carries, or false.
-	SessionNotifyAsk(msg *marotte.RPCResponse) (marotte.RunInputNeededPayload, bool)
+	// SessionNotifySignal reads a `_kiro/session/notify` frame naming a run, or false.
+	SessionNotifySignal(msg *marotte.RPCResponse) (translate.NotifySignal, bool)
 	// HandleWorkflowMessage records the workflow message a `_kiro/session/notify` frame carries.
 	HandleWorkflowMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
 }
 
-// runBroadcaster publishes an ask and its settlement, the only run events marotte originates.
+// runBroadcaster publishes a run's asks, the only run event marotte originates.
 type runBroadcaster interface {
 	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }

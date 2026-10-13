@@ -31,6 +31,7 @@ func newStepScript(t *testing.T, br *fakeBridge, state string) *stepScript {
 			"paused":    oneStepInspect(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused, "sess_step"),
 			"running":   oneStepInspect(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning, "sess_step"),
 			"completed": oneStepInspect(t, marotte.RunStatusRunning, marotte.RunNodeStatusCompleted, "sess_step"),
+			"asked":     inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")),
 		},
 		holds:   map[string]chan struct{}{},
 		entered: map[string]chan struct{}{},
@@ -101,7 +102,7 @@ type stepSend struct {
 func sendAsync(ctx context.Context, h *Runtime, text, messageID string) <-chan stepSend {
 	done := make(chan stepSend, 1)
 	go func() {
-		out, err := h.runs.messageStep(ctx, "wf_1", reviewPath, text, messageID)
+		out, err := h.runs.messageStep(ctx, "wf_1", reviewPath, text, messageID, "")
 		done <- stepSend{out: out, err: err}
 	}()
 	return done
@@ -114,9 +115,10 @@ func refusalCode(t *testing.T, h *Runtime, err error) string {
 	return reasonOf(t, rec.Body.Bytes())
 }
 
-// While the first message's prompt is resuming a paused step, a second message waits for it and then
-// decides again: it steers the now-running step instead of prompting it a second time.
-func TestMessageStep_ASecondSendToAPausedStepDecidesAfterTheFirst(t *testing.T) {
+// While the first message's prompt is resuming a paused step, a second message is refused rather than
+// waiting behind it: the first one's send holds the run's message gate for as long as KAS takes, and
+// a send queued there would hold every stop behind it too. Once the first lands, a message decides again.
+func TestMessageStep_ASecondSendToAPausedStepIsRefusedWhileTheFirstIsInFlight(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -126,20 +128,17 @@ func TestMessageStep_ASecondSendToAPausedStepDecidesAfterTheFirst(t *testing.T) 
 
 		first := sendAsync(t.Context(), h, "use main", "m-a")
 		<-promptIn
-		second := sendAsync(t.Context(), h, "and the fixture", "m-b")
-		// Every goroutine is parked: the first in its prompt, the second waiting on the run.
-		synctest.Wait()
-		if n := s.count(marotte.MethodPrompt); n != 1 {
-			t.Errorf("%d session/prompt while the first was in flight, want 1", n)
+		r2 := <-sendAsync(t.Context(), h, "and the fixture", "m-b")
+		if code := refusalCode(t, h, r2.err); code != string(marotte.RunAskRefusedPending) {
+			t.Errorf("second MessageStep during the first's prompt = (%+v, %v), want code %s", r2.out, r2.err, marotte.RunAskRefusedPending)
 		}
 		releasePrompt()
-		r1, r2 := <-first, <-second
-
-		if r1.err != nil || r1.out.Verb != marotte.RunStepMessagePrompt {
+		if r1 := <-first; r1.err != nil || r1.out.Verb != marotte.RunStepMessagePrompt {
 			t.Errorf("first MessageStep = (%+v, %v), want verb prompt", r1.out, r1.err)
 		}
-		if r2.err != nil || r2.out.Verb != marotte.RunStepMessageSteer {
-			t.Errorf("second MessageStep = (%+v, %v), want verb steer: the step was running by then", r2.out, r2.err)
+		r3 := <-sendAsync(t.Context(), h, "and the fixture", "m-c")
+		if r3.err != nil || r3.out.Verb != marotte.RunStepMessageSteer {
+			t.Errorf("a message after the first landed = (%+v, %v), want verb steer: the step was running by then", r3.out, r3.err)
 		}
 		if p, st := s.count(marotte.MethodPrompt), s.count(marotte.MethodSessionSteer); p != 1 || st != 1 {
 			t.Errorf("KAS got %d session/prompt and %d _session/steer, want one of each", p, st)
@@ -254,7 +253,7 @@ func TestMessageStep_AStepThatCompletesBeforeTheSendIsNotSteered(t *testing.T) {
 		h.runs.RunNodeComplete(t.Context(), "wf_1", reviewSegments, "completed", "")
 	}}
 
-	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-e")
+	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-e", "")
 
 	if code := refusalCode(t, h, err); code != string(marotte.RunStepBusy) {
 		t.Errorf("MessageStep refusal = %q (%v), want busy", code, err)

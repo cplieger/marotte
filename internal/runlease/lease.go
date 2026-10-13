@@ -43,6 +43,9 @@ type Lease struct {
 	// ChatID is the chat whose agent launched the run. Empty means "no chat to
 	// exempt": the parentless launch verbs mint with no chat by design.
 	ChatID string `json:"chat_id,omitempty"`
+	// ParentSessionID is the run's parent session as marotte recorded it at launch or from
+	// `run_start`: the only process marotte asks about the run's questions is the one holding it.
+	ParentSessionID string `json:"parent_session_id,omitempty"`
 	// Recipe is the run's recipe NAME, which is what the single-run rule keys on.
 	Recipe string `json:"recipe"`
 	Origin Origin `json:"origin"`

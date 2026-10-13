@@ -16,6 +16,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/sse"
 	"github.com/cplieger/sse/ssetest"
@@ -413,38 +414,30 @@ func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.
 	}
 }
 
-// A parked run has no deadline and its event does not re-fire, so a reload with no replay leaves nothing to answer.
-func TestHandleSSE_ReplaysAParkedStepsQuestion(t *testing.T) {
+// Every connect carries every leased run's asks in its pending_snapshot, and a run whose lease ended is
+// not named, so a client that missed the run's last frame drops its card on the next connect.
+func TestHandleSSE_ThePendingSnapshotNamesEveryLeasedRunAndNoEndedOne(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.runs.asks.add(&runAsk{
-		chatID: "c1",
-		payload: marotte.RunInputNeededPayload{
-			WorkflowID: "wf_1", AskID: "a1", NodeID: "review", Question: "which branch?",
-		},
-	})
+	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", Origin: runlease.OriginAgent})
+	c := h.runs.cellFor("wf_1")
+	c.mu.Lock()
+	h.runs.publishLocked(t.Context(), c, []marotte.RunAsk{{
+		AskID: "a1", NodeID: "review", NodePath: []string{"wf_1", "review"}, StepSessionID: "sess_step",
+		Text: "which branch?", TextSource: marotte.RunAskTextAsked,
+	}}, true)
+	c.mu.Unlock()
 
-	body := coldConnectAs(t, h, true).Body.String()
-	if !strings.Contains(body, `"type":"run_input_needed"`) {
-		t.Fatalf("a parked step's question was not replayed, so the run stays parked with "+
-			"nothing on screen to answer it: %q", body)
-	}
-	if !strings.Contains(body, "which branch?") {
-		t.Errorf("the replayed ask carried no question, and no endpoint has one: %q", body)
-	}
 	v3 := coldConnectAs(t, h, false).Body.String()
-	if !strings.Contains(v3, "which branch?") {
-		t.Errorf("the v3 pending_snapshot does not carry the question: %q", v3)
+	if !strings.Contains(v3, `"type":"run_asks"`) || !strings.Contains(v3, "which branch?") {
+		t.Fatalf("the v3 pending_snapshot does not carry the run's asks: %q", v3)
+	}
+	if legacy := coldConnectAs(t, h, true).Body.String(); strings.Contains(legacy, `"type":"run_asks"`) {
+		t.Errorf("a legacy connect carried run_asks, which a v2 bundle cannot decode: %q", legacy)
 	}
 
-	// The claim deleted the entry, so a second connection must not re-offer it.
-	if _, ok := h.runs.asks.takeIfPresent("wf_1", "a1"); !ok {
-		t.Fatal("Setup: the ask could not be claimed")
-	}
-	if after := coldConnectAs(t, h, true).Body.String(); strings.Contains(after, `"type":"run_input_needed"`) {
-		t.Errorf("an answered ask was replayed to a later connection: %q", after)
-	}
-	if after := coldConnectAs(t, h, false).Body.String(); strings.Contains(after, "which branch?") {
-		t.Errorf("an answered ask rode a later v3 pending_snapshot: %q", after)
+	h.runs.releaseLease(t.Context(), "wf_1")
+	if after := coldConnectAs(t, h, false).Body.String(); strings.Contains(after, "which branch?") || strings.Contains(after, `"type":"run_asks"`) {
+		t.Errorf("a run whose lease ended rode a later pending_snapshot: %q", after)
 	}
 }
 

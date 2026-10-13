@@ -497,8 +497,9 @@ export function outcomeLatch(outcome: TurnOutcome | undefined): "done" | "failed
 }
 
 /** Derive the chat tab's activity-dot state. ONE rule, shared by the store effect and the
- *  turn-lifecycle handlers. Order is precedence, and `pendingAsk` is a parameter because
- *  `decision-dock.ts` imports this module. */
+ *  turn-lifecycle handlers. Order is precedence. `input` comes only from `pendingAsk` (the dock's
+ *  decisions and the step questions of the chat's runs, `hasPendingDecision`), a parameter because
+ *  `decision-dock.ts` imports this module; `waiting` only from the chat's own `chat_status`. */
 export type TabDotState = "" | "input" | "failed" | "working" | "waiting" | "done" | "idle";
 
 export function tabStatusFor(s: Session | undefined, pendingAsk = false): TabDotState {
@@ -522,20 +523,13 @@ export function tabStatusFor(s: Session | undefined, pendingAsk = false): TabDot
   return latch === "done" ? "done" : "idle";
 }
 
-/** The pause classes the dot vocabulary distinguishes. A classified value rather than the raw
- *  `pauseReason`, so this module never learns KAS's pause sentences or its node signals:
- *  `run-store.ts` owns that rule and hands the answer over already decided. */
-export type RunPauseClass = "" | "need_input";
-
 /** The same dot vocabulary for a workflow RUN, which has no `Session` behind it. Its own
  *  function rather than a branch in `tabStatusFor` because the two inputs share not one field;
- *  what they share is the OUTPUT vocabulary and precedence. `paused` is `waiting` — stopped, not
- *  finished — EXCEPT for a step parked on a person, which is `input`, the park being the half
- *  that survives a client which never received the card. */
+ *  what they share is the OUTPUT vocabulary and precedence. `paused` is `waiting`, stopped and not
+ *  finished; a step waiting on a person is `pendingAsk`, which `runPendingAsks` decides. */
 export function runStatusFor(
   status: ClassifiedRunStatus | undefined,
   pendingAsk = false,
-  pause: RunPauseClass = "",
 ): TabDotState {
   if (pendingAsk) {
     return "input";
@@ -546,7 +540,7 @@ export function runStatusFor(
     case "running":
       return "working";
     case "paused":
-      return pause === "need_input" ? "input" : "waiting";
+      return "waiting";
     case "failed":
     case "aborted":
       return "failed";

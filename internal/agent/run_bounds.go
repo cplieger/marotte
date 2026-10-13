@@ -386,7 +386,12 @@ func (rs *Runs) finishTermination(
 ) error {
 	// Read before the cancel: the terminal frame it can cause may release the lease (forgetBounds) before the call returns.
 	l, held := rs.lease(workflowID)
-	if err := rs.cancelRPC(ctx, workflowID, stop, carrier); err != nil {
+	var err error
+	rs.stopSerialized(ctx, workflowID, func(sctx context.Context) bool {
+		err = rs.cancelRPC(sctx, workflowID, stop, carrier)
+		return err == nil
+	})
+	if err != nil {
 		rs.releaseTermination(workflowID)
 		rs.retryTermination(workflowID, reason, stop)
 		return err
@@ -503,9 +508,7 @@ func (rs *Runs) forgetBounds(ctx context.Context, workflowID string) {
 	rs.clearHeals(workflowID)
 	rs.clearCancelRetries(workflowID)
 	rs.clearExecuted(workflowID)
-	// A finished run waits on nobody; announce rather than drop, or a dead card hides the chat's later asks.
-	rs.settleAsksForRun(ctx, workflowID)
-	// The run's request-shaped asks live in the decision tracker; silent, since SettledByMoot is for run asks.
+	// The run's request-shaped asks live in the decision tracker; its step asks ended with the lease.
 	rs.clearRunPerms(workflowID)
 }
 
@@ -559,11 +562,11 @@ func (rs *Runs) clearEnd(workflowID string) {
 
 // An already-hosted retry may still carry its old deadline; one after a terminal frame needs a new
 // lease, named from KAS's run list for the single-run rule. The slot stays zero.
-func (rs *Runs) rearmRetried(ctx context.Context, workflowID, recipe string) {
+func (rs *Runs) rearmRetried(ctx context.Context, workflowID string, o *runOrigin) {
 	rs.clearEnd(workflowID)
 	rs.disarmDeadline(ctx, workflowID)
 	if _, held := rs.lease(workflowID); !held {
-		rs.grantLease(ctx, workflowID, recipe, manualLaunch())
+		rs.grantRetryLease(ctx, workflowID, o)
 	}
 	rs.armDeadline(ctx, workflowID)
 }
@@ -790,6 +793,7 @@ func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *ma
 		if _, held := rs.lease(f.WorkflowID); !held {
 			rs.grantLease(ctx, f.WorkflowID, f.WorkflowName, runStartLaunch(chatID))
 		}
+		rs.recordParentSession(ctx, f.WorkflowID, f.ParentSessionID)
 		rs.armDeadline(ctx, f.WorkflowID)
 	}
 	rs.translate.HandleRunStart(ctx, chatID, msg)
@@ -876,9 +880,10 @@ type lifecycleFrame struct {
 			Kind string `json:"kind"`
 		} `json:"pause"`
 	} `json:"finalState"`
-	WorkflowID   string            `json:"workflowId"`
-	WorkflowName string            `json:"workflowName"`
-	Status       marotte.RunStatus `json:"status"`
+	WorkflowID      string            `json:"workflowId"`
+	WorkflowName    string            `json:"workflowName"`
+	ParentSessionID string            `json:"parentSessionId"`
+	Status          marotte.RunStatus `json:"status"`
 }
 
 func decodeLifecycleFrame(msg *marotte.RPCResponse) lifecycleFrame {

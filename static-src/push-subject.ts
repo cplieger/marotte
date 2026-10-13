@@ -1,6 +1,7 @@
 // The subject vocabulary: what a notification is ABOUT, and the one place a subject becomes a
 // destination. DOM-free, so the service worker compiles it too.
 
+import { split } from "@cplieger/keyenc";
 import type { Route } from "./route-path.js";
 
 /** marotte.PRSubjectPrefix. The ONLY TypeScript copy. */
@@ -8,6 +9,12 @@ const PR_SUBJECT_PREFIX = "pr:";
 
 /** marotte.RunSubjectPrefix. The ONLY TypeScript copy. */
 const RUN_SUBJECT_PREFIX = "run:";
+
+/** marotte.RunAskSubjectPrefix. The ONLY TypeScript copy. */
+const RUN_ASK_SUBJECT_PREFIX = "runask:";
+
+/** The tag prefix every subject's tag carries. */
+const TAG_PREFIX = "marotte:";
 
 /** The two subject fields as they travel (marotte.PushSubject, push_types.go:83-86). */
 interface PushWire {
@@ -37,6 +44,9 @@ export type PushTarget =
   | { readonly kind: "chat"; readonly chatID: string }
   | { readonly kind: "pr"; readonly identity: string }
   | { readonly kind: "run"; readonly workflowID: string }
+  /** One step's wait in a run: `position` is the ask's id without its turn marker
+   *  (`run-asks.ts` `runAskPosition`), `workflowID` its first component, "" when it is hashed. */
+  | { readonly kind: "run_ask"; readonly workflowID: string; readonly position: string }
   | { readonly kind: "workspace" };
 
 export function parsePushTarget(wire: PushWire): PushTarget {
@@ -46,6 +56,9 @@ export function parsePushTarget(wire: PushWire): PushTarget {
   }
   if (wire.subject.startsWith(RUN_SUBJECT_PREFIX)) {
     return runTarget(wire.subject.slice(RUN_SUBJECT_PREFIX.length));
+  }
+  if (wire.subject.startsWith(RUN_ASK_SUBJECT_PREFIX)) {
+    return runAskTarget(wire.subject.slice(RUN_ASK_SUBJECT_PREFIX.length));
   }
   return chatTarget(wire.chatId);
 }
@@ -60,6 +73,10 @@ export function pushTargetRoute(target: PushTarget): Route {
       return { kind: "git", tab: "prs", pr: target.identity };
     case "run":
       return { kind: "run", id: target.workflowID };
+    case "run_ask":
+      return target.workflowID === ""
+        ? { kind: "chat", id: "" }
+        : { kind: "run", id: target.workflowID };
     case "workspace":
       return { kind: "chat", id: "" };
   }
@@ -70,21 +87,29 @@ export function pushTargetRoute(target: PushTarget): Route {
 export function pushTargetTag(target: PushTarget): string {
   switch (target.kind) {
     case "chat":
-      return `marotte:${target.chatID}`;
+      return `${TAG_PREFIX}${target.chatID}`;
     case "pr":
-      return `marotte:${PR_SUBJECT_PREFIX}${target.identity}`;
+      return `${TAG_PREFIX}${PR_SUBJECT_PREFIX}${target.identity}`;
     case "run":
-      return `marotte:${RUN_SUBJECT_PREFIX}${target.workflowID}`;
+      return `${TAG_PREFIX}${RUN_SUBJECT_PREFIX}${target.workflowID}`;
+    case "run_ask":
+      return `${TAG_PREFIX}${RUN_ASK_SUBJECT_PREFIX}${target.position}`;
     case "workspace":
       return "marotte";
   }
 }
 
-/** Whether a tag names a chat or a run, the two targets a pending set speaks for. A pull
+/** The step-question target a tag names, or undefined for any other tag. */
+export function runAskOfTag(tag: string): (PushTarget & { kind: "run_ask" }) | undefined {
+  const prefix = `${TAG_PREFIX}${RUN_ASK_SUBJECT_PREFIX}`;
+  return tag.startsWith(prefix) ? runAskTarget(tag.slice(prefix.length)) : undefined;
+}
+
+/** Whether a tag names a chat, a run or a step's wait, the targets a pending set speaks for. A pull
  *  request's banner has no ask to be settled by and is never retracted, and the constant tag is
  *  the cue this page showed for no one chat. */
 export function settleableTag(tag: string): boolean {
-  return tag.startsWith("marotte:") && !tag.startsWith(`marotte:${PR_SUBJECT_PREFIX}`);
+  return tag.startsWith(TAG_PREFIX) && !tag.startsWith(`${TAG_PREFIX}${PR_SUBJECT_PREFIX}`);
 }
 
 /** A pull request's identity as both halves of the app spell it: the subject key minus its
@@ -107,6 +132,18 @@ export function chatTarget(chatID: string): PushTarget {
 
 export function runTarget(workflowID: string): PushTarget {
   return workflowID === "" ? { kind: "workspace" } : { kind: "run", workflowID };
+}
+
+/** A step's wait from its position. A position over keyenc's component budget is hashed and names
+ *  no run, so it keeps its own tag and routes nowhere. */
+export function runAskTarget(position: string): PushTarget & { kind: "run_ask" } {
+  let workflowID = "";
+  try {
+    workflowID = split(position)[0] ?? "";
+  } catch {
+    // A hashed or malformed position: the tag still matches exactly.
+  }
+  return { kind: "run_ask", workflowID, position };
 }
 
 /** The target for an ASK, which carries both an envelope chat id and a run attribution. The run

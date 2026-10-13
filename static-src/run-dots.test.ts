@@ -2,7 +2,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { signal } from "@cplieger/reactive";
-import type { RunNode, RunState } from "./run-store.js";
+import type { RunState } from "./run-store.js";
 
 const m = {
   painted: [] as { id: string; status: string }[],
@@ -89,31 +89,6 @@ vi.mock("./run-store.js", () => ({
   invalidateRun: vi.fn((id: string) => {
     m.invalidated.push(id);
   }),
-  // The REAL rule, not a stub. The dot's yellow arm is decided by it, so a stub answering `false`
-  // would leave the park case green while production could not tell a park on a person from a
-  // network blip.
-  isNeedInputPark: (state: RunState | undefined): boolean => {
-    if (state?.status !== "paused") {
-      return false;
-    }
-    const reason = state.pauseReason;
-    const byReason =
-      reason === "Step requested user input via send_message." ||
-      (reason !== undefined &&
-        reason.startsWith("Step '") &&
-        (reason.endsWith("' is waiting for user input.") ||
-          reason.endsWith("' is waiting for the next user message.")));
-    const parked = (function find(n: RunNode | undefined): boolean {
-      if (n === undefined) {
-        return false;
-      }
-      if (n.status === "paused" && n.completionSignal === "need_input") {
-        return true;
-      }
-      return (n.children ?? []).some(find);
-    })(state.root);
-    return byReason || parked;
-  },
 }));
 
 const { trackRun, refreshRunDots, installRunDotSubscriber } = await import("./run-dots.js");
@@ -445,111 +420,36 @@ describe("an unanswered ask outranks the wire's own word for the run", () => {
   );
 });
 
-// The PARK, which is the row the liveness split added.
+// The one store decides: a park reads amber only while the run-asks store holds an ask for the run.
 
-describe("the dot separates a park on a PERSON from every other pause", () => {
-  it("reads a needInput park as amber with no card in the dock", () => {
-    expect(runStatusFor("paused", false, "need_input")).toBe("input");
-  });
-
-  it("reads every other pause as the still blue dot", () => {
-    expect(runStatusFor("paused", false, "")).toBe("waiting");
-  });
-
-  // The gate, and the reason the class is consulted only in the `paused` arm: a reason can outlive
-  // the pause it described, so a finished run must not be painted as one waiting on somebody.
-  it.each([...RUN_STATUSES.filter((s: string) => s !== "paused"), "cancelled"])(
-    "ignores the pause class on %s",
-    (status: string) => {
-      const cls = classifyRunStatus(status);
-      expect(runStatusFor(cls, false, "need_input")).toBe(runStatusFor(cls, false, ""));
-    },
-  );
-});
-
-describe("a run parked on a person paints amber through the effect", () => {
-  it("paints amber off the pause reason alone", () => {
+describe("a parked run's dot follows the store's asks, never the park itself", () => {
+  it("paints a need-input park blue while no ask is held for it", () => {
     m.tabs.add("run:wf_park");
     m.states.set("wf_park", {
       workflowId: "wf_park",
       status: "paused",
       pauseReason: "Step 'review' is waiting for user input.",
+      root: {
+        nodeId: "root",
+        type: "sequence",
+        status: "paused",
+        children: [
+          { nodeId: "review", type: "step", status: "paused", completionSignal: "need_input" },
+        ],
+      },
     });
     trackRun("wf_park");
-    // No ask was pushed into the mocked dock, which is the whole case: a client that connected
-    // after the question was raised holds nothing to join.
-    expect(m.asks).toEqual([]);
-    expect(m.painted).toEqual([{ id: "run:wf_park", status: "input" }]);
+    expect(m.painted).toEqual([{ id: "run:wf_park", status: "waiting" }]);
   });
 
-  // The arm no pause reason can reach.
-  it("paints amber for a park inside a parallel branch", () => {
-    m.tabs.add("run:wf_branch");
-    m.states.set("wf_branch", {
-      workflowId: "wf_branch",
-      status: "paused",
-      pauseReason: "Parallel 'phase1' is waiting on branch 'verify'.",
-      root: {
-        nodeId: "root",
-        type: "sequence",
-        status: "paused",
-        children: [
-          {
-            nodeId: "phase1",
-            type: "parallel",
-            status: "paused",
-            children: [
-              {
-                nodeId: "verify",
-                type: "step",
-                status: "paused",
-                completionSignal: "need_input",
-              },
-            ],
-          },
-        ],
-      },
-    });
-    trackRun("wf_branch");
-    expect(m.asks).toEqual([]);
-    expect(m.painted).toEqual([{ id: "run:wf_branch", status: "input" }]);
-  });
-
-  // The negative, and it is the same wrapper sentence: KAS emits it whenever the paused branch
-  // carries no detail, which covers an interruption and a permanent failure as well. Amber here
-  // would tell a reader to answer a question nobody asked.
-  it("paints a branch parked for another cause blue", () => {
-    m.tabs.add("run:wf_branch_blip");
-    m.states.set("wf_branch_blip", {
-      workflowId: "wf_branch_blip",
-      status: "paused",
-      pauseReason: "Parallel 'phase1' is waiting on branch 'verify'.",
-      root: {
-        nodeId: "root",
-        type: "sequence",
-        status: "paused",
-        children: [
-          {
-            nodeId: "phase1",
-            type: "parallel",
-            status: "paused",
-            children: [{ nodeId: "verify", type: "step", status: "paused" }],
-          },
-        ],
-      },
-    });
-    trackRun("wf_branch_blip");
-    expect(m.painted).toEqual([{ id: "run:wf_branch_blip", status: "waiting" }]);
-  });
-
-  it("paints a transient pause blue, not amber", () => {
-    m.tabs.add("run:wf_blip");
-    m.states.set("wf_blip", {
-      workflowId: "wf_blip",
-      status: "paused",
-      pauseReason: "Transient connection error (EAI_AGAIN); the run is paused and can be resumed.",
-    });
-    trackRun("wf_blip");
-    expect(m.painted).toEqual([{ id: "run:wf_blip", status: "waiting" }]);
+  it("turns it amber once the store holds the step's ask, and blue again once it leaves", () => {
+    m.tabs.add("run:wf_asked");
+    m.states.set("wf_asked", { workflowId: "wf_asked", status: "paused" });
+    trackRun("wf_asked");
+    m.asks.push({ chatID: "run:wf_asked", runID: "wf_asked" });
+    dockChanged();
+    m.asks.length = 0;
+    dockChanged();
+    expect(m.painted.map((p) => p.status)).toEqual(["waiting", "input", "waiting"]);
   });
 });

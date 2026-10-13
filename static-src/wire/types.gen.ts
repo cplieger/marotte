@@ -48,6 +48,12 @@ export type RefusalCode = "changed" | "too_large" | "binary" | "invalid_file_id"
 
 export type RegistryFailureReason = "rate_limited" | "rejected" | "unavailable";
 
+export type RunAskBlocker = "stopping" | "pending" | "recovering" | "branch_running" | "unsettled" | "settling";
+
+export type RunAskRefusal = "ask_stopping" | "ask_pending" | "ask_stale" | "ask_gone" | "ask_recovering" | "ask_branch_running" | "ask_unsettled" | "ask_settling" | "ask_unreadable" | "ask_unnamed" | "run_answer_pending";
+
+export type RunAskText = "asked" | "last_message" | "unseen";
+
 export type RunNodeStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted" | "skipped";
 
 export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "loop_iteration" | "watch_poll" | "paused" | "steps_queued";
@@ -2042,8 +2048,8 @@ export interface PartialResult {
 /**
  * PendingSnapshotPayload is the payload for type="pending_snapshot": every
  * pending item across every chat, each a complete ServerEvent envelope of one
- * of the five ask kinds (permission_needed, elicitation_needed,
- * user_input_needed, run_input_needed, steer_queued). Raw so the client can
+ * of the five kinds (permission_needed, elicitation_needed, user_input_needed,
+ * steer_queued, and one run_asks per run marotte answers for). Raw so the client can
  * re-dispatch each through the decoder it already has for that type; the
  * stamp rides the snapshot's own envelope, never an item.
  */
@@ -2582,6 +2588,44 @@ export interface RunAnswerRequest {
 }
 
 /**
+ * RunAsk is one step waiting on a person, in run_asks and under `open_asks` in GET /api/runs/{id}.
+ * AskID changes with every turn of the step marotte sees start, so an answer typed against an
+ * older one is refused as stale. Blocked is absent when an answer may go; CanContinue is true on a blocked ask too, and
+ * Continue is offered only when it is true and Blocked is absent.
+ */
+export interface RunAsk {
+  ask_id: string;
+  node_id: string;
+  step_session_id: string;
+  agent_name: string;
+  text: string;
+  text_source: RunAskText;
+  blocked?: RunAskBlocker;
+  asked_at?: string;
+  node_path: string[];
+  can_continue: boolean;
+}
+
+/**
+ * RunAsksPayload is the payload for type="run_asks": every step of one run waiting on a person, as
+ * marotte last read it, replacing the client's previous snapshot of that run whole. A newer
+ * (epoch, seq) wins and an older or equal one is dropped. Reachable false means the asks are the
+ * last ones read, or none when the run was not read this epoch, so a client closes nothing on it.
+ * The run's final frame has no asks and Reachable true; a run a pending_snapshot no longer names
+ * has ended.
+ */
+export interface RunAsksPayload {
+  workflow_id: string;
+  /** ChatID is the launching chat, else `run:<workflowId>`, as the envelope's. */
+  chat_id: string;
+  epoch: string;
+  /** Asks is never null. */
+  asks: RunAsk[];
+  seq: number;
+  reachable: boolean;
+}
+
+/**
  * RunControlsResponse is GET /api/runs/{id}/controls's reply: what may be done to
  * one run, and why not for the rest.
  * //
@@ -2647,54 +2691,6 @@ export interface RunFinishedPayload {
 }
 
 /**
- * RunInputNeededPayload is the payload for type="run_input_needed": a workflow STEP
- * asked a question and the run is parked until somebody answers it. It carries its
- * payload rather than invalidating because the text is on no endpoint — KAS parks
- * with one fixed literal in `state.pauseReason` — and WorkflowID is the IDENTITY,
- * since the envelope's chat id is empty for a parentless run. Question MAY BE
- * EMPTY: the ask registry is in memory, so a restart loses the text while the run
- * stays parked. No Severity field — only `warning` parks a run.
- */
-export interface RunInputNeededPayload {
-  workflow_id: string;
-  /**
- * AskID is composed with keyenc so a separator inside one part cannot forge it.
- * The after-restart spelling must be DETERMINISTIC, or the read path that mints it
- * on every refetch stacks duplicate cards.
- */
-  ask_id: string;
-  /**
- * NodeID addresses the asking step. MAY BE EMPTY — KAS sets it only for a step
- * caller, and a run blocked by an unattributable ask is still blocked. No
- * NodePath: the step-session registry holds no path, so a live ask could not.
- */
-  node_id: string;
-  /**
- * StepSessionID is the ANSWER ADDRESS: KAS reroutes a `session/prompt` sent to the
- * paused step's session into the run. Empty when the notify frame carried no
- * caller session, and the answer path resolves it from a fresh `inspect`.
- */
-  step_session_id: string;
-  agent_name: string;
-  question: string;
-  asked_at: string;
-}
-
-/**
- * RunInputSettledPayload is the payload for type="run_input_settled": the ask is
- * answered or waived, so every surface still showing it must retire the card.
- * //
- * Its own event rather than a member of decision_settled, which is keyed by an
- * int64 JSON-RPC request id: a run ask has no open request, so sharing that payload
- * would give one shape two mutually exclusive identity keys.
- */
-export interface RunInputSettledPayload {
-  workflow_id: string;
-  ask_id: string;
-  settled_by: SettledBy;
-}
-
-/**
  * RunLaunchRequest is POST /api/runs's body: launch one recipe, PARENTLESS.
  * //
  * Source is `_kiro/workflow/listRecipes`' own value verbatim. The server
@@ -2714,20 +2710,6 @@ export interface RunLaunchRequest {
 export interface RunLaunchedResponse {
   workflow_id: string;
   name: string;
-}
-
-/**
- * RunOpenAsk is one unanswered ask of a run, under `open_asks` in GET /api/runs/{id}, so an agent
- * handed a deferral can read the question. Question has no omitempty: after a restart a reconciled
- * ask's text is legitimately "", which must not read as absent. node_id is a step's whole address
- * here.
- */
-export interface RunOpenAsk {
-  ask_id: string;
-  question: string;
-  node_id?: string;
-  agent_name?: string;
-  asked_at?: string;
 }
 
 /**
@@ -2847,6 +2829,8 @@ export interface RunStepEnd {
 export interface RunStepMessageRequest {
   text: string;
   message_id: string;
+  /** AskID, when set, is the ask the words answer: a different ask at the path refuses them as stale. */
+  ask_id?: string;
 }
 
 /**
@@ -2868,6 +2852,20 @@ export interface RunStepStart {
   /** StartedAt is RFC 3339. */
   started_at: string;
   ended: boolean;
+}
+
+/**
+ * RunStepStatusRequest is POST /api/runs/{id}/step's body: Status `completed` or `failed` marks the
+ * step at NodeID, `running` is Continue without answering.
+ */
+export interface RunStepStatusRequest {
+  node_id: string;
+  status: string;
+  /**
+ * AskID, on a Continue, is the ask the card shows; a Continue naming none is refused when more
+ * than one ask shares NodeID, as a fan-out's executions do.
+ */
+  ask_id?: string;
 }
 
 /**

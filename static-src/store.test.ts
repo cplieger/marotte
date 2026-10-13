@@ -874,8 +874,7 @@ describe("runStatusFor", () => {
     expect(runStatusFor("completed", true)).toBe("input");
   });
 
-  it("reads a park on a person as input and any other park as waiting", () => {
-    expect(runStatusFor("paused", false, "need_input")).toBe("input");
+  it("reads a park as waiting, whatever it parked on", () => {
     expect(runStatusFor("paused")).toBe("waiting");
   });
 

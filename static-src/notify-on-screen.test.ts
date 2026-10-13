@@ -1,7 +1,8 @@
 // A notification's target is on screen only while the page is visible AND its own tab is active.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { chatTarget, runTarget } from "./push-subject.js";
+import { join } from "@cplieger/keyenc";
+import { chatTarget, runAskTarget, runTarget } from "./push-subject.js";
 import type * as Tabs from "./tabs.js";
 
 const tabs = vi.hoisted(() => ({ active: "", ids: new Map<string, string>() }));
@@ -34,6 +35,13 @@ describe("targetOnScreen", () => {
   it("is true for the active run's tab", () => {
     tabs.active = "tab-wf1";
     expect(targetOnScreen(runTarget("wf1"))).toBe(true);
+  });
+
+  it("is true for a step question while its run's tab is active", () => {
+    const wait = runAskTarget(join("wf1", join("wf1", "review"), "sess-1"));
+    expect(targetOnScreen(wait)).toBe(false);
+    tabs.active = "tab-wf1";
+    expect(targetOnScreen(wait)).toBe(true);
   });
 
   it("is false while the page is hidden, whatever tab is active", () => {

@@ -458,9 +458,35 @@ type ACPSessionUpdateBase struct {
 		Kiro struct {
 			// Workflow is the discriminator the dispatcher classifies a step on.
 			Workflow *ACPWorkflowMeta `json:"workflow"`
-			Replay   bool             `json:"replay"`
+			// TurnStart and TurnEnd are the session's turn bracket on session_info_update.
+			TurnStart *bool `json:"turnStart"`
+			TurnEnd   *struct {
+				StopReason string `json:"stopReason"`
+			} `json:"turnEnd"`
+			Replay bool `json:"replay"`
 		} `json:"kiro"`
 	} `json:"_meta"`
+}
+
+// TurnEdge is the turn bracket a session/update frame carries, if any.
+type TurnEdge int
+
+// The two brackets and their absence.
+const (
+	TurnEdgeNone TurnEdge = iota
+	TurnEdgeStart
+	TurnEdgeEnd
+)
+
+// Edge reports the turn bracket this frame carries.
+func (b *ACPSessionUpdateBase) Edge() TurnEdge {
+	switch {
+	case b.Meta.Kiro.TurnStart != nil && *b.Meta.Kiro.TurnStart:
+		return TurnEdgeStart
+	case b.Meta.Kiro.TurnEnd != nil:
+		return TurnEdgeEnd
+	}
+	return TurnEdgeNone
 }
 
 // contentTypeContent is the ACP content-block type discriminator value "content".

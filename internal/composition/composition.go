@@ -177,7 +177,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// BEFORE anything can launch: relying on the scheduler's first tick would make
 	// correctness a property of the tick interval. On the APP's lifetime, never Build's,
 	// or the sweep outlives App.Shutdown; backgrounded because a boot must not wait.
-	stopOrphanSweep := startOrphanSweep(appCtx, h.Runs().SweepOrphaned, kiro.installed)
+	stopOrphanSweep := startOrphanSweep(appCtx, h.Runs().BootSweep, kiro.installed)
 
 	startScheduleRunner(appCtx, scheduleStore, h.Runs())
 

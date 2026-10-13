@@ -159,6 +159,23 @@ func (s *Store) SetFirstAbsentAt(ctx context.Context, workflowID string, at time
 	return s.persistLocked(ctx)
 }
 
+// SetParentSessionID records the run's parent session; ErrNotFound when no lease holds the run.
+func (s *Store) SetParentSessionID(ctx context.Context, workflowID, session string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l, ok := s.leases[workflowID]
+	if !ok {
+		return ErrNotFound
+	}
+	if l.ParentSessionID == session {
+		return nil
+	}
+	l.ParentSessionID = session
+	s.leases[workflowID] = l
+	s.version++
+	return s.persistLocked(ctx)
+}
+
 // SetDeadline re-stamps a lease's deadline, or parks it with the zero time.
 // The error reports DURABILITY, not the mutation: when the lease exists the in-memory
 // deadline is set regardless. ErrNotFound is the one error meaning nothing was stored.

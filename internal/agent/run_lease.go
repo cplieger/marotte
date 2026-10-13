@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -27,9 +28,25 @@ type launchOrigin struct {
 	origin runlease.Origin
 }
 
-// manualLaunch is the Run button and retry: attended, no schedule row. The slot depends on the resolved recipe, so launch sets it.
+// manualLaunch is the Run button and a parentless run's retry: attended, no schedule row. The slot depends on the resolved recipe, so launch sets it.
 func manualLaunch() launchOrigin {
 	return launchOrigin{origin: runlease.OriginManual}
+}
+
+// retryLaunch leases a retried run as its gate found it: an agent's run keeps its launching chat,
+// whose bridge hosts the retry and is the one its asks and verbs are read through.
+func retryLaunch(o *runOrigin) launchOrigin {
+	if o.parent.chat == "" {
+		return manualLaunch()
+	}
+	return launchOrigin{origin: runlease.OriginAgent, chatID: string(o.parent.chat)}
+}
+
+// grantRetryLease leases a retried run from its gate's origin, parent session included: the
+// retry's run_start finds the lease held and adds no chat to it.
+func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOrigin) {
+	rs.grantLease(ctx, workflowID, o.recipe, retryLaunch(o))
+	rs.recordParentSession(ctx, workflowID, o.parent.session)
 }
 
 // scheduledLaunch carries the schedule row for outcomes and the slot the run may not outlive.
@@ -131,15 +148,50 @@ func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o lau
 		slog.Error("run lease not persisted; this run's envelope will not survive a restart",
 			"workflow_id", workflowID, "recipe", recipe, "origin", o.origin, "error", err)
 	}
+	// Named from the grant on, so every pending_snapshot names every run marotte answers for.
+	rs.cellFor(workflowID)
 }
 
-// Idempotent: the terminal frame and cancel both release.
+// Idempotent: the terminal frame and cancel both release. Every path that ends a run comes here, so
+// the run's asks end here too, after the store forgot the lease.
 func (rs *Runs) releaseLease(ctx context.Context, workflowID string) {
 	if workflowID == "" {
 		return
 	}
 	if err := rs.leaseStore().Release(ctx, workflowID); err != nil {
 		slog.Warn("run lease not released on disk", "workflow_id", workflowID, "error", err)
+	}
+	rs.endAsks(ctx, workflowID)
+}
+
+// recordParentSession stamps the run's parent session on its lease, the one host its asks are read through.
+func (rs *Runs) recordParentSession(ctx context.Context, workflowID, session string) {
+	if session == "" {
+		return
+	}
+	l, held := rs.lease(workflowID)
+	if !held || l.ParentSessionID == session {
+		return
+	}
+	if err := rs.leaseStore().SetParentSessionID(ctx, workflowID, session); err != nil {
+		slog.Warn("a run's parent session was not recorded on disk", "workflow_id", workflowID, "error", err)
+	}
+}
+
+// leaseOrigin routes a verb on a leased run from its lease alone, never a run-list read on the
+// utility, which can stamp the utility as the run's owner. A lease with no recorded parent session
+// names no host, so the verb is refused. Only a run with no lease is looked up in the run list.
+func (rs *Runs) leaseOrigin(ctx context.Context, workflowID string) runOrigin {
+	l, held := rs.lease(workflowID)
+	if !held {
+		return rs.originOf(ctx, workflowID)
+	}
+	if l.ParentSessionID == "" {
+		return runOrigin{err: fmt.Errorf("%w: the run's lease records no launching session", errLaunchSessionUnavailable)}
+	}
+	return runOrigin{
+		parent: runParent{chat: marotte.ChatID(l.ChatID), session: l.ParentSessionID},
+		recipe: l.Recipe,
 	}
 }
 

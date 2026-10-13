@@ -382,8 +382,8 @@
   color: var(--c-text-tertiary);
 }
 
-/* Only rendered when the question text did not survive a restart, which is
-   exactly when the card needs to say why it looks empty. */
+/* Why the card's Send is off, or that marotte could not read the run just
+   now; hidden while there is nothing to say. */
 .run-input-note {
   margin: 0;
   font-size: var(--fs-sm);

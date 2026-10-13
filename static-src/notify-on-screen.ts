@@ -10,6 +10,7 @@ function tabOf(target: PushTarget): string {
     case "chat":
       return tabIdFor("chat", target.chatID);
     case "run":
+    case "run_ask":
       return tabIdFor("run", target.workflowID);
     case "pr":
     case "workspace":

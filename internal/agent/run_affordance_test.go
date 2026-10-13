@@ -184,7 +184,7 @@ func refusableVerb(verb string) bool {
 	return false
 }
 
-// TestChatForSession_ResolvesARunsParentWithoutALiveBridge pins that hostBridgeChat needs a live bridge, wrong for a refusal.
+// TestChatForSession_ResolvesARunsParentWithoutALiveBridge pins that hostBridge needs a live bridge, wrong for a refusal.
 func TestChatForSession_ResolvesARunsParentWithoutALiveBridge(t *testing.T) {
 	seed := func(t *testing.T, sessions ...string) *Runtime {
 		t.Helper()

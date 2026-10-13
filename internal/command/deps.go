@@ -114,6 +114,11 @@ type sessionClaims interface {
 	SessionClaimed(ctx context.Context, sessionID string) (claimed, complete bool)
 }
 
+// stepSessions answers whether a KAS session is a workflow step's, read from KAS's session list.
+type stepSessions interface {
+	StepSessionOf(ctx context.Context, sessionID string) (workflowID string, found bool, err error)
+}
+
 // chatStore is the chat store as the command handlers use it: read the header,
 // mutate it, record a draft and its attachments, delete the chat, and the two
 // log operations a command owns, the rewind's truncate and the attachment count.
@@ -757,6 +762,8 @@ type Roles struct {
 	SpecApprovals SpecApprovals
 	// Tangents resolves a tangent's parent and reads its summary for a merge.
 	Tangents TangentAccess
+	// StepSessions refuses resuming a workflow step's session as a chat. Nil checks nothing.
+	StepSessions stepSessions
 	// Workspace is last for fieldalignment (a trailing length word stops
 	// the leading-pointer count early).
 	Workspace Workspace

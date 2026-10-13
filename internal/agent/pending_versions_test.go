@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
 )
 
@@ -73,31 +74,27 @@ func TestPendingPermsTracker_EveryMutationMovesTheSharedCounter(t *testing.T) {
 	mustHold(t, v, "EndOrigin with nothing to retire", func() { tr.endOrigin(origin) })
 }
 
-func TestPendingRunAsks_EveryMutationMovesTheSharedCounter(t *testing.T) {
+func TestRunAsks_EveryPublishMovesTheSharedCounter(t *testing.T) {
 	v := &subject.Versions{}
-	var r pendingRunAsks
-	r.versions = v
-	mustMove(t, v, "Add", func() { r.add(askOf("c1", "wf-1", "a1", "n1")) })
-	mustHold(t, v, "Add of a duplicate", func() { r.add(askOf("c1", "wf-1", "a1", "n1")) })
-	mustMove(t, v, "TakeIfPresent", func() {
-		if _, ok := r.takeIfPresent("wf-1", "a1"); !ok {
-			t.Fatal("TakeIfPresent = false, want the ask")
-		}
-	})
-	mustHold(t, v, "TakeIfPresent on a missing ask", func() { r.takeIfPresent("wf-1", "a1") })
-	r.add(askOf("c1", "wf-1", "a2", "n2"))
-	mustMove(t, v, "TakeNode", func() {
-		if got := r.takeNode("wf-1", "n2"); len(got) != 1 {
-			t.Fatalf("TakeNode returned %d asks, want 1", len(got))
-		}
-	})
-	mustHold(t, v, "TakeNode with nothing to claim", func() { r.takeNode("wf-1", "n2") })
-	r.add(askOf("c1", "wf-1", "a3", "n3"))
-	mustMove(t, v, "TakeRun", func() { r.takeRun("wf-1") })
-	mustHold(t, v, "TakeRun with nothing to claim", func() { r.takeRun("wf-1") })
-	r.add(askOf("c1", "wf-2", "a4", "n4"))
-	mustMove(t, v, "ClearChat", func() { r.clearChat("c1") })
-	mustHold(t, v, "ClearChat with nothing to drop", func() { r.clearChat("c1") })
+	rs := &Runs{}
+	rs.asks.versions = v
+	if err := rs.leaseStore().Put(t.Context(), &runlease.Lease{WorkflowID: "wf-1", Origin: runlease.OriginManual}); err != nil {
+		t.Fatalf("Setup: lease: %v", err)
+	}
+	var c *askCell
+	mustMove(t, v, "a leased run's first trigger", func() { c = rs.cellFor("wf-1") })
+	mustHold(t, v, "a second trigger", func() { rs.cellFor("wf-1") })
+	asks := []marotte.RunAsk{{AskID: "a1", NodePath: []string{"root", "n1"}}}
+	publish := func() {
+		c.mu.Lock()
+		rs.publishLocked(t.Context(), c, asks, true)
+		c.mu.Unlock()
+	}
+	mustMove(t, v, "a changed snapshot", publish)
+	mustHold(t, v, "an unchanged snapshot", publish)
+	mustMove(t, v, "the lease's release", func() { rs.releaseLease(t.Context(), "wf-1") })
+	mustHold(t, v, "a second release", func() { rs.releaseLease(t.Context(), "wf-1") })
+	mustHold(t, v, "a trigger after the release", func() { rs.cellFor("wf-1") })
 }
 
 func TestSteerRecords_EveryMutationMovesTheSharedCounter(t *testing.T) {
@@ -121,12 +118,15 @@ func TestPendingStores_ShareOneCounter(t *testing.T) {
 	v := &subject.Versions{}
 	tr := newPendingPermsTracker()
 	tr.versions = v
-	var r pendingRunAsks
-	r.versions = v
+	rs := &Runs{}
+	rs.asks.versions = v
+	if err := rs.leaseStore().Put(t.Context(), &runlease.Lease{WorkflowID: "wf-1", Origin: runlease.OriginManual}); err != nil {
+		t.Fatalf("Setup: lease: %v", err)
+	}
 	b := newSteerRecords()
 	b.versions = v
 	tr.add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c1", marotte.PermissionNeededPayload{RequestID: 1}), nil)
-	r.add(askOf("c1", "wf-1", "a1", "n1"))
+	rs.cellFor("wf-1")
 	b.SteerWaiting("c1", &marotte.SteerQueuedPayload{SteerID: "s1"})
 	if got := pendingVersion(t, v); got != "3" {
 		t.Errorf("pending version after one mutation per store = %q, want \"3\"", got)

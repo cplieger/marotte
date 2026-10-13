@@ -17,24 +17,19 @@ import {
   hasLiveRunForChat,
   openRunEntry,
   openRunTurn,
-  runChatID,
   runLabelOf,
   sealRunEntry,
 } from "../run-store.js";
-import { submitLabelled } from "../submit.js";
 import { isBroken } from "../turn-severity.js";
 import { payloadOf } from "../turns.js";
 import { isThinking } from "../store.js";
 import { trackRun } from "../run-dots.js";
-import {
-  pushDecision,
-  collapseSettledRunInput,
-  dropRunAsks,
-  dropTurnDecisions,
-} from "../decision-dock.js";
+import { dropRunRequests, dropTurnDecisions } from "../decision-dock.js";
+import { applyRunAsks, runAskPosition } from "../run-asks.js";
+import { dropRunAskDrafts, registerRunAskVerbs } from "../run-input.js";
 import { answerRunInput, continueRunStep } from "../actions/runs.js";
-import { closeNotificationsFor } from "../notify.js";
-import { runTarget } from "../push-subject.js";
+import { submitLabelled } from "../submit.js";
+import { closeRunAsksExcept } from "../notify.js";
 
 // Toasts at each end of a run. A START only for a SCHEDULED run (manual and agent launches already
 // have attention); a COMPLETION for any run. `scheduled` must come from the server: a manual launch
@@ -108,9 +103,10 @@ onSSE("run_finished", (chatID, p) => {
     noteRunLive(p.workflow_id, chatID, false);
   } else {
     noteRunSettled(p.workflow_id);
-    // A run that is over cannot still be waiting on a person. Which asks that
-    // reaches, and why each kind needs it, is `dropRunAsks`' own doc.
-    dropRunAsks(p.workflow_id);
+    // A run that is over cannot still be waiting on a person; its step questions leave with the
+    // server's final `run_asks`, its requests and answer drafts here.
+    dropRunRequests(p.workflow_id);
+    dropRunAskDrafts(p.workflow_id);
     // The ORPHANS: a step's ask with an EMPTY `run_id` is reachable only by the turn-scoped sweep,
     // whose `turn_closed` trigger never fires for a step-driven turn. Gate 1 spares the turn of a user
     // who prompted meanwhile (a live JSON-RPC request); gate 2 spares a still-running sibling run's
@@ -183,15 +179,27 @@ function forRun(p: { workflow_id?: string }): string {
   return p.workflow_id ?? "";
 }
 
-/** Ask the launching agent to answer the run's open question, through `submit.ts` (the owner of
- *  what Send means). THROWS on refusal, re-enabling the card's button; submit.ts surfaces it. Names
- *  the RUN and the answer body's two unguessable fields; embeds neither the question nor the
- *  (opaque, large) ask id. */
+registerRunAskVerbs({
+  answer: async (workflowID, askID, text) =>
+    (await answerRunInput.dispatch({ workflowID, ask_id: askID, text }).outcome).status ===
+    "success",
+  continueStep: async (workflowID, nodeID, askID) => {
+    await continueRunStep.dispatch({ workflowID, nodeID, askID }).outcome;
+  },
+  defer: deferToParentAgent,
+});
+
+/** Ask the launching agent to answer, through `submit.ts` (the owner of what Send means). Rejects
+ *  when the prompt was refused. Names the run and both answer routes; embeds neither the question
+ *  nor the (opaque, large) ask id, which the agent reads fresh. */
 async function deferToParentAgent(chatID: string, workflowID: string): Promise<void> {
   const text =
     `Please answer the open question on workflow run ${workflowID}.\n` +
-    `Read it with GET /api/runs/${workflowID} (its open_asks), then ` +
-    `POST /api/runs/${workflowID}/answer with {"ask_id": "<that ask's id>", "text": "<your answer>"}.`;
+    `Read it with GET /api/runs/${workflowID}: each entry of its open_asks names the waiting ` +
+    `step's step_session_id and ask_id. Answer either with send_message to that step session, ` +
+    `or with POST /api/runs/${workflowID}/answer and ` +
+    `{"ask_id": "<that ask's id>", "text": "<your answer>"}.\n` +
+    `A 409 with code ask_gone means the step already has its answer; do not retry it.`;
   if (
     (await submitLabelled(
       chatID,
@@ -203,48 +211,25 @@ async function deferToParentAgent(chatID: string, workflowID: string): Promise<v
   }
 }
 
-// A workflow STEP asked a person and its run is parked; a payload, not an invalidation, because
-// KAS's pause reason says nothing of the question. The ENVELOPE's chat id puts one Decision in the
-// parent tab's dock and the run tab's. Its notification is the server's `notification` frame.
-onSSE("run_input_needed", (chatID, p) => {
-  trackRun(p.workflow_id);
-  // After a reload the replayed ask can be the FIRST frame for a run; without the chat the footer
-  // link opens the tab top-level. noteRunChat refuses the synthetic `run:<workflowId>`.
-  noteRunChat(p.workflow_id, chatID);
-  // The chat-parented discriminator, and it needs no wire field: noteRunChat refuses
-  // both "" and the synthetic `run:` prefix, so a non-empty answer here means this
-  // run was launched from a conversation AND names it.
-  const parentChat = runChatID(p.workflow_id);
-  // Live but PARKED: `executing` false, so the row's mark withholds. `parentChat` already refused
-  // both spellings of "no launching chat".
-  noteRunLive(p.workflow_id, parentChat, false);
-  pushDecision({
-    kind: "run_input",
-    chatID,
-    runID: p.workflow_id,
-    askID: p.ask_id,
-    payload: p,
-    // A conditional spread because `exactOptionalPropertyTypes` refuses an explicit
-    // `defer: undefined`, and the card reads PRESENCE rather than a flag.
-    ...(parentChat === "" ? {} : { defer: () => deferToParentAgent(parentChat, p.workflow_id) }),
-    submit: (text) => {
-      if (text === null) {
-        // By NODE, which the step-status verb takes (it 400s without one, so the card hides the button).
-        // The server settles the ask when the status write lands.
-        void continueRunStep.dispatch({ workflowID: p.workflow_id, nodeID: p.node_id });
-        return;
-      }
-      void answerRunInput.dispatch({ workflowID: p.workflow_id, ask_id: p.ask_id, text });
-    },
-  });
-});
-
-// Its twin, and it does the same job `decision_settled` does for the three
-// request-shaped asks: every surface is offered the ask and only the first answer
-// is accepted, so something has to retire the cards that lost.
-onSSE("run_input_settled", (_chatID, p) => {
-  collapseSettledRunInput(p.workflow_id, p.ask_id, p.settled_by);
-  void closeNotificationsFor(runTarget(p.workflow_id));
+// Which steps of one run wait on a person, replacing the store's snapshot of that run whole. A
+// reachable snapshot is the whole truth about the run's waits, so a banner for a wait it does not
+// hold is stale wherever it was shown.
+onSSE("run_asks", (chatID, p) => {
+  if (!applyRunAsks(p)) {
+    return;
+  }
+  if (p.asks.length > 0) {
+    trackRun(p.workflow_id);
+    // After a reload a snapshot can be the FIRST frame for a run; without the chat the footer
+    // link opens the tab top-level. noteRunChat refuses the synthetic `run:<workflowId>`.
+    noteRunChat(p.workflow_id, chatID);
+  }
+  if (p.reachable) {
+    void closeRunAsksExcept(
+      p.workflow_id,
+      new Set(p.asks.map((a) => runAskPosition(p.workflow_id, a))),
+    );
+  }
 });
 
 // The one lifecycle frame carrying CONTENT: applied to the cached tree, refetching only when it

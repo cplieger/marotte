@@ -73,3 +73,29 @@ func TestACPKiroBlock_UserMessageTagIsNestedUnderMetaKiro(t *testing.T) {
 		}
 	})
 }
+
+// Edge reads the bracket off `_meta.kiro` of the update: turnStart opens only when true, and any
+// turnEnd block closes.
+func TestACPSessionUpdateBase_Edge(t *testing.T) {
+	for name, tc := range map[string]struct {
+		raw  string
+		want TurnEdge
+	}{
+		"turn_start":           {`{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_start","turnStart":true}}}`, TurnEdgeStart},
+		"turnStart false":      {`{"sessionUpdate":"session_info_update","_meta":{"kiro":{"turnStart":false}}}`, TurnEdgeNone},
+		"turn_end":             {`{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_end","turnEnd":{"stopReason":"end_turn"}}}}`, TurnEdgeEnd},
+		"turn_end, no reason":  {`{"sessionUpdate":"session_info_update","_meta":{"kiro":{"turnEnd":{}}}}`, TurnEdgeEnd},
+		"another sub-block":    {`{"sessionUpdate":"session_info_update","_meta":{"kiro":{"contextUsage":{"percentage":12}}}}`, TurnEdgeNone},
+		"on the update itself": {`{"sessionUpdate":"session_info_update","turnStart":true,"turnEnd":{}}`, TurnEdgeNone},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var b ACPSessionUpdateBase
+			if err := json.Unmarshal([]byte(tc.raw), &b); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got := b.Edge(); got != tc.want {
+				t.Errorf("Edge() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

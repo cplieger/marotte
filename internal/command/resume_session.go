@@ -9,6 +9,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -19,7 +20,7 @@ import (
 // cmdResumeSession creates a chat bound to an existing KAS session so the
 // stored conversation can be opened, and returns the chat plus its tab.
 // The id is minted here when the envelope carries none.
-func cmdResumeSession(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+func cmdResumeSession(ctx context.Context, mem *Membership, steps stepSessions, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.ResumeSessionCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
@@ -32,6 +33,9 @@ func cmdResumeSession(ctx context.Context, mem *Membership, cmd *marotte.ClientC
 	name := cmp.Or(p.Name, marotte.DefaultChatName)
 	if len(name) > marotte.MaxChatNameBytes {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	if err := refuseStepSession(ctx, steps, p.SessionID); err != nil {
+		return nil, err
 	}
 
 	// Minting per attempt would leave two chats bound to one KAS session.
@@ -52,4 +56,28 @@ func cmdResumeSession(ctx context.Context, mem *Membership, cmd *marotte.ClientC
 	slog.Info("session resumed into a new chat",
 		"chat_id", opened.Chat.ID, "acp_session", p.SessionID, "tab", opened.Subject.ID)
 	return openedResponse(&opened, nil), nil
+}
+
+// ErrStepSession refuses resuming a workflow step's session as a chat: the step's run still owns it.
+var ErrStepSession = errors.New("this session belongs to a workflow step")
+
+// refuseStepSession fails closed: a step session loaded into a chat would answer the step's run
+// from a second resident, so an unreadable session list refuses too, retryably.
+func refuseStepSession(ctx context.Context, steps stepSessions, sessionID string) error {
+	if steps == nil {
+		return nil
+	}
+	workflowID, isStep, err := steps.StepSessionOf(ctx, sessionID)
+	switch {
+	case err != nil:
+		slog.Warn("could not read whether a session is a workflow step's, so it was not resumed",
+			"acp_session", sessionID, "error", err)
+		return StatusError(http.StatusServiceUnavailable,
+			errors.New("could not check this session just now; try again in a moment"))
+	case isStep:
+		slog.Info("refused resuming a workflow step's session as a chat",
+			"acp_session", sessionID, "workflow_id", workflowID)
+		return StatusError(http.StatusConflict, ErrStepSession)
+	}
+	return nil
 }

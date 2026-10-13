@@ -176,8 +176,8 @@ const (
 	SettledByUnattended SettledBy = "unattended"
 	// SettledByMoot means NOBODY answered and nobody had to: the question stopped being
 	// answerable. User and unattended both ASSERT an answer, so retiring a discarded ask under
-	// one of them would tell the reader their question was decided. A run ask carries it,
-	// and so does a request KAS withdrew itself (interaction_resolved, outcome cancelled).
+	// one of them would tell the reader their question was decided. A request KAS withdrew
+	// itself (interaction_resolved, outcome cancelled) carries it.
 	SettledByMoot SettledBy = "moot"
 	// SettledByEnded means nobody answered and nobody now can: the bridge the ask arrived on
 	// ended, and an answer may only go back on that bridge. Separate from moot because the
@@ -567,8 +567,8 @@ const ChatStatusWaitingOnUser = "waiting_on_user"
 
 // PendingSnapshotPayload is the payload for type="pending_snapshot": every
 // pending item across every chat, each a complete ServerEvent envelope of one
-// of the five ask kinds (permission_needed, elicitation_needed,
-// user_input_needed, run_input_needed, steer_queued). Raw so the client can
+// of the five kinds (permission_needed, elicitation_needed, user_input_needed,
+// steer_queued, and one run_asks per run marotte answers for). Raw so the client can
 // re-dispatch each through the decoder it already has for that type; the
 // stamp rides the snapshot's own envelope, never an item.
 type PendingSnapshotPayload struct {

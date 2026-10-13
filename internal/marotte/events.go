@@ -142,14 +142,8 @@ const (
 	EventRunStarted  EventType = "run_started"
 	EventRunProgress EventType = "run_progress"
 	EventRunFinished EventType = "run_finished"
-	// EventRunInputNeeded is a workflow STEP asking a person a question. It carries its payload
-	// because the question is on no endpoint: KAS parks the run with a fixed pauseReason. Keyed to
-	// the launching chat, else to `run:<workflowId>`.
-	EventRunInputNeeded EventType = "run_input_needed"
-	// EventRunInputSettled retires a run ask on every surface that did not answer
-	// it, the run-shaped twin of decision_settled. Separate from that event
-	// because a run ask is identified by a string, not by an int64 request id.
-	EventRunInputSettled EventType = "run_input_settled"
+	// EventRunAsks is one run's steps waiting on a person, replaced whole (RunAsksPayload).
+	EventRunAsks         EventType = "run_asks"
 	EventForgesChanged   EventType = "forges_changed"
 	EventGovernanceState EventType = "governance_state"
 	EventHooksChanged    EventType = "hooks_changed"

@@ -24,13 +24,7 @@ import {
   get,
   setActive,
 } from "./store.js";
-import type {
-  ChatHeader,
-  PermissionNeededPayload,
-  RunInputNeededPayload,
-  Session,
-  TabKind,
-} from "./types.js";
+import type { ChatHeader, PermissionNeededPayload, Session, TabKind } from "./types.js";
 import type { Entry, EntryToolCall, TurnOutcome } from "./wire/types.gen.js";
 import type { TabDotStatus } from "./tab-view.js";
 import type { ClassifiedRunStatus } from "./run-status.js";
@@ -1200,11 +1194,9 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
     const painted = new Set<string>();
     for (const status of [undefined, ...(Object.keys(ALL_STATUSES) as ClassifiedRunStatus[])]) {
       for (const ask of [false, true]) {
-        for (const pause of ["", "need_input"] as const) {
-          const s = runStatusFor(status, ask, pause);
-          if (s !== "") {
-            painted.add(s);
-          }
+        const s = runStatusFor(status, ask);
+        if (s !== "") {
+          painted.add(s);
         }
       }
     }
@@ -1872,32 +1864,29 @@ describe("a run's wait ending releases the launching chat's dot", () => {
   const PARENT = "c-parent";
   const RUN = "wf-1";
 
-  function runInput(over: Partial<RunInputNeededPayload> = {}): RunInputNeededPayload {
-    return {
-      workflow_id: RUN,
-      ask_id: "ask-1",
-      node_id: "review",
-      step_session_id: "sess-1",
-      agent_name: "reviewer",
-      question: "Ship it?",
-      asked_at: "2026-09-04T10:00:00Z",
-      ...over,
-    };
-  }
+  let askSeq = 0;
 
-  /** The step's question, filed exactly as `handlers/run.ts` files it for a
-   *  chat-parented run: the LAUNCHING chat's id as the queue key, the run stamped
-   *  on the decision. */
-  function runAsk(over: Partial<RunInputNeededPayload> = {}) {
-    const payload = runInput(over);
-    return {
-      kind: "run_input" as const,
-      chatID: PARENT,
-      runID: payload.workflow_id,
-      askID: payload.ask_id,
-      payload,
-      submit: vi.fn(),
-    };
+  /** The server's snapshot of one run launched from PARENT: `askIDs` names the waiting steps. */
+  async function snapshot(runID: string, askIDs: string[]): Promise<void> {
+    const { applyRunAsks } = await import("./run-asks.js");
+    askSeq++;
+    applyRunAsks({
+      workflow_id: runID,
+      chat_id: PARENT,
+      epoch: "e1",
+      seq: askSeq,
+      reachable: true,
+      asks: askIDs.map((id) => ({
+        ask_id: id,
+        node_id: "review",
+        node_path: [runID, "review"],
+        step_session_id: `${runID}-sess`,
+        agent_name: "reviewer",
+        text: "Ship it?",
+        text_source: "asked",
+        can_continue: false,
+      })),
+    });
   }
 
   /** A step's `_kiro/userInput` question, which reaches the client through the
@@ -1939,22 +1928,10 @@ describe("a run's wait ending releases the launching chat's dot", () => {
     return el;
   }
 
-  /** Answer the card on screen in a dock. `:scope >` skips an answered card still on screen for the
-   *  length of its phase. */
-  function answerIn(hostEl: HTMLElement, text: string): void {
-    const card = hostEl.querySelector<HTMLElement>(":scope > .dock-card");
-    const box = card?.querySelector<HTMLTextAreaElement>(".dock-ask-text") ?? null;
-    if (box !== null) {
-      box.value = text;
-    }
-    [...(card?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
-      .find((b) => b.textContent === "Send answer")
-      ?.click();
-  }
-
   beforeEach(async () => {
     const dock = await import("./decision-dock.js");
     dock._resetForTest();
+    (await import("./run-asks.js"))._resetRunAsksForTest();
     document.body.replaceChildren();
     // The launching turn ended when the run was created — `run_workflow` returns as
     // soon as the run exists — so this is the state the parent has to come back to,
@@ -1963,84 +1940,70 @@ describe("a run's wait ending releases the launching chat's dot", () => {
   });
 
   // The sub-tab answers through its composer (run-composer.ts), so its dock draws no card; the
-  // parent tab's card is the one a click settles.
-  it("clears the parent when the parent tab answers the step's question", async () => {
-    const { pushDecision, hasPendingDecision, runPendingAsks } = await import("./decision-dock.js");
+  // parent tab's card is the one shown, and the server's next snapshot is what retires it, whichever
+  // surface answered.
+  it("clears the parent once the server's snapshot no longer holds the step's question", async () => {
+    const { hasPendingDecision, runPendingAsks } = await import("./decision-dock.js");
     const runHost = await mountRunHost();
     const chatHost = await mountChatHost();
-    pushDecision(runAsk());
+    await snapshot(RUN, ["ask-1"]);
 
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
     expect(runPendingAsks(RUN).count).toBe(1);
     expect(runHost.querySelector(":scope > .dock-card")).toBeNull();
+    expect(chatHost.querySelector(":scope > .dock-card")).not.toBeNull();
 
-    answerIn(chatHost, "yes, ship it");
+    await snapshot(RUN, []);
 
     expect(runPendingAsks(RUN).count).toBe(0);
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("done");
   });
 
-  it("clears the parent when another surface settled the ask", async () => {
-    const { pushDecision, hasPendingDecision, runPendingAsks, collapseSettledRunInput } =
-      await import("./decision-dock.js");
-    pushDecision(runAsk());
+  it("clears the parent when a reconnect's pending set no longer names the run", async () => {
+    const { hasPendingDecision, runPendingAsks } = await import("./decision-dock.js");
+    const { dropAllRunAsks } = await import("./run-asks.js");
+    await snapshot(RUN, ["ask-1"]);
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
 
-    // `run_input_settled`: a second device answered, so every surface still
-    // showing the card has to retire it.
-    collapseSettledRunInput(RUN, "ask-1", "user");
+    dropAllRunAsks();
 
     expect(runPendingAsks(RUN).count).toBe(0);
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("done");
   });
 
-  it("clears the parent when the run ENDS still parked on the ask", async () => {
-    const { pushDecision, hasPendingDecision, runPendingAsks, dropRunAsks } =
+  it("clears a step's user-input question when the run ends", async () => {
+    const { pushDecision, hasPendingDecision, dropRunRequests } =
       await import("./decision-dock.js");
-    pushDecision(runAsk());
-    expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
-
-    // A terminal run waits on no one, and `dropTurnDecisions` exempts run-scoped asks, so only this
-    // drop reaches it.
-    dropRunAsks(RUN);
-
-    expect(runPendingAsks(RUN).count).toBe(0);
-    expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("done");
-  });
-
-  it("clears a step's user-input question when the run ends too", async () => {
-    const { pushDecision, hasPendingDecision, dropRunAsks } = await import("./decision-dock.js");
-    // REQUEST-shaped with a `runID`: neither `collapseSettledRunInput` nor `dropTurnDecisions` takes it,
-    // so removal asks "this run's ask, wherever filed".
+    // REQUEST-shaped with a `runID`: `dropTurnDecisions` does not take it, so removal asks "this
+    // run's request, wherever filed".
     pushDecision(stepQuestion(1));
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
 
-    dropRunAsks(RUN);
+    dropRunRequests(RUN);
 
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("done");
   });
 
   it("leaves another chat's own ask alone when a run ends", async () => {
-    const { pushDecision, hasPendingDecision, dropRunAsks } = await import("./decision-dock.js");
+    const { pushDecision, hasPendingDecision, dropRunRequests } =
+      await import("./decision-dock.js");
     // The run-scoped sweep is keyed on the RUN, so a plain chat ask sharing the
     // launching chat's queue is not its business — that one still blocks a turn and
     // still has a card to answer it with.
     pushDecision(stepQuestion(1));
     pushDecision({ ...stepQuestion(2), runID: "" });
 
-    dropRunAsks(RUN);
+    dropRunRequests(RUN);
 
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
   });
 
-  it("leaves a SIBLING run's ask alone when one of the two ends", async () => {
-    const { pushDecision, hasPendingDecision, runPendingAsks, dropRunAsks } =
-      await import("./decision-dock.js");
-    // Two runs share one chat's queue key, so the sweep separates by RUN; a sibling survivor pins that.
-    pushDecision(runAsk());
-    pushDecision(runAsk({ workflow_id: "wf-2", ask_id: "ask-2" }));
+  it("leaves a SIBLING run's question alone when one of the two stops waiting", async () => {
+    const { hasPendingDecision, runPendingAsks } = await import("./decision-dock.js");
+    await snapshot(RUN, ["ask-1"]);
+    await snapshot("wf-2", ["ask-2"]);
 
-    dropRunAsks(RUN);
+    await snapshot(RUN, []);
 
     expect(runPendingAsks(RUN).count).toBe(0);
     expect(runPendingAsks("wf-2").count).toBe(1);
@@ -2053,14 +2016,12 @@ describe("a run's wait ending releases the launching chat's dot", () => {
   it("holds the parent on input for a step question that carries NO run id", async () => {
     const { pushDecision, hasPendingDecision, runPendingAsks, dropTurnDecisions } =
       await import("./decision-dock.js");
-    // The orphan, and the run's own answerable ask, both under the launching chat.
+    // The orphan, and the run's own question, both for the launching chat.
     pushDecision({ ...stepQuestion(1), runID: "" });
-    pushDecision(runAsk());
+    await snapshot(RUN, ["ask-1"]);
     expect(runPendingAsks(RUN).count).toBe(1);
 
-    // The run's own ask settles where the run tab answers it; the orphan stays queued.
-    const { collapseSettledRunInput } = await import("./decision-dock.js");
-    collapseSettledRunInput(RUN, "ask-1", "user");
+    await snapshot(RUN, []);
 
     // Every run surface goes quiet — the sub-tab's dock, the run card's `needs
     // input`, the exec page's alert all read this count — while the parent's dot
@@ -2075,12 +2036,13 @@ describe("a run's wait ending releases the launching chat's dot", () => {
   });
 
   it("refuses an empty run id rather than sweeping every chat's ask", async () => {
-    const { pushDecision, hasPendingDecision, dropRunAsks } = await import("./decision-dock.js");
+    const { pushDecision, hasPendingDecision, dropRunRequests } =
+      await import("./decision-dock.js");
     // `runID` is empty on every ordinary chat ask and the id arrives off the wire,
     // so an empty argument would match the whole store rather than one run.
     pushDecision({ ...stepQuestion(1), runID: "" });
 
-    dropRunAsks("");
+    dropRunRequests("");
 
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
   });
