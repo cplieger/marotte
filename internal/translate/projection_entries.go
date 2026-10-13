@@ -71,6 +71,8 @@ type EntryProjection struct {
 	// carry is the marker filter's withheld tail per lane, carrySay the say it belongs to.
 	carry    map[string]string
 	carrySay map[string]string
+	// minted holds the say ids sayIDFor made up for id-less deltas.
+	minted map[string]bool
 	// calls maps an unsettled tool_call's entry id to the lane its result belongs in,
 	// fixed at the create frame; callOrder is the order the turn's close aborts them
 	// in.
@@ -254,9 +256,10 @@ func (p *EntryProjection) ingestAgentText(raw json.RawMessage, kind marotte.Entr
 		return
 	}
 	sayID := p.sayIDFor(kind, lane, c.Meta.Kiro.MessageID)
-	// Another say, or thinking over text, is a barrier: settle the held carry first so a `[` tail
-	// stays off the next say's head.
-	if held, ok := p.heldSay(lane); ok && (held.id != sayID || held.kind != kind) {
+	// Another message, or thinking over text, is a barrier: settle the held carry first so a `[`
+	// tail stays off the next say's head. A minted say is no evidence of another message
+	// (turnlog.TakeCarry's rule), so its carry joins.
+	if held, ok := p.heldSay(lane); ok && (held.kind != kind || (held.id != sayID && !p.minted[held.id])) {
 		p.sealLane(lane)
 	}
 	text := c.Content.Text
@@ -283,7 +286,9 @@ func (p *EntryProjection) sayIDFor(kind marotte.EntryKind, lane, sayID string) s
 	if held, ok := p.heldSay(lane); ok && held.kind == kind {
 		return held.id
 	}
-	return p.newID()
+	id := p.newID()
+	p.minted[id] = true
+	return id
 }
 
 // heldSay is the say a lane is still accumulating: its open entry, or the say a carry
@@ -593,6 +598,7 @@ func (p *EntryProjection) startTurn(source marotte.TurnOpenSourceName, prompt *m
 	p.sayText = map[string]string{}
 	p.carry = map[string]string{}
 	p.carrySay = map[string]string{}
+	p.minted = map[string]bool{}
 	p.laneOpen = map[string]laneSay{}
 	p.calls = map[string]string{}
 	p.callOrder = nil

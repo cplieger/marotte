@@ -44,10 +44,10 @@
       "terminal": true,
       "sites": [
         "internal/chat/entrylog.go:958",
-        "internal/translate/projection_entries.go:654",
+        "internal/translate/projection_entries.go:660",
         "internal/translate/streaming_tools.go:388",
         "internal/translate/wire_enums.go:35",
-        "internal/turnlog/turnlog.go:552"
+        "internal/turnlog/turnlog.go:601"
       ]
     },
     {
@@ -137,7 +137,7 @@
       "status": "failed"
     },
     {
-      "site": "internal/translate/projection_entries.go:654",
+      "site": "internal/translate/projection_entries.go:660",
       "form": "status_field",
       "status": "aborted"
     },
@@ -217,7 +217,7 @@
       "status": "pending"
     },
     {
-      "site": "internal/turnlog/turnlog.go:552",
+      "site": "internal/turnlog/turnlog.go:601",
       "form": "status_field",
       "status": "aborted"
     }
