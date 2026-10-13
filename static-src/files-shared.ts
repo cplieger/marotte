@@ -1,6 +1,10 @@
 import { el } from "@cplieger/reactive";
 
 export const FB_ROW = "fb-row";
+/** A row mounted past the `FB_ENTER_ROWS`th row a render pass mounts carries this and skips the entry animation (19-files.css). */
+export const FB_NO_ENTER_ATTR = "data-no-enter";
+/** Newly mounted rows, counted in item order, that a render pass animates. On a fresh render those are the first rows of the list (3,800 CSS pixels at the 38px fine-pointer row); a later pass that mounts a single row animates it wherever it sorts. */
+export const FB_ENTER_ROWS = 100;
 export const FB_NOTICE = "fb-notice";
 export const FB_NAME = "fb-name";
 export const FB_NAME_LINK = "fb-name-link";

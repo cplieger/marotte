@@ -823,7 +823,10 @@ func pinGolden(t *testing.T, path string, v any, regen, consumer string) {
 // contentWalk is a contents-mode walk over needle, driven below the handler.
 func contentWalk(ctx context.Context, needle string, caseSensitive bool) (*searchWalk, *contentVisitor) {
 	v := newContentVisitor(ctx, needle, caseSensitive)
-	return &searchWalk{ctx: ctx, v: v, maxDirs: maxSearchDirs, ignoreRules: true, caseSensitive: caseSensitive}, v
+	walk := newSearchWalk(ctx, v, modeContents)
+	walk.ignoreRules = true
+	walk.caseSensitive = caseSensitive
+	return walk, v
 }
 
 var bothModes = []string{"names", "contents"}

@@ -273,6 +273,13 @@
      `sibling-index()` is 1-based, so the `- 1` is what makes the first row 0. */
   animation-delay: calc(min(sibling-index() - 1, 8) * 30ms);
 
+  /* files.ts marks every row past the hundredth that a render pass mounts. A viewport
+     taller than 100 rows (3 800px at the 38px tier) would show them unanimated: the
+     price of not starting thousands of entry animations at once on a large listing. */
+  &[data-no-enter] {
+    animation: none;
+  }
+
   /* The last row drops the separator's COLOUR, not the edge itself. `none` would
      zero the used width, and since 70-selection.css reserves a 1px edge on all
      four sides of every row, that would make the last row 1px shorter than its
