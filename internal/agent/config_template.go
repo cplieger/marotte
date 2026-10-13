@@ -225,16 +225,7 @@ func flattenTemplateModels(choices []kasConfigChoice) []marotte.SessionModel {
 		if c.Value == "" || modeltext.Hidden(c.Description) {
 			continue
 		}
-		out = append(out, marotte.SessionModel{
-			ID:                 c.Value,
-			Name:               c.Name,
-			Description:        c.Description,
-			RateMultiplier:     c.Meta.Kiro.RateMultiplier,
-			HasEffort:          c.Meta.Kiro.HasEffort,
-			DefaultEffortLevel: c.Meta.Kiro.DefaultEffortLevel,
-			ThinkingToggleable: c.Meta.Kiro.ThinkingToggleable,
-			ThinkingDefaultOff: c.Meta.ThinkingDefaultOff(),
-		})
+		out = append(out, c.Meta.SessionModel(c.Value, c.Name, c.Description))
 	}
 	return out
 }

@@ -5,6 +5,7 @@ package command
 // record must survive until the tangent is minted.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -190,7 +191,8 @@ func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marott
 			}
 			c.Model = parent.Model
 			c.CurrentModeID = parent.CurrentModeID
-			c.Effort = parent.Effort
+			// The level in force: KAS's fork drops it, so the tangent's load must assert it.
+			c.Effort = cmp.Or(parent.Effort, parent.EffortActive)
 			// Inherited like the model, mode and effort: dropping the review gate would let a
 			// supervised chat's tangent write files without asking.
 			c.SupervisedMode = parent.SupervisedMode

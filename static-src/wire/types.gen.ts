@@ -3142,10 +3142,7 @@ export interface SessionModel {
   id: string;
   name: string;
   description?: string;
-  /**
- * DefaultEffortLevel is this MODEL's default level. Never seed Chat.Effort from it:
- * that would pin the default to every later session through StartOpts.Effort.
- */
+  /** DefaultEffortLevel is this MODEL's default level, the last rung of a chat's first level on it. */
   default_effort_level?: string;
   rate_multiplier?: number;
   /**

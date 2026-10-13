@@ -273,23 +273,20 @@ func writeEffortSeed(t *testing.T, dir string, seed map[string]string) {
 	}
 }
 
-// effortFor prefers the chat's choice, then the seed for its own model, and refuses a
-// malformed level; a well-formed unknown seed flows. No catalog is loaded here.
-func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
+// firstEffortFor reads the seed for its own model, refusing a malformed level; a well-formed
+// unknown seed flows. No catalog is loaded here.
+func TestFirstEffortFor_ReadsTheSeedForItsOwnModel(t *testing.T) {
 	tests := map[string]struct {
-		chatEffort string
-		chatModel  string
-		seed       map[string]string
-		want       string
+		model string
+		seed  map[string]string
+		want  string
 	}{
-		"chat choice wins over the seed":        {chatEffort: "max", chatModel: "m1", seed: map[string]string{"m1": "low"}, want: "max"},
-		"seed answers for an unset chat":        {chatEffort: "", chatModel: "m1", seed: map[string]string{"m1": "xhigh"}, want: "xhigh"},
-		"no choice and no seed sends none":      {chatEffort: "", chatModel: "m1", want: ""},
-		"a malformed seed level is refused":     {chatEffort: "", chatModel: "m1", seed: map[string]string{"m1": "TURBO"}, want: ""},
-		"a well-formed unknown level flows":     {chatEffort: "", chatModel: "m1", seed: map[string]string{"m1": "none"}, want: "none"},
-		"another model's entry is not this one": {chatEffort: "", chatModel: "m2", seed: map[string]string{"m1": "max"}, want: ""},
-		"a modelless chat never takes a seed":   {chatEffort: "", chatModel: "", seed: map[string]string{"m1": "max"}, want: ""},
-		"the choice survives a seed miss":       {chatEffort: "high", chatModel: "m2", seed: map[string]string{"m1": "max"}, want: "high"},
+		"the model's seed answers":              {model: "m1", seed: map[string]string{"m1": "xhigh"}, want: "xhigh"},
+		"no seed sends none":                    {model: "m1", want: ""},
+		"a malformed seed level is refused":     {model: "m1", seed: map[string]string{"m1": "TURBO"}, want: ""},
+		"a well-formed unknown level flows":     {model: "m1", seed: map[string]string{"m1": "none"}, want: "none"},
+		"another model's entry is not this one": {model: "m2", seed: map[string]string{"m1": "max"}, want: ""},
+		"a modelless chat never takes a seed":   {model: "", seed: map[string]string{"m1": "max"}, want: ""},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -300,18 +297,16 @@ func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 			h, _, _ := newTestHub()
 			h.coord.lifecycle.configDir = dir
 
-			got := h.coord.effortFor(t.Context(), &marotte.Chat{ID: "c1", Effort: test.chatEffort, Model: test.chatModel})
-
-			if got != test.want {
-				t.Errorf("effortFor(chat=%q, model=%q, last_effort_by_model=%v) = %q, want %q",
-					test.chatEffort, test.chatModel, test.seed, got, test.want)
+			if got := h.coord.firstEffortFor(t.Context(), test.model); got != test.want {
+				t.Errorf("firstEffortFor(%q, last_effort_by_model=%v) = %q, want %q",
+					test.model, test.seed, got, test.want)
 			}
 		})
 	}
 }
 
 // A pick on one model must not retract another model's remembered level.
-func TestEffortFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
+func TestEffortSeedFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"m1": "max", "m2": "low"})
 	h, _, _ := newTestHub()
@@ -321,22 +316,6 @@ func TestEffortFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
 		if got := h.coord.effortSeedFor(t.Context(), model); got != want {
 			t.Errorf("effortSeedFor(%q) = %q, want %q — each model keeps its own remembered level", model, got, want)
 		}
-		if got := h.coord.effortFor(t.Context(), &marotte.Chat{ID: "c-" + model, Model: model}); got != want {
-			t.Errorf("effortFor(chat on %q) = %q, want %q — each model keeps its own remembered level", model, got, want)
-		}
-	}
-}
-
-// With no choice and no seed, effortFor resolves the model's catalog default, not "".
-func TestEffortFor_FallsBackToTheModelsCatalogDefault(t *testing.T) {
-	h, _, _ := newTestHub()
-	h.coord.lifecycle.configDir = t.TempDir()
-	h.coord.catalog.SetModels([]marotte.SessionModel{{ID: "m1", DefaultEffortLevel: "high"}})
-
-	got := h.coord.effortFor(t.Context(), &marotte.Chat{ID: "c1", Model: "m1"})
-
-	if got != "high" {
-		t.Errorf("effortFor(chat on m1, no choice and no seed) = %q, want high — the model's own default_effort_level is the last rung", got)
 	}
 }
 
@@ -360,7 +339,7 @@ func TestSessionEffort_CapsAHighTierOnADefaultOffModel(t *testing.T) {
 			h.coord.catalog.SetModels([]marotte.SessionModel{{ID: "m1", ThinkingToggleable: true, ThinkingDefaultOff: tc.defaultOff}})
 			rec := &marotte.Chat{ID: "c1", Model: "m1", Effort: "max", Thinking: tc.thinking, EffortLevels: five}
 
-			if got := h.coord.sessionEffort(t.Context(), rec); got != tc.want {
+			if got := h.coord.sessionEffort(rec); got != tc.want {
 				t.Errorf("sessionEffort(Effort max, Thinking %q, defaultOff %v) = %q, want %q",
 					tc.thinking, tc.defaultOff, got, tc.want)
 			}
@@ -368,8 +347,8 @@ func TestSessionEffort_CapsAHighTierOnADefaultOffModel(t *testing.T) {
 	}
 }
 
-// EffortForSwitch resolves against the target model: its seed, else its workspace catalog default.
-func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
+// firstEffortFor resolves against the model: its seed, else its workspace catalog default.
+func TestFirstEffortFor_SeedThenModelDefault(t *testing.T) {
 	catalog := []marotte.SessionModel{
 		{ID: "m1", DefaultEffortLevel: "high"},
 		{ID: "m2", DefaultEffortLevel: "medium"},
@@ -394,29 +373,24 @@ func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
 			h.coord.lifecycle.configDir = dir
 			h.coord.catalog.SetModels(catalog)
 
-			got := h.coord.effortForSwitch(t.Context(), test.target)
-
-			if got != test.want {
-				t.Errorf("EffortForSwitch(target=%q, last_effort_by_model=%v) = %q, want %q — the chat's own choice must never leak into a switch",
+			if got := h.coord.firstEffortFor(t.Context(), test.target); got != test.want {
+				t.Errorf("firstEffortFor(target=%q, last_effort_by_model=%v) = %q, want %q",
 					test.target, test.seed, got, test.want)
 			}
 		})
 	}
 }
 
-// The seed is a fallback, never written onto the chat record.
-func TestEffortFor_DoesNotWriteTheSeedOntoTheChat(t *testing.T) {
+// An open session is held to the record's level only: the seed is another chat's last pick.
+func TestSessionEffort_NeverReadsTheSeed(t *testing.T) {
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"m1": "max"})
 	h, _, _ := newTestHub()
 	h.coord.lifecycle.configDir = dir
-	chat := &marotte.Chat{ID: "c1", Model: "m1"}
+	h.coord.catalog.SetModels([]marotte.SessionModel{{ID: "m1", DefaultEffortLevel: "high"}})
 
-	if got := h.coord.effortFor(t.Context(), chat); got != "max" {
-		t.Fatalf("effortFor = %q, want max", got)
-	}
-	if chat.Effort != "" {
-		t.Errorf("chat.Effort = %q, want it left empty; the seed is resolved per spawn, not persisted", chat.Effort)
+	if got := h.coord.sessionEffort(&marotte.Chat{ID: "c1", Model: "m1"}); got != "" {
+		t.Errorf("sessionEffort(chat on m1 holding no level) = %q, want none: neither the seed nor the default is this chat's", got)
 	}
 }
 
@@ -542,11 +516,15 @@ func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 }
 
 // A landed switch is one model_switched entry plus a header taking the pick: pending_model
-// cleared, old tier dropped, usage reset to the new context size.
+// cleared, the old tier replaced by the switch's, usage reset to the new context size.
 func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	finishedTurn(t, h, "c1")
+	// Held as applyPendingModel holds it, so the finished turn's own pending-model apply cannot
+	// land the pick bridgeless between the stage and the switch.
+	lc := h.coord.turns.lifecycleFor("c1")
+	lc.switchMu.Lock()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
@@ -558,10 +536,10 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 
 	h.coord.persistModelSwitch(ctx, "c1",
 		marotte.EntryModelSwitched{From: "m-old", To: "m-new", Effort: "high"}, 1234)
+	lc.switchMu.Unlock()
 
 	entries := logOf(t, cs, "c1")
 	switches := switchesOf(t, entries)
-	// The tier travels on the entry, the only record of it once the header clears its copy.
 	if len(switches) != 1 || switches[0] != (marotte.EntryModelSwitched{From: "m-old", To: "m-new", Effort: "high"}) {
 		t.Errorf("model_switched entries = %+v, want one {From: m-old, To: m-new, Effort: high}", switches)
 	}
@@ -573,8 +551,9 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 	if !ok {
 		t.Fatal("the chat vanished")
 	}
-	if c.Model != "m-new" || c.PendingModel != "" || c.Effort != "" {
-		t.Errorf("header after the switch = {Model %q, PendingModel %q, Effort %q}, want {m-new, \"\", \"\"}",
+	// The switch's level stays on the record, so a later door re-sends it rather than the moving seed.
+	if c.Model != "m-new" || c.PendingModel != "" || c.Effort != "high" {
+		t.Errorf("header after the switch = {Model %q, PendingModel %q, Effort %q}, want {m-new, \"\", high}",
 			c.Model, c.PendingModel, c.Effort)
 	}
 	if c.Usage.ContextSize != 1234 || c.Usage.Credits != 0 {
@@ -1029,7 +1008,7 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 			})
 
 			since := h.bus.fanout.Position().Head
-			h.coord.persistNewSessionMetadata(t.Context(), "c1", br)
+			h.coord.persistNewSessionMetadata(t.Context(), "c1", br, firstLevel{})
 
 			// The record always holds the mode the session is really in.
 			c, _ := cs.Get(t.Context(), "c1")
@@ -1322,7 +1301,7 @@ func TestLoad_ASavedModelIsJudgedAgainstTheServedCatalogue(t *testing.T) {
 			h, _, _ := newTestHub()
 			rec := &marotte.Chat{Name: "A", Model: "m-saved", Effort: "max", ServedModelIDs: tc.served}
 
-			sent, _, _, _ := h.coord.sessionChoices(t.Context(), "c1", rec, "")
+			sent := h.coord.sessionChoices(t.Context(), "c1", rec, "").model
 			_, _ = applyLoadedSessionFacts(rec, &fakeBridge{catalog: tc.catalog}, "")
 
 			if sent != tc.wantSent {
@@ -1496,7 +1475,7 @@ func TestPersistNewSessionMetadata_RenamesASuccessorOfAUserNamedChat(t *testing.
 			return true
 		})
 
-		h.coord.persistNewSessionMetadata(t.Context(), "c1", br)
+		h.coord.persistNewSessionMetadata(t.Context(), "c1", br, firstLevel{})
 
 		br.mu.Lock()
 		params, renamed := br.lastParams[marotte.MethodSessionRename]

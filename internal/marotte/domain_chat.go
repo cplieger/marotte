@@ -318,10 +318,12 @@ type SessionModel struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	// DefaultEffortLevel is this MODEL's default level. Never seed Chat.Effort from it:
-	// that would pin the default to every later session through StartOpts.Effort.
-	DefaultEffortLevel string  `json:"default_effort_level,omitempty"`
-	RateMultiplier     float64 `json:"rate_multiplier,omitempty"`
+	// DefaultEffortLevel is this MODEL's default level, the last rung of a chat's first level on it.
+	DefaultEffortLevel string `json:"default_effort_level,omitempty"`
+	// ThinkingOffEffortCap is the tier KAS runs xhigh and max at on this model while thinking is
+	// off (CapEffortForThinkingOff over its tiers), empty when none is lower. Server-side only.
+	ThinkingOffEffortCap string  `json:"-"`
+	RateMultiplier       float64 `json:"rate_multiplier,omitempty"`
 	// HasEffort reports whether this model offers effort tiers. KAS silently drops a
 	// level sent to a tierless model (`auto`), so the effort row hides.
 	HasEffort bool `json:"has_effort,omitempty"`
@@ -341,6 +343,8 @@ type ModelChoiceMeta struct {
 		DefaultThinkingEnabled *bool `json:"defaultThinkingEnabled"`
 		// DefaultEffortLevel is the tier this MODEL defaults to.
 		DefaultEffortLevel string `json:"defaultEffortLevel"`
+		// EffortLevels are the model's tier ids, lowest first.
+		EffortLevels []string `json:"effortLevels"`
 		// RateMultiplier is the model's credit cost relative to the cheapest one.
 		RateMultiplier float64 `json:"rateMultiplier"`
 		// HasEffort reports whether the model offers reasoning-effort tiers.
@@ -350,9 +354,33 @@ type ModelChoiceMeta struct {
 	} `json:"kiro"`
 }
 
-// ThinkingDefaultOff reads a choice's defaultThinkingEnabled, absent meaning on.
-func (m *ModelChoiceMeta) ThinkingDefaultOff() bool {
+// thinkingDefaultOff reads a choice's defaultThinkingEnabled, absent meaning on.
+func (m *ModelChoiceMeta) thinkingDefaultOff() bool {
 	return m.Kiro.DefaultThinkingEnabled != nil && !*m.Kiro.DefaultThinkingEnabled
+}
+
+// SessionModel is the catalog entry of the choice id, name and description it rides on.
+func (m *ModelChoiceMeta) SessionModel(id, name, description string) SessionModel {
+	return SessionModel{
+		ID: id, Name: name, Description: description,
+		DefaultEffortLevel:   m.Kiro.DefaultEffortLevel,
+		ThinkingOffEffortCap: m.thinkingOffEffortCap(),
+		RateMultiplier:       m.Kiro.RateMultiplier,
+		HasEffort:            m.Kiro.HasEffort,
+		ThinkingToggleable:   m.Kiro.ThinkingToggleable,
+		ThinkingDefaultOff:   m.thinkingDefaultOff(),
+	}
+}
+
+func (m *ModelChoiceMeta) thinkingOffEffortCap() string {
+	levels := make([]SessionEffortLevel, 0, len(m.Kiro.EffortLevels))
+	for _, id := range m.Kiro.EffortLevels {
+		levels = append(levels, SessionEffortLevel{ID: id})
+	}
+	if capped := CapEffortForThinkingOff(string(EffortMax), levels); capped != string(EffortMax) {
+		return capped
+	}
+	return ""
 }
 
 // SessionEffortLevel is one reasoning-effort tier the running session offers, from the
@@ -418,8 +446,10 @@ type Chat struct {
 	Model         string `json:"model,omitempty"`
 	ACPSessionID  string `json:"acp_session_id,omitempty"`
 	CurrentModeID string `json:"current_mode_id,omitempty"`
-	// Effort is the chat's chosen effort level. A plain string so a value another build
-	// wrote decodes rather than throws; the command boundary validates EffortLevel.
+	// Effort is the chat's uncapped effort preference for Model: a pick, its first session's seed,
+	// or a level a session reported. Every session door sends it, capped while thinking is off, so
+	// turning thinking on restores it. A plain string so a value another build wrote decodes
+	// rather than throws; the command boundary validates EffortLevel.
 	Effort string `json:"effort,omitempty"`
 	// Draft is the composer text typed but not sent. NOT on ChatHeader: the autosave
 	// would put it in a chat_updated frame on every debounce, racing the typing tab's
@@ -437,8 +467,7 @@ type Chat struct {
 	// EffortLevels is the effort vocabulary the last session advertised, per chat
 	// because it is THIS chat's model's. EMPTY means the model has no tiers.
 	EffortLevels []SessionEffortLevel `json:"effort_levels,omitempty"`
-	// EffortActive is the level the session is RUNNING at; Effort is what the chat
-	// CHOSE, empty when it never picked.
+	// EffortActive is the level the session last reported RUNNING at; Effort is the chat's.
 	EffortActive string `json:"effort_active,omitempty"`
 	// Thinking is the chat's thinking CHOICE, empty for the model's default;
 	// ThinkingActive is what the session last reported.
@@ -603,6 +632,19 @@ func (c *Chat) Header() ChatHeader {
 	}
 }
 
+// MoveToModel points the chat at model. A move drops what the old model's session reported
+// (EffortActive, EffortLevels, ThinkingActive): each describes one model, and a door reading them
+// for the new one would send the old model's tier. The new model's next config_option_update
+// reports its own. Effort is the mover's to set.
+func (c *Chat) MoveToModel(model string) {
+	if c.Model == model {
+		return
+	}
+	c.Model = model
+	c.EffortActive, c.ThinkingActive = "", ""
+	c.EffortLevels = nil
+}
+
 // ThinkingIsOff reports whether the chat's session runs, or will run, with thinking off:
 // the session's report, else the chat's choice, else the model's default. Callers apply
 // it only on a toggleable model.
@@ -610,6 +652,12 @@ func (c *Chat) ThinkingIsOff(modelDefaultOff bool) bool {
 	if c.ThinkingActive != "" {
 		return c.ThinkingActive == ThinkingOff
 	}
+	return c.ThinkingChosenOff(modelDefaultOff)
+}
+
+// ThinkingChosenOff is ThinkingIsOff without the session's report, for a model the session does
+// not run yet: the chat's choice, else the model's default.
+func (c *Chat) ThinkingChosenOff(modelDefaultOff bool) bool {
 	if c.Thinking != "" {
 		return c.Thinking == ThinkingOff
 	}

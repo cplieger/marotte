@@ -89,9 +89,9 @@ func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID)
 		rt.coord.persistModelPick(ctx, chatID, model)
 		return
 	}
-	// Resolved once: PersistModelSwitch clears Chat.Effort, so a second read would forget the tier.
-	effort := rt.coord.effortForSwitch(ctx, model)
-	if !rt.coord.applyModelSwitch(ctx, chatID, model, effort) {
+	// Resolved once: the swap asserts it capped for thinking off, and the record keeps it uncapped.
+	effort := rt.coord.firstEffortFor(ctx, model)
+	if !rt.coord.applyModelSwitch(ctx, chatID, model, rt.coord.capForThinking(chat, model, effort)) {
 		rt.clearPendingModel(ctx, chatID)
 		rt.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
 			Code:    marotte.ErrCodeSwitchFailed,

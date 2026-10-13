@@ -255,26 +255,27 @@ func (bc *bridgeCoordinator) spawnGeneration(ctx context.Context, chatID marotte
 		bc.preBridgeSpawn(ctx)
 	}
 
-	model, effort, thinking, withheld := bc.sessionChoices(ctx, chatID, rec, modelOverride)
-	held := bc.holdUnservedModel(ctx, chatID, withheld)
+	ask := bc.sessionChoices(ctx, chatID, rec, modelOverride)
+	held := bc.holdUnservedModel(ctx, chatID, ask.withheld)
 
 	if rec.ACPSessionID != "" {
-		if loaded, err := bc.tryLoadSession(ctx, chatID, sb, rec.ACPSessionID, model, effort, thinking, rec.SupervisedMode, held); loaded {
+		if loaded, err := bc.tryLoadSession(ctx, chatID, sb, rec.ACPSessionID, ask.model, ask.effort, ask.thinking, rec.SupervisedMode, held); loaded {
 			bc.settleResumed(ctx, chatID, sb, err)
 			return
 		}
+		bc.replaceFailedLoad(ctx, rec, &ask)
 	}
 
 	// EnableHooks opts chat bridges into KAS's hook engine. Forward must drain NotifCh before
 	// Start: the handshake already delivers notifications and requests.
 	bc.goForward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), Steering: bc.renderChatSteering(ctx), Model: model, Mode: rec.CurrentModeID, Effort: effort, Thinking: thinking, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: rec.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), IgnoreFiles: func(c context.Context) []string { return spawnIgnoreFiles(c, bc.lifecycle.configDir) }, TerminalTimeout: func(c context.Context) int { return terminalCommandTimeoutMs(c, bc.lifecycle.configDir) }, ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryPreference(ctx, bc.lifecycle.configDir), DisableAutoCompaction: sessionDisablesAutoCompaction(autoCompactionPolicy(ctx, bc.lifecycle.configDir)), Features: agentFeatures(ctx, bc.lifecycle.configDir, currentLocks(bc.locks)), ContentCollection: contentCollectionResolver(bc.lifecycle.configDir, bc.locks), DisableTelemetry: bc.lifecycle.telemetryDisabled(bc.locks)}); err != nil {
+	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), Steering: bc.renderChatSteering(ctx), Model: ask.model, Mode: rec.CurrentModeID, Effort: ask.effort, Thinking: ask.thinking, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: rec.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), IgnoreFiles: func(c context.Context) []string { return spawnIgnoreFiles(c, bc.lifecycle.configDir) }, TerminalTimeout: func(c context.Context) int { return terminalCommandTimeoutMs(c, bc.lifecycle.configDir) }, ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryPreference(ctx, bc.lifecycle.configDir), DisableAutoCompaction: sessionDisablesAutoCompaction(autoCompactionPolicy(ctx, bc.lifecycle.configDir)), Features: agentFeatures(ctx, bc.lifecycle.configDir, currentLocks(bc.locks)), ContentCollection: contentCollectionResolver(bc.lifecycle.configDir, bc.locks), DisableTelemetry: bc.lifecycle.telemetryDisabled(bc.locks)}); err != nil {
 		bc.restoreUnservedModel(ctx, chatID, held)
 		bc.failGeneration(chatID, sb, err)
 		return
 	}
 	sb.adoptSpawn()
-	if err := bc.persistNewSessionMetadata(ctx, chatID, sb.bridge); err != nil {
+	if err := bc.persistNewSessionMetadata(ctx, chatID, sb.bridge, ask.first); err != nil {
 		sessionID := string(sb.bridge.SessionID())
 		bc.restoreUnservedModel(ctx, chatID, held)
 		bc.failGeneration(chatID, sb, err)
@@ -340,33 +341,93 @@ func (bc *bridgeCoordinator) retireGeneration(chatID marotte.ChatID, sb *sharedB
 	sb.settled.settle(err)
 }
 
+// sessionAsk is what a session door sends. effort is the level capped for thinking off.
+// loadKeepsLevel marks a load sending none, whose replacement replaceFailedLoad resolves.
+type sessionAsk struct {
+	model, effort, thinking, withheld string
+	first                             firstLevel
+	loadKeepsLevel                    bool
+}
+
+// firstLevel is the uncapped preference a record holding no level for model takes once a session
+// opens on it (onto). The session is sent sessionAsk.effort, this capped for thinking off.
+type firstLevel struct{ model, level string }
+
+// onto is the record's level once a session opened on running, the record holding current for
+// prevModel: the first level when it was resolved for running and the record holds none for it,
+// none when the session runs another model than the record's level was for.
+func (f firstLevel) onto(current, prevModel, running string) string {
+	switched := prevModel != "" && prevModel != running
+	switch {
+	case f.level != "" && f.model == running && (current == "" || switched):
+		return f.level
+	case switched:
+		return ""
+	}
+	return current
+}
+
+// sessionChoices resolves what a door sends: the record's level, or the target's first level on a
+// switch-by-restart, capped for thinking off. A record holding none opens a new session at
+// levelRanOrFirst's preference, capped likewise, and loads a session sending none, so the session
+// keeps its own level, which the record then adopts.
 func (bc *bridgeCoordinator) sessionChoices(
 	ctx context.Context, chatID marotte.ChatID, rec *marotte.Chat, modelOverride string,
-) (model, effort, thinking, withheld string) {
-	model = rec.Model
+) sessionAsk {
+	ask := sessionAsk{model: rec.Model}
 	if modelOverride != "" && modelOverride != modelAuto {
-		model = modelOverride
+		ask.model = modelOverride
 	}
 	// Withhold a model the account cannot run: it is inherited, not a fresh pick (refused in
 	// cmdSwitchModel). An empty advertised set allows.
-	if !marotte.ModelServed(model, rec.ServedModelIDs) {
+	if !marotte.ModelServed(ask.model, rec.ServedModelIDs) {
 		slog.Warn("withholding a model this account does not serve; using the backend default",
-			"chat_id", chatID, "model", model)
-		withheld, model = model, ""
+			"chat_id", chatID, "model", ask.model)
+		ask.withheld, ask.model = ask.model, ""
 	}
 
-	// A differing override is switch-by-restart: resolve effort against the target model.
-	effort = bc.effortFor(ctx, rec)
-	if model != "" && model != rec.Model {
-		effort = bc.effortForSwitch(ctx, model)
+	level := rec.Effort
+	switch {
+	case ask.model != "" && ask.model != rec.Model:
+		// A differing override is switch-by-restart: the target model's first session.
+		level = bc.firstEffortFor(ctx, ask.model)
+		ask.first = firstLevel{model: ask.model, level: level}
+	case level != "":
+	case rec.ACPSessionID == "":
+		level = bc.levelRanOrFirst(ctx, rec)
+		ask.first = firstLevel{model: rec.Model, level: level}
+	default:
+		// The load sends none so KAS restores the session's own level.
+		ask.loadKeepsLevel = true
 	}
-	if target := cmp.Or(model, rec.Model); bc.catalog.thinkingToggleable(target) {
-		thinking = rec.Thinking
-		if rec.ThinkingIsOff(bc.catalog.thinkingDefaultOff(target)) {
-			effort = marotte.CapEffortForThinkingOff(effort, rec.EffortLevels)
-		}
+	target := cmp.Or(ask.model, rec.Model)
+	if bc.catalog.thinkingToggleable(target) {
+		ask.thinking = rec.Thinking
 	}
-	return model, effort, thinking, withheld
+	ask.effort = bc.capForThinking(rec, target, level)
+	return ask
+}
+
+// replaceFailedLoad turns ask, a failed load of rec's session, into the session/new replacing it:
+// a load that sent no level opens at levelRanOrFirst's preference capped for thinking off,
+// resolved only now so a load that succeeds never reads the seed.
+func (bc *bridgeCoordinator) replaceFailedLoad(ctx context.Context, rec *marotte.Chat, ask *sessionAsk) {
+	if !ask.loadKeepsLevel {
+		return
+	}
+	level := bc.levelRanOrFirst(ctx, rec)
+	ask.loadKeepsLevel = false
+	ask.effort = bc.capForThinking(rec, cmp.Or(ask.model, rec.Model), level)
+	ask.first = firstLevel{model: rec.Model, level: level}
+}
+
+// levelRanOrFirst is the preference a record holding none takes for a new session: the level its
+// last session reported running, else the model's first (firstEffortFor). Uncapped.
+func (bc *bridgeCoordinator) levelRanOrFirst(ctx context.Context, rec *marotte.Chat) string {
+	if marotte.EffortLevel(rec.EffortActive).Valid() {
+		return rec.EffortActive
+	}
+	return bc.firstEffortFor(ctx, rec.Model)
 }
 
 // unservedSelection is a model the session opens without, with the record's effort for it.
@@ -439,7 +500,8 @@ func (bc *bridgeCoordinator) commitUnservedModel(ctx context.Context, chatID mar
 		if !ex || (c.Model != "" && c.Model != held.model && c.Model != to) {
 			return false
 		}
-		c.Model, c.Effort = to, effort
+		c.MoveToModel(to)
+		c.Effort = effort
 		return true
 	}); err != nil {
 		slog.Error("unserved model: persist the running model", "chat_id", chatID, "error", err)
@@ -617,9 +679,9 @@ func reassertUserName(ctx context.Context, chatID marotte.ChatID, bridge renamab
 	}
 }
 
-// persistNewSessionMetadata records the new session on the chat. An error is a record that did not
-// take it, wrapping command.ErrChatGone when the record is absent.
-func (bc *bridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chatID marotte.ChatID, bridge newSessionFacts) error {
+// persistNewSessionMetadata records the new session on the chat, pinning first (firstLevel.onto).
+// An error is a record that did not take it, wrapping command.ErrChatGone when the record is absent.
+func (bc *bridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chatID marotte.ChatID, bridge newSessionFacts, first firstLevel) error {
 	newSessionID := bridge.SessionID()
 	newModelID := bridge.ModelID()
 	currentMode := bridge.CurrentMode()
@@ -638,9 +700,11 @@ func (bc *bridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 		}
 		requestedMode = c.CurrentModeID
 		c.RecordSession(string(newSessionID))
+		prevModel := c.Model
 		if newModelID != "" {
-			c.Model = string(newModelID)
+			c.MoveToModel(string(newModelID))
 		}
+		c.Effort = first.onto(c.Effort, prevModel, c.Model)
 		c.CurrentModeID = currentMode
 		marotte.ApplyServedModels(c, catalog)
 		renameTo = reconcileUserName(c, title, titleSetByUser)
@@ -828,8 +892,6 @@ func (bc *bridgeCoordinator) consumeFrame(chatID marotte.ChatID, origin acpRespo
 	bc.translateEvent(chatID, origin, n.Msg)
 }
 
-// Effort lives on the chat record (marotte.Chat.Effort), never a global keyed by the last model.
-
 // NoticeTarget names the tab a notification about chatID, or about its run, opens.
 func (bc *bridgeCoordinator) NoticeTarget(ctx context.Context, chatID marotte.ChatID, runID string) notice.Target {
 	if id := notice.AskRun(chatID, runID); id != "" {
@@ -940,7 +1002,7 @@ func (bc *bridgeCoordinator) repairEffort(ctx context.Context, chatID marotte.Ch
 				"chat_id", chatID, "thinking", rec.Thinking, "error", err)
 		}
 	}
-	level := bc.sessionEffort(ctx, rec)
+	level := bc.sessionEffort(rec)
 	if level == "" {
 		return
 	}
@@ -973,10 +1035,12 @@ func (bc *bridgeCoordinator) healEffort(next sessionUpdateHandler) sessionUpdate
 		running := rec.EffortActive
 		sb.bridge.ObserveEffort(running)
 		sb.bridge.ObserveThinking(rec.ThinkingActive)
-		// The capped level when thinking is off: re-asserting the uncapped one would re-enable
-		// thinking (KAS enables it for xhigh and max).
-		want := bc.sessionEffort(ctx, rec)
-		if want == "" || running == "" || want == running {
+		// A swap the session already runs while the record still holds the old model's level is
+		// a switch in flight, which asserts its own level (applyModelSwitchOn); a heal would race
+		// it with the old one and spend the latch. A pick merely parked behind a turn still heals.
+		want := bc.sessionEffort(rec)
+		switching := rec.PendingModel != "" && rec.PendingModel == rec.Model
+		if switching || want == "" || running == "" || want == running {
 			return
 		}
 		if !sb.claimEffortHeal() {
@@ -998,30 +1062,37 @@ func (bc *bridgeCoordinator) healEffort(next sessionUpdateHandler) sessionUpdate
 	}
 }
 
-// effortFor resolves the level a chat's next session starts at: the chat's choice, else
-// the level remembered for its model (settings.KeyLastEffortByModel), else the catalog
-// default; empty sends nothing. A fallback is never written to the record. Validated
-// here because config.json is user-editable.
-func (bc *bridgeCoordinator) effortFor(ctx context.Context, rec *marotte.Chat) string {
-	if rec.Effort != "" {
-		return rec.Effort
-	}
-	if level := bc.effortSeedFor(ctx, rec.Model); level != "" {
+// sessionEffort is the level an open session is held to: the record's, capped for thinking off.
+// Never the seed, which another chat's pick moves.
+func (bc *bridgeCoordinator) sessionEffort(rec *marotte.Chat) string {
+	return bc.capForThinking(rec, rec.Model, rec.Effort)
+}
+
+// capForThinking caps level as KAS does while model's thinking is off: asserting xhigh or max
+// there would re-enable thinking. rec's reported thinking and tiers are rec.Model's only, so
+// another model reads the chat's choice, its default and its catalog tiers.
+func (bc *bridgeCoordinator) capForThinking(rec *marotte.Chat, model, level string) string {
+	if !bc.catalog.thinkingToggleable(model) {
 		return level
 	}
-	return bc.catalog.defaultEffortFor(rec.Model)
-}
-
-// sessionEffort is effortFor capped for thinking off, the level KAS reports there.
-func (bc *bridgeCoordinator) sessionEffort(ctx context.Context, rec *marotte.Chat) string {
-	level := bc.effortFor(ctx, rec)
-	if bc.catalog.thinkingToggleable(rec.Model) && rec.ThinkingIsOff(bc.catalog.thinkingDefaultOff(rec.Model)) {
-		return marotte.CapEffortForThinkingOff(level, rec.EffortLevels)
+	defaultOff := bc.catalog.thinkingDefaultOff(model)
+	if model != rec.Model {
+		if rec.ThinkingChosenOff(defaultOff) {
+			return bc.catalog.capForThinkingOff(model, level)
+		}
+		return level
 	}
-	return level
+	switch {
+	case !rec.ThinkingIsOff(defaultOff):
+		return level
+	case len(rec.EffortLevels) == 0: // no session has reported model's tiers yet
+		return bc.catalog.capForThinkingOff(model, level)
+	}
+	return marotte.CapEffortForThinkingOff(level, rec.EffortLevels)
 }
 
-// Per model, so one pick never retracts another model's level. The single seed read.
+// Per model, so one pick never retracts another model's level. Validated because config.json
+// is user-editable.
 func (bc *bridgeCoordinator) effortSeedFor(ctx context.Context, model string) string {
 	if model == "" {
 		return ""
@@ -1037,10 +1108,10 @@ func (bc *bridgeCoordinator) effortSeedFor(ctx context.Context, model string) st
 	return level
 }
 
-// effortForSwitch resolves the level after a model switch: the target model's remembered
-// level, else its catalog default, else "". Not effortFor: the stored choice was made
-// under the model being left.
-func (bc *bridgeCoordinator) effortForSwitch(ctx context.Context, model string) string {
+// firstEffortFor is the uncapped preference a chat holding no level for model takes: the level
+// last picked under model (settings.KeyLastEffortByModel), else its catalog default, else "".
+// Only such a door reads it, because the seed moves with every chat's pick.
+func (bc *bridgeCoordinator) firstEffortFor(ctx context.Context, model string) string {
 	if level := bc.effortSeedFor(ctx, model); level != "" {
 		return level
 	}
@@ -1058,10 +1129,11 @@ func (bc *bridgeCoordinator) persistModelSwitch(ctx context.Context, chatID maro
 		if !ex {
 			return false
 		}
-		c.Model = sw.To
+		c.MoveToModel(sw.To)
 		c.PendingModel = ""
-		// The tier was chosen for the old model; resolution falls to the seed or the new default.
-		c.Effort = ""
+		// The new model's uncapped first level: the stored preference later doors derive their
+		// assertion from, capped while thinking is off.
+		c.Effort = sw.Effort
 		c.Usage = marotte.Usage{ContextSize: contextSize}
 		return true
 	}); err != nil {
@@ -1135,15 +1207,16 @@ func (bc *bridgeCoordinator) PersistModeSwitch(ctx context.Context, chatID marot
 }
 
 // persistModelPick records a model choice on a chat with no live bridge: model takes the
-// pick, pending_model and Effort clear, no entry, no usage reset.
+// pick, pending_model clears, Effort takes the model's first level, no entry, no usage reset.
 func (bc *bridgeCoordinator) persistModelPick(ctx context.Context, chatID marotte.ChatID, model string) {
+	level := bc.firstEffortFor(ctx, model)
 	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
-		c.Model = model
+		c.MoveToModel(model)
 		c.PendingModel = ""
-		c.Effort = ""
+		c.Effort = level
 		return true
 	}); err != nil {
 		slog.Error("switch_model: persist pick", "chat_id", chatID, "error", err)
