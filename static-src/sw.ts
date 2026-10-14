@@ -4,7 +4,7 @@
 // eslint-disable-next-line @typescript-eslint/triple-slash-reference
 /// <reference path="sw-env.d.ts" />
 
-import { type PrecacheManifest, isPreviewPath, isShellPath, parseManifest } from "./precache.js";
+import { type PrecacheManifest, fetchArm, parseManifest } from "./precache.js";
 import { buildPath } from "./route-path.js";
 import type { Route } from "./route-path.js";
 import {
@@ -113,37 +113,30 @@ sw.addEventListener("activate", ((event: ExtendableEvent) => {
   );
 }) as EventListener);
 
-// Three arms (the handler's presence also satisfies PWA installability): NAVIGATION to the network
-// (and the deploy check), a CONTENT-HASHED CHUNK from cache, everything else never `respondWith`'d;
-// `isShellPath` is synchronous for that reason.
+// The handler's presence also satisfies PWA installability; precache.ts `fetchArm` owns the routing.
 sw.addEventListener("fetch", ((event: FetchEvent) => {
-  const url = new URL(event.request.url);
-  if (url.origin === location.origin && isPreviewPath(url.pathname)) {
-    return;
+  switch (fetchArm(event.request, location.origin)) {
+    case "untouched":
+      return;
+    case "navigation":
+      event.respondWith(fetch(event.request));
+      event.waitUntil(
+        syncPrecache().catch((err: unknown) => {
+          console.warn("sw: precache sync failed", err);
+          return false;
+        }),
+      );
+      return;
+    case "shell":
+      event.respondWith(
+        (async () => {
+          const cache = await caches.open(SHELL_CACHE);
+          const hit = await cache.match(event.request);
+          return hit ?? (await fetch(event.request));
+        })(),
+      );
+      return;
   }
-  if (event.request.mode === "navigate") {
-    event.respondWith(fetch(event.request));
-    event.waitUntil(
-      syncPrecache().catch((err: unknown) => {
-        console.warn("sw: precache sync failed", err);
-        return false;
-      }),
-    );
-    return;
-  }
-  if (event.request.method !== "GET") {
-    return;
-  }
-  if (url.origin !== location.origin || !isShellPath(url.pathname)) {
-    return;
-  }
-  event.respondWith(
-    (async () => {
-      const cache = await caches.open(SHELL_CACHE);
-      const hit = await cache.match(event.request);
-      return hit ?? (await fetch(event.request));
-    })(),
-  );
 }) as EventListener);
 
 /** The push is marotte.NotificationPayload as internal/notice wrote it: shown as sent, with at

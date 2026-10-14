@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // The upload doors OTHER than the composer's (files-drop.test.ts): the offending file is named
-// before anything is sent, and a partly legal batch sends the legal part. The two DIALOG doors are
-// absent: their <input type="file"> is never in the document and needs an OS dialog; they screen
-// with screenUploads, driven here and in upload-policy.test.ts.
+// before anything is sent, and a partly legal batch sends the legal part. The two DIALOG doors'
+// wiring is files-picker.test.ts and files-tabs.test.ts, their dialog file-dialog.test.ts; they
+// screen with screenUploads, driven here and in upload-policy.test.ts.
 // ---------------------------------------------------------------------------
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

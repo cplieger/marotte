@@ -28,6 +28,7 @@ import { attachPathsToActiveChat } from "./chat.js";
 import { initBrowserDragDrop } from "./files-browser-drop.js";
 import { closeFilesSearch, initFilesSearch, resetFilesSearch } from "./files-search.js";
 import { screenUploads } from "./upload-policy.js";
+import { openFileDialog } from "./file-dialog.js";
 import * as toast from "./toast.js";
 import {
   type FileEntry,
@@ -998,13 +999,9 @@ function downloadSelected(): void {
 }
 
 function uploadViaDialog(): void {
-  const input = el("input", { type: "file", multiple: true }) as HTMLInputElement;
-  input.addEventListener("change", () => {
-    if (input.files === null || input.files.length === 0) {
-      return;
-    }
+  openFileDialog($.fbUpload, (files) => {
     // Screened: the OS picker hides the limit, and multi-select reaches the total cap without a large file.
-    const screened = screenUploads(input.files);
+    const screened = screenUploads(files);
     if (screened.skipped !== "") {
       toast.error(screened.skipped);
     }
@@ -1022,5 +1019,4 @@ function uploadViaDialog(): void {
       },
     );
   });
-  input.click();
 }

@@ -1,5 +1,5 @@
-// The shell precache's two pure decisions: which manifest documents are usable, and which request
-// paths the cache may answer.
+// The shell precache's pure decisions: which manifest documents are usable, which request paths
+// the cache may answer, and which arm of the worker's fetch handler a request takes.
 
 /** The build-emitted asset list (cmd/bundle writePrecacheManifest). `stamp` moves when the set
  *  of names moves, and each name carries its own content hash; `assets` are root-relative paths,
@@ -25,6 +25,30 @@ export function isShellPath(pathname: string): boolean {
  *  load must not trigger a precache sync, and its bytes are never the worker's to cache. */
 export function isPreviewPath(pathname: string): boolean {
   return pathname.startsWith("/preview/");
+}
+
+/** How the worker treats one fetch: `navigation` goes to the network and runs the deploy check,
+ *  `shell` is answered cache-first, and `untouched` is never `respondWith`'d, so the browser sends
+ *  it, body included, as if no worker were installed. Synchronous: `respondWith` must be called
+ *  while the event dispatches. */
+export type FetchArm = "navigation" | "shell" | "untouched";
+
+/** The arm for `req`, a request seen by the worker at `origin`. */
+export function fetchArm(
+  req: { readonly method: string; readonly mode: string; readonly url: string },
+  origin: string,
+): FetchArm {
+  const url = new URL(req.url);
+  if (url.origin === origin && isPreviewPath(url.pathname)) {
+    return "untouched";
+  }
+  if (req.mode === "navigate") {
+    return "navigation";
+  }
+  if (req.method !== "GET" || url.origin !== origin || !isShellPath(url.pathname)) {
+    return "untouched";
+  }
+  return "shell";
 }
 
 /** The manifest a document just served, or null when it is unusable. Every field is checked
