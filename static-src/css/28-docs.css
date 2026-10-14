@@ -308,7 +308,6 @@
   padding: var(--sp-2);
   background: var(--c-bg-tertiary);
   border-radius: var(--r-sm);
-  border-inline-start: 2px solid var(--c-accent);
 }
 
 /* Pause: the state Save produces when this is unchecked, so keeping a rule and
@@ -326,8 +325,8 @@
 /* The unattended note. Quieter than the summary (that is the rule the user is
    building; this is the standing policy it will run under) but not a footnote:
    it sits above the actions, because it is what should be read before Save. The
-   yellow edge is the app's caution vocabulary, the same one the always-loaded
-   inclusion badge uses. */
+   yellow wash and title are the app's caution vocabulary, the same one the
+   always-loaded inclusion badge uses. */
 .sched-note {
   display: flex;
   flex-direction: column;
@@ -336,7 +335,6 @@
   padding: var(--sp-2);
   border-radius: var(--r-sm);
   background: color-mix(in oklch, var(--c-yellow) 8%, transparent);
-  border-inline-start: 2px solid color-mix(in oklch, var(--c-yellow) 45%, transparent);
 }
 
 .sched-note-title {

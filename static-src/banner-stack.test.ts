@@ -218,9 +218,9 @@ describe("banner-stack: single live region", () => {
   });
 });
 
-// A banner's level must carry a shape, not colour alone (WCAG 1.4.1). The left border is
-// the one colour channel surviving `forced-colors: active`, and 40-a11y.css's
-// forced-colors block does not cover banners, so the glyph is what carries it.
+// A banner's level must carry a shape, not colour alone (WCAG 1.4.1). `forced-colors: active`
+// replaces its wash and ink, and 40-a11y.css's forced-colors block does not cover banners, so
+// the glyph is what carries it.
 
 describe("banner-stack: severity carries a shape, not colour alone", () => {
   it("gives every level its own conventional character", async () => {

@@ -1239,20 +1239,10 @@
   align-items: center;
   gap: var(--sp-2);
   min-block-size: var(--btn-h);
-
-  /* The alert edge's box is reserved at rest and taken from the padding, so the row's
-     contents do not move when an alert comes or goes. */
-  border-inline-start: 0.1875rem solid transparent;
-  padding-inline: calc(var(--sp-1) - 0.1875rem) var(--sp-2);
+  padding-inline: var(--sp-1) var(--sp-2);
   cursor: pointer;
   font-size: var(--fs-sm);
   transition: background var(--dur-micro) var(--ease-standard);
-
-  /* Forced colors paint a transparent border in CanvasText; a system colour is kept,
-     so the resting edge stays invisible and the alerting one (below) still shows. */
-  @media (forced-colors: active) {
-    border-inline-start-color: Canvas;
-  }
 
   @media (any-hover: hover) {
     &:hover {
@@ -1359,11 +1349,10 @@
   }
 }
 
-/* An alert that wants the reader replaces the summary: the page alert's edge, wash,
-   mark and ink (`--ev-alert-*`, 31-exec-view.css), on the row. The wash is an image
-   layer so the row's hover fill still shows beneath it. */
+/* An alert that wants the reader replaces the summary: the page alert's wash, mark
+   and ink (`--ev-alert-*`, 31-exec-view.css), on the row. The wash is an image layer
+   so the row's hover fill still shows beneath it. */
 .ev-box-alerting > .ev-box-head {
-  border-inline-start-color: var(--ev-alert-edge);
   background-image: linear-gradient(var(--ev-alert-wash), var(--ev-alert-wash));
 }
 
