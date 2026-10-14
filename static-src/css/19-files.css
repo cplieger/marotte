@@ -230,6 +230,19 @@
   font-size: var(--fs-form-peer);
 }
 
+/* The OS file dialog's input (file-dialog.ts), laid over the pressed Upload
+   button: invisible and click-through, but with a real box, because iPadOS
+   anchors its source menu at that box. Not .sr-only, whose 1px box sits wherever
+   its static position falls. */
+.file-dialog-input {
+  position: fixed;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* Attach is now a pill inside .prompt-pills */
 
 .fb-row.fb-drop-target {
