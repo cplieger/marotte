@@ -3,6 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import type * as ModPRs from "./git-prs-tab.js";
+import { forgeRow } from "./__test-helpers__/forge-rows.js";
 
 let bootSeq = 0;
 
@@ -16,10 +17,15 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   apiGetTyped,
   apiPost: vi.fn(),
 }));
-vi.mock("./forge-store.js", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  ensureForges,
-}));
+vi.mock("./forge-store.js", async (importOriginal) => {
+  const { forgeRow, forgesList } = await import("./__test-helpers__/forge-rows.js");
+  return {
+    ...(await importOriginal<Record<string, unknown>>()),
+    ensureForges,
+    forgeRows: () => forgesList([forgeRow()]),
+    usablePairs: () => [],
+  };
+});
 vi.mock("./bus.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   onSSE: vi.fn(),
@@ -76,13 +82,7 @@ vi.mock("./git-scroll.js", async (importOriginal) => ({
 
 const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
 
-const forge = {
-  id: "github:github.com",
-  kind: "github" as const,
-  host: "github.com",
-  connected: true,
-  reconnect_required: false,
-};
+const forge = forgeRow();
 /** An opaque id: nothing here reads its shape. */
 const REPO_ID = "v1.sandbox";
 
@@ -147,6 +147,7 @@ async function section(): Promise<HTMLElement> {
     entries: [
       {
         forge_id: forge.id,
+        account: forge.account,
         state: "ready",
         cycle_id: "1",
         credential: "valid",

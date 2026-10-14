@@ -31,7 +31,13 @@ vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
   const read = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
-  return { ...orig, refreshForges: read, ensureForges: read };
+  const { forgeRow, forgesList } = await import("./__test-helpers__/forge-rows.js");
+  return {
+    ...orig,
+    ensureForges: read,
+    forgeRows: () => forgesList([forgeRow()]),
+    usablePairs: () => [],
+  };
 });
 vi.mock("./sse-adapter.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -55,7 +61,8 @@ vi.mock("@cplieger/ui-primitives/dialog", async (importOriginal) => ({
 
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { openNewPRForRepo } from "./git-prs-tab.js";
-import { _resetForTest, applyInventoryList, setPRForges } from "./git-prs-state.js";
+import { _resetForTest, applyInventoryList } from "./git-prs-state.js";
+import { forgeRow } from "./__test-helpers__/forge-rows.js";
 import { decodeInventoryList } from "./wire/decoders.gen.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { heldFetch, json, expectBusy, expectIdle } from "./__test-helpers__/press-feedback.js";
@@ -65,13 +72,7 @@ beforeEach(() => {
 });
 
 describe("the New PR dialog", () => {
-  const FORGE = {
-    id: "github:github.com",
-    kind: "github" as const,
-    host: "github.com",
-    connected: true,
-    reconnect_required: false,
-  };
+  const FORGE = forgeRow();
   const REPO_ID = "v1.616c6963652f6f6e65";
 
   let host: HTMLElement;
@@ -102,12 +103,12 @@ describe("the New PR dialog", () => {
       </dialog>`;
     document.body.appendChild(host);
     _resetForTest();
-    setPRForges([FORGE]);
     applyInventoryList(
       decodeInventoryList({
         entries: [
           {
             forge_id: FORGE.id,
+            account: FORGE.account,
             state: "ready",
             cycle_id: "1",
             credential: "valid",

@@ -46,6 +46,7 @@ func TestAffordancesRoute_CarriesStrategiesAndCanPush(t *testing.T) {
 
 	got := decodeAffordances(t, getRoute(t, mux, affordancesPath))
 	want := RepoAffordances{
+		Account:         testSignIn,
 		MergeStrategies: []string{"merge", "squash"},
 		HasIssues:       Affordance{Support: "yes", Source: "unknown"},
 		CanPush:         Affordance{Support: "no", Source: "probe", Detail: "permissions"},

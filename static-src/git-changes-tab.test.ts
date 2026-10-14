@@ -59,6 +59,7 @@ vi.mock("./api-client.js", () => ({
   apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
 }));
 vi.mock("./bus.js", () => ({ onSSE: vi.fn() }));
+vi.mock("./forge-store.js", () => ({ forgeRows: () => null, usablePairs: () => [] }));
 vi.mock("./confirm.js", () => ({ confirm: confirmDialog }));
 vi.mock("./navigate.js", () => ({ openChange }));
 vi.mock("./actions/index.js", () => ({

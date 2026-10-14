@@ -5,26 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
 )
-
-func seedStoreRecord(t *testing.T, configDir, id, account string) {
-	t.Helper()
-	store, reason := openCredentialStore(configDir)
-	if store == nil {
-		t.Fatalf("open store: %s", reason)
-	}
-	host := strings.SplitN(id, ":", 2)[1]
-	if err := store.Save(id, creds.Record{
-		Family: forgeapi.FamilyGitHub, WebBaseURL: "https://" + host,
-		Kind: forgeapi.CredKindStaticPAT, Token: "test-token", Issued: time.Now(), Account: account,
-	}); err != nil {
-		t.Fatalf("save record: %v", err)
-	}
-}
 
 func TestOpenCredentialStore_WidenedDirectoryDegradesWithAReason(t *testing.T) {
 	cfg := t.TempDir()

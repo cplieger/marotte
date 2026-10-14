@@ -225,25 +225,31 @@ describe("forge.clone_repo", () => {
 });
 
 describe("forge.connect_pat", () => {
-  it("POSTs to /api/forges/:id/login/pat with token", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ status: "ok" }), { status: 200 }));
+  // The server mints the connection id; the client never builds one.
+  it("POSTs the kind, host and token to /api/forges/login and answers the saved id", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ forge_id: "minted-id" }), { status: 200 }),
+    );
     const { connectPAT } = await import("./forge.js");
-    await connectPAT.dispatch({
+    const got = await connectPAT.dispatch({
       kind: "github",
       host: "github.com",
       token: "ghp_abc",
       options: {},
     });
     const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/forges/github%3Agithub.com/login/pat");
+    expect(url).toBe("/api/forges/login");
     expect(opts.method).toBe("POST");
-    expect(JSON.parse(opts.body as string)).toEqual({ token: "ghp_abc" });
+    expect(JSON.parse(opts.body as string)).toEqual({
+      kind: "github",
+      host: "github.com",
+      token: "ghp_abc",
+    });
+    expect(got).toEqual({ forge_id: "minted-id" });
   });
 
   it("sends the connection fields beside the token", async () => {
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ status: "complete" }), { status: 200 }),
-    );
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ forge_id: "x" }), { status: 200 }));
     const { connectPAT } = await import("./forge.js");
     await connectPAT.dispatch({
       kind: "gitea",
@@ -252,8 +258,10 @@ describe("forge.connect_pat", () => {
       options: { web_base_url: "http://127.0.0.1:3000", plaintext_http: true },
     });
     const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/forges/gitea%3A127.0.0.1%3A3000/login/pat");
+    expect(url).toBe("/api/forges/login");
     expect(JSON.parse(opts.body as string)).toEqual({
+      kind: "gitea",
+      host: "127.0.0.1:3000",
       token: "tok",
       web_base_url: "http://127.0.0.1:3000",
       plaintext_http: true,
@@ -261,7 +269,7 @@ describe("forge.connect_pat", () => {
   });
 
   it("includes Idempotency-Key header", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ forge_id: "x" }), { status: 200 }));
     const { connectPAT } = await import("./forge.js");
     await connectPAT.dispatch({ kind: "gitlab", host: "gitlab.com", token: "tok", options: {} });
     expect(headerValue(mockFetch.mock.calls[0]![1], "idempotency-key")).toEqual(expect.any(String));

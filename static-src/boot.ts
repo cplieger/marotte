@@ -75,6 +75,7 @@ import { dropStoredShellPanel, releaseStoredShellPanel } from "./shell-height.js
 import { restoreShell } from "./shell.js";
 import { applyShareTarget } from "./share-target.js";
 import { error as toastError } from "./toast.js";
+import { notifyStreamConnected } from "./forge-store.js";
 
 /** What the boot chain needs from the composition root. */
 interface BootDeps {
@@ -480,6 +481,7 @@ export function onTransportStatus(status: ConnectionStatus): void {
     return;
   }
   void loadList();
+  notifyStreamConnected();
   if (bootTabsRead === false) {
     void listTabs();
   }

@@ -14,13 +14,13 @@ vi.mock("../api-client.js", () => ({
   // Inert: present only so real-ESM linking succeeds.
   apiGetTyped: vi.fn(),
 }));
-import {
-  _resetForTest,
-  applyInventoryList,
-  bindPRPaint,
-  getPRGroups,
-  setPRForges,
-} from "../git-prs-state.js";
+vi.mock("../forge-store.js", () => ({
+  forgeRows: () => ({
+    forges: [{ id: "gh1", kind: "github", host: "github.com", account: "a1", status: "connected" }],
+    kinds: ["github"],
+  }),
+}));
+import { _resetForTest, applyInventoryList, bindPRPaint, getPRGroups } from "../git-prs-state.js";
 import type { PR } from "../wire/types.gen.js";
 import * as toast from "../toast.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
@@ -72,13 +72,11 @@ function row(n: number): PR {
 /** One connection listing org/repo's #10, #5 and #3. */
 function seed(): void {
   _resetForTest();
-  setPRForges([
-    { id: "gh1", kind: "github", host: "github.com", connected: true, reconnect_required: false },
-  ]);
   applyInventoryList({
     entries: [
       {
         forge_id: "gh1",
+        account: "a1",
         state: "ready",
         cycle_id: "1",
         credential: "valid",
@@ -402,11 +400,23 @@ describe("readCapabilities", () => {
         rerun_checks: { support: "unknown", source: "version", detail: "per repository" },
       },
       grant: { read_merge_state: { support: "yes", source: "probe", detail: "" } },
+      account: "a1",
     };
     mockFetch.mockResolvedValue(new Response(JSON.stringify(caps), { status: 200 }));
     expect(await readCapabilities.dispatch({ forge_id: "gh1" })).toEqual(caps);
     expect(requestURL()).toBe("/api/forges/gh1/capabilities");
     expect(mockFetch.mock.calls[0]![1].method).toBe("GET");
+  });
+
+  // An ask after the connection changed must reach the server, not join the read issued before the change.
+  it("sends each ask, one in flight or not", async () => {
+    const body = JSON.stringify({ connection: {}, grant: {}, account: "a1" });
+    mockFetch.mockImplementation(() => Promise.resolve(new Response(body, { status: 200 })));
+    await Promise.all([
+      readCapabilities.dispatch({ forge_id: "gh1" }),
+      readCapabilities.dispatch({ forge_id: "gh1" }),
+    ]);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
   it("answers nothing, and toasts nothing, when the read fails", async () => {

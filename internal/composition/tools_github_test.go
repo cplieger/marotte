@@ -1,6 +1,7 @@
 package composition
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,16 +11,20 @@ import (
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/keyenc"
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/toolbelt/v3"
 )
 
-// connectGitHubDotcom writes what a github.com connect leaves under configDir:
-// its connection record and its stored token.
+// connectGitHubDotcom writes what a github.com sign-in leaves under configDir:
+// its connection record and its stored token in slot 0, in the on-disk format
+// spelled out here rather than built through the forges package.
 func connectGitHubDotcom(t *testing.T, configDir, token string) {
 	t.Helper()
 	id := forges.MakeID(forges.KindGitHub, "github.com")
-	doc, err := json.Marshal(map[string]any{"connections": []map[string]string{{"id": id, "kind": "github", "host": "github.com"}}})
+	doc, err := json.Marshal(map[string]any{"connections": []map[string]any{
+		{"id": id, "kind": "github", "host": "github.com", "slot": 0, "sign_in": "sign-in-a"},
+	}})
 	if err != nil {
 		t.Fatalf("Setup: marshal the record: %v", err)
 	}
@@ -30,7 +35,7 @@ func connectGitHubDotcom(t *testing.T, configDir, token string) {
 	if err != nil {
 		t.Fatalf("Setup: open the credential store: %v", err)
 	}
-	if err := store.Save(id, creds.Record{
+	if err := store.Save(keyenc.Join(id, "0"), creds.Record{
 		Family: forgeapi.FamilyGitHub, WebBaseURL: "https://github.com", Kind: forgeapi.CredKindStaticPAT,
 		Token: token, Issued: time.Now().Truncate(time.Second), Account: "alice",
 	}); err != nil {
@@ -38,8 +43,29 @@ func connectGitHubDotcom(t *testing.T, configDir, token string) {
 	}
 }
 
+// loadedForges is a manager over configDir after its boot Load, its git
+// registrations isolated from this machine's config.
+func loadedForges(t *testing.T, configDir string) *forges.Manager {
+	t.Helper()
+	isolateForgeGit(t)
+	m := forges.NewManager(configDir, func(context.Context, forges.Change) {})
+	m.Load(t.Context())
+	return m
+}
+
+// isolateForgeGit points git's global config and HOME at a temp directory, so a
+// manager's helper registration and cleartext scrub touch nothing real.
+func isolateForgeGit(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+}
+
 func TestGitHubTokenFor_NoConnectionIsAnonymousWithoutFailing(t *testing.T) {
-	token, err := githubTokenFor(forges.NewManager(t.TempDir()))(t.Context())
+	token, err := githubTokenFor(loadedForges(t, t.TempDir()))(t.Context())
 	if token != "" || err != nil {
 		t.Errorf("githubTokenFor() with no connection = (%q, %v), want (\"\", nil)", token, err)
 	}
@@ -48,7 +74,7 @@ func TestGitHubTokenFor_NoConnectionIsAnonymousWithoutFailing(t *testing.T) {
 func TestGitHubTokenFor_TheConnectionGivesItsToken(t *testing.T) {
 	dir := t.TempDir()
 	connectGitHubDotcom(t, dir, "ghp-from-sources")
-	token, err := githubTokenFor(forges.NewManager(dir))(t.Context())
+	token, err := githubTokenFor(loadedForges(t, dir))(t.Context())
 	if token != "ghp-from-sources" || err != nil {
 		t.Errorf("githubTokenFor() with a github.com connection = (%q, %v), want (\"ghp-from-sources\", nil)", token, err)
 	}

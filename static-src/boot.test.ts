@@ -51,6 +51,7 @@ const m = vi.hoisted(() => {
       claims.applyRoute.length = 0;
     },
     loadList: vi.fn(),
+    notifyStreamConnected: vi.fn(),
     loadSettings: vi.fn(),
     resolveIdentity: vi.fn(),
     refreshRetention: vi.fn(),
@@ -142,6 +143,7 @@ const m = vi.hoisted(() => {
 });
 
 vi.mock("./actions/index.js", () => ({ subscribeByName: m.subscribeByName }));
+vi.mock("./forge-store.js", () => ({ notifyStreamConnected: m.notifyStreamConnected }));
 // Only the action's NAME is read here (boot.ts subscribes by it rather than by a
 // literal), so the definition itself needs no behaviour.
 vi.mock("./actions/settings.js", () => ({ logout: { name: "settings.logout" } }));
@@ -468,6 +470,18 @@ describe("the chat list is read once per cold boot", () => {
     onTransportStatus("connected");
 
     expect(m.loadList).toHaveBeenCalledTimes(2);
+  });
+
+  // The forge rows may have changed while the stream was down; forge-store reads only once it has started.
+  it("tells the forge store on a RE-connect, and not on the connection the boot rides", async () => {
+    const { startBoot, onTransportStatus } = await freshBoot();
+    onTransportStatus("connected");
+    await startBoot({ applyRoute: m.applyRoute });
+    expect(m.notifyStreamConnected).not.toHaveBeenCalled();
+    onTransportStatus("disconnected");
+    onTransportStatus("connected");
+
+    expect(m.notifyStreamConnected).toHaveBeenCalledTimes(1);
   });
 
   it("recovers a read that FAILED while the stream was already up", async () => {

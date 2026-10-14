@@ -42,6 +42,8 @@ type myPRsCore struct {
 	others int
 }
 
+func (*myPRsCore) Close() {}
+
 func (c *myPRsCore) ListMyPRs(_ context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	set, err := forgeapi.ResolveList(opts...)
 	if err != nil {
@@ -65,39 +67,41 @@ func (c *myPRsCore) ListPRs(context.Context, forgeapi.RepoRef, ...forgeapi.ListO
 	return forgeapi.Page[forgeapi.PullRequest]{}, nil
 }
 
-func sourceManager(t *testing.T, cores map[string]forgeapi.Core, recs ...connectionRecord) *Manager {
+// sourceManager is a loaded manager holding specs, each signed in as bob, whose
+// clients are cores by id; an id with no core cannot be opened, so its row is
+// reconnect with no client.
+func sourceManager(t *testing.T, cores map[string]forgeapi.Core, specs ...connectionSpec) *Manager {
 	t.Helper()
-	// The boot Refresh registers a helper for every record in the global git
+	m, _ := sourceManagerLogged(t, cores, specs...)
+	return m
+}
+
+// sourceManagerLogged is sourceManager with the changes it notifies.
+func sourceManagerLogged(t *testing.T, cores map[string]forgeapi.Core, specs ...connectionSpec) (*Manager, *changeLog) {
+	t.Helper()
+	// Load registers a helper for every usable connection in the global git
 	// config, which a package-wide config would accumulate test after test.
 	isolateGit(t)
 	stubPath(t)
 	cfg := t.TempDir()
-	for i := range recs {
-		seedStoreRecord(t, cfg, recs[i].ID, "bob")
-	}
-	m := NewManager(cfg)
-	saveRecords(t, m.conns, recs...)
-	m.clients.newCore = func(rec *connectionRecord, _ []forgeapi.Option) (forgeapi.Core, error) {
-		if c, ok := cores[rec.ID]; ok {
+	seedConnections(t, cfg, "bob", specs...)
+	m, log := newManager(t, cfg, nil)
+	m.newCore = func(spec *connectionSpec, _ []forgeapi.Option) (forgeapi.Core, error) {
+		if c, ok := cores[spec.ID]; ok {
 			return c, nil
 		}
 		return nil, errNoClient
 	}
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Setup: Refresh() = %v", err)
-	}
-	return m
+	m.Load(t.Context())
+	return m, log
 }
 
-func gitlabRecord() connectionRecord {
-	return connectionRecord{ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com"}
-}
+func gitlabRecord() connectionSpec { return specFor(KindGitLab, "gitlab.com") }
 
-func localGiteaRecord() connectionRecord {
-	return connectionRecord{
-		ID: "gitea:127.0.0.1:3000", Kind: KindGitea, Host: "127.0.0.1:3000",
-		WebBaseURL: "http://127.0.0.1:3000", PlaintextHTTP: true, PrivateAddresses: true,
-	}
+func localGiteaRecord() connectionSpec {
+	s := specFor(KindGitea, "127.0.0.1:3000")
+	s.WebBaseURL, s.PlaintextHTTP, s.PrivateAddresses = "http://127.0.0.1:3000", true, true
+	return s
 }
 
 func fixedOrigins(origins ...RepoOrigin) func(context.Context) []RepoOrigin {
@@ -127,10 +131,10 @@ func subjectKey(forgeID, selector string, number int) string {
 }
 
 func TestCloneRepos_AnswersDirForgeAndCanonicalRepoID(t *testing.T) {
-	rows := []ConfiguredForge{
-		{ID: "github:github.com", Kind: KindGitHub, Host: "github.com", webBase: "https://github.com", Connected: true},
-		{ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com", webBase: "https://gitlab.com", Connected: true},
-		{ID: "gitea:127.0.0.1:3000", Kind: KindGitea, Host: "127.0.0.1:3000", webBase: "http://127.0.0.1:3000"},
+	rows := []readHandle{
+		{id: "github:github.com", family: forgeapi.FamilyGitHub, webBase: "https://github.com"},
+		{id: "gitlab:gitlab.com", family: forgeapi.FamilyGitLab, webBase: "https://gitlab.com"},
+		{id: MakeID(KindGitea, "127.0.0.1:3000"), family: forgeapi.FamilyGitea, webBase: "http://127.0.0.1:3000"},
 	}
 	origins := []RepoOrigin{
 		{Dir: "sandbox", WebBase: "https://gitlab.com", Slug: "forgeapi-live/nested/sandbox"},
@@ -145,7 +149,7 @@ func TestCloneRepos_AnswersDirForgeAndCanonicalRepoID(t *testing.T) {
 	want := []CloneRepo{
 		{Dir: "sandbox", ForgeID: "gitlab:gitlab.com", RepoID: repoIDOf("forgeapi-live/nested/sandbox")},
 		{Dir: "upper", ForgeID: "github:github.com", RepoID: repoIDOf("bob/app")},
-		{Dir: "local", ForgeID: "gitea:127.0.0.1:3000", RepoID: repoIDOf("alice/app")},
+		{Dir: "local", ForgeID: MakeID(KindGitea, "127.0.0.1:3000"), RepoID: repoIDOf("alice/app")},
 	}
 	if got := cloneRepos(rows, origins); !slices.Equal(got, want) {
 		t.Errorf("CloneRepos() =\n%+v\nwant\n%+v\n(an ssh remote, another port, another forge's origin, another scheme and a path the family refuses join nothing)",
@@ -166,7 +170,7 @@ func TestSource_KeepsOnlyRowsInATrackedClone(t *testing.T) {
 	))
 
 	reads := src.Read(t.Context(), false, firstPage)
-	wantConn := PRConnection{ID: "github:github.com", Account: "bob", WebBase: "https://github.com"}
+	wantConn := PRConnection{ID: "github:github.com", Account: testSignIn, WebBase: "https://github.com"}
 	if len(reads) != 1 || reads[0].Conn != wantConn {
 		t.Fatalf("Read() = %+v, want one read of %+v", reads, wantConn)
 	}
@@ -207,16 +211,16 @@ func TestSource_OneListMyPRsPerConnectionPerSweep(t *testing.T) {
 	gitlab := &myPRsCore{pages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{"": {}}}
 	gitea := &myPRsCore{pages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{"": {}}}
 	codeberg := &myPRsCore{pages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{"": {}}}
-	codebergRec := connectionRecord{ID: "codeberg:codeberg.org", Kind: KindCodeberg, Host: "codeberg.org"}
+	codebergRec := connectionSpec{SignIn: testSignIn, ID: "codeberg:codeberg.org", Kind: KindCodeberg, Host: "codeberg.org"}
 	m := sourceManager(t, map[string]forgeapi.Core{
-		"github:github.com": github, "gitlab:gitlab.com": gitlab, "gitea:127.0.0.1:3000": gitea,
+		"github:github.com": github, "gitlab:gitlab.com": gitlab, MakeID(KindGitea, "127.0.0.1:3000"): gitea,
 		"codeberg:codeberg.org": codeberg,
 	}, githubRecord(), gitlabRecord(), localGiteaRecord(), codebergRec)
-	// Codeberg keeps its record and loses its credential, so its row is not connected.
-	if err := m.store.Delete(codebergRec.ID); err != nil {
+	// Codeberg keeps its record and loses its credential, so its row is reconnect.
+	if err := openTestStore(t, m.configDir).Delete(slotKey(codebergRec.ID, 0)); err != nil {
 		t.Fatalf("Setup: delete the codeberg credential: %v", err)
 	}
-	m.invalidate()
+	m.Load(t.Context())
 	src := NewManagerPRSource(m, fixedOrigins(
 		RepoOrigin{Dir: "one", WebBase: "https://github.com", Slug: "bob/one"},
 		RepoOrigin{Dir: "two", WebBase: "https://github.com", Slug: "bob/two"},
@@ -249,29 +253,11 @@ func TestSource_OneListMyPRsPerConnectionPerSweep(t *testing.T) {
 	}
 }
 
-func TestSource_APresentCycleHealsATemporaryProbeFailure(t *testing.T) {
-	core := &whoamiCore{err: &forgeapi.Error{Op: "Whoami", Kind: forgeapi.KindTransient, Message: "no route to host"}}
-	m := sourceManager(t, map[string]forgeapi.Core{"github:github.com": core}, githubRecord())
-	if err := m.probeConnection(t.Context(), "github:github.com"); err == nil {
-		t.Fatal("Setup: Probe() over a dead network = nil, want the failure")
-	}
-	core.err = nil
-	p := newTestPoller(NewManagerPRSource(m, fixedOrigins()), &fakeNotifier{}, &fakeGate{present: true})
-
-	p.sweep(t.Context())
-
-	if f := m.get("github:github.com"); f == nil || !f.Connected || f.LastError != "" {
-		t.Errorf("row after a present cycle once the network is back = %+v, want connected with the error cleared", f)
-	}
-}
-
 func TestSource_NothingConnectedReadsNoOrigins(t *testing.T) {
 	stubPath(t)
-	m := NewManager(t.TempDir())
-	saveRecords(t, m.conns, githubRecord())
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Setup: Refresh() = %v", err)
-	}
+	cfg := t.TempDir()
+	writeRecords(t, cfg, connectionRecord{connectionSpec: githubRecord()})
+	m, _ := loadedManager(t, cfg, nil)
 	read := 0
 	src := NewManagerPRSource(m, func(context.Context) []RepoOrigin {
 		read++

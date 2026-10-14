@@ -13,8 +13,6 @@ const ROOT = join(import.meta.dirname, "..");
 /** Files where a write-shaped call is permitted as a background path or cleanup, each with a
  *  one-line reason. Matched by basename, so entries must be unique filenames. */
 const BACKGROUND_ALLOWLIST = new Set<string>([
-  "forge-auth.ts", // await apiPost in revalidateInBackground (probe per forge)
-
   // OAuth poll loop with its own status/error UI.
   "forge-auth-oauth.ts",
 

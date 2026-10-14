@@ -117,12 +117,11 @@ func (e *grantEndpoint) holdFirstToken(t *testing.T) (held <-chan struct{}, rele
 	return held, release
 }
 
-func (e *grantEndpoint) record() connectionRecord {
+func (e *grantEndpoint) record() connectionSpec {
 	host := strings.TrimPrefix(e.srv.URL, "http://")
-	return connectionRecord{
-		ID: MakeID(KindGitHub, host), Kind: KindGitHub, Host: host, WebBaseURL: e.srv.URL,
-		PrivateAddresses: true, PlaintextHTTP: true,
-	}
+	s := specFor(KindGitHub, host)
+	s.WebBaseURL, s.PrivateAddresses, s.PlaintextHTTP = e.srv.URL, true, true
+	return s
 }
 
 const pendingAnswer = `{"error":"authorization_pending"}`

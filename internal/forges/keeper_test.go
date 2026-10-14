@@ -2,7 +2,6 @@ package forges
 
 import (
 	"context"
-	"encoding/json"
 	"encoding/pem"
 	"io"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/forgeapi"
@@ -22,36 +20,44 @@ import (
 const rotatedAnswer = `{"access_token":"token-new","token_type":"bearer","scope":"repo","expires_in":28800,` +
 	`"refresh_token":"refresh-new","refresh_token_expires_in":15897600}`
 
-// tokenServer is a TLS stand-in for github.com: its OAuth token endpoint answers
-// body to every refresh, and it counts every request it receives on any path.
+// tokenServer is a TLS stand-in for github.com: its OAuth token endpoint
+// answers body to every refresh, its identity read answers alice, and it counts
+// each.
 type tokenServer struct {
-	srv  *httptest.Server
-	hits atomic.Int32
+	srv       *httptest.Server
+	refreshes atomic.Int32
+	users     atomic.Int32
 }
 
 func newTokenServer(t *testing.T, body string) *tokenServer {
 	t.Helper()
 	ts := &tokenServer{}
 	ts.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ts.hits.Add(1)
-		if r.URL.Path != "/login/oauth/access_token" {
-			http.NotFound(w, r)
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, body)
+		switch r.URL.Path {
+		case "/login/oauth/access_token":
+			ts.refreshes.Add(1)
+			_, _ = io.WriteString(w, body)
+		case "/api/v3/user":
+			ts.users.Add(1)
+			_, _ = io.WriteString(w, `{"login":"alice"}`)
+		case "/api/v3/user/repos":
+			_, _ = io.WriteString(w, `[]`)
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	t.Cleanup(ts.srv.Close)
 	return ts
 }
 
-func (ts *tokenServer) record() connectionRecord {
+func (ts *tokenServer) record() connectionSpec {
 	host := strings.TrimPrefix(ts.srv.URL, "https://")
-	return connectionRecord{
-		ID: MakeID(KindGitHub, host), Kind: KindGitHub, Host: host, WebBaseURL: ts.srv.URL,
-		CAPEM:            string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ts.srv.Certificate().Raw})),
-		PrivateAddresses: true,
-	}
+	s := specFor(KindGitHub, host)
+	s.WebBaseURL = ts.srv.URL
+	s.CAPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ts.srv.Certificate().Raw}))
+	s.PrivateAddresses = true
+	return s
 }
 
 func rotatingCredential(webBase string, expiresIn time.Duration) creds.Record {
@@ -63,40 +69,39 @@ func rotatingCredential(webBase string, expiresIn time.Duration) creds.Record {
 	}
 }
 
-func keeperManager(t *testing.T, rec *connectionRecord, cred *creds.Record) *Manager {
+// keeperManager is a loaded manager over the real family clients holding spec
+// with cred in its active slot, with the store it reads and its change log.
+func keeperManager(t *testing.T, spec *connectionSpec, cred *creds.Record) (*Manager, *creds.FileStore, *changeLog) {
 	t.Helper()
-	m := NewManager(t.TempDir())
-	if m.store == nil {
-		t.Fatalf("Setup: open the credential store: %s", m.storeReason)
-	}
-	if err := m.store.Save(rec.ID, *cred); err != nil {
+	isolateGit(t)
+	cfg := t.TempDir()
+	seedConnections(t, cfg, cred.Account, *spec)
+	store := openTestStore(t, cfg)
+	if err := store.Save(slotKey(spec.ID, spec.Slot), *cred); err != nil {
 		t.Fatalf("Setup: save the credential: %v", err)
 	}
-	saveRecords(t, m.conns, *rec)
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Setup: Refresh() = %v", err)
-	}
-	return m
+	m, log := loadedManager(t, cfg, nil)
+	return m, store, log
 }
 
 func TestKeeper_RefreshesARotatingRecordBeforeExpiry(t *testing.T) {
 	ts := newTokenServer(t, rotatedAnswer)
 	rec := ts.record()
 	cred := rotatingCredential(ts.srv.URL, time.Minute)
-	m := keeperManager(t, &rec, &cred)
+	m, store, _ := keeperManager(t, &rec, &cred)
 
-	NewKeeper(m, nil).pass(t.Context())
+	NewKeeper(m).pass(t.Context())
 
-	got, ok, err := m.store.Load(rec.ID)
+	got, ok, err := store.Load(slotKey(rec.ID, 0))
 	if err != nil || !ok || got.Token != "token-new" || got.RefreshToken != "refresh-new" {
 		t.Errorf("stored credential after a keeper pass = token %q, refresh %q (ok %v, err %v); want the rotated pair token-new, refresh-new",
 			got.Token, got.RefreshToken, ok, err)
 	}
-	if n := ts.hits.Load(); n != 1 {
-		t.Errorf("the forge saw %d requests during the pass, want the one refresh", n)
+	if n := ts.refreshes.Load(); n != 1 {
+		t.Errorf("the forge saw %d refreshes during the pass, want 1", n)
 	}
-	if row := m.get(rec.ID); row.ReconnectRequired || !row.Connected {
-		t.Errorf("row after a successful refresh = %+v, want connected and not reconnect-required", row)
+	if row := viewFor(t, m, rec.ID); row.Status != ForgeConnected {
+		t.Errorf("row after a successful refresh = %+v, want connected", row)
 	}
 }
 
@@ -107,97 +112,46 @@ func TestKeeper_LeavesAStaticRecordAlone(t *testing.T) {
 		Family: forgeapi.FamilyGitHub, WebBaseURL: ts.srv.URL, Kind: forgeapi.CredKindStaticPAT,
 		Token: "pat", Issued: time.Now().Truncate(time.Second), Account: "alice",
 	}
-	m := keeperManager(t, &rec, &cred)
-	changes := 0
+	m, store, changes := keeperManager(t, &rec, &cred)
+	k := NewKeeper(m)
 
-	NewKeeper(m, func(context.Context) { changes++ }).pass(t.Context())
+	k.pass(t.Context())
+	k.pass(t.Context())
 
-	if n := ts.hits.Load(); n != 0 {
-		t.Errorf("a pass over a token connection sent %d requests to the forge, want none", n)
+	if n := ts.refreshes.Load(); n != 0 {
+		t.Errorf("two passes over a token connection sent %d refreshes, want none", n)
 	}
-	if got, _, err := m.store.Load(rec.ID); err != nil || got.Token != "pat" || got.Usability != creds.UsabilityUnmarked {
-		t.Errorf("stored credential after the pass = token %q, usability %v (err %v); want pat, unmarked", got.Token, got.Usability, err)
+	if n := ts.users.Load(); n != 2 {
+		t.Errorf("two passes sent %d identity reads, want one a pass", n)
 	}
-	if row := m.get(rec.ID); row.ReconnectRequired || !row.Connected || changes != 0 {
-		t.Errorf("row after the pass = %+v with %d changes announced, want it untouched and nothing announced", row, changes)
+	if got, _, err := store.Load(slotKey(rec.ID, 0)); err != nil || got.Token != "pat" || got.Usability != creds.UsabilityUnmarked {
+		t.Errorf("stored credential after the passes = token %q, usability %v (err %v); want pat, unmarked", got.Token, got.Usability, err)
+	}
+	if row := viewFor(t, m, rec.ID); row.Status != ForgeConnected || len(changes.all()) != 0 {
+		t.Errorf("row after the passes = %+v with %d changes announced, want it connected and nothing announced",
+			row, len(changes.all()))
 	}
 }
 
-// A record whose credential the store lacks reads reconnect-required from the
-// rebuild itself, so a keeper pass after a refresh announces no change.
-func TestKeeper_ARecordWithNoCredentialIsNotReannounced(t *testing.T) {
-	ts := newTokenServer(t, `{"error":"bad_refresh_token"}`)
-	rec := ts.record()
-	cred := creds.Record{
-		Family: forgeapi.FamilyGitHub, WebBaseURL: ts.srv.URL, Kind: forgeapi.CredKindStaticPAT,
-		Token: "pat", Issued: time.Now().Truncate(time.Second), Account: "alice",
-	}
-	m := keeperManager(t, &rec, &cred)
-	if err := m.store.Delete(rec.ID); err != nil {
-		t.Fatalf("Setup: Delete() = %v", err)
-	}
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Setup: Refresh() = %v", err)
-	}
-	if row := m.get(rec.ID); !row.ReconnectRequired || row.ErrorCode != forgeapi.CodeReconnectRequired {
-		t.Errorf("row with no stored credential = %+v, want reconnect-required", row)
-	}
-	changes := 0
-	k := NewKeeper(m, func(context.Context) { changes++ })
-	k.pass(t.Context())
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Setup: Refresh() = %v", err)
-	}
-	k.pass(t.Context())
-	if changes != 0 {
-		t.Errorf("two keeper passes around a Refresh announced %d changes, want none: the row already said it", changes)
-	}
-}
-
-func TestKeeper_TerminalRefreshMarksTheRowReconnectRequired(t *testing.T) {
-	ts := newTokenServer(t, `{"error":"bad_refresh_token","error_description":"The refresh token passed is incorrect or expired."}`)
-	rec := ts.record()
-	cred := rotatingCredential(ts.srv.URL, time.Minute)
-	m := keeperManager(t, &rec, &cred)
-	changes := 0
-	k := NewKeeper(m, func(context.Context) { changes++ })
-
-	k.pass(t.Context())
-
-	row := m.get(rec.ID)
-	if !row.ReconnectRequired || row.Connected || row.LastError == "" || row.ErrorCode != forgeapi.CodeReconnectRequired {
-		t.Errorf("row after a refused refresh = %+v, want reconnect-required, disconnected, with the reason and its code", row)
-	}
-	if changes != 1 {
-		t.Errorf("a refused refresh announced %d changes, want 1", changes)
-	}
-	k.pass(t.Context())
-	if changes != 1 {
-		t.Errorf("a second pass over the already-marked row announced %d changes in total, want still 1", changes)
-	}
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Refresh() = %v", err)
-	}
-	if row := m.get(rec.ID); !row.ReconnectRequired || row.Connected {
-		t.Errorf("row after a refresh of the list = %+v, want the reconnect state kept from the marked record", row)
-	}
-}
-
-func TestKeeper_FailedRefreshOfAnExpiredTokenLeavesTheRowUnmarked(t *testing.T) {
+// A refresh the forge failed without refusing leaves an expired token retrying,
+// so the next pass refreshes again.
+func TestKeeper_FailedRefreshOfAnExpiredTokenRetries(t *testing.T) {
 	ts := newTokenServer(t, `{"error":"temporarily_unavailable"}`)
 	rec := ts.record()
 	cred := rotatingCredential(ts.srv.URL, -time.Minute)
-	m := keeperManager(t, &rec, &cred)
-	changes := 0
+	m, _, _ := keeperManager(t, &rec, &cred)
+	k := NewKeeper(m)
 
-	NewKeeper(m, func(context.Context) { changes++ }).pass(t.Context())
-
-	if n := ts.hits.Load(); n == 0 {
-		t.Fatal("the pass sent no refresh for an expired token; the fixture is not exercising a failed refresh")
+	k.pass(t.Context())
+	if n := ts.refreshes.Load(); n != 1 {
+		t.Fatalf("the pass sent %d refreshes for an expired token, want 1; the fixture is not exercising a failed refresh", n)
 	}
-	if row := m.get(rec.ID); row.ReconnectRequired || changes != 0 {
-		t.Errorf("row after a refresh the forge failed without refusing = %+v with %d changes announced, "+
-			"want it not reconnect-required and nothing announced: the next pass refreshes again", row, changes)
+	if row := viewFor(t, m, rec.ID); row.Status != ForgeRetrying {
+		t.Errorf("row after a refresh the forge failed without refusing = %+v, want retrying", row)
+	}
+	k.pass(t.Context())
+	if n := ts.refreshes.Load(); n != 2 {
+		t.Errorf("the second pass left the refresh count at %d, want 2: a retrying row is checked again", n)
 	}
 }
 
@@ -219,19 +173,18 @@ func (c *cursorCore) BudgetState() forgeapi.BudgetState {
 	return forgeapi.BudgetState{Remaining: forgeapi.BudgetRemainingUnknown, RotationCursor: c.cursor}
 }
 
-func giteaCursorRecord() connectionRecord {
-	return connectionRecord{
-		ID: "gitea:git.example.com", Kind: KindGitea, Host: "git.example.com", WebBaseURL: "https://git.example.com",
-		HelperValue: "/'usr/bin/marotte' git-credential --config-dir '/config'", RotationCursor: "repo-1:4",
-		OwnerScopes: []string{"acme"},
-	}
+func giteaCursorRecord() connectionSpec {
+	s := specFor(KindGitea, "git.example.com")
+	s.WebBaseURL, s.RotationCursor, s.OwnerScopes = "https://git.example.com", "repo-1:4", []string{"acme"}
+	return s
 }
 
 func TestKeeper_PersistsAMovedRotationCursor(t *testing.T) {
 	rec := giteaCursorRecord()
 	core := &cursorCore{cursor: "repo-1:4"}
+	isolateGit(t)
 	m := recordManagerFor(t, &rec, core)
-	k := NewKeeper(m, nil)
+	k := NewKeeper(m)
 	pre := storedRecord(t, m, rec.ID)
 
 	core.set("repo-7:12")
@@ -241,11 +194,11 @@ func TestKeeper_PersistsAMovedRotationCursor(t *testing.T) {
 	if got.RotationCursor != "repo-7:12" {
 		t.Errorf("stored rotation cursor after the client moved it = %q, want repo-7:12", got.RotationCursor)
 	}
-	if got.HelperValue != pre.HelperValue || len(got.OwnerScopes) != 1 || got.OwnerScopes[0] != "acme" {
+	if got.SignIn != pre.SignIn || len(got.OwnerScopes) != 1 || got.OwnerScopes[0] != "acme" {
 		t.Errorf("the cursor write-back changed the record's other fields: %+v, was %+v", got, pre)
 	}
 
-	path := m.conns.path
+	path := m.records.path
 	before, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
@@ -263,23 +216,25 @@ func TestKeeper_PersistsAMovedRotationCursor(t *testing.T) {
 }
 
 func TestKeeper_RunsAPassEveryInterval(t *testing.T) {
+	isolateGit(t)
 	rec := giteaCursorRecord()
 	core := &cursorCore{cursor: "repo-1:4"}
 	m := recordManagerFor(t, &rec, core)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	k := NewKeeper(m)
+	k.every = 20 * time.Millisecond
+	go k.Run(ctx)
 
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		go NewKeeper(m, nil).Run(ctx)
-		synctest.Wait()
-
-		core.set("repo-2:9")
-		time.Sleep(keeperInterval)
-		synctest.Wait()
-		if got := storedRecord(t, m, rec.ID).RotationCursor; got != "repo-2:9" {
-			t.Errorf("stored cursor one interval after it moved = %q, want repo-2:9", got)
+	core.set("repo-2:9")
+	deadline := time.Now().Add(10 * time.Second)
+	for storedRecord(t, m, rec.ID).RotationCursor != "repo-2:9" {
+		if time.Now().After(deadline) {
+			t.Fatalf("stored cursor ten seconds after it moved = %q, want repo-2:9: no later pass ran",
+				storedRecord(t, m, rec.ID).RotationCursor)
 		}
-	})
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func TestKeeper_StopsOnContextCancel(t *testing.T) {
@@ -287,7 +242,7 @@ func TestKeeper_StopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
-		NewKeeper(m, nil).Run(ctx)
+		NewKeeper(m).Run(ctx)
 		close(done)
 	}()
 
@@ -310,99 +265,4 @@ func (c *whoamiCore) Whoami(ctx context.Context) (forgeapi.Account, error) {
 		return forgeapi.Account{}, c.err
 	}
 	return c.fakeCore.Whoami(ctx)
-}
-
-// heldWhoamiCore answers Whoami once release closes, or its context ends.
-type heldWhoamiCore struct {
-	fakeCore
-	release chan struct{}
-}
-
-func (c *heldWhoamiCore) Whoami(ctx context.Context) (forgeapi.Account, error) {
-	select {
-	case <-c.release:
-		return c.fakeCore.Whoami(ctx)
-	case <-ctx.Done():
-		return forgeapi.Account{}, ctx.Err()
-	}
-}
-
-// A probe caller leaving does not fail another waiting on the same probe, and
-// the verdict still lands on the row.
-func TestManagerProbe_ASharedProbeSurvivesTheFirstCallerLeaving(t *testing.T) {
-	core := &heldWhoamiCore{}
-	m := recordManager(t, core)
-	synctest.Test(t, func(t *testing.T) {
-		core.release = make(chan struct{})
-		first, cancel := context.WithCancel(t.Context())
-		var wg sync.WaitGroup
-		wg.Go(func() { _ = m.probeConnection(first, "github:github.com") })
-		synctest.Wait()
-		var err error
-		wg.Go(func() { err = m.probeConnection(t.Context(), "github:github.com") })
-		synctest.Wait()
-		cancel()
-		synctest.Wait()
-		close(core.release)
-		wg.Wait()
-
-		if err != nil {
-			t.Errorf("Probe() of a caller still waiting after the first left = %v, want nil", err)
-		}
-		if f := m.get("github:github.com"); f == nil || !f.Connected || f.LastError != "" {
-			t.Errorf("row after the shared probe = %+v, want connected", f)
-		}
-	})
-}
-
-func TestManagerProbe_ReconnectRefusalMarksTheRow(t *testing.T) {
-	core := &whoamiCore{err: &forgeapi.Error{
-		Code: forgeapi.CodeReconnectRequired, Kind: forgeapi.KindUnauthorized, Message: "reconnect the forge",
-	}}
-	m := recordManager(t, core)
-
-	if err := m.probeConnection(t.Context(), "github:github.com"); err == nil {
-		t.Fatal("Probe() over a reconnect refusal = nil, want the refusal")
-	}
-	if row := m.get("github:github.com"); !row.ReconnectRequired || row.Connected || row.ErrorCode != forgeapi.CodeReconnectRequired {
-		t.Errorf("row after a reconnect refusal = %+v, want reconnect-required, disconnected and coded so", row)
-	}
-
-	core.err = &forgeapi.Error{Kind: forgeapi.KindTransient, Message: "upstream timed out"}
-	_ = m.probeConnection(t.Context(), "github:github.com")
-	if row := m.get("github:github.com"); !row.ReconnectRequired {
-		t.Errorf("row after a transient probe failure = %+v, want the reconnect state kept", row)
-	}
-
-	core.err = nil
-	if err := m.probeConnection(t.Context(), "github:github.com"); err != nil {
-		t.Fatalf("Probe() after a new sign-in = %v", err)
-	}
-	if row := m.get("github:github.com"); row.ReconnectRequired || !row.Connected {
-		t.Errorf("row after a successful probe = %+v, want the reconnect state cleared", row)
-	}
-}
-
-func TestManagerList_MarkedCredentialReadsReconnectRequired(t *testing.T) {
-	rec := githubRecord()
-	cred := creds.Record{
-		Family: forgeapi.FamilyGitHub, WebBaseURL: rec.webBase(), Kind: forgeapi.CredKindStaticPAT,
-		Token: "pat", Issued: time.Now(), Account: "alice", Usability: creds.UsabilityReconnectRequired,
-	}
-	m := keeperManager(t, &rec, &cred)
-
-	row := m.get(rec.ID)
-	if !row.ReconnectRequired || row.Connected || row.LastError == "" || row.ErrorCode != forgeapi.CodeReconnectRequired {
-		t.Errorf("row of a record marked reconnect-required = %+v, want reconnect-required, disconnected, with the reason and its code", row)
-	}
-}
-
-func TestConfiguredForge_AlwaysStatesReconnectRequired(t *testing.T) {
-	data, err := json.Marshal(ConfiguredForge{ID: "github:github.com", Kind: KindGitHub, Host: "github.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), `"reconnect_required":false`) {
-		t.Errorf("json.Marshal(a usable row) = %s, want reconnect_required stated as false", data)
-	}
 }

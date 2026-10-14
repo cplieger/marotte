@@ -5,11 +5,14 @@ import {
   H,
   actions,
   applyFilter,
+  applyRows,
+  capabilities,
   entry,
   frame,
   giteaForge,
   githubForge,
   gitlabForge,
+  handle,
   inventory,
   inventoryAnswer,
   load,
@@ -21,6 +24,7 @@ import {
   routeAPI,
   serve,
   serveRows,
+  succeeds,
   resetPRsTab,
   restorePRsTab,
 } from "./__test-helpers__/git-prs-tab-harness.js";
@@ -653,7 +657,7 @@ describe("an inventory that is not whole", () => {
   });
 
   it("keeps a connection that needs a new sign-in on the list, saying so", async () => {
-    const lapsed = { ...gitlabForge, connected: false, reconnect_required: true };
+    const lapsed = { ...gitlabForge, status: "reconnect" as const };
     await shown([githubForge, lapsed], entry(githubForge, "1", [pr(7)]));
     expect(mount().querySelector(".git-multirepo-error")?.textContent).toBe(
       "Could not list pull requests on gitlab.com. This account needs a new sign-in. Reconnect it in Sources.",
@@ -662,7 +666,7 @@ describe("an inventory that is not whole", () => {
   });
 
   it("says a lone connection needs a new sign-in rather than that none is connected", async () => {
-    const lapsed = { ...gitlabForge, connected: false, reconnect_required: true };
+    const lapsed = { ...gitlabForge, status: "reconnect" as const };
     await shown([lapsed]);
     expect(mount().querySelector(".git-multirepo-error")?.textContent).toBe(
       "Could not list pull requests on gitlab.com. This account needs a new sign-in. Reconnect it in Sources.",
@@ -712,5 +716,214 @@ describe("an inventory that is not whole", () => {
     frame(entry(githubForge, "2", [pr(7)]));
     expect(hints()).toEqual([]);
     expect(mount().querySelector(".git-prs-connection")).toBeNull();
+  });
+});
+
+describe("PRs tab over the store's rows", () => {
+  beforeEach(async () => {
+    await resetPRsTab();
+  });
+
+  afterEach(() => {
+    restorePRsTab();
+  });
+
+  const failing = {
+    checks: "failing",
+    checks_total: 2,
+    checks_failing: 1,
+    merge_blocked: "checks_failing",
+  };
+
+  async function shown(forges: readonly Forge[], ...entries: Record<string, unknown>[]) {
+    routeAPI({ forges });
+    serve(...entries);
+    const mod = await load();
+    // The store's re-read reaches the tab's own refresh, as the real action does.
+    const { refreshPRs } = await actions();
+    vi.mocked(refreshPRs.dispatch).mockImplementation(() => mod.refreshPRs() as never);
+    mod.initPRsTab();
+    await mod.refreshPRs();
+    await vi.advanceTimersByTimeAsync(0);
+    return mod;
+  }
+
+  function boxes(): string[] {
+    return [...mount().querySelectorAll(".git-prs-connection .git-multirepo-error")].map(
+      (b) => b.textContent,
+    );
+  }
+
+  function rowNumbers(): number[] {
+    return [...mount().querySelectorAll<HTMLElement>(".git-pr-row")].map((r) =>
+      Number(r.dataset["pr"]?.split("#").pop()),
+    );
+  }
+
+  function rerunOf(n: number): HTMLButtonElement | undefined {
+    const r = mount().querySelector<HTMLElement>(
+      `[data-pr="${CSS.escape(prIdentity(githubForge.id, repos[0]?.repo_id ?? "", n))}"]`,
+    );
+    return [...(r?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (b) => b.textContent.trim() === "Re-run",
+    );
+  }
+
+  const RECONNECT = "This account needs a new sign-in. Reconnect it in Sources.";
+  const refusedReason = "the forge refused this account at its last check";
+
+  it("names a refused and a reconnect account, each in its own words", async () => {
+    await shown([
+      { ...gitlabForge, status: "refused", error: { message: refusedReason } },
+      { ...giteaForge, status: "reconnect", error: { message: "gone" } },
+    ]);
+
+    expect(boxes()).toEqual([
+      `Could not list pull requests on gitea.example. ${RECONNECT}`,
+      `Could not list pull requests on gitlab.com: ${refusedReason}. Check it in Sources once it is fixed on the forge.`,
+    ]);
+  });
+
+  it("names an account that appears refused after the tab listed none", async () => {
+    await shown([]);
+    expect(mount().textContent).toContain("No connected forges");
+
+    applyRows([{ ...gitlabForge, status: "refused", error: { message: refusedReason } }]);
+
+    expect(boxes()).toEqual([
+      `Could not list pull requests on gitlab.com: ${refusedReason}. Check it in Sources once it is fixed on the forge.`,
+    ]);
+    expect(mount().textContent).not.toContain("No connected forges");
+  });
+
+  it("restates a lapsed box when its row moves between lapsed states or the forge gives a new reason", async () => {
+    // One message across both states, so only the state can move the box.
+    const message = "the forge refused the credential";
+    await shown([githubForge, { ...giteaForge, status: "reconnect", error: { message } }]);
+    expect(boxes()).toEqual([`Could not list pull requests on gitea.example. ${RECONNECT}`]);
+
+    applyRows([githubForge, { ...giteaForge, status: "refused", error: { message } }]);
+    expect(boxes()).toEqual([
+      `Could not list pull requests on gitea.example: ${message}. Check it in Sources once it is fixed on the forge.`,
+    ]);
+
+    applyRows([
+      githubForge,
+      { ...giteaForge, status: "refused", error: { message: "IP not allowed" } },
+    ]);
+    expect(boxes()).toEqual([
+      "Could not list pull requests on gitea.example: IP not allowed. Check it in Sources once it is fixed on the forge.",
+    ]);
+  });
+
+  it("names every account while the forge store is unusable, never no connected forges", async () => {
+    const message = "the forge credential store could not be read";
+    await shown([
+      { ...githubForge, status: "unusable", error: { message } },
+      { ...giteaForge, status: "unusable", error: { message } },
+    ]);
+
+    expect(boxes()).toEqual([
+      `Could not list pull requests on gitea.example: marotte cannot use its forge store right now (${message}).`,
+      `Could not list pull requests on github.com: marotte cannot use its forge store right now (${message}).`,
+    ]);
+    expect(mount().textContent).not.toContain("No connected forges");
+  });
+
+  it("lists a new connection's pull requests from the read its sign-in starts", async () => {
+    await shown([githubForge], entry(githubForge, "1", [pr(7)]));
+    serve(entry(githubForge, "1", [pr(7)]), entry(giteaForge, "1", [pr(9, 1)]));
+
+    applyRows([githubForge, giteaForge]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(rowNumbers().sort()).toEqual([7, 9]);
+  });
+
+  // The inventory read the change starts is held or fails here, so only the row change can clear the old rows.
+  it.each([
+    ["held", () => new Promise<unknown>(() => undefined)],
+    ["failing", () => Promise.resolve(null)],
+  ] as const)(
+    "drops a connection's pull requests at once when it is signed in as another account, its read %s",
+    async (_, read) => {
+      await shown([githubForge], entry(githubForge, "1", [pr(7)]));
+      expect(rowNumbers()).toEqual([7]);
+      inventoryAnswer.next = read;
+
+      applyRows([{ ...githubForge, account: "acct-other" }]);
+      expect(rowNumbers()).toEqual([]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(rowNumbers()).toEqual([]);
+    },
+  );
+
+  it.each(["refused", "reconnect", "unusable"] as const)(
+    "drops a connection's pull requests at once when its row turns %s",
+    async (status) => {
+      await shown([githubForge], entry(githubForge, "1", [pr(7)]));
+      inventoryAnswer.next = () => new Promise(() => undefined);
+
+      applyRows([{ ...githubForge, status, error: { message: "no" } }]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(rowNumbers()).toEqual([]);
+      expect(boxes()).toHaveLength(1);
+    },
+  );
+
+  describe("re-run capabilities", () => {
+    it("are asked again after a new sign-in and after a refusal clears, not on a frame that changes nothing", async () => {
+      const { readCapabilities } = await actions();
+      await shown([githubForge], entry(githubForge, "1", [pr(7, 0, {}, failing)]));
+      expect(readCapabilities.dispatch).toHaveBeenCalledTimes(1);
+
+      frame(entry(githubForge, "2", [pr(7, 0, { title: "again" }, failing)]));
+      expect(readCapabilities.dispatch).toHaveBeenCalledTimes(1);
+
+      const again = { ...githubForge, account: "acct-github-2" };
+      applyRows([again]);
+      frame(entry(again, "3", [pr(7, 0, {}, failing)]));
+      expect(readCapabilities.dispatch).toHaveBeenCalledTimes(2);
+
+      applyRows([{ ...again, status: "refused", error: { message: "no" } }]);
+      applyRows([again]);
+      frame(entry(again, "4", [pr(7, 0, {}, failing)]));
+      expect(readCapabilities.dispatch).toHaveBeenCalledTimes(3);
+    });
+
+    it("apply only the answer to the newest ask, whatever order the answers land in", async () => {
+      const { readCapabilities } = await actions();
+      const answers: ((v: Record<string, unknown>) => void)[] = [];
+      vi.mocked(readCapabilities.dispatch).mockImplementation(
+        () => handle(new Promise((r) => answers.push(r))) as never,
+      );
+      await shown([githubForge], entry(githubForge, "1", [pr(7, 0, {}, failing)]));
+      expect(answers).toHaveLength(1);
+
+      // The refusal clears on the forge; the same account reads its capabilities again.
+      applyRows([{ ...githubForge, status: "refused", error: { message: "no" } }]);
+      applyRows([githubForge]);
+      frame(entry(githubForge, "2", [pr(7, 0, {}, failing)]));
+      expect(answers).toHaveLength(2);
+
+      answers[1]!({ status: "success", value: capabilities("yes") });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(rerunOf(7)?.disabled).toBe(false);
+      answers[0]!({ status: "success", value: capabilities("no", "read before the change") });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(rerunOf(7)).toBeDefined();
+    });
+
+    it("drop an answer read through another sign-in than the row's", async () => {
+      const { readCapabilities } = await actions();
+      vi.mocked(readCapabilities.dispatch).mockImplementation(
+        () => succeeds(capabilities("no", "", "acct-before")) as never,
+      );
+      await shown([githubForge], entry(githubForge, "1", [pr(7, 0, {}, failing)]));
+
+      expect(rerunOf(7)?.disabled).toBe(false);
+    });
   });
 });

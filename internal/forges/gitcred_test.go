@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/creds"
 	"github.com/cplieger/marotte/internal/systembin"
@@ -20,8 +19,8 @@ import (
 
 // TestMain runs the test binary as the credential helper when git re-executes
 // it, and otherwise points git's global config away from this machine's for the
-// whole package: a manager's boot Refresh registers the helper for every record
-// it holds.
+// whole package: a manager's Load registers the helper for every usable
+// connection it holds.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == HelperCommand {
 		os.Exit(RunCredentialHelper(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
@@ -70,11 +69,21 @@ func writeGitConfig(t *testing.T, path, body string) {
 
 func helperValuesFor(t *testing.T, url string) []string {
 	t.Helper()
-	got, err := gitHelperValues(t.Context(), "credential."+url+".helper")
+	have, err := registeredHelpers(t.Context())
 	if err != nil {
 		t.Fatalf("read credential.%s.helper: %v", url, err)
 	}
-	return got
+	return have[url]
+}
+
+// reconcileOne reconciles url's helpers against git's current config.
+func reconcileOne(t *testing.T, url, want, configDir string) error {
+	t.Helper()
+	have, err := registeredHelpers(t.Context())
+	if err != nil {
+		return err
+	}
+	return reconcileHelper(t.Context(), url, have[url], want, ownedBy(configDir))
 }
 
 func mustHelperValue(t *testing.T, bin, configDir string) string {
@@ -90,17 +99,34 @@ func ownedBy(configDir string) func(string) bool {
 	return func(v string) bool { return ownsHelperValue(v, configDir) }
 }
 
-func seedCredential(t *testing.T, configDir, key string, rec creds.Record) {
+// seedHelperConnections writes specs as configDir's records, each standing
+// as given, and saves each one's static credential under its active slot.
+func seedHelperConnections(t *testing.T, configDir string, conns map[string]helperConnection) {
 	t.Helper()
-	store, reason := openCredentialStore(configDir)
-	if store == nil {
-		t.Fatalf("Setup: open store: %s", reason)
+	store := openTestStore(t, configDir)
+	recs := make([]connectionRecord, 0, len(conns))
+	for _, c := range conns {
+		recs = append(recs, connectionRecord{connectionSpec: c.spec, Standing: c.standing})
+		c.cred.Kind, c.cred.Issued = forgeapi.CredKindStaticPAT, time.Now()
+		if c.cred.Family == forgeapi.FamilyUnknown {
+			c.cred.Family = c.spec.Kind.family()
+		}
+		c.cred.WebBaseURL = c.spec.webBase()
+		if err := store.Save(slotKey(c.spec.ID, c.spec.Slot), c.cred); err != nil {
+			t.Fatalf("Setup: save %s: %v", c.spec.ID, err)
+		}
 	}
-	rec.Kind = forgeapi.CredKindStaticPAT
-	rec.Issued = time.Now()
-	if err := store.Save(key, rec); err != nil {
-		t.Fatalf("Setup: save %s: %v", key, err)
-	}
+	writeRecords(t, configDir, recs...)
+}
+
+type helperConnection struct {
+	cred     creds.Record
+	standing standing
+	spec     connectionSpec
+}
+
+func helperOn(kind Kind, host, token string) helperConnection {
+	return helperConnection{spec: specFor(kind, host), cred: creds.Record{Token: token}}
 }
 
 func runHelper(t *testing.T, configDir, action, input string) (code int, out, diag string) {
@@ -140,7 +166,7 @@ func TestReconcileHelper_AppendsResetThenValueAfterForeignEntries(t *testing.T) 
 	cfgDir := t.TempDir()
 	want := mustHelperValue(t, "/opt/marotte/marotte", cfgDir)
 
-	if err := reconcileHelper(t.Context(), "https://github.com", want, ownedBy(cfgDir)); err != nil {
+	if err := reconcileOne(t, "https://github.com", want, cfgDir); err != nil {
 		t.Fatalf("reconcileHelper: %v", err)
 	}
 	got := helperValuesFor(t, "https://github.com")
@@ -166,7 +192,7 @@ func TestReconcileHelper_RewritesWhenTheBinaryMoved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := reconcileHelper(t.Context(), "https://forge.test", moved, ownedBy(cfgDir)); err != nil {
+	if err := reconcileOne(t, "https://forge.test", moved, cfgDir); err != nil {
 		t.Fatalf("reconcileHelper: %v", err)
 	}
 	got := helperValuesFor(t, "https://forge.test")
@@ -188,7 +214,7 @@ func TestReconcileHelper_DisconnectRemovesOnlyItsPair(t *testing.T) {
 		}
 	}
 
-	if err := reconcileHelper(t.Context(), "https://forge.test", "", ownedBy(cfgDir)); err != nil {
+	if err := reconcileOne(t, "https://forge.test", "", cfgDir); err != nil {
 		t.Fatalf("reconcileHelper(want empty): %v", err)
 	}
 	if got, want := helperValuesFor(t, "https://forge.test"), []string{"", "!gh auth git-credential"}; !slices.Equal(got, want) {
@@ -203,7 +229,7 @@ func TestReconcileHelper_WritesNothingWhenUnchanged(t *testing.T) {
 	gitcfg := isolateGit(t)
 	cfgDir := t.TempDir()
 	v := mustHelperValue(t, "/opt/marotte/marotte", cfgDir)
-	if err := reconcileHelper(t.Context(), "https://forge.test", v, ownedBy(cfgDir)); err != nil {
+	if err := reconcileOne(t, "https://forge.test", v, cfgDir); err != nil {
 		t.Fatalf("first reconcileHelper: %v", err)
 	}
 	before, err := os.Stat(gitcfg)
@@ -211,7 +237,7 @@ func TestReconcileHelper_WritesNothingWhenUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := reconcileHelper(t.Context(), "https://forge.test", v, ownedBy(cfgDir)); err != nil {
+	if err := reconcileOne(t, "https://forge.test", v, cfgDir); err != nil {
 		t.Fatalf("second reconcileHelper: %v", err)
 	}
 	after, err := os.Stat(gitcfg)
@@ -227,14 +253,12 @@ func TestReconcileHelper_WritesNothingWhenUnchanged(t *testing.T) {
 
 func TestRunCredentialHelper_GetAnswersAnOwnedOrigin(t *testing.T) {
 	cfgDir := t.TempDir()
-	seedCredential(t, cfgDir, "github:github.test", creds.Record{
-		Family: forgeapi.FamilyGitHub, WebBaseURL: "https://github.test", Token: "gh-token",
-	})
-	seedCredential(t, cfgDir, "gitlab:gitlab.test", creds.Record{
-		Family: forgeapi.FamilyGitLab, WebBaseURL: "https://gitlab.test", Token: "gl-token",
-	})
-	seedCredential(t, cfgDir, "gitea:gitea.test", creds.Record{
-		Family: forgeapi.FamilyGitea, WebBaseURL: "https://gitea.test", Token: "gt-token", Account: "carol",
+	gitea := helperOn(KindGitea, "gitea.test", "gt-token")
+	gitea.cred.Account = "carol"
+	seedHelperConnections(t, cfgDir, map[string]helperConnection{
+		"github": helperOn(KindGitHub, "github.test", "gh-token"),
+		"gitlab": helperOn(KindGitLab, "gitlab.test", "gl-token"),
+		"gitea":  gitea,
 	})
 
 	for _, tc := range []struct {
@@ -286,9 +310,7 @@ func TestRunCredentialHelper_AbsentStoreAnswersNothingAndCreatesNothing(t *testi
 
 func TestRunCredentialHelper_StoreAndEraseAnswerNothing(t *testing.T) {
 	cfgDir := t.TempDir()
-	seedCredential(t, cfgDir, "github:forge.test", creds.Record{
-		Family: forgeapi.FamilyGitHub, WebBaseURL: "https://forge.test", Token: "kept-token",
-	})
+	seedHelperConnections(t, cfgDir, map[string]helperConnection{"forge": helperOn(KindGitHub, "forge.test", "kept-token")})
 	for _, action := range []string{"store", "erase"} {
 		code, out, diag := runHelper(t, cfgDir, action,
 			"protocol=https\nhost=forge.test\nusername=x-access-token\npassword=other\n\n")
@@ -323,10 +345,8 @@ func TestGitCredentialFill_ReachesTheHelper(t *testing.T) {
 	if err := os.Mkdir(cfgDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	seedCredential(t, cfgDir, "github:forge.test", creds.Record{
-		Family: forgeapi.FamilyGitHub, WebBaseURL: "https://forge.test", Token: "fill-token",
-	})
-	if err := reconcileHelper(t.Context(), "https://forge.test", mustHelperValue(t, bin, cfgDir), ownedBy(cfgDir)); err != nil {
+	seedHelperConnections(t, cfgDir, map[string]helperConnection{"forge": helperOn(KindGitHub, "forge.test", "fill-token")})
+	if err := reconcileOne(t, "https://forge.test", mustHelperValue(t, bin, cfgDir), cfgDir); err != nil {
 		t.Fatalf("Setup: register the helper: %v", err)
 	}
 
@@ -344,70 +364,5 @@ func TestGitCredentialFill_ReachesTheHelper(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "username=x-access-token\npassword=fill-token\n") {
 		t.Errorf("git credential fill = %q (stderr %q), want the helper's credential", out, stderr.String())
-	}
-}
-
-func TestManagerRefresh_RegistersTheHelperForEveryRecordOnce(t *testing.T) {
-	isolateGit(t)
-	stubPath(t)
-	cfgDir := t.TempDir()
-	m := NewManager(cfgDir)
-	m.executable = func() (string, error) { return "/opt/marotte/marotte", nil }
-	saveRecords(t, m.conns, githubRecord(),
-		connectionRecord{ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com"})
-	gh := []string{"", "!/usr/bin/gh auth git-credential"}
-	for _, v := range gh {
-		if _, err := runGitConfig(t.Context(), "--add", "credential.https://github.com.helper", v); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
-	want := mustHelperValue(t, "/opt/marotte/marotte", cfgDir)
-	for url, prefix := range map[string][]string{"https://github.com": gh, "https://gitlab.com": nil} {
-		wantList := append(slices.Clone(prefix), "", want)
-		if got := helperValuesFor(t, url); !slices.Equal(got, wantList) {
-			t.Errorf("after the boot Refresh credential.%s.helper = %q, want %q", url, got, wantList)
-		}
-	}
-	recs, err := m.conns.load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range recs {
-		if r.HelperValue != want {
-			t.Errorf("record %s helper_value = %q, want %q", r.ID, r.HelperValue, want)
-		}
-	}
-
-	m.executable = func() (string, error) { return "/elsewhere/marotte", nil }
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("second Refresh: %v", err)
-	}
-	if got := helperValuesFor(t, "https://gitlab.com"); !slices.Equal(got, []string{"", want}) {
-		t.Errorf("a later Refresh re-registered the helper: %q, want the boot value %q", got, want)
-	}
-}
-
-func TestManagerRefresh_UnverifiedRecordsRegisterNothing(t *testing.T) {
-	isolateGit(t)
-	stubPath(t)
-	cfgDir := t.TempDir()
-	m := NewManager(cfgDir)
-	m.executable = func() (string, error) { return "/opt/marotte/marotte", nil }
-	saveRecords(t, m.conns, githubRecord())
-	orig := enforceFileMode
-	t.Cleanup(func() { enforceFileMode = orig })
-	enforceFileMode = func(string, os.FileMode) (os.FileMode, error) {
-		return 0o660, atomicfile.ErrModeNotStored
-	}
-
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
-	if got := helperValuesFor(t, "https://github.com"); len(got) != 0 {
-		t.Errorf("a record file of unverifiable mode registered helpers %q, want none", got)
 	}
 }

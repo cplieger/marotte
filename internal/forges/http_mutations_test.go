@@ -44,6 +44,8 @@ type mutationCore struct {
 	mu       sync.Mutex
 }
 
+func (*mutationCore) Close() {}
+
 func (c *mutationCore) record(call mutationCall) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

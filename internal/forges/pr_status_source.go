@@ -31,23 +31,22 @@ type RepoOrigin struct {
 // names. The repository id is the canonical one of the remote's path on that
 // connection's family, so a mixed-case remote and the forge's own spelling are
 // one repository; a path the family refuses joins nothing. It sends no request.
-func cloneRepos(rows []ConfiguredForge, origins []RepoOrigin) []CloneRepo {
-	byOrigin := make(map[string]*ConfiguredForge, len(rows))
-	for i := range rows {
-		byOrigin[originKey(rows[i].webBase)] = &rows[i]
+func cloneRepos(hs []readHandle, origins []RepoOrigin) []CloneRepo {
+	byOrigin := make(map[string]*readHandle, len(hs))
+	for i := range hs {
+		byOrigin[originKey(hs[i].webBase)] = &hs[i]
 	}
 	out := make([]CloneRepo, 0, len(origins))
 	for _, o := range origins {
-		f, ok := byOrigin[originKey(o.WebBase)]
+		h, ok := byOrigin[originKey(o.WebBase)]
 		if !ok {
 			continue
 		}
-		family := f.Kind.family()
-		if forgeapi.ValidateSelector(family, o.Slug) != nil {
+		if forgeapi.ValidateSelector(h.family, o.Slug) != nil {
 			continue
 		}
-		ref := forgeapi.RepoRef{Family: family, Selector: o.Slug}
-		out = append(out, CloneRepo{Dir: o.Dir, ForgeID: f.ID, RepoID: ref.Encode()})
+		ref := forgeapi.RepoRef{Family: h.family, Selector: o.Slug}
+		out = append(out, CloneRepo{Dir: o.Dir, ForgeID: h.id, RepoID: ref.Encode()})
 	}
 	return out
 }
@@ -83,65 +82,45 @@ func NewManagerPRSource(mgr *Manager, origins func(context.Context) []RepoOrigin
 	return &managerPRSource{mgr: mgr, origins: origins}
 }
 
-// Read answers every connected connection with the clones it serves. Present,
-// it reads each one's scopes; otherwise only the ones a clone tracks, by the
+// Read answers every usable connection with the clones it serves. Present, it
+// reads each one's scopes; otherwise only the ones a clone tracks, by the
 // authored call alone. Every call starts from the cursor after gives its scope,
 // and a failed call answers its error alone, so one broken scope or connection
 // does not stop the others being read.
 func (s *managerPRSource) Read(ctx context.Context, present bool, after func(PRConnection, Scope) forgeapi.Cursor) []ConnectionRead {
-	rows := s.mgr.List(ctx)
-	if !anyConnected(rows) {
+	hs := s.mgr.readers()
+	if len(hs) == 0 {
 		return nil
 	}
 	clones := make(map[string][]CloneRepo)
-	for _, c := range cloneRepos(rows, s.origins(ctx)) {
+	for _, c := range cloneRepos(hs, s.origins(ctx)) {
 		clones[c.ForgeID] = append(clones[c.ForgeID], c)
 	}
-	var out []ConnectionRead
-	for i := range rows {
-		f := &rows[i]
-		if !f.Connected {
-			continue
-		}
+	out := make([]ConnectionRead, 0, len(hs))
+	for i := range hs {
+		h := &hs[i]
 		r := ConnectionRead{
-			Conn:   PRConnection{ID: f.ID, Account: f.Username, WebBase: f.webBase},
-			Clones: clones[f.ID], Family: f.Kind.family(),
+			Conn:   PRConnection{ID: h.id, Account: h.account, WebBase: h.webBase},
+			Clones: clones[h.id], Family: h.family,
 		}
 		if present || len(r.Clones) > 0 {
-			s.read(ctx, f, &r, present, after)
+			read(ctx, h, &r, present, after)
 		}
 		out = append(out, r)
 	}
 	return out
 }
 
-// read makes r's calls on f's client: present, the account probe and then one
-// ListMyPRs per scope; otherwise the authored call alone.
-func (s *managerPRSource) read(ctx context.Context, f *ConfiguredForge, r *ConnectionRead, present bool,
+// read makes r's calls on h's client: present, one ListMyPRs per scope;
+// otherwise the authored call alone.
+func read(ctx context.Context, h *readHandle, r *ConnectionRead, present bool,
 	after func(PRConnection, Scope) forgeapi.Cursor,
 ) {
-	fc, err := s.mgr.clientOf(f)
-	login := f.Username
-	if err == nil && present {
-		if acct, perr := s.mgr.probe(ctx, fc); perr == nil && acct.Login != "" {
-			login = acct.Login
-		}
+	for _, sc := range cycleScopes(h, present) {
+		r.Pages = append(r.Pages, listScope(ctx, h.core, sc, after(r.Conn, sc)))
 	}
-	for _, sc := range cycleScopes(f, login, present) {
-		if err != nil {
-			r.Pages = append(r.Pages, scopePage{Scope: sc, Err: err})
-			continue
-		}
-		r.Pages = append(r.Pages, listScope(ctx, fc.core, sc, after(r.Conn, sc)))
-	}
-	if err != nil {
-		r.Credential = forgeapi.CredUnknown.String()
-		return
-	}
-	b := fc.core.BudgetState()
-	r.Budget = &InventoryBudget{Remaining: b.Remaining, Reset: unixMilli(b.Reset), LastCost: b.LastCost}
-	r.Credential = fc.cred.State().String()
-	r.ReadPR = readerOf(fc.core, r.Family)
+	r.Credential = h.cred.State().String()
+	r.ReadPR = readerOf(h.core, r.Family)
 }
 
 func readerOf(core forgeapi.Core, family forgeapi.Family) func(context.Context, string, int) (PR, error) {
@@ -160,16 +139,16 @@ func readerOf(core forgeapi.Core, family forgeapi.Family) func(context.Context, 
 
 // GitLab's owner scope takes a group only and refuses the user's own namespace, so its authored
 // rows stand in for the login's.
-func cycleScopes(f *ConfiguredForge, login string, present bool) []Scope {
+func cycleScopes(h *readHandle, present bool) []Scope {
 	if !present {
 		return []Scope{authoredScope}
 	}
-	scopes := make([]Scope, 0, 2+len(f.OwnerScopes))
-	if login != "" && f.Kind.family() != forgeapi.FamilyGitLab {
-		scopes = append(scopes, Scope{Kind: scopeOwner, Owner: login})
+	scopes := make([]Scope, 0, 2+len(h.owners))
+	if h.login != "" && h.family != forgeapi.FamilyGitLab {
+		scopes = append(scopes, Scope{Kind: scopeOwner, Owner: h.login})
 	}
 	scopes = append(scopes, authoredScope)
-	for _, o := range f.OwnerScopes {
+	for _, o := range h.owners {
 		scopes = append(scopes, Scope{Kind: scopeAdded, Owner: o})
 	}
 	return scopes
@@ -198,13 +177,4 @@ func listRow(p *forgeapi.PullRequest) PR {
 	row := prWire(p)
 	row.Body = ""
 	return row
-}
-
-func anyConnected(rows []ConfiguredForge) bool {
-	for i := range rows {
-		if rows[i].Connected {
-			return true
-		}
-	}
-	return false
 }

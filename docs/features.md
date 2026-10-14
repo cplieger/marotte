@@ -39,6 +39,14 @@ An account connects by signing in through your browser on GitHub or GitLab, or w
 
 A gitlab.com sign-in token lasts two hours. marotte renews it with the refresh token GitLab issues with it, so the account stays connected. If GitLab issued no refresh token or refuses a renewal, the account shows **Reconnect** once the token expires.
 
+marotte checks each connected account in the background about once a minute, whether or not a page is open. A network failure, a rate limit or a forge outage does not disconnect the account. Sources shows a note under it, and the note goes once a later check succeeds.
+
+When the forge rejects the token, the account shows **Reconnect**, and only a new sign-in brings it back. When the forge refuses the account instead, for example for a missing permission or an IP allowlist, the account shows the forge's reason and **Check**. Press **Check** once you have fixed it on the forge.
+
+In both cases marotte stops giving git that account's credential, so git uses your other credential helpers or asks you. Both states survive a restart, and the **Pull requests** tab lists the account with what to do. After a restart a refused account shows a general reason in place of the forge's, and **Check** asks the forge again.
+
+marotte 0.15.0 does not keep the forge accounts that 0.14 or earlier saved. After that update, Sources lists no accounts. Add and sign in to each one again, including the address and **Connection options** of a self-hosted forge.
+
 Signing in to GitHub Enterprise or a self-managed GitLab uses an OAuth application registered on that server, and the connect form asks for its client ID. On GitLab, an administrator registers it on the **Applications** page. Select the `api` scope, enter any HTTPS redirect URI, leave **Confidential** unticked and tick **Device authorization grant**. Without that last box, GitLab refuses the sign-in.
 
 ## Reviewing the agent's edits

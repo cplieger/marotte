@@ -37,6 +37,8 @@ type pagedCore struct {
 	mu         sync.Mutex
 }
 
+func (*pagedCore) Close() {}
+
 func (c *pagedCore) record(repo forgeapi.RepoRef, opts []forgeapi.ListOption) (forgeapi.ListSettings, error) {
 	set, err := forgeapi.ResolveList(opts...)
 	if err != nil {
@@ -157,7 +159,7 @@ func onePRPage(n int) map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest] {
 
 func repoRoutes(m *Manager) *http.ServeMux {
 	mux := http.NewServeMux()
-	NewHTTPHandler(m, nil).RegisterRoutes(mux)
+	NewHTTPHandler(m).RegisterRoutes(mux)
 	return mux
 }
 
@@ -236,7 +238,7 @@ func TestRepoRoute_BadRepoIDIs400(t *testing.T) {
 
 func TestRepoRoute_NestedGitLabProjectIsReachable(t *testing.T) {
 	core := &pagedCore{prPages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{"": {}}}
-	rec := connectionRecord{ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com", WebBaseURL: "https://gitlab.com"}
+	rec := connectionSpec{SignIn: testSignIn, ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com", WebBaseURL: "https://gitlab.com"}
 	mux := repoRoutes(recordManagerFor(t, &rec, core))
 	const nested = "v1.666f7267656170692d6c6976652f6e65737465642f73616e64626f78"
 
@@ -360,9 +362,7 @@ func TestListRoute_StateMapsAndAnUnknownStateIs400(t *testing.T) {
 	t.Run("a state on the repository list", func(t *testing.T) {
 		wire := aliceWire()
 		h := newConnectHarness(t, wire)
-		if rec := h.do(t, http.MethodPost, githubPATPath, `{"token":"ghp_secret"}`); rec.Code != http.StatusOK {
-			t.Fatalf("Setup: connect = %d %s", rec.Code, rec.Body)
-		}
+		h.signedIn(t, KindGitHub, "", "ghp_secret", "")
 		before := len(wire.requests())
 		rec := h.do(t, http.MethodGet, "/api/forges/github%3Agithub.com/repos?state=open", "")
 		if rec.Code != http.StatusBadRequest || decodeBody(t, rec)["code"] != forgeapi.CodeListStateInvalid {
@@ -377,9 +377,7 @@ func TestListRoute_StateMapsAndAnUnknownStateIs400(t *testing.T) {
 func patGitHub(t *testing.T, wire *userWire) *connectHarness {
 	t.Helper()
 	h := newConnectHarness(t, wire)
-	if rec := h.do(t, http.MethodPost, githubPATPath, `{"token":"ghp_secret"}`); rec.Code != http.StatusOK {
-		t.Fatalf("Setup: connect = %d %s", rec.Code, rec.Body)
-	}
+	h.signedIn(t, KindGitHub, "", "ghp_secret", "")
 	return h
 }
 

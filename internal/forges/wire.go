@@ -13,6 +13,64 @@ type Detection struct {
 	Kind Kind `json:"kind"`
 }
 
+// ForgeStatus is a connection's one status: what Sources shows and which
+// requests marotte sends through it.
+type ForgeStatus string
+
+// The ForgeStatus values. Connected and retrying rows serve requests; the
+// others serve none.
+const (
+	ForgeConnected ForgeStatus = "connected"
+	// ForgeRetrying is a failure another check can outlive, checked again on the
+	// next background pass.
+	ForgeRetrying ForgeStatus = "retrying"
+	// ForgeRefused is the forge refusing the account, not the token: a Check
+	// revives it once fixed on the forge.
+	ForgeRefused ForgeStatus = "refused"
+	// ForgeReconnect is a token only a new sign-in revives.
+	ForgeReconnect ForgeStatus = "reconnect"
+	// ForgeUnusable is every row while marotte cannot use its forge
+	// persistence.
+	ForgeUnusable ForgeStatus = "unusable"
+)
+
+// ForgeError is why a connection is not connected, in the error envelope's
+// terms.
+type ForgeError struct {
+	Message string `json:"message"`
+	Code    string `json:"code,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	// RetryAt is when the forge's rate limit lets a request through again, in
+	// Unix milliseconds; absent when the forge named no wait.
+	RetryAt int64 `json:"retry_at,omitempty"`
+}
+
+// ConfiguredForge is one connection as Sources lists it. Error is present
+// exactly when Status is not connected.
+type ConfiguredForge struct {
+	Error    *ForgeError `json:"error,omitempty"`
+	ID       string      `json:"id"`
+	Kind     Kind        `json:"kind"`
+	Host     string      `json:"host"`
+	Username string      `json:"username,omitempty"`
+	Email    string      `json:"email,omitempty"`
+	// Account names the sign-in, so a reply read through an older one can be
+	// told apart; a new sign-in as the same user changes it.
+	Account string      `json:"account"`
+	Status  ForgeStatus `json:"status"`
+	// OwnerScopes are the owners a present cycle reads beside the connection's
+	// own pull requests.
+	OwnerScopes []string `json:"owner_scopes,omitempty"`
+	// CheckedAt is the last check's end in Unix milliseconds, absent before one.
+	CheckedAt int64 `json:"checked_at,omitempty"`
+}
+
+// LoginResult is a token sign-in's 200 answer: the id the server minted for the
+// saved connection.
+type LoginResult struct {
+	ForgeID string `json:"forge_id"`
+}
+
 // PartialResult says a list or a row is incomplete: why, how much arrived, and
 // at least how much did not.
 type PartialResult struct {
@@ -106,8 +164,10 @@ type Affordance struct {
 	Detail  string `json:"detail"`
 }
 
-// RepoAffordances is what a repository allows.
+// RepoAffordances is what a repository allows. Account is the sign-in the
+// affordances route read it through, absent on a repository row.
 type RepoAffordances struct {
+	Account       string     `json:"account,omitempty"`
 	HasIssues     Affordance `json:"has_issues"`
 	CanPush       Affordance `json:"can_push"`
 	MergeTrain    Affordance `json:"merge_train"`
@@ -122,6 +182,8 @@ type RepoAffordances struct {
 type Capabilities struct {
 	Connection map[string]Affordance `json:"connection"`
 	Grant      map[string]Affordance `json:"grant"`
+	// Account is the sign-in the answer was read through.
+	Account string `json:"account"`
 }
 
 // Repo is a repository the connection reaches.
@@ -150,7 +212,9 @@ type Repo struct {
 type RepoList struct {
 	Partial *PartialResult `json:"partial,omitempty"`
 	Next    string         `json:"next,omitempty"`
-	Repos   []Repo         `json:"repos"`
+	// Account is the sign-in the page was read through.
+	Account string `json:"account"`
+	Repos   []Repo `json:"repos"`
 }
 
 // PRList is one page of a repository's pull requests. Successor names where a
@@ -235,15 +299,6 @@ type InventoryError struct {
 	RetryAfterS int64  `json:"retry_after_s,omitempty"`
 }
 
-// InventoryBudget is a connection's request budget as its client last read it.
-type InventoryBudget struct {
-	// Remaining is -1 where the family reports none.
-	Remaining int `json:"remaining"`
-	// Reset is unix ms, absent where the family reports none.
-	Reset    int64 `json:"reset,omitempty"`
-	LastCost int   `json:"last_cost"`
-}
-
 // InventoryScope is one list a connection's cycle reads. Next is present while
 // its walk has more pages; Partial is the last page's own.
 type InventoryScope struct {
@@ -259,9 +314,11 @@ type InventoryScope struct {
 // InventoryEntry is one connection's pull requests as the poller's last
 // present cycle read them.
 type InventoryEntry struct {
-	Error   *InventoryError  `json:"error,omitempty"`
-	Budget  *InventoryBudget `json:"budget,omitempty"`
-	ForgeID string           `json:"forge_id"`
+	Error   *InventoryError `json:"error,omitempty"`
+	ForgeID string          `json:"forge_id"`
+	// Account is the sign-in the entry was read through; a client drops an
+	// entry whose account is not its row's.
+	Account string `json:"account"`
 	// State is "loading", "ready", "partial" or "failed".
 	State string `json:"state"`
 	// CycleID is the decimal id of the cycle that produced the entry, "0" while
@@ -297,14 +354,11 @@ type OwnerScopes struct {
 	Owners []string `json:"owners"`
 }
 
-// ProbeResult is a probe's answer: the row as the probe left it, whether that
-// row is connected, and the failure's sentence when the identity read failed.
-// A temporary failure on a connected row answers its sentence beside connected
-// true.
+// ProbeResult is a Check's answer: the row as the check left it, its status
+// and reason included.
 type ProbeResult struct {
-	Forge     *ConfiguredForge `json:"forge,omitempty"`
-	Error     string           `json:"error,omitempty"`
-	Connected bool             `json:"connected"`
+	Forge *ConfiguredForge `json:"forge,omitempty"`
+	Error string           `json:"error,omitempty"`
 }
 
 // InventoryChangedPayload is the forge_inventory event: one connection's entry

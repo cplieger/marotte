@@ -34,6 +34,8 @@ type mergeCore struct {
 	mu        sync.Mutex
 }
 
+func (*mergeCore) Close() {}
+
 func (c *mergeCore) MergePR(_ context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -58,7 +60,7 @@ func (c *mergeCore) merges() []forgeapi.MergeRequest {
 }
 
 type mergeRow struct {
-	rec    connectionRecord
+	rec    connectionSpec
 	repoID string
 	family forgeapi.Family
 	sel    string
@@ -70,7 +72,7 @@ func githubMergeRow() mergeRow {
 
 func gitlabMergeRow() mergeRow {
 	return mergeRow{
-		rec:    connectionRecord{ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com", WebBaseURL: "https://gitlab.com"},
+		rec:    connectionSpec{SignIn: testSignIn, ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com", WebBaseURL: "https://gitlab.com"},
 		repoID: "v1.666f7267656170692d6c6976652f6e65737465642f73616e64626f78",
 		family: forgeapi.FamilyGitLab, sel: "forgeapi-live/nested/sandbox",
 	}
@@ -82,7 +84,7 @@ func giteaMergeRow() mergeRow {
 
 func codebergMergeRow() mergeRow {
 	return mergeRow{
-		rec:    connectionRecord{ID: "codeberg:codeberg.org", Kind: KindCodeberg, Host: "codeberg.org", WebBaseURL: "https://codeberg.org"},
+		rec:    connectionSpec{SignIn: testSignIn, ID: "codeberg:codeberg.org", Kind: KindCodeberg, Host: "codeberg.org", WebBaseURL: "https://codeberg.org"},
 		repoID: "v1.6f2f72", family: forgeapi.FamilyGitea, sel: "o/r",
 	}
 }
@@ -279,7 +281,7 @@ func TestMergeRoute_AnswersTheOutcome(t *testing.T) {
 func TestMergeRoute_GitLabStrategyIsRefused400(t *testing.T) {
 	wire := &userWire{status: http.StatusOK, body: `{"id":1,"username":"alice"}`}
 	h := newConnectHarness(t, wire)
-	connectGitLabByPAT(t, h)
+	h.signedIn(t, KindGitLab, "", "glpat-secret", "")
 	before := len(wire.requests())
 
 	rec := h.do(t, http.MethodPost, gitlabMergeRow().mergePath("11"),

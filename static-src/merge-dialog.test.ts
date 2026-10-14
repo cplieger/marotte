@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   loadSettings: vi.fn(),
   patchDispatch: vi.fn(),
   readAffordances: vi.fn(),
+  ensureForges: vi.fn(),
+  setHeld: (_v: unknown): void => undefined,
 }));
 
 vi.mock("./persist.js", () => ({ loadSettings: mocks.loadSettings }));
@@ -13,11 +15,22 @@ vi.mock("./actions/settings.js", () => ({
 vi.mock("./actions/git-prs.js", () => ({
   readAffordances: { dispatch: mocks.readAffordances },
 }));
+// The dialog follows the held rows through a signal, so the double holds them in one.
+vi.mock("./forge-store.js", async () => {
+  const { signal } = await import("@cplieger/reactive");
+  const held = signal<unknown>(null);
+  mocks.setHeld = (v: unknown) => {
+    held.value = v;
+  };
+  return { ensureForges: mocks.ensureForges, forgeRows: () => held.value };
+});
 
 import { openMergeMethodDialog } from "./merge-dialog.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { WALKERS } from "./audit/walkers.js";
+import { forgeRow, forgesList } from "./__test-helpers__/forge-rows.js";
+import type { ConfiguredForge } from "./wire/types.gen.js";
 
 function mountDialog(): void {
   document.body.innerHTML = `
@@ -40,10 +53,11 @@ function handle(outcome: Record<string, unknown>): unknown {
   );
 }
 
-function lists(strategies: string[]): unknown {
+function lists(strategies: string[], account = "acct-1"): unknown {
   return handle({
     status: "success",
     value: {
+      account,
       merge_strategies: strategies,
       has_issues: { support: "yes", source: "response_body", detail: "" },
       can_push: { support: "yes", source: "response_body", detail: "" },
@@ -99,6 +113,13 @@ const OPTS = {
   repo_id: "v1.6f72672f7265706f",
 };
 
+/** The store applies these rows: ensureForges answers them and the held rows move to them. */
+function showRows(forges: ConfiguredForge[]): void {
+  const list = forgesList(forges);
+  mocks.ensureForges.mockImplementation(() => Promise.resolve(list));
+  mocks.setHeld(list);
+}
+
 describe("merge method dialog", () => {
   beforeEach(() => {
     mocks.loadSettings.mockReset();
@@ -106,6 +127,7 @@ describe("merge method dialog", () => {
     mocks.readAffordances.mockReset();
     mocks.loadSettings.mockResolvedValue(settingsPayload());
     mocks.readAffordances.mockImplementation(() => lists(["merge", "squash", "rebase"]));
+    showRows([forgeRow()]);
     mountDialog();
   });
 
@@ -186,7 +208,7 @@ describe("merge method dialog", () => {
     mocks.readAffordances.mockImplementation(() => {
       const outcome = pending.then(() => ({
         status: "success",
-        value: { merge_strategies: ["squash"] },
+        value: { merge_strategies: ["squash"], account: "acct-1" },
       }));
       return Object.assign(
         outcome.then((o) => o.value),
@@ -377,6 +399,148 @@ describe("merge method dialog", () => {
   });
 });
 
+describe("merge method dialog across a sign-in", () => {
+  const B = forgeRow({ account: "acct-2" });
+
+  beforeEach(() => {
+    mocks.loadSettings.mockReset();
+    mocks.readAffordances.mockReset();
+    mocks.loadSettings.mockResolvedValue(settingsPayload());
+    showRows([forgeRow()]);
+    mountDialog();
+  });
+
+  /** The first read stays in flight until the returned function answers it as account A. */
+  function holdFirstRead(): () => void {
+    let answer: () => void = () => undefined;
+    mocks.readAffordances.mockImplementationOnce(() =>
+      handle(
+        new Promise<Record<string, unknown>>((resolve) => {
+          answer = () => {
+            resolve({ status: "success", value: { ...readValue(["merge"]), account: "acct-1" } });
+          };
+        }) as never,
+      ),
+    );
+    return () => {
+      answer();
+    };
+  }
+
+  function readValue(strategies: string[]): Record<string, unknown> {
+    return {
+      merge_strategies: strategies,
+      has_issues: { support: "yes", source: "response_body", detail: "" },
+      can_push: { support: "yes", source: "response_body", detail: "" },
+      merge_train: { support: "unknown", source: "default", detail: "" },
+      default_branch: "main",
+    };
+  }
+
+  it("never offers the previous account's methods, and reads once more through the new one", async () => {
+    const answerA = holdFirstRead();
+    mocks.readAffordances.mockImplementationOnce(() => lists(["squash"], "acct-2"));
+    const p = openMergeMethodDialog(OPTS);
+    showRows([B]);
+    answerA();
+    await vi.waitFor(() => {
+      expect(values()).toEqual(["squash"]);
+    });
+    expect(mocks.readAffordances).toHaveBeenCalledTimes(2);
+    expect(confirmBtn().disabled).toBe(false);
+    cancel();
+    await p;
+  });
+
+  it("says the account changed when the second read also answers the old one", async () => {
+    const answerA = holdFirstRead();
+    mocks.readAffordances.mockImplementation(() => lists(["merge"], "acct-1"));
+    const p = openMergeMethodDialog(OPTS);
+    showRows([B]);
+    answerA();
+    await vi.waitFor(() => {
+      expect(status().textContent).toBe(
+        "This forge account changed while the dialog was open. Close it and open it again.",
+      );
+    });
+    expect(values()).toEqual([]);
+    expect(mocks.readAffordances).toHaveBeenCalledTimes(2);
+    expect(confirmBtn().disabled).toBe(true);
+    cancel();
+    await p;
+  });
+
+  it("offers nothing when the row is signed in to another account while the settings are read", async () => {
+    let settingsLand: (v: unknown) => void = () => undefined;
+    mocks.loadSettings.mockReturnValue(
+      new Promise((resolve) => {
+        settingsLand = resolve;
+      }),
+    );
+    mocks.readAffordances.mockImplementation(() => lists(["merge", "squash"], "acct-1"));
+    const p = openMergeMethodDialog(OPTS);
+    await vi.waitFor(() => expect(mocks.ensureForges).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    showRows([B]);
+    settingsLand(settingsPayload());
+
+    await vi.waitFor(() => {
+      expect(status().textContent).toBe(
+        "This forge account changed while the dialog was open. Close it and open it again.",
+      );
+    });
+    expect(values()).toEqual([]);
+    expect(confirmBtn().disabled).toBe(true);
+    cancel();
+    await p;
+  });
+
+  it("follows the row while open: keeps the pick through a repaint, takes the methods away on a change", async () => {
+    mocks.readAffordances.mockImplementation(() => lists(["merge", "squash"], "acct-1"));
+    const p = openMergeMethodDialog(OPTS);
+    await vi.waitFor(() => expect(confirmBtn().disabled).toBe(false));
+    const squash = document.querySelector<HTMLInputElement>('input[value="squash"]')!;
+    squash.checked = true;
+
+    showRows([forgeRow()]);
+    expect(document.querySelector('input[value="squash"]')).toBe(squash);
+    expect(checkedValue()).toBe("squash");
+
+    showRows([forgeRow({ status: "refused", error: { message: "no access" } })]);
+    expect(status().textContent).toBe(
+      "This forge account can no longer be used. Check it in Sources.",
+    );
+    expect(values()).toEqual([]);
+    expect(confirmBtn().disabled).toBe(true);
+
+    showRows([B]);
+    expect(status().textContent).toBe(
+      "This forge account changed while the dialog was open. Close it and open it again.",
+    );
+    expect(values()).toEqual([]);
+    expect(confirmBtn().disabled).toBe(true);
+    cancel();
+    await expect(p).resolves.toBeNull();
+  });
+
+  it("says the account can no longer be used when its row is refused meanwhile", async () => {
+    const answerA = holdFirstRead();
+    const p = openMergeMethodDialog(OPTS);
+    showRows([forgeRow({ status: "refused", error: { message: "no access" } })]);
+    answerA();
+    await vi.waitFor(() => {
+      expect(status().textContent).toBe(
+        "This forge account can no longer be used. Check it in Sources.",
+      );
+    });
+    expect(values()).toEqual([]);
+    expect(confirmBtn().disabled).toBe(true);
+    cancel();
+    await p;
+  });
+});
+
 describe("merge method dialog on a phone", () => {
   let style: HTMLStyleElement | null = null;
 
@@ -385,6 +549,7 @@ describe("merge method dialog on a phone", () => {
     mocks.readAffordances.mockReset();
     mocks.loadSettings.mockResolvedValue(settingsPayload());
     mocks.readAffordances.mockImplementation(() => lists(["merge", "squash", "rebase"]));
+    showRows([forgeRow()]);
     // A 390px phone's 90vw, under the app's stylesheet.
     document.body.innerHTML = `
       <dialog id="pr-merge-dialog" class="pr-dialog pr-merge-dialog" style="width: 351px">

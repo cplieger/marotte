@@ -31,7 +31,7 @@ vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
   const read = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
-  return { ...orig, refreshForges: read, ensureForges: read };
+  return { ...orig, ensureForges: read };
 });
 vi.mock("./sse-adapter.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),

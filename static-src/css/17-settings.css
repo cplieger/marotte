@@ -475,18 +475,6 @@
   white-space: nowrap;
 }
 
-/* Skeleton placeholder for the primary identity line while the
- * background probe is still fetching email + username. Inherits
- * the .skeleton shimmer animation; sized to roughly an email's
- * worth of width so the row doesn't reflow when the real value
- * lands. */
-.forge-account-primary-skeleton {
-  display: inline-block;
-  width: 12em;
-  height: 0.875rem;
-  border-radius: var(--r-sm);
-}
-
 .forge-account-meta {
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
@@ -498,6 +486,12 @@
 .forge-account-error {
   font-size: var(--fs-xs);
   color: color-mix(in srgb, var(--c-danger) 90%, var(--c-text-primary));
+}
+
+/* A state that heals by itself (an outage, a rate limit): said, not alarmed. */
+.forge-account-note {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
 }
 
 .forge-account-actions {

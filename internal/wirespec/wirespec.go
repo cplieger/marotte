@@ -224,6 +224,7 @@ var wireTypes = []wiregen.WireType{
 	// GET /api/settings. No omitempty, so the client holds no defaults of its own.
 	wiregen.TypeRef[marotte.KiroDefault](),
 	wiregen.TypeRef[marotte.EffectiveSettings](),
+	wiregen.TypeRef[forges.ForgeError](),
 	wiregen.TypeRef[forges.ConfiguredForge](),
 	// The list envelopes after the rows and parts they hold.
 	wiregen.TypeRef[forges.PartialResult](),
@@ -249,7 +250,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[forges.MergeStatus](),
 	wiregen.TypeRef[forges.CloneRepo](),
 	wiregen.TypeRef[forges.InventoryError](),
-	wiregen.TypeRef[forges.InventoryBudget](),
 	wiregen.TypeRef[forges.InventoryScope](),
 	wiregen.TypeRef[forges.InventoryEntry](),
 	wiregen.TypeRef[forges.InventoryList](),
@@ -263,6 +263,8 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[forges.LabelList](),
 	wiregen.TypeRef[forges.DeviceFlowResponse](),
 	wiregen.TypeRef[forges.PollResult](),
+	// POST /api/forges/login's 200 answer.
+	wiregen.TypeRef[forges.LoginResult](),
 	wiregen.TypeRef[forges.Detection](),
 	wiregen.TypeRef[auth.WhoamiResponse](),
 	wiregen.TypeRef[auth.LoginOptions](),
@@ -304,6 +306,8 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"ToolKind": {}, "ToolStatus": {},
 	"PlanStatus": {},
 	"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
+	// Sources, the PR tab and the merge dialog each switch over it.
+	"ForgeStatus": {},
 	// The rule producing it is implemented in BOTH languages.
 	"TurnOutcome": {},
 	// turn_close.failure_kind; the turn notice's remedy button branches on it.

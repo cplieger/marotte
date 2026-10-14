@@ -32,24 +32,24 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   confirm: vi.fn(() => Promise.resolve(true)),
 }));
 
-// Routed through the mocked client so each case answers the forge list first with mockResolvedValueOnce.
-vi.mock("./forge-store.js", async (importOriginal) => {
-  const orig = await importOriginal<Record<string, unknown>>();
+// The rows read is routed through the mocked client, so each case answers the forge list first.
+vi.mock("./actions/forge-list.js", async () => {
   const { apiGetTyped } = await import("./api-client.js");
-  const forgeRead = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
   return {
-    ...orig,
-    refreshForges: forgeRead,
-    ensureForges: forgeRead,
-    initForgeStore: vi.fn(),
+    listForges: {
+      dispatch: () =>
+        Promise.resolve(apiGetTyped("/api/forges", (v: unknown) => v)).then((v) => v ?? null),
+    },
   };
 });
 
+import { resetActionFramework } from "@cplieger/actions/testing";
 import { renderForgesPanel } from "./forge-auth.js";
 import { apiGetTyped, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_CLOSE_UI, ICON_PLUS_UI } from "./icons.js";
+import { _resetForTest as resetForgeStore } from "./forge-store.js";
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 const mockedApiPost = vi.mocked(apiPost);
@@ -65,6 +65,7 @@ function panel(): HTMLElement {
 
 describe("forge-auth: race condition guards", () => {
   beforeEach(() => {
+    resetForgeStore();
     setupDOM();
     vi.clearAllMocks();
   });
@@ -75,24 +76,27 @@ describe("forge-auth: race condition guards", () => {
     const firstPromise = new Promise((r) => {
       resolveFirst = r;
     });
-    mockedApiGet.mockReturnValueOnce(firstPromise);
-
-    mockedApiGet.mockResolvedValueOnce({
+    const second = {
       forges: [
         {
           id: "gitlab:gitlab.com",
           kind: "gitlab",
           host: "gitlab.com",
           username: "fast",
-          connected: true,
-          reconnect_required: false,
+          account: "acct-1",
+          status: "connected",
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
-    });
+    };
+    const rowsReads = [firstPromise, Promise.resolve(second)];
+    mockedApiGet.mockImplementation(((url: string) =>
+      url === "/api/forges"
+        ? (rowsReads.shift() ?? Promise.resolve(null))
+        : Promise.resolve({ repos: [] })) as typeof apiGetTyped);
 
-    const p1 = renderForgesPanel({ revalidate: false });
-    const p2 = renderForgesPanel({ revalidate: false });
+    const p1 = renderForgesPanel();
+    const p2 = renderForgesPanel();
 
     await p2;
 
@@ -103,8 +107,8 @@ describe("forge-auth: race condition guards", () => {
           kind: "github",
           host: "github.com",
           username: "stale",
-          connected: true,
-          reconnect_required: false,
+          account: "acct-1",
+          status: "connected",
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -119,6 +123,7 @@ describe("forge-auth: race condition guards", () => {
 
 describe("forge-auth: 4-section layout", () => {
   beforeEach(() => {
+    resetForgeStore();
     setupDOM();
     vi.clearAllMocks();
   });
@@ -157,13 +162,13 @@ describe("forge-auth: 4-section layout", () => {
           host: "github.com",
           username: "alice",
           email: "a@x.io",
-          connected: true,
-          reconnect_required: false,
+          account: "acct-1",
+          status: "connected",
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
-    await renderForgesPanel({ revalidate: false });
+    await renderForgesPanel();
     const section = panel().querySelector<HTMLElement>(".forge-kind-section[data-kind='github']")!;
     section.querySelector<HTMLButtonElement>("[data-forge-add]")!.click();
 
@@ -199,16 +204,16 @@ describe("forge-auth: 4-section layout", () => {
           host: "github.com",
           username: "alice",
           email: "alice@example.com",
-          connected: true,
-          reconnect_required: false,
+          account: "acct-1",
+          status: "connected",
         },
         {
           id: "gitlab:gitlab.com",
           kind: "gitlab",
           host: "gitlab.com",
           username: "bob",
-          connected: true,
-          reconnect_required: false,
+          account: "acct-1",
+          status: "connected",
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -238,8 +243,8 @@ describe("forge-auth: 4-section layout", () => {
           host: "github.com",
           username: "alice",
           email: "a@x.io",
-          connected: true,
-          reconnect_required: false,
+          account: "acct-1",
+          status: "connected",
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -264,9 +269,9 @@ describe("forge-auth: 4-section layout", () => {
           kind: "github",
           host: "github.com",
           username: "alice",
-          connected: false,
-          reconnect_required: false,
-          last_error: "token expired",
+          account: "acct-1",
+          status: "refused",
+          error: { message: "token expired" },
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -352,8 +357,8 @@ describe("forge-auth: 4-section layout", () => {
           kind: "github",
           host: "github.com",
           username: "cplieger",
-          connected: true,
-          reconnect_required: false,
+          account: "acct-1",
+          status: "connected",
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -408,7 +413,8 @@ describe("forge-auth: 4-section layout", () => {
     expect(btn.innerHTML).toBe(glyph(ICON_PLUS_UI));
   });
 
-  it("re-probes connected accounts in the background on page open", async () => {
+  // Checks are the server's background pass; opening Sources only reads.
+  it("sends no check for any account when Sources opens", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [
         {
@@ -416,59 +422,32 @@ describe("forge-auth: 4-section layout", () => {
           kind: "github",
           host: "github.com",
           username: "alice",
-          connected: true,
-          reconnect_required: false,
+          account: "acct-1",
+          status: "connected",
         },
         {
           id: "codeberg:codeberg.org",
           kind: "codeberg",
           host: "codeberg.org",
           username: "bob",
-          connected: true,
-          reconnect_required: false,
+          account: "acct-1",
+          status: "connected",
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
-    mockedApiGet.mockResolvedValueOnce({ repos: [] });
+    resetActionFramework();
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
+    vi.stubGlobal("fetch", fetchSpy);
     await renderForgesPanel();
-    // Flushes the void revalidateInBackground microtasks.
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 50));
 
-    const probeCalls = mockedApiPost.mock.calls.filter(
-      ([path]) => typeof path === "string" && path.includes("/probe"),
-    );
-    expect(probeCalls.length).toBe(2);
-    expect(probeCalls.some(([p]) => p.includes("github%3Agithub.com"))).toBe(true);
-    expect(probeCalls.some(([p]) => p.includes("codeberg%3Acodeberg.org"))).toBe(true);
-  });
-
-  it("does not probe disconnected accounts on page open", async () => {
-    mockedApiGet.mockResolvedValueOnce({
-      forges: [
-        {
-          id: "github:github.com",
-          kind: "github",
-          host: "github.com",
-          username: "alice",
-          connected: false,
-          reconnect_required: false,
-          last_error: "expired",
-        },
-      ],
-      kinds: ["github", "gitlab", "codeberg", "gitea"],
-    });
-    await renderForgesPanel();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const probeCalls = mockedApiPost.mock.calls.filter(
-      ([path]) => typeof path === "string" && path.includes("/probe"),
-    );
-    expect(probeCalls.length).toBe(0);
+    const sent = [
+      ...mockedApiPost.mock.calls.map(([path]) => String(path)),
+      ...fetchSpy.mock.calls.map((c: unknown[]) => String(c[0])),
+    ];
+    expect(sent.filter((path) => path.includes("/probe"))).toEqual([]);
+    vi.unstubAllGlobals();
   });
 
   it("sign-out uses the custom styled confirm dialog (not the native popup)", async () => {
@@ -480,8 +459,8 @@ describe("forge-auth: 4-section layout", () => {
           host: "github.com",
           username: "alice",
           email: "a@x.io",
-          connected: true,
-          reconnect_required: false,
+          account: "acct-1",
+          status: "connected",
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -524,8 +503,8 @@ describe("forge-auth: 4-section layout", () => {
           kind: "github",
           host: "github.com",
           username: "alice",
-          connected: true,
-          reconnect_required: false,
+          account: "acct-1",
+          status: "connected",
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
