@@ -74,7 +74,7 @@ func giteaRead(pr forgeapi.PullRequest, check forgeapi.CheckState, head string) 
 
 const viewerTag = "tab-a"
 
-func fillPoller(t *testing.T, cores map[string]forgeapi.Core, origins []RepoOrigin, recs ...connectionRecord,
+func fillPoller(t *testing.T, cores map[string]forgeapi.Core, origins []RepoOrigin, recs ...connectionSpec,
 ) (*PRStatusPoller, *fakeGate, *Manager) {
 	t.Helper()
 	m := sourceManager(t, cores, recs...)
@@ -198,7 +198,7 @@ func TestFill_BoundIsTenPerConnectionPerCycle(t *testing.T) {
 	}
 	gl.pages[""], gt.pages["bob"], gt.pages[""], cb.pages[""] = page(glRows...), page(gtOwner...), page(gtAuthored...), page(cbRows...)
 	glRec, gtRec := gitlabRecord(), localGiteaRecord()
-	cbRec := connectionRecord{ID: "codeberg:codeberg.org", Kind: KindCodeberg, Host: "codeberg.org"}
+	cbRec := connectionSpec{SignIn: testSignIn, ID: "codeberg:codeberg.org", Kind: KindCodeberg, Host: "codeberg.org"}
 	cores := map[string]forgeapi.Core{glRec.ID: gl, gtRec.ID: gt, cbRec.ID: cb}
 	p, _, _ := fillPoller(t, cores, nil, glRec, gtRec, cbRec)
 	p.viewers.watch(viewerTag, "", true)
@@ -514,7 +514,7 @@ func TestFill_ARowInTwoScopesIsReadOnce(t *testing.T) {
 }
 
 func TestFill_AForgottenFillIsReadAgain(t *testing.T) {
-	setup := func(t *testing.T) (*PRStatusPoller, *fakeGate, *Manager, *fillCore, connectionRecord) {
+	setup := func(t *testing.T) (*PRStatusPoller, *fakeGate, *Manager, *fillCore, connectionSpec) {
 		t.Helper()
 		core := newFillCore()
 		pr := listed(forgeapi.FamilyGitLab, "group/app", 1, 0)
@@ -552,13 +552,9 @@ func TestFill_AForgottenFillIsReadAgain(t *testing.T) {
 	})
 	t.Run("Disconnected", func(t *testing.T) {
 		p, _, m, core, rec := setup(t)
-		if err := m.store.Delete(rec.ID); err != nil {
-			t.Fatalf("Setup: delete the credential: %v", err)
-		}
-		m.invalidate()
+		dropCredential(t, m, rec.ID)
 		p.sweep(t.Context())
-		seedStoreRecord(t, m.configDir, rec.ID, "bob")
-		m.invalidate()
+		addConnections(t, m, "bob", rec)
 		p.sweep(t.Context())
 		if len(core.asked) != 2 {
 			t.Errorf("reads of a settled row across a disconnect = %q, want it read again", core.asked)

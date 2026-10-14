@@ -3,8 +3,8 @@ import type * as ModPRs from "./git-prs-tab.js";
 import { prIdentity } from "./push-subject.js";
 import type { Forge } from "./__test-helpers__/git-prs-tab-harness.js";
 import {
-  H,
   actions,
+  applyRows,
   applyFilter,
   capabilities,
   entry,
@@ -468,7 +468,10 @@ describe("the pull-request row's action state", () => {
   it("disables Re-run with the evidence where another family's capability reads unknown", async () => {
     const { readCapabilities } = await actions();
     vi.mocked(readCapabilities.dispatch).mockImplementation(
-      () => succeeds(capabilities("unknown", "no swagger document on this instance")) as never,
+      () =>
+        succeeds(
+          capabilities("unknown", "no swagger document on this instance", giteaForge.account),
+        ) as never,
     );
     await shown([pr(7, 0, {}, failing)], giteaForge);
     const r = mount().querySelector<HTMLElement>(".git-pr-row");
@@ -482,7 +485,7 @@ describe("the pull-request row's action state", () => {
   it("hides Re-run where the connection says it cannot re-run checks", async () => {
     const { readCapabilities } = await actions();
     vi.mocked(readCapabilities.dispatch).mockImplementation(
-      () => succeeds(capabilities("no", "swagger has no rerun verb")) as never,
+      () => succeeds(capabilities("no", "swagger has no rerun verb", giteaForge.account)) as never,
     );
     await shown([pr(7, 0, {}, failing)], giteaForge);
 
@@ -676,7 +679,7 @@ describe("the pull-request row's action state", () => {
     expect(statusOf(row(7))).toBe("");
   });
 
-  it("forgets a refusal when the connections change", async () => {
+  it("forgets a refusal when the connection is signed in again", async () => {
     const { rerunChecks } = await actions();
     vi.mocked(rerunChecks.dispatch).mockImplementationOnce(
       () => refuses("scope_insufficient", "needs the workflow scope") as never,
@@ -686,9 +689,10 @@ describe("the pull-request row's action state", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(buttonOf(row(7), "Re-run")?.disabled).toBe(true);
 
-    // A reconnect may grant the permission: the next read decides again.
-    H.sse.get("forges_changed")?.("", undefined);
-    frame(entry(githubForge, "2", [pr(7, 0, {}, failing)]));
+    // A new sign-in may grant the permission: the next read decides again.
+    const again = { ...githubForge, account: "acct-github-2" };
+    applyRows([again]);
+    frame(entry(again, "2", [pr(7, 0, {}, failing)]));
     await vi.advanceTimersByTimeAsync(0);
     expect(buttonOf(row(7), "Re-run")?.disabled).toBe(false);
     const { readCapabilities } = await actions();

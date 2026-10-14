@@ -123,10 +123,10 @@ func TestDeviceGrant_CompleteSavesTheRecordWithItsAccount(t *testing.T) {
 
 	rec := h.pollGrant(t, t.Context(), grant)
 
-	if body := decodeBody(t, rec); rec.Code != http.StatusOK || body["status"] != stateComplete {
-		t.Fatalf("poll of an approved grant = %d %v, want 200 complete", rec.Code, body)
+	if body := decodeBody(t, rec); rec.Code != http.StatusOK || body["status"] != stateComplete || body["forge_id"] != e.id() {
+		t.Fatalf("poll of an approved grant = %d %v, want 200 complete naming %s", rec.Code, body, e.id())
 	}
-	cred, ok, err := h.m.store.Load(e.id())
+	cred, ok, err := openTestStore(t, h.cfgDir).Load(slotKey(e.id(), 0))
 	if err != nil || !ok {
 		t.Fatalf("store.Load(%s) = %v, %v; want the saved credential", e.id(), ok, err)
 	}
@@ -141,15 +141,15 @@ func TestDeviceGrant_CompleteSavesTheRecordWithItsAccount(t *testing.T) {
 	if auth != "Bearer token-new" {
 		t.Errorf("the identity read carried Authorization %q, want the grant's token", auth)
 	}
-	recs, err := h.m.conns.load()
-	if err != nil || len(recs) != 1 || recs[0].OAuthClientID != applianceClientID || recs[0].WebBaseURL != e.srv.URL ||
+	recs := readRecords(t, h.cfgDir)
+	if len(recs) != 1 || recs[0].OAuthClientID != applianceClientID || recs[0].WebBaseURL != e.srv.URL ||
 		!recs[0].PlaintextHTTP || !recs[0].PrivateAddresses {
-		t.Errorf("connection records = %+v, %v; want the appliance's record naming its application", recs, err)
+		t.Errorf("connection records = %+v; want the appliance's record naming its application", recs)
 	}
 	if got, want := helperValuesFor(t, e.srv.URL), []string{"", h.helperValue(t)}; !slices.Equal(got, want) {
 		t.Errorf("credential.%s.helper = %q, want %q", e.srv.URL, got, want)
 	}
-	if row := h.m.get(e.id()); row == nil || !row.Connected || row.Username != "alice" {
+	if row := viewFor(t, h.m, e.id()); row.Status != ForgeConnected || row.Username != "alice" {
 		t.Errorf("row after the grant = %+v, want alice connected", row)
 	}
 	if again := decodeBody(t, h.pollGrant(t, t.Context(), grant)); again["code"] != codeGrantNotFound {
@@ -174,7 +174,7 @@ func TestDeviceGrant_ApprovalIsSavedWhenTheClientWalksAway(t *testing.T) {
 	if rec.Body.Len() != 0 {
 		t.Errorf("poll answered %q to a client that walked away, want nothing", rec.Body)
 	}
-	if cred, ok, err := h.m.store.Load(e.id()); err != nil || !ok || cred.Token != "token-new" {
+	if cred, ok, err := openTestStore(t, h.cfgDir).Load(slotKey(e.id(), 0)); err != nil || !ok || cred.Token != "token-new" {
 		t.Errorf("store.Load(%s) = %+v, %v, %v; want the approved credential saved", e.id(), cred, ok, err)
 	}
 }
@@ -203,15 +203,15 @@ func TestDeviceGrant_EnterpriseHostWithoutClientIDIsRefused(t *testing.T) {
 	}
 }
 
-func TestDeviceStart_DegradedStoreAnswers503(t *testing.T) {
+func TestDeviceStart_UnusablePersistenceAnswers503(t *testing.T) {
 	e := newGrantEndpoint(t, "900", pendingAnswer)
 	h := newConnectHarness(t, nil)
-	h.m.store, h.m.storeReason = nil, "the forge credential store /x cannot be used"
+	widenStore(t, h.m)
 
 	rec := h.do(t, http.MethodPost, githubGrantStart, e.startBody(applianceClientID))
 
-	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "/x cannot be used") {
-		t.Errorf("start over a degraded store = %d %s, want 503 naming the reason", rec.Code, rec.Body)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "unusable") {
+		t.Errorf("start over an unreadable store = %d %s, want 503", rec.Code, rec.Body)
 	}
 	e.mu.Lock()
 	form := e.codeForm

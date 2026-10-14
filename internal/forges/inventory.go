@@ -24,7 +24,7 @@ const (
 )
 
 // inventory is each connection's pull requests as the poller's last present
-// cycle read them, held in memory. Only the poller's sweep writes it; an entry
+// cycle read them, held in memory. The poller's sweep and DropInventory write it; an entry
 // is replaced whole and never modified after, so a read shares its slices.
 // Every write moves the entry's forge_inventory version inside mu, removals
 // included, so a client holding a removed entry reads it changed.
@@ -62,9 +62,13 @@ func (inv *inventory) clear() {
 }
 
 type inventoryHub interface {
-	broadcaster
+	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 	Epoch() string
 }
+
+// DropInventory forgets connection id's entry at once, which a sign-in or a
+// sign-out makes the wrong account's; the next sweep forgets its walks.
+func (p *PRStatusPoller) DropInventory(id string) { p.inv.drop(id) }
 
 // PollerOption configures a PRStatusPoller.
 type PollerOption func(*PRStatusPoller)
@@ -93,7 +97,7 @@ func (p *PRStatusPoller) publish(ctx context.Context, e *InventoryEntry) {
 // failed, and the error is the cycle's last failure.
 func (p *PRStatusPoller) entryOf(r *ConnectionRead) InventoryEntry {
 	e := InventoryEntry{
-		Budget: r.Budget, ForgeID: r.Conn.ID, CycleID: strconv.FormatUint(p.cycle, 10), Credential: r.Credential,
+		ForgeID: r.Conn.ID, Account: r.Conn.Account, CycleID: strconv.FormatUint(p.cycle, 10), Credential: r.Credential,
 		Scopes: make([]InventoryScope, 0, len(r.Pages)), Clones: append(make([]CloneRepo, 0, len(r.Clones)), r.Clones...),
 		FetchedAt: time.Now().UnixMilli(),
 	}
@@ -162,16 +166,18 @@ func (inv *inventory) lookup(ids []string) []heldEntry {
 	return out
 }
 
-// inventoryFor is the entry of every connected row, ordered by connection id,
-// from memory, each with its stamp, and whether a client shows the pull-request
-// view. A connection no cycle has filled answers
-// loading and asks for a cycle; an entry of a connection no longer connected is
-// left out.
+// inventoryFor is the entry of every connected or retrying row, ordered by
+// connection id, from memory, each with its stamp, and whether a client shows
+// the pull-request view. A connection no cycle has filled for its current
+// account answers loading and asks for a cycle; an entry of a connection no
+// longer usable is left out.
 func (p *PRStatusPoller) inventoryFor(rows []ConfiguredForge) InventoryList {
 	ids := make([]string, 0, len(rows))
+	accounts := make(map[string]string, len(rows))
 	for i := range rows {
-		if rows[i].Connected {
+		if rows[i].Status == ForgeConnected || rows[i].Status == ForgeRetrying {
 			ids = append(ids, rows[i].ID)
+			accounts[rows[i].ID] = rows[i].Account
 		}
 	}
 	slices.Sort(ids)
@@ -179,9 +185,9 @@ func (p *PRStatusPoller) inventoryFor(rows []ConfiguredForge) InventoryList {
 	missing := false
 	held := p.inv.lookup(ids)
 	for i := range held {
-		if !held[i].ok {
+		if !held[i].ok || held[i].entry.Account != accounts[ids[i]] {
 			held[i].entry = InventoryEntry{
-				ForgeID: ids[i], State: inventoryLoading, CycleID: "0", Credential: forgeapi.CredUnknown.String(),
+				ForgeID: ids[i], Account: accounts[ids[i]], State: inventoryLoading, CycleID: "0", Credential: forgeapi.CredUnknown.String(),
 				Scopes: []InventoryScope{}, Clones: []CloneRepo{},
 			}
 			missing = true

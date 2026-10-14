@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/cplieger/forgeapi"
@@ -29,14 +30,14 @@ type detectBody struct {
 
 // record is the connection b describes, refused unless its web base is an
 // origin the connect route could then take.
-func (b *detectBody) record() (connectionRecord, error) {
+func (b *detectBody) record() (connectionSpec, error) {
 	u, err := url.Parse(b.WebBaseURL)
 	if err != nil || !originOn(b.WebBaseURL, u.Host) {
-		return connectionRecord{}, errDetectWebBaseInvalid
+		return connectionSpec{}, errDetectWebBaseInvalid
 	}
-	rec := b.recordOn(u.Host)
-	rec.WebBaseURL = u.Scheme + "://" + u.Host
-	return rec, nil
+	spec := b.specOn(u.Host)
+	spec.WebBaseURL = u.Scheme + "://" + u.Host
+	return spec, nil
 }
 
 // handleDetect serves POST /api/forges/detect: the kind of forge at an address
@@ -59,7 +60,7 @@ func (h *HTTPHandler) handleDetect(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), detectBudget)
 	defer cancel()
-	family, err := h.manager.clients.detect(ctx, &rec, body.Token)
+	family, err := detect(ctx, h.manager, &rec, body.Token)
 	if err != nil {
 		writeOpsError(w, r, err)
 		return
@@ -68,15 +69,15 @@ func (h *HTTPHandler) handleDetect(w http.ResponseWriter, r *http.Request) {
 }
 
 // No client is kept: families.Open closes the candidates it rejects and detect closes the one that
-// answered.
-func (f *clientFactory) detect(ctx context.Context, rec *connectionRecord, token string) (forgeapi.Family, error) {
-	opts := f.options(rec)
+// answered, so its read cache is off.
+func detect(ctx context.Context, m *Manager, spec *connectionSpec, token string) (forgeapi.Family, error) {
+	opts := slices.Concat(connOptions(spec), m.extraOpts, []forgeapi.Option{forgeapi.WithReadCache(0)})
 	// With no source at all the constructors refuse anonymous_refused before
 	// sending; an empty static token would be sent.
 	if token != "" {
 		opts = append(opts, forgeapi.WithCredentialSource(staticSource(token)))
 	}
-	core, family, err := families.Open(ctx, connectionFor(rec), opts...)
+	core, family, err := families.Open(ctx, connectionFor(spec), opts...)
 	if err != nil {
 		return family, err
 	}

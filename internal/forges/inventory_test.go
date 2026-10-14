@@ -32,6 +32,8 @@ type scopeCore struct {
 	whoamis int
 }
 
+func (*scopeCore) Close() {}
+
 func (c *scopeCore) Whoami(context.Context) (forgeapi.Account, error) {
 	c.whoamis++
 	return forgeapi.Account{Login: c.login}, nil
@@ -62,7 +64,7 @@ func newScopeCore() *scopeCore {
 	}
 }
 
-func inventoryPoller(t *testing.T, cores map[string]forgeapi.Core, origins []RepoOrigin, recs ...connectionRecord,
+func inventoryPoller(t *testing.T, cores map[string]forgeapi.Core, origins []RepoOrigin, recs ...connectionSpec,
 ) (*PRStatusPoller, *fakeGate, *fakeNotifier, *Manager) {
 	t.Helper()
 	m := sourceManager(t, cores, recs...)
@@ -122,8 +124,9 @@ func TestInventory_PresentCycleRunsEveryScope(t *testing.T) {
 
 	p.sweep(t.Context())
 
-	if core.whoamis != 1 || !slices.Equal(core.asked, []string{"bob", "", "acme"}) {
-		t.Errorf("a present cycle made %d account reads and listed owners %q, want 1 and [bob, (authored), acme]",
+	if core.whoamis != 0 || !slices.Equal(core.asked, []string{"bob", "", "acme"}) {
+		t.Errorf("a present cycle made %d account reads and listed owners %q, want none and [bob, (authored), acme]: "+
+			"the owner scope's login is the stored account",
 			core.whoamis, core.asked)
 	}
 	e := entryFor(t, p, rec.ID)
@@ -141,8 +144,8 @@ func TestInventory_PresentCycleRunsEveryScope(t *testing.T) {
 			e.State, e.CycleID, e.FetchedAt, e.Error)
 	}
 	p.sweep(t.Context())
-	if core.whoamis != 2 || len(core.asked) != 6 || entryFor(t, p, rec.ID).CycleID != "2" {
-		t.Errorf("after a second present cycle: %d account reads, %d lists, entry cycle %q; want 2, 6 and 2",
+	if core.whoamis != 0 || len(core.asked) != 6 || entryFor(t, p, rec.ID).CycleID != "2" {
+		t.Errorf("after a second present cycle: %d account reads, %d lists, entry cycle %q; want 0, 6 and 2",
 			core.whoamis, len(core.asked), entryFor(t, p, rec.ID).CycleID)
 	}
 }
@@ -287,10 +290,7 @@ func TestInventory_DisconnectDropsTheEntry(t *testing.T) {
 		p.sweep(t.Context())
 		entryFor(t, p, rec.ID)
 
-		if err := m.store.Delete(rec.ID); err != nil {
-			t.Fatalf("Setup: delete the credential: %v", err)
-		}
-		m.invalidate()
+		dropCredential(t, m, rec.ID)
 		p.sweep(t.Context())
 		if got := entriesOf(p); len(got) != 0 {
 			t.Errorf("entries after the connection lost its credential = %+v, want none", got)
@@ -315,8 +315,9 @@ func TestInventory_DisconnectDropsTheEntry(t *testing.T) {
 		p.sweep(t.Context())
 		entryFor(t, p, rec.ID)
 
-		seedStoreRecord(t, m.configDir, rec.ID, "carol")
-		m.invalidate()
+		again := rec
+		again.SignIn = "another-sign-in"
+		addConnections(t, m, "carol", again)
 		g.present, g.push = false, true
 		p.sweep(t.Context())
 		if got := entriesOf(p); len(got) != 0 {
@@ -378,10 +379,9 @@ func TestInventory_RemovedOwnerScopeForgetsItsWalk(t *testing.T) {
 	p, _, _, m := inventoryPoller(t, map[string]forgeapi.Core{rec.ID: core}, nil, rec)
 	setOwners := func(owners ...string) {
 		t.Helper()
-		r := githubRecord()
-		r.OwnerScopes = owners
-		saveRecords(t, m.conns, r)
-		m.invalidate()
+		if _, err := m.setOwners(t.Context(), m.deadlines.from(time.Now()), rec.ID, owners); err != nil {
+			t.Fatalf("Setup: setOwners(%q) = %v", owners, err)
+		}
 	}
 
 	p.sweep(t.Context())
@@ -404,7 +404,7 @@ func TestInventory_AddedOwnerIsReadNextCycle(t *testing.T) {
 	rec := githubRecord()
 	p, _, _, m := inventoryPoller(t, map[string]forgeapi.Core{rec.ID: core}, nil, rec)
 	mux := http.NewServeMux()
-	NewHTTPHandler(m, nil).RegisterRoutes(mux)
+	NewHTTPHandler(m).RegisterRoutes(mux)
 
 	p.sweep(t.Context())
 	answeredOwners(t, putOwners(t, mux, rec.ID, ownersBodyOf("acme")))
@@ -451,41 +451,34 @@ func TestInventory_ClonesAreTheCloneJoin(t *testing.T) {
 	}
 }
 
-func TestInventory_BudgetAndCredentialStateAreCarried(t *testing.T) {
-	reset := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+func TestInventory_CredentialStateIsCarried(t *testing.T) {
 	gh, gl := newScopeCore(), newScopeCore()
-	gh.budget = forgeapi.BudgetState{Remaining: 4990, Reset: reset, LastCost: 1}
-	gl.budget = forgeapi.BudgetState{Remaining: forgeapi.BudgetRemainingUnknown}
 	ghRec, glRec := githubRecord(), gitlabRecord()
 	p, _, _, m := inventoryPoller(t, map[string]forgeapi.Core{ghRec.ID: gh, glRec.ID: gl}, nil, ghRec, glRec)
-	if err := m.store.Save(ghRec.ID, creds.Record{
-		Family: forgeapi.FamilyGitHub, WebBaseURL: "https://github.com", Kind: forgeapi.CredKindStaticPAT,
-		Token: "test-token", Issued: time.Now(), Account: "bob", Usability: creds.UsabilityReconnectRequired,
-	}); err != nil {
-		t.Fatalf("Setup: mark the GitHub credential: %v", err)
+	refresh := creds.Record{
+		Family: forgeapi.FamilyGitHub, WebBaseURL: "https://github.com", Kind: forgeapi.CredKindRotatingOAuth,
+		Token: "test-token", Issued: time.Now().Add(-time.Hour), Expiry: time.Now().Add(time.Minute),
+		RefreshToken: "refresh", ClientID: "client", Account: "bob",
+	}
+	if err := openTestStore(t, m.configDir).Save(slotKey(ghRec.ID, 0), refresh); err != nil {
+		t.Fatalf("Setup: make the GitHub credential due: %v", err)
 	}
 
 	p.sweep(t.Context())
 
-	e := entryFor(t, p, ghRec.ID)
-	if want := (InventoryBudget{Remaining: 4990, Reset: reset.UnixMilli(), LastCost: 1}); e.Budget == nil || *e.Budget != want ||
-		e.Credential != "reconnect_required" {
-		t.Errorf("GitHub entry budget %+v, credential %q; want %+v and reconnect_required", e.Budget, e.Credential, want)
+	if e := entryFor(t, p, ghRec.ID); e.Credential != "refresh_due" {
+		t.Errorf("GitHub entry credential %q, want refresh_due", e.Credential)
 	}
-	e = entryFor(t, p, glRec.ID)
-	if want := (InventoryBudget{Remaining: -1}); e.Budget == nil || *e.Budget != want || e.Credential != "valid" {
-		t.Errorf("GitLab entry budget %+v, credential %q; want %+v and valid", e.Budget, e.Credential, want)
+	if e := entryFor(t, p, glRec.ID); e.Credential != "valid" {
+		t.Errorf("GitLab entry credential %q, want valid", e.Credential)
 	}
 
 	t.Run("NoClient", func(t *testing.T) {
 		rec := githubRecord()
 		p, _, _, _ := inventoryPoller(t, map[string]forgeapi.Core{}, nil, rec)
 		p.sweep(t.Context())
-
-		e := entryFor(t, p, rec.ID)
-		if e.State != inventoryFailed || e.Error == nil || e.Error.Kind != "unknown" || e.Budget != nil || e.Credential != "unknown" {
-			t.Errorf("entry of a connection whose client cannot be built: state %q, error %+v, budget %+v, credential %q; "+
-				"want failed, kind unknown, no budget and unknown", e.State, e.Error, e.Budget, e.Credential)
+		if got := entriesOf(p); len(got) != 0 {
+			t.Errorf("entries of a connection whose client cannot be built = %+v, want none: its row is reconnect", got)
 		}
 	})
 }

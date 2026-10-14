@@ -7,22 +7,22 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   apiPost: vi.fn(() => Promise.resolve(null)),
 }));
 
-// Routed through the mocked client so the forge list is one more path the case answers.
-vi.mock("./forge-store.js", async (importOriginal) => {
-  const orig = await importOriginal<Record<string, unknown>>();
+// The rows read is routed through the mocked client, so each case answers the forge list first.
+vi.mock("./actions/forge-list.js", async (importOriginal) => {
   const { apiGetTyped } = await import("./api-client.js");
-  const forgeRead = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
   return {
-    ...orig,
-    refreshForges: forgeRead,
-    ensureForges: forgeRead,
-    initForgeStore: vi.fn(),
+    ...(await importOriginal<Record<string, unknown>>()),
+    listForges: {
+      dispatch: () =>
+        Promise.resolve(apiGetTyped("/api/forges", (v: unknown) => v)).then((v) => v ?? null),
+    },
   };
 });
 
 import { resetActionFramework } from "@cplieger/actions/testing";
 import { apiGetTyped } from "./api-client.js";
 import { initSourcesTab } from "./git-sources-tab.js";
+import { _resetForTest as resetForgeStore } from "./forge-store.js";
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 const KINDS = ["github", "gitlab", "codeberg", "gitea"];
@@ -38,8 +38,8 @@ function answer(page: unknown, local: unknown = { repos: [] }): void {
             kind: "github",
             host: "github.com",
             username: "alice",
-            connected: true,
-            reconnect_required: false,
+            account: "acct-1",
+            status: "connected",
           },
         ],
         kinds: KINDS,
@@ -49,7 +49,9 @@ function answer(page: unknown, local: unknown = { repos: [] }): void {
       return Promise.resolve(local === null ? null : decode(local));
     }
     if (url.startsWith(REPOS)) {
-      return Promise.resolve(page === null ? null : decode(page));
+      return Promise.resolve(
+        page === null ? null : decode({ account: "acct-1", ...(page as object) }),
+      );
     }
     return Promise.resolve(null);
   }) as typeof apiGetTyped);
@@ -61,6 +63,7 @@ function repoReads(): string[] {
 
 describe("the Sources tab's refresh", () => {
   beforeEach(() => {
+    resetForgeStore();
     resetActionFramework();
     document.body.innerHTML = `
       <div class="page-toolbar">
@@ -73,24 +76,21 @@ describe("the Sources tab's refresh", () => {
     return document.getElementById("git-refresh-sources-btn") as HTMLButtonElement;
   }
 
-  // Each paint is followed by a background re-probe that reads the list once more through the cache.
   it("reads every repository list past the server's cache, where opening the tab reads through it", async () => {
     answer({ repos: [] });
     initSourcesTab();
-    await vi.waitFor(() => expect(repoReads()).toEqual([REPOS, REPOS]));
+    await vi.waitFor(() => expect(repoReads()).toEqual([REPOS]));
 
     refresh().click();
 
-    await vi.waitFor(() =>
-      expect(repoReads()).toEqual([REPOS, REPOS, `${REPOS}?refresh=1`, REPOS]),
-    );
-    expect(refresh().dataset["asyncStatus"]).toBe("success");
+    await vi.waitFor(() => expect(repoReads()).toEqual([REPOS, `${REPOS}?refresh=1`]));
+    await vi.waitFor(() => expect(refresh().dataset["asyncStatus"]).toBe("success"));
   });
 
   it("reports a repository list it could not read as a failed refresh", async () => {
     answer({ repos: [] });
     initSourcesTab();
-    await vi.waitFor(() => expect(repoReads()).toHaveLength(2));
+    await vi.waitFor(() => expect(repoReads()).toHaveLength(1));
     answer(null);
 
     refresh().click();

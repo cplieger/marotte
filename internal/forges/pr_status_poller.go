@@ -66,9 +66,11 @@ type watchedPR struct {
 }
 
 // PRConnection is one connection as a walk keys it: the same connection signed
-// in as another account, or moved to another address, starts another walk.
+// in again, even as the same user, or moved to another address, starts another
+// walk.
 type PRConnection struct {
-	ID      string
+	ID string
+	// Account is the sign-in the connection was read through.
 	Account string
 	WebBase string
 }
@@ -112,7 +114,6 @@ type scopePage struct {
 // ConnectionRead is one connected connection's answer to a sweep. Pages is
 // empty when the sweep did not read it.
 type ConnectionRead struct {
-	Budget *InventoryBudget
 	// ReadPR reads one of the connection's pull requests, body stripped, by the
 	// canonical repository id its rows carry; nil when the sweep did not read it.
 	ReadPR     func(ctx context.Context, repoID string, number int) (PR, error)

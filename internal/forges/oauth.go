@@ -76,7 +76,7 @@ type grantRegistry struct {
 
 type heldGrant struct {
 	grant *creds.DeviceGrant
-	conn  connectionRecord
+	conn  connectionSpec
 	mu    sync.Mutex
 	// cancelled is read again after a poll returns, so a cancel pressed while
 	// the token request was in flight wins over its answer.
@@ -96,7 +96,7 @@ type startedGrant struct {
 // in once Done.
 type polledGrant struct {
 	Record creds.Record
-	Conn   connectionRecord
+	Conn   connectionSpec
 	Done   bool
 }
 
@@ -104,7 +104,7 @@ func newGrantRegistry() *grantRegistry {
 	return &grantRegistry{grants: make(map[string]*heldGrant), now: time.Now}
 }
 
-func (r *grantRegistry) start(ctx context.Context, rec *connectionRecord, req creds.GrantRequest) (startedGrant, error) {
+func (r *grantRegistry) start(ctx context.Context, rec *connectionSpec, req creds.GrantRequest) (startedGrant, error) {
 	r.sweep()
 	if !r.reserve() {
 		return startedGrant{}, errTooManyGrants

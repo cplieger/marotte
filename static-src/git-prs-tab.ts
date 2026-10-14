@@ -1,7 +1,7 @@
 // Per-repo collapsible sections in #git-prs-mount, each listing its open PRs and their actions. Rows are the server's
 // inventory (git-prs-state.ts): one GET, then one forge_inventory frame per connection per cycle.
 
-import { join } from "@cplieger/keyenc";
+import { join, split } from "@cplieger/keyenc";
 
 import { apiGetTyped, apiPost } from "./api-client.js";
 import { BUS_RECONCILE, onBus, onSSE } from "./bus.js";
@@ -71,14 +71,14 @@ import {
   reinsertPRInGroups,
   removePRFromGroups,
   settleRemoval,
-  setPRForges,
+  adoptForgeRows,
 } from "./git-prs-state.js";
 import type { ElsewherePR } from "./git-prs-state.js";
-import { ensureForges } from "./forge-store.js";
+import { ensureForges, forgeRows, usablePairs } from "./forge-store.js";
 import { partialWhy } from "./forge-types.js";
 import { reconcile } from "./reconcile.js";
 import { forgetSig, sigChanged, wireSignature } from "./paint-sig.js";
-import { el } from "@cplieger/reactive";
+import { effect, el, untracked } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
@@ -283,8 +283,8 @@ function wantElsewhereOpen(rows: readonly ElsewherePR[]): boolean {
 }
 
 /**
- * Compared exactly and never parsed: the server mints the subject from the same `repo_id`, and a forge id
- * (`<kind>:<host>`) is not self-delimiting.
+ * Compared exactly and never parsed: the server mints the subject from the same `repo_id`, and a forge id (a keyenc
+ * join of kind and host) is not self-delimiting.
  */
 function holdsPendingFocus(g: RepoGroup): boolean {
   if (pendingFocus === "") {
@@ -348,11 +348,12 @@ export function initPRsTab(): void {
     });
   }
 
-  // The list depends on connected forges, and a reconnect can change a connection's capabilities and refusals.
-  onSSE("forges_changed", () => {
-    rerunCaps.clear();
-    rerunRefused.clear();
-    void refreshPRsAction.dispatch();
+  effect(() => {
+    const rows = forgeRows();
+    const pairs = usablePairs();
+    untracked(() => {
+      followForgeRows(rows?.forges ?? null, pairs);
+    });
   });
   onSSE("forge_inventory", (_chatID, p) => {
     if (applyInventoryEntry(p.entry) && inventoryHeld()) {
@@ -517,7 +518,6 @@ async function readAndPaintPRs(
       return;
     }
     skeleton?.cancel();
-    setPRForges(read.forges);
     const adopted = applyInventoryList(read.list, { reset: opts.reset === true });
     for (const i of adopted) {
       observeStamp(read.list.subject[i]);
@@ -546,10 +546,8 @@ async function newerSettled(): Promise<void> {
 }
 
 /** Null when the read was aborted; throws when either could not be read. */
-async function readInventory(
-  signal: AbortSignal,
-): Promise<{ forges: ConfiguredForge[]; list: InventoryList } | null> {
-  // From the shared store, which supplies each connection's kind and host.
+async function readInventory(signal: AbortSignal): Promise<{ list: InventoryList } | null> {
+  // The store's rows supply each connection's kind and host, so the tab cannot paint without them.
   const [forgesRes, list] = await Promise.all([
     ensureForges(),
     apiGetTyped("/api/forges/inventory", decodeInventoryList, signal),
@@ -563,7 +561,7 @@ async function readInventory(
   if (list === null) {
     throw new Error("The pull-request inventory could not be read");
   }
-  return { forges: forgesRes.forges, list };
+  return { list };
 }
 
 /** A connected forge the inventory has not answered for is one the poller has not read; ask it to. */
@@ -601,15 +599,29 @@ function paintLoadError(root: HTMLElement, err: unknown): void {
 interface ConnectionState {
   forge: ConfiguredForge;
   entry: InventoryEntry | undefined;
-  /** The connection needs a new sign-in, so no entry is coming. */
-  lapsed: boolean;
+  /** Why the connection has no inventory coming, or null when one is. */
+  lapsed: Lapsed | null;
+}
+
+type Lapsed = "reconnect" | "refused" | "unusable";
+
+function lapsedOf(f: ConfiguredForge): Lapsed | null {
+  switch (f.status) {
+    case "connected":
+    case "retrying":
+      return null;
+    case "reconnect":
+    case "refused":
+    case "unusable":
+      return f.status;
+  }
 }
 
 function connectionStates(): ConnectionState[] {
   const out: ConnectionState[] = lapsedForges().map((forge) => ({
     forge,
     entry: undefined,
-    lapsed: true,
+    lapsed: lapsedOf(forge),
   }));
   for (const forge of connectedForges()) {
     const entry = heldEntry(forge.id);
@@ -619,14 +631,14 @@ function connectionStates(): ConnectionState[] {
       entry.state === "failed" ||
       entryNotes(forge, entry).length > 0
     ) {
-      out.push({ forge, entry, lapsed: false });
+      out.push({ forge, entry, lapsed: null });
     }
   }
   return out.sort((a, b) => a.forge.id.localeCompare(b.forge.id));
 }
 
 function loading(s: ConnectionState): boolean {
-  return !s.lapsed && (s.entry === undefined || s.entry.state === "loading");
+  return s.lapsed === null && (s.entry === undefined || s.entry.state === "loading");
 }
 
 /** A scope whose walk goes on, a scope cut short, and a list that failed beside the read ones. */
@@ -659,14 +671,8 @@ function scopeWhere(s: InventoryScope): string {
 
 function renderConnectionState(s: ConnectionState): HTMLElement {
   const box = el("div", { className: "git-prs-connection" });
-  if (s.lapsed) {
-    box.appendChild(
-      el(
-        "div",
-        { className: "git-multirepo-error" },
-        `Could not list pull requests on ${s.forge.host}. ${capitalise(RECONNECT_WORDS)}`,
-      ),
-    );
+  if (s.lapsed !== null) {
+    box.appendChild(el("div", { className: "git-multirepo-error" }, lapsedText(s.forge, s.lapsed)));
   } else if (s.entry?.state === "failed") {
     box.appendChild(
       el(
@@ -691,6 +697,18 @@ function renderConnectionState(s: ConnectionState): HTMLElement {
 }
 
 const RECONNECT_WORDS = "this account needs a new sign-in. Reconnect it in Sources.";
+
+function lapsedText(f: ConfiguredForge, lapsed: Lapsed): string {
+  const reason = (f.error?.message ?? "").replace(/\.$/, "");
+  switch (lapsed) {
+    case "reconnect":
+      return `Could not list pull requests on ${f.host}. ${capitalise(RECONNECT_WORDS)}`;
+    case "refused":
+      return `Could not list pull requests on ${f.host}: ${reason}. Check it in Sources once it is fixed on the forge.`;
+    case "unusable":
+      return `Could not list pull requests on ${f.host}: marotte cannot use its forge store right now (${reason}).`;
+  }
+}
 
 /** From its code and kind: the inventory carries no upstream message. */
 function inventoryErrorText(e: InventoryEntry): string {
@@ -878,6 +896,8 @@ function paneKey(it: PaneItem): string {
 function connectionSig(s: ConnectionState): string[] {
   return [
     s.forge.host,
+    s.lapsed ?? "",
+    s.forge.error?.message ?? "",
     s.entry === undefined ? "" : wireSignature(s.entry.error ?? {}),
     s.entry?.state ?? "",
     // A later cycle's entry restates the rate limit's wait.
@@ -1145,9 +1165,14 @@ function appendSummary(li: HTMLElement, pr: PR, number: string): void {
   li.appendChild(sub);
 }
 
-/** Null when its read failed; absent until it answers. Kept until the connections change. */
+/** Null when its read failed; absent until it answers. Kept until the connection's account or status changes. */
 const rerunCaps = new Map<string, Affordance | null>();
 const capsAsked = new Set<string>();
+/** Per connection, bumped when its account or status changes: a capabilities answer applies only to its own ask. */
+const capsIssue = new Map<string, number>();
+/** Each connection's last (account, status) and (account, status, error message), as the store last applied it. */
+const followed = new Map<string, { row: string; shown: string }>();
+let followedPairs: readonly string[] | null = null;
 /** By `join(forge_id, repo_id)`, for the life of the list. */
 const rerunRefused = new Map<string, string>();
 /** In-flight row actions by row identity and label, so a repaint while one runs renders its button busy. */
@@ -1183,12 +1208,81 @@ function askCapabilities(groups: readonly RepoGroup[]): void {
       continue;
     }
     capsAsked.add(id);
+    const issue = capsIssue.get(id) ?? 0;
     void readCapabilities.dispatch({ forge_id: id }).then((caps) => {
+      if ((capsIssue.get(id) ?? 0) !== issue) {
+        return;
+      }
       capsAsked.delete(id);
+      const account = forgeRows()?.forges.find((f) => f.id === id)?.account;
       // The route carries every capability forgeapi names, so an absent key is an answer that did not arrive.
-      rerunCaps.set(id, caps?.connection["rerun_checks"] ?? null);
+      rerunCaps.set(
+        id,
+        caps !== null && caps.account === account
+          ? (caps.connection["rerun_checks"] ?? null)
+          : null,
+      );
       paint();
     });
+  }
+}
+
+/**
+ * The store applied rows. A connection whose account or status changed forgets its capabilities and refusals, any
+ * change a lapsed box shows repaints (the usable set does not move between two lapsed statuses), and a change of the
+ * usable set reads the inventory again.
+ */
+function followForgeRows(
+  rows: readonly ConfiguredForge[] | null,
+  pairs: readonly string[] | null,
+): void {
+  if (rows === null || pairs === null) {
+    return;
+  }
+  adoptForgeRows();
+  let repaint = false;
+  const seen = new Set<string>();
+  for (const f of rows) {
+    seen.add(f.id);
+    const row = join(f.account, f.status);
+    const shown = join(f.account, f.status, f.error?.message ?? "");
+    const was = followed.get(f.id);
+    followed.set(f.id, { row, shown });
+    if (was === undefined) {
+      // A row that arrives lapsed moves no usable pair, yet the pane names it.
+      repaint ||= followedPairs !== null;
+      continue;
+    }
+    if (was.row !== row) {
+      forgetConnection(f.id);
+    }
+    repaint ||= was.shown !== shown;
+  }
+  for (const id of [...followed.keys()]) {
+    if (!seen.has(id)) {
+      followed.delete(id);
+      forgetConnection(id);
+      repaint = true;
+    }
+  }
+  const pairsChanged = followedPairs !== null && followedPairs !== pairs;
+  followedPairs = pairs;
+  if (pairsChanged || repaint) {
+    paint();
+  }
+  if (pairsChanged) {
+    void refreshPRsAction.dispatch();
+  }
+}
+
+function forgetConnection(id: string): void {
+  rerunCaps.delete(id);
+  capsAsked.delete(id);
+  capsIssue.set(id, (capsIssue.get(id) ?? 0) + 1);
+  for (const key of [...rerunRefused.keys()]) {
+    if (split(key)[0] === id) {
+      rerunRefused.delete(key);
+    }
   }
 }
 

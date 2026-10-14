@@ -30,7 +30,7 @@ const (
 )
 
 func inventoryRoutes(m *Manager, p *PRStatusPoller) *http.ServeMux {
-	h := NewHTTPHandler(m, nil)
+	h := NewHTTPHandler(m)
 	h.SetPoller(p)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -172,16 +172,16 @@ func TestInventoryRoute_NeverFilledIsLoadingAndAsksForACycle(t *testing.T) {
 	core := newScopeCore()
 	gh, gl := githubRecord(), gitlabRecord()
 	p, g, _, m := inventoryPoller(t, map[string]forgeapi.Core{gh.ID: core}, nil, gh)
-	// gl has no stored credential, so it is not connected and no cycle fills it.
-	saveRecords(t, m.conns, gh, gl)
-	m.invalidate()
+	// gl has no stored credential, so it is reconnect and no cycle fills it.
+	writeRecords(t, m.configDir, connectionRecord{connectionSpec: gh}, connectionRecord{connectionSpec: gl})
+	m.Load(t.Context())
 	g.present = false
 	mux := inventoryRoutes(m, p)
 
 	got := readInventory(t, mux)
 
 	want := []InventoryEntry{{
-		ForgeID: gh.ID, State: "loading", CycleID: "0", Credential: "unknown",
+		ForgeID: gh.ID, Account: testSignIn, State: "loading", CycleID: "0", Credential: "unknown",
 		Scopes: []InventoryScope{}, Clones: []CloneRepo{},
 	}}
 	if !reflect.DeepEqual(got, want) {
@@ -191,15 +191,15 @@ func TestInventoryRoute_NeverFilledIsLoadingAndAsksForACycle(t *testing.T) {
 		t.Errorf("the read made %d account reads and %d lists, want none", core.whoamis, len(core.asked))
 	}
 	p.sweep(t.Context())
-	if e := entryFor(t, p, gh.ID); core.whoamis != 1 || e.State != inventoryReady || e.CycleID != "1" {
-		t.Errorf("the sweep after the read, gate closed: %d account reads, entry %q from cycle %q; "+
-			"want 1 and a ready entry from cycle 1: a read of a connection never filled asks for a cycle",
-			core.whoamis, e.State, e.CycleID)
+	if e := entryFor(t, p, gh.ID); len(core.asked) == 0 || e.State != inventoryReady || e.CycleID != "1" {
+		t.Errorf("the sweep after the read, gate closed: %d lists, entry %q from cycle %q; "+
+			"want the scopes read and a ready entry from cycle 1: a read of a connection never filled asks for a cycle",
+			len(core.asked), e.State, e.CycleID)
 	}
 }
 
 func TestInventoryRoute_ANeverFilledReadDuringACycleAsksForTheNext(t *testing.T) {
-	m := sourceManager(t, nil, githubRecord())
+	m := sourceManager(t, map[string]forgeapi.Core{testConn.ID: &fakeCore{}}, githubRecord())
 	synctest.Test(t, func(t *testing.T) {
 		src := newHeldSource(true)
 		p := NewPRStatusPoller(src, &fakeNotifier{}, (&fakeGate{}).Open)
@@ -227,11 +227,9 @@ func TestInventoryRoute_ANeverFilledReadDuringACycleAsksForTheNext(t *testing.T)
 
 func TestInventoryRoute_StampsEachEntryWithItsVersion(t *testing.T) {
 	gh, gl := githubRecord(), gitlabRecord()
-	p, _, _, _, m := pushPoller(t, map[string]forgeapi.Core{gh.ID: newScopeCore()}, nil, gh)
+	p, _, _, _, m := pushPoller(t, map[string]forgeapi.Core{gh.ID: newScopeCore(), gl.ID: newScopeCore()}, nil, gh)
 	p.sweep(t.Context())
-	seedStoreRecord(t, m.configDir, gl.ID, "bob")
-	saveRecords(t, m.conns, gh, gl)
-	m.invalidate()
+	addConnections(t, m, "bob", gl)
 
 	rec := serve(t, inventoryRoutes(m, p), http.MethodGet, inventoryPath)
 	var body InventoryList
@@ -266,10 +264,7 @@ func TestInventoryRoute_LeavesOutAConnectionNoLongerConnected(t *testing.T) {
 	rec := githubRecord()
 	p, _, _, m := inventoryPoller(t, map[string]forgeapi.Core{rec.ID: newScopeCore()}, nil, rec)
 	p.sweep(t.Context())
-	if err := m.store.Delete(rec.ID); err != nil {
-		t.Fatalf("Setup: delete the credential: %v", err)
-	}
-	m.invalidate()
+	dropCredential(t, m, rec.ID)
 
 	if got := readInventory(t, inventoryRoutes(m, p)); len(got) != 0 {
 		t.Errorf("GET %s after the connection lost its credential = %+v, want no entry before the next sweep drops it",
@@ -288,7 +283,7 @@ func TestInventoryRoutes_RefuseOtherMethodsAndAnUnwiredPoller(t *testing.T) {
 	if rec := serve(t, mux, http.MethodGet, watchPath); rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET %s = %d, want 405", watchPath, rec.Code)
 	}
-	h := NewHTTPHandler(nil, nil)
+	h := NewHTTPHandler(nil)
 	unwired := http.NewServeMux()
 	h.RegisterRoutes(unwired)
 	for _, req := range []struct{ method, path string }{

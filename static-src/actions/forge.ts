@@ -11,6 +11,7 @@ import {
 
 import {
   decodeDetection,
+  decodeLoginResult,
   decodeOwnerScopes,
   decodeProbeResult,
   decodeRepoList,
@@ -19,6 +20,7 @@ import type {
   Detection,
   DeviceFlowResponse,
   ForgeKind,
+  LoginResult,
   OwnerScopes,
   ProbeResult,
   RepoList,
@@ -95,12 +97,14 @@ export const cancelDeviceFlow = apiAction<CancelDeviceFlowArgs, void>({
   error: false,
 });
 
-/** Sign out of a forge account (delete the token). Not retryable: a timed-out
- *  DELETE may have succeeded server-side, and a retry would answer 404. Error
- *  toast suppressed: the account row renders the refusal. */
+/** Sign out of a forge account (delete the token). Retried: the server answers a repeated DELETE as it answered the
+ *  first, and its 503 `sign_out_cleanup_pending` means a stored credential is still to be deleted. Error toast
+ *  suppressed: the account row renders the refusal. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const signOut = apiAction<ConnectionArgs, void>({
   name: "forge.sign_out",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   request: ({ forgeId }) => ({
     method: "DELETE",
     path: `/api/forges/${encodeURIComponent(forgeId)}`,
@@ -108,8 +112,8 @@ export const signOut = apiAction<ConnectionArgs, void>({
   error: false,
 });
 
-/** Read the account behind a connection; the answer is the row as the probe
- *  left it. Error toast suppressed: the account row renders the outcome. */
+/** Check the account behind a connection; the answer is the row as the check left it. A 409 carries `check_busy` or
+ *  `reconnect_required` in its ActionError's code. Error toast suppressed: the account row renders the outcome. */
 export const probeForge = apiAction<ConnectionArgs, ProbeResult>({
   name: "forge.probe",
   retryable: retryNetwork,
@@ -287,17 +291,19 @@ interface ConnectPATArgs {
   options: ConnectionOptions;
 }
 
-/** Connect a forge account via PAT; the form renders the error inline. */
-export const connectPAT = apiAction<ConnectPATArgs, { status?: string; error?: string }>({
+/** Connect a forge account via PAT; the answer names the connection the server saved. The form renders the error
+ *  inline. A `sign_in_timed_out` 504 is not retried: the server's whole sign-in deadline already ran out once. */
+export const connectPAT = apiAction<ConnectPATArgs, LoginResult>({
   name: "forge.connect_pat",
   idempotencyKey: true,
-  retryable: retryNetwork,
+  retryable: (e) => retryNetwork(e) && e.code !== "sign_in_timed_out",
   retry: RETRY_STANDARD,
   request: ({ kind, host, token, options }) => ({
     method: "POST",
-    path: `/api/forges/${encodeURIComponent(`${kind}:${host}`)}/login/pat`,
-    body: { token, ...options },
+    path: "/api/forges/login",
+    body: { kind, host, token, ...options },
   }),
+  decode: (data) => decodeLoginResult(data),
   error: false,
 });
 

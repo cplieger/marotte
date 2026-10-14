@@ -18,10 +18,9 @@ import (
 )
 
 const (
-	githubPATPath = "/api/forges/github%3Agithub.com/login/pat"
 	githubRowPath = "/api/forges/github%3Agithub.com"
 	githubOrigin  = "https://github.com"
-	gitlabPATPath = "/api/forges/gitlab%3Agitlab.com/login/pat"
+	loginPath     = "/api/forges/login"
 	testHelperBin = "/opt/marotte/marotte"
 )
 
@@ -112,17 +111,13 @@ func newConnectHarness(t *testing.T, wire http.RoundTripper) *connectHarness {
 	gitcfg := isolateGit(t)
 	stubPath(t)
 	cfg := t.TempDir()
-	m := NewManager(cfg)
-	m.executable = func() (string, error) { return testHelperBin, nil }
+	m, _ := newManager(t, cfg, nil)
 	if wire != nil {
-		m.clients.extra = []forgeapi.Option{forgeapi.WithWireTransport(wire)}
+		m.extraOpts = []forgeapi.Option{forgeapi.WithWireTransport(wire)}
 	}
-	// The boot refresh, which spends the one startup reconcile of the helpers.
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Setup: Refresh() = %v", err)
-	}
+	m.Load(t.Context())
 	mux := http.NewServeMux()
-	handler := NewHTTPHandler(m, nil)
+	handler := NewHTTPHandler(m)
 	handler.RegisterRoutes(mux)
 	return &connectHarness{m: m, handler: handler, mux: mux, home: filepath.Dir(gitcfg), cfgDir: cfg}
 }
@@ -133,6 +128,28 @@ func (h *connectHarness) do(t *testing.T, method, path, body string) *httptest.R
 	rec := httptest.NewRecorder()
 	h.mux.ServeHTTP(rec, req)
 	return rec
+}
+
+// login posts a token sign-in for kind on host, extra being more of the body's
+// fields with their leading comma.
+func (h *connectHarness) login(t *testing.T, kind Kind, host, token, extra string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"kind": string(kind), "host": host, "token": token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h.do(t, http.MethodPost, loginPath, strings.TrimSuffix(string(body), "}")+extra+"}")
+}
+
+// signedIn is a login that must answer 200 with the id the server minted.
+func (h *connectHarness) signedIn(t *testing.T, kind Kind, host, token, extra string) string {
+	t.Helper()
+	rec := h.login(t, kind, host, token, extra)
+	var got LoginResult
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got.ForgeID == "" {
+		t.Fatalf("POST %s for %s on %q = %d %s, want 200 with the minted id", loginPath, kind, host, rec.Code, rec.Body)
+	}
+	return got.ForgeID
 }
 
 func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
@@ -149,21 +166,28 @@ func (h *connectHarness) helperValue(t *testing.T) string {
 	return mustHelperValue(t, testHelperBin, h.cfgDir)
 }
 
-// assertNothingStored checks that no credential, no connection record and no
-// helper registration exist for id after a refused connect.
-func (h *connectHarness) assertNothingStored(t *testing.T, id, origin string) {
+// storedKeys is every key the harness's credential store holds.
+func (h *connectHarness) storedKeys(t *testing.T) []string {
 	t.Helper()
-	if h.m.store != nil {
-		if _, ok, err := h.m.store.Load(id); ok || err != nil {
-			t.Errorf("store holds a credential for %s (err %v) after a refused connect", id, err)
-		}
+	keys, err := openTestStore(t, h.cfgDir).Keys()
+	if err != nil {
+		t.Fatalf("read the store's keys: %v", err)
 	}
-	recs, err := h.m.conns.load()
-	if err != nil || len(recs) != 0 {
-		t.Errorf("connection records = %+v, %v after a refused connect, want none", recs, err)
+	return keys
+}
+
+// assertNothingStored checks that no credential, no connection record and no
+// helper registration exist after a refused sign-in.
+func (h *connectHarness) assertNothingStored(t *testing.T, origin string) {
+	t.Helper()
+	if keys := h.storedKeys(t); len(keys) != 0 {
+		t.Errorf("store holds %q after a refused sign-in, want nothing", keys)
+	}
+	if recs := readRecords(t, h.cfgDir); len(recs) != 0 {
+		t.Errorf("connection records = %+v after a refused sign-in, want none", recs)
 	}
 	if got := helperValuesFor(t, origin); len(got) != 0 {
-		t.Errorf("credential.%s.helper = %q after a refused connect, want nothing registered", origin, got)
+		t.Errorf("credential.%s.helper = %q after a refused sign-in, want nothing registered", origin, got)
 	}
 }
 
@@ -171,37 +195,32 @@ func TestPATLogin_SavesAStaticRecordAndRegistersTheHelper(t *testing.T) {
 	wire := aliceWire()
 	h := newConnectHarness(t, wire)
 
-	rec := h.do(t, http.MethodPost, githubPATPath, `{"token":"ghp_secret"}`)
-	if body := decodeBody(t, rec); rec.Code != http.StatusOK || body["status"] != stateComplete {
-		t.Fatalf("POST %s = %d %v, want 200 complete", githubPATPath, rec.Code, body)
+	if id := h.signedIn(t, KindGitHub, "", "ghp_secret", ""); id != "github:github.com" {
+		t.Fatalf("minted id = %q, want github:github.com", id)
 	}
 
-	cred, ok, err := h.m.store.Load("github:github.com")
+	cred, ok, err := openTestStore(t, h.cfgDir).Load(slotKey("github:github.com", 0))
 	if err != nil || !ok {
-		t.Fatalf("store.Load(github:github.com) = %v, %v; want the saved credential", ok, err)
+		t.Fatalf("store.Load(slot 0) = %v, %v; want the saved credential", ok, err)
 	}
 	if cred.Kind != forgeapi.CredKindStaticPAT || cred.Token != "ghp_secret" || cred.Account != "alice" ||
 		cred.Family != forgeapi.FamilyGitHub || cred.WebBaseURL != githubOrigin {
 		t.Errorf("stored credential = %+v, want a static PAT for alice on %s", cred, githubOrigin)
 	}
-	recs, err := h.m.conns.load()
-	if err != nil || len(recs) != 1 || recs[0].ID != "github:github.com" || recs[0].Kind != KindGitHub {
-		t.Fatalf("connection records = %+v, %v; want the github.com record", recs, err)
+	recs := readRecords(t, h.cfgDir)
+	if len(recs) != 1 || recs[0].ID != "github:github.com" || recs[0].Kind != KindGitHub || recs[0].SignIn == "" {
+		t.Fatalf("connection records = %+v; want the github.com record with its sign-in id", recs)
 	}
 	want := h.helperValue(t)
 	if got := helperValuesFor(t, githubOrigin); !slices.Equal(got, []string{"", want}) {
 		t.Errorf("credential.%s.helper = %q, want the reset then %q", githubOrigin, got, want)
 	}
-	if recs[0].HelperValue != want {
-		t.Errorf("record helper_value = %q, want the registered %q", recs[0].HelperValue, want)
-	}
 	if seen := wire.requests(); len(seen) != 1 || seen[0].Header.Get("Authorization") != "Bearer ghp_secret" {
 		t.Errorf("the forge saw %d requests, want the one identity read carrying the pasted token", len(seen))
 	}
-
-	row := h.m.get("github:github.com")
-	if row == nil || !row.Connected || row.Username != "alice" {
-		t.Errorf("row after connect = %+v, want github.com connected as alice with no CLI on PATH", row)
+	if row := viewFor(t, h.m, "github:github.com"); row.Status != ForgeConnected || row.Username != "alice" ||
+		row.Account != recs[0].SignIn {
+		t.Errorf("row after the sign-in = %+v, want github.com connected as alice under the stored sign-in", row)
 	}
 }
 
@@ -210,15 +229,13 @@ func TestPATLogin_ScrubsTheHostsCleartextCredential(t *testing.T) {
 	creds := filepath.Join(h.home, ".git-credentials")
 	writeFixture(t, creds, "https://alice:old@github.com\nhttps://bob:tok@other.example/\n")
 
-	if rec := h.do(t, http.MethodPost, githubPATPath, `{"token":"ghp_secret"}`); rec.Code != http.StatusOK {
-		t.Fatalf("POST %s = %d %s", githubPATPath, rec.Code, rec.Body)
-	}
+	h.signedIn(t, KindGitHub, "", "ghp_secret", "")
 	data, err := os.ReadFile(creds)
 	if err != nil {
 		t.Fatalf("read %s: %v", creds, err)
 	}
 	if strings.Contains(string(data), "github.com") || !strings.Contains(string(data), "other.example") {
-		t.Errorf("~/.git-credentials after connect = %q, want the github.com line gone and the other kept", data)
+		t.Errorf("~/.git-credentials after the sign-in = %q, want the github.com line gone and the other kept", data)
 	}
 }
 
@@ -226,38 +243,34 @@ func TestPATLogin_StoresNothingWhenWhoamiFails(t *testing.T) {
 	wire := &userWire{status: http.StatusUnauthorized, body: `{"message":"Bad credentials"}`}
 	h := newConnectHarness(t, wire)
 
-	rec := h.do(t, http.MethodPost, githubPATPath, `{"token":"ghp_revoked"}`)
+	rec := h.login(t, KindGitHub, "", "ghp_revoked", "")
 	body := decodeBody(t, rec)
-	if _, coded := body["code"]; rec.Code != http.StatusOK || body["error"] == nil || !coded || body["kind"] != "unauthorized" {
-		t.Errorf("POST %s with a refused token = %d %v, want a 2xx {error, code, kind: unauthorized}",
-			githubPATPath, rec.Code, body)
+	if rec.Code != http.StatusUnauthorized || body["error"] == nil || body["kind"] != "unauthorized" {
+		t.Errorf("POST %s with a refused token = %d %v, want 401 {error, kind: unauthorized}", loginPath, rec.Code, body)
 	}
-	if body["status"] == stateComplete {
-		t.Errorf("a refused token answered complete: %v", body)
-	}
-	h.assertNothingStored(t, "github:github.com", githubOrigin)
-	if row := h.m.get("github:github.com"); row != nil {
-		t.Errorf("row after a refused connect = %+v, want none", row)
+	h.assertNothingStored(t, githubOrigin)
+	if _, ok := h.m.view("github:github.com"); ok {
+		t.Error("a row exists after a refused sign-in, want none")
 	}
 }
 
-func TestPATLogin_DegradedStoreAnswers503(t *testing.T) {
+func TestPATLogin_UnusablePersistenceAnswers503(t *testing.T) {
 	wire := aliceWire()
 	h := newConnectHarness(t, wire)
-	h.m.store, h.m.storeReason = nil, "the forge credential store /x cannot be used"
+	h.signedIn(t, KindGitLab, "", "glpat", "")
+	before := len(wire.requests())
+	widenStore(t, h.m)
 
-	rec := h.do(t, http.MethodPost, githubPATPath, `{"token":"ghp_secret"}`)
-	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "/x cannot be used") {
-		t.Errorf("POST %s over a degraded store = %d %s, want 503 naming the store's reason",
-			githubPATPath, rec.Code, rec.Body)
+	rec := h.login(t, KindGitHub, "", "ghp_secret", "")
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "credential store") {
+		t.Errorf("POST %s over an unreadable store = %d %s, want 503 naming the store", loginPath, rec.Code, rec.Body)
 	}
-	if n := len(wire.requests()); n != 0 {
-		t.Errorf("the forge saw %d requests over a degraded store, want none", n)
+	if n := len(wire.requests()) - before; n != 0 {
+		t.Errorf("the forge saw %d requests over an unusable store, want none", n)
 	}
-	h.assertNothingStored(t, "github:github.com", githubOrigin)
 }
 
-func TestPATLogin_WebBaseURLMustMatchTheIDHost(t *testing.T) {
+func TestPATLogin_WebBaseURLMustMatchTheHost(t *testing.T) {
 	cases := []struct {
 		name, base string
 	}{
@@ -271,44 +284,42 @@ func TestPATLogin_WebBaseURLMustMatchTheIDHost(t *testing.T) {
 			wire := aliceWire()
 			h := newConnectHarness(t, wire)
 
-			rec := h.do(t, http.MethodPost, githubPATPath, `{"token":"ghp_secret","web_base_url":"`+tc.base+`"}`)
+			rec := h.login(t, KindGitHub, "", "ghp_secret", `,"web_base_url":"`+tc.base+`"`)
 			body := decodeBody(t, rec)
-			if rec.Code != http.StatusOK || body["code"] != codeWebBaseInvalid {
-				t.Errorf("connect github:github.com at %q = %d %v, want a 2xx refusal coded %q",
-					tc.base, rec.Code, body, codeWebBaseInvalid)
+			if rec.Code != http.StatusBadRequest || body["code"] != codeWebBaseInvalid {
+				t.Errorf("sign-in to github.com at %q = %d %v, want 400 coded %q", tc.base, rec.Code, body, codeWebBaseInvalid)
 			}
 			if n := len(wire.requests()); n != 0 {
-				t.Errorf("the token was sent in %d requests for a web base the id does not name, want none", n)
+				t.Errorf("the token was sent in %d requests for a web base the host does not name, want none", n)
 			}
-			h.assertNothingStored(t, "github:github.com", githubOrigin)
+			h.assertNothingStored(t, githubOrigin)
 		})
 	}
 
-	t.Run("the id's own origin", func(t *testing.T) {
+	t.Run("the host's own origin", func(t *testing.T) {
 		h := newConnectHarness(t, aliceWire())
-		rec := h.do(t, http.MethodPost, githubPATPath, `{"token":"ghp_secret","web_base_url":"https://GitHub.com/"}`)
-		if body := decodeBody(t, rec); body["status"] != stateComplete {
-			t.Errorf("connect at the id's own origin = %d %v, want complete", rec.Code, body)
+		h.signedIn(t, KindGitHub, "", "ghp_secret", `,"web_base_url":"https://GitHub.com/"`)
+		if recs := readRecords(t, h.cfgDir); len(recs) != 1 || recs[0].WebBaseURL != "https://github.com" {
+			t.Errorf("records = %+v, want the web base stored as scheme://host", recs)
 		}
 	})
 }
 
-// The host comes from the request path and becomes the origin the token is
-// sent to, so a host that is not a bare host[:port] is refused before any
-// request: here userinfo would move the origin to evil.example.
-func TestPATLogin_IDHostMustBeABareHost(t *testing.T) {
+// The host becomes the origin the token is sent to, so a host that is not a
+// bare host[:port] is refused before any request: here userinfo would move the
+// origin to evil.example.
+func TestPATLogin_TheHostMustBeABareHost(t *testing.T) {
 	wire := aliceWire()
 	h := newConnectHarness(t, wire)
 
-	rec := h.do(t, http.MethodPost, "/api/forges/github%3Agithub.com%3A443%40evil.example/login/pat",
-		`{"token":"ghp_secret"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("connect to host github.com:443@evil.example = %d %s, want 400", rec.Code, rec.Body)
+	rec := h.login(t, KindGitHub, "github.com:443@evil.example", "ghp_secret", "")
+	if body := decodeBody(t, rec); rec.Code != http.StatusBadRequest || body["error"] != errHostInvalid.Error() {
+		t.Errorf("sign-in to host github.com:443@evil.example = %d %v, want 400 with the host rule", rec.Code, body)
 	}
 	if n := len(wire.requests()); n != 0 {
 		t.Errorf("the token was sent in %d requests, want none", n)
 	}
-	h.assertNothingStored(t, "github:github.com:443@evil.example", "https://evil.example")
+	h.assertNothingStored(t, "https://evil.example")
 }
 
 // A plaintext web base reaches a real loopback GitHub API, so the library's own
@@ -329,50 +340,42 @@ func TestPATLogin_HTTPWebBaseNeedsPlaintext(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	host := strings.TrimPrefix(srv.URL, "http://")
-	id := MakeID(KindGitHub, host)
-	path := "/api/forges/" + strings.ReplaceAll(id, ":", "%3A") + "/login/pat"
-	body := func(extra string) string {
-		return `{"token":"ghp_secret","web_base_url":"` + srv.URL + `","private_addresses":true` + extra + `}`
-	}
+	extra := func(more string) string { return `,"web_base_url":"` + srv.URL + `","private_addresses":true` + more }
 
 	h := newConnectHarness(t, nil)
-	rec := h.do(t, http.MethodPost, path, body(""))
-	if got := decodeBody(t, rec); rec.Code != http.StatusOK || got["code"] != forgeapi.CodePlaintextRefused {
-		t.Errorf("connect over http without plaintext_http = %d %v, want a 2xx refusal coded %q",
-			rec.Code, got, forgeapi.CodePlaintextRefused)
+	rec := h.login(t, KindGitHub, host, "ghp_secret", extra(""))
+	if got := decodeBody(t, rec); rec.Code != http.StatusBadRequest || got["code"] != forgeapi.CodePlaintextRefused {
+		t.Errorf("sign-in over http without plaintext_http = %d %v, want 400 coded %q", rec.Code, got, forgeapi.CodePlaintextRefused)
 	}
-	h.assertNothingStored(t, id, srv.URL)
+	h.assertNothingStored(t, srv.URL)
 
-	rec = h.do(t, http.MethodPost, path, body(`,"plaintext_http":true`))
-	if got := decodeBody(t, rec); got["status"] != stateComplete {
-		t.Fatalf("connect over http with plaintext_http = %d %v, want complete", rec.Code, got)
-	}
+	h.signedIn(t, KindGitHub, host, "ghp_secret", extra(`,"plaintext_http":true`))
 	mu.Lock()
 	defer mu.Unlock()
 	if reads != 1 {
-		t.Errorf("the instance answered %d identity reads, want 1 (none for the refused connect)", reads)
+		t.Errorf("the instance answered %d identity reads, want 1 (none for the refused sign-in)", reads)
 	}
-	recs, err := h.m.conns.load()
-	if err != nil || len(recs) != 1 || recs[0].WebBaseURL != srv.URL || !recs[0].PlaintextHTTP || !recs[0].PrivateAddresses {
-		t.Errorf("connection records = %+v, %v; want the loopback record with both opt-ins", recs, err)
+	recs := readRecords(t, h.cfgDir)
+	if len(recs) != 1 || recs[0].WebBaseURL != srv.URL || !recs[0].PlaintextHTTP || !recs[0].PrivateAddresses {
+		t.Errorf("connection records = %+v; want the loopback record with both opt-ins", recs)
 	}
 }
 
-// Gitea has no public instance to default to, so an id naming no host is
+// Gitea has no public instance to default to, so a body naming no host is
 // refused before any request.
 func TestPATLogin_GiteaRequiresAHost(t *testing.T) {
 	wire := aliceWire()
 	h := newConnectHarness(t, wire)
 
-	rec := h.do(t, http.MethodPost, patPath("gitea:"), `{"token":"gitea-secret"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("connect gitea with no host = %d %s, want 400", rec.Code, rec.Body)
+	rec := h.login(t, KindGitea, "", "gitea-secret", "")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), errHostInvalid.Error()) {
+		t.Errorf("sign-in to gitea with no host = %d %s, want 400 naming the host", rec.Code, rec.Body)
 	}
 	if n := len(wire.requests()); n != 0 {
 		t.Errorf("the token was sent in %d requests, want none", n)
 	}
-	if recs, err := h.m.conns.load(); err != nil || len(recs) != 0 {
-		t.Errorf("connection records = %+v, %v after a refused connect, want none", recs, err)
+	if recs := readRecords(t, h.cfgDir); len(recs) != 0 {
+		t.Errorf("connection records = %+v after a refused sign-in, want none", recs)
 	}
 }
 
@@ -393,10 +396,8 @@ func TestPATLogin_LoopbackGiteaNeedsBothOptIns(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":1,"login":"alice"}`)
 	}))
 	t.Cleanup(srv.Close)
-	id := MakeID(KindGitea, strings.TrimPrefix(srv.URL, "http://"))
-	body := func(optIns string) string {
-		return `{"token":"gitea-secret","web_base_url":"` + srv.URL + `"` + optIns + `}`
-	}
+	host := strings.TrimPrefix(srv.URL, "http://")
+	extra := func(optIns string) string { return `,"web_base_url":"` + srv.URL + `"` + optIns }
 	h := newConnectHarness(t, nil)
 
 	refusals := []struct{ optIns, code string }{
@@ -404,25 +405,22 @@ func TestPATLogin_LoopbackGiteaNeedsBothOptIns(t *testing.T) {
 		{`,"private_addresses":true`, forgeapi.CodePlaintextRefused},
 	}
 	for _, tc := range refusals {
-		rec := h.do(t, http.MethodPost, patPath(id), body(tc.optIns))
-		if got := decodeBody(t, rec); rec.Code != http.StatusOK || got["code"] != tc.code {
-			t.Errorf("connect %s with only %s = %d %v, want a 2xx refusal coded %q", srv.URL, tc.optIns, rec.Code, got, tc.code)
+		rec := h.login(t, KindGitea, host, "gitea-secret", extra(tc.optIns))
+		if got := decodeBody(t, rec); rec.Code != http.StatusBadRequest || got["code"] != tc.code {
+			t.Errorf("sign-in to %s with only %s = %d %v, want 400 coded %q", srv.URL, tc.optIns, rec.Code, got, tc.code)
 		}
-		h.assertNothingStored(t, id, srv.URL)
+		h.assertNothingStored(t, srv.URL)
 	}
 
-	rec := h.do(t, http.MethodPost, patPath(id), body(`,"plaintext_http":true,"private_addresses":true`))
-	if got := decodeBody(t, rec); got["status"] != stateComplete {
-		t.Fatalf("connect %s with both opt-ins = %d %v, want complete", srv.URL, rec.Code, got)
-	}
+	h.signedIn(t, KindGitea, host, "gitea-secret", extra(`,"plaintext_http":true,"private_addresses":true`))
 	mu.Lock()
 	defer mu.Unlock()
 	if reads != 1 {
-		t.Errorf("the instance answered %d identity reads, want 1 (none for the refused connects)", reads)
+		t.Errorf("the instance answered %d identity reads, want 1 (none for the refused sign-ins)", reads)
 	}
-	recs, err := h.m.conns.load()
-	if err != nil || len(recs) != 1 || recs[0].WebBaseURL != srv.URL || !recs[0].PlaintextHTTP || !recs[0].PrivateAddresses {
-		t.Errorf("connection records = %+v, %v; want the loopback record with both opt-ins", recs, err)
+	recs := readRecords(t, h.cfgDir)
+	if len(recs) != 1 || recs[0].WebBaseURL != srv.URL || !recs[0].PlaintextHTTP || !recs[0].PrivateAddresses {
+		t.Errorf("connection records = %+v; want the loopback record with both opt-ins", recs)
 	}
 }
 
@@ -437,7 +435,7 @@ func TestGitLabPATLogin_NestedProjectIsListed(t *testing.T) {
 			`"default_branch":"main","visibility":"private"}]`,
 	}}
 	h := newConnectHarness(t, wire)
-	connectGitLabByPAT(t, h)
+	h.signedIn(t, KindGitLab, "", "glpat-secret", "")
 
 	rec := h.do(t, http.MethodGet, "/api/forges/gitlab%3Agitlab.com/repos", "")
 	if rec.Code != http.StatusOK {
@@ -471,9 +469,7 @@ func TestDisconnect_DeletesRecordStoreEntryAndHelperPair(t *testing.T) {
 	const foreign = "!/usr/bin/gh auth git-credential"
 	writeGitConfig(t, os.Getenv("GIT_CONFIG_GLOBAL"),
 		"[credential \""+githubOrigin+"\"]\n\thelper =\n\thelper = "+foreign+"\n")
-	if rec := h.do(t, http.MethodPost, githubPATPath, `{"token":"ghp_secret"}`); rec.Code != http.StatusOK {
-		t.Fatalf("Setup: connect = %d %s", rec.Code, rec.Body)
-	}
+	h.signedIn(t, KindGitHub, "", "ghp_secret", "")
 	if got := helperValuesFor(t, githubOrigin); len(got) != 4 {
 		t.Fatalf("Setup: credential.%s.helper = %q, want the foreign pair then Marotte's", githubOrigin, got)
 	}
@@ -484,43 +480,41 @@ func TestDisconnect_DeletesRecordStoreEntryAndHelperPair(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("DELETE %s = %d %s", githubRowPath, rec.Code, rec.Body)
 	}
-	if _, ok, err := h.m.store.Load("github:github.com"); ok || err != nil {
-		t.Errorf("store still holds the credential after disconnect (err %v)", err)
+	if keys := h.storedKeys(t); len(keys) != 0 {
+		t.Errorf("store still holds %q after the sign-out", keys)
 	}
-	if recs, err := h.m.conns.load(); err != nil || len(recs) != 0 {
-		t.Errorf("connection records after disconnect = %+v, %v; want none", recs, err)
+	if recs := readRecords(t, h.cfgDir); len(recs) != 0 {
+		t.Errorf("connection records after the sign-out = %+v; want none", recs)
 	}
 	if got := helperValuesFor(t, githubOrigin); !slices.Equal(got, []string{"", foreign}) {
-		t.Errorf("credential.%s.helper after disconnect = %q, want only the foreign pair", githubOrigin, got)
+		t.Errorf("credential.%s.helper after the sign-out = %q, want only the foreign pair", githubOrigin, got)
 	}
 	if data, err := os.ReadFile(creds); err != nil || strings.Contains(string(data), "github.com") {
-		t.Errorf("~/.git-credentials after disconnect = %q, %v; want the github.com line scrubbed", data, err)
+		t.Errorf("~/.git-credentials after the sign-out = %q, %v; want the github.com line scrubbed", data, err)
 	}
-	if row := h.m.get("github:github.com"); row != nil {
-		t.Errorf("row after disconnect = %+v, want none", row)
+	if _, ok := h.m.view("github:github.com"); ok {
+		t.Error("a row exists after the sign-out, want none")
 	}
 }
 
-func TestDisconnect_DegradedStoreAnswers503AndRemovesNothing(t *testing.T) {
+func TestDisconnect_UnusablePersistenceAnswers503AndRemovesNothing(t *testing.T) {
 	h := newConnectHarness(t, aliceWire())
-	if rec := h.do(t, http.MethodPost, githubPATPath, `{"token":"ghp_secret"}`); rec.Code != http.StatusOK {
-		t.Fatalf("Setup: connect = %d %s", rec.Code, rec.Body)
-	}
-	store := h.m.store
-	h.m.store, h.m.storeReason = nil, "the forge credential store /x cannot be used"
+	h.signedIn(t, KindGitHub, "", "ghp_secret", "")
+	restore := widenStore(t, h.m)
 
 	rec := h.do(t, http.MethodDelete, githubRowPath, "")
-	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "/x cannot be used") {
-		t.Errorf("DELETE %s over a degraded store = %d %s, want 503 naming the reason", githubRowPath, rec.Code, rec.Body)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "credential store") {
+		t.Errorf("DELETE %s over an unreadable store = %d %s, want 503 naming the store", githubRowPath, rec.Code, rec.Body)
 	}
-	if _, ok, err := store.Load("github:github.com"); !ok || err != nil {
-		t.Errorf("credential after a refused disconnect: present %v (err %v), want it kept", ok, err)
+	restore()
+	if keys := h.storedKeys(t); len(keys) != 1 {
+		t.Errorf("store keys after a refused sign-out = %q, want the credential kept", keys)
 	}
-	if recs, err := h.m.conns.load(); err != nil || len(recs) != 1 {
-		t.Errorf("records after a refused disconnect = %+v, %v; want the record kept", recs, err)
+	if recs := readRecords(t, h.cfgDir); len(recs) != 1 {
+		t.Errorf("records after a refused sign-out = %+v; want the record kept", recs)
 	}
 	if got := helperValuesFor(t, githubOrigin); len(got) != 2 {
-		t.Errorf("credential.%s.helper after a refused disconnect = %q, want the pair kept", githubOrigin, got)
+		t.Errorf("credential.%s.helper after a refused sign-out = %q, want the pair kept", githubOrigin, got)
 	}
 }
 
@@ -535,6 +529,8 @@ type capsCore struct {
 	grant    forgeapi.GrantCaps
 	reads    int
 }
+
+func (*capsCore) Close() {}
 
 func (c *capsCore) ConnectionCaps(context.Context) (forgeapi.ConnectionCaps, error) {
 	c.reads++
@@ -566,16 +562,17 @@ func TestCapabilitiesRoute_CarriesEvidence(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s = %d %s, want 200", githubCapsPath, rec.Code, rec.Body)
 	}
-	var got map[string]map[string]Affordance
+	var got Capabilities
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("GET %s body %q: %v", githubCapsPath, rec.Body, err)
 	}
-	want := map[string]map[string]Affordance{
-		"connection": {
+	want := Capabilities{
+		Account: testSignIn,
+		Connection: map[string]Affordance{
 			"rerun_checks": {Support: "yes", Source: "swagger", Detail: "swagger declares rerun"},
 			"pin_runs":     {Support: "no", Source: "probe", Detail: "the probe answered 404"},
 		},
-		"grant": {
+		Grant: map[string]Affordance{
 			"read_merge_state": {Support: "yes", Source: "response-header", Detail: "the scope header carries repo"},
 		},
 	}
@@ -602,6 +599,7 @@ func TestCapabilitiesRoute_UnknownIsItsOwnSpelling(t *testing.T) {
 		t.Fatalf("GET %s = %d %s, want 200", githubCapsPath, rec.Code, rec.Body)
 	}
 	want := map[string]any{
+		"account": testSignIn,
 		"connection": map[string]any{
 			"rerun_checks": map[string]any{"support": "unknown", "source": "response-header", "detail": "the runner is enabled per repository"},
 			"pin_runs":     map[string]any{"support": "yes", "source": "unknown", "detail": ""},
@@ -648,15 +646,13 @@ func TestCapabilitiesRoute_AFailedReadAnswersTheEnvelope(t *testing.T) {
 	}
 }
 
-func TestCapabilitiesRoute_AnUnusableRecordFileIs503(t *testing.T) {
+func TestCapabilitiesRoute_UnusablePersistenceIs503(t *testing.T) {
 	core := &capsCore{}
 	m := recordManager(t, core)
-	m.mu.Lock()
-	m.recordsReason = "the connection records /x cannot be used"
-	m.mu.Unlock()
+	widenStore(t, m)
 
 	rec := getRoute(t, repoRoutes(m), githubCapsPath)
-	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "/x cannot be used") {
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "credential store") {
 		t.Errorf("GET %s over unusable records = %d %s, want 503 naming the reason", githubCapsPath, rec.Code, rec.Body)
 	}
 	if core.reads != 0 {

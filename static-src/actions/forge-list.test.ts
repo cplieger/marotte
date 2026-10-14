@@ -35,8 +35,8 @@ const forgesResp = {
       id: "github:github.com",
       kind: "github",
       host: "github.com",
-      connected: true,
-      reconnect_required: false,
+      account: "acct-1",
+      status: "connected",
     },
   ],
   kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -65,23 +65,15 @@ describe("listForges", () => {
     expect(urls).not.toContain("/api/git/status-all");
   });
 
-  it("dedupes concurrent dispatches", async () => {
-    mockFetch.mockImplementation(
-      () =>
-        new Promise((r) =>
-          setTimeout(() => r(new Response(JSON.stringify(forgesResp), { status: 200 })), 10),
-        ),
+  // A read joined to one issued before a sign-in would answer the rows from before it.
+  it("sends every dispatch, one in flight or not", async () => {
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify(forgesResp), { status: 200 })),
     );
 
-    vi.useFakeTimers();
-    const p1 = listForges.dispatch(undefined);
-    const p2 = listForges.dispatch(undefined);
-    await vi.advanceTimersByTimeAsync(10);
-    const [r1, r2] = await Promise.all([p1, p2]);
-    vi.useRealTimers();
+    await Promise.all([listForges.dispatch(undefined), listForges.dispatch(undefined)]);
 
-    expect(r1).toEqual(r2);
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
   it("resolves null on a failed fetch rather than throwing", async () => {

@@ -114,8 +114,8 @@ export function settleableTag(tag: string): boolean {
 
 /** A pull request's identity as both halves of the app spell it: the subject key minus its
  *  prefix. Twin of the composition in marotte.PRSubject, keyed on the repository's canonical
- *  `repo_id` rather than its display path. OPAQUE, and never parsed: `forgeID` is itself
- *  `<kind>:<host>` (forges.MakeID), so the key contains a colon and is not self-delimiting. */
+ *  `repo_id` rather than its display path. OPAQUE, and never parsed: `forgeID` is a keyenc
+ *  join of kind and host (forges.MakeID), so the key contains a colon and is not self-delimiting. */
 export function prIdentity(forgeID: string, repoID: string, number: number): string {
   return `${forgeID}:${repoID}#${String(number)}`;
 }

@@ -53,10 +53,10 @@ export interface PATFormDeps {
   connected: (slot: HTMLElement, id: string) => void;
 }
 
-/** Connects with the host and token read once per press. Resolves to the kind
- *  connected, or null when the request was cancelled; rejects after writing
- *  the refusal into `status`. */
-type Connect = (host: string, token: string, status: HTMLElement) => Promise<ForgeKind | null>;
+/** Connects with the host and token read once per press. Resolves to the id of
+ *  the connection the server saved, or null when the request was cancelled;
+ *  rejects after writing the refusal into `status`. */
+type Connect = (host: string, token: string, status: HTMLElement) => Promise<string | null>;
 
 export function renderPATForm(
   hostEl: HTMLElement,
@@ -82,8 +82,8 @@ export function renderPATForm(
   hostEl.appendChild(helpEl);
   hostEl.appendChild(el("p", { className: "forge-help forge-scopes" }, PAT_SCOPES[kind]));
   hostEl.appendChild(
-    tokenForm(slot, target, deps, async (host, token, status) =>
-      (await connectAs({ kind, host, token, options: target.options() }, status)) ? kind : null,
+    tokenForm(slot, target, deps, (host, token, status) =>
+      connectAs({ kind, host, token, options: target.options() }, status),
     ),
   );
 }
@@ -150,12 +150,12 @@ function tokenForm(
     void withAsyncFeedback(
       submit,
       async () => {
-        const kind = await connect(host, token, status);
-        if (kind === null) {
+        const id = await connect(host, token, status);
+        if (id === null) {
           return;
         }
         tokenInput.value = "";
-        deps.connected(slot, `${kind}:${host}`);
+        deps.connected(slot, id);
       },
       { keepLabel: true },
     );
@@ -164,25 +164,31 @@ function tokenForm(
   return form;
 }
 
-/** Connect, landing the outcome in `status`: true when connected, false when
- *  cancelled. Rejects on a refusal so the button's feedback shows it. */
+/** Connect, landing the outcome in `status`: the saved connection's id, or null
+ *  when cancelled. Rejects on a refusal so the button's feedback shows it. */
 async function connectAs(
   args: Parameters<typeof connectPAT.dispatch>[0],
   status: HTMLElement,
-): Promise<boolean> {
+): Promise<string | null> {
   // The framework's error toast is suppressed (error: false), so this status line is the only failure surface.
   const o = await connectPAT.dispatch(args).outcome;
   if (o.status === "cancelled") {
     setLine(status, "");
-    return false;
+    return null;
   }
-  const refusal = o.status === "error" ? o.error.message : o.value.error;
-  if (refusal !== undefined) {
-    setLine(status, refusal, "err");
-    throw new Error(refusal);
+  if (o.status === "error") {
+    return refuse(status, o.error.message);
+  }
+  if (o.value.forge_id === "") {
+    return refuse(status, "the server answered no connection id");
   }
   setLine(status, "Connected.", "ok");
-  return true;
+  return o.value.forge_id;
+}
+
+function refuse(status: HTMLElement, why: string): never {
+  setLine(status, why, "err");
+  throw new Error(why);
 }
 
 async function detectThenConnect(
@@ -190,7 +196,7 @@ async function detectThenConnect(
   token: string,
   options: ConnectionOptions,
   status: HTMLElement,
-): Promise<ForgeKind | null> {
+): Promise<string | null> {
   const o = await detectForge.dispatch({ host, token, options }).outcome;
   if (o.status === "cancelled") {
     setLine(status, "");
@@ -206,7 +212,7 @@ async function detectThenConnect(
   }
   const kind = o.value.kind;
   setLine(status, `${kindTitle(kind)} found. Connecting...`);
-  return (await connectAs({ kind, host, token, options }, status)) ? kind : null;
+  return connectAs({ kind, host, token, options }, status);
 }
 
 function setLine(status: HTMLElement, text: string, kind: "ok" | "err" | "" = ""): void {

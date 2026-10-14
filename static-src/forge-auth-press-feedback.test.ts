@@ -26,12 +26,16 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   confirm: H.confirm,
 }));
-// The forge store reads the list through an action; routed through the mocked client so each describe answers it.
-vi.mock("./forge-store.js", async (importOriginal) => {
-  const orig = await importOriginal<Record<string, unknown>>();
+// The rows read is routed through the mocked client, so each case answers the forge list first.
+vi.mock("./actions/forge-list.js", async (importOriginal) => {
   const { apiGetTyped } = await import("./api-client.js");
-  const read = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
-  return { ...orig, refreshForges: read, ensureForges: read };
+  return {
+    ...(await importOriginal<Record<string, unknown>>()),
+    listForges: {
+      dispatch: () =>
+        Promise.resolve(apiGetTyped("/api/forges", (v: unknown) => v)).then((v) => v ?? null),
+    },
+  };
 });
 vi.mock("./sse-adapter.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -65,8 +69,10 @@ import {
   expectBusy,
   expectIdle,
 } from "./__test-helpers__/press-feedback.js";
+import { _resetForTest as resetForgeStore } from "./forge-store.js";
 
 beforeEach(() => {
+  resetForgeStore();
   H.confirm.mockImplementation(async () => true);
 });
 
@@ -77,8 +83,8 @@ describe("the Sources tab", () => {
     kind: "github",
     host: "github.com",
     username: "alice",
-    connected: true,
-    reconnect_required: false,
+    account: "acct-1",
+    status: "connected",
   };
   const FIRST_PAGE = "/api/forges/github%3Agithub.com/repos";
 
@@ -117,7 +123,7 @@ describe("the Sources tab", () => {
         case "/api/git/repos":
           return Promise.resolve(decode({ repos: [...clones] }));
         case FIRST_PAGE:
-          return Promise.resolve(decode({ repos: listed.map(repo) }));
+          return Promise.resolve(decode({ account: "acct-1", repos: listed.map(repo) }));
         default:
           return Promise.resolve(null);
       }
@@ -133,7 +139,7 @@ describe("the Sources tab", () => {
   async function show(names: string[], cloned: string[]): Promise<HTMLElement> {
     listed = names;
     clones = new Set(cloned);
-    await renderForgesPanel({ revalidate: false });
+    await renderForgesPanel();
     const d = host.querySelector<HTMLElement>(".forge-account-repos")!;
     toggle(d).click();
     return d;
@@ -171,7 +177,7 @@ describe("the Sources tab", () => {
     expectBusy(clone);
     await vi.waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]!.url).toBe("/api/git/clone");
-    await renderForgesPanel({ revalidate: false });
+    await renderForgesPanel();
     expectBusy(control("one", "Clone into workspace"));
     clones.add("one");
     calls[0]!.answer(cloneAnswer({ output: "Cloning into 'one'..." }));
@@ -192,7 +198,7 @@ describe("the Sources tab", () => {
       expect(note("one")).toBe("Could not clone. fatal: repository not found"),
     );
     await vi.waitFor(() => expectIdle(control("one", "Clone into workspace")), { timeout: 3000 });
-    await renderForgesPanel({ revalidate: false });
+    await renderForgesPanel();
     expect(note("one")).toBe("Could not clone. fatal: repository not found");
     expect(toast.error).not.toHaveBeenCalled();
 

@@ -1,3 +1,4 @@
+import { join } from "@cplieger/keyenc";
 import { el } from "@cplieger/reactive";
 import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -7,8 +8,8 @@ import { confirm as confirmDialog } from "./confirm.js";
 import type { PartialResult, Repo, RepoList } from "./wire/types.gen.js";
 import { cloneRepo as cloneRepoAction, deleteLocal as deleteLocalAction } from "./actions/forge.js";
 
-/** One account's repositories as the panel holds them: the first page, the pages
- *  loaded past it, and where the next page continues. */
+/** One account's repositories as the forge store holds them: the first page, the
+ *  pages loaded past it, and where the next page continues. */
 export interface RepoListing {
   first: Repo[];
   /** The cursor the first page answered, which `more` continued from. */
@@ -100,12 +101,12 @@ function rowKey(repo: Repo): string {
 }
 
 function cloneKey(repo: Repo): string {
-  return `clone ${rowKey(repo)}`;
+  return join("clone", rowKey(repo));
 }
 
 /** A local copy is a directory named for the repository, so one removal serves every row of that name. */
 function removeKey(repo: Repo): string {
-  return `remove ${repo.name}`;
+  return join("remove", repo.name);
 }
 
 function setRowNote(repo: Repo, text: string, deps: RepoDeps): void {

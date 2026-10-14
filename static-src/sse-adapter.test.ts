@@ -391,6 +391,7 @@ describe("frames", () => {
       payload: {
         entry: {
           forge_id: "github:github.com",
+          account: "acct-1",
           state: "ready",
           cycle_id: version,
           credential: "valid",

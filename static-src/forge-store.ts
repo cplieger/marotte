@@ -1,62 +1,274 @@
-// The one owner of the /api/forges poll and payload, so one answer serves the PRs tab and Sources. A consumer about
-// to act reads through ensureForges. Nothing takes an AbortSignal: one consumer navigating away must not abort a
-// fetch others await, so callers guard staleness after the await.
+// The one client owner of the forge connection rows (GET /api/forges) and of Sources' repository listings. Every
+// surface renders from it. It starts on the first call of any accessor below, so a subscriber that reads one through
+// an effect starts it too; it never polls: the server's forges_changed, a page resume and a stream reconnect re-read.
 
-import { pollAction } from "./actions/index.js";
+import { batch, computed, signal, touch } from "@cplieger/reactive";
+import { join } from "@cplieger/keyenc";
 import { listForges, type ForgesListResponse } from "./actions/forge-list.js";
-import { onSSE } from "./bus.js";
+import { listRepoPage } from "./actions/forge.js";
+import { apiGetTyped } from "./api-client.js";
+import { BUS_PAGE_RESUMED, onBus, onSSE } from "./bus.js";
+import { usableStatus } from "./forge-auth-status.js";
+import { readFirstPage, readNextPage, type RepoListing } from "./forge-auth-repos.js";
+import type { ConfiguredForge } from "./wire/types.gen.js";
+import { decodeRepoList } from "./wire/decoders.gen.js";
 
 /** Re-exported so consumers import the payload shape from the store that owns it. */
 export type { ForgesListResponse };
 
-/** pollAction pauses while the document is hidden and refreshes on focus, so this is a ceiling, not a floor. */
-const POLL_INTERVAL_MS = 15_000;
+const rows = signal<ForgesListResponse | null>(null);
+const failed = signal(false);
 
-/** The last successful payload, or null before the first lands. A failed fetch keeps it. */
-let state: ForgesListResponse | null = null;
+/** Each row's listing, held for the account it was read through. */
+const listings = new Map<string, { account: string; listing: RepoListing }>();
+const listingVersion = signal(0);
+
+interface FirstRead {
+  fresh: boolean;
+  done: Promise<boolean>;
+}
+
+/** The first-page read whose answer applies, keyed join(id, account). */
+const pendingFirst = new Map<string, FirstRead>();
+
+const pairs = computed<readonly string[] | null>(
+  () =>
+    rows.value === null
+      ? null
+      : rows.value.forges
+          .filter((f) => usableStatus(f.status))
+          .map((f) => join(f.id, f.account))
+          .sort(),
+  {
+    equals: (a, b) =>
+      a === b ||
+      (a !== null && b !== null && a.length === b.length && a.every((p, i) => p === b[i])),
+  },
+);
 
 let started = false;
+let issued = 0;
+let latestRead: Promise<ForgesListResponse | null> | null = null;
 
-/** Start the poll and the invalidation listener. Idempotent: several init paths reach it. */
-export function initForgeStore(): void {
+/** Subscribe the store's triggers once; answers whether this call did. */
+function subscribe(): boolean {
   if (started) {
-    return;
+    return false;
   }
   started = true;
-  // A connection change is the only thing besides time that moves this data, and the server broadcasts it, so a
-  // sign-out reaches the cached list at once rather than at the next poll.
   onSSE("forges_changed", () => {
-    void refreshForges();
+    void readForges();
   });
-  pollAction(listForges, undefined, {
-    interval: POLL_INTERVAL_MS,
-    onSuccess: apply,
+  onBus(BUS_PAGE_RESUMED, () => {
+    void readForges();
   });
+  return true;
 }
 
-function apply(d: ForgesListResponse | null): void {
-  if (d !== null) {
-    state = d;
+function start(): void {
+  if (subscribe()) {
+    void readForges();
   }
 }
 
 /**
- * Fetch now and publish the result, deduped with any in-flight poll tick. For a consumer with a reason to distrust
- * the cache (Sources after a sign-in or sign-out, the SSE listener).
+ * Read the rows now. Only the newest-issued read applies, so a read issued before a change cannot paint over one
+ * issued after it. Resolves this read's answer, null when it failed (the rows held stay).
  */
-export async function refreshForges(): Promise<ForgesListResponse | null> {
-  const d = await listForges.dispatch(undefined);
-  apply(d);
-  return d;
+export async function readForges(): Promise<ForgesListResponse | null> {
+  subscribe();
+  const mine = ++issued;
+  const read = listForges.dispatch(undefined).then((d) => {
+    if (mine === issued) {
+      latestRead = null;
+      if (d === null) {
+        failed.value = true;
+      } else {
+        applyRows(d);
+      }
+    }
+    return d;
+  });
+  latestRead = read;
+  return read;
 }
 
-/**
- * The forge list, fetching once if nothing has landed yet, for a consumer that cannot proceed without one (an
- * empty answer would read as "no connected forges"). A payload in hand is returned as-is, with no round trip.
- */
+/** The stream (re)connected: the rows may have changed while it was down. Reads only once the store has started. */
+export function notifyStreamConnected(): void {
+  if (started) {
+    void readForges();
+  }
+}
+
+/** The rows, read once when none are held yet; null when that read failed. */
 export async function ensureForges(): Promise<ForgesListResponse | null> {
-  if (state !== null) {
-    return state;
+  start();
+  const held = rows.peek();
+  if (held !== null) {
+    return held;
   }
-  return refreshForges();
+  await (latestRead ?? readForges());
+  return rows.peek();
+}
+
+/** The rows held, null before the first read lands. */
+export function forgeRows(): ForgesListResponse | null {
+  start();
+  return rows.value;
+}
+
+/** True when the last read of the rows failed. */
+export function forgeRowsFailed(): boolean {
+  start();
+  return failed.value;
+}
+
+/** The sorted join(id, account) of every usable row, null before any rows; a new array only when the set changes. */
+export function usablePairs(): readonly string[] | null {
+  start();
+  return pairs.value;
+}
+
+function rowOf(id: string): ConfiguredForge | undefined {
+  return rows.peek()?.forges.find((f) => f.id === id);
+}
+
+function applyRows(d: ForgesListResponse): void {
+  const before = new Map((rows.peek()?.forges ?? []).map((f) => [f.id, f]));
+  batch(() => {
+    rows.value = d;
+    failed.value = false;
+    let dropped = false;
+    for (const [id, held] of listings) {
+      const row = d.forges.find((f) => f.id === id);
+      if (row?.account !== held.account || !usableStatus(row.status)) {
+        listings.delete(id);
+        dropped = true;
+      }
+    }
+    if (dropped) {
+      listingVersion.value = listingVersion.peek() + 1;
+    }
+  });
+  for (const row of d.forges) {
+    const prev = before.get(row.id);
+    const held = listings.get(row.id);
+    const nowConnected = row.status === "connected" && prev?.status !== "connected";
+    if (nowConnected && held !== undefined && (held.listing.unread || held.listing.stale)) {
+      void readFirst(row.id, row.account, false);
+    }
+  }
+}
+
+/**
+ * The listing held for the row's current account. With none held and none in flight it starts the one first-page
+ * read for that (id, account) and answers undefined, which a row paints as loading.
+ */
+export function ensureListing(id: string): RepoListing | undefined {
+  start();
+  touch(listingVersion);
+  const row = rowOf(id);
+  if (row === undefined || !usableStatus(row.status)) {
+    return undefined;
+  }
+  const held = listings.get(id);
+  if (held?.account === row.account) {
+    return held.listing;
+  }
+  void readFirst(id, row.account, false);
+  return undefined;
+}
+
+/** Read a row's first page from its forge rather than the server's cache. Resolves false on failure. */
+export async function refreshListing(id: string): Promise<boolean> {
+  const row = rowOf(id);
+  if (row === undefined || !usableStatus(row.status)) {
+    return true;
+  }
+  return readFirst(id, row.account, true);
+}
+
+/**
+ * Joins the read in flight for (id, account) unless this one is fresh and that one is not; the fresh one then
+ * supersedes it, so a cached answer never lands over the forge's.
+ */
+function readFirst(id: string, account: string, fresh: boolean): Promise<boolean> {
+  const key = join(id, account);
+  const inFlight = pendingFirst.get(key);
+  if (inFlight !== undefined && (inFlight.fresh || !fresh)) {
+    return inFlight.done;
+  }
+  const read: FirstRead = { fresh, done: Promise.resolve(true) };
+  pendingFirst.set(key, read);
+  read.done = sendFirst(id, account, key, read);
+  return read.done;
+}
+
+async function sendFirst(
+  id: string,
+  account: string,
+  key: string,
+  read: FirstRead,
+): Promise<boolean> {
+  const page = await apiGetTyped(
+    `/api/forges/${encodeURIComponent(id)}/repos${read.fresh ? "?refresh=1" : ""}`,
+    decodeRepoList,
+  );
+  if (pendingFirst.get(key) !== read) {
+    return page !== null;
+  }
+  pendingFirst.delete(key);
+  const row = rowOf(id);
+  if (
+    row?.account !== account ||
+    !usableStatus(row.status) ||
+    (page !== null && page.account !== account)
+  ) {
+    return page !== null;
+  }
+  const prev = listings.get(id);
+  listings.set(id, {
+    account,
+    listing: readFirstPage(prev?.account === account ? prev.listing : undefined, page),
+  });
+  listingVersion.value = listingVersion.peek() + 1;
+  return page !== null;
+}
+
+/** Read the page after a row's held one. Resolves the failure's message, or undefined. */
+export async function readMoreListing(id: string): Promise<string | undefined> {
+  const held = listings.get(id);
+  if (held === undefined || held.listing.next === "") {
+    return undefined;
+  }
+  const o = await listRepoPage.dispatch({ forgeId: id, after: held.listing.next }).outcome;
+  if (o.status === "cancelled") {
+    return undefined;
+  }
+  if (o.status === "error") {
+    return o.error.message;
+  }
+  const now = listings.get(id);
+  if (
+    now?.account !== held.account ||
+    now.listing.next !== held.listing.next ||
+    o.value.account !== held.account
+  ) {
+    return undefined;
+  }
+  listings.set(id, { account: now.account, listing: readNextPage(now.listing, o.value) });
+  listingVersion.value = listingVersion.peek() + 1;
+  return undefined;
+}
+
+/** Forget every row and listing, for a suite's next case; the subscriptions stay. */
+// deadset:ignore DS1004 -- test seam: resets the held rows, listings and read counters
+export function _resetForTest(): void {
+  rows.value = null;
+  failed.value = false;
+  listings.clear();
+  pendingFirst.clear();
+  latestRead = null;
+  issued += 1;
+  listingVersion.value = listingVersion.peek() + 1;
 }

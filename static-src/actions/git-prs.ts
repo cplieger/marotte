@@ -208,10 +208,11 @@ function capabilityDetail(body: unknown): string {
 
 /** Read what a connection can do (`GET /api/forges/{id}/capabilities`); the
  *  row's Re-run reads its `rerun_checks`. A failed read answers null and no
- *  toast: the row then offers the press and lets a refusal decide. */
+ *  toast: the row then offers the press and lets a refusal decide. Not
+ *  deduped: an ask after the connection changed must not join a read issued
+ *  before it. */
 export const readCapabilities = apiAction<{ forge_id: string }, Capabilities>({
   name: "git.read_capabilities",
-  dedupe: true,
   request: (args) => ({
     method: "GET",
     path: `/api/forges/${encodeURIComponent(args.forge_id)}/capabilities`,

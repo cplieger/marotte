@@ -319,7 +319,12 @@ describe("an account's repository listing", () => {
   }
 
   function page(names: string[], next = "", partial?: RepoList["partial"]): RepoList {
-    return { repos: names.map(row), next, ...(partial === undefined ? {} : { partial }) };
+    return {
+      account: "acct-1",
+      repos: names.map(row),
+      next,
+      ...(partial === undefined ? {} : { partial }),
+    };
   }
 
   function names(repos: readonly Repo[]): string[] {

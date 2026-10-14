@@ -19,16 +19,22 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   confirm: vi.fn(() => Promise.resolve(true)),
 }));
-vi.mock("./forge-store.js", async (importOriginal) => {
-  const orig = await importOriginal<Record<string, unknown>>();
+// The rows read is routed through the mocked client, so each case answers the forge list first.
+vi.mock("./actions/forge-list.js", async (importOriginal) => {
   const { apiGetTyped } = await import("./api-client.js");
-  const read = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
-  return { ...orig, refreshForges: read, ensureForges: read };
+  return {
+    ...(await importOriginal<Record<string, unknown>>()),
+    listForges: {
+      dispatch: () =>
+        Promise.resolve(apiGetTyped("/api/forges", (v: unknown) => v)).then((v) => v ?? null),
+    },
+  };
 });
 
 import { resetActionFramework } from "@cplieger/actions/testing";
 import { renderForgesPanel } from "./forge-auth.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { _resetForTest as resetForgeStore } from "./forge-store.js";
 
 const ACCOUNT = {
   id: "gitea:git.example.com",
@@ -36,20 +42,21 @@ const ACCOUNT = {
   host: "git.example.com",
   username: "someone",
   email: "someone@example.invalid",
-  connected: true,
-  reconnect_required: false,
+  account: "acct-1",
+  status: "connected",
 };
 
 let style: HTMLStyleElement;
 
 beforeEach(() => {
+  resetForgeStore();
   resetActionFramework();
   H.apiGetTyped.mockImplementation((url: string, decode: (v: unknown) => unknown) => {
     switch (url) {
       case "/api/forges":
         return Promise.resolve(decode({ forges: [ACCOUNT], kinds: ["github", "gitea"] }));
       default:
-        return Promise.resolve(decode({ repos: [] }));
+        return Promise.resolve(decode({ account: "acct-1", repos: [] }));
     }
   });
   // The Sources column of a 390px phone, in the viewport so every rect is real.
@@ -67,7 +74,7 @@ describe("a connection row's top line on a phone's column", () => {
     "shows the whole account beside its actions at %s",
     async (tier) => {
       document.documentElement.dataset["pointer"] = tier;
-      await renderForgesPanel({ revalidate: false });
+      await renderForgesPanel();
       const top = document.querySelector<HTMLElement>(".forge-account-row-top")!;
       const primary = top.querySelector<HTMLElement>(".forge-account-primary")!;
       const meta = top.querySelector<HTMLElement>(".forge-account-meta")!;

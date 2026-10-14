@@ -139,7 +139,7 @@ export function renderDeviceSignIn(
         }
         listening.abort();
         if (body.isConnected) {
-          beginGrant(body, target, host, o.value, deps);
+          beginGrant(body, target, o.value, deps);
         }
       },
       { keepLabel: true },
@@ -161,7 +161,6 @@ export function renderDeviceSignIn(
 function beginGrant(
   body: HTMLElement,
   target: DeviceSignInTarget,
-  host: string,
   start: DeviceFlowResponse,
   deps: OAuthFlowDeps,
 ): void {
@@ -199,9 +198,9 @@ function beginGrant(
   });
   void pollDevice(body, target.kind, start, poll.signal)
     .finally(forget)
-    .then((connected) => {
-      if (connected) {
-        deps.connected(`${target.kind}:${host}`);
+    .then((id) => {
+      if (id !== null) {
+        deps.connected(id);
       }
     });
 }
@@ -278,7 +277,7 @@ async function pollDevice(
   kind: DeviceKind,
   start: DeviceFlowResponse,
   signal: AbortSignal,
-): Promise<boolean> {
+): Promise<string | null> {
   const statusEl = host.querySelector<HTMLDivElement>(".forge-device-status");
   // The caller aborts `signal` on host teardown, and every status write also checks host.isConnected.
   const setStatus = (text: string): void => {
@@ -309,24 +308,28 @@ async function pollDevice(
   );
 
   if (outcome.status === "aborted") {
-    return false;
+    return null;
   }
   if (outcome.status === "timeout") {
     setStatus("Timed out waiting for approval. Try again.");
-    return false;
+    return null;
   }
   const res = outcome.result;
   if (res.status === "complete") {
-    return true;
+    if (res.forge_id === undefined || res.forge_id === "") {
+      setStatus("Error: the server answered no connection id");
+      return null;
+    }
+    return res.forge_id;
   }
   if (res.status === "expired") {
     setStatus("Device code expired. Try again.");
-    return false;
+    return null;
   }
   if (res.status === "error" || res.status === "denied") {
     setStatus(`Error: ${res.error ?? "unknown"}`);
   }
-  return false;
+  return null;
 }
 
 function setLine(status: HTMLElement, text: string, kind: "ok" | "err" | "" = ""): void {

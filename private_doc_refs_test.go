@@ -150,7 +150,7 @@ var publicProjects = func() map[string]bool {
 	for name := range strings.FieldsSeq(`cert-converter docker-age docker-caddy
 		docker-fclones-scheduler docker-keepalived docker-nut-upsd docker-radvd
 		docker-renovate-scheduler docker-rsync-scheduler docker-smtp-relay docker-static-web
-		github-scout pg-autodump plex-exporter plex-language-sync registry-stats seadex-scout
+		forge-scout pg-autodump plex-exporter plex-language-sync registry-stats seadex-scout
 		tautulli-remap tool-catalog ui-primitives web-terminal-engine web-terminal-glyphs
 		web-terminal-kiro web-terminal-server web-terminal-ui`) {
 		set[name] = true

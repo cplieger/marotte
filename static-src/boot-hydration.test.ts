@@ -52,6 +52,17 @@ vi.mock("./run-store.js", () => ({
 vi.mock("./session-catalog.js", () => ({ fetchCatalog: vi.fn() }));
 vi.mock("./send-state.js", () => ({ setSSEStatus: vi.fn() }));
 vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
+vi.mock("./forge-store.js", () => ({
+  notifyStreamConnected: vi.fn(),
+  readForges: vi.fn(),
+  ensureForges: vi.fn(),
+  forgeRows: () => null,
+  forgeRowsFailed: () => false,
+  usablePairs: () => [],
+  ensureListing: vi.fn(),
+  refreshListing: vi.fn(),
+  readMoreListing: vi.fn(),
+}));
 
 /** Let the written bytes cross the stream reader: a frame that is still in flight
  *  cannot prove it was held. */

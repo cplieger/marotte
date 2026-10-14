@@ -15,7 +15,7 @@ import (
 
 // noticePoller is a push-only poller over the production source for recs, each
 // served by the core cores names, with the clones origins describe.
-func noticePoller(t *testing.T, cores map[string]forgeapi.Core, origins []RepoOrigin, recs ...connectionRecord,
+func noticePoller(t *testing.T, cores map[string]forgeapi.Core, origins []RepoOrigin, recs ...connectionSpec,
 ) (*PRStatusPoller, *fakeGate, *fakeNotifier) {
 	t.Helper()
 	p, g, n, _ := inventoryPoller(t, cores, origins, recs...)
@@ -268,7 +268,7 @@ func TestNotice_ClosedRowDropsItsRead(t *testing.T) {
 func TestNotice_ASettledRowIsReadEveryCycle(t *testing.T) {
 	cases := []struct {
 		read  func(forgeapi.PullRequest, forgeapi.CheckState) forgeapi.PullRequest
-		rec   connectionRecord
+		rec   connectionSpec
 		clone func(string) RepoOrigin
 		name  string
 		fam   forgeapi.Family

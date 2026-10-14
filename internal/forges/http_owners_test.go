@@ -12,20 +12,16 @@ import (
 	"reflect"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func ownersRoutes(t *testing.T, recs ...connectionRecord) (*Manager, *http.ServeMux) {
+func ownersRoutes(t *testing.T, recs ...connectionSpec) (*Manager, *http.ServeMux) {
 	t.Helper()
 	m := sourceManager(t, map[string]forgeapi.Core{}, recs...)
 	mux := http.NewServeMux()
-	NewHTTPHandler(m, nil).RegisterRoutes(mux)
+	NewHTTPHandler(m).RegisterRoutes(mux)
 	return m, mux
 }
 
@@ -65,10 +61,7 @@ func answeredOwners(t *testing.T, rec *httptest.ResponseRecorder) []string {
 
 func storedRecord(t *testing.T, m *Manager, id string) connectionRecord {
 	t.Helper()
-	recs, err := m.conns.load()
-	if err != nil {
-		t.Fatalf("load the records: %v", err)
-	}
+	recs := readRecords(t, m.configDir)
 	for i := range recs {
 		if recs[i].ID == id {
 			return recs[i]
@@ -80,26 +73,21 @@ func storedRecord(t *testing.T, m *Manager, id string) connectionRecord {
 
 func rowOwners(t *testing.T, m *Manager, id string) []string {
 	t.Helper()
-	row := m.get(id)
-	if row == nil {
-		t.Fatalf("no row for %s", id)
-	}
-	return row.OwnerScopes
+	return viewFor(t, m, id).OwnerScopes
 }
 
 // The connection row is where a client reads the stored owners before any cycle
 // has run, so the row carries them on the wire and a stored change is announced.
 func TestOwnersRoute_TheRowCarriesTheOwnersAndTheChangeIsAnnounced(t *testing.T) {
 	gh := githubRecord()
-	m := sourceManager(t, map[string]forgeapi.Core{}, gh)
-	b := &recordingBroadcaster{}
+	m, changes := sourceManagerLogged(t, map[string]forgeapi.Core{}, gh)
 	mux := http.NewServeMux()
-	NewHTTPHandler(m, b).RegisterRoutes(mux)
+	NewHTTPHandler(m).RegisterRoutes(mux)
 
 	answeredOwners(t, putOwners(t, mux, gh.ID, ownersBodyOf("acme", "beta")))
 
-	if len(b.events) != 1 || b.events[0].Type != marotte.EventForgesChanged {
-		t.Errorf("a stored owners change broadcast %+v, want one forges_changed", b.events)
+	if got := changes.all(); !slices.Equal(got, []Change{{ID: gh.ID}}) {
+		t.Errorf("a stored owners change notified %+v, want one change of %s", got, gh.ID)
 	}
 	var list struct {
 		Forges []map[string]any `json:"forges"`
@@ -111,12 +99,12 @@ func TestOwnersRoute_TheRowCarriesTheOwnersAndTheChangeIsAnnounced(t *testing.T)
 		t.Errorf("row owner_scopes on the wire = %v, want [acme beta]", got)
 	}
 
-	b.events = nil
 	if rec := putOwners(t, mux, gh.ID, ownersBodyOf("a b")); rec.Code != http.StatusBadRequest {
 		t.Fatalf("PUT owners [a b] = %d %s, want 400", rec.Code, rec.Body)
 	}
-	if len(b.events) != 0 {
-		t.Errorf("a refused owners write broadcast %+v, want nothing: nothing changed", b.events)
+	answeredOwners(t, putOwners(t, mux, gh.ID, ownersBodyOf("acme", "beta")))
+	if got := changes.all(); len(got) != 1 {
+		t.Errorf("a refused write and an unchanged one notified %+v, want nothing more: nothing changed", got)
 	}
 }
 
@@ -151,72 +139,27 @@ func TestOwnersRoute_PersistsThroughTheSingleWriter(t *testing.T) {
 	gh := githubRecord()
 	gh.RotationCursor = "c"
 	m, mux := ownersRoutes(t, gh)
-	helper := storedRecord(t, m, gh.ID).HelperValue
-	if helper == "" {
-		t.Fatalf("Setup: the boot refresh recorded no helper value for %s", gh.ID)
-	}
 
 	if got := answeredOwners(t, putOwners(t, mux, gh.ID, ownersBodyOf("acme", "beta"))); !slices.Equal(got, []string{"acme", "beta"}) {
 		t.Errorf("PUT owners [acme beta] answered %q, want them as stored", got)
 	}
 	stored := storedRecord(t, m, gh.ID)
-	if !slices.Equal(stored.OwnerScopes, []string{"acme", "beta"}) || stored.HelperValue != helper ||
-		stored.RotationCursor != "c" {
-		t.Errorf("stored record = %+v, want owner_scopes [acme beta] with the helper value and cursor kept", stored)
+	if !slices.Equal(stored.OwnerScopes, []string{"acme", "beta"}) || stored.RotationCursor != "c" || stored.SignIn != gh.SignIn {
+		t.Errorf("stored record = %+v, want owner_scopes [acme beta] with the cursor and sign-in kept", stored)
 	}
 	if got := rowOwners(t, m, gh.ID); !slices.Equal(got, []string{"acme", "beta"}) {
 		t.Errorf("the row the next cycle reads names owners %q, want [acme beta] without waiting for the list TTL", got)
 	}
-
-	t.Run("ConcurrentWritersLoseNoUpdate", func(t *testing.T) {
-		const writers, rounds = 8, 6
-		var wg sync.WaitGroup
-		for i := range writers {
-			wg.Go(func() {
-				for range rounds {
-					if rec := putOwners(t, mux, gh.ID, ownersBodyOf(fmt.Sprintf("org-%d", i))); rec.Code != http.StatusOK {
-						t.Errorf("PUT owners [org-%d] = %d %s", i, rec.Code, rec.Body)
-					}
-				}
-			})
-			wg.Go(func() {
-				for range rounds {
-					if err := m.conns.update(t.Context(), func(cur []connectionRecord) []connectionRecord {
-						for j := range cur {
-							cur[j].RotationCursor += "x"
-						}
-						return cur
-					}); err != nil {
-						t.Errorf("cursor write-back: %v", err)
-					}
-				}
-			})
-		}
-		wg.Wait()
-
-		stored := storedRecord(t, m, gh.ID)
-		if want := "c" + strings.Repeat("x", writers*rounds); stored.RotationCursor != want {
-			t.Errorf("rotation cursor after %d write-backs beside as many owner writes = %q, want %q: an owner write put back a stale record",
-				writers*rounds, stored.RotationCursor, want)
-		}
-		if len(stored.OwnerScopes) != 1 || !strings.HasPrefix(stored.OwnerScopes[0], "org-") {
-			t.Errorf("owner scopes after concurrent writes = %q, want one writer's whole list", stored.OwnerScopes)
-		}
-	})
 }
 
-// A reconnect replaces the record from the connect body, and the owners are the
-// user's choice for that connection, so the new record carries them over.
-func TestOwnersRoute_AReconnectKeepsTheOwners(t *testing.T) {
+// A sign-in replaces the record from its body, and the owners are the user's
+// choice for that connection, so the new record carries them over.
+func TestOwnersRoute_ASignInKeepsTheOwners(t *testing.T) {
 	h := newConnectHarness(t, aliceWire())
-	if rec := h.do(t, http.MethodPost, githubPATPath, `{"token":"ghp_secret"}`); rec.Code != http.StatusOK {
-		t.Fatalf("Setup: connect = %d %s", rec.Code, rec.Body)
-	}
+	h.signedIn(t, KindGitHub, "", "ghp_secret", "")
 	answeredOwners(t, h.do(t, http.MethodPut, ownersPath("github:github.com"), ownersBodyOf("acme")))
 
-	if rec := h.do(t, http.MethodPost, githubPATPath, `{"token":"ghp_rotated"}`); rec.Code != http.StatusOK {
-		t.Fatalf("reconnect = %d %s", rec.Code, rec.Body)
-	}
+	h.signedIn(t, KindGitHub, "", "ghp_rotated", "")
 
 	if got := storedRecord(t, h.m, "github:github.com").OwnerScopes; !slices.Equal(got, []string{"acme"}) {
 		t.Errorf("owner scopes after a reconnect = %q, want [acme] kept", got)
@@ -302,14 +245,12 @@ func TestOwnersRoute_MalformedOwnerIs400AndStoresNothing(t *testing.T) {
 		}
 	})
 
-	t.Run("DegradedStore", func(t *testing.T) {
-		store, reason := m.store, m.storeReason
-		m.store, m.storeReason = nil, "the forge credential store /x cannot be used"
-		t.Cleanup(func() { m.store, m.storeReason = store, reason })
-
+	t.Run("UnusablePersistence", func(t *testing.T) {
+		restore := widenStore(t, m)
 		rec := putOwners(t, mux, gh.ID, ownersBodyOf("acme"))
-		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "/x cannot be used") {
-			t.Errorf("PUT owners over a degraded store = %d %s, want 503 naming the reason", rec.Code, rec.Body)
+		restore()
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "credential store") {
+			t.Errorf("PUT owners over an unreadable store = %d %s, want 503 naming the store", rec.Code, rec.Body)
 		}
 		if got := storedRecord(t, m, gh.ID).OwnerScopes; !slices.Equal(got, []string{"keep"}) {
 			t.Errorf("stored owner scopes after a refused PUT = %q, want [keep]", got)
@@ -348,15 +289,7 @@ func TestOwnersRoute_DeduplicatesAndBounds(t *testing.T) {
 	t.Run("TheLoginMatchesInAnyCase", func(t *testing.T) {
 		gitea := localGiteaRecord()
 		gm, gmux := ownersRoutes(t, gitea)
-		if err := gm.store.Save(gitea.ID, creds.Record{
-			Family: forgeapi.FamilyGitea, WebBaseURL: gitea.WebBaseURL, Kind: forgeapi.CredKindStaticPAT,
-			Token: "test-token", Issued: time.Now(), Account: "Carol",
-		}); err != nil {
-			t.Fatalf("Setup: sign the connection in as Carol: %v", err)
-		}
-		if err := gm.Refresh(t.Context()); err != nil {
-			t.Fatalf("Setup: Refresh() = %v", err)
-		}
+		addConnections(t, gm, "Carol", gitea)
 		got := answeredOwners(t, putOwners(t, gmux, gitea.ID, ownersBodyOf("carol", "acme")))
 		if !slices.Equal(got, []string{"acme"}) {
 			t.Errorf("PUT owners [carol acme] as Carol on Gitea answered %q, want [acme]", got)

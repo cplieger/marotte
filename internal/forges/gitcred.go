@@ -32,9 +32,11 @@ const (
 
 // RunCredentialHelper answers one git credential-helper invocation, args being
 // everything after [HelperCommand]: --config-dir <dir> and git's action. It
-// answers from the credential store under dir and never refreshes a token. A
-// store that cannot be opened writes one line to diag and exits 0, so git's
-// later helpers and prompting still run. It returns the process exit code.
+// answers from the credential store under dir for the active slot of every
+// connection the records file holds usable, and never refreshes a token. A
+// store or records file that cannot be read writes one line to diag and exits
+// 0, so git's later helpers and prompting still run. It returns the process
+// exit code.
 func RunCredentialHelper(ctx context.Context, args []string, in io.Reader, out, diag io.Writer) int {
 	fs := flag.NewFlagSet(HelperCommand, flag.ContinueOnError)
 	fs.SetOutput(diag)
@@ -52,6 +54,12 @@ func RunCredentialHelper(ctx context.Context, args []string, in io.Reader, out, 
 	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
 		return 0
 	}
+	keys, err := activeKeys(*configDir)
+	if err != nil {
+		_, _ = fmt.Fprintf(diag, "marotte git credential helper: the forge connection records %s cannot be read (%s), so no credential was handed to git\n",
+			filepath.Join(*configDir, connectionsFileName), oneLine(err.Error()))
+		return 0
+	}
 	// The decline line already reaches diag; a logger on stderr would print it twice.
 	quiet := forgeapi.WithLogger(slog.New(slog.DiscardHandler))
 	store, err := creds.OpenFileStore(dir, quiet)
@@ -62,11 +70,30 @@ func RunCredentialHelper(ctx context.Context, args []string, in io.Reader, out, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, helperServeBudget)
 	defer cancel()
-	if err := gitcred.New(store, quiet).Serve(ctx, fs.Arg(0), in, out, diag); err != nil {
+	listed := func() ([]string, error) { return keys, nil }
+	if err := gitcred.NewFor(store, listed, quiet).Serve(ctx, fs.Arg(0), in, out, diag); err != nil {
 		_, _ = fmt.Fprintf(diag, "marotte git credential helper: %s\n", oneLine(err.Error()))
 		return 1
 	}
 	return 0
+}
+
+// activeKeys is the active slot key of every connection the records file holds
+// with no refusal, read without the server's mode verdict: the helper process
+// only reads, and git keeps working through a mode problem the server reports.
+// A missing file answers none.
+func activeKeys(configDir string) ([]string, error) {
+	recs, err := newRecordsFile(configDir).read()
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(recs))
+	for i := range recs {
+		if recs[i].Standing == standingUsable {
+			keys = append(keys, slotKey(recs[i].ID, recs[i].Slot))
+		}
+	}
+	return keys, nil
 }
 
 func oneLine(s string) string {
@@ -116,12 +143,25 @@ func ownsHelperValue(value, configDir string) bool {
 	return strings.HasPrefix(value, "/") && strings.HasSuffix(value, helperArgs(dir))
 }
 
-// reconcileHelpers registers the helper the running binary builds for every
-// connection record, which heals an upgrade or a relocation, and records the
-// value on each record. A record file that did not load is never used.
-func (m *Manager) reconcileHelpers(ctx context.Context) {
-	recs, err := m.conns.load()
-	if err != nil || len(recs) == 0 {
+// reconcileGit makes git's credential helper registrations follow the usable
+// connections: for each one's origin "" then this binary's helper after any
+// foreign entries, and for every other origin no value this config directory
+// owns. It does nothing while persistence is unusable, when no row's usability
+// is known and a reconcile would strip every helper. A git config failure is
+// logged and retried by the next keeper pass, and is silent once ctx has
+// ended, when the caller left rather than git failing.
+func (m *Manager) reconcileGit(ctx context.Context) {
+	// The origins are read under gitMu: a reconcile that waited holding an
+	// older read would undo the reconcile of the change that superseded it.
+	m.gitMu.Lock()
+	defer m.gitMu.Unlock()
+	wanted, healthy := m.helperOrigins()
+	if !healthy {
+		return
+	}
+	have, err := registeredHelpers(ctx)
+	if err != nil {
+		warnGit(ctx, "forges: git credential helpers not read", "error", err)
 		return
 	}
 	want, err := m.currentHelperValue()
@@ -129,41 +169,42 @@ func (m *Manager) reconcileHelpers(ctx context.Context) {
 		slog.Warn("forges: cannot build the git credential helper value", "error", err)
 		return
 	}
-	moved := map[string]bool{}
-	for i := range recs {
-		rec := &recs[i]
-		if regErr := reconcileHelper(ctx, rec.webBase(), want, m.ownedBy(rec)); regErr != nil {
-			slog.Warn("forges: git credential helper not registered", "connection", rec.ID, "error", regErr)
+	owned := func(v string) bool { return ownsHelperValue(v, m.configDir) }
+	for url := range wanted {
+		if err := reconcileHelper(ctx, url, have[url], want, owned); err != nil {
+			warnGit(ctx, "forges: git credential helper not registered", "origin", url, "error", err)
+		}
+	}
+	for url, values := range have {
+		if wanted[url] || !slices.ContainsFunc(values, owned) {
 			continue
 		}
-		if rec.HelperValue != want {
-			moved[rec.ID] = true
+		if err := reconcileHelper(ctx, url, values, "", owned); err != nil {
+			warnGit(ctx, "forges: git credential helper not removed", "origin", url, "error", err)
 		}
 	}
-	if len(moved) > 0 {
-		m.recordHelperValue(ctx, moved, want)
+}
+
+// warnGit logs a git config failure unless ctx has ended: exec refuses or
+// kills a command whose ctx ended, so that failure names no fault in git.
+func warnGit(ctx context.Context, msg string, args ...any) {
+	if ctx.Err() == nil {
+		slog.Warn(msg, args...)
 	}
 }
 
-// A failure is logged; the next boot's reconcile retries it.
-func (m *Manager) registerHelper(ctx context.Context, rec *connectionRecord) {
-	want, err := m.currentHelperValue()
-	if err == nil {
-		err = reconcileHelper(ctx, rec.webBase(), want, m.ownedBy(rec))
+// helperOrigins is the web origin of every usable connection, and whether
+// persistence is usable, read under one hold of mu.
+func (m *Manager) helperOrigins() (wanted map[string]bool, healthy bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	wanted = map[string]bool{}
+	for _, c := range m.conns {
+		if m.usable(c) {
+			wanted[c.spec.webBase()] = true
+		}
 	}
-	if err != nil {
-		slog.Warn("forges: git credential helper not registered", "connection", rec.ID, "error", err)
-		return
-	}
-	if rec.HelperValue != want {
-		m.recordHelperValue(ctx, map[string]bool{rec.ID: true}, want)
-	}
-}
-
-func (m *Manager) unregisterHelper(ctx context.Context, rec *connectionRecord) {
-	if err := reconcileHelper(ctx, rec.webBase(), "", m.ownedBy(rec)); err != nil {
-		slog.Warn("forges: git credential helper not removed", "connection", rec.ID, "error", err)
-	}
+	return wanted, m.health == ""
 }
 
 func (m *Manager) currentHelperValue() (string, error) {
@@ -174,37 +215,11 @@ func (m *Manager) currentHelperValue() (string, error) {
 	return helperValue(bin, m.configDir)
 }
 
-// ownedBy reports a value this Marotte registered for rec: the value recorded
-// on the record, or any value naming this config directory.
-func (m *Manager) ownedBy(rec *connectionRecord) func(string) bool {
-	return func(v string) bool {
-		return (rec.HelperValue != "" && v == rec.HelperValue) || ownsHelperValue(v, m.configDir)
-	}
-}
-
-func (m *Manager) recordHelperValue(ctx context.Context, ids map[string]bool, value string) {
-	err := m.conns.update(ctx, func(cur []connectionRecord) []connectionRecord {
-		for i := range cur {
-			if ids[cur[i].ID] {
-				cur[i].HelperValue = value
-			}
-		}
-		return cur
-	})
-	if err != nil {
-		slog.Warn("forges: registered git credential helper not recorded", "error", err)
-	}
-}
-
 // Git consults helpers in order and an empty value resets the list, so a connected origin gets ""
 // then want after whatever precedes it; every owned value goes with the empty value before it, and
 // want empty removes the pair.
-func reconcileHelper(ctx context.Context, url, want string, owned func(string) bool) error {
+func reconcileHelper(ctx context.Context, url string, have []string, want string, owned func(string) bool) error {
 	key := "credential." + url + ".helper"
-	have, err := gitHelperValues(ctx, key)
-	if err != nil {
-		return err
-	}
 	next := withoutOwned(have, owned)
 	if want != "" {
 		next = append(next, "", want)
@@ -244,17 +259,27 @@ func writeHelperValues(ctx context.Context, key string, exists bool, values []st
 	return nil
 }
 
-func gitHelperValues(ctx context.Context, key string) ([]string, error) {
-	out, err := runGitConfig(ctx, "-z", "--get-all", key)
+// registeredHelpers is every credential.<url>.helper value in git's global
+// config, by url, in git's order, from one read.
+func registeredHelpers(ctx context.Context) (map[string][]string, error) {
+	out, err := runGitConfig(ctx, "-z", "--get-regexp", `^credential\..*\.helper$`)
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() == 1 {
-		return nil, nil
+		return map[string][]string{}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	values := strings.Split(string(out), "\x00")
-	return values[:len(values)-1], nil
+	have := map[string][]string{}
+	for entry := range strings.SplitSeq(string(out), "\x00") {
+		key, value, _ := strings.Cut(entry, "\n")
+		rest, prefixed := strings.CutPrefix(key, "credential.")
+		url, suffixed := strings.CutSuffix(rest, ".helper")
+		if prefixed && suffixed && url != "" {
+			have[url] = append(have[url], value)
+		}
+	}
+	return have, nil
 }
 
 func runGitConfig(ctx context.Context, args ...string) ([]byte, error) {
@@ -265,7 +290,7 @@ func runGitConfig(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, gitConfigBudget)
 	defer cancel()
 	var stderr bytes.Buffer
-	//nolint:gosec,nolintlint // G702: argv[0] is an absolute path from a fixed system-directory set that reads no environment and the subcommand is always config --global; the key's origin is a validated scheme and host:port (patBody.record) and every argv element reaches execve as a separate token with no shell, where git itself refuses a malformed key
+	//nolint:gosec,nolintlint // G702: argv[0] is an absolute path from a fixed system-directory set that reads no environment and the subcommand is always config --global; the key's origin is a validated scheme and host:port (connectionFields.record, validSpec) and every argv element reaches execve as a separate token with no shell, where git itself refuses a malformed key
 	cmd := exec.CommandContext(ctx, git, append([]string{"config", "--global"}, args...)...)
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

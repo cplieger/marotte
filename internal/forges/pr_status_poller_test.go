@@ -537,9 +537,11 @@ func TestPoller_RunDoesNotSweepOnEntry(t *testing.T) {
 func scopeRun(t *testing.T, wire *pathWire, id, webBase string, first, second map[string]string) (sent []sentPush, held map[int]string) {
 	t.Helper()
 	h := newConnectHarness(t, wire)
-	if rec := h.do(t, http.MethodPost, patPath(id), `{"token":"scope-secret"}`); rec.Code != http.StatusOK {
-		t.Fatalf("Setup: POST %s = %d %s", patPath(id), rec.Code, rec.Body)
+	kind, host, ok := parseID(id)
+	if !ok {
+		t.Fatalf("Setup: %q is not a connection id", id)
 	}
+	h.signedIn(t, kind, host, "scope-secret", "")
 	src := NewManagerPRSource(h.m, fixedOrigins(RepoOrigin{Dir: "app", WebBase: webBase, Slug: "alice/app"}))
 	n := &fakeNotifier{}
 	p := NewPRStatusPoller(src, n, (&fakeGate{push: true}).Open)

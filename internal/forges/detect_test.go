@@ -85,7 +85,7 @@ func TestDetect_AnswersTheFamilyAndStoresNothing(t *testing.T) {
 	if !inst.sawCredential(detectToken) {
 		t.Errorf("no request to %s carried the body's token (requests %v)", inst.srv.URL, inst.requests())
 	}
-	h.assertNothingStored(t, MakeID(KindGitea, strings.TrimPrefix(inst.srv.URL, "http://")), inst.srv.URL)
+	h.assertNothingStored(t, inst.srv.URL)
 	if _, err := os.Stat(filepath.Join(h.cfgDir, connectionsFileName)); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("stat %s after a detection = %v, want no record file", connectionsFileName, err)
 	}
@@ -105,7 +105,7 @@ func TestDetect_UndetectedIs422(t *testing.T) {
 	if len(inst.requests()) == 0 {
 		t.Errorf("detect %s sent no request, want every family's read asked", inst.srv.URL)
 	}
-	h.assertNothingStored(t, MakeID(KindGitea, strings.TrimPrefix(inst.srv.URL, "http://")), inst.srv.URL)
+	h.assertNothingStored(t, inst.srv.URL)
 }
 
 // A loopback instance over plain HTTP needs both opt-ins, and the library's own

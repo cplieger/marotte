@@ -4,7 +4,6 @@
 
 import { $ } from "./dom.js";
 import { onGitStatusChange, currentRepos } from "./git-status-store.js";
-import { initForgeStore, refreshForges } from "./forge-store.js";
 import type { GitRepoStatusBadge } from "./git-types.js";
 
 type BadgeState = { kind: "none" } | { kind: "dirty"; dirtyCount: number };
@@ -18,23 +17,20 @@ let started = false;
 let lastState: BadgeState = { kind: "none" };
 let lastTooltip = "";
 
-/** Wire the badge to the git status store and start the shared forge poll. Idempotent. */
+/** Wire the badge to the git status store. Idempotent. */
 export function initGitBadge(): void {
   if (started) {
     return;
   }
   started = true;
-  // No other init path starts the forge poll, and the PRs tab reads the forge list it keeps fresh.
-  initForgeStore();
   // The store fires immediately with its current value, and subscribing starts its one read.
   onGitStatusChange(() => {
     repaint();
   });
 }
 
-/** Refresh the shared forge list after an agent turn, and repaint the badge from current data. */
-export async function refreshGitBadge(): Promise<void> {
-  await refreshForges();
+/** Repaint the badge from current data, after an agent turn. */
+export function refreshGitBadge(): void {
   repaint();
 }
 

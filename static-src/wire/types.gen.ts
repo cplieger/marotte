@@ -20,6 +20,8 @@ export type FileMatchKind = "content" | "name" | "dir";
 
 export type ForgeKind = "github" | "gitlab" | "gitea" | "codeberg";
 
+export type ForgeStatus = "connected" | "retrying" | "refused" | "reconnect" | "unusable";
+
 export type InterruptMode = "steer" | "queue";
 
 export type KnowledgeIndexingPhase = "started" | "completed";
@@ -237,6 +239,8 @@ export interface Attachment {
 export interface Capabilities {
   connection: Record<string, Affordance>;
   grant: Record<string, Affordance>;
+  /** Account is the sign-in the answer was read through. */
+  account: string;
 }
 
 /**
@@ -422,43 +426,30 @@ export interface ConfigTemplateResponse {
   effort_levels: SessionEffortLevel[];
 }
 
-/** ConfiguredForge is one connected forge backend: a connection record's row. */
+/**
+ * ConfiguredForge is one connection as Sources lists it. Error is present
+ * exactly when Status is not connected.
+ */
 export interface ConfiguredForge {
+  error?: ForgeError;
   id: string;
   kind: ForgeKind;
   host: string;
   username?: string;
   email?: string;
-  last_error?: string;
   /**
- * ErrorCode and ErrorKind are LastError's code and kind in the error
- * envelope's terms. The code connection_unusable marks a row no request can
- * serve until the record file or the credential store is repaired.
+ * Account names the sign-in, so a reply read through an older one can be
+ * told apart; a new sign-in as the same user changes it.
  */
-  error_code?: string;
-  error_kind?: string;
+  account: string;
+  status: ForgeStatus;
   /**
  * OwnerScopes are the owners a present cycle reads beside the connection's
  * own pull requests.
  */
   owner_scopes?: string[];
-  last_probed?: number;
-  /**
- * RetryAfterS is the wait the refusal behind LastError asked for, counted
- * from LastProbed.
- */
-  retry_after_s?: number;
-  /**
- * Connected says requests may use the connection. A connected row's
- * LastError is a temporary failure the next probe retries: any other
- * failure disconnects the row.
- */
-  connected: boolean;
-  /**
- * ReconnectRequired says the stored credential can be neither used nor
- * renewed: only a new sign-in revives the connection.
- */
-  reconnect_required: boolean;
+  /** CheckedAt is the last check's end in Unix milliseconds, absent before one. */
+  checked_at?: number;
 }
 
 /**
@@ -1339,6 +1330,21 @@ export interface FileWriteResult {
   ok: boolean;
 }
 
+/**
+ * ForgeError is why a connection is not connected, in the error envelope's
+ * terms.
+ */
+export interface ForgeError {
+  message: string;
+  code?: string;
+  kind?: string;
+  /**
+ * RetryAt is when the forge's rate limit lets a request through again, in
+ * Unix milliseconds; absent when the forge named no wait.
+ */
+  retry_at?: number;
+}
+
 /** GitHubRateLimit is the wire form of a [GitHubRateLimitError]. */
 export interface GitHubRateLimit {
   /**
@@ -1504,15 +1510,6 @@ export interface Inventory {
   apt_packages?: AptPackage[];
 }
 
-/** InventoryBudget is a connection's request budget as its client last read it. */
-export interface InventoryBudget {
-  /** Remaining is -1 where the family reports none. */
-  remaining: number;
-  /** Reset is unix ms, absent where the family reports none. */
-  reset?: number;
-  last_cost: number;
-}
-
 /**
  * InventoryChangedPayload is the forge_inventory event: one connection's entry
  * as the cycle that wrote it left it.
@@ -1527,8 +1524,12 @@ export interface InventoryChangedPayload {
  */
 export interface InventoryEntry {
   error?: InventoryError;
-  budget?: InventoryBudget;
   forge_id: string;
+  /**
+ * Account is the sign-in the entry was read through; a client drops an
+ * entry whose account is not its row's.
+ */
+  account: string;
   /** State is "loading", "ready", "partial" or "failed". */
   state: string;
   /**
@@ -1789,6 +1790,14 @@ export interface LoginOptions {
   idc_region?: string;
   builder_id: boolean;
   idc: boolean;
+}
+
+/**
+ * LoginResult is a token sign-in's 200 answer: the id the server minted for the
+ * saved connection.
+ */
+export interface LoginResult {
+  forge_id: string;
 }
 
 /**
@@ -2262,6 +2271,8 @@ export interface PollResult {
   status: string;
   error?: string;
   code?: string;
+  /** ForgeID is the id the server minted for the saved connection, on complete. */
+  forge_id?: string;
 }
 
 /**
@@ -2310,15 +2321,12 @@ export interface PreviewStamp {
 }
 
 /**
- * ProbeResult is a probe's answer: the row as the probe left it, whether that
- * row is connected, and the failure's sentence when the identity read failed.
- * A temporary failure on a connected row answers its sentence beside connected
- * true.
+ * ProbeResult is a Check's answer: the row as the check left it, its status
+ * and reason included.
  */
 export interface ProbeResult {
   forge?: ConfiguredForge;
   error?: string;
-  connected: boolean;
 }
 
 /**
@@ -2523,8 +2531,12 @@ export interface Repo {
   fork?: boolean;
 }
 
-/** RepoAffordances is what a repository allows. */
+/**
+ * RepoAffordances is what a repository allows. Account is the sign-in the
+ * affordances route read it through, absent on a repository row.
+ */
 export interface RepoAffordances {
+  account?: string;
   has_issues: Affordance;
   can_push: Affordance;
   merge_train: Affordance;
@@ -2540,6 +2552,8 @@ export interface RepoAffordances {
 export interface RepoList {
   partial?: PartialResult;
   next?: string;
+  /** Account is the sign-in the page was read through. */
+  account: string;
   repos: Repo[];
 }
 

@@ -2,9 +2,13 @@
 // over the real modules, so every suite drives the one state object here.
 
 import { vi } from "vitest";
+import { join } from "@cplieger/keyenc";
+import { computed, signal } from "@cplieger/reactive";
 import type * as ModPRs from "../git-prs-tab.js";
 import type * as ModActions from "../actions/git-prs.js";
-import type { InventoryEntry } from "../wire/types.gen.js";
+import type { ConfiguredForge, InventoryEntry } from "../wire/types.gen.js";
+import type { ForgesListResponse } from "../actions/forge-list.js";
+import { forgeRow, forgesList } from "./forge-rows.js";
 
 export const H = {
   apiGet: vi.fn(),
@@ -35,9 +39,37 @@ export function applyFilter(q: string): void {
   filterSeam.render(result, q);
 }
 
+/** The store's rows as the suites stage them. Each case gets fresh signals, so an earlier case's tab instance, whose
+ *  effect stays subscribed to the old ones, never repaints this case's mount. */
+function newStore(): {
+  rows: ReturnType<typeof signal<ForgesListResponse | null>>;
+  pairs: { readonly value: readonly string[] | null };
+} {
+  const rows = signal<ForgesListResponse | null>(null);
+  const pairs = computed(
+    () =>
+      (rows.value?.forges ?? [])
+        .filter((f) => f.status === "connected" || f.status === "retrying")
+        .map((f) => join(f.id, f.account))
+        .sort(),
+    { equals: (a, b) => a.join("\n") === b.join("\n") },
+  );
+  return { rows, pairs };
+}
+let store = newStore();
+
+/** The store applies `forges` as its rows, as a read answering after a forges_changed would. */
+export function applyRows(forges: readonly ConfiguredForge[]): void {
+  store.rows.value = forgesList(forges);
+}
+
 export const mocks = {
   apiClient: () => ({ apiGet: H.apiGet, apiGetTyped: H.apiGetTyped, apiPost: H.apiPost }),
-  forgeStore: () => ({ ensureForges: H.ensureForges }),
+  forgeStore: () => ({
+    ensureForges: H.ensureForges,
+    forgeRows: () => store.rows.value,
+    usablePairs: () => store.pairs.value,
+  }),
   bus: () => ({
     BUS_RECONCILE: "transport:reconcile",
     onSSE: (type: string, fn: (chatID: string, payload: unknown) => void) => {
@@ -101,32 +133,24 @@ export const mocks = {
   }),
 };
 
-export const githubForge = {
-  id: "github:github.com",
-  kind: "github" as const,
-  host: "github.com",
-  connected: true,
-  reconnect_required: false,
-};
+export const githubForge = forgeRow({ account: "acct-github" });
 
-export const giteaForge = {
+export const giteaForge = forgeRow({
   id: "gitea:gitea.example",
-  kind: "gitea" as const,
+  kind: "gitea",
   host: "gitea.example",
-  connected: true,
-  reconnect_required: false,
-};
+  account: "acct-gitea",
+});
 
-export const gitlabForge = {
+export const gitlabForge = forgeRow({
   id: "gitlab:gitlab.com",
-  kind: "gitlab" as const,
+  kind: "gitlab",
   host: "gitlab.com",
   username: "cplieger",
-  connected: true,
-  reconnect_required: false,
-};
+  account: "acct-gitlab",
+});
 
-export type Forge = typeof githubForge | typeof giteaForge | typeof gitlabForge;
+export type Forge = ConfiguredForge;
 
 export const repos = [
   { repo_id: "v1.63706c69656765722f6f6e65", full_name: "cplieger/one" },
@@ -190,6 +214,7 @@ export function entry(
       : [{ scope: "owner", owner: "cplieger", rows }];
   return {
     forge_id: forge.id,
+    account: forge.account,
     state: "ready",
     cycle_id: cycle,
     credential: "valid",
@@ -220,9 +245,8 @@ export const inventoryAnswer: { next: () => Promise<unknown> } = {
 
 export function routeAPI(opts: { forgesNull?: boolean; forges?: readonly Forge[] } = {}): void {
   const forges = opts.forges ?? [githubForge];
-  H.ensureForges.mockImplementation(() =>
-    Promise.resolve(opts.forgesNull === true ? null : { forges, kinds: forges.map((f) => f.kind) }),
-  );
+  store.rows.value = opts.forgesNull === true ? null : forgesList(forges);
+  H.ensureForges.mockImplementation(() => Promise.resolve(store.rows.peek()));
   H.apiGetTyped.mockImplementation((url: string, decode: (v: unknown) => unknown) => {
     if (url !== "/api/forges/inventory") {
       return Promise.resolve(null);
@@ -295,10 +319,11 @@ export function refuses(code: string, message: string): unknown {
 }
 
 /** The capability route's answer: `rerun_checks` reads `support`. */
-export function capabilities(support: string, detail = ""): unknown {
+export function capabilities(support: string, detail = "", account = "acct-github"): unknown {
   return {
     connection: { rerun_checks: { support, source: "version", detail } },
     grant: {},
+    account,
   };
 }
 
@@ -310,6 +335,7 @@ export async function resetPRsTab(): Promise<void> {
   H.apiPost.mockReset();
   H.apiPost.mockResolvedValue(null);
   H.ensureForges.mockReset();
+  store = newStore();
   H.sse.clear();
   H.bus.clear();
   inventoryAnswer.next = () => Promise.resolve(inventory());
