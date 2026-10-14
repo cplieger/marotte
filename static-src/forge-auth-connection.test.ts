@@ -33,9 +33,10 @@ vi.mock("./confirm.js", async (importOriginal) => ({
 }));
 
 // The rows read is routed through the mocked client, so each case answers the forge list first.
-vi.mock("./actions/forge-list.js", async () => {
+vi.mock("./actions/forge-list.js", async (importOriginal) => {
   const { apiGetTyped } = await import("./api-client.js");
   return {
+    ...(await importOriginal<Record<string, unknown>>()),
     listForges: {
       dispatch: () =>
         Promise.resolve(apiGetTyped("/api/forges", (v: unknown) => v)).then((v) => v ?? null),
@@ -653,7 +654,7 @@ describe("forge-auth: the connection row", () => {
       const block = owners(await showRow(account({ owner_scopes: ["acme"] })));
       const { spy, answer } = queuedFetch();
       const held = (): { land: (v: unknown) => void } => {
-        const h = { land: (_v: unknown): void => undefined };
+        const h: { land: (v: unknown) => void } = { land: () => undefined };
         mockedApiGet.mockImplementationOnce(
           () =>
             new Promise((r) => {

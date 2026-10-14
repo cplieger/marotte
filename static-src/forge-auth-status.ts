@@ -5,7 +5,7 @@ import type { ConfiguredForge, ForgeStatus } from "./wire/types.gen.js";
 /** Which request a row offers: a Check, a new sign-in, or none when no request can succeed. */
 type RowControl = "check" | "reconnect" | "none";
 
-export interface RowStatus {
+interface RowStatus {
   /** The sentence under the account, "" when there is nothing to say. */
   line: string;
   /** "muted" for a state that heals by itself, "error" for one that needs a person. */

@@ -3,7 +3,10 @@ import type { ForgesListResponse } from "./actions/forge-list.js";
 
 // The store's rows as each case stages them: the module reads them through forgeRows on every derivation.
 const S = vi.hoisted(() => ({ rows: null as ForgesListResponse | null }));
-vi.mock("./forge-store.js", () => ({ forgeRows: () => S.rows }));
+vi.mock("./forge-store.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  forgeRows: () => S.rows,
+}));
 
 import {
   applyInventoryEntry,

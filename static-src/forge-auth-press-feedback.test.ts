@@ -27,9 +27,10 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   confirm: H.confirm,
 }));
 // The rows read is routed through the mocked client, so each case answers the forge list first.
-vi.mock("./actions/forge-list.js", async () => {
+vi.mock("./actions/forge-list.js", async (importOriginal) => {
   const { apiGetTyped } = await import("./api-client.js");
   return {
+    ...(await importOriginal<Record<string, unknown>>()),
     listForges: {
       dispatch: () =>
         Promise.resolve(apiGetTyped("/api/forges", (v: unknown) => v)).then((v) => v ?? null),

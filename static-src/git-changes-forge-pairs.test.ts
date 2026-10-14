@@ -29,15 +29,20 @@ vi.mock("./actions/index.js", async (importOriginal) => ({
   registerCleanup: vi.fn(),
   bindLoadingState: vi.fn(() => vi.fn()),
 }));
-vi.mock("./actions/forge-list.js", () => ({ listForges: { dispatch: H.listForges } }));
-vi.mock("./actions/forge.js", () => ({
+vi.mock("./actions/forge-list.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  listForges: { dispatch: H.listForges },
+}));
+vi.mock("./actions/forge.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   listRepoPage: { dispatch: vi.fn() },
   cloneRepo: { dispatch: vi.fn() },
   deleteLocal: { dispatch: vi.fn() },
 }));
-vi.mock("./actions/git-changes.js", () => {
+vi.mock("./actions/git-changes.js", async (importOriginal) => {
   const stub = { dispatch: vi.fn() };
   return {
+    ...(await importOriginal<Record<string, unknown>>()),
     stage: stub,
     unstage: stub,
     discard: stub,
