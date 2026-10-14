@@ -17,6 +17,7 @@ import { initSegmentedBar } from "./segmented-bar.js";
 import { editorDocSkeleton } from "./skeleton.js";
 import { get, isThinking, watchSession } from "./store.js";
 import { openChatRefs, openSpecRefs, parentChatRef, setTabParent, tabIdFor } from "./tabs.js";
+import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { SharedScroll } from "./view-scroll.js";
 import { swapViews } from "./view-swap.js";
 import { decodeSpec } from "./wire/decoders.gen.js";
@@ -174,7 +175,10 @@ function release(ref: string): void {
     // rendering into a detached element for the tab's life.
     unmountDecisionDock(st.page.dockHost);
   }
-  st.page?.root.remove();
+  if (st.page !== null) {
+    releaseScrollableTablesIn(st.page.root);
+    st.page.root.remove();
+  }
   states.delete(ref);
   pageScroll.forget(ref);
   if (shown === ref) {
@@ -911,11 +915,13 @@ function paint(ref: string): void {
     page.barKey = "";
     page.paintBar = null;
     const parts = [String(st.gone)];
-    paintIfChanged(page.pane, parts, () => [
-      st.gone
-        ? el("div", { className: "spec-empty list-empty" }, `Nothing is at ${ref} any more`)
-        : el("div", { className: "list-empty" }, "Loading spec\u2026"),
-    ]);
+    if (sigChanged(page.pane, parts)) {
+      replacePane(page.pane, [
+        st.gone
+          ? el("div", { className: "spec-empty list-empty" }, `Nothing is at ${ref} any more`)
+          : el("div", { className: "list-empty" }, "Loading spec\u2026"),
+      ]);
+    }
     return;
   }
 
@@ -967,12 +973,18 @@ function paint(ref: string): void {
   const content = seg === undefined ? [] : buildPane(ref, st, spec, seg, chat, thinking);
   if (switched) {
     swapViews(() => {
-      page.pane.replaceChildren(...content);
+      replacePane(page.pane, content);
       return page.pane;
     });
   } else {
-    page.pane.replaceChildren(...content);
+    replacePane(page.pane, content);
   }
+}
+
+/** Swap the pane's content, letting go of the markdown tables it held before their DOM is discarded. */
+function replacePane(pane: HTMLElement, content: readonly Node[]): void {
+  releaseScrollableTablesIn(pane);
+  pane.replaceChildren(...content);
 }
 
 function buildHead(ref: string, st: SpecPageState, chat: string, thinking: boolean): HTMLElement[] {

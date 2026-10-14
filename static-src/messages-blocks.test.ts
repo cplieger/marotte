@@ -25,6 +25,7 @@ const {
   buildDetachedBody,
   updateDetachedBody,
   disposeAssistantBody,
+  disposeDetachedBody,
   resetBlockRenders,
   initBlockRenderer,
   blockElement,
@@ -39,6 +40,7 @@ const { runCardOwners, sliceTurn } = await import("./block-window.js");
 const { toolResultID } = await import("./entry-ids.js");
 const { clearAllEntrySigs, ensureToolCallSig, toolCallSigs } = await import("./store-signals.js");
 const { setActive } = await import("./store.js");
+const { tableObservationCount } = await import("./table-scroll.js");
 
 /** Part of the per-tool signal key, and the store's active chat: the live-anchor fallback scans only that chat. */
 const CHAT_ID = "c-blocks";
@@ -1320,5 +1322,48 @@ describe("a render no chat owns settles its own cards", () => {
     const settled = retarget([running(), resultEntry("t", 2, 1, { status: "failed" })], turnID);
     updateDetachedBody(host, turnOf(turnID, settled), "", "", false);
     expect(host.querySelector(".tool-call")?.getAttribute("data-outcome")).toBe("fail");
+  });
+});
+
+describe("a render's markdown tables are let go of with the DOM that holds them", () => {
+  // The shared observer in `table-scroll.ts` keeps what it watches reachable until it is told to stop,
+  // so every discard path of rendered prose must say so. The counts are read with no frame awaited:
+  // only the render's own release can lower them before an engine reports a removed target.
+  const TABLE = "| a | b |\n|---|---|\n| 1 | 2 |\n";
+
+  it("when the render is disposed", () => {
+    const before = tableObservationCount();
+    const r = render([text("t", 1, TABLE)]);
+    expect(r.body.querySelectorAll("table"), "the table rendered").toHaveLength(1);
+    expect(tableObservationCount() - before).toBe(1);
+
+    disposeAssistantBody(r.turnID);
+
+    expect(tableObservationCount() - before).toBe(0);
+  });
+
+  it("when a detached lane is disposed, as a run step or a delegate page does before it clears the box", () => {
+    const before = tableObservationCount();
+    const turnID = nextTurnID();
+    const host = bodyHost();
+    buildDetachedBody(host, turnOf(turnID, retarget([text("t", 1, TABLE)], turnID)), "", "", false);
+    expect(host.querySelectorAll("table"), "the table rendered").toHaveLength(1);
+    expect(tableObservationCount() - before).toBe(1);
+
+    disposeDetachedBody(turnID, "");
+
+    expect(tableObservationCount() - before).toBe(0);
+  });
+
+  it("when the window drops the entry that holds one", () => {
+    const before = tableObservationCount();
+    const r = render([text("t", 1, TABLE), callEntry("t", 2, toolCall("tool-a"))]);
+    expect(tableObservationCount() - before).toBe(1);
+
+    dropHead(r.turn, { from: 2, to: 3 });
+
+    expect(r.body.querySelectorAll("table"), "the table left the page").toHaveLength(0);
+    expect(tableObservationCount() - before).toBe(0);
+    disposeAssistantBody(r.turnID);
   });
 });

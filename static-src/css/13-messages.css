@@ -434,9 +434,18 @@
       border-spacing: 0;
       border: 1px solid var(--c-border);
       border-radius: var(--r);
-      width: 100%;
       margin: var(--sp-2) 0;
       font-size: var(--fs-sm);
+
+      /* Sized by its content and capped at the measure, scrolling inside its own box
+       * when the columns cannot fit. `.message`'s `overflow-wrap: anywhere` is reset
+       * here because `anywhere` counts every character boundary toward a cell's
+       * min-content, so auto layout would crush a short column to one letter. */
+      display: block;
+      inline-size: max-content;
+      max-inline-size: 100%;
+      overflow-x: auto;
+      overflow-wrap: normal;
     }
 
     /* ONE SIDE PER CELL, or an interior line is two adjacent borders and draws at
@@ -447,6 +456,11 @@
     & td {
       border-inline-start: 1px solid var(--c-border);
       padding: var(--sp-1) var(--sp-2);
+
+      /* The user agent centres `th` and middles every cell; the delimiter row's inline
+       * `text-align` still wins, on header and body alike. */
+      text-align: start;
+      vertical-align: top;
     }
 
     & tbody :where(th, td) {

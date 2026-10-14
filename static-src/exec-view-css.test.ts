@@ -550,27 +550,32 @@ describe("the run page's collapsed report ends on a whole line", () => {
     readonly bottom: number;
   }
 
-  /** Every line band, rects merged by vertical overlap; a single `Range` returns a bounding box. */
+  /** Every line band, rects merged by vertical overlap; a single `Range` returns a bounding box.
+   *  Sorted by top first: a top-aligned row lists a wrapped cell's second line before the next cell's first. */
   function textBands(box: HTMLElement): Band[] {
-    const bands: Band[] = [];
+    const rects: Band[] = [];
     const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
     const range = document.createRange();
     for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
       range.selectNodeContents(node);
       for (const rect of range.getClientRects()) {
-        if (rect.height <= 0) {
-          continue;
+        if (rect.height > 0) {
+          rects.push({ top: rect.top, bottom: rect.bottom });
         }
-        const open = bands[bands.length - 1];
-        if (open !== undefined && rect.top < open.bottom - 0.5) {
-          bands[bands.length - 1] = {
-            top: Math.min(open.top, rect.top),
-            bottom: Math.max(open.bottom, rect.bottom),
-          };
-          continue;
-        }
-        bands.push({ top: rect.top, bottom: rect.bottom });
       }
+    }
+    rects.sort((x, y) => x.top - y.top);
+    const bands: Band[] = [];
+    for (const rect of rects) {
+      const open = bands[bands.length - 1];
+      if (open !== undefined && rect.top < open.bottom - 0.5) {
+        bands[bands.length - 1] = {
+          top: Math.min(open.top, rect.top),
+          bottom: Math.max(open.bottom, rect.bottom),
+        };
+        continue;
+      }
+      bands.push(rect);
     }
     return bands;
   }

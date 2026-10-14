@@ -93,6 +93,7 @@ import { renderMarkdownDoc } from "./editor-markdown.js";
 import { renderReadSurface } from "./editor-ui.js";
 import { freshState, type FileMode } from "./editor-types.js";
 import { rendersMarkdown } from "./viewer-rules.js";
+import { tableObservationCount } from "./table-scroll.js";
 
 function hidden(el: HTMLElement): boolean {
   return el.classList.contains("hidden");
@@ -188,6 +189,18 @@ describe("read mode for a markdown document", () => {
     renderReadSurface(loaded("docs/b.md", "# Second\n"));
     expect(surfaces.editorMarkdown.textContent).not.toContain("First");
     expect(surfaces.editorMarkdown.querySelector("h1")?.textContent).toBe("Second");
+  });
+
+  it("lets go of the previous document's tables when it repaints", () => {
+    const before = tableObservationCount();
+    renderReadSurface(loaded("docs/a.md", "| a | b |\n|---|---|\n| 1 | 2 |\n\nafter\n"));
+    expect(surfaces.editorMarkdown.querySelectorAll("table").length, "table rendered").toBe(1);
+    expect(tableObservationCount() - before, "one watched").toBe(1);
+
+    renderReadSurface(loaded("docs/b.md", "# No table\n"));
+
+    expect(surfaces.editorMarkdown.querySelector("table")).toBeNull();
+    expect(tableObservationCount() - before).toBe(0);
   });
 });
 

@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { buildAssistantBubble } from "./text-bubble.js";
 import { framesBudgetMs, testTimeoutFor } from "../__test-helpers__/frame-budget.js";
+import { tableObservationCount } from "../table-scroll.js";
 
 /** `reveal.ts` clamps a frame's advance to MAX_DT_SECS (0.1s), so 400 characters need ~10
  *  throttled frames; sized at twice that. */
@@ -33,6 +34,21 @@ describe("buildAssistantBubble", { timeout: testTimeoutFor(REVEAL_BUDGET_MS) }, 
       b.finishNow();
       expect(b.root.textContent).toContain("already on screen");
     }
+  });
+
+  it("lets go of a replayed table when growth re-renders the bubble through a stream", () => {
+    const before = tableObservationCount();
+    const b = buildAssistantBubble("| a | b |\n|---|---|\n| 1 | 2 |\n\nafter the table\n", false);
+    const replayed = b.root.querySelector("table");
+    expect(replayed, "the replayed table").not.toBeNull();
+    expect(tableObservationCount() - before, "one watched").toBe(1);
+
+    b.append("\nmore\n");
+    b.finishNow();
+
+    expect(replayed?.isConnected, "the replayed table was replaced").toBe(false);
+    expect(b.root.querySelectorAll("table").length, "one table in the bubble").toBe(1);
+    expect(tableObservationCount() - before, "only the table now in the bubble").toBe(1);
   });
 
   it("defers growth on a live bubble and lands all of it", async () => {

@@ -17,6 +17,7 @@ import {
 import { clearTurnSigs } from "./store-signals.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
+import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { effect, el, touch } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
@@ -344,6 +345,7 @@ export function disposeChatView(chatID: string): void {
   }
   // Every clamp in the view in one sweep; `parkView` deliberately keeps its clamps and re-measures on unpark.
   releaseClampsIn(view.el);
+  releaseScrollableTablesIn(view.el);
   // After the row disposal, which records one last height per entry. Heights are keyed `(turnID, seq)`, and the cache
   // survives unmounts, so the view's dispose is where they stop meaning anything.
   forgetHeights(get(chatID)?.turn_order ?? []);
@@ -399,6 +401,7 @@ function rebuildTurnBody(session: Session, t: Turn, body: HTMLElement): void {
   disposeAssistantBody(t.id);
   clearTurnSigs(t.id);
   releaseClampsIn(body);
+  releaseScrollableTablesIn(body);
   body.replaceChildren();
   buildAssistantBody(body, t, session.id, turnIsLive(t), want);
   // The wipe took the head spacer.
@@ -1261,6 +1264,7 @@ const turnSpec: ReconcileSpec<Turn> = {
     disposeTurnBody(key);
     // A rewind truncation drops a card while its view lives, so `disposeChatView` never runs for it.
     releaseClampsIn(card);
+    releaseScrollableTablesIn(card);
   },
 };
 
@@ -1584,7 +1588,7 @@ function setCardFolded(card: HTMLElement, folded: boolean): void {
 // A collapsed turn keeps the open layout: header, a face with the final answer prose where the body was, and the
 // ledger. The face carries no run card; the composer's run bar is a live run's persistent surface.
 
-/** Per-card content key that detects when the face must be rebuilt; the prose-only face needs no dispose. */
+/** Per-card content key that detects when the face must be rebuilt; the face's tables are released when it goes. */
 const turnFaces = new WeakMap<HTMLElement, string>();
 
 function faceKey(t: Turn): string {
@@ -1597,7 +1601,11 @@ function disposeTurnFace(card: HTMLElement): void {
     return;
   }
   turnFaces.delete(card);
-  card.querySelector(":scope > .turn-face")?.remove();
+  const face = card.querySelector<HTMLElement>(":scope > .turn-face");
+  if (face !== null) {
+    releaseScrollableTablesIn(face);
+    face.remove();
+  }
 }
 
 /** Build or refresh the face to match the fold state; idempotent per content key, so cheap every pass. */
@@ -1848,6 +1856,7 @@ function unmountTurnBody(card: HTMLElement): void {
   }
   // The header's clamp stays with the card.
   releaseClampsIn(body);
+  releaseScrollableTablesIn(body);
   // The tail spacer is the body's sibling, so it leaves with it.
   for (const space of card.querySelectorAll<HTMLElement>(":scope > .turn-space")) {
     space.remove();

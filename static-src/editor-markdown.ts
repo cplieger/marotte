@@ -37,6 +37,7 @@
 
 import { el } from "@cplieger/reactive";
 import { renderMarkdownInto } from "./markdown.js";
+import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { splitFrontMatter, type FrontMatterField } from "./front-matter.js";
 
 /** Render a markdown document into `host`: its front-matter as a metadata block,
@@ -50,6 +51,8 @@ export function renderMarkdownDoc(host: HTMLElement, text: string): void {
   const prose = el("div", { className: "message assistant" });
   renderMarkdownInto(prose, doc.body);
   children.push(prose);
+  // The tables of the render being replaced are let go of before their DOM is discarded.
+  releaseScrollableTablesIn(host);
   host.replaceChildren(...children);
 }
 
