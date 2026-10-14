@@ -13,7 +13,7 @@ func TestMemoryPreferenceFor_MapsEachDropdownValue(t *testing.T) {
 		mode string
 		want marotte.MemoryPreference
 	}{
-		{MemoryOff, marotte.MemoryPreference{Mode: "disabled"}},
+		{memoryOff, marotte.MemoryPreference{Mode: "disabled"}},
 		{memoryReadOnly, marotte.MemoryPreference{Mode: "read_only"}},
 		{memoryReadWrite, marotte.MemoryPreference{Mode: "read_write"}},
 		{memoryLearn, marotte.MemoryPreference{Mode: "read_write", Reflection: true}},
@@ -29,8 +29,8 @@ func TestMemoryPreferenceFor_MapsEachDropdownValue(t *testing.T) {
 }
 
 func TestEffectiveFrom_MemoryModeDefaultsAndRejectsUnknownValues(t *testing.T) {
-	if got := EffectiveDefaults().MemoryMode; got != MemoryOff {
-		t.Errorf("EffectiveDefaults().MemoryMode = %q, want %q (kiro-cli's disabled)", got, MemoryOff)
+	if got := EffectiveDefaults().MemoryMode; got != memoryOff {
+		t.Errorf("EffectiveDefaults().MemoryMode = %q, want %q (kiro-cli's disabled)", got, memoryOff)
 	}
 	eff, rejected := EffectiveFrom(map[string]json.RawMessage{KeyMemoryMode: json.RawMessage(`"learn"`)})
 	if eff.MemoryMode != memoryLearn || len(rejected) != 0 {

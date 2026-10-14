@@ -9,7 +9,7 @@ import (
 
 // The four values of KeyMemoryMode, one per option of the Memory dropdown.
 const (
-	MemoryOff       = "off"
+	memoryOff       = "off"
 	memoryReadOnly  = "read_only"
 	memoryReadWrite = "read_write"
 	memoryLearn     = "learn"
@@ -17,12 +17,12 @@ const (
 
 // DefaultMemoryMode is kiro-cli's shipped default: its TUI sends mode disabled unless
 // KIRO_INTERNAL=1, and KAS's own fallback is {disabled, reflection: false} from 2.31.0.
-const DefaultMemoryMode = MemoryOff
+const DefaultMemoryMode = memoryOff
 
 // validMemoryMode reports whether mode is one of the four dropdown values.
 func validMemoryMode(mode string) bool {
 	switch mode {
-	case MemoryOff, memoryReadOnly, memoryReadWrite, memoryLearn:
+	case memoryOff, memoryReadOnly, memoryReadWrite, memoryLearn:
 		return true
 	}
 	return false

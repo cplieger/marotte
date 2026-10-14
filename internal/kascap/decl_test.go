@@ -360,19 +360,6 @@ func TestDeadDelegationSettingsAreNotDeclared(t *testing.T) {
 	}
 }
 
-// findRow returns the one row with this identity, failing when it is absent so a
-// renamed key surfaces as a missing row rather than a vacuous pass.
-func findRow(t *testing.T, r resolver, key string) decl {
-	t.Helper()
-	for _, row := range table {
-		if row.resolver == r && row.key == key {
-			return row
-		}
-	}
-	t.Fatalf("no %s.%s row in the table", r, key)
-	return decl{}
-}
-
 // TestBuildersDoNotAliasTheTable pins that a caller cannot corrupt the table through a payload it
 // was handed.
 func TestBuildersDoNotAliasTheTable(t *testing.T) {

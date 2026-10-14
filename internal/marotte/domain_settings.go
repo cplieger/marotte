@@ -39,7 +39,7 @@ type EffectiveSettings struct {
 	// spelling, the merge dialog's default where the repository offers it. Empty
 	// means nothing picked yet.
 	LastMergeMethod string `json:"last_merge_method"`
-	// MemoryMode is the Memory dropdown's value (settings.MemoryOff and its three
+	// MemoryMode is the Memory dropdown's value ("off" and its three
 	// siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
 	MemoryMode string `json:"memory_mode"`
 	// SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli.

@@ -649,7 +649,7 @@ export interface EffectiveSettings {
  */
   last_merge_method: string;
   /**
- * MemoryMode is the Memory dropdown's value (settings.MemoryOff and its three
+ * MemoryMode is the Memory dropdown's value ("off" and its three
  * siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
  */
   memory_mode: string;
