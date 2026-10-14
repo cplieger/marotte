@@ -118,12 +118,13 @@ point this test at its new home rather than guessing from the local cache.`, ent
 
 // loadBundle returns the pinned agent server's source, skipping when it is not installed locally and
 // failing when the pin has moved under the fixture. A bundle missing from ~/.local/share/kiro-cli/kas/
-// is unpacked as below; `env -u` stops an inherited KIRO_KAS_* path serving another tree instead.
+// is unpacked as below; `env -u` stops an inherited KIRO_KAS_* path serving another tree and an
+// inherited KIRO_HOME pointing the scratch engine at the live state directory.
 //
 //	curl -fsSLO https://desktop-release.q.us-east-1.amazonaws.com/<version>/kirocli-x86_64-linux.zip
 //	unzip -q kirocli-x86_64-linux.zip
-//	env -u KIRO_KAS_SERVER_PATH -u KIRO_KAS_NODE_PATH HOME=<scratch> ./kirocli/bin/kiro-cli-chat acp --agent-engine v3 </dev/null
-//	HOME=<scratch> <censusUpdateCmd>
+//	env -u KIRO_KAS_SERVER_PATH -u KIRO_KAS_NODE_PATH -u KIRO_HOME HOME=<scratch> ./kirocli/bin/kiro-cli-chat acp --agent-engine v3 </dev/null
+//	env -u KIRO_HOME HOME=<scratch> <censusUpdateCmd>
 func loadBundle(t *testing.T) string {
 	t.Helper()
 	active := activeKASVersion(t)
@@ -601,9 +602,9 @@ func TestEnvironmentArmCensus(t *testing.T) {
 }
 
 func TestBundleEnvArms_DerivesTheGateHelperName(t *testing.T) {
-	got := bundleEnvArms(`x="KIRO_FEATURE_TOOL_LOAD_ENABLED";lkr({settingKey:"unifiedAgent"});"KIRO_DISABLE_RECAP";` +
+	got := bundleEnvArms(`x="KIRO_FEATURE_AUTH_EXPIRY_RETRY_ENABLED";lkr({settingKey:"unifiedAgent"});"KIRO_DISABLE_RECAP";` +
 		`y=process.env.KIRO_FEATURE_X_CONFIG;` + "`KIRO_FEATURE_${n}`")
-	want := []string{"KIRO_DISABLE_RECAP", "KIRO_FEATURE_TOOL_LOAD_ENABLED", "KIRO_FEATURE_UNIFIED_AGENT_ENABLED", "KIRO_FEATURE_X_CONFIG"}
+	want := []string{"KIRO_DISABLE_RECAP", "KIRO_FEATURE_AUTH_EXPIRY_RETRY_ENABLED", "KIRO_FEATURE_UNIFIED_AGENT_ENABLED", "KIRO_FEATURE_X_CONFIG"}
 	if !slices.Equal(got, want) {
 		t.Errorf("bundleEnvArms = %q, want %q", got, want)
 	}

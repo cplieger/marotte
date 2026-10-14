@@ -617,7 +617,6 @@ const arbModel = fc.letrec<{
       knowledge_enabled: fc.boolean(),
       content_collection_enabled: fc.boolean(),
       guard_payload_links: fc.boolean(),
-      tool_search_enabled: fc.boolean(),
       mcp_wait_for_ready: fc.boolean(),
       notifications_enabled: fc.boolean(),
       notify_agent_finished: fc.boolean(),
@@ -631,7 +630,7 @@ const arbModel = fc.letrec<{
       debug_logs: fc.boolean(),
       model_fallback_enabled: fc.boolean(),
     },
-    { requiredKeys: ["last_effort_by_model", "kiro_defaults", "theme", "fb_path", "last_model", "last_merge_method", "memory_mode", "spec_planning", "work_validation", "cloudformation_safety_check", "auto_routing", "auto_delegation", "output_style", "agent_ignore_files", "chat_retention_days", "auto_compact_pct", "terminal_command_timeout_ms", "auto_compaction_enabled", "knowledge_enabled", "content_collection_enabled", "guard_payload_links", "tool_search_enabled", "mcp_wait_for_ready", "notifications_enabled", "notify_agent_finished", "notify_pr_status", "notify_run_outcome", "spec_planning_ask_first", "steering_reminders_enabled", "workflows_enabled", "supervised_default", "scheduled_auto_approve", "debug_logs", "model_fallback_enabled"] },
+    { requiredKeys: ["last_effort_by_model", "kiro_defaults", "theme", "fb_path", "last_model", "last_merge_method", "memory_mode", "spec_planning", "work_validation", "cloudformation_safety_check", "auto_routing", "auto_delegation", "output_style", "agent_ignore_files", "chat_retention_days", "auto_compact_pct", "terminal_command_timeout_ms", "auto_compaction_enabled", "knowledge_enabled", "content_collection_enabled", "guard_payload_links", "mcp_wait_for_ready", "notifications_enabled", "notify_agent_finished", "notify_pr_status", "notify_run_outcome", "spec_planning_ask_first", "steering_reminders_enabled", "workflows_enabled", "supervised_default", "scheduled_auto_approve", "debug_logs", "model_fallback_enabled"] },
   ),
   ElicitationNeededPayload: fc.record(
     {
@@ -1889,6 +1888,7 @@ const arbModel = fc.letrec<{
       agent_name: fc.string(),
       text: fc.string(),
       text_source: arbRunAskText,
+      reason: fc.string(),
       blocked: arbRunAskBlocker,
       asked_at: fc.string(),
       node_path: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),

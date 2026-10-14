@@ -9,7 +9,6 @@ import (
 	_ "embed"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"github.com/cplieger/marotte/internal/composition"
 	"github.com/cplieger/marotte/internal/forges"
@@ -37,14 +36,11 @@ func runMain() int {
 	cfg.ToolCatalogRequire = toolbelt.ParseRequireList(requiredToolsList)
 
 	workspace.SetKiroHomeResolver(func() string {
-		if h := os.Getenv("KIRO_HOME"); h != "" {
-			return h
-		}
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return ".kiro"
 		}
-		return filepath.Join(home, ".kiro")
+		return workspace.ResolveKiroHome(os.Getenv("KIRO_HOME"), home)
 	})
 
 	app, err := composition.Build(context.Background(), &cfg, staticFS)

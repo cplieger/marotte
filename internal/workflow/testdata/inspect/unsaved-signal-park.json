@@ -1,0 +1,53 @@
+{
+ "workflowId": "wf_7e891a7469b82ed3",
+ "state": {
+  "workflowId": "wf_7e891a7469b82ed3",
+  "workflowName": "askloop",
+  "status": "paused",
+  "inputs": {},
+  "artifacts": {},
+  "capturedOutputs": {},
+  "root": {
+   "nodeId": "wf_7e891a7469b82ed3",
+   "type": "sequence",
+   "status": "paused",
+   "children": [
+    {
+     "nodeId": "ask",
+     "type": "step",
+     "status": "paused",
+     "agentName": "asker",
+     "modelId": "claude-sonnet-5.5",
+     "effortLevel": "high",
+     "startedAt": "2026-10-13T21:28:24.093Z",
+     "sessionId": "sess_2336f73e-7b71-4acd-bbdf-7ff92c0ac98f",
+     "awaitingUserInput": true
+    }
+   ],
+   "startedAt": "2026-10-13T21:28:24.091Z"
+  },
+  "createdAt": "2026-10-13T21:28:24.080Z",
+  "planRevision": 0,
+  "parentSessionId": "sess_4434f183-77eb-4afd-a76e-29191dc2fe68",
+  "rootConversationId": "sess_4434f183-77eb-4afd-a76e-29191dc2fe68",
+  "workspacePath": "/work",
+  "memoryConfig": {
+   "mode": "disabled",
+   "reflection": false
+  },
+  "memoryConfigSource": "legacy",
+  "backgroundExecution": false,
+  "parentModelId": "claude-sonnet-5.5",
+  "parentEffortLevel": "high",
+  "pauseReason": "Step 'ask' sent a send_message success signal that could not be saved, so it is paused awaiting user input instead of finishing."
+ },
+ "nodePlan": [
+  {
+   "nodeId": "ask",
+   "type": "step",
+   "agentName": "asker",
+   "modelId": "claude-sonnet-5.5",
+   "effortLevel": "high"
+  }
+ ]
+}

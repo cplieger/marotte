@@ -39,6 +39,8 @@ type State struct {
 	WorkflowID      string `json:"workflowId"`
 	Status          string `json:"status"`
 	ParentSessionID string `json:"parentSessionId"`
+	// PauseReason is KAS's sentence for the run's latest park, whichever step parked.
+	PauseReason string `json:"pauseReason"`
 }
 
 // InspectResult is `_kiro/workflow/inspect`'s reply, decoded to the one part

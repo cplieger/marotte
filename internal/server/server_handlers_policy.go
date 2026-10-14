@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -114,7 +114,7 @@ func pickerCapabilities(rules []marotte.PolicyRule) []string {
 
 // Used only as the no-bridge fallback for the view.
 func (s *Server) policyRulesFromFiles(scope string) []marotte.PolicyRule {
-	home, err := os.UserHomeDir()
+	kiroHome, err := workspace.KiroHomeDir()
 	if err != nil {
 		return []marotte.PolicyRule{}
 	}
@@ -123,7 +123,7 @@ func (s *Server) policyRulesFromFiles(scope string) []marotte.PolicyRule {
 		if scope != "" && scope != sc {
 			continue
 		}
-		path, perr := policyfile.PathFor(sc, policyfile.Roots{Home: home, WorkDir: s.workDir})
+		path, perr := policyfile.PathFor(sc, policyfile.Roots{KiroHome: kiroHome, WorkDir: s.workDir})
 		if perr != nil {
 			continue
 		}
@@ -212,12 +212,12 @@ func (s *Server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "scope must be user or workspace")
 		return
 	}
-	home, err := os.UserHomeDir()
+	kiroHome, err := workspace.KiroHomeDir()
 	if err != nil {
 		httpreply.InternalError(w, err)
 		return
 	}
-	path, err := policyfile.PathFor(body.Scope, policyfile.Roots{Home: home, WorkDir: s.workDir})
+	path, err := policyfile.PathFor(body.Scope, policyfile.Roots{KiroHome: kiroHome, WorkDir: s.workDir})
 	if err != nil {
 		httpreply.BadRequest(w, err.Error())
 		return

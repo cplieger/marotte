@@ -209,7 +209,7 @@ var configWrites = []struct {
 	key   string
 	reach settingReach
 }{
-	{key: settings.KeyMemoryMode, value: settings.MemoryOff, reach: reachReopen},
+	{key: settings.KeyMemoryMode, value: "learn", reach: reachReopen},
 	{key: settings.KeySecurityProfile, value: policyfile.ProfileTrusted, reach: reachReopen},
 	{key: settings.KeyWorkflowsEnabled, value: false, reach: reachReopen},
 	{key: settings.KeySpecPlanning, value: settings.SpecPlanningQuick, reach: reachReopen},
@@ -222,7 +222,6 @@ var configWrites = []struct {
 	{key: settings.KeyAutoDelegation, value: settings.FeatureOff, reach: reachReopen},
 	{key: settings.KeyModelFallback, value: true, reach: reachReopen},
 	{key: settings.KeyKnowledgeEnabled, value: false, reach: reachReopen},
-	{key: settings.KeyToolSearchEnabled, value: true, reach: reachReopen},
 	{key: settings.KeyAutoCompactionEnabled, value: false, reach: reachReopen},
 	// sessionDisablesAutoCompaction draws the session door at 80, so only a move across it reopens.
 	{key: settings.KeyAutoCompactPct, value: 60, reach: reachLive},
@@ -504,13 +503,13 @@ func TestReconcileSessionSettings_AMemorySwitchLeavesTheUtilitySessionRunning(t 
 	h, configDir := reopenFixture(t)
 	utility := acquireUtility(t, h)
 
-	reopened := reopensAfter(t, h, func() { writeSetting(t, configDir, settings.KeyMemoryMode, settings.MemoryOff) })
+	reopened := reopensAfter(t, h, func() { writeSetting(t, configDir, settings.KeyMemoryMode, "learn") })
 
 	if !reopened {
-		t.Fatal("Setup: turning memory off did not reopen the open chat")
+		t.Fatal("Setup: turning memory on did not reopen the open chat")
 	}
 	if stopped(utility) {
-		t.Error("turning memory off stopped the utility session, which never reads memory")
+		t.Error("turning memory on stopped the utility session, which never reads memory")
 	}
 }
 

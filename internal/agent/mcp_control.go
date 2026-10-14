@@ -15,7 +15,9 @@ import (
 )
 
 const (
-	// mcpReconnectTimeout bounds one bridge's resetServer (may include an OAuth redirect); bridge.Call has no timeout.
+	// mcpReconnectTimeout bounds a bridge that never answers resetServer (bridge.Call has no timeout). KAS itself
+	// answers within 60 s whether or not the reset finished (kiro-cli 2.31.0 awaitBoundedReset), so the reply is
+	// never the verdict: the server's state arrives on _kiro/mcp/status.
 	mcpReconnectTimeout = 90 * time.Second
 )
 

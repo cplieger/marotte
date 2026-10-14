@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -24,7 +25,7 @@ func storeOver(t *testing.T, live []marotte.PolicyRule) (*Store, string) {
 		ConfigDir: t.TempDir(),
 		WorkDir:   t.TempDir(),
 	}
-	path, err := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: s.WorkDir})
+	path, err := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: s.WorkDir})
 	if err != nil {
 		t.Fatalf("Setup: user path: %v", err)
 	}

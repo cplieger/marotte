@@ -41,9 +41,7 @@ const (
 	// chosen, not inherited.
 	KeyScheduledAutoApprove = "scheduled_auto_approve"
 
-	// KeyToolSearchEnabled and KeyKnowledgeEnabled reach the agent per spawn (knowledge under
-	// _meta.kiro.settings, tool search as KIRO_FEATURE_TOOL_LOAD_ENABLED). Knowledge defaults TRUE.
-	KeyToolSearchEnabled = "tool_search_enabled"
+	// KeyKnowledgeEnabled reaches the agent per spawn under _meta.kiro.settings; it defaults TRUE.
 	KeyKnowledgeEnabled  = "knowledge_enabled"
 	KeyGuardPayloadLinks = "guard_payload_links"
 
@@ -150,7 +148,6 @@ var KnownKeys = map[string]struct{}{
 	KeyScheduledAutoApprove:     {},
 	KeySecurityProfile:          {},
 	KeyTheme:                    {},
-	KeyToolSearchEnabled:        {},
 }
 
 // WarnUnknownKeys logs a warning for each key in keys outside KnownKeys and returns them

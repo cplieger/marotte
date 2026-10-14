@@ -160,6 +160,8 @@ func TestDeclIsWellFormed(t *testing.T) {
 func TestSettingRowsCarryTheEnabledObject(t *testing.T) {
 	vetoRows := map[string]bool{
 		"steeringSupervisor": true,
+		// KAS's own default, sent so every session states it.
+		"_providerPowers": true,
 	}
 
 	checked := 0
@@ -313,8 +315,8 @@ func settingValuesOf(t *testing.T, row decl) []settingValue {
 		{"with every gate field on", Spawn{
 			SecretStorage: true, Hooks: true,
 			Presets:   []string{"read-workspace"},
-			Knowledge: true, ToolLoad: true,
-			SpecPlan: "full", SpecAskClarification: true,
+			Knowledge: true,
+			SpecPlan:  "full", SpecAskClarification: true,
 			WorkValidation: "on", InfraSafetyMonitor: "on",
 			AutoRouting: "on", AutoDelegation: "on", ConfigurationState: true,
 			TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
@@ -347,19 +349,6 @@ func promptValuesOf(t *testing.T, row decl) []settingValue {
 		t.Fatalf("%s is sent but its prompt gate withholds in every state, so it can never reach the wire", rowID(row))
 	}
 	return out
-}
-
-// The tool-search setting must stay off the wire: "Load MCP tools on demand"
-// drives the tool_load arm through the child environment, and a still-sent
-// toolSearch key would reinstate the array-growing mode if that arm were removed.
-func TestToolSearchSettingIsWithheld(t *testing.T) {
-	row := findRow(t, resolverSetting, "toolSearch")
-	if row.send {
-		t.Errorf("%s is sent; it must be a withheld claim row", rowID(row))
-	}
-	if row.gate != nil || row.value != nil {
-		t.Errorf("%s carries a gate or value; a withheld row has no wire value", rowID(row))
-	}
 }
 
 // No engine reads these two delegation keys, so no row may send or claim them.

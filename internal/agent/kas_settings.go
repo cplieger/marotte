@@ -8,18 +8,7 @@ import (
 )
 
 // Settings whose value must reach the agent, resolved into StartOpts per spawn. KAS's ACP path
-// never reads kiro-cli's settings store (2.19.2), so these ride levers it does read. KAS
-// freezes both at session creation.
-
-// toolSearchEnabled reports whether a session defers MCP tools behind KAS's tool_load/tool_call
-// pair. Off by default, matching kiro-cli; an absent key reads false.
-func toolSearchEnabled(ctx context.Context, configDir string) bool {
-	var b bool
-	if !settings.FieldInto(ctx, configDir, settings.KeyToolSearchEnabled, &b) {
-		return false
-	}
-	return b
-}
+// never reads kiro-cli's settings store (2.19.2), so these ride levers it does read.
 
 // knowledgeEnabled reports whether a session gets the knowledge index in msg0 and KAS's
 // Knowledge tool. On by default (settings.Default() matches) so existing installs keep it. It

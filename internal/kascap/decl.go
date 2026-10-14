@@ -122,9 +122,6 @@ type Spawn struct {
 	// `=== true`, so its key is present with a real boolean either way.
 	Knowledge        bool
 	MemoryReflection bool
-	// ToolLoad is "Load MCP tools on demand", written to the child environment
-	// as KIRO_FEATURE_TOOL_LOAD_ENABLED in both states.
-	ToolLoad bool
 	// DisableSessionTitles writes KIRO_DISABLE_SESSION_TITLE_LLM=true. Set on
 	// run bridges only.
 	DisableSessionTitles bool

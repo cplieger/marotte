@@ -3,7 +3,6 @@ package kascap
 import (
 	"cmp"
 	"encoding/json"
-	"strconv"
 )
 
 // enabledMember is the one member name KAS reads inside a settings entry (isSettingEnabled returns
@@ -283,7 +282,7 @@ var table = []decl{
 		key:      "_providerPowers",
 		door:     doorSession,
 		resolver: resolverSetting,
-		gate:     func(s *Spawn) (any, bool) { return enabledIf(s.ToolLoad), true },
+		value:    enabledIf(false),
 		send:     true,
 	},
 	{
@@ -354,8 +353,8 @@ var table = []decl{
 		key:      "memory",
 		door:     doorSession,
 		resolver: resolverSettingObject,
-		// Always present: an absent key falls back to KAS's own default
-		// {read_write, reflection: true}, so Off has to be SENT.
+		// Always present: an absent key leaves the chat's memory to KAS's
+		// fallback config, not the user's choice.
 		gate: func(s *Spawn) (any, bool) {
 			return map[string]any{"mode": cmp.Or(s.MemoryMode, "disabled"), "reflection": s.MemoryReflection}, true
 		},
@@ -560,14 +559,6 @@ var table = []decl{
 		promptGate: func(p *Prompt) (any, bool) {
 			return p.OutputStyle, p.OutputStyle != ""
 		},
-	},
-	{
-		key:          "KIRO_FEATURE_TOOL_LOAD_ENABLED",
-		door:         doorEnvironment,
-		resolver:     resolverEnv,
-		gate:         func(s *Spawn) (any, bool) { return strconv.FormatBool(s.ToolLoad), true },
-		send:         true,
-		settingOwned: true,
 	},
 	{
 		key:      "KIRO_DISABLE_SESSION_TITLE_LLM",

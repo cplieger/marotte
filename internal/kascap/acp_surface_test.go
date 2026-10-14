@@ -74,6 +74,11 @@ func marotteACPMethods(t *testing.T) []string {
 			case ".git", "node_modules", "static", "testdata":
 				return fs.SkipDir
 			}
+			// A directory with its own go.mod is another module, outside the root module this census
+			// covers, as `go ./...` excludes it; a scratch worktree of this repo is one such module.
+			if _, serr := os.Stat(filepath.Join(path, "go.mod")); path != root && serr == nil {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if !strings.HasSuffix(d.Name(), ".go") || strings.HasSuffix(d.Name(), "_test.go") {

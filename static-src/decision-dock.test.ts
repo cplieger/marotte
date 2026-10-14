@@ -718,6 +718,18 @@ describe("a workflow step's question", () => {
     expect(liveCard()?.textContent).toContain("Ship it now?");
   });
 
+  it("rebuilds the card when the same ask gains kiro-cli's reason", () => {
+    snapshot("c1", [stepAsk({ text_source: "last_message" })]);
+    const card = liveCard();
+    snapshot("c1", [
+      stepAsk({ text_source: "last_message", reason: "Step 'review' is awaiting user input." }),
+    ]);
+    expect(liveCard()).not.toBe(card);
+    expect(liveCard()?.querySelector(".run-input-reason")?.textContent).toBe(
+      "Step 'review' is awaiting user input.",
+    );
+  });
+
   it("puts the chat's request decisions ahead of its step questions", () => {
     snapshot("c1", [stepAsk()]);
     pushPerm("c1", 3);

@@ -466,7 +466,6 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     knowledge_enabled: reqBool(o, "knowledge_enabled", "$.effective_settings"),
     content_collection_enabled: reqBool(o, "content_collection_enabled", "$.effective_settings"),
     guard_payload_links: reqBool(o, "guard_payload_links", "$.effective_settings"),
-    tool_search_enabled: reqBool(o, "tool_search_enabled", "$.effective_settings"),
     mcp_wait_for_ready: reqBool(o, "mcp_wait_for_ready", "$.effective_settings"),
     notifications_enabled: reqBool(o, "notifications_enabled", "$.effective_settings"),
     notify_agent_finished: reqBool(o, "notify_agent_finished", "$.effective_settings"),
@@ -2202,6 +2201,8 @@ export const decodeRunAsk: Decoder<RunAsk> = (v) => {
     node_path: o["node_path"] === null ? [] : decodeArray(o["node_path"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.run_ask.node_path"),
     can_continue: reqBool(o, "can_continue", "$.run_ask"),
   };
+  const reason = o["reason"] === null ? undefined : optStr(o, "reason", "$.run_ask");
+  if (reason !== undefined) out.reason = reason;
   if (o["blocked"] !== undefined && o["blocked"] !== null) out.blocked = reqOneOf(o, "blocked", RUN_ASK_BLOCKERS, "$.run_ask");
   const askedAt = o["asked_at"] === null ? undefined : optStr(o, "asked_at", "$.run_ask");
   if (askedAt !== undefined) out.asked_at = askedAt;

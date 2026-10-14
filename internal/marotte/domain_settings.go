@@ -83,8 +83,6 @@ type EffectiveSettings struct {
 	// GuardPayloadLinks defaults to settings.defaultGuardPayloadLinks; no server path
 	// reads it.
 	GuardPayloadLinks bool `json:"guard_payload_links"`
-	// ToolSearchEnabled defaults off, matching kiro-cli.
-	ToolSearchEnabled bool `json:"tool_search_enabled"`
 	// MCPWaitForReady renders waitForReady on every server in KAS's MCP file, so
 	// a prompt waits for the servers to settle. Default off.
 	MCPWaitForReady bool `json:"mcp_wait_for_ready"`

@@ -17,7 +17,7 @@ Variables go in the `environment:` block of `compose.yaml` and are read at start
 | `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for every chat. | _(unset)_ |
 | `KIRO_WORK_DIR` | Folder chats and the terminal start in. It must exist, or startup fails. | `/workspace` |
 | `KIRO_CONFIG_DIR` | Folder for chats, the kiro-cli home, installed tools and settings. It must exist and be writable. | `/config` |
-| `KIRO_HOME` | Where marotte finds kiro-cli's own state: steering, settings and session files. | `$HOME/.kiro` |
+| `KIRO_HOME` | Where marotte and kiro-cli keep kiro-cli's own state: steering, settings, permissions and session files. A relative path, `/`, or a path that is `HOME` or holds `HOME` inside it is ignored with a warning at startup, as kiro-cli ignores it. kiro-cli's test for "inside" does not count a `HOME` whose path relative to `KIRO_HOME` starts with `..`, such as a `..home` folder directly below it, and marotte follows it. | `$HOME/.kiro` |
 | `MAROTTE_TOOLS_DIR` | Where the tools engine installs tools, on the persistent volume. | `<KIRO_CONFIG_DIR>/tools` |
 | `MAROTTE_TOOL_CATALOG` | Tool catalog built into the image, used at first start and offline. | `/opt/marotte/tool-catalog.json` |
 | `MAROTTE_TOOL_CATALOG_URL` | Where catalog updates come from. Point it at a fork or a mirror. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest release |

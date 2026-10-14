@@ -203,16 +203,19 @@ type RunAsksPayload struct {
 // older one is refused as stale. Blocked is absent when an answer may go; CanContinue is true on a blocked ask too, and
 // Continue is offered only when it is true and Blocked is absent.
 type RunAsk struct {
-	AskID         string        `json:"ask_id"`
-	NodeID        string        `json:"node_id"`
-	StepSessionID string        `json:"step_session_id"`
-	AgentName     string        `json:"agent_name"`
-	Text          string        `json:"text"`
-	TextSource    RunAskText    `json:"text_source"`
-	Blocked       RunAskBlocker `json:"blocked,omitempty"`
-	AskedAt       string        `json:"asked_at,omitempty"`
-	NodePath      []string      `json:"node_path"`
-	CanContinue   bool          `json:"can_continue"`
+	AskID         string     `json:"ask_id"`
+	NodeID        string     `json:"node_id"`
+	StepSessionID string     `json:"step_session_id"`
+	AgentName     string     `json:"agent_name"`
+	Text          string     `json:"text"`
+	TextSource    RunAskText `json:"text_source"`
+	// Reason is kiro-cli's sentence for why a step that has no completion signal is waiting, such
+	// as one whose signal it could not save; absent otherwise.
+	Reason      string        `json:"reason,omitempty"`
+	Blocked     RunAskBlocker `json:"blocked,omitempty"`
+	AskedAt     string        `json:"asked_at,omitempty"`
+	NodePath    []string      `json:"node_path"`
+	CanContinue bool          `json:"can_continue"`
 }
 
 // RunAskText says where an ask's text came from, so a card labels it: only `asked` is the step's

@@ -661,11 +661,10 @@ export function initExperimentalToggles(): void {
 
 // Toggles that look like the kiro-cli flags above and are a different mechanism: they write MAROTTE
 // settings through /api/settings, and internal/agent resolves each at spawn time into the lever KAS
-// reads: `_meta.kiro.settings` for knowledge, the child environment for tool search.
+// reads.
 const agentCapabilities: readonly {
   key:
     | "knowledge_enabled"
-    | "tool_search_enabled"
     | "model_fallback_enabled"
     | "spec_planning_ask_first"
     | "steering_reminders_enabled"
@@ -674,7 +673,6 @@ const agentCapabilities: readonly {
   inputID: string;
 }[] = [
   { key: "knowledge_enabled", inputID: "flag-knowledge" },
-  { key: "tool_search_enabled", inputID: "flag-tool-search" },
   { key: "model_fallback_enabled", inputID: "flag-model-fallback" },
   { key: "spec_planning_ask_first", inputID: "flag-spec-ask-first" },
   { key: "steering_reminders_enabled", inputID: "flag-steering-reminders" },

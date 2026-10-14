@@ -342,7 +342,7 @@ func wireAsks(asks []workflow.Ask) []marotte.RunAsk {
 		a := &asks[i]
 		out = append(out, marotte.RunAsk{
 			AskID: a.ID, NodeID: a.NodeID, NodePath: a.NodePath, StepSessionID: a.StepSessionID,
-			AgentName: a.AgentName, Text: a.Text, TextSource: a.TextSource,
+			AgentName: a.AgentName, Text: a.Text, TextSource: a.TextSource, Reason: a.Reason,
 			Blocked: a.Blocked(), CanContinue: a.CanContinue, AskedAt: a.AskedAt,
 		})
 	}
@@ -351,7 +351,7 @@ func wireAsks(asks []workflow.Ask) []marotte.RunAsk {
 
 func sameAsks(x, y []marotte.RunAsk) bool {
 	return slices.EqualFunc(x, y, func(p, q marotte.RunAsk) bool {
-		return p.AskID == q.AskID && p.Text == q.Text && p.TextSource == q.TextSource &&
+		return p.AskID == q.AskID && p.Text == q.Text && p.TextSource == q.TextSource && p.Reason == q.Reason &&
 			p.Blocked == q.Blocked && p.CanContinue == q.CanContinue && p.AskedAt == q.AskedAt &&
 			p.AgentName == q.AgentName && slices.Equal(p.NodePath, q.NodePath)
 	})
