@@ -14,10 +14,15 @@ import {
   type MockInstance,
 } from "vitest";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import type * as Toast from "./toast.js";
 
 const toastError = vi.hoisted(() => vi.fn());
 const toastInfo = vi.hoisted(() => vi.fn());
-vi.mock("./toast.js", () => ({ error: toastError, info: toastInfo }));
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Toast>()),
+  error: toastError,
+  info: toastInfo,
+}));
 
 import { openFileDialog } from "./file-dialog.js";
 
