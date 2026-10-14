@@ -31,7 +31,7 @@ export function isPreviewPath(pathname: string): boolean {
  *  `shell` is answered cache-first, and `untouched` is never `respondWith`'d, so the browser sends
  *  it, body included, as if no worker were installed. Synchronous: `respondWith` must be called
  *  while the event dispatches. */
-export type FetchArm = "navigation" | "shell" | "untouched";
+type FetchArm = "navigation" | "shell" | "untouched";
 
 /** The arm for `req`, a request seen by the worker at `origin`. */
 export function fetchArm(
