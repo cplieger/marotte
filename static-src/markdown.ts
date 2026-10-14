@@ -8,6 +8,7 @@ import { domRenderer } from "./smd-renderer.js";
 import { linkifyPaths } from "./linkify.js";
 import { decorateCodeBlocks, decorateStreamingCodeTail } from "./code-blocks.js";
 import { renderSvgBlock } from "./svg-block.js";
+import { syncScrollableTables } from "./table-scroll.js";
 
 /** Buffered deltas reach the append-only parser at most once per interval; nothing re-parses. */
 const FLUSH_INTERVAL_MS = 200;
@@ -51,6 +52,7 @@ function decorate(block: HTMLElement): HTMLElement {
     return block;
   }
   linkifyPaths(block);
+  syncScrollableTables(block);
   return block;
 }
 
@@ -183,6 +185,7 @@ export function createMarkdownStream(
       draining = false;
       parser_end(p);
       linkifyTail(host);
+      syncScrollableTables(host);
       // parser_end does not close an open fence, so finalize it here: highlighting and Run are withheld while streaming.
       decorateCodeBlocks(host);
     },
@@ -195,6 +198,7 @@ export function renderMarkdownInto(host: HTMLElement, md: string): void {
   parser_write(p, md);
   parser_end(p);
   linkifyTail(host);
+  syncScrollableTables(host);
   // An unterminated fence in stored content never reaches the per-block callback either.
   decorateCodeBlocks(host);
 }

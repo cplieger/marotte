@@ -12,6 +12,7 @@ import { ICON_TAB_RUN } from "../icons.js";
 import { reconcile } from "../reconcile.js";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
 import { formatElapsed } from "../strings.js";
+import { releaseScrollableTablesIn } from "../table-scroll.js";
 import {
   counters,
   currentWork,
@@ -352,6 +353,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       results.hidden = true;
       delete resultsBody.dataset["sig"];
       releaseClampsIn(resultsBody);
+      releaseScrollableTablesIn(resultsBody);
       resultsBody.replaceChildren();
       return;
     }
@@ -363,6 +365,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     }
     resultsBody.dataset["sig"] = sig;
     releaseClampsIn(resultsBody);
+    releaseScrollableTablesIn(resultsBody);
     resultsBody.replaceChildren(...[...merged].map(([key, value]) => resultItem(key, value)));
   }
 
@@ -498,6 +501,9 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     dispose() {
       setClock(false);
       dock?.dispose();
+      // Docked, `results` sits in the dock rather than under `root`, so the body is released itself.
+      releaseScrollableTablesIn(root);
+      releaseScrollableTablesIn(resultsBody);
     },
   };
 }
