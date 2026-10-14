@@ -57,7 +57,7 @@
    `data-status` still says running and would report nothing wrong. Yellow is the
    app's wants-you ink (see --c-dot-input in 01-tokens.css). */
 .run-card[data-asking="true"] {
-  border-inline-start-color: var(--c-yellow);
+  border-color: color-mix(in srgb, var(--c-yellow) 35%, transparent);
 }
 
 /* --------------------------------------------------------------------------

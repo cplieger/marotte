@@ -305,14 +305,13 @@ describe("the dock's alert row", () => {
     expect(icon.innerHTML).not.toBe(warnGlyph);
   });
 
-  it("paints the page alert's edge, wash, mark and ink on the row, per kind", () => {
+  it("paints the page alert's wash, mark and ink on the row, per kind, with no edge", () => {
     const style = mountAppCSS();
     for (const kind of ["input", "paused", "failed"] as const) {
       page.render({ ...run([step("loop", "waiting", 0)]), alert: { kind, text: kind } });
       const top = getComputedStyle(page.root.querySelector<HTMLElement>(".ev-alert-line")!);
       const head = getComputedStyle(box("timeline").querySelector<HTMLElement>(".ev-box-head")!);
-      expect(head.borderInlineStartColor).toBe(top.borderInlineStartColor);
-      expect(head.borderInlineStartWidth).toBe(top.borderInlineStartWidth);
+      expect([head.borderInlineStartWidth, top.borderInlineStartWidth]).toEqual(["0px", "0px"]);
       expect(head.backgroundImage).toContain(top.backgroundColor);
       const mark = (sel: string): string =>
         getComputedStyle(document.querySelector<HTMLElement>(sel)!).color;
