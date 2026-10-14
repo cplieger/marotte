@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -366,46 +365,6 @@ func TestStart_SpawnEnvCarriesModelFallback(t *testing.T) {
 		if strings.HasPrefix(line, "KIRO_FEATURE_MODEL_FALLBACK_") {
 			t.Errorf("child environment with ModelFallback off carries %q; off must leave KAS's default", line)
 		}
-	}
-}
-
-func TestStart_ChildEnvironmentCarriesTheToolLoadLever(t *testing.T) {
-	const toolLoadEnvVar = "KIRO_FEATURE_TOOL_LOAD_ENABLED"
-	t.Setenv(toolLoadEnvVar, "ambient-should-lose")
-
-	for _, on := range []bool{false, true} {
-		name := "tool load off"
-		if on {
-			name = "tool load on"
-		}
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			dumpPath := filepath.Join(dir, "child.env")
-			scriptPath := envDumpFake(t, dir, dumpPath)
-
-			b := New(scriptPath, dir)
-			t.Cleanup(b.Stop)
-			if err := b.Start(context.Background(), &marotte.StartOpts{
-				Lifetime:   context.Background(),
-				ToolSearch: on,
-			}); err != nil {
-				t.Fatalf("Start: %v", err)
-			}
-
-			dump, err := os.ReadFile(dumpPath)
-			if err != nil {
-				t.Fatalf("read the child environment dump: %v", err)
-			}
-			lines := strings.Split(string(dump), "\n")
-			want := toolLoadEnvVar + "=" + strconv.FormatBool(on)
-			if !slices.Contains(lines, want) {
-				t.Errorf("child environment is missing %q with ToolSearch=%t:\n%s", want, on, dump)
-			}
-			if slices.Contains(lines, toolLoadEnvVar+"=ambient-should-lose") {
-				t.Errorf("the inherited %s survived with ToolSearch=%t; the lever must be appended after the screen",
-					toolLoadEnvVar, on)
-			}
-		})
 	}
 }
 

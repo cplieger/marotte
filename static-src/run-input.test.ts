@@ -108,6 +108,18 @@ describe("buildRunAskCard", () => {
     );
   });
 
+  it("prints kiro-cli's reason for a step that waits without asking", () => {
+    const reason =
+      "Step 'review' sent a send_message success signal that could not be saved, so it is paused awaiting user input instead of finishing.";
+    const card = mount(input({ text: "Done.", text_source: "last_message", reason }));
+    expect(card.querySelector(".run-input-reason")?.textContent).toBe(reason);
+    expect(actionLabels(card)).toContain("Continue without answering");
+  });
+
+  it("prints no reason line when the step asked", () => {
+    expect(mount(input()).querySelector(".run-input-reason")).toBeNull();
+  });
+
   it("says marotte saw nothing when no text came through", () => {
     const card = mount(input({ text: "", text_source: "unseen", agent_name: "", node_id: "" }));
     expect(card.querySelector("strong")?.textContent).toBe("A step is waiting for your answer");

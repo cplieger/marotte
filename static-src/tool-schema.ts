@@ -103,11 +103,9 @@ const TITLE_PROFILES: Readonly<Record<string, ToolProfile>> = {
   webFetch: { kind: "fetch", writesFile: false },
   remote_web_search: { kind: "fetch", writesFile: false },
 
-  // Deferred MCP tool discovery (tool_search is the older mode).
+  // Deferred MCP tool discovery.
   tool_load: { kind: "search", writesFile: false },
   "Tool Load": { kind: "search", writesFile: false },
-  tool_search: { kind: "search", writesFile: false },
-  "Tool Search": { kind: "search", writesFile: false },
 };
 
 /** Fallback profile keyed on the ACP kind, for titles the client does not know. */

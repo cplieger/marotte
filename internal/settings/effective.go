@@ -150,7 +150,6 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 			return decodeInto(&out.ContentCollection, r)
 		},
 		KeyGuardPayloadLinks:    func(r json.RawMessage) error { return decodeInto(&out.GuardPayloadLinks, r) },
-		KeyToolSearchEnabled:    func(r json.RawMessage) error { return decodeInto(&out.ToolSearchEnabled, r) },
 		KeyMemoryMode:           func(r json.RawMessage) error { return decodeMemoryMode(&out.MemoryMode, r) },
 		KeyMCPWaitForReady:      func(r json.RawMessage) error { return decodeInto(&out.MCPWaitForReady, r) },
 		KeyNotificationsEnabled: func(r json.RawMessage) error { return decodeInto(&out.NotificationsEnabled, r) },

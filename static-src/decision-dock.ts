@@ -566,7 +566,7 @@ function decisionIdentity(d: Decision): string {
     return String(d.requestID);
   }
   const a = d.ask;
-  return join(a.ask_id, a.text_source, a.text, a.agent_name, a.node_id);
+  return join(a.ask_id, a.text_source, a.text, a.reason ?? "", a.agent_name, a.node_id);
 }
 
 /** keyenc rather than a template join: a run ask id is arbitrary text, and a separator inside it would merge two keys. */

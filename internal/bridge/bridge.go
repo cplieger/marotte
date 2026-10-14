@@ -155,10 +155,8 @@ type Bridge struct {
 	// secretStorage gates the `_meta.kiro.secretStorage` declaration in initialize.
 	secretStorage      bool
 	configurationState bool
-	// toolSearch is "Load MCP tools on demand", driving kascap's KIRO_FEATURE_TOOL_LOAD_ENABLED row. knowledge gates the
-	// two knowledge rows. Both immutable after Start: KAS freezes them at session creation.
-	toolSearch bool
-	knowledge  bool
+	// knowledge gates the two knowledge rows; immutable after Start: KAS freezes it at session creation.
+	knowledge bool
 	// disableTelemetry drives kascap's telemetryEnabled row; immutable after Start.
 	disableTelemetry bool
 	// supervised records that the session accepted `autopilot: off`, not that the chat asked; the request lives on the
@@ -456,7 +454,6 @@ func (b *Bridge) spawn() *kascap.Spawn {
 		Knowledge:                b.knowledge,
 		MemoryMode:               b.memory.Mode,
 		MemoryReflection:         b.memory.Reflection,
-		ToolLoad:                 b.toolSearch,
 		DisableSessionTitles:     b.disableSessionTitles,
 		DisableAutoCompaction:    b.disableAutoCompaction,
 		SpecPlan:                 b.features.SpecPlan,

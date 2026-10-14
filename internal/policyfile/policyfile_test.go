@@ -68,18 +68,18 @@ func TestWorkspaceHashGolden(t *testing.T) {
 }
 
 func TestPathFor(t *testing.T) {
-	home := "/home/u"
+	home := "/home/u/.kiro"
 	wd := "/work/space"
-	up, err := PathFor(ScopeUser, Roots{Home: home, WorkDir: wd})
-	if err != nil || up != filepath.Join(home, ".kiro", "settings", "permissions.yaml") {
+	up, err := PathFor(ScopeUser, Roots{KiroHome: home, WorkDir: wd})
+	if err != nil || up != filepath.Join(home, "settings", "permissions.yaml") {
 		t.Errorf("user path = %q, err = %v", up, err)
 	}
-	wp, err := PathFor(ScopeWorkspace, Roots{Home: home, WorkDir: wd})
-	wantWP := filepath.Join(home, ".kiro", "workspace-roots", workspaceHash(wd), "permissions.yaml")
+	wp, err := PathFor(ScopeWorkspace, Roots{KiroHome: home, WorkDir: wd})
+	wantWP := filepath.Join(home, "workspace-roots", workspaceHash(wd), "permissions.yaml")
 	if err != nil || wp != wantWP {
 		t.Errorf("workspace path = %q, want %q, err = %v", wp, wantWP, err)
 	}
-	if _, err := PathFor("agent", Roots{Home: home, WorkDir: wd}); err != errInvalidScope {
+	if _, err := PathFor("agent", Roots{KiroHome: home, WorkDir: wd}); err != errInvalidScope {
 		t.Errorf("agent scope err = %v, want ErrInvalidScope", err)
 	}
 }

@@ -9,15 +9,63 @@ TOOLS="$CONFIG_DIR/tools"
 # Keep them bare double-quoted literals under their `# renovate:` anchors: the
 # shared custom datasource matches exactly this shape (tests/shell/pins_export_test.sh).
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.30.0"
-KIRO_CLI_SHA256="2e913eb21c44f8bf70ee194fffbbc8dbd4c2ed586e3614e663d02247a8477777"
+KIRO_CLI_VERSION="2.31.1"
+KIRO_CLI_SHA256="47972b933825d5cf1f0b218c36863862df11f12dab2c864f041051f4cada58be"
 # The `# kiro-cli <version>` trailer is Renovate's anchor for this digest.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="7a41094bdf39d792fadfb76616a2f3790b77d8908b905e73b72e3f2f76f761e5" # kiro-cli 2.30.0
+KIRO_CLI_SHA256_ARM64="4d6bebd03d86b0946156e8a8104cb988b44c5ac48ae6aa7df2b1d20aac1ece22" # kiro-cli 2.31.1
 
 # Without the export the server sees no pins and turns its readiness gate off,
 # reporting healthy while installing nothing.
 export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
+
+# Prints the KIRO_HOME kiro-cli honours (2.31.0 acp-server.js P8o/O9u): the trimmed
+# value when absolute, not a filesystem root, and neither equal to HOME nor holding
+# HOME inside it, else $HOME/.kiro. Symlinks are resolved, and "inside" is tested as
+# kiro-cli tests it: a HOME whose relative path from the value starts with ".." (such
+# as "..home" directly below it) is not inside. Exported back, so this script, the
+# server and every child act on one tree; workspace.ResolveKiroHome is the Go twin.
+effective_kiro_home() {
+  local v why="" resolved home_resolved shown
+  v=${KIRO_HOME:-}
+  v=${v#"${v%%[![:space:]]*}"}
+  v=${v%"${v##*[![:space:]]}"}
+  case "$v" in
+    "")
+      printf '%s\n' "$HOME/.kiro"
+      return 0
+      ;;
+    /*)
+      # -s first: KAS cleans the path lexically, then resolves the longest existing prefix.
+      resolved=$(realpath -m -- "$(realpath -sm -- "$v")")
+      home_resolved=$(realpath -m -- "$(realpath -sm -- "$HOME")")
+      if [ "$resolved" = / ]; then
+        why="a filesystem root"
+      else
+        # O9u's startsWith("..") is a byte-prefix test, so a HOME whose relative path from
+        # the candidate starts with ".." (such as "..home" directly below it) is outside it,
+        # and kiro-cli honours the candidate.
+        case "$home_resolved/" in
+          "$resolved/"..*) ;;
+          "$resolved/"*) why="it equals or contains HOME" ;;
+        esac
+      fi
+      if [ -z "$why" ]; then
+        realpath -sm -- "$v"
+        return 0
+      fi
+      ;;
+    *) why="relative" ;;
+  esac
+  # The value is untrusted: a control character would forge a boot-log line.
+  shown=${v//[[:cntrl:]]/?}
+  [ "${#shown}" -le 256 ] || shown="${shown:0:256}..."
+  printf 'WARNING: ignoring KIRO_HOME=%s (%s), as kiro-cli does; using %s\n' "$shown" "$why" "$HOME/.kiro" >&2
+  printf '%s\n' "$HOME/.kiro"
+}
+
+KIRO_HOME=$(effective_kiro_home)
+export KIRO_HOME
 
 # The tools engine creates its own subtrees; bin/ is created here so PATH never
 # races it. kiro-cli-versions is the server's kiro-cli install root, created here so
@@ -82,8 +130,8 @@ if ! install_path_dropin; then
   printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not see %s, so an engine-installed tool will not resolve by name there\n" "$TOOLS/bin" >&2
 fi
 
-# One-time migration from the legacy KIRO_HOME (/config/kiro): KAS reads
-# $HOME/.kiro, so only the settings and custom steering doc carry over.
+# One-time migration from the legacy KIRO_HOME (/config/kiro) to the current one;
+# only the settings and custom steering doc carry over.
 if [ -d /config/kiro ] && [ "$KIRO_HOME" != /config/kiro ]; then
   printf "Migrating legacy kiro state /config/kiro -> %s\n" "$KIRO_HOME"
   mkdir -p "$KIRO_HOME/settings" "$KIRO_HOME/steering" "$KIRO_HOME/agents"

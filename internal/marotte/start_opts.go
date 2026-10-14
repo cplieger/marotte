@@ -96,10 +96,6 @@ type StartOpts struct {
 	// _kiro/configuration/state. Set on the utility bridge only, whose connection view is what a
 	// new chat resolves before marotte states anything.
 	ConfigurationState bool
-	// ToolSearch ("Load MCP tools on demand") reaches KAS as KIRO_FEATURE_TOOL_LOAD_ENABLED in the
-	// child environment (kascap.ChildEnv), not the wire: `_meta.kiro.settings.toolSearch` grew the
-	// tools array on every load. Resolved per spawn; KAS freezes it at session creation.
-	ToolSearch bool
 	// Knowledge gates BOTH knowledge rows, the capability that lists the bases
 	// in msg0 and the setting that builds the Knowledge tool: gating one alone
 	// lists bases the agent cannot query. It does not reach `_kiro/knowledge`,

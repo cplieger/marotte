@@ -224,7 +224,8 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
     xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# KIRO_HOME must equal $HOME/.kiro: KAS ignores KIRO_HOME and uses os.homedir()/.kiro.
+# KIRO_HOME is kiro-cli's own default spelled out. KAS and the TUI honour it, so a
+# child that swaps HOME must also unset it, or it opens this tree.
 # GOROOT is unset: the toolchain derives it from its resolved location.
 # tools/bin is the engine's only PATH dir; npm/ and python/ link their binaries into
 # it, so their own bin dirs stay off PATH (they would sit ahead of /usr/bin as a

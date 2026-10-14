@@ -44,7 +44,6 @@ var spawnMatrix = []struct {
 	{"memory read only", Spawn{MemoryMode: "read_only"}},
 	{"memory read write", Spawn{MemoryMode: "read_write"}},
 	{"memory learn", Spawn{MemoryMode: "read_write", MemoryReflection: true}},
-	{"tool load on", Spawn{ToolLoad: true}},
 	{"run bridge titles off", Spawn{DisableSessionTitles: true}},
 	{"auto compaction off", Spawn{DisableAutoCompaction: true}},
 	{"spec planning quick", Spawn{SpecPlan: "quick"}},
@@ -63,7 +62,7 @@ var spawnMatrix = []struct {
 		SecretStorage: true, Hooks: true,
 		Presets:   []string{"read-workspace"},
 		Knowledge: true, MemoryMode: "read_write", MemoryReflection: true,
-		DisableAutoCompaction: true, ToolLoad: true, DisableSessionTitles: true,
+		DisableAutoCompaction: true, DisableSessionTitles: true,
 		SpecPlan: "full", SpecAskClarification: true,
 		WorkValidation: "on", InfraSafetyMonitor: "on",
 		AutoRouting: "on", AutoDelegation: "on",
@@ -227,19 +226,14 @@ func TestMemoryRow_FailsClosedAndNeverVetoes(t *testing.T) {
 	}
 }
 
-// TestChildEnv_WritesToolLoadInBothStates pins that the tool_load arm is always
-// explicit and that no other KIRO_FEATURE_* arm is pinned: the rest follow the
-// experiment ramp.
-func TestChildEnv_WritesToolLoadInBothStates(t *testing.T) {
-	for _, on := range []bool{false, true} {
-		got := ChildEnv(&Spawn{ToolLoad: on})
-		want := []string{"KIRO_FEATURE_TOOL_LOAD_ENABLED=" + strconv.FormatBool(on)}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("ChildEnv(ToolLoad=%v) = %q, want %q", on, got, want)
-		}
+// TestChildEnv_PinsNoArmByDefault pins that a zero Spawn writes no KIRO_* variable, so every arm
+// follows the experiment ramp unless a Settings control or a spawn fact decides it.
+func TestChildEnv_PinsNoArmByDefault(t *testing.T) {
+	if got := ChildEnv(&Spawn{}); len(got) != 0 {
+		t.Errorf("ChildEnv(&Spawn{}) = %q, want nothing", got)
 	}
 	got := ChildEnv(&Spawn{DisableSessionTitles: true})
-	want := []string{"KIRO_DISABLE_SESSION_TITLE_LLM=true", "KIRO_FEATURE_TOOL_LOAD_ENABLED=false"}
+	want := []string{"KIRO_DISABLE_SESSION_TITLE_LLM=true"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ChildEnv(DisableSessionTitles) = %q, want %q", got, want)
 	}
@@ -252,16 +246,14 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 		choice string
 		want   []string
 	}{
-		{"", []string{"KIRO_FEATURE_TOOL_LOAD_ENABLED=false"}},
+		{"", []string{}},
 		{"on", []string{
 			`KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}`,
 			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":true}`,
-			"KIRO_FEATURE_TOOL_LOAD_ENABLED=false",
 		}},
 		{"off", []string{
 			`KIRO_FEATURE_CASCADE_CONFIG={"cascadeEnabled":false}`,
 			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":false}`,
-			"KIRO_FEATURE_TOOL_LOAD_ENABLED=false",
 		}},
 	} {
 		got := ChildEnv(&Spawn{AutoRouting: tc.choice, AutoDelegation: tc.choice})
@@ -269,8 +261,8 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 			t.Errorf("ChildEnv(AutoRouting=AutoDelegation=%q) = %q, want %q", tc.choice, got, tc.want)
 		}
 	}
-	if got := ChildEnv(&Spawn{AutoRouting: "on"}); len(got) != 2 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
-		t.Errorf("ChildEnv(AutoRouting=on alone) = %q, want only the cascade arm beside tool_load", got)
+	if got := ChildEnv(&Spawn{AutoRouting: "on"}); len(got) != 1 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
+		t.Errorf("ChildEnv(AutoRouting=on alone) = %q, want only the cascade arm", got)
 	}
 	if settings, _ := SessionMeta(&Spawn{AutoRouting: "on"})[settingsKey].(map[string]any); settings["cascade"] != nil {
 		t.Errorf("SessionMeta(AutoRouting=on) sends settings.cascade = %#v; the env arm carries the choice", settings["cascade"])
@@ -284,11 +276,10 @@ func TestChildEnv_ModelFallbackSendsBothFlagsOnlyWhenOn(t *testing.T) {
 		want []string
 		on   bool
 	}{
-		{on: false, want: []string{"KIRO_FEATURE_TOOL_LOAD_ENABLED=false"}},
+		{on: false, want: []string{}},
 		{on: true, want: []string{
 			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
 			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
-			"KIRO_FEATURE_TOOL_LOAD_ENABLED=false",
 		}},
 	} {
 		if got := ChildEnv(&Spawn{ModelFallback: tc.on}); !reflect.DeepEqual(got, tc.want) {
@@ -308,7 +299,6 @@ func TestOwnsEnv_ClaimsOnlyTheSettingOwnedRows(t *testing.T) {
 		{kv: "KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=", want: true},
 		{kv: `KIRO_FEATURE_CASCADE_CONFIG={"cascadeEnabled":true}`, want: true},
 		{kv: `KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={}`, want: true},
-		{kv: "KIRO_FEATURE_TOOL_LOAD_ENABLED=true", want: true},
 		{kv: "KIRO_DISABLE_SESSION_TITLE_LLM=true", want: false},
 		{kv: "KIRO_FEATURE_VALIDATION_ENABLED=true", want: false},
 		{kv: "KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED_X=true", want: false},

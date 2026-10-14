@@ -20,6 +20,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
 // Customize's refusals. Each leaves both files as they were, except ErrRestoreFailed.
@@ -113,11 +114,11 @@ func (s *Store) customize(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	home, err := os.UserHomeDir()
+	kiroHome, err := workspace.KiroHomeDir()
 	if err != nil {
 		return err
 	}
-	path, err := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: s.WorkDir})
+	path, err := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{KiroHome: kiroHome, WorkDir: s.WorkDir})
 	if err != nil {
 		return err
 	}

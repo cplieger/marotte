@@ -601,19 +601,6 @@
               </div>
               <div class="section-option">
                 <label class="toggle">
-                  <input type="checkbox" id="flag-tool-search" aria-label="Load MCP tools on demand">
-                  <span class="toggle-slider"></span>
-                </label>
-                <div>
-                  <div class="section-title-status-row">
-                    <span class="section-option-label">Load MCP tools on demand</span>
-                    <span class="settings-save-status hidden" data-save-status="tool_search_enabled" aria-live="polite"></span>
-                  </div>
-                  <p class="section-hint">Off (default), the agent sees every MCP tool's description on every message, which uses context. On, it sees only tool names and loads the ones it needs, which is worth it if you have many tools.</p>
-                </div>
-              </div>
-              <div class="section-option">
-                <label class="toggle">
                   <input type="checkbox" id="flag-model-fallback" aria-label="Model fallback" aria-describedby="flag-model-fallback-hint">
                   <span class="toggle-slider"></span>
                 </label>
@@ -632,12 +619,12 @@
                     <span class="settings-save-status hidden" data-save-status="memory_mode" aria-live="polite"></span>
                   </div>
                   <select id="memory-mode" class="rf-select" aria-describedby="memory-mode-hint">
-                    <option value="off">Off</option>
+                    <option value="off" selected>Off</option>
                     <option value="read_only">Read only</option>
                     <option value="read_write">Read and write when the agent decides</option>
-                    <option value="learn" selected>Read and write, and also learn from conversations in the background</option>
+                    <option value="learn">Read and write, and also learn from conversations in the background</option>
                   </select>
-                  <p class="section-hint" id="memory-mode-hint">Lets the agent remember your preferences and facts about your projects from one chat to the next. The last option is the default and matches kiro-cli. Pick Read only to keep what it knows without adding more, or Off to stop it. Unless Memory is Off, you can review and delete memories in Docs → Memories.</p>
+                  <p class="section-hint" id="memory-mode-hint">Lets the agent remember your preferences and facts about your projects from one chat to the next. Off is the default and matches kiro-cli. Pick Read only to keep what it knows without adding more, or one of the last two to let it add memories. Unless Memory is Off, you can review and delete memories in Docs → Memories.</p>
                 </div>
               </div>
               <div class="section-option">

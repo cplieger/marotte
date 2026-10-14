@@ -4,7 +4,9 @@ package workflow
 // recorded around one park of a one-step recipe whose step calls send_message warning: the park,
 // the first read after an admitted answer (run running, step still paused), the answered step
 // running, the parent session's send_message resuming it, its re-park, and a cancel. The parallel,
-// repeat and non-step cases are those replies' node shapes recombined.
+// repeat and non-step cases are those replies' node shapes recombined. unsaved-signal-park is a
+// kiro-cli 2.31.0 park reply with finalizeStepAfterTurn's lost-signal arm applied (signal cleared,
+// its pauseReason), since that arm has not been triggered live.
 
 import (
 	"encoding/json"
@@ -425,5 +427,57 @@ func TestParkedSteps_MatchesOpenAsks(t *testing.T) {
 		stepNode("a", "running", "sess_a", "", nil), stepNode("b", "paused", fixtureSession, "need_input", true))
 	if got := ParkedSteps(mixed); len(got) != 1 || got[0].NodeID != "b" {
 		t.Errorf("ParkedSteps = %+v, want only the waiting step, not the running one beside it", got)
+	}
+}
+
+// A send_message signal KAS could not save parks the step with no signal: it is still one ask,
+// Continue reaches it, and the card carries KAS's reason rather than reading as a question.
+func TestOpenAsks_UnsavedSignalParkCarriesItsReason(t *testing.T) {
+	t.Parallel()
+	const (
+		run     = "wf_7e891a7469b82ed3"
+		session = "sess_2336f73e-7b71-4acd-bbdf-7ff92c0ac98f"
+		reason  = "Step 'ask' sent a send_message success signal that could not be saved, so it is paused awaiting user input instead of finishing."
+	)
+	in, err := DecodeInspect(run, fixture(t, "unsaved-signal-park"))
+	if err != nil {
+		t.Fatalf("DecodeInspect: %v", err)
+	}
+	log := RunLog{Steps: map[string]StepLog{session: {Marker: "m1", Said: "All three files are updated."}}}
+	got := OpenAsks(in, log)
+	if len(got) != 1 {
+		t.Fatalf("OpenAsks = %d asks %+v, want 1", len(got), got)
+	}
+	a := got[0]
+	if a.Reason != reason {
+		t.Errorf("Reason = %q, want %q", a.Reason, reason)
+	}
+	if !a.CanContinue || a.Blocked() != "" {
+		t.Errorf("CanContinue = %v Blocked = %q, want Continue offered and nothing blocking", a.CanContinue, a.Blocked())
+	}
+	if a.TextSource != marotte.RunAskTextLastMessage || a.Text != "All three files are updated." {
+		t.Errorf("text = %q (%s), want the step's last message", a.Text, a.TextSource)
+	}
+}
+
+// A step that signalled need_input asks its own question, and with two steps waiting the one
+// run-level reason names either, so neither carries it.
+func TestOpenAsks_ReasonOnlyWhereItNamesThisPark(t *testing.T) {
+	t.Parallel()
+	if got := OpenAsks(decoded(t, fixture(t, "parked")), RunLog{}); len(got) != 1 || got[0].Reason != "" {
+		t.Errorf("need_input park: asks %+v, want one with no reason", got)
+	}
+	two := recombined(t, statusPaused,
+		stepNode("a", statusPaused, fixtureSession, "", true),
+		stepNode("b", statusPaused, "sess_other", "", true))
+	two.State.PauseReason = "Step 'b' is awaiting user input."
+	got := OpenAsks(two, RunLog{})
+	if len(got) != 2 {
+		t.Fatalf("OpenAsks = %d asks %+v, want 2", len(got), got)
+	}
+	for _, a := range got {
+		if a.Reason != "" {
+			t.Errorf("%s: Reason = %q, want none while two steps wait", a.NodeID, a.Reason)
+		}
 	}
 }

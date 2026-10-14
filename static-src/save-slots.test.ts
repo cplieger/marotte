@@ -25,7 +25,6 @@ const EXPECTED_KEYS = [
   "auto_compact_pct",
   // Agent capabilities (settings.ts agentCapabilities)
   "knowledge_enabled",
-  "tool_search_enabled",
   "model_fallback_enabled",
   "memory_mode",
   "spec_planning",

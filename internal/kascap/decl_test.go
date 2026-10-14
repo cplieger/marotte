@@ -160,6 +160,8 @@ func TestDeclIsWellFormed(t *testing.T) {
 func TestSettingRowsCarryTheEnabledObject(t *testing.T) {
 	vetoRows := map[string]bool{
 		"steeringSupervisor": true,
+		// KAS's own default, sent so every session states it.
+		"_providerPowers": true,
 	}
 
 	checked := 0
@@ -313,8 +315,8 @@ func settingValuesOf(t *testing.T, row decl) []settingValue {
 		{"with every gate field on", Spawn{
 			SecretStorage: true, Hooks: true,
 			Presets:   []string{"read-workspace"},
-			Knowledge: true, ToolLoad: true,
-			SpecPlan: "full", SpecAskClarification: true,
+			Knowledge: true,
+			SpecPlan:  "full", SpecAskClarification: true,
 			WorkValidation: "on", InfraSafetyMonitor: "on",
 			AutoRouting: "on", AutoDelegation: "on", ConfigurationState: true,
 			TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
@@ -349,19 +351,6 @@ func promptValuesOf(t *testing.T, row decl) []settingValue {
 	return out
 }
 
-// The tool-search setting must stay off the wire: "Load MCP tools on demand"
-// drives the tool_load arm through the child environment, and a still-sent
-// toolSearch key would reinstate the array-growing mode if that arm were removed.
-func TestToolSearchSettingIsWithheld(t *testing.T) {
-	row := findRow(t, resolverSetting, "toolSearch")
-	if row.send {
-		t.Errorf("%s is sent; it must be a withheld claim row", rowID(row))
-	}
-	if row.gate != nil || row.value != nil {
-		t.Errorf("%s carries a gate or value; a withheld row has no wire value", rowID(row))
-	}
-}
-
 // No engine reads these two delegation keys, so no row may send or claim them.
 func TestDeadDelegationSettingsAreNotDeclared(t *testing.T) {
 	for _, row := range table {
@@ -369,19 +358,6 @@ func TestDeadDelegationSettingsAreNotDeclared(t *testing.T) {
 			t.Errorf("%s is declared; KAS has no reader for it", rowID(row))
 		}
 	}
-}
-
-// findRow returns the one row with this identity, failing when it is absent so a
-// renamed key surfaces as a missing row rather than a vacuous pass.
-func findRow(t *testing.T, r resolver, key string) decl {
-	t.Helper()
-	for _, row := range table {
-		if row.resolver == r && row.key == key {
-			return row
-		}
-	}
-	t.Fatalf("no %s.%s row in the table", r, key)
-	return decl{}
 }
 
 // TestBuildersDoNotAliasTheTable pins that a caller cannot corrupt the table through a payload it

@@ -43,8 +43,8 @@ func TestSafeKiroSetting(t *testing.T) {
 		{"chat.enableTodoList", ""},
 		{"compaction.excludeContextWindowPercent", ""},
 		{"compaction.excludeMessages", ""},
-		// Live upstream readers, but reached through internal/kascap's doors, not this endpoint.
 		{"toolSearch.enabled", ""},
+		// Live upstream readers, but reached through internal/kascap's doors, not this endpoint.
 		{"chat.disableAutoCompaction", ""},
 	}
 	for _, tt := range tests {

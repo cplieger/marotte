@@ -192,7 +192,7 @@ func writeUIGuide(b *strings.Builder) {
 	b.WriteString("of its own and notifies whenever push is on. ")
 	b.WriteString("Then \"About\" (versions, \"Run diagnostics\"), \"Chat retention\" ")
 	b.WriteString("(\"Keep forever\" or \"Days kept\", default 7), \"Agent capabilities\" (\"Knowledge base ")
-	b.WriteString("search\", \"Load MCP tools on demand\", \"Model fallback\", \"Memory\", ")
+	b.WriteString("search\", \"Model fallback\", \"Memory\", ")
 	b.WriteString("\"Spec planning\", \"Steering reminders\", \"Work validation\", ")
 	b.WriteString("\"AWS CloudFormation safety check\", \"Workflows\", \"Output style\", \"Shell command timeout\"), ")
 	b.WriteString("\"Data sharing\" (\"Share content with AWS for service improvement\", \"kiro-cli telemetry\"), ")

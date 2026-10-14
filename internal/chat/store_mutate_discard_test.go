@@ -17,13 +17,9 @@ import (
 // error impossible and leaves exactly this population.
 var discardedMutate = regexp.MustCompile(`_\s*=\s*[^=\n]*\bMutate\(`)
 
-// `.worktrees` holds checkouts of this same repo at other commits, so its production files are
-// another branch's, not this tree's — scanning them makes the verdict depend on whoever has a
-// worktree open.
 var scanSkipDirs = map[string]bool{
 	".git":         true,
 	".kiro":        true,
-	".worktrees":   true,
 	"node_modules": true,
 	"static":       true,
 	"static-src":   true,
@@ -50,6 +46,11 @@ func TestNoProductionSiteDiscardsMutateError(t *testing.T) {
 		}
 		if d.IsDir() {
 			if scanSkipDirs[d.Name()] || path == exempt {
+				return fs.SkipDir
+			}
+			// A directory with its own go.mod is another module, outside the root module this census
+			// covers, as `go ./...` excludes it; a scratch worktree of this repo is one such module.
+			if _, serr := os.Stat(filepath.Join(path, "go.mod")); path != root && serr == nil {
 				return fs.SkipDir
 			}
 			return nil

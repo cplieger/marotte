@@ -2826,30 +2826,28 @@ const initializeGoldenPath = "testdata/initialize.golden"
 const initializeGoldenCmd = "UPDATE_GOLDEN=1 go test ./internal/bridge/ -run TestInitializeDeclaresExactly"
 
 // initGateCases is the complete matrix of _meta.kiro runtime gates: SecretStorage and DisableTelemetry set a value,
-// EnableHooks key presence, Knowledge two values; ToolSearch must change nothing here. Presets ride the session door.
+// EnableHooks key presence, Knowledge two values. Presets ride the session door.
 // The order is the golden's line order.
 var initGateCases = []struct {
 	name          string
 	features      marotte.AgentFeatures
 	secretStorage bool
 	enableHooks   bool
-	toolSearch    bool
 	knowledge     bool
 	telemetryOff  bool
 }{
-	{"gates off", marotte.AgentFeatures{}, false, false, false, false, false},
-	{"secret storage only", marotte.AgentFeatures{}, true, false, false, false, false},
-	{"hooks only", marotte.AgentFeatures{}, false, true, false, false, false},
-	{"both gates on", marotte.AgentFeatures{}, true, true, false, false, false},
-	{"tool search on", marotte.AgentFeatures{}, false, false, true, false, false},
-	{"knowledge on", marotte.AgentFeatures{}, false, false, false, true, false},
+	{"gates off", marotte.AgentFeatures{}, false, false, false, false},
+	{"secret storage only", marotte.AgentFeatures{}, true, false, false, false},
+	{"hooks only", marotte.AgentFeatures{}, false, true, false, false},
+	{"both gates on", marotte.AgentFeatures{}, true, true, false, false},
+	{"knowledge on", marotte.AgentFeatures{}, false, false, true, false},
 	// Proves spawn() copies StartOpts.Features.
 	{"agent capabilities on", marotte.AgentFeatures{
 		SteeringReminders:  true,
 		InfraSafetyMonitor: "on", TerminalCommandTimeoutMs: 300000,
-	}, false, true, false, false, false},
-	{"telemetry off", marotte.AgentFeatures{}, false, false, false, false, true},
-	{"every gate on", marotte.AgentFeatures{}, true, true, true, true, false},
+	}, false, true, false, false},
+	{"telemetry off", marotte.AgentFeatures{}, false, false, false, true},
+	{"every gate on", marotte.AgentFeatures{}, true, true, true, false},
 }
 
 // TestInitializeDeclaresExactly pins every initialize request's exact bytes against a golden, since each failure is
@@ -2893,7 +2891,6 @@ done
 			Model:            "m",
 			SecretStorage:    tc.secretStorage,
 			EnableHooks:      tc.enableHooks,
-			ToolSearch:       tc.toolSearch,
 			Knowledge:        tc.knowledge,
 			DisableTelemetry: tc.telemetryOff,
 			Features:         tc.features,

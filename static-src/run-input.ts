@@ -120,6 +120,9 @@ export function buildRunAskCard(d: RunAskCardInput): HTMLElement {
   const { ask } = d;
   const { body } = askHead(ask.text === "" ? RUN_INPUT_FALLBACK : ask.text);
   body.appendChild(el("p", { className: "run-input-step" }, headline(ask)));
+  if (ask.reason !== undefined && ask.reason !== "") {
+    body.appendChild(el("p", { className: "run-input-note run-input-reason" }, ask.reason));
+  }
   const note = el("p", { className: "run-input-note" });
   body.appendChild(note);
 

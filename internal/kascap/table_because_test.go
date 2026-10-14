@@ -61,8 +61,8 @@ was in it.
 
 GATED since 2026-08, on marotte's own knowledge_enabled setting. The
 control used to write kiro-cli's chat.enableKnowledge, which measured as
-unable to reach a running chat at all (KAS's ACP path reads no kiro-cli
-setting — see the toolSearch row for the counts), so the switch in
+unable to reach a running chat at all (on the 2.19.2 bundle: zero occurrences of
+cli.json, kiro-cli/settings, readSettingsFile and loadCliSettings), so the switch in
 Settings → General appeared to turn knowledge off and did nothing. It
 now drives this key and the setting below, which are the two KAS reads.
 
@@ -144,29 +144,13 @@ reads off the same object: ResolvedKnowledgeConfig.resolve reads
 indexType, includePatterns, excludePatterns, maxFiles and chunking and
 never touches enabled, so sending {"enabled": false} withdraws the tool
 without disturbing how the store is built.`,
-	"setting.toolSearch": `WITHHELD, because "Load MCP tools on demand" now drives KAS's other
-deferral mode through the child environment (the KIRO_FEATURE_TOOL_LOAD_ENABLED
-environment row below) and this key is the mode it replaces.
-_meta.kiro.settings.toolSearch makes KAS ship tool_search in place of every MCP
-tool's description, and each activation ADDS the loaded tools to the request's
-tools array (2.26.1 bundle ~11,121,900). Growing the array per load invalidates
-the prompt cache and walks a thinking model into a signature mismatch, and a
-narrow agent allowlist drops the tool_search loader itself (filterTools, @403,369).
-The tool_load arm keeps the array fixed for the session, runs a loaded tool through
-tool_call, and its tool pair carries @mcp-disclosure, which the allowlist filter
-always re-admits.
-
-Not sent as a fallback beside the env var: with the arm on KAS forces this key off
-(Nr = !toolLoad && isSettingEnabled(settings, "toolSearch"), @11,119,827), so it is
-inert while the arm exists, and if upstream ever removed the arm a still-sent key
-would silently reinstate the array-growing mode. Withheld, the census and the next
-release read surface that removal instead.
-
-History worth keeping: the toggle once wrote kiro-cli's own toolSearch.enabled
-through /api/kiro-settings, and measured on the stock 2.19.2 bundle that store is
-unreachable from KAS's ACP path: zero occurrences of cli.json, kiro-cli/settings,
-readSettingsFile and loadCliSettings, and each chat.* literal appearing exactly
-once, every one a "@see kiro-cli:" cross-reference inside the settings schema.`,
+	"setting.toolSearch": `WITHHELD. KAS defers every MCP tool behind tool_load/tool_call with no gate,
+and the only member it still reads here is neverDefer, a list of server::tool ids
+kept in the always-loaded belt (session tool assembly, 2.31.0 @11,676,859).
+marotte offers no control for it: kiro-cli's own TUI writes no neverDefer either
+(its toolSearch.* keys map enabled, minPct and minTokens, none read by KAS), the
+key rides initialize so any change needs a new process, and what it saves is one
+tool_load call per server per session.`,
 	"setting.workflows": `_meta.kiro.settings.workflows gates the agent's workflow TOOLS the
 same way: resolveWorkflows resolves an absent key to false, and KAS then
 withholds every agent-side workflow tool (its run tool, its chat workflow
@@ -416,12 +400,13 @@ against AB_STEERING_SUPERVISOR. In 2.27.x the supervisor runs in shadow mode onl
 (buildPreToolUseGate logs "shadow: non-blocking, verdict not applied"): one fast
 model call per allow-listed tool call whose verdict is discarded, so enabling it
 buys cost and nothing else. Revisit when verdicts are applied.`,
-	"setting._providerPowers": `SENT with its underscore, tied to "Load MCP tools on demand": both defer
-tool descriptions until needed. When on, installed Powers' MCP tools are reached
-through the kiro_powers tool instead of the direct list. KAS reads it only on
-session/load (session/new initialises providerPowersEnabled false), so a chat's
-first session keeps the direct list until it resumes; that is upstream's read
-site.`,
+	"setting._providerPowers": `SENT as a compiled {"enabled": false} on both session doors, matching
+KAS's own default (km("_providerPowers","off",{hidden:true})). On, KAS drops
+installed Powers' MCP tools from the direct list and serves them only through
+kiro_powers; it reads the key only on session/load (session/new initialises
+providerPowersEnabled false), so on would split a chat's first session from its
+resumes. kiro-cli's TUI never sends it, and every MCP tool is deferred anyway.
+Sent so every session states KAS's default.`,
 	"setting.fta": `WITHHELD, matching kiro-cli (no client sends it; default off). fta's prompt
 arms live only in the bundled workflow coder agents, so it is the workflow twin of
 validation and has no chat behaviour of its own.`,
@@ -562,13 +547,17 @@ or read_write; reflection is background learning and only acts under read_write.
 KAS's policy builder applies mode AFTER the entitlement gate, so disabled turns
 injection, the memory tool, writes and extraction off whatever the experiment says.
 
+Always sent, whatever KAS's default is: an absent key hands the chat's memory to
+KAS's fallback config, which has moved ({read_write, reflection: true} through
+2.30.0, {disabled, reflection: false} from 2.31.0), so only a sent value keeps the
+user's choice across a release.
+
 Session door, not connection door, because only a SESSION-door preference upgrades
 a session persisted with memoryConfigSource "legacy" (every session marotte created
-before this row) to "explicit" on load. A legacy session's persisted config is KAS's
-default {read_write, reflection: true}, so omitting this key on a load turns memory
-fully on for that chat. Once explicit, KAS keeps the session's persisted mode on
-every later load; the bridge re-sends the reflection half through the
-memoryReflection config option after a load.
+before this row) to "explicit" on load; a legacy session otherwise loads with KAS's
+fallback config. Once explicit, KAS keeps the session's persisted mode on every
+later load; the bridge re-sends the reflection half through the memoryReflection
+config option after a load.
 
 An empty mode is sent as disabled, so a spawn that resolves no setting (the utility
 bridge) fails closed. Sending any memory field flips the source to explicit, which
@@ -774,11 +763,6 @@ tangent merge relies on. A typed chat prompt never sends it.`,
 KAS maps the id to a style instruction for THAT turn only (an unknown id reads as default, and a
 continuation or agent-initiated prompt gets none), so it rides every user prompt rather than a
 session door. The default id is never sent: absent already means default.`,
-	"env.KIRO_FEATURE_TOOL_LOAD_ENABLED": `SENT in both states from "Load MCP tools on demand" (tool_search_enabled,
-default off, Crew c2). The env provider outranks the experiment, so an explicit
-"false" holds the arm shut against a server-side ramp. With it on, KAS keeps the
-tools array fixed (tool_load + tool_call) and forces settings.toolSearch off,
-which is why the toolSearch settings row is withheld.`,
 	"env.KIRO_DISABLE_SESSION_TITLE_LLM": `SENT on RUN bridges only (Spawn.DisableSessionTitles). Nothing renders a
 workflow step session's title, so the fast-model title call is spend with no
 reader. KAS tests this variable before the feature registry, so it beats the

@@ -61,7 +61,6 @@ type sessionSettings struct {
 	utilitySettings
 	Memory                marotte.MemoryPreference `json:"memory"`
 	Features              marotte.AgentFeatures    `json:"features"`
-	ToolSearch            bool                     `json:"tool_search"`
 	Knowledge             bool                     `json:"knowledge"`
 	DisableAutoCompaction bool                     `json:"disable_auto_compaction"`
 }
@@ -106,7 +105,6 @@ func (rt *Runtime) sessionFingerprint(ctx context.Context) (fingerprints session
 	chatRaw, chatErr := json.Marshal(sessionSettings{
 		Memory:                memoryPreference(ctx, dir),
 		Features:              features,
-		ToolSearch:            toolSearchEnabled(ctx, dir),
 		Knowledge:             knowledgeEnabled(ctx, dir),
 		DisableAutoCompaction: sessionDisablesAutoCompaction(autoCompactionPolicy(ctx, dir)),
 		utilitySettings:       utility,

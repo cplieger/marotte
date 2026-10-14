@@ -358,14 +358,11 @@ describe("renderInfoFor", () => {
     expect(info.mcp).toBeNull();
   });
 
-  it.each(["tool_load", "Tool Load", "tool_search", "Tool Search"])(
-    "%s renders as a search",
-    (title) => {
-      expect(renderInfoFor(title, "other", { tool_ids: ["github::create_issue"] }).kind).toBe(
-        "search",
-      );
-    },
-  );
+  it.each(["tool_load", "Tool Load"])("%s renders as a search", (title) => {
+    expect(renderInfoFor(title, "other", { tool_ids: ["github::create_issue"] }).kind).toBe(
+      "search",
+    );
+  });
 
   it("unknown tool with no input", () => {
     const info = renderInfoFor("mystery", "unknown", undefined);

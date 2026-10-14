@@ -649,7 +649,7 @@ export interface EffectiveSettings {
  */
   last_merge_method: string;
   /**
- * MemoryMode is the Memory dropdown's value (settings.MemoryOff and its three
+ * MemoryMode is the Memory dropdown's value ("off" and its three
  * siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
  */
   memory_mode: string;
@@ -712,8 +712,6 @@ export interface EffectiveSettings {
  * reads it.
  */
   guard_payload_links: boolean;
-  /** ToolSearchEnabled defaults off, matching kiro-cli. */
-  tool_search_enabled: boolean;
   /**
  * MCPWaitForReady renders waitForReady on every server in KAS's MCP file, so
  * a prompt waits for the servers to settle. Default off.
@@ -2614,6 +2612,11 @@ export interface RunAsk {
   agent_name: string;
   text: string;
   text_source: RunAskText;
+  /**
+ * Reason is kiro-cli's sentence for why a step that has no completion signal is waiting, such
+ * as one whose signal it could not save; absent otherwise.
+ */
+  reason?: string;
   blocked?: RunAskBlocker;
   asked_at?: string;
   node_path: string[];

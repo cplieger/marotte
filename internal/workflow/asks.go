@@ -16,6 +16,10 @@ type Ask struct {
 	AgentName     string
 	Text          string
 	TextSource    marotte.RunAskText
+	// Reason is KAS's sentence for why this step parked, set only for a park with no signal (a lost
+	// send_message signal, or a step that ended its turn without one) and only when it is the run's
+	// sole waiting step: the reply carries one run-level reason, so with two waiting steps it names either.
+	Reason string
 	// Hold is what marotte's own requests on the run block: stopping or pending.
 	Hold marotte.RunAskBlocker
 	// Wait is what KAS's state blocks, computed without reading Hold, so a verb that registered its
@@ -92,6 +96,7 @@ func OpenAsks(reply Inspect, log RunLog) []Ask {
 	s := reply.State
 	all := nodes(s)
 	target, hasTarget := StatusUpdateTarget(s)
+	sole := len(ParkedSteps(reply)) == 1
 	var out []Ask
 	for i, v := range all {
 		if !v.n.waits() {
@@ -110,6 +115,7 @@ func OpenAsks(reply Inspect, log RunLog) []Ask {
 			AgentName:     v.n.AgentName,
 			Text:          text,
 			TextSource:    source,
+			Reason:        unsignalledReason(s, v.n, sole),
 			Hold:          hold(log),
 			Wait:          wait(s, all, i, log),
 			CanContinue: s.Status == statusPaused && hasTarget &&
@@ -118,6 +124,13 @@ func OpenAsks(reply Inspect, log RunLog) []Ask {
 		})
 	}
 	return out
+}
+
+func unsignalledReason(s *State, n *node, sole bool) string {
+	if !sole || n.CompletionSignal != "" {
+		return ""
+	}
+	return s.PauseReason
 }
 
 func askText(step StepLog) (string, marotte.RunAskText) {

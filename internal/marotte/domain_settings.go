@@ -39,7 +39,7 @@ type EffectiveSettings struct {
 	// spelling, the merge dialog's default where the repository offers it. Empty
 	// means nothing picked yet.
 	LastMergeMethod string `json:"last_merge_method"`
-	// MemoryMode is the Memory dropdown's value (settings.MemoryOff and its three
+	// MemoryMode is the Memory dropdown's value ("off" and its three
 	// siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
 	MemoryMode string `json:"memory_mode"`
 	// SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli.
@@ -83,8 +83,6 @@ type EffectiveSettings struct {
 	// GuardPayloadLinks defaults to settings.defaultGuardPayloadLinks; no server path
 	// reads it.
 	GuardPayloadLinks bool `json:"guard_payload_links"`
-	// ToolSearchEnabled defaults off, matching kiro-cli.
-	ToolSearchEnabled bool `json:"tool_search_enabled"`
 	// MCPWaitForReady renders waitForReady on every server in KAS's MCP file, so
 	// a prompt waits for the servers to settle. Default off.
 	MCPWaitForReady bool `json:"mcp_wait_for_ready"`

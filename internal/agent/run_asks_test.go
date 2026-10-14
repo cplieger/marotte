@@ -741,3 +741,17 @@ func TestRunAsks_AnUnseenQuestionReadsTheStepsLastWords(t *testing.T) {
 		t.Errorf("ask text = %q (%s), want the step's send_message words labelled as its last message", a.Text, a.TextSource)
 	}
 }
+
+// kiro-cli's reason reaches the wire, and a reason arriving on an unchanged ask is a change to
+// publish.
+func TestWireAsks_CarriesTheReasonAndCountsItAsAChange(t *testing.T) {
+	const reason = "Step 'ask' sent a send_message success signal that could not be saved, so it is paused awaiting user input instead of finishing."
+	before := wireAsks([]workflow.Ask{{ID: "a1", NodeID: "ask", TextSource: marotte.RunAskTextLastMessage}})
+	after := wireAsks([]workflow.Ask{{ID: "a1", NodeID: "ask", TextSource: marotte.RunAskTextLastMessage, Reason: reason}})
+	if after[0].Reason != reason {
+		t.Errorf("wire Reason = %q, want %q", after[0].Reason, reason)
+	}
+	if sameAsks(before, after) {
+		t.Error("sameAsks reports a gained reason as no change, so the card would never show it")
+	}
+}

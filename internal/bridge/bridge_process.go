@@ -38,7 +38,6 @@ func (b *Bridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	b.secretStorage = opts.SecretStorage
 	b.configurationState = opts.ConfigurationState
 	b.presets = opts.Presets
-	b.toolSearch = opts.ToolSearch
 	b.knowledge = opts.Knowledge
 	b.disableTelemetry = opts.DisableTelemetry
 	b.memory = opts.Memory

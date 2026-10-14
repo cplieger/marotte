@@ -1,6 +1,6 @@
 // Package policyfile reads and writes kiro-cli's native Cedar permission files for the user and
-// workspace scopes, resolved from $HOME rather than KIRO_HOME: <home>/.kiro/settings/permissions.yaml
-// and <home>/.kiro/workspace-roots/<workspaceHash>/permissions.yaml. KAS also writes the user file
+// workspace scopes, under kiro-cli's state directory: <kiroHome>/settings/permissions.yaml and
+// <kiroHome>/workspace-roots/<workspaceHash>/permissions.yaml. KAS also writes the user file
 // for a user-scope consent, and hot-reloads both, so a write reaches every live session. Load
 // accepts block YAML or JSON; Save writes block YAML (KAS 2.12).
 package policyfile
@@ -141,8 +141,9 @@ func canonicalWorkDir(workDir string) string {
 // transposition of two path strings would write a security policy under the wrong root with nothing
 // to detect it.
 type Roots struct {
-	// Home is the base KAS resolves both scopes from ($HOME).
-	Home string
+	// KiroHome is kiro-cli's state directory (workspace.KiroHome), the base KAS resolves both
+	// scopes from.
+	KiroHome string
 	// WorkDir is the bridge's cwd, needed only for the workspace scope.
 	WorkDir string
 }
@@ -155,9 +156,9 @@ type Roots struct {
 func PathFor(scope string, roots Roots) (string, error) {
 	switch scope {
 	case ScopeUser:
-		return filepath.Join(roots.Home, ".kiro", "settings", filename), nil
+		return filepath.Join(roots.KiroHome, "settings", filename), nil
 	case ScopeWorkspace:
-		return filepath.Join(roots.Home, ".kiro", "workspace-roots",
+		return filepath.Join(roots.KiroHome, "workspace-roots",
 			workspaceHash(roots.WorkDir), filename), nil
 	default:
 		return "", errInvalidScope

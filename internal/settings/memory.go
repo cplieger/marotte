@@ -9,20 +9,20 @@ import (
 
 // The four values of KeyMemoryMode, one per option of the Memory dropdown.
 const (
-	MemoryOff       = "off"
+	memoryOff       = "off"
 	memoryReadOnly  = "read_only"
 	memoryReadWrite = "read_write"
 	memoryLearn     = "learn"
 )
 
-// DefaultMemoryMode is kiro-cli's shipped default: read and write with
-// background learning (KAS's own fallback is {read_write, reflection: true}).
-const DefaultMemoryMode = memoryLearn
+// DefaultMemoryMode is kiro-cli's shipped default: its TUI sends mode disabled unless
+// KIRO_INTERNAL=1, and KAS's own fallback is {disabled, reflection: false} from 2.31.0.
+const DefaultMemoryMode = memoryOff
 
 // validMemoryMode reports whether mode is one of the four dropdown values.
 func validMemoryMode(mode string) bool {
 	switch mode {
-	case MemoryOff, memoryReadOnly, memoryReadWrite, memoryLearn:
+	case memoryOff, memoryReadOnly, memoryReadWrite, memoryLearn:
 		return true
 	}
 	return false
@@ -31,16 +31,18 @@ func validMemoryMode(mode string) bool {
 // MemoryPreferenceFor maps a dropdown value onto KAS's `settings.memory`
 // fields. An unrecognised value takes DefaultMemoryMode.
 func MemoryPreferenceFor(mode string) marotte.MemoryPreference {
+	if !validMemoryMode(mode) {
+		mode = DefaultMemoryMode
+	}
 	switch mode {
-	case MemoryOff:
-		return marotte.MemoryPreference{Mode: "disabled"}
 	case memoryReadOnly:
 		return marotte.MemoryPreference{Mode: "read_only"}
 	case memoryReadWrite:
 		return marotte.MemoryPreference{Mode: "read_write"}
-	default: // memoryLearn, and DefaultMemoryMode for anything unrecognised
+	case memoryLearn:
 		return marotte.MemoryPreference{Mode: "read_write", Reflection: true}
 	}
+	return marotte.MemoryPreference{Mode: "disabled"}
 }
 
 // decodeMemoryMode is decodeInto plus the value check: the spawn path reads the

@@ -49,8 +49,8 @@ describe("flashTarget", { timeout: testTimeoutFor(framesBudgetMs(25)) }, () => {
   });
 
   it("drops the flash class when the animation ends", async () => {
-    const box = control("flag-tool-search");
-    flashTarget(byId("flag-tool-search"));
+    const box = control("flag-knowledge");
+    flashTarget(byId("flag-knowledge"));
     await frames(1);
     expect(box.classList.contains("deep-link-flash")).toBe(true);
     box.dispatchEvent(new Event("animationend"));
