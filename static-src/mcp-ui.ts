@@ -191,9 +191,9 @@ async function addRegistryServer(name: string): Promise<void> {
 }
 
 /**
- * Render the organization's registry: allowed catalog servers with Add, plus dropped servers with no row of their own
- * and entries the catalog lacks. Hidden when not restricted; Add disabled while `lockReason` is set. Exported for
- * testing.
+ * Render the organization's registry: a notice naming the configured servers it hides, allowed catalog servers with
+ * Add, and entries the catalog lacks. Hidden when not restricted; Add disabled while `lockReason` is set. Exported
+ * for testing.
  */
 export function renderRegistryPanel(
   host: HTMLElement,
@@ -215,6 +215,9 @@ export function renderRegistryPanel(
       "Your organization limits MCP to its registry: only the servers below can run, and any other server you configure stays off.",
     ),
   ];
+  if (reg.filtered.length > 0) {
+    children.push(renderHiddenNotice(reg.filtered));
+  }
   const list = el("ul", { className: "mcp-registry-list" });
   for (const srv of reg.servers) {
     const added = have.has(srv.name);
@@ -245,12 +248,6 @@ export function renderRegistryPanel(
   } else {
     children.push(list);
   }
-  const rowless = reg.filtered.filter((name) => !have.has(name));
-  if (rowless.length > 0) {
-    children.push(
-      el("p", { className: "section-hint" }, `${NOT_IN_REGISTRY}: ${rowless.join(", ")}.`),
-    );
-  }
   if (reg.unresolved.length > 0) {
     children.push(
       el(
@@ -261,6 +258,23 @@ export function renderRegistryPanel(
     );
   }
   host.replaceChildren(...children);
+}
+
+/**
+ * Every configured server KAS drops in registry mode (its `accessModeFilteredServers`), whether or not this page
+ * holds its row: the TUI's managed view names the same list.
+ */
+function renderHiddenNotice(names: readonly string[]): HTMLElement {
+  return el(
+    "div",
+    { className: "mcp-registry-hidden", role: "note" },
+    el(
+      "p",
+      null,
+      "Your organization's MCP registry doesn't include these servers, so kiro-cli won't start them.",
+    ),
+    el("ul", { className: "mcp-registry-hidden-list" }, ...names.map((n) => el("li", null, n))),
+  );
 }
 
 /**

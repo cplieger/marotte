@@ -574,6 +574,32 @@
   margin-block-end: var(--sp-3);
 }
 
+/* The configured servers registry mode drops: a notice, so the state's hue wash
+   with no edge (27-run-card.css `.run-alert` is the same idiom). */
+.mcp-registry-hidden {
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--c-yellow) 10%, transparent);
+  color: var(--c-text-primary);
+  font-size: var(--fs-sm);
+
+  & p {
+    margin: 0 0 var(--sp-1);
+  }
+}
+
+.mcp-registry-hidden-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .mcp-registry-list {
   display: flex;
   flex-direction: column;
