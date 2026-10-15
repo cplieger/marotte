@@ -57,8 +57,10 @@ function stamp(el: Element): void {
     stampedFor.set(el, start);
   }
   // Negative, so a new animation behaves as though it began at the last boundary of one
-  // grid anchored at the performance origin.
-  el.style.setProperty("--beat-phase", `${String(-(performance.now() % period))}ms`);
+  // grid anchored at the performance origin. From the beat's own start rather than now: the
+  // event can arrive late on a busy main thread, and the delay offsets the start.
+  const from = start ?? performance.now();
+  el.style.setProperty("--beat-phase", `${String(-(from % period))}ms`);
 }
 
 let attached: AbortController | undefined;
