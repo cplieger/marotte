@@ -1,0 +1,124 @@
+/* A ```mermaid fence drawn by pele (mermaid-block.ts) inline, and its full-screen view (mermaid-overlay.ts).
+ *
+ * THE TOKEN MAPPING. pele paints every colour and font through `--pele-*`
+ * (https://pele.run/theming), so pointing them at the app's tokens is the whole
+ * theme: a light/dark switch restyles a drawn diagram with no re-render. No colour
+ * is named here or in the modules; a diagram's own `style`/`classDef` colours are
+ * the author's and stay fixed, as pele documents. */
+.mermaid-canvas,
+.mermaid-stage {
+  /* Also the edge labels' knock-out fill, so it must be the opaque surface the
+     drawing sits on, never a translucent well. */
+  --pele-bg: var(--c-turn-body);
+  --pele-fg: var(--c-text-primary);
+  --pele-muted: var(--c-text-tertiary);
+  --pele-line: var(--c-text-secondary);
+
+  /* Nodes one step up from the surface, subgraphs one step the other way, so a
+     node inside a group reads in both themes. */
+  --pele-surface: var(--c-bg-secondary);
+  --pele-surface-alt: var(--c-bg-primary);
+  --pele-border: var(--c-text-tertiary);
+  --pele-accent: var(--c-accent);
+  --pele-critical: var(--c-danger);
+  --pele-font: var(--font-sans);
+  --pele-font-mono: var(--font-mono);
+  --pele-radius: var(--r);
+
+  /* Text on a series fill is drawn in --pele-bg, so each is an ink the token
+     ramp already holds at contrast against that surface. */
+  --pele-series-1: var(--c-blue);
+  --pele-series-2: var(--c-warning);
+  --pele-series-3: var(--c-green);
+  --pele-series-4: var(--c-red);
+  --pele-series-5: var(--c-teal);
+  --pele-series-6: var(--c-yellow);
+  --pele-series-7: var(--c-accent);
+  --pele-series-8: var(--c-hl-number);
+
+  background: var(--pele-bg);
+}
+
+/* Static inline: no zoom, so a pinch or wheel over it is left to the page. A
+ * diagram too wide to draw at a readable size scrolls inside the block (its
+ * `min-width` is set per drawing), never past the chat column. */
+.mermaid-canvas {
+  padding: var(--sp-3);
+  overflow-x: auto;
+
+  & > svg {
+    display: block;
+    margin-inline: auto;
+  }
+}
+
+/* One line between the block's title bar and the source it falls back to. */
+.mermaid-notice {
+  margin: 0;
+  padding: var(--sp-1) var(--sp-3);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+/* THE FULL-SCREEN VIEW. The <dialog> and its panel fill the viewport, and the
+ * panel's padding keeps the bar and the drawing off an iPhone's notch and home
+ * indicator. Higher specificity than 04-uip-skin's `.uip-modal` and
+ * `.uip-modal-dialog`, whose sizes are a centred card's. */
+.uip-modal.mermaid-overlay-dialog {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+.uip-modal-dialog.mermaid-overlay {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+
+  /* 50-mobile's phone card caps a modal at 85dvh and scrolls it; this one is
+     the viewport, and the stage clips. */
+  max-height: none;
+  overflow: hidden;
+  gap: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+  border: 0;
+  border-radius: 0;
+  background: var(--c-turn-body);
+}
+
+.mermaid-overlay-head {
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) var(--sp-4);
+  background: var(--c-bg-secondary);
+}
+
+.mermaid-overlay-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mermaid-overlay-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--sp-05);
+}
+
+/* pele zooms by moving the viewBox inside the box mermaid-overlay.ts sizes, so
+ * the stage clips rather than scrolls; its size never depends on the drawing's,
+ * or the fit's ResizeObserver would chase its own writes. */
+.mermaid-stage {
+  display: grid;
+  flex: 1;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+  min-height: 0;
+  padding: var(--sp-3);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}

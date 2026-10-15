@@ -55,6 +55,11 @@ export const ICON_FILE_TEXT_UI = svg(
 export const ICON_TRASH = svg("inline", PATH_TRASH);
 export const ICON_TRASH_UI = svg("ui", PATH_TRASH);
 export const ICON_PLUS_UI = svg("ui", PATH_PLUS);
+export const ICON_MINUS_UI = svg("ui", '<path d="M5 12h14"/>');
+/** Lucide `code`: a diagram's source text. */
+export const ICON_CODE_UI = svg("ui", '<path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>');
+/** Lucide `maximize-2`: open full screen. */
+export const ICON_EXPAND_UI = svg("ui", '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>');
 // Per-tool auto_update toggle: filled = pinned (auto_update off), outline = tracking upstream.
 export const ICON_PIN = svg("inline", PATH_PIN);
 // Stroke 2 like `ICON_PIN`, so the pin keeps its weight across states.

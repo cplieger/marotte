@@ -547,3 +547,15 @@ describe("refresh with holder attributes", () => {
     expect(eng.currentIndex).toBe(1);
   });
 });
+
+// A drawn diagram's `<text>` cannot hold the HTML `<mark>` a hit is wrapped in.
+describe("a drawn diagram", () => {
+  it("is not marked, while the prose beside it is", () => {
+    const host = mount(
+      `<p>alpha in prose</p><svg xmlns="http://www.w3.org/2000/svg"><text>alpha in a label</text></svg>`,
+    );
+    expect(new FindEngine(host).search("alpha")).toBe(1);
+    expect(host.querySelector("svg mark")).toBeNull();
+    expect(host.querySelector("svg text")?.textContent).toBe("alpha in a label");
+  });
+});

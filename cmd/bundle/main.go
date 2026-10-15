@@ -47,7 +47,8 @@ func run() error {
 	if err := cleanOutputs(); err != nil {
 		return err
 	}
-	if err := bundleScripts(); err != nil {
+	onDemand, err := bundleScripts()
+	if err != nil {
 		return err
 	}
 	if err := bundleServiceWorker(); err != nil {
@@ -62,7 +63,7 @@ func run() error {
 	if err := fingerprintFonts(); err != nil {
 		return err
 	}
-	return writePrecacheManifest()
+	return writePrecacheManifest(onDemand)
 }
 
 // precacheManifest is static/precache.json. Field names are the wire contract with
@@ -77,9 +78,9 @@ type precacheManifest struct {
 const precacheName = "precache.json"
 
 // writePrecacheManifest stamps the cacheable asset NAMES: every entry carries esbuild's
-// content hash, so changed bytes always change a name.
-func writePrecacheManifest() error {
-	assets, err := precacheAssets()
+// content hash, so changed bytes always change a name. onDemand chunks are left out.
+func writePrecacheManifest(onDemand map[string]bool) error {
+	assets, err := precacheAssets(onDemand)
 	if err != nil {
 		return err
 	}
@@ -100,8 +101,9 @@ func writePrecacheManifest() error {
 
 // precacheAssets lists the content-hashed chunks, sorted, as site-root URL paths. app.js
 // and style.css change bytes under a stable name, so they are excluded; sw.js too, because
-// a worker that caches itself makes a broken worker permanent.
-func precacheAssets() ([]string, error) {
+// a worker that caches itself makes a broken worker permanent. A name in onDemand (outDir-relative)
+// is skipped.
+func precacheAssets(onDemand map[string]bool) ([]string, error) {
 	// Non-nil: a nil slice marshals to `null`, which parseManifest rejects.
 	assets := []string{}
 	entries, err := os.ReadDir(filepath.Join(outDir, "chunks"))
@@ -112,7 +114,7 @@ func precacheAssets() ([]string, error) {
 		return nil, fmt.Errorf("precache chunks: %w", err)
 	}
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != jsExt {
+		if e.IsDir() || filepath.Ext(e.Name()) != jsExt || onDemand["chunks/"+e.Name()] {
 			continue
 		}
 		assets = append(assets, "chunks/"+e.Name())
@@ -196,10 +198,11 @@ func pruneEmptyDirs(dir string) error {
 }
 
 // bundleScripts builds the SSE worker first: its content-hashed URL is injected into the app build.
-func bundleScripts() error {
+// It returns the app's onDemandChunks.
+func bundleScripts() (map[string]bool, error) {
 	workerURL, err := bundleSSEWorker()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	return bundleApp(workerURL)
 }
@@ -208,7 +211,7 @@ func bundleScripts() error {
 const workerURLDefine = "__SSE_WORKER_URL__"
 
 // The entry keeps its stable /app.js name, so the HTML is never rewritten.
-func bundleApp(workerURL string) error {
+func bundleApp(workerURL string) (map[string]bool, error) {
 	result := api.Build(api.BuildOptions{
 		EntryPoints:       []string{filepath.Join(srcDir, "app.ts")},
 		Outdir:            outDir,
@@ -224,9 +227,62 @@ func bundleApp(workerURL string) error {
 		Sourcemap:         api.SourceMapLinked,
 		Charset:           api.CharsetUTF8,
 		LogLevel:          api.LogLevelWarning,
+		Metafile:          true,
 		Write:             true,
 	})
-	return buildErr("app", &result)
+	if err := buildErr("app", &result); err != nil {
+		return nil, err
+	}
+	return onDemandChunks(result.Metafile)
+}
+
+// onDemandPackages are dependencies the page imports only on meeting their content (pele: a
+// ```mermaid fence). Precaching their chunks would have every device fetch them at each deploy,
+// whether or not it ever shows a diagram.
+var onDemandPackages = []string{"pele"}
+
+func isOnDemandInput(path string) bool {
+	for _, pkg := range onDemandPackages {
+		if strings.HasPrefix(path, srcDir+"/node_modules/"+pkg+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// onDemandChunks names, outDir-relative and slash-separated, each emitted script built only from
+// onDemandPackages modules; a chunk mixing in any other input is precached as before.
+func onDemandChunks(metafile string) (map[string]bool, error) {
+	var meta struct {
+		Outputs map[string]struct {
+			Inputs map[string]json.RawMessage `json:"inputs"`
+		} `json:"outputs"`
+	}
+	if err := json.Unmarshal([]byte(metafile), &meta); err != nil {
+		return nil, fmt.Errorf("app metafile: %w", err)
+	}
+	chunks := map[string]bool{}
+	for out, info := range meta.Outputs {
+		if filepath.Ext(out) != jsExt || len(info.Inputs) == 0 {
+			continue
+		}
+		onlyOnDemand := true
+		for in := range info.Inputs {
+			if !isOnDemandInput(in) {
+				onlyOnDemand = false
+				break
+			}
+		}
+		if !onlyOnDemand {
+			continue
+		}
+		rel, err := filepath.Rel(outDir, out)
+		if err != nil {
+			return nil, fmt.Errorf("app output %q is outside %s: %w", out, outDir, err)
+		}
+		chunks[filepath.ToSlash(rel)] = true
+	}
+	return chunks, nil
 }
 
 // bundleSSEWorker bundles sse-worker.ts as one IIFE at a content-hashed name under

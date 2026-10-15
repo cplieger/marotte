@@ -1,5 +1,5 @@
 import { effect, el, signal, touch } from "@cplieger/reactive";
-import { isSafeUrl } from "./utils-url.js";
+import { exfilShaped, isSafeUrl } from "./utils-url.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
 
 /** Marks both forms of a guarded link, so a switch flip finds every one. Empty: the address lives in `payloadUrls`. */
@@ -83,6 +83,18 @@ export function formPayloadLink(anchor: HTMLAnchorElement, url: string): Element
   return button;
 }
 
+/** A diagram's SVG `<a>`, which cannot hold the copy button: a payload-shaped link loses its `href` while the switch
+ *  is on and keeps its text. Any other link is left alone. */
+export function formDiagramLink(a: SVGAElement, url: string): void {
+  if (!exfilShaped(url)) {
+    return;
+  }
+  markGuarded(a, url);
+  if (guardOn.peek()) {
+    a.removeAttribute("href");
+  }
+}
+
 export function reformPayloadLinks(root: ParentNode): void {
   const on = guardOn.peek();
   for (const node of root.querySelectorAll(`[${PAYLOAD_ATTR}]`)) {
@@ -90,7 +102,13 @@ export function reformPayloadLinks(root: ParentNode): void {
     if (url === undefined) {
       continue;
     }
-    if (on && node.tagName === "A") {
+    if (node instanceof SVGAElement) {
+      if (on) {
+        node.removeAttribute("href");
+      } else {
+        node.setAttribute("href", url);
+      }
+    } else if (on && node.tagName === "A") {
       reseat(node, withheldButton(url), url);
     } else if (!on && node.tagName === "BUTTON" && isSafeUrl(url)) {
       const a = linkAnchor();

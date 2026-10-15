@@ -55,7 +55,7 @@ describe("isShellPath", () => {
     // whose imports name chunk hashes the new server no longer serves.
     expect(isShellPath("/app.js")).toBe(false);
     expect(isShellPath("/style.css")).toBe(false);
-    const body = /func precacheAssets\(\)[\s\S]*?\n}\n/.exec(bundleGo);
+    const body = /func precacheAssets\([^)]*\)[\s\S]*?\n}\n/.exec(bundleGo);
     expect(body, "precacheAssets not found in cmd/bundle/main.go").not.toBeNull();
     for (const name of ["app.js", "style.css"]) {
       expect(body?.[0], `precacheAssets still lists ${name}`).not.toContain(`"${name}"`);

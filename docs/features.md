@@ -9,6 +9,7 @@ Conversations stay in sync across devices, so a chat open on a phone and a deskt
 - Send a message while the agent is working and it joins the running turn, or with **Queue messages** switched on in the composer's `+` menu, runs after it. On a touch screen, Return adds a new line, so send it with the **Steer** or **Queue** button beside Cancel.
 - Start a message with `!` to run a shell command.
 - `/compact` compacts the context now. `/drop` ends a turn that is stuck. `/goal` sets an objective the agent works toward across turns, until it meets the goal or runs out of attempts.
+- A Mermaid diagram in a reply (a fenced `mermaid` block) is drawn as a picture. Its buttons switch to the source, copy it, download the SVG, or open the diagram full screen, where a pinch, the mouse wheel or the zoom buttons enlarge it. A diagram that cannot be drawn shows its source with a note saying why.
 - Attach files by drag and drop, paste or the composer's `+` menu. PDF, CSV and Office documents reach the agent as documents and images as images. Any other file reaches it as a path it opens with its file tools.
 
 You can also search inside a chat, export a chat, search across chats, and browse past conversations and workflow runs in **History**. Settings decides how long closed chats are kept.
