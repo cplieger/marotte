@@ -19,12 +19,8 @@ import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { getActionLog as recentLog } from "@cplieger/actions";
 import * as toast from "../toast.js";
 
-const mockFetch = vi.fn();
-
 beforeEach(() => {
   resetActionFramework();
-  mockFetch.mockReset();
-  vi.stubGlobal("fetch", mockFetch);
 });
 
 describe("ui.copy_clipboard", () => {
@@ -46,25 +42,5 @@ describe("ui.copy_clipboard", () => {
     expect(r).toBeNull();
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Could not copy"), undefined);
     expect(recentLog()[0]?.error?.code).toBe("clipboard");
-  });
-});
-
-describe("messages.explain_error", () => {
-  it("POSTs to /api/utility/explain-error with truncated error text", async () => {
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ output: "explanation" }), { status: 200 }),
-    );
-    const { explainError } = await import("./messages.js");
-    const r = await explainError.dispatch({
-      errorText: "TypeError: x is not a function",
-      context: "tool call",
-    });
-    expect(r).toEqual({ output: "explanation" });
-    const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/utility/explain-error");
-    expect(opts.method).toBe("POST");
-    const body = JSON.parse(opts.body as string);
-    expect(body.error).toBe("TypeError: x is not a function");
-    expect(body.context).toBe("tool call");
   });
 });

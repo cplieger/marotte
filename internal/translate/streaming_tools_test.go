@@ -966,8 +966,8 @@ func TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined(t *testing.T) {
 			if got.Declined != c.wantDeclined {
 				t.Errorf("ToolCall.Declined from rawOutput %v = %v, want %v", c.raw, got.Declined, c.wantDeclined)
 			}
-			// A second axis, never a status: `failed` would offer "Explain this error" for a tool
-			// that ran correctly.
+			// A second axis, never a status: `failed` would mark a tool that ran correctly as
+			// broken.
 			if got.Status != marotte.ToolCompleted {
 				t.Errorf("ToolCall.Status = %q, want %q (a refusal is still a completion)", got.Status, marotte.ToolCompleted)
 			}

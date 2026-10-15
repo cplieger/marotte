@@ -335,8 +335,8 @@ describe("a11y: async-button screen reader announcements", () => {
   });
 });
 
-describe("a11y: failed tool aria-expanded", () => {
-  it("failed status sets aria-expanded=true on the tool toggle", async () => {
+describe("a11y: declined tool aria-expanded", () => {
+  it("a refusal's auto-open sets aria-expanded=true on the tool toggle", async () => {
     vi.resetModules();
     const noop = (): void => {
       /* noop */
@@ -354,17 +354,12 @@ describe("a11y: failed tool aria-expanded", () => {
       registerCleanup: () => {
         /* noop */
       },
-      bindLoadingState: () => () => undefined,
     }));
 
     const { buildToolCard } = await import("./tool-card.js");
     const { initToolCallbacks, applyToolCallUpdate } = await import("./messages-tools.js");
 
-    initToolCallbacks({
-      pushBind: noop,
-      refreshGroupHeader: noop,
-      explainError: () => Promise.resolve(""),
-    });
+    initToolCallbacks({ refreshGroupHeader: noop });
 
     const card = buildToolCard({
       id: "tf1",
@@ -389,13 +384,14 @@ describe("a11y: failed tool aria-expanded", () => {
         id: "tf1",
         title: "Running: grep",
         kind: "other",
-        status: "failed",
+        status: "completed",
+        declined: true,
         ts: 0,
       },
       "c-a11y",
     );
 
-    // The failed branch auto-expands the details, which must keep aria-expanded and the
+    // The refusal branch auto-expands the details, which must keep aria-expanded and the
     // region's aria-hidden in sync.
     expect(details.getAttribute("aria-hidden")).toBe("false");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
