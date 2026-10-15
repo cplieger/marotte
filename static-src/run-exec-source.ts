@@ -18,6 +18,9 @@ import {
   currentMembers,
   failureOwner,
   isWork,
+  passBudgetText,
+  passCountText,
+  passText,
   type ExecFact,
   type ExecKind,
   type ExecNode,
@@ -42,7 +45,10 @@ export type StepEnds = ReadonlyMap<string, RunStepEnd>;
 interface PlanEntry {
   maxIterations?: number;
   onMaxIterations?: string;
+  /** The stop condition in words, a file check naming its whole path; `stopBrief` names the file
+   *  alone, for a one-line subtitle. */
   stopCondition?: string;
+  stopBrief?: string;
   /** A watch's handler id. */
   watch?: string;
   /** On a sequence KAS expanded from an `include`: the included recipe's name and the path the
@@ -55,6 +61,43 @@ interface PlanEntry {
 /** Every container spelling the engine uses, plus a generic `children` so a node type added
  *  upstream still has its descendants indexed. */
 const PLAN_CHILD_KEYS = ["steps", "branches", "children", "body", "nodes"] as const;
+
+/** A loop's stop condition in words: a string as written, or KAS's object form (`containsText`,
+ *  `fileCheck { path, jsonPath, value }`, `completionSignal`; an array `value` is any-of), each
+ *  part it sets. `brief` names a checked file by its base name. */
+function stopPhrase(raw: unknown, brief: boolean): string | undefined {
+  if (typeof raw === "string") {
+    return raw === "" ? undefined : raw;
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const o = raw as Record<string, unknown>;
+  const literal = (v: unknown): string => (typeof v === "string" ? v : JSON.stringify(v));
+  const parts: string[] = [];
+  if (typeof o["containsText"] === "string" && o["containsText"] !== "") {
+    parts.push(`output contains ${JSON.stringify(o["containsText"])}`);
+  }
+  const check = o["fileCheck"];
+  if (check !== null && typeof check === "object" && !Array.isArray(check)) {
+    const c = check as Record<string, unknown>;
+    const path = typeof c["path"] === "string" ? c["path"] : "";
+    if (path !== "" && "value" in c) {
+      const file = brief ? (path.split("/").pop() ?? path) : path;
+      const field =
+        typeof c["jsonPath"] === "string" && c["jsonPath"] !== "" ? ` ${c["jsonPath"]}` : "";
+      const value = c["value"];
+      const want = Array.isArray(value)
+        ? `one of ${value.map(literal).join(", ")}`
+        : literal(value);
+      parts.push(`${file}${field} is ${want}`);
+    }
+  }
+  if (typeof o["completionSignal"] === "string" && o["completionSignal"] !== "") {
+    parts.push(`the step signals ${o["completionSignal"]}`);
+  }
+  return parts.length === 0 ? undefined : parts.join("; ");
+}
 
 /** Walk the raw plan and index every node id it names. */
 export function indexPlan(plan: unknown): Map<string, PlanEntry> {
@@ -82,22 +125,17 @@ export function indexPlan(plan: unknown): Map<string, PlanEntry> {
       if (max !== undefined) {
         entry.maxIterations = max;
       }
-      for (const [key, field] of [
-        ["onMaxIterations", "onMaxIterations"],
-        ["stopCondition", "stopCondition"],
-      ] as const) {
-        const v = str(o[key]);
-        if (v !== undefined) {
-          entry[field] = v;
-        }
+      const onMax = str(o["onMaxIterations"]);
+      if (onMax !== undefined) {
+        entry.onMaxIterations = onMax;
       }
       // `stopWhen` is the other spelling of a stop condition; the engine rejects a node declaring
       // both, so taking either into one field cannot lose one.
-      if (entry.stopCondition === undefined) {
-        const when = str(o["stopWhen"]);
-        if (when !== undefined) {
-          entry.stopCondition = when;
-        }
+      const stop = o["stopCondition"] ?? o["stopWhen"];
+      const full = stopPhrase(stop, false);
+      if (full !== undefined) {
+        entry.stopCondition = full;
+        entry.stopBrief = stopPhrase(stop, true) ?? full;
       }
       // KAS's nodePlan carries a watch's handler id in `agentName`.
       if (o["type"] === "watch") {
@@ -173,6 +211,20 @@ function kindOf(type: string): ExecKind {
   }
 }
 
+/** A repeat's pass budget as KAS's loop executor reads it, `extendedMaxIterations ??
+ *  maxIterations` (an extension stores the new total), and how many passes the extension added. */
+function passBudget(
+  node: RunNode,
+  plan: PlanEntry | undefined,
+): { max: number; added: number } | undefined {
+  const planned = plan?.maxIterations;
+  const max = node.extendedMaxIterations ?? planned;
+  if (max === undefined) {
+    return undefined;
+  }
+  return { max, added: planned === undefined ? 0 : Math.max(0, max - planned) };
+}
+
 /** The identity facts for a step, in the order they answer questions: who ran it, on what, how
  *  it ended, and what it took to get there. */
 function stepFacts(
@@ -205,7 +257,15 @@ function stepFacts(
   if (node.watchTerminal === true) {
     add("Watch", "reached a terminal state");
   }
-  add("Max passes", plan?.maxIterations === undefined ? undefined : String(plan.maxIterations));
+  const budget = passBudget(node, plan);
+  add(
+    "Max passes",
+    budget === undefined
+      ? undefined
+      : budget.added > 0
+        ? `${String(budget.max)} (${String(budget.max - budget.added)} planned, ${String(budget.added)} added)`
+        : String(budget.max),
+  );
   add("At the cap", plan?.onMaxIterations);
   add("Stops when", plan?.stopCondition, true);
   add("Handler", plan?.watch, true);
@@ -232,11 +292,10 @@ function subtitleOf(
 ): string {
   const bits: string[] = [];
   if (kind === "repeat") {
-    bits.push(
-      plan?.maxIterations === undefined ? "repeats" : `up to ${String(plan.maxIterations)} passes`,
-    );
-    if (plan?.stopCondition !== undefined) {
-      bits.push(`until ${truncate(plan.stopCondition, 60)}`);
+    const budget = passBudget(node, plan);
+    bits.push(budget === undefined ? "repeats" : passBudgetText(budget.max, budget.added));
+    if (plan?.stopBrief !== undefined) {
+      bits.push(`until ${truncate(plan.stopBrief, 60)}`);
     }
   } else if (kind === "parallel") {
     bits.push("in parallel");
@@ -391,7 +450,7 @@ function toNode(
     parent?.type === "repeat"
       ? (node.iteration ?? (parent.children ?? []).indexOf(node)) + 1
       : undefined;
-  const label = pass !== undefined && !work ? `pass ${String(pass)}` : node.nodeId;
+  const label = pass !== undefined && !work ? passText(pass) : node.nodeId;
   const out: ExecNode = { path: address, label, kind, state, children };
   // KAS prefixes every id inside an include with `<include id>/`; a hand-written id holding a `/`
   // is not one, so the prefix is matched against the include's id, never split out of the label.
@@ -410,8 +469,12 @@ function toNode(
   if (pass !== undefined) {
     out.pass = pass;
   }
-  if (kind === "repeat" && plan?.maxIterations !== undefined) {
-    out.maxPasses = plan.maxIterations;
+  const budget = kind === "repeat" ? passBudget(node, plan) : undefined;
+  if (budget !== undefined) {
+    out.maxPasses = budget.max;
+    if (budget.added > 0) {
+      out.addedPasses = budget.added;
+    }
   }
   if (node.startedAt !== undefined) {
     out.start = node.startedAt;
@@ -503,6 +566,14 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
     const detail = pauseDetailPhrase(state.pauseDetail);
     if (detail !== undefined) {
       bits.push(detail);
+    }
+    const cap = state.pause;
+    if (
+      cap?.kind === "maxIterations" &&
+      typeof cap.iterationsRun === "number" &&
+      typeof cap.maxIterations === "number"
+    ) {
+      bits.push(passCountText(cap.iterationsRun, cap.maxIterations));
     }
     return { kind: "paused", text: bits.join(" \u00b7 ") };
   }

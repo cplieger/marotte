@@ -629,6 +629,41 @@ describe("a render patches its rows rather than rebuilding them", () => {
     expect(after.clock).toBe(before.clock);
   });
 
+  it("repaints a row in place when only the loop pass moves", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("pass");
+    const pass = (n: number, code: string, review: string) => ({
+      nodeId: `loop#${String(n)}`,
+      type: "sequence",
+      status: code === "completed" && review === "completed" ? "completed" : "running",
+      iteration: n,
+      children: [
+        { nodeId: "code", type: "step", status: code, iteration: n },
+        { nodeId: "review", type: "step", status: review, iteration: n },
+      ],
+    });
+    const tree = (passes: unknown[]) => ({
+      root: {
+        nodeId: "r",
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "loop", type: "repeat", status: "running", children: passes }],
+      },
+    });
+    inspect.set(id, state(tree([pass(0, "running", "pending")])));
+    live(id, c);
+    await activate(c);
+    expect(rowText(".ev-sum-long")).toEqual(["pass 1 \u00b7 step 1 of 2"]);
+    const before = parts();
+
+    // The same totals, done count, position, state, label and alert: only the pass differs.
+    await advance(id, tree([pass(0, "completed", "completed"), pass(1, "running", "pending")]));
+
+    expect(rowText(".ev-sum-long")).toEqual(["pass 2 \u00b7 step 1 of 2"]);
+    expect(parts().row).toBe(before.row);
+  });
+
   it("keeps the keyboard's place on a row whose state changed", async () => {
     const c = chatID();
     chats.push(c);

@@ -46,6 +46,9 @@ export interface RunNode {
   startedAt?: string;
   endedAt?: string;
   iteration?: number;
+  /** On a repeat an extension grew: its new pass budget in total, replacing the plan's
+   *  `maxIterations`. */
+  extendedMaxIterations?: number;
   branchId?: string;
   children?: RunNode[];
   artifacts?: Record<string, string>;
@@ -78,6 +81,8 @@ export interface RunState {
   root?: RunNode;
   pauseReason?: string;
   pauseDetail?: { class?: string; code?: string; occurredAt?: string };
+  /** KAS's `state.pause`: which loop a cap pause stopped at, its budget and the passes it ran. */
+  pause?: { kind?: string; nodeId?: string; maxIterations?: number; iterationsRun?: number };
   stopInitiator?: string;
   stopReason?: string;
   /** A pause asked for that lands at the end of the current step. */

@@ -3,11 +3,19 @@
 // the keyboard up, the panel open and an ask showing.
 
 import { describe, it, expect, afterEach } from "vitest";
-import { page as browser } from "vitest/browser";
+import { page as browser, userEvent } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import type { ExecNode, ExecRun } from "./exec-view/model.js";
+import { buildExecSummary } from "./exec-view/summary.js";
+import {
+  STATE_WORD,
+  inFlight,
+  neverRan,
+  settled as ended,
+  type ExecState,
+} from "./exec-view/status.js";
 
 /** The app's chrome above a tab's view on a phone: the toolbar and the tab strip. */
 const CHROME_PX = 88;
@@ -67,7 +75,7 @@ function mountRunView(height: number): { runView: HTMLElement; byId: (id: string
   return { runView, byId };
 }
 
-function verbs(withField: boolean): HTMLElement {
+function verbs(withField: boolean, names?: readonly string[]): HTMLElement {
   const row = document.createElement("span");
   row.className = "run-controls";
   if (withField) {
@@ -75,7 +83,7 @@ function verbs(withField: boolean): HTMLElement {
     field.className = "tool-form-input run-extend-count";
     row.append(field);
   }
-  for (const name of ["Add iterations", "End this loop", "Cancel"].slice(withField ? 0 : 1)) {
+  for (const name of names ?? ["Add passes", "End this loop", "Cancel"].slice(withField ? 0 : 1)) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "icon-btn run-icon-btn";
@@ -146,6 +154,42 @@ describe("the run tab's layout", () => {
     }
   });
 
+  it("keeps a loop run's head to one line on a phone, the pass in its glyph form", async () => {
+    await browser.viewport(390, 844);
+    document.documentElement.setAttribute("data-pointer", "coarse");
+    style = mountAppCSS();
+    const { byId } = mountRunView(844);
+    const loop: ExecNode = {
+      path: "root/build-loop",
+      label: "build-loop",
+      kind: "repeat",
+      state: "running",
+      maxPasses: 8,
+      addedPasses: 5,
+      children: [
+        {
+          path: "root/build-loop/iter-6",
+          label: "pass 7",
+          kind: "sequence",
+          state: "running",
+          pass: 7,
+          children: fan(),
+        },
+      ],
+    };
+    mountPage(byId, verbs(false)).render({
+      label: "kiro-cli-2.31.0-contract-fixes-r2",
+      state: "running",
+      nodes: [loop],
+      live: true,
+    });
+    const head = byId("run-exec-dock").querySelector<HTMLElement>(".ev-dock-head")!;
+    expect(head.getBoundingClientRect().height).toBeLessThanOrEqual(80);
+    const short = head.querySelector<HTMLElement>(".ev-sum-short")!;
+    expect(getComputedStyle(short).display).not.toBe("none");
+    expect(short.textContent).toBe("7/8 \u00b7 1 of 4");
+  });
+
   it("keeps the composer on a phone with the keyboard up, the panel open and an ask showing", async () => {
     const vv = 464;
     await browser.viewport(390, 844);
@@ -168,7 +212,7 @@ describe("the run tab's layout", () => {
       live: true,
       alert: {
         kind: "paused",
-        text: "Waiting: review reached its 3-iteration limit · maxIterations",
+        text: "Waiting: Repeat 'review' reached maxIterations. · 3 of 3 passes",
       },
       notice: { text: "Plan revised: 2 steps queued after review · applied", failed: false },
     });
@@ -210,5 +254,205 @@ describe("the run tab's layout", () => {
     ask.classList.add("hidden");
     inside(byId("run-composer"), vv, "composer without the ask");
     expect(body.getBoundingClientRect().height, "the open panel's body").toBeGreaterThan(80);
+  });
+});
+
+/** A run's six steps as a run in `state` holds them, the clock at 22h 31m wherever one runs: in
+ *  flight, the 3rd and 4th steps carry the state; settled, every step does; not started, none has
+ *  begun. */
+function sixSteps(state: ExecState): ExecNode[] {
+  const span = (22 * 60 + 31) * 60_000 + 20_000;
+  const live = inFlight(state);
+  const t0 = live ? Date.now() - span : Date.parse("2026-10-07T00:00:00Z");
+  const each: ExecState[] = live
+    ? ["ok", "ok", state, state, "pending", "pending"]
+    : Array.from({ length: 6 }, () => state);
+  return each.map((s, i) => {
+    const node: ExecNode = {
+      path: `root/build-loop/iter-6/s${String(i)}`,
+      label: `s${String(i)}`,
+      kind: "step",
+      state: s,
+      children: [],
+    };
+    if (!neverRan(s)) {
+      node.start = new Date(t0 + i * 60_000).toISOString();
+    }
+    if (ended(s)) {
+      node.end = new Date(live ? t0 + (i + 1) * 60_000 : t0 + span - (5 - i) * 1000).toISOString();
+    }
+    return node;
+  });
+}
+
+function inLoop(steps: ExecNode[]): ExecNode[] {
+  return [
+    {
+      path: "root/build-loop",
+      label: "build-loop",
+      kind: "repeat",
+      state: "running",
+      maxPasses: 8,
+      addedPasses: 5,
+      children: [
+        {
+          path: "root/build-loop/iter-6",
+          label: "pass 7",
+          kind: "sequence",
+          state: "running",
+          pass: 7,
+          children: steps,
+        },
+      ],
+    },
+  ];
+}
+
+/** Every state a summary words at rest: an unanswered ask always arrives with its alert, which
+ *  takes the summary's place. */
+const REST_STATES = (Object.keys(STATE_WORD) as ExecState[]).filter((s) => s !== "input");
+
+/** The rightmost edge any rendered part of the summary paints to. */
+function contentRight(sum: Element): number {
+  return Math.max(
+    ...[...sum.querySelectorAll<HTMLElement>(":scope > *, .ev-sum-short > *")]
+      .filter(
+        (e) => getComputedStyle(e).position !== "absolute" && e.getBoundingClientRect().width > 1,
+      )
+      .map((e) => e.getBoundingClientRect().right),
+  );
+}
+
+/** Each text part shows whole: none ellipsed or cut by its box. The run bar's name is the one
+ *  part made to ellipse. */
+function unclipped(sum: Element, what: string): void {
+  for (const e of sum.querySelectorAll<HTMLElement>(
+    ".ev-sum-state, .ev-sum-short-text, .ev-sum-clock",
+  )) {
+    if (e.getBoundingClientRect().width > 1) {
+      expect(e.scrollWidth, `${what}: ${e.className} clipped`).toBeLessThanOrEqual(e.clientWidth);
+    }
+  }
+}
+
+describe("the run summary on a phone", () => {
+  for (const width of [360, 390]) {
+    it(`clears the dock's Pause and Cancel at ${String(width)}px, in a loop and out`, async () => {
+      await browser.viewport(width, 844);
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      style = mountAppCSS();
+      const { byId } = mountRunView(844);
+      const row = verbs(false, ["Pause", "Cancel"]);
+      const page = mountPage(byId, row);
+      const head = byId("run-exec-dock").querySelector<HTMLElement>(".ev-dock-head")!;
+      for (const looped of [true, false]) {
+        for (const state of REST_STATES) {
+          const what = `${looped ? "loop" : "plain"} ${state} at ${String(width)}`;
+          page.render({
+            label: "kiro-cli-2.31.0-contract-fixes-r2",
+            state,
+            nodes: looped ? inLoop(sixSteps(state)) : sixSteps(state),
+            live: inFlight(state),
+          });
+          const sum = head.querySelector(".ev-sum")!;
+          expect(sum.querySelector(".ev-sum-clock")?.textContent, what).toBe(
+            neverRan(state) ? "" : "22h 31m",
+          );
+          expect(contentRight(sum), what).toBeLessThanOrEqual(
+            row.getBoundingClientRect().left + 0.5,
+          );
+          unclipped(sum, what);
+          const tall = head.getBoundingClientRect().height;
+          expect(tall, what).toBeGreaterThanOrEqual(44);
+          expect(tall, what).toBeLessThanOrEqual(80);
+        }
+      }
+    });
+
+    it(`fits the chat's run bar row at ${String(width)}px, in a loop and out`, async () => {
+      await browser.viewport(width, 844);
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      style = mountAppCSS();
+      const start = indexHtml.indexOf('<div id="chat-view"');
+      const end = indexHtml.indexOf("<!-- Settings view", start);
+      expect(start, "#chat-view in index.html").toBeGreaterThan(-1);
+      frame = document.createElement("div");
+      frame.style.cssText = "display:flex;flex-direction:column;block-size:844px";
+      frame.innerHTML = indexHtml.slice(start, end);
+      document.body.prepend(frame);
+      const bar = frame.querySelector<HTMLElement>("#run-bar")!;
+      bar.classList.remove("hidden");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "run-bar-open";
+      const glyph = document.createElement("span");
+      glyph.className = "run-bar-glyph";
+      glyph.dataset["status"] = "working";
+      const summary = buildExecSummary({ washHost: btn, live: false });
+      btn.append(glyph, summary.root);
+      const li = document.createElement("li");
+      li.className = "run-bar-row";
+      li.append(btn);
+      bar.append(li);
+      for (const looped of [true, false]) {
+        for (const state of REST_STATES) {
+          const what = `${looped ? "loop" : "plain"} ${state} at ${String(width)}`;
+          summary.paint({
+            label: "kiro-cli-2.31.0-contract-fixes-r2",
+            state,
+            nodes: looped ? inLoop(sixSteps(state)) : sixSteps(state),
+            live: inFlight(state),
+          });
+          const box = btn.getBoundingClientRect();
+          const inner = box.right - parseFloat(getComputedStyle(btn).paddingInlineEnd);
+          expect(contentRight(summary.root), what).toBeLessThanOrEqual(inner + 0.5);
+          unclipped(summary.root, what);
+          expect(box.right, what).toBeLessThanOrEqual(width);
+        }
+      }
+    });
+  }
+
+  it("toggles the panel from a tap anywhere on the head row at 360px, the chevron's narrowed box included", async () => {
+    await browser.viewport(360, 844);
+    document.documentElement.setAttribute("data-pointer", "coarse");
+    style = mountAppCSS();
+    const { byId } = mountRunView(844);
+    mountPage(byId, verbs(false, ["Pause", "Cancel"])).render({
+      label: "nightly",
+      state: "running",
+      nodes: inLoop(sixSteps("running")),
+      live: true,
+    });
+    const dock = byId("run-exec-dock");
+    const head = dock.querySelector<HTMLElement>(".ev-dock-head")!;
+    const toggle = dock.querySelector<HTMLButtonElement>(".ev-box-toggle")!;
+    expect(toggle.getBoundingClientRect().width, "the chevron's box narrows").toBeLessThan(44);
+    expect(
+      head.getBoundingClientRect().height,
+      "the row keeps the floor's height",
+    ).toBeGreaterThanOrEqual(44);
+    expect(toggle.tabIndex).toBe(0);
+    expect(toggle.getAttribute("aria-label")).toBe("Run details");
+    // The chevron's centre, the head's own padding before it, and the gap after it that the
+    // floor's width used to cover. Read per tap: the head rises as the panel opens.
+    const points: [string, (b: DOMRect, r: DOMRect) => number][] = [
+      ["the chevron", (b) => b.left + b.width / 2],
+      ["the row's start", (_b, r) => r.left + 2],
+      ["past the chevron", (b) => b.right + 2],
+    ];
+    const region = dock.querySelector(".ev-dock-panel")!;
+    for (const [what, at] of points) {
+      for (const want of ["true", "false"]) {
+        const r = head.getBoundingClientRect();
+        const x = at(toggle.getBoundingClientRect(), r);
+        const y = r.top + r.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        expect(hit !== null && head.contains(hit), `${what} is on the head`).toBe(true);
+        await userEvent.click(head, { position: { x: x - r.left, y: y - r.top } });
+        expect(toggle.getAttribute("aria-expanded"), `a tap on ${what}`).toBe(want);
+        await Promise.all(region.getAnimations().map((a) => a.finished));
+      }
+    }
   });
 });

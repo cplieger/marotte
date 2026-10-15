@@ -6,15 +6,15 @@ import { el } from "@cplieger/reactive";
 import { reconcile } from "../reconcile.js";
 import { formatElapsed } from "../strings.js";
 import {
-  counters,
   currentWork,
-  progressText,
+  summaryProgress,
   window as execWindow,
   type ExecNode,
   type ExecRun,
 } from "./model.js";
 import { STATE_WORD } from "./status.js";
 import { buildAlertLine, wantsReader } from "./alert.js";
+import { kindGlyph } from "./tree.js";
 
 export interface ExecSummaryView {
   /** `.ev-sum`. */
@@ -39,7 +39,21 @@ interface SummaryOpts {
 export function buildExecSummary(opts: SummaryOpts): ExecSummaryView {
   const label = el("span", { className: "ev-sum-label" });
   const state = el("span", { className: "ev-sum-state" });
-  const progress = el("span", { className: "ev-sum-progress" });
+  // Two forms, the narrow container showing one (31-exec-view.css): the long one stays in the
+  // accessibility tree at every width, the glyph form never enters it.
+  const progressLong = el("span", { className: "ev-sum-long" });
+  const progressShort = el("span", { className: "ev-sum-short-text" });
+  const progress = el(
+    "span",
+    { className: "ev-sum-progress" },
+    progressLong,
+    el(
+      "span",
+      { className: "ev-sum-short", "aria-hidden": "true" },
+      kindGlyph("repeat"),
+      progressShort,
+    ),
+  );
   const mini = el("span", { className: "ev-mini", "aria-hidden": "true" });
   const clock = el("span", { className: "ev-sum-clock" });
   // A failure interrupts and anything else waits its turn: two live hosts that stay rendered (a
@@ -94,11 +108,14 @@ export function buildExecSummary(opts: SummaryOpts): ExecSummaryView {
       setText(label, run.label);
       const word = run.alert?.kind === "input" ? "needs input" : STATE_WORD[run.state];
       setText(state, word);
-      // Withheld for a one-step run: "step 1 of 1" cannot progress, and the state word says how it ended.
-      const steps = counters(run.nodes).total <= 1 ? "" : progressText(run.nodes);
-      setText(progress, steps);
+      const phrase = summaryProgress(run);
+      setText(progressLong, phrase.long);
+      setText(progressShort, phrase.short);
+      progress.toggleAttribute("data-loop", phrase.short !== "");
       const paintSeg = (seg: HTMLElement, n: ExecNode): void => {
-        seg.dataset["state"] = n.state;
+        if (seg.dataset["state"] !== n.state) {
+          seg.dataset["state"] = n.state;
+        }
         const tip = `${n.label}, ${STATE_WORD[n.state]}`;
         if (seg.getAttribute("data-tooltip") !== tip) {
           seg.setAttribute("data-tooltip", tip);
@@ -118,13 +135,14 @@ export function buildExecSummary(opts: SummaryOpts): ExecSummaryView {
       paintAlert(run);
       described = wantsReader(run.alert)
         ? `${run.label}: ${run.alert.text}`
-        : [run.label, word, steps].filter((s) => s !== "").join(", ");
+        : [run.label, word, phrase.pass, phrase.steps].filter((s) => s !== "").join(", ");
     },
     paintPending(name) {
       setText(label, name);
-      for (const part of [state, progress, clock]) {
+      for (const part of [state, progressLong, progressShort, clock]) {
         setText(part, "");
       }
+      progress.removeAttribute("data-loop");
       mini.replaceChildren();
       delete root.dataset["alerting"];
       delete opts.washHost.dataset["alert"];

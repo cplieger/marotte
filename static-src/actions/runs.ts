@@ -212,7 +212,7 @@ export const extendRunRepeat = apiAction<
   }),
   error: errorAbout(
     ({ workflowID }) => onRun(workflowID),
-    (_args, err) => serverSentence(err) ?? "Couldn't add iterations",
+    (_args, err) => serverSentence(err) ?? "Couldn't add passes",
   ),
   onSuccess: (_res, { workflowID }) => {
     rereadAfterVerb(workflowID);

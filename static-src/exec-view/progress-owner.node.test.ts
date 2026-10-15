@@ -1,5 +1,5 @@
-// One owner for the run's progress wording (`model.ts` `progressText`): a second "step N of M"
-// literal anywhere else is a copy that can drift.
+// One owner for the run's progress wording (`model.ts` `progressText`, `passText` and the pass
+// counts): a second "step N of M", "pass N" or "N passes" literal elsewhere is a copy that drifts.
 
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -21,10 +21,14 @@ function sources(dir: string): string[] {
 }
 
 describe("the run's progress wording", () => {
-  it("is spelled only in exec-view/model.ts", () => {
-    const spelled = sources(ROOT).filter((path) =>
-      /`step \$\{[^}`]*\} of /.test(readFileSync(path, "utf8")),
-    );
-    expect(spelled.map((p) => p.slice(ROOT.length + 1))).toEqual(["exec-view/model.ts"]);
-  });
+  for (const [what, literal] of [
+    ["step count", /`step \$\{[^}`]*\} of /],
+    ["loop pass", /`pass \$\{/],
+    ["pass count", /\$\{[^}`]*\} passes\b/],
+  ] as const) {
+    it(`spells the ${what} only in exec-view/model.ts`, () => {
+      const spelled = sources(ROOT).filter((path) => literal.test(readFileSync(path, "utf8")));
+      expect(spelled.map((p) => p.slice(ROOT.length + 1))).toEqual(["exec-view/model.ts"]);
+    });
+  }
 });

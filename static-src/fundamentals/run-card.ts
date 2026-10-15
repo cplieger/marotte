@@ -17,6 +17,7 @@ import {
   elapsed,
   isWork,
   latestPass,
+  passText,
   progressText,
   window as execWindow,
   type ExecKind,
@@ -118,12 +119,7 @@ function membersOf(n: ExecNode): readonly ExecNode[] {
 /** A container's one-line fact: a repeat's pass against its bound, else the adapter's summary. */
 function groupMeta(n: ExecNode): string {
   const pass = n.kind === "repeat" ? latestPass(n)?.pass : undefined;
-  if (pass === undefined) {
-    return n.subtitle ?? "";
-  }
-  return n.maxPasses === undefined
-    ? `pass ${String(pass)}`
-    : `pass ${String(pass)} of ${String(n.maxPasses)}`;
+  return pass === undefined ? (n.subtitle ?? "") : passText(pass, n.maxPasses);
 }
 
 /** The card's disclosure bookkeeping, delegated because the registry's keys are not known here.
@@ -528,7 +524,7 @@ export function buildRunCard(
     // ask blocks it, so `data-status` keeps the status and this says what is wanted.
     const word = asks.count > 0 ? "needs input" : runWord(state?.status);
 
-    countEl.textContent = progressText(lastNodes);
+    countEl.textContent = exec === undefined ? "" : progressText(exec);
 
     liveClock = runIsLive(state);
 

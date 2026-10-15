@@ -988,6 +988,23 @@ describe("the card shows the run's structure, and only steps and watches as work
     ).toBe("pass 2 of 3");
   });
 
+  it("counts an extended loop's passes against the extended budget", () => {
+    const c = card();
+    const s = liveLoop();
+    const loop = s.root?.children?.[0];
+    const pass = loop?.children?.[0];
+    if (loop === undefined || pass === undefined) {
+      throw new Error("fixture lost its loop");
+    }
+    loop.extendedMaxIterations = 8;
+    pass.nodeId = "build-loop#6";
+    pass.iteration = 6;
+    c.render(s, NO_ASKS, { plan: PLAN });
+    expect(
+      c.root.querySelector('.run-group[data-kind="repeat"] .run-group-meta')?.textContent,
+    ).toBe("pass 7 of 8");
+  });
+
   // A re-insert of an attached node drops its focus and restarts its animation, so a row that
   // survives a render must never move while a departed sibling still sits ahead of it.
   it("keeps a surviving row seated, and focused, when an earlier sibling leaves", () => {
@@ -1118,7 +1135,7 @@ describe("the card shows the run's structure, and only steps and watches as work
   it("counts the steps a reader sees, in the head and the foot alike", () => {
     const c = card();
     c.render(liveLoop(), NO_ASKS, { plan: PLAN });
-    expect(c.root.querySelector(".run-count")?.textContent).toBe("step 1 of 4");
+    expect(c.root.querySelector(".run-count")?.textContent).toBe("pass 1 of 3 \u00b7 step 1 of 4");
     expect(ledger(c.root)).toMatch(/^4 steps \u00b7 running \u00b7 2m/);
   });
 

@@ -80,16 +80,16 @@ describe("the run's controls row", () => {
     expect(m.dispatched).toEqual(["pause:wf", "resume:wf", "cancel:wf"]);
   });
 
-  it("gives a loop at its limit a count field, Add iterations and End this loop", () => {
+  it("gives a loop at its limit a count field, Add passes and End this loop", () => {
     m.answer = {
       verbs: ["extend", "finish_loop", "cancel"],
       pause_node_id: "loop-1",
       parent_chat_id: "",
     };
     const row = buildRunControlsView("wf").current();
-    expect(names(row)).toEqual(["Add iterations", "End this loop", "Cancel"]);
+    expect(names(row)).toEqual(["Add passes", "End this loop", "Cancel"]);
     const count = row?.querySelector<HTMLInputElement>(".run-extend-count");
-    expect(count?.getAttribute("aria-label")).toBe("Iterations to add");
+    expect(count?.getAttribute("aria-label")).toBe("Passes to add");
     count!.value = "7";
     for (const btn of row?.querySelectorAll("button") ?? []) {
       btn.click();

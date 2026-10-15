@@ -3,7 +3,8 @@
 import { describe, it, expect } from "vitest";
 import { runToExec, indexPlan } from "./run-exec-source.js";
 import { nodePathKey } from "./run-node-key.js";
-import { flatten, workNodes, counters } from "./exec-view/model.js";
+import { flatten, workNodes, counters, type ExecNode } from "./exec-view/model.js";
+import extendedLoopRaw from "./testdata/run-extended-loop.json?raw";
 import { makeRunState } from "./__test-helpers__/model.js";
 import type { RunNode, RunState } from "./run-store.js";
 import type { RunAsks } from "./run-asks.js";
@@ -1135,5 +1136,223 @@ describe("runToExec shows where an included group came from", () => {
 
   it("says a parallel runs in parallel and no more, since KAS's plan names no join", () => {
     expect(byLabel(fold(plan), "review/seats").subtitle).toBe("in parallel");
+  });
+});
+
+// KAS's loop executor reads `extendedMaxIterations ?? maxIterations`, and an extension stores the
+// new total on the repeat's state node (`testdata/run-extended-loop.json`, a run extended from 3
+// passes to 8 that ran 7).
+describe("runToExec reads a loop's budget as the engine does", () => {
+  const extended = JSON.parse(extendedLoopRaw) as { state: unknown; nodePlan: unknown };
+
+  function fold(edit: (loop: Record<string, unknown>) => void = () => undefined): ExecNode {
+    const state = structuredClone(extended.state) as RunState;
+    const loop = state.root?.children?.find((n) => n.nodeId === "build-loop");
+    if (loop === undefined) {
+      throw new Error("the fixture lost its loop");
+    }
+    edit(loop as unknown as Record<string, unknown>);
+    const node = runToExec(state, extended.nodePlan, NO_ASKS).nodes.find(
+      (n) => n.label === "build-loop",
+    );
+    if (node === undefined) {
+      throw new Error("no build-loop node");
+    }
+    return node;
+  }
+
+  const fact = (n: ExecNode, label: string): string | undefined =>
+    n.facts?.find((f) => f.label === label)?.value;
+
+  it("takes an extension's total as the budget and states what it added", () => {
+    const loop = fold();
+    expect([loop.maxPasses, loop.addedPasses]).toEqual([8, 5]);
+    expect(loop.subtitle).toBe(
+      "up to 8 passes (5 added) \u00b7 until gate.json verdict is APPROVED",
+    );
+    expect(fact(loop, "Max passes")).toBe("8 (3 planned, 5 added)");
+    expect(fact(loop, "Stops when")).toBe(
+      "/repo/.agents/tasks/build/gate.json verdict is APPROVED",
+    );
+  });
+
+  it("keeps the plan's bound with no extension", () => {
+    const loop = fold((l) => {
+      delete l["extendedMaxIterations"];
+    });
+    expect([loop.maxPasses, loop.addedPasses]).toEqual([3, undefined]);
+    expect(loop.subtitle).toBe("up to 3 passes \u00b7 until gate.json verdict is APPROVED");
+    expect(fact(loop, "Max passes")).toBe("3");
+  });
+});
+
+describe("runToExec words a stop condition in KAS's object form", () => {
+  const subtitle = (stopCondition: unknown): string | undefined =>
+    runToExec(
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "loop", type: "repeat", status: "running", children: [] }],
+      }),
+      [{ nodeId: "loop", type: "repeat", stopCondition, steps: [{ nodeId: "w", type: "step" }] }],
+      NO_ASKS,
+    ).nodes[0]?.subtitle;
+
+  it("names each part it sets", () => {
+    expect(subtitle({ containsText: "PASS" })).toBe('repeats \u00b7 until output contains "PASS"');
+    expect(subtitle({ completionSignal: "success" })).toBe(
+      "repeats \u00b7 until the step signals success",
+    );
+    expect(subtitle({ fileCheck: { path: "/t/done.json", jsonPath: "done", value: true } })).toBe(
+      "repeats \u00b7 until done.json done is true",
+    );
+    expect(subtitle({ fileCheck: { path: "/t/v.json", value: ["A", "B"] } })).toBe(
+      "repeats \u00b7 until v.json is one of A, B",
+    );
+  });
+
+  it("says nothing of a shape it cannot read", () => {
+    expect(subtitle({ fileCheck: { jsonPath: "done", value: true } })).toBe("repeats");
+    expect(subtitle(42)).toBe("repeats");
+  });
+});
+
+// KAS names the loop a cap pause stopped at in `state.pause` (`{kind: "maxIterations", nodeId,
+// maxIterations, iterationsRun}`), and `pauseReason` is its sentence.
+describe("the alert of a run paused at a loop's cap", () => {
+  const pass = (n: number, status: string, children?: unknown[]) => ({
+    nodeId: `loop#${String(n)}`,
+    type: "sequence",
+    status,
+    iteration: n,
+    children: children ?? [
+      step("code", status),
+      step("review", status === "running" ? "paused" : status),
+    ],
+  });
+  const loop = (status: string, passes: unknown[], nodeId = "loop") => ({
+    nodeId,
+    type: "repeat",
+    status,
+    children: passes,
+  });
+  const capPause = (nodeId: string, max: number, ran = max) => ({
+    kind: "maxIterations",
+    nodeId,
+    maxIterations: max,
+    iterationsRun: ran,
+  });
+  const PLAN = [
+    {
+      nodeId: "loop",
+      type: "repeat",
+      maxIterations: 3,
+      onMaxIterations: "pause",
+      steps: [{ nodeId: "code", type: "step" }],
+    },
+  ];
+  const alertFor = (
+    children: unknown[],
+    pause: Record<string, unknown>,
+    plan: unknown = PLAN,
+  ): string | undefined =>
+    runToExec(
+      stateWith(
+        { nodeId: "wf_1", type: "sequence", status: "paused", children },
+        { status: "paused", ...pause },
+      ),
+      plan,
+      NO_ASKS,
+    ).alert?.text;
+  const spent = [pass(0, "completed"), pass(1, "completed"), pass(2, "completed")];
+
+  it("keeps the pass count beside KAS's sentence", () => {
+    expect(
+      alertFor([loop("paused", spent), step("land", "pending")], {
+        pauseReason: "Repeat 'loop' reached maxIterations.",
+        pause: capPause("loop", 3),
+      }),
+    ).toBe("Waiting: Repeat 'loop' reached maxIterations. \u00b7 3 of 3 passes");
+  });
+
+  it("counts an extended budget as KAS ran it", () => {
+    const passes = Array.from({ length: 8 }, (_, i) => pass(i, "completed"));
+    expect(
+      alertFor([loop("paused", passes), step("land", "pending")], {
+        pauseReason: "Repeat 'loop' reached maxIterations.",
+        pause: capPause("loop", 8),
+      }),
+    ).toBe("Waiting: Repeat 'loop' reached maxIterations. \u00b7 8 of 8 passes");
+  });
+
+  it("counts nothing for a pause inside a pass", () => {
+    const passes = [pass(0, "completed"), pass(1, "completed"), pass(2, "running")];
+    expect(
+      alertFor([loop("paused", passes), step("land", "pending")], {
+        pauseReason: "Interrupted by agent restart",
+      }),
+    ).toBe("Waiting: Interrupted by agent restart");
+  });
+
+  it("counts nothing for a pause of another kind", () => {
+    expect(
+      alertFor([loop("paused", spent), step("land", "pending")], {
+        pauseReason: "Waiting on a step",
+        pause: { ...capPause("loop", 3), kind: "stepInput" },
+      }),
+    ).toBe("Waiting: Waiting on a step");
+  });
+
+  it("counts nothing for a pause after a loop that stopped on its last pass", () => {
+    expect(
+      alertFor([loop("completed", spent), step("land", "paused")], {
+        pauseReason: "Step 'land' failed: exit 1",
+      }),
+    ).toBe("Waiting: Step 'land' failed: exit 1");
+  });
+
+  it("counts nothing for a pause after a loop whose cap outcome was continue", () => {
+    const plan = [{ ...PLAN[0], onMaxIterations: "continue" }];
+    expect(
+      alertFor(
+        [loop("completed", spent), step("land", "paused")],
+        { pauseReason: "Interrupted by agent restart" },
+        plan,
+      ),
+    ).toBe("Waiting: Interrupted by agent restart");
+  });
+
+  it("counts the loop KAS paused, not a nested one that spent its own budget", () => {
+    const inner = loop("completed", spent, "inner");
+    const outer = loop(
+      "paused",
+      [pass(0, "completed", [inner]), pass(1, "completed", [structuredClone(inner)])],
+      "outer",
+    );
+    const plan = [
+      {
+        nodeId: "outer",
+        type: "repeat",
+        maxIterations: 2,
+        onMaxIterations: "pause",
+        steps: [
+          {
+            nodeId: "inner",
+            type: "repeat",
+            maxIterations: 3,
+            onMaxIterations: "continue",
+            steps: [{ nodeId: "code", type: "step" }],
+          },
+        ],
+      },
+    ];
+    expect(
+      alertFor(
+        [outer, step("land", "pending")],
+        { pauseReason: "Repeat 'outer' reached maxIterations.", pause: capPause("outer", 2) },
+        plan,
+      ),
+    ).toBe("Waiting: Repeat 'outer' reached maxIterations. \u00b7 2 of 2 passes");
   });
 });
