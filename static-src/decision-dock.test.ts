@@ -6,7 +6,6 @@
 import { vi, describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { userEvent } from "vitest/browser";
 import { join } from "@cplieger/keyenc";
-import { batch } from "@cplieger/reactive";
 
 // The store is real: the chat-switch trigger is an effect over the real `activeSession` computed.
 vi.mock("./editor-openers.js", () => ({
@@ -42,7 +41,6 @@ import {
   type AnswerOutcome,
 } from "./decision-dock.js";
 import { BUS_USER_INPUT_ANSWERED, onBus } from "./bus.js";
-import { RUN_INPUT_FALLBACK } from "./dock-ask.js";
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import { clampObservationCount } from "./clamp-text.js";
 // Read directly (`loadCSS` globs `*.css`; MANIFEST has no extension): its file order is a cascade fact for the
@@ -52,7 +50,6 @@ import { setSessions, setActive } from "./store.js";
 import type { PermissionNeededPayload, Session } from "./types.js";
 import type { PermissionAnswer } from "./permission.js";
 import { _resetRunAsksForTest, applyRunAsks } from "./run-asks.js";
-import { _resetRunAskDraftsForTest } from "./run-input.js";
 import type { RunAsk, RunAsksPayload } from "./wire/types.gen.js";
 
 function stepAsk(over: Partial<RunAsk> = {}): RunAsk {
@@ -173,10 +170,6 @@ function liveCards(h: HTMLElement = host()): HTMLElement[] {
   return [...h.querySelectorAll<HTMLElement>(":scope > .dock-card")];
 }
 
-function askRows(h: HTMLElement = host()): HTMLElement[] {
-  return [...h.querySelectorAll<HTMLElement>(":scope > .dock-ask-rows > .dock-ask-row")];
-}
-
 function liveCard(h: HTMLElement = host()): HTMLElement | null {
   return h.querySelector<HTMLElement>(":scope > .dock-card");
 }
@@ -208,7 +201,6 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   _resetForTest();
   _resetRunAsksForTest();
-  _resetRunAskDraftsForTest();
   mockToastInfo.mockClear();
   document.body.innerHTML = `<div id="decision-dock" class="hidden"></div>`;
   setSessions([session("c1"), session("c2")]);
@@ -620,8 +612,8 @@ describe("the run tab's dock", () => {
   });
 });
 
-// A workflow step's question is never queued: the dock derives its cards from the run-asks store on every render, so a
-// card exists exactly while the server's newest snapshot holds the ask, whoever answered it.
+// A workflow step's question takes no card in any dock: kiro-cli hands it to the launching agent, and the run tab's
+// composer answers it. The run-asks store still says the run waits, which its run card and dots read.
 
 describe("a workflow step's question", () => {
   function mountRunHost(run: () => string): HTMLElement {
@@ -633,176 +625,49 @@ describe("a workflow step's question", () => {
     return el;
   }
 
-  function textarea(h: HTMLElement = host()): HTMLTextAreaElement | null {
-    return liveCard(h)?.querySelector<HTMLTextAreaElement>(".dock-ask-text") ?? null;
-  }
-
-  it("renders in the PARENT TAB, keyed to the launching chat", () => {
-    snapshot("c1", [stepAsk()]);
-    expect(host().classList.contains("hidden")).toBe(false);
-    expect(liveCard()?.classList.contains("dock-run-input")).toBe(true);
-    expect(liveCard()?.textContent).toContain("Ship it?");
-    expect(liveCard()?.textContent).toContain("reviewer \u00b7 step review");
+  const reParked = stepAsk({
+    ask_id: "ask:8",
+    node_id: "build",
+    node_path: ["wf_1", "build"],
+    step_session_id: "sess-2",
+    text: "Build it?",
+    text_source: "last_message",
   });
 
-  it("takes no card on the run tab, where the run composer answers it", () => {
-    const runHost = mountRunHost(() => "wf_1");
-    snapshot("run:wf_1", [stepAsk()]);
+  it("draws no card in the launching chat, whether the step asked or re-parked on plain text", () => {
+    snapshot("c1", [stepAsk(), reParked]);
+    settleMotion();
     expect(host().classList.contains("hidden")).toBe(true);
+    expect(host().children.length).toBe(0);
+    expect(runPendingAsks("wf_1").count).toBe(2);
+  });
+
+  it("draws no card on the run tab's dock, where the run composer answers it", () => {
+    const runHost = mountRunHost(() => "wf_1");
+    snapshot("c1", [stepAsk()]);
     expect(runHost.classList.contains("hidden")).toBe(true);
     expect(runPendingAsks("wf_1").count).toBe(1);
   });
 
-  // The reported bug: the question was answered through the launching chat (the parent agent's send_message after a
-  // defer) and the card stayed. Nothing on this side settles an ask; the server's next snapshot no longer holds it.
-  it("leaves every surface once the run's snapshot no longer holds the ask, however it was answered", () => {
+  it("does not mark the launching chat as holding a decision", () => {
     snapshot("c1", [stepAsk()]);
-    expect(hasPendingDecision("c1")).toBe(true);
-    snapshot("c1", []);
-    settleMotion();
-    expect(host().classList.contains("hidden")).toBe(true);
-    expect(runPendingAsks("wf_1").count).toBe(0);
     expect(hasPendingDecision("c1")).toBe(false);
   });
 
-  it("leaves when a sibling's ask stays and its own goes", () => {
-    snapshot("c1", [
-      stepAsk(),
-      stepAsk({
-        ask_id: "ask:8",
-        node_id: "build",
-        node_path: ["wf_1", "build"],
-        step_session_id: "sess-2",
-        text: "Build it?",
-      }),
-    ]);
+  it("leaves a permission card from the same run alone, and is not counted behind it", () => {
+    snapshot("c1", [stepAsk(), reParked]);
+    pushDecision({
+      kind: "permission",
+      chatID: "c1",
+      runID: "wf_1",
+      requestID: 3,
+      payload: perm({ request_id: 3, node_id: "build" }),
+      submit: vi.fn(),
+    });
+    expect(liveCards().length).toBe(1);
+    expect(liveCard()?.classList.contains("dock-permission")).toBe(true);
     expect(liveDepth()?.classList.contains("hidden")).toBe(true);
-    expect(askRows().map((r) => r.querySelector(".dock-ask-row-text")?.textContent)).toEqual([
-      "Build it?",
-    ]);
-    snapshot("c1", [
-      stepAsk({
-        ask_id: "ask:8",
-        node_id: "build",
-        node_path: ["wf_1", "build"],
-        step_session_id: "sess-2",
-        text: "Build it?",
-      }),
-    ]);
-    settleMotion();
-    expect(liveCard()?.textContent).toContain("Build it?");
-    expect(liveDepth()?.classList.contains("hidden")).toBe(true);
-  });
-
-  it("lists every other waiting step as a row whose Answer brings its card forward, open", () => {
-    const build = stepAsk({
-      ask_id: "ask:8",
-      node_id: "build",
-      node_path: ["wf_1", "build"],
-      step_session_id: "sess-2",
-      text: "Build it?",
-    });
-    snapshot("c1", [stepAsk(), build]);
-    settleMotion();
-    const [row] = askRows();
-    expect(row?.querySelector(".dock-ask-row-who")?.textContent).toContain("step build");
-    const open = row?.querySelector<HTMLButtonElement>("button");
-    expect(open?.getAttribute("aria-label")).toMatch(/^Answer .*step build$/);
-    open?.click();
-    settleMotion();
-    expect(liveCard()?.textContent).toContain("Build it?");
-    expect(liveCard()?.hasAttribute("data-open")).toBe(true);
-    expect(document.activeElement).toBe(textarea());
-    expect(askRows().map((r) => r.querySelector(".dock-ask-row-text")?.textContent)).toEqual([
-      "Ship it?",
-    ]);
-    // The pick holds while both still wait, whatever the store's order.
-    snapshot("c1", [stepAsk(), build]);
-    expect(liveCard()?.textContent).toContain("Build it?");
-  });
-
-  it("opens only the card a row's Answer picked, never the next one to come forward", () => {
-    const build = stepAsk({
-      ask_id: "ask:8",
-      node_id: "build",
-      node_path: ["wf_1", "build"],
-      step_session_id: "sess-2",
-      text: "Build it?",
-    });
-    snapshot("c1", [stepAsk(), build]);
-    settleMotion();
-    const open = askRows()[0]?.querySelector<HTMLButtonElement>("button");
-    // In one batch: the picked step is answered elsewhere as its row's Answer is pressed.
-    batch(() => {
-      open?.click();
-      snapshot("c1", [stepAsk()]);
-    });
-    settleMotion();
-    expect(liveCard()?.textContent).toContain("Ship it?");
-    snapshot("c1", [stepAsk({ ask_id: "ask:9", text: "Deploy it?" })]);
-    settleMotion();
-    expect(liveCard()?.textContent).toContain("Deploy it?");
-    expect(liveCard()?.hasAttribute("data-open")).toBe(false);
-  });
-
-  it("keeps a card marotte could not re-read, so an unreadable host is never an answer", () => {
-    snapshot("c1", [stepAsk()]);
-    snapshot("c1", [stepAsk()], { reachable: false });
-    expect(liveCard()?.textContent).toContain("marotte could not read this run just now.");
-  });
-
-  it("re-states a blocker in place, keeping the card, its typing and its phase", () => {
-    snapshot("c1", [stepAsk()]);
-    settleMotion();
-    const card = liveCard();
-    const box = textarea();
-    if (box !== null) {
-      box.value = "half an answer";
-    }
-    snapshot("c1", [stepAsk({ blocked: "settling" })]);
-    expect(liveCard()).toBe(card);
-    expect(textarea()?.value).toBe("half an answer");
-    expect(host().dataset["dockPhase"]).toBeUndefined();
-    const send = [...(card?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
-      (b) => b.textContent === "Send answer",
-    );
-    expect(send?.disabled).toBe(true);
-  });
-
-  it("rebuilds the card when the step asks again under a new id", () => {
-    snapshot("c1", [stepAsk()]);
-    const card = liveCard();
-    snapshot("c1", [stepAsk({ ask_id: "ask:9", text: "Ship it now?" })]);
-    expect(liveCard()).not.toBe(card);
-    expect(liveCard()?.textContent).toContain("Ship it now?");
-  });
-
-  it("rebuilds the card when the same ask gains kiro-cli's reason", () => {
-    snapshot("c1", [stepAsk({ text_source: "last_message" })]);
-    const card = liveCard();
-    snapshot("c1", [
-      stepAsk({ text_source: "last_message", reason: "Step 'review' is awaiting user input." }),
-    ]);
-    expect(liveCard()).not.toBe(card);
-    expect(liveCard()?.querySelector(".run-input-reason")?.textContent).toBe(
-      "Step 'review' is awaiting user input.",
-    );
-  });
-
-  it("puts the chat's request decisions ahead of its step questions", () => {
-    snapshot("c1", [stepAsk()]);
-    pushPerm("c1", 3);
-    expect(liveCard()?.classList.contains("dock-run-input")).toBe(false);
-    expect(liveDepth()?.textContent).toBe("1 more waiting");
-  });
-
-  it("survives a switch away from the parent tab and back", () => {
-    snapshot("c1", [stepAsk()]);
-    setActive("c2");
-    settleMotion();
-    expect(host().classList.contains("hidden")).toBe(true);
-    setActive("c1");
-    expect(liveCard()?.classList.contains("dock-run-input")).toBe(true);
+    expect(hasPendingDecision("c1")).toBe(true);
   });
 
   describe("runPendingAsks", () => {
@@ -830,9 +695,9 @@ describe("a workflow step's question", () => {
       expect(a.label).toBe("Ship it?");
     });
 
-    it("labels a question with no text with the shared fallback", () => {
+    it("labels a question with no text with the fallback", () => {
       snapshot("run:wf_1", [stepAsk({ text: "", text_source: "unseen" })]);
-      expect(runPendingAsks("wf_1").label).toBe(RUN_INPUT_FALLBACK);
+      expect(runPendingAsks("wf_1").label).toBe("A step is waiting for an answer");
     });
 
     it("ignores another run's questions", () => {
@@ -840,14 +705,12 @@ describe("a workflow step's question", () => {
       expect(runPendingAsks("wf_1").count).toBe(0);
       expect(runPendingAsks("").count).toBe(0);
     });
-  });
 
-  it("marks only the launching chat as holding a decision", () => {
-    snapshot("c1", [stepAsk()]);
-    expect(hasPendingDecision("c1")).toBe(true);
-    expect(hasPendingDecision("c2")).toBe(false);
-    snapshot("c1", [], { reachable: false });
-    expect(hasPendingDecision("c1")).toBe(false);
+    it("drops the question once the run's snapshot no longer holds it, however it was answered", () => {
+      snapshot("c1", [stepAsk()]);
+      snapshot("c1", []);
+      expect(runPendingAsks("wf_1").count).toBe(0);
+    });
   });
 
   it("is left alone by the run's request sweep, which the server's final snapshot ends", () => {
@@ -1544,8 +1407,19 @@ const OPTIONS = Array.from({ length: 10 }, (_, i) => ({
   description: "Keeps that surface's wording and rewrites the other two to match it.",
 }));
 
+/** The agent's own prose question, the card the clamp and the ceiling serve. */
+function proseAsk(chatID: string, question: string): void {
+  pushDecision({
+    kind: "user_input",
+    chatID,
+    requestID: 40,
+    payload: { request_id: 40, question },
+    submit: vi.fn(),
+  });
+}
+
 function longAsk(chatID: string): void {
-  snapshot(chatID, [stepAsk({ text: LONG_QUESTION })], { workflow_id: "wf_long" });
+  proseAsk(chatID, LONG_QUESTION);
 }
 
 function question(h: HTMLElement = host()): HTMLElement | null {
@@ -1574,7 +1448,7 @@ describe("a question longer than the card", () => {
   });
 
   it("leaves a SHORT question unclamped, so the opener is not permanent furniture", () => {
-    snapshot("c1", [stepAsk()]);
+    proseAsk("c1", "Ship it?");
     expect(opener()?.hidden).toBe(true);
   });
 
@@ -1585,7 +1459,7 @@ describe("a question longer than the card", () => {
     longAsk("c1");
     expect(clampObservationCount()).toBeGreaterThan(before);
 
-    snapshot("c1", [], { workflow_id: "wf_long" });
+    dropDecisions("c1");
     settleMotion();
     expect(clampObservationCount()).toBe(before);
   });

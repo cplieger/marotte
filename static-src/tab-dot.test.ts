@@ -270,7 +270,7 @@ vi.mock("./device-view.js", () => {
     setActiveView: vi.fn((id: string) => {
       active = id;
     }),
-    // pointer-tier.ts's imports, reached through the run-input card. Inert here.
+    // pointer-tier.ts's imports, which the module graph reaches. Inert here.
     cachePointerTier: undefined,
     cachedPointerTier: undefined,
     coarseEverSeen: undefined,
@@ -1856,9 +1856,10 @@ describe("an abandoned ask does not keep a chat in input", () => {
   });
 });
 
-// 9. A chat-parented run's ask is filed under the LAUNCHING chat, so `input` lands on the parent's
-// dot, while the run sub-tab reads `runPendingAsks`; every case asserts BOTH surfaces. The state
-// to return to is `done` (the launching turn ended long before the run).
+// 9. A chat-parented run's request decision is filed under the LAUNCHING chat, so `input` lands on
+// the parent's dot, while the run sub-tab reads `runPendingAsks`; every case asserts BOTH surfaces.
+// A step's question is the run's alone: the parent's dot never reads it. The state to return to is
+// `done` (the launching turn ended long before the run).
 
 describe("a run's wait ending releases the launching chat's dot", () => {
   const PARENT = "c-parent";
@@ -1939,19 +1940,18 @@ describe("a run's wait ending releases the launching chat's dot", () => {
     setSessions([settledChat(PARENT)]);
   });
 
-  // The sub-tab answers through its composer (run-composer.ts), so its dock draws no card; the
-  // parent tab's card is the one shown, and the server's next snapshot is what retires it, whichever
-  // surface answered.
-  it("clears the parent once the server's snapshot no longer holds the step's question", async () => {
+  // Neither dock draws a card for a step's question: the sub-tab answers it through its composer
+  // (run-composer.ts), and the parent chat's agent gets it from kiro-cli. Only the run's count moves.
+  it("leaves the parent's dot alone while a step waits, and draws no card in either dock", async () => {
     const { hasPendingDecision, runPendingAsks } = await import("./decision-dock.js");
     const runHost = await mountRunHost();
     const chatHost = await mountChatHost();
     await snapshot(RUN, ["ask-1"]);
 
-    expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
+    expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("done");
     expect(runPendingAsks(RUN).count).toBe(1);
     expect(runHost.querySelector(":scope > .dock-card")).toBeNull();
-    expect(chatHost.querySelector(":scope > .dock-card")).not.toBeNull();
+    expect(chatHost.querySelector(":scope > .dock-card")).toBeNull();
 
     await snapshot(RUN, []);
 
@@ -1959,16 +1959,15 @@ describe("a run's wait ending releases the launching chat's dot", () => {
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("done");
   });
 
-  it("clears the parent when a reconnect's pending set no longer names the run", async () => {
-    const { hasPendingDecision, runPendingAsks } = await import("./decision-dock.js");
+  it("drops the run's wait when a reconnect's pending set no longer names the run", async () => {
+    const { runPendingAsks } = await import("./decision-dock.js");
     const { dropAllRunAsks } = await import("./run-asks.js");
     await snapshot(RUN, ["ask-1"]);
-    expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
+    expect(runPendingAsks(RUN).count).toBe(1);
 
     dropAllRunAsks();
 
     expect(runPendingAsks(RUN).count).toBe(0);
-    expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("done");
   });
 
   it("clears a step's user-input question when the run ends", async () => {
@@ -1999,7 +1998,7 @@ describe("a run's wait ending releases the launching chat's dot", () => {
   });
 
   it("leaves a SIBLING run's question alone when one of the two stops waiting", async () => {
-    const { hasPendingDecision, runPendingAsks } = await import("./decision-dock.js");
+    const { runPendingAsks } = await import("./decision-dock.js");
     await snapshot(RUN, ["ask-1"]);
     await snapshot("wf-2", ["ask-2"]);
 
@@ -2007,7 +2006,6 @@ describe("a run's wait ending releases the launching chat's dot", () => {
 
     expect(runPendingAsks(RUN).count).toBe(0);
     expect(runPendingAsks("wf-2").count).toBe(1);
-    expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
   });
 
   // A step question whose `run_id` arrived EMPTY holds the parent amber. Not a red check: it guards

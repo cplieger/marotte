@@ -284,7 +284,7 @@ describe("run view composer target", () => {
       refreshRun(tab);
       await vi.waitFor(() => {
         expect(document.querySelector(".ev-alert-text")?.textContent).toBe(
-          "Waiting for your answer: Which colour?",
+          "Waiting for answer: Which colour?",
         );
       });
       // Still running: words would steer it, so an Answer here could only say nothing waits.

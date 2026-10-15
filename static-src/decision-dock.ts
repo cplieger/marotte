@@ -7,18 +7,9 @@ import { activeSession } from "./store.js";
 import { BUS_USER_INPUT_ANSWERED, emitBus } from "./bus.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { forceReflow } from "./dom.js";
-import { RUN_INPUT_FALLBACK } from "./dock-ask.js";
 import { buildPermissionCard, type PermissionAnswer } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
 import { buildUserInputCard } from "./user-input.js";
-import {
-  buildRunAskCard,
-  openRunAskCard,
-  updateRunAskCard,
-  type RunAskCardInput,
-} from "./run-input.js";
-import { reconcile } from "./reconcile.js";
-import { runLabelOf } from "./run-store.js";
 import { info } from "./toast.js";
 import { named, noticeSubject } from "./notice-subject.js";
 import { join } from "@cplieger/keyenc";
@@ -64,25 +55,10 @@ interface UserInputDecision {
   submit: (action: "answered" | "dismissed", answer?: string) => Promise<AnswerOutcome>;
 }
 
-/**
- * A workflow step's question, never queued: derived on every render from the run-asks store, which alone says whether
- * the step still waits, so the card leaves exactly when the store drops the ask.
- */
-interface RunInputDecision {
-  kind: "run_input";
-  /** The run's envelope chat: the launching chat, else `run:<workflowId>`. */
-  chatID: string;
-  runID: string;
-  ask: RunAsk;
-  reachable: boolean;
-}
-
-/** What a dock renders; the per-kind shapes are this module's business. */
-type Decision = PermissionDecision | ElicitationDecision | UserInputDecision | RunInputDecision;
-
-/** The three request-shaped kinds (an open JSON-RPC request with an int64 id), the ones the queue holds and
- *  `decision_settled` can name. */
-type RequestDecision = PermissionDecision | ElicitationDecision | UserInputDecision;
+/** What a dock renders: an open JSON-RPC request with an int64 id, which `decision_settled` can name. A workflow
+ *  step's question takes no card: kiro-cli hands the questions a step sends to the agent that launched the run, and
+ *  the run tab's composer answers any of them. */
+type Decision = PermissionDecision | ElicitationDecision | UserInputDecision;
 
 /**
  * What the server made of an answer: `answered` (its `decision_settled` retires the card), `superseded` (another
@@ -96,14 +72,10 @@ export type AnswerOutcome = "answered" | "superseded" | "withdrawn" | "failed";
  * Request decisions this surface answered and the server has not yet settled: their cards stay on screen, inert,
  * because only the server knows whether the answer reached the agent.
  */
-const answering = new WeakSet<RequestDecision>();
+const answering = new WeakSet<Decision>();
 
-function isRequestDecision(d: Decision): d is RequestDecision {
-  return d.kind !== "run_input";
-}
-
-/** Per-chat FIFO of unanswered request decisions. A chat's step questions follow its queue. */
-const queues = new Map<string, RequestDecision[]>();
+/** Per-chat FIFO of unanswered decisions. */
+const queues = new Map<string, Decision[]>();
 
 /**
  * The queue key a run owns, twin of `runChatPrefix` in `internal/agent/run_host.go`. Not a chat id: no tab or session
@@ -152,10 +124,6 @@ interface DockHost {
   /** Bumped by `endPhase`. A timer callback whose generation has moved on
    *  returns without touching the DOM. */
   gen: number;
-  /** The step question the reader chose from the rows, led with until it leaves; `""` for none. */
-  prefer: string;
-  /** Open the next card's answer box: the reader asked for it with a row's Answer. */
-  openOnShow: boolean;
   /**
    * This host's render subscription, released when a per-page host (`spec-view.ts`) drops; otherwise the effect renders
    * into a detached element for the tab's lifetime.
@@ -172,17 +140,13 @@ export function mountDecisionDock(hostEl: HTMLElement): void {
 
 /**
  * Wire the run view's dock: the current run's decisions, whether keyed to the launching chat or `run:<id>`. The run is
- * a getter because one view element serves every run tab. Idempotent per host element. A step's question takes no
- * card here: the run composer answers it, marked by its attention border (`run-composer.ts`).
+ * a getter because one view element serves every run tab. Idempotent per host element. A step's question is answered
+ * in the run composer, marked by its attention border (`run-composer.ts`).
  */
 export function mountRunDecisionDock(hostEl: HTMLElement, runID: () => string): void {
   addHost(hostEl, (d) => {
     const id = runID();
-    return (
-      id !== "" &&
-      d.kind !== "run_input" &&
-      (d.runID === id || d.chatID === `${RUN_CHAT_PREFIX}${id}`)
-    );
+    return id !== "" && (d.runID === id || d.chatID === `${RUN_CHAT_PREFIX}${id}`);
   });
 }
 
@@ -229,8 +193,6 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
     outgoing: null,
     timer: null,
     gen: 0,
-    prefer: "",
-    openOnShow: false,
     stop: () => undefined,
   };
   hosts.push(h);
@@ -245,7 +207,7 @@ function activeChatID(): string {
 }
 
 /** Enqueue a decision and show it when its chat is the one on screen. */
-export function pushDecision(d: RequestDecision): void {
+export function pushDecision(d: Decision): void {
   const q = queues.get(d.chatID) ?? [];
   // SSE connect replays every unanswered request, so a re-delivery must not stack.
   if (q.some((existing) => existing.kind === d.kind && existing.requestID === d.requestID)) {
@@ -335,15 +297,13 @@ export function dropTurnDecisions(chatID: string): void {
 }
 
 /**
- * Whether this chat holds an unanswered decision or a step of a run it launched waits on a person (the tab dot's
- * `input`). Subscribes the calling effect to the queue and the run-asks store. A `run:<id>` key never matches a tab.
+ * Whether this chat holds an unanswered decision (the tab dot's `input`). A step question of a run it launched is not
+ * one: the run's own mark carries it (`chat-run-dots.ts`). Subscribes the calling effect to the queue. A `run:<id>`
+ * key never matches a tab.
  */
 export function hasPendingDecision(chatID: string): boolean {
   touch(queueVersion);
-  if ((queues.get(chatID)?.length ?? 0) > 0) {
-    return true;
-  }
-  return allRunAsks().some((r) => r.chat_id === chatID && r.asks.length > 0);
+  return (queues.get(chatID)?.length ?? 0) > 0;
 }
 
 /**
@@ -394,12 +354,15 @@ export function runPendingAsks(workflowID: string): RunAsks {
   return { count: asked.length, asked, label };
 }
 
+/** What a step's question reads as when marotte has no text for it. */
+const RUN_ASK_FALLBACK = "A step is waiting for an answer";
+
 function runAskLabel(a: RunAsk): string {
-  return a.text === "" ? RUN_INPUT_FALLBACK : a.text;
+  return a.text === "" ? RUN_ASK_FALLBACK : a.text;
 }
 
 /** Per-kind and private: the run card takes the sentence, not a payload. */
-function requestLabel(d: RequestDecision): string {
+function requestLabel(d: Decision): string {
   switch (d.kind) {
     case "permission":
       return d.payload.title ?? "";
@@ -417,7 +380,7 @@ function requestLabel(d: RequestDecision): string {
  */
 export function collapseSettledDecision(
   chatID: string,
-  kind: RequestDecision["kind"],
+  kind: Decision["kind"],
   requestID: number,
   settledBy: SettledBy,
 ): string | undefined {
@@ -447,7 +410,7 @@ export function collapseSettledDecision(
  * the subject moved on, so claiming an answer would be false), `ended` (nobody can: the agent session that asked
  * is gone).
  */
-function settledMessage(kind: RequestDecision["kind"], settledBy: SettledBy): string {
+function settledMessage(kind: Decision["kind"], settledBy: SettledBy): string {
   const subject = settledSubject(kind);
   switch (settledBy) {
     case "unattended":
@@ -464,7 +427,7 @@ function settledMessage(kind: RequestDecision["kind"], settledBy: SettledBy): st
   }
 }
 
-function settledSubject(kind: RequestDecision["kind"]): string {
+function settledSubject(kind: Decision["kind"]): string {
   switch (kind) {
     case "permission":
       return "The permission request";
@@ -477,11 +440,11 @@ function settledSubject(kind: RequestDecision["kind"]): string {
 
 /** Whether d is still queued; membership, not head position: a run tab may answer an ask queued behind the chat's
  *  own, which is protocol-correct. */
-function isQueued(d: RequestDecision): boolean {
+function isQueued(d: Decision): boolean {
   return queues.get(d.chatID)?.includes(d) ?? false;
 }
 
-function unqueue(d: RequestDecision): void {
+function unqueue(d: Decision): void {
   const q = queues.get(d.chatID);
   const i = q?.indexOf(d) ?? -1;
   if (q === undefined || i < 0) {
@@ -498,7 +461,7 @@ function unqueue(d: RequestDecision): void {
  * retires it, a failure hands it back, and `onAnswered` runs only once the agent has the answer.
  */
 function answerRequest(
-  d: RequestDecision,
+  d: Decision,
   send: () => Promise<AnswerOutcome>,
   onAnswered?: () => void,
 ): void {
@@ -530,7 +493,7 @@ function answerRequest(
 }
 
 /** Every host showing d's card makes it inert while its answer is in flight, and live again after. */
-function paintAnswering(d: RequestDecision): void {
+function paintAnswering(d: Decision): void {
   const key = decisionKey(d.chatID, d.kind, decisionIdentity(d));
   for (const h of hosts) {
     if (h.renderedKey === key && h.card !== null) {
@@ -544,8 +507,7 @@ function markAnswering(card: HTMLElement, on: boolean): void {
   card.toggleAttribute("aria-busy", on);
 }
 
-/** Request decisions first, in insertion order across queues (a run's asks come from one bridge), since they hold a
- *  live turn; then the step questions, in the store's order. */
+/** In insertion order across queues (a run's asks come from one bridge). */
 function matching(h: DockHost): Decision[] {
   const out: Decision[] = [];
   for (const q of queues.values()) {
@@ -555,48 +517,22 @@ function matching(h: DockHost): Decision[] {
       }
     }
   }
-  for (const r of allRunAsks()) {
-    for (const ask of r.asks) {
-      const d: RunInputDecision = {
-        kind: "run_input",
-        chatID: r.chat_id,
-        runID: r.workflow_id,
-        ask,
-        reachable: r.reachable,
-      };
-      if (h.match(d)) {
-        out.push(d);
-      }
-    }
-  }
   return out;
 }
 
-/** Within-kind identity: the server's int64 ask id (`request_id`), or a step question's id with everything the card
- *  prints but cannot rewrite in place, so a change there rebuilds it. */
+/** Within-kind identity: the server's int64 ask id (`request_id`). */
 function decisionIdentity(d: Decision): string {
-  if (d.kind !== "run_input") {
-    return String(d.requestID);
-  }
-  const a = d.ask;
-  return join(a.ask_id, a.text_source, a.text, a.reason ?? "", a.agent_name, a.node_id);
+  return String(d.requestID);
 }
 
-/** keyenc rather than a template join: a run ask id is arbitrary text, and a separator inside it would merge two keys. */
+/** keyenc rather than a template join: a chat id is arbitrary text, and a separator inside it would merge two keys. */
 function decisionKey(chatID: string, kind: Decision["kind"], identity: string): string {
   return join(chatID, kind, identity);
 }
 
 function renderHost(h: DockHost): void {
-  const mine = preferred(h, matching(h));
+  const mine = matching(h);
   const head = mine[0];
-  // A row's Answer opens the card it picked, never a later one that takes its place.
-  if (
-    head === undefined ||
-    decisionKey(head.chatID, head.kind, decisionIdentity(head)) !== h.prefer
-  ) {
-    h.openOnShow = false;
-  }
 
   if (head === undefined) {
     // Cleared when `leaving` starts, so a second empty render does not restart the exit.
@@ -611,10 +547,7 @@ function renderHost(h: DockHost): void {
   const key = decisionKey(head.chatID, head.kind, decisionIdentity(head));
   const rest = mine.slice(1);
   if (key === h.renderedKey) {
-    paintRest(h, head, rest);
-    if (head.kind === "run_input" && h.card !== null) {
-      updateRunAskCard(h.card, runAskInput(head));
-    }
+    paintRest(h, rest);
     return;
   }
 
@@ -687,22 +620,14 @@ function swap(h: DockHost, head: Decision | undefined, rest: readonly Decision[]
 /** Identical on both paths, so `announce()` fires once per new head with the card in the DOM and never opacity-0. */
 function show(h: DockHost, head: Decision, rest: readonly Decision[]): void {
   const card = buildCard(head);
-  if (isRequestDecision(head) && answering.has(head)) {
+  if (answering.has(head)) {
     markAnswering(card, true);
   }
   h.card = card;
-  h.el.replaceChildren(
-    card,
-    el("ul", { className: "dock-ask-rows", "aria-label": "Other steps waiting for you" }),
-    depthRow(),
-  );
+  h.el.replaceChildren(card, depthRow());
   h.el.classList.remove("hidden");
   h.renderedKey = decisionKey(head.chatID, head.kind, decisionIdentity(head));
-  paintRest(h, head, rest);
-  if (h.openOnShow && head.kind === "run_input") {
-    openRunAskCard(card);
-  }
-  h.openOnShow = false;
+  paintRest(h, rest);
   announce(announcementFor(head));
 }
 
@@ -782,68 +707,18 @@ function motionOff(): boolean {
   );
 }
 
-/** Behind a step's question, each other step waiting on the reader is a row of its own whose
- *  Answer brings its card forward; behind anything else, the queue is a count. Lookups are scoped
- *  to DIRECT children: a stale row inside `.dock-outgoing` sits earlier in document order. */
-function paintRest(h: DockHost, head: Decision, rest: readonly Decision[]): void {
-  const asks = head.kind === "run_input" ? rest.filter((d) => d.kind === "run_input") : [];
-  const list = h.el.querySelector<HTMLElement>(":scope > .dock-ask-rows");
-  if (list !== null) {
-    reconcile(list, asks, {
-      key: (d) => decisionKey(d.chatID, d.kind, decisionIdentity(d)),
-      mount: (d) => askRow(h, d),
-    });
-    list.classList.toggle("hidden", asks.length === 0);
-  }
+/** The queue behind the head, as a count. Scoped to a DIRECT child: a stale row inside `.dock-outgoing` sits earlier
+ *  in document order. */
+function paintRest(h: DockHost, rest: readonly Decision[]): void {
   const row = h.el.querySelector(":scope > .dock-depth");
   if (row !== null) {
-    const depth = rest.length - asks.length;
-    row.textContent = depth === 0 ? "" : `${String(depth)} more waiting`;
-    row.classList.toggle("hidden", depth === 0);
+    row.textContent = rest.length === 0 ? "" : `${String(rest.length)} more waiting`;
+    row.classList.toggle("hidden", rest.length === 0);
   }
 }
 
 function depthRow(): HTMLElement {
   return el("p", { className: "dock-depth hidden" });
-}
-
-/** One waiting step as a row: its question, its run and step, and the Answer that makes it the
- *  card, opened. Keyed by the ask's identity, so a repaint keeps a focused Answer in place. */
-function askRow(h: DockHost, d: RunInputDecision): HTMLElement {
-  const who = [runLabelOf(d.runID) || "Workflow run", d.ask.node_id && `step ${d.ask.node_id}`]
-    .filter((s) => s !== "")
-    .join(" \u00b7 ");
-  const answer = el(
-    "button",
-    { type: "button", className: "btn-small", "aria-label": `Answer ${who}` },
-    "Answer",
-  );
-  answer.addEventListener("click", () => {
-    h.prefer = decisionKey(d.chatID, d.kind, decisionIdentity(d));
-    h.openOnShow = true;
-    bump();
-  });
-  return el(
-    "li",
-    { className: "dock-ask-row" },
-    el("span", { className: "dock-ask-row-text" }, runAskLabel(d.ask)),
-    el("span", { className: "dock-ask-row-who" }, who),
-    answer,
-  );
-}
-
-/** The decisions in render order, with the step question the reader picked brought to the front.
- *  Only among step questions: a request decision holds a live turn and always leads. */
-function preferred(h: DockHost, mine: Decision[]): Decision[] {
-  if (h.prefer === "" || mine[0]?.kind !== "run_input") {
-    return mine;
-  }
-  const i = mine.findIndex((d) => decisionKey(d.chatID, d.kind, decisionIdentity(d)) === h.prefer);
-  if (i < 0) {
-    h.prefer = "";
-    return mine;
-  }
-  return [mine[i], ...mine.slice(0, i), ...mine.slice(i + 1)].flatMap((d) => d ?? []);
 }
 
 function announcementFor(d: Decision): string {
@@ -856,16 +731,10 @@ function announcementFor(d: Decision): string {
       return "A tool is requesting input";
     case "user_input":
       return "The agent has a question";
-    case "run_input":
-      return "A workflow step is waiting for your answer";
     default:
       d satisfies never;
       return "";
   }
-}
-
-function runAskInput(d: RunInputDecision): RunAskCardInput {
-  return { workflowID: d.runID, chatID: d.chatID, reachable: d.reachable, ask: d.ask };
 }
 
 function buildCard(d: Decision): HTMLElement {
@@ -891,8 +760,6 @@ function buildCard(d: Decision): HTMLElement {
             : undefined,
         );
       });
-    case "run_input":
-      return buildRunAskCard(runAskInput(d));
     default:
       d satisfies never;
       return el("div");

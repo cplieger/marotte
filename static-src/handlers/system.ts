@@ -20,7 +20,6 @@ import { dropDecisions, dropRunDecisions } from "../decision-dock.js";
 import { closeNotificationsExcept } from "../notify.js";
 import { askTarget, chatTarget, pushTargetTag, runAskTarget } from "../push-subject.js";
 import { dropAllRunAsks, runAskPosition } from "../run-asks.js";
-import { keepRunAskDrafts } from "../run-input.js";
 import { loadList, scheduleListRetry } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { refreshRetention } from "../retention.js";
@@ -182,14 +181,12 @@ onSSE("pending_snapshot", (_chatID, p) => {
   // the set names but marotte has not read this epoch keeps its step-question banners.
   const live = new Set<string>();
   const unread = new Set<string>();
-  const runs = new Set<string>();
   for (const evt of items) {
     if (evt.type !== "run_asks") {
       live.add(liveAskTag(evt));
       continue;
     }
     const run = evt.payload as RunAsksPayload;
-    runs.add(run.workflow_id);
     for (const a of run.asks) {
       live.add(pushTargetTag(runAskTarget(runAskPosition(run.workflow_id, a))));
     }
@@ -211,8 +208,6 @@ onSSE("pending_snapshot", (_chatID, p) => {
   for (const evt of items) {
     dispatch(evt);
   }
-  // The set names every run marotte still answers for, waiting or not.
-  keepRunAskDrafts(runs);
 });
 
 // The waiting-status set REPLACES every chat's agent status; a later `chat_status` re-sets a

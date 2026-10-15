@@ -498,7 +498,7 @@ export function outcomeLatch(outcome: TurnOutcome | undefined): "done" | "failed
 
 /** Derive the chat tab's activity-dot state. ONE rule, shared by the store effect and the
  *  turn-lifecycle handlers. Order is precedence. `input` comes only from `pendingAsk` (the dock's
- *  decisions and the step questions of the chat's runs, `hasPendingDecision`), a parameter because
+ *  decisions, `hasPendingDecision`), a parameter because
  *  `decision-dock.ts` imports this module; `waiting` only from the chat's own `chat_status`. */
 export type TabDotState = "" | "input" | "failed" | "working" | "waiting" | "done" | "idle";
 

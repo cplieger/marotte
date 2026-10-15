@@ -829,7 +829,7 @@ describe("the run dock", () => {
         label: "Which branch?",
       });
       await paint(openRunView, "running", { root: live("running") });
-      expect(alertText()).toBe("Waiting for your answer: Which branch?");
+      expect(alertText()).toBe("Waiting for answer: Which branch?");
       expect(document.querySelector("#run-exec-dock .ev-dock-alert-act")?.childElementCount).toBe(
         0,
       );

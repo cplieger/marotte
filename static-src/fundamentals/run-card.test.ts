@@ -196,7 +196,7 @@ describe("an unanswered ask", () => {
     expect(rowStates(c.root)).toEqual(["input", "pending"]);
     expect(glyphs(c.root)[0]).toBe("?");
     expect(c.root.querySelector(".run-step-head")?.getAttribute("aria-label")).toBe(
-      "a, waiting for your answer",
+      "a, waiting for answer",
     );
   });
 
@@ -246,7 +246,7 @@ describe("an unanswered ask", () => {
   it("reports itself in the alert, ahead of the run's own status", () => {
     const c = card();
     c.render(runOf("running", step("a", "running")), asks(1, ["a"], "Run git push"));
-    expect(alertText(c.root)).toBe("Waiting for your answer: Run git push");
+    expect(alertText(c.root)).toBe("Waiting for answer: Run git push");
     expect(c.root.querySelector<HTMLElement>(".run-alert")?.dataset["kind"]).toBe("input");
   });
 
@@ -257,7 +257,7 @@ describe("an unanswered ask", () => {
     c.render(runOf("running", step("a", "running")), asks(2, []));
     expect(rowStates(c.root)).toEqual(["running"]);
     expect(statusWord(c.root)).toBe("needs input");
-    expect(alertText(c.root)).toBe("Waiting for your answer (2 asks waiting)");
+    expect(alertText(c.root)).toBe("Waiting for answer (2 asks waiting)");
   });
 
   it("loses to a failed launch, which is the one state with no run behind it", () => {
@@ -293,7 +293,7 @@ describe("an unanswered ask", () => {
     };
     expect(alertText(buildAndRender(state, asks(0, [])))).toBe("Waiting: retry budget");
     expect(alertText(buildAndRender(state, asks(1, ["a"], "Approve")))).toBe(
-      "Waiting for your answer: Approve",
+      "Waiting for answer: Approve",
     );
   });
 });

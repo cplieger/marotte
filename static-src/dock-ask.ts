@@ -1,5 +1,4 @@
-// The ask card's shared regions for both prose-question cards (`user-input.ts`, `run-input.ts`): one implementation,
-// so the two cannot drift.
+// The prose-question card's regions (`user-input.ts`).
 
 import { el } from "@cplieger/reactive";
 import { attachClamp } from "./clamp-text.js";
@@ -9,12 +8,6 @@ import { attachClamp } from "./clamp-text.js";
  * (`clamp-line-count.test.ts`).
  */
 const CLAMP_LINES = 4;
-
-/**
- * What a step's question reads as when marotte has no text for it, shared by the dock card and the run's alert. Declared
- * here: in `decision-dock` it would make `run-input` import its own parent (a cycle).
- */
-export const RUN_INPUT_FALLBACK = "A step is waiting for your answer";
 
 /** A custom property because the value is the caller's. */
 const ASK_ROWS_PROP = "--ask-rows";
@@ -42,23 +35,15 @@ export function askHead(question: string): AskHead {
   return { body, text };
 }
 
-interface AskEditor {
-  /** The answer box's own row. No button shares it. */
-  readonly editor: HTMLElement;
-  readonly input: HTMLTextAreaElement;
-}
-
 /**
- * The answer box, alone on its row, growing with its text. `rows` is the opening height; growth and ceiling are CSS
+ * The answer box, growing with its text. `rows` is the opening height; growth and ceiling are CSS
  * (`css/26-dock.css`), read through `--ask-rows`.
  */
 export function askEditor(opts: {
   readonly rows: string;
   readonly placeholder: string;
   readonly label: string;
-  /** Seeds the box with held text so a retryable refusal keeps it. A property write, as a textarea's value is. */
-  readonly value?: string;
-}): AskEditor {
+}): HTMLTextAreaElement {
   const input = el("textarea", {
     className: "dock-ask-text",
     rows: opts.rows,
@@ -66,9 +51,8 @@ export function askEditor(opts: {
     "aria-label": opts.label,
   }) as HTMLTextAreaElement;
   input.style.setProperty(ASK_ROWS_PROP, opts.rows);
-  input.value = opts.value ?? "";
   publishViewportHeight();
-  return { editor: el("div", { className: "dock-ask-editor" }, input), input };
+  return input;
 }
 
 let viewportWired = false;

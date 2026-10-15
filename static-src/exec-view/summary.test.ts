@@ -56,7 +56,7 @@ describe("the run summary", () => {
     view.paint(
       run([step("a", "input")], {
         state: "input",
-        alert: { kind: "input", text: "Waiting for your answer" },
+        alert: { kind: "input", text: "Waiting for answer" },
       }),
     );
     expect(part(view, "ev-sum-state")).toBe("needs input");

@@ -23,7 +23,6 @@ import type { Session } from "../types.js";
 import type { Entry, RunAsk, RunAsksPayload } from "../wire/types.gen.js";
 import { _resetRunAsksForTest, runAskPosition, runAsksOf } from "../run-asks.js";
 import { pushTargetTag, runAskTarget } from "../push-subject.js";
-import { _resetRunAskDraftsForTest, buildRunAskCard, registerRunAskVerbs } from "../run-input.js";
 // The two modules the factories below spread rather than replace. Type-only, so neither
 // adds a runtime edge the `vi.mock` would have to reach around.
 import type * as RunStore from "../run-store.js";
@@ -900,10 +899,9 @@ describe("a client that missed a run's final run_asks", () => {
   }
 
   async function heldEverywhere(held: boolean): Promise<void> {
-    const { hasPendingDecision, runPendingAsks } = await import("../decision-dock.js");
+    const { runPendingAsks } = await import("../decision-dock.js");
     expect(runAsksOf("wf_1") !== undefined).toBe(held);
     expect(runPendingAsks("wf_1").count).toBe(held ? 1 : 0);
-    expect(hasPendingDecision("c1")).toBe(held);
   }
 
   it("drops the question and closes both banners once the run's cell is gone", async () => {
@@ -961,123 +959,6 @@ describe("a client that missed a run's final run_asks", () => {
     await Promise.resolve();
     expect(PageNotification.raised.map((n) => n.closed)).toEqual([false]);
     expect(tray.map((n) => n.closed)).toEqual([false]);
-  });
-});
-
-// A step reads `asks: []` from its admitted answer until it parks again, and a step whose answer
-// did not land asks again at the same wait: the words sent outlive that gap, and the run's end.
-
-describe("an answered step that asks again", () => {
-  const answer = vi.fn((_workflowID: string, _askID: string, _text: string) =>
-    Promise.resolve(true),
-  );
-
-  beforeEach(() => {
-    _resetRunAskDraftsForTest();
-    answer.mockClear();
-    registerRunAskVerbs({
-      answer,
-      continueStep: () => Promise.resolve(),
-      defer: () => Promise.resolve(),
-    });
-  });
-
-  afterEach(() => {
-    document.body.replaceChildren();
-  });
-
-  /** The dock card for the run's one ask, built from what the store holds now. */
-  function cardOf(workflowID: string): HTMLElement {
-    const run = runAsksOf(workflowID);
-    const ask = run?.asks[0];
-    if (run === undefined || ask === undefined) {
-      throw new Error(`the store holds no ask for ${workflowID}`);
-    }
-    const card = buildRunAskCard({
-      workflowID,
-      chatID: run.chat_id,
-      reachable: run.reachable,
-      ask,
-    });
-    document.body.replaceChildren(card);
-    return card;
-  }
-
-  function labels(card: HTMLElement): (string | null)[] {
-    return [...card.querySelectorAll(".dock-ask-actions button")]
-      .filter((b) => !b.classList.contains("hidden"))
-      .map((b) => b.textContent);
-  }
-
-  async function answerOnCard(workflowID: string, text: string): Promise<void> {
-    const card = cardOf(workflowID);
-    const box = card.querySelector("textarea") as HTMLTextAreaElement;
-    box.value = text;
-    box.dispatchEvent(new Event("input", { bubbles: true }));
-    const send = [...card.querySelectorAll("button")].find((b) => b.textContent === "Send answer");
-    send?.click();
-    await vi.waitFor(() => {
-      expect(labels(card)).toContain("Restore last message");
-    });
-  }
-
-  it("offers the words back after the empty frame between the answer and the re-ask", async () => {
-    fireSSE("run_asks", "c1", runAsksFrame("wf_1", [stepAsk("wf_1")], "c1"));
-    await answerOnCard("wf_1", "Cut the migration paragraph.");
-    expect(answer).toHaveBeenCalledWith("wf_1", "wf_1:ask", "Cut the migration paragraph.");
-
-    fireSSE(
-      "run_asks",
-      "c1",
-      runAsksFrame("wf_1", [stepAsk("wf_1", { blocked: "pending" })], "c1"),
-    );
-    fireSSE("run_asks", "c1", runAsksFrame("wf_1", [], "c1"));
-    expect(runAsksOf("wf_1")).toBeUndefined();
-    fireSSE(
-      "run_asks",
-      "c1",
-      runAsksFrame("wf_1", [stepAsk("wf_1", { ask_id: "wf_1:ask2" })], "c1"),
-    );
-
-    const again = cardOf("wf_1");
-    expect(labels(again)).toContain("Restore last message");
-    const restore = [...again.querySelectorAll("button")].find(
-      (b) => b.textContent === "Restore last message",
-    );
-    restore?.click();
-    expect((again.querySelector("textarea") as HTMLTextAreaElement).value).toBe(
-      "Cut the migration paragraph.",
-    );
-  });
-
-  it("keeps them through a pending set that still names the run, waiting or not", async () => {
-    fireSSE("run_asks", "c1", runAsksFrame("wf_1", [stepAsk("wf_1")], "c1"));
-    await answerOnCard("wf_1", "Cut the migration paragraph.");
-
-    fireSSE("pending_snapshot", "", {
-      items: [{ type: "run_asks", chat_id: "c1", payload: runAsksFrame("wf_1", [], "c1") }],
-    });
-    fireSSE(
-      "run_asks",
-      "c1",
-      runAsksFrame("wf_1", [stepAsk("wf_1", { ask_id: "wf_1:ask2" })], "c1"),
-    );
-
-    expect(labels(cardOf("wf_1"))).toContain("Restore last message");
-  });
-
-  it("forgets them once a pending set no longer names the run", async () => {
-    fireSSE("run_asks", "c1", runAsksFrame("wf_1", [stepAsk("wf_1")], "c1"));
-    await answerOnCard("wf_1", "Cut the migration paragraph.");
-
-    fireSSE("pending_snapshot", "", { items: [] });
-    fireSSE(
-      "run_asks",
-      "c1",
-      runAsksFrame("wf_1", [stepAsk("wf_1", { ask_id: "wf_1:ask2" })], "c1"),
-    );
-
-    expect(labels(cardOf("wf_1"))).not.toContain("Restore last message");
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { clearRunStepSteers, continueRunStep, messageRunStep, removeRunStepSteer } from "./runs.js";
+import { clearRunStepSteers, messageRunStep, removeRunStepSteer } from "./runs.js";
 import { headerValue, resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import stepRoutesRaw from "../../internal/agent/testdata/step_routes.json?raw";
 import { nodePathKey } from "../run-node-key.js";
@@ -52,7 +52,7 @@ describe("runs.message_step", () => {
   });
 });
 
-describe("the words and the Continue that answer one question", () => {
+describe("the words that answer one question", () => {
   it("carry the question's ask id on the message when the caller names one", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ verb: "answer" }), { status: 200 }));
     await messageRunStep.dispatch({
@@ -63,16 +63,6 @@ describe("the words and the Continue that answer one question", () => {
       ask_id: "ask-7",
     }).outcome;
     expect(sent().body).toEqual({ text: "yes", message_id: "m-1", ask_id: "ask-7" });
-  });
-
-  it("send Continue to the step-status verb, naming the card's ask", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    await continueRunStep.dispatch({ workflowID: "wf_1", nodeID: "review", askID: "ask-7" })
-      .outcome;
-    expect(sent()).toEqual({
-      url: "/api/runs/wf_1/step",
-      body: { node_id: "review", status: "running", ask_id: "ask-7" },
-    });
   });
 });
 

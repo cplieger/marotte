@@ -10,12 +10,10 @@ import type {
   RunRetriedResponse,
   RunStepMessageRequest,
   RunStepMessageResponse,
-  RunStepStatusRequest,
   RunStepSteerRequest,
 } from "../wire/types.gen.js";
 import type {
   RecipesResponse,
-  RunAnswerRequest,
   RunLaunchRequest,
   RunLaunchedResponse,
   SessionListResponse,
@@ -127,28 +125,6 @@ export const retryRun = apiAction<string, RunRetriedResponse>({
  *  from disk), so it is offered on any paused run. */
 export const resumeRun = runControl("resume", "Could not resume the run");
 
-/** Answer the question a waiting workflow step asked. A refusal carries the server's sentence and
- *  its `code` (`RunAskRefusal`): only `ask_settling` and `ask_unreadable` are worth sending again
- *  unchanged, and `ask_gone` means the step already has its answer. NO argument-composite
- *  idempotency key: inside that cache's window a repeat replays a cached success and the answer
- *  never reaches the step. */
-export const answerRunInput = apiAction<{ workflowID: string } & RunAnswerRequest, { ok: boolean }>(
-  {
-    name: "runs.answer_input",
-    request: ({ workflowID, ask_id, text }) => ({
-      method: "POST",
-      path: `/api/runs/${encodeURIComponent(workflowID)}/answer`,
-      body: { ask_id, text },
-    }),
-    // The server's sentence ALONE: a static `error` string PREFIXES the message (`emitErrorToast`),
-    // which contradicts the 409's "already answered" and leaks the empty-body `HTTP 500`.
-    error: errorAbout(
-      ({ workflowID }: { workflowID: string }) => onRun(workflowID),
-      (_args, err) => serverSentence(err) ?? "Could not send your answer to the step",
-    ),
-  },
-);
-
 /** One run step's address, `/api/runs/{id}/steps/{path}` with `{path}` one encoded `nodePathKey`; its
  *  verbs are sub-paths. The workflow id and the node path are independent, so neither is derived from
  *  the other. */
@@ -223,26 +199,6 @@ export function serverSentence(err: {
   }
   return err.message;
 }
-
-/** Let a parked step carry on with NO answer. Not Resume: KAS's resume leaves the step's
- *  `need_input` signal, so it re-parks; setting the status clears it and the step runs its
- *  default continuation. `askID` names the card's ask, which tells apart a fan-out's executions
- *  sharing one node id. */
-export const continueRunStep = apiAction<
-  { workflowID: string; nodeID: string; askID: string },
-  { ok: boolean }
->({
-  name: "runs.continue_step",
-  request: ({ workflowID, nodeID, askID }) => ({
-    method: "POST",
-    path: `/api/runs/${encodeURIComponent(workflowID)}/step`,
-    body: { node_id: nodeID, status: "running", ask_id: askID } satisfies RunStepStatusRequest,
-  }),
-  error: errorAbout(
-    ({ workflowID }) => onRun(workflowID),
-    (_args, err) => serverSentence(err) ?? "Could not let the step continue",
-  ),
-});
 
 export const extendRunRepeat = apiAction<
   { workflowID: string; nodeID: string; iterations: number },

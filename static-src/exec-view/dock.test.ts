@@ -216,7 +216,7 @@ describe("the live rows", () => {
 
 describe("the alert", () => {
   const alerts: [string, NonNullable<ExecRun["alert"]>][] = [
-    ["a step waiting on an answer", { kind: "input", text: "Waiting for your answer: Which?" }],
+    ["a step waiting on an answer", { kind: "input", text: "Waiting for answer: Which?" }],
     ["a loop at its limit", { kind: "paused", text: "Waiting: review reached its 3-pass limit" }],
     ["an interrupted run", { kind: "paused", text: "Waiting: Interrupted by agent restart" }],
     ["an unreachable host", { kind: "paused", text: "Waiting: host unreachable (ECONNREFUSED)" }],
@@ -290,7 +290,7 @@ describe("the alert", () => {
     answer = document.createElement("button");
     const asking: ExecRun = {
       ...run([step("ask", "input", 0)]),
-      alert: { kind: "input", text: "Waiting for your answer" },
+      alert: { kind: "input", text: "Waiting for answer" },
     };
     page.render(asking);
     expect(q(".ev-dock-alert-act").firstChild).toBe(answer);
