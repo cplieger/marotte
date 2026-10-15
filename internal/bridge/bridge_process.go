@@ -292,6 +292,20 @@ func localeEnv() []string {
 	return []string{localeEnvVar + "=C.UTF-8"}
 }
 
+// toolkitTelemetryEnvVar is read by kiro-cli's Rust binary, not KAS, so it has no kascap row (the environment
+// census admits only variables the KAS bundle reads). Set to any value, it skips the legacy toolkit telemetry client.
+const toolkitTelemetryEnvVar = "KIRO_DISABLE_TOOLKIT_TELEMETRY"
+
+func isToolkitTelemetryEnv(kv string) bool { return strings.HasPrefix(kv, toolkitTelemetryEnvVar+"=") }
+
+// toolkitTelemetryEnv follows the telemetryEnabled row: off sets the variable, on leaves it unset, kiro-cli's default.
+func toolkitTelemetryEnv(disable bool) []string {
+	if !disable {
+		return nil
+	}
+	return []string{toolkitTelemetryEnvVar + "=1"}
+}
+
 // buildACPArgs assembles the kiro-cli ACP invocation. The constant `--auth-method cli` is why KAS never asks marotte
 // for the access token: the relay answers from the CLI login, while `client` would send `_kiro/auth/getAccessToken`
 // to marotte, which routes no handler for it.
@@ -320,8 +334,9 @@ func (b *Bridge) startProcess(engine string) error {
 	// b.extraEnv still lands last, so the active version wins PATH.
 	env, dropped := screenBridgeEnv(os.Environ(), b.extraEnv, b.envAllow)
 	// A setting decides these even when it withholds them (kascap.OwnsEnv), so no inherited value survives.
-	env = slices.DeleteFunc(env, kascap.OwnsEnv)
+	env = slices.DeleteFunc(env, func(kv string) bool { return kascap.OwnsEnv(kv) || isToolkitTelemetryEnv(kv) })
 	env = append(env, kascap.ChildEnv(b.spawn())...)
+	env = append(env, toolkitTelemetryEnv(b.disableTelemetry)...)
 	// After the screen and the door: os/exec keeps a key's last value.
 	env = append(env, localeEnv()...)
 	b.cmd.Env = env

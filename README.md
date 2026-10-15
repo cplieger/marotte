@@ -103,7 +103,7 @@ Set `ALLOWED_HOSTS` on any server that stays up. marotte then answers only at th
 
 The agent can read the container's `environment:`. marotte drops names ending in `_TOKEN` or `_SECRET` and the AWS key pair, so keep other credentials out of it.
 
-marotte sends no telemetry, and kiro-cli's own telemetry starts off. [Security](docs/hardening.md) covers the container user, tool installs and how kiro-cli is verified.
+marotte sends no telemetry. kiro-cli's own telemetry is on by default, as in kiro-cli, and one switch in **Settings** turns it off. [Security](docs/hardening.md) covers the container user, tool installs and how kiro-cli is verified.
 
 ## Troubleshooting
 

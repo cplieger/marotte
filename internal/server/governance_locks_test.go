@@ -224,6 +224,32 @@ func TestReadKiroSettings_ReportsTheHeldUserValue(t *testing.T) {
 	}
 }
 
+// A user with no value of their own reads "" under the lock, so the switch shows kiro-cli's default
+// on unlock rather than the organization's value.
+func TestReadKiroSettings_ReportsAHeldUnsetValueAsUnset(t *testing.T) {
+	const key = "telemetry.enabled"
+	cli := &seedStoreCLI{}
+	s := &Server{cliRunner: cli, cliTimeouts: defaultCLITimeouts(), governance: fakeLocks{
+		marotte.LockTelemetry: {Value: false, Source: marotte.LockSourceOrganization},
+	}}
+	s.ApplyGovernanceLocks(t.Context())
+	if got, _ := cli.value(key); got != "false" {
+		t.Fatalf("Setup: under the lock kiro-cli holds %s = %q, want the organization's \"false\"", key, got)
+	}
+
+	rec := httptest.NewRecorder()
+	s.readKiroSettings(rec, httptest.NewRequest(http.MethodGet, "/api/kiro-settings?keys="+key, nil))
+	var body struct {
+		Settings map[string]string `json:"settings"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("GET /api/kiro-settings body %q: %v", rec.Body, err)
+	}
+	if got, ok := body.Settings[key]; !ok || got != "" {
+		t.Errorf("GET %s under the lock = (%q, present=%v), want \"\" (the user had no value)", key, got, ok)
+	}
+}
+
 func TestSettingsWrite_ReopensOpenChatsWhenASessionSettingMoved(t *testing.T) {
 	dir := t.TempDir()
 	eng := &fakeEngine{sessionSettings: func(ctx context.Context) string {

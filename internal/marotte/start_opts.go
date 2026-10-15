@@ -103,8 +103,9 @@ type StartOpts struct {
 	// spawn; KAS freezes it at session creation.
 	Knowledge bool
 	// DisableTelemetry turns KAS's agent telemetry off at initialize (kascap's
-	// telemetryEnabled row). Resolved per spawn on every bridge; the zero value
-	// leaves KAS's default, on.
+	// telemetryEnabled row) and the Rust binary's toolkit client off in the spawn
+	// environment. Resolved per spawn on every bridge; the zero value leaves both
+	// at kiro-cli's default, on.
 	DisableTelemetry bool
 	// DisableSessionTitles writes KIRO_DISABLE_SESSION_TITLE_LLM=true into the
 	// child environment. Run bridges only: nothing renders a run step session's

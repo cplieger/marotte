@@ -580,13 +580,14 @@ interface KiroSettingsPayload {
 const experimentalFlags: readonly {
   key: string;
   inputID: string;
-  /** Must match the key's Seed in the server's allowedKiroSettings, because a failed seed and a failed
-   *  read both arrive as "". Per row, because the three polarities are not uniform. */
+  /** Must match the key's Seed in the server's allowedKiroSettings, or kiro-cli's own default for a key
+   *  with none, because an unset key and a failed read both arrive as "". Per row, because the three
+   *  polarities are not uniform. */
   defaultOn: boolean;
   inverted?: boolean;
 }[] = [
   { key: "hooks.showStatus", inputID: "flag-hooks-status", defaultOn: true },
-  { key: "telemetry.enabled", inputID: "flag-telemetry", defaultOn: false },
+  { key: "telemetry.enabled", inputID: "flag-telemetry", defaultOn: true },
   // Checked = disable inheritance of default steering/skills/AGENTS.md by custom agents (kiro-cli
   // 2.10+). Not inverted: on = true = disabled.
   {

@@ -68,6 +68,10 @@ Whether the chat agent can start and manage workflow runs is a setting, not a va
 
 Beside it, **Wake the chat when a workflow loop hits its limit**, on by default, decides what happens when a loop in a run the agent started stops at its iteration limit. On: marotte sends the agent one message for you, naming the run and the loop, so it can extend the loop or end it. Off: the run waits until you write to the agent yourself.
 
+## kiro-cli telemetry
+
+kiro-cli's telemetry is a setting, not a variable: **kiro-cli telemetry** under **Data sharing** on the **General** tab in **Settings**. It is on by default, as in kiro-cli. One switch covers both kinds kiro-cli sends: its usage telemetry and its legacy toolkit telemetry. Off stops both. An existing install keeps the value it already has, so one that earlier versions started with telemetry off stays off. On an enterprise account, the organization's usage-analytics setting decides it instead, and the switch is locked. Open chats switch at their next message.
+
 ## Variables the agent sets (`MAROTTE_ALLOW_AGENT_ENV`)
 
 When the agent runs a command, it can ask for environment variables to be set for it. Most are ordinary, such as `CGO_ENABLED`, `GOFLAGS` or `TERM`. A few change which program runs instead: `LD_PRELOAD`, `GIT_SSH_COMMAND` and `BASH_ENV` each redirect execution. marotte refuses those, because approving a command must approve that exact command, and the agent's variables take precedence over marotte's own. A harmless value is still accepted, so `GIT_PAGER=cat` keeps working. The refusal names the variable, so the agent can retry without it.
