@@ -194,7 +194,6 @@
   "tabs.test.ts",
   "tool-bulk.test.ts",
   "tool-card.test.ts",
-  "tool-explain-btn.test.ts",
   "tool-group.test.ts",
   "tools.test.ts",
   "tooltip-anchor.test.ts",

@@ -1,6 +1,6 @@
 // Status updates against the REAL tool card (`messages-tools.test.ts` stubs it). A terminal frame often carries
-// status and output, and `applyStatusUpdate` reads the output region for the Explain gate and the bare-disclosure
-// predicate, so status is applied last.
+// status and output, and `applyStatusUpdate` reads the output region for the bare-disclosure predicate, so status is
+// applied last.
 
 import { describe, it, expect } from "vitest";
 import type { ToolCall } from "./types.js";
@@ -44,14 +44,18 @@ function frame(id: string, tc: Partial<ToolCall>): ToolCall {
 }
 
 describe("a terminal frame carrying the failure AND its output", () => {
-  it("auto-expands the card", () => {
-    const card = liveCard("st-open");
+  it("stays collapsed like any other call, with the failure in its header and no button of its own", () => {
+    const card = liveCard("st-shut");
     applyToolCallUpdate(
       card,
-      frame("st-open", { status: "failed", output: "exit status 2\n" }),
+      frame("st-shut", { status: "failed", output: "exit status 2\n" }),
       "c1",
     );
-    expect(card.querySelector(".tool-disclosure")?.getAttribute("aria-expanded")).toBe("true");
+    expect(card.querySelector(".tool-disclosure")?.getAttribute("aria-expanded")).toBe("false");
+    expect(card.querySelector(".tool-details")?.getAttribute("aria-hidden")).toBe("true");
+    expect(card.dataset["outcome"]).toBe("fail");
+    expect(card.querySelector(".tool-icon.is-fail")).not.toBeNull();
+    expect(card.querySelector(":scope > button")).toBeNull();
     card.remove();
   });
 
@@ -63,22 +67,6 @@ describe("a terminal frame carrying the failure AND its output", () => {
       "c1",
     );
     expect(card.querySelector(".tool-disclosure")).not.toBeNull();
-    card.remove();
-  });
-
-  it("offers Explain this error", () => {
-    // Status applied before output would reach the Explain gate with an unpainted region and offer no button.
-    const card = liveCard("st-explain");
-    applyToolCallUpdate(
-      card,
-      frame("st-explain", { status: "failed", output: "exit status 2\n" }),
-      "c1",
-    );
-    const btn = card.querySelector(".tool-explain-btn");
-    expect(btn).not.toBeNull();
-    // The trigger is icon-only, so its accessible name is what identifies it; a class-only assertion would pass a
-    // nameless button.
-    expect(card.querySelector('.tool-explain-btn[aria-label="Explain this error"]')).toBe(btn);
     card.remove();
   });
 });
@@ -105,7 +93,7 @@ describe("a live call that has produced nothing YET", () => {
 
 describe("a terminal frame whose output is blank", () => {
   it("paints nothing into the region", () => {
-    // The predicate and the Explain gate both read this region as empty, so a `<pre>` here would be unreachable DOM.
+    // The predicate reads this region as empty, so a `<pre>` here would be unreachable DOM.
     const card = liveCard("st-blank-pre");
     applyToolCallUpdate(
       card,
@@ -113,19 +101,6 @@ describe("a terminal frame whose output is blank", () => {
       "c1",
     );
     expect(card.querySelector(".tool-output pre")).toBeNull();
-    card.remove();
-  });
-
-  it("offers no Explain button on a failure", () => {
-    const card = liveCard("st-blank-explain");
-    applyToolCallUpdate(
-      card,
-      frame("st-blank-explain", { status: "failed", output: "  \n" }),
-      "c1",
-    );
-    expect(card.querySelector(".tool-explain-btn")).toBeNull();
-    // By name: an icon-only control that lost its `aria-label` and kept its class would satisfy the line above.
-    expect(card.querySelector('[aria-label="Explain this error"]')).toBeNull();
     card.remove();
   });
 });
@@ -219,20 +194,6 @@ describe("a frame carrying a refusal", () => {
       "c1",
     );
     expect(card.querySelector(".tool-disclosure")?.getAttribute("aria-expanded")).toBe("true");
-    card.remove();
-  });
-
-  it("offers no Explain this error", () => {
-    // Widening the failure branch to include `declined` would also offer this button, for a tool that did as asked.
-    const card = liveCard("st-dec-explain");
-    applyToolCallUpdate(
-      card,
-      frame("st-dec-explain", { status: "completed", declined: true, output: "plan rejected\n" }),
-      "c1",
-    );
-    expect(card.querySelector(".tool-explain-btn")).toBeNull();
-    // By name, for the reason the blank-output case states.
-    expect(card.querySelector('[aria-label="Explain this error"]')).toBeNull();
     card.remove();
   });
 

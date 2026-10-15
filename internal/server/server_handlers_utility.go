@@ -10,38 +10,6 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	if s.utilityPrompt == nil {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(marotte.ErrMsgUtilityUnavailable))
-		return
-	}
-	var body struct {
-		Error   string `json:"error"`
-		Context string `json:"context"`
-	}
-	if !decodeBody(w, r, &body) {
-		return
-	}
-	if body.Error == "" {
-		httpreply.BadRequest(w, "error is required")
-		return
-	}
-	prompt := "Explain this error in plain language. What went wrong and how to fix it? Be concise (2-3 sentences).\n\n"
-	if body.Context != "" {
-		prompt += "Context: " + body.Context + "\n\n"
-	}
-	prompt += "Error: " + body.Error
-	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), prompt, marotte.EffortLow)
-	if err != nil {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("generation failed"))
-		return
-	}
-	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: strings.TrimSpace(result)})
-}
-
 func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return

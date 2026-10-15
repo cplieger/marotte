@@ -117,7 +117,6 @@ import {
   geometrySkipped,
   setRunCardOwners,
 } from "./messages-blocks.js";
-import { explainError as explainErrorAction } from "./actions/messages.js";
 import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
@@ -422,17 +421,6 @@ function resumeView(view: ChatView, session: Session): void {
   drainParkedTerminals(session.id, view.el);
 }
 
-/** bindLoadingState unsubs keyed by tool id, released at page teardown; a card's loading binding outlives its card. */
-const bindUnbinds = new Map<string, (() => void)[]>();
-function pushBind(key: string, unbind: () => void): void {
-  let arr = bindUnbinds.get(key);
-  if (arr === undefined) {
-    arr = [];
-    bindUnbinds.set(key, arr);
-  }
-  arr.push(unbind);
-}
-
 /** Dispose one turn's per-entry effects, on turn end and on unmount. */
 function disposeTurnEffects(turnID: string): void {
   const per = entryEffects.get(turnID);
@@ -505,11 +493,7 @@ function svgTemplate(markup: string): () => Node {
 
 let mounted = false;
 
-initToolCallbacks({
-  pushBind,
-  refreshGroupHeader,
-  explainError,
-});
+initToolCallbacks({ refreshGroupHeader });
 initTurnActionCallbacks({ svgTemplate });
 initBlockRenderer({
   pushEntryEffect,
@@ -1231,12 +1215,6 @@ export function teardownAll(): void {
     disposeChatView(chatID);
   }
   // For what no view reaches: a detached render's effects and rows a view walk could not see. Idempotent.
-  for (const arr of bindUnbinds.values()) {
-    for (const fn of arr) {
-      fn();
-    }
-  }
-  bindUnbinds.clear();
   disposeAllToolEffects();
   resetBlockRenders();
   resetScrollState();
@@ -2241,9 +2219,4 @@ function finalizeStreamingIfNeeded(turns: readonly Turn[]): void {
  *  it. */
 function makeRow(): HTMLDivElement {
   return el("div", { className: "msg-row" }) as HTMLDivElement;
-}
-
-async function explainError(errorText: string, toolTitle: string): Promise<string> {
-  const d = await explainErrorAction.dispatch({ errorText, context: toolTitle });
-  return d?.output ?? "";
 }

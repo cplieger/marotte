@@ -21,12 +21,9 @@ import {
 } from "./tool-card.js";
 import { clearToolSilence, forgetToolSilence } from "./tool-silence.js";
 import { toolCardOptsFor } from "./tool-card-opts.js";
-import { iconEl } from "./icon-el.js";
-import { ICON_SPARKLE } from "./icons.js";
 import { windowOutput, windowSpans } from "./strings.js";
 import { renderOutput, appendOutput as appendOutputChunk } from "./output-render.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
-import { bindLoadingState } from "./actions/index.js";
 
 // ---------------------------------------------------------------------------
 // Module state (tool-specific)
@@ -526,23 +523,12 @@ function trimToLiveCap(pre: HTMLElement): void {
 // Callbacks injected by messages.ts at init time
 // ---------------------------------------------------------------------------
 
-let _pushBind: (key: string, unbind: () => void) => void = () => {
-  /* default until init */
-};
 let _refreshGroupHeader: (group: HTMLElement) => void = () => {
   /* default until init */
 };
-let _explainError: (errorText: string, toolTitle: string) => Promise<string> = () =>
-  Promise.resolve("");
 
-export function initToolCallbacks(cbs: {
-  pushBind: (key: string, unbind: () => void) => void;
-  refreshGroupHeader: (group: HTMLElement) => void;
-  explainError: (errorText: string, toolTitle: string) => Promise<string>;
-}): void {
-  _pushBind = cbs.pushBind;
+export function initToolCallbacks(cbs: { refreshGroupHeader: (group: HTMLElement) => void }): void {
   _refreshGroupHeader = cbs.refreshGroupHeader;
-  _explainError = cbs.explainError;
 }
 
 // ---------------------------------------------------------------------------
@@ -609,8 +595,8 @@ export function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: st
   if (tc.declined === true) {
     el.dataset["declined"] = "1";
   }
-  // Status is applied last: the Explain gate and the bare-disclosure predicate read `.tool-output` back from the
-  // DOM, and a terminal frame often carries both. The gate trims, like both of them.
+  // Status is applied last: the bare-disclosure predicate reads `.tool-output` back from the DOM, and a terminal
+  // frame often carries both. The output check below trims, like the predicate.
   if (tc.output !== undefined && tc.output.trim() !== "") {
     applyOutputUpdate(el, tc.output, tc.output_spans ?? []);
   }
@@ -620,7 +606,7 @@ export function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: st
   syncOffloadLink(el, tc.offload);
   syncInteractionFact(el, tc.interaction);
   if (tc.status !== undefined) {
-    applyStatusUpdate(el, tc.status, tc.id);
+    applyStatusUpdate(el, tc.status);
     if (isToolDone(tc.status)) {
       // A settle is the one event saying no further frame is coming; another surface may still hold a card.
       forgetToolSilence(chatID, tc.id);
@@ -628,7 +614,7 @@ export function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: st
   }
 }
 
-function applyStatusUpdate(card: HTMLDivElement, status: ToolStatus, toolId: string): void {
+function applyStatusUpdate(card: HTMLDivElement, status: ToolStatus): void {
   // The outcome glyph, through the one writer that owns that vocabulary.
   applyOutcome(card, status, card.dataset["title"] ?? "", {
     kind: (card.dataset["kind"] ?? "other") as ToolKind,
@@ -655,48 +641,8 @@ function applyStatusUpdate(card: HTMLDivElement, status: ToolStatus, toolId: str
     }
   }
   if (card.dataset["declined"] === "1") {
-    // A refusal's reason is its output, so the region opens; no Explain button, since nothing broke.
+    // A refusal's reason is its output, so the region opens.
     expandToolDetails(card);
-  }
-  if (status === "failed") {
-    // Failed tools open their details; `expandToolDetails` refuses a bare card, so there is no gate here.
-    expandToolDetails(card);
-    if (card.querySelector(".tool-explain-btn") === null) {
-      const output = card.querySelector(".tool-output")?.textContent ?? "";
-      if (output.trim() !== "") {
-        // Icon-only, so the name and hover text share one local. `data-tooltip`, not `title`: the delegated tooltip
-        // publishes `aria-describedby`, where a UA `title` reaches mouse users alone.
-        const label = "Explain this error";
-        const btn = el(
-          "button",
-          {
-            type: "button",
-            className: "tool-explain-btn",
-            "aria-label": label,
-            "data-tooltip": label,
-            [CHROME_ATTR]: "",
-          },
-          // The sparkle every model-asking button carries; its export records why it is a path.
-          iconEl(ICON_SPARKLE),
-        ) as HTMLButtonElement;
-        _pushBind(
-          toolId,
-          bindLoadingState("messages.explain_error", btn, { pendingClass: "btn-loading" }),
-        );
-        btn.addEventListener("click", () => {
-          void _explainError(output, card.dataset["title"] ?? "").then((explanation) => {
-            if (explanation !== "") {
-              btn.textContent = explanation;
-              btn.className = "tool-explain-result";
-              // `aria-label` wins over content, so one left on the result would announce "Explain this error" instead.
-              btn.removeAttribute("aria-label");
-              btn.removeAttribute("data-tooltip");
-            }
-          });
-        });
-        card.appendChild(btn);
-      }
-    }
   }
 }
 

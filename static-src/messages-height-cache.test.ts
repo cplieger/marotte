@@ -18,7 +18,6 @@ for (const id of [
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 vi.mock("./actions/messages.js", () => ({
   copyClipboard: { dispatch: () => Promise.resolve() },
-  explainError: { dispatch: () => Promise.resolve(null) },
 }));
 vi.mock("./api-client.js", async () => ({
   ...(await vi.importActual<Record<string, unknown>>("./api-client.js")),

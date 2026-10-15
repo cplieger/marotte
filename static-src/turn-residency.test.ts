@@ -32,8 +32,7 @@ for (const id of [
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 // The clipboard action, so what a turn's Copy hands over is observable. A REPLACING
-// factory naming both exports: real-ESM linking fails on a missing one, and the second
-// is the error explainer this graph also imports.
+// factory naming the module's one export: real-ESM linking fails on a missing one.
 const { copied } = vi.hoisted(() => ({ copied: [] as string[] }));
 vi.mock("./actions/messages.js", () => ({
   copyClipboard: {
@@ -42,7 +41,6 @@ vi.mock("./actions/messages.js", () => ({
       return Promise.resolve();
     },
   },
-  explainError: { dispatch: () => Promise.resolve(null) },
 }));
 
 // The graph's network edge, real except for the two GETs these cases drive: a
