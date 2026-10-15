@@ -96,7 +96,7 @@ func TestUtilitySession_APushThatLandsOnAProcessSinceReplacedIsNotRecordedForThe
 	synctest.Test(t, func(t *testing.T) {
 		h, configDir := reopenFixture(t)
 		old := acquireUtility(t, h)
-		us := h.utility.peek().session
+		us := h.utility.peek()
 		gate := make(chan struct{})
 		old.blockNotify(marotte.MethodPolicyIgnoreFilesChanged, gate)
 		rewriteConfigByHand(t, configDir, `{"agent_ignore_files":[".gitignore"]}`)

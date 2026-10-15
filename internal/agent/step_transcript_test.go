@@ -385,10 +385,10 @@ func TestStepTranscript_TheUtilitySessionKeepsItsOwnIdentity(t *testing.T) {
 	armStepReplay(br, "sess_pass0", "hello")
 
 	// Settle the utility's id before the read.
-	if err := h.utility.get().session.ensureStarted(t.Context()); err != nil {
+	if err := h.utility.get().ensureStarted(t.Context()); err != nil {
 		t.Fatalf("start utility session: %v", err)
 	}
-	before := h.utility.get().session.liveID()
+	before := h.utility.get().liveID()
 	if before == "" {
 		t.Fatal("the utility session reports no id")
 	}
@@ -397,7 +397,7 @@ func TestStepTranscript_TheUtilitySessionKeepsItsOwnIdentity(t *testing.T) {
 		t.Fatalf("StepTranscript: %v", err)
 	}
 
-	if after := h.utility.get().session.liveID(); after != before {
+	if after := h.utility.get().liveID(); after != before {
 		t.Errorf("the utility session's id moved from %q to %q across a step read — "+
 			"the orphan reaper's keep-list now names the wrong session", before, after)
 	}
@@ -636,8 +636,8 @@ func TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
 	}
 }
 
-// TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing pins that the utility session is recycled (20 prompts,
-// 30 min idle), and an old forward's positions run far ahead of a restarted sequence.
+// TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing pins that the utility session can restart, and an old
+// forward's positions run far ahead of a restarted sequence.
 func TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing(t *testing.T) {
 	var sr stepReplays
 	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
@@ -772,7 +772,7 @@ func TestUtilityRawCallAt_CarriesTheResponsePosition(t *testing.T) {
 	armStepReplay(br, "sess_pass0", "one ", "two ", "three")
 	rs := unwiredStepRuns(t, br)
 
-	raw, at, err := rs.utility().session.rawCallAt(t.Context(), "step transcript load",
+	raw, at, err := rs.utility().rawCallAt(t.Context(), "step transcript load",
 		marotte.MethodSessionLoad,
 		callerParams(map[string]any{marotte.KeySessionID: "sess_pass0"}))
 	if err != nil {
@@ -808,13 +808,11 @@ func unwiredStepRuns(t *testing.T, br *fakeBridge) *Runs {
 	session := &utilitySession{
 		shutdownCtx:   context.Background(),
 		bridgeFactory: func() ACPBridge { return br },
-		models:        func() []marotte.SessionModel { return nil },
 	}
-	ur := &utilityRuntime{session: session, textgen: newUtilityAgent(session)}
 	t.Cleanup(session.Stop)
 	return &Runs{
 		translate: noopRunTranslator{},
-		utility:   func() *utilityRuntime { return ur },
+		utility:   func() *utilitySession { return session },
 	}
 }
 

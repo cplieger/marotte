@@ -57,7 +57,7 @@ func fakeOf(sb *sharedBridge) *fakeBridge {
 
 func acquireUtility(t *testing.T, h *Runtime) *fakeBridge {
 	t.Helper()
-	lease, err := h.utility.get().session.acquire(t.Context())
+	lease, err := h.utility.get().acquire(t.Context())
 	if err != nil {
 		t.Fatalf("acquire the utility session: %v", err)
 	}

@@ -87,7 +87,7 @@ func rowFromKAS(m *kasMemory) memoryRow {
 func (st *Settings) memoryCall(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
 	cctx, cancel := context.WithTimeout(ctx, memoryCallTimeout)
 	defer cancel()
-	return st.utility().session.memoryRaw(cctx, method, params)
+	return st.utility().memoryRaw(cctx, method, params)
 }
 
 // One page normally covers it.

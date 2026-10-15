@@ -251,7 +251,7 @@ func (rs *Runs) deleteCall(ctx context.Context, workflowID string, stop runStop,
 		err = runCallErr(resp, err)
 		return verdictOf(err), err
 	}
-	called, err := rs.utility().session.rawCallDetached(ctx, "workflow delete call", methodKiroWorkflowDelete, callerParams(params))
+	called, err := rs.utility().rawCallDetached(ctx, "workflow delete call", methodKiroWorkflowDelete, callerParams(params))
 	if !called {
 		return kasRefused, err
 	}
@@ -773,7 +773,7 @@ func (rs *Runs) callReclaiming(
 	if !errors.Is(callErr, workflow.ErrOwnedElsewhere) {
 		return resp, callErr
 	}
-	rs.utility().session.Stop()
+	rs.utility().Stop()
 	slog.Info("a run was held by another process, so the utility session was stopped "+
 		"and the verb sent again", "workflow_id", workflowID, "method", method)
 	return resendWhileOwned(ctx, b, method, params)
@@ -1308,7 +1308,7 @@ func (rs *Runs) control(
 		resp, err := carrier.bridge.Call(ctx, method, params)
 		return runCallErr(resp, err)
 	}
-	_, err := rs.utility().session.rawCall(ctx, logLabel, method, callerParams(params))
+	_, err := rs.utility().rawCall(ctx, logLabel, method, callerParams(params))
 	return err
 }
 
@@ -1493,7 +1493,7 @@ func (rs *Runs) listRecipes(ctx context.Context) ([]marotte.Recipe, error) {
 	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
-	raw, err := u.session.rawCall(cctx, "workflow listRecipes call", methodKiroWorkflowListRecipes,
+	raw, err := u.rawCall(cctx, "workflow listRecipes call", methodKiroWorkflowListRecipes,
 		callerParams(map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}}))
 	if err != nil {
 		return nil, err
@@ -1827,7 +1827,7 @@ func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
-	raw, err := u.session.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
+	raw, err := u.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
 		callerParams(map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}}))
 	if err != nil {
 		return nil, err

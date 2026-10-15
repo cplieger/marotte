@@ -71,7 +71,7 @@ func spawnSites() []spawnSite {
 			host.release(nil)
 		}},
 		{name: "utility", spawn: func(t *testing.T, h *Runtime, _ *testChatStore, _ *fakeBridge) {
-			if _, err := h.utility.get().session.acquire(t.Context()); err != nil {
+			if _, err := h.utility.get().acquire(t.Context()); err != nil {
 				t.Fatalf("acquire utility session: %v", err)
 			}
 		}},
@@ -120,7 +120,7 @@ func TestGovernanceLockChange_PushesContentCollectionToEveryLiveProcess(t *testi
 			pushed := make(chan struct{}, 1)
 			h, _ := newContentCollectionHub(t, func() ACPBridge { return utility },
 				WithGovernanceLocksHook(func(context.Context) { pushed <- struct{}{} }))
-			if _, err := h.utility.get().session.acquire(t.Context()); err != nil {
+			if _, err := h.utility.get().acquire(t.Context()); err != nil {
 				t.Fatalf("acquire utility session: %v", err)
 			}
 

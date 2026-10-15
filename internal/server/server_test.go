@@ -181,33 +181,8 @@ func TestModelHidden(t *testing.T) {
 	for _, tt := range tests {
 		got := modeltext.Hidden(tt.desc)
 		if got != tt.want {
-			t.Errorf("TagExcluded(%q, HiddenTags) = %v, want %v", tt.desc, got, tt.want)
+			t.Errorf("Hidden(%q) = %v, want %v", tt.desc, got, tt.want)
 		}
-	}
-}
-
-func TestStripCodeFence(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"no fence passthrough", "plain text\nmore lines", "plain text\nmore lines"},
-		{"fence with language tag", "```go\nfunc main() {}\n```", "func main() {}"},
-		{"fence without language tag", "```\nsome code\n```", "some code"},
-		{"fence with trailing whitespace", "```js\nlet x = 1;\n```  \n", "let x = 1;"},
-		{"bare triple backtick no newline", "```", "```"},
-		{"empty content between fences", "```\n\n```", ""},
-		{"multiline content", "```python\nimport os\nprint(os.getcwd())\n```", "import os\nprint(os.getcwd())"},
-		{"no trailing fence", "```go\nfunc main() {}", "func main() {}"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := modeltext.StripCodeFence(tt.input)
-			if got != tt.want {
-				t.Errorf("StripCodeFence(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
 	}
 }
 

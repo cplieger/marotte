@@ -61,8 +61,8 @@ type StartOpts struct {
 	// running session's policy. Set on the utility bridge too, which answers GET /api/permissions.
 	Presets []string
 	// ExtraArgs are operator kiro-cli flags (MAROTTE_KIRO_ACP_ARGS, bridge.filterACPArgs), appended
-	// after marotte's own. CHAT bridges only: on the utility bridge an `--effort max` would spend
-	// real credits generating a two-word title.
+	// after marotte's own. CHAT bridges only: docs/launch-flags.md promises them to every chat's
+	// launch command, not to the utility bridge.
 	ExtraArgs []string
 	// Steering is the session door's client steering, sent on session/new and
 	// session/load alike (KAS persists none of it); nil sends no key. Chat
@@ -157,8 +157,3 @@ type MemoryPreference struct {
 
 // No PushService interface: internal/agent and internal/server each declare the methods they use;
 // internal/forges notifies through *agent.Runtime (PRNotifier).
-
-// --- AI Utilities ---
-
-// No UtilityPrompter interface: internal/server and internal/git each declare the one method;
-// *agent.Runtime satisfies both.

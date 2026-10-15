@@ -38,17 +38,6 @@ export const saveFile = apiAction<{ path: string; content: string; fileId?: stri
   error: false,
 });
 
-/** Requests AI conflict resolution. No retry (not idempotent). */
-export const suggestResolution = apiAction<
-  { ours: string; theirs: string; context: string },
-  { output?: string; error?: string }
->({
-  name: "editor.suggest_resolution",
-  // No dedupe: editor-conflict.ts's per-file generation counter handles supersession.
-  request: (body) => ({ method: "POST", path: "/api/utility/resolve-conflict", body }),
-  error: false,
-});
-
 export const fetchAgentLines = apiAction<
   { chatID: string; path: string },
   { changes: { start_line: number; end_line: number }[] }

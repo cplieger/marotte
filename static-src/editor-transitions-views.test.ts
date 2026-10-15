@@ -55,7 +55,6 @@ import {
   stage,
   stageLarge,
   statURL,
-  suggestions,
 } from "./__test-helpers__/editor-transitions-harness.js";
 import {
   gitDiffInFlight,
@@ -176,27 +175,5 @@ describe("a discard confirmed for a closed tab, after the same path is reopened"
     await drain();
     expect(onScreen()).toContain(FIRST.trim());
     expect(onScreen()).not.toContain("draft base");
-  });
-});
-
-describe("a conflict suggestion for a closed tab, after the same path is reopened", () => {
-  const suggestButton = (): HTMLButtonElement | undefined =>
-    [...byId("editor-conflict-overlay").querySelectorAll("button")].find(
-      (b) => b.textContent === "Suggest",
-    );
-
-  it("never paints over the reopened file's own request", async () => {
-    stage(CONFLICTED, CONFLICT);
-    await opened(CONFLICTED);
-    suggestButton()?.click();
-    expect(suggestions).toHaveLength(1);
-    closeEditorFile(CONFLICTED);
-    await opened(CONFLICTED);
-    suggestButton()?.click();
-    expect(suggestions).toHaveLength(2);
-    suggestions[0]?.({ output: "the closed tab's merge" });
-    await drain();
-    expect(byId("editor-conflict-overlay").textContent).not.toContain("the closed tab's merge");
-    expect(byId("editor-conflict-overlay").textContent).toContain("Suggesting");
   });
 });

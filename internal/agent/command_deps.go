@@ -176,7 +176,7 @@ var _ command.SessionRenamer = (*Runtime)(nil)
 
 // RenameSession renames a session no chat bridge holds, through the utility session.
 func (rt *Runtime) RenameSession(ctx context.Context, sessionID, title string) error {
-	raw, err := rt.utility.get().session.renameSessionRaw(ctx, sessionID, title)
+	raw, err := rt.utility.get().renameSessionRaw(ctx, sessionID, title)
 	if err != nil {
 		return err
 	}

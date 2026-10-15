@@ -1,5 +1,4 @@
-// Stateless KAS RPC wrappers over the utility session. Each Call runs outside any lock, so none waits on the text
-// turn mutex.
+// Stateless KAS RPC wrappers over the utility session. Each Call runs outside the session mutex.
 
 package agent
 

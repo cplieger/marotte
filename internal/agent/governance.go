@@ -257,7 +257,7 @@ func (st *Settings) governanceState(ctx context.Context) marotte.GovernanceState
 	u := st.utility()
 	warmCtx, cancel := context.WithTimeout(ctx, governanceWarmTimeout)
 	defer cancel()
-	if err := u.session.ensureStarted(warmCtx); err != nil {
+	if err := u.ensureStarted(warmCtx); err != nil {
 		slog.Warn("governance: utility bridge start failed", "error", err)
 		return st.governance.peek()
 	}

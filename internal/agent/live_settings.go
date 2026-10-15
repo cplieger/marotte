@@ -313,7 +313,7 @@ func (rt *Runtime) syncLiveExcept(ctx context.Context, skip liveSurface) {
 		wg.Go(func() { sb.syncLive(ctx, chatID, rt.liveSettings) })
 	}
 	if u := rt.utility.peek(); u != nil && !skip.utility {
-		wg.Go(func() { u.session.syncLive(ctx, rt.liveSettings) })
+		wg.Go(func() { u.syncLive(ctx, rt.liveSettings) })
 	}
 	wg.Wait()
 }

@@ -80,7 +80,7 @@ func (rt *Runtime) deleteSessions(ctx context.Context, chatID marotte.ChatID, ch
 			err = runCallErr(sb.Call(dctx, marotte.MethodSessionDelete, map[string]any{marotte.KeySessionID: id}))
 		} else {
 			// Raw params: scopedParams would inject the utility's own session id.
-			_, err = rt.utility.get().session.rawCall(dctx, "session delete", marotte.MethodSessionDelete,
+			_, err = rt.utility.get().rawCall(dctx, "session delete", marotte.MethodSessionDelete,
 				callerParams(map[string]any{marotte.KeySessionID: id}))
 		}
 		cancel()

@@ -514,11 +514,6 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	return h
 }
 
-// UtilityPrompt delegates to the utility text-gen agent, built lazily. effort "" keeps the session's level.
-func (rt *Runtime) UtilityPrompt(ctx context.Context, prompt string, effort marotte.EffortLevel) (string, error) {
-	return rt.utility.get().textgen.UtilityPrompt(ctx, prompt, effort)
-}
-
 // MCPRegistry returns the MCP runtime registry as a RouteRegistrar.
 func (rt *Runtime) MCPRegistry() RouteRegistrar { return rt.mcpRegistry }
 
@@ -855,13 +850,13 @@ func (rt *Runtime) utilityLiveSessionID() string {
 	if u == nil {
 		return ""
 	}
-	return u.session.liveID()
+	return u.liveID()
 }
 
 // take clears and stops it in one step.
 func (rt *Runtime) stopUtilityBridge() {
 	if u := rt.utility.take(); u != nil {
-		u.session.Stop()
+		u.Stop()
 	}
 }
 
@@ -883,7 +878,7 @@ func (rt *Runtime) cullIdleUtilityBridge() {
 // peek, since building a bridge to check idleness creates work.
 func (rt *Runtime) cullIdleUtilityBridgeOnce() {
 	u := rt.utility.peek()
-	if u != nil && u.session.stopIfIdle(time.Now().Add(-bridgeIdleTimeout)) {
+	if u != nil && u.stopIfIdle(time.Now().Add(-bridgeIdleTimeout)) {
 		slog.Info("culled idle utility bridge")
 	}
 }

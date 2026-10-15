@@ -214,8 +214,8 @@ func TextBlock(content string) map[string]any {
 const KeySessionID = "sessionId"
 
 // KeyPrompt is the ACP wire key for a `session/prompt` call's content-block
-// array. KeySessionID's sibling, for the same reason: three senders build that
-// call — a chat's prompt, the utility bridge's own turn, and the answer to a
-// parked workflow step — and a bare literal at each is three chances to disagree
-// about the spelling of a key KAS validates.
+// array. KeySessionID's sibling, for the same reason: two senders build that
+// call — a chat's prompt and the answer to a parked workflow step — and a bare
+// literal at each is two chances to disagree about the spelling of a key KAS
+// validates.
 const KeyPrompt = "prompt"

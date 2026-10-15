@@ -289,10 +289,8 @@ type EffortLevel string
 // Well-known effort levels, used where marotte itself picks a tier. Not the
 // valid set: the per-model catalog owns which tiers exist.
 const (
-	EffortLow    EffortLevel = "low"
-	EffortMedium EffortLevel = "medium"
-	effortXHigh  EffortLevel = "xhigh"
-	EffortMax    EffortLevel = "max"
+	effortXHigh EffortLevel = "xhigh"
+	EffortMax   EffortLevel = "max"
 )
 
 // Valid reports whether e is plausibly an effort-level id: a short lowercase token (letter first;

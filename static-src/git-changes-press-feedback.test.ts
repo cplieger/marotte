@@ -218,12 +218,6 @@ describe("the Changes tab", () => {
         commitBox(r).value = "fix: a change";
       },
     },
-    {
-      name: "AI message",
-      route: "/api/git/commit-message",
-      could: "write a commit message",
-      find: (r) => byLabel(r, "AI message"),
-    },
   ];
 
   describe.each(PRESSES)("$name", (p) => {
@@ -376,22 +370,18 @@ describe("the Changes tab", () => {
     });
   });
 
-  it("Commit clears its message once it lands, and AI message fills the box on screen", async () => {
+  it("Commit clears the box on screen once it lands, after a repaint replaced the one it was pressed in", async () => {
     const mine = repoStatus();
     await show(mine);
     const calls = heldFetch();
+    commitBox(mine.repo).value = "feat: typed";
 
-    byLabel(mine.repo, "AI message")!.click();
-    await vi.waitFor(() => expect(calls).toHaveLength(1));
-    await refreshChanges();
-    calls[0]!.answer(json({ output: "feat: drafted" }));
-    await vi.waitFor(() => expect(commitBox(mine.repo).value).toBe("feat: drafted"));
-
-    await vi.waitFor(() => expectIdle(byLabel(mine.repo, "Commit 1 file")), { timeout: 3000 });
     byLabel(mine.repo, "Commit 1 file")!.click();
-    await vi.waitFor(() => expect(calls).toHaveLength(2));
-    expect(calls[1]!.body).toEqual({ repo: mine.repo, message: "feat: drafted" });
-    calls[1]!.answer(json({ output: "[main abc1234] feat: drafted" }));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]!.body).toEqual({ repo: mine.repo, message: "feat: typed" });
+    await refreshChanges();
+    expect(commitBox(mine.repo).value).toBe("feat: typed");
+    calls[0]!.answer(json({ output: "[main abc1234] feat: typed" }));
     await vi.waitFor(() => expect(commitBox(mine.repo).value).toBe(""));
   });
 

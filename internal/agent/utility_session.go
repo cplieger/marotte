@@ -1,6 +1,7 @@
-// The utility session is the shared kiro-cli subprocess behind marotte's ambient AI features: this file holds the
-// session, utility_rpc.go the RPC wrappers, utility_agent.go the text agent. acquire() a lease and use its bridge
-// outside the session mutex; resetIf(gen) is idempotent, so a stale failure cannot tear down a recycled session.
+// The utility session is the shared kiro-cli subprocess that answers marotte's workspace reads and writes with no
+// chat open; it is never prompted. This file holds the session, utility_rpc.go the RPC wrappers. acquire() a lease
+// and use its bridge outside the session mutex; resetIf(gen) is idempotent, so a stale failure cannot tear down a
+// recycled session.
 
 package agent
 
@@ -18,17 +19,6 @@ import (
 	"github.com/cplieger/marotte/internal/secretstore"
 	"github.com/cplieger/marotte/internal/translate"
 )
-
-type utilityRuntime struct {
-	session *utilitySession
-	// textgen is the text-generation agent; a field named agent would invite a local shadowing the package.
-	textgen *utilityAgent
-}
-
-func newUtilityRuntime(shutdownCtx context.Context, factory ACPBridgeFactory, models func() []marotte.SessionModel, hooks *utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilityRuntime {
-	session := newUtilitySession(shutdownCtx, factory, models, hooks, secrets, enableHooks)
-	return &utilityRuntime{session: session, textgen: newUtilityAgent(session)}
-}
 
 // utilitySessionHooks are the runtime callbacks the forward goroutine invokes, immutable after construction so it
 // reads them without locks.
@@ -65,30 +55,28 @@ type utilitySessionHooks struct {
 	// ignoreFiles resolves the ignore-file list for StartOpts, so every session resolves it the same way. nil sends
 	// none, and then no notification is sent.
 	ignoreFiles func(context.Context) []string
-	// contentCollection resolves StartOpts.ContentCollection: this session sends diffs and error text, so it opts out.
-	// nil sends nothing.
+	// contentCollection resolves StartOpts.ContentCollection, the Settings switch every chat spawns under too. nil
+	// sends nothing.
 	contentCollection func(context.Context) (enabled, readable bool)
 	// telemetryOff resolves StartOpts.DisableTelemetry; nil leaves KAS's default, on.
 	telemetryOff func() bool
 }
 
-// utilitySession owns the dedicated kiro-cli subprocess and ACP session, so ambient work never pollutes a chat's
-// context. Started lazily on first acquire, culled after 30 minutes idle.
+// utilitySession owns the dedicated kiro-cli subprocess and ACP session, so a workspace read needs no chat open and
+// never rebinds a chat's session. Started lazily on first acquire, culled after 30 minutes idle.
 type utilitySession struct {
 	// shutdownCtx is the runtime's lifetime, never a request context: acquire's ctx dies with the request, and the
 	// subprocess must outlive it.
 	shutdownCtx   context.Context
 	bridgeFactory ACPBridgeFactory
-	models        func() []marotte.SessionModel
 	// secrets is the runtime's shared credential store, so a registration from any bridge is visible to all. Nil
 	// without a configDir.
 	secrets *secretstore.Store
 	hooks   utilitySessionHooks
 
-	// Guarded by mu, held only for bookkeeping and never across a bridge Call, or a slow turn starves a recycle.
+	// Guarded by mu, held only for bookkeeping and never across a bridge Call, or a slow call starves a stop.
 	lastActiveAt time.Time
 	bridge       utilityBridge
-	responseCh   chan utilityChunkPayload
 	forwardDone  chan struct{}
 	// liveIgnore is the ignore list this process last confirmed, guarded by mu.
 	liveIgnore []string
@@ -104,22 +92,19 @@ type utilitySession struct {
 
 // newUtilitySession constructs a stopped session (started=false, gen=0, zero lastActiveAt). shutdownCtx is
 // positional: any default lifetime would be one nothing can cancel.
-func newUtilitySession(shutdownCtx context.Context, factory ACPBridgeFactory, models func() []marotte.SessionModel, hooks *utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
+func newUtilitySession(shutdownCtx context.Context, factory ACPBridgeFactory, hooks *utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
 	return &utilitySession{
 		shutdownCtx:   shutdownCtx,
 		bridgeFactory: factory,
-		models:        models,
 		secrets:       secrets,
 		hooks:         *hooks,
 		enableHooks:   enableHooks,
 	}
 }
 
-// sessionLease is a caller's snapshot of the live session: the bridge to Call, the generation for resetIf, and the
-// chunk channel (nil until started; a closed one ends a drain early).
+// sessionLease is a caller's snapshot of the live session: the bridge to Call and the generation for resetIf.
 type sessionLease struct {
 	bridge acpSessionCaller
-	chunks <-chan utilityChunkPayload
 	gen    uint64
 }
 
@@ -134,7 +119,7 @@ func (us *utilitySession) acquire(ctx context.Context) (sessionLease, error) {
 		}
 	}
 	us.lastActiveAt = time.Now()
-	return sessionLease{bridge: us.bridge, gen: us.gen, chunks: us.responseCh}, nil
+	return sessionLease{bridge: us.bridge, gen: us.gen}, nil
 }
 
 // ensureStarted lazily starts the session without a request, for callers that only need it live (warming GET
@@ -144,46 +129,42 @@ func (us *utilitySession) ensureStarted(ctx context.Context) error {
 	return err
 }
 
-// Caller holds us.mu.
+// No Model in StartOpts: the session is never prompted, so KAS's default costs nothing. Caller holds us.mu.
 func (us *utilitySession) startLocked(ctx context.Context) error {
 	bridge := us.bridgeFactory()
-	model := cheapestModel(ctx, us.models())
 
-	// Forward must drain NotifCh before Start: the handshake sends notifications and host requests there. Locals, so a
+	// Forward must drain NotifCh before Start: the handshake sends notifications and host requests there. A local, so a
 	// failed Start leaves no state.
-	responseCh := make(chan utilityChunkPayload, 64)
 	forwardDone := make(chan struct{})
 	// Bumped before the goroutine: positions compare only within one attachment, and the lease carries the same
 	// number. A failed Start is harmless: started stays false and resetIf returns early.
 	us.gen++
-	go us.forward(bridge, us.gen, bridge.NotifCh(), responseCh, forwardDone)
+	go us.forward(bridge, us.gen, bridge.NotifCh(), forwardDone)
 
 	// shutdownCtx, not a request ctx: this runs under us.mu, so a session/new that never answers would hold the mutex
 	// for good. Start bounds the handshake itself.
-	if err := bridge.Start(us.shutdownCtx, &marotte.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx), IgnoreFiles: us.sessionIgnoreFiles, ContentCollection: us.hooks.contentCollection, DisableTelemetry: us.hooks.telemetryOff != nil && us.hooks.telemetryOff(), ConfigurationState: true}); err != nil {
+	if err := bridge.Start(us.shutdownCtx, &marotte.StartOpts{Lifetime: us.shutdownCtx, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx), IgnoreFiles: us.sessionIgnoreFiles, ContentCollection: us.hooks.contentCollection, DisableTelemetry: us.hooks.telemetryOff != nil && us.hooks.telemetryOff(), ConfigurationState: true}); err != nil {
 		return err
 	}
 	us.liveIgnore = startedLive(bridge).ignoreFiles
 	us.bridge = bridge
 	us.started = true
 	us.lastActiveAt = time.Now()
-	us.responseCh = responseCh
 	us.forwardDone = forwardDone
 
 	// Logged because this session appears in session/list owned by no chat.
-	slog.Info("utility bridge started", "model", model, "session_id", string(bridge.SessionID()))
+	slog.Info("utility bridge started", "session_id", string(bridge.SessionID()))
 	return nil
 }
 
-// stopLocked stops the subprocess and waits for the forward goroutine to exit, so a recycle leaks nothing.
-// forwardChunk never blocks, so a full responseCh cannot wedge it. Caller holds us.mu.
+// stopLocked stops the subprocess and waits for the forward goroutine to exit, so a recycle leaks nothing. Caller
+// holds us.mu.
 func (us *utilitySession) stopLocked() {
 	us.bridge.Stop()
 	if us.forwardDone != nil {
 		<-us.forwardDone
 	}
 	us.started = false
-	us.responseCh = nil
 	us.forwardDone = nil
 }
 
@@ -219,7 +200,6 @@ func (us *utilitySession) stopIfIdle(cutoff time.Time) bool {
 		// Under the lock: startLocked reassigns us.bridge, so a later read could stop a freshly restarted bridge.
 		victim = us.bridge
 		us.started = false
-		us.responseCh = nil
 		us.forwardDone = nil
 	}
 	us.mu.Unlock()
@@ -238,11 +218,6 @@ func (us *utilitySession) liveID() string {
 		return ""
 	}
 	return string(us.bridge.SessionID())
-}
-
-// The drain skips a reset that would race Stop.
-func (us *utilitySession) shuttingDown() bool {
-	return us.shutdownCtx.Err() != nil
 }
 
 // Not command.sessionParams: this bridge carries no prompt slot.
@@ -270,18 +245,11 @@ type utilityUpdateBase struct {
 	Kind marotte.ACPUpdateKind `json:"sessionUpdate"`
 }
 
-type utilityChunkPayload struct {
-	Content struct {
-		Text string `json:"text"`
-	} `json:"content"`
-}
-
 // Peer requests go to answerHostRequest (session/ new stalls without the shell type); everything
 // else but hooks and policy is dropped so readLoop never blocks. bridge is explicit so a recycle
 // cannot redirect answers.
-func (us *utilitySession) forward(bridge acpSessionResponder, gen uint64, notifCh <-chan marotte.Notification, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
+func (us *utilitySession) forward(bridge acpSessionResponder, gen uint64, notifCh <-chan marotte.Notification, done chan<- struct{}) {
 	defer close(done)
-	defer close(responseCh)
 	for n := range notifCh {
 		msg := n.Msg
 		switch {
@@ -292,7 +260,7 @@ func (us *utilitySession) forward(bridge acpSessionResponder, gen uint64, notifC
 		default:
 			// Read per frame: the id is empty until session/new answers. SessionID takes only the bridge's own mutex, which no
 			// method holds across a round trip.
-			forwardChunk(msg, string(bridge.SessionID()), responseCh, us.hooks.onForeignUpdate)
+			offerForeign(msg, string(bridge.SessionID()), us.hooks.onForeignUpdate)
 		}
 		// After handling, so the reported position is folded, not merely received.
 		us.noteFrameDrained(drainPoint{gen: gen, seq: n.Seq}, false)
@@ -388,8 +356,10 @@ func (us *utilitySession) sessionIgnoreFiles(ctx context.Context) []string {
 	return us.hooks.ignoreFiles(ctx)
 }
 
-// Two decodes: the envelope names the session, the inner frame carries kind and content.
-func forwardChunk(msg *marotte.RPCResponse, ownSession string, responseCh chan<- utilityChunkPayload, onForeign foreignUpdateHook) {
+// offerForeign hands another session's session/update frame to its reader. KAS can hydrate a session into this
+// process (a step replay), and that text belongs to the other transcript. This session is never prompted, so its own
+// frames, and every frame before session/new names it, carry nothing to read.
+func offerForeign(msg *marotte.RPCResponse, ownSession string, onForeign foreignUpdateHook) {
 	if msg.Method != marotte.MethodSessionUpdate || msg.Params == nil {
 		return
 	}
@@ -397,36 +367,20 @@ func forwardChunk(msg *marotte.RPCResponse, ownSession string, responseCh chan<-
 	if json.Unmarshal(msg.Params, &env) != nil || env.Update == nil {
 		return
 	}
-	kind, kindOK := updateKind(env.Update)
-	// KAS can hydrate a chat's session into this process, and its text belongs to that transcript. An empty id is the
-	// window before session/new, when no prompt drains.
-	if ownSession != "" && env.SessionID != ownSession {
-		// A frame someone is reading is offered before the Warn. An undecodable update goes to nobody: consuming it would
-		// hide the shape change.
-		if kindOK && onForeign != nil && onForeign(env.SessionID, kind, env.Update) {
-			return
-		}
-		slog.Warn("utility bridge: dropping a frame for a foreign session",
-			"frame_session", env.SessionID, "utility_session", ownSession)
+	if ownSession == "" || env.SessionID == ownSession {
 		return
 	}
-	if !kindOK || kind != marotte.ACPUpdateAgentChunk {
+	// An undecodable update goes to nobody: consuming it would hide the shape change.
+	if kind, ok := updateKind(env.Update); ok && onForeign != nil && onForeign(env.SessionID, kind, env.Update) {
 		return
 	}
-	var chunk utilityChunkPayload
-	if json.Unmarshal(env.Update, &chunk) == nil {
-		// Non-blocking: a full responseCh is a turn nobody reads, and a blocked forward never sees notifCh close, so
-		// stopLocked's <-forwardDone would hang under us.mu.
-		select {
-		case responseCh <- chunk:
-		default:
-		}
-	}
+	slog.Warn("utility bridge: dropping a frame for a foreign session",
+		"frame_session", env.SessionID, "utility_session", ownSession)
 }
 
 // answerHostRequest answers the utility session's host requests. shell_type is answered for KAS's step reloads.
 // executeHook is not answered (it runs a shell command a hook file names) and gets -32601. Tool requests are refused
-// rather than left pending, which would wedge the turn.
+// rather than left pending.
 func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *marotte.RPCResponse) {
 	ctx := context.Background()
 	switch {
@@ -444,18 +398,18 @@ func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *marotte.RP
 	case msg.Method == marotte.MethodRequestPermission:
 		// cancelled rather than a selected reject: nobody is attached to select. KAS maps both to the same reject on every
 		// arm (measured on KAS 0.58.7).
-		slog.Warn("utility bridge: denying tool permission request (text-only session)")
+		slog.Warn("utility bridge: denying tool permission request (no-tools session)")
 		_ = bridge.Respond(ctx, *msg.ID, marotte.PermissionOutcomeCancelled(), nil)
 	case msg.Method == marotte.MethodFSRead || msg.Method == marotte.MethodFSWrite ||
 		strings.HasPrefix(msg.Method, methodTermPrefix):
-		slog.Warn("utility bridge: refusing tool request (text-only session)", "method", msg.Method)
+		slog.Warn("utility bridge: refusing tool request (no-tools session)", "method", msg.Method)
 		// -32601: a capability deliberately not offered, not a fault.
 		_ = bridge.Respond(ctx, *msg.ID, nil, &marotte.RPCError{
 			Code:    marotte.RPCCodeMethodNotFound,
-			Message: "utility session is text-generation only; tools are unavailable",
+			Message: "the utility session runs no tools",
 		})
 	default:
-		// Answered rather than left pending, which can wedge the turn.
+		// Answered rather than left pending, which can wedge the caller.
 		slog.Warn("utility bridge: unexpected peer request, refusing", "method", msg.Method, "id", *msg.ID)
 		// -32601: a deliberate refusal, where -32603 would blame the wrong side.
 		_ = bridge.Respond(ctx, *msg.ID, nil, &marotte.RPCError{

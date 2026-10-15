@@ -366,7 +366,7 @@ func TestChatSpawn_SendsTheCompactionPolicyAndOtherSpawnsDoNot(t *testing.T) {
 	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	if _, err := h.utility.get().session.acquire(t.Context()); err != nil {
+	if _, err := h.utility.get().acquire(t.Context()); err != nil {
 		t.Fatalf("utility session: %v", err)
 	}
 	mu.Lock()

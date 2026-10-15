@@ -206,7 +206,7 @@ func TestShutdown_BoundsAStallingUtilityStop(t *testing.T) {
 	br := &stallingStopBridge{fakeBridge: newFakeBridge(), release: make(chan struct{})}
 	t.Cleanup(func() { close(br.release) })
 	s := &utilitySession{shutdownCtx: t.Context(), started: true, bridge: br}
-	h.utility = &utilityLease{rt: &utilityRuntime{session: s, textgen: newUtilityAgent(s)}}
+	h.utility = &utilityLease{session: s}
 
 	const budget = 150 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), budget)

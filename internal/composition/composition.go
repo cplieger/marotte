@@ -218,7 +218,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	}
 
 	gitHandler := git.NewHandler(cfg.WorkDir, git.WithShowMax(filebrowse.WholeFileMax))
-	gitAIHandler := git.NewAIHandler(cfg.WorkDir, h)
 	ensureUploadDir()
 	sensitive := filebrowse.NewSensitive(cfg.ConfigDir)
 	fileHandler, err := filebrowse.New(sensitive, cfg.BrowseRoots,
@@ -292,7 +291,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithAgent(h),
 		server.WithChats(chatStore),
 		server.WithGit(gitHandler),
-		server.WithGitAI(gitAIHandler),
 		server.WithFiles(fileHandler),
 		server.WithAuth(authHandler),
 		server.WithPush(pushSvc),
@@ -302,7 +300,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithForges(forgesHTTP),
 		server.WithPreview(preview.New(cfg.WorkDir, sensitive, previewSigner, slog.Default())),
 		server.WithTools(tools),
-		server.WithUtilityPrompt(h),
 		server.WithAccountUsage(h),
 		server.WithPolicy(h.Config()),
 		server.WithGovernanceLocks(h.Config()),

@@ -1,5 +1,5 @@
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
-import { decodeGitResult, type GitCmdResult } from "./git-changes.js";
+import { decodeGitResult } from "./git-changes.js";
 
 import { truncate } from "../strings.js";
 
@@ -26,18 +26,4 @@ export const checkoutBranch = apiAction<CheckoutArgs, void>({
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: (args) => `Could not check out "${truncate(args.branch)}"`,
-});
-
-/** Ask the utility agent for a branch name describing the repo's work in
- *  progress (uncommitted changes, else recent commits). The result lands
- *  in the branch-switcher's create input for the user to edit or accept. */
-export const suggestBranchName = apiAction<{ repo: string }, GitCmdResult>({
-  name: "git.suggest_branch_name",
-  scope: (args) => "git:" + args.repo,
-  dedupe: (args) => args.repo,
-  request: (args) => ({ method: "POST", path: "/api/git/branch-name", body: args }),
-  decode: decodeGitResult,
-  error: "Could not suggest a branch name",
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
 });

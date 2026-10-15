@@ -493,7 +493,7 @@ describe("the in-file find bar", () => {
   });
 
   it("searches the conflict overlay and the buffer as ONE list, in reading order", async () => {
-    const conflicted = "a\n<<<<<<< HEAD\ntarget one\n=======\ntarget two\n>>>>>>> incoming\n";
+    const conflicted = "a\n<<<<<<< HEAD\nConflict one\n=======\nConflict two\n>>>>>>> incoming\n";
     await openFile("/workspace/a.go", "conflict", conflicted);
     showTextarea(conflicted);
     const overlay = document.getElementById("editor-conflict-overlay");
@@ -503,31 +503,29 @@ describe("the in-file find bar", () => {
     overlay.classList.remove("hidden");
     overlay.innerHTML =
       '<div class="conflict-status">1 unresolved conflict</div>' +
-      '<div class="conflict-hunk-row"><span class="conflict-hunk-title">Line 2: HEAD vs incoming</span>' +
-      '<span class="conflict-suggest-pill">AI suggestion</span></div>' +
-      '<pre class="conflict-suggest-preview">merged Target here</pre>';
+      '<div class="conflict-hunk-row"><span class="conflict-hunk-title">Line 2: HEAD vs incoming</span></div>';
     mod.openEditorFind();
 
-    // The merge suggestion is rendered text nobody could search before.
-    type("merged");
+    // The status line is rendered text the buffer does not hold.
+    type("unresolved");
     expect(count()).toBe("1 of 1");
     expect(overlay.querySelectorAll("mark.find-hit-current")).toHaveLength(1);
     expect(revealHit).not.toHaveBeenCalled();
 
     // One overlay hit sits above two buffer hits: the overlay comes first.
-    type("target");
+    type("Conflict");
     expect(count()).toBe("1 of 3");
-    expect(overlay.querySelector("mark.find-hit-current")?.textContent).toBe("Target");
+    expect(overlay.querySelector("mark.find-hit-current")?.textContent).toBe("conflict");
     expect(revealHit).not.toHaveBeenCalled();
     enter();
     expect(count()).toBe("2 of 3");
     // The overlay keeps its highlight and loses its "current": one cursor.
     expect(overlay.querySelectorAll("mark.find-hit")).toHaveLength(1);
     expect(overlay.querySelectorAll("mark.find-hit-current")).toHaveLength(0);
-    expect(revealHit).toHaveBeenLastCalledWith(15, 6, 3);
+    expect(revealHit).toHaveBeenLastCalledWith(15, 8, 3);
     enter();
     expect(count()).toBe("3 of 3");
-    expect(revealHit).toHaveBeenLastCalledWith(34, 6, 5);
+    expect(revealHit).toHaveBeenLastCalledWith(36, 8, 5);
     clearMark.mockReset();
     enter();
     expect(count()).toBe("1 of 3");
@@ -539,11 +537,11 @@ describe("the in-file find bar", () => {
     document.querySelector<HTMLButtonElement>(".editor-find-case")?.click();
     expect(count()).toBe("1 of 2");
     expect(overlay.querySelectorAll("mark.find-hit")).toHaveLength(0);
-    expect(revealHit).toHaveBeenLastCalledWith(15, 6, 3);
+    expect(revealHit).toHaveBeenLastCalledWith(15, 8, 3);
 
     mod.closeEditorFind();
     expect(overlay.querySelectorAll("mark.find-hit")).toHaveLength(0);
-    expect(overlay.textContent).toContain("merged Target here");
+    expect(overlay.textContent).toContain("1 unresolved conflict");
   });
 
   it("declines with no file open at all", async () => {

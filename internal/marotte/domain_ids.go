@@ -43,11 +43,6 @@ func NewChatID() ChatID {
 	return ChatID("c-" + hex.EncodeToString(b[:]))
 }
 
-// ErrMsgUtilityUnavailable is the canonical error message returned when
-// the utility bridge (LLM prompt function) is not wired. Used by both
-// the git and server packages to keep the error string in one place.
-const ErrMsgUtilityUnavailable = "utility bridge not available"
-
 // ChatID is a typed wrapper for chat identifiers. The underlying string
 // marshals identically to JSON, preserving the wire contract.
 type ChatID string

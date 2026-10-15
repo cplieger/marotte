@@ -50,10 +50,10 @@ func TestConfigurationState_OnlyTheUtilityBridgeDeclaresIt(t *testing.T) {
 		t.Fatalf("chat StartOpts = %+v, want a chat spawn that withholds configurationState", opts)
 	}
 	u := h.utility.get()
-	if _, err := u.session.acquire(t.Context()); err != nil {
+	if _, err := u.acquire(t.Context()); err != nil {
 		t.Fatalf("acquire utility session: %v", err)
 	}
-	defer u.session.Stop()
+	defer u.Stop()
 	if opts := br.lastStartOpts(); opts == nil || !opts.ConfigurationState {
 		t.Errorf("utility StartOpts = %+v, want ConfigurationState true", opts)
 	}
@@ -62,7 +62,7 @@ func TestConfigurationState_OnlyTheUtilityBridgeDeclaresIt(t *testing.T) {
 func TestConfigurationState_TheUtilityViewResolvesWorkValidationsDefault(t *testing.T) {
 	h, _, _ := newTestHub()
 	t.Cleanup(h.stopUtilityBridge)
-	us := h.utility.get().session
+	us := h.utility.get()
 
 	if got := h.config.KiroDefaults(); len(got) != 0 {
 		t.Errorf("KiroDefaults() before any view = %v, want empty: nothing is known yet", got)

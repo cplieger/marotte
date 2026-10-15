@@ -205,16 +205,13 @@ func TestOpenBridge_ChecksIdentityBeforeReuse(t *testing.T) {
 
 func TestRetireBridges_ResetsUtilitySession(t *testing.T) {
 	h, _, _ := newTestHub()
-	if _, err := h.UtilityPrompt(t.Context(), "warm", ""); err != nil {
-		t.Fatalf("UtilityPrompt: %v", err)
-	}
-	if h.utility.peek() == nil {
-		t.Fatal("utility runtime was not built")
+	if err := h.utility.get().ensureStarted(t.Context()); err != nil {
+		t.Fatalf("start the utility session: %v", err)
 	}
 
 	h.RetireBridges("identity changed")
 
 	if h.utility.peek() != nil {
-		t.Error("RetireBridges kept the utility runtime")
+		t.Error("RetireBridges kept the utility session")
 	}
 }

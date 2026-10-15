@@ -69,7 +69,3 @@ type policyProvider interface {
 type policyReloader interface {
 	SecurityProfileChanged(ctx context.Context)
 }
-
-type utilityPrompter interface {
-	UtilityPrompt(ctx context.Context, prompt string, effort marotte.EffortLevel) (string, error)
-}

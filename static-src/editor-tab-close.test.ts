@@ -133,8 +133,6 @@ vi.mock("./run-store.js", () => ({
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 vi.mock("./editor-conflict.js", () => ({
-  abortSuggestion: vi.fn(),
-  clearSuggestionState: vi.fn(),
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened
   // this graph and these names are imported somewhere in it. No case here calls
   // them.

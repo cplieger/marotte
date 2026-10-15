@@ -68,7 +68,7 @@ func (st *Settings) knowledgeCall(ctx context.Context, params map[string]any) (j
 	u := st.utility()
 	cctx, cancel := context.WithTimeout(ctx, knowledgeCallTimeout)
 	defer cancel()
-	return u.session.knowledgeRaw(cctx, params)
+	return u.knowledgeRaw(cctx, params)
 }
 
 func parseKnowledgeResult(raw json.RawMessage) (*kasKnowledgeResult, error) {

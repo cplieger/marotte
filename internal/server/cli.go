@@ -12,13 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/procout"
-)
-
-const (
-	jsonKeyOutput = httpreply.JSONKeyOutput
 )
 
 const (

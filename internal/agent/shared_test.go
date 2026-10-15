@@ -171,21 +171,6 @@ func newSessionChunkMsg(sessionID, text string) *marotte.RPCResponse {
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
-func newToolCallMsg(t *testing.T, id, title, status string) *marotte.RPCResponse {
-	t.Helper()
-	raw := mustJSON(t, map[string]any{
-		"sessionUpdate": "tool_call",
-		"toolCallId":    id,
-		"title":         title,
-		"kind":          "read",
-		"status":        status,
-	})
-	return &marotte.RPCResponse{
-		Method: "session/update",
-		Params: mustJSON(t, map[string]any{"update": raw}),
-	}
-}
-
 // logCapture is mutex-guarded: background goroutines write logs.
 type logCapture struct {
 	buf bytes.Buffer

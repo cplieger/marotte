@@ -128,7 +128,7 @@ func (st *Settings) hooksListRaw(ctx context.Context) ([]kasHook, error) {
 	u := st.utility()
 	cctx, cancel := context.WithTimeout(ctx, hookCallTimeout)
 	defer cancel()
-	raw, err := u.session.hooksRaw(cctx, methodKiroHooksList, map[string]any{
+	raw, err := u.hooksRaw(cctx, methodKiroHooksList, map[string]any{
 		keyWorkspacePaths: []string{st.lifecycle.workDir},
 		// includeDisabled, or a disabled hook vanishes and can never be re-enabled from the UI.
 		"includeDisabled": true,
@@ -211,7 +211,7 @@ func (st *Settings) handleHookSetEnabled(w http.ResponseWriter, r *http.Request)
 	u := st.utility()
 	cctx, cancel := context.WithTimeout(r.Context(), hookCallTimeout)
 	defer cancel()
-	raw, err := u.session.hooksRaw(cctx, methodKiroHooksSetEnabled, map[string]any{
+	raw, err := u.hooksRaw(cctx, methodKiroHooksSetEnabled, map[string]any{
 		"hookId":  hookID,
 		"enabled": body.Enabled,
 	})

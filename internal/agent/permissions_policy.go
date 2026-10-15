@@ -13,13 +13,13 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// policyCallTimeout bounds one list or explain: both hold the utility mutex across bridge.Call.
+// policyCallTimeout bounds one list or explain, so a wedged answer fails the request and resets the session (callOn).
 const policyCallTimeout = 45 * time.Second
 
 // buildUtility is the utility lease's constructor, here because it closes over Settings hooks into runtime services.
-func (rt *Runtime) buildUtility() *utilityRuntime {
-	return newUtilityRuntime(
-		rt.lifecycle.shutdownCtx, rt.bridge.factory, rt.models,
+func (rt *Runtime) buildUtility() *utilitySession {
+	return newUtilitySession(
+		rt.lifecycle.shutdownCtx, rt.bridge.factory,
 		&utilitySessionHooks{
 			onHooksChanged: rt.config.broadcastHooksChanged,
 			onPowersChanged: func(params json.RawMessage) {
@@ -79,7 +79,7 @@ func (st *Settings) PolicyList(ctx context.Context, scope string) ([]marotte.Pol
 	}
 	cctx, cancel := context.WithTimeout(ctx, policyCallTimeout)
 	defer cancel()
-	raw, err := st.utility().session.policyRaw(cctx, methodV3PermissionsList, extra)
+	raw, err := st.utility().policyRaw(cctx, methodV3PermissionsList, extra)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func (st *Settings) PolicyExplain(ctx context.Context, req marotte.PolicyExplain
 	}
 	cctx, cancel := context.WithTimeout(ctx, policyCallTimeout)
 	defer cancel()
-	raw, err := st.utility().session.policyRaw(cctx, methodV3PermissionsExplain, extra)
+	raw, err := st.utility().policyRaw(cctx, methodV3PermissionsExplain, extra)
 	if err != nil {
 		return nil, err
 	}

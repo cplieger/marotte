@@ -60,10 +60,10 @@ func TestChatSteeringReachesBothChatVerbsAndNotTheUtility(t *testing.T) {
 		h.SetChatSteering(func(context.Context) []marotte.ClientSteeringDoc { return sentinel })
 
 		u := h.utility.get()
-		if _, err := u.session.acquire(t.Context()); err != nil {
+		if _, err := u.acquire(t.Context()); err != nil {
 			t.Fatalf("acquire utility session: %v", err)
 		}
-		defer u.session.Stop()
+		defer u.Stop()
 		opts := br.lastStartOpts()
 		if opts == nil {
 			t.Fatal("the utility bridge was never started")

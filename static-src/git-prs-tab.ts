@@ -3,7 +3,7 @@
 
 import { join, split } from "@cplieger/keyenc";
 
-import { apiGetTyped, apiPost } from "./api-client.js";
+import { apiGet, apiGetTyped } from "./api-client.js";
 import { BUS_RECONCILE, onBus, onSSE } from "./bus.js";
 import { setBusy } from "./dom.js";
 import { isSafeURL } from "./url-safety.js";
@@ -1987,14 +1987,30 @@ function prDialogController(dlg: HTMLDialogElement): DialogController {
 /** Each open builds fresh buttons from these, dropping the last open's listeners and outcome state. */
 let prDialogButtons: {
   submit: HTMLButtonElement;
-  generate: HTMLButtonElement;
   close: HTMLButtonElement[];
 } | null = null;
+
+/** Aborted when the dialog closes: the open's field listeners and its commit-list read. */
+let prDialogOpen: AbortController | null = null;
 
 function freshButton(old: HTMLButtonElement, pristine: HTMLButtonElement): HTMLButtonElement {
   const btn = pristine.cloneNode(true) as HTMLButtonElement;
   old.replaceWith(btn);
   return btn;
+}
+
+/** The subjects GET /api/git/branch-commits answered, oldest first; anything else reads as none. */
+function subjectsOf(res: unknown): string[] {
+  const subjects = (res as Record<string, unknown> | null)?.["subjects"];
+  if (!Array.isArray(subjects)) {
+    return [];
+  }
+  return (subjects as unknown[]).filter((v): v is string => typeof v === "string");
+}
+
+/** A new pull request's body: one bullet per commit subject, oldest first. */
+function commitListBody(subjects: readonly string[]): string {
+  return subjects.map((subject) => `- ${subject}`).join("\n");
 }
 
 function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
@@ -2011,24 +2027,14 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   const draftInput = document.getElementById("pr-draft") as HTMLInputElement | null;
   const status = document.getElementById("pr-dialog-status");
   const submitBtn = document.getElementById("pr-submit-btn") as HTMLButtonElement | null;
-  const generateBtn = document.getElementById("pr-generate-btn") as HTMLButtonElement | null;
 
-  if (
-    !baseInput ||
-    !headInput ||
-    !titleInput ||
-    !bodyInput ||
-    !draftInput ||
-    !submitBtn ||
-    !generateBtn
-  ) {
+  if (!baseInput || !headInput || !titleInput || !bodyInput || !draftInput || !submitBtn) {
     console.error("PR dialog missing required elements");
     return;
   }
   const closeBtns = [...dlg.querySelectorAll<HTMLButtonElement>("[data-pr-close]")];
   prDialogButtons ??= {
     submit: submitBtn.cloneNode(true) as HTMLButtonElement,
-    generate: generateBtn.cloneNode(true) as HTMLButtonElement,
     close: closeBtns.map((b) => b.cloneNode(true) as HTMLButtonElement),
   };
   const pristine = prDialogButtons;
@@ -2040,7 +2046,6 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
     }
   };
 
-  // Pre-fill base and head; the AI drafts the body.
   baseInput.value = "main";
   headInput.value = sourceBranch;
   // Fixed only when the caller named the branch (the Changes tab's post-push hint).
@@ -2048,9 +2053,9 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   titleInput.value = "";
   bodyInput.value = "";
   draftInput.checked = false;
+  setStatus("", "");
 
   const newSubmit = freshButton(submitBtn, pristine.submit);
-  const newGenerate = freshButton(generateBtn, pristine.generate);
   const freshClose = closeBtns.map((b, i) => {
     const fresh = freshButton(b, pristine.close[i] ?? b);
     fresh.addEventListener("click", () => {
@@ -2059,52 +2064,54 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
     return fresh;
   });
 
-  let generateAbort = new AbortController();
+  prDialogOpen?.abort();
+  const open = new AbortController();
+  prDialogOpen = open;
   dlg.addEventListener(
     "close",
     () => {
-      generateAbort.abort();
+      open.abort();
     },
-    { once: true },
+    { once: true, signal: open.signal },
   );
 
-  /** Resolves early, saying nothing, once a newer draft or the dialog's close owns the button. */
-  const generate = async (ctrl: AbortController): Promise<void> => {
-    setStatus("Generating description…", "");
-    const res = await apiPost<{ output?: string; error?: string }>(
-      `/api/git/pr-description`,
-      // The clone's own directory when the inventory joins one; it need not share the forge's name.
-      {
+  // The body follows base and head until the reader writes in it: only an empty body or the last prefill is
+  // replaced, so typed text survives every change.
+  let prefilled = "";
+  let readAbort = new AbortController();
+  const prefill = async (): Promise<void> => {
+    readAbort.abort();
+    readAbort = new AbortController();
+    const signal = AbortSignal.any([open.signal, readAbort.signal]);
+    const base = baseInput.value.trim();
+    let body = "";
+    if (base !== "") {
+      const q = new URLSearchParams({
+        // The clone's own directory when the inventory joins one; it need not share the forge's name.
         repo: cloneDirOf(g.forge_id, g.repo_id) ?? g.name,
-        branch: baseInput.value.trim() || "main",
+        base,
+        head: headInput.value.trim(),
+      });
+      const res = await apiGet<unknown>(`/api/git/branch-commits?${q.toString()}`, signal);
+      if (signal.aborted) {
+        return;
+      }
+      body = commitListBody(subjectsOf(res));
+    }
+    if (bodyInput.value === "" || bodyInput.value === prefilled) {
+      bodyInput.value = body;
+      prefilled = body;
+    }
+  };
+  for (const input of [baseInput, headInput]) {
+    input.addEventListener(
+      "change",
+      () => {
+        void prefill();
       },
-      ctrl.signal,
+      { signal: open.signal },
     );
-    if (ctrl.signal.aborted) {
-      return;
-    }
-    if (res === null) {
-      setStatus("Network error.", "err");
-      throw new Error("network error");
-    }
-    if (res.error !== undefined && res.error !== "") {
-      setStatus(res.error, "err");
-      throw new Error(res.error);
-    }
-    // The server's single {output} description fills the body; the title stays the user's.
-    if (res.output !== undefined && res.output !== "" && bodyInput.value === "") {
-      bodyInput.value = res.output;
-    }
-    setStatus("Description generated. Edit and submit.", "ok");
-  };
-
-  const draft = (): void => {
-    generateAbort.abort();
-    generateAbort = new AbortController();
-    const ctrl = generateAbort;
-    void withAsyncFeedback(newGenerate, () => generate(ctrl), { keepLabel: true });
-  };
-  newGenerate.addEventListener("click", draft);
+  }
 
   /** It names and links the PR, and offers nothing that could open it again. */
   const opened = (pr: PR): void => {
@@ -2122,7 +2129,6 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
     }
     // The utility class: `.btn-small` declares a display that beats `[hidden]`.
     newSubmit.classList.add("hidden");
-    newGenerate.classList.add("hidden");
     for (const b of freshClose) {
       if (b.textContent.trim() !== "") {
         b.textContent = "Close";
@@ -2160,6 +2166,5 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   });
 
   dialogCtl.open();
-  // Started at once to overlap with the user reading the form; a failure leaves the fields blank.
-  draft();
+  void prefill();
 }

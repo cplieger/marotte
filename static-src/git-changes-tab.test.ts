@@ -81,7 +81,6 @@ vi.mock("./actions/git-changes.js", () => ({
   stash: recorder("stash"),
   stashPop: recorder("stashPop"),
   commit: recorder("commit"),
-  generateCommitMessage: recorder("generateCommitMessage"),
 }));
 vi.mock("./search-popup.js", () => ({
   createSearchPopup: vi.fn((spec: unknown) => {

@@ -125,7 +125,7 @@ func (rt *Runtime) workspaceSessionRows(ctx context.Context) ([]kasSessionRow, e
 
 	// cwd scopes the answer to this workspace; unscoped it returned 399 rows across 55 directories. The "user"
 	// scope is that unscoped answer.
-	raw, err := u.session.rawCall(cctx, "session list call", marotte.MethodSessionList,
+	raw, err := u.rawCall(cctx, "session list call", marotte.MethodSessionList,
 		callerParams(map[string]any{"cwd": rt.lifecycle.workDir}))
 	if err != nil {
 		return nil, err
@@ -270,7 +270,7 @@ func (rs *Runs) list(ctx context.Context, claimed map[string]marotte.ChatID) ([]
 	defer cancel()
 
 	// workspacePaths is a required array (methodKiroWorkflowList).
-	raw, err := u.session.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
+	raw, err := u.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
 		callerParams(map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}}))
 	if err != nil {
 		return nil, err
