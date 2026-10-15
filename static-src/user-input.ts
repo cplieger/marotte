@@ -152,7 +152,7 @@ function renderEditor(
   hasOptions: boolean,
   submit: SubmitFn,
 ): void {
-  const { input } = askEditor({
+  const input = askEditor({
     rows: hasOptions ? "1" : "3",
     placeholder: hasOptions ? "Or type your own answer\u2026" : "Type your answer\u2026",
     label: "Your answer",

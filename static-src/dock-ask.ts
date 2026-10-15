@@ -35,23 +35,15 @@ export function askHead(question: string): AskHead {
   return { body, text };
 }
 
-interface AskEditor {
-  /** The answer box's own row. No button shares it. */
-  readonly editor: HTMLElement;
-  readonly input: HTMLTextAreaElement;
-}
-
 /**
- * The answer box, alone on its row, growing with its text. `rows` is the opening height; growth and ceiling are CSS
+ * The answer box, growing with its text. `rows` is the opening height; growth and ceiling are CSS
  * (`css/26-dock.css`), read through `--ask-rows`.
  */
 export function askEditor(opts: {
   readonly rows: string;
   readonly placeholder: string;
   readonly label: string;
-  /** Seeds the box with held text so a retryable refusal keeps it. A property write, as a textarea's value is. */
-  readonly value?: string;
-}): AskEditor {
+}): HTMLTextAreaElement {
   const input = el("textarea", {
     className: "dock-ask-text",
     rows: opts.rows,
@@ -59,9 +51,8 @@ export function askEditor(opts: {
     "aria-label": opts.label,
   }) as HTMLTextAreaElement;
   input.style.setProperty(ASK_ROWS_PROP, opts.rows);
-  input.value = opts.value ?? "";
   publishViewportHeight();
-  return { editor: el("div", { className: "dock-ask-editor" }, input), input };
+  return input;
 }
 
 let viewportWired = false;
