@@ -496,7 +496,6 @@ func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
-		// The tier was chosen under m-old; the pick clears it.
 		c.Effort = "max"
 		return true
 	})
@@ -516,8 +515,8 @@ func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
 	if chat.Model != "m-new" {
 		t.Errorf("chat.Model = %q, want m-new persisted on the record", chat.Model)
 	}
-	if chat.Effort != "" {
-		t.Errorf("chat.Effort = %q, want cleared: the tier was chosen under m-old", chat.Effort)
+	if chat.Effort != "max" {
+		t.Errorf("chat.Effort = %q, want max: the chat's level rides a pick onto a model no session has reported", chat.Effort)
 	}
 	if entries := logOf(t, cs, "c1"); len(entries) != 0 {
 		t.Errorf("entries = %+v, want none: a pre-session pick is not a switch event", entries)

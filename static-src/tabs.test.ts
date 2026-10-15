@@ -10,6 +10,7 @@ import { effect } from "@cplieger/reactive";
 // Mock dependencies that tabs.ts imports at module level.
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
+  ICON_MODEL_UI: "",
   ICON_CLOSE: "",
   ICON_TAB_CHAT: "",
   ICON_TAB_SETTINGS: "",
@@ -92,6 +93,7 @@ vi.mock("./dom.js", () => ({
     },
   ),
   // `byId` (page-title.ts, every view switch) must exist for real ESM linking.
+  setBusy: vi.fn(),
   byId: (id: string) => {
     let el = document.getElementById(id);
     if (el === null) {

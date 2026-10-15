@@ -142,11 +142,6 @@ var abandonableWriteSites = []durableSite{{
 	calls:   []string{"OpenTurn", "WriteCounters"},
 	because: "the wire bracket's turn_open on the frame's context, the same class as ReviseTurnBinding",
 }, {
-	file:    "internal/agent/model_switch.go",
-	fn:      "cmdSwitchModel",
-	calls:   []string{"Mutate"},
-	because: "a model pick on the REQUEST's context, the same class as the command/* writes: a switch nobody is waiting for must not land",
-}, {
 	file:    "internal/agent/queue_drain.go",
 	fn:      "AppendIfLive",
 	calls:   []string{"Mutate"},
@@ -229,6 +224,11 @@ var inheritedWriteSites = []durableSite{{
 	fn:      "persistModelPick",
 	calls:   []string{"Mutate"},
 	because: "applyPendingModel's detach, and the spawn's own ctx at its fold",
+}, {
+	file:    "internal/agent/model_switch.go",
+	fn:      "parkSwitch",
+	calls:   []string{"Mutate"},
+	because: "admitSwitchModel decides: the REQUEST's context, as the command/* writes, so a switch nobody is waiting for does not park; detached once its stop has landed, so the stop never stands without its park",
 }, {
 	file:    "internal/agent/queue_drain.go",
 	fn:      "NextUserRow",

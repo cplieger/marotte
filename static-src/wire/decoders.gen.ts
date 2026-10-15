@@ -208,6 +208,8 @@ export const decodeChatHeader: Decoder<ChatHeader> = (v) => {
   if (thinkingActive !== undefined) out.thinking_active = thinkingActive;
   const pendingModel = o["pending_model"] === null ? undefined : optStr(o, "pending_model", "$.chat_header");
   if (pendingModel !== undefined) out.pending_model = pendingModel;
+  const pendingEffort = o["pending_effort"] === null ? undefined : optStr(o, "pending_effort", "$.chat_header");
+  if (pendingEffort !== undefined) out.pending_effort = pendingEffort;
   if (o["effort_levels"] !== undefined && o["effort_levels"] !== null) out.effort_levels = decodeArray(o["effort_levels"], decodeSessionEffortLevel, "$.chat_header.effort_levels");
   const compactionWatermark = o["compaction_watermark"] === null ? undefined : optStr(o, "compaction_watermark", "$.chat_header");
   if (compactionWatermark !== undefined) out.compaction_watermark = compactionWatermark;
@@ -640,6 +642,8 @@ export const decodeEntryModelSwitched: Decoder<EntryModelSwitched> = (v) => {
   };
   const effort = o["effort"] === null ? undefined : optStr(o, "effort", "$.entry_model_switched");
   if (effort !== undefined) out.effort = effort;
+  const unoffered = o["unoffered"] === null ? undefined : optStr(o, "unoffered", "$.entry_model_switched");
+  if (unoffered !== undefined) out.unoffered = unoffered;
   if (o["reason"] !== undefined && o["reason"] !== null) out.reason = reqOneOf(o, "reason", MODEL_SWITCH_REASONS, "$.entry_model_switched");
   return out;
 };

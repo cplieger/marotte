@@ -52,7 +52,7 @@ type TypedCommand =
   | { type: "cancel"; chat_id: string; payload?: { lead: string } }
   | { type: "delete_chat"; chat_id: string }
   | { type: "merge_tangent"; chat_id: string; payload: { op_id: string } }
-  | { type: "switch_model"; chat_id: string; payload: { model: string } }
+  | { type: "switch_model"; chat_id: string; payload: { model: string; effort?: string } }
   | { type: "set_supervised_mode"; chat_id: string; payload: { enabled: boolean } }
   | {
       type: "permission_response";

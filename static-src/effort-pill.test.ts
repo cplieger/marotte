@@ -34,11 +34,20 @@ vi.mock("./prompt-input.js", () => ({
   sendComposer: vi.fn(),
 }));
 
-// `onExpand` is what the pill's click calls, so capturing it is the click surface.
-const expand = vi.hoisted(() => ({ fn: null as null | (() => void) }));
+// `onExpand` is what the pill's click calls and `onCollapse` what every close calls, so capturing
+// them is the click surface.
+const expand = vi.hoisted(() => ({
+  fn: null as null | (() => void),
+  close: null as null | (() => void),
+}));
 vi.mock("./pill-expand.js", () => ({
-  makeExpandable: (_pill: HTMLElement, _card: HTMLElement, opts?: { onExpand?: () => void }) => {
+  makeExpandable: (
+    _pill: HTMLElement,
+    _card: HTMLElement,
+    opts?: { onExpand?: () => void; onCollapse?: () => void },
+  ) => {
     expand.fn = opts?.onExpand ?? null;
+    expand.close = opts?.onCollapse ?? null;
   },
   collapseAll: vi.fn(),
 }));
@@ -275,7 +284,8 @@ describe("the model pill's model half", () => {
   });
 });
 
-// The gesture end: `setEffortAction`'s optimistic callback is module-private, so only this reaches it.
+// The gesture end previews; the close reaches `setEffortAction`, whose optimistic callback is
+// module-private, so only this reaches it.
 describe("a gesture on the slider", () => {
   function knob(): HTMLElement {
     expand.fn?.();
@@ -299,7 +309,47 @@ describe("a gesture on the slider", () => {
     expect(await tier()).toEqual({ text: "· max", hidden: false });
     // The knob and the pill resolve through the same `effort.ts` chain.
     expect(k.dataset["level"]).toBe("max");
-    // The pill reads the store, so the write must land there.
+    // The pill reads the store, so the preview must land there.
     expect(store.get("k")?.effort).toBe("max");
+
+    arm();
+    expand.close?.();
+    // The close puts the preview back and sends: the action's own write keeps the pill on max.
+    expect(await tier()).toEqual({ text: "· max", hidden: false });
+    expect(store.get("k")?.effort).toBe("max");
+  });
+
+  it("rolls a refused pick back to the chat's own tier, not the preview", async () => {
+    staged.models = [model("claude-opus-5", "high")];
+    mount(session("m", { model: "claude-opus-5", effort: "medium" }));
+    // Held, so the optimistic write is observable before the refusal rolls it back.
+    // Cast, not annotated: tsc would narrow an annotated `null` past the closure's assignment.
+    let refuse = null as (() => void) | null;
+    configureTransport(
+      () =>
+        new Promise((resolve) => {
+          refuse = () => {
+            resolve({ ok: false, status: 400, error: "refused" });
+          };
+        }),
+    );
+    try {
+      const k = knob();
+      k.focus();
+      await userEvent.keyboard("{End}");
+      expect(store.get("m")?.effort, "the preview").toBe("max");
+      expand.close?.();
+      await vi.waitFor(() => {
+        expect(store.get("m")?.effort, "the action's own optimistic write").toBe("max");
+        expect(refuse, "the pick reached the transport").not.toBeNull();
+      });
+      refuse?.();
+
+      await vi.waitFor(() => {
+        expect(store.get("m")?.effort).toBe("medium");
+      });
+    } finally {
+      configureTransport(() => Promise.resolve({ ok: true, status: 200 }));
+    }
   });
 });

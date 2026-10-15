@@ -119,8 +119,9 @@ type chatLifecycle struct {
 	reserved bool
 	state    turnState
 	mu       sync.Mutex
-	// switchMu serializes applying pending_model: a closer's dispatch and the switch command
-	// would otherwise both read one pick and apply it twice. Held across the bridge call.
+	// switchMu is held by every writer of pending_model (the switch's admission, the idle or
+	// turn-close apply, the spawn's fold): otherwise two appliers read one pick and apply it twice,
+	// or a landing falls between an admission's read and its park. Held across the bridge call.
 	switchMu sync.Mutex
 }
 

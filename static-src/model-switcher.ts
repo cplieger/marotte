@@ -1,5 +1,6 @@
-// Model switcher: the pill plus its expandable model list. A pick routes through
-// requestModelSwitch (no session, an empty chat, a chat with history).
+// Model switcher: the pill plus its expandable model list. The open card previews its picks and
+// commits them once, on close (`commit`); a model routes through requestModelSwitch (no session,
+// an empty chat, a chat with history).
 
 import {
   activeSession,
@@ -44,6 +45,13 @@ import {
   thinkingOffShown,
 } from "./effort.js";
 import { buildEffortSlider, type EffortSliderHandle } from "./effort-slider.js";
+import {
+  parkedStop,
+  resolvePillCommit,
+  type PillCommand,
+  type PillKnob,
+  type PillOpen,
+} from "./pill-commit.js";
 import type { ModelInfo, Session, SessionEffortLevel } from "./types.js";
 
 // effort.ts owns the effort vocabulary: the pill names the live tier too.
@@ -141,6 +149,17 @@ function sliderVocabulary(session: Session | undefined): {
   };
 }
 
+/** The open card's unsent picks (`level`, `model`) and the chat as it opened (`open`, plus the
+ *  thinking state the preview writes over and the close restores before it sends). */
+interface PillDraft {
+  readonly chatID: string;
+  readonly open: PillOpen;
+  readonly thinking: string;
+  readonly thinkingActive: string;
+  level?: string;
+  model?: string;
+}
+
 class ModelSwitchController {
   init(): void {
     // Prepended because the label follows it. The `.switching` face hides this svg by
@@ -149,9 +168,29 @@ class ModelSwitchController {
     const expandContent = $.modelSwitchList;
     makeExpandable($.switchModelBtn, expandContent, {
       onExpand: () => {
+        const session = getActive();
+        this.draft =
+          session === undefined
+            ? null
+            : {
+                chatID: session.id,
+                open: {
+                  chatModel: session.model,
+                  effort: session.effort ?? "",
+                  thinkingOff: thinkingOffShown(session, getCachedModels()),
+                  pendingModel: session.pending_model ?? "",
+                  pendingEffort: session.pending_effort ?? "",
+                },
+                thinking: session.thinking_choice ?? "",
+                thinkingActive: session.thinking_active ?? "",
+              };
         // Always the inline list, even on an empty chat: the effort control must be
         // reachable before the first prompt.
         this.renderCondensedList();
+      },
+      // Every close commits: a model click, Escape, a click away, the pill itself.
+      onCollapse: () => {
+        this.commit();
       },
     });
     // Wired ONCE: re-wiring per render stacks keydown handlers.
@@ -248,6 +287,9 @@ class ModelSwitchController {
   /** App-lifetime singleton; nothing to dispose. */
   private effortSlider: EffortSliderHandle | null = null;
 
+  /** Null while the card is closed. */
+  private draft: PillDraft | null = null;
+
   /** Rebuild the ticks only when the vocabulary changed. */
   private effortLevelsShown: readonly SessionEffortLevel[] = [];
 
@@ -281,7 +323,7 @@ class ModelSwitchController {
       // announces a nesting that is not there.
       this.effortSlider = buildEffortSlider({
         onPick: (level) => {
-          this.setEffort(level);
+          this.previewStop(level);
         },
       });
       // Reading activeSession makes the row per-chat; app-lifetime, so never disposed.
@@ -303,32 +345,71 @@ class ModelSwitchController {
     this.syncEffortActive();
   }
 
-  /** A chat that has chosen nothing still RUNS at a level, so the knob always marks one. */
+  /** A chat that has chosen nothing still RUNS at a level, so the knob always marks one. The
+   *  open card's own pick, then a parked tier, outranks the store, so a header echo cannot move
+   *  a previewed knob. */
   private syncEffortActive(): void {
-    this.effortSlider?.setActive(this.effortActive);
+    const draft = this.draft;
+    this.effortSlider?.setActive(
+      draft?.level ?? (draft === null ? undefined : parkedStop(draft.open)) ?? this.effortActive,
+    );
   }
 
-  /** The command writes the seed (`last_effort_by_model`), so a refused level is never remembered. A
-   *  repeat of the chat's OWN choice is dropped (a fast triple click sent three POSTs); the guard
-   *  ignores the marked tier, because pinning a default must reach the server. */
-  private setEffort(level: string): void {
-    const session = getActive();
-    if (session === undefined) {
+  /** The pill names a picked stop at once, through the store writes its send would make. */
+  private previewStop(level: string): void {
+    const draft = this.draft;
+    if (draft === null) {
       return;
     }
-    const off = thinkingOffShown(session, getCachedModels());
+    draft.level = level;
     if (level === THINKING_OFF.id) {
-      if (!off) {
-        void setThinkingOffAction.dispatch({ chatID: session.id });
-      }
+      setEffort(draft.chatID, draft.open.effort);
+      setThinkingChoice(draft.chatID, "off", draft.thinkingActive === "" ? "" : "off");
       return;
     }
-    // A repeat of the chosen tier is still a real command while thinking is off:
-    // it is the gesture that turns thinking back on.
-    if ((session.effort ?? "") === level && !off) {
+    setEffort(draft.chatID, level);
+    setThinkingChoice(draft.chatID, draft.thinking, draft.thinkingActive);
+    const session = get(draft.chatID);
+    // A tier pick turns thinking back on server-side (CmdSetEffort), so the preview does too.
+    if (thinkingIsOff(session, getCachedModels())) {
+      setThinkingChoice(draft.chatID, "on", draft.thinkingActive === "" ? "" : "on");
+    }
+  }
+
+  /** The card's one send (resolvePillCommit). The preview is put back first, so each action's
+   *  optimistic write and rollback start from the chat's state. */
+  private commit(): void {
+    const draft = this.draft;
+    this.draft = null;
+    if (draft === null) {
       return;
     }
-    void setEffortAction.dispatch({ chatID: session.id, level });
+    if (draft.level !== undefined) {
+      setEffort(draft.chatID, draft.open.effort);
+      setThinkingChoice(draft.chatID, draft.thinking, draft.thinkingActive);
+    }
+    if (get(draft.chatID) === undefined) {
+      return;
+    }
+    const knob: PillKnob =
+      draft.level === undefined ? { touched: false } : { touched: true, level: draft.level };
+    this.send(draft.chatID, resolvePillCommit(draft.open, knob, draft.model));
+  }
+
+  /** set_effort writes the seed (`last_effort_by_model`), so a refused level is never remembered. */
+  private send(chatID: string, cmd: PillCommand): void {
+    switch (cmd.kind) {
+      case "none":
+        return;
+      case "set_effort":
+        void setEffortAction.dispatch({ chatID, level: cmd.level });
+        return;
+      case "thinking_off":
+        void setThinkingOffAction.dispatch({ chatID });
+        return;
+      case "switch":
+        this.requestModelSwitch(cmd.model, cmd.effort, chatID);
+    }
   }
 
   private buildModelOption(m: ModelInfo): HTMLElement {
@@ -346,14 +427,13 @@ class ModelSwitchController {
     if (rate !== "") {
       opt.append(el("span", { className: "pill-model-meta" }, rate));
     }
-    // Reads the live current each time, so a switch from another path cannot leave it stale.
+    // The close commits the pick (`commit`).
     opt.addEventListener("click", (e: MouseEvent) => {
       e.stopPropagation();
-      collapseAll();
-      if (m.model_id === getActive()?.model) {
-        return;
+      if (this.draft !== null) {
+        this.draft.model = m.model_id;
       }
-      this.requestModelSwitch(m.model_id);
+      collapseAll();
     });
     this.syncModelOption(opt, m, getActive()?.model ?? "");
     return opt;
@@ -365,8 +445,10 @@ class ModelSwitchController {
     opt.setAttribute("aria-selected", isCurrent ? "true" : "false");
   }
 
-  requestModelSwitch(modelID: string): void {
-    const session = getActive();
+  /** `effort` is a switch's effort (PillCommand); `chatID` names the chat the pick was made on,
+   *  defaulting to the active one. */
+  requestModelSwitch(modelID: string, effort?: string, chatID?: string): void {
+    const session = chatID === undefined ? getActive() : get(chatID);
     if (session === undefined) {
       this.applyLocalChoice(modelID);
       return;
@@ -376,19 +458,23 @@ class ModelSwitchController {
       // Local apply PLUS the command: every header echo carries the record, so a
       // local-only pick would be clobbered.
       this.applyLocalChoice(modelID);
-      this.fire(session.id, modelID);
+      this.fire(session.id, modelID, effort);
       return;
     }
     // Mid-turn too: the server applies `pending_model` at the running turn's close.
-    this.fire(session.id, modelID);
+    this.fire(session.id, modelID, effort);
   }
 
   private applyLocalChoice(modelID: string): void {
     applyLocalModel(modelID);
   }
 
-  private fire(chatID: string, modelID: string): void {
-    void switchModel.dispatch({ chatID, model: modelID });
+  private fire(chatID: string, modelID: string, effort: string | undefined): void {
+    void switchModel.dispatch({
+      chatID,
+      model: modelID,
+      ...(effort === undefined ? {} : { effort }),
+    });
   }
 }
 

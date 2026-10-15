@@ -168,7 +168,7 @@ func TestApplyModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.applyModelSwitch(ctx, "c1", "m-new", "max"); got != true {
+	if got := h.coord.applyModelSwitch(ctx, "c1", &effortDecision{to: "m-new", sent: "max"}); got != true {
 		t.Errorf("ApplyModelSwitch(success) = %v, want true", got)
 	}
 	if got := br.lastEffort(); got != "max" {
@@ -186,7 +186,7 @@ func TestApplyModelSwitch_TouchesNoOpenTurn(t *testing.T) {
 	}
 	id, log := streamingPromptTurn(t, h, "c1", "the user's own reply, still streaming")
 
-	if got := h.coord.applyModelSwitch(ctx, "c1", "m-new", ""); !got {
+	if got := h.coord.applyModelSwitch(ctx, "c1", &effortDecision{to: "m-new"}); !got {
 		t.Fatalf("ApplyModelSwitch = %v, want true", got)
 	}
 
@@ -207,7 +207,7 @@ func TestApplyModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.applyModelSwitch(ctx, "c1", "m-new", ""); got != true {
+	if got := h.coord.applyModelSwitch(ctx, "c1", &effortDecision{to: "m-new"}); got != true {
 		t.Errorf("ApplyModelSwitch(success) = %v, want true", got)
 	}
 	if got := br.lastEffort(); got != "" {
@@ -273,9 +273,9 @@ func writeEffortSeed(t *testing.T, dir string, seed map[string]string) {
 	}
 }
 
-// firstEffortFor reads the seed for its own model, refusing a malformed level; a well-formed
-// unknown seed flows. No catalog is loaded here.
-func TestFirstEffortFor_ReadsTheSeedForItsOwnModel(t *testing.T) {
+// A chat holding no level reads the seed for its own model, refusing a malformed level; a
+// well-formed seed flows while no session has reported the model. No catalog is loaded here.
+func TestLevelRanOrFirst_ReadsTheSeedForItsOwnModel(t *testing.T) {
 	tests := map[string]struct {
 		model string
 		seed  map[string]string
@@ -297,8 +297,8 @@ func TestFirstEffortFor_ReadsTheSeedForItsOwnModel(t *testing.T) {
 			h, _, _ := newTestHub()
 			h.coord.lifecycle.configDir = dir
 
-			if got := h.coord.firstEffortFor(t.Context(), test.model); got != test.want {
-				t.Errorf("firstEffortFor(%q, last_effort_by_model=%v) = %q, want %q",
+			if got, _ := h.coord.levelRanOrFirst(t.Context(), &marotte.Chat{Model: test.model}); got != test.want {
+				t.Errorf("levelRanOrFirst(%q, last_effort_by_model=%v) = %q, want %q",
 					test.model, test.seed, got, test.want)
 			}
 		})
@@ -347,11 +347,12 @@ func TestSessionEffort_CapsAHighTierOnADefaultOffModel(t *testing.T) {
 	}
 }
 
-// firstEffortFor resolves against the model: its seed, else its workspace catalog default.
-func TestFirstEffortFor_SeedThenModelDefault(t *testing.T) {
+// A chat holding no level resolves against its model: the seed, else the catalog default.
+func TestLevelRanOrFirst_SeedThenModelDefault(t *testing.T) {
+	tiers := []string{"low", "medium", "high", "max"}
 	catalog := []marotte.SessionModel{
-		{ID: "m1", DefaultEffortLevel: "high"},
-		{ID: "m2", DefaultEffortLevel: "medium"},
+		{ID: "m1", DefaultEffortLevel: "high", EffortTiers: tiers},
+		{ID: "m2", DefaultEffortLevel: "medium", EffortTiers: tiers},
 	}
 	tests := map[string]struct {
 		seed   map[string]string
@@ -373,8 +374,8 @@ func TestFirstEffortFor_SeedThenModelDefault(t *testing.T) {
 			h.coord.lifecycle.configDir = dir
 			h.coord.catalog.SetModels(catalog)
 
-			if got := h.coord.firstEffortFor(t.Context(), test.target); got != test.want {
-				t.Errorf("firstEffortFor(target=%q, last_effort_by_model=%v) = %q, want %q",
+			if got, _ := h.coord.levelRanOrFirst(t.Context(), &marotte.Chat{Model: test.target}); got != test.want {
+				t.Errorf("levelRanOrFirst(target=%q, last_effort_by_model=%v) = %q, want %q",
 					test.target, test.seed, got, test.want)
 			}
 		})
@@ -506,7 +507,7 @@ func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 
 	logs := captureLogs(t)
-	h.coord.persistModelSwitch(ctx, "c1", marotte.EntryModelSwitched{From: "m-old", To: "m-new"}, 1234)
+	h.coord.persistModelSwitch(ctx, "c1", &effortDecision{from: "m-old", to: "m-new"}, 1234)
 	if got := logs.String(); strings.Contains(got, "switch_model:") {
 		t.Errorf("unexpected switch_model error log on success: %s", got)
 	}
@@ -534,8 +535,7 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 		return true
 	})
 
-	h.coord.persistModelSwitch(ctx, "c1",
-		marotte.EntryModelSwitched{From: "m-old", To: "m-new", Effort: "high"}, 1234)
+	h.coord.persistModelSwitch(ctx, "c1", &effortDecision{from: "m-old", to: "m-new", pref: "high", sent: "high"}, 1234)
 	lc.switchMu.Unlock()
 
 	entries := logOf(t, cs, "c1")
@@ -664,7 +664,7 @@ func TestPersistSwitches_RecordNothingBeforeTheFirstPrompt(t *testing.T) {
 				marotte.EntryModeSwitched{From: "", To: "spec", Source: marotte.ModeSwitchSourceUser})
 		},
 		"model": func(h *Runtime) {
-			h.coord.persistModelSwitch(t.Context(), "c1", marotte.EntryModelSwitched{From: "opus-5", To: "sonnet-5"}, 1234)
+			h.coord.persistModelSwitch(t.Context(), "c1", &effortDecision{from: "opus-5", to: "sonnet-5"}, 1234)
 		},
 	}
 	for name, persist := range tests {
@@ -693,7 +693,7 @@ func TestPersistModelSwitch_UnstartedChatTakesThePickOnTheHeader(t *testing.T) {
 		return true
 	})
 
-	h.coord.persistModelSwitch(t.Context(), "c1", marotte.EntryModelSwitched{From: "opus-5", To: "sonnet-5"}, 1234)
+	h.coord.persistModelSwitch(t.Context(), "c1", &effortDecision{from: "opus-5", to: "sonnet-5"}, 1234)
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if c.Model != "sonnet-5" || c.PendingModel != "" || c.Usage.ContextSize != 1234 {

@@ -552,12 +552,12 @@ func (t *Turn) SafetyBlocked(ctx context.Context, properties []string) ([]Sealed
 }
 
 // ModelSwitched appends an applied model switch. The switch applies while idle, so it lands
-// by the between-turns rule or on a turn with nothing open. Takes the payload so the three
-// adjacent strings cannot be transposed.
-func (t *Turn) ModelSwitched(ctx context.Context, p marotte.EntryModelSwitched) ([]Sealed, error) {
+// by the between-turns rule or on a turn with nothing open. Takes the payload so the adjacent
+// strings cannot be transposed.
+func (t *Turn) ModelSwitched(ctx context.Context, p *marotte.EntryModelSwitched) ([]Sealed, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.laneless(ctx, marotte.EntryKindModelSwitched, t.mintID(), p)
+	return t.laneless(ctx, marotte.EntryKindModelSwitched, t.mintID(), *p)
 }
 
 // ModelRouted appends KAS's in-turn Auto routing notice at its position in the turn.

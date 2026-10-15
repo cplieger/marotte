@@ -7,8 +7,9 @@ let cachedModels: ModelInfo[] = [];
 
 let notice: { text: string; busy: boolean } | null = null;
 
-const { onExpand, effortDispatch, thinkingDispatch } = vi.hoisted(() => ({
+const { onExpand, onCollapse, effortDispatch, thinkingDispatch } = vi.hoisted(() => ({
   onExpand: { fn: null as null | (() => void) },
+  onCollapse: { fn: null as null | (() => void) },
   effortDispatch: vi.fn(),
   thinkingDispatch: vi.fn(),
 }));
@@ -17,8 +18,13 @@ const { onExpand, effortDispatch, thinkingDispatch } = vi.hoisted(() => ({
 let lastEffortByModel: Record<string, string> = {};
 
 vi.mock("./pill-expand.js", () => ({
-  makeExpandable: (_pill: HTMLElement, _content: HTMLElement, opts?: { onExpand?: () => void }) => {
+  makeExpandable: (
+    _pill: HTMLElement,
+    _content: HTMLElement,
+    opts?: { onExpand?: () => void; onCollapse?: () => void },
+  ) => {
     onExpand.fn = opts?.onExpand ?? null;
+    onCollapse.fn = opts?.onCollapse ?? null;
   },
   collapseAll: vi.fn(),
 }));
@@ -146,6 +152,11 @@ function markedTier(): string {
     document.querySelector(".effort-value")?.textContent ?? "",
   );
   return k.dataset["level"] ?? "";
+}
+
+/** The card's close, which is when its picks are sent. */
+function closeCard(): void {
+  onCollapse.fn?.();
 }
 
 /** Runs inside ONE open: the mocked store would rewind the knob on a re-open. */
@@ -295,11 +306,16 @@ describe("the effort section", () => {
     effortDispatch.mockClear();
 
     await press("{Home}");
+    expect(
+      effortDispatch,
+      "a pick is previewed, never sent while the card is open",
+    ).not.toHaveBeenCalled();
+    closeCard();
 
     expect(effortDispatch).toHaveBeenCalledWith({ chatID: "c1", level: "low" });
   });
 
-  it("steps one tier at a time and clamps at both ends", async () => {
+  it("steps one tier at a time, clamps at both ends and sends only where it stopped", async () => {
     cachedModels = [model("opus-4.7")];
     setSession({
       id: "c1",
@@ -310,14 +326,17 @@ describe("the effort section", () => {
     });
     effortDispatch.mockClear();
 
-    await press("{ArrowLeft}", "{ArrowRight}", "{ArrowUp}", "{End}");
+    const shown: string[] = [];
+    openCard();
+    knob().focus();
+    for (const key of ["{ArrowLeft}", "{ArrowRight}", "{ArrowUp}", "{End}"]) {
+      await userEvent.keyboard(key);
+      shown.push(knob().dataset["level"] ?? "");
+    }
+    closeCard();
 
-    expect(effortDispatch.mock.calls.map((c) => (c[0] as { level: string }).level)).toEqual([
-      "low",
-      "medium",
-      "high",
-      "max",
-    ]);
+    expect(shown).toEqual(["low", "medium", "high", "max"]);
+    expect(effortDispatch.mock.calls).toEqual([[{ chatID: "c1", level: "max" }]]);
   });
 
   it("does not mark a chosen level the current model does not offer", () => {
@@ -403,6 +422,7 @@ describe("the effort section", () => {
     effortDispatch.mockClear();
 
     await press("{Home}", "{Home}", "{Home}");
+    closeCard();
 
     expect(effortDispatch).not.toHaveBeenCalled();
   });
@@ -414,6 +434,7 @@ describe("the effort section", () => {
     expect(markedTier()).toBe("max");
 
     await press("{End}");
+    closeCard();
 
     expect(effortDispatch).toHaveBeenCalledWith({ chatID: "c1", level: "max" });
   });
@@ -499,6 +520,7 @@ describe("the effort slider's thinking Off stop", () => {
     });
 
     await press("{Home}");
+    closeCard();
 
     expect(thinkingDispatch).toHaveBeenCalledWith({ chatID: "c1" });
     expect(effortDispatch).not.toHaveBeenCalled();
@@ -515,6 +537,7 @@ describe("the effort slider's thinking Off stop", () => {
     });
 
     await press("{Home}");
+    closeCard();
 
     expect(thinkingDispatch).not.toHaveBeenCalled();
   });
@@ -530,6 +553,7 @@ describe("the effort slider's thinking Off stop", () => {
     });
 
     await press("{ArrowRight}");
+    closeCard();
 
     expect(effortDispatch).toHaveBeenCalledWith({ chatID: "c1", level: "low" });
   });

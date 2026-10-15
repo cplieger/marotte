@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
+  ICON_MODEL_UI: "",
   ICON_CLOSE: "",
   ICON_TAB_CHAT: "",
   ICON_TAB_SETTINGS: "",
@@ -69,6 +70,7 @@ vi.mock("./dom.js", () => ({
   ),
   // `byId` (via page-title.ts) must exist for real ESM linking. Inlined: a hoisted `vi.mock` factory
   // cannot reach a helper. Resolve-or-create, since the real one throws.
+  setBusy: vi.fn(),
   byId: (id: string): HTMLElement => {
     let el = document.getElementById(id);
     if (el === null) {

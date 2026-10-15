@@ -183,6 +183,12 @@ func newEffortDrift(t *testing.T) *effortDrift {
 // boot starts a runtime over the drift's store, as marotte's start does; the caller shuts it down.
 func (d *effortDrift) boot(t *testing.T) *Runtime {
 	t.Helper()
+	return d.bootOver(t, d.cs)
+}
+
+// bootOver is boot with store, which reads and writes the drift's own, in front of it.
+func (d *effortDrift) bootOver(t *testing.T, store chatRecords) *Runtime {
+	t.Helper()
 	h := New(t.Context(), t.TempDir(), func() ACPBridge {
 		b := newFakeBridge()
 		d.mu.Lock()
@@ -191,7 +197,7 @@ func (d *effortDrift) boot(t *testing.T) *Runtime {
 		}
 		d.mu.Unlock()
 		return b
-	}, d.cs)
+	}, store)
 	h.runs.cancelRetryBase = time.Hour
 	d.cs.wire(h)
 	h.coord.lifecycle.configDir = d.dir
@@ -642,8 +648,8 @@ func detach(t *testing.T, d *effortDrift, h *Runtime) {
 	}
 }
 
-// The tier fake-model's session reported is fake-model's: after a move onto m-flat or auto (no tiers,
-// no seed), the next session/new sends none and pins none, whichever door moved the chat and opens anew.
+// The tier fake-model's session reported is fake-model's: after a move onto m-flat (listed with no
+// tiers) or auto, the next session/new sends none and pins none, whichever door moved the chat and opens anew.
 func TestModelMove_TheOldModelsTierReachesNoLaterSession(t *testing.T) {
 	tests := map[string]func(t *testing.T, d *effortDrift, h *Runtime){
 		"a bridgeless pick, then a refreshed session": func(t *testing.T, d *effortDrift, h *Runtime) {
@@ -675,6 +681,7 @@ func TestModelMove_TheOldModelsTierReachesNoLaterSession(t *testing.T) {
 			d.pinAtHigh(t)
 			h := d.boot(t)
 			t.Cleanup(func() { shutdownHub(t, h) })
+			h.coord.catalog.SetModels([]marotte.SessionModel{{ID: "m-flat"}})
 			moveThenDoor(t, d, h)
 
 			opts := reopenStartOpts(t, h)

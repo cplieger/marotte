@@ -6,6 +6,7 @@ import type { Mock } from "vitest";
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
+  ICON_MODEL_UI: "",
   ICON_CLOSE: "",
   ICON_TAB_CHAT: "",
   ICON_TAB_SETTINGS: "",
@@ -86,6 +87,7 @@ vi.mock("./dom.js", () => ({
       },
     },
   ),
+  setBusy: vi.fn(),
   byId: (id: string) => {
     let el = document.getElementById(id);
     if (el === null) {

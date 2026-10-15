@@ -159,9 +159,15 @@ function switchedBase(p: {
   readonly to: string;
   readonly from: string;
   readonly effort?: string;
+  readonly unoffered?: string;
 }): string {
   // `effortLabel`, never the live catalog: the row records the tier picked then.
-  const tier = p.effort === undefined || p.effort === "" ? "" : effortLabel({ id: p.effort });
+  const ran = p.effort === undefined || p.effort === "" ? "" : effortLabel({ id: p.effort });
+  const unoffered =
+    p.unoffered === undefined || p.unoffered === ""
+      ? ""
+      : `${effortLabel({ id: p.unoffered })} is not offered`;
+  const tier = [ran, unoffered].filter((part) => part !== "").join("; ");
   if (tier === "") {
     return `Switched to ${p.to}`;
   }

@@ -146,6 +146,7 @@ vi.mock("./dom.js", () => {
         },
       },
     ),
+    setBusy: vi.fn(),
     byId: vi.fn(() => document.createElement("div")),
     forceReflow: vi.fn(() => 0),
   };

@@ -243,7 +243,7 @@ func cmdSetEffort(
 	if changed {
 		recorder.PersistEffortChange(ctx, cmd.ChatID, model, p.Level)
 	}
-	recordEffortSeed(ctx, bus, ws.ConfigDir, model, p.Level)
+	RecordEffortSeed(ctx, bus, ws.ConfigDir, model, p.Level)
 	return responseWith(map[string]any{"level": p.Level}), nil
 }
 
@@ -304,8 +304,9 @@ func persistEffortPick(
 	return model, changed, err
 }
 
-// A failure does not fail the command; a chat with no model is skipped.
-func recordEffortSeed(ctx context.Context, bus broadcaster, configDir, model string, level marotte.EffortLevel) {
+// RecordEffortSeed remembers level as model's next new-chat level (settings.KeyLastEffortByModel),
+// after the pick landed. A failure only logs; an empty model is skipped.
+func RecordEffortSeed(ctx context.Context, bus broadcaster, configDir, model string, level marotte.EffortLevel) {
 	if configDir == "" || model == "" {
 		return
 	}

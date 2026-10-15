@@ -793,6 +793,7 @@ export function upsertHeader(h: ChatHeader): void {
         // apply at a turn's close arrives with the field empty, which is what clears the pending
         // pick on every device.
         pending_model: h.pending_model ?? "",
+        pending_effort: h.pending_effort ?? "",
         // Both are header-authoritative: an absent field is steer and no follow-ups.
         interrupt_mode: h.interrupt_mode ?? "steer",
         queued: h.queued_prompts ?? [],
@@ -831,6 +832,7 @@ export function upsertHeader(h: ChatHeader): void {
     usage: h.usage,
     turn_count: h.turn_count,
     pending_model: h.pending_model ?? "",
+    pending_effort: h.pending_effort ?? "",
     interrupt_mode: h.interrupt_mode ?? "steer",
     queued: h.queued_prompts ?? [],
     tangent: h.tangent ?? false,

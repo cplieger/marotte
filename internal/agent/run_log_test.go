@@ -777,7 +777,7 @@ func TestRunLog_StepTurnsStampCertifiesTheServedEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if _, err := turn.ModelSwitched(ctx, marotte.EntryModelSwitched{From: "m-old", To: "m-new"}); err != nil {
+	if _, err := turn.ModelSwitched(ctx, &marotte.EntryModelSwitched{From: "m-old", To: "m-new"}); err != nil {
 		t.Fatalf("ModelSwitched: %v", err)
 	}
 	// A seal after the read: the counter moves, the page does not.
