@@ -313,3 +313,18 @@ describe("linkifyPaths property-based", () => {
     );
   });
 });
+
+// A drawn diagram's label is SVG text: an HTML button inside `<text>` would blank the label.
+describe("linkifyPaths: a diagram", () => {
+  it("leaves a path in an SVG label as text", () => {
+    const root = document.createElement("div");
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.textContent = "reads src/foo.ts:42";
+    svg.append(text);
+    root.append(svg);
+    linkifyPaths(root);
+    expect(links(root)).toHaveLength(0);
+    expect(text.textContent).toBe("reads src/foo.ts:42");
+  });
+});

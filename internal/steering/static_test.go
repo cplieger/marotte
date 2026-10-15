@@ -409,6 +409,27 @@ func TestWriteChatCapabilities(t *testing.T) {
 	}
 }
 
+func TestWriteAttachments_TeachesMermaidDiagrams(t *testing.T) {
+	var b strings.Builder
+	writeAttachments(&b, "/u", "/w")
+	out := b.String()
+	for _, want := range []string{
+		"a fenced block whose language is `mermaid`",
+		"once the fence closes it renders as a diagram in the chat",
+		"differs slightly from mermaid.js",
+		"no HTML, no `%%{init}%%` theme or config directive (marotte themes it), no `click` callback (ignored)",
+		"Prefer top-down (`flowchart TD`) to left-right so it fits a phone",
+		"split a large one",
+		"an `accTitle:` line, which becomes its accessible label and the full-screen view's title",
+		"shows its source under a notice",
+		"toggle to the source, copy it, download the SVG, or expand it full screen to zoom",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeAttachments output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestWriteAttachments_TeachesTheHTMLPreview(t *testing.T) {
 	var b strings.Builder
 	writeAttachments(&b, "/workspace/.uploads", "/workspace")

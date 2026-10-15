@@ -53,7 +53,8 @@ function patterns(): PathPatterns {
   return compiled;
 }
 
-const SKIP_TAGS = "code, pre, a, button";
+/** `svg`: a drawn diagram's label is SVG `<text>`, which cannot hold the HTML button a path becomes. */
+const SKIP_TAGS = "code, pre, a, button, svg";
 
 /**
  * Injected, like `initAttachmentPillCallbacks`: importing the opener would close a ring through the editor. A no-op

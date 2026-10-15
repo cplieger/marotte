@@ -8,6 +8,7 @@ import { domRenderer } from "./smd-renderer.js";
 import { linkifyPaths } from "./linkify.js";
 import { decorateCodeBlocks, decorateStreamingCodeTail } from "./code-blocks.js";
 import { renderSvgBlock } from "./svg-block.js";
+import { renderMermaidBlock } from "./mermaid-block.js";
 import { syncScrollableTables } from "./table-scroll.js";
 
 /** Buffered deltas reach the append-only parser at most once per interval; nothing re-parses. */
@@ -49,6 +50,8 @@ function decorate(block: HTMLElement): HTMLElement {
     if (block.parentElement !== null) {
       decorateCodeBlocks(block.parentElement);
     }
+    // Here and nowhere else: this callback fires only for a closed fence, so a streaming diagram is never drawn.
+    renderMermaidBlock(block);
     return block;
   }
   linkifyPaths(block);
