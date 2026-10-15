@@ -117,8 +117,7 @@ func (rt *Runtime) applyStopInPlace(ctx context.Context, chatID marotte.ChatID, 
 		}
 		cmd.Type, cmd.Payload = marotte.CmdSetEffort, payload
 	}
-	_, err := rt.dispatcher.Run(ctx, &cmd)
-	return err
+	return rt.dispatcher.Run(ctx, &cmd)
 }
 
 // applyPendingModel applies pending_model, with pending_effort, on an idle chat: through

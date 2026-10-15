@@ -144,14 +144,16 @@ func (d *Dispatcher) handler(t marotte.CommandType) (Handler, bool) {
 	return fn, ok
 }
 
-// Run answers cmd with its registered handler in process, for a command that applies another's
-// effect as part of its own: no envelope, no idempotency replay and no answer discharge.
-func (d *Dispatcher) Run(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
+// Run applies cmd through its registered handler in process, for a command that applies another's
+// effect as part of its own: no envelope, no idempotency replay, no answer discharge, and the
+// handler's response is dropped.
+func (d *Dispatcher) Run(ctx context.Context, cmd *marotte.ClientCommand) error {
 	fn, ok := d.handler(cmd.Type)
 	if !ok {
-		return nil, StatusError(http.StatusInternalServerError, errors.New("unknown command: "+string(cmd.Type)))
+		return StatusError(http.StatusInternalServerError, errors.New("unknown command: "+string(cmd.Type)))
 	}
-	return fn(ctx, cmd)
+	_, err := fn(ctx, cmd)
+	return err
 }
 
 // ResolveAfterClose resolves the pending turn ends of the closed turn and older
