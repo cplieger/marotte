@@ -33,8 +33,11 @@ const (
 const (
 	separator = " · "
 	ellipsis  = "…"
-	// fallbackRunName is the run tab's own label for a run nobody named.
+	// fallbackRunName names a run with neither a label nor an id.
 	fallbackRunName = "Workflow run"
+	// shortIDRunes is `wf_` plus eight characters, the client's `runLabelText` fallback, so a
+	// notification and the card or tab a click opens name an unlabelled run alike.
+	shortIDRunes = 11
 )
 
 // pauseKindMaxIterations is KAS's `finalState.pause.kind` for a repeat's onMaxIterations stop.
@@ -54,12 +57,22 @@ func ChatTarget(chatID marotte.ChatID, name string) Target {
 	return Target{Subject: marotte.ChatSubject(chatID), Name: name}
 }
 
-// RunTarget is one workflow run's tab; an unlabelled run reads as the run tab's default label.
+// RunTarget is one workflow run's tab; an unlabelled run reads as its id's short form.
 func RunTarget(workflowID, label string) Target {
 	if strings.TrimSpace(label) == "" {
-		label = fallbackRunName
+		label = shortRunID(workflowID)
 	}
 	return Target{Subject: marotte.RunSubject(workflowID), Name: label}
+}
+
+func shortRunID(workflowID string) string {
+	if workflowID == "" {
+		return fallbackRunName
+	}
+	if utf8.RuneCountInString(workflowID) <= shortIDRunes {
+		return workflowID
+	}
+	return string([]rune(workflowID)[:shortIDRunes])
 }
 
 // AskRun is the run an ask belongs to: the attributed run, else the run whose bridge key

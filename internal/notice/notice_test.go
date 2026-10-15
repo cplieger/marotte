@@ -70,8 +70,14 @@ func TestTargets_unnamedTabsReadAsTheirDefaultLabels(t *testing.T) {
 	if got := ChatTarget("c1", "").Name; got != marotte.DefaultChatName {
 		t.Errorf("ChatTarget(c1, \"\").Name = %q, want %q", got, marotte.DefaultChatName)
 	}
-	if got := RunTarget("wf1", " ").Name; got != fallbackRunName {
-		t.Errorf("RunTarget(wf1, \" \").Name = %q, want %q", got, fallbackRunName)
+	for _, tc := range []struct{ id, want string }{
+		{"wf_0123456789abcdef", "wf_01234567"},
+		{"wf1", "wf1"},
+		{"", fallbackRunName},
+	} {
+		if got := RunTarget(tc.id, " ").Name; got != tc.want {
+			t.Errorf("RunTarget(%q, \" \").Name = %q, want %q", tc.id, got, tc.want)
+		}
 	}
 }
 

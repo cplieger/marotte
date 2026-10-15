@@ -189,9 +189,7 @@ describe("a parent's buffered workflow updates", () => {
     }
     const boxes = view.querySelectorAll(".steer-group");
     expect(boxes).toHaveLength(1);
-    expect(boxes[0]?.querySelector(".steer-group-header")?.textContent).toBe(
-      "3 updates from 1 workflow",
-    );
+    expect(boxes[0]?.querySelector(".steer-group-header")?.textContent).toBe("3 updates from wf_1");
     expect(rows.every((r) => r.parentElement?.parentElement === boxes[0])).toBe(true);
   });
 

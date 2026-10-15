@@ -202,13 +202,18 @@ function seatGroup(
   }
 }
 
-/** The box's header: the runs counted only when every row names its own, so the count never undercounts. */
+/** The box's header: the one run named when every row comes from it, else the runs counted, and only
+ *  when every row names its own, so the count never undercounts. */
 function groupLabel(rows: readonly HTMLElement[]): string {
   const runs = rows.map((r) => r.dataset["run"] ?? "");
   if (runs.includes("")) {
     return `${String(rows.length)} workflow updates`;
   }
   const n = new Set(runs).size;
+  const name = rows[0]?.dataset["runLabel"] ?? "";
+  if (n === 1 && name !== "") {
+    return `${String(rows.length)} updates from ${name}`;
+  }
   return `${String(rows.length)} updates from ${String(n)} ${n === 1 ? "workflow" : "workflows"}`;
 }
 

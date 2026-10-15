@@ -271,6 +271,10 @@ const cells = new Map<string, Signal<RunState | undefined>>();
 const inFlight = new Set<string>();
 const stale = new Map<string, string>();
 
+/** Runs forgotten while their read was out; the read drops its answer and its retry, so a late
+ *  response cannot rebuild the state `forgetRun` just released. */
+const forgotten = new Set<string>();
+
 /** The invalidation CAUSE behind each run's current answer: recorded when its fetch is ISSUED
  *  and kept once that fetch has answered, which is what makes one cause cost one request per run
  *  however the two callers interleave — a second invalidation naming a cause this run was
@@ -675,6 +679,7 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
     answeredCause.set(workflowID, cause);
   }
   let answered = false;
+  let dropped: boolean;
   // The status of a read that produced nothing, which is what tells a SETTLED answer from the
   // absence of one: `handleRun` answers 404 only where the engine described this run and refused,
   // so no number of retries can change it. 0 (no request) and every other status are worth
@@ -687,7 +692,9 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
   try {
     const r = await apiGetOrError<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
     const d = r.data;
-    if (d?.state !== undefined && executionsOf(workflowID).frames !== issued) {
+    if (forgotten.has(workflowID)) {
+      // The last reader left while this read was out: writing the answer would recreate a cell nobody holds.
+    } else if (d?.state !== undefined && executionsOf(workflowID).frames !== issued) {
       // A frame changed the tree while this read was out, so the answer may predate it. Only a
       // read issued after the frame can say which side of it KAS is on.
       stale.set(workflowID, stale.get(workflowID) ?? cause);
@@ -719,7 +726,10 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
     }
   } finally {
     inFlight.delete(workflowID);
-    if (answered) {
+    dropped = forgotten.delete(workflowID);
+    if (dropped) {
+      // Nothing to retry for a run no reader holds; `forgetRun` already cleared its ladder.
+    } else if (answered) {
       cancelRunRetry(workflowID);
     } else {
       if (cause !== "") {
@@ -735,6 +745,11 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
         scheduleRunRetry(workflowID, cause, failed);
       }
     }
+  }
+  if (dropped && !runStateDemanded(workflowID)) {
+    // `stale` may come from a lifecycle invalidation, which fires whether or not anyone reads the run,
+    // so only a registered demand lets the trailing read recreate the cell.
+    stale.delete(workflowID);
   }
   const next = stale.get(workflowID);
   if (next !== undefined) {
@@ -784,11 +799,18 @@ function cancelRunRetry(workflowID: string): void {
   runRetries.delete(workflowID);
 }
 
-/** Externally-owned reasons a run's state cell must be KEPT, registered by the composition root
- *  so this module stays a leaf — importing `tabs.ts` here would invert the dependency direction,
- *  which is why `store.ts`'s eviction exemptions take the same shape. Nothing registered means
- *  nothing demands a cell. */
+/** Externally-owned reasons a run's state cell must be KEPT, registered by the module that owns
+ *  the reader (the composition root for tabs, a surface for its own mounted notes) so this module
+ *  stays a leaf — importing `tabs.ts` here would invert the dependency direction, which is why
+ *  `store.ts`'s eviction exemptions take the same shape. Every reader of a cell must register one
+ *  (tabs, mounted notes, transcript run cards, and detached run cards in subagent pages and run-tab step streams): `forgetRun` and a dropped late read treat an
+ *  unregistered reader as absent. */
 const stateDemands: ((workflowID: string) => boolean)[] = [];
+
+/** Whether any registered demand holds the run's state cell. */
+export function runStateDemanded(workflowID: string): boolean {
+  return stateDemands.some((fn) => fn(workflowID));
+}
 
 /** Register one demand predicate. Returns its unregister. */
 export function registerRunStateDemand(fn: (workflowID: string) => boolean): () => void {
@@ -815,8 +837,11 @@ export function noteRunLabel(workflowID: string, name: string | undefined): void
  *  predicate answering true keeps everything below, because no call site can enumerate this
  *  store's readers. */
 export function forgetRun(workflowID: string): void {
-  if (stateDemands.some((fn) => fn(workflowID))) {
+  if (runStateDemanded(workflowID)) {
     return;
+  }
+  if (inFlight.has(workflowID)) {
+    forgotten.add(workflowID);
   }
   cells.delete(workflowID);
   stale.delete(workflowID);

@@ -87,7 +87,15 @@ import {
 export { refreshGroupHeader };
 import { delegateDetail, iconForSubagent, subagentLabel, subagentName } from "./roles.js";
 import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
-import { invalidateRun, runPlan, runState, runStepEnds, forgetRun } from "./run-store.js";
+import {
+  invalidateRun,
+  runPlan,
+  runState,
+  runStepEnds,
+  forgetRun,
+  registerRunStateDemand,
+} from "./run-store.js";
+import { runLabelText, unwatchStepRunLabel, watchStepRunLabel } from "./workflow-run-label.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { buildPath } from "./route-path.js";
 
@@ -280,6 +288,8 @@ interface TurnRender {
    * its turn, which a turn-end disposal would cut short.
    */
   disposers: Map<number, (() => void)[]>;
+  /** Entry `seq` to the workflow note whose run label is watched now; one `disposers` cleanup per `seq` releases it. */
+  noteRuns: Map<number, HTMLElement>;
   /**
    * Whether this render lives outside the transcript (the subagent page): its turn-lifetime cleanups go into
    * `disposers`, and a cleanup must not clear a shared per-tool signal.
@@ -355,6 +365,26 @@ const renders = new Map<string, TurnRender>();
  */
 const runCardHosts = new Map<string, Map<string, TurnRender>>();
 
+/** Workflow id to the detached renders (subagent pages and run-tab step streams) holding a card for it; they are not in `runCardHosts`. */
+const detachedRunCards = new Map<string, Set<TurnRender>>();
+
+/** Runs whose `forgetRun` a detached release deferred to the end of `rebuildDetached`; null outside one. */
+let heldDetachedForgets: Set<string> | null = null;
+
+// A hosted card reads its run's cell; `releaseRunCard` clears the claim before it calls `forgetRun`, so a
+// released card never keeps the cell, and a returning card holds it before its first read is queued.
+registerRunStateDemand((workflowID) => {
+  if ((detachedRunCards.get(workflowID)?.size ?? 0) > 0) {
+    return true;
+  }
+  for (const hosts of runCardHosts.values()) {
+    if (hosts.has(workflowID)) {
+      return true;
+    }
+  }
+  return false;
+});
+
 // ---------------------------------------------------------------------------
 // Public API (called by messages.ts)
 
@@ -403,6 +433,7 @@ function buildBody(
     runs: new Map(),
     runEffects: new Map(),
     disposers: new Map(),
+    noteRuns: new Map(),
     detached,
     bubbles: [],
     liveBubble: null,
@@ -901,6 +932,25 @@ export function finalizeDetachedBody(turnID: string, subtask: string): void {
 /** Drop a detached render: the page's own unmount, the only thing firing its disposers. */
 export function disposeDetachedBody(turnID: string, subtask: string): void {
   disposeAssistantBody(renderIDFor(turnID, subtask));
+}
+
+/**
+ * Run a detached rebuild (dispose, wipe, build) holding back the run-state release its dispose would make until the
+ * new render has claimed its cards, so a nested run both renders share keeps its cell and the rebuilt card paints
+ * with state while its re-read is in flight, instead of painting empty until that read lands.
+ */
+export function rebuildDetached(rebuild: () => void): void {
+  const held = new Set<string>();
+  heldDetachedForgets = held;
+  try {
+    rebuild();
+  } finally {
+    heldDetachedForgets = null;
+  }
+  // Demand-aware: a run the new render claimed is kept, one it dropped goes now.
+  for (const id of held) {
+    forgetRun(id);
+  }
 }
 
 /** Run and clear every cleanup this render owns; idempotent, since both dispose paths can reach it. */
@@ -1586,6 +1636,14 @@ function runCardFor(st: TurnRender, workflowID: string, name: string, owner = fa
       runCardHosts.set(st.chatID, hosts);
     }
     hosts.set(workflowID, st);
+  } else {
+    // Before the first read below, so a forget racing it finds the demand.
+    let holders = detachedRunCards.get(workflowID);
+    if (holders === undefined) {
+      holders = new Set();
+      detachedRunCards.set(workflowID, holders);
+    }
+    holders.add(st);
   }
   // The footer link re-opens the run's tab, injected so `fundamentals/` points downward and lazy since `run-view.ts`
   // reaches the whole page. The parent is this render's chat; the run store learns it only from SSE.
@@ -1625,6 +1683,20 @@ function runCardFor(st: TurnRender, workflowID: string, name: string, owner = fa
  */
 function releaseRunCard(st: TurnRender, workflowID: string, card: RunCardView): void {
   disarmRunCard(st, workflowID, card);
+  if (st.detached) {
+    const holders = detachedRunCards.get(workflowID);
+    if (holders?.delete(st) === true) {
+      if (holders.size === 0) {
+        detachedRunCards.delete(workflowID);
+      }
+      if (heldDetachedForgets === null) {
+        forgetRun(workflowID);
+      } else {
+        heldDetachedForgets.add(workflowID);
+      }
+    }
+    return;
+  }
   // Only while this render holds the claim: a re-homed card's effect still reads that cell.
   const hosts = runCardHosts.get(st.chatID);
   if (hosts?.get(workflowID) !== st) {
@@ -2194,6 +2266,38 @@ function mountSteerNote(st: TurnRender, container: HTMLElement, e: Entry, steer:
   const note = buildSteerNote(steerNoteData(st, e, steer));
   stampEntry(st, note, e.seq);
   appendEntry(st, container, note);
+  watchNoteRun(st, e.seq, note, steer);
+}
+
+/** Keep a workflow update's run label current while the note is mounted. */
+function watchNoteRun(st: TurnRender, seq: number, note: HTMLElement, steer: EntrySteer): void {
+  const run = steer.origin_run ?? "";
+  if (run === "") {
+    return;
+  }
+  watchStepRunLabel(note, run);
+  // One cleanup per seq reading the current note: a redraw appending its own would keep every replaced note alive.
+  if (!st.noteRuns.has(seq)) {
+    pushDisposer(st, seq, () => {
+      const current = st.noteRuns.get(seq);
+      st.noteRuns.delete(seq);
+      if (current !== undefined) {
+        unwatchStepRunLabel(current);
+      }
+    });
+  }
+  st.noteRuns.set(seq, note);
+}
+
+/** Open a workflow update's run, as the run bar's row does. */
+function openNoteRun(chatID: string, workflowID: string): void {
+  void import("./run-view.js")
+    .then(({ openRunView }) => {
+      void openRunView(workflowID, runLabelText(workflowID), chatID);
+    })
+    .catch(() => {
+      /* noop: the label stays a button for the next click */
+    });
 }
 
 function steerNoteData(st: TurnRender, e: Entry, steer: EntrySteer): SteerNoteData {
@@ -2210,8 +2314,12 @@ function steerNoteData(st: TurnRender, e: Entry, steer: EntrySteer): SteerNoteDa
   if (steer.step !== undefined) {
     data.step = steer.step;
   }
-  if (steer.origin_run !== undefined) {
+  if (steer.origin_run !== undefined && steer.origin_run !== "") {
     data.run = steer.origin_run;
+    data.runLabel = runLabelText(steer.origin_run);
+    data.onOpenRun = () => {
+      openNoteRun(st.chatID, steer.origin_run ?? "");
+    };
   }
   const workflowMessage = steer.origin === "parent" || steer.origin === "step";
   if (workflowMessage && steer.produced_ts !== undefined) {
@@ -2242,6 +2350,10 @@ function redrawSettledRows(pick: (id: string, steer: EntrySteer) => boolean): vo
       }
       stampEntry(st, note, seq);
       old.replaceWith(note);
+      // Watch before releasing: the old note may be the run's last watcher, and releasing first would
+      // forget the fetched name and draw the short id until a refetch lands.
+      watchNoteRun(st, seq, note, steer);
+      unwatchStepRunLabel(old);
       regroupWorkflowUpdates(st);
     }
   }

@@ -3,7 +3,7 @@
 // corrections). The clamp is measured against real layout at the bottom.
 
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import { buildSteerNote, type SteerNoteData } from "./steer-note.js";
+import { buildSteerNote, setSteerNoteRunLabel, type SteerNoteData } from "./steer-note.js";
 import type { SteerReason } from "../types.js";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 
@@ -308,5 +308,49 @@ describe("the clamp measured on the page", () => {
 
     host.style.inlineSize = "150px";
     await settles(n, false, "offered once it no longer fits");
+  });
+});
+
+describe("the run label", () => {
+  it("is a button before the step that opens the run", () => {
+    const open = vi.fn();
+    const n = note({
+      origin: "step",
+      step: "review",
+      run: "wf_1",
+      runLabel: "forge-f2-build",
+      onOpenRun: open,
+    });
+
+    const run = n.querySelector<HTMLButtonElement>("button.steer-note-run");
+    expect(run?.textContent).toBe("forge-f2-build");
+    expect(n.querySelector(".steer-note-head")?.textContent).toBe("forge-f2-build\u00b7review");
+
+    run?.click();
+    expect(open).toHaveBeenCalledOnce();
+  });
+
+  it("is plain text when the caller cannot open the run", () => {
+    const n = note({ origin: "step", step: "review", run: "wf_1", runLabel: "forge-f2-build" });
+
+    expect(n.querySelector("button.steer-note-run")).toBeNull();
+    expect(textOf(n, ".steer-note-run")).toBe("forge-f2-build");
+  });
+
+  it("is absent from a note that names no run", () => {
+    const n = note({ origin: "step", step: "review", runLabel: "forge-f2-build" });
+
+    expect(n.querySelector(".steer-note-run")).toBeNull();
+  });
+
+  it("is rewritten in place when the name arrives after the first paint", () => {
+    const n = note({ origin: "step", run: "wf_1", runLabel: "wf_1", onOpenRun: vi.fn() });
+    const run = n.querySelector(".steer-note-run");
+
+    setSteerNoteRunLabel(n, "forge-f2-build");
+
+    expect(n.querySelector(".steer-note-run")).toBe(run);
+    expect(run?.textContent).toBe("forge-f2-build");
+    expect(n.dataset["runLabel"]).toBe("forge-f2-build");
   });
 });
