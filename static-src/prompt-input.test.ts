@@ -493,6 +493,31 @@ describe("the mid-turn Send", () => {
     expect(midTurn().getAttribute("aria-label")).toBe("Queue for after this turn");
   });
 
+  it("names this turn in Send's window before the turn opens", () => {
+    setSessions([{ ...makeSession([]), thinking: true, interrupt_mode: "queue", queued: [] }]);
+    setActive(CHAT);
+    setSendState({ kind: "streaming" });
+    type("hello");
+    expect(midTurn().getAttribute("aria-label")).toBe("Queue for after this turn");
+    expect(input().placeholder).toBe("Queue a follow-up for after this turn...");
+  });
+
+  it("names this turn while a turn the agent started has not streamed", () => {
+    setSessions([{ ...makeSession([]), interrupt_mode: "queue", queued: [] }]);
+    setActive(CHAT);
+    openTurn(CHAT, {
+      id: "tw-open",
+      turn: "tw",
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "wire_turn_start", n: 1 },
+    });
+    setSendState({ kind: "streaming" });
+    type("hello");
+    expect(midTurn().getAttribute("aria-label")).toBe("Queue for after this turn");
+  });
+
   it("stops counting a follow-up once its turn opens", () => {
     setSessions([
       {

@@ -90,10 +90,10 @@ vi.mock("./store.js", async (importOriginal) => {
   return {
     ...actual,
     get: (id: string) => (m.names.has(id) ? { id, name: m.names.get(id) } : undefined),
-    isThinking: (id: string) => m.thinking.get(id) ?? false,
-    watchSession: (id: string) => {
+    isBusy: (id: string) => m.thinking.get(id) ?? false,
+    watchBusy: (id: string) => {
       void thinkVersion.value;
-      return { id, thinking: m.thinking.get(id) ?? false };
+      return m.thinking.get(id) ?? false;
     },
   };
 });

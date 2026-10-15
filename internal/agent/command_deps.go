@@ -147,6 +147,11 @@ func (rt *Runtime) StopRequestedAfter(chatID marotte.ChatID, turnID string) bool
 	return rt.coord.StopRequestedAfter(chatID, turnID)
 }
 
+// ArmWireCancelGrace closes the agent-started turn a cancel targets unless its turn_end arrives within d.
+func (rt *Runtime) ArmWireCancelGrace(chatID marotte.ChatID, d time.Duration) bool {
+	return rt.coord.ArmWireCancelGrace(chatID, d)
+}
+
 // RequestStop records the reader's stop on the chat's turn sequence.
 func (rt *Runtime) RequestStop(chatID marotte.ChatID) {
 	rt.coord.RequestStop(chatID)

@@ -154,12 +154,15 @@ func cmdUnqueuePrompt(ctx context.Context, roles *promptRoles, cmd *marotte.Clie
 type CloseFacts struct {
 	Outcome marotte.TurnOutcome
 	Fence   TurnFence
+	// Unattended is a close no one stopped (marotte closing a turn KAS went idle without
+	// ending), after which queued user rows still go, as after a clean close.
+	Unattended bool
 }
 
 // drainAfterClose sends at most one prompt for a close, under the chat's steer lock from the pick
 // to launchPrompt's return: unread steers first (after a close leaving a live bridge or a drained
-// death), else one queued user row (after a clean close, bridge live). A pending end, a held slot,
-// a newer turn or a shutdown sends nothing; no shell interception.
+// death), else one queued user row (after a clean or unattended close, bridge live). A pending
+// end, a held slot, a newer turn or a shutdown sends nothing; no shell interception.
 func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, cl CloseFacts, ends EndFacts) {
 	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
 	if err != nil {
@@ -180,7 +183,8 @@ func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 			return
 		}
 	}
-	if !live || marotte.SeverityOf(cl.Outcome) != marotte.TurnSeverityClean || roles.followups == nil {
+	clean := marotte.SeverityOf(cl.Outcome) == marotte.TurnSeverityClean || cl.Unattended
+	if !live || !clean || roles.followups == nil {
 		roles.admission.ReleaseTurnReservation(chatID)
 		return
 	}

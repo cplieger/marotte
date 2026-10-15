@@ -46,6 +46,12 @@ export const storeMock = {
   promptOpened: vi.fn(() => false),
 
   isThinking: vi.fn(() => false),
+  // IDLE, like `isThinking`: a busy answer would steer a send no suite meant to steer.
+  sessionBusy: vi.fn(() => false),
+  isBusy: vi.fn(() => false),
+  watchBusy: vi.fn(() => false),
+  dropTurnLocally: vi.fn(),
+  clearTurnDropped: vi.fn(),
   isEmptyChat: vi.fn(() => false),
   setThinking: vi.fn(),
   setTurnOpen: vi.fn(),

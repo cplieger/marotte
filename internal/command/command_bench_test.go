@@ -168,6 +168,8 @@ func (*benchDeps) StopRequestedAfter(marotte.ChatID, string) bool { return false
 
 func (d *benchDeps) RequestStop(chatID marotte.ChatID) { d.stops = append(d.stops, chatID) }
 
+func (*benchDeps) ArmWireCancelGrace(marotte.ChatID, time.Duration) bool { return false }
+
 func (d *benchDeps) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return d.holder, d.holderOpen
 }

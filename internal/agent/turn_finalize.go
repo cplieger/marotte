@@ -34,7 +34,15 @@ const (
 	closerWireEnd
 	// closerBracketLost is a turn_start arriving while a bracketed own turn is open: its turn_end was lost.
 	closerBracketLost
+	// closerCancelGrace and closerKASIdle are marotte ceasing to wait for a wire turn's turn_end: after a cancel
+	// (ArmWireCancelGrace), or after KAS reported no turn running (WireTurnActivity). A turn_end arriving first wins
+	// the claim.
+	closerCancelGrace
+	closerKASIdle
 )
+
+// kasIdleReason is what a turn closed by closerKASIdle says.
+const kasIdleReason = "The agent went idle without ending this turn, so marotte closed it."
 
 // deathInterruptCause is a turn's public sentence when the bridge's stream ended mid-turn. It claims only what was
 // observed: nothing reads the exit status, so a closed pipe is not an exit.
@@ -70,11 +78,12 @@ type turnClose struct {
 	// Turn names the ONE turn an id-scoped closer may end. Empty only with Own.
 	Turn string
 	// Stop is what the close concludes: the wire's on closerWireEnd, the command layer's (`interrupted` or
-	// `cancelled` only) on closerPromptFailure and closerBridgeDeath.
+	// `cancelled` only) on closerPromptFailure and closerBridgeDeath, the backstop's on the grace closers.
 	Stop marotte.StopReason
 	// Seq is the reply's read-loop position on the prompt closers, waited for before closing; zero skips the wait.
 	Seq uint64
-	// Own spells "close the chat's own turn", for a closer describing the chat rather than an id it holds.
+	// Own spells "close the chat's own open turn, unless it is a prompt its turn_start has not bound" (claimBound),
+	// for a closer describing the chat rather than an id it holds.
 	Own    bool
 	Closer turnCloser
 }
@@ -106,13 +115,13 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 		if cause := bc.turns.interruptCause(t); cause != "" {
 			reason, kind = string(cause), ""
 		}
-	case closerWireEnd:
+	case closerWireEnd, closerCancelGrace, closerKASIdle:
 	}
 	if reason == "" && kind == "" {
 		reason, kind = engineAccount(t, stop)
 	}
 	result, outcome := bc.closeTurn(ctx, t, stop, reason, kind, tc.Closer)
-	cf := closeFacts{outcome: outcome, fence: fenceOf(t)}
+	cf := closeFacts{outcome: outcome, fence: fenceOf(t), unattended: tc.Closer == closerKASIdle}
 	if tc.Closer == closerBridgeDeath {
 		cf.exit = bc.turns.forwardExit(t.Chat)
 	}
@@ -149,11 +158,13 @@ func engineAccount(t *activeTurn, stop marotte.StopReason) (string, marotte.Fail
 	return rpcerr.Account(m, e.Message), kind
 }
 
-// closeFacts is what a won close hands its pipeline: the outcome, the fence naming the turn, and a death's forwarder exit.
+// closeFacts is what a won close hands its pipeline: the outcome, the fence naming the turn, a death's forwarder
+// exit, and whether no one asked for the stop (command.CloseFacts.Unattended).
 type closeFacts struct {
-	exit    <-chan struct{}
-	outcome marotte.TurnOutcome
-	fence   command.TurnFence
+	exit       <-chan struct{}
+	outcome    marotte.TurnOutcome
+	fence      command.TurnFence
+	unattended bool
 }
 
 // afterTurnClose runs the between-turns follow-ups in order: steer ends, a model switch (it changes the
@@ -178,7 +189,7 @@ func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, chatID marotte.
 		!bc.settleAfterClose(bc.lifecycle.shutdownCtx, chatID, command.AdmissionWait) {
 		return
 	}
-	bc.drainAfterClose(ctx, chatID, command.CloseFacts{Outcome: cf.outcome, Fence: cf.fence}, ends)
+	bc.drainAfterClose(ctx, chatID, command.CloseFacts{Outcome: cf.outcome, Fence: cf.fence, Unattended: cf.unattended}, ends)
 }
 
 func (bc *bridgeCoordinator) draining() bool {
@@ -200,7 +211,7 @@ func waitForwarder(exit <-chan struct{}) {
 // bracket makes no phantom; an empty id closes nothing.
 func (bc *bridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.ChatID, tc *turnClose) (*activeTurn, bool) {
 	if tc.Own {
-		return bc.turns.claimOwn(ctx, chatID)
+		return bc.turns.claimBound(ctx, chatID)
 	}
 	if tc.Turn == "" {
 		slog.Warn("a turn closer named no turn, so it closed nothing",

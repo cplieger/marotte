@@ -13,6 +13,7 @@ import {
   registerEvictionExemption,
   codeReferencesFor,
   liveRefusalFor,
+  sessionBusy,
 } from "./store.js";
 import { clearTurnSigs } from "./store-signals.js";
 import { buildEvent } from "./messages-events.js";
@@ -612,7 +613,9 @@ function refreshResumeLabel(): void {
     return;
   }
   // Nothing new since they parked: say what the turn is doing rather than a count of zero.
-  setResumeLabel(session?.thinking === true ? session.working_label || "Working" : "Latest");
+  setResumeLabel(
+    session !== undefined && sessionBusy(session) ? session.working_label || "Working" : "Latest",
+  );
 }
 
 /**
@@ -1166,7 +1169,7 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
   if (session === undefined) {
     return;
   }
-  if (session.thinking) {
+  if (sessionBusy(session)) {
     return;
   }
   // Through the projection: an undrawn turn is not one the reader can be told they are discarding.
@@ -2123,7 +2126,8 @@ function mountRewind(card: HTMLElement, t: Turn): void {
     });
   };
   // Disabled mid-turn: KAS refuses a revert on a session with a live abortController.
-  const busy = getActive()?.thinking ?? false;
+  const session = getActive();
+  const busy = session !== undefined && sessionBusy(session);
   btn.disabled = busy;
   // The consequence, in a channel separate from the name. `data-tooltip`, not `title`, reaches a disabled button.
   btn.setAttribute(

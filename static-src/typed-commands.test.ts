@@ -167,11 +167,30 @@ describe("handleTypedCommand /drop", () => {
 
   it("returns the composer to prompt mode by clearing thinking", () => {
     seedThinking("c1");
-    expect(store.isThinking("c1")).toBe(true);
+    expect(store.isBusy("c1")).toBe(true);
     expect(handleTypedCommand("c1", "/drop")).toBe(true);
     // This is what makes the next Send a PROMPT rather than a steer: submit.ts
     // branches on exactly this read.
-    expect(store.isThinking("c1")).toBe(false);
+    expect(store.isBusy("c1")).toBe(false);
+  });
+
+  // A turn the client holds open with no close (one the agent started, or one whose close never
+  // arrived) is what `isBusy` reads besides `thinking`, so `/drop` has to waive it too.
+  it("returns the composer to prompt mode beside an open turn that never streamed", () => {
+    seedThinking("c1");
+    store.setThinking("c1", false);
+    store.openTurn("c1", {
+      id: "t-wake-open",
+      turn: "t-wake",
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "wire_turn_start", n: 1 },
+    });
+    expect(store.isBusy("c1")).toBe(true);
+    expect(handleTypedCommand("c1", "/drop")).toBe(true);
+    expect(store.isBusy("c1")).toBe(false);
+    expect(toasts.at(-1)).toContain("not told to stop");
   });
 
   it("dispatches no command, so it needs nothing from the engine", () => {
@@ -196,8 +215,8 @@ describe("handleTypedCommand /drop", () => {
   it("touches only the named chat", () => {
     seedThinking("c1", "c2");
     handleTypedCommand("c2", "/drop");
-    expect(store.isThinking("c1")).toBe(true);
-    expect(store.isThinking("c2")).toBe(false);
+    expect(store.isBusy("c1")).toBe(true);
+    expect(store.isBusy("c2")).toBe(false);
   });
 
   it("does not claim /drop with arguments", () => {

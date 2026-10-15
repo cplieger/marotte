@@ -69,12 +69,20 @@ type activeTurn struct {
 	// reapArmID names the newest reap arm; an expiry carrying an older id is a stale
 	// timer whose Stop lost the race and must not act.
 	reapArmID uint64
+	// idleArms counts KAS's idle reports that armed this turn's idle close (WireTurnActivity); an expiry carrying an
+	// older count, or arriving after kasIdle cleared, must not act.
+	idleArms uint64
 	// holds is how many completion handles are outstanding, and what bounds
 	// retention: a result a waiter still holds a handle for is never evicted.
 	holds  int
 	Source marotte.TurnOpenSource
 	// acked is whether a wire turn_start bound to this turn, provisional for an acknowledgeable source; reviseLocked re-targets it.
 	acked bool
+	// bracketed is whether a wire turn_start opened this wire turn, so its turn_end is owed; a fold opens one with no
+	// bracket, which may never close, and admission must not refuse a prompt beside it (bracketedWireLocked).
+	bracketed bool
+	// kasIdle is whether KAS's newest activity report since this turn opened said no turn runs.
+	kasIdle bool
 	// finalizing is whether a closer holds this turn's claim: a second claim and a
 	// fold both treat a finalizing turn as absent.
 	finalizing bool
@@ -259,14 +267,17 @@ func (lc *chatLifecycle) slotFreeLocked(source marotte.TurnOpenSource) bool {
 	}
 }
 
-// claimOwn claims the chat's own open turn for finalizing, false when none or already claimed. First-wins.
-func (r *turnRegistry) claimOwn(ctx context.Context, chatID marotte.ChatID) (*activeTurn, bool) {
+// claimBound claims, for a turn_end, the chat's own open turn unless it is a prompt its turn_start has not bound
+// (not acked); false then, when none is open, or when it is already claimed. First-wins. An end cannot be safely
+// attributed to an unacknowledged prompt: claiming it could retire the prompt's words before KAS reads them, and
+// the prompt's own session/prompt response stays its closer.
+func (r *turnRegistry) claimBound(ctx context.Context, chatID marotte.ChatID) (*activeTurn, bool) {
 	lc := r.lifecycleFor(chatID)
 	if !lc.awaitNotFinalizing(ctx) {
 		return nil, false
 	}
 	defer lc.mu.Unlock()
-	if lc.own == nil || lc.own.finalizing {
+	if lc.own == nil || lc.own.finalizing || !lc.own.acked {
 		return nil, false
 	}
 	return lc.claimLocked(lc.own), true

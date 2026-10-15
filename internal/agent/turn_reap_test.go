@@ -98,7 +98,7 @@ func TestCompactionReap_DoesNotRearmForAToolThatPredatesTheBudget(t *testing.T) 
 }
 
 func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) {
-	h, _, log, pctx := newCompactionReapFixture(t)
+	h, turnID, log, pctx := newCompactionReapFixture(t)
 
 	synctest.Test(t, func(t *testing.T) {
 		h.coord.CompactionFailed("c1", "compaction failed")
@@ -116,7 +116,7 @@ func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) 
 			t.Error("a long-running tool was treated as a flat timeout")
 		}
 
-		turn, ok := h.coord.turns.claimOwn(t.Context(), "c1")
+		turn, ok := h.coord.turns.claimTurn(t.Context(), "c1", turnID)
 		if !ok {
 			t.Fatal("normal closer could not claim the tool-running turn")
 		}
@@ -136,9 +136,9 @@ func TestCompactionReap_WithNoOpenTurnArmsNothing(t *testing.T) {
 }
 
 func TestCompactionReap_StoppedWhenTheTurnClosesNormally(t *testing.T) {
-	h, _, _, _ := newCompactionReapFixture(t)
+	h, turnID, _, _ := newCompactionReapFixture(t)
 	h.coord.CompactionFailed("c1", "compaction failed")
-	turn, ok := h.coord.turns.claimOwn(t.Context(), "c1")
+	turn, ok := h.coord.turns.claimTurn(t.Context(), "c1", turnID)
 	if !ok {
 		t.Fatal("normal closer could not claim the armed turn")
 	}

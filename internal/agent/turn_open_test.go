@@ -34,12 +34,12 @@ func TestTurnLive_TrueWhileATurnIsOpen(t *testing.T) {
 // turnFinalizing counts as live: the turn_close and broadcast have not landed yet.
 func TestTurnLive_TrueWhileFinalizing(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.stagePromptTurn(t, "c1")
+	id, _ := h.stagePromptTurn(t, "c1")
 
 	// Claiming without finishing is the window between a closer's claim and its effects.
-	turn, won := h.coord.turns.claimOwn(t.Context(), "c1")
+	turn, won := h.coord.turns.claimTurn(t.Context(), "c1", id)
 	if !won {
-		t.Fatal("claimOwn lost the claim on a freshly opened turn")
+		t.Fatal("claimTurn lost the claim on a freshly opened turn")
 	}
 	if !h.TurnLive("c1") {
 		t.Error("a finalizing turn reports the record final, so a refetch inside the " +

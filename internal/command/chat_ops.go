@@ -137,8 +137,9 @@ func cmdCancel(
 	}
 	// session/cancel is a notification nothing acks: the turn ends only when KAS answers
 	// session/prompt. If it never does, the grace budget cancels the prompt's context so the
-	// ordinary prompt-failure path finalizes the turn.
-	if !sb.ArmCancelGrace(sb.PromptGeneration(), CancelGrace) {
+	// ordinary prompt-failure path finalizes the turn. A turn KAS started itself has no prompt
+	// call, so its grace closes the turn directly.
+	if !sb.ArmCancelGrace(sb.PromptGeneration(), CancelGrace) && !stops.ArmWireCancelGrace(cmd.ChatID, CancelGrace) {
 		slog.Debug("cancel: no in-flight prompt to arm a grace budget against", "chat_id", cmd.ChatID)
 	}
 	return responseOK, nil

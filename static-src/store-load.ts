@@ -557,6 +557,7 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
       // `onTransportStatus` calls this for more connections than a reconnect, so an ordinary
       // network recovery reaches this rebuild.
       ...(existing?.agent_status !== undefined && { agent_status: existing.agent_status }),
+      ...(existing?.turn_dropped !== undefined && { turn_dropped: existing.turn_dropped }),
       // Residency describes the carried-over window of turns, so it travels with it: dropping it
       // here would make every reconnect read a loaded chat as never-loaded (or an evicted one as
       // fresh).

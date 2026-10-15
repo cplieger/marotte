@@ -426,9 +426,8 @@ func startPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
 	return turnID, nil
 }
 
-// reservePromptAdmission takes the chat's admission slot for a prompt: a prompt-class holder with a
-// live bridge answers the plain 409 (which the client converts to a steer), any other holder 409
-// with reason "starting".
+// reservePromptAdmission takes the chat's admission slot for a prompt: AdmissionBusy answers the plain
+// 409 (which the client steers or queues, per the chat's mode), any other holder 409 with reason "starting".
 func reservePromptAdmission(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) error {
 	switch roles.admission.ReserveTurnForPrompt(ctx, chatID, AdmissionWait) {
 	case AdmissionAcquired:

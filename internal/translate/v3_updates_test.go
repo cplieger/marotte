@@ -303,6 +303,44 @@ func TestHandleSessionInfoUpdate_AStepsTurnBracketIsDropped(t *testing.T) {
 	}
 }
 
+// activityInfo is the engine's focus_update as the 2.31 wire sends it: a focus status with the activity
+// snapshot flat beside the kind.
+func activityInfo(t *testing.T, turnActive bool) json.RawMessage {
+	t.Helper()
+	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+		"kind":     "focus_update",
+		"focus":    map[string]any{"status": "idle"},
+		"status":   "idle",
+		"activity": map[string]any{"turnActive": turnActive, "runningWorkflows": 0, "pausedWorkflows": 0},
+	}}})
+}
+
+// KAS's activity report reaches the turn lifecycle for the chat's own session only.
+func TestHandleSessionInfoUpdate_ActivityReachesTheTurnLifecycle(t *testing.T) {
+	tests := []struct {
+		name   string
+		active bool
+		attr   FrameAttribution
+		want   []turnBracket
+	}{
+		{name: "the chat going idle", active: false, want: []turnBracket{{chat: "c1", kind: "idle"}}},
+		{name: "the chat running a turn", active: true, want: []turnBracket{{chat: "c1", kind: "active"}}},
+		{name: "a step going idle", active: false, attr: FrameAttribution{Step: true}, want: nil},
+		{name: "a subagent going idle", active: false, attr: FrameAttribution{Subagent: true}, want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps, _, _ := depsWithStore(t, "c1")
+
+			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1", activityInfo(t, tt.active), tt.attr)
+
+			if !slices.Equal(deps.brackets, tt.want) {
+				t.Errorf("brackets = %+v, want %+v", deps.brackets, tt.want)
+			}
+		})
+	}
+}
+
 // TestMaterialPctDelta pins the gate on a context-percentage rewrite: a sub-point move is
 // dropped (the ring cannot render it), a tier crossing is kept.
 func TestMaterialPctDelta(t *testing.T) {

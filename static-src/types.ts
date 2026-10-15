@@ -406,6 +406,9 @@ export interface Session {
    *  PRESERVES rows the server did not name, so the mark keeps a hint for a deleted chat from
    *  outliving the answer that omitted it. */
   provisional?: true;
+  /** `/drop` waived the turns open when it ran, so `sessionBusy` reads them as idle; client-only,
+   *  cleared by the next live `turn_opened` or streamed entry. */
+  turn_dropped?: true;
 }
 
 // GET /api/sessions' row types are GENERATED (`ResumableSession`, `WorkflowRun`, wire/types.gen.ts).

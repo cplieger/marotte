@@ -13,7 +13,7 @@ import type { HashQuery, MentionProvider } from "./context-mentions.js";
 import { itemsFor, resetMentionSources } from "./context-sources.js";
 import type { MentionItem } from "./context-sources.js";
 import { join as joinKey } from "@cplieger/keyenc";
-import { getActiveId, isThinking, watchActiveId } from "./store.js";
+import { getActiveId, isBusy, watchActiveId } from "./store.js";
 import { chatNotice, subjectName } from "./notice-subject.js";
 import { MAROTTE_COMMANDS } from "./typed-commands.js";
 import { decodeSlashCommandsResponse } from "./wire/decoders.gen.js";
@@ -153,7 +153,7 @@ function close(): void {
 
 function thinkingNow(): boolean {
   const id = getActiveId();
-  return id !== "" && isThinking(id);
+  return id !== "" && isBusy(id);
 }
 
 function slashRows(query: string): Row[] {

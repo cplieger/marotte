@@ -88,10 +88,13 @@ type turnBoundary interface {
 	// WireTurnStart binds the bracket to the pending pre-open, or closes a turn
 	// whose own end never arrived.
 	WireTurnStart(ctx context.Context, chatID marotte.ChatID)
-	// WireTurnEnd closes the chat's open turn with the wire's own outcome. A no-op
-	// when none is open. The wire carries no stop prose, so the failure reason is
+	// WireTurnEnd closes the chat's open turn with the wire's own outcome. A no-op when none is open or
+	// the open one is a prompt its turn_start has not bound. The wire carries no stop prose, so the failure reason is
 	// the outcome's own default.
 	WireTurnEnd(ctx context.Context, chatID marotte.ChatID, stop marotte.StopReason)
+	// WireTurnActivity carries KAS's own report of whether the chat's session runs a turn
+	// (focus_update's activity.turnActive), the backstop for a turn_end that never arrives.
+	WireTurnActivity(chatID marotte.ChatID, active bool)
 	// ReviseTurnBinding re-targets routing on an agent-initiated frame: a new
 	// wire_turn_start turn takes own and the prompt's turn drops back to pending.
 	ReviseTurnBinding(ctx context.Context, chatID marotte.ChatID)

@@ -76,6 +76,7 @@ func deadContext(t *testing.T) context.Context {
 func streamingPromptTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, text string) (string, *turnlog.Turn) {
 	t.Helper()
 	id, log := h.stagePromptTurn(t, chatID)
+	h.coord.WireTurnStart(t.Context(), chatID)
 	if _, err := log.TextDelta(t.Context(), "", "say-1", text); err != nil {
 		t.Fatalf("TextDelta: %v", err)
 	}

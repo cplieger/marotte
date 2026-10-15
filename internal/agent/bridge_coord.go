@@ -100,6 +100,8 @@ type bridgeCoordinator struct {
 	acpArgs []string `wiring:"optional"`
 	// noSubscribers latches the no-subscriber report once per episode (reportNoSubscribers).
 	noSubscribers atomic.Bool
+	// idleEndGrace is WireTurnActivity's wait, zero meaning defaultIdleEndGrace; a field so a test shortens it.
+	idleEndGrace time.Duration
 }
 
 // newBridgeCoordinator builds the coordinator once, from NewHub after all options apply.
@@ -1286,11 +1288,11 @@ func (bc *bridgeCoordinator) WireTurnStart(ctx context.Context, chatID marotte.C
 		}
 		return
 	}
-	bc.openWireTurn(ctx, chatID)
+	bc.openWireTurn(ctx, chatID, true)
 }
 
-// WireTurnEnd handles the engine's turn_end bracket. With no own turn it is a no-op,
-// never a phantom turn. Live path only: replay is filtered upstream.
+// WireTurnEnd handles the engine's turn_end bracket. It is a no-op, never a phantom turn, when no own turn is open
+// or the open one is a prompt its turn_start has not bound (claimBound). Live path only: replay is filtered upstream.
 func (bc *bridgeCoordinator) WireTurnEnd(ctx context.Context, chatID marotte.ChatID, stop marotte.StopReason) {
 	bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerWireEnd, Stop: stop, Own: true})
 }
@@ -1301,7 +1303,7 @@ func (bc *bridgeCoordinator) TurnFoldTarget(ctx context.Context, chatID marotte.
 	if log, ok := bc.turns.foldTarget(chatID); ok {
 		return log
 	}
-	t := bc.openWireTurn(ctx, chatID)
+	t := bc.openWireTurn(ctx, chatID, false)
 	if t == nil {
 		return nil
 	}

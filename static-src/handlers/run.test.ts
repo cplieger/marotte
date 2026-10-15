@@ -33,7 +33,7 @@ vi.mock("../run-store.js", () => ({
 // The launching chat's own liveness, for the orphan sweep's two gates. Mocked
 // because what this suite pins is WHEN the sweep fires, not how a chat comes to
 // be thinking.
-vi.mock("../store.js", () => ({ isThinking: vi.fn(() => false) }));
+vi.mock("../store.js", () => ({ isBusy: vi.fn(() => false) }));
 vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
 vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
 // The dock is mocked (`decision-dock.test.ts`); the run-asks store is real.
@@ -66,7 +66,7 @@ import {
   runLabelOf,
   sealRunEntry,
 } from "../run-store.js";
-import { isThinking } from "../store.js";
+import { isBusy } from "../store.js";
 import { trackRun } from "../run-dots.js";
 import { info, success, error } from "../toast.js";
 import { dropRunRequests, dropTurnDecisions } from "../decision-dock.js";
@@ -88,7 +88,7 @@ const toastSuccess = vi.mocked(success);
 const toastError = vi.mocked(error);
 const dropAsks = vi.mocked(dropRunRequests);
 const sweepOrphans = vi.mocked(dropTurnDecisions);
-const chatThinking = vi.mocked(isThinking);
+const chatThinking = vi.mocked(isBusy);
 const siblingRunLive = vi.mocked(hasLiveRunForChat);
 const fetchedLabel = vi.mocked(runLabelOf);
 const runTurnOpened = vi.mocked(openRunTurn);
