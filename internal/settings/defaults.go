@@ -41,6 +41,10 @@ const (
 	// chosen, not inherited.
 	KeyScheduledAutoApprove = "scheduled_auto_approve"
 
+	// KeyLoopLimitWake wakes a launching chat's agent when its workflow's loop pauses at its
+	// iteration limit (internal/agent run_loop_wake.go); DefaultLoopLimitWake owns its default.
+	KeyLoopLimitWake = "loop_limit_wake"
+
 	// KeyKnowledgeEnabled reaches the agent per spawn under _meta.kiro.settings; it defaults TRUE.
 	KeyKnowledgeEnabled  = "knowledge_enabled"
 	KeyGuardPayloadLinks = "guard_payload_links"
@@ -138,6 +142,7 @@ var KnownKeys = map[string]struct{}{
 	KeyLastEffortByModel:        {},
 	KeyLastMergeMethod:          {},
 	KeyLastModel:                {},
+	KeyLoopLimitWake:            {},
 	KeyMCPWaitForReady:          {},
 	KeyMemoryMode:               {},
 	KeyNotificationsEnabled:     {},

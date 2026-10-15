@@ -24,6 +24,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     spec_planning_ask_first: false,
     steering_reminders_enabled: false,
     workflows_enabled: true,
+    loop_limit_wake: true,
     work_validation: "",
     cloudformation_safety_check: "",
     auto_routing: "",

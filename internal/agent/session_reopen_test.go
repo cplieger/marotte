@@ -237,6 +237,7 @@ var configWrites = []struct {
 	{key: settings.KeyLastModel, value: "claude-sonnet-4", reach: reachNewChat},
 	{key: settings.KeyLastEffortByModel, value: map[string]string{"claude-sonnet-4": "high"}, reach: reachNewChat},
 	{key: settings.KeyScheduledAutoApprove, value: true, reach: reachNoChat},
+	{key: settings.KeyLoopLimitWake, value: false, reach: reachNoChat},
 	{key: settings.KeyGuardPayloadLinks, value: false, reach: reachNoChat},
 	{key: settings.KeyNotificationsEnabled, value: false, reach: reachNoChat},
 	{key: settings.KeyNotifyAgentFinished, value: false, reach: reachNoChat},

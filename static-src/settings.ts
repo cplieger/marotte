@@ -669,6 +669,7 @@ const agentCapabilities: readonly {
     | "spec_planning_ask_first"
     | "steering_reminders_enabled"
     | "workflows_enabled"
+    | "loop_limit_wake"
     | "content_collection_enabled";
   inputID: string;
 }[] = [
@@ -677,6 +678,7 @@ const agentCapabilities: readonly {
   { key: "spec_planning_ask_first", inputID: "flag-spec-ask-first" },
   { key: "steering_reminders_enabled", inputID: "flag-steering-reminders" },
   { key: "workflows_enabled", inputID: "flag-workflows" },
+  { key: "loop_limit_wake", inputID: "flag-loop-limit-wake" },
   { key: "content_collection_enabled", inputID: "flag-content-collection" },
 ];
 

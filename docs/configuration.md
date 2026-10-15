@@ -66,6 +66,8 @@ Mount each folder with `volumes:` first. Credential and internal files under `/c
 
 Whether the chat agent can start and manage workflow runs is a setting, not a variable: **Workflows** under **Agent capabilities** on the **General** tab in **Settings**, on by default. With it on, a request like "run the publish workflow" starts the run instead of describing it. On: the agent hands work to workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Runs you start yourself from **Workflows** on the `/docs` page work either way. A change reaches new chats, and an open chat picks it up at its next message.
 
+Beside it, **Wake the chat when a workflow loop hits its limit**, on by default, decides what happens when a loop in a run the agent started stops at its iteration limit. On: marotte sends the agent one message for you, naming the run and the loop, so it can extend the loop or end it. Off: the run waits until you write to the agent yourself.
+
 ## Variables the agent sets (`MAROTTE_ALLOW_AGENT_ENV`)
 
 When the agent runs a command, it can ask for environment variables to be set for it. Most are ordinary, such as `CGO_ENABLED`, `GOFLAGS` or `TERM`. A few change which program runs instead: `LD_PRELOAD`, `GIT_SSH_COMMAND` and `BASH_ENV` each redirect execution. marotte refuses those, because approving a command must approve that exact command, and the agent's variables take precedence over marotte's own. A harmless value is still accepted, so `GIT_PAGER=cat` keeps working. The refusal names the variable, so the agent can retry without it.

@@ -476,6 +476,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     spec_planning_ask_first: reqBool(o, "spec_planning_ask_first", "$.effective_settings"),
     steering_reminders_enabled: reqBool(o, "steering_reminders_enabled", "$.effective_settings"),
     workflows_enabled: reqBool(o, "workflows_enabled", "$.effective_settings"),
+    loop_limit_wake: reqBool(o, "loop_limit_wake", "$.effective_settings"),
     supervised_default: reqBool(o, "supervised_default", "$.effective_settings"),
     scheduled_auto_approve: reqBool(o, "scheduled_auto_approve", "$.effective_settings"),
     debug_logs: reqBool(o, "debug_logs", "$.effective_settings"),

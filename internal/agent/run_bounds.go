@@ -815,6 +815,7 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 		}
 	} else if f.WorkflowID != "" && f.Status == marotte.RunStatusPaused {
 		rs.notifyRunOutcome(ctx, chatID, &f)
+		rs.wakeAtLoopLimit(ctx, &f)
 	}
 	rs.translate.HandleRunComplete(ctx, chatID, msg)
 }
@@ -829,8 +830,7 @@ func (rs *Runs) notifyRunOutcome(ctx context.Context, chatID marotte.ChatID, f *
 	if p := rs.parentChat(chatID, f.WorkflowID); p != "" {
 		parent = rs.coord.NoticeTarget(ctx, p, "").Name
 	}
-	label := cmp.Or(f.FinalState.RunLabel, f.FinalState.WorkflowName, f.WorkflowName, rs.tabLabel(f.WorkflowID))
-	n, ok := notice.RunEnded(notice.RunTarget(f.WorkflowID, label), f.Status, parent,
+	n, ok := notice.RunEnded(notice.RunTarget(f.WorkflowID, rs.frameLabel(f)), f.Status, parent,
 		f.FinalState.StopReason, f.FinalState.Pause.Kind)
 	if !ok {
 		return
@@ -848,6 +848,11 @@ func (rs *Runs) parentChat(chatID marotte.ChatID, workflowID string) marotte.Cha
 		return ""
 	}
 	return chatID
+}
+
+// frameLabel names the run a lifecycle frame is about, as its tab does.
+func (rs *Runs) frameLabel(f *lifecycleFrame) string {
+	return cmp.Or(f.FinalState.RunLabel, f.FinalState.WorkflowName, f.WorkflowName, rs.tabLabel(f.WorkflowID))
 }
 
 // tabLabel is the name a run's tab shows: the label the launch sent KAS, else its recipe.
@@ -872,18 +877,20 @@ func (rs *Runs) observePaused(next func(context.Context, marotte.ChatID, *marott
 // decoded separately from translate's KAS contract. WorkflowName is on `run_start`, FinalState
 // on `run_complete`.
 type lifecycleFrame struct {
-	FinalState struct {
-		WorkflowName string `json:"workflowName"`
-		RunLabel     string `json:"runLabel"`
-		StopReason   string `json:"stopReason"`
-		Pause        struct {
-			Kind string `json:"kind"`
-		} `json:"pause"`
-	} `json:"finalState"`
 	WorkflowID      string            `json:"workflowId"`
 	WorkflowName    string            `json:"workflowName"`
 	ParentSessionID string            `json:"parentSessionId"`
 	Status          marotte.RunStatus `json:"status"`
+	FinalState      struct {
+		WorkflowName string `json:"workflowName"`
+		RunLabel     string `json:"runLabel"`
+		StopReason   string `json:"stopReason"`
+		Pause        struct {
+			Kind          string `json:"kind"`
+			NodeID        string `json:"nodeId"`
+			IterationsRun int    `json:"iterationsRun"`
+		} `json:"pause"`
+	} `json:"finalState"`
 }
 
 func decodeLifecycleFrame(msg *marotte.RPCResponse) lifecycleFrame {

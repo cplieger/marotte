@@ -127,28 +127,42 @@ func cmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComman
 // The error is the send carrying key. turn is the prompt turn a delivery is aimed at, empty for a
 // new steer.
 func steerOne(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, key, text, turn string) (refuse string, err error) {
+	return SteerInto(ctx, roles.steerTarget(chatID), steerHolder(roles, chatID, turn), key, text)
+}
+
+func steerHolder(roles *promptRoles, chatID marotte.ChatID, turn string) SteerHolder {
 	source, held := roles.admission.AdmissionHolderSource(chatID)
-	h := SteerHolder{
+	return SteerHolder{
 		Held:        held && source != marotte.TurnSourceLocalShell,
 		PromptClass: source.PromptClass(),
 		Live:        roles.bridges.BridgeLive(chatID),
 		Turn:        turn,
 		Delivering:  turn != "",
 	}
-	return SteerInto(ctx, roles.steerTarget(chatID), h, key, text)
 }
 
 // SteerInto routes one steer row into t's buffer under the holder h and sends what the record
 // answers. The caller holds t's steer lock. refuse is the record's refusal class; err is the
 // failed send carrying key.
 func SteerInto(ctx context.Context, t SteerTarget, h SteerHolder, key, text string) (refuse string, err error) {
+	refuse, _, err = steerInto(ctx, t, h, key, text)
+	return refuse, err
+}
+
+// dropped reports that the send carrying key came back queued:false, so the record cleared the row
+// and the agent will never read it.
+func steerInto(ctx context.Context, t SteerTarget, h SteerHolder, key, text string) (refuse string, dropped bool, err error) {
 	sends, refuse := t.Queue.RouteSteer(t.Key, key, text, h)
 	if refuse != "" {
-		return refuse, nil
+		return refuse, false, nil
 	}
-	return "", issueSteers(ctx, t, sends, key, func(s SteerSend, queued bool, err error) {
-		t.Queue.SteerSent(t.Key, s, queued, err)
+	err = issueSteers(ctx, t, sends, key, func(s SteerSend, queued bool, sendErr error) {
+		t.Queue.SteerSent(t.Key, s, queued, sendErr)
+		if !queued && sendErr == nil && (s.ID == key || slices.Contains(s.Keys, key)) {
+			dropped = true
+		}
 	})
+	return "", dropped, err
 }
 
 // SendPlanned sends rows the record already routed (a flush job's plan) into t. The caller holds t's
