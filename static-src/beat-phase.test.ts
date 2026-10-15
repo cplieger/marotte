@@ -78,6 +78,22 @@ describe("beat phase", () => {
     expect(opacity(second)).toBeCloseTo(opacity(first), 2);
   });
 
+  it("keeps a dot on the grid when its start event is dispatched late", async () => {
+    // A busy main thread delivers one dot's `animationstart` after its beat began. A window
+    // capture listener runs before the module's document one, so this delays the second dot's.
+    const first = await beatingDot();
+    await new Promise((r) => setTimeout(r, 600));
+    const stall = (): void => {
+      const until = performance.now() + 40;
+      while (performance.now() < until) {
+        // Hold the dispatch, as a loaded main thread does.
+      }
+    };
+    window.addEventListener("animationstart", stall, { capture: true, once: true });
+    const second = await beatingDot();
+    expect(opacity(second)).toBeCloseTo(opacity(first), 2);
+  });
+
   it("is what puts them there, not the shared duration", async () => {
     // The negative control turns the MODULE off: `stamp` overwrites an inline `0ms`. With the
     // listener detached, two dots 600ms apart are deterministically a quarter period apart.
