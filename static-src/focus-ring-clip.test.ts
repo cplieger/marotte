@@ -16,7 +16,6 @@ const MEMBERS = [
   "a.run-step-head",
   ".run-open",
   ".tool-group-header",
-  ".code-act-btn",
   ".git-repo-section-header",
   ".git-repo-section-header-toggle",
   ".forge-account-repos-summary",
@@ -265,7 +264,7 @@ function toolGroup(): { clipper: HTMLElement; head: HTMLElement } {
   return { clipper: mount(clipper), head };
 }
 
-/** `.code-head`'s 2px block padding is the only thing between an action button and the clip. */
+/** `.code-head`'s row height, taller than its buttons, is what keeps them off the clip. */
 function codeBlock(): { clipper: HTMLElement; copy: HTMLElement; run: HTMLElement } {
   const copy = node("button", "code-act-btn", { type: "button", "aria-label": "Copy" });
   copy.appendChild(glyph());
@@ -655,19 +654,6 @@ describe("the ring is painted inside the card that clips it", () => {
     expectRingInside("tool group header", head, clipper);
   });
 
-  it("on a code block's action buttons, which are 2px inside rather than flush", async () => {
-    // The mildest member: 2px block padding against 3px reach.
-    const { clipper, copy, run } = codeBlock();
-    await focusByTab(copy);
-    const gap = inset(copy, clipper);
-    expect(gap.top, `code copy button: block-start inset against the floor's reach`).toBe(2);
-    expect(gap.top).toBeLessThan(FLOOR_REACH);
-    expect(gap.right, "the other three edges are clear").toBeGreaterThanOrEqual(FLOOR_REACH);
-    expectRingInside("code copy button", copy, clipper);
-    await focusByTab(run);
-    expectRingInside("code run button", run, clipper);
-  });
-
   it("on a git repo section's header", async () => {
     const { clipper, head } = gitRepoSection();
     await focusByTab(head);
@@ -715,7 +701,6 @@ describe("the inset band clears the content it now sits over", () => {
       ["run head", () => runCard().head],
       ["run step head", () => runStep().head],
       ["tool group header", () => toolGroup().head],
-      ["code action button", () => codeBlock().copy],
       ["git section header", () => gitRepoSection().head],
       ["prs section toggle", () => gitRepoSectionPRs().head],
       ["account repos summary", () => forgeAccountRow().summary],
@@ -836,6 +821,15 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
     await focusByTab(discard);
     expect(inset(discard, clipper).top).toBe(8);
     expectClears("git file Discard", discard, clipper);
+  });
+
+  it("pins a code block's header buttons, centred in a row taller than they are", async () => {
+    const { clipper, copy, run } = codeBlock();
+    await focusByTab(copy);
+    expect(inset(copy, clipper).top, "half the head's spare block room").toBe(4);
+    expectClears("code copy button", copy, clipper);
+    await focusByTab(run);
+    expectClears("code run button", run, clipper);
   });
 
   it("pins the diff pane's whitespace checkbox against its toolbar's padding", async () => {

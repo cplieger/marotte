@@ -1257,10 +1257,11 @@
   justify-content: space-between;
   gap: var(--sp-2);
 
-  /* Not a target (a plain div; the buttons inside carry their own floor), so the
-     hit floor is not its measure. */
-  min-height: 1.75rem;
-  padding: 0.125rem var(--sp-2);
+  /* The turn footer's row height (29-turns.css), for the same buttons: their
+     `--hit-floor` expanders must fit inside `.code-wrap`'s clip, which cuts hit
+     testing as well as paint. */
+  min-height: max(var(--hit-floor), var(--ctl-h-dense));
+  padding: 0 var(--sp-2);
   background: var(--c-bg-secondary);
 }
 
@@ -1277,10 +1278,12 @@
   white-space: nowrap;
 }
 
+/* The buttons' box is the turn footer's (61-mcp-tools.css); they inherit this ink. */
 .code-actions {
   display: flex;
   flex-shrink: 0;
-  gap: 0.25rem;
+  gap: var(--action-gap);
+  color: var(--c-text-control);
 }
 
 /* Still arriving: the block has its chrome but not its highlighting, because the
@@ -1299,25 +1302,6 @@
 
   animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
   vertical-align: 1px;
-}
-
-.code-act-btn {
-  width: 1.75rem;
-  height: 1.75rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--c-bg-secondary);
-  color: var(--c-text-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  cursor: pointer;
-  flex-shrink: 0;
-
-  &:hover {
-    background: var(--c-bg-tertiary);
-    color: var(--c-text-primary);
-  }
 }
 
 /* Math (native MathML, no KaTeX). THE FONT IS THE WHOLE REASON THIS BLOCK EXISTS:
