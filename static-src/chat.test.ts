@@ -416,6 +416,22 @@ describe("createSession is async, and what that means for its callers", () => {
     await chatModule.createSession();
     expect(vi.mocked(upsertHeader).mock.calls.at(-1)?.[0]).toMatchObject({ id: "c-created" });
   });
+
+  // The reply's header predates the chat's log, so its read position is 0; a frame that landed
+  // first carries the log's, and the late reply must not erase it.
+  it("keeps a read position an earlier frame put on the row", async () => {
+    vi.mocked(get).mockReturnValueOnce({ read_position: 2 } as ReturnType<typeof get>);
+    await chatModule.createSession();
+    expect(vi.mocked(upsertHeader).mock.calls.at(-1)?.[0]).toMatchObject({
+      id: "c-created",
+      read_position: 2,
+    });
+  });
+
+  it("takes the reply's header as is when no frame came first", async () => {
+    await chatModule.createSession();
+    expect(vi.mocked(upsertHeader).mock.calls.at(-1)?.[0]).not.toHaveProperty("read_position");
+  });
 });
 
 // Attaching a BATCH: N singular calls on an empty workspace would each create a chat.

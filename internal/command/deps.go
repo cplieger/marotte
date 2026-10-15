@@ -150,6 +150,8 @@ type chatStore interface {
 	// TurnCount is the header's turn_count, the whole-history read the rewind and
 	// the model switch key on.
 	TurnCount(ctx context.Context, chatID marotte.ChatID) (uint64, bool)
+	// ReadBound is the chat's read position now, the clamp for an ack_tab.
+	ReadBound(ctx context.Context, chatID marotte.ChatID) (uint64, error)
 	// SetDraft persists the chat's unsent composer text. Its own method rather than a
 	// Mutate call because a draft save is not activity: Mutate stamps UpdatedAt, which
 	// the retention purge ages a chat from. A no-op for a chat that does not exist —

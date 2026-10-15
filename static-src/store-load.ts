@@ -24,6 +24,7 @@ import {
   setTurnOpen,
 } from "./store.js";
 import { clearTurnState } from "./turn-teardown.js";
+import { framedSince, headerFrameMark } from "./header-frames.js";
 import { observeStamp } from "./subject-versions.js";
 import { settleWorkflowMessages } from "./workflow-delivery.js";
 import type { Entry, OpenEntry, SubjectStamp } from "./wire/types.gen.js";
@@ -439,12 +440,16 @@ export async function confirmChatExists(chatID: string): Promise<ChatVerdict> {
   // `limit=1` is the cheapest page the endpoint will serve — it honours 1..200 inclusive and
   // answers anything else with its own 20-turn default, so 1 is served rather than widened — and
   // the transcript is not what is being asked about.
+  const mark = headerFrameMark();
   const r = await apiGetTypedOrError(
     `/api/chats/${encodeURIComponent(chatID)}?limit=1`,
     decodeChatConfirmResponseLocal,
   );
   if (r.ok && r.data !== null) {
-    upsertHeader(r.data.chat);
+    const h = r.data.chat;
+    upsertHeader(
+      framedSince(chatID, mark) ? { ...h, read_position: get(chatID)?.read_position ?? 0 } : h,
+    );
     return "exists";
   }
   if (saysTheChatIsGone(r.status, chatID)) {
@@ -494,6 +499,7 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
   }
   const knownBefore = new Set(sessionIndex.keys());
 
+  const mark = headerFrameMark();
   const d = await apiGetTyped("/api/chats", decodeChatListResponseLocal, combined);
   if (combined.aborted) {
     // `listReach` is deliberately NOT written here. This request was superseded — by a `connected`
@@ -533,6 +539,7 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
       thinking_active: h.thinking_active ?? existing?.thinking_active ?? "",
       usage: h.usage,
       turn_count: h.turn_count,
+      read_position: replyReadPosition(h.id, mark, h.read_position),
       // The resident window travels as one value: the map and the order it renders in describe the
       // same turns, so carrying one without the other is a window that renders nothing or renders
       // it twice.
@@ -595,6 +602,11 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
   return true;
 }
 
+/** The read position a reply issued at `mark` applies (header-frames.ts `framedSince` owns why). */
+function replyReadPosition(chatID: string, mark: number, replied: number | undefined): number {
+  return framedSince(chatID, mark) ? (get(chatID)?.read_position ?? 0) : (replied ?? 0);
+}
+
 /** The older page each chat has in flight, so the scroller's edge, the turn map and the in-chat search share one fetch
  *  instead of aborting each other's (`loadMessages` supersedes a chat's previous load). */
 const olderInFlight = new Map<string, Promise<boolean>>();
@@ -641,6 +653,7 @@ export async function loadMessages(
   const query = params.toString();
   const path = `/api/chats/${encodeURIComponent(chatID)}${query === "" ? "" : `?${query}`}`;
   const heldAtRequest = new Set(beforeTurnID === undefined ? (get(chatID)?.turn_order ?? []) : []);
+  const mark = headerFrameMark();
   const d = await apiGetTyped(path, decodeChatGetResponseLocal, combined);
   if (combined.aborted) {
     releaseLoad(chatID, controller);
@@ -679,6 +692,7 @@ export async function loadMessages(
   }
   // Before the read below, so it sees the server's own count.
   session.turn_count = d.chat.turn_count;
+  session.read_position = replyReadPosition(chatID, mark, d.chat.read_position);
   if (pageStartsWindow) {
     session.has_more = d.has_more;
   } else {

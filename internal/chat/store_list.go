@@ -9,18 +9,54 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
-	"golang.org/x/sync/singleflight"
 )
 
-// sfDo wraps singleflight.Group.Do so the result needs no type assertion at
-// each call site.
-func sfDo(sf *singleflight.Group, key string, fn func() listResult) listResult {
-	v, _, _ := sf.Do(key, func() (any, error) { return fn(), nil })
-	r, _ := v.(listResult)
-	return r
+// listFlight coalesces concurrent list scans, except that a caller never joins a scan that
+// started before it arrived: it waits for that one and shares the next. A joined older scan can
+// miss a write the caller already observed (a frame it applied, the version listStamped read),
+// which hands it a list older than what it knows.
+type listFlight struct {
+	// running is closed when the scan in progress ends; nil when none runs.
+	running chan struct{}
+	// queued is the next scan, shared by every caller arriving while one runs.
+	queued *listCall
+	mu     sync.Mutex
+}
+
+type listCall struct {
+	done chan struct{}
+	r    listResult
+}
+
+func (f *listFlight) do(scan func() listResult) listResult {
+	f.mu.Lock()
+	if c := f.queued; c != nil {
+		f.mu.Unlock()
+		<-c.done
+		return c.r
+	}
+	c := &listCall{done: make(chan struct{})}
+	f.queued = c
+	for f.running != nil {
+		wait := f.running
+		f.mu.Unlock()
+		<-wait
+		f.mu.Lock()
+	}
+	f.queued, f.running = nil, c.done
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		f.running = nil
+		f.mu.Unlock()
+		close(c.done)
+	}()
+	c.r = scan()
+	return c.r
 }
 
 // List returns every chat's header sorted by UpdatedAt desc. Unreadable headers
@@ -95,7 +131,7 @@ func (s *Store) SessionClaimed(ctx context.Context, sessionID string) (claimed, 
 // both then received a truncated header list.
 func (s *Store) listWithCompleteness(ctx context.Context) ([]marotte.ChatHeader, bool) {
 	scanCtx := context.WithoutCancel(ctx)
-	r := sfDo(&s.listSF, "list", func() listResult {
+	r := s.listScans.do(func() listResult {
 		headers, complete := s.listOnce(scanCtx)
 		return listResult{headers: headers, complete: complete}
 	})
@@ -120,6 +156,9 @@ func (s *Store) listOnce(ctx context.Context) ([]marotte.ChatHeader, bool) {
 	// No per-chat lock: reads are read-only and writes land by temp+rename, so a
 	// reader always sees a complete file.
 	headers, headersComplete := readHeadersParallel(ctx, valid)
+	for i := range headers {
+		headers[i].ReadPosition = s.openReadPosition(marotte.ChatID(headers[i].ID))
+	}
 	complete := dirsComplete && headersComplete
 	slices.SortFunc(headers, func(a, b marotte.ChatHeader) int {
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)

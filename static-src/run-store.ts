@@ -85,6 +85,9 @@ export interface RunState {
   parentSessionId?: string;
   /** marotte's, from the reply's `plan_update`: the run's newest queued plan revision. */
   planUpdate?: RunPlanUpdate;
+  /** marotte's, from the reply's `read_position`: the run's read position, 0 while it is live. Only
+   *  a read sets it; a `run_progress` frame keeps the previous read's value. */
+  readPosition?: number;
 }
 
 /** The alert an attributed stop or pause reads, or undefined when KAS names no initiator. KAS's
@@ -157,6 +160,12 @@ interface RawRunInspect extends Omit<RunInspect, "state"> {
   step_ends?: Record<string, RunStepEnd>;
   /** marotte's own key beside KAS's reply: when each node's current attempt began in the run's log. */
   step_starts?: Record<string, RunStepStart>;
+  read_position?: unknown;
+}
+
+/** The reply's read position, 0 for none or a value that is not a non-negative safe integer. */
+function readPositionOf(raw: unknown): number {
+  return typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0 ? raw : 0;
 }
 
 /** The reply's plan revision, or undefined for none or one this build cannot read. */
@@ -714,6 +723,7 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
       if (planUpdate !== undefined) {
         state.planUpdate = planUpdate;
       }
+      state.readPosition = readPositionOf(d.read_position);
       if (state.root !== undefined) {
         stampStarts(workflowID, state.root);
       }

@@ -27,6 +27,7 @@ import (
 	"github.com/cplieger/marotte/internal/git"
 	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/logctl"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
@@ -829,7 +830,8 @@ func openSpecApprovalStore(dir string) *specapproval.Store {
 
 // pruneTabs is the tab set's one-shot LOAD-TIME crash recovery for a crash between the
 // coordinator's two writes. Only CHAT tabs are checked against the chat store; a missing file is no
-// reason to close an editor, run or singleton tab.
+// reason to close an editor, run or singleton tab. It then opens each remaining chat tab's log, so
+// its read position is projected from the first request.
 func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
 	if st == nil {
 		return
@@ -841,12 +843,21 @@ func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
 		_, ok := chats.Get(ctx, marotte.ChatID(t.Ref))
 		return ok
 	})
-	if err != nil {
+	switch {
+	case err != nil:
 		slog.Warn("tab prune failed; the arrangement may name a chat that is gone", "error", err)
-		return
-	}
-	if len(dropped) > 0 {
+	case len(dropped) > 0:
 		slog.Info("tab prune dropped tabs whose subject is gone", "count", len(dropped))
+	}
+	open, _ := st.List()
+	for _, t := range open {
+		if t.Kind != marotte.TabKindChat {
+			continue
+		}
+		if err := chats.Warm(ctx, marotte.ChatID(t.Ref)); err != nil {
+			slog.Warn("chat log not opened at boot, its unread state waits for the next read",
+				"chat_id", logsafe.Field(t.Ref), "error", err)
+		}
 	}
 }
 

@@ -1,4 +1,4 @@
-// The four tab mutations; nothing else may send a tab command. A reply is what the server
+// The tab mutations; nothing else may send a tab command. A reply is what the server
 // committed, reconciled by the pending-op machine against the following `tabs_changed` frame.
 // Its version feeds the machine, never the watermark: only an EVENT advances it (tabs-sync.ts),
 // or another device's in-flight v+1 would read as stale. `open_tab` and `close_tab` dedupe via a
@@ -243,6 +243,41 @@ export const reparentTabCommand = defineAction<ReparentTabArgs, TabSubject>({
     return decodeTabSubject(body["subject"]);
   },
   error: "Could not move that tab",
+});
+
+interface AckTabArgs {
+  id: string;
+  seen: number;
+  opID: string;
+}
+
+/** Acknowledge a chat or run tab up to a read position. Background work with no toast; attention.ts
+ *  decides what is resent. Resolves the marker as the server now stores it, or 0 when the tab is
+ *  not open. */
+export const ackTabCommand = defineAction<AckTabArgs, number>({
+  name: "tabs.ack",
+  networkMode: "always",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  run: async ({ id, seen, opID }, signal, ctx) => {
+    const r = await transportSend(
+      {
+        type: "ack_tab",
+        payload: { id, seen, op_id: opID },
+        ...(ctx?.idempotencyKey === undefined
+          ? {}
+          : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
+      },
+      { signal, reportSendState: false },
+    );
+    if (!r.ok) {
+      throw sendFailure(r, "acknowledge that tab");
+    }
+    const body = asObject(r.body);
+    return body === null ? 0 : numberField(body, "seen");
+  },
+  error: false,
 });
 
 // --- Shared reply handling ---

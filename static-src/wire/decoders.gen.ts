@@ -216,6 +216,8 @@ export const decodeChatHeader: Decoder<ChatHeader> = (v) => {
   if (o["prior_acp_session_ids"] !== undefined && o["prior_acp_session_ids"] !== null) out.prior_acp_session_ids = decodeArray(o["prior_acp_session_ids"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.chat_header.prior_acp_session_ids");
   if (o["interrupt_mode"] !== undefined && o["interrupt_mode"] !== null) out.interrupt_mode = reqOneOf(o, "interrupt_mode", INTERRUPT_MODES, "$.chat_header");
   if (o["queued_prompts"] !== undefined && o["queued_prompts"] !== null) out.queued_prompts = decodeArray(o["queued_prompts"], decodeQueuedPrompt, "$.chat_header.queued_prompts");
+  const readPosition = o["read_position"] === null ? undefined : optNum(o, "read_position", "$.chat_header");
+  if (readPosition !== undefined) out.read_position = readPosition;
   const supervisedMode = o["supervised_mode"] === null ? undefined : optBool(o, "supervised_mode", "$.chat_header");
   if (supervisedMode !== undefined) out.supervised_mode = supervisedMode;
   const tangent = o["tangent"] === null ? undefined : optBool(o, "tangent", "$.chat_header");
@@ -2858,6 +2860,8 @@ export const decodeTabSubject: Decoder<TabSubject> = (v) => {
     pinned: reqBool(o, "pinned", "$.tab_subject"),
     owns: reqBool(o, "owns", "$.tab_subject"),
   };
+  const seen = o["seen"] === null ? undefined : optNum(o, "seen", "$.tab_subject");
+  if (seen !== undefined) out.seen = seen;
   return out;
 };
 

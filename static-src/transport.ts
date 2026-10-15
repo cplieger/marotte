@@ -122,6 +122,7 @@ type TypedCommand =
   | { type: "reorder_tabs"; payload: { order: string[]; op_id: string } }
   | { type: "pin_tab"; payload: { id: string; pinned: boolean; op_id: string } }
   | { type: "reparent_tab"; payload: { id: string; parent: string; op_id: string } }
+  | { type: "ack_tab"; payload: { id: string; seen: number; op_id: string } }
   // A human sign-off on one phase of one spec, with no `chat_id` for the tab
   // mutations' reason: a spec is workspace-global. `hash` is the compare-and-swap
   // precondition rather than a value the server trusts.

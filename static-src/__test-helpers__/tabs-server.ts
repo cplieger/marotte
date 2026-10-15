@@ -56,6 +56,8 @@ interface State {
   listCalls: number;
   /** Releasers for responses being HELD, or null when responses resolve at once. */
   held: (() => void)[] | null;
+  /** The read bound `ack_tab` clamps to, per tab id; an id absent here is unbounded. */
+  readBounds: Map<string, number>;
 }
 
 const state: State = {
@@ -69,6 +71,7 @@ const state: State = {
   listAnswers: [],
   listCalls: 0,
   held: null,
+  readBounds: new Map(),
 };
 
 export const tabServer = {
@@ -84,6 +87,22 @@ export const tabServer = {
     state.listAnswers = [];
     state.listCalls = 0;
     state.held = null;
+    state.readBounds = new Map();
+  },
+
+  /** The read position the server's state names for a tab: `ack_tab` clamps to it. */
+  setReadBound(id: string, bound: number): void {
+    state.readBounds.set(id, bound);
+  },
+
+  /** Acknowledge a tab the way ANOTHER device does: the server's rule, then a frame with no
+   *  `op_id`. */
+  ackRemotely(id: string, seen: number): void {
+    const frame = commitAck(id, seen);
+    if (frame !== null) {
+      state.pending.pop();
+      ingest(frame);
+    }
   },
 
   setMode(mode: Interleaving): void {
@@ -241,6 +260,27 @@ function commitOpen(spec: SeedSpec): TabSubject {
   return subject;
 }
 
+/** The server's ack rule: clamp to the bound, store only a value past the stored one. Answers the
+ *  frame it queued, or null when nothing moved. */
+function commitAck(id: string, seen: number): TabsChangedPayload | null {
+  const at = state.subjects.findIndex((s) => s.id === id);
+  if (at < 0) {
+    return null;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by the index check
+  const before = state.subjects[at]!;
+  const clamped = Math.min(seen, state.readBounds.get(id) ?? Number.POSITIVE_INFINITY);
+  if (clamped <= (before.seen ?? 0)) {
+    return null;
+  }
+  const after: TabSubject = { ...before, seen: clamped };
+  state.subjects[at] = after;
+  state.version++;
+  const frame: TabsChangedPayload = { changed: after, version: state.version };
+  state.pending.push(frame);
+  return frame;
+}
+
 /** An id and every tab beneath it, deepest first, which is the order a close
  *  commits them in. */
 function descendants(id: string): string[] {
@@ -368,6 +408,14 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
       });
       stamp(payload);
       return { ok: true, status: 200, body: { subject: after, version: state.version } };
+    }
+    case "ack_tab": {
+      const id = payload["id"] as string;
+      if (commitAck(id, payload["seen"] as number) !== null) {
+        stamp(payload);
+      }
+      const seen = state.subjects.find((s) => s.id === id)?.seen ?? 0;
+      return { ok: true, status: 200, body: { version: state.version, seen } };
     }
     case "reorder_tabs": {
       const order = payload["order"] as string[];

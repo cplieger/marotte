@@ -84,6 +84,9 @@ type TabSubject struct {
 	// reassigns it, and only to an open CHAT tab, so a chain cannot close on itself and no
 	// cycle check is needed.
 	Parent string `json:"parent"`
+	// Seen is the read position the reader last acknowledged for a chat or run tab, 0 for none;
+	// only ack_tab moves it, never backward.
+	Seen uint64 `json:"seen,omitempty"`
 	// Pinned sorts a tab ahead of every unpinned one. The partition is applied
 	// by the client when it renders (applyPinOrder); the stored slice keeps the
 	// order it was given.

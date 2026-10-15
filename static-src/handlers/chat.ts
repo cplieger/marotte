@@ -2,6 +2,7 @@
 
 import { onSSE } from "../bus.js";
 import { upsertHeader, removeChat, getActiveId, setAgentStatus } from "../store.js";
+import { noteHeaderFrame } from "../header-frames.js";
 import { dropDecisions } from "../decision-dock.js";
 import { forgetDeferredCue } from "../agent-finished-cue.js";
 import { dropComposerState, adoptRemoteComposerState } from "../composer-state.js";
@@ -22,6 +23,7 @@ onSSE("chat_created", (_chatID, header) => {
   if (header === undefined) {
     return;
   }
+  noteHeaderFrame(header.id);
   upsertHeader(header);
   // `applyInitialRoute` canonicalizes an active chat, so this covers a chat becoming active while
   // the route is still "/" (e.g. created on another device). Never hijack a reader who navigated away.
@@ -35,6 +37,7 @@ onSSE("chat_updated", (_chatID, header) => {
   if (header === undefined) {
     return;
   }
+  noteHeaderFrame(header.id);
   upsertHeader(header);
 });
 

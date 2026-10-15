@@ -336,6 +336,9 @@ export interface Session {
   /** How many turns the whole session holds, from `ChatHeader`. `has_more` is about
    *  this window's left edge; this is about the session. */
   turn_count: number;
+  /** `ChatHeader.read_position`: the server's read position for this chat, 0 when unknown. The
+   *  unread fold compares it with the tab's `seen` (attention.ts `cueClass`). */
+  read_position?: number;
   /** The turns a `turn_revert` took out of this window, client-only: a range-read answer decoded
    *  before the frame would otherwise re-seat them. Not "absent from `turn_order`", which also means
    *  a lost `turn_opened` that the repair must re-read. */

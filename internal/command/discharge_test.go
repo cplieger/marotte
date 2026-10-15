@@ -90,6 +90,7 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdReorderTabs:         "CmdReorderTabs",
 		marotte.CmdPinTab:              "CmdPinTab",
 		marotte.CmdReparentTab:         "CmdReparentTab",
+		marotte.CmdAckTab:              "CmdAckTab",
 		marotte.CmdApproveSpecPhase:    "CmdApproveSpecPhase",
 		marotte.CmdMergeTangent:        "CmdMergeTangent",
 	}

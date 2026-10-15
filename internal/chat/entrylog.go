@@ -1247,6 +1247,28 @@ func (l *EntryLog) NewestRevert() (string, bool) {
 	return l.newestRevert, l.newestRevert != ""
 }
 
+// ReadPosition is the chat's read position: the 1-based file-order index, among every turn the log holds, of its
+// newest closed, surviving, non-carrier turn; 0 for none. A later turn has a larger index, and a rewind or a merge
+// never lowers a turn's index, because neither removes a turn from the order.
+func (l *EntryLog) ReadPosition() uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for n := uint64(len(l.order)); n > 0; n-- {
+		if st := l.turns[l.order[n-1]]; st.closed && !st.carrier && !st.reverted {
+			return n
+		}
+	}
+	return 0
+}
+
+// TurnHighWater is the number of turns the log holds, reverted ones and carriers included; it never shrinks while
+// the process holds the log.
+func (l *EntryLog) TurnHighWater() uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return uint64(len(l.order))
+}
+
 // WaitingWorkflowMessages answers the surviving workflow messages no surviving take-up has settled, oldest first.
 func (l *EntryLog) WaitingWorkflowMessages() []marotte.WorkflowMessage {
 	l.mu.Lock()

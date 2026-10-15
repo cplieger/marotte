@@ -4,6 +4,7 @@ package command
 // rather than from whichever device knew the launching chat.
 
 import (
+	"context"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -17,6 +18,13 @@ type fakeRunOwner struct {
 	chats map[string]marotte.ChatID
 	// known is the lease's existence, independent of the chat id.
 	known map[string]bool
+	// bounds is what RunReadBound answers per run, and boundErr its failure.
+	bounds   map[string]uint64
+	boundErr error
+}
+
+func (f *fakeRunOwner) RunReadBound(_ context.Context, workflowID string) (uint64, error) {
+	return f.bounds[workflowID], f.boundErr
 }
 
 func (f *fakeRunOwner) RunChat(workflowID string) (marotte.ChatID, bool) {

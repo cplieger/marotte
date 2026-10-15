@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Session, TurnState } from "./types.js";
 import { _resetForTest as resetVersions, hasSubject, versionMap } from "./subject-versions.js";
+import { _resetForTest as resetHeaderFrames, noteHeaderFrame } from "./header-frames.js";
 // The module's own shape, for the fresh-instance loader at the foot of this file: `chatListLoaded`,
 // `listReach` and the outcome counters are module state, so their cases re-evaluate the module and
 // need a type for what the dynamic import hands back.
@@ -289,6 +290,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   sessions.clear();
   resetVersions();
+  resetHeaderFrames();
   // Every loader reports its outcome on the console; a case that is about the LINE spies on it
   // itself, and the rest would otherwise print one per assertion.
   warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -360,6 +362,37 @@ describe("loadList rebuilds each row from the header", () => {
     }
     return row;
   }
+
+  it("takes the server's read_position, and 0 when the header carries none", async () => {
+    expect((await rebuild(header("c1", { read_position: 3 }))).read_position).toBe(3);
+    expect((await rebuild(header("c1"))).read_position).toBe(0);
+  });
+
+  // A list issued before a header frame may describe the chat before it: the frame's position
+  // stands, in both directions, or one device folds an older value than the others.
+  it.each([
+    { desc: "a turn's close", held: 2, framed: 3 },
+    { desc: "a rewind", held: 3, framed: 1 },
+  ])("keeps the position of $desc framed while the list was out", async ({ held, framed }) => {
+    seedSession("c1", { read_position: held });
+    mockApiGetTyped.mockImplementation(() => {
+      noteHeaderFrame("c1");
+      const s = sessions.get("c1");
+      if (s !== undefined) {
+        s.read_position = framed;
+      }
+      return Promise.resolve({ chats: [header("c1", { read_position: held })] });
+    });
+    await loadList();
+    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
+    expect(passed.find((r) => r.id === "c1")?.read_position).toBe(framed);
+  });
+
+  it("takes the list's position over a frame that landed before it was issued", async () => {
+    seedSession("c1", { read_position: 2 });
+    noteHeaderFrame("c1");
+    expect((await rebuild(header("c1", { read_position: 4 }))).read_position).toBe(4);
+  });
 
   it("takes the server's turn_count", async () => {
     const row = await rebuild(header("c1", { turn_count: 7 }));
@@ -575,6 +608,56 @@ describe("loadMessages walks a page's entries into whole turns", () => {
     expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2"]);
     expect(seqsOf("c1", "t1")).toEqual([0, 1]);
     expect(seqsOf("c1", "t2")).toEqual([0, 1]);
+  });
+
+  it("takes the page header's read_position, lower than the one held included", async () => {
+    seedSession("c1", { read_position: 5 });
+    answerPage("c1", { header: { read_position: 2 } });
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.read_position).toBe(2);
+  });
+
+  it.each([
+    { desc: "a turn's close", held: 2, framed: 3 },
+    { desc: "a rewind", held: 3, framed: 1 },
+  ])("keeps the position of $desc framed while the page was out", async ({ held, framed }) => {
+    seedSession("c1", { read_position: held });
+    mockApiGetTyped.mockImplementation(() => {
+      noteHeaderFrame("c1");
+      const s = sessions.get("c1");
+      if (s !== undefined) {
+        s.read_position = framed;
+      }
+      return Promise.resolve({
+        chat: header("c1", { read_position: held }),
+        entries: [],
+        open_entries: [],
+        has_more: false,
+        live: undefined,
+        subject: [],
+        draft: "",
+      });
+    });
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.read_position).toBe(framed);
+  });
+
+  it("ignores a frame for another chat while the page was out", async () => {
+    seedSession("c1", { read_position: 1 });
+    mockApiGetTyped.mockImplementation(() => {
+      noteHeaderFrame("c2");
+      return Promise.resolve({
+        chat: header("c1", { read_position: 4 }),
+        entries: [],
+        open_entries: [],
+        has_more: false,
+        live: undefined,
+        subject: [],
+        draft: "",
+      });
+    });
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.read_position).toBe(4);
   });
 
   it("keeps FILE order when two turns interleave", async () => {
@@ -1272,6 +1355,26 @@ describe("confirmChatExists asks the SERVER about one chat id", () => {
 
     expect(await confirmChatExists("c-abc")).toBe("exists");
     expect(mockUpsertHeader).toHaveBeenCalledExactlyOnceWith(header("c-abc"));
+  });
+
+  it.each([
+    { desc: "a turn's close", held: 2, framed: 3 },
+    { desc: "a rewind", held: 3, framed: 1 },
+  ])("keeps the position of $desc framed while the confirm was out", async ({ held, framed }) => {
+    seedSession("c-abc", { read_position: framed });
+    mockApiGetTypedOrError.mockImplementation(() => {
+      noteHeaderFrame("c-abc");
+      return Promise.resolve({
+        ok: true,
+        data: { chat: header("c-abc", { read_position: held }) },
+        status: 200,
+        error: "",
+      });
+    });
+    await confirmChatExists("c-abc");
+    expect(mockUpsertHeader).toHaveBeenCalledExactlyOnceWith(
+      header("c-abc", { read_position: framed }),
+    );
   });
 
   it("asks for the cheapest page the endpoint will serve", async () => {

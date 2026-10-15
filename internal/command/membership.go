@@ -37,6 +37,8 @@ var (
 	// errTabUnknown is the 404 for a pin or a reparent naming an id the set does
 	// not hold.
 	errTabUnknown = errors.New("that tab is not open")
+	// errRunsUnavailable is the 503 for a run tab's ack with no run surface wired.
+	errRunsUnavailable = errors.New("the workflow runs are unavailable")
 	// errParentNotChat is the 409 for a reparent whose parent is not an open chat
 	// tab: only a chat can hold sub-tabs.
 	errParentNotChat = errors.New("the parent must be an open chat tab")
@@ -52,19 +54,23 @@ type TabSet interface {
 	Close(ctx context.Context, id string) ([]marotte.TabSubject, uint64, error)
 	Reorder(ctx context.Context, ids []string) (uint64, error)
 	SetPinned(ctx context.Context, id string, pinned bool) (uint64, error)
+	SetSeen(ctx context.Context, id string, seen uint64) (uint64, error)
 	Reparent(ctx context.Context, id, parent string) (uint64, error)
 	List() ([]marotte.TabSubject, uint64)
 	Subtree(id string) []marotte.TabSubject
 }
 
 // runOwner is the run surface as the coordinator uses it: which chat's agent
-// launched a run. Declared here, at the consumer; *agent.Runs satisfies it.
+// launched a run, and its read bound. Declared here, at the consumer;
+// *agent.Runs satisfies it.
 //
 // `ok` is false for a run with no lease — one this server never put on the
 // wire, or one whose lease was released when it ended — so a finished run's
 // parent is unknown here and History supplies it instead.
 type runOwner interface {
 	RunChat(workflowID string) (chatID marotte.ChatID, ok bool)
+	// RunReadBound is the run's read position now, the clamp for an ack_tab.
+	RunReadBound(ctx context.Context, workflowID string) (uint64, error)
 }
 
 // chatCloser is the tab-close teardown for a chat tab: cancel the turn, cancel
@@ -543,6 +549,56 @@ func (m *Membership) setPinned(ctx context.Context, id string, pinned bool, opID
 		}
 	}
 	return version, nil
+}
+
+// ackTab advances a chat or run tab's seen marker to seen, clamped to the position the tab's
+// state names now, and answers the version and the marker as stored. The marker never moves
+// backward (tabs.Store.SetSeen), so a lagging window's older ack is a no-op. An id that is not
+// open, or closed during the bound read, is a no-op too, unlike a pin: an ack racing a close on
+// another device is normal.
+//
+// The bound read may open a chat log or ask KAS, so it runs between two sections of mu, never
+// under it.
+func (m *Membership) ackTab(ctx context.Context, id string, seen uint64, opID string) (version, stored uint64, err error) {
+	if m.tabs == nil {
+		return 0, 0, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
+	}
+	m.mu.Lock()
+	sub, open := m.subject(id)
+	current := m.version()
+	m.mu.Unlock()
+	if !open {
+		return current, 0, nil
+	}
+	var bound uint64
+	switch sub.Kind {
+	case marotte.TabKindChat:
+		bound, err = m.chats.ReadBound(ctx, marotte.ChatID(sub.Ref))
+	case marotte.TabKindRun:
+		if m.runs == nil {
+			return 0, 0, StatusError(http.StatusServiceUnavailable, errRunsUnavailable)
+		}
+		bound, err = m.runs.RunReadBound(ctx, sub.Ref)
+	default:
+		return 0, 0, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	if err != nil {
+		slog.Warn("tab ack: read bound not read", "tab", id, "error", err)
+		return 0, 0, StatusError(http.StatusInternalServerError, err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	before := m.version()
+	version, err = m.tabs.SetSeen(ctx, id, min(seen, bound))
+	if err != nil {
+		slog.Warn("tab ack not persisted", "tab", id, "error", err)
+		return 0, 0, StatusError(http.StatusInternalServerError, err)
+	}
+	changed, ok := m.subject(id)
+	if version != before && ok {
+		m.emit(ctx, &marotte.TabsChangedPayload{Changed: &changed, Version: version, OpID: opID})
+	}
+	return version, changed.Seen, nil
 }
 
 // reparent hangs one open tab under an open chat tab and returns the subject

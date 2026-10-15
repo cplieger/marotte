@@ -40,13 +40,16 @@ const (
 	// CmdSteerRemove drops ONE waiting steer: KAS has no per-steer verb, so the
 	// server clears the buffer and resends the others together, in order.
 	CmdSteerRemove CommandType = "steer_remove"
-	// The four tab commands. Membership is a mutation, so it rides this envelope
+	// The tab commands. Membership is a mutation, so it rides this envelope
 	// rather than a second REST surface with its own failure semantics.
 	CmdOpenTab     CommandType = "open_tab"
 	CmdCloseTab    CommandType = "close_tab"
 	CmdReorderTabs CommandType = "reorder_tabs"
 	CmdPinTab      CommandType = "pin_tab"
 	CmdReparentTab CommandType = "reparent_tab"
+	// CmdAckTab records that the reader has seen a chat or run tab up to a read position.
+	// Payload: AckTabCommand.
+	CmdAckTab CommandType = "ack_tab"
 	// CmdApproveSpecPhase records a human sign-off on one phase of a spec. It is
 	// a COMMAND rather than a REST POST because invariant 1 puts every mutation
 	// through this envelope; its chat_id is EMPTY, because a spec is
@@ -411,6 +414,15 @@ type PinTabCommand struct {
 	ID     string `json:"id"`
 	OpID   string `json:"op_id,omitempty"`
 	Pinned bool   `json:"pinned"`
+}
+
+// AckTabCommand is the payload for type="ack_tab": the reader has seen a chat or run tab up to
+// Seen, a read position the server sent. The server clamps Seen to the position the tab's state
+// names now, and a value not past the stored one is a no-op; the reply's `seen` is what is stored.
+type AckTabCommand struct {
+	ID   string `json:"id"`
+	OpID string `json:"op_id,omitempty"`
+	Seen uint64 `json:"seen"`
 }
 
 // ReparentTabCommand is the payload for type="reparent_tab": hang an open tab

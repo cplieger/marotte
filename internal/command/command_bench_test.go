@@ -64,6 +64,8 @@ func (*benchDeps) PromptAttachmentPaths(context.Context, marotte.ChatID, string)
 
 func (*benchDeps) TurnCount(context.Context, marotte.ChatID) (uint64, bool) { return 0, false }
 
+func (*benchDeps) ReadBound(context.Context, marotte.ChatID) (uint64, error) { return 0, nil }
+
 func (*benchDeps) SetDraft(context.Context, marotte.ChatID, string) (*marotte.ComposerState, error) {
 	return nil, nil
 }

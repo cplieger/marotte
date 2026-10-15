@@ -711,13 +711,16 @@ type ChatHeader struct {
 	// PriorACPSessionIDs mirrors Chat's: the retention sweep reads headers only.
 	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
 	// InterruptMode and QueuedPrompts mirror Chat's for the composer and the dock.
-	InterruptMode  InterruptMode  `json:"interrupt_mode,omitempty"`
-	QueuedPrompts  []QueuedPrompt `json:"queued_prompts,omitempty"`
-	Usage          Usage          `json:"usage"`
-	CreatedAt      int64          `json:"created_at"`
-	UpdatedAt      int64          `json:"updated_at"`
-	TurnCount      int            `json:"turn_count"`
-	SupervisedMode bool           `json:"supervised_mode,omitempty"`
+	InterruptMode InterruptMode  `json:"interrupt_mode,omitempty"`
+	QueuedPrompts []QueuedPrompt `json:"queued_prompts,omitempty"`
+	Usage         Usage          `json:"usage"`
+	CreatedAt     int64          `json:"created_at"`
+	UpdatedAt     int64          `json:"updated_at"`
+	// ReadPosition is wire-only: EntryLog.ReadPosition of the opened log, 0 when the log is not
+	// open. chat.Store fills it; Chat.Header does not.
+	ReadPosition   uint64 `json:"read_position,omitempty"`
+	TurnCount      int    `json:"turn_count"`
+	SupervisedMode bool   `json:"supervised_mode,omitempty"`
 	// Tangent mirrors Chat's for the merge controls.
 	Tangent bool `json:"tangent,omitempty"`
 }

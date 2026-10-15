@@ -117,6 +117,23 @@ func cmdPinTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand)
 	return responseWith(map[string]any{keyVersion: version}), nil
 }
 
+// cmdAckTab advances a chat or run tab's seen marker. The response's `seen` is the marker as
+// stored now, or 0 when the tab is not open.
+func cmdAckTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+	var p marotte.AckTabCommand
+	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	if !validTabID(p.ID) || p.ID == "" || p.Seen == 0 || !validIdent(p.OpID) {
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	version, seen, err := mem.ackTab(ctx, p.ID, p.Seen, p.OpID)
+	if err != nil {
+		return nil, err
+	}
+	return responseWith(map[string]any{keyVersion: version, "seen": seen}), nil
+}
+
 // cmdReparentTab hangs an open tab under an open chat tab. Idempotent when
 // the parent is unchanged. The response carries the subject as it now reads,
 // because an unchanged parent emits no event for the client to adopt from.
