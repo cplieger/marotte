@@ -38,6 +38,22 @@ var steerChunkingSamples = []struct {
 	name: "brackets that never become a marker",
 	text: "See [docs], [STEERING no colon] and [STEERING steer-A: A].",
 	want: []string{`prose "See [docs], [STEERING no colon] and "`, `ack steer-A "A"`, `prose "."`},
+}, {
+	name: "brackets the marker reads as its own",
+	text: "[STEERING steer-a]b: done] and [STEERING steer-0: ]0]",
+	want: []string{`ack steer-a]b "done"`, `prose " and "`, `ack steer-0 "]0"`},
+}, {
+	name: "a reply ending on a bracketed id",
+	text: "see [STEERING steer-abc]",
+	want: []string{`prose "see [STEERING steer-abc]"`},
+}, {
+	name: "a reply ending on a bracketed id and a full stop",
+	text: "see [STEERING steer-abc].",
+	want: []string{`prose "see [STEERING steer-abc]."`},
+}, {
+	name: "a reply ending on a bracket opening the body",
+	text: "see [STEERING steer-0: ]",
+	want: []string{`prose "see [STEERING steer-0: ]"`},
 }}
 
 // steerChunk is one text delta: its text and whether it carries the say's messageId.
