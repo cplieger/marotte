@@ -13,9 +13,6 @@ import { readFirstPage, readNextPage, type RepoListing } from "./forge-auth-repo
 import type { ConfiguredForge } from "./wire/types.gen.js";
 import { decodeRepoList } from "./wire/decoders.gen.js";
 
-/** Re-exported so consumers import the payload shape from the store that owns it. */
-export type { ForgesListResponse };
-
 const rows = signal<ForgesListResponse | null>(null);
 const failed = signal(false);
 
