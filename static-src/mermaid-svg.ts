@@ -1,5 +1,6 @@
 // What the inline block and the full-screen view share about a pele-drawn SVG (https://pele.run): the render options
-// that meet pele's SECURITY.md "App responsibilities", the post-render pass over the inserted SVG, and the export.
+// that meet the "App responsibilities" of pele's security policy, the post-render pass over the inserted SVG, and
+// the export.
 
 import type * as PeleModule from "pele/lazy";
 import type { MountOptions } from "pele/lazy";
@@ -22,7 +23,7 @@ export async function loadPele(): Promise<Pele> {
   return pele;
 }
 
-/** Constant and trusted (SECURITY.md: never fill `options` or `options.config` from the diagram). No `icons`
+/** Constant and trusted (pele's security policy: never fill `options` or `options.config` from the diagram). No `icons`
  *  resolver, because pele inserts its markup unfiltered. `imageSchemes: []` keeps only relative images, which the
  *  page CSP's `img-src 'self' data:` would hold to this origin anyway. Links keep pele's default schemes. */
 export const RENDER_OPTIONS = {

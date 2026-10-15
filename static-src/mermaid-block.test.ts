@@ -194,7 +194,7 @@ describe("a diagram that cannot be drawn", () => {
     expect(pre.hidden).toBe(false);
   });
 
-  // pele's message quotes the source (SECURITY.md), here on its first line; markup in it must stay text.
+  // pele's message quotes the source (its security policy), here on its first line; markup in it must stay text.
   it("shows the error as text, never as markup", () => {
     const bad = "<img src=x onerror=alert(1)>";
     const { wrap } = parts(

@@ -1,6 +1,6 @@
 // A closed ```mermaid fence becomes a diagram drawn by pele, imported the first time one is seen. The fence stays a
 // decorated code block (hidden) beside the drawing, so Copy, the source toggle and the failure fallback all read
-// the one `<pre>`. pele's SVG is inserted as markup: SECURITY.md lets an app do that when it meets the duties
+// the one `<pre>`. pele's SVG is inserted as markup: its security policy lets an app do that when it meets the duties
 // `mermaid-svg.ts` RENDER_OPTIONS and `adoptSvg` carry, and the CSP's `script-src 'self'` refuses any handler anyway.
 
 import { el } from "@cplieger/reactive";
@@ -41,7 +41,7 @@ function failureText(pele: Pele, err: unknown): string {
 }
 
 /** The source stays the block's body; the notice sits between its title bar and its text. Text only, because a
- *  PeleError quotes the diagram (SECURITY.md). */
+ *  PeleError quotes the diagram (pele's security policy). */
 function showFailure(wrap: HTMLElement, pre: HTMLElement, text: string): void {
   wrap.setAttribute(STATE_ATTR, "failed");
   const notice = el("p", { className: "mermaid-notice" });
