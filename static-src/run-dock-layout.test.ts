@@ -165,7 +165,6 @@ describe("the run tab's layout", () => {
       kind: "repeat",
       state: "running",
       maxPasses: 8,
-      addedPasses: 5,
       children: [
         {
           path: "root/build-loop/iter-6",
@@ -293,7 +292,6 @@ function inLoop(steps: ExecNode[]): ExecNode[] {
       kind: "repeat",
       state: "running",
       maxPasses: 8,
-      addedPasses: 5,
       children: [
         {
           path: "root/build-loop/iter-6",

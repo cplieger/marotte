@@ -472,9 +472,6 @@ function toNode(
   const budget = kind === "repeat" ? passBudget(node, plan) : undefined;
   if (budget !== undefined) {
     out.maxPasses = budget.max;
-    if (budget.added > 0) {
-      out.addedPasses = budget.added;
-    }
   }
   if (node.startedAt !== undefined) {
     out.start = node.startedAt;

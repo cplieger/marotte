@@ -64,8 +64,6 @@ export interface ExecNode {
   pass?: number;
   /** On a `repeat`: the most passes it may run, an extension included, when the plan bounds it. */
   maxPasses?: number;
-  /** On a `repeat`: the passes an extension added past the plan's bound. */
-  addedPasses?: number;
 }
 
 /** Whether a node does WORK. Decided by kind, never by shape: a container KAS has not expanded
@@ -262,7 +260,7 @@ function loopAt({ nodes, state }: ProgressSource): LoopPass | undefined {
 }
 
 /** Where the run stands, in parts, for a surface that lays them out itself. */
-export interface ProgressPhrase {
+interface ProgressPhrase {
   /** "pass 3 of 8"; "" outside a loop. */
   pass: string;
   /** "step 2 of 5", or "4 of 5" with no step in flight; "" when withheld. */

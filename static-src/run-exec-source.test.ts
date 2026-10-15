@@ -1166,7 +1166,7 @@ describe("runToExec reads a loop's budget as the engine does", () => {
 
   it("takes an extension's total as the budget and states what it added", () => {
     const loop = fold();
-    expect([loop.maxPasses, loop.addedPasses]).toEqual([8, 5]);
+    expect(loop.maxPasses).toBe(8);
     expect(loop.subtitle).toBe(
       "up to 8 passes (5 added) \u00b7 until gate.json verdict is APPROVED",
     );
@@ -1180,7 +1180,7 @@ describe("runToExec reads a loop's budget as the engine does", () => {
     const loop = fold((l) => {
       delete l["extendedMaxIterations"];
     });
-    expect([loop.maxPasses, loop.addedPasses]).toEqual([3, undefined]);
+    expect(loop.maxPasses).toBe(3);
     expect(loop.subtitle).toBe("up to 3 passes \u00b7 until gate.json verdict is APPROVED");
     expect(fact(loop, "Max passes")).toBe("3");
   });
