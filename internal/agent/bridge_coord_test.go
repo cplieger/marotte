@@ -522,10 +522,6 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	finishedTurn(t, h, "c1")
-	// Held as applyPendingModel holds it, so the finished turn's own pending-model apply cannot
-	// land the pick bridgeless between the stage and the switch.
-	lc := h.coord.turns.lifecycleFor("c1")
-	lc.switchMu.Lock()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
@@ -536,7 +532,6 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 	})
 
 	h.coord.persistModelSwitch(ctx, "c1", &effortDecision{from: "m-old", to: "m-new", pref: "high", sent: "high"}, 1234)
-	lc.switchMu.Unlock()
 
 	entries := logOf(t, cs, "c1")
 	switches := switchesOf(t, entries)
@@ -645,10 +640,13 @@ func TestPersistEffortChange_AChatWithNoModelWritesNothing(t *testing.T) {
 	}
 }
 
+// finishedTurn returns once the close's follow-ups (afterTurnClose) are done: the queue drain's
+// brief admission reservation otherwise makes a caller's next applier read the chat as busy.
 func finishedTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 	t.Helper()
 	id, _ := h.stagePromptTurn(t, chatID)
 	endTurn(t, h, chatID, id)
+	joinInflight(t, h)
 	if c, ok := h.chatStore.Get(t.Context(), chatID); !ok || c.TurnCount != 1 {
 		t.Fatalf("after one finished turn the header reads %+v, want turn_count 1", c)
 	}
