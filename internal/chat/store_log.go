@@ -51,7 +51,7 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 	s.logs.Store(chatID, l)
 	// The first open is when a client can first learn the read position, and any reader may be
 	// first. The `chat` version stays: the transcript did not move.
-	if c != nil && l.ReadPosition() != 0 {
+	if c != nil && l.readPosition() != 0 {
 		s.broadcastMutation(ctx, chatID, c, true)
 	}
 	return l, nil
@@ -568,7 +568,7 @@ func (s *Store) Warm(ctx context.Context, chatID marotte.ChatID) error {
 func (s *Store) ReadBound(ctx context.Context, chatID marotte.ChatID) (uint64, error) {
 	var bound uint64
 	err := s.withLog(ctx, chatID, func(l *EntryLog) error {
-		bound = l.ReadPosition()
+		bound = l.readPosition()
 		return nil
 	})
 	return bound, err

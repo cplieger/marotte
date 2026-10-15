@@ -22,7 +22,7 @@ import { newOpID } from "./transport.js";
  * off-page, so it must not disagree with the dot. No per-outcome carve-out:
  * `tabs.test.ts` pins `cueCandidates` as verbatim.
  */
-export type CueStatus = "input" | "waiting" | "failed" | "done";
+type CueStatus = "input" | "waiting" | "failed" | "done";
 
 /**
  * Severity order over CueStatus, most severe first, AND the complete set isCueStatus
@@ -100,8 +100,6 @@ export interface Attention {
   /** The most severe of them, or "" when there is none. */
   readonly worst: CueStatus | "";
 }
-
-export const NO_ATTENTION: Attention = { count: 0, worst: "" };
 
 /**
  * summarize folds the tabs into what every surface renders: a COUNT for title and badge, the

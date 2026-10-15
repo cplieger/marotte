@@ -1247,10 +1247,10 @@ func (l *EntryLog) NewestRevert() (string, bool) {
 	return l.newestRevert, l.newestRevert != ""
 }
 
-// ReadPosition is the chat's read position: the 1-based file-order index, among every turn the log holds, of its
+// readPosition is the chat's read position: the 1-based file-order index, among every turn the log holds, of its
 // newest closed, surviving, non-carrier turn; 0 for none. A later turn has a larger index, and a rewind or a merge
 // never lowers a turn's index, because neither removes a turn from the order.
-func (l *EntryLog) ReadPosition() uint64 {
+func (l *EntryLog) readPosition() uint64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for n := uint64(len(l.order)); n > 0; n-- {

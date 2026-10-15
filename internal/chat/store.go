@@ -343,7 +343,7 @@ func (s *Store) wireHeader(chatID marotte.ChatID, c *marotte.Chat) marotte.ChatH
 func (s *Store) openReadPosition(chatID marotte.ChatID) uint64 {
 	if v, ok := s.logs.Load(chatID); ok {
 		if l, isLog := v.(*EntryLog); isLog {
-			return l.ReadPosition()
+			return l.readPosition()
 		}
 	}
 	return 0

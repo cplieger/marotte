@@ -12,15 +12,15 @@ func TestReadPosition_ARunningTurnIsNotCounted(t *testing.T) {
 	f.closeTurn(a, marotte.TurnOutcomeCompleted)
 	f.prompt("b")
 
-	if got := f.log.ReadPosition(); got != 1 {
-		t.Errorf("ReadPosition() with b running = %d, want 1 (a's index)", got)
+	if got := f.log.readPosition(); got != 1 {
+		t.Errorf("readPosition() with b running = %d, want 1 (a's index)", got)
 	}
 }
 
 func TestReadPosition_EmptyLogAnswersZero(t *testing.T) {
 	f := newLogFixture(t)
-	if got := f.log.ReadPosition(); got != 0 {
-		t.Errorf("ReadPosition() on an empty log = %d, want 0", got)
+	if got := f.log.readPosition(); got != 0 {
+		t.Errorf("readPosition() on an empty log = %d, want 0", got)
 	}
 }
 
@@ -33,8 +33,8 @@ func TestReadPosition_SkipsCarriers(t *testing.T) {
 		if err != nil || len(minted) == 0 {
 			t.Fatalf("Setup: Revert(a) = (minted %d, %v), want a minted carrier", len(minted), err)
 		}
-		if got := f.log.ReadPosition(); got != 0 {
-			t.Errorf("ReadPosition() after reverting the only turn = %d, want 0", got)
+		if got := f.log.readPosition(); got != 0 {
+			t.Errorf("readPosition() after reverting the only turn = %d, want 0", got)
 		}
 	})
 	t.Run("a lane-less entry's event carrier", func(t *testing.T) {
@@ -44,8 +44,8 @@ func TestReadPosition_SkipsCarriers(t *testing.T) {
 		if err != nil || len(minted) == 0 {
 			t.Fatalf("Setup: appendBetweenTurns on an empty log = (minted %d, %v), want a carrier", len(minted), err)
 		}
-		if got := f.log.ReadPosition(); got != 0 {
-			t.Errorf("ReadPosition() with only an event carrier = %d, want 0", got)
+		if got := f.log.readPosition(); got != 0 {
+			t.Errorf("readPosition() with only an event carrier = %d, want 0", got)
 		}
 	})
 }
@@ -55,18 +55,18 @@ func TestReadPosition_RewindLowersThenTheNextTurnPassesIt(t *testing.T) {
 	a, b := f.prompt("a"), f.prompt("b")
 	f.closeTurn(a, marotte.TurnOutcomeCompleted)
 	f.closeTurn(b, marotte.TurnOutcomeCompleted)
-	before := f.log.ReadPosition()
+	before := f.log.readPosition()
 	if _, _, err := f.log.Revert(t.Context(), b, marotte.TurnRevertCauseRewind, ""); err != nil {
 		t.Fatalf("Setup: Revert(b): %v", err)
 	}
-	if got := f.log.ReadPosition(); got != 1 {
-		t.Errorf("ReadPosition() after reverting b = %d, want 1 (a's index)", got)
+	if got := f.log.readPosition(); got != 1 {
+		t.Errorf("readPosition() after reverting b = %d, want 1 (a's index)", got)
 	}
 
 	c := f.prompt("c")
 	f.closeTurn(c, marotte.TurnOutcomeCompleted)
-	if got := f.log.ReadPosition(); got <= before {
-		t.Errorf("ReadPosition() after c closes = %d, want past the pre-rewind %d, or the turn after a rewind never lights", got, before)
+	if got := f.log.readPosition(); got <= before {
+		t.Errorf("readPosition() after c closes = %d, want past the pre-rewind %d, or the turn after a rewind never lights", got, before)
 	}
 }
 
@@ -91,8 +91,8 @@ func TestReadPosition_FollowsFileOrderNotTimestamps(t *testing.T) {
 			if err := f.log.Rewrite(t.Context(), all); err != nil {
 				t.Fatalf("Setup: Rewrite(): %v", err)
 			}
-			if got := f.log.ReadPosition(); got != 3 {
-				t.Errorf("ReadPosition() = %d, want 3, the newest turn in file order", got)
+			if got := f.log.readPosition(); got != 3 {
+				t.Errorf("readPosition() = %d, want 3, the newest turn in file order", got)
 			}
 		})
 	}

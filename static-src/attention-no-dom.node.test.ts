@@ -40,7 +40,6 @@ vi.mock("./transport.js", () => ({ newOpID: (): string => "op" }));
 
 import {
   CUE_SEVERITY,
-  NO_ATTENTION,
   createAttention,
   createAttentionController,
   cueClass,
@@ -55,6 +54,8 @@ import {
   type AttentionEnv,
   type CueCandidate,
 } from "./attention.js";
+
+const NO_ATTENTION: Attention = { count: 0, worst: "" };
 
 /** A candidate; a finished tab whose position is past its seen marker unless stated. */
 function tab(id: string, status: string, over: Partial<CueCandidate> = {}): CueCandidate {
