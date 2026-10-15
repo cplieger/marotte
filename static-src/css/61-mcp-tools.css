@@ -84,15 +84,19 @@
 
 /* Turn actions: the copy/source/export icon buttons, mounted in the turn
  * FOOTER's middle grid column (29-turns.css owns the placement). Ink is the
- * footer's own; each button lifts itself on hover. */
-.turn-actions-buttons {
+ * footer's own; each button lifts itself on hover. A code block's header row
+ * (`.code-actions`, 13-messages.css) holds the same buttons, so it shares the gap. */
+.turn-actions-buttons,
+.code-actions {
   /* Wide enough that two neighbours' expanders (below) meet rather than overlap: the
      floor less the paint, so 2px on a mouse and 8px under a finger. */
-  --turn-action-gap: max(0.125rem, var(--hit-floor) - var(--ctl-h-sm));
+  --action-gap: max(0.125rem, var(--hit-floor) - var(--ctl-h-sm));
+}
 
+.turn-actions-buttons {
   display: inline-flex;
   align-items: center;
-  gap: var(--turn-action-gap);
+  gap: var(--action-gap);
   flex-shrink: 0;
 }
 
@@ -117,7 +121,7 @@
 .turn-actions-group {
   display: inline-flex;
   align-items: center;
-  gap: var(--turn-action-gap);
+  gap: var(--action-gap);
 }
 
 .turn-actions-more > .turn-action-more,
@@ -125,15 +129,17 @@
   display: none;
 }
 
-/* THE TURN FOOTER'S CONTROL BOX for the action buttons, the ledger trigger and Rewind:
-   ONE definition, so they cannot drift. The paint leaves the hit floor so each control
-   keeps air on every side in the band (29-turns.css); the expander restores the
-   target on each short axis, `min(0px, …)` never shrinking a wider box. The menu rows
-   below put their own floor back. `box-shadow` is in the transition because 03-base.css's
-   press wash is an inset shadow, which otherwise appears and leaves in one frame. */
+/* THE TURN FOOTER'S CONTROL BOX for the action buttons, the ledger trigger and
+   Rewind, and the code block's header buttons: ONE definition, so they cannot drift.
+   The paint leaves the hit floor so each control keeps air on every side in the band
+   (29-turns.css); the expander restores the target on each short axis, `min(0px, …)`
+   never shrinking a wider box. The menu rows below put their own floor back.
+   `box-shadow` is in the transition because 03-base.css's press wash is an inset
+   shadow, which otherwise appears and leaves in one frame. */
 .turn-action-btn,
 .turn-ledger-summary,
-.turn-rewind {
+.turn-rewind,
+.code-act-btn {
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -163,7 +169,8 @@
    why neither contrast gate could report it: each rule looked reasonable alone.
    The glyph inherits the row's ink (4.771 / 4.719) and hover keeps its own ink
    and fill lift, which is the whole affordance. */
-.turn-action-btn {
+.turn-action-btn,
+.code-act-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -186,7 +193,8 @@
 
 .turn-action-btn:hover,
 .turn-ledger-summary:hover,
-.turn-rewind:hover {
+.turn-rewind:hover,
+.code-act-btn:hover {
   background: var(--c-hover);
   color: var(--c-text-primary);
 }
