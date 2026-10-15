@@ -2781,6 +2781,8 @@ export const decodeSteerQueuedPayload: Decoder<SteerQueuedPayload> = (v) => {
   const nodePath = o["node_path"] === null ? undefined : optStr(o, "node_path", "$.steer_queued_payload");
   if (nodePath !== undefined) out.node_path = nodePath;
   if (o["replaces"] !== undefined && o["replaces"] !== null) out.replaces = decodeArray(o["replaces"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.steer_queued_payload.replaces");
+  const awaitsPrompt = o["awaits_prompt"] === null ? undefined : optBool(o, "awaits_prompt", "$.steer_queued_payload");
+  if (awaitsPrompt !== undefined) out.awaits_prompt = awaitsPrompt;
   return out;
 };
 

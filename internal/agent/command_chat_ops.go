@@ -50,7 +50,8 @@ func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID
 		return
 	}
 	resent := rt.resentKeys(durable.Context(ctx), chatID)
-	for _, p := range unread {
+	for i := range unread {
+		p := &unread[i]
 		if resent[p.SteerID] {
 			continue
 		}

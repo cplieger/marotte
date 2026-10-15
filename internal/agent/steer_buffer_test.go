@@ -1549,3 +1549,105 @@ func TestSteerRecords_ShutdownTakeLeavesNothingToFold(t *testing.T) {
 		t.Errorf("a read after the take noted %+v", n)
 	}
 }
+
+// idleUnsent leaves key as a row the server holds with no turn to deliver it to.
+func (s *steerHarness) idleUnsent(key string) {
+	s.steer(key, "words")
+	if _, refuse := s.q.RouteSteer(s.chat, key, "words", command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
+		s.fatalf("RouteSteer(%s) with no holder refused %q, want no_turn", key, refuse)
+	}
+	s.mustState(key, rowUnsent)
+}
+
+func (s *steerHarness) lastFrame(key string) marotte.SteerQueuedPayload {
+	f := s.spy.framesFor(key)
+	if len(f) == 0 {
+		s.fatalf("no frame for %s", key)
+		return marotte.SteerQueuedPayload{}
+	}
+	return f[len(f)-1]
+}
+
+func (s *steerHarness) replayed(key string) marotte.SteerQueuedPayload {
+	for _, ev := range s.recs.list(s.chat) {
+		if p, ok := ev.Payload.(marotte.SteerQueuedPayload); ok && p.SteerID == key {
+			return p
+		}
+	}
+	s.fatalf("no replayed frame for %s", key)
+	return marotte.SteerQueuedPayload{}
+}
+
+// An opened prompt's start delivery takes the unsent rows into its turn, so until it runs they
+// await that prompt rather than a close of their own; the delivery parks them.
+func TestSteerRecords_AnOpenedPromptMarksTheUnsentRowsAsAwaitingIt(t *testing.T) {
+	s := newSteerHarness(t)
+	s.idleUnsent("steer-a")
+	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || f.AwaitsPrompt {
+		t.Fatalf("idle frame = %+v, want unsent and not awaiting a prompt", f)
+	}
+
+	s.recs.turnOpened(s.chat, "t-p")
+
+	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || !f.AwaitsPrompt {
+		t.Errorf("frame after the open = %+v, want unsent and awaiting the prompt", f)
+	}
+	if f := s.replayed("steer-a"); !f.AwaitsPrompt {
+		t.Errorf("replayed frame = %+v, want it awaiting the prompt", f)
+	}
+
+	s.recs.turnStarted(s.chat, "t-p")
+	if _, _, ok := s.q.NextParked(s.chat, "t-p"); !ok {
+		t.Fatal("the start delivery parked nothing")
+	}
+
+	s.mustState("steer-a", rowParked)
+	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowQueued {
+		t.Errorf("frame after the delivery = %+v, want queued", f)
+	}
+	if _, refuse := s.q.RouteSteer(s.chat, "steer-a", "words", command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
+		t.Fatalf("RouteSteer with no holder refused %q, want no_turn", refuse)
+	}
+	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || f.AwaitsPrompt {
+		t.Errorf("a row unsent after the delivery = %+v, want it not awaiting a prompt", f)
+	}
+}
+
+// A prompt that closes before its start delivery takes nothing, so its rows stop awaiting it.
+func TestSteerRecords_APromptClosedBeforeItsDeliveryReleasesTheAwait(t *testing.T) {
+	s := newSteerHarness(t)
+	s.idleUnsent("steer-a")
+	s.recs.turnOpened(s.chat, "t-p")
+
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{TurnID: "t-p", Source: marotte.TurnSourcePrompt})
+
+	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || f.AwaitsPrompt {
+		t.Errorf("frame after the close = %+v, want unsent and not awaiting a prompt", f)
+	}
+}
+
+// While KAS may re-inject a dead bridge's rows, UnsentRows answers none, so no close sends them;
+// a landed post-load clear lets the next close send them again.
+func TestSteerRecords_ReinjectedRowsAwaitAPromptUntilThePostLoadClear(t *testing.T) {
+	s := newSteerHarness(t)
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
+	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", promptHolder)
+	s.kas(sends)
+	s.recs.bridgeGone(s.chat)
+
+	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || !f.AwaitsPrompt {
+		t.Errorf("frame after the death = %+v, want unsent and awaiting a prompt", f)
+	}
+	if rows := s.q.UnsentRows(s.chat, false); len(rows) != 0 {
+		t.Errorf("UnsentRows = %+v, want none while KAS may re-inject", rows)
+	}
+
+	s.q.PostLoadCleared(s.chat, nil, true)
+
+	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || f.AwaitsPrompt {
+		t.Errorf("frame after the clear = %+v, want unsent and not awaiting a prompt", f)
+	}
+	if rows := s.q.UnsentRows(s.chat, false); len(rows) != 1 {
+		t.Errorf("UnsentRows = %+v, want steer-a for the next close", rows)
+	}
+}

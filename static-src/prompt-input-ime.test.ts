@@ -14,6 +14,9 @@ const { PRIOR_PROMPT } = vi.hoisted(() => ({ PRIOR_PROMPT: "the prompt before th
 vi.mock("./store.js", () => ({
   // No active chat: the busy placeholder reads Steer, which no case here observes.
   activeSession: { value: undefined, peek: () => undefined },
+  turnLive: () => false,
+  promptOpened: () => false,
+  messagesVersionOf: () => ({ value: 0 }),
   getActive: () => ({
     // ONE prompt-opened turn, in the shape the appender writes it: the `turn_open` is `entries[0]`
     // and carries the prompt, which is where `userPrompts()` reads a past prompt from.

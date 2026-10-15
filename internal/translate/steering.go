@@ -129,8 +129,9 @@ func (t *Translator) steeringInjected(ctx context.Context, sc steerScope, k *ses
 // too, so it writes nothing: a dropped row beside the read one would contradict it.
 func (t *Translator) steeringCleared(ctx context.Context, sc steerScope, k *sessionInfoKiroBlock, read map[string]struct{}) {
 	held := make(map[string]marotte.SteerQueuedPayload)
-	for _, p := range t.steerBufferCleared(sc.key, k.MessageIDs) {
-		held[p.SteerID] = p
+	cleared := t.steerBufferCleared(sc.key, k.MessageIDs)
+	for i := range cleared {
+		held[cleared[i].SteerID] = cleared[i]
 	}
 	for _, id := range k.MessageIDs {
 		if _, ok := read[id]; ok {

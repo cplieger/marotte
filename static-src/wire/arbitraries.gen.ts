@@ -2334,6 +2334,7 @@ const arbModel = fc.letrec<{
       workflow_id: fc.string(),
       node_path: fc.string(),
       replaces: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
+      awaits_prompt: fc.boolean(),
     },
     { requiredKeys: ["steer_id", "text", "origin", "state"] },
   ),

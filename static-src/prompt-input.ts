@@ -5,7 +5,8 @@
 // second button beside Cancel sends it, because a touch Return is a new line.
 
 import { $, byId } from "./dom.js";
-import { activeSession, getActive, getActiveId } from "./store.js";
+import { activeSession, getActive, getActiveId, turnLive } from "./store.js";
+import { sessionDrain, turnsPhrase } from "./queue-slots.js";
 import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
 import { ICON_SEND, ICON_CANCEL, ICON_ALERT, ICON_HOURGLASS } from "./icons.js";
@@ -22,16 +23,28 @@ import type { InterruptMode } from "./types.js";
  *  the button. */
 const busyMode = computed(() => activeSession.value?.interrupt_mode ?? "steer");
 
+/** How long a follow-up queued now would wait, in the dock's words, so the two agree. */
+const queueWait = computed(() => {
+  const s = activeSession.value;
+  if (s === undefined) {
+    return turnsPhrase(1, true);
+  }
+  return turnsPhrase(sessionDrain(s).next, turnLive(s));
+});
+
 /** While a turn runs the placeholder names what Send will do with the text. */
-const BUSY_PLACEHOLDER = {
-  steer: "Steer the agent mid-turn...",
-  queue: "Queue a follow-up for after this turn...",
-} as const;
+const BUSY_PLACEHOLDER: Record<InterruptMode, (wait: string) => string> = {
+  steer: () => "Steer the agent mid-turn...",
+  queue: (wait) => `Queue a follow-up for after ${wait}...`,
+};
 
 /** The mid-turn Send's face per mode. The word is a word of the name (WCAG 2.5.3). */
-const MIDTURN_FACE: Record<InterruptMode, { label: string; name: string; icon: string }> = {
-  steer: { label: "Steer", name: "Steer the running turn", icon: ICON_SEND },
-  queue: { label: "Queue", name: "Queue for after this turn", icon: ICON_HOURGLASS },
+const MIDTURN_FACE: Record<
+  InterruptMode,
+  { label: string; name: (wait: string) => string; icon: string }
+> = {
+  steer: { label: "Steer", name: () => "Steer the running turn", icon: ICON_SEND },
+  queue: { label: "Queue", name: (wait) => `Queue for after ${wait}`, icon: ICON_HOURGLASS },
 };
 
 /** Appended to every error tooltip. A fixed suffix rather than a test against the reason's
@@ -94,7 +107,7 @@ class PromptInputController {
   private onSubmit: Submit = () => undefined;
   private staged: Staged = signal(false);
   private midTurn: HTMLButtonElement | null = null;
-  private midTurnFace: InterruptMode | "" = "";
+  private midTurnName = "";
 
   /** Send whatever is in the composer. THE send path: the form's submit handler, Enter, the
    *  mid-turn Send and the keyboard shortcut all call this, and submit.ts decides what a send
@@ -212,15 +225,15 @@ class PromptInputController {
       return;
     }
     btn.hidden = false;
-    const mode = busyMode.peek();
-    if (this.midTurnFace === mode) {
+    const face = MIDTURN_FACE[busyMode.peek()];
+    const name = face.name(queueWait.peek());
+    if (this.midTurnName === name) {
       return;
     }
-    this.midTurnFace = mode;
-    const face = MIDTURN_FACE[mode];
+    this.midTurnName = name;
     btn.replaceChildren(el("span", { className: "send-btn-label" }, face.label), iconEl(face.icon));
-    btn.setAttribute("data-tooltip", face.name);
-    btn.setAttribute("aria-label", face.name);
+    btn.setAttribute("data-tooltip", name);
+    btn.setAttribute("aria-label", name);
   }
 
   private applyButtonState(): void {
@@ -243,7 +256,7 @@ class PromptInputController {
     $.sendBtn.disabled = false;
     $.promptInput.disabled = false;
     $.promptInput.placeholder =
-      k === "streaming" ? BUSY_PLACEHOLDER[busyMode.peek()] : "Message Kiro...";
+      k === "streaming" ? BUSY_PLACEHOLDER[busyMode.peek()](queueWait.peek()) : "Message Kiro...";
     this.applyMidTurnSend();
   }
 
@@ -281,10 +294,11 @@ class PromptInputController {
     });
 
     syncComposerText();
-    // Follows the active chat's mode; setSendState() paints the other input directly, because
-    // `state` is not a signal.
+    // Follows the active chat's mode and queue; setSendState() paints the other input directly,
+    // because `state` is not a signal.
     effect(() => {
       touch(busyMode);
+      touch(queueWait);
       this.applyButtonState();
     });
     effect(() => {
