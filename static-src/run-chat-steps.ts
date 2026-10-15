@@ -5,6 +5,7 @@ import {
   buildDetachedBody,
   disposeDetachedBody,
   finalizeDetachedBody,
+  rebuildDetached,
   updateDetachedBody,
 } from "./messages-blocks.js";
 import { buildRequestHeader } from "./fundamentals/turn-header.js";
@@ -68,10 +69,12 @@ export function createRunStepStream(hostFor: StepHostFor): RunStepStream {
     if (shapeExtends(rec.shape, shape) && rec.shape.length > 0) {
       updateDetachedBody(rec.box, turn, NO_CHAT, ROOT_LANE, live);
     } else {
-      disposeDetachedBody(turn.id, ROOT_LANE);
-      rec.box.replaceChildren();
-      rec.sealed = false;
-      buildDetachedBody(rec.box, turn, NO_CHAT, ROOT_LANE, live);
+      rebuildDetached(() => {
+        disposeDetachedBody(turn.id, ROOT_LANE);
+        rec.box.replaceChildren();
+        rec.sealed = false;
+        buildDetachedBody(rec.box, turn, NO_CHAT, ROOT_LANE, live);
+      });
     }
     rec.shape = shape;
 

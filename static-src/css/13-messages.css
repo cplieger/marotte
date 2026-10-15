@@ -1669,12 +1669,83 @@
   overflow: hidden;
 }
 
+/* The run's name before the step: secondary ink, the step's label stays the accent word. It shrinks
+ * and ellipsizes first, so a long run name never pushes the step or the times off the row. */
+.steer-note-run {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.steer-note-run {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-underline-offset: 2px;
+}
+
+button.steer-note-run:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+@media (any-hover: hover) {
+  button.steer-note-run:hover {
+    color: var(--c-accent);
+    text-decoration: underline;
+  }
+}
+
+.steer-note-run-sep {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+}
+
 /* A workflow message's two times, after the label. */
 .steer-note-times {
   margin-inline-start: auto;
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+/* Phone-shaped: the run's name takes a line of its own beside the glyph and is ellipsized there on its
+ * own, apart from the step and the times, which each keep a line under it. */
+@media (width <= 48rem) {
+  .steer-note-head:has(> .steer-note-run) {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0 var(--sp-2);
+  }
+
+  .steer-note-head:has(> .steer-note-run) > .tool-icon {
+    grid-area: 1 / 1;
+  }
+
+  .steer-note-head > .steer-note-run {
+    grid-area: 1 / 2;
+    justify-self: start;
+    max-inline-size: 100%;
+  }
+
+  .steer-note-head > .steer-note-run-sep {
+    display: none;
+  }
+
+  .steer-note-head:has(> .steer-note-run) > .steer-note-label {
+    grid-area: 2 / 2;
+  }
+
+  .steer-note-head:has(> .steer-note-run) > .steer-note-times {
+    grid-area: 3 / 2;
+    margin-inline-start: 0;
+  }
 }
 
 /* Kiro's notification group: a run of workflow updates inside one box (14-tools.css

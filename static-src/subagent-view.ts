@@ -16,6 +16,7 @@ import {
   buildDetachedBody,
   disposeDetachedBody,
   finalizeDetachedBody,
+  rebuildDetached,
   updateDetachedBody,
 } from "./messages-blocks.js";
 import { refreshChatView } from "./chat.js";
@@ -248,11 +249,13 @@ function renderBody(
   if (sameTurn && shapeExtends(rec.shape, shape) && rec.shape.length > 0) {
     updateDetachedBody(rec.host, turn, chatID, subtaskID, slice.live);
   } else {
-    disposeDetachedBody(rec.turnID, subtaskID);
-    rec.host.replaceChildren();
-    rec.turnID = turn.id;
-    rec.sealed = false;
-    buildDetachedBody(rec.host, turn, chatID, subtaskID, slice.live);
+    rebuildDetached(() => {
+      disposeDetachedBody(rec.turnID, subtaskID);
+      rec.host.replaceChildren();
+      rec.turnID = turn.id;
+      rec.sealed = false;
+      buildDetachedBody(rec.host, turn, chatID, subtaskID, slice.live);
+    });
   }
   rec.shape = shape;
 

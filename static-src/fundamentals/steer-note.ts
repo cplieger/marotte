@@ -28,6 +28,10 @@ export interface SteerNoteData {
   step?: string;
   /** The run the note came from, which groups a chat's workflow updates. */
   run?: string;
+  /** What the run is called (the dock row's name), drawn before the step; set with `run`. */
+  runLabel?: string;
+  /** Opens the run's tab. Without it the run label is plain text. */
+  onOpenRun?: () => void;
   /** When a workflow message was sent, epoch ms; set, the note states its send time. */
   sentAt?: number;
   /** The row has a take-up channel, so it states its delivery too. A row logged only when read (a KAS notice) has
@@ -81,8 +85,17 @@ const GLYPHS: Record<SteerOrigin, string> = {
  *  header's three: this is the message itself, not a navigation row. */
 const CLAMP_LINES = 4;
 
+/** Each note's accessible name without the run, so a run label that arrives later can be prefixed. */
+const ariaBases = new WeakMap<HTMLElement, string>();
+
+function ariaNameFor(base: string, runLabel: string | undefined): string {
+  return runLabel === undefined || runLabel === "" ? base : `${runLabel}, ${base}`;
+}
+
 export function buildSteerNote(d: SteerNoteData): HTMLElement {
   const label = labelFor(d);
+  const base = `${label}: ${oneLine(d.text)}`;
+  const named = d.run !== undefined && d.run !== "" ? d.runLabel : undefined;
 
   const root = el("div", {
     className: "steer-note",
@@ -90,8 +103,9 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
     "data-origin": d.origin,
     // The full text: an accessible name has no width, and neither the glyph nor
     // the clamp carries the state on its own.
-    "aria-label": `${label}: ${oneLine(d.text)}`,
+    "aria-label": ariaNameFor(base, named),
   });
+  ariaBases.set(root, base);
   if (d.acknowledged === true) {
     root.setAttribute("data-acknowledged", "true");
   }
@@ -104,13 +118,19 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   if (d.run !== undefined && d.run !== "") {
     root.dataset["run"] = d.run;
   }
-
   const head = el(
     "div",
     { className: "steer-note-head" },
     el("span", { className: "tool-icon", "aria-hidden": "true" }, iconEl(GLYPHS[d.origin])),
-    el("span", { className: "steer-note-label" }, label),
   );
+  if (d.run !== undefined && d.run !== "" && d.runLabel !== undefined && d.runLabel !== "") {
+    root.dataset["runLabel"] = d.runLabel;
+    head.append(
+      runLabelEl(d.runLabel, d.onOpenRun),
+      el("span", { className: "steer-note-run-sep", "aria-hidden": "true" }, "\u00b7"),
+    );
+  }
+  head.appendChild(el("span", { className: "steer-note-label" }, label));
   root.appendChild(head);
   if (d.sentAt !== undefined && d.sentAt > 0) {
     head.appendChild(el("span", { className: "steer-note-times" }, ...timesFor(d, d.sentAt)));
@@ -134,6 +154,34 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
 
   attachClamp(text, more, { lines: CLAMP_LINES });
   return root;
+}
+
+/** The run's name in front of the step. A button when the caller can open the run, text otherwise. */
+function runLabelEl(runLabel: string, open: (() => void) | undefined): HTMLElement {
+  if (open === undefined) {
+    return el("span", { className: "steer-note-run" }, runLabel);
+  }
+  const btn = el("button", {
+    type: "button",
+    className: "steer-note-run",
+    "data-tooltip": "Open the workflow run",
+  });
+  btn.textContent = runLabel;
+  btn.addEventListener("click", open);
+  return btn;
+}
+
+/** Rewrite a drawn note's run label in place, so a label that arrives after the first paint needs no redraw. */
+export function setSteerNoteRunLabel(note: HTMLElement, runLabel: string): void {
+  const name = note.querySelector(".steer-note-run");
+  if (name !== null && name.textContent !== runLabel) {
+    name.textContent = runLabel;
+  }
+  note.dataset["runLabel"] = runLabel;
+  const base = ariaBases.get(note);
+  if (base !== undefined) {
+    note.setAttribute("aria-label", ariaNameFor(base, runLabel));
+  }
 }
 
 /** A workflow message's two times: when it was sent, and when the receiver took it up or that it

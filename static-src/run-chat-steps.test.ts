@@ -58,9 +58,13 @@ vi.mock("./messages-blocks.js", () => ({
   disposeDetachedBody: vi.fn((key: string, lane: string) => {
     m.calls.push({ fn: "dispose", key, lane });
   }),
+  rebuildDetached: vi.fn((rebuild: () => void) => {
+    rebuild();
+  }),
 }));
 
 const { createRunStepStream } = await import("./run-chat-steps.js");
+const { rebuildDetached } = await import("./messages-blocks.js");
 
 function entry(turn: string, seq: number, kind: Entry["kind"] = "text"): Entry {
   return { id: `${turn}-${String(seq)}`, turn, kind, seq, ts: 0, payload: {} };
@@ -216,6 +220,22 @@ describe("run step stream", () => {
     // first build filled.
     expect(box?.childElementCount).toBe(1);
     expect(h.host("a/coder").childElementCount).toBe(1);
+  });
+
+  // The pair is one bracket: the run-state release the dispose makes waits for the build's claims.
+  it("disposes and builds inside one rebuild bracket", () => {
+    const h = harness();
+    h.apply({ "a/coder": [paint("t1", ["text", "text"])] });
+    m.calls.length = 0;
+    const inside: string[] = [];
+    vi.mocked(rebuildDetached).mockImplementationOnce((rebuild) => {
+      m.calls.push({ fn: "update", key: "open", lane: "" });
+      rebuild();
+      m.calls.push({ fn: "update", key: "close", lane: "" });
+      inside.push(...(m.calls as Call[]).map((c) => `${c.fn}:${c.key}`));
+    });
+    h.apply({ "a/coder": [paint("t1", ["tool_call", "text"])] });
+    expect(inside).toEqual(["update:open", "dispose:t1", "build:t1", "update:close"]);
   });
 
   // The FIRST apply cannot update, whatever the shape says: nothing is mounted for the watermark to

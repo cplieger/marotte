@@ -466,7 +466,7 @@ func TestNoticeTarget_TitlesTheTabTheClickOpens(t *testing.T) {
 	}{
 		{"c1", "", "Fix the parser", marotte.ChatSubject("c1")},
 		{"gone", "", marotte.DefaultChatName, marotte.ChatSubject("gone")},
-		{"c1", "wf1", "Workflow run", marotte.RunSubject("wf1")},
+		{"c1", "wf_0123456789", "wf_01234567", marotte.RunSubject("wf_0123456789")},
 	} {
 		target := h.coord.NoticeTarget(t.Context(), tc.chatID, tc.runID)
 		n := notice.TurnFinished(target, "")
