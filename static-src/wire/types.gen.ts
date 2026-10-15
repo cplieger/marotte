@@ -739,7 +739,7 @@ export interface EffectiveSettings {
   spec_planning_ask_first: boolean;
   steering_reminders_enabled: boolean;
   workflows_enabled: boolean;
-  /** LoopLimitWake defaults ON: a parented run's iteration-limit pause wakes its launching chat. */
+  /** LoopLimitWake: a parented run's iteration-limit pause wakes its launching chat. */
   loop_limit_wake: boolean;
   supervised_default: boolean;
   scheduled_auto_approve: boolean;

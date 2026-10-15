@@ -52,26 +52,26 @@ type Lease struct {
 	// ScheduleID names the row that asked for the run. Set iff Origin is scheduled.
 	ScheduleID string `json:"schedule_id,omitempty"`
 	// LoopWake is the run's latest iteration-limit wake to its launching chat.
-	LoopWake LoopWake `json:"loop_wake,omitzero"`
+	LoopWake loopWake `json:"loop_wake,omitzero"`
 	// Unattended marks a run with nobody to answer a permission request, which arms
 	// the deny-fast floor. Distinct from the origin: who launched it vs who watches.
 	Unattended bool `json:"unattended"`
 }
 
-// LoopWake is one iteration-limit pause's wake. A pause whose Key is recorded is never sent again,
+// loopWake is one iteration-limit pause's wake. A pause whose Key is recorded is never sent again,
 // whatever its State, so a restart neither resends nor retries it.
-type LoopWake struct {
+type loopWake struct {
 	Key   string        `json:"key"`
 	State LoopWakeState `json:"state"`
 }
 
-// LoopWakeState is how far a LoopWake got.
+// LoopWakeState is how far a Lease.LoopWake got.
 type LoopWakeState string
 
-// The LoopWake states. Delivered and Failed are the send's outcome.
+// The Lease.LoopWake states. Delivered and Failed are the send's outcome.
 const (
-	// LoopWakeSending is recorded before the send: a process that dies mid-send leaves it.
-	LoopWakeSending   LoopWakeState = "sending"
+	// loopWakeSending is recorded before the send: a process that dies mid-send leaves it.
+	loopWakeSending   LoopWakeState = "sending"
 	LoopWakeDelivered LoopWakeState = "delivered"
 	LoopWakeFailed    LoopWakeState = "failed"
 )

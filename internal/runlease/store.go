@@ -176,7 +176,7 @@ func (s *Store) SetParentSessionID(ctx context.Context, workflowID, session stri
 	return s.persistLocked(ctx)
 }
 
-// ClaimLoopWake records the pause key as LoopWakeSending unless the run's wake already names it;
+// ClaimLoopWake records the pause key as loopWakeSending unless the run's wake already names it;
 // claimed reports that this call recorded it, so of racing callers exactly one is claimed. The
 // error reports DURABILITY, as SetDeadline's does; ErrNotFound is the one error meaning nothing
 // was stored.
@@ -190,7 +190,7 @@ func (s *Store) ClaimLoopWake(ctx context.Context, workflowID, key string) (clai
 	if l.LoopWake.Key == key {
 		return false, nil
 	}
-	l.LoopWake = LoopWake{Key: key, State: LoopWakeSending}
+	l.LoopWake = loopWake{Key: key, State: loopWakeSending}
 	s.leases[workflowID] = l
 	s.version++
 	return true, s.persistLocked(ctx)
