@@ -43,6 +43,7 @@ export const storeMock = {
   // A suite driving the failed-send rescue path overrides it from its own turns.
   hasMessage: vi.fn(() => false),
   hasQueued: vi.fn(() => false),
+  promptOpened: vi.fn(() => false),
 
   isThinking: vi.fn(() => false),
   isEmptyChat: vi.fn(() => false),

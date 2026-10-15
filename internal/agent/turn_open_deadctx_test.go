@@ -100,3 +100,64 @@ func TestPromptTurn_ShutdownBeforeTheTurnOpensStartsNoTurn(t *testing.T) {
 		t.Errorf("events = %v, want the prompt's terminal error frame", types)
 	}
 }
+
+// A prompt's open marks the chat's unsent rows as awaiting it before turn_opened goes out, so no
+// client sees the turn live while those rows still read as a turn of their own. A shell turn
+// takes no rows.
+func TestOpenTurn_MarksUnsentRowsAwaitingAPromptBeforeTheAnnounce(t *testing.T) {
+	cases := []struct {
+		name   string
+		source marotte.TurnOpenSource
+		want   bool
+	}{
+		{name: "prompt", source: marotte.TurnSourcePrompt, want: true},
+		{name: "local_shell", source: marotte.TurnSourceLocalShell, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			seedChat(t, cs, "c1")
+			if _, refuse := h.steerQueue.RouteSteer("c1", "steer-a", "words", promptHolder); refuse != "" {
+				t.Fatalf("RouteSteer refused %q", refuse)
+			}
+			if _, refuse := h.steerQueue.RouteSteer("c1", "steer-a", "words", command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
+				t.Fatalf("RouteSteer with no holder refused %q, want no_turn", refuse)
+			}
+			since := uint64(0)
+			if b := bufferedSince(h, 0); len(b) > 0 {
+				since = b[len(b)-1].Offset
+			}
+
+			if _, err := h.coord.OpenTurn(t.Context(), "c1", command.TurnOpen{Source: tc.source, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "hi"}}); err != nil {
+				t.Fatalf("OpenTurn: %v", err)
+			}
+
+			awaitAt, openAt := -1, -1
+			for i, e := range bufferedSince(h, since) {
+				var msg struct {
+					Type    marotte.EventType          `json:"type"`
+					Payload marotte.SteerQueuedPayload `json:"payload"`
+				}
+				if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
+					t.Fatalf("unmarshal event: %v", err)
+				}
+				switch {
+				case msg.Type == marotte.EventSteerQueued && msg.Payload.SteerID == "steer-a" && msg.Payload.AwaitsPrompt && awaitAt < 0:
+					awaitAt = i
+				case msg.Type == marotte.EventTurnOpened && openAt < 0:
+					openAt = i
+				}
+			}
+			if openAt < 0 {
+				t.Fatal("no turn_opened frame")
+			}
+			if got := awaitAt >= 0; got != tc.want {
+				t.Fatalf("steer-a re-framed as awaiting a prompt = %v, want %v", got, tc.want)
+			}
+			if tc.want && awaitAt > openAt {
+				t.Errorf("the awaiting frame (%d) came after turn_opened (%d)", awaitAt, openAt)
+			}
+		})
+	}
+}

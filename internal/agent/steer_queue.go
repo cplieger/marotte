@@ -652,6 +652,7 @@ func (q steerQueue) NextParked(chatID marotte.ChatID, turnID string) (key, text 
 		if !rec.names(turnID) {
 			return
 		}
+		rec.absorbed(turnID)
 		var parked []*dockRow
 		rec.live(func(w *dockRow) {
 			if w.owner != "" {

@@ -209,6 +209,20 @@ describe("a gap and then the connect replay", () => {
     ]);
   });
 
+  // The server's mark is the only thing that keeps the dock from counting an unread-steer turn
+  // ahead of the first queued follow-up, and a later frame without it lifts it.
+  it("carries the server's awaits_prompt mark onto a not-sent row, and drops it with the field", () => {
+    const unsent = { steer_id: "steer-1", text: "use tabs", origin: "user", state: "unsent" };
+    fireSSE("steer_queued", "c1", { ...unsent, awaits_prompt: true });
+    expect(get("c1")?.steers).toEqual([
+      { id: "steer-1", text: "use tabs", origin: "user", unsent: true, awaitsPrompt: true },
+    ]);
+    fireSSE("steer_queued", "c1", unsent);
+    expect(get("c1")?.steers).toEqual([
+      { id: "steer-1", text: "use tabs", origin: "user", unsent: true },
+    ]);
+  });
+
   it("passes a batch frame's members through, adding no row", () => {
     fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
     fireSSE("steer_queued", "c1", { steer_id: "steer-2", text: "two", origin: "user" });

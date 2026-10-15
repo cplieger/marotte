@@ -216,9 +216,11 @@ export function watchSession(id: string): Session | undefined {
 /** Whether `chatID`'s log already holds a turn this client's prompt opened. */
 export function hasMessage(chatID: string, messageID: string): boolean {
   const s = sessions.get(chatID);
-  if (s === undefined) {
-    return false;
-  }
+  return s !== undefined && promptOpened(s, messageID);
+}
+
+/** Whether one of `s`'s resident turns was opened by the prompt under `messageID`. */
+export function promptOpened(s: Session, messageID: string): boolean {
   for (const state of s.turns.values()) {
     const first = state.entries[0];
     if (first !== undefined && payloadOf(first, "turn_open")?.prompt?.id === messageID) {

@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { signal } from "@cplieger/reactive";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { refreshContextUI } from "./context-ui.js";
-import { setSessions, setActive, setChatInterruptMode } from "./store.js";
+import { setSessions, setActive, setChatInterruptMode, openTurn } from "./store.js";
 import type { Session } from "./types.js";
 
 const CHAT = "c1";
@@ -468,6 +468,59 @@ describe("the mid-turn Send", () => {
 
     setChatInterruptMode(CHAT, "steer");
     expect(midTurn().getAttribute("aria-label")).toBe("Steer the running turn");
+  });
+
+  it("names the turn a follow-up queued behind others will wait for", () => {
+    setSessions([
+      {
+        ...makeSession([]),
+        turn_open: true,
+        interrupt_mode: "queue",
+        queued: [
+          { id: "m-q1", text: "first" },
+          { id: "m-q2", text: "second" },
+        ],
+      },
+    ]);
+    setActive(CHAT);
+    setSendState({ kind: "streaming" });
+    type("hello");
+    expect(midTurn().getAttribute("aria-label")).toBe("Queue for after 3 turns");
+    expect(midTurn().getAttribute("data-tooltip")).toBe("Queue for after 3 turns");
+    expect(input().placeholder).toBe("Queue a follow-up for after 3 turns...");
+
+    setSessions([{ ...makeSession([]), turn_open: true, interrupt_mode: "queue", queued: [] }]);
+    expect(midTurn().getAttribute("aria-label")).toBe("Queue for after this turn");
+  });
+
+  it("stops counting a follow-up once its turn opens", () => {
+    setSessions([
+      {
+        ...makeSession([]),
+        turn_open: true,
+        interrupt_mode: "queue",
+        queued: [
+          { id: "m-q1", text: "first" },
+          { id: "m-q2", text: "second" },
+        ],
+      },
+    ]);
+    setActive(CHAT);
+    setSendState({ kind: "streaming" });
+    type("hello");
+    expect(midTurn().getAttribute("aria-label")).toBe("Queue for after 3 turns");
+
+    openTurn(CHAT, {
+      id: "tq-open",
+      turn: "tq",
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "prompt", n: 1, prompt: { id: "m-q1", text: "first" } },
+    });
+
+    expect(midTurn().getAttribute("aria-label")).toBe("Queue for after 2 turns");
+    expect(input().placeholder).toBe("Queue a follow-up for after 2 turns...");
   });
 
   it("sends the box through the composer's send path, then empties it and hides", () => {

@@ -82,6 +82,7 @@ type bridgeCoordinator struct {
 	// steerTurnStarted runs under the lifecycle lock, so it never waits on the record's queue.
 	steerTurnEnded   func(marotte.ChatID, command.SteerTurnEnd) `wiring:"optional"`
 	steerTurnStarted func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
+	steerTurnOpened  func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerTurnBound   func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerTurnRevised func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerBridgeGone  func(marotte.ChatID)                       `wiring:"optional"`
@@ -158,6 +159,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		takeAgentSteers:  h.bus.steers.takeAgentRows,
 		steerTurnEnded:   h.bus.steers.turnEnded,
 		steerTurnStarted: h.bus.steers.turnStarted,
+		steerTurnOpened:  h.bus.steers.turnOpened,
 		steerTurnBound:   h.bus.steers.turnBound,
 		steerTurnRevised: h.bus.steers.turnRevised,
 		steerBridgeGone:  h.bus.steers.bridgeGone,

@@ -17,6 +17,7 @@ onSSE("steer_queued", (chatID, p) => {
     origin: p.origin,
     replaces: p.replaces,
     state: p.state,
+    awaitsPrompt: p.awaits_prompt,
   };
   // A run step's row names its run and step and no chat.
   if (p.workflow_id !== undefined && p.workflow_id !== "") {

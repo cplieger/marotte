@@ -3436,6 +3436,11 @@ export interface SteerQueuedPayload {
  * a resubmit repaints nothing; a ROW frame (SteerID is the row's key) leaves it empty.
  */
   replaces?: string[];
+  /**
+ * AwaitsPrompt is set on an unsent row that no clean turn close sends as a prompt of its own: a
+ * prompt that has opened carries it into its turn, or KAS may re-inject it after a load.
+ */
+  awaits_prompt?: boolean;
 }
 
 /** SteeringIssue is one configuration problem KAS found in a steering document. */

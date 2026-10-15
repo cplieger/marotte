@@ -547,7 +547,7 @@ function interruptRow(): HTMLElement {
   return switchRow({
     id: "chat-opt-queue",
     name: "Queue messages",
-    hint: "Send waits for the current turn to end. Off, the agent reads it mid-turn",
+    hint: "Messages wait for the turn to end and send one per turn. Off, the agent reads them mid-turn",
     read: (s) => s.interrupt_mode === "queue",
     write: (chatID, on) => {
       const mode: InterruptMode = on ? "queue" : "steer";

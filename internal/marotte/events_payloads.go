@@ -660,6 +660,9 @@ type SteerQueuedPayload struct {
 	// re-sent row) under, and these are the rows' keys. A batch frame adds no row, so
 	// a resubmit repaints nothing; a ROW frame (SteerID is the row's key) leaves it empty.
 	Replaces []string `json:"replaces,omitempty"`
+	// AwaitsPrompt is set on an unsent row that no clean turn close sends as a prompt of its own: a
+	// prompt that has opened carries it into its turn, or KAS may re-inject it after a load.
+	AwaitsPrompt bool `json:"awaits_prompt,omitempty"`
 }
 
 // SteerRowState is a dock row's state as the dock draws it. Every row that is or may

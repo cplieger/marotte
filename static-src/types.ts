@@ -297,6 +297,9 @@ export interface PendingSteer {
   /** The server holds the row and could not deliver it to any turn (`steer_queued`
    *  state `unsent`); it goes with the chat's next prompt unless deleted first. */
   unsent?: true;
+  /** An `unsent` row that no clean turn close sends as a prompt of its own
+   *  (`SteerQueuedPayload.awaits_prompt`): a prompt's start carries it, so it costs the follow-ups no turn. */
+  awaitsPrompt?: true;
 }
 
 // --- Local session state (client-only projection of server chat) ---
