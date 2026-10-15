@@ -29,11 +29,11 @@ vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
   const read = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
-  const { forgeRow, forgesList } = await import("./__test-helpers__/forge-rows.js");
+  const { forgeRow, forgesList, staticStore } = await import("./__test-helpers__/forge-rows.js");
   return {
     ...orig,
     ensureForges: read,
-    forgeRows: () => forgesList([forgeRow()]),
+    ...staticStore(() => forgesList([forgeRow()])),
     usablePairs: () => [],
   };
 });

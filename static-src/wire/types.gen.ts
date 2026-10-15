@@ -2335,7 +2335,6 @@ export interface PreviewStamp {
  */
 export interface ProbeResult {
   forge?: ConfiguredForge;
-  error?: string;
 }
 
 /**

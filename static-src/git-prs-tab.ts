@@ -71,14 +71,13 @@ import {
   reinsertPRInGroups,
   removePRFromGroups,
   settleRemoval,
-  adoptForgeRows,
 } from "./git-prs-state.js";
 import type { ElsewherePR } from "./git-prs-state.js";
-import { ensureForges, forgeRows, usablePairs } from "./forge-store.js";
+import { ensureForges, forgeRows, usableAccount, usablePairs } from "./forge-store.js";
 import { partialWhy } from "./forge-types.js";
 import { reconcile } from "./reconcile.js";
 import { forgetSig, sigChanged, wireSignature } from "./paint-sig.js";
-import { effect, el, untracked } from "@cplieger/reactive";
+import { effect, el, on } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
@@ -348,13 +347,19 @@ export function initPRsTab(): void {
     });
   }
 
-  effect(() => {
-    const rows = forgeRows();
-    const pairs = usablePairs();
-    untracked(() => {
-      followForgeRows(rows?.forges ?? null, pairs);
-    });
-  });
+  effect(
+    on(
+      () => ({ rows: forgeRows(), pairs: usablePairs() }),
+      (now, prev) => {
+        followForgeRows(
+          now.rows?.forges ?? null,
+          now.pairs,
+          prev !== undefined && prev.rows !== null ? prev.pairs : null,
+        );
+        return undefined;
+      },
+    ),
+  );
   onSSE("forge_inventory", (_chatID, p) => {
     if (applyInventoryEntry(p.entry) && inventoryHeld()) {
       paint();
@@ -1172,7 +1177,6 @@ const capsAsked = new Set<string>();
 const capsIssue = new Map<string, number>();
 /** Each connection's last (account, status) and (account, status, error message), as the store last applied it. */
 const followed = new Map<string, { row: string; shown: string }>();
-let followedPairs: readonly string[] | null = null;
 /** By `join(forge_id, repo_id)`, for the life of the list. */
 const rerunRefused = new Map<string, string>();
 /** In-flight row actions by row identity and label, so a repaint while one runs renders its button busy. */
@@ -1214,11 +1218,10 @@ function askCapabilities(groups: readonly RepoGroup[]): void {
         return;
       }
       capsAsked.delete(id);
-      const account = forgeRows()?.forges.find((f) => f.id === id)?.account;
       // The route carries every capability forgeapi names, so an absent key is an answer that did not arrive.
       rerunCaps.set(
         id,
-        caps !== null && caps.account === account
+        caps !== null && caps.account === usableAccount(id)
           ? (caps.connection["rerun_checks"] ?? null)
           : null,
       );
@@ -1230,16 +1233,17 @@ function askCapabilities(groups: readonly RepoGroup[]): void {
 /**
  * The store applied rows. A connection whose account or status changed forgets its capabilities and refusals, any
  * change a lapsed box shows repaints (the usable set does not move between two lapsed statuses), and a change of the
- * usable set reads the inventory again.
+ * usable set from `prevPairs` reads the inventory again. Status is followed here, not only usableAccount: the server
+ * drops a connection's capabilities on any status-kind change, retrying to connected included.
  */
 function followForgeRows(
   rows: readonly ConfiguredForge[] | null,
   pairs: readonly string[] | null,
+  prevPairs: readonly string[] | null,
 ): void {
   if (rows === null || pairs === null) {
     return;
   }
-  adoptForgeRows();
   let repaint = false;
   const seen = new Set<string>();
   for (const f of rows) {
@@ -1250,7 +1254,7 @@ function followForgeRows(
     followed.set(f.id, { row, shown });
     if (was === undefined) {
       // A row that arrives lapsed moves no usable pair, yet the pane names it.
-      repaint ||= followedPairs !== null;
+      repaint ||= prevPairs !== null;
       continue;
     }
     if (was.row !== row) {
@@ -1265,8 +1269,7 @@ function followForgeRows(
       repaint = true;
     }
   }
-  const pairsChanged = followedPairs !== null && followedPairs !== pairs;
-  followedPairs = pairs;
+  const pairsChanged = prevPairs !== null && prevPairs !== pairs;
   if (pairsChanged || repaint) {
     paint();
   }

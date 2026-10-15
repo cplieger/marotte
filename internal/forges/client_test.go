@@ -168,18 +168,80 @@ func (f *fakeCore) ListMyPRs(_ context.Context, opts ...forgeapi.ListOption) (fo
 	return forgeapi.Page[forgeapi.PullRequest]{Items: f.prs}, nil
 }
 
-func TestRepoNames_RecordRowListsThroughTheManager(t *testing.T) {
+// HeldRepoNames announces the page its read stored, then answers it for the
+// account it was read through and nil for any other.
+func TestHeldRepoNames_AnnouncesTheLandingAndAnswersOnlyItsAccount(t *testing.T) {
 	core := &fakeCore{repos: forgeapi.Page[forgeapi.Repository]{Items: []forgeapi.Repository{
 		{Ref: forgeapi.RepoRef{DisplayPath: "bob/one"}},
 		{Ref: forgeapi.RepoRef{DisplayPath: "bob/two"}},
 	}}}
+	stubPath(t)
+	cfg := t.TempDir()
+	rec := githubRecord()
+	seedConnections(t, cfg, "bob", rec)
+	m, changes := loadedManager(t, cfg, core)
+	listed := Change{ID: rec.ID, ReposListed: true}
+
+	m.HeldRepoNames(t.Context(), rec.ID, testSignIn)
+	deadline := time.Now().Add(5 * time.Second)
+	for !slices.Contains(changes.all(), listed) {
+		if time.Now().After(deadline) {
+			t.Fatalf("notified %+v after the read, want %+v", changes.all(), listed)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got, want := m.HeldRepoNames(t.Context(), rec.ID, testSignIn), []string{"bob/one", "bob/two"}; !slices.Equal(got, want) {
+		t.Errorf("HeldRepoNames(%q) = %v, want %v", testSignIn, got, want)
+	}
+	if got := m.HeldRepoNames(t.Context(), rec.ID, "someone-else"); got != nil {
+		t.Errorf("HeldRepoNames(another account) = %v, want nil", got)
+	}
+}
+
+// gatedRepos is fakeCore with a repository list that answers once release closes.
+type gatedRepos struct {
+	*fakeCore
+	release chan struct{}
+}
+
+func (g *gatedRepos) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Repository], error) {
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+		return forgeapi.Page[forgeapi.Repository]{}, ctx.Err()
+	}
+	return g.fakeCore.ListRepos(ctx, opts...)
+}
+
+// HeldRepoNames answers at once while the forge has not answered, and the
+// names once the read it started lands.
+func TestHeldRepoNames_NeverWaitsOnTheForge(t *testing.T) {
+	core := &gatedRepos{release: make(chan struct{}), fakeCore: &fakeCore{repos: forgeapi.Page[forgeapi.Repository]{
+		Items: []forgeapi.Repository{{Ref: forgeapi.RepoRef{DisplayPath: "bob/one"}}},
+	}}}
 	m := recordManager(t, core)
 
-	account, names, err := m.RepoNames(t.Context(), "github:github.com")
-	if err != nil {
-		t.Fatalf("RepoNames() = %v", err)
+	done := make(chan []string, 1)
+	go func() { done <- m.HeldRepoNames(t.Context(), "github:github.com", testSignIn) }()
+	select {
+	case names := <-done:
+		if names != nil {
+			t.Errorf("HeldRepoNames() before any read = %v, want nil", names)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("HeldRepoNames() waited on the forge's repository list")
 	}
-	if want := []string{"bob/one", "bob/two"}; !slices.Equal(names, want) || account != testSignIn {
-		t.Errorf("RepoNames() = %q, %v; want %q, %v", account, names, testSignIn, want)
+
+	close(core.release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got := m.HeldRepoNames(t.Context(), "github:github.com", testSignIn)
+		if slices.Equal(got, []string{"bob/one"}) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("HeldRepoNames() after the read landed = %v, want [bob/one]", got)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

@@ -52,17 +52,35 @@ func (m *Manager) windows(base context.Context, deadline time.Time) (fctx, dctx 
 	return f, d, func() { fcancel(); dcancel() }
 }
 
-// lockFor takes id's lock on fctx: a deadline is errConnectionBusy, a base that
-// ended its own error.
-func (m *Manager) lockFor(base, fctx context.Context, id string) (func(), error) {
-	unlock, err := m.locks.lock(fctx, id)
-	if err == nil {
-		return unlock, nil
+// begin takes id's lock on fctx and answers the row and store it holds: a
+// deadline is errConnectionBusy, a base that ended its own error, and unusable
+// persistence errConnectionUnusable with the lock released.
+func (m *Manager) begin(base, fctx context.Context, id string) (cur *connection, store creds.Store, unlock func(), err error) {
+	unlock, err = m.locks.lock(fctx, id)
+	if err != nil {
+		if base.Err() != nil {
+			return nil, nil, nil, base.Err()
+		}
+		return nil, nil, nil, errConnectionBusy
 	}
-	if base.Err() != nil {
-		return nil, base.Err()
+	cur, health, store := m.current(id)
+	if health != "" {
+		unlock()
+		return nil, nil, nil, fmt.Errorf("%w: %s", errConnectionUnusable, health)
 	}
-	return nil, errConnectionBusy
+	return cur, store, unlock, nil
+}
+
+// retire ends old's account as connection id's once the records write has
+// replaced it: its client, its cached answers, the notify, and host's
+// cleartext git-credentials line.
+func (m *Manager) retire(ctx context.Context, id, host string, old *connection) {
+	if old != nil && old.conn != nil {
+		old.conn.Close()
+	}
+	m.lists.drop(id)
+	m.notify(ctx, Change{ID: id, AccountChanged: true})
+	scrubCleartext(ctx, host)
 }
 
 // signIn verifies cred against the forge and makes it spec's connection: saved
@@ -87,7 +105,7 @@ func (m *Manager) signIn(base context.Context, deadline time.Time, spec *connect
 	if len(cred.Scopes) == 0 {
 		cred.Scopes = acct.Scopes
 	}
-	unlock, err := m.lockFor(base, fctx, id)
+	cur, store, unlock, err := m.begin(base, fctx, id)
 	if err != nil {
 		return "", err
 	}
@@ -97,10 +115,6 @@ func (m *Manager) signIn(base context.Context, deadline time.Time, spec *connect
 			unlock()
 		}
 	}()
-	cur, health, store := m.current(id)
-	if health != "" {
-		return "", fmt.Errorf("%w: %s", errConnectionUnusable, health)
-	}
 	next := &connection{spec: *spec, login: acct.Login, email: acct.Email}
 	if cur != nil {
 		next.spec.Slot = 1 - cur.spec.Slot
@@ -126,13 +140,7 @@ func (m *Manager) signIn(base context.Context, deadline time.Time, spec *connect
 		core.Close()
 		return "", cerr
 	}
-	ectx := context.WithoutCancel(base)
-	if cur != nil && cur.conn != nil {
-		cur.conn.Close()
-	}
-	m.lists.drop(id)
-	m.notify(ectx, Change{ID: id, AccountChanged: true})
-	scrubCleartext(ectx, spec.Host)
+	m.retire(context.WithoutCancel(base), id, spec.Host, cur)
 	deleteKey(store, slotKey(id, 1-next.spec.Slot))
 	locked = false
 	unlock()
@@ -177,32 +185,20 @@ func deleteKey(store creds.Store, key string) {
 func (m *Manager) signOut(base context.Context, deadline time.Time, id string) error {
 	fctx, dctx, cancel := m.windows(base, deadline)
 	defer cancel()
-	unlock, err := m.lockFor(base, fctx, id)
+	cur, store, unlock, err := m.begin(base, fctx, id)
 	if err != nil {
 		return err
 	}
-	cur, health, store := m.current(id)
-	if health != "" {
-		unlock()
-		return fmt.Errorf("%w: %s", errConnectionUnusable, health)
-	}
-	ectx := context.WithoutCancel(base)
+	// Only a row is retired: a crafted id with no row must not remove a
+	// person's own git-credentials line.
 	if cur != nil {
 		if err := m.commit(dctx, id, nil); err != nil {
 			unlock()
 			return err
 		}
-		if cur.conn != nil {
-			cur.conn.Close()
-		}
-		m.lists.drop(id)
-		m.notify(ectx, Change{ID: id, AccountChanged: true})
+		m.retire(context.WithoutCancel(base), id, cur.spec.Host, cur)
 	}
 	cleanup := errors.Join(store.Delete(slotKey(id, 0)), store.Delete(slotKey(id, 1)))
-	// A crafted id with no row must not remove a person's own git-credentials line.
-	if cur != nil {
-		scrubCleartext(ectx, cur.spec.Host)
-	}
 	unlock()
 	m.reconcileGit(dctx)
 	if cleanup != nil {
@@ -216,16 +212,11 @@ func (m *Manager) signOut(base context.Context, deadline time.Time, id string) e
 func (m *Manager) setOwners(base context.Context, deadline time.Time, id string, owners []string) ([]string, error) {
 	fctx, dctx, cancel := m.windows(base, deadline)
 	defer cancel()
-	unlock, err := m.lockFor(base, fctx, id)
+	cur, _, unlock, err := m.begin(base, fctx, id)
 	if err != nil {
 		return nil, err
 	}
-	cur, health, _ := m.current(id)
-	switch {
-	case health != "":
-		unlock()
-		return nil, fmt.Errorf("%w: %s", errConnectionUnusable, health)
-	case cur == nil:
+	if cur == nil {
 		unlock()
 		return nil, fmt.Errorf("%w: %s", errNotLoggedIn, id)
 	}

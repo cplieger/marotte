@@ -1,6 +1,7 @@
 // A read-through cache over the forge listing routes (repositories, pull requests, affordances),
-// first page only. No ticker: a fill happens only because a request asked, and the one goroutine is
-// the revalidation of a stale value already served, bounded by listFillBudget.
+// first page only. No ticker: a fill happens only because a caller asked, and the one goroutine is
+// a fill no caller waits on (a get's revalidation of a stale value it served, or a peek's fill of a
+// missing or stale entry), bounded by listFillBudget.
 
 package forges
 
@@ -54,10 +55,13 @@ type generation struct {
 type listEntry[T any] struct {
 	// at is the zero time until the first successful fill, which is what
 	// separates "nothing to serve" from "something stale to serve".
-	at   time.Time
-	val  T
-	gen  generation
-	busy bool // a revalidation is in flight; do not start a second
+	at time.Time
+	// asked is when peek last started a fill, so a failing one is retried
+	// once a TTL rather than on every peek.
+	asked time.Time
+	val   T
+	gen   generation
+	busy  bool // a revalidation is in flight; do not start a second
 }
 
 // listCache caches one KIND of listing, keyed by whatever identifies a single
@@ -73,10 +77,12 @@ type listCache[T any] struct {
 	// storing it would strand that change until the TTL.
 	gens  map[string]uint64
 	conns map[string]uint64
-	sf    singleflight.Group
-	fills *semaphore.Weighted
-	ttl   time.Duration
-	mu    sync.Mutex
+	// stored, when set, is told each key a fill stored, with no lock held.
+	stored func(context.Context, cacheKey)
+	sf     singleflight.Group
+	fills  *semaphore.Weighted
+	ttl    time.Duration
+	mu     sync.Mutex
 }
 
 func newListCache[T any](ttl time.Duration, fills *semaphore.Weighted) *listCache[T] {
@@ -121,11 +127,43 @@ func (c *listCache[T]) serve(ctx context.Context, key cacheKey,
 		var zero T
 		return zero, false
 	}
-	if time.Since(e.at) >= c.ttl && !e.busy {
-		e.busy = true
-		go c.revalidate(ctx, key, e.gen, fill)
-	}
+	c.reviveLocked(ctx, key, e, e.at, fill)
 	return e.val, true
+}
+
+// peek answers key's stored value, false when none is, and never waits on the
+// forge: a missing or stale entry is filled behind the caller, detached from
+// ctx's cancellation. A failed fill is retried by the next peek a TTL after the
+// last peek asked for key, or at once if none has (serve stamps no ask).
+func (c *listCache[T]) peek(ctx context.Context, key cacheKey, fill func(context.Context) (T, error)) (T, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	if !ok {
+		e = &listEntry[T]{gen: c.genLocked(key)}
+		c.entries[key] = e
+	}
+	since := e.at
+	if e.asked.After(since) {
+		since = e.asked
+	}
+	if c.reviveLocked(ctx, key, e, since, fill) {
+		e.asked = time.Now()
+	}
+	return e.val, !e.at.IsZero()
+}
+
+// reviveLocked starts e's revalidation when since is a TTL old and none is in
+// flight, reporting whether it did.
+func (c *listCache[T]) reviveLocked(ctx context.Context, key cacheKey, e *listEntry[T], since time.Time,
+	fill func(context.Context) (T, error),
+) bool {
+	if e.busy || time.Since(since) < c.ttl {
+		return false
+	}
+	e.busy = true
+	go c.revalidate(ctx, key, e.gen, fill)
+	return true
 }
 
 // Concurrent callers for one key share a single fetch, as two browser tabs opening one list
@@ -151,7 +189,7 @@ func (c *listCache[T]) fillNow(ctx context.Context, key cacheKey,
 		if err != nil {
 			return nil, err
 		}
-		c.store(key, gen, val)
+		c.store(fctx, key, gen, val)
 		return val, nil
 	})
 
@@ -170,9 +208,9 @@ func (c *listCache[T]) fillNow(ctx context.Context, key cacheKey,
 	}
 }
 
-// revalidate refreshes an entry whose stale value was already served, on a detached context bounded
-// by its timeout, since the noticing request's ctx dies with its response. A failure is not
-// reported; the next request retries.
+// revalidate fills key for a caller that did not wait (reviveLocked), on a detached context bounded
+// by listFillBudget, since the caller's ctx may die first. A failure is not reported: the next get
+// retries, and so does the next peek (peek says when).
 func (c *listCache[T]) revalidate(ctx context.Context, key cacheKey, gen generation,
 	fill func(context.Context) (T, error),
 ) {
@@ -188,15 +226,15 @@ func (c *listCache[T]) revalidate(ctx context.Context, key cacheKey, gen generat
 		slog.Debug("forges: listing revalidation failed", "key", key, "error", err)
 		return
 	}
-	c.store(key, gen, val)
+	c.store(bg, key, gen, val)
 }
 
 // store records a successful fill, unless its generation moved while it was in
 // flight (see listCache.gens).
-func (c *listCache[T]) store(key cacheKey, gen generation, val T) {
+func (c *listCache[T]) store(ctx context.Context, key cacheKey, gen generation, val T) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if gen != c.genLocked(key) {
+		c.mu.Unlock()
 		return
 	}
 	e, ok := c.entries[key]
@@ -207,6 +245,10 @@ func (c *listCache[T]) store(key cacheKey, gen generation, val T) {
 	e.val = val
 	e.gen = gen
 	e.at = time.Now()
+	c.mu.Unlock()
+	if c.stored != nil {
+		c.stored(ctx, key)
+	}
 }
 
 func (c *listCache[T]) clearBusy(key cacheKey) {
@@ -302,8 +344,16 @@ func resolveList(opts ...forgeapi.ListOption) (listRequest, error) {
 // cursor, so caching it would grow without bound and could answer for the first page, and a named
 // state must reach the library that refuses it.
 func (m *Manager) repoPage(ctx context.Context, h *readHandle, req *listRequest, force bool) (RepoList, error) {
-	fill := func(ctx context.Context) (RepoList, error) {
-		page, err := h.core.ListRepos(ctx, req.opts...)
+	fill := repoFill(h, req.opts)
+	if req.set.After != "" || req.set.StateSet {
+		return fill(ctx)
+	}
+	return m.lists.repos.get(ctx, firstRepoPage(h), force, fill)
+}
+
+func repoFill(h *readHandle, opts []forgeapi.ListOption) func(context.Context) (RepoList, error) {
+	return func(ctx context.Context) (RepoList, error) {
+		page, err := h.core.ListRepos(ctx, opts...)
 		if err != nil {
 			return RepoList{}, err
 		}
@@ -311,11 +361,9 @@ func (m *Manager) repoPage(ctx context.Context, h *readHandle, req *listRequest,
 		list.Account = h.account
 		return list, nil
 	}
-	if req.set.After != "" || req.set.StateSet {
-		return fill(ctx)
-	}
-	return m.lists.repos.get(ctx, listKey(h.id, h.account, "", "repos", ""), force, fill)
 }
+
+func firstRepoPage(h *readHandle) cacheKey { return listKey(h.id, h.account, "", "repos", "") }
 
 func (m *Manager) prPage(ctx context.Context, h *readHandle, ref forgeapi.RepoRef, req *listRequest, force bool) (PRList, error) {
 	fill := func(ctx context.Context) (PRList, error) {

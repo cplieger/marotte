@@ -71,13 +71,13 @@ func stubGitHub(t *testing.T) (srv *httptest.Server, whoamis *atomic.Int32) {
 }
 
 // wiredForges is the manager, routes and notifier composed as Build composes
-// them, with the names cache's builds blocked until the test ends.
+// them, with a steering sync that writes no file.
 type wiredForges struct {
 	m        *forges.Manager
 	mux      *http.ServeMux
 	notifier *forgeNotifier
 	hub      *recordingHub
-	names    *repoNamesCache
+	dir      string
 }
 
 func wireForges(t *testing.T) *wiredForges {
@@ -85,21 +85,21 @@ func wireForges(t *testing.T) *wiredForges {
 	isolateForgeGit(t)
 	hub := &recordingHub{}
 	notifier := &forgeNotifier{hub: hub}
-	m := forges.NewManager(t.TempDir(), notifier.notify)
+	dir := t.TempDir()
+	m := forges.NewManager(dir, notifier.notify)
 	m.Load(t.Context())
-	blocked := make(chan struct{})
-	t.Cleanup(func() { close(blocked) })
-	steer := steering.New(t.TempDir(), t.TempDir())
-	names := newRepoNamesCache(context.WithoutCancel(t.Context()), steer, func(context.Context) map[string][]string {
-		<-blocked
-		return nil
-	})
 	poller := forges.NewPRStatusPoller(forges.NewManagerPRSource(m, func(context.Context) []forges.RepoOrigin { return nil }),
 		quietNotifier{}, func() forges.Gate { return forges.Gate{} })
-	notifier.poller, notifier.names = poller, names
+	notifier.poller, notifier.steer = poller, quietSteering(t, m)
 	mux := http.NewServeMux()
 	forges.NewHTTPHandler(m).RegisterRoutes(mux)
-	return &wiredForges{m: m, mux: mux, notifier: notifier, hub: hub, names: names}
+	return &wiredForges{m: m, mux: mux, notifier: notifier, hub: hub, dir: dir}
+}
+
+// quietSteering is a steering sync over m whose regeneration does nothing.
+func quietSteering(t *testing.T, m *forges.Manager) *forgeSteering {
+	t.Helper()
+	return &forgeSteering{appCtx: context.WithoutCancel(t.Context()), m: m, generate: func(context.Context) {}}
 }
 
 func (w *wiredForges) send(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
@@ -135,21 +135,20 @@ func hostsOf(snap steering.ForgeSnapshot) []string {
 }
 
 // A chat started right after a sign-in or a sign-out lists the right accounts,
-// with no wait on the repository names refresh, and a check whose only news is
-// its time notifies nothing.
+// and a check whose only news is its time notifies nothing.
 func TestForgeNotify_ANewChatSeesTheAccountAtOnce(t *testing.T) {
 	srv, whoamis := stubGitHub(t)
 	w := wireForges(t)
 	host := strings.TrimPrefix(srv.URL, "http://")
 
 	id := w.signIn(t, srv)
-	if got := hostsOf(forgeSnapshot(w.m, w.names)); len(got) != 1 || got[0] != host {
-		t.Fatalf("forgeSnapshot right after the sign-in = %v, want [%s] with the names refresh still blocked", got, host)
+	if got := hostsOf(forgeSnapshot(t.Context(), w.m)); len(got) != 1 || got[0] != host {
+		t.Fatalf("forgeSnapshot right after the sign-in = %v, want [%s]", got, host)
 	}
 	if rec := w.send(t, http.MethodDelete, "/api/forges/"+id, ""); rec.Code != http.StatusOK {
 		t.Fatalf("DELETE the connection = %d %s", rec.Code, rec.Body)
 	}
-	if got := hostsOf(forgeSnapshot(w.m, w.names)); len(got) != 0 {
+	if got := hostsOf(forgeSnapshot(t.Context(), w.m)); len(got) != 0 {
 		t.Fatalf("forgeSnapshot right after the sign-out = %v, want none", got)
 	}
 
@@ -180,13 +179,10 @@ func TestForgeNotify_ANewChatSeesTheAccountAtOnce(t *testing.T) {
 func TestForgeNotify_ASignInDropsTheInventoryBeforeTheBroadcast(t *testing.T) {
 	versions := &subject.Versions{}
 	hub := &recordingHub{versions: versions}
-	blocked := make(chan struct{})
-	t.Cleanup(func() { close(blocked) })
-	names := newRepoNamesCache(context.WithoutCancel(t.Context()), steering.New(t.TempDir(), t.TempDir()),
-		func(context.Context) map[string][]string { <-blocked; return nil })
 	poller := forges.NewPRStatusPoller(nil, quietNotifier{}, func() forges.Gate { return forges.Gate{} },
 		forges.WithInventoryPush(versions, hub))
-	n := &forgeNotifier{hub: hub, poller: poller, names: names}
+	m := forges.NewManager(t.TempDir(), func(context.Context, forges.Change) {})
+	n := &forgeNotifier{hub: hub, poller: poller, steer: quietSteering(t, m)}
 	before, _ := versions.Current(subject.KindForgeInventory, "github:github.com")
 
 	n.notify(t.Context(), forges.Change{ID: "github:github.com", AccountChanged: true})

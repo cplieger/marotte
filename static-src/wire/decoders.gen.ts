@@ -1900,8 +1900,6 @@ export const decodeProbeResult: Decoder<ProbeResult> = (v) => {
   const out: ProbeResult = {
   };
   if (o["forge"] !== undefined && o["forge"] !== null) out.forge = decodeConfiguredForge(o["forge"]);
-  const error = o["error"] === null ? undefined : optStr(o, "error", "$.probe_result");
-  if (error !== undefined) out.error = error;
   return out;
 };
 

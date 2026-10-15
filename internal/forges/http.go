@@ -118,7 +118,7 @@ func (h *HTTPHandler) handleInventory(w http.ResponseWriter, r *http.Request) {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
 		return
 	}
-	webhttp.WriteJSON(w, h.poller.inventoryFor(h.manager.List()))
+	webhttp.WriteJSON(w, h.poller.inventoryFor(h.manager.readers()))
 }
 
 func (h *HTTPHandler) handleInventoryRefresh(w http.ResponseWriter, r *http.Request) {
@@ -200,17 +200,27 @@ func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, i
 	switch {
 	case err == nil:
 		webhttp.Ok(w)
-	case r.Context().Err() != nil:
+	case r.Context().Err() != nil, writeMutationError(w, err):
 	case errors.Is(err, errCleanupPending):
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			httpreply.ErrorJSONWithCode(logsafe.Field(err.Error()), codeCleanupPending))
+	default:
+		httpreply.ServerError(w, "the sign-out could not be saved", err)
+	}
+}
+
+// writeMutationError answers the refusals every mutation of a connection
+// shares, and reports whether err was one.
+func writeMutationError(w http.ResponseWriter, err error) bool {
+	switch {
 	case errors.Is(err, errConnectionBusy):
 		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeConnectionBusy))
 	case errors.Is(err, errConnectionUnusable):
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
 	default:
-		httpreply.ServerError(w, "the sign-out could not be saved", err)
+		return false
 	}
+	return true
 }
 
 const (
@@ -253,7 +263,7 @@ func (h *HTTPHandler) handleOwners(w http.ResponseWriter, r *http.Request, id st
 // writeOwnersError answers a refused owners write. An owner the library refuses
 // is its own envelope, with the message naming which owner it was.
 func writeOwnersError(w http.ResponseWriter, r *http.Request, err error) {
-	if r.Context().Err() != nil {
+	if r.Context().Err() != nil || writeMutationError(w, err) {
 		return
 	}
 	if ferr, ok := errors.AsType[*forgeapi.Error](err); ok {
@@ -265,10 +275,6 @@ func writeOwnersError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, errTooManyOwners):
 		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeOwnersTooMany))
-	case errors.Is(err, errConnectionBusy):
-		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeConnectionBusy))
-	case errors.Is(err, errConnectionUnusable):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
 	case errors.Is(err, errNotLoggedIn):
 		httpreply.NotFound(w, err.Error())
 	default:
@@ -323,16 +329,13 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 	}
 	_, err := h.manager.check(r.Context(), id, checkBudget)
 	switch {
-	case r.Context().Err() != nil:
+	case r.Context().Err() != nil, writeMutationError(w, err):
 		return
 	case errors.Is(err, errCheckBusy):
 		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeCheckBusy))
 		return
 	case errors.Is(err, errReconnectRequired):
 		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeReconnectRequired))
-		return
-	case errors.Is(err, errConnectionUnusable):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
 		return
 	case err != nil:
 		httpreply.NotFound(w, err.Error())
@@ -343,11 +346,7 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 		httpreply.NotFound(w, "unknown forge id")
 		return
 	}
-	res := ProbeResult{Forge: &row}
-	if row.Error != nil {
-		res.Error = row.Error.Message
-	}
-	webhttp.WriteJSON(w, res)
+	webhttp.WriteJSON(w, ProbeResult{Forge: &row})
 }
 
 const (
@@ -501,7 +500,7 @@ func originOn(raw, host string) bool {
 // writeLoginError answers a refused sign-in with an ordinary status and the
 // {error, code} body the client's action layer carries to the form.
 func writeLoginError(w http.ResponseWriter, r *http.Request, err error) {
-	if r.Context().Err() != nil {
+	if r.Context().Err() != nil || writeMutationError(w, err) {
 		return
 	}
 	if ferr, ok := errors.AsType[*forgeapi.Error](err); ok {
@@ -509,12 +508,8 @@ func writeLoginError(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	switch {
-	case errors.Is(err, errConnectionBusy):
-		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeConnectionBusy))
 	case errors.Is(err, errSignInTimedOut):
 		webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout, httpreply.ErrorJSONWithCode(err.Error(), codeSignInTimedOut))
-	case errors.Is(err, errConnectionUnusable):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
 	default:
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(logsafe.Field(err.Error())))
 	}

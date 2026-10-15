@@ -358,7 +358,6 @@ type OwnerScopes struct {
 // and reason included.
 type ProbeResult struct {
 	Forge *ConfiguredForge `json:"forge,omitempty"`
-	Error string           `json:"error,omitempty"`
 }
 
 // InventoryChangedPayload is the forge_inventory event: one connection's entry

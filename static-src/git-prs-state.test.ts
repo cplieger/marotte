@@ -1,12 +1,22 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ForgesListResponse } from "./actions/forge-list.js";
 
-// The store's rows as each case stages them: the module reads them through forgeRows on every derivation.
-const S = vi.hoisted(() => ({ rows: null as ForgesListResponse | null }));
-vi.mock("./forge-store.js", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  forgeRows: () => S.rows,
+// The store's rows as each case stages them, and the apply hooks the module registered.
+const S = vi.hoisted(() => ({
+  rows: null as ForgesListResponse | null,
+  hooks: [] as (() => void)[],
 }));
+vi.mock("./forge-store.js", async (importOriginal) => {
+  const { usableAccountIn } = await import("./__test-helpers__/forge-rows.js");
+  return {
+    ...(await importOriginal<Record<string, unknown>>()),
+    forgeRows: () => S.rows,
+    usableAccount: (id: string) => usableAccountIn(S.rows, id),
+    onRowsApplied: (fn: () => void) => {
+      S.hooks.push(fn);
+    },
+  };
+});
 
 import {
   applyInventoryEntry,
@@ -115,6 +125,9 @@ beforeEach(() => {
 /** The store applies `forges` as its rows. */
 function setRows(forges: ConfiguredForge[]): void {
   S.rows = { forges, kinds: ["github", "gitlab"] };
+  for (const fn of S.hooks) {
+    fn();
+  }
 }
 
 describe("the groups an inventory derives", () => {

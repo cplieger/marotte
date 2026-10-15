@@ -169,6 +169,50 @@ func TestListCache_StaleEntryServesAtOnceThenRevalidates(t *testing.T) {
 	})
 }
 
+// A peek whose fill fails asks the forge again only once a TTL has passed, so a
+// down forge is not read on every peek.
+func TestListCache_PeekRetriesAFailedFillOncePerTTL(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const ttl = time.Minute
+		c := newTestCache(ttl)
+		f := &countingFill{err: errors.New("forge down")}
+
+		for range 3 {
+			if _, ok := c.peek(t.Context(), testKey("k"), f.fill); ok {
+				t.Fatal("peek() with no stored value reported one")
+			}
+			synctest.Wait()
+		}
+		if calls := f.count(); calls != 1 {
+			t.Errorf("fill calls after three peeks inside the TTL = %d, want 1", calls)
+		}
+
+		synctest.Sleep(ttl)
+		c.peek(t.Context(), testKey("k"), f.fill)
+		synctest.Wait()
+		if calls := f.count(); calls != 2 {
+			t.Errorf("fill calls after a peek a TTL later = %d, want 2", calls)
+		}
+	})
+}
+
+// stored is told each fill the cache keeps, and not one it refuses.
+func TestListCache_StoredIsToldEachKeptFill(t *testing.T) {
+	c := newTestCache(time.Hour)
+	var told []cacheKey
+	c.stored = func(_ context.Context, key cacheKey) { told = append(told, key) }
+
+	if _, err := c.get(t.Context(), testKey("k"), false, (&countingFill{}).fill); err != nil {
+		t.Fatalf("get(cold) error = %v, want nil", err)
+	}
+	if _, err := c.get(t.Context(), testKey("bad"), false, (&countingFill{err: errors.New("down")}).fill); err == nil {
+		t.Fatal("get(failing) error = nil, want the fill's")
+	}
+	if !slices.Equal(told, []cacheKey{testKey("k")}) {
+		t.Errorf("stored was told %v, want only %v", told, testKey("k"))
+	}
+}
+
 func TestListCache_OneRevalidationAtATime(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const ttl = time.Minute

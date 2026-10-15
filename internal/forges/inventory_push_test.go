@@ -114,7 +114,7 @@ func TestInventory_UnchangedCycleBroadcastsNothing(t *testing.T) {
 	if len(core.asked) != 3 {
 		t.Fatalf("Setup: lists made = %d, want 3: the push-only cycle must have read the authored call", len(core.asked))
 	}
-	p.inventoryFor(m.List())
+	p.inventoryFor(m.readers())
 
 	if len(b.events) != 1 || inventoryVersion(v, rec.ID) != "1" {
 		t.Errorf("after a push-only cycle and a read: %d frames, version %q; want 1 and \"1\": neither writes the entry",

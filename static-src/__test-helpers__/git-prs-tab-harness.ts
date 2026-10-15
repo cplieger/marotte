@@ -3,12 +3,12 @@
 
 import { vi } from "vitest";
 import { join } from "@cplieger/keyenc";
-import { computed, signal } from "@cplieger/reactive";
+import { batch, computed, signal } from "@cplieger/reactive";
 import type * as ModPRs from "../git-prs-tab.js";
 import type * as ModActions from "../actions/git-prs.js";
 import type { ConfiguredForge, InventoryEntry } from "../wire/types.gen.js";
 import type { ForgesListResponse } from "../actions/forge-list.js";
-import { forgeRow, forgesList } from "./forge-rows.js";
+import { forgeRow, forgesList, usableAccountIn } from "./forge-rows.js";
 
 export const H = {
   apiGet: vi.fn(),
@@ -56,10 +56,24 @@ function newStore(): {
   return { rows, pairs };
 }
 let store = newStore();
+/** What the modules under test passed to onRowsApplied; they register once per suite file. */
+const appliedHooks: (() => void)[] = [];
+
+/** Set the store's rows, and for a read's answer run its apply hooks in the same batch, as forge-store.ts does. */
+function setStoreRows(rows: ForgesListResponse | null): void {
+  batch(() => {
+    store.rows.value = rows;
+    if (rows !== null) {
+      for (const fn of appliedHooks) {
+        fn();
+      }
+    }
+  });
+}
 
 /** The store applies `forges` as its rows, as a read answering after a forges_changed would. */
 export function applyRows(forges: readonly ConfiguredForge[]): void {
-  store.rows.value = forgesList(forges);
+  setStoreRows(forgesList(forges));
 }
 
 export const mocks = {
@@ -68,6 +82,10 @@ export const mocks = {
     ensureForges: H.ensureForges,
     forgeRows: () => store.rows.value,
     usablePairs: () => store.pairs.value,
+    usableAccount: (id: string) => usableAccountIn(store.rows.value, id),
+    onRowsApplied: (fn: () => void) => {
+      appliedHooks.push(fn);
+    },
   }),
   bus: () => ({
     BUS_RECONCILE: "transport:reconcile",
@@ -244,7 +262,7 @@ export const inventoryAnswer: { next: () => Promise<unknown> } = {
 
 export function routeAPI(opts: { forgesNull?: boolean; forges?: readonly Forge[] } = {}): void {
   const forges = opts.forges ?? [githubForge];
-  store.rows.value = opts.forgesNull === true ? null : forgesList(forges);
+  setStoreRows(opts.forgesNull === true ? null : forgesList(forges));
   H.ensureForges.mockImplementation(() => Promise.resolve(store.rows.peek()));
   H.apiGetTyped.mockImplementation((url: string, decode: (v: unknown) => unknown) => {
     if (url !== "/api/forges/inventory") {

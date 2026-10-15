@@ -215,6 +215,48 @@ describe("the usable pairs", () => {
   });
 });
 
+describe("a row's usable account", () => {
+  it("is the account while the row is usable, and undefined once it is gone or unusable", async () => {
+    const retrying = forgeRow({ status: "retrying", error: { message: "slow" } });
+    answerRows(
+      forgesList([retrying]),
+      forgesList([{ ...retrying, status: "reconnect" }]),
+      forgesList([]),
+    );
+    const store = await load();
+    expect(store.usableAccount(retrying.id)).toBeUndefined();
+
+    await store.ensureForges();
+    expect(store.usableAccount(retrying.id)).toBe("acct-1");
+    await store.readForges();
+    expect(store.usableAccount(retrying.id)).toBeUndefined();
+    await store.readForges();
+    expect(store.usableAccount(retrying.id)).toBeUndefined();
+  });
+
+  it("is what an apply hook sees, run before any effect sees the applied rows", async () => {
+    answerRows(forgesList([forgeRow()]), forgesList([forgeRow({ account: "acct-2" })]));
+    const store = await load();
+    const order: string[] = [];
+    store.onRowsApplied(() => {
+      order.push(`hook ${store.usableAccount("github:github.com") ?? "none"}`);
+    });
+    effect(() => {
+      order.push(`effect ${store.forgeRows()?.forges[0]?.account ?? "none"}`);
+    });
+    await flush();
+    await store.readForges();
+
+    expect(order).toEqual([
+      "effect none",
+      "hook acct-1",
+      "effect acct-1",
+      "hook acct-2",
+      "effect acct-2",
+    ]);
+  });
+});
+
 describe("the listings", () => {
   const A = forgeRow();
   const B = forgeRow({ account: "acct-2" });

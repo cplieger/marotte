@@ -13,9 +13,6 @@ import { readFirstPage, readNextPage, type RepoListing } from "./forge-auth-repo
 import type { ConfiguredForge } from "./wire/types.gen.js";
 import { decodeRepoList } from "./wire/decoders.gen.js";
 
-/** Re-exported so consumers import the payload shape from the store that owns it. */
-export type { ForgesListResponse };
-
 const rows = signal<ForgesListResponse | null>(null);
 const failed = signal(false);
 
@@ -45,6 +42,9 @@ const pairs = computed<readonly string[] | null>(
       (a !== null && b !== null && a.length === b.length && a.every((p, i) => p === b[i])),
   },
 );
+
+/** Run inside the batch that applies each read of the rows (see onRowsApplied). */
+const appliedHooks: (() => void)[] = [];
 
 let started = false;
 let issued = 0;
@@ -129,6 +129,23 @@ export function usablePairs(): readonly string[] | null {
   return pairs.value;
 }
 
+/**
+ * The account row `id` is usable as, undefined while it is gone or unusable: state read through any other account
+ * no longer belongs to the row.
+ */
+export function usableAccount(id: string): string | undefined {
+  const row = forgeRows()?.forges.find((f) => f.id === id);
+  return row !== undefined && usableStatus(row.status) ? row.account : undefined;
+}
+
+/**
+ * Run `fn` inside the batch that applies each read of the rows, so the state it drops for an account usableAccount
+ * no longer answers is gone before any effect or reader sees those rows.
+ */
+export function onRowsApplied(fn: () => void): void {
+  appliedHooks.push(fn);
+}
+
 function rowOf(id: string): ConfiguredForge | undefined {
   return rows.peek()?.forges.find((f) => f.id === id);
 }
@@ -140,14 +157,16 @@ function applyRows(d: ForgesListResponse): void {
     failed.value = false;
     let dropped = false;
     for (const [id, held] of listings) {
-      const row = d.forges.find((f) => f.id === id);
-      if (row?.account !== held.account || !usableStatus(row.status)) {
+      if (usableAccount(id) !== held.account) {
         listings.delete(id);
         dropped = true;
       }
     }
     if (dropped) {
       listingVersion.value = listingVersion.peek() + 1;
+    }
+    for (const fn of appliedHooks) {
+      fn();
     }
   });
   for (const row of d.forges) {
@@ -218,12 +237,7 @@ async function sendFirst(
     return page !== null;
   }
   pendingFirst.delete(key);
-  const row = rowOf(id);
-  if (
-    row?.account !== account ||
-    !usableStatus(row.status) ||
-    (page !== null && page.account !== account)
-  ) {
+  if (usableAccount(id) !== account || (page !== null && page.account !== account)) {
     return page !== null;
   }
   const prev = listings.get(id);

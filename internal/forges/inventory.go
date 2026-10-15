@@ -166,28 +166,22 @@ func (inv *inventory) lookup(ids []string) []heldEntry {
 	return out
 }
 
-// inventoryFor is the entry of every connected or retrying row, ordered by
-// connection id, from memory, each with its stamp, and whether a client shows
-// the pull-request view. A connection no cycle has filled for its current
-// account answers loading and asks for a cycle; an entry of a connection no
-// longer usable is left out.
-func (p *PRStatusPoller) inventoryFor(rows []ConfiguredForge) InventoryList {
-	ids := make([]string, 0, len(rows))
-	accounts := make(map[string]string, len(rows))
-	for i := range rows {
-		if rows[i].Status == ForgeConnected || rows[i].Status == ForgeRetrying {
-			ids = append(ids, rows[i].ID)
-			accounts[rows[i].ID] = rows[i].Account
-		}
+// inventoryFor is the entry of every usable connection in hs, in hs's id
+// order, from memory, each with its stamp, and whether a client shows the
+// pull-request view. A connection no cycle has filled for its current account
+// answers loading and asks for a cycle.
+func (p *PRStatusPoller) inventoryFor(hs []readHandle) InventoryList {
+	ids := make([]string, len(hs))
+	for i := range hs {
+		ids[i] = hs[i].id
 	}
-	slices.Sort(ids)
 	list := InventoryList{Entries: make([]InventoryEntry, 0, len(ids)), Subject: make([]*marotte.SubjectStamp, 0, len(ids))}
 	missing := false
 	held := p.inv.lookup(ids)
 	for i := range held {
-		if !held[i].ok || held[i].entry.Account != accounts[ids[i]] {
+		if !held[i].ok || held[i].entry.Account != hs[i].account {
 			held[i].entry = InventoryEntry{
-				ForgeID: ids[i], Account: accounts[ids[i]], State: inventoryLoading, CycleID: "0", Credential: forgeapi.CredUnknown.String(),
+				ForgeID: ids[i], Account: hs[i].account, State: inventoryLoading, CycleID: "0", Credential: forgeapi.CredUnknown.String(),
 				Scopes: []InventoryScope{}, Clones: []CloneRepo{},
 			}
 			missing = true
