@@ -51,10 +51,30 @@ type Lease struct {
 	Origin Origin `json:"origin"`
 	// ScheduleID names the row that asked for the run. Set iff Origin is scheduled.
 	ScheduleID string `json:"schedule_id,omitempty"`
+	// LoopWake is the run's latest iteration-limit wake to its launching chat.
+	LoopWake LoopWake `json:"loop_wake,omitzero"`
 	// Unattended marks a run with nobody to answer a permission request, which arms
 	// the deny-fast floor. Distinct from the origin: who launched it vs who watches.
 	Unattended bool `json:"unattended"`
 }
+
+// LoopWake is one iteration-limit pause's wake. A pause whose Key is recorded is never sent again,
+// whatever its State, so a restart neither resends nor retries it.
+type LoopWake struct {
+	Key   string        `json:"key"`
+	State LoopWakeState `json:"state"`
+}
+
+// LoopWakeState is how far a LoopWake got.
+type LoopWakeState string
+
+// The LoopWake states. Delivered and Failed are the send's outcome.
+const (
+	// LoopWakeSending is recorded before the send: a process that dies mid-send leaves it.
+	LoopWakeSending   LoopWakeState = "sending"
+	LoopWakeDelivered LoopWakeState = "delivered"
+	LoopWakeFailed    LoopWakeState = "failed"
+)
 
 // Bounded reports whether marotte believes the run to be EXECUTING under a deadline it set.
 func (l *Lease) Bounded() bool { return !l.Deadline.IsZero() }

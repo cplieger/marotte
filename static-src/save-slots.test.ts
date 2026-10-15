@@ -31,6 +31,7 @@ const EXPECTED_KEYS = [
   "spec_planning_ask_first",
   "steering_reminders_enabled",
   "workflows_enabled",
+  "loop_limit_wake",
   "work_validation",
   "auto_routing",
   "auto_delegation",

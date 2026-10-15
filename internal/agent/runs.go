@@ -49,6 +49,8 @@ type Runs struct {
 	unconfirmed unconfirmedSends
 	// life admits every step-session mutation against a Delete (run_lifecycle.go).
 	life runLifecycle
+	// loopWake wakes a launching chat at its run's iteration-limit pause (run_loop_wake.go).
+	loopWake loopLimitWake
 	// positions serializes a run's positional step-status write with its heal's resume, or a resume between read and write marks another step.
 	positions runLocks
 	// hosts serializes, per run, finding or starting a verb's carrier with entering it (acquireHost).

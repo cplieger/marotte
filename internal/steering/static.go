@@ -194,7 +194,7 @@ func writeUIGuide(b *strings.Builder) {
 	b.WriteString("(\"Keep forever\" or \"Days kept\", default 7), \"Agent capabilities\" (\"Knowledge base ")
 	b.WriteString("search\", \"Model fallback\", \"Memory\", ")
 	b.WriteString("\"Spec planning\", \"Steering reminders\", \"Work validation\", ")
-	b.WriteString("\"AWS CloudFormation safety check\", \"Workflows\", \"Output style\", \"Shell command timeout\"), ")
+	b.WriteString("\"AWS CloudFormation safety check\", \"Workflows\", \"Wake the chat when a workflow loop hits its limit\", \"Output style\", \"Shell command timeout\"), ")
 	b.WriteString("\"Data sharing\" (\"Share content with AWS for service improvement\", \"kiro-cli telemetry\"), ")
 	b.WriteString("\"Experimental features\" (\"Show hook status in chat\", \"Exclude ")
 	b.WriteString("default resources from custom agents\", \"Debug logs\"), \"Advanced\" (\"config.json\" opens every setting as one file in the editor)\n")

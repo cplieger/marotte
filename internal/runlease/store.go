@@ -176,6 +176,45 @@ func (s *Store) SetParentSessionID(ctx context.Context, workflowID, session stri
 	return s.persistLocked(ctx)
 }
 
+// ClaimLoopWake records the pause key as LoopWakeSending unless the run's wake already names it;
+// claimed reports that this call recorded it, so of racing callers exactly one is claimed. The
+// error reports DURABILITY, as SetDeadline's does; ErrNotFound is the one error meaning nothing
+// was stored.
+func (s *Store) ClaimLoopWake(ctx context.Context, workflowID, key string) (claimed bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l, ok := s.leases[workflowID]
+	if !ok {
+		return false, ErrNotFound
+	}
+	if l.LoopWake.Key == key {
+		return false, nil
+	}
+	l.LoopWake = LoopWake{Key: key, State: LoopWakeSending}
+	s.leases[workflowID] = l
+	s.version++
+	return true, s.persistLocked(ctx)
+}
+
+// SetLoopWakeState records how a claimed wake ended. A wake whose key a later pause's claim
+// replaced is left alone, so a slow send never unclaims the newer pause. The error reports
+// DURABILITY; ErrNotFound is the one error meaning nothing was stored.
+func (s *Store) SetLoopWakeState(ctx context.Context, workflowID, key string, state LoopWakeState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l, ok := s.leases[workflowID]
+	if !ok {
+		return ErrNotFound
+	}
+	if l.LoopWake.Key != key || l.LoopWake.State == state {
+		return nil
+	}
+	l.LoopWake.State = state
+	s.leases[workflowID] = l
+	s.version++
+	return s.persistLocked(ctx)
+}
+
 // SetDeadline re-stamps a lease's deadline, or parks it with the zero time.
 // The error reports DURABILITY, not the mutation: when the lease exists the in-memory
 // deadline is set regardless. ErrNotFound is the one error meaning nothing was stored.

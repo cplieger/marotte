@@ -626,12 +626,13 @@ const arbModel = fc.letrec<{
       spec_planning_ask_first: fc.boolean(),
       steering_reminders_enabled: fc.boolean(),
       workflows_enabled: fc.boolean(),
+      loop_limit_wake: fc.boolean(),
       supervised_default: fc.boolean(),
       scheduled_auto_approve: fc.boolean(),
       debug_logs: fc.boolean(),
       model_fallback_enabled: fc.boolean(),
     },
-    { requiredKeys: ["last_effort_by_model", "kiro_defaults", "theme", "fb_path", "last_model", "last_merge_method", "memory_mode", "spec_planning", "work_validation", "cloudformation_safety_check", "auto_routing", "auto_delegation", "output_style", "agent_ignore_files", "chat_retention_days", "auto_compact_pct", "terminal_command_timeout_ms", "auto_compaction_enabled", "knowledge_enabled", "content_collection_enabled", "guard_payload_links", "mcp_wait_for_ready", "notifications_enabled", "notify_agent_finished", "notify_pr_status", "notify_run_outcome", "spec_planning_ask_first", "steering_reminders_enabled", "workflows_enabled", "supervised_default", "scheduled_auto_approve", "debug_logs", "model_fallback_enabled"] },
+    { requiredKeys: ["last_effort_by_model", "kiro_defaults", "theme", "fb_path", "last_model", "last_merge_method", "memory_mode", "spec_planning", "work_validation", "cloudformation_safety_check", "auto_routing", "auto_delegation", "output_style", "agent_ignore_files", "chat_retention_days", "auto_compact_pct", "terminal_command_timeout_ms", "auto_compaction_enabled", "knowledge_enabled", "content_collection_enabled", "guard_payload_links", "mcp_wait_for_ready", "notifications_enabled", "notify_agent_finished", "notify_pr_status", "notify_run_outcome", "spec_planning_ask_first", "steering_reminders_enabled", "workflows_enabled", "loop_limit_wake", "supervised_default", "scheduled_auto_approve", "debug_logs", "model_fallback_enabled"] },
   ),
   ElicitationNeededPayload: fc.record(
     {
