@@ -1,6 +1,8 @@
 package composition
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -65,6 +67,66 @@ func TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest(t *testing.T) {
 				t.Errorf("%s kept = %v, want %v (set: %+v)", tc.key, kept[tc.key], tc.want, open)
 			}
 		})
+	}
+}
+
+// TestPruneTabs_OpensEachKeptChatTabsLog: a chat's read position is projected only from an open
+// log, so boot opens every chat tab's, and one unreadable log costs only that chat.
+func TestPruneTabs_OpensEachKeptChatTabsLog(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "chats")
+	writer, err := chat.NewStore(dir)
+	if err != nil {
+		t.Fatalf("chat store: %v", err)
+	}
+	for _, id := range []marotte.ChatID{"c-bad", "c-good"} {
+		if _, err := writer.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
+			c.Name = "a chat"
+			return true
+		}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	opened, err := writer.OpenTurn(t.Context(), "c-good", &chat.TurnSpec{
+		Source: marotte.TurnOpenNamePrompt, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "hi"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("open turn: %v", err)
+	}
+	closer, err := json.Marshal(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Append(t.Context(), "c-good", &marotte.Entry{
+		ID: opened.Turn + ":close", Turn: opened.Turn, Kind: marotte.EntryKindTurnClose, Payload: closer,
+	}); err != nil {
+		t.Fatalf("close turn: %v", err)
+	}
+	// A directory where the log file belongs makes c-bad's log unopenable.
+	if err := os.Mkdir(filepath.Join(dir, "c-bad", "entries.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	chatStore, err := chat.NewStore(dir)
+	if err != nil {
+		t.Fatalf("chat store: %v", err)
+	}
+	tabStore, err := tabs.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("tab store: %v", err)
+	}
+	for _, ref := range []string{"c-bad", "c-good"} {
+		if _, _, _, err := tabStore.Open(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: ref}); err != nil {
+			t.Fatalf("open tab %s: %v", ref, err)
+		}
+	}
+
+	pruneTabs(t.Context(), tabStore, chatStore)
+
+	positions := map[string]uint64{}
+	for _, h := range chatStore.List(t.Context()) {
+		positions[h.ID] = h.ReadPosition
+	}
+	if positions["c-good"] != 1 {
+		t.Errorf("c-good's read_position after boot = %d, want 1 (positions %v)", positions["c-good"], positions)
 	}
 }
 

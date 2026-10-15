@@ -39,12 +39,17 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	read, err := rr.runs.openRun(r.Context(), id)
+	read, err := rr.runs.positionedRead(r.Context(), id)
 	if err != nil {
 		writeRunReadErr(w, id, err)
 		return
 	}
 	raw := read.raw
+	position, err := read.position(id)
+	if err != nil {
+		slog.Warn("workflow inspect: the run's read position could not be computed",
+			"workflow_id", logsafe.Field(id), "error", err)
+	}
 	var ends map[string]marotte.RunStepEnd
 	var starts map[string]marotte.RunStepStart
 	if rr.runs.log != nil {
@@ -63,7 +68,9 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	if u, ok := rr.runs.planUpdate(id); ok {
 		plan = &u
 	}
-	out, err := withRunExtras(raw, runExtras{asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan})
+	out, err := withRunExtras(raw, runExtras{
+		asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan, readPosition: position,
+	})
 	if err != nil {
 		slog.Warn("workflow inspect: the reply could not carry the run's open asks, step ends, step starts and plan update",
 			"workflow_id", logsafe.Field(id), "error", err)
@@ -206,13 +213,63 @@ type runExtras struct {
 	starts        map[string]marotte.RunStepStart
 	plan          *marotte.RunPlanUpdate
 	asks          []marotte.RunAsk
+	readPosition  uint64
 	asksReachable bool
+}
+
+// runReadPosition is a run's read position: the turns its own log holds plus one once KAS reports
+// it terminal, else 0. The plus one gives a run that settled with no step turn a position, so it
+// lights once; a retry's step turns raise it, so a retried run lights again when it settles.
+func runReadPosition(status marotte.RunStatus, turns uint64) uint64 {
+	if !status.Terminal() {
+		return 0
+	}
+	return turns + 1
+}
+
+// positionedRead is a run read with its log's turn count, taken BEFORE the state: a retry's step
+// turn opened after a terminal state was read cannot pair with that state into a position no reply
+// describes.
+type positionedRead struct {
+	turnsErr error
+	runRead
+	turns uint64
+}
+
+func (rs *Runs) positionedRead(ctx context.Context, workflowID string) (positionedRead, error) {
+	var p positionedRead
+	if rs.log != nil {
+		p.turns, p.turnsErr = rs.log.turnHighWater(ctx, workflowID)
+	}
+	read, err := rs.openRun(ctx, workflowID)
+	p.runRead = read
+	return p, err
+}
+
+// position is the read's runReadPosition; an unreadable state or turn count is an error.
+func (p *positionedRead) position(workflowID string) (uint64, error) {
+	in, decodeErr := workflow.DecodeInspect(workflowID, p.raw)
+	if err := errors.Join(decodeErr, p.turnsErr); err != nil {
+		return 0, err
+	}
+	return runReadPosition(marotte.RunStatus(in.State.Status), p.turns), nil
+}
+
+// RunReadBound is the run's read position now, read as GET /api/runs/{id} reads it: the clamp for an
+// acknowledgement (command.runOwner). It errors when the run's state or log cannot be read.
+func (rs *Runs) RunReadBound(ctx context.Context, workflowID string) (uint64, error) {
+	read, err := rs.positionedRead(ctx, workflowID)
+	if err != nil {
+		return 0, err
+	}
+	return read.position(workflowID)
 }
 
 // withRunExtras splices marotte's top-level keys into KAS's reply, decoding to raw values so future
 // keys survive and nested values stay byte-identical: `open_asks`, `step_ends` and `step_starts`, never
 // null because an agent could not tell "none" from "unsupported", `asks_reachable`, false when
-// `open_asks` is not a statement that nothing waits, and `plan_update` when a revision was seen.
+// `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), and
+// `plan_update` when a revision was seen.
 func withRunExtras(raw json.RawMessage, x runExtras) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
@@ -249,6 +306,9 @@ func withRunExtras(raw json.RawMessage, x runExtras) (json.RawMessage, error) {
 	}
 	obj["step_ends"] = encodedEnds
 	obj["step_starts"] = encodedStarts
+	if obj["read_position"], err = json.Marshal(x.readPosition); err != nil {
+		return nil, err
+	}
 	if plan != nil {
 		if obj["plan_update"], err = json.Marshal(plan); err != nil {
 			return nil, err

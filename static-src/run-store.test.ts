@@ -200,6 +200,42 @@ describe("the reply's step ends travel beside the state", () => {
   });
 });
 
+describe("the reply's read position travels beside the state", () => {
+  it.each([
+    ["a non-negative integer", 4, 4],
+    ["a negative number", -1, 0],
+    ["a fraction", 1.5, 0],
+    ["a string", "4", 0],
+    ["nothing", undefined, 0],
+  ])("reads %s as %s", async (_label, raw, want) => {
+    responses = [{ workflowId: "rp", status: "failed" }];
+    replyExtra = raw === undefined ? {} : { read_position: raw };
+    store.invalidateRun("rp");
+    await settle();
+    expect(store.peekRunState("rp")?.readPosition).toBe(want);
+    store.forgetRun("rp");
+  });
+
+  // Only a read names a run's position: a retry's frames arrive before the run settles again.
+  it("is left alone by a run_progress frame", async () => {
+    responses = [
+      {
+        workflowId: "rp",
+        status: "failed",
+        root: { nodeId: "rp", type: "sequence", status: "failed", children: [step("build")] },
+      },
+    ];
+    replyExtra = { read_position: 3 };
+    store.invalidateRun("rp");
+    await settle();
+    expect(
+      store.applyRunProgress({ workflow_id: "rp", node_path: ["rp", "build"], status: "running" }),
+    ).toBe(true);
+    expect(store.peekRunState("rp")?.readPosition).toBe(3);
+    store.forgetRun("rp");
+  });
+});
+
 // KAS restamps a node's `startedAt` each time it re-enters it, so after a pause and a resume its own
 // stamp would restart every clock on the run at zero. The run log's attempt start does not move.
 describe("a node's start is its attempt's, from the run log", () => {

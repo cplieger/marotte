@@ -330,6 +330,11 @@ export interface ChatHeader {
   usage: Usage;
   created_at: number;
   updated_at: number;
+  /**
+ * ReadPosition is wire-only: EntryLog.ReadPosition of the opened log, 0 when the log is not
+ * open. chat.Store fills it; Chat.Header does not.
+ */
+  read_position?: number;
   turn_count: number;
   supervised_mode?: boolean;
   /** Tangent mirrors Chat's for the merge controls. */
@@ -3527,6 +3532,11 @@ export interface TabSubject {
  * cycle check is needed.
  */
   parent: string;
+  /**
+ * Seen is the read position the reader last acknowledged for a chat or run tab, 0 for none;
+ * only ack_tab moves it, never backward.
+ */
+  seen?: number;
   /**
  * Pinned sorts a tab ahead of every unpinned one. The partition is applied
  * by the client when it renders (applyPinOrder); the stored slice keeps the

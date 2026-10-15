@@ -47,6 +47,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.Register(marotte.CmdReorderTabs, bind1(mem, cmdReorderTabs))
 	d.Register(marotte.CmdPinTab, bind1(mem, cmdPinTab))
 	d.Register(marotte.CmdReparentTab, bind1(mem, cmdReparentTab))
+	d.Register(marotte.CmdAckTab, bind1(mem, cmdAckTab))
 
 	d.Register(marotte.CmdApproveSpecPhase, bind3(r.SpecApprovals, r.Workspace, r.Bus, cmdApproveSpecPhase))
 

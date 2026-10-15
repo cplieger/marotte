@@ -204,6 +204,7 @@ func (f *fixedTabs) Close(context.Context, string) ([]marotte.TabSubject, uint64
 func (*fixedTabs) Reorder(context.Context, []string) (uint64, error) { return 0, nil }
 
 func (*fixedTabs) SetPinned(context.Context, string, bool) (uint64, error) { return 0, nil }
+func (*fixedTabs) SetSeen(context.Context, string, uint64) (uint64, error) { return 0, nil }
 
 func (*fixedTabs) Reparent(context.Context, string, string) (uint64, error) { return 0, nil }
 

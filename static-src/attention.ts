@@ -1,13 +1,19 @@
-// The unseen-cue set, rendered on the surfaces OUTSIDE this page: the tab title's count,
+// The tabs that want the reader, rendered on the surfaces OUTSIDE this page: the tab title's count,
 // the installed app's badge and the tab icon. A latched sidebar dot is not reliably on
 // screen (a scrolled list, the mobile drawer, a hidden page), and Notification is absent
 // on iOS Safari outside an installed app. STATE, not events: a pure render of what is
 // true, so nothing here has a timer. Ported from web-terminal-ui's attention.ts, which its
 // `exports` map does not publish. DOM-free above "The browser binding".
 
-import { cueCandidates, getActiveTabId, subscribeTabCues, setOnTabClosed } from "./tabs.js";
-import { BUS_TAB_CHANGED, onBus } from "./bus.js";
+import { ackTabCommand } from "./actions/tabs.js";
+import { cueCandidates, getActiveTabId, openTabSubjects, subscribeTabCues } from "./tabs.js";
+import { BUS_PAGE_RESUMED, BUS_RECONCILE, BUS_TAB_CHANGED, onBus, onSSE } from "./bus.js";
 import { $ } from "./dom.js";
+import { closeNotificationsFor } from "./notify.js";
+import { chatTarget, runTarget } from "./push-subject.js";
+import { runState } from "./run-store.js";
+import { watchSession } from "./store.js";
+import { newOpID } from "./transport.js";
 
 /**
  * The dot states that raise an attention cue, the states that WANT the reader. `working`
@@ -16,7 +22,7 @@ import { $ } from "./dom.js";
  * off-page, so it must not disagree with the dot. No per-outcome carve-out:
  * `tabs.test.ts` pins `cueCandidates` as verbatim.
  */
-export type CueStatus = "input" | "waiting" | "failed" | "done";
+type CueStatus = "input" | "waiting" | "failed" | "done";
 
 /**
  * Severity order over CueStatus, most severe first, AND the complete set isCueStatus
@@ -59,53 +65,58 @@ export function cueIconName(status: CueStatus): "input" | "done" | "alert" {
   return CUE_ICON[status];
 }
 
-/**
- * isUnseenCue reports whether a chat's CURRENT dot state is a cue this reader has not
- * acknowledged: the one predicate behind count and icon. A watched chat's cue is
- * acknowledged on observation, so no caller special-cases the chat on screen.
- */
-export function isUnseenCue(
-  status: string,
-  id: string,
-  seen: ReadonlyMap<string, CueStatus>,
-): status is CueStatus {
-  return isCueStatus(status) && seen.get(id) !== status;
-}
-
-/** What the fold reads per chat tab. A structural type, so tabs.ts passes its own
+/** What the fold reads per chat or run tab. A structural type, so tabs.ts passes its own
  *  projection without this module knowing what else a TabViewSpec carries. */
 export interface CueCandidate {
   readonly id: string;
+  readonly kind: "chat" | "run";
+  /** The folded dot state. */
   readonly status: string;
+  /** `TabSubject.seen`: the read position the server holds as acknowledged. */
+  readonly seen: number;
+  /** The tab's read position, 0 when unknown: a chat header's or a run reply's `read_position`. */
+  readonly position: number;
+}
+
+/**
+ * cueClass is the one predicate behind count, icon and acknowledgement. "needs" is an open ask or a
+ * paused run: it counts while open and no acknowledgement clears it. "unread" is a finished state
+ * whose read position is past what the server holds as seen. A running tab is neither.
+ */
+export function cueClass(c: CueCandidate): "needs" | "unread" | "" {
+  if (!isCueStatus(c.status)) {
+    return "";
+  }
+  if (c.status === "input" || (c.kind === "run" && c.status === "waiting")) {
+    return "needs";
+  }
+  return c.position > c.seen ? "unread" : "";
 }
 
 /** The whole attention state, and the only thing the sinks are allowed to see. */
 export interface Attention {
-  /** How many chats hold an unacknowledged cue. */
+  /** How many tabs need the reader or hold an unread state. */
   readonly count: number;
   /** The most severe of them, or "" when there is none. */
   readonly worst: CueStatus | "";
 }
 
-export const NO_ATTENTION: Attention = { count: 0, worst: "" };
-
 /**
- * summarize folds the chat tabs and this reader's acknowledgements into what every surface
- * renders: a COUNT for title and badge, the single WORST for the icon, neither naming a
- * chat. A stateless fold, so it cannot go stale and is cheap on every dot write.
+ * summarize folds the tabs into what every surface renders: a COUNT for title and badge, the
+ * single WORST for the icon, neither naming a tab. `watchedTab` is the tab on screen: its unread
+ * state is this page's own projection of the acknowledgement it sends, so it is left out, while
+ * its "needs" still counts. Stateless: another window counts that tab until the ack's frame lands.
  */
-export function summarize(
-  candidates: readonly CueCandidate[],
-  seen: ReadonlyMap<string, CueStatus>,
-): Attention {
+export function summarize(candidates: readonly CueCandidate[], watchedTab: string): Attention {
   let count = 0;
   let worst: CueStatus | "" = "";
   for (const candidate of candidates) {
-    if (!isUnseenCue(candidate.status, candidate.id, seen)) {
+    const cls = cueClass(candidate);
+    if (cls === "" || (cls === "unread" && candidate.id === watchedTab)) {
       continue;
     }
     count += 1;
-    worst = worseCue(worst, candidate.status);
+    worst = worseCue(worst, candidate.status as CueStatus);
   }
   return { count, worst };
 }
@@ -134,32 +145,65 @@ export interface AttentionEnv {
 }
 
 interface AttentionSurfaces {
-  /** Render an attention state. Idempotent: a value equal to the last one
-   *  applied touches nothing. */
+  /** Each surface is written only when its own value changed. */
   apply: (next: Attention) => void;
+  /** A no-op until the first apply, so boot writes through apply's count gate. */
+  assertBadge: () => void;
+  /** Leaves the badge: it means "unread", which the page going away does not change. */
+  release: () => void;
 }
 
 export function createAttention(env: AttentionEnv): AttentionSurfaces {
-  // Last applied, so each sink fires only on a real change: the title is also the bookmark
-  // name, and re-assigning an icon href makes some browsers re-fetch it.
-  let applied: Attention = NO_ATTENTION;
-  let first = true;
+  // The title and icon are page-local and gated on what was painted: the title is also the
+  // bookmark name, and re-assigning an icon href makes some browsers re-fetch it.
+  let painted: Attention | null = null;
+  // The badge is OS state the page cannot read back: WebKit resolves setAppBadge before the write
+  // lands and may drop it silently (Source/WebCore/page/Navigator.cpp, webpushd's setAppBadge).
+  // This memory gates only the count-change write; assertBadge writes whatever it holds.
+  let badge: number | null = null;
+  // The count already written in this microtask turn: several sync points firing together
+  // (an acknowledgement that also changed the count) cost one OS write.
+  let writtenThisTurn: number | null = null;
+
+  function writeBadge(count: number): void {
+    badge = count;
+    if (writtenThisTurn === count) {
+      return;
+    }
+    if (writtenThisTurn === null) {
+      queueMicrotask(() => {
+        writtenThisTurn = null;
+      });
+    }
+    writtenThisTurn = count;
+    env.setBadge?.(count);
+  }
 
   return {
     apply(next: Attention): void {
-      const countChanged = first || next.count !== applied.count;
-      const worstChanged = first || next.worst !== applied.worst;
-      first = false;
-      applied = next;
-
-      if (countChanged) {
+      if (painted?.count !== next.count) {
         env.titlePrefix(titlePrefixFor(next.count));
-        // The badge takes the SAME number as the title.
-        env.setBadge?.(next.count);
       }
-      if (worstChanged) {
+      if (painted?.worst !== next.worst) {
         env.setIcon?.(next.worst === "" ? null : cueIconName(next.worst));
       }
+      painted = next;
+      // The badge takes the SAME number as the title.
+      if (badge !== next.count) {
+        writeBadge(next.count);
+      }
+    },
+
+    assertBadge(): void {
+      if (badge !== null) {
+        writeBadge(badge);
+      }
+    },
+
+    release(): void {
+      env.titlePrefix("");
+      env.setIcon?.(null);
+      painted = null;
     },
   };
 }
@@ -179,119 +223,28 @@ export function iconVariantHref(href: string, variant: string): string | null {
   return `${href.slice(0, at)}-${variant}${href.slice(at)}`;
 }
 
-/**
- * localStorage key for the cues this reader has SEEN: chat id -> the acknowledged dot
- * state. Its own key, not `marotte.ui-state` (a different cadence). Remembered because
- * every dot input is rebuilt from server state on reload and reconnect. Per device: seen
- * is the READER's property. Keyed per chat, since several chats latch at once.
- */
-export const CUE_SEEN_KEY = "marotte.cue-seen";
-
-/**
- * Bound on the acknowledgement map, so a corrupted or hostile stored value cannot make the
- * restore path do unbounded work.
- */
-export const MAX_PERSISTED_CUE_SEEN = 200;
-
-/**
- * parseCueSeen reads stored acknowledgements into a clean map, dropping anything it cannot
- * trust (a lost acknowledgement only re-lights a dismissable cue). Pure; the caller owns
- * the read and its try/catch.
- */
-export function parseCueSeen(raw: string | null): Map<string, CueStatus> {
-  const out = new Map<string, CueStatus>();
-  if (raw === null || raw === "") {
-    return out;
-  }
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    return out;
-  }
-  // Arrays and null are typeof "object" too, and neither is a cue map.
-  if (typeof data !== "object" || data === null || Array.isArray(data)) {
-    return out;
-  }
-  for (const [id, status] of Object.entries(data)) {
-    if (id === "" || typeof status !== "string" || !isCueStatus(status)) {
-      continue;
-    }
-    out.set(id, status);
-    if (out.size >= MAX_PERSISTED_CUE_SEEN) {
-      break;
-    }
-  }
-  return out;
-}
-
-/**
- * serializeCueSeen encodes acknowledgements for storage without truncating: `mark` keeps
- * the map within the cap.
- */
-export function serializeCueSeen(seen: ReadonlyMap<string, CueStatus>): string {
-  return JSON.stringify(Object.fromEntries(seen));
-}
-
-/** Where acknowledgements are kept. Injected so the store is testable with no
- *  localStorage, and so the quota/disabled-storage try/catch has one home. */
-export interface CueSeenStorage {
-  read: () => string | null;
-  write: (raw: string) => void;
-}
-
-interface CueSeen {
-  /** The live map, for the fold to read. */
-  map: () => ReadonlyMap<string, CueStatus>;
-  /** Record that this reader has seen `id` holding `status`. A non-cue status is
-   *  not an acknowledgeable event, so it is ignored rather than stored. */
-  mark: (id: string, status: string) => void;
-  /** Drop an acknowledgement, so the chat's NEXT cue is a fresh one. */
-  forget: (id: string) => void;
-}
-
-export function createCueSeen(storage: CueSeenStorage): CueSeen {
-  const seen = parseCueSeen(storage.read());
-  return {
-    map: () => seen,
-    mark(id: string, status: string): void {
-      if (!isCueStatus(status) || seen.get(id) === status) {
-        return;
-      }
-      seen.set(id, status);
-      // Evict oldest-first so the live map obeys the parser's cap: a chat that vanished while the
-      // page was closed leaves an entry nothing else collects.
-      while (seen.size > MAX_PERSISTED_CUE_SEEN) {
-        const oldest = seen.keys().next().value;
-        if (oldest === undefined) {
-          break;
-        }
-        seen.delete(oldest);
-      }
-      storage.write(serializeCueSeen(seen));
-    },
-    forget(id: string): void {
-      if (seen.delete(id)) {
-        storage.write(serializeCueSeen(seen));
-      }
-    },
-  };
-}
+/** How an acknowledgement went. "refused" is a 400, or a successful reply whose marker is below
+ *  the ack, whatever the cause: the same position is not resent until a sync point, and a new one
+ *  is sent at once. "failed" is a transport error, a 409 or a 5xx, resent on the next refresh. */
+export type AckResult = "acked" | "refused" | "failed";
 
 /** Everything the controller needs from outside itself. */
 interface AttentionWiring {
-  /** The chat tabs and their current dot states. */
+  /** The chat and run tabs, their dot states, seen markers and read positions. */
   candidates: () => readonly CueCandidate[];
   /**
    * The TAB the reader is looking at, "" for none. A tab id like every key here, never the
-   * chat store's active id: the watched-chat rule could never match it.
+   * chat store's active id: the watched-tab rule could never match it.
    */
   activeTabID: () => string;
   /** Whether the page is in front of the reader at all. */
   pageVisible: () => boolean;
-  /** The chat ids whose sidebar row the reader can actually SEE right now. */
+  /** The tab ids whose sidebar row the reader can actually SEE right now. */
   rowsInView: () => readonly string[];
-  storage: CueSeenStorage;
+  /** Called once when a tab stops needing the reader or being unread, on any device's action. */
+  retract: (tabID: string) => void;
+  /** Send the acknowledgement of a tab up to a read position. */
+  sendAck: (tabID: string, seen: number) => Promise<AckResult>;
   surfaces: AttentionSurfaces;
 }
 
@@ -300,75 +253,113 @@ interface AttentionController {
    *  The recompute funnel's target; idempotent, so calling it more often than
    *  necessary costs a loop over a handful of tabs. */
   refresh: () => void;
-  /** Acknowledge what the reader can see: the chat on screen, plus every sidebar
+  /** refresh, then write the badge whether or not its count moved: for every event after
+   *  which the OS badge or the server may disagree with this page. Resends refused acks. */
+  sync: () => void;
+  /** Acknowledge what the reader can see: the tab on screen, plus every sidebar
    *  row actually in view. */
   ackSeen: () => void;
-  /** Acknowledge the chat the reader just switched to. */
-  ackSwitch: (chatID: string) => void;
-  /** Drop a departed chat's acknowledgement. */
-  forget: (chatID: string) => void;
+  /** Acknowledge the tab the reader just switched to. */
+  ackSwitch: (tabID: string) => void;
 }
 
 export function createAttentionController(wiring: AttentionWiring): AttentionController {
-  const seen = createCueSeen(wiring.storage);
+  // Request dedupe in page memory: the position last sent per tab. The server's monotonic marker is
+  // the state; this only stops a refresh from resending what is in flight or refused, and every
+  // sync point clears it, so a refused position is offered once more after a reconnect or a wake.
+  const sent = new Map<string, number>();
+  // Each tab's class at the previous fold, so a tab leaving it retracts its notifications once.
+  const classes = new Map<string, "needs" | "unread">();
 
-  /**
-   * refresh is the RAISE rule: a cue raises when the chat is NOT (active AND page-visible)
-   * and its state is an unacknowledged cue. Both halves matter: "active" alone swallows the
-   * cue of the one chat left running on a hidden page. Safe as a SWEEP, so it is the funnel.
-   * The acknowledgement path is the ONLY thing keeping a watched chat out of the count.
-   */
-  function refresh(): void {
-    const watchedTab = wiring.pageVisible() ? wiring.activeTabID() : "";
-    for (const candidate of wiring.candidates()) {
-      if (candidate.status === "") {
-        // No information, not a state: a never-painted dot or a chat the store does not know is no
-        // evidence a cue ENDED, and dropping the acknowledgement re-lit it on every reload.
-        continue;
+  function ack(c: CueCandidate): void {
+    if (cueClass(c) !== "unread" || sent.get(c.id) === c.position) {
+      return;
+    }
+    const { id, position } = c;
+    sent.set(id, position);
+    void wiring.sendAck(id, position).then((result) => {
+      if (result === "failed" && sent.get(id) === position) {
+        sent.delete(id);
       }
-      if (!isCueStatus(candidate.status)) {
-        // The state moved off a cue, so the next cue must be fresh; this also bounds the map.
-        seen.forget(candidate.id);
-      } else if (candidate.id === watchedTab) {
-        seen.mark(candidate.id, candidate.status);
+    });
+  }
+
+  function retractLeft(candidates: readonly CueCandidate[]): void {
+    const now = new Map<string, "needs" | "unread">();
+    for (const c of candidates) {
+      const cls = cueClass(c);
+      if (cls !== "") {
+        now.set(c.id, cls);
       }
     }
-    wiring.surfaces.apply(summarize(wiring.candidates(), seen.map()));
+    for (const id of classes.keys()) {
+      if (!now.has(id)) {
+        wiring.retract(id);
+      }
+    }
+    classes.clear();
+    for (const [id, cls] of now) {
+      classes.set(id, cls);
+    }
+  }
+
+  /**
+   * refresh is the RAISE rule: a tab counts unless its unread state is on screen (active AND
+   * page-visible). Both halves matter: "active" alone swallows the cue of the one tab left
+   * running on a hidden page. Safe as a SWEEP, so it is the funnel.
+   */
+  function refresh(): void {
+    const candidates = wiring.candidates();
+    const ids = new Set(candidates.map((c) => c.id));
+    for (const id of sent.keys()) {
+      if (!ids.has(id)) {
+        sent.delete(id);
+      }
+    }
+    const watchedTab = wiring.pageVisible() ? wiring.activeTabID() : "";
+    const watched = candidates.find((c) => c.id === watchedTab);
+    if (watched !== undefined) {
+      ack(watched);
+    }
+    retractLeft(candidates);
+    wiring.surfaces.apply(summarize(candidates, watchedTab));
+  }
+
+  function reassert(): void {
+    refresh();
+    wiring.surfaces.assertBadge();
   }
 
   return {
     refresh,
+    sync(): void {
+      sent.clear();
+      reassert();
+    },
 
     ackSeen(): void {
-      if (!wiring.pageVisible()) {
-        return;
-      }
-      const inView = new Set(wiring.rowsInView());
-      for (const candidate of wiring.candidates()) {
-        if (inView.has(candidate.id)) {
-          seen.mark(candidate.id, candidate.status);
+      if (wiring.pageVisible()) {
+        const inView = new Set(wiring.rowsInView());
+        for (const candidate of wiring.candidates()) {
+          if (inView.has(candidate.id)) {
+            ack(candidate);
+          }
         }
       }
-      // refresh's watched-chat rule acknowledges the ACTIVE chat, row in view or not (the page
-      // is visible here).
-      refresh();
+      // refresh's watched-tab rule acknowledges the ACTIVE tab, row in view or not.
+      reassert();
     },
 
     ackSwitch(tabID: string): void {
-      // Switching to a chat means looking at it, gated on visibility: the boot restore activates
-      // a tab too. refresh cannot cover it: `activeTabID()` may still name the outgoing tab.
+      // Switching to a tab means looking at it, gated on visibility: the boot restore activates a
+      // tab too. refresh cannot cover it: `activeTabID()` may still name the outgoing tab.
       if (wiring.pageVisible()) {
         const candidate = wiring.candidates().find((c) => c.id === tabID);
         if (candidate !== undefined) {
-          seen.mark(candidate.id, candidate.status);
+          ack(candidate);
         }
       }
-      refresh();
-    },
-
-    forget(tabID: string): void {
-      seen.forget(tabID);
-      refresh();
+      reassert();
     },
   };
 }
@@ -429,26 +420,17 @@ export function rowsInView(sidebar: HTMLElement, tabList: HTMLElement): string[]
   return ids;
 }
 
-/** localStorage-backed acknowledgements, with the two try/catch guards a
- *  disabled or full store needs. Module-private: `initAttention` is the only
- *  caller, and the tests reach it through the key rather than the constructor. */
-function browserCueSeenStorage(): CueSeenStorage {
-  return {
-    read(): string | null {
-      try {
-        return localStorage.getItem(CUE_SEEN_KEY);
-      } catch {
-        return null; // storage unavailable (private mode / disabled)
-      }
-    },
-    write(raw: string): void {
-      try {
-        localStorage.setItem(CUE_SEEN_KEY, raw);
-      } catch {
-        // ignore quota / disabled storage
-      }
-    },
-  };
+/** Close the banners a cue-bearing tab's subject was announced with, through the tag the worker
+ *  and notify.ts both derive from that subject. Only chat and run tabs bear a cue. */
+function retractTab(tabID: string): void {
+  const subject = openTabSubjects().find((s) => s.id === tabID);
+  if (subject === undefined) {
+    return;
+  }
+  const target = subject.kind === "run" ? runTarget(subject.ref) : chatTarget(subject.ref);
+  void closeNotificationsFor(target).catch(() => {
+    /* the page's own banner is closed; a failed listing leaves the worker's delivered */
+  });
 }
 
 /** browserAttentionEnv binds the three sinks to the real browser. Every
@@ -459,7 +441,7 @@ export function browserAttentionEnv(): AttentionEnv {
   const base = document.title;
   const env: AttentionEnv = {
     titlePrefix: (text: string): void => {
-      // No guard here: createAttention only calls this when the count changed,
+      // No guard here: createAttention calls this only on a count change or a release,
       // and this is the only writer of document.title in the app.
       document.title = text + base;
     },
@@ -518,20 +500,51 @@ export function browserAttentionEnv(): AttentionEnv {
   return env;
 }
 
+/** The tabs with their read positions. Tracked reads of the chat headers and run states, so a
+ *  frame or reply moving only a position re-runs the fold inside `subscribeTabCues`. */
+function positionedCandidates(): CueCandidate[] {
+  return cueCandidates().map((c) => ({
+    id: c.id,
+    kind: c.kind,
+    status: c.status,
+    seen: c.seen,
+    position:
+      c.kind === "chat"
+        ? (watchSession(c.ref)?.read_position ?? 0)
+        : (runState(c.ref)?.readPosition ?? 0),
+  }));
+}
+
+/** Send an acknowledgement as the background action `tabs.ack`. Deferred a microtask: the fold
+ *  runs inside a reactive effect, which must not track or write the action's own state. */
+function sendAck(tabID: string, seen: number): Promise<AckResult> {
+  return new Promise<void>((resolve) => {
+    queueMicrotask(resolve);
+  })
+    .then(() => ackTabCommand.dispatch({ id: tabID, seen, opID: newOpID() }).outcome)
+    .then((outcome): AckResult => {
+      if (outcome.status === "success") {
+        return outcome.value >= seen ? "acked" : "refused";
+      }
+      return outcome.status === "error" && outcome.error.status === 400 ? "refused" : "failed";
+    });
+}
+
 /**
  * initAttention wires the controller to the app and returns its disposer. The recompute
- * funnel is `subscribeTabCues`, watching `stateVersion` (the chat-tab SET) and
- * `dotVersion` (every dot write); missing either leaves the count stale after a close.
- * Acknowledgement keys on WHAT THE READER CAN SEE, so the scrolled-off chat keeps its cue.
+ * funnel is `subscribeTabCues`, watching `stateVersion` (the tab SET and every subject's
+ * `seen`) and `dotVersion` (every dot write); missing either leaves the count stale.
+ * Acknowledgement keys on WHAT THE READER CAN SEE, so the scrolled-off tab keeps its cue.
  */
 export function initAttention(): () => void {
   const surfaces = createAttention(browserAttentionEnv());
   const controller = createAttentionController({
-    candidates: cueCandidates,
+    candidates: positionedCandidates,
     activeTabID: getActiveTabId,
     pageVisible,
     rowsInView: () => rowsInView($.sidebar, $.tabList),
-    storage: browserCueSeenStorage(),
+    retract: retractTab,
+    sendAck,
     surfaces,
   });
 
@@ -539,14 +552,11 @@ export function initAttention(): () => void {
 
   stop.push(
     onBus(BUS_TAB_CHANGED, (e) => {
-      if (e.kind === "chat") {
+      if (e.kind === "chat" || e.kind === "run") {
         controller.ackSwitch(e.to);
       }
     }),
   );
-
-  // closeTab is the only production path removing a tab, so one hook drops its acknowledgement.
-  setOnTabClosed(controller.forget);
 
   const onVisible = (): void => {
     controller.ackSeen();
@@ -579,21 +589,42 @@ export function initAttention(): () => void {
 
   // Restore the page's own icon before the page GOES AWAY: a browser remembers one icon per
   // URL for bookmarks and history. `pagehide`, NOT `freeze`, which fires for a background
-  // tab still showing its icon. Through apply() so the change gate stays true and a bfcache
-  // restore (pageshow) repaints.
+  // tab still showing its icon.
   const onPageGone = (): void => {
-    surfaces.apply(NO_ATTENTION);
+    surfaces.release();
   };
-  const onPageBack = (e: PageTransitionEvent): void => {
-    if (e.persisted) {
-      controller.refresh();
-    }
+  const onSync = (): void => {
+    controller.sync();
   };
   window.addEventListener("pagehide", onPageGone);
-  window.addEventListener("pageshow", onPageBack);
+  window.addEventListener("pageshow", onSync);
+  window.addEventListener("focus", onSync);
   stop.push(() => {
     window.removeEventListener("pagehide", onPageGone);
-    window.removeEventListener("pageshow", onPageBack);
+    window.removeEventListener("pageshow", onSync);
+    window.removeEventListener("focus", onSync);
+  });
+
+  // Each event below may follow state this page missed: the stream reopened, the server's
+  // snapshots replaced every dot, or the service worker relayed a push or a click.
+  stop.push(
+    onBus(BUS_RECONCILE, onSync),
+    onBus(BUS_PAGE_RESUMED, onSync),
+    onSSE("connected", onSync),
+    onSSE("status_snapshot", onSync),
+    onSSE("pending_snapshot", onSync),
+  );
+  const worker = (globalThis.navigator as { readonly serviceWorker?: EventTarget } | undefined)
+    ?.serviceWorker;
+  const onWorkerMessage = (e: Event): void => {
+    const data: unknown = (e as MessageEvent).data;
+    if (typeof data === "object" && data !== null && (data as { type?: unknown }).type === "push") {
+      controller.sync();
+    }
+  };
+  worker?.addEventListener("message", onWorkerMessage);
+  stop.push(() => {
+    worker?.removeEventListener("message", onWorkerMessage);
   });
 
   controller.refresh();

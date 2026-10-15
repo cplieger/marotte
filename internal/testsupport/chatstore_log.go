@@ -60,6 +60,11 @@ func (*InMemoryChatStore) PromptReceipt(context.Context, marotte.ChatID, string)
 	return marotte.PromptReceipt{}, nil
 }
 
+// ReadBound answers 0: this store holds no log, so no read position.
+func (*InMemoryChatStore) ReadBound(context.Context, marotte.ChatID) (uint64, error) {
+	return 0, nil
+}
+
 // PromptAttachmentPaths answers no paths.
 func (*InMemoryChatStore) PromptAttachmentPaths(context.Context, marotte.ChatID, string) ([]string, error) {
 	return nil, nil

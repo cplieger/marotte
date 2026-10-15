@@ -96,13 +96,32 @@ vi.mock("./device-view.js", () => {
 });
 // The two leaf stores the tab factory reads for a display NAME. Neither matters
 // here: what this suite reads off a row is its DOT.
-vi.mock("./run-store.js", () => ({
-  // Inert here; a Browser-Mode mock is linked as real ESM, so a name any module in the graph
-  // reaches has to exist on it.
-  runLabelOf: vi.fn(() => ""),
-}));
+// One signal per run, so a reply moving only `readPosition` re-runs the fold as the real cell does.
+const runCells = vi.hoisted(() => new Map<string, { value: unknown }>());
+vi.mock("./run-store.js", async () => {
+  const { signal } = await import("@cplieger/reactive");
+  return {
+    // Inert here; a Browser-Mode mock is linked as real ESM, so a name any module in the graph
+    // reaches has to exist on it.
+    runLabelOf: vi.fn(() => ""),
+    runState: (id: string): unknown => {
+      let c = runCells.get(id);
+      if (c === undefined) {
+        c = signal<unknown>(undefined);
+        runCells.set(id, c);
+      }
+      return c.value;
+    },
+  };
+});
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
+// notify.ts's subscription half, which no case reaches: the retraction under test is the rest.
+vi.mock("./persist.js", () => ({ patchSettings: vi.fn(() => Promise.resolve(null)) }));
+vi.mock("./actions/notify.js", () => ({
+  registerPush: { dispatch: vi.fn(() => Promise.resolve(null)), cancel: vi.fn() },
+  unsubscribePush: { dispatch: vi.fn(() => Promise.resolve(null)) },
+}));
 // Type-only, for the `importOriginal` below.
 import type * as TabsDrag from "./tabs-drag.js";
 // `exceedsSlop` stays real: `tabs.ts` reads it, so a partial factory would fail
@@ -156,9 +175,16 @@ import {
   initAttention,
   pageVisible,
   rowsInView,
-  CUE_SEEN_KEY,
 } from "./attention.js";
-import { setActive } from "./store.js";
+import { defaultUsage, setActive, setSessions, upsertHeader } from "./store.js";
+import { BUS_PAGE_RESUMED, BUS_RECONCILE, dispatch, emitBus } from "./bus.js";
+import {
+  _setRegistrationForTest,
+  notifyOffScreen,
+  setNotificationsEnabled,
+  setOnScreen,
+} from "./notify.js";
+import type { ServerEvent } from "./types.js";
 import {
   openTab,
   openEditorView,
@@ -177,6 +203,15 @@ import { bindTabsSync, tabServer } from "./__test-helpers__/tabs-server.js";
 import type { TabDotStatus } from "./tab-view.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
+
+function runCell(id: string): { value: unknown } {
+  let c = runCells.get(id);
+  if (c === undefined) {
+    c = signal<unknown>(undefined);
+    runCells.set(id, c);
+  }
+  return c;
+}
 
 function rect(top: number, height: number, left = 0, width = 260): DOMRect {
   return {
@@ -573,9 +608,33 @@ describe("initAttention", () => {
     return document.querySelector("link")?.getAttribute("href") ?? "";
   }
 
-  /** The acknowledgement map as an object, keyed by TAB id. */
-  function seen(): Record<string, string> {
-    return JSON.parse(localStorage.getItem(CUE_SEEN_KEY) ?? "{}") as Record<string, string>;
+  /** The seen marker the SERVER holds for a tab: what every other device folds. */
+  function serverSeen(tabID: string): number {
+    return tabServer.subjects().find((s) => s.id === tabID)?.seen ?? 0;
+  }
+
+  /** The chat's header as the server sends it, at a read position. */
+  function header(ref: string, position: number): void {
+    upsertHeader({
+      id: ref,
+      name: ref,
+      usage: defaultUsage(),
+      turn_count: position,
+      created_at: 0,
+      updated_at: 0,
+      read_position: position,
+    });
+  }
+
+  /** A chat turn closing: the header's read position moves, then the tab's dot. */
+  function finish(tabID: string, ref: string, status: TabDotStatus, position = 1): void {
+    header(ref, position);
+    setTabStatus(tabID, status);
+  }
+
+  /** A run reply landing in the run store, at a read position. */
+  function runReply(workflowID: string, position: number): void {
+    runCell(workflowID).value = { workflowId: workflowID, readPosition: position };
   }
 
   beforeEach(() => {
@@ -583,12 +642,13 @@ describe("initAttention", () => {
     _resetTabsSyncForTest();
     _resetTabOpenersForTest();
     seededDots.clear();
+    runCells.clear();
     registerOpeners();
     resetActionFramework();
     _resetForTest();
+    setSessions([]);
     setActive("");
     hidePage(false);
-    localStorage.clear();
     document.body.innerHTML = "";
     document.head.innerHTML = '<link rel="icon" href="/favicon.svg">';
     document.title = "Marotte for Kiro";
@@ -616,36 +676,56 @@ describe("initAttention", () => {
     expect(iconVariant()).toBe("/favicon.svg");
   });
 
-  it("raises a cue on a background chat", async () => {
+  it("raises an unread background chat", async () => {
     await openChat("a");
     const b = await openChat("b", { activate: false });
-    setTabStatus(b, "done");
+    finish(b, "b", "done");
     expect(count()).toBe(1);
     expect(iconVariant()).toBe("/favicon-done.svg");
   });
 
-  // "Watching" is a fact about the TAB: every key here is a tab id.
-  it("raises nothing for the tab the reader is watching", async () => {
-    const a = await openChat("a");
-    setTabStatus(a, "done");
+  it("counts nothing for a finished dot whose read position the server has not sent", async () => {
+    await openChat("a");
+    const b = await openChat("b", { activate: false });
+    setTabStatus(b, "done");
     expect(count()).toBe(0);
   });
 
-  it("raises the active tab's cue while the page is hidden", async () => {
+  // "Watching" is a fact about the TAB: every key here is a tab id.
+  it("leaves the watched tab out and acknowledges it on the server", async () => {
     const a = await openChat("a");
-    hidePage(true);
-    setTabStatus(a, "failed");
-    expect(count()).toBe(1);
-    expect(iconVariant()).toBe("/favicon-alert.svg");
+    finish(a, "a", "done", 3);
+    expect(count()).toBe(0);
+    await vi.waitFor(() => {
+      expect(serverSeen(a)).toBe(3);
+    });
   });
 
-  it("counts each latched chat once and paints the most severe", async () => {
+  it("raises the active tab while the page is hidden, and acknowledges nothing", async () => {
+    const a = await openChat("a");
+    hidePage(true);
+    finish(a, "a", "failed");
+    expect(count()).toBe(1);
+    expect(iconVariant()).toBe("/favicon-alert.svg");
+    await settle();
+    expect(tabServer.sentOfType("ack_tab")).toHaveLength(0);
+  });
+
+  it("counts an open ask on the chat being read until it is answered", async () => {
+    const a = await openChat("a");
+    setTabStatus(a, "input");
+    expect(count()).toBe(1);
+    setTabStatus(a, "working");
+    expect(count()).toBe(0);
+  });
+
+  it("counts each tab once and paints the most severe", async () => {
     const ids: string[] = [];
     for (const ref of ["a", "b", "c"]) {
       ids.push(await openChat(ref, { activate: false }));
     }
-    setTabStatus(ids[0] ?? "", "done");
-    setTabStatus(ids[1] ?? "", "failed");
+    finish(ids[0] ?? "", "a", "done");
+    finish(ids[1] ?? "", "b", "failed");
     setTabStatus(ids[2] ?? "", "input");
     expect(count()).toBe(3);
     expect(iconVariant()).toBe("/favicon-input.svg");
@@ -654,6 +734,7 @@ describe("initAttention", () => {
   it("raises a cue the SPEC carried in, with no dot write at all", async () => {
     // The boot-restore path: a restored chat holding a latch never calls `setTabStatus`, so
     // the tab-set signal is the only thing that wakes the fold.
+    header("a", 1);
     seededDots.set("a", "failed");
     await openChat("a", { activate: false });
     expect(count()).toBe(1);
@@ -661,11 +742,9 @@ describe("initAttention", () => {
   });
 
   it("counts a sub-tab chat, which owns its own bridge and its own cue", async () => {
-    // A tangent carries a parent and the default `owns`, so it is its own chat
-    // rather than a view over its parent's. Excluding sub-tabs would silence it.
     await openChat("parent", { activate: false });
     const tangent = await openChat("tangent", { activate: false, parentRef: "parent" });
-    setTabStatus(tangent, "done");
+    finish(tangent, "tangent", "done");
     expect(count()).toBe(1);
   });
 
@@ -674,8 +753,8 @@ describe("initAttention", () => {
     // counting it would count one chat twice whenever its own tab is open too.
     const a = await openChat("a", { activate: false });
     const view = await openChat("a-view", { activate: false, parentRef: "a", owns: false });
-    setTabStatus(a, "done");
-    setTabStatus(view, "done");
+    finish(a, "a", "done");
+    finish(view, "a-view", "done");
     expect(count()).toBe(1);
   });
 
@@ -685,21 +764,24 @@ describe("initAttention", () => {
     expect(count()).toBe(0);
   });
 
-  it("clears a chat's cue when the reader switches to it", async () => {
+  it("clears a chat when the reader switches to it, and the server records the read", async () => {
     await openChat("a");
     const b = await openChat("b", { activate: false });
-    setTabStatus(b, "done");
+    finish(b, "b", "done", 2);
     expect(count()).toBe(1);
 
-    activateTab(b);
+    await activateTab(b);
     expect(count()).toBe(0);
+    await vi.waitFor(() => {
+      expect(serverSeen(b)).toBe(2);
+    });
   });
 
   it("acknowledges only the IN-VIEW rows on becoming visible", async () => {
     const a = await openChat("a", { activate: false });
     const b = await openChat("b", { activate: false });
-    setTabStatus(a, "done");
-    setTabStatus(b, "input");
+    finish(a, "a", "done");
+    finish(b, "b", "done");
     hidePage(true);
     expect(count()).toBe(2);
 
@@ -710,56 +792,40 @@ describe("initAttention", () => {
     ]);
     hidePage(false);
     document.dispatchEvent(new Event("visibilitychange"));
-    expect(count()).toBe(1);
-    expect(iconVariant()).toBe("/favicon-input.svg");
-  });
-
-  it("acknowledges the rest once the reader scrolls to them", async () => {
-    const a = await openChat("a", { activate: false });
-    const b = await openChat("b", { activate: false });
-    setTabStatus(a, "done");
-    setTabStatus(b, "input");
-    rows([
-      { id: a, top: 110, height: 40 },
-      { id: b, top: 900, height: 40 },
-    ]);
-    document.dispatchEvent(new Event("visibilitychange"));
-    expect(count()).toBe(1);
-
-    rows([
-      { id: a, top: -400, height: 40 },
-      { id: b, top: 200, height: 40 },
-    ]);
-    document.dispatchEvent(new Event("visibilitychange"));
-    expect(count()).toBe(0);
+    await vi.waitFor(() => {
+      expect(count()).toBe(1);
+    });
+    expect(serverSeen(b)).toBe(0);
   });
 
   it("acknowledges nothing while the page is hidden", async () => {
     const a = await openChat("a", { activate: false });
-    setTabStatus(a, "done");
+    finish(a, "a", "done");
     rows([{ id: a, top: 110, height: 40 }]);
     hidePage(true);
     document.dispatchEvent(new Event("visibilitychange"));
+    await settle();
+    expect(tabServer.sentOfType("ack_tab")).toHaveLength(0);
     expect(count()).toBe(1);
   });
 
   it("acknowledges the in-view rows when the drawer's class changes", async () => {
     // The drawer opening is a class toggle, so it is OBSERVED, covering every opener.
     const a = await openChat("a", { activate: false });
-    setTabStatus(a, "done");
+    finish(a, "a", "done");
     rows([{ id: a, top: 110, height: 40 }]);
     expect(count()).toBe(1);
 
-    const sidebar = document.getElementById("sidebar");
-    sidebar?.classList.add("open");
-    await settle();
-    expect(count()).toBe(0);
+    document.getElementById("sidebar")?.classList.add("open");
+    await vi.waitFor(() => {
+      expect(count()).toBe(0);
+    });
   });
 
   it("acknowledges the in-view rows once the drawer has settled", async () => {
     // The mutation lands before the transform, so the settled event acknowledges.
     const a = await openChat("a", { activate: false });
-    setTabStatus(a, "done");
+    finish(a, "a", "done");
     rows([{ id: a, top: 110, height: 40 }]);
     const sidebar = document.getElementById("sidebar");
     if (sidebar === null) {
@@ -767,69 +833,50 @@ describe("initAttention", () => {
     }
     place(sidebar, rect(0, 700, -1024, 1024));
     sidebar.classList.add("open");
-    expect(count()).toBe(1);
+    await settle();
+    expect(tabServer.sentOfType("ack_tab")).toHaveLength(0);
 
     place(sidebar, rect(0, 700));
     sidebar.dispatchEvent(new Event("transitionend", { bubbles: true }));
-    expect(count()).toBe(0);
+    await vi.waitFor(() => {
+      expect(count()).toBe(0);
+    });
   });
 
   it("ignores a transition finishing on a tab row rather than the sidebar", async () => {
     // transitionend bubbles, and every row animates its own background on hover.
     const a = await openChat("a", { activate: false });
-    setTabStatus(a, "done");
+    finish(a, "a", "done");
     rows([{ id: a, top: 110, height: 40 }]);
-    const row = document.querySelector("[data-tab-id]");
-    row?.dispatchEvent(new Event("transitionend", { bubbles: true }));
-    expect(count()).toBe(1);
-  });
-
-  it("keeps a scrolled-out row's cue when the drawer opens", async () => {
-    const a = await openChat("a", { activate: false });
-    const b = await openChat("b", { activate: false });
-    setTabStatus(a, "done");
-    setTabStatus(b, "input");
-    rows([
-      { id: a, top: 110, height: 40 },
-      { id: b, top: 900, height: 40 },
-    ]);
-    document.getElementById("sidebar")?.classList.add("open");
+    document
+      .querySelector("[data-tab-id]")
+      ?.dispatchEvent(new Event("transitionend", { bubbles: true }));
     await settle();
-    expect(count()).toBe(1);
+    expect(tabServer.sentOfType("ack_tab")).toHaveLength(0);
   });
 
-  it("un-acknowledges a chat whose status moves off the cue", async () => {
+  it("lights a read chat again when its next turn closes", async () => {
     const a = await openChat("a", { activate: false });
-    setTabStatus(a, "done");
+    finish(a, "a", "done");
     rows([{ id: a, top: 110, height: 40 }]);
     document.dispatchEvent(new Event("visibilitychange"));
-    expect(count()).toBe(0);
+    await vi.waitFor(() => {
+      expect(count()).toBe(0);
+    });
 
-    // A new turn starts, then finishes: the next cue is fresh news.
+    rows([]);
     setTabStatus(a, "working");
     expect(count()).toBe(0);
-    setTabStatus(a, "done");
+    finish(a, "a", "done", 2);
     expect(count()).toBe(1);
   });
 
-  it("re-raises immediately when the cue changes to a different cue", async () => {
-    const a = await openChat("a", { activate: false });
-    setTabStatus(a, "done");
-    rows([{ id: a, top: 110, height: 40 }]);
-    document.dispatchEvent(new Event("visibilitychange"));
-    expect(count()).toBe(0);
-
-    setTabStatus(a, "failed");
-    expect(count()).toBe(1);
-    expect(iconVariant()).toBe("/favicon-alert.svg");
-  });
-
-  it("reaches zero when the last latched chat closes", async () => {
+  it("reaches zero when the last counted chat closes", async () => {
     // The funnel's other leg. `setTabStatus` does not `emit()`, so a recompute
     // hung off the dot alone would leave this count claiming a chat that is gone.
     const a = await openChat("a", { activate: false });
     const b = await openChat("b", { activate: false });
-    setTabStatus(a, "done");
+    finish(a, "a", "done");
     setTabStatus(b, "input");
     expect(count()).toBe(2);
 
@@ -838,6 +885,134 @@ describe("initAttention", () => {
     await closeTab(b);
     expect(count()).toBe(0);
     expect(iconVariant()).toBe("/favicon.svg");
+  });
+
+  describe("seen state lives on the server, so every device folds the same", () => {
+    it("clears here when another device reads the chat", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      finish(b, "b", "done", 2);
+      expect(count()).toBe(1);
+
+      tabServer.ackRemotely(b, 2);
+      expect(count()).toBe(0);
+    });
+
+    it("keeps a newer turn lit when a lagging device acknowledges an older one", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      finish(b, "b", "done", 2);
+      tabServer.ackRemotely(b, 1);
+      expect(count()).toBe(1);
+    });
+
+    it("lights on a header frame that moves only the read position", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      finish(b, "b", "done", 1);
+      tabServer.ackRemotely(b, 1);
+      expect(count()).toBe(0);
+
+      header("b", 2);
+      expect(count()).toBe(1);
+    });
+
+    it("unlights a rewound chat on every device at once, the lower header included", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      finish(b, "b", "done", 2);
+      tabServer.ackRemotely(b, 1);
+      expect(count()).toBe(1);
+
+      // The rewind takes turn 2 out; the server's header now names turn 1, which was read.
+      header("b", 1);
+      expect(count()).toBe(0);
+    });
+
+    it("keeps a read across a reload, because the subject carries it", async () => {
+      const a = await openChat("a", { activate: false });
+      finish(a, "a", "done");
+      rows([{ id: a, top: 110, height: 40 }]);
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.waitFor(() => {
+        expect(serverSeen(a)).toBe(1);
+      });
+
+      dispose?.();
+      _resetForTest();
+      registerOpeners();
+      document.title = "Marotte for Kiro";
+      dispose = initAttention();
+      await tabServer.seed();
+      setTabStatus(a, "done");
+      expect(count()).toBe(0);
+    });
+
+    // A 409 is another request holding the idempotency key, whose own outcome is unknown here.
+    it.each([
+      ["resends after a 409", 409, 2],
+      ["does not resend after a 400", 400, 1],
+    ])("%s", async (_label, status, sends) => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      finish(b, "b", "done");
+      tabServer.failNext("ack_tab", status);
+      await activateTab(b);
+      await vi.waitFor(() => {
+        expect(tabServer.sentOfType("ack_tab")).toHaveLength(1);
+      });
+      await settle();
+      await settle();
+
+      header("b", 1);
+      await settle();
+      expect(tabServer.sentOfType("ack_tab")).toHaveLength(sends);
+    });
+
+    it("listens for no storage event: no window holds seen state", async () => {
+      dispose?.();
+      const listen = vi.spyOn(window, "addEventListener");
+      try {
+        dispose = initAttention();
+        expect(listen.mock.calls.map(([type]) => type)).not.toContain("storage");
+      } finally {
+        listen.mockRestore();
+      }
+    });
+  });
+
+  describe("a run tab", () => {
+    async function openRun(): Promise<string> {
+      await openChat("a");
+      await openTab({ kind: "run", ref: "wf-1", owns: false, activate: false });
+      return tabIdFor("run", "wf-1");
+    }
+
+    it("counts nothing for a terminal dot until a read serves its position", async () => {
+      const run = await openRun();
+      setTabStatus(run, "failed");
+      expect(count()).toBe(0);
+
+      runReply("wf-1", 2);
+      expect(count()).toBe(1);
+      expect(iconVariant()).toBe("/favicon-alert.svg");
+    });
+
+    it("counts a paused run while it waits, with no position", async () => {
+      const run = await openRun();
+      setTabStatus(run, "waiting");
+      expect(count()).toBe(1);
+    });
+
+    it("acknowledges a finished run the reader switches to", async () => {
+      const run = await openRun();
+      runReply("wf-1", 3);
+      setTabStatus(run, "done");
+      await activateTab(run);
+      await vi.waitFor(() => {
+        expect(serverSeen(run)).toBe(3);
+      });
+    });
   });
 
   // The badge count follows the notification's rule: a chat whose run is still going counts
@@ -865,27 +1040,15 @@ describe("initAttention", () => {
       });
     });
 
-    it("blanks a background chat's done cue while its run is live", async () => {
+    it("blanks a background chat's done cue while its run is live, and raises it after", async () => {
       await openChat("a");
       const b = await openChat("b", { activate: false });
       setUnsettled("b", true);
-      setTabStatus(b, "done");
-
+      finish(b, "b", "done");
       expect(count()).toBe(0);
       expect(iconVariant()).toBe("/favicon.svg");
-    });
-
-    // The other half, and the one that makes the case above more than "the cue was
-    // dropped": the reader IS told, once the work is over.
-    it("raises the cue when the run terminates", async () => {
-      await openChat("a");
-      const b = await openChat("b", { activate: false });
-      setUnsettled("b", true);
-      setTabStatus(b, "done");
-      expect(count()).toBe(0);
 
       setUnsettled("b", false);
-
       expect(count()).toBe(1);
       expect(iconVariant()).toBe("/favicon-done.svg");
     });
@@ -894,21 +1057,18 @@ describe("initAttention", () => {
       await openChat("a");
       const b = await openChat("b", { activate: false });
       setUnsettled("b", true);
-      setTabStatus(b, "failed");
+      finish(b, "b", "failed");
       expect(count()).toBe(0);
 
       setUnsettled("b", false);
       expect(count()).toBe(1);
-      expect(iconVariant()).toBe("/favicon-alert.svg");
     });
 
-    // An unanswered decision counts whatever the chat's runs are doing.
     it("never blanks an unanswered decision", async () => {
       await openChat("a");
       const b = await openChat("b", { activate: false });
       setUnsettled("b", true);
       setTabStatus(b, "input");
-
       expect(count()).toBe(1);
     });
 
@@ -916,8 +1076,7 @@ describe("initAttention", () => {
       await openChat("a");
       const b = await openChat("b", { activate: false });
       setUnsettled("b", true);
-      setTabStatus(b, "waiting");
-
+      finish(b, "b", "waiting");
       expect(count()).toBe(1);
     });
 
@@ -928,33 +1087,23 @@ describe("initAttention", () => {
       await openTab({ kind: "run", ref: "wf-1", owns: false, activate: false });
       const runTab = tabIdFor("run", "wf-1");
       setUnsettled("wf-1", true);
+      runReply("wf-1", 1);
       setTabStatus(runTab, "done");
-
       expect(count()).toBe(1);
     });
 
-    // The `""`-not-`idle` rule: `""` leaves the acknowledgement alone, while `idle` forgets it
-    // and would re-raise the cue once the run ended.
-    it("keeps the reader's acknowledgement across the blank", async () => {
+    it("keeps the reader's read across the blank", async () => {
       const a = await openChat("a");
       const b = await openChat("b", { activate: false });
-      setTabStatus(b, "done");
-      rows([
-        { id: a, top: 110, height: 40 },
-        { id: b, top: 160, height: 40 },
-      ]);
-      // Visiting b is what acknowledges its cue.
+      finish(b, "b", "done");
       await activateTab(b);
-      expect(seen()).toEqual({ [b]: "done" });
+      await vi.waitFor(() => {
+        expect(serverSeen(b)).toBe(1);
+      });
       await activateTab(a);
-      expect(count()).toBe(0);
 
       setUnsettled("b", true);
-      expect(seen()).toEqual({ [b]: "done" });
-
-      // And the run ending must not re-raise a cue that was already dismissed.
       setUnsettled("b", false);
-      expect(seen()).toEqual({ [b]: "done" });
       expect(count()).toBe(0);
     });
 
@@ -965,46 +1114,14 @@ describe("initAttention", () => {
       await openChat("a");
       const b = await openChat("b", { activate: false });
       setUnsettled("b", true);
-      setTabStatus(b, "done");
-
+      finish(b, "b", "done");
       expect(count()).toBe(1);
     });
   });
 
-  it("drops a closed chat's acknowledgement from storage", async () => {
-    const a = await openChat("a", { activate: false });
-    setTabStatus(a, "done");
-    rows([{ id: a, top: 110, height: 40 }]);
-    document.dispatchEvent(new Event("visibilitychange"));
-    expect(seen()).toEqual({ [a]: "done" });
-
-    await closeTab(a);
-    expect(seen()).toEqual({});
-  });
-
-  it("persists an acknowledgement so a reconnect cannot re-raise it", async () => {
-    // Cue latches rebuild from server state on reconnect, so acknowledgements persist, keyed
-    // by the server-minted tab id that survives a reload.
-    const a = await openChat("a", { activate: false });
-    setTabStatus(a, "input");
-    rows([{ id: a, top: 110, height: 40 }]);
-    document.dispatchEvent(new Event("visibilitychange"));
-    expect(count()).toBe(0);
-
-    dispose?.();
-    _resetForTest();
-    document.title = "Marotte for Kiro";
-    dispose = initAttention();
-    // The collection is re-adopted through a real `GET /api/tabs`, which is what a
-    // reload does — so the row comes back under the id the acknowledgement names.
-    await tabServer.seed();
-    setTabStatus(a, "input");
-    expect(count()).toBe(0);
-  });
-
   it("stops touching the surfaces once disposed", async () => {
     const a = await openChat("a", { activate: false });
-    setTabStatus(a, "done");
+    finish(a, "a", "done");
     expect(count()).toBe(1);
     dispose?.();
     dispose = null;
@@ -1015,7 +1132,7 @@ describe("initAttention", () => {
   it("hands the page's own icon back when the page goes away with a cue lit", async () => {
     // A browser remembers one icon per URL, so a tab closed on a lit cue would leave a variant.
     const a = await openChat("a", { activate: false });
-    setTabStatus(a, "done");
+    finish(a, "a", "done");
     expect(iconVariant()).toBe("/favicon-done.svg");
 
     window.dispatchEvent(new Event("pagehide"));
@@ -1039,7 +1156,7 @@ describe("initAttention", () => {
     // pagehide fires on bfcache entry too, and that page can return. The sinks
     // are change-gated, so the fold has to be re-run rather than trusted.
     const a = await openChat("a", { activate: false });
-    setTabStatus(a, "failed");
+    finish(a, "a", "failed");
     window.dispatchEvent(new Event("pagehide"));
     expect(iconVariant()).toBe("/favicon.svg");
 
@@ -1053,10 +1170,266 @@ describe("initAttention", () => {
 
   it("stops restoring once disposed", async () => {
     const a = await openChat("a", { activate: false });
-    setTabStatus(a, "done");
+    finish(a, "a", "done");
     dispose?.();
     dispose = null;
     window.dispatchEvent(new Event("pagehide"));
     expect(iconVariant()).toBe("/favicon-done.svg");
+  });
+
+  // The OS badge as WebKit keeps it: assigned by each write that lands, kept until the next one.
+  // `dropNext` loses one write after its promise resolved, which the page cannot observe.
+  describe("the installed app's badge", () => {
+    const os = { badge: 0, dropNext: false };
+    const worker = new EventTarget();
+    const delivered: string[] = [];
+    const closed: string[] = [];
+
+    function write(n: number): Promise<void> {
+      if (os.dropNext) {
+        os.dropNext = false;
+      } else {
+        os.badge = n;
+      }
+      return Promise.resolve();
+    }
+
+    beforeEach(() => {
+      dispose?.();
+      os.badge = 0;
+      os.dropNext = false;
+      delivered.length = 0;
+      closed.length = 0;
+      vi.stubGlobal("navigator", {
+        setAppBadge: write,
+        clearAppBadge: () => write(0),
+        serviceWorker: worker,
+      });
+      _setRegistrationForTest(() =>
+        Promise.resolve({
+          getNotifications: (filter?: GetNotificationOptions) =>
+            Promise.resolve(
+              delivered
+                .filter((tag) => filter?.tag === undefined || tag === filter.tag)
+                .map((tag) => ({ tag, close: () => closed.push(tag) }) as unknown as Notification),
+            ),
+        }),
+      );
+      dispose = initAttention();
+    });
+
+    afterEach(() => {
+      _setRegistrationForTest(null);
+    });
+
+    it("lights for a new item and clears when it is read", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      finish(b, "b", "done");
+      expect(os.badge).toBe(1);
+
+      await activateTab(b);
+      expect(os.badge).toBe(0);
+    });
+
+    it("clears when another device reads the chat", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      finish(b, "b", "done");
+      expect(os.badge).toBe(1);
+
+      tabServer.ackRemotely(b, 1);
+      expect(os.badge).toBe(0);
+    });
+
+    /** Two background threads finish; the reader reads the first, and the clear on reading the
+     *  second never lands. Answers the thread every case looks at again. */
+    async function stuckBadge(): Promise<string> {
+      const a = await openChat("a");
+      const b = await openChat("b", { activate: false });
+      const c = await openChat("c", { activate: false });
+      finish(b, "b", "done");
+      finish(c, "c", "done");
+      await activateTab(b);
+      await vi.waitFor(() => {
+        expect(serverSeen(b)).toBe(1);
+      });
+      os.dropNext = true;
+      await activateTab(c);
+      await vi.waitFor(() => {
+        expect(serverSeen(c)).toBe(1);
+      });
+      expect(count(), "the page believes every thread is read").toBe(0);
+      expect(os.badge, "the OS kept the dot").toBe(1);
+      // The event under test arrives in a later task than the dropped write.
+      await settle();
+      return a;
+    }
+
+    const syncPoints: readonly (readonly [string, (a: string) => unknown])[] = [
+      ["the reader switching to an already-read thread", (a) => activateTab(a)],
+      ["the page becoming visible", () => document.dispatchEvent(new Event("visibilitychange"))],
+      ["the window taking focus", () => window.dispatchEvent(new Event("focus"))],
+      [
+        "a fresh pageshow",
+        () => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: false })),
+      ],
+      [
+        "a bfcache pageshow",
+        () => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })),
+      ],
+      [
+        "the stream reconnecting",
+        () => {
+          emitBus(BUS_RECONCILE, { cause: "epoch", signal: new AbortController().signal });
+        },
+      ],
+      [
+        "the page resuming",
+        () => {
+          emitBus(BUS_PAGE_RESUMED);
+        },
+      ],
+      [
+        "the hello",
+        () => {
+          dispatch({ type: "connected", chat_id: "", payload: {} } as ServerEvent);
+        },
+      ],
+      [
+        "the status snapshot",
+        () => {
+          dispatch({ type: "status_snapshot", chat_id: "", payload: { rows: [] } } as ServerEvent);
+        },
+      ],
+      [
+        "the pending snapshot",
+        () => {
+          dispatch({
+            type: "pending_snapshot",
+            chat_id: "",
+            payload: { items: [] },
+          } as ServerEvent);
+        },
+      ],
+      [
+        "a push the worker relayed to this page",
+        () =>
+          worker.dispatchEvent(
+            new MessageEvent("message", { data: { type: "push", reason: "arrived", chatId: "" } }),
+          ),
+      ],
+      [
+        "a notification click the worker relayed",
+        () =>
+          worker.dispatchEvent(
+            new MessageEvent("message", { data: { type: "push", reason: "clicked", chatId: "" } }),
+          ),
+      ],
+    ];
+
+    it.each(syncPoints)("clears a dot a lost write left lit, on %s", async (_name, fire) => {
+      const a = await stuckBadge();
+      await fire(a);
+      expect(os.badge).toBe(0);
+    });
+
+    it("re-asserts the real count, not a blanket clear, on a sync point", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      finish(b, "b", "done");
+      await settle();
+      os.badge = 0;
+      window.dispatchEvent(new Event("focus"));
+      expect(os.badge).toBe(1);
+    });
+
+    it("ignores a worker message that is not a push", async () => {
+      await stuckBadge();
+      worker.dispatchEvent(new MessageEvent("message", { data: { type: "other" } }));
+      expect(os.badge).toBe(1);
+    });
+
+    it("closes this page's own banner for a thread read on another device", async () => {
+      // A page-created Notification is invisible to getNotifications(), so only this page can.
+      const pageClosed: string[] = [];
+      class PageNotification {
+        static readonly permission = "granted";
+        constructor(
+          _title: string,
+          private readonly options: NotificationOptions,
+        ) {}
+        addEventListener(): void {
+          /* no click or close in this case */
+        }
+        close(): void {
+          pageClosed.push(this.options.tag ?? "");
+        }
+      }
+      vi.stubGlobal("Notification", PageNotification);
+      setNotificationsEnabled(true);
+      setOnScreen(() => false);
+      try {
+        await openChat("a");
+        const b = await openChat("b", { activate: false });
+        finish(b, "b", "done");
+        expect(
+          notifyOffScreen({ kind: "agent_finished", chat_id: "b", title: "b", body: "" }),
+        ).toBe(true);
+
+        tabServer.ackRemotely(b, 1);
+        expect(pageClosed).toEqual(["marotte:b"]);
+      } finally {
+        setNotificationsEnabled(false);
+        setOnScreen(() => document.visibilityState === "visible");
+      }
+    });
+
+    it("keeps the dot lit when the page goes away with an unread thread", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      finish(b, "b", "done");
+      await settle();
+
+      window.dispatchEvent(new Event("pagehide"));
+      expect(os.badge).toBe(1);
+      expect(document.title).toBe("Marotte for Kiro");
+    });
+
+    it("closes a read chat's delivered notification and no other", async () => {
+      delivered.push("marotte:a", "marotte:b", "marotte:c");
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      const c = await openChat("c", { activate: false });
+      finish(b, "b", "done");
+      finish(c, "c", "done");
+
+      await activateTab(b);
+      await vi.waitFor(() => {
+        expect(closed).toEqual(["marotte:b"]);
+      });
+      expect(closed).not.toContain("marotte:c");
+    });
+
+    it("closes a run's delivered notification once its pause is resumed", async () => {
+      delivered.push("marotte:run:wf-1");
+      await openChat("a");
+      await openTab({ kind: "run", ref: "wf-1", owns: false, activate: false });
+      const run = tabIdFor("run", "wf-1");
+      setTabStatus(run, "waiting");
+      setTabStatus(run, "working");
+      await vi.waitFor(() => {
+        expect(closed).toEqual(["marotte:run:wf-1"]);
+      });
+    });
+
+    it("stops listening once disposed", async () => {
+      await stuckBadge();
+      dispose?.();
+      dispose = null;
+      window.dispatchEvent(new Event("focus"));
+      worker.dispatchEvent(new MessageEvent("message", { data: { type: "push" } }));
+      expect(os.badge).toBe(1);
+    });
   });
 });

@@ -349,7 +349,10 @@ const NEW_CHAT_NAME = "New conversation";
  * `usage.context_size` is derived: the client owns the model catalog.
  */
 function seedChat(header: ChatHeader): void {
-  upsertHeader(header);
+  // The reply's header was built before the chat's log existed, so its read position is 0; a frame
+  // that already landed for this chat carries the log's, which the stale 0 must not erase.
+  const held = get(header.id)?.read_position;
+  upsertHeader(held === undefined ? header : { ...header, read_position: held });
   const model = header.model ?? "";
   if (model !== "") {
     setModel(header.id, model);

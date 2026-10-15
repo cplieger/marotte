@@ -78,6 +78,7 @@ type chatRecords interface {
 	WaitingWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
 	DepartedName(id marotte.ChatID) (string, bool)
 	TurnCount(ctx context.Context, chatID marotte.ChatID) (uint64, bool)
+	ReadBound(ctx context.Context, chatID marotte.ChatID) (uint64, error)
 	TurnPage(ctx context.Context, chatID marotte.ChatID, turn string, from uint64) (*chat.TurnPage, error)
 	// TurnSeq is a turn's newest sealed seq: the digest's live_turn version.
 	TurnSeq(ctx context.Context, chatID marotte.ChatID, turn string) (uint64, bool)

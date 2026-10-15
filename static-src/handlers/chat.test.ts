@@ -4,6 +4,7 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { setSessions, getSessions, get, setActive } from "../store.js";
 import type { Session, ChatHeader } from "../types.js";
+import { framedSince, headerFrameMark } from "../header-frames.js";
 
 // tabs.ts: a separate subsystem; assert the close command, not store state.
 const mockCloseTab = vi.fn();
@@ -138,6 +139,17 @@ describe("chat_updated", () => {
     setSessions([makeSession("c1", { name: "Old Name" })]);
     fireSSE("chat_updated", "", undefined);
     expect(get("c1")?.name).toBe("Old Name");
+  });
+});
+
+// An HTTP reply issued before either frame must not replace the position the frame carried.
+describe("a header frame orders the replies issued before it", () => {
+  it.each(["chat_created", "chat_updated"] as const)("%s", (type) => {
+    setSessions([makeSession("c1")]);
+    const mark = headerFrameMark();
+    fireSSE(type, "", makeHeader({ id: "c1" }));
+    expect(framedSince("c1", mark)).toBe(true);
+    expect(framedSince("c2", mark)).toBe(false);
   });
 });
 

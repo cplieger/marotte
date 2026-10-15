@@ -1,21 +1,24 @@
-// The out-of-page attention system's DECISIONS (fold, orders, acknowledgement store,
-// sinks, raise rule), in the `node` project with no DOM: if a decision starts reading
-// `document` this file stops loading, and "the premise" below asserts that. The browser
-// binding is attention-wiring.test.ts's. Pinned divergences from web-terminal-ui: the
-// severity order, the icon mapping, chat-only candidates, and the two-halved raise rule.
+// The out-of-page attention system's DECISIONS (cue class, fold, orders, sinks, raise rule,
+// acknowledgement), in the `node` project with no DOM: if a decision starts reading `document`
+// this file stops loading, and "the premise" below asserts that. The browser binding is
+// attention-wiring.test.ts's. Pinned divergences from web-terminal-ui: the severity order, the
+// icon mapping, chat and run candidates, and seen state held by the server rather than the page.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 import { describe, it, expect, vi } from "vitest";
 
-// The four modules the WIRING half imports (they pull in a DOM), stubbed: this file
+// The modules the WIRING half imports (they pull in a DOM), stubbed: this file
 // loading proves every decision takes its capabilities through an injected env.
-vi.mock("./store.js", () => ({ getActiveId: (): string => "" }));
+vi.mock("./store.js", () => ({
+  getActiveId: (): string => "",
+  watchSession: (): undefined => undefined,
+}));
 vi.mock("./tabs.js", () => ({
   cueCandidates: (): [] => [],
+  openTabSubjects: (): [] => [],
   subscribeTabCues: (): (() => void) => (): void => undefined,
-  setOnTabClosed: (): void => undefined,
   // Present-but-inert so real-ESM linking succeeds; no case calls them.
   get: vi.fn(() => undefined),
   getActive: vi.fn(() => undefined),
@@ -23,37 +26,40 @@ vi.mock("./tabs.js", () => ({
   tabStatusFor: vi.fn(() => ""),
 }));
 vi.mock("./bus.js", () => ({
+  BUS_PAGE_RESUMED: "transport:resumed",
+  BUS_RECONCILE: "transport:reconcile",
   BUS_TAB_CHANGED: "tabs:changed",
   onBus: (): (() => void) => (): void => undefined,
+  onSSE: (): (() => void) => (): void => undefined,
 }));
 vi.mock("./dom.js", () => ({ $: {} }));
+vi.mock("./notify.js", () => ({ closeNotificationsFor: (): Promise<void> => Promise.resolve() }));
+vi.mock("./actions/tabs.js", () => ({ ackTabCommand: { dispatch: vi.fn() } }));
+vi.mock("./run-store.js", () => ({ runState: (): undefined => undefined }));
+vi.mock("./transport.js", () => ({ newOpID: (): string => "op" }));
 
 import {
   CUE_SEVERITY,
-  CUE_SEEN_KEY,
-  MAX_PERSISTED_CUE_SEEN,
-  NO_ATTENTION,
   createAttention,
   createAttentionController,
-  createCueSeen,
+  cueClass,
   cueIconName,
   iconVariantHref,
   isCueStatus,
-  isUnseenCue,
-  parseCueSeen,
-  serializeCueSeen,
   summarize,
   titlePrefixFor,
   worseCue,
+  type AckResult,
   type Attention,
   type AttentionEnv,
   type CueCandidate,
-  type CueSeenStorage,
-  type CueStatus,
 } from "./attention.js";
 
-function seen(entries: Record<string, CueStatus> = {}): Map<string, CueStatus> {
-  return new Map(Object.entries(entries));
+const NO_ATTENTION: Attention = { count: 0, worst: "" };
+
+/** A candidate; a finished tab whose position is past its seen marker unless stated. */
+function tab(id: string, status: string, over: Partial<CueCandidate> = {}): CueCandidate {
+  return { id, kind: "chat", status, seen: 0, position: 1, ...over };
 }
 
 // 0. The premise. PLACEMENT is the realm: no `document` or `window` in node, so a decision
@@ -205,9 +211,9 @@ function moduleScopeEffects(source: string): { globals: string[]; runs: string[]
 
 describe("the premise: attention.ts reads nothing from outside itself at load", () => {
   it("runs in the node project, where document and window do not exist", () => {
-    // Placement, not the invariant. Its job is to make the four mocks above
+    // Placement, not the invariant. Its job is to make the mocks above
     // load-bearing and to keep the browser sibling's half of the split true.
-    expect(typeof document, "a DOM here makes the four mocks above decoration").toBe("undefined");
+    expect(typeof document, "a DOM here makes the mocks above decoration").toBe("undefined");
     expect(typeof window).toBe("undefined");
   });
 
@@ -293,176 +299,6 @@ describe("the icon mapping", () => {
     for (const cue of CUE_SEVERITY) {
       expect(shipped.has(cueIconName(cue)), `${cue} names a missing asset`).toBe(true);
     }
-  });
-});
-
-describe("summarize folds the chat tabs into one value", () => {
-  it("counts nothing when nothing is latched", () => {
-    expect(
-      summarize(
-        [
-          { id: "a", status: "idle" },
-          { id: "b", status: "working" },
-        ],
-        seen(),
-      ),
-    ).toEqual(NO_ATTENTION);
-  });
-
-  it("counts one per chat holding an unacknowledged cue", () => {
-    expect(
-      summarize(
-        [
-          { id: "a", status: "done" },
-          { id: "b", status: "waiting" },
-          { id: "c", status: "working" },
-        ],
-        seen(),
-      ),
-    ).toEqual({ count: 2, worst: "waiting" });
-  });
-
-  it("reports the most severe cue as the worst, not the last one seen", () => {
-    expect(
-      summarize(
-        [
-          { id: "a", status: "done" },
-          { id: "b", status: "input" },
-          { id: "c", status: "failed" },
-        ],
-        seen(),
-      ),
-    ).toEqual({ count: 3, worst: "input" });
-  });
-
-  it("drops a chat whose current cue this reader already acknowledged", () => {
-    expect(
-      summarize(
-        [
-          { id: "a", status: "done" },
-          { id: "b", status: "failed" },
-        ],
-        seen({ a: "done" }),
-      ),
-    ).toEqual({ count: 1, worst: "failed" });
-  });
-
-  it("re-raises a chat whose cue MOVED to another cue", () => {
-    // An acknowledgement is of a state, not of a chat: a chat that finished, was
-    // acknowledged, then failed is news again.
-    expect(summarize([{ id: "a", status: "failed" }], seen({ a: "done" }))).toEqual({
-      count: 1,
-      worst: "failed",
-    });
-  });
-
-  it("ignores an acknowledgement for a chat that is no longer latched", () => {
-    expect(summarize([{ id: "a", status: "working" }], seen({ a: "done" }))).toEqual(NO_ATTENTION);
-  });
-
-  it("never counts the editor's dirty mark, whatever reaches it", () => {
-    // Belt for tabs.ts cueCandidates: `dirty` is the one non-chat state that could arrive.
-    expect(summarize([{ id: "editor:/a.go", status: "dirty" }], seen())).toEqual(NO_ATTENTION);
-  });
-
-  it("folds a RUN tab's cue into the count and the worst pick", () => {
-    // A run tab is one more candidate speaking the same vocabulary (store.ts `runStatusFor`):
-    // it counts and can win the severity pick.
-    expect(
-      summarize(
-        [
-          { id: "tab-chat", status: "done" },
-          { id: "tab-run", status: "failed" },
-        ],
-        seen(),
-      ),
-    ).toEqual({ count: 2, worst: "failed" });
-  });
-
-  it("counts one per chat and never twice for the same id", () => {
-    // Set-valued: the fold must not reintroduce a duplicate by summing per status.
-    expect(summarize([{ id: "a", status: "done" }], seen()).count).toBe(1);
-  });
-
-  // What a FRESH DEVICE opens at: the `done` and `failed` latches seed from the chat header
-  // (store.ts `latchFieldsFor`), so the first-load count is the open chat tabs holding a
-  // finished or failed turn. Measured here rather than argued.
-  it("opens at one per finished tab on a device with no acknowledgements", () => {
-    // Eight open chat tabs: six `completed`, two `interrupted` (graded `failed`). A stopped
-    // turn with a tab counts too: `done` is the dot for any turn that ended.
-    const tabs = [
-      { id: "t1", status: "done" },
-      { id: "t2", status: "done" },
-      { id: "t3", status: "done" },
-      { id: "t4", status: "done" },
-      { id: "t5", status: "done" },
-      { id: "t6", status: "done" },
-      { id: "t7", status: "failed" },
-      { id: "t8", status: "failed" },
-    ];
-
-    // The active tab is acknowledged as it is observed (the controller's
-    // watched-tab rule), so the reader sees one fewer than the tab count.
-    expect(summarize(tabs, seen())).toEqual({ count: 8, worst: "failed" });
-    expect(summarize(tabs, seen({ t1: "done" }))).toEqual({ count: 7, worst: "failed" });
-  });
-
-  it("takes the ALERT icon as soon as one tab holds a failure", () => {
-    // `failed` outranks `done`, so one broken turn decides the favicon for the whole window.
-    expect(cueIconName(summarize([{ id: "a", status: "done" }], seen()).worst as CueStatus)).toBe(
-      "done",
-    );
-    expect(
-      cueIconName(
-        summarize(
-          [
-            { id: "a", status: "done" },
-            { id: "b", status: "failed" },
-          ],
-          seen(),
-        ).worst as CueStatus,
-      ),
-    ).toBe("alert");
-  });
-
-  it("clears as the reader visits each tab, so the count is transient", () => {
-    // Acknowledgements persist per device, so the first-load count only falls.
-    const tabs = [
-      { id: "a", status: "done" },
-      { id: "b", status: "done" },
-      { id: "c", status: "failed" },
-    ];
-    expect(summarize(tabs, seen()).count).toBe(3);
-    expect(summarize(tabs, seen({ a: "done" })).count).toBe(2);
-    expect(summarize(tabs, seen({ a: "done", b: "done" })).count).toBe(1);
-    expect(summarize(tabs, seen({ a: "done", b: "done", c: "failed" }))).toEqual(NO_ATTENTION);
-  });
-
-  it("counts a chat whose dot has never been written as nothing", () => {
-    // `""` (an unpainted dot, an unknown chat) is not a cue, so a boot restore cannot spike
-    // the count.
-    expect(
-      summarize(
-        [
-          { id: "a", status: "" },
-          { id: "b", status: "" },
-        ],
-        seen(),
-      ),
-    ).toEqual(NO_ATTENTION);
-  });
-});
-
-describe("isUnseenCue is the one predicate behind both surfaces", () => {
-  it("agrees with the fold on every case", () => {
-    const candidates: CueCandidate[] = [
-      { id: "a", status: "done" },
-      { id: "b", status: "idle" },
-      { id: "c", status: "input" },
-    ];
-    const ack = seen({ a: "done" });
-    const byPredicate = candidates.filter((c) => isUnseenCue(c.status, c.id, ack)).length;
-    expect(summarize(candidates, ack).count).toBe(byPredicate);
   });
 });
 
@@ -566,6 +402,81 @@ describe("createAttention drives each sink only on a real change", () => {
   });
 });
 
+/** Let the badge's one-write-per-turn window close, as the next event's task would. */
+async function nextTurn(): Promise<void> {
+  await Promise.resolve();
+}
+
+describe("assertBadge writes the OS badge whatever the page last wrote", () => {
+  it("writes the count again after a write the OS may have dropped", async () => {
+    // WebKit resolves setAppBadge before the write lands, so a lost clear leaves the icon lit
+    // while every later apply of 0 matches the page's memory.
+    const log = emptyLog();
+    const surfaces = createAttention(fakeEnv(log));
+    surfaces.apply({ count: 1, worst: "done" });
+    await nextTurn();
+    surfaces.apply(NO_ATTENTION);
+    await nextTurn();
+    surfaces.assertBadge();
+    expect(log.badges).toEqual([1, 0, 0]);
+  });
+
+  it("leaves the title and icon to their change gate", async () => {
+    const log = emptyLog();
+    const surfaces = createAttention(fakeEnv(log));
+    surfaces.apply({ count: 2, worst: "input" });
+    await nextTurn();
+    surfaces.assertBadge();
+    expect(log).toEqual({ titles: ["(2) "], badges: [2, 2], icons: ["input"] });
+  });
+
+  it("costs one OS write when it follows a count change in the same turn", () => {
+    const log = emptyLog();
+    const surfaces = createAttention(fakeEnv(log));
+    surfaces.apply({ count: 1, worst: "done" });
+    surfaces.assertBadge();
+    surfaces.assertBadge();
+    expect(log.badges).toEqual([1]);
+  });
+
+  it("still writes a different count inside the same turn", () => {
+    const log = emptyLog();
+    const surfaces = createAttention(fakeEnv(log));
+    surfaces.apply({ count: 1, worst: "done" });
+    surfaces.apply(NO_ATTENTION);
+    surfaces.apply({ count: 1, worst: "done" });
+    expect(log.badges).toEqual([1, 0, 1]);
+  });
+
+  it("writes nothing before the first apply, when there is no count to assert", () => {
+    const log = emptyLog();
+    createAttention(fakeEnv(log)).assertBadge();
+    expect(log.badges).toEqual([]);
+  });
+});
+
+describe("release hands the page its own title and icon back", () => {
+  it("restores the title and icon and leaves the badge alone", () => {
+    const log = emptyLog();
+    const surfaces = createAttention(fakeEnv(log));
+    surfaces.apply({ count: 2, worst: "failed" });
+    surfaces.release();
+    expect(log).toEqual({ titles: ["(2) ", ""], badges: [2], icons: ["alert", null] });
+  });
+
+  it("repaints the title and icon on the next apply of the same value", () => {
+    // A bfcache restore re-runs the fold with the value that was showing before the hide.
+    const log = emptyLog();
+    const surfaces = createAttention(fakeEnv(log));
+    surfaces.apply({ count: 2, worst: "failed" });
+    surfaces.release();
+    surfaces.apply({ count: 2, worst: "failed" });
+    expect(log.titles).toEqual(["(2) ", "", "(2) "]);
+    expect(log.icons).toEqual(["alert", null, "alert"]);
+    expect(log.badges).toEqual([2]);
+  });
+});
+
 describe("iconVariantHref follows the asset generator's naming", () => {
   it("rewrites marotte's one icon link", () => {
     expect(iconVariantHref("/favicon.svg", "input")).toBe("/favicon-input.svg");
@@ -587,158 +498,147 @@ describe("iconVariantHref follows the asset generator's naming", () => {
   });
 });
 
-describe("the acknowledgement store's key", () => {
-  it("lives beside the UI state rather than inside it", () => {
-    // Its own key: `marotte.ui-state` is the window's arrangement, on another cadence.
-    expect(CUE_SEEN_KEY).toBe("marotte.cue-seen");
-    expect(CUE_SEEN_KEY).not.toBe("marotte.ui-state");
-  });
-});
-
-describe("parseCueSeen distrusts everything it reads", () => {
-  it("round-trips what serializeCueSeen wrote", () => {
-    const map = seen({ a: "done", b: "input" });
-    expect([...parseCueSeen(serializeCueSeen(map))]).toEqual([...map]);
-  });
-
-  it("reads an absent or empty document as nothing acknowledged", () => {
-    expect(parseCueSeen(null).size).toBe(0);
-    expect(parseCueSeen("").size).toBe(0);
-  });
-
-  it("drops a whole document it cannot parse", () => {
-    // Degrading to "nothing acknowledged" is always safe: a lost
-    // acknowledgement only re-lights a cue the reader can dismiss again.
-    expect(parseCueSeen("{oh no").size).toBe(0);
-  });
-
-  it("refuses a JSON value that is not an object of entries", () => {
-    // A POPULATED array matters: Object.entries on ["done"] yields ["0", "done"], a cue for a
-    // chat called "0".
-    for (const raw of ["[]", '["done"]', '["done","input"]', "null", '"done"', "42", "true"]) {
-      expect(parseCueSeen(raw).size, `${raw} must not parse as a cue map`).toBe(0);
+describe("cueClass is the one predicate behind count, icon and acknowledgement", () => {
+  const statuses = ["input", "waiting", "failed", "done", "working", "idle", "dirty", ""];
+  // Every status by kind, with the position below, equal to and past the seen marker, and unknown.
+  const want = (status: string, kind: "chat" | "run", past: boolean): string => {
+    if (status === "input" || (kind === "run" && status === "waiting")) {
+      return "needs";
     }
-  });
-
-  it("keeps the trustworthy entries of a partly-corrupt document", () => {
-    const map = parseCueSeen('{"a":"done","b":"nonsense","":"input","c":7,"d":"failed"}');
-    expect([...map]).toEqual([
-      ["a", "done"],
-      ["d", "failed"],
-    ]);
-  });
-
-  it("stops at the cap, so a hostile document cannot make the restore unbounded", () => {
-    const hostile: Record<string, string> = {};
-    for (let i = 0; i < MAX_PERSISTED_CUE_SEEN * 3; i++) {
-      hostile[`c${String(i)}`] = "done";
-    }
-    expect(parseCueSeen(JSON.stringify(hostile)).size).toBe(MAX_PERSISTED_CUE_SEEN);
-  });
-});
-
-function fakeStorage(initial: string | null = null): CueSeenStorage & { raw: () => string | null } {
-  let raw = initial;
-  return {
-    read: () => raw,
-    write: (next) => {
-      raw = next;
-    },
-    raw: () => raw,
+    return isCueStatus(status) && past ? "unread" : "";
   };
+  for (const kind of ["chat", "run"] as const) {
+    for (const status of statuses) {
+      for (const [label, seen, position] of [
+        ["below", 3, 2],
+        ["equal", 3, 3],
+        ["past", 3, 4],
+        ["unknown", 0, 0],
+      ] as const) {
+        it(`classes a ${kind} at ${status === "" ? "no dot" : status} with its position ${label}`, () => {
+          expect(cueClass(tab("t", status, { kind, seen, position }))).toBe(
+            want(status, kind, position > seen),
+          );
+        });
+      }
+    }
+  }
+});
+
+describe("summarize folds the tabs into one value", () => {
+  it("counts nothing when nothing needs the reader or is unread", () => {
+    expect(summarize([tab("a", "done", { seen: 1 }), tab("b", "working")], "")).toEqual(
+      NO_ATTENTION,
+    );
+  });
+
+  it("counts one per tab and paints the most severe, not the last", () => {
+    const got = summarize([tab("a", "done"), tab("b", "input"), tab("c", "failed")], "");
+    expect(got).toEqual({ count: 3, worst: "input" });
+  });
+
+  it("leaves the watched tab's unread state out and still counts its open ask", () => {
+    expect(summarize([tab("a", "done"), tab("b", "done")], "a")).toEqual({
+      count: 1,
+      worst: "done",
+    });
+    expect(summarize([tab("a", "input"), tab("b", "done", { seen: 1 })], "a")).toEqual({
+      count: 1,
+      worst: "input",
+    });
+  });
+
+  it("counts a paused run until it settles, whatever was acknowledged", () => {
+    expect(summarize([tab("r", "waiting", { kind: "run", seen: 9, position: 0 })], "r")).toEqual({
+      count: 1,
+      worst: "waiting",
+    });
+  });
+});
+
+/** One server's seen markers and read bounds, as several controllers see it: the ack rule is the
+ *  server's (clamp to the bound, keep only a value past the stored one). */
+interface FakeServer {
+  seen: Map<string, number>;
+  bound: Map<string, number>;
+  acks: { id: string; seen: number }[];
+  ack: (id: string, seen: number) => AckResult;
 }
 
-describe("createCueSeen persists and bounds the acknowledgements", () => {
-  it("starts from what the reader already dismissed", () => {
-    // Latches rebuild from server state on each reconnect, so a dismissed count must persist.
-    const store = createCueSeen(fakeStorage('{"a":"done"}'));
-    expect(store.map().get("a")).toBe("done");
-  });
-
-  it("writes through on every mark", () => {
-    const storage = fakeStorage();
-    createCueSeen(storage).mark("a", "input");
-    expect(storage.raw()).toBe('{"a":"input"}');
-  });
-
-  it("ignores a non-cue status rather than storing it", () => {
-    const storage = fakeStorage();
-    const store = createCueSeen(storage);
-    store.mark("a", "working");
-    store.mark("editor:/x.go", "dirty");
-    expect(store.map().size).toBe(0);
-    expect(storage.raw()).toBeNull();
-  });
-
-  it("does not re-write an acknowledgement it already holds", () => {
-    const storage = fakeStorage();
-    const store = createCueSeen(storage);
-    store.mark("a", "done");
-    const after = storage.raw();
-    store.mark("a", "done");
-    expect(storage.raw()).toBe(after);
-  });
-
-  it("evicts oldest-first so the live map obeys the parser's cap", () => {
-    // A chat that vanished while the page was closed leaves an entry nothing prunes; unbounded,
-    // the parser would drop fresh acknowledgements.
-    const store = createCueSeen(fakeStorage());
-    for (let i = 0; i <= MAX_PERSISTED_CUE_SEEN; i++) {
-      store.mark(`c${String(i)}`, "done");
-    }
-    expect(store.map().size).toBe(MAX_PERSISTED_CUE_SEEN);
-    expect(store.map().has("c0")).toBe(false);
-    expect(store.map().has(`c${String(MAX_PERSISTED_CUE_SEEN)}`)).toBe(true);
-  });
-
-  it("forgets an entry and writes that through", () => {
-    const storage = fakeStorage('{"a":"done"}');
-    const store = createCueSeen(storage);
-    store.forget("a");
-    expect(store.map().size).toBe(0);
-    expect(storage.raw()).toBe("{}");
-  });
-
-  it("does not write when there was nothing to forget", () => {
-    const storage = fakeStorage();
-    createCueSeen(storage).forget("nobody");
-    expect(storage.raw()).toBeNull();
-  });
-});
+function fakeServer(): FakeServer {
+  const server: FakeServer = {
+    seen: new Map(),
+    bound: new Map(),
+    acks: [],
+    ack(id, seen) {
+      server.acks.push({ id, seen });
+      const clamped = Math.min(seen, server.bound.get(id) ?? Number.POSITIVE_INFINITY);
+      if (clamped > (server.seen.get(id) ?? 0)) {
+        server.seen.set(id, clamped);
+      }
+      return (server.seen.get(id) ?? 0) >= seen ? "acked" : "refused";
+    },
+  };
+  return server;
+}
 
 interface Harness {
   applied: Attention[];
+  asserts: () => number;
+  retracted: string[];
+  /** Every acknowledgement this controller sent, in order. */
+  sent: { id: string; seen: number }[];
   latest: () => Attention;
+  /** Set the tabs this window projects; `seen` is read from the server when one is attached. */
   setCandidates: (next: CueCandidate[]) => void;
   setActive: (id: string) => void;
   setVisible: (v: boolean) => void;
   setRowsInView: (ids: string[]) => void;
-  stored: () => string | null;
+  /** What the next sendAck answers when no server is attached. */
+  answer: (result: AckResult) => void;
   controller: ReturnType<typeof createAttentionController>;
 }
 
-function harness(opts: { stored?: string } = {}): Harness {
+function harness(server?: FakeServer): Harness {
   let candidates: CueCandidate[] = [];
   let active = "";
   let visible = true;
   let rows: string[] = [];
-  const storage = fakeStorage(opts.stored ?? null);
+  let next: AckResult = "acked";
   const applied: Attention[] = [];
+  const retracted: string[] = [];
+  const sent: { id: string; seen: number }[] = [];
+  let asserts = 0;
+  const view = (): CueCandidate[] =>
+    server === undefined
+      ? candidates
+      : candidates.map((c) => ({ ...c, seen: server.seen.get(c.id) ?? 0 }));
   const controller = createAttentionController({
-    candidates: () => candidates,
+    candidates: view,
     activeTabID: () => active,
     pageVisible: () => visible,
     rowsInView: () => rows,
-    storage,
+    retract: (id) => retracted.push(id),
+    sendAck: (id, seen) => {
+      sent.push({ id, seen });
+      return Promise.resolve(server === undefined ? next : server.ack(id, seen));
+    },
     surfaces: {
-      apply: (next) => applied.push(next),
+      apply: (a) => applied.push(a),
+      assertBadge: () => {
+        asserts += 1;
+      },
+      release: (): void => undefined,
     },
   });
   return {
     applied,
+    asserts: () => asserts,
+    retracted,
+    sent,
     latest: () => applied[applied.length - 1] ?? NO_ATTENTION,
-    setCandidates: (next) => {
-      candidates = next;
+    setCandidates: (c) => {
+      candidates = c;
     },
     setActive: (id) => {
       active = id;
@@ -749,232 +649,289 @@ function harness(opts: { stored?: string } = {}): Harness {
     setRowsInView: (ids) => {
       rows = ids;
     },
-    stored: storage.raw,
+    answer: (result) => {
+      next = result;
+    },
     controller,
   };
 }
 
+/** Let an acknowledgement's answer land. */
+async function settled(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe("the raise rule", () => {
-  it("raises a cue on a background chat", () => {
+  it("raises an unread background tab and sends nothing for it", () => {
+    const h = harness();
+    h.setActive("b");
+    h.setCandidates([tab("a", "done")]);
+    h.controller.refresh();
+    expect(h.latest()).toEqual({ count: 1, worst: "done" });
+    expect(h.sent).toEqual([]);
+  });
+
+  it("leaves the watched tab out and acknowledges it at its own position", () => {
     const h = harness();
     h.setActive("a");
-    h.setCandidates([
-      { id: "a", status: "idle" },
-      { id: "b", status: "done" },
+    h.setCandidates([tab("a", "done", { seen: 2, position: 5 })]);
+    h.controller.refresh();
+    expect(h.latest()).toEqual(NO_ATTENTION);
+    expect(h.sent).toEqual([{ id: "a", seen: 5 }]);
+  });
+
+  it("raises the active tab while the page is hidden, and acknowledges nothing", () => {
+    const h = harness();
+    h.setActive("a");
+    h.setVisible(false);
+    h.setCandidates([tab("a", "done")]);
+    h.controller.refresh();
+    expect(h.latest()).toEqual({ count: 1, worst: "done" });
+    expect(h.sent).toEqual([]);
+  });
+
+  it("never acknowledges an open ask, which counts on screen until answered", () => {
+    const h = harness();
+    h.setActive("a");
+    h.setCandidates([tab("a", "input")]);
+    h.controller.refresh();
+    expect(h.latest()).toEqual({ count: 1, worst: "input" });
+    expect(h.sent).toEqual([]);
+  });
+
+  it("acknowledges nothing for a running tab", () => {
+    const h = harness();
+    h.setActive("a");
+    h.setCandidates([tab("a", "working", { position: 4 })]);
+    h.controller.refresh();
+    expect(h.sent).toEqual([]);
+  });
+});
+
+describe("an acknowledgement is sent once per position", () => {
+  it("sends one acknowledgement over five refreshes", () => {
+    const h = harness();
+    h.setActive("a");
+    h.setCandidates([tab("a", "done", { position: 3 })]);
+    for (let i = 0; i < 5; i++) {
+      h.controller.refresh();
+    }
+    expect(h.sent).toEqual([{ id: "a", seen: 3 }]);
+  });
+
+  it("resends on the next refresh after a failure", async () => {
+    const h = harness();
+    h.answer("failed");
+    h.setActive("a");
+    h.setCandidates([tab("a", "done", { position: 3 })]);
+    h.controller.refresh();
+    await settled();
+    h.controller.refresh();
+    expect(h.sent).toHaveLength(2);
+  });
+
+  it("does not resend a refused position on a refresh, and does after a sync point", async () => {
+    const h = harness();
+    h.answer("refused");
+    h.setActive("a");
+    h.setCandidates([tab("a", "done", { position: 3 })]);
+    h.controller.refresh();
+    await settled();
+    h.controller.refresh();
+    expect(h.sent).toHaveLength(1);
+    h.controller.sync();
+    expect(h.sent).toHaveLength(2);
+  });
+
+  it("sends a newer position for the same tab", () => {
+    const h = harness();
+    h.setActive("a");
+    h.setCandidates([tab("a", "done", { position: 3 })]);
+    h.controller.refresh();
+    h.setCandidates([tab("a", "done", { position: 4 })]);
+    h.controller.refresh();
+    expect(h.sent).toEqual([
+      { id: "a", seen: 3 },
+      { id: "a", seen: 4 },
     ]);
-    h.controller.refresh();
-    expect(h.latest()).toEqual({ count: 1, worst: "done" });
-  });
-
-  it("raises nothing for the chat the reader is watching", () => {
-    const h = harness();
-    h.setActive("a");
-    h.setCandidates([{ id: "a", status: "done" }]);
-    h.controller.refresh();
-    expect(h.latest()).toEqual(NO_ATTENTION);
-  });
-
-  it("RAISES the active chat's cue while the page is hidden", () => {
-    // Both halves of "watched": "active" alone swallows the single running chat's cue.
-    const h = harness();
-    h.setActive("a");
-    h.setVisible(false);
-    h.setCandidates([{ id: "a", status: "done" }]);
-    h.controller.refresh();
-    expect(h.latest()).toEqual({ count: 1, worst: "done" });
-  });
-
-  it("acknowledges the active chat's cue once the reader can see it again", () => {
-    const h = harness();
-    h.setActive("a");
-    h.setVisible(false);
-    h.setCandidates([{ id: "a", status: "done" }]);
-    h.controller.refresh();
-    expect(h.latest().count).toBe(1);
-
-    h.setVisible(true);
-    h.controller.refresh();
-    expect(h.latest()).toEqual(NO_ATTENTION);
-  });
-
-  it("keeps an acknowledgement across a hide, so it does not re-raise", () => {
-    const h = harness();
-    h.setActive("a");
-    h.setCandidates([{ id: "a", status: "done" }]);
-    h.controller.refresh();
-    h.setVisible(false);
-    h.controller.refresh();
-    expect(h.latest()).toEqual(NO_ATTENTION);
-  });
-
-  it("un-acknowledges a chat whose state moved off the cue", () => {
-    // So its NEXT cue is fresh. Without this, a chat that finished, was
-    // acknowledged, then started and finished another turn would stay silent.
-    const h = harness();
-    h.setActive("a");
-    h.setCandidates([{ id: "a", status: "done" }]);
-    h.controller.refresh();
-    expect(h.stored()).toBe('{"a":"done"}');
-
-    h.setCandidates([{ id: "a", status: "working" }]);
-    h.controller.refresh();
-    expect(h.stored()).toBe("{}");
-
-    h.setActive("");
-    h.setCandidates([{ id: "a", status: "done" }]);
-    h.controller.refresh();
-    expect(h.latest()).toEqual({ count: 1, worst: "done" });
-  });
-
-  it("treats an unpainted tab as no information, not as a cleared cue", () => {
-    // Reading an unpainted dot or an unknown chat as "the cue ended" dropped the
-    // acknowledgement on every reload.
-    const h = harness({ stored: '{"a":"done"}' });
-    h.setCandidates([{ id: "a", status: "" }]);
-    h.controller.refresh();
-    expect(h.stored()).toBe('{"a":"done"}');
-
-    h.setCandidates([{ id: "a", status: "done" }]);
-    h.controller.refresh();
-    expect(h.latest()).toEqual(NO_ATTENTION);
-  });
-
-  it("does un-acknowledge on a real non-cue state", () => {
-    // The contrast with the case above: `idle` and `working` are states the chat
-    // is genuinely in, and they mean the cue is over.
-    const h = harness({ stored: '{"a":"done"}' });
-    h.setCandidates([{ id: "a", status: "idle" }]);
-    h.controller.refresh();
-    expect(h.stored()).toBe("{}");
-  });
-
-  it("reports zero once the last latched chat closes", () => {
-    const h = harness();
-    h.setCandidates([{ id: "a", status: "done" }]);
-    h.controller.refresh();
-    expect(h.latest().count).toBe(1);
-
-    h.setCandidates([]);
-    h.controller.refresh();
-    expect(h.latest()).toEqual(NO_ATTENTION);
-  });
-
-  it("drops a departed chat's acknowledgement", () => {
-    const h = harness();
-    h.setActive("a");
-    h.setCandidates([{ id: "a", status: "done" }]);
-    h.controller.refresh();
-    h.setCandidates([]);
-    h.controller.forget("a");
-    expect(h.stored()).toBe("{}");
   });
 });
 
 describe("acknowledging what the reader can see", () => {
-  it("acknowledges every chat whose row is in view", () => {
+  it("acknowledges every unread tab whose row is in view, chat and run alike", () => {
     const h = harness();
-    h.setActive("");
     h.setCandidates([
-      { id: "a", status: "done" },
-      { id: "b", status: "input" },
+      tab("a", "done"),
+      tab("r", "failed", { kind: "run", position: 3 }),
+      tab("c", "done"),
     ]);
-    h.setRowsInView(["a", "b"]);
+    h.setRowsInView(["a", "r"]);
     h.controller.ackSeen();
-    expect(h.latest()).toEqual(NO_ATTENTION);
-  });
-
-  it("KEEPS the cue of a chat scrolled out of the list", () => {
-    // The forgotten chat is likely below the fold, so becoming visible must not clear wholesale.
-    const h = harness();
-    h.setActive("");
-    h.setCandidates([
-      { id: "a", status: "done" },
-      { id: "b", status: "input" },
+    expect(h.sent).toEqual([
+      { id: "a", seen: 1 },
+      { id: "r", seen: 3 },
     ]);
-    h.setRowsInView(["a"]);
-    h.controller.ackSeen();
-    expect(h.latest()).toEqual({ count: 1, worst: "input" });
-  });
-
-  it("acknowledges the active chat even when no row is in view", () => {
-    // Mobile with the drawer closed: no sidebar row is visible, but the active
-    // chat's transcript is what fills the screen.
-    const h = harness();
-    h.setActive("a");
-    h.setCandidates([
-      { id: "a", status: "done" },
-      { id: "b", status: "done" },
-    ]);
-    h.setRowsInView([]);
-    h.controller.ackSeen();
-    expect(h.latest()).toEqual({ count: 1, worst: "done" });
   });
 
   it("acknowledges nothing at all while the page is hidden", () => {
-    // A closed drawer reports no rows, but so would a page nobody is looking at;
-    // acknowledging there would blank every cue on a background page.
     const h = harness();
-    h.setActive("a");
     h.setVisible(false);
-    h.setCandidates([{ id: "a", status: "done" }]);
+    h.setCandidates([tab("a", "done")]);
     h.setRowsInView(["a"]);
     h.controller.ackSeen();
-    expect(h.stored()).toBeNull();
+    expect(h.sent).toEqual([]);
   });
 
-  it("acknowledges a RUN row in view, because the seen map is keyed by TAB id", () => {
-    // Every id is a tab id (`data-tab-id`), so a run row acknowledges like a chat row; the chat
-    // beside it keeps its cue.
+  it("acknowledges the tab switched to before the active id has moved", () => {
     const h = harness();
-    h.setActive("");
-    h.setCandidates([
-      { id: "tab-chat", status: "done" },
-      { id: "tab-run", status: "failed" },
-    ]);
-    h.setRowsInView(["tab-run"]);
-    h.controller.ackSeen();
-    expect(h.latest()).toEqual({ count: 1, worst: "done" });
-    expect(h.stored()).toBe('{"tab-run":"failed"}');
-  });
-
-  it("ignores an in-view row holding no cue", () => {
-    const h = harness();
-    h.setCandidates([{ id: "a", status: "working" }]);
-    h.setRowsInView(["a"]);
-    h.controller.ackSeen();
-    expect(h.stored()).toBeNull();
-  });
-});
-
-describe("switching to a chat acknowledges it", () => {
-  it("acknowledges the incoming chat before the store's active id has moved", () => {
-    // The tab store announces a switch from inside its emit, BEFORE store.setActive, so the
-    // switch needs its own hook.
-    const h = harness();
-    h.setActive("a");
-    h.setCandidates([
-      { id: "a", status: "idle" },
-      { id: "b", status: "done" },
-    ]);
-    h.controller.ackSwitch("b");
-    expect(h.latest()).toEqual(NO_ATTENTION);
-    expect(h.stored()).toBe('{"b":"done"}');
+    h.setActive("old");
+    h.setCandidates([tab("a", "done", { position: 2 })]);
+    h.controller.ackSwitch("a");
+    expect(h.sent).toEqual([{ id: "a", seen: 2 }]);
   });
 
   it("does not acknowledge a switch made while the page is hidden", () => {
-    // The boot restore activates a tab too, and a page restored into a
-    // background browser tab must not have its cue swallowed by that.
     const h = harness();
     h.setVisible(false);
-    h.setCandidates([{ id: "b", status: "done" }]);
-    h.controller.ackSwitch("b");
+    h.setCandidates([tab("a", "done")]);
+    h.controller.ackSwitch("a");
+    expect(h.sent).toEqual([]);
+  });
+});
+
+describe("every acknowledgement and sync point writes the badge again", () => {
+  it("re-asserts on a switch that leaves the count unchanged", () => {
+    const h = harness();
+    h.setCandidates([tab("a", "done", { seen: 1 })]);
+    h.controller.ackSwitch("a");
+    h.controller.ackSwitch("a");
+    expect(h.latest()).toEqual(NO_ATTENTION);
+    expect(h.asserts()).toBe(2);
+  });
+
+  it("re-asserts on becoming visible or hidden, with nothing to acknowledge", () => {
+    const h = harness();
+    h.setCandidates([tab("a", "done")]);
+    h.controller.ackSeen();
+    h.setVisible(false);
+    h.controller.ackSeen();
+    expect(h.asserts()).toBe(2);
     expect(h.latest()).toEqual({ count: 1, worst: "done" });
   });
 
-  it("ignores a switch to a tab that is not a chat", () => {
+  it("sync recomputes from the candidates before it asserts", () => {
     const h = harness();
-    h.setCandidates([{ id: "a", status: "done" }]);
-    h.controller.ackSwitch("__settings__");
-    expect(h.latest()).toEqual({ count: 1, worst: "done" });
+    h.setCandidates([tab("b", "failed")]);
+    h.controller.sync();
+    expect(h.latest()).toEqual({ count: 1, worst: "failed" });
+    expect(h.asserts()).toBe(1);
+  });
+
+  it("leaves a plain recompute to the count gate", () => {
+    const h = harness();
+    h.setCandidates([tab("a", "done")]);
+    h.controller.refresh();
+    h.controller.refresh();
+    expect(h.asserts()).toBe(0);
+  });
+});
+
+describe("a tab that stops wanting the reader retracts its notifications once", () => {
+  it("retracts an unread tab another device's acknowledgement caught up", () => {
+    const server = fakeServer();
+    const h = harness(server);
+    h.setCandidates([tab("a", "done", { position: 2 })]);
+    h.controller.refresh();
+    server.seen.set("a", 2);
+    h.controller.refresh();
+    h.controller.refresh();
+    expect(h.retracted).toEqual(["a"]);
+  });
+
+  it("retracts a paused run that resumes", () => {
+    const h = harness();
+    h.setCandidates([tab("r", "waiting", { kind: "run", position: 0 })]);
+    h.controller.refresh();
+    h.setCandidates([tab("r", "working", { kind: "run", position: 0 })]);
+    h.controller.refresh();
+    expect(h.retracted).toEqual(["r"]);
+  });
+
+  it("retracts a tab that closed while it was counted", () => {
+    const h = harness();
+    h.setCandidates([tab("a", "done")]);
+    h.controller.refresh();
+    h.setCandidates([]);
+    h.controller.refresh();
+    expect(h.retracted).toEqual(["a"]);
+  });
+
+  it("retracts nothing while a tab keeps its class", () => {
+    const h = harness();
+    h.setCandidates([tab("a", "done"), tab("b", "input")]);
+    h.controller.refresh();
+    h.controller.refresh();
+    expect(h.retracted).toEqual([]);
+  });
+});
+
+describe("two windows on one server", () => {
+  it("a lagging window's acknowledgement never hides a newer turn", async () => {
+    const server = fakeServer();
+    const fresh = harness(server);
+    const lagging = harness(server);
+    // Both read the chat at position 1; then turn 2 closes, which only `fresh` has heard of.
+    fresh.setCandidates([tab("a", "done", { position: 2 })]);
+    lagging.setCandidates([tab("a", "done", { position: 1 })]);
+    lagging.setActive("a");
+    lagging.controller.refresh();
+    await settled();
+
+    expect(server.acks).toEqual([{ id: "a", seen: 1 }]);
+    fresh.controller.refresh();
+    expect(fresh.latest()).toEqual({ count: 1, worst: "done" });
+    // The lagging window catches up while the reader looks elsewhere: it counts the new turn too.
+    lagging.setActive("");
+    lagging.setCandidates([tab("a", "done", { position: 2 })]);
+    lagging.controller.refresh();
+    expect(lagging.latest()).toEqual({ count: 1, worst: "done" });
+  });
+
+  it("an older acknowledgement landing after a newer one leaves the newer marker", async () => {
+    const server = fakeServer();
+    const reader = harness(server);
+    const stale = harness(server);
+    reader.setActive("a");
+    reader.setCandidates([tab("a", "done", { position: 2 })]);
+    reader.controller.refresh();
+    stale.setActive("a");
+    stale.setCandidates([tab("a", "done", { position: 1 })]);
+    stale.controller.refresh();
+    await settled();
+    expect(server.seen.get("a")).toBe(2);
+  });
+
+  it("a refused position never holds back the next one, so both windows converge", async () => {
+    const server = fakeServer();
+    const reader = harness(server);
+    const other = harness(server);
+    // The reader holds position 5, which a rewind elsewhere took back to 3: the ack is clamped.
+    server.bound.set("a", 3);
+    reader.setActive("a");
+    reader.setCandidates([tab("a", "done", { position: 5 })]);
+    reader.controller.refresh();
+    await settled();
+    expect(server.seen.get("a")).toBe(3);
+
+    // The next turn closes at 6 on the server; both windows hear of it.
+    server.bound.set("a", 6);
+    reader.setCandidates([tab("a", "done", { position: 6 })]);
+    other.setCandidates([tab("a", "done", { position: 6 })]);
+    reader.controller.refresh();
+    await settled();
+    other.controller.refresh();
+    expect(server.seen.get("a")).toBe(6);
+    expect(other.latest()).toEqual(NO_ATTENTION);
   });
 });

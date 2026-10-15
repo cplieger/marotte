@@ -167,6 +167,15 @@ func (r *runLog) log(ctx context.Context, workflowID string) (*chat.EntryLog, er
 	return rec.log, nil
 }
 
+// turnHighWater is the number of turns the run's log holds, 0 with no log.
+func (r *runLog) turnHighWater(ctx context.Context, workflowID string) (uint64, error) {
+	l, err := r.log(ctx, workflowID)
+	if err != nil || l == nil {
+		return 0, err
+	}
+	return l.TurnHighWater(), nil
+}
+
 // stepTurns is one step path's transcript: its turns in file order, open tails, and one run_turn stamp per
 // open turn. The stamp's seq comes from the served entries, never the record's counter, which advances
 // outside the lock. found is false with no such turn.

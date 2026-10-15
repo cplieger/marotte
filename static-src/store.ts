@@ -789,6 +789,9 @@ export function upsertHeader(h: ChatHeader): void {
         // has not closed yet is not counted, and a rewind's shrink heals on that rewind's own
         // refetch.
         turn_count: Math.max(s.turn_count, h.turn_count),
+        // Authoritative both ways, unlike `turn_count`: a rewind lowers it, and every device must
+        // fold the same value or one counts a chat another has read.
+        read_position: h.read_position ?? 0,
         // The model badge's ONE input, and a header read is its authority in both directions: the
         // apply at a turn's close arrives with the field empty, which is what clears the pending
         // pick on every device.
@@ -831,6 +834,7 @@ export function upsertHeader(h: ChatHeader): void {
     thinking_active: h.thinking_active ?? "",
     usage: h.usage,
     turn_count: h.turn_count,
+    read_position: h.read_position ?? 0,
     pending_model: h.pending_model ?? "",
     pending_effort: h.pending_effort ?? "",
     interrupt_mode: h.interrupt_mode ?? "steer",

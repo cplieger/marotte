@@ -1683,15 +1683,20 @@ describe("cueCandidates", () => {
     setTabStatus(chatID("c-failed"), "failed");
 
     expect(cueCandidates()).toEqual([
-      { id: chatID("c-done"), status: "done" },
-      { id: chatID("c-failed"), status: "failed" },
+      { id: chatID("c-done"), kind: "chat", ref: "c-done", status: "done", seen: 0 },
+      { id: chatID("c-failed"), kind: "chat", ref: "c-failed", status: "failed", seen: 0 },
     ]);
 
-    // And a tab whose dot has never been written reports "" rather than a guess —
-    // attention.ts reads that as NO INFORMATION and keeps the acknowledgement,
-    // which is what stops a boot restore re-lighting a dismissed cue.
+    // And a tab whose dot has never been written reports "" rather than a guess, which no cue
+    // counts.
     await openChat("c-fresh");
-    expect(cueCandidates()).toContainEqual({ id: chatID("c-fresh"), status: "" });
+    expect(cueCandidates()).toContainEqual({
+      id: chatID("c-fresh"),
+      kind: "chat",
+      ref: "c-fresh",
+      status: "",
+      seen: 0,
+    });
   });
 
   it("excludes a VIEW tab, so one chat is never counted twice", async () => {
@@ -1702,7 +1707,7 @@ describe("cueCandidates", () => {
     setTabStatus(chatID("c-owned"), "done");
     setTabStatus(chatID("c-watched"), "done");
 
-    expect(cueCandidates()).toEqual([{ id: chatID("c-owned"), status: "done" }]);
+    expect(cueCandidates().map((c) => c.id)).toEqual([chatID("c-owned")]);
   });
 
   it("reports a RUN tab's dot, which is the one non-chat kind that bears a cue", async () => {
@@ -1713,7 +1718,9 @@ describe("cueCandidates", () => {
     await openRunTab("wf_1", "A run");
     setTabStatus(tabIdFor("run", "wf_1"), "done");
 
-    expect(cueCandidates()).toEqual([{ id: tabIdFor("run", "wf_1"), status: "done" }]);
+    expect(cueCandidates()).toEqual([
+      { id: tabIdFor("run", "wf_1"), kind: "run", ref: "wf_1", status: "done", seen: 0 },
+    ]);
   });
 
   it("excludes an editor tab, whose dirty mark is not an agent state", async () => {
@@ -1734,9 +1741,9 @@ describe("cueCandidates", () => {
     setTabStatus(chatID("c-launcher"), "failed");
     setTabStatus(tabIdFor("run", "wf_2"), "done");
 
-    expect(cueCandidates()).toEqual([
-      { id: chatID("c-launcher"), status: "failed" },
-      { id: tabIdFor("run", "wf_2"), status: "done" },
+    expect(cueCandidates().map((c) => [c.id, c.status])).toEqual([
+      [chatID("c-launcher"), "failed"],
+      [tabIdFor("run", "wf_2"), "done"],
     ]);
   });
 
@@ -1752,11 +1759,20 @@ describe("cueCandidates", () => {
     setTabStatus(chatID("c-owned-remote"), "done");
     setTabStatus(chatID("c-view-remote"), "done");
 
-    expect(cueCandidates()).toContainEqual({
-      id: chatID("c-owned-remote"),
-      status: "done",
-    });
+    expect(cueCandidates().map((c) => c.id)).toContain(chatID("c-owned-remote"));
     expect(cueCandidates().map((c) => c.id)).not.toContain(chatID("c-view-remote"));
+  });
+
+  it("reports the seen marker a later frame carries", async () => {
+    expect.assertions(1);
+    const { cueCandidates } = await import("./tabs.js");
+    const sub = tabServer.openElsewhere({ kind: "chat", ref: "c-read" });
+    tabServer.flushFrames();
+    await settleTabs();
+    tabServer.emitRaw({ changed: { ...sub, seen: 4 }, version: tabServer.version() + 1 });
+    await settleTabs();
+
+    expect(cueCandidates()[0]?.seen).toBe(4);
   });
 
   // `owns` never changes after open, so a row's `spec` is a SNAPSHOT and a later frame cannot promote

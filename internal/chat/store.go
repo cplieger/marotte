@@ -23,7 +23,6 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
-	"golang.org/x/sync/singleflight"
 )
 
 // errInvalidUTF8 marks content that cannot round-trip through JSON, the storage format.
@@ -68,7 +67,7 @@ type Store struct {
 	broadcast   broadcaster
 	versions    *subject.Versions
 	epoch       func() string
-	listSF      singleflight.Group
+	listScans   listFlight
 	onPurge     func(chatID marotte.ChatID, sessionChain []string)
 	isLive      func(chatID marotte.ChatID) bool
 	hasOpenTab  func(chatID marotte.ChatID) bool
@@ -326,9 +325,28 @@ func (s *Store) broadcastMutation(ctx context.Context, chatID marotte.ChatID, c 
 	if !exists {
 		evt = marotte.EventChatCreated
 	}
-	frame := marotte.NewEvent(evt, chatID, c.Header())
+	frame := marotte.NewEvent(evt, chatID, s.wireHeader(chatID, c))
 	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
 	s.broadcast.Broadcast(ctx, frame)
+}
+
+// wireHeader is the header every chat producer in this package sends: c.Header() plus the read
+// position of the chat's log when this process has it open. It never opens a log, so a chat whose
+// log is closed carries 0, which no client counts as unread.
+func (s *Store) wireHeader(chatID marotte.ChatID, c *marotte.Chat) marotte.ChatHeader {
+	h := c.Header()
+	h.ReadPosition = s.openReadPosition(chatID)
+	return h
+}
+
+// openReadPosition is the read position of the chat's log if this process has it open, else 0.
+func (s *Store) openReadPosition(chatID marotte.ChatID) uint64 {
+	if v, ok := s.logs.Load(chatID); ok {
+		if l, isLog := v.(*EntryLog); isLog {
+			return l.readPosition()
+		}
+	}
+	return 0
 }
 
 // SetDraft persists the chat's unsent composer text. Not a Mutate: it leaves UpdatedAt alone

@@ -532,14 +532,11 @@ describe("a skipped version", () => {
 // sorts LAST, never read as closed.
 describe("a tabs_changed whose order omits a tab we hold", () => {
   it("keeps that tab, at the END of the strip, and never closes it", async () => {
-    expect.assertions(4);
+    expect.assertions(3);
     tabServer.setMode("event-first");
     await openTab({ kind: "chat", ref: "a" });
     await openTab({ kind: "chat", ref: "b" });
     await openTab({ kind: "chat", ref: "c" });
-    const closed: string[] = [];
-    const { setOnTabClosed } = await import("./tabs.js");
-    setOnTabClosed((id) => closed.push(id));
 
     // The order names two of the three. The third is not a closure and must not be
     // read as one.
@@ -553,7 +550,6 @@ describe("a tabs_changed whose order omits a tab we hold", () => {
     // LAST rather than first: an unnamed tab ahead of the strip would put a tab the
     // server has not told us about in front of the arrangement the reader made.
     expect(await rowRefs()).toEqual(["c", "a", "b"]);
-    expect(closed).toEqual([]);
     expect(tabServer.sentOfType("close_tab")).toHaveLength(0);
   });
 
