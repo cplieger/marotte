@@ -146,7 +146,7 @@ func RunEnded(t Target, status marotte.RunStatus, parent, stopReason, pauseKind 
 		if parent != "" || pauseKind != pauseKindMaxIterations {
 			return marotte.NotificationPayload{}, false
 		}
-		return build(marotte.PushKindRunOutcome, t, "Workflow paused", "iteration limit reached"), true
+		return build(marotte.PushKindRunOutcome, t, "Workflow paused", "pass limit reached"), true
 	default:
 		return marotte.NotificationPayload{}, false
 	}

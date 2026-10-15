@@ -5,9 +5,12 @@ import {
   counters,
   elapsed,
   failureOwner,
+  progressText,
+  summaryProgress,
   window as execWindow,
   workNodes,
   type ExecNode,
+  type ProgressSource,
 } from "./model.js";
 import type { ExecState } from "./status.js";
 
@@ -65,6 +68,116 @@ describe("counters answers the header's step counter", () => {
 
   it("is all zeros with nothing to count", () => {
     expect(counters([])).toEqual({ total: 0, done: 0, failed: 0, current: 0 });
+  });
+});
+
+describe("progressText states the loop pass the run stands in", () => {
+  const running = (nodes: ExecNode[]): ProgressSource => ({ nodes, state: "running" });
+  const passOf = (n: number, kids: ExecNode[]): ExecNode => ({
+    ...group(`pass ${String(n)}`, "sequence", kids),
+    path: `loop#${String(n)}`,
+    pass: n,
+  });
+  const loop = (passes: ExecNode[], over: Partial<ExecNode> = {}): ExecNode => ({
+    ...group("loop", "repeat", passes),
+    ...over,
+  });
+  const earlier = (n: number): ExecNode =>
+    passOf(n, [work(`code${String(n)}`, "ok"), work(`review${String(n)}`, "ok")]);
+  // The fixture's third pass: 1 done, the 2nd step running, 2 more in the pass and `land` after it.
+  const third = (): ExecNode =>
+    passOf(3, [
+      work("code", "ok"),
+      work("review", "running"),
+      work("fix", "pending"),
+      work("verify", "pending"),
+    ]);
+
+  it("prefixes the pass and its budget", () => {
+    const nodes = [
+      loop([earlier(1), earlier(2), third()], { maxPasses: 8 }),
+      work("land", "pending"),
+    ];
+    expect(progressText(running(nodes))).toBe("pass 3 of 8 \u00b7 step 2 of 5");
+    expect(summaryProgress(running(nodes))).toEqual({
+      pass: "pass 3 of 8",
+      steps: "step 2 of 5",
+      long: "pass 3 of 8 \u00b7 step 2 of 5",
+      short: "3/8 \u00b7 2 of 5",
+    });
+  });
+
+  it("names the pass alone for a loop with no bound", () => {
+    const nodes = [loop([earlier(1), earlier(2), third()]), work("land", "pending")];
+    expect(progressText(running(nodes))).toBe("pass 3 \u00b7 step 2 of 5");
+    expect(summaryProgress(running(nodes)).short).toBe("3 \u00b7 2 of 5");
+  });
+
+  it("shows no pass once the step in flight is outside the loop", () => {
+    const done = passOf(3, [work("code", "ok"), work("review", "ok")]);
+    const nodes = [loop([earlier(1), earlier(2), done], { maxPasses: 8 }), work("land", "running")];
+    expect(progressText(running(nodes))).toBe("step 3 of 3");
+    expect(summaryProgress(running(nodes)).short).toBe("");
+  });
+
+  it("shows the innermost of two nested loops", () => {
+    const inner = loop([passOf(2, [work("try", "running")])], { path: "inner", maxPasses: 4 });
+    const outer = loop([passOf(5, [inner, work("check", "pending")])], { maxPasses: 6 });
+    expect(progressText(running([outer]))).toBe("pass 2 of 4 \u00b7 step 1 of 2");
+  });
+
+  it("follows the first step in flight across a parallel holding two loops", () => {
+    const a = loop([passOf(1, [work("a1", "ok")]), passOf(2, [work("a2", "running")])], {
+      path: "a",
+      maxPasses: 3,
+    });
+    const b = loop([passOf(4, [work("b4", "running")])], { path: "b", maxPasses: 9 });
+    expect(progressText(running([group("fan", "parallel", [a, b])]))).toBe(
+      "pass 2 of 3 \u00b7 step 1 of 2",
+    );
+  });
+
+  it("follows the newest started step when none is in flight", () => {
+    const at = (min: number): Partial<ExecNode> => ({ startGen: min });
+    const paused = passOf(2, [work("code", "ok", at(3)), work("review", "pending")]);
+    const nodes = [
+      work("plan", "ok", at(1)),
+      loop([passOf(1, [work("code1", "ok", at(2))]), paused], { maxPasses: 4 }),
+    ];
+    expect(progressText(running(nodes))).toBe("pass 2 of 4 \u00b7 2 of 3");
+  });
+
+  it("shows no pass once every step has settled", () => {
+    const last = passOf(2, [
+      work("code", "ok", { startGen: 1 }),
+      work("review", "ok", { startGen: 2 }),
+    ]);
+    expect(progressText(running([loop([earlier(1), last], { maxPasses: 2 })]))).toBe("2 of 2");
+  });
+
+  for (const state of ["fail", "warn"] as const) {
+    it(`shows no pass for a run that ended (${state}) with steps still pending after its loop`, () => {
+      const ended = passOf(2, [
+        work("code", "ok", { startGen: 1 }),
+        work("review", state, { startGen: 2 }),
+      ]);
+      const run: ProgressSource = {
+        nodes: [loop([earlier(1), ended], { maxPasses: 4 }), work("land", "pending")],
+        state,
+      };
+      expect(progressText(run)).toBe("1 of 3");
+      expect(summaryProgress(run).short).toBe("");
+    });
+  }
+
+  it("keeps the pass of a one-step loop, whose step count the summary withholds", () => {
+    const nodes = [loop([earlier(1), passOf(2, [work("code", "running")])], { maxPasses: 5 })];
+    expect(summaryProgress(running(nodes))).toEqual({
+      pass: "pass 2 of 5",
+      steps: "",
+      long: "pass 2 of 5",
+      short: "2/5",
+    });
   });
 });
 

@@ -122,6 +122,21 @@
   min-inline-size: 0.125rem;
 }
 
+/* A loop pass's header over its lanes: a label, not a target. */
+.ev-tl-pass {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-1) 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+
+  &:not(:first-child) {
+    margin-block-start: var(--sp-1);
+    border-block-start: 1px solid var(--c-border);
+  }
+}
+
 /* A step not started yet: its lane is there from the plan, its track empty. */
 .ev-tl-bar[hidden] {
   display: none;
@@ -1115,9 +1130,21 @@
 }
 
 .ev-sum-state:empty,
-.ev-sum-progress:empty,
+.ev-sum-progress:has(> .ev-sum-long:empty),
 .ev-sum-clock:empty {
   display: none;
+}
+
+/* The loop's narrow form: the repeat glyph for the word "pass", shown under 30rem. */
+.ev-sum-short {
+  display: none;
+  align-items: center;
+  gap: 0.125rem;
+
+  & > svg {
+    inline-size: 1em;
+    block-size: 1em;
+  }
 }
 
 /* The serial mini timeline: one segment per step of the plan as it stands, a
@@ -1519,6 +1546,47 @@
   /* The tab names the run; the state word stays, so state is never colour alone. */
   .ev-dock .ev-sum-label {
     display: none;
+  }
+
+  /* So does the head's run mark, its state being the word beside it: with the tighter
+     gaps, its width lets the pass, the step count and the clock clear the verbs. */
+  .ev-dock-head > .ev-dock-icon {
+    display: none;
+  }
+
+  .ev-dock-head:not([data-alert]),
+  .run-bar-open,
+  .ev-sum {
+    column-gap: var(--sp-1);
+  }
+
+  /* Under the hit floor's width on purpose: the head row is the toggle's target
+     (`wireRowToggle`) and keeps the floor's height, so the chevron's box needs only
+     its glyph's width. */
+  .ev-dock-head:not([data-alert]) {
+    padding-inline-end: var(--sp-1);
+
+    & > .ev-box-toggle {
+      min-inline-size: 0;
+    }
+  }
+
+  /* The long form leaves the screen, not the accessibility tree: the head's description
+     and a row's name keep the word "pass". */
+  .ev-sum-progress[data-loop] {
+    position: relative;
+
+    & > .ev-sum-short {
+      display: inline-flex;
+    }
+
+    & > .ev-sum-long {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+    }
   }
 
   /* The mini timeline becomes a band along the head's bottom edge. */

@@ -95,7 +95,7 @@ func TestRunEnded(t *testing.T) {
 		{name: "failed", status: marotte.RunStatusFailed, wantBody: "Workflow failed", wantOK: true},
 		{name: "aborted with a stop reason", status: marotte.RunStatusAborted, parent: "Ship it", stop: "operator stop", wantBody: "Workflow aborted · operator stop", wantOK: true},
 		{name: "cancelled", status: marotte.RunStatusCancelled, wantBody: "Workflow cancelled", wantOK: true},
-		{name: "parentless pause at the iteration limit", status: marotte.RunStatusPaused, kind: "maxIterations", wantBody: "Workflow paused · iteration limit reached", wantOK: true},
+		{name: "parentless pause at the iteration limit", status: marotte.RunStatusPaused, kind: "maxIterations", wantBody: "Workflow paused · pass limit reached", wantOK: true},
 		{name: "pause of a run whose parent agent intervenes", status: marotte.RunStatusPaused, parent: "Ship it", kind: "maxIterations"},
 		{name: "parentless pause for a step's input", status: marotte.RunStatusPaused, kind: "stepInput"},
 		{name: "parentless pause with no kind", status: marotte.RunStatusPaused},

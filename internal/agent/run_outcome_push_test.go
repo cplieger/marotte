@@ -127,7 +127,7 @@ func TestObserveComplete_APauseNotifiesOnlyAParentlessRun(t *testing.T) {
 		h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
 			"workflowId": "wf_1", "status": "paused", "finalState": pause,
 		}))
-		if got := awaitRunPush(t, fp); got.body != "Workflow paused · iteration limit reached" {
+		if got := awaitRunPush(t, fp); got.body != "Workflow paused · pass limit reached" {
 			t.Errorf("a parentless paused run pushed %q", got.body)
 		}
 	})

@@ -573,12 +573,12 @@ describe("run view controls", () => {
         parent_chat_id: "",
       },
     });
-    expect(painted.labels).toEqual(["Add iterations", "End this loop", "Cancel"]);
+    expect(painted.labels).toEqual(["Add passes", "End this loop", "Cancel"]);
     const count = painted.body.querySelector<HTMLInputElement>(".run-extend-count");
     if (count === null) {
-      throw new Error("no count field beside Add iterations");
+      throw new Error("no count field beside Add passes");
     }
-    expect(count.getAttribute("aria-label")).toBe("Iterations to add");
+    expect(count.getAttribute("aria-label")).toBe("Passes to add");
     count.value = "5";
     const buttons = [...painted.body.querySelectorAll<HTMLButtonElement>(".run-controls button")];
     buttons[0]?.click();
@@ -835,22 +835,22 @@ describe("the run dock", () => {
       );
     });
 
-    it("paused at a loop's limit: Add iterations with its count and End this loop", async () => {
+    it("paused at a loop's limit: Add passes with its count and End this loop", async () => {
       await paint(openRunView, "paused", {
         root: live("paused"),
-        state: { pauseReason: "review reached its 3-iteration limit" },
+        state: { pauseReason: "Repeat 'loop-1' reached maxIterations." },
         controls: {
           verbs: ["extend", "finish_loop", "cancel"],
           pause_node_id: "loop-1",
           parent_chat_id: "",
         },
       });
-      expect(alertText()).toBe("Waiting: review reached its 3-iteration limit");
+      expect(alertText()).toBe("Waiting: Repeat 'loop-1' reached maxIterations.");
       expect(alertRole()).toBe("status");
-      expect(names("#run-exec-dock")).toEqual(["Add iterations", "End this loop", "Cancel"]);
+      expect(names("#run-exec-dock")).toEqual(["Add passes", "End this loop", "Cancel"]);
       const count = document.querySelector<HTMLInputElement>("#run-exec-dock .run-extend-count")!;
       count.value = "4";
-      verb("Add iterations").click();
+      verb("Add passes").click();
       verb("End this loop").click();
       expect(m.dispatched).toEqual([
         'extend:{"workflowID":"wf_1","nodeID":"loop-1","iterations":4}',

@@ -64,7 +64,7 @@ const ICON: Record<RunVerb, string> = {
 const TIP: Record<RunVerb, string> = {
   pause: "Pause the run at the end of its current step",
   resume: "Resume the run",
-  extend: "Add iterations to the paused loop",
+  extend: "Add passes to the paused loop",
   finish_loop: "End the paused loop and go on",
   cancel: "Cancel the run",
   retry: "Retry the failed steps",
@@ -146,7 +146,7 @@ function render(
         max: String(MAX_EXTEND),
         step: "1",
         value: "1",
-        "aria-label": "Iterations to add",
+        "aria-label": "Passes to add",
       }) as HTMLInputElement;
       const btn = button(verb, () => {
         if (!count.reportValidity()) {

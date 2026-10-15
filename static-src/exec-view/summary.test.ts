@@ -44,6 +44,90 @@ describe("the run summary", () => {
     expect(view.describe()).toBe("nightly, running, step 2 of 3");
   });
 
+  describe("in a loop", () => {
+    const loopRun = (): ExecRun =>
+      run([
+        {
+          path: "r/loop",
+          label: "loop",
+          kind: "repeat",
+          state: "running",
+          maxPasses: 8,
+          children: [
+            {
+              path: "r/loop/iter-2",
+              label: "pass 3",
+              kind: "sequence",
+              state: "running",
+              pass: 3,
+              children: [step("code", "ok"), step("review", "running"), step("fix", "pending")],
+            },
+          ],
+        },
+        step("land", "pending"),
+      ]);
+
+    it("states the pass in both forms and in the accessible name", () => {
+      const view = build(true);
+      view.paint(loopRun());
+      expect(view.root.querySelector(".ev-sum-progress")?.hasAttribute("data-loop")).toBe(true);
+      expect([part(view, "ev-sum-long"), part(view, "ev-sum-short")]).toEqual([
+        "pass 3 of 8 \u00b7 step 2 of 4",
+        "3/8 \u00b7 2 of 4",
+      ]);
+      expect(view.root.querySelector(".ev-sum-short")?.getAttribute("aria-hidden")).toBe("true");
+      expect(view.root.querySelector(".ev-sum-short svg")).not.toBeNull();
+      expect(view.describe()).toBe("nightly, running, pass 3 of 8, step 2 of 4");
+    });
+
+    it("withholds the pass outside a loop", () => {
+      const view = build(true);
+      view.paint(loopRun());
+      view.paint(run([step("a", "ok"), step("b", "running")]));
+      expect(view.root.querySelector(".ev-sum-progress")?.hasAttribute("data-loop")).toBe(false);
+      expect([part(view, "ev-sum-long"), part(view, "ev-sum-short")]).toEqual(["step 2 of 2", ""]);
+      expect(view.describe()).toBe("nightly, running, step 2 of 2");
+    });
+
+    it("writes nothing on a repaint that changes nothing", async () => {
+      const view = build(true);
+      view.paint(loopRun());
+      const seen: MutationRecord[] = [];
+      const mo = new MutationObserver((records) => seen.push(...records));
+      mo.observe(view.root, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+      });
+      view.paint(loopRun());
+      await Promise.resolve();
+      mo.disconnect();
+      expect(seen.map((r) => `${r.type}:${(r.target as Element).className}`)).toEqual([]);
+    });
+
+    for (const [width, narrow] of [
+      ["22rem", true],
+      ["40rem", false],
+    ] as const) {
+      it(`shows the ${narrow ? "glyph" : "worded"} form in a ${width} dock`, () => {
+        const style = mountAppCSS();
+        try {
+          wash.className = "ev-dock";
+          wash.style.inlineSize = width;
+          const view = build(true);
+          view.paint(loopRun());
+          const short = view.root.querySelector<HTMLElement>(".ev-sum-short")!;
+          const long = view.root.querySelector<HTMLElement>(".ev-sum-long")!;
+          expect(getComputedStyle(short).display === "none").toBe(!narrow);
+          expect(long.getBoundingClientRect().width > 1).toBe(!narrow);
+        } finally {
+          style.remove();
+        }
+      });
+    }
+  });
+
   it("withholds the progress of a one-step run", () => {
     const view = build(true);
     view.paint(run([step("a", "running")]));

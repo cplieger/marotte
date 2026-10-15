@@ -217,7 +217,13 @@ describe("the live rows", () => {
 describe("the alert", () => {
   const alerts: [string, NonNullable<ExecRun["alert"]>][] = [
     ["a step waiting on an answer", { kind: "input", text: "Waiting for answer: Which?" }],
-    ["a loop at its limit", { kind: "paused", text: "Waiting: review reached its 3-pass limit" }],
+    [
+      "a loop at its limit",
+      {
+        kind: "paused",
+        text: "Waiting: Repeat 'review' reached maxIterations. \u00b7 3 of 3 passes",
+      },
+    ],
     ["an interrupted run", { kind: "paused", text: "Waiting: Interrupted by agent restart" }],
     ["an unreachable host", { kind: "paused", text: "Waiting: host unreachable (ECONNREFUSED)" }],
     ["a failure", { kind: "failed", text: "build failed: exit status 2" }],
@@ -642,7 +648,7 @@ describe("the phone budget", () => {
       );
       const alert = {
         kind: "paused",
-        text: "Waiting: review reached its 3-iteration limit · maxIterations",
+        text: "Waiting: Repeat 'review' reached maxIterations. · 3 of 3 passes",
       } as const;
       page.render({ ...run(fan()), alert });
       expect(dockHeight()).toBeLessThanOrEqual(150);

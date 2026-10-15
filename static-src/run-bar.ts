@@ -17,7 +17,7 @@ import {
 } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { runToExec } from "./run-exec-source.js";
-import { counters, type ExecRun } from "./exec-view/model.js";
+import { counters, progressText, type ExecRun } from "./exec-view/model.js";
 import { buildExecSummary, type ExecSummaryView } from "./exec-view/summary.js";
 import { wantsReader } from "./exec-view/alert.js";
 import { chevronEl } from "./chevron.js";
@@ -97,6 +97,8 @@ function key(): string {
         String(c.total),
         String(c.done),
         String(c.current),
+        // A new pass can open on the same step counts.
+        run === undefined ? "" : progressText(run),
       ].join("\u0002"),
     );
   }
