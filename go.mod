@@ -33,6 +33,7 @@ require (
 	github.com/cplieger/webhttp/v3 v3.0.2
 	github.com/cplieger/wiregen/v3 v3.3.0
 	github.com/evanw/esbuild v0.28.2
+	github.com/klauspost/compress v1.20.3
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/image v0.47.0
 	golang.org/x/net v0.61.0

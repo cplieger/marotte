@@ -27,7 +27,6 @@ const acpMethodFloor = 60
 // every ACP method marotte's sources name.
 func TestACPMethodsPresent(t *testing.T) {
 	active := activeKASVersion(t)
-	src, path := bundleSource(t, active)
 	methods := marotteACPMethods(t)
 
 	if len(methods) < acpMethodFloor {
@@ -37,23 +36,25 @@ or moved into a file this walk skips is invisible to it, and every assertion
 below would then pass for having nothing to check.`, len(methods), acpMethodFloor)
 	}
 
-	var absent []string
-	for _, m := range methods {
-		if !strings.Contains(src, `"`+m+`"`) && !strings.Contains(src, `'`+m+`'`) {
-			absent = append(absent, m)
+	forEachBundle(t, func(t *testing.T, b bundle) {
+		var absent []string
+		for _, m := range methods {
+			if !strings.Contains(b.src, `"`+m+`"`) && !strings.Contains(b.src, `'`+m+`'`) {
+				absent = append(absent, m)
+			}
 		}
-	}
-	if len(absent) > 0 {
-		t.Errorf(`kiro-cli %s does not carry %d ACP method name(s) marotte uses:
+		if len(absent) > 0 {
+			t.Errorf(`kiro-cli %s does not carry %d ACP method name(s) marotte uses:
   %s
 marotte either calls these and gets an unknown-method error, or serves them and
 the handler is now dead. Read each one against the bundle: a RENAME upstream
 needs the same rename here, and a REMOVAL needs the feature retired rather than
 left calling into the void.
-Bundle: %s`, active, len(absent), strings.Join(absent, "\n  "), path)
-		return
-	}
-	t.Logf("kiro-cli %s carries all %d ACP method names marotte uses", active, len(methods))
+Bundle: %s`, active, len(absent), strings.Join(absent, "\n  "), b.path)
+			return
+		}
+		t.Logf("kiro-cli %s carries all %d ACP method names marotte uses", active, len(methods))
+	})
 }
 
 // marotteACPMethods returns every ACP method name marotte's production sources name, sorted and
