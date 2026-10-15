@@ -6,19 +6,9 @@
 import { el, effect, signal, touch } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { join } from "@cplieger/keyenc";
-import { bindLoadingState } from "./actions/index.js";
 import { openRunTab, openTab, parentChatRef, tabIdFor } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks, runPendingAsks } from "./decision-dock.js";
-import {
-  cancelRun,
-  clearRunStepSteers,
-  extendRunRepeat,
-  finishRunRepeat,
-  pauseRun,
-  removeRunStepSteer,
-  resumeRun,
-  retryRun,
-} from "./actions/runs.js";
+import { clearRunStepSteers, removeRunStepSteer } from "./actions/runs.js";
 import {
   mountRunComposer,
   restoreRunComposer,
@@ -34,12 +24,13 @@ import {
   type FollowScroller,
   type ViewScrollState,
 } from "./scroll-controller.js";
-import { CONTROL_LABEL, offeredVerbs, refusalSentences, type RunVerb } from "./run-controls.js";
+import { buildRunControlsView, type RunControlsView } from "./run-controls-view.js";
 import { get } from "./store.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight, neverRan, settled } from "./exec-view/status.js";
-import { flatten, workNodes, type ExecNode } from "./exec-view/model.js";
+import { flatten, workNodes, type ExecNode, type ExecRun } from "./exec-view/model.js";
 import { runToExec } from "./run-exec-source.js";
+import type { RunAsks } from "./run-asks.js";
 import { lastPrintedLine } from "./run-step-tail.js";
 import type { RunStepPaint, RunStepStream } from "./run-chat-steps.js";
 import {
@@ -53,7 +44,6 @@ import {
   invalidateRun,
   invalidateRunControls,
   noteRunChat,
-  runControls,
   runState,
   runChatID,
   runPlan,
@@ -64,45 +54,10 @@ import {
 } from "./run-store.js";
 import { projectTurn, turnOpenOf, type TurnSource } from "./turns.js";
 import type { TurnState } from "./types.js";
-import type { RunControlsResponse } from "./wire/types.gen.js";
 import { refreshRunDots, trackRun } from "./run-dots.js";
 import { buildPath } from "./route-path.js";
 import { iconEl } from "./icon-el.js";
-import {
-  ICON_CANCEL,
-  ICON_EXTERNAL,
-  ICON_PAUSE,
-  ICON_PLAY,
-  ICON_PLUS_UI,
-  ICON_REFRESH,
-  ICON_SAVE_OK,
-  ICON_TAB_CHAT,
-} from "./icons.js";
-
-/** The two verbs a repeat paused at its iteration cap offers. They address the paused NODE as
- *  well as the run, so they cannot share the one-argument table. */
-type RepeatVerb = "extend" | "finish_loop";
-
-/** Largest count one extend may add; the server refuses anything past it. */
-const MAX_EXTEND = 1000;
-
-const RUN_ACTION: Record<
-  Exclude<RunVerb, RepeatVerb>,
-  { readonly name: string; dispatch: (id: string) => Promise<unknown> }
-> = {
-  pause: pauseRun,
-  resume: resumeRun,
-  cancel: cancelRun,
-  retry: retryRun,
-};
-
-/** The glyph each one-argument verb leads with. On a phone it is the whole face (18-pages.css). */
-const RUN_ACTION_ICON: Record<Exclude<RunVerb, RepeatVerb>, string> = {
-  pause: ICON_PAUSE,
-  resume: ICON_PLAY,
-  cancel: ICON_CANCEL,
-  retry: ICON_REFRESH,
-};
+import { ICON_EXTERNAL, ICON_TAB_CHAT } from "./icons.js";
 
 /** The run this view is currently showing, so an SSE invalidation knows whether it is about the
  *  run on screen. Cleared when the view loads a different one; a closed tab simply stops
@@ -128,42 +83,6 @@ function launchingChatOf(workflowID: string): string {
     noteRunChat(workflowID, fromTab);
   }
   return fromTab;
-}
-
-/** Where a copy of the run's controls sits: the page header's labelled row, the dock's compact
- *  icons, or the shown step's inline control. Every copy is drawn from the one `runControls` cell. */
-type ControlSite = "head" | "dock" | "step";
-
-/** One copy and the pending bindings on its buttons, disposed when the copy goes:
- *  `bindLoadingState` self-disposes only for an element that was ATTACHED the last time its
- *  effect ran, and a copy is built before its caller appends it, so a button replaced before its
- *  first pending flip never reaches that path. */
-interface ControlCopy {
-  readonly row: HTMLElement | null;
-  readonly bindings: (() => void)[];
-}
-
-/** The copies on screen and the affordance they were built from, so a render that did not move
- *  the answer hands the SAME elements back. */
-const controlCopies = new Map<ControlSite, ControlCopy>();
-let controlSig = "";
-
-function dropControlSite(site: ControlSite): void {
-  const copy = controlCopies.get(site);
-  if (copy === undefined) {
-    return;
-  }
-  for (const dispose of copy.bindings) {
-    dispose();
-  }
-  controlCopies.delete(site);
-}
-
-function dropControlRow(): void {
-  for (const site of [...controlCopies.keys()]) {
-    dropControlSite(site);
-  }
-  controlSig = "";
 }
 
 /** Point the run view at one run and mount its dock. */
@@ -261,8 +180,8 @@ let focusRequest: { workflowID: string; path: string } | undefined;
  *  into this same page rather than a second page. */
 let page: ExecPageView | undefined;
 let pageRun = "";
-/** Whether the page was built with the folded dock, the only reader of its siblings' tails. */
-let pageDocked = false;
+/** The shown run's verbs, built with its page and disposed with it. */
+let controls: RunControlsView | undefined;
 
 let follower: FollowScroller | undefined;
 
@@ -446,28 +365,23 @@ let stepStreamLoading = false;
  *  minute on a live run. */
 let emptyLink: { workflowID: string; chatID: string; el: HTMLElement } | undefined;
 
-/** Build the page into `#run-body`, replacing whatever was there. */
-function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
+/** Build the page into `#run-body` and its dock into `dockHost`, replacing whatever was there. */
+function mountPage(
+  container: HTMLElement,
+  dockHost: HTMLElement,
+  workflowID: string,
+): ExecPageView {
   parkPage();
-  page?.dispose();
-  // The row belonged to the page being replaced, and its host goes with it.
-  dropControlRow();
-  const boxes = document.getElementById("run-boxes");
+  dropPage();
+  const verbs = buildRunControlsView(workflowID);
+  controls = verbs;
   const built = buildExecPage({
     emptyNote: stepEmptyNote,
     emptyAction: stepEmptyAction,
-    controls: (run) => buildRunControls(run.id, "head"),
-    dockControls: (run) => buildRunControls(run.id, "dock"),
-    alertAction: (run) => (run.alert?.kind === "input" ? answerButton() : null),
-    // The run's pause or resume, on any step still in flight: Pause lands at a step boundary, so
-    // it reads the same from whichever step the reader is on. A settled step gets nothing.
-    stepControls: (run, node) => {
-      if (node?.transcript === true && inFlight(node.state)) {
-        return buildRunControls(run.id, "step");
-      }
-      dropControlSite("step");
-      return null;
-    },
+    dock: dockHost,
+    controls: () => verbs.current(),
+    notes: () => verbs.refusals(),
+    alertAction: answerAction,
     onShowNode: armStepRead,
     // A page still drawn while another run loads publishes nothing.
     onSelect: (node) => {
@@ -475,12 +389,10 @@ function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
         pushStepTarget(workflowID, node);
       }
     },
-    ...(boxes === null ? {} : { dock: boxes }),
     follow: "newest",
   });
   page = built;
   pageRun = workflowID;
-  pageDocked = boxes !== null;
   stepStream?.dispose();
   stepStream = undefined;
   stepStreamLoading = false;
@@ -503,6 +415,15 @@ function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
   }
   container.replaceChildren(built.root);
   return built;
+}
+
+/** Release the page, its dock and its verbs. */
+function dropPage(): void {
+  page?.dispose();
+  page = undefined;
+  pageRun = "";
+  controls?.dispose();
+  controls = undefined;
 }
 
 /** A `TurnSource` over one run's log, so `turns.ts`'s pure projection reads it unchanged. Built
@@ -653,7 +574,7 @@ function armShownStepRetry(workflowID: string): void {
   }, delay);
 }
 
-/** The folded dock's catch-up reads, per in-flight step path. The shown step's read and ladder are
+/** The run dock's catch-up reads, per in-flight step path. The shown step's read and ladder are
  *  `armStepRead`'s and `armShownStepRetry`'s, so this owns only the siblings the dock rows summarise. */
 const dockCatchUps = new Map<
   string,
@@ -678,9 +599,6 @@ function catchUpDockSteps(
   nodes: readonly ExecNode[],
   turns: readonly [string, TurnState][],
 ): void {
-  if (!pageDocked) {
-    return;
-  }
   const wanted = new Set<string>();
   for (const node of nodes) {
     const path = node.path;
@@ -866,17 +784,15 @@ function paint(
   turns: readonly [string, TurnState][],
 ): void {
   const container = document.getElementById("run-body");
-  if (container === null) {
+  const dockHost = document.getElementById("run-exec-dock");
+  if (container === null || dockHost === null) {
     return;
   }
   if (state === undefined) {
     if (pageRun !== workflowID && page !== undefined) {
-      // Another run's page and its dock boxes must not stand in for this run while it loads.
+      // Another run's page and its dock must not stand in for this run while it loads.
       parkPage();
-      page.dispose();
-      page = undefined;
-      pageRun = "";
-      dropControlRow();
+      dropPage();
       container.replaceChildren();
     }
     if (container.childElementCount === 0) {
@@ -894,18 +810,12 @@ function paint(
 
   // Reused only while the page this module built is STILL MOUNTED in this container.
   const mounted = pageRun === workflowID && page?.root.parentElement === container;
-  const view = mounted && page !== undefined ? page : mountPage(container, workflowID);
+  const view = mounted && page !== undefined ? page : mountPage(container, dockHost, workflowID);
   // Two inputs on different clocks, the same pair the transcript's card takes: `inspect` says what
   // the nodes are doing, and the dock says which of them is blocked on a person.
   const focus = focusRequest?.workflowID === workflowID ? focusRequest.path : "";
-  const run = runToExec(
-    workflowID,
-    state,
-    runPlan(workflowID),
-    runPendingAsks(workflowID),
-    focus,
-    runStepEnds(workflowID),
-  );
+  shownAsks = runPendingAsks(workflowID);
+  const run = runToExec(state, runPlan(workflowID), shownAsks, focus, runStepEnds(workflowID));
   for (const node of workNodes(run.nodes)) {
     const tail = lastPrintedLine(turnsForStep(turns, node.path).map(([, t]) => t));
     if (tail !== "") {
@@ -1000,208 +910,11 @@ function leafPaints(
   return out;
 }
 
-/** One copy of the run's controls, rendered from the SERVER's answer and rebuilt only when that
- *  answer moved (`controlCopies` owns why). */
-function buildRunControls(workflowID: string, site: ControlSite): HTMLElement | null {
-  const answer = runControls(workflowID);
-  const sig = answer === undefined ? "" : controlSignature(workflowID, answer);
-  if (sig !== controlSig) {
-    // The answer moved, so every copy on screen is on its way out and its bindings go with it — each
-    // caller replaces its host's children with whatever is returned here.
-    dropControlRow();
-    controlSig = sig;
-  }
-  let copy = controlCopies.get(site);
-  if (copy === undefined) {
-    const bindings: (() => void)[] = [];
-    const row =
-      answer === undefined
-        ? null
-        : site === "head"
-          ? renderControls(workflowID, answer, bindings)
-          : renderCompactControls(workflowID, answer, site, bindings);
-    copy = { row, bindings };
-    controlCopies.set(site, copy);
-  }
-  return copy.row;
-}
+/** What the shown run waits on a person for, as its last paint read it. */
+let shownAsks: RunAsks = { count: 0, asked: [], label: "" };
 
-/** What the row is a function of, and nothing else: the run it acts on, the verbs it draws and
- *  the sentences it draws instead. The parent chat travels on the same answer and changes
- *  nothing here, so it is left out rather than churning the row. */
-function controlSignature(workflowID: string, answer: RunControlsResponse): string {
-  // Keyed, not positional: `refused` is a map on the wire, so two answers that differ only in the
-  // order the server happened to serialize them are the same row.
-  const refused = Object.entries(answer.refused ?? {})
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([verb, text]) => `${verb}\u0001${text}`)
-    .join("\u0002");
-  return `${workflowID}\u0000${answer.verbs.join("\u0001")}\u0000${refused}\u0000${answer.pause_node_id ?? ""}`;
-}
-
-/** Sends the node the server reported as paused, never one derived here. */
-function repeatControl(
-  workflowID: string,
-  verb: RepeatVerb,
-  nodeID: string,
-): { nodes: HTMLElement[]; btn: HTMLButtonElement; name: string } {
-  if (verb === "finish_loop") {
-    const btn = el(
-      "button",
-      {
-        type: "button",
-        className: "btn btn-sm",
-        onclick: () => void finishRunRepeat.dispatch({ workflowID, nodeID }),
-      },
-      CONTROL_LABEL[verb],
-    ) as HTMLButtonElement;
-    return { nodes: [btn], btn, name: finishRunRepeat.name };
-  }
-  const count = el("input", {
-    type: "number",
-    className: "tool-form-input run-extend-count",
-    min: "1",
-    max: String(MAX_EXTEND),
-    step: "1",
-    value: "1",
-    "aria-label": "Iterations to add",
-  }) as HTMLInputElement;
-  const btn = el(
-    "button",
-    {
-      type: "button",
-      className: "btn btn-sm",
-      onclick: () => {
-        if (!count.reportValidity()) {
-          return;
-        }
-        void extendRunRepeat.dispatch({ workflowID, nodeID, iterations: count.valueAsNumber });
-      },
-    },
-    CONTROL_LABEL[verb],
-  ) as HTMLButtonElement;
-  return { nodes: [count, btn], btn, name: extendRunRepeat.name };
-}
-
-function renderControls(
-  workflowID: string,
-  answer: RunControlsResponse,
-  bindings: (() => void)[],
-): HTMLElement | null {
-  const verbs = offeredVerbs(answer.verbs);
-  if (verbs.length === 0) {
-    return refusalRow(refusalSentences(answer.refused));
-  }
-  const row = el("div", { className: "run-controls" });
-  for (const verb of verbs) {
-    if (verb === "extend" || verb === "finish_loop") {
-      const nodeID = answer.pause_node_id ?? "";
-      if (nodeID === "") {
-        continue;
-      }
-      const control = repeatControl(workflowID, verb, nodeID);
-      bindings.push(bindLoadingState(control.name, control.btn));
-      row.append(...control.nodes);
-      continue;
-    }
-    const action = RUN_ACTION[verb];
-    const label = CONTROL_LABEL[verb];
-    const btn = el(
-      "button",
-      {
-        type: "button",
-        className:
-          verb === "cancel" ? "btn btn-sm btn-danger run-control" : "btn btn-sm run-control",
-        // The name once a phone drops the word. No tooltip: on desktop it would repeat the visible
-        // word (and announce it twice through aria-describedby), and a phone has no hover.
-        "aria-label": label,
-        onclick: () => {
-          // No optimistic state flip. Every one of these verbs settles at a NODE boundary, so the
-          // run is still `running` when the reply arrives and a flipped label would be a lie for as
-          // long as the node takes. The run_progress invalidation is what repaints this row.
-          void action.dispatch(workflowID);
-        },
-      },
-      iconEl(RUN_ACTION_ICON[verb]),
-      el("span", { className: "run-control-label" }, label),
-      // `el` answers HTMLElement; the pending binding needs the `disabled` property, which only the
-      // concrete button type declares.
-    ) as HTMLButtonElement;
-    // A retry starts a process and can legitimately take tens of seconds, so an unbound button
-    // looks dead for the whole handshake and can be clicked again meanwhile.
-    bindings.push(bindLoadingState(action.name, btn));
-    row.appendChild(btn);
-  }
-  return row;
-}
-
-/** What each verb's icon says on hover, where no word stands beside it. */
-const COMPACT_TIP: Record<RunVerb, string> = {
-  pause: "Pause the run at the end of its current step",
-  resume: "Resume the run",
-  extend: "Add 1 iteration to the paused loop",
-  finish_loop: "End the paused loop and go on",
-  cancel: "Cancel the run",
-  retry: "Retry the failed steps",
-};
-
-const COMPACT_ICON: Record<RunVerb, string> = {
-  ...RUN_ACTION_ICON,
-  extend: ICON_PLUS_UI,
-  finish_loop: ICON_SAVE_OK,
-};
-
-/** The verbs as icon buttons: every one the server offers on the dock, only pause and resume on the
- *  step. Extend adds one pass here; the header's count field adds more. A refusal draws nothing,
- *  since the header states it. */
-function renderCompactControls(
-  workflowID: string,
-  answer: RunControlsResponse,
-  site: Exclude<ControlSite, "head">,
-  bindings: (() => void)[],
-): HTMLElement | null {
-  const verbs = offeredVerbs(answer.verbs).filter(
-    (v) => site === "dock" || v === "pause" || v === "resume",
-  );
-  const nodeID = answer.pause_node_id ?? "";
-  const row = el("span", { className: "run-controls run-controls-compact" });
-  for (const verb of verbs) {
-    let name: string;
-    let dispatch: () => void;
-    if (verb === "extend" || verb === "finish_loop") {
-      if (nodeID === "") {
-        continue;
-      }
-      const action = verb === "extend" ? extendRunRepeat : finishRunRepeat;
-      name = action.name;
-      dispatch =
-        verb === "extend"
-          ? () => void extendRunRepeat.dispatch({ workflowID, nodeID, iterations: 1 })
-          : () => void finishRunRepeat.dispatch({ workflowID, nodeID });
-    } else {
-      const action = RUN_ACTION[verb];
-      name = action.name;
-      dispatch = () => void action.dispatch(workflowID);
-    }
-    const btn = el(
-      "button",
-      {
-        type: "button",
-        className: verb === "cancel" ? "icon-btn run-icon-btn is-danger" : "icon-btn run-icon-btn",
-        "aria-label": CONTROL_LABEL[verb],
-        "data-tooltip": COMPACT_TIP[verb],
-        onclick: dispatch,
-      },
-      iconEl(COMPACT_ICON[verb]),
-    ) as HTMLButtonElement;
-    bindings.push(bindLoadingState(name, btn));
-    row.appendChild(btn);
-  }
-  return row.childElementCount === 0 ? null : row;
-}
-
-/** The dock alert row's Answer for a run waiting on an ask. One element for the module's life, so a
- *  repaint seats the same node and focus inside it survives. */
+/** The dock's Answer for a run waiting on an ask. One element for the module's life, so a repaint
+ *  seats the same node and focus inside it survives. */
 let answerBtn: HTMLButtonElement | undefined;
 
 function answerButton(): HTMLButtonElement {
@@ -1215,13 +928,42 @@ function answerButton(): HTMLButtonElement {
       onclick: answerWaitingAsk,
     },
     iconEl(ICON_TAB_CHAT),
+    el("span", { className: "run-control-label" }, "Answer"),
   ) as HTMLButtonElement;
   return answerBtn;
 }
 
-/** Move to the ask in the decision dock below the boxes: its answer field, else its first button. */
+/** Where the dock's Answer takes the reader: a step whose question the server would take an answer
+ *  for, answered in the run composer; else a request decision, answered in the decision dock
+ *  (`mountRunDecisionDock`, which leaves step questions to the composer). Undefined while neither
+ *  can be answered yet, and then no Answer is offered. */
+function answerTarget(run: ExecRun): { step: ExecNode } | { decision: true } | undefined {
+  const step = workNodes(run.nodes).find((n) => n.verb === "answer");
+  if (step !== undefined) {
+    return { step };
+  }
+  return shownAsks.asked.some((a) => !a.answer) ? { decision: true } : undefined;
+}
+
+/** The run the dock's Answer acts on, as the last paint offered it. */
+let answerRun: ExecRun | undefined;
+
+function answerAction(run: ExecRun): HTMLElement | null {
+  answerRun = run;
+  return run.alert?.kind === "input" && answerTarget(run) !== undefined ? answerButton() : null;
+}
+
 function answerWaitingAsk(): void {
-  const shown = [
+  const target = answerRun === undefined ? undefined : answerTarget(answerRun);
+  if (target === undefined) {
+    return;
+  }
+  if ("step" in target) {
+    page?.select(target.step.path);
+    document.getElementById("run-composer-input")?.focus();
+    return;
+  }
+  const fields = [
     ...(document
       .getElementById("run-dock")
       ?.querySelectorAll<HTMLElement>("textarea:enabled, input:enabled, button:enabled") ?? []),
@@ -1229,25 +971,7 @@ function answerWaitingAsk(): void {
   const typed = (n: HTMLElement): boolean =>
     n instanceof HTMLTextAreaElement ||
     (n instanceof HTMLInputElement && n.type !== "checkbox" && n.type !== "radio");
-  const target = shown.find(typed) ?? shown.find((n) => n instanceof HTMLButtonElement);
-  if (target === undefined) {
-    announce("Nothing is waiting for your answer now");
-    return;
-  }
-  target.scrollIntoView({ block: "nearest" });
-  target.focus();
-}
-
-/** The row a run with no verbs gets: the server's own sentences, in the place a reader is
- *  already looking for the control. Null when there is nothing to say, so a completed run keeps
- *  its clean header. */
-function refusalRow(sentences: readonly string[]): HTMLElement | null {
-  if (sentences.length === 0) {
-    return null;
-  }
-  return el(
-    "div",
-    { className: "run-controls run-controls-refused", role: "note" },
-    ...sentences.map((text) => el("p", { className: "run-control-refusal" }, text)),
-  );
+  const field = fields.find(typed) ?? fields.find((n) => n instanceof HTMLButtonElement);
+  field?.scrollIntoView({ block: "nearest" });
+  field?.focus();
 }

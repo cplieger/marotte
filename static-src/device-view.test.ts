@@ -52,6 +52,7 @@ describe("the four fields this screen keeps to itself", () => {
       shell_open: false,
       shell_h: 0,
       sidebar_w: 0,
+      run_bar_open: false,
     });
   });
 
@@ -67,6 +68,7 @@ describe("the four fields this screen keeps to itself", () => {
       shell_open: false,
       shell_h: 0,
       sidebar_w: 0,
+      run_bar_open: false,
     });
   });
 
@@ -93,7 +95,13 @@ describe("the four fields this screen keeps to itself", () => {
   });
 
   it("survives a blob that is not an object, and one that is not JSON at all", () => {
-    const defaults = { active_view: "", shell_open: false, shell_h: 0, sidebar_w: 0 };
+    const defaults = {
+      active_view: "",
+      shell_open: false,
+      shell_h: 0,
+      sidebar_w: 0,
+      run_bar_open: false,
+    };
     localStorage.setItem(LS_UI_STATE_KEY, '"a string"');
     expect(loadDeviceView()).toEqual(defaults);
 
@@ -188,6 +196,7 @@ describe("one owner of the key", () => {
       shell_open: true,
       shell_h: 420,
       sidebar_w: 380,
+      run_bar_open: false,
     });
   });
 
@@ -216,6 +225,7 @@ describe("one owner of the key", () => {
       shell_open: true,
       shell_h: 420,
       sidebar_w: 380,
+      run_bar_open: false,
     });
   });
 
@@ -239,6 +249,7 @@ describe("one owner of the key", () => {
       shell_open: true,
       shell_h: 420,
       sidebar_w: 380,
+      run_bar_open: false,
     });
   });
 

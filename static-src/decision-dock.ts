@@ -11,7 +11,14 @@ import { RUN_INPUT_FALLBACK } from "./dock-ask.js";
 import { buildPermissionCard, type PermissionAnswer } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
 import { buildUserInputCard } from "./user-input.js";
-import { buildRunAskCard, updateRunAskCard, type RunAskCardInput } from "./run-input.js";
+import {
+  buildRunAskCard,
+  openRunAskCard,
+  updateRunAskCard,
+  type RunAskCardInput,
+} from "./run-input.js";
+import { reconcile } from "./reconcile.js";
+import { runLabelOf } from "./run-store.js";
 import { info } from "./toast.js";
 import { named, noticeSubject } from "./notice-subject.js";
 import { join } from "@cplieger/keyenc";
@@ -145,6 +152,10 @@ interface DockHost {
   /** Bumped by `endPhase`. A timer callback whose generation has moved on
    *  returns without touching the DOM. */
   gen: number;
+  /** The step question the reader chose from the rows, led with until it leaves; `""` for none. */
+  prefer: string;
+  /** Open the next card's answer box: the reader asked for it with a row's Answer. */
+  openOnShow: boolean;
   /**
    * This host's render subscription, released when a per-page host (`spec-view.ts`) drops; otherwise the effect renders
    * into a detached element for the tab's lifetime.
@@ -218,6 +229,8 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
     outgoing: null,
     timer: null,
     gen: 0,
+    prefer: "",
+    openOnShow: false,
     stop: () => undefined,
   };
   hosts.push(h);
@@ -575,13 +588,20 @@ function decisionKey(chatID: string, kind: Decision["kind"], identity: string): 
 }
 
 function renderHost(h: DockHost): void {
-  const mine = matching(h);
+  const mine = preferred(h, matching(h));
   const head = mine[0];
+  // A row's Answer opens the card it picked, never a later one that takes its place.
+  if (
+    head === undefined ||
+    decisionKey(head.chatID, head.kind, decisionIdentity(head)) !== h.prefer
+  ) {
+    h.openOnShow = false;
+  }
 
   if (head === undefined) {
     // Cleared when `leaving` starts, so a second empty render does not restart the exit.
     if (h.renderedKey !== "") {
-      swap(h, undefined, 0);
+      swap(h, undefined, []);
     }
     return;
   }
@@ -589,16 +609,16 @@ function renderHost(h: DockHost): void {
   // A rebuild would discard the user's typing, so the same decision only re-states what can move in place. MUST NOT
   // start a phase.
   const key = decisionKey(head.chatID, head.kind, decisionIdentity(head));
-  const depth = mine.length;
+  const rest = mine.slice(1);
   if (key === h.renderedKey) {
-    updateDepth(h, depth);
+    paintRest(h, head, rest);
     if (head.kind === "run_input" && h.card !== null) {
       updateRunAskCard(h.card, runAskInput(head));
     }
     return;
   }
 
-  swap(h, head, depth);
+  swap(h, head, rest);
 }
 
 // The phase machine. The next head is observed, not detected: every retirement unqueues then `bump()`s, so the render
@@ -608,7 +628,7 @@ function renderHost(h: DockHost): void {
  * Swap the host's content, animating unless motion is off: nothing->head enters, head->head advances, head->nothing
  * leaves (nothing->nothing returns early in `renderHost`).
  */
-function swap(h: DockHost, head: Decision | undefined, depth: number): void {
+function swap(h: DockHost, head: Decision | undefined, rest: readonly Decision[]): void {
   // Measured first, before `endPhase` or any write, so it reads the live height and rapid answers morph from it.
   const from = measure(h);
   const phase: Phase =
@@ -630,7 +650,7 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
       h.renderedKey = "";
       h.card = null;
     } else {
-      show(h, head, depth);
+      show(h, head, rest);
     }
     return;
   }
@@ -644,7 +664,7 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
     h.renderedKey = "";
     h.card = null;
   } else {
-    show(h, head, depth);
+    show(h, head, rest);
   }
   if (outgoing !== null) {
     h.el.prepend(outgoing);
@@ -665,15 +685,24 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
 }
 
 /** Identical on both paths, so `announce()` fires once per new head with the card in the DOM and never opacity-0. */
-function show(h: DockHost, head: Decision, depth: number): void {
+function show(h: DockHost, head: Decision, rest: readonly Decision[]): void {
   const card = buildCard(head);
   if (isRequestDecision(head) && answering.has(head)) {
     markAnswering(card, true);
   }
   h.card = card;
-  h.el.replaceChildren(card, depthRow(depth));
+  h.el.replaceChildren(
+    card,
+    el("ul", { className: "dock-ask-rows", "aria-label": "Other steps waiting for you" }),
+    depthRow(),
+  );
   h.el.classList.remove("hidden");
   h.renderedKey = decisionKey(head.chatID, head.kind, decisionIdentity(head));
+  paintRest(h, head, rest);
+  if (h.openOnShow && head.kind === "run_input") {
+    openRunAskCard(card);
+  }
+  h.openOnShow = false;
   announce(announcementFor(head));
 }
 
@@ -753,25 +782,68 @@ function motionOff(): boolean {
   );
 }
 
-/** Scoped to a DIRECT child: a stale depth row inside `.dock-outgoing` sits
- *  earlier in document order and would win an unscoped lookup. */
-function updateDepth(h: DockHost, depth: number): void {
-  const row = h.el.querySelector(":scope > .dock-depth");
-  if (row === null) {
-    return;
+/** Behind a step's question, each other step waiting on the reader is a row of its own whose
+ *  Answer brings its card forward; behind anything else, the queue is a count. Lookups are scoped
+ *  to DIRECT children: a stale row inside `.dock-outgoing` sits earlier in document order. */
+function paintRest(h: DockHost, head: Decision, rest: readonly Decision[]): void {
+  const asks = head.kind === "run_input" ? rest.filter((d) => d.kind === "run_input") : [];
+  const list = h.el.querySelector<HTMLElement>(":scope > .dock-ask-rows");
+  if (list !== null) {
+    reconcile(list, asks, {
+      key: (d) => decisionKey(d.chatID, d.kind, decisionIdentity(d)),
+      mount: (d) => askRow(h, d),
+    });
+    list.classList.toggle("hidden", asks.length === 0);
   }
-  row.textContent = depthText(depth);
-  row.classList.toggle("hidden", depth < 2);
+  const row = h.el.querySelector(":scope > .dock-depth");
+  if (row !== null) {
+    const depth = rest.length - asks.length;
+    row.textContent = depth === 0 ? "" : `${String(depth)} more waiting`;
+    row.classList.toggle("hidden", depth === 0);
+  }
 }
 
-function depthRow(depth: number): HTMLElement {
-  const row = el("p", { className: "dock-depth" }, depthText(depth));
-  row.classList.toggle("hidden", depth < 2);
-  return row;
+function depthRow(): HTMLElement {
+  return el("p", { className: "dock-depth hidden" });
 }
 
-function depthText(depth: number): string {
-  return depth < 2 ? "" : `${String(depth - 1)} more waiting`;
+/** One waiting step as a row: its question, its run and step, and the Answer that makes it the
+ *  card, opened. Keyed by the ask's identity, so a repaint keeps a focused Answer in place. */
+function askRow(h: DockHost, d: RunInputDecision): HTMLElement {
+  const who = [runLabelOf(d.runID) || "Workflow run", d.ask.node_id && `step ${d.ask.node_id}`]
+    .filter((s) => s !== "")
+    .join(" \u00b7 ");
+  const answer = el(
+    "button",
+    { type: "button", className: "btn-small", "aria-label": `Answer ${who}` },
+    "Answer",
+  );
+  answer.addEventListener("click", () => {
+    h.prefer = decisionKey(d.chatID, d.kind, decisionIdentity(d));
+    h.openOnShow = true;
+    bump();
+  });
+  return el(
+    "li",
+    { className: "dock-ask-row" },
+    el("span", { className: "dock-ask-row-text" }, runAskLabel(d.ask)),
+    el("span", { className: "dock-ask-row-who" }, who),
+    answer,
+  );
+}
+
+/** The decisions in render order, with the step question the reader picked brought to the front.
+ *  Only among step questions: a request decision holds a live turn and always leads. */
+function preferred(h: DockHost, mine: Decision[]): Decision[] {
+  if (h.prefer === "" || mine[0]?.kind !== "run_input") {
+    return mine;
+  }
+  const i = mine.findIndex((d) => decisionKey(d.chatID, d.kind, decisionIdentity(d)) === h.prefer);
+  if (i < 0) {
+    h.prefer = "";
+    return mine;
+  }
+  return [mine[i], ...mine.slice(0, i), ...mine.slice(i + 1)].flatMap((d) => d ?? []);
 }
 
 function announcementFor(d: Decision): string {

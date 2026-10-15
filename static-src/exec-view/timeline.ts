@@ -19,24 +19,9 @@ export interface ExecTimelineView {
   tick(nodes: readonly ExecNode[], selected: string, live: boolean): void;
 }
 
-/** `minLanes` is the fewest work nodes worth a chart; below it the timeline hides. */
-export function buildExecTimeline(
-  onSelect: (path: string) => void,
-  minLanes: number,
-): ExecTimelineView {
-  const scale = el("span", { className: "ev-tl-scale" });
+export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelineView {
   const lanes = el("div", { className: "ev-tl-lanes" });
-  const root = el(
-    "div",
-    { className: "ev-tl" },
-    el(
-      "div",
-      { className: "ev-tl-head" },
-      el("span", { className: "ev-tl-title" }, "Timeline"),
-      scale,
-    ),
-    lanes,
-  );
+  const root = el("div", { className: "ev-tl" }, lanes);
 
   /** One lane per node path, reused across passes. */
   interface Lane {
@@ -82,13 +67,6 @@ export function buildExecTimeline(
   function paint(nodes: readonly ExecNode[], selected: string, live: boolean): void {
     const ls = workNodes(nodes);
     const win = execWindow(nodes, live);
-    if (ls.length < minLanes) {
-      root.hidden = true;
-      lanes.replaceChildren();
-      return;
-    }
-    root.hidden = false;
-    scale.textContent = win === undefined ? "" : formatElapsed(win.span);
 
     const paintLane = (lane: Lane, n: ExecNode): void => {
       const from = Date.parse(n.start ?? "");

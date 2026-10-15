@@ -27,7 +27,7 @@ const STATE: RunState = {
 describe("the tree pane's node addresses", () => {
   it("keeps groups and steps whose ids spell alike under a slash join apart", () => {
     const tree = buildExecTree(vi.fn());
-    tree.render(runToExec("wf_1", STATE, undefined, NO_ASKS).nodes, "wf_1:a/b:c");
+    tree.render(runToExec(STATE, undefined, NO_ASKS).nodes, "wf_1:a/b:c");
 
     const rows = [...tree.root.querySelectorAll<HTMLElement>(".ev-row")];
     const paths = rows.map((r) => r.dataset["path"] ?? "");

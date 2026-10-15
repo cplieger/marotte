@@ -168,7 +168,7 @@ describe("the timeline pane", () => {
   ];
 
   it("keeps focus on a lane across a re-render and across a tick", () => {
-    const tl = buildExecTimeline(vi.fn(), 2);
+    const tl = buildExecTimeline(vi.fn());
     host.appendChild(tl.root);
     tl.render(two(), "a", true);
 
@@ -185,7 +185,7 @@ describe("the timeline pane", () => {
   });
 
   it("reuses the same lane element while still updating its geometry and labels", () => {
-    const tl = buildExecTimeline(vi.fn(), 2);
+    const tl = buildExecTimeline(vi.fn());
     host.appendChild(tl.root);
     tl.render(two(), "a", true);
 
@@ -209,7 +209,7 @@ describe("the timeline pane", () => {
   });
 
   it("drops a lane the plan no longer describes", () => {
-    const tl = buildExecTimeline(vi.fn(), 2);
+    const tl = buildExecTimeline(vi.fn());
     host.appendChild(tl.root);
     tl.render([...two(), step("c")], "a", true);
     expect(host.querySelectorAll(".ev-tl-lane").length).toBe(3);

@@ -5,6 +5,7 @@ import { describe, it, expect } from "vitest";
 
 import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 import execPageSrc from "./exec-view/page.ts?raw";
+import execDockSrc from "./exec-view/dock.ts?raw";
 import steerNoteSrc from "./fundamentals/steer-note.ts?raw";
 import dockAskSrc from "./dock-ask.ts?raw";
 
@@ -30,9 +31,9 @@ interface ClampPair {
 // `.steer-text`. Their counts are asserted against layout in `disclosure-row-css.test.ts` and `pending-steers.test.ts`.
 const PAIRS: readonly ClampPair[] = [
   {
-    what: "the run page's instructions",
-    tsFile: "exec-view/page.ts",
-    tsSrc: execPageSrc,
+    what: "the run dock's inputs",
+    tsFile: "exec-view/dock.ts",
+    tsSrc: execDockSrc,
     constant: "CLAMP",
     sheet: "31-exec-view.css",
     selector: ".ev-in-text[data-clamped]",

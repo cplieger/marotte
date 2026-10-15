@@ -309,47 +309,6 @@ describe("a row inside the group box is a band, not a pill", () => {
   });
 });
 
-describe("the run's task instructions read as a card", () => {
-  function inputs(hidden: boolean): HTMLElement {
-    const dl = document.createElement("dl");
-    dl.className = "ev-inputs";
-    dl.hidden = hidden;
-    const k = document.createElement("dt");
-    k.className = "ev-in-k";
-    k.textContent = "task";
-    const v = document.createElement("dd");
-    v.className = "ev-in-v";
-    v.textContent = "converge the chevrons";
-    dl.append(k, v);
-    return dl;
-  }
-
-  it("takes the same fill, radius and padding as the timeline card", () => {
-    // Read off `.ev-tl`: the claim is that they are the same card.
-    const tl = document.createElement("div");
-    tl.className = "ev-tl";
-    const reference = mount(tl);
-    const want = {
-      bg: css(reference, "background-color"),
-      radius: css(reference, "border-top-left-radius"),
-      pad: css(reference, "padding-top"),
-    };
-    expect(want.bg).not.toBe("rgba(0, 0, 0, 0)");
-
-    const box = mount(inputs(false));
-    expect(css(box, "background-color")).toBe(want.bg);
-    expect(css(box, "border-top-left-radius")).toBe(want.radius);
-    expect(css(box, "padding-top")).toBe(want.pad);
-  });
-
-  it("disappears entirely when hidden, rather than becoming an empty card", () => {
-    // No author `[hidden]` rule here, so the UA's `[hidden]` loses to the bare class.
-    const box = mount(inputs(true));
-    expect(css(box, "display")).toBe("none");
-    expect(box.getBoundingClientRect().height).toBe(0);
-  });
-});
-
 // Two clamps, one opener skin; `run-page-layout.test.ts` pins the shared selector, this pins what it paints.
 describe("both clamp openers wear one skin", () => {
   it("resolves to the same ink, size and underline", () => {
@@ -1211,7 +1170,7 @@ describe("an included step's qualifier on the selected fill", () => {
   });
 
   it("takes the selected muted ink on a selected timeline lane", () => {
-    const timeline = buildExecTimeline(vi.fn(), 1);
+    const timeline = buildExecTimeline(vi.fn());
     mount(timeline.root);
     timeline.render(nodes, "wf:advisor", false);
     const muted = tokenColor(timeline.root, "--c-selected-muted-fg");

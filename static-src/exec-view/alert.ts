@@ -1,5 +1,5 @@
-// The run's alert as a mark and a sentence: one painter for the page's alert and the dock's row,
-// so the two never disagree on its kind, glyph or words.
+// The run's alert as a mark and a sentence, painted by the run summary (`summary.ts`) wherever it
+// shows.
 
 import { el } from "@cplieger/reactive";
 import { iconEl } from "../icon-el.js";
@@ -8,7 +8,7 @@ import type { ExecRun } from "./model.js";
 
 type ExecAlert = NonNullable<ExecRun["alert"]>;
 
-export function alertGlyph(kind: ExecAlert["kind"]): string {
+function alertGlyph(kind: ExecAlert["kind"]): string {
   return kind === "failed" ? ICON_ALERT : ICON_WARN;
 }
 

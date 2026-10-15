@@ -1442,7 +1442,7 @@
           </button>
         </div>
         <div class="run-bottom-bar bottom-bar">
-          <div id="run-boxes" class="run-boxes"></div>
+          <div id="run-exec-dock" class="ev-dock-host"></div>
           <div id="run-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
           <ul id="run-steer-stack" class="steer-stack hidden" aria-label="Messages sent to the selected step"></ul>
           <!-- method="dialog" for the reason #prompt-form carries it: a stray submit does nothing. -->
@@ -1465,15 +1465,18 @@
       </div>
 
       <!-- One SUBAGENT execution, read on its own page. The content is the shared
-           exec view (static-src/exec-view/), the same surface the run tab uses, so
-           this holds no header of its own — buildExecPage draws the identity row,
-           the timeline, the tree and the detail pane. No composer and no decision
-           dock: a delegate takes its instructions from the agent that dispatched
-           it, and its permission asks are queued under the launching chat, so both
-           would be controls for something this page cannot address. -->
+           exec view (static-src/exec-view/), the same surface the run tab uses:
+           buildExecPage draws the detail pane into the body and the run dock into
+           the bottom bar. No composer and no decision dock: a delegate takes its
+           instructions from the agent that dispatched it, and its permission asks
+           are queued under the launching chat, so both would be controls for
+           something this page cannot address. -->
       <div id="subagent-view" class="hidden" data-tab-view>
         <div class="page-content">
           <div id="subagent-body"></div>
+        </div>
+        <div class="run-bottom-bar bottom-bar">
+          <div id="subagent-exec-dock" class="ev-dock-host"></div>
         </div>
       </div>
 

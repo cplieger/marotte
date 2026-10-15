@@ -257,7 +257,7 @@ describe("an unanswered ask", () => {
     c.render(runOf("running", step("a", "running")), asks(2, []));
     expect(rowStates(c.root)).toEqual(["running"]);
     expect(statusWord(c.root)).toBe("needs input");
-    expect(alertText(c.root)).toBe("Waiting for your answer \u00b7 2 asks waiting");
+    expect(alertText(c.root)).toBe("Waiting for your answer (2 asks waiting)");
   });
 
   it("loses to a failed launch, which is the one state with no run behind it", () => {
@@ -409,9 +409,7 @@ describe("a step row's key is the exec view's own node path", () => {
     // The run tab's model over the same state: its paths are what the page
     // navigates and `bodyFor` files a transcript under, so a row that keyed on
     // anything else would open the page on no node at all.
-    const execPaths = workNodes(runToExec("wf_1", state, undefined, NO_ASKS).nodes).map(
-      (n) => n.path,
-    );
+    const execPaths = workNodes(runToExec(state, undefined, NO_ASKS).nodes).map((n) => n.path);
     expect(execPaths).toEqual(["wf_1:plan", CODE_PATH, "wf_1:loop:iter-0:review"]);
     expect(rowPaths(c.root)).toEqual(execPaths);
   });
@@ -794,9 +792,7 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
     const { c } = wired();
     c.render(state);
     expect(alertText(c.root)).toBe("a failed: the second try broke");
-    expect(runToExec("wf_1", state, undefined, NO_ASKS).alert?.text).toBe(
-      "a failed: the second try broke",
-    );
+    expect(runToExec(state, undefined, NO_ASKS).alert?.text).toBe("a failed: the second try broke");
   });
 
   it("names no failure the loop recovered from, on the card or the run tab", () => {
@@ -804,7 +800,7 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
     const { c } = wired();
     c.render(state);
     expect(alertText(c.root)).toBe("The run failed");
-    expect(runToExec("wf_1", state, undefined, NO_ASKS).alert?.text).toBe("The run failed");
+    expect(runToExec(state, undefined, NO_ASKS).alert?.text).toBe("The run failed");
   });
 
   it("does not fold a failed run, and re-opens one that fails after folding", () => {

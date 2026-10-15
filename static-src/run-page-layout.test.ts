@@ -21,6 +21,10 @@ function overflowDecls(css: string, selector: string): string[] {
   );
 }
 
+/** Both exec tabs share one rule per box (18-pages.css), so each is addressed as the pair. */
+const SCROLLER = '[id="run-view"] .page-content,\n[id="subagent-view"] .page-content';
+const BODY = '[id="run-body"],\n[id="subagent-body"]';
+
 describe("the run page claims its height", () => {
   // The omission itself. Every full-page view is in this list; a new one that is not renders inside
   // a wrapper with no height and looks like a styling bug.
@@ -51,33 +55,22 @@ describe("the run page claims its height", () => {
   it("scrolls the page wrapper, not the panes", () => {
     // `overflow: hidden auto` is the two-value shorthand: `hidden` across, `auto` down. Exactly one
     // declaration, so no plain `overflow: hidden` can sit beside it.
-    expect(overflowDecls(loadCSS("18-pages.css"), '[id="run-view"] .page-content')).toEqual([
-      "overflow: hidden auto",
-    ]);
+    expect(overflowDecls(loadCSS("18-pages.css"), SCROLLER)).toEqual(["overflow: hidden auto"]);
 
     // A pane with an `overflow` on either axis is a scroll container again, and a scroll
     // container's automatic minimum size is 0.
     expect(overflowDecls(loadCSS("31-exec-view.css"), ".ev-pane")).toEqual([]);
   });
 
-  // The second consumer of the same exec page. It has no bottom bar, so it could have scrolled the
-  // view instead — but leaving it `overflow: hidden` while `.ev-page` stops clamping itself would
-  // clip a delegate's transcript outright.
-  it("scrolls the subagent page too", () => {
-    expect(overflowDecls(loadCSS("18-pages.css"), '[id="subagent-view"] .page-content')).toEqual([
-      "overflow: hidden auto",
-    ]);
+  // One block owns `overflow` for both tabs: two contradictory blocks at equal specificity in one
+  // file let the later declaration silently win.
+  it("declares the scroller exactly once, for both tabs", () => {
+    const css = loadCSS("18-pages.css");
+    const hits = allRules(css).filter(
+      (r) => r.selector.includes(".page-content") && /run-view|subagent-view/.test(r.selector),
+    );
+    expect(hits.map((r) => r.selector)).toEqual([SCROLLER]);
   });
-
-  // One block per page owns `overflow`: two contradictory blocks at equal specificity in one file
-  // let the later declaration silently win.
-  it.each(['[id="run-view"] .page-content', '[id="subagent-view"] .page-content'])(
-    "declares %s exactly once",
-    (selector) => {
-      const hits = allRules(loadCSS("18-pages.css")).filter((r) => r.selector === selector);
-      expect(hits).toHaveLength(1);
-    },
-  );
 
   // The page must SIZE TO CONTENT, or the scroller above has nothing taller than itself to scroll:
   // `flex: 1 1 0` plus `min-height: 0` made this column exactly the free space of its parent, so
@@ -87,16 +80,6 @@ describe("the run page claims its height", () => {
     expect(/display:\s*flex/.test(page)).toBe(true);
     expect(/flex-direction:\s*column/.test(page)).toBe(true);
     expect(/flex:\s*1 0 auto/.test(page)).toBe(true);
-  });
-
-  // The floor this replaced (`min-block-size: 16rem`) existed because the results region competed
-  // with the panes for a fixed page height and crushed them to ~90px. With nothing clamped to the
-  // scrollport there is no competition, so the panes size to content and each shrink-wraps its own.
-  it("sizes the panes to their content rather than flooring them", () => {
-    const panes = decls(loadCSS("31-exec-view.css"), ".ev-panes");
-    expect(/flex:\s*0 0 auto/.test(panes)).toBe(true);
-    expect(panes).not.toMatch(/min-block-size:/);
-    expect(/align-items:\s*start/.test(panes)).toBe(true);
   });
 
   // The results are the selected step's PRODUCT, so they render whole and the page scrolls. A
@@ -145,8 +128,8 @@ describe("the run page claims its height", () => {
 
   // `#run-body` sits between the scroller and the page, so it has to SIZE TO CONTENT like
   // everything else below the scroller.
-  it.each(['[id="run-body"]', '[id="subagent-body"]'])("sizes %s to its content", (selector) => {
-    const host = decls(loadCSS("18-pages.css"), selector);
+  it("sizes both bodies to their content", () => {
+    const host = decls(loadCSS("18-pages.css"), BODY);
     expect(/flex:\s*1 0 auto/.test(host)).toBe(true);
     expect(host).not.toMatch(/min-height:\s*0/);
   });
@@ -154,13 +137,10 @@ describe("the run page claims its height", () => {
   // WHICH BOX carries the measure is the half worth pinning, and it moved: a capped scroller puts
   // its scrollbar against the right edge of the cards rather than the view's, which reads as a
   // panel's inner scroller instead of the page's.
-  it.each([
-    ['[id="run-view"] .page-content', '[id="run-body"]'],
-    ['[id="subagent-view"] .page-content', '[id="subagent-body"]'],
-  ])("measures %s at its body rather than at its scroller", (scroller, body) => {
+  it("measures both tabs at their body rather than at their scroller", () => {
     const css = loadCSS("18-pages.css");
-    expect(decls(css, scroller)).toMatch(/max-width:\s*none/);
-    expect(decls(css, body)).toMatch(/max-width:\s*var\(--content-max-w\)/);
+    expect(decls(css, SCROLLER)).toMatch(/max-width:\s*none/);
+    expect(decls(css, BODY)).toMatch(/max-width:\s*var\(--content-max-w\)/);
   });
 
   // The transcript is the OTHER side of that contract, and it is what makes the token assertion
@@ -181,14 +161,11 @@ describe("the run page claims its height", () => {
     }
   });
 
-  it.each(['[id="run-body"]', '[id="subagent-body"]'])(
-    "lets %s fill its measure rather than shrink-wrapping to content",
-    (selector) => {
-      const body = decls(loadCSS("18-pages.css"), selector);
-      expect(body).toMatch(/width:\s*100%/);
-      expect(body).toMatch(/margin-inline:\s*auto/);
-    },
-  );
+  it("lets both bodies fill their measure rather than shrink-wrapping to content", () => {
+    const body = decls(loadCSS("18-pages.css"), BODY);
+    expect(body).toMatch(/width:\s*100%/);
+    expect(body).toMatch(/margin-inline:\s*auto/);
+  });
 
   it("keeps the page measure a real token", () => {
     expect(loadCSS("01-tokens.css")).toMatch(/--content-max-w:\s*\d/);

@@ -29,7 +29,6 @@ describe("runToExec structure", () => {
   // around everything — an indent carrying no information.
   it("unwraps the synthetic root and keeps the real top level", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -47,7 +46,6 @@ describe("runToExec structure", () => {
 
   it("keys two steps whose ids spell alike under a slash join apart", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -66,7 +64,6 @@ describe("runToExec structure", () => {
   // Flattening the tree to its leaves would make a loop, a parallel and a watch invisible.
   it("keeps control-flow containers as nodes of their own", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -117,7 +114,6 @@ describe("runToExec structure", () => {
   // renders with no glyph and no treatment.
   it("maps an unknown node type onto group rather than passing it through", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({ nodeId: "wf_1", type: "fanout", status: "running", children: [] }),
       undefined,
       NO_ASKS,
@@ -149,7 +145,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
   ];
 
   function shape(root: unknown, plan: unknown): string[] {
-    return flatten(runToExec("wf_1", stateWith(root), plan, NO_ASKS).nodes).map(
+    return flatten(runToExec(stateWith(root), plan, NO_ASKS).nodes).map(
       (n) => `${n.kind}:${n.label}:${n.path}:${n.transcript === true ? "t" : "-"}`,
     );
   }
@@ -175,7 +171,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
       status: "running",
       children: [{ nodeId: "loop", type: "repeat", status: "running" }],
     };
-    const run = runToExec("wf_1", stateWith(root), PLAN, NO_ASKS);
+    const run = runToExec(stateWith(root), PLAN, NO_ASKS);
     expect(shape(root, PLAN)).toEqual([
       "repeat:loop:wf_1:loop:-",
       "sequence:pass 1:wf_1:loop:iter-0:-",
@@ -201,7 +197,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
         { nodeId: "fan", type: "parallel", status: "pending", children: [] },
       ],
     };
-    const run = runToExec("wf_1", stateWith(root), undefined, NO_ASKS);
+    const run = runToExec(stateWith(root), undefined, NO_ASKS);
     expect(workNodes(run.nodes).map((n) => n.label)).toEqual(["a"]);
     expect(run.nodes[1]?.transcript).toBeUndefined();
   });
@@ -239,7 +235,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
       "sequence:pass 1:wf_1:loop:iter-0:-",
       "step:code:wf_1:loop:iter-0:code:t",
     ]);
-    expect(runToExec("wf_1", stateWith(root), undefined, NO_ASKS).nodes).toEqual([]);
+    expect(runToExec(stateWith(root), undefined, NO_ASKS).nodes).toEqual([]);
   });
 
   it("keeps the state's children over the plan's once KAS has expanded a container", () => {
@@ -283,7 +279,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
         },
       ],
     };
-    const run = runToExec("wf_1", stateWith(root), PLAN, NO_ASKS);
+    const run = runToExec(stateWith(root), PLAN, NO_ASKS);
     expect(counters(run.nodes)).toEqual({ total: 2, done: 0, failed: 0, current: 1 });
     // The run tab still holds every pass.
     expect(run.nodes[0]?.children.map((p) => `${p.label}:${String(p.pass)}`)).toEqual([
@@ -307,7 +303,6 @@ describe("runToExec container state", () => {
       ["paused", "waiting"],
     ] as const) {
       const run = runToExec(
-        "wf_1",
         stateWith({
           nodeId: "wf_1",
           type: "sequence",
@@ -332,7 +327,6 @@ describe("runToExec container state", () => {
   // which it does until KAS settles it.
   it("settles a container once every child has", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -355,7 +349,6 @@ describe("runToExec container state", () => {
   // KAS's inspect reply carries no end on a completed repeat, so without one its duration ran on.
   it("ends a finished container with no end of its own at its last child's end", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -387,7 +380,6 @@ describe("runToExec container state", () => {
 
   it("leaves a running container's end open", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -442,7 +434,7 @@ describe("runToExec container state", () => {
       ["completed", "ok"],
       ["failed", "fail"],
     ] as const) {
-      const run = runToExec("wf_1", loopAfterFailure(last), undefined, NO_ASKS);
+      const run = runToExec(loopAfterFailure(last), undefined, NO_ASKS);
       expect(run.nodes[0]?.state, last).toBe(want);
       expect(run.nodes[0]?.children[0]?.state, "pass 1 keeps its own failure").toBe("fail");
     }
@@ -454,7 +446,6 @@ describe("runToExec reads what nothing read before", () => {
   // nowhere in the app.
   it("carries the run's inputs", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "running"), { inputs: { repo: "marotte" } }),
       undefined,
       NO_ASKS,
@@ -467,7 +458,6 @@ describe("runToExec reads what nothing read before", () => {
   // screen.
   it("states a repeat's bound and stop condition from the plan", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -498,7 +488,6 @@ describe("runToExec reads what nothing read before", () => {
 
   it("names a watch's handler from KAS's nodePlan shape", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -517,7 +506,6 @@ describe("runToExec reads what nothing read before", () => {
 
   it("reads a settled background-process watch's exit record", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -554,7 +542,6 @@ describe("runToExec reads what nothing read before", () => {
 
   it("keeps a watch capture that is not KAS's record verbatim", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -579,7 +566,6 @@ describe("runToExec reads what nothing read before", () => {
   // Four more fields with zero render sites before the exec view.
   it("surfaces the per-step facts nothing rendered", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(
         step("a", "completed", {
           agentName: "wf-coder",
@@ -605,7 +591,6 @@ describe("runToExec reads what nothing read before", () => {
   // `auto` is the ABSENCE of a model choice, so naming it as one implies a pin that never happened.
   it("does not report auto as a model", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "running", { agentName: "wf-coder", modelId: "auto" })),
       undefined,
       NO_ASKS,
@@ -617,7 +602,6 @@ describe("runToExec reads what nothing read before", () => {
   it("counts a step's retries in the subtitle, one retry singular", () => {
     const subtitle = (n: number) =>
       runToExec(
-        "wf_1",
         stateWith(step("a", "running", { agentName: "wf-coder", continuationAttempts: n })),
         undefined,
         NO_ASKS,
@@ -679,16 +663,11 @@ describe("runToExec alert precedence", () => {
   // `running` while a step's ask blocks it — so the status reports nothing wrong and would leave
   // the one actionable state unsaid.
   it("puts an unanswered ask ahead of everything", () => {
-    const run = runToExec(
-      "wf_1",
-      stateWith(step("a", "running"), { status: "failed" }),
-      undefined,
-      {
-        count: 2,
-        asked: [{ nodeID: "a", sessionID: "", answer: false }],
-        label: "Run tests?",
-      },
-    );
+    const run = runToExec(stateWith(step("a", "running"), { status: "failed" }), undefined, {
+      count: 2,
+      asked: [{ nodeID: "a", sessionID: "", answer: false }],
+      label: "Run tests?",
+    });
     expect(run.alert?.kind).toBe("input");
     expect(run.alert?.text).toContain("Run tests?");
     expect(run.alert?.text).toContain("2 asks waiting");
@@ -701,7 +680,6 @@ describe("runToExec alert precedence", () => {
   // is on the wire.
   it("separates a user stop from a failure", () => {
     const stopped = runToExec(
-      "wf_1",
       stateWith(step("a", "aborted"), {
         status: "aborted",
         stopInitiator: "user",
@@ -714,7 +692,6 @@ describe("runToExec alert precedence", () => {
     expect(stopped.alert?.text).toBe("Stopped by user: changed my mind");
 
     const paused = runToExec(
-      "wf_1",
       stateWith(step("a", "paused"), { status: "paused", stopInitiator: "user" }),
       undefined,
       NO_ASKS,
@@ -722,7 +699,6 @@ describe("runToExec alert precedence", () => {
     expect(paused.alert?.text).toBe("Paused by user");
 
     const pending = runToExec(
-      "wf_1",
       stateWith(step("a", "running"), { status: "running", pausePending: { initiator: "user" } }),
       undefined,
       NO_ASKS,
@@ -730,7 +706,6 @@ describe("runToExec alert precedence", () => {
     expect(pending.alert).toEqual({ kind: "paused", text: "Pausing after the current step" });
 
     const failed = runToExec(
-      "wf_1",
       stateWith(step("a", "failed", { failureReason: "exit 1" }), { status: "failed" }),
       undefined,
       NO_ASKS,
@@ -742,7 +717,6 @@ describe("runToExec alert precedence", () => {
 
   it("names the transient-error code behind a pause", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "paused"), {
         status: "paused",
         pauseReason: "retrying",
@@ -760,7 +734,6 @@ describe("runToExec alert precedence", () => {
   // is not a transient failure, and the reason sentence already carries upstream's own explanation.
   it("does not call an exhausted continuation budget a transient error", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "paused"), {
         status: "paused",
         pauseReason: "Step could not be continued after 3 consecutive attempts.",
@@ -778,7 +751,6 @@ describe("runToExec alert precedence", () => {
   // run was not read yet, or the question was answered) is KAS's pause, quoted like any other.
   it("leaves a need-input park the store holds no ask for to KAS's own sentence", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(
         {
           nodeId: "phase1",
@@ -797,7 +769,6 @@ describe("runToExec alert precedence", () => {
 
   it("quotes any other pause reason verbatim", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "paused"), { status: "paused", pauseReason: "watching for a file" }),
       undefined,
       NO_ASKS,
@@ -807,7 +778,6 @@ describe("runToExec alert precedence", () => {
 
   it("raises no alert on a run that wants nothing", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "completed"), { status: "completed" }),
       undefined,
       NO_ASKS,
@@ -833,7 +803,7 @@ describe("runToExec question targeting", () => {
   };
 
   function answered(address: RunAsks["asked"][number]): { path: string; ask?: string }[] {
-    const run = runToExec("wf_1", stateWith(loop, { status: "paused" }), undefined, {
+    const run = runToExec(stateWith(loop, { status: "paused" }), undefined, {
       count: 1,
       asked: [address],
       label: "Which colour?",
@@ -869,7 +839,6 @@ describe("runToExec question targeting", () => {
 describe("a step's detail line", () => {
   it("names a retry wait on a running step and a pause on a paused one, verbatim", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("coder", "running", { retryReason: "Waiting 30s to retry." })),
       undefined,
       NO_ASKS,
@@ -878,7 +847,6 @@ describe("a step's detail line", () => {
     expect(run.nodes[0]?.subtitle).toBe("Retrying: Waiting 30s to retry.");
 
     const paused = runToExec(
-      "wf_1",
       stateWith(step("coder", "paused", { pauseReason: "Step paused." })),
       undefined,
       NO_ASKS,
@@ -915,18 +883,12 @@ describe("the plan revision notice", () => {
       false,
     ],
   ] as const)("words %o", (u, text, failed) => {
-    const run = runToExec(
-      "wf_1",
-      stateWith(step("a", "running"), { planUpdate: u }),
-      undefined,
-      NO_ASKS,
-    );
+    const run = runToExec(stateWith(step("a", "running"), { planUpdate: u }), undefined, NO_ASKS);
     expect(run.notice).toEqual({ text, failed });
   });
 
   it("reaches the exec model from the run read", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "running"), {
         planUpdate: { outcome: "queued", pending: 2, after: "a" },
       }),
@@ -947,7 +909,6 @@ describe("runToExec reads the run log's step ends", () => {
 
   it("marks a completed step whose turn kiro-cli stopped as failed, with the reason", () => {
     const run = runToExec(
-      "wf_1",
       tree(step("build", "completed")),
       undefined,
       NO_ASKS,
@@ -965,7 +926,6 @@ describe("runToExec reads the run log's step ends", () => {
 
   it("falls back to the outcome's sentence for an end with no reason", () => {
     const run = runToExec(
-      "wf_1",
       tree(step("build", "completed")),
       undefined,
       NO_ASKS,
@@ -978,7 +938,6 @@ describe("runToExec reads the run log's step ends", () => {
 
   it.each(["", "  \n"])("falls back to the outcome's sentence for a blank reason %j", (reason) => {
     const run = runToExec(
-      "wf_1",
       tree(step("build", "completed")),
       undefined,
       NO_ASKS,
@@ -990,7 +949,6 @@ describe("runToExec reads the run log's step ends", () => {
 
   it("does not name a blank account of KAS's own failure", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(
         {
           nodeId: "wf_1",
@@ -1011,7 +969,6 @@ describe("runToExec reads the run log's step ends", () => {
 
   it("keeps KAS's own account for a step it did not grade completed", () => {
     const run = runToExec(
-      "wf_1",
       tree(step("build", "failed", { failureReason: "exit 1" })),
       undefined,
       NO_ASKS,
@@ -1024,7 +981,6 @@ describe("runToExec reads the run log's step ends", () => {
 
   it("leaves a completed step with no end, and an end at another path, alone", () => {
     const run = runToExec(
-      "wf_1",
       tree(step("build", "completed")),
       undefined,
       NO_ASKS,
@@ -1087,7 +1043,7 @@ describe("runToExec shows where an included group came from", () => {
     ],
   };
   const fold = (planIn: unknown, review: Record<string, unknown> = started) =>
-    flatten(runToExec("wf_1", stateWith(root(review)), planIn, NO_ASKS).nodes);
+    flatten(runToExec(stateWith(root(review)), planIn, NO_ASKS).nodes);
   const byLabel = (nodes: ReturnType<typeof fold>, label: string) => {
     const n = nodes.find((x) => x.label === label);
     if (n === undefined) {
@@ -1151,7 +1107,6 @@ describe("runToExec shows where an included group came from", () => {
   it("gives a hand-written id holding a slash no qualifier", () => {
     const nodes = flatten(
       runToExec(
-        "wf_1",
         stateWith({
           nodeId: "wf_1",
           type: "sequence",

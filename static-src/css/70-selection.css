@@ -140,6 +140,8 @@
    speak this vocabulary. */
 .ev-row.ev-selected > .ev-row-main,
 .ev-tl-lane.ev-selected,
+/* The run dock's row for the step the page shows. */
+.ev-dock-row[aria-current="true"],
 .pr-merge-method:has(input:checked),
 .editor-find-case[aria-pressed="true"],
 .sidebar-history-btn.active {

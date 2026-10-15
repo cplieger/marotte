@@ -17,16 +17,13 @@ function step(id: string, output?: string): ExecNode {
 }
 
 function finished(nodes: ExecNode[]): ExecRun {
-  return { id: "wf_1", label: "release", state: "ok", nodes, live: false };
+  return { label: "release", state: "ok", nodes, live: false };
 }
 
 // Every table the results region rendered is watched by the shared observer, whose own report of a
 // removed table is not delivered on every engine. These tests read the count with no frame awaited,
 // so only the page's own release can lower it.
-describe.each([
-  ["undocked", false],
-  ["docked", true],
-])("step results tables, %s page", (_name, docked) => {
+describe("step results tables", () => {
   const hosts: HTMLElement[] = [];
   let page: ExecPageView | undefined;
 
@@ -43,7 +40,7 @@ describe.each([
     page = buildExecPage({
       emptyNote: () => "",
       onShowNode: () => undefined,
-      ...(docked ? { dock: host } : {}),
+      dock: host,
       follow: "newest",
     });
     document.body.append(page.root, host);
