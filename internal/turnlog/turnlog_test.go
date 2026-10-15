@@ -219,7 +219,7 @@ func TestSealingTable(t *testing.T) {
 		rec.seal(turn.TextDelta(ctx, "", "s3-say", "c"))
 		rec.seal(turn.SafetyBlocked(ctx, []string{"p1"}))
 		rec.seal(turn.TextDelta(ctx, "", "s4-say", "d"))
-		rec.seal(turn.ModelSwitched(ctx, marotte.EntryModelSwitched{From: "old", To: "new"}))
+		rec.seal(turn.ModelSwitched(ctx, &marotte.EntryModelSwitched{From: "old", To: "new"}))
 		equalShape(t, rec.shape(), []string{
 			"/text", "/compaction", "/text", "/compaction_failed",
 			"/text", "/safety_blocked", "/text", "/model_switched",

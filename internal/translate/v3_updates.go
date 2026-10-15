@@ -562,7 +562,7 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID marott
 		sw := *repin
 		t.appendLaneless(ctx, chatID, marotte.EntryKindModelSwitched, "", sw,
 			func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) {
-				return turn.ModelSwitched(ctx, sw)
+				return turn.ModelSwitched(ctx, &sw)
 			})
 	}
 }

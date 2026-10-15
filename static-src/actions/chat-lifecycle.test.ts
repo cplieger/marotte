@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, onTestFinished } from "vitest";
 
 vi.mock("../toast.js", () =>
   import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
@@ -120,6 +120,96 @@ describe("chat.switch_model", () => {
     const { switchModel } = await import("./chat.js");
     await switchModel.dispatch({ chatID: "c1", model: "opus" });
     expect(get("c1")!.model).toBe("claude-4");
+  });
+
+  it("sends the Off stop as the switch's effort and writes no tier for it", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    const { switchModel } = await import("./chat.js");
+    const before = get("c1")!.effort;
+
+    await switchModel.dispatch({ chatID: "c1", model: "opus", effort: "thinking:off" });
+
+    const [cmd] = mockSend.mock.calls.at(-1) ?? [];
+    expect((cmd as { payload?: unknown }).payload).toEqual({
+      model: "opus",
+      effort: "thinking:off",
+    });
+    expect(get("c1")!.model).toBe("opus");
+    expect(get("c1")!.effort).toBe(before);
+  });
+
+  // A stop kept on the running model mid-turn lands at once server-side, so it shows at once; the
+  // model stays, as no move is made.
+  it("shows a stop the switch keeps on the running model, mid-turn too", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    setSessions([makeSession("c1", { effort: "medium", thinking_choice: "on", turn_open: true })]);
+    const { switchModel } = await import("./chat.js");
+
+    await switchModel.dispatch({ chatID: "c1", model: "claude-4", effort: "thinking:off" });
+    expect(get("c1")!.thinking_choice).toBe("off");
+
+    await switchModel.dispatch({ chatID: "c1", model: "claude-4", effort: "high" });
+    expect(get("c1")!.effort).toBe("high");
+    expect(get("c1")!.thinking_choice, "a tier turns thinking on").toBe("on");
+    expect(get("c1")!.model).toBe("claude-4");
+  });
+
+  // A chat that never chose reads the target's catalog default, as the server does.
+  it("turns thinking on with a tier picked onto a model that defaults it off", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    const { setPickerModels } = await import("../picker.js");
+    setPickerModels([
+      {
+        model_id: "opus",
+        model_name: "Opus",
+        thinking_toggleable: true,
+        thinking_default_off: true,
+      },
+    ]);
+    onTestFinished(() => setPickerModels([]));
+    const { switchModel } = await import("./chat.js");
+
+    await switchModel.dispatch({ chatID: "c1", model: "opus", effort: "high" });
+
+    expect(get("c1")!.thinking_choice).toBe("on");
+    expect(get("c1")!.effort).toBe("high");
+  });
+
+  // The cancelling switch is the close's one request: when it fails, nothing of the gesture stays,
+  // its stop included, and no other command was sent for it.
+  it("rolls the stop back with the switch that carried it", async () => {
+    mockSend.mockResolvedValue({ ok: false, status: 502, error: "the session refused" });
+    setSessions([makeSession("c1", { effort: "medium", thinking_choice: "on" })]);
+    const { switchModel } = await import("./chat.js");
+
+    await switchModel.dispatch({ chatID: "c1", model: "claude-4", effort: "thinking:off" });
+
+    const types = mockSend.mock.calls.map((c) => (c[0] as { type?: string }).type);
+    expect(types.length).toBeGreaterThan(0);
+    expect(new Set(types), "each attempt is the switch itself").toEqual(new Set(["switch_model"]));
+    expect(get("c1")!.thinking_choice).toBe("on");
+    expect(get("c1")!.effort).toBe("medium");
+  });
+
+  // The first answer is lost after the switch landed: the retry carries the first attempt's key,
+  // so the server replays that answer rather than re-running the switch, and nothing rolls back.
+  it("retries a switch whose answer was lost under one idempotency key", async () => {
+    mockSend
+      .mockResolvedValueOnce({ ok: false, status: 0, error: "Failed to fetch", code: "network" })
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    const { switchModel } = await import("./chat.js");
+    const { IDEMPOTENCY_COMMAND_FIELD } = await import("./index.js");
+
+    const outcome = await switchModel.dispatch({ chatID: "c1", model: "opus", effort: "high" })
+      .outcome;
+
+    expect(outcome).toEqual({ status: "success", value: true, attempts: 2 });
+    const [first, second] = mockSend.mock.calls.map((c) => c[0] as Record<string, unknown>);
+    expect(typeof first?.[IDEMPOTENCY_COMMAND_FIELD]).toBe("string");
+    expect(second?.[IDEMPOTENCY_COMMAND_FIELD]).toBe(first?.[IDEMPOTENCY_COMMAND_FIELD]);
+    expect(second?.["payload"]).toEqual({ model: "opus", effort: "high" });
+    expect(get("c1")!.model).toBe("opus");
+    expect(get("c1")!.effort).toBe("high");
   });
 });
 

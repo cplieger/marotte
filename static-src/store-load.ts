@@ -558,6 +558,7 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
       // The model badge's ONE input, replaced by every header read: an absent `pending_model` is a
       // CLEAR, which is how a pick applied at a turn's close reaches every device.
       ...(h.pending_model !== undefined && { pending_model: h.pending_model }),
+      ...(h.pending_effort !== undefined && { pending_effort: h.pending_effort }),
       // The row is rebuilt from the header rather than spread from `existing`, so a conditional
       // spread IS a replace here: nothing carries over because nothing is there. `updated_at` needs
       // no guard — it is required on the wire.

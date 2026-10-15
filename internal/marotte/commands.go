@@ -146,10 +146,20 @@ const (
 // switched in place. The fallback restarts the bridge and first attempts to load
 // the existing session before creating a fresh one.
 type SwitchModelCommand struct {
-	// Empty or "auto" keeps the current model: a bare restart of the bridge,
-	// useful when the session is wedged.
+	// Empty or "auto" names the model in force.
 	Model string `json:"model,omitempty"`
+	// Effort is the tier this pick sets: empty keeps a tier parked with Model, else the chat's
+	// level; a level replaces it; SwitchEffortOff drops a parked one, turns no thinking on, and
+	// turns the running session's thinking off at once. On the model in force a level is set in
+	// place as set_effort sets it (refused when that model lacks it), and a level or
+	// SwitchEffortOff there cancels a switch parked on another model, in the same request; empty
+	// changes nothing.
+	Effort EffortLevel `json:"effort,omitempty"`
 }
+
+// SwitchEffortOff is the switch Effort for the slider's Off stop. It fails Valid, so no tier
+// can carry its name.
+const SwitchEffortOff EffortLevel = "thinking:off"
 
 // PermissionResponseCommand is the payload for type="permission_response".
 type PermissionResponseCommand struct {

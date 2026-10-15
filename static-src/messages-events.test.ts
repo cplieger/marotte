@@ -153,6 +153,25 @@ describe("model_switched", () => {
     expect(labelOf(node)).toBe("Switched from opus-9 to sonnet-5 · not available for this account");
   });
 
+  it("says so when the new model does not offer the tier the chat wanted", () => {
+    const node = buildEvent(
+      event("model_switched", {
+        from: "opus-5",
+        to: "gpt-5.6-sol",
+        effort: "high",
+        unoffered: "max",
+      }),
+    );
+    expect(labelOf(node)).toBe("Switched to gpt-5.6-sol (high; max is not offered)");
+  });
+
+  it("names the unoffered tier alone when the new model runs at none", () => {
+    const node = buildEvent(
+      event("model_switched", { from: "opus-5", to: "gpt-5.6-sol", unoffered: "xhigh" }),
+    );
+    expect(labelOf(node)).toBe("Switched to gpt-5.6-sol (x-high is not offered)");
+  });
+
   it("names the model alone when the entry carries no tier", () => {
     const node = buildEvent(event("model_switched", { from: "sonnet-5", to: "opus-5" }));
     expect(labelOf(node)).toBe("Switched to opus-5");

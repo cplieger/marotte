@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"reflect"
 	"slices"
 	"sync"
 
@@ -50,7 +51,8 @@ func (c *catalog) SetModels(models []marotte.SessionModel) bool {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if slices.Equal(c.models, models) {
+	// DeepEqual: EffortTiers makes SessionModel incomparable.
+	if reflect.DeepEqual(c.models, models) {
 		return false
 	}
 	c.models = slices.Clone(models)
@@ -66,16 +68,40 @@ func (c *catalog) modesModelsStamped() (modes []marotte.SessionMode, models []ma
 	return slices.Clone(c.modes), slices.Clone(c.models), marotte.NewSubjectStamp(string(subject.KindCatalog), "", version)
 }
 
-// defaultEffortFor returns the model's default reasoning tier, or "" for an unknown model, without cloning the catalog.
-func (c *catalog) defaultEffortFor(model string) string {
+// tierKnowledge is how much the catalog knows of a model's effort tiers.
+type tierKnowledge int
+
+const (
+	// tiersUnknown: the catalog does not list the model, as before any session reports it.
+	tiersUnknown tierKnowledge = iota
+	// tiersNone: the catalog lists the model with no tiers; KAS drops any effort sent for it.
+	tiersNone
+	tiersListed
+)
+
+// modelTiers is the catalog's account of one model's effort tiers; levels and def are set only
+// when known is tiersListed.
+type modelTiers struct {
+	def    string
+	levels []string
+	known  tierKnowledge
+}
+
+// tiersOf returns the catalog's account of model's effort tiers.
+func (c *catalog) tiersOf(model string) modelTiers {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i := range c.models {
-		if c.models[i].ID == model {
-			return c.models[i].DefaultEffortLevel
+		m := &c.models[i]
+		switch {
+		case m.ID != model:
+			continue
+		case len(m.EffortTiers) == 0:
+			return modelTiers{known: tiersNone}
 		}
+		return modelTiers{known: tiersListed, levels: slices.Clone(m.EffortTiers), def: m.DefaultEffortLevel}
 	}
-	return ""
+	return modelTiers{}
 }
 
 // thinkingToggleable reports whether the catalog knows the model and lets thinking be turned off.
@@ -90,17 +116,17 @@ func (c *catalog) thinkingToggleable(model string) bool {
 	return false
 }
 
-// capForThinkingOff is level as model runs it while thinking is off, by its catalog tiers; an
-// unknown model, or one with no lower tier, leaves it.
-func (c *catalog) capForThinkingOff(model, level string) string {
+// thinkingOffCap is the tier list marotte.CapEffortForThinkingOff caps model's xhigh and max
+// against; nil (no cap) for an unknown model or one with no lower tier.
+func (c *catalog) thinkingOffCap(model string) []marotte.SessionEffortLevel {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i := range c.models {
 		if c.models[i].ID == model && c.models[i].ThinkingOffEffortCap != "" {
-			return marotte.CapEffortForThinkingOff(level, []marotte.SessionEffortLevel{{ID: c.models[i].ThinkingOffEffortCap}})
+			return []marotte.SessionEffortLevel{{ID: c.models[i].ThinkingOffEffortCap}}
 		}
 	}
-	return level
+	return nil
 }
 
 // thinkingDefaultOff reports whether the catalog knows the model and defaults its thinking off.

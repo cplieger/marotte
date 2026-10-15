@@ -110,6 +110,7 @@ vi.mock("./git-tabs.js", () => ({ forceGitTab: mocks.forceGitTab }));
 // call OBSERVABLE without pulling the git view into this fixture.
 vi.mock("./git-prs-tab.js", () => ({ requestPRFocus: mocks.requestPRFocus }));
 vi.mock("./icons.js", () => ({
+  ICON_MODEL_UI: "",
   ICON_CLOSE: "",
   ICON_TAB_CHAT: "",
   ICON_TAB_SETTINGS: "",
@@ -165,6 +166,7 @@ vi.mock("./dom.js", () => ({
       },
     },
   ),
+  setBusy: vi.fn(),
   byId: (id: string) => {
     let el = document.getElementById(id);
     if (el === null) {

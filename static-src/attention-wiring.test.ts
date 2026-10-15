@@ -137,6 +137,7 @@ vi.mock("./dom.js", () => ({
   // `byId` is reached through this graph and ESM links for real, so it must exist on the
   // mock. Inlined: a `vi.mock` factory is hoisted above imports. Resolve-or-create, because
   // the real `byId` throws.
+  setBusy: vi.fn(),
   byId: (id: string): HTMLElement => {
     let el = document.getElementById(id);
     if (el === null) {

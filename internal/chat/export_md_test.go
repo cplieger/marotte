@@ -282,6 +282,16 @@ func TestRenderChatMarkdown_SaysWhichModelSwitchedTriggerFired(t *testing.T) {
 			want:    "**Event: model_switched** sonnet-5 → opus-5 (high)",
 		},
 		{
+			name:    "tier_not_offered",
+			payload: marotte.EntryModelSwitched{From: "opus-5", To: "gpt-5", Effort: "high", Unoffered: "max"},
+			want:    "**Event: model_switched** opus-5 → gpt-5 (high; max is not offered)",
+		},
+		{
+			name:    "no_tier_and_one_not_offered",
+			payload: marotte.EntryModelSwitched{From: "opus-5", To: "gpt-5", Unoffered: "max"},
+			want:    "**Event: model_switched** opus-5 → gpt-5 (max is not offered)",
+		},
+		{
 			name:     "tier_only",
 			payload:  marotte.EntryModelSwitched{From: "opus-5", To: "opus-5", Effort: "high"},
 			want:     "**Event: model_switched** reasoning effort: high",

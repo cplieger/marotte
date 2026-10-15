@@ -24,6 +24,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
+  ICON_MODEL_UI: "",
   ICON_CLOSE: "",
   ICON_TAB_CHAT: "",
   ICON_TAB_SETTINGS: "",

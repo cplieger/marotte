@@ -315,8 +315,9 @@ export interface ChatHeader {
   /** Thinking and ThinkingActive mirror Chat's for the effort slider's Off stop. */
   thinking?: string;
   thinking_active?: string;
-  /** PendingModel mirrors Chat's: the model badge reads it off the header. */
+  /** PendingModel and PendingEffort mirror Chat's for the model badge and the pill's card. */
   pending_model?: string;
+  pending_effort?: string;
   effort_levels?: SessionEffortLevel[];
   /** The model and mode vocabulary is a workspace fact (agent.catalog), never here. */
   id: string;
@@ -906,6 +907,8 @@ export interface EntryModelSwitched {
  * level another build wrote decodes rather than throws.
  */
   effort?: string;
+  /** Unoffered is the tier the chat wanted that To does not offer, so it runs at Effort instead. */
+  unoffered?: string;
   /** Reason is set only on a switch KAS made by itself. */
   reason?: ModelSwitchReason;
 }

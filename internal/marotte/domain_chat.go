@@ -322,8 +322,10 @@ type SessionModel struct {
 	DefaultEffortLevel string `json:"default_effort_level,omitempty"`
 	// ThinkingOffEffortCap is the tier KAS runs xhigh and max at on this model while thinking is
 	// off (CapEffortForThinkingOff over its tiers), empty when none is lower. Server-side only.
-	ThinkingOffEffortCap string  `json:"-"`
-	RateMultiplier       float64 `json:"rate_multiplier,omitempty"`
+	ThinkingOffEffortCap string `json:"-"`
+	// EffortTiers are the model's tier ids, lowest first; empty when KAS named none. Server-side only.
+	EffortTiers    []string `json:"-"`
+	RateMultiplier float64  `json:"rate_multiplier,omitempty"`
 	// HasEffort reports whether this model offers effort tiers. KAS silently drops a
 	// level sent to a tierless model (`auto`), so the effort row hides.
 	HasEffort bool `json:"has_effort,omitempty"`
@@ -365,6 +367,7 @@ func (m *ModelChoiceMeta) SessionModel(id, name, description string) SessionMode
 		ID: id, Name: name, Description: description,
 		DefaultEffortLevel:   m.Kiro.DefaultEffortLevel,
 		ThinkingOffEffortCap: m.thinkingOffEffortCap(),
+		EffortTiers:          slices.Clone(m.Kiro.EffortLevels),
 		RateMultiplier:       m.Kiro.RateMultiplier,
 		HasEffort:            m.Kiro.HasEffort,
 		ThinkingToggleable:   m.Kiro.ThinkingToggleable,
@@ -447,9 +450,10 @@ type Chat struct {
 	ACPSessionID  string `json:"acp_session_id,omitempty"`
 	CurrentModeID string `json:"current_mode_id,omitempty"`
 	// Effort is the chat's uncapped effort preference for Model: a pick, its first session's seed,
-	// or a level a session reported. Every session door sends it, capped while thinking is off, so
-	// turning thinking on restores it. A plain string so a value another build wrote decodes
-	// rather than throws; the command boundary validates EffortLevel.
+	// or a level a session reported; a model switch carries it when the new model offers it. Every
+	// session door sends it, capped while thinking is off, so turning thinking on restores it. A
+	// plain string so a value another build wrote decodes rather than throws; the command boundary
+	// validates EffortLevel.
 	Effort string `json:"effort,omitempty"`
 	// Draft is the composer text typed but not sent. NOT on ChatHeader: the autosave
 	// would put it in a chat_updated frame on every debounce, racing the typing tab's
@@ -477,6 +481,8 @@ type Chat struct {
 	LastTurnOutcome TurnOutcome `json:"last_turn_outcome,omitempty"`
 	// PendingModel is a model pick awaiting its apply between turns.
 	PendingModel string `json:"pending_model,omitempty"`
+	// PendingEffort is the tier picked with PendingModel, applied with it; empty carries Effort.
+	PendingEffort string `json:"pending_effort,omitempty"`
 	// PriorACPSessionIDs are the KAS sessions this chat USED to run on, oldest first.
 	// Never trimmed: each still holds history on disk, so the reaper spares the whole
 	// chain. Maintained by RecordSession.
@@ -624,6 +630,7 @@ func (c *Chat) Header() ChatHeader {
 		UpdatedAt:           c.UpdatedAt,
 		TurnCount:           c.TurnCount,
 		PendingModel:        c.PendingModel,
+		PendingEffort:       c.PendingEffort,
 		SupervisedMode:      c.SupervisedMode,
 		CompactionWatermark: c.CompactionWatermark,
 		InterruptMode:       c.InterruptMode,
@@ -694,9 +701,10 @@ type ChatHeader struct {
 	// Thinking and ThinkingActive mirror Chat's for the effort slider's Off stop.
 	Thinking       string `json:"thinking,omitempty"`
 	ThinkingActive string `json:"thinking_active,omitempty"`
-	// PendingModel mirrors Chat's: the model badge reads it off the header.
-	PendingModel string               `json:"pending_model,omitempty"`
-	EffortLevels []SessionEffortLevel `json:"effort_levels,omitempty"`
+	// PendingModel and PendingEffort mirror Chat's for the model badge and the pill's card.
+	PendingModel  string               `json:"pending_model,omitempty"`
+	PendingEffort string               `json:"pending_effort,omitempty"`
+	EffortLevels  []SessionEffortLevel `json:"effort_levels,omitempty"`
 	// The model and mode vocabulary is a workspace fact (agent.catalog), never here.
 	ID                  string `json:"id"`
 	CompactionWatermark string `json:"compaction_watermark,omitempty"`

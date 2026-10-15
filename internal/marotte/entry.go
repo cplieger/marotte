@@ -316,6 +316,8 @@ type EntryModelSwitched struct {
 	// Effort is the reasoning tier in force; a plain string, as Chat.Effort, so a
 	// level another build wrote decodes rather than throws.
 	Effort string `json:"effort,omitempty"`
+	// Unoffered is the tier the chat wanted that To does not offer, so it runs at Effort instead.
+	Unoffered string `json:"unoffered,omitempty"`
 	// Reason is set only on a switch KAS made by itself.
 	Reason ModelSwitchReason `json:"reason,omitempty"`
 }

@@ -363,6 +363,9 @@ func modelSwitchedDetail(p *marotte.EntryModelSwitched) string {
 		return "context reset"
 	}
 	tier := oneLine(p.Effort)
+	if p.Unoffered != "" {
+		tier = strings.TrimPrefix(tier+"; ", "; ") + oneLine(p.Unoffered) + " is not offered"
+	}
 	if tier == "" {
 		return fmt.Sprintf("%s → %s", oneLine(p.From), oneLine(p.To))
 	}

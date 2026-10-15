@@ -365,6 +365,8 @@ export interface Session {
   /** The model picked for the NEXT turn (`ChatHeader.pending_model`): the badge's ONE input, on every
    *  device. No local queue. */
   pending_model?: string;
+  /** The tier parked with `pending_model` (`ChatHeader.pending_effort`); empty carries `effort`. */
+  pending_effort?: string;
   supervised_mode?: boolean;
   /** What Send means while a turn runs: a steer into it, or a follow-up held for its
    *  end. From `ChatHeader.interrupt_mode`; absent is steer. */
