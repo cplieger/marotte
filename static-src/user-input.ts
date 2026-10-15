@@ -55,8 +55,7 @@ function renderOptionsStage(
     );
   }
 
-  // Send goes into `actions` BEFORE Skip, so the row reads primary-then-secondary
-  // exactly as the run-input card's does.
+  // Send goes into `actions` BEFORE Skip, so the row reads primary-then-secondary.
   renderEditor(editorEl, actions, options.length > 0, submit);
   actions.appendChild(dismissButton(submit));
 }

@@ -301,6 +301,25 @@ describe("the run bar", () => {
     expect(btn.getAttribute("aria-label")).toBe("Open workflow run nightly, running");
   });
 
+  // The answer may come from the launching agent rather than the reader, so the alert names no one.
+  it("says a step's question is waiting for answer, and opens the run to answer it", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("question");
+    inspect.set(id, state({ runLabel: "release", status: "paused" }));
+    live(id, c);
+    pushRunAsk(c, id);
+    await activate(c);
+    const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open")!;
+    expect(btn.dataset["alert"]).toBe("input");
+    expect(btn.querySelector(".ev-alert-text")?.textContent).toBe(
+      "Waiting for answer: which branch?",
+    );
+
+    btn.click();
+    expect(openRunView).toHaveBeenCalledWith(id, "release", c);
+  });
+
   it("names a run by its label, then the recipe, then a fallback", async () => {
     const c = chatID();
     chats.push(c);

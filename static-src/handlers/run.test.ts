@@ -41,16 +41,6 @@ vi.mock("../decision-dock.js", () => ({
   dropRunRequests: vi.fn(),
   dropTurnDecisions: vi.fn(),
 }));
-vi.mock("../run-input.js", () => ({ dropRunAskDrafts: vi.fn(), registerRunAskVerbs: vi.fn() }));
-vi.mock("../actions/runs.js", () => ({
-  answerRunInput: { dispatch: vi.fn() },
-  continueRunStep: { dispatch: vi.fn() },
-}));
-// `vi.hoisted` because the factory is lifted and the value is asserted on.
-const { mockSubmitPrompt } = vi.hoisted(() => ({
-  mockSubmitPrompt: vi.fn(async (): Promise<"sent" | "steered" | "failed"> => "sent"),
-}));
-vi.mock("../submit.js", () => ({ submitLabelled: mockSubmitPrompt }));
 vi.mock("../notify.js", () => ({
   notifyOffScreen: vi.fn(),
   closeRunAsksExcept: vi.fn(() => Promise.resolve()),
@@ -80,8 +70,6 @@ import { isThinking } from "../store.js";
 import { trackRun } from "../run-dots.js";
 import { info, success, error } from "../toast.js";
 import { dropRunRequests, dropTurnDecisions } from "../decision-dock.js";
-import { dropRunAskDrafts, registerRunAskVerbs, type RunAskVerbs } from "../run-input.js";
-import { answerRunInput, continueRunStep } from "../actions/runs.js";
 import { _resetRunAsksForTest, runAskPosition, runAsksOf } from "../run-asks.js";
 import { closeRunAsksExcept, notifyOffScreen } from "../notify.js";
 import type { RunAsk } from "../wire/types.gen.js";
@@ -99,7 +87,6 @@ const toastInfo = vi.mocked(info);
 const toastSuccess = vi.mocked(success);
 const toastError = vi.mocked(error);
 const dropAsks = vi.mocked(dropRunRequests);
-const dropDrafts = vi.mocked(dropRunAskDrafts);
 const sweepOrphans = vi.mocked(dropTurnDecisions);
 const chatThinking = vi.mocked(isThinking);
 const siblingRunLive = vi.mocked(hasLiveRunForChat);
@@ -137,7 +124,6 @@ beforeEach(() => {
   toastSuccess.mockClear();
   toastError.mockClear();
   dropAsks.mockClear();
-  dropDrafts.mockClear();
   closeStale.mockClear();
   _resetRunAsksForTest();
   sweepOrphans.mockClear();
@@ -365,17 +351,6 @@ describe("run SSE handlers", () => {
   it("leaves a PAUSED run's asks queued: that pause is what wants an answer", () => {
     send("run_finished", { workflow_id: "wf_pause", status: "paused" });
     expect(dropAsks).not.toHaveBeenCalled();
-  });
-
-  it("drops the run's answer drafts on every terminal finish, and keeps a PAUSED run's", () => {
-    for (const status of ["completed", "failed", "aborted", "cancelled", "exploded"]) {
-      dropDrafts.mockClear();
-      send("run_finished", { workflow_id: "wf_ask", status });
-      expect(dropDrafts, status).toHaveBeenCalledWith("wf_ask");
-    }
-    dropDrafts.mockClear();
-    send("run_finished", { workflow_id: "wf_pause", status: "paused" });
-    expect(dropDrafts).not.toHaveBeenCalled();
   });
 
   it("drops nothing on the frames that are not an ending", () => {
@@ -723,14 +698,6 @@ describe("a run's step questions", () => {
     expect(track).not.toHaveBeenCalled();
   });
 
-  // A run reads `asks: []` between an admitted answer and the step's next park, which is the gap
-  // "Restore last message" crosses.
-  it("keeps the run's drafts across an empty snapshot", () => {
-    snapshot([stepAsk()]);
-    snapshot([]);
-    expect(dropDrafts).not.toHaveBeenCalled();
-  });
-
   // The server's `notification` frame carries the question's words; a second page-side notice
   // would show it twice.
   it("raises no notification and refetches nothing", () => {
@@ -739,64 +706,5 @@ describe("a run's step questions", () => {
     expect(invalidate).not.toHaveBeenCalled();
     expect(listRefetches).toBe(0);
     expect(toasts()).toEqual([]);
-  });
-});
-
-// The run card's three verbs, which this module registers: the card stays free of the action and
-// send graphs.
-describe("the verbs a step question's card calls", () => {
-  const verbs = vi.mocked(registerRunAskVerbs).mock.calls[0]?.[0] as RunAskVerbs;
-  const answer = vi.mocked(answerRunInput.dispatch);
-  const waive = vi.mocked(continueRunStep.dispatch);
-
-  beforeEach(() => {
-    answer.mockReset();
-    waive.mockReset();
-    mockSubmitPrompt.mockReset();
-    mockSubmitPrompt.mockResolvedValue("sent");
-  });
-
-  it("answers under the card's ask id, and reports whether the server took it", async () => {
-    answer.mockReturnValue({
-      outcome: Promise.resolve({ status: "success", value: { ok: true } }),
-    } as never);
-    await expect(verbs.answer("wf_1", "ask:7", "yes")).resolves.toBe(true);
-    expect(answer).toHaveBeenCalledWith({ workflowID: "wf_1", ask_id: "ask:7", text: "yes" });
-    answer.mockReturnValue({
-      outcome: Promise.resolve({ status: "error", error: { message: "gone" } }),
-    } as never);
-    await expect(verbs.answer("wf_1", "ask:7", "yes")).resolves.toBe(false);
-  });
-
-  it("continues the step addressed by node and by the card's ask", async () => {
-    waive.mockReturnValue({ outcome: Promise.resolve({ status: "success" }) } as never);
-    await verbs.continueStep("wf_1", "review", "ask:7");
-    expect(waive).toHaveBeenCalledWith({ workflowID: "wf_1", nodeID: "review", askID: "ask:7" });
-  });
-
-  it("prompts the LAUNCHING chat, naming the run and both answer routes, not the question", async () => {
-    await verbs.defer("c1", "wf_1");
-    expect(mockSubmitPrompt).toHaveBeenCalledTimes(1);
-    const [chat, text, label] = mockSubmitPrompt.mock.calls[0] as unknown as [
-      string,
-      string,
-      string,
-    ];
-    expect(chat).toBe("c1");
-    expect(label).toBe("Deferred the open question on workflow run wf_1");
-    expect(text).toContain("GET /api/runs/wf_1");
-    expect(text).toContain("step_session_id");
-    expect(text).toContain("send_message");
-    expect(text).toContain("POST /api/runs/wf_1/answer");
-    // The body's field NAMES, quoted, because they are unguessable (`text`, not `answer`).
-    expect(text).toContain('"ask_id"');
-    expect(text).toContain('"text"');
-    // The final refusal, so an agent sent by a second route does not loop on it.
-    expect(text).toContain("ask_gone");
-  });
-
-  it("rejects on a refusal, so the card hands its button back", async () => {
-    mockSubmitPrompt.mockResolvedValue("failed");
-    await expect(verbs.defer("c1", "wf_1")).rejects.toThrow(/wf_1/);
   });
 });

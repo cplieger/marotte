@@ -1,5 +1,4 @@
-// The ask card's shared regions for both prose-question cards (`user-input.ts`, `run-input.ts`): one implementation,
-// so the two cannot drift.
+// The prose-question card's regions (`user-input.ts`).
 
 import { el } from "@cplieger/reactive";
 import { attachClamp } from "./clamp-text.js";
@@ -9,12 +8,6 @@ import { attachClamp } from "./clamp-text.js";
  * (`clamp-line-count.test.ts`).
  */
 const CLAMP_LINES = 4;
-
-/**
- * What a step's question reads as when marotte has no text for it, shared by the dock card and the run's alert. Declared
- * here: in `decision-dock` it would make `run-input` import its own parent (a cycle).
- */
-export const RUN_INPUT_FALLBACK = "A step is waiting for your answer";
 
 /** A custom property because the value is the caller's. */
 const ASK_ROWS_PROP = "--ask-rows";

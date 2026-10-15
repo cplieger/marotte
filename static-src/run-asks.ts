@@ -1,5 +1,5 @@
 // The one store of workflow steps waiting on a person: each run's newest `run_asks` snapshot,
-// replaced whole. Every surface that shows a step's question (the dock card, the run tab, the tab
+// replaced whole. Every surface that shows a step's question (the run tab, the run bar, the run
 // dots, the notifications) reads it, and nothing else says a step is waiting.
 
 import { join } from "@cplieger/keyenc";

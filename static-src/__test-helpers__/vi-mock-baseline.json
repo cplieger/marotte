@@ -23,7 +23,6 @@
   "actions/notify.test.ts",
   "actions/permissions.test.ts",
   "actions/rewind.test.ts",
-  "actions/run-answer.test.ts",
   "actions/runs-retry.test.ts",
   "actions/settings.test.ts",
   "actions/tabs-actions.test.ts",

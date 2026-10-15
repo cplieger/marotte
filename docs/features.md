@@ -20,7 +20,7 @@ You can also search inside a chat, export a chat, search across chats, and brows
 - Answer permission requests, the agent's questions and the forms an MCP server asks you to fill in.
 - Fork a tangent, a new chat that starts with this chat's context and leaves the original untouched. **Merge into parent chat** in the composer's `+` menu, or `/tangent merge`, sends a summary of the tangent's findings back to the chat it came from.
 
-The **Workflows** switch in Settings decides how the agent hands work off. On: the agent hands work to workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Either kind of handed-off work shows as a card you can open on its own page. The agent's own terminals show their output on the tool card that started them.
+The **Workflows** switch in Settings decides how the agent hands work off. On: the agent hands work to workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Either kind of handed-off work shows as a card you can open on its own page. A question a workflow step asks goes to the agent that launched the workflow, not to you: the chat shows that the run is waiting for an answer, and to answer the step yourself, open the run's tab. A step's permission requests still come to you in the chat. The agent's own terminals show their output on the tool card that started them.
 
 ## Files, editor and terminal
 

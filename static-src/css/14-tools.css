@@ -1627,8 +1627,7 @@ a.subagent-header {
 }
 
 /* Agent question (kiro-cli _kiro/userInput), a .dock-card. ONLY THE OPTION CARDS are
-   here; the card's own regions are the dock's, shared with the run-input card
-   (26-dock.css). */
+   here; the card's own regions are the dock's (26-dock.css). */
 
 .user-input-options {
   display: flex;

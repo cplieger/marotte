@@ -108,7 +108,7 @@ describe("retrying a run", () => {
     }
   });
 
-  // The refusal reads as the SERVER's sentence alone (`answerRunInput`'s rule).
+  // The refusal reads as the SERVER's sentence alone (`serverSentence`'s rule).
   it("shows a refusal as the server's sentence alone", async () => {
     const sentence = "Workflow wf_1 is not registered. Load or create it first.";
     m.result.err = { status: 409, body: { error: sentence } };

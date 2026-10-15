@@ -271,23 +271,21 @@
 
 /* YELLOW MEANS THE AGENT IS BLOCKED ON A DECISION IT CANNOT MAKE ITSELF, and
    every kind of ask that reaches this dock now is one — a tool permission, a turn
-   approval, a parked workflow step's question, and the agent's own structured
-   question. So the accent face on `.dock-card` is the DEFAULT for a card that is
-   not asking, and nothing in the dock takes it today.
+   approval, and the agent's own structured question. So the accent face on
+   `.dock-card` is the DEFAULT for a card that is not asking, and nothing in the
+   dock takes it today.
 
-   The run-input and user-input cards joined this set for the same reason the
-   permission ask is in it: the work stops until somebody answers, and the only
-   thing separating them is how much work — one tool call, a whole run, or the
-   turn. Reusing the existing `data-kind` vocabulary rather than a hue per kind:
-   the shape is already the ask shape, and one more colour would be one more thing
-   to learn.
+   The user-input card joined this set for the same reason the permission ask
+   is in it: the work stops until somebody answers, and the only thing separating
+   them is how much work — one tool call or the turn. Reusing the existing
+   `data-kind` vocabulary rather than a hue per kind: the shape is already the ask
+   shape, and one more colour would be one more thing to learn.
 
    `.dock-elicitation` is deliberately NOT here: an MCP server asking for form
    input is a tool's own request for data rather than a decision the agent is
    waiting on, so it keeps the accent face. */
 .dock-permission,
 .dock-approval,
-.dock-run-input,
 .dock-user-input {
   border-color: var(--c-yellow);
 }
@@ -297,7 +295,6 @@
   color: var(--c-yellow);
 }
 
-.dock-run-input .dock-ask-body strong,
 .dock-user-input .dock-ask-body strong {
   color: var(--c-yellow);
 }
@@ -309,63 +306,9 @@
   text-align: end;
 }
 
-/* Behind a step's question, the other waiting steps: one row each, scrolling inside
-   their own ceiling. */
-.dock-ask-rows {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  max-block-size: calc(3.5 * (var(--hit-floor) + var(--sp-1)));
-  overflow: hidden auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-}
-
-.dock-ask-row {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: 0 var(--sp-1) 0 var(--sp-3);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-secondary);
-  font-size: var(--fs-sm);
-}
-
-.dock-ask-row-text {
-  flex: 1 1 0;
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--c-text-primary);
-}
-
-.dock-ask-row-who {
-  flex: 0 1 auto;
-  min-inline-size: 0;
-  max-inline-size: 40%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-}
-
-/* The compact card's door to its answer box; the box is always there on a wider
-   screen. */
-.run-input-open {
-  display: none;
-  flex: none;
-}
-
 /* ==========================================================================
-   THE ANSWER-CARD REGIONS, shared by the run-input and user-input cards:
-   heading, who is asking, the answer box, the button row.
+   THE ANSWER-CARD REGIONS of the user-input card: heading, who is asking, the
+   answer box, the button row.
 
    ONE VERTICAL RHYTHM, and it is `.dock-card`'s own flex gap — no region carries
    a margin. The user-input card used to (it predates the dock, where it was a
@@ -428,20 +371,6 @@
 .dock-ask-question {
   flex: none;
   overflow-wrap: anywhere;
-}
-
-.run-input-step {
-  margin: 0;
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-}
-
-/* Why the card's Send is off, or that marotte could not read the run just
-   now; hidden while there is nothing to say. */
-.run-input-note {
-  margin: 0;
-  font-size: var(--fs-sm);
-  color: var(--c-text-secondary);
 }
 
 /* THE ANSWER BOX GETS ITS ROW TO ITSELF, and no button shares it. The user-input
@@ -556,8 +485,7 @@
 /* An option's own description is NOT clamped, and cannot be with this mechanism:
    `.user-input-option` IS the button, the description is inside it, and a button
    inside a button is invalid HTML that axe reports as nested-interactive. The
-   options region scrolls instead. Its skin is in 14-tools.css — the option cards
-   are the one part of this card the run-input card has no counterpart for. */
+   options region scrolls instead. Its skin is in 14-tools.css. */
 
 /* --- Turn approval: the per-action file list --- */
 
@@ -1071,10 +999,8 @@
   }
 }
 
-/* A phone-shaped screen: the ask card (a fifth), the other waiting steps (a row and
-   a half) and the run bar (an eighth, never under its summary row) keep the band to
-   about a third of the visual viewport. A step's question rests as one row, its
-   answer box behind Answer (`run-input.ts`). */
+/* A phone-shaped screen: the ask card (a fifth) and the run bar (an eighth, never
+   under its summary row) keep the band to about a third of the visual viewport. */
 @media (width <= 48rem), (height <= 30rem) {
   .run-bar {
     max-block-size: max(var(--btn-h), calc(0.13 * var(--dock-viewport-h, 100dvh)));
@@ -1082,39 +1008,5 @@
 
   .dock-card {
     max-block-size: calc(0.2 * var(--dock-viewport-h, 100dvh));
-  }
-
-  .dock-ask-rows {
-    max-block-size: calc(1.5 * (var(--hit-floor) + var(--sp-1)));
-  }
-
-  .dock-run-input:not([data-open]) {
-    flex-direction: row;
-    align-items: center;
-
-    & > .dock-ask-body {
-      flex: 1 1 0;
-      min-inline-size: 0;
-    }
-
-    & > :is(.dock-ask-editor, .dock-ask-actions) {
-      display: none;
-    }
-
-    & > .run-input-open {
-      display: inline-flex;
-    }
-
-    & .dock-ask-question {
-      display: -webkit-box;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 1;
-      line-clamp: 1;
-      overflow: hidden;
-    }
-
-    & .dock-ask-more {
-      display: none;
-    }
   }
 }

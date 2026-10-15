@@ -476,9 +476,7 @@ function toNode(
 function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): ExecRun["alert"] {
   if (asks.count > 0) {
     const head =
-      asks.label === ""
-        ? "Waiting for your answer"
-        : `Waiting for your answer: ${truncate(asks.label, 160)}`;
+      asks.label === "" ? "Waiting for answer" : `Waiting for answer: ${truncate(asks.label, 160)}`;
     return {
       kind: "input",
       text: asks.count > 1 ? `${head} (${String(asks.count)} asks waiting)` : head,

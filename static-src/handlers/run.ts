@@ -26,9 +26,6 @@ import { isThinking } from "../store.js";
 import { trackRun } from "../run-dots.js";
 import { dropRunRequests, dropTurnDecisions } from "../decision-dock.js";
 import { applyRunAsks, runAskPosition } from "../run-asks.js";
-import { dropRunAskDrafts, registerRunAskVerbs } from "../run-input.js";
-import { answerRunInput, continueRunStep } from "../actions/runs.js";
-import { submitLabelled } from "../submit.js";
 import { closeRunAsksExcept } from "../notify.js";
 
 // Toasts at each end of a run. A START only for a SCHEDULED run (manual and agent launches already
@@ -104,9 +101,8 @@ onSSE("run_finished", (chatID, p) => {
   } else {
     noteRunSettled(p.workflow_id);
     // A run that is over cannot still be waiting on a person; its step questions leave with the
-    // server's final `run_asks`, its requests and answer drafts here.
+    // server's final `run_asks`, its requests here.
     dropRunRequests(p.workflow_id);
-    dropRunAskDrafts(p.workflow_id);
     // The ORPHANS: a step's ask with an EMPTY `run_id` is reachable only by the turn-scoped sweep,
     // whose `turn_closed` trigger never fires for a step-driven turn. Gate 1 spares the turn of a user
     // who prompted meanwhile (a live JSON-RPC request); gate 2 spares a still-running sibling run's
@@ -177,38 +173,6 @@ onSSE("turn_closed", (_chatID, p) => {
 
 function forRun(p: { workflow_id?: string }): string {
   return p.workflow_id ?? "";
-}
-
-registerRunAskVerbs({
-  answer: async (workflowID, askID, text) =>
-    (await answerRunInput.dispatch({ workflowID, ask_id: askID, text }).outcome).status ===
-    "success",
-  continueStep: async (workflowID, nodeID, askID) => {
-    await continueRunStep.dispatch({ workflowID, nodeID, askID }).outcome;
-  },
-  defer: deferToParentAgent,
-});
-
-/** Ask the launching agent to answer, through `submit.ts` (the owner of what Send means). Rejects
- *  when the prompt was refused. Names the run and both answer routes; embeds neither the question
- *  nor the (opaque, large) ask id, which the agent reads fresh. */
-async function deferToParentAgent(chatID: string, workflowID: string): Promise<void> {
-  const text =
-    `Please answer the open question on workflow run ${workflowID}.\n` +
-    `Read it with GET /api/runs/${workflowID}: each entry of its open_asks names the waiting ` +
-    `step's step_session_id and ask_id. Answer either with send_message to that step session, ` +
-    `or with POST /api/runs/${workflowID}/answer and ` +
-    `{"ask_id": "<that ask's id>", "text": "<your answer>"}.\n` +
-    `A 409 with code ask_gone means the step already has its answer; do not retry it.`;
-  if (
-    (await submitLabelled(
-      chatID,
-      text,
-      `Deferred the open question on workflow run ${workflowID}`,
-    )) === "failed"
-  ) {
-    throw new Error(`the deferral prompt for run ${workflowID} was refused`);
-  }
 }
 
 // Which steps of one run wait on a person, replacing the store's snapshot of that run whole. A
