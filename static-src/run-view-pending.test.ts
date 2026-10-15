@@ -132,12 +132,17 @@ async function paintRetryRow(): Promise<HTMLElement> {
   m.reply.current = abortedState();
   m.controls.current = RETRY_ONLY;
 
+  // The view as `static/index.html` lays it out; the row lives in the run dock.
   document.body.replaceChildren();
   const body = document.createElement("div");
-  body.id = "run-body";
+  const runBody = document.createElement("div");
+  runBody.id = "run-body";
+  const execDock = document.createElement("div");
+  execDock.id = "run-exec-dock";
   const dock = document.createElement("div");
   dock.id = "run-dock";
-  document.body.append(body, dock);
+  body.append(runBody, execDock, dock);
+  document.body.append(body);
 
   openRunView(RUN, "nightly");
   showRun(RUN);
@@ -270,45 +275,6 @@ describe("the control row's in-flight state", () => {
     expect(document.activeElement).toBe(btn);
   });
 
-  it("stops following the verb on the shown step's copy once that step settles", async () => {
-    const running = (step: string): unknown => ({
-      workflowId: RUN,
-      state: {
-        workflowId: RUN,
-        status: "running",
-        root: {
-          nodeId: RUN,
-          type: "sequence",
-          status: "running",
-          children: [{ nodeId: "coder", type: "step", status: step, children: [] }],
-        },
-      },
-    });
-    const body = await paintRetryRow();
-    m.reply.current = running("running");
-    m.controls.current = { verbs: ["pause", "cancel"], refused: {}, parent_chat_id: "" };
-    invalidateRun(RUN);
-    await drain();
-    const stepPause = body.querySelector<HTMLButtonElement>(
-      '.ev-d-head .run-controls-compact button[aria-label="Pause"]',
-    );
-    expect(stepPause).not.toBeNull();
-
-    m.reply.current = running("completed");
-    invalidateRun(RUN);
-    await drain();
-    expect(stepPause?.isConnected).toBe(false);
-
-    body
-      .querySelector<HTMLButtonElement>('.ev-head .run-controls button[aria-label="Pause"]')
-      ?.click();
-    await drain();
-    expect(
-      body.querySelector<HTMLButtonElement>('.ev-head button[aria-label="Pause"]')?.disabled,
-    ).toBe(true);
-    expect(stepPause?.disabled).toBe(false);
-  });
-
   // THE LEAK. `bindLoadingState` disposes itself only for an element that was ATTACHED the last
   // time its effect ran, and the row is built before the page appends it — so a button replaced
   // before its first pending flip never armed that path and stayed subscribed.
@@ -335,7 +301,7 @@ describe("the control row's in-flight state", () => {
 
     // What a caller replacing `#run-body`'s children does: the page this module cached is no longer
     // mounted in it, so the next paint mounts a new one.
-    body.replaceChildren();
+    body.querySelector("#run-body")?.replaceChildren();
     await repaint();
     const live = retryButton(body);
     expect(live).not.toBe(stale);

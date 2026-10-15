@@ -575,7 +575,10 @@ export function runToExec(
   const runState = stateOf(state.status);
   const out: ExecRun = {
     id: workflowID,
-    label: state.runLabel ?? state.workflowName ?? "Workflow run",
+    // An empty label names nothing, so it falls through like an absent one.
+    label:
+      [state.runLabel, state.workflowName].find((s) => s !== undefined && s !== "") ??
+      "Workflow run",
     state: asks.count > 0 ? "input" : runState,
     nodes,
     live: inFlight(runState) || asks.count > 0,

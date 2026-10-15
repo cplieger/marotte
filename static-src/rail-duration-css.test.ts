@@ -40,7 +40,6 @@ const RULED = new Map<string, string>([
   ["ev-dur", "out of scope — the exec view"],
   ["ev-d-dur", "out of scope — the exec view"],
   ["ev-tl-dur", "out of scope — the exec view"],
-  ["ev-box-dur", "out of scope — the exec view's dock box row"],
   ["ev-dock-dur", "out of scope — the exec view's dock step row"],
   // Row 8's rule applied elsewhere: an absolute timestamp is not a duration.
   ["sched-time", "wall clock, not a duration"],

@@ -113,7 +113,9 @@ async function activate(chat: string): Promise<void> {
 }
 
 function rowStates(): string[] {
-  return [...bar.querySelectorAll("li")].map((li) => li.dataset["state"] ?? "");
+  return [...bar.querySelectorAll<HTMLElement>("li.run-bar-row")].map(
+    (li) => li.dataset["state"] ?? "",
+  );
 }
 
 function rowText(sel: string): string[] {
@@ -200,7 +202,7 @@ describe("the run bar", () => {
     await activate(mine);
 
     expect(bar.classList.contains("hidden")).toBe(false);
-    expect(rowText(".run-bar-name")).toEqual(["mine"]);
+    expect(rowText(".ev-sum-label")).toEqual(["mine"]);
   });
 
   it("reads running, waiting and an unanswered ask as three states", async () => {
@@ -218,8 +220,85 @@ describe("the run bar", () => {
     pushRunAsk(c, asking);
     await activate(c);
 
-    expect(rowStates()).toEqual(["running", "waiting", "input"]);
-    expect(rowText(".run-bar-state")).toEqual(["running", "waiting", "waiting for your answer"]);
+    // The two that need the reader first, in inventory order.
+    expect(rowStates()).toEqual(["waiting", "input", "running"]);
+    expect(rowText(".run-bar-row .ev-sum-state")).toEqual(["waiting", "needs input", "running"]);
+  });
+
+  // The chat's row reads the run dock's own summary, so a run stuck on a person says why here too,
+  // in the alert's wash, and returns to its summary once it clears.
+  // A fan-out folds behind one row, so the transcript and the composer stay on a phone.
+  it("folds three or more runs behind one summary row that opens in place", async () => {
+    localStorage.removeItem("marotte.ui-state");
+    const c = chatID();
+    chats.push(c);
+    const ids = ["f1", "f2", "f3", "f4"].map((n) => runID(n));
+    for (const id of ids) {
+      inspect.set(id, state({ runLabel: id }));
+      live(id, c);
+    }
+    inspect.set(ids[2]!, state({ runLabel: ids[2], status: "paused" }));
+    await activate(c);
+    const toggle = bar.querySelector<HTMLButtonElement>(".run-bar-summary .run-bar-toggle")!;
+    expect(toggle.textContent).toBe("4 workflows, 1 needs you");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.dataset["alert"]).toBe("input");
+    const rows = (): HTMLElement[] => [...bar.querySelectorAll<HTMLElement>("li.run-bar-row")];
+    expect(rows().every((r) => r.hidden)).toBe(true);
+    expect(rows()[0]?.querySelector(".ev-sum-label")?.textContent).toBe(ids[2]);
+
+    toggle.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(rows().some((r) => r.hidden)).toBe(false);
+    expect(JSON.parse(localStorage.getItem("marotte.ui-state") ?? "{}")).toMatchObject({
+      run_bar_open: true,
+    });
+    toggle.click();
+    expect(rows().every((r) => r.hidden)).toBe(true);
+    localStorage.removeItem("marotte.ui-state");
+  });
+
+  it("lists two runs without a summary row", async () => {
+    const c = chatID();
+    chats.push(c);
+    for (const n of ["p1", "p2"]) {
+      const id = runID(n);
+      inspect.set(id, state({ runLabel: id }));
+      live(id, c);
+    }
+    await activate(c);
+    expect(bar.querySelector(".run-bar-summary")).toBeNull();
+    expect([...bar.querySelectorAll<HTMLElement>("li.run-bar-row")].map((r) => r.hidden)).toEqual([
+      false,
+      false,
+    ]);
+  });
+
+  it("shows the alert in place of the summary, and the summary again once it clears", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("alert");
+    inspect.set(
+      id,
+      state({ runLabel: "nightly", status: "paused", pauseReason: "host unreachable" }),
+    );
+    live(id, c);
+    await activate(c);
+    const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open")!;
+    expect(btn.dataset["alert"]).toBe("paused");
+    expect(btn.querySelector(".ev-alert-text")?.textContent).toBe("Waiting: host unreachable");
+    expect(btn.querySelector("[role]")).toBeNull();
+    expect(btn.getAttribute("aria-label")).toBe(
+      "Open workflow run nightly: Waiting: host unreachable",
+    );
+
+    inspect.set(id, state({ runLabel: "nightly" }));
+    invalidateRun(id);
+    await vi.waitFor(() => {
+      expect(btn.dataset["alert"]).toBeUndefined();
+    });
+    expect(btn.querySelector(".ev-alert-line")).toBeNull();
+    expect(btn.getAttribute("aria-label")).toBe("Open workflow run nightly, running");
   });
 
   it("names a run by its label, then the recipe, then a fallback", async () => {
@@ -234,7 +313,7 @@ describe("the run bar", () => {
     live(d, c);
     await activate(c);
 
-    expect(rowText(".run-bar-name")).toEqual(["the label", "the recipe", "Workflow run"]);
+    expect(rowText(".ev-sum-label")).toEqual(["the label", "the recipe", "Workflow run"]);
   });
 
   it("says nothing about a run it has not fetched yet", async () => {
@@ -247,7 +326,7 @@ describe("the run bar", () => {
     // The row exists — the inventory says the run is live — and it claims no state rather than
     // reporting "not started" for a run that has demonstrably started.
     expect(rowStates()).toEqual(["unknown"]);
-    expect(rowText(".run-bar-state")).toEqual([""]);
+    expect(rowText(".ev-sum-state")).toEqual([""]);
     // No `data-status` at all, which is how the shared mark rule says "reserved box, nothing to
     // show" — the same answer a tab row gets for a run it has not fetched.
     expect(bar.querySelector(".run-bar-glyph")?.hasAttribute("data-status")).toBe(false);
@@ -269,10 +348,12 @@ describe("the run bar", () => {
     pushRunAsk(c, asking);
     await activate(c);
 
-    expect(rowStates()).toEqual(["running", "waiting", "input"]);
+    expect(rowStates()).toEqual(["waiting", "input", "running"]);
     expect(
-      [...bar.querySelectorAll(".run-bar-glyph")].map((g) => g.getAttribute("data-status")),
-    ).toEqual(["working", "waiting", "input"]);
+      [...bar.querySelectorAll(".run-bar-row .run-bar-glyph")].map((g) =>
+        g.getAttribute("data-status"),
+      ),
+    ).toEqual(["waiting", "input", "working"]);
   });
 
   it("reports the step counter and the elapsed clock", async () => {
@@ -283,9 +364,10 @@ describe("the run bar", () => {
     live(id, c);
     await activate(c);
 
-    expect(rowText(".run-bar-steps")).toEqual(["step 1 of 1"]);
+    // Withheld for one step, as the run dock does: "step 1 of 1" cannot progress.
+    expect(rowText(".ev-sum-progress")).toEqual([""]);
     // `formatElapsed`'s sub-minute spelling, a tenth of a second.
-    expect(rowText(".run-bar-clock")[0]).toMatch(/^\d+\.\ds$/);
+    expect(rowText(".ev-sum-clock")[0]).toMatch(/^\d+\.\ds$/);
   });
 
   it("opens the run's own tab on click, and nothing else", async () => {
@@ -315,7 +397,7 @@ describe("the run bar", () => {
     await activate(c);
 
     const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open");
-    expect(rowText(".run-bar-name")).toEqual([label]);
+    expect(rowText(".ev-sum-label")).toEqual([label]);
     expect(btn?.getAttribute("aria-label")).toContain(label);
 
     btn?.click();
@@ -379,7 +461,7 @@ describe("the run bar", () => {
     inspect.set(parked, state({ runLabel: "nightly sweep", status: "paused" }));
     live(parked, c);
     await activate(c);
-    expect(rowText(".run-bar-name")).toEqual(["nightly sweep"]);
+    expect(rowText(".ev-sum-label")).toEqual(["nightly sweep"]);
 
     const { forgetRun } = await import("./run-store.js");
     forgetRun(parked);
@@ -393,7 +475,7 @@ describe("the run bar", () => {
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(rowText(".run-bar-name")).toEqual(["nightly sweep", "the other one"]);
+    expect(rowText(".ev-sum-label")).toEqual(["nightly sweep", "the other one"]);
     expect(rowStates()).toEqual(["waiting", "running"]);
   });
 
@@ -415,7 +497,7 @@ describe("the run bar", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       await activate(c);
-      const before = rowText(".run-bar-clock")[0];
+      const before = rowText(".ev-sum-clock")[0];
       expect(before).not.toBe("");
       const fetches = vi.mocked(apiGetOrError).mock.calls.length;
 
@@ -423,7 +505,7 @@ describe("the run bar", () => {
       // joins it as a holder rather than starting one of its own.
       vi.advanceTimersByTime(2000);
 
-      expect(rowText(".run-bar-clock")[0]).not.toBe(before);
+      expect(rowText(".ev-sum-clock")[0]).not.toBe(before);
       expect(vi.mocked(apiGetOrError).mock.calls.length).toBe(fetches);
     } finally {
       vi.useRealTimers();
@@ -473,7 +555,7 @@ describe("a render patches its rows rather than rebuilding them", () => {
   function parts(): { row: Element; glyph: Element; clock: Element } {
     const row = bar.querySelector("li");
     const glyph = bar.querySelector(".run-bar-glyph");
-    const clock = bar.querySelector(".run-bar-clock");
+    const clock = bar.querySelector(".ev-sum-clock");
     if (row === null || glyph === null || clock === null) {
       throw new Error("the bar has no row");
     }
@@ -501,7 +583,7 @@ describe("a render patches its rows rather than rebuilding them", () => {
     );
     live(id, c);
     await activate(c);
-    expect(rowText(".run-bar-steps")).toEqual(["step 2 of 2"]);
+    expect(rowText(".ev-sum-progress")).toEqual(["step 2 of 2"]);
     const before = parts();
 
     await advance(id, {
@@ -519,7 +601,7 @@ describe("a render patches its rows rather than rebuilding them", () => {
     });
 
     // The text moved, so the render definitely ran.
-    expect(rowText(".run-bar-steps")).toEqual(["step 3 of 3"]);
+    expect(rowText(".ev-sum-progress")).toEqual(["step 3 of 3"]);
     const after = parts();
     expect(after.row).toBe(before.row);
     // The mark is what carries the beat, and the clock is the element the shared 1s tick holds a
@@ -542,6 +624,25 @@ describe("a render patches its rows rather than rebuilding them", () => {
     await advance(id, { status: "paused" });
 
     expect(rowStates()).toEqual(["waiting"]);
+    expect(document.activeElement).toBe(btn);
+  });
+
+  it("keeps the keyboard on a row the waiting-first order moves", async () => {
+    const c = chatID();
+    chats.push(c);
+    const [first, second] = [runID("first"), runID("second")];
+    inspect.set(first, state({ runLabel: "first" }));
+    inspect.set(second, state({ runLabel: "second" }));
+    live(first, c);
+    live(second, c);
+    await activate(c);
+    expect(rowText(".ev-sum-label")).toEqual(["first", "second"]);
+    const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open");
+    btn?.focus();
+
+    await advance(second, { runLabel: "second", status: "paused" });
+
+    expect(rowText(".ev-sum-label")).toEqual(["second", "first"]);
     expect(document.activeElement).toBe(btn);
   });
 
@@ -576,7 +677,7 @@ describe("a render patches its rows rather than rebuilding them", () => {
     live(id, c);
     await activate(c);
     // Nothing fetched yet, so the row carries the fallback name.
-    expect(rowText(".run-bar-name")).toEqual(["Workflow run"]);
+    expect(rowText(".ev-sum-label")).toEqual(["Workflow run"]);
     const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open");
 
     await advance(id, { runLabel: "nightly sweep" });

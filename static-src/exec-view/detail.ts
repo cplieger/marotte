@@ -16,8 +16,6 @@ export interface ExecDetailView {
   bodyFor(path: string): HTMLElement;
   /** Advance the duration of a node still running. */
   tick(): void;
-  /** Seat the shown node's inline control on its name row; the same element again moves nothing. */
-  setControls(row: HTMLElement | null): void;
 }
 
 /** What a node with no transcript host says; injected so the consumer owns the wording. */
@@ -31,13 +29,11 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
   const title = el("span", { className: "ev-d-title" });
   const state = el("span", { className: "ev-d-state" });
   const dur = el("span", { className: "ev-d-dur" });
-  const actions = el("span", { className: "ev-d-actions" });
   const head = el(
     "div",
     { className: "ev-d-head" },
     title,
     el("span", { className: "ev-d-meta" }, state, dur),
-    actions,
   );
   const facts = el("dl", { className: "ev-d-facts" });
   const failure = el("div", { className: "ev-d-fail", role: "status" });
@@ -136,13 +132,6 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
         emptyAct.hidden = true;
       }
       return host;
-    },
-    setControls(row) {
-      if (row === null) {
-        actions.replaceChildren();
-      } else if (actions.firstChild !== row || actions.childNodes.length !== 1) {
-        actions.replaceChildren(row);
-      }
     },
     tick() {
       if (shown === undefined || shown.end !== undefined) {

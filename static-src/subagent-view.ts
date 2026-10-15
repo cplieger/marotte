@@ -1,6 +1,6 @@
 // One SUBAGENT execution on its own page (/chat/{id}/subagent/{taskId}): the second surface over
 // the card's blocks. It IS the shared exec view (`subagent-exec-source.ts` folds into its model), so
-// no layout or status vocabulary lives here. View-only (no composer, dock or controls row). The
+// no layout or status vocabulary lives here. View-only: a run dock with no verbs, no composer. The
 // close stops nothing but RELEASES: the demand effect drops the page once no open subagent tab
 // names its delegate. Nothing is fetched: blocks persist with `agent_subtask_id`. The page projects
 // one delegate (`sliceSubagent`); its body mounts on first `onShowNode` and is kept. Paged-out turns
@@ -168,7 +168,8 @@ function installEffects(): void {
 
 function paint(chatID: string, subtaskID: string, slice: SubagentSlice | undefined): void {
   const host = document.getElementById("subagent-body");
-  if (host === null) {
+  const dockHost = document.getElementById("subagent-exec-dock");
+  if (host === null || dockHost === null) {
     return;
   }
 
@@ -185,7 +186,7 @@ function paint(chatID: string, subtaskID: string, slice: SubagentSlice | undefin
   // re-resolved per pass (as `run-view.ts` does).
   const kept =
     mounted?.key === key && mounted.view.root.parentElement === host ? mounted : undefined;
-  const m = kept ?? mountPage(host, key, chatID, subtaskID, slice);
+  const m = kept ?? mountPage(host, dockHost, key, chatID, subtaskID, slice);
   // AFTER `mountPage`, which drops the previous page and with it its own slice.
   m.slice = slice;
   inPaint = true;
@@ -270,6 +271,7 @@ function renderBody(
 /** Build the page into `#subagent-body`, replacing whatever was there. */
 function mountPage(
   host: HTMLElement,
+  dockHost: HTMLElement,
   key: string,
   chatID: string,
   subtaskID: string,
@@ -278,8 +280,8 @@ function mountPage(
   unmount();
   const built = buildExecPage({
     emptyNote: emptyNote,
-    // The agent hexagon rather than the workflow glyph. No `controls`: a delegate has
-    // no pause, resume or cancel verb, so the row does not render at all.
+    dock: dockHost,
+    // No `controls`: a delegate has no pause, resume or cancel verb.
     icon: ICON_TAB_AGENT,
     // A selection arrives from a repaint or a click; only the click syncs here. Resolved through the
     // module slot, so a dropped page is never reached; `exec-view/page.ts` fires this only from

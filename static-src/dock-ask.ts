@@ -74,10 +74,11 @@ export function askEditor(opts: {
 let viewportWired = false;
 
 /**
- * The card's ceiling follows the visual viewport: with no `interactive-widget` in the meta, a raised keyboard moves
- * neither `dvh` nor `svh`. One frame-coalesced listener (precedent: `pill-expand.ts`).
+ * Publish `--dock-viewport-h` on the root, once: a bottom-bar ceiling follows the visual viewport because, with no
+ * `interactive-widget` in the meta, a raised keyboard moves neither `dvh` nor `svh`. One frame-coalesced listener
+ * (precedent: `pill-expand.ts`).
  */
-function publishViewportHeight(): void {
+export function publishViewportHeight(): void {
   const vv = window.visualViewport;
   if (viewportWired || vv == null) {
     return;

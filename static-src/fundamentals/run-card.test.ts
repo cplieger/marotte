@@ -257,7 +257,7 @@ describe("an unanswered ask", () => {
     c.render(runOf("running", step("a", "running")), asks(2, []));
     expect(rowStates(c.root)).toEqual(["running"]);
     expect(statusWord(c.root)).toBe("needs input");
-    expect(alertText(c.root)).toBe("Waiting for your answer \u00b7 2 asks waiting");
+    expect(alertText(c.root)).toBe("Waiting for your answer (2 asks waiting)");
   });
 
   it("loses to a failed launch, which is the one state with no run behind it", () => {

@@ -22,6 +22,8 @@ for (const id of [
   // The page's own host: `paint` bails silently without it, which would make the
   // repaint case below pass on an empty document.
   "subagent-body",
+  // The bottom bar's run dock host, which `paint` requires beside the body.
+  "subagent-exec-dock",
 ]) {
   const d = document.createElement(id === "prompt-input" ? "textarea" : "div");
   d.id = id;
@@ -352,6 +354,25 @@ describe("a stage-shaped delegate", () => {
     });
     expect(body().textContent).not.toContain("the review stage report");
     expect(body().querySelectorAll(".ev-d-body")).toHaveLength(1);
+  });
+
+  it("mounts the run dock in the bottom bar with no verbs, the page holding only the detail", async () => {
+    const chat = "c-dock";
+    const turn = "t-dock";
+    seedChats({ chat, turn });
+    push(chat, turn, "tool_call", invocation("invoke_subagent_orc_1_stage_plan", "st-plan"), {
+      id: "invoke_subagent_orc_1_stage_plan",
+    });
+    push(chat, turn, "text", { text: "the plan stage report" }, { lane: "st-plan" });
+    show(chat, "st-plan");
+    const dock = document.getElementById("subagent-exec-dock")!;
+    await vi.waitFor(() => {
+      expect(dock.querySelector(".ev-dock")).not.toBeNull();
+    });
+    expect(dock.querySelector(".run-controls")).toBeNull();
+    expect(dock.querySelector(".ev-dock-body .ev-tree")).not.toBeNull();
+    expect(body().querySelector(".ev-tree, .ev-tl, .ev-head")).toBeNull();
+    expect(body().querySelector(".ev-detail")).not.toBeNull();
   });
 });
 

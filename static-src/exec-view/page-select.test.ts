@@ -38,13 +38,15 @@ afterEach(() => {
 });
 
 function selectedPath(run: ExecRun): string {
-  const view = buildExecPage({ emptyNote: () => "" });
   host = document.createElement("div");
-  host.appendChild(view.root);
+  const dock = document.createElement("div");
+  const view = buildExecPage({ emptyNote: () => "", dock });
+  host.append(view.root, dock);
   document.body.appendChild(host);
   view.render(run);
+  const path = host.querySelector<HTMLElement>(".ev-row.ev-selected")?.dataset["path"] ?? "";
   view.dispose();
-  return host.querySelector<HTMLElement>(".ev-row.ev-selected")?.dataset["path"] ?? "";
+  return path;
 }
 
 describe("the page's default selection", () => {

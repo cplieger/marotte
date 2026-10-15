@@ -77,7 +77,7 @@ export function latestPass(repeat: Pick<ExecNode, "children">): ExecNode | undef
   return repeat.children[repeat.children.length - 1];
 }
 
-/** The whole execution, plus the facts a header states. */
+/** The whole execution, plus the facts its run dock states. */
 export interface ExecRun {
   /** The id the route and the store key on. */
   id: string;
@@ -190,6 +190,29 @@ export function counters(nodes: readonly ExecNode[]): ExecCounters {
     }
   });
   return { total: ls.length, done, failed, current };
+}
+
+/** The work node with the largest `startGen`; one carrying none has not started. */
+export function newestStarted(nodes: readonly ExecNode[]): ExecNode | undefined {
+  let best: ExecNode | undefined;
+  for (const n of workNodes(nodes)) {
+    if (n.startGen !== undefined && (best?.startGen === undefined || n.startGen > best.startGen)) {
+      best = n;
+    }
+  }
+  return best;
+}
+
+/** Where the run stands, as every run surface words it: the in-flight step's position, else how
+ *  many are done; "" for a plan with no work. */
+export function progressText(nodes: readonly ExecNode[]): string {
+  const c = counters(nodes);
+  if (c.total === 0) {
+    return "";
+  }
+  return c.current > 0
+    ? `step ${String(c.current)} of ${String(c.total)}`
+    : `${String(c.done)} of ${String(c.total)}`;
 }
 
 /** Elapsed ms between two ISO stamps, to NOW when only the end is absent; 0 when unusable. */

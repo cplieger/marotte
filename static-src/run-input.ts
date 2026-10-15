@@ -103,7 +103,7 @@ function launchingChat(chatID: string): string {
 }
 
 /** The parts `updateRunAskCard` rewrites in place, so a blocker turning on or off keeps the
- *  reader's typing, focus and the Defer button's state. */
+ *  reader's typing, focus and the Defer button's state, plus the box `openRunAskCard` focuses. */
 interface CardParts {
   readonly note: HTMLElement;
   readonly send: HTMLButtonElement;
@@ -111,6 +111,7 @@ interface CardParts {
   readonly actions: HTMLElement;
   readonly defer: HTMLButtonElement | undefined;
   readonly restore: HTMLButtonElement;
+  readonly input: HTMLTextAreaElement;
 }
 
 const parts = new WeakMap<HTMLElement, CardParts>();
@@ -137,7 +138,18 @@ export function buildRunAskCard(d: RunAskCardInput): HTMLElement {
   input.enterKeyHint = "enter";
   wireTouchComposer(input);
 
-  const card = el("div", { className: "dock-card dock-run-input" }, body, editor);
+  // On a phone the card rests as one row and the box opens on demand (`css/26-dock.css`); a
+  // card holding a draft opens at once, so the reader's words are never behind a click.
+  const opener = el(
+    "button",
+    { type: "button", className: "btn-small confirm-allow run-input-open" },
+    "Answer",
+  ) as HTMLButtonElement;
+  const card = el("div", { className: "dock-card dock-run-input" }, body, opener, editor);
+  card.toggleAttribute("data-open", draft.text !== "");
+  opener.addEventListener("click", () => {
+    openRunAskCard(card);
+  });
 
   const restore = el(
     "button",
@@ -192,9 +204,15 @@ export function buildRunAskCard(d: RunAskCardInput): HTMLElement {
   const skip = chat === "" ? continueButton(card, d.workflowID, ask) : undefined;
   const actions = askActions(restore, send);
   card.appendChild(actions);
-  parts.set(card, { note, send, skip, actions, defer, restore });
+  parts.set(card, { note, send, skip, actions, defer, restore, input });
   updateRunAskCard(card, d);
   return card;
+}
+
+/** Open a card's answer box and put the caret in it. */
+export function openRunAskCard(card: HTMLElement): void {
+  card.toggleAttribute("data-open", true);
+  parts.get(card)?.input.focus();
 }
 
 /** Re-state a card's blocker and Continue offer for the same ask, in place. */

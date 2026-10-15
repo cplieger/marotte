@@ -6,6 +6,7 @@
 import { vi, describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { userEvent } from "vitest/browser";
 import { join } from "@cplieger/keyenc";
+import { batch } from "@cplieger/reactive";
 
 // The store is real: the chat-switch trigger is an effect over the real `activeSession` computed.
 vi.mock("./editor-openers.js", () => ({
@@ -170,6 +171,10 @@ function pushPerm(
 /** The live cards: `:scope >` excludes an answered one, which sits inside `.dock-outgoing`. */
 function liveCards(h: HTMLElement = host()): HTMLElement[] {
   return [...h.querySelectorAll<HTMLElement>(":scope > .dock-card")];
+}
+
+function askRows(h: HTMLElement = host()): HTMLElement[] {
+  return [...h.querySelectorAll<HTMLElement>(":scope > .dock-ask-rows > .dock-ask-row")];
 }
 
 function liveCard(h: HTMLElement = host()): HTMLElement | null {
@@ -671,7 +676,10 @@ describe("a workflow step's question", () => {
         text: "Build it?",
       }),
     ]);
-    expect(liveDepth()?.textContent).toBe("1 more waiting");
+    expect(liveDepth()?.classList.contains("hidden")).toBe(true);
+    expect(askRows().map((r) => r.querySelector(".dock-ask-row-text")?.textContent)).toEqual([
+      "Build it?",
+    ]);
     snapshot("c1", [
       stepAsk({
         ask_id: "ask:8",
@@ -684,6 +692,57 @@ describe("a workflow step's question", () => {
     settleMotion();
     expect(liveCard()?.textContent).toContain("Build it?");
     expect(liveDepth()?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("lists every other waiting step as a row whose Answer brings its card forward, open", () => {
+    const build = stepAsk({
+      ask_id: "ask:8",
+      node_id: "build",
+      node_path: ["wf_1", "build"],
+      step_session_id: "sess-2",
+      text: "Build it?",
+    });
+    snapshot("c1", [stepAsk(), build]);
+    settleMotion();
+    const [row] = askRows();
+    expect(row?.querySelector(".dock-ask-row-who")?.textContent).toContain("step build");
+    const open = row?.querySelector<HTMLButtonElement>("button");
+    expect(open?.getAttribute("aria-label")).toMatch(/^Answer .*step build$/);
+    open?.click();
+    settleMotion();
+    expect(liveCard()?.textContent).toContain("Build it?");
+    expect(liveCard()?.hasAttribute("data-open")).toBe(true);
+    expect(document.activeElement).toBe(textarea());
+    expect(askRows().map((r) => r.querySelector(".dock-ask-row-text")?.textContent)).toEqual([
+      "Ship it?",
+    ]);
+    // The pick holds while both still wait, whatever the store's order.
+    snapshot("c1", [stepAsk(), build]);
+    expect(liveCard()?.textContent).toContain("Build it?");
+  });
+
+  it("opens only the card a row's Answer picked, never the next one to come forward", () => {
+    const build = stepAsk({
+      ask_id: "ask:8",
+      node_id: "build",
+      node_path: ["wf_1", "build"],
+      step_session_id: "sess-2",
+      text: "Build it?",
+    });
+    snapshot("c1", [stepAsk(), build]);
+    settleMotion();
+    const open = askRows()[0]?.querySelector<HTMLButtonElement>("button");
+    // In one batch: the picked step is answered elsewhere as its row's Answer is pressed.
+    batch(() => {
+      open?.click();
+      snapshot("c1", [stepAsk()]);
+    });
+    settleMotion();
+    expect(liveCard()?.textContent).toContain("Ship it?");
+    snapshot("c1", [stepAsk({ ask_id: "ask:9", text: "Deploy it?" })]);
+    settleMotion();
+    expect(liveCard()?.textContent).toContain("Deploy it?");
+    expect(liveCard()?.hasAttribute("data-open")).toBe(false);
   });
 
   it("keeps a card marotte could not re-read, so an unreadable host is never an answer", () => {

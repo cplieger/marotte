@@ -15,12 +15,13 @@ import {
   counters,
   currentMembers,
   elapsed,
-  failureOwner,
   isWork,
   latestPass,
+  progressText,
   window as execWindow,
   type ExecKind,
   type ExecNode,
+  type ExecRun,
 } from "../exec-view/model.js";
 import { reconcile } from "../reconcile.js";
 import { kindGlyph } from "../exec-view/tree.js";
@@ -34,15 +35,7 @@ import { runToExec, type StepEnds } from "../run-exec-source.js";
 import { formatElapsed, truncate } from "../strings.js";
 import type { ToolStatus } from "../types.js";
 import { watchResult, watchSummary } from "../watch-result.js";
-import {
-  nodesOfType,
-  pauseDetailPhrase,
-  pausePendingSentence,
-  resumeSentence,
-  runIsLive,
-  type RunState,
-  stopSentence,
-} from "../run-store.js";
+import { nodesOfType, runIsLive, type RunState } from "../run-store.js";
 
 const NO_ASKS: RunAsks = { count: 0, asked: [], label: "" };
 
@@ -51,15 +44,6 @@ const NO_ASKS: RunAsks = { count: 0, asked: [], label: "" };
 interface RunDetail {
   readonly plan?: unknown;
   readonly ends?: StepEnds;
-}
-
-/** The pause as a sentence; a step waiting on a person is the alert's earlier arm. */
-function pauseSentence(state: RunState | undefined): string {
-  const reason = state?.pauseReason;
-  if (reason === undefined || reason === "") {
-    return "Waiting";
-  }
-  return `Waiting: ${reason}`;
 }
 
 /** A run's status as one word. `paused` reads "waiting": KAS pauses for a watch, a retry budget
@@ -402,62 +386,18 @@ export function buildRunCard(
     });
   }
 
-  /** The alert: five things that can put a run in front of a person, ordered
-   *  by what the reader can do about it. Only one shows. It truncates tighter
-   *  than the run tab's alert, which carries the detail this glance leaves out. */
-  function renderAlert(state: RunState | undefined, asks: RunAsks): void {
-    const parts: string[] = [];
-    let kind = "";
-    if (launchError !== "") {
-      // Outranks every state: the launch never created a run, so `inspect`
-      // has nothing and only this reason exists.
-      kind = "failed";
-      parts.push(launchError);
-    } else if (asks.count > 0) {
-      // Ahead of the run's own status: it still reads `running` while a
-      // step's ask blocks it.
-      kind = "input";
-      parts.push(
-        asks.label === ""
-          ? "Waiting for your answer"
-          : `Waiting for your answer: ${truncate(asks.label, 120)}`,
-      );
-      if (asks.count > 1) {
-        parts.push(`${String(asks.count)} asks waiting`);
-      }
-    } else if (state !== undefined && stopSentence(state) !== undefined) {
-      kind = "stopped";
-      parts.push(stopSentence(state) ?? "");
-    } else if (state !== undefined && pausePendingSentence(state) !== undefined) {
-      kind = "paused";
-      parts.push(pausePendingSentence(state) ?? "");
-    } else if (state !== undefined && resumeSentence(state) !== undefined) {
-      kind = "stopped";
-      parts.push(resumeSentence(state) ?? "");
-    } else if (state?.status === "paused") {
-      kind = "paused";
-      parts.push(pauseSentence(state));
-      const detail = pauseDetailPhrase(state.pauseDetail);
-      if (detail !== undefined) {
-        parts.push(detail);
-      }
-    } else if (state?.status === "failed") {
-      kind = "failed";
-      const failed = failureOwner(lastNodes);
-      parts.push(
-        failed === undefined
-          ? "The run failed"
-          : `${failed.label} failed: ${truncate(failed.failure ?? "", 160)}`,
-      );
-    }
-    if (parts.length === 0) {
+  /** The alert: a failed launch, which no run state can carry, else the run's own
+   *  (`run-exec-source.ts` owns its precedence and its words). */
+  function renderAlert(runAlert: ExecRun["alert"]): void {
+    const alertOf = launchError !== "" ? { kind: "failed", text: launchError } : runAlert;
+    if (alertOf === undefined) {
       alert.classList.add("hidden");
       alert.replaceChildren();
       return;
     }
-    alert.dataset["kind"] = kind;
+    alert.dataset["kind"] = alertOf.kind;
     alert.classList.remove("hidden");
-    alert.textContent = parts.join(" \u00b7 ");
+    alert.textContent = alertOf.text;
   }
 
   /** Artifacts and captured outputs as one result list (one thing to a reader); artifacts win a key
@@ -569,10 +509,11 @@ export function buildRunCard(
     lastState = state;
     lastAsks = asks;
     lastDetail = detail;
-    lastNodes =
+    const exec =
       state === undefined
-        ? []
-        : runToExec(workflowID, state, detail.plan, asks, "", detail.ends).nodes;
+        ? undefined
+        : runToExec(workflowID, state, detail.plan, asks, "", detail.ends);
+    lastNodes = exec?.nodes ?? [];
     const label = state?.runLabel ?? state?.workflowName ?? "";
     if (label !== "") {
       nameEl.textContent = label;
@@ -589,17 +530,11 @@ export function buildRunCard(
     // ask blocks it, so `data-status` keeps the status and this says what is wanted.
     const word = asks.count > 0 ? "needs input" : runWord(state?.status);
 
-    const c = counters(lastNodes);
-    countEl.textContent =
-      c.total === 0
-        ? ""
-        : c.current > 0
-          ? `step ${String(c.current)} of ${String(c.total)}`
-          : `${String(c.done)} of ${String(c.total)}`;
+    countEl.textContent = progressText(lastNodes);
 
     liveClock = runIsLive(state);
 
-    renderAlert(state, asks);
+    renderAlert(exec?.alert);
     seat(steps, lastNodes);
     renderOutputs(state);
     renderFoot(state);

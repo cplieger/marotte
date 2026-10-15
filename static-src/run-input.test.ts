@@ -1,12 +1,14 @@
 // Tests for run-input.ts: the card a waiting workflow step renders as in the interaction dock.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { userEvent } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 import {
   _resetRunAskDraftsForTest,
   buildRunAskCard,
   dropRunAskDrafts,
+  openRunAskCard,
   keepRunAskDrafts,
   registerRunAskVerbs,
   updateRunAskCard,
@@ -327,5 +329,65 @@ describe("buildRunAskCard", () => {
       await userEvent.keyboard("{Enter}");
       expect(b.value).toBe("- first\n- ");
     });
+  });
+});
+
+describe("the compact card on a phone", () => {
+  async function phone(): Promise<HTMLStyleElement> {
+    await page.viewport(390, 844);
+    return mountAppCSS();
+  }
+
+  async function restore(style: HTMLStyleElement): Promise<void> {
+    style.remove();
+    await page.viewport(1280, 720);
+  }
+
+  const shown = (node: Element | null): boolean => node?.checkVisibility() ?? false;
+
+  it("rests as one row with Answer, its box and buttons behind it", async () => {
+    const style = await phone();
+    try {
+      const card = mount(input());
+      expect(shown(button(card, "Answer"))).toBe(true);
+      expect(shown(box(card))).toBe(false);
+      expect(shown(card.querySelector(".dock-ask-actions"))).toBe(false);
+      const row = button(card, "Answer").getBoundingClientRect();
+      expect(card.getBoundingClientRect().height).toBeLessThan(row.height * 3);
+      button(card, "Answer").click();
+      expect(card.hasAttribute("data-open")).toBe(true);
+      expect(shown(box(card))).toBe(true);
+      expect(shown(button(card, "Send answer"))).toBe(true);
+      expect(shown(button(card, "Answer"))).toBe(false);
+      expect(document.activeElement).toBe(box(card));
+    } finally {
+      await restore(style);
+    }
+  });
+
+  it("opens at once for a card holding a draft", async () => {
+    const style = await phone();
+    try {
+      type(mount(input()), "main");
+      const card = mount(input());
+      expect(box(card).value).toBe("main");
+      expect(card.hasAttribute("data-open")).toBe(true);
+      expect(shown(box(card))).toBe(true);
+    } finally {
+      await restore(style);
+    }
+  });
+
+  it("keeps the box in view and Answer out of it on a wider screen", () => {
+    const style = mountAppCSS();
+    try {
+      const card = mount(input());
+      expect(shown(box(card))).toBe(true);
+      expect(shown(button(card, "Answer"))).toBe(false);
+      openRunAskCard(card);
+      expect(document.activeElement).toBe(box(card));
+    } finally {
+      style.remove();
+    }
   });
 });

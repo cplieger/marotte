@@ -309,6 +309,60 @@
   text-align: end;
 }
 
+/* Behind a step's question, the other waiting steps: one row each, scrolling inside
+   their own ceiling. */
+.dock-ask-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-block-size: calc(3.5 * (var(--hit-floor) + var(--sp-1)));
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.dock-ask-row {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-1) 0 var(--sp-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  font-size: var(--fs-sm);
+}
+
+.dock-ask-row-text {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-text-primary);
+}
+
+.dock-ask-row-who {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  max-inline-size: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+/* The compact card's door to its answer box; the box is always there on a wider
+   screen. */
+.run-input-open {
+  display: none;
+  flex: none;
+}
+
 /* ==========================================================================
    THE ANSWER-CARD REGIONS, shared by the run-input and user-input cards:
    heading, who is asking, the answer box, the button row.
@@ -903,6 +957,7 @@
    ========================================================================== */
 
 .run-bar {
+  container: run-dock / inline-size;
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
@@ -921,22 +976,23 @@
    tiers, and a class-level declaration here would BEAT it (0,1,0 against 0,0,0)
    — the `.send-btn` precedent that file records. */
 .run-bar-open {
-  /* glyph | name | word | steps | clock. minmax(0, 1fr) on the name is what lets
-     it ellipsize instead of pushing the clock off the row. */
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  /* The mark, then the run's summary (`.ev-sum`, 31-exec-view.css), the dock head's
+     own painter, so the two word a run alike. Positioned for the phone band. */
+  position: relative;
+  display: flex;
   align-items: center;
   gap: var(--sp-2);
   width: 100%;
   padding: var(--sp-1) var(--sp-2);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
-  background: var(--c-bg-secondary);
+  background-color: var(--c-bg-secondary);
+  font-size: var(--fs-sm);
   text-align: start;
   cursor: pointer;
   touch-action: manipulation;
   transition:
-    background var(--dur-micro) var(--ease-standard),
+    background-color var(--dur-micro) var(--ease-standard),
     opacity var(--dur-enter) var(--ease-enter),
     transform var(--dur-enter) var(--ease-enter);
 
@@ -953,8 +1009,14 @@
    idiom and reads as a link on a button-shaped control. */
 @media (any-hover: hover) {
   .run-bar-open:hover {
-    background: var(--c-hover);
+    background-color: var(--c-hover);
   }
+}
+
+/* An alert that wants the reader: its state's wash, an image layer over the fill so
+   hover still shows beneath it. */
+.run-bar-open[data-alert] {
+  background-image: linear-gradient(var(--ev-alert-wash), var(--ev-alert-wash));
 }
 
 .run-bar-open:focus-visible {
@@ -962,51 +1024,97 @@
   outline-offset: var(--focus-offset);
 }
 
-/* THE GLYPH IS THE WORKFLOW MARK, and its whole look lives in 12-tabs.css ("The
-   workflow mark"), which lists this class beside `.tab-run-dot` rather than being
-   copied here: the mark on the launching chat's tab row, the dot on that run's own
-   row and this glyph all report ONE run, so a reader may not be shown three
-   answers. `run-bar.ts` writes the state as `data-status` in that mark's own
-   vocabulary (working | waiting | input) and the rules over there do the rest —
-   silhouette, band, halo, ink, and the breathing beat with its mask.
+/* --- The bar's height budget ------------------------------------------------ */
 
-   WHAT THAT REPLACED, because it is the divergence the share exists to end: a
-   CIRCULAR ring in `--c-accent`, a spinning conic arc for `running`, `--c-blue` for
-   `waiting`, and a yellow `?` character for `input`. Every one of those was a
-   channel this row answered differently from the strip while naming the same run.
-   The `?` is the one real loss — it carried "act on me" as a shape — and what
-   stands in for it is the mark's own wants-you halo plus the WORD beside it, which
-   this row has and a tab row does not.
+/* A HARD CAP, so the transcript and the composer are always on screen however many
+   runs are live: the list scrolls inside itself past it. With the ask card's own
+   ceiling below, the band above the composer stays within about a third of a phone's
+   visual viewport, keyboard up or down (`--dock-viewport-h`, `dock-ask.ts`). */
+.run-bar {
+  max-block-size: min(calc(0.25 * var(--dock-viewport-h, 100dvh)), 16rem);
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
 
-   The mark sizes itself off `--dot-size`, so the reserved box IS the mark: no state
-   changes the box, which is what keeps the name from stepping sideways when the
-   first fetch lands. A run with no state yet writes no `data-status` at all and the
-   shared rule then paints nothing, so the column holds its width empty. */
+.run-bar-row[hidden] {
+  display: none;
+}
 
-.run-bar-name {
-  min-width: 0;
+/* The folded bar's one row: a chevron, the mark and the count, washed while a run
+   needs the reader. */
+.run-bar-chev {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: var(--c-text-control);
+}
+
+.run-bar-toggle[aria-expanded="true"] .disclosure-chevron {
+  --chev-turn: 0deg;
+}
+
+.run-bar-count {
+  flex: 1 1 0;
+  min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-sm);
   color: var(--c-text-primary);
 }
 
-/* The WORD, not only the glyph, and dimmed with a CHOSEN ink rather than an
-   opacity: an opacity multiplies the measured contrast and is invisible to the
-   contrast gates. */
-.run-bar-state {
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-  font-size: var(--fs-xs);
-  color: var(--c-text-secondary);
+/* A phone keeps a row to one line: the alert's sentence truncates, the state and
+   the clock stay. */
+@container run-dock (width < 30rem) {
+  .run-bar-open .ev-alert-text {
+    -webkit-line-clamp: 1;
+  }
 }
 
-.run-bar-steps,
-.run-bar-clock {
-  white-space: nowrap;
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--c-text-tertiary);
+/* A phone-shaped screen: the ask card (a fifth), the other waiting steps (a row and
+   a half) and the run bar (an eighth, never under its summary row) keep the band to
+   about a third of the visual viewport. A step's question rests as one row, its
+   answer box behind Answer (`run-input.ts`). */
+@media (width <= 48rem), (height <= 30rem) {
+  .run-bar {
+    max-block-size: max(var(--btn-h), calc(0.13 * var(--dock-viewport-h, 100dvh)));
+  }
+
+  .dock-card {
+    max-block-size: calc(0.2 * var(--dock-viewport-h, 100dvh));
+  }
+
+  .dock-ask-rows {
+    max-block-size: calc(1.5 * (var(--hit-floor) + var(--sp-1)));
+  }
+
+  .dock-run-input:not([data-open]) {
+    flex-direction: row;
+    align-items: center;
+
+    & > .dock-ask-body {
+      flex: 1 1 0;
+      min-inline-size: 0;
+    }
+
+    & > :is(.dock-ask-editor, .dock-ask-actions) {
+      display: none;
+    }
+
+    & > .run-input-open {
+      display: inline-flex;
+    }
+
+    & .dock-ask-question {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 1;
+      line-clamp: 1;
+      overflow: hidden;
+    }
+
+    & .dock-ask-more {
+      display: none;
+    }
+  }
 }

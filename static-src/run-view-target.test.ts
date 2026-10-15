@@ -118,6 +118,7 @@ import { apiGetOrError } from "./api-client.js";
 import { stepTranscriptVersion } from "./run-step-transcript.js";
 import { beginStepMessage, recordStepSteerQueued } from "./run-step-steers.js";
 import { invalidateRun } from "./run-store.js";
+import { buildPermissionCard } from "./permission.js";
 
 // The bar is mounted once per module, as in the app, so every case re-attaches the same elements.
 const form = document.createElement("form");
@@ -144,10 +145,12 @@ beforeEach(() => {
   document.body.replaceChildren();
   const body = document.createElement("div");
   body.id = "run-body";
+  const execDock = document.createElement("div");
+  execDock.id = "run-exec-dock";
   const dock = document.createElement("div");
   dock.id = "run-dock";
   input.value = "";
-  document.body.append(body, dock, stack, form);
+  document.body.append(body, execDock, dock, stack, form);
 });
 
 afterEach(() => {
@@ -231,6 +234,131 @@ describe("run view composer target", () => {
     // The premise: the shown step's path and state, all the page's change-of-attention guard reads.
     expect(document.querySelector(".ev-d-title")?.textContent).toBe("review");
     expect(detailState()).toBe("input");
+  });
+
+  describe("the dock's Answer", () => {
+    const ASK = "wf_dock_answer";
+    const twoSteps = (review: string): RunInspectReply => ({
+      workflowId: ASK,
+      state: {
+        workflowId: ASK,
+        status: "running",
+        root: {
+          nodeId: ASK,
+          type: "sequence",
+          status: "running",
+          children: [
+            { nodeId: "plan", type: "step", status: "completed", sessionId: "sess_plan" },
+            { nodeId: "review", type: "step", status: review, sessionId: "sess_review" },
+          ],
+        },
+      },
+    });
+    const answerBtn = (): HTMLButtonElement | null =>
+      document.querySelector<HTMLButtonElement>(
+        '#run-exec-dock .ev-dock-alert-act button[aria-label="Answer"]',
+      );
+
+    beforeEach(() => {
+      vi.mocked(runPendingAsks).mockReturnValue({
+        count: 1,
+        asked: [
+          {
+            nodeID: "review",
+            sessionID: "sess_review",
+            answer: true,
+            path: nodePathKey([ASK, "review"]),
+            askID: "ask-1",
+          },
+        ],
+        label: "Which colour?",
+      });
+    });
+
+    it("waits for the step to take an answer, then shows it with the composer ready to answer", async () => {
+      m.reply.current = twoSteps("running");
+      openRunView(ASK, "nightly");
+      const tab = m.opened.at(-1)!;
+      showRun(tab);
+      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
+      refreshRun(tab);
+      await vi.waitFor(() => {
+        expect(document.querySelector(".ev-alert-text")?.textContent).toBe(
+          "Waiting for your answer: Which colour?",
+        );
+      });
+      // Still running: words would steer it, so an Answer here could only say nothing waits.
+      expect(answerBtn()).toBeNull();
+
+      m.reply.current = twoSteps("paused");
+      invalidateRun(ASK);
+      await vi.waitFor(() => {
+        expect(answerBtn()).not.toBeNull();
+      });
+      pick(ASK, "plan");
+      expect(document.querySelector(".ev-d-title")?.textContent).toBe("plan");
+      answerBtn()!.click();
+      expect(document.querySelector(".ev-d-title")?.textContent).toBe("review");
+      expect(document.activeElement).toBe(composerInput());
+      expect(composerInput().disabled).toBe(false);
+      expect(document.getElementById("run-composer")?.dataset["mode"]).toBe("answer");
+      expect(composerInput().placeholder).toBe("Answer review\u2026");
+    });
+  });
+
+  describe("the dock's Answer for a request decision", () => {
+    const PERM = "wf_dock_perm";
+
+    it("moves to the permission card in the decision dock", async () => {
+      vi.mocked(runPendingAsks).mockReturnValue({
+        count: 1,
+        asked: [{ nodeID: "coder", sessionID: "", answer: false }],
+        label: "Run grep?",
+      });
+      m.reply.current = {
+        workflowId: PERM,
+        state: {
+          workflowId: PERM,
+          status: "running",
+          root: {
+            nodeId: PERM,
+            type: "sequence",
+            status: "running",
+            children: [{ nodeId: "coder", type: "step", status: "running", sessionId: "s1" }],
+          },
+        },
+      };
+      // What `mountRunDecisionDock` seats in the decision dock for a step's permission ask.
+      const card = buildPermissionCard(
+        `run:${PERM}`,
+        {
+          request_id: 1,
+          title: "grep -rn foo",
+          kind: "execute",
+          options: [
+            { option_id: "a", name: "Allow", kind: "allow_once" },
+            { option_id: "r", name: "Reject", kind: "reject_once" },
+          ],
+        },
+        vi.fn(),
+      );
+      document.getElementById("run-dock")?.append(card);
+      openRunView(PERM, "nightly");
+      const tab = m.opened.at(-1)!;
+      showRun(tab);
+      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
+      refreshRun(tab);
+      const answer = await vi.waitFor(() => {
+        const btn = document.querySelector<HTMLButtonElement>(
+          '#run-exec-dock .ev-dock-alert-act button[aria-label="Answer"]',
+        );
+        expect(btn).not.toBeNull();
+        return btn!;
+      });
+      answer.click();
+      expect(card.contains(document.activeElement)).toBe(true);
+      expect(document.activeElement).toBeInstanceOf(HTMLButtonElement);
+    });
   });
 
   // A run whose first read has not resolved: nothing the previous run's tab drew may address it.
