@@ -15,13 +15,12 @@ import (
 // is a review action, not a formatting one: every line it adds is a capability somebody has to
 // judge.
 var updateCensus = flag.Bool("update", false,
-	"rewrite testdata/unclaimed.txt and testdata/kas-version.txt from the local agent-server bundle")
+	"rewrite testdata/unclaimed.txt from the local agent-server bundle")
 
 const (
-	kasVersionPath  = "testdata/kas-version.txt"
 	unclaimedPath   = "testdata/unclaimed.txt"
 	entrypointPath  = "../../entrypoint.sh"
-	censusUpdateCmd = "go test ./internal/kascap/ -run 'TestCapabilityCensus|TestAbsentTrueMatchesTheBundle' -update"
+	censusUpdateCmd = "go test ./internal/kascap/ -run TestCapabilityCensus -update"
 
 	bindingScopeReach = 64 << 10
 
@@ -116,70 +115,68 @@ point this test at its new home rather than guessing from the local cache.`, ent
 	return string(m[1])
 }
 
-// loadBundle returns the pinned agent server's source, skipping when it is not installed locally and
-// failing when the pin has moved under the fixture. A bundle missing from ~/.local/share/kiro-cli/kas/
-// is unpacked as below; `env -u` stops an inherited KIRO_KAS_* path serving another tree and an
-// inherited KIRO_HOME pointing the scratch engine at the live state directory.
+// bundle is one pinned agent server's source for the bundle readers.
+type bundle struct {
+	name string // "local", or the architecture of the fetched archive
+	src  string
+	path string
+}
+
+// forEachBundle runs check as a subtest against every bundle bundles returns. A bundle missing from
+// ~/.local/share/kiro-cli/kas/ is unpacked as below; `env -u` keeps an inherited KIRO_KAS_* path or
+// KIRO_HOME from pointing the scratch engine at another tree.
 //
 //	curl -fsSLO https://desktop-release.q.us-east-1.amazonaws.com/<version>/kirocli-x86_64-linux.zip
 //	unzip -q kirocli-x86_64-linux.zip
 //	env -u KIRO_KAS_SERVER_PATH -u KIRO_KAS_NODE_PATH -u KIRO_HOME HOME=<scratch> ./kirocli/bin/kiro-cli-chat acp --agent-engine v3 </dev/null
-//	env -u KIRO_HOME HOME=<scratch> <censusUpdateCmd>
-func loadBundle(t *testing.T) string {
+//	env -u KIRO_HOME HOME=<scratch> go test ./internal/kascap/
+func forEachBundle(t *testing.T, check func(t *testing.T, b bundle)) {
 	t.Helper()
-	active := activeKASVersion(t)
-	raw, path := bundleSource(t, active)
-
-	pinnedRaw, err := os.ReadFile(kasVersionPath)
-	if err != nil {
-		t.Fatalf("read %s (regenerate with: %s): %v", kasVersionPath, censusUpdateCmd, err)
+	for _, b := range bundles(t, activeKASVersion(t)) {
+		t.Run(b.name, func(t *testing.T) { check(t, b) })
 	}
-	pinned := strings.TrimSpace(string(pinnedRaw))
-
-	// The stale-fixture check runs AFTER the bundle lookup, so a machine without the bundle skips;
-	// TestCensusFixture_MatchesThePin gates fixture against pin without one.
-	if pinned != active && !*updateCensus {
-		t.Fatalf(`census fixture was generated against kiro-cli %s, active is %s.
-A version bump can add, rename or drop a client capability, so this fixture has
-to be RE-READ rather than diffed. Regenerate and review every added or dropped
-line:
-  %s`, pinned, active, censusUpdateCmd)
-	}
-	if *updateCensus && pinned != active {
-		if err := os.WriteFile(kasVersionPath, []byte(active+"\n"), 0o600); err != nil {
-			t.Fatalf("write %s: %v", kasVersionPath, err)
-		}
-		t.Logf("re-pinned %s to %s (read from %s)", kasVersionPath, active, path)
-	}
-	return raw
 }
 
-// bundleSource reads the pinned agent server's source, skipping when it is not installed locally;
-// it knows nothing about the census fixture.
-func bundleSource(t *testing.T, active string) (src, path string) {
+// bundleRel is the agent server's path inside a kas/<version>-<hash>/ runtime tree.
+var bundleRel = filepath.Join("node_modules", "@kiro", "agent", "dist", "server", "acp-server.js")
+
+// bundles returns the pinned agent server from the local kiro-cli data dir; else, on a pull request
+// that changes the pin, the one inside each changed archive (bundle_fetch_test.go); else it skips.
+func bundles(t *testing.T, active string) []bundle {
 	t.Helper()
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Skipf("no home directory, so no local agent-server bundle: %v", err)
 	}
-	pattern := filepath.Join(home, ".local", "share", "kiro-cli", "kas",
-		active+"-*", "node_modules", "@kiro", "agent", "dist", "server", "acp-server.js")
+	if matches := globBundle(t, home, active); len(matches) > 0 {
+		slices.Sort(matches)
+		read := pristineBundle(matches[0])
+		raw, err := os.ReadFile(read)
+		if err != nil {
+			t.Fatalf("read bundle %s: %v", read, err)
+		}
+		return []bundle{{name: "local", src: string(raw), path: read}}
+	}
+	var fetchedBundles []bundle
+	for _, arch := range changedArchesOnThisPR(t) {
+		fetchedBundles = append(fetchedBundles, fetchedBundle(t, active, arch))
+	}
+	if len(fetchedBundles) == 0 {
+		t.Skipf(`no agent-server bundle for kiro-cli %s under %s.
+It is fetched only on a pull request that changes the pin; elsewhere unpack it as
+forEachBundle's doc describes.`, active, filepath.Join(home, ".local", "share", "kiro-cli", "kas"))
+	}
+	return fetchedBundles
+}
+
+func globBundle(t *testing.T, home, active string) []string {
+	t.Helper()
+	pattern := filepath.Join(home, ".local", "share", "kiro-cli", "kas", active+"-*", bundleRel)
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		t.Fatalf("glob %s: %v", pattern, err)
 	}
-	if len(matches) == 0 {
-		t.Skipf(`no agent-server bundle for kiro-cli %s under %s.
-This is stage 2 of the capability gate and it is local-only by design; stage 1
-(TestInitializeDeclaresExactly) needs no bundle and gates CI.`, active, pattern)
-	}
-	slices.Sort(matches)
-	read := pristineBundle(matches[0])
-	raw, err := os.ReadFile(read)
-	if err != nil {
-		t.Fatalf("read bundle %s: %v", read, err)
-	}
-	return string(raw), read
+	return matches
 }
 
 // pristineBundle returns path's .orig sibling when one exists, else path: local kiro-cli patches
@@ -192,9 +189,9 @@ func pristineBundle(path string) string {
 	return path
 }
 
-// TestBundleSource_PrefersThePristineSibling pins the .orig preference, which is
+// TestBundles_PrefersThePristineSibling pins the .orig preference, which is
 // the difference between reading upstream and reading our own patches.
-func TestBundleSource_PrefersThePristineSibling(t *testing.T) {
+func TestBundles_PrefersThePristineSibling(t *testing.T) {
 	const active = "9.9.9"
 	live := fakeBundle(t, active, "patched")
 	orig := live + ".orig"
@@ -202,27 +199,23 @@ func TestBundleSource_PrefersThePristineSibling(t *testing.T) {
 		t.Fatalf("write %s: %v", orig, err)
 	}
 
-	src, path := bundleSource(t, active)
-	if src != "pristine" {
-		t.Errorf("bundleSource(%q) read %q, want %q (the .orig sibling)", active, src, "pristine")
-	}
-	if path != orig {
-		t.Errorf("bundleSource(%q) path = %q, want %q", active, path, orig)
+	got := bundles(t, active)
+	want := []bundle{{name: "local", src: "pristine", path: orig}}
+	if !slices.Equal(got, want) {
+		t.Errorf("bundles(%q) = %+v, want %+v (the .orig sibling)", active, got, want)
 	}
 }
 
-// TestBundleSource_FallsBackToTheLiveBundle covers the unpatched machine, where
+// TestBundles_FallsBackToTheLiveBundle covers the unpatched machine, where
 // there is no .orig to prefer.
-func TestBundleSource_FallsBackToTheLiveBundle(t *testing.T) {
+func TestBundles_FallsBackToTheLiveBundle(t *testing.T) {
 	const active = "9.9.9"
 	live := fakeBundle(t, active, "stock")
 
-	src, path := bundleSource(t, active)
-	if src != "stock" {
-		t.Errorf("bundleSource(%q) read %q, want %q", active, src, "stock")
-	}
-	if path != live {
-		t.Errorf("bundleSource(%q) path = %q, want %q", active, path, live)
+	got := bundles(t, active)
+	want := []bundle{{name: "local", src: "stock", path: live}}
+	if !slices.Equal(got, want) {
+		t.Errorf("bundles(%q) = %+v, want %+v", active, got, want)
 	}
 }
 
@@ -437,37 +430,38 @@ func declaredKeys() (capabilities, settings map[string]bool) {
 // TestCapabilityCensus reports every client-side key the pinned agent server reads that the table
 // does not account for.
 func TestCapabilityCensus(t *testing.T) {
-	src := loadBundle(t)
-	declaredCaps, declaredSettings := declaredKeys()
+	forEachBundle(t, func(t *testing.T, b bundle) {
+		src := b.src
+		declaredCaps, declaredSettings := declaredKeys()
 
-	var unclaimed []string
-	for _, key := range readCapabilityKeys(t, src) {
-		if !declaredCaps[key] {
-			unclaimed = append(unclaimed, "capability "+key)
+		var unclaimed []string
+		for _, key := range readCapabilityKeys(t, src) {
+			if !declaredCaps[key] {
+				unclaimed = append(unclaimed, "capability "+key)
+			}
 		}
-	}
-	for _, key := range readSettingKeys(t, src) {
-		if !declaredSettings[key] {
-			unclaimed = append(unclaimed, "setting "+key)
+		for _, key := range readSettingKeys(t, src) {
+			if !declaredSettings[key] {
+				unclaimed = append(unclaimed, "setting "+key)
+			}
 		}
-	}
-	slices.Sort(unclaimed)
+		slices.Sort(unclaimed)
 
-	got := censusHeader(activeKASVersion(t)) + strings.Join(unclaimed, "\n") + "\n"
-	if *updateCensus {
-		if err := os.WriteFile(unclaimedPath, []byte(got), 0o600); err != nil {
-			t.Fatalf("write %s: %v", unclaimedPath, err)
+		got := censusHeader + strings.Join(unclaimed, "\n") + "\n"
+		if *updateCensus {
+			if err := os.WriteFile(unclaimedPath, []byte(got), 0o600); err != nil {
+				t.Fatalf("write %s: %v", unclaimedPath, err)
+			}
+			t.Logf("wrote %s (%d unclaimed)", unclaimedPath, len(unclaimed))
 		}
-		t.Logf("wrote %s (%d unclaimed)", unclaimedPath, len(unclaimed))
-	}
-	wantRaw, err := os.ReadFile(unclaimedPath)
-	if err != nil {
-		t.Fatalf("read %s (regenerate with: %s): %v", unclaimedPath, censusUpdateCmd, err)
-	}
-	if string(wantRaw) == got {
-		return
-	}
-	t.Errorf(`the capability census changed.
+		wantRaw, err := os.ReadFile(unclaimedPath)
+		if err != nil {
+			t.Fatalf("read %s (regenerate with: %s): %v", unclaimedPath, censusUpdateCmd, err)
+		}
+		if string(wantRaw) == got {
+			return
+		}
+		t.Errorf(`the capability census changed.
 A key appearing here is one the agent server reads and the table does not
 account for; a key disappearing means it was claimed or upstream stopped reading
 it. Either way it is a review, not a diff to wave through. Regenerate with:
@@ -476,12 +470,12 @@ it. Either way it is a review, not a diff to wave through. Regenerate with:
 %s
 +++ got
 %s`, censusUpdateCmd, wantRaw, got)
+	})
 }
 
-// censusHeader is the fixture's preamble, regenerated with the body so the
-// version it was read from travels with the findings.
-func censusHeader(version string) string {
-	return `# Client-side keys the kiro-cli agent server reads that internal/kascap does
+// censusHeader names no kiro-cli version, so a version-only bump (same keys read, same table rows)
+// leaves the fixture byte-identical.
+const censusHeader = `# Client-side keys the kiro-cli agent server reads that internal/kascap does
 # NOT account for: neither sent nor deliberately withheld.
 #
 # This is not a to-do list. Most entries are capabilities marotte has no handler
@@ -489,65 +483,47 @@ func censusHeader(version string) string {
 # either direction: send:true with an implementation, or send:false with a
 # because saying why not.
 #
-# Read from kiro-cli ` + version + ` by TestCapabilityCensus.
+# Read from the pinned kiro-cli by TestCapabilityCensus.
 # Regenerate: go test ./internal/kascap/ -run TestCapabilityCensus -update
 `
-}
-
-// TestCensusFixture_MatchesThePin fails when the census fixture was read from a
-// different kiro-cli than the one this repo pins. It needs no bundle, so it runs in
-// CI, where the bundle-reading census tests skip: a pin bump has to carry a
-// regenerated census in the same change.
-func TestCensusFixture_MatchesThePin(t *testing.T) {
-	raw, err := os.ReadFile(kasVersionPath)
-	if err != nil {
-		t.Fatalf("read %s: %v", kasVersionPath, err)
-	}
-	recorded := strings.TrimSpace(string(raw))
-	active := activeKASVersion(t)
-	if recorded != active {
-		t.Fatalf(`census fixture %s records kiro-cli %s, but the pin is %s.
-Fetch and unpack the pinned bundle as loadBundle's doc comment describes, then
-regenerate and review every added or dropped line:
-  %s`, kasVersionPath, recorded, active, censusUpdateCmd)
-	}
-}
 
 // TestAbsentTrueMatchesTheBundle validates the absentTrue column against the agent server in both
 // directions: it is a claim about somebody else's code.
 func TestAbsentTrueMatchesTheBundle(t *testing.T) {
-	src := loadBundle(t)
-	bundleTrue := requireNonEmpty(t, "inverse-default resolvers", keysIn(absentTrueResolverRe, src))
+	forEachBundle(t, func(t *testing.T, b bundle) {
+		src := b.src
+		bundleTrue := requireNonEmpty(t, "inverse-default resolvers", keysIn(absentTrueResolverRe, src))
 
-	for _, row := range table {
-		if !absentTrue[rowID(row)] {
-			continue
-		}
-		if !slices.Contains(bundleTrue, row.key) {
-			t.Errorf(`%s declares absentTrue, but no resolver in kiro-cli %s defaults it to true.
+		for _, row := range table {
+			if !absentTrue[rowID(row)] {
+				continue
+			}
+			if !slices.Contains(bundleTrue, row.key) {
+				t.Errorf(`%s declares absentTrue, but no resolver in kiro-cli %s defaults it to true.
 The bundle's inverse-default resolvers are %v. Either the claim was always wrong
 or upstream changed the default, and both make the row's because misleading.`,
-				rowID(row), activeKASVersion(t), bundleTrue)
+					rowID(row), activeKASVersion(t), bundleTrue)
+			}
 		}
-	}
 
-	declared := make(map[string]*decl)
-	for i, row := range table {
-		if row.resolver == resolverSetting {
-			declared[row.key] = &table[i]
+		declared := make(map[string]*decl)
+		for i, row := range table {
+			if row.resolver == resolverSetting {
+				declared[row.key] = &table[i]
+			}
 		}
-	}
-	for _, key := range bundleTrue {
-		row, ok := declared[key]
-		if !ok {
-			continue
-		}
-		if !absentTrue[rowID(*row)] {
-			t.Errorf(`setting.%s is declared without absentTrue, but kiro-cli %s resolves an
+		for _, key := range bundleTrue {
+			row, ok := declared[key]
+			if !ok {
+				continue
+			}
+			if !absentTrue[rowID(*row)] {
+				t.Errorf(`setting.%s is declared without absentTrue, but kiro-cli %s resolves an
 ABSENT %s to TRUE. Withholding the key therefore ENABLES the feature, which
 inverts how send reads on this row.`, key, activeKASVersion(t), key)
+			}
 		}
-	}
+	})
 }
 
 // featureEnvRe matches every KIRO_FEATURE_*_ENABLED, KIRO_FEATURE_*_CONFIG (a JSON
@@ -577,28 +553,30 @@ func bundleEnvArms(src string) []string {
 // switch) the pinned bundle knows that the environment door has no row for. Every
 // arm needs a row, sent or withheld, so none ramps silently.
 func TestEnvironmentArmCensus(t *testing.T) {
-	src := loadBundle(t)
-	arms := bundleEnvArms(src)
-	if len(arms) < 10 {
-		t.Fatalf("only %d env arms extracted (%v); the extraction patterns no longer match the bundle", len(arms), arms)
-	}
-	rows := make(map[string]bool)
-	for _, row := range table {
-		if row.door == doorEnvironment {
-			rows[row.key] = true
+	forEachBundle(t, func(t *testing.T, b bundle) {
+		src := b.src
+		arms := bundleEnvArms(src)
+		if len(arms) < 10 {
+			t.Fatalf("only %d env arms extracted (%v); the extraction patterns no longer match the bundle", len(arms), arms)
 		}
-	}
-	for _, arm := range arms {
-		if !rows[arm] {
-			t.Errorf("kiro-cli %s reads %s and the environment door has no row for it; add one (withheld follows the ramp)",
-				activeKASVersion(t), arm)
+		rows := make(map[string]bool)
+		for _, row := range table {
+			if row.door == doorEnvironment {
+				rows[row.key] = true
+			}
 		}
-	}
-	for key := range rows {
-		if !slices.Contains(arms, key) {
-			t.Errorf("environment row %s names a variable kiro-cli %s does not read", key, activeKASVersion(t))
+		for _, arm := range arms {
+			if !rows[arm] {
+				t.Errorf("kiro-cli %s reads %s and the environment door has no row for it; add one (withheld follows the ramp)",
+					activeKASVersion(t), arm)
+			}
 		}
-	}
+		for key := range rows {
+			if !slices.Contains(arms, key) {
+				t.Errorf("environment row %s names a variable kiro-cli %s does not read", key, activeKASVersion(t))
+			}
+		}
+	})
 }
 
 func TestBundleEnvArms_DerivesTheGateHelperName(t *testing.T) {

@@ -18,7 +18,7 @@ A change to how chats or settings are stored adds no migration code, compatibili
 
 ## Checks
 
-The census tests in `internal/kascap` compare the capability table with kiro-cli's own agent-server bundle under `~/.local/share/kiro-cli/kas/`. CI has no bundle and skips them.
+The census tests in `internal/kascap` compare the capability table with kiro-cli's own agent-server bundle under `~/.local/share/kiro-cli/kas/`. On a pull request that changes `KIRO_CLI_VERSION` or a `KIRO_CLI_SHA256` digest, CI downloads each release archive whose pin changed, x86_64 and aarch64 alike, checks its sha256, reads the agent server out of it and runs them against each. Every other CI run skips them.
 
 After a change to that package, run `go test -v ./internal/kascap/` on a machine with the pinned kiro-cli, and check that no census test reports SKIP. A failure prints the `-update` command, and every line it adds is a capability to judge.
 
