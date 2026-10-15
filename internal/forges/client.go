@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"time"
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/creds"
@@ -79,33 +78,29 @@ func (staticSource) State() forgeapi.CredState               { return forgeapi.C
 // under the connection's id lock. State and Kind are the refreshing source's,
 // which read without sending.
 type storedToken struct {
-	store creds.Store
-	src   *creds.Source
-	key   string
+	src *creds.Source
 }
 
 var _ forgeapi.CredentialSource = storedToken{}
 
 func (t storedToken) Token(context.Context) (string, error) {
-	switch t.src.State() {
-	case forgeapi.CredReconnectRequired:
+	token, state, err := t.src.StoredToken()
+	switch {
+	case err == nil:
+		return token, nil
+	case state == forgeapi.CredReconnectRequired:
 		return "", &forgeapi.Error{Kind: forgeapi.KindUnauthorized, Code: forgeapi.CodeReconnectRequired, Message: reconnectReason}
-	case forgeapi.CredValid, forgeapi.CredRefreshDue, forgeapi.CredRefreshing:
-		rec, ok, err := t.store.Load(t.key)
-		if err != nil {
-			break
-		}
-		if ok && (rec.Expiry.IsZero() || time.Now().Before(rec.Expiry)) {
-			return rec.Token, nil
-		}
+	case state == forgeapi.CredUnknown:
 		return "", &forgeapi.Error{
 			Kind: forgeapi.KindTransient, Retryable: true,
-			Message: "the token expired; it is renewed on the next check",
+			Message: "the credential store could not be read",
 		}
 	}
+	// Source.StoredToken owns which tokens are handed over, a held rotated pair's
+	// included; a token it refuses here waits for the check's src.Token.
 	return "", &forgeapi.Error{
 		Kind: forgeapi.KindTransient, Retryable: true,
-		Message: "the credential store could not be read",
+		Message: "the token expired; it is renewed on the next check",
 	}
 }
 
@@ -123,7 +118,7 @@ func openConn(store creds.Store, spec *connectionSpec, newCore coreFactory, extr
 	if err != nil {
 		return nil, nil, storedToken{}, err
 	}
-	cred = storedToken{store: store, key: key, src: src}
+	cred = storedToken{src: src}
 	core, err = newCore(spec, slices.Concat(opts, []forgeapi.Option{
 		forgeapi.WithCredentialSource(cred),
 		forgeapi.WithRotationCursor(forgeapi.RotationCursor(spec.RotationCursor)),

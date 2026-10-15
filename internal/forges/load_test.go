@@ -54,6 +54,18 @@ func (s *failingLoads) Load(key string) (creds.Record, bool, error) {
 	return s.FileStore.Load(key)
 }
 
+func (s *failingLoads) loads() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func (s *failingLoads) resetLoads() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = 0
+}
+
 func TestLoad_EachFailureHasItsScope(t *testing.T) {
 	isolateGit(t)
 	cfg := t.TempDir()
