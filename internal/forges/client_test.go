@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -113,6 +115,171 @@ func TestOpenConn_TheSourceCarriesTheConnectionsPostures(t *testing.T) {
 	var ferr *forgeapi.Error
 	if !errors.As(err, &ferr) || ferr.Code != forgeapi.CodePrivateAddressRefused {
 		t.Errorf("a source built without the record's postures = %v, want %q", err, forgeapi.CodePrivateAddressRefused)
+	}
+}
+
+func TestStoredToken_ReadsTheStoreOncePerRequest(t *testing.T) {
+	spec := specFor(KindGitHub, "ghe.example.com")
+	spec.WebBaseURL = "https://ghe.example.com"
+	key := slotKey(spec.ID, 0)
+	store := &failingLoads{FileStore: openTestStore(t, t.TempDir()), key: key}
+	if err := store.Save(key, staticCredential(&spec, "alice", "ghe-token")); err != nil {
+		t.Fatal(err)
+	}
+	wire := &recordingWire{body: `{"login":"alice"}`}
+	core, _, _, err := openConn(store, &spec, newFamilyClient, []forgeapi.Option{forgeapi.WithWireTransport(wire.transport())})
+	if err != nil {
+		t.Fatalf("openConn(%+v) = %v", spec, err)
+	}
+	store.resetLoads()
+
+	for range 3 {
+		if _, err := core.Whoami(t.Context()); err != nil {
+			t.Fatalf("Whoami() = %v", err)
+		}
+	}
+	if got, sent := store.loads(), len(wire.seen); sent != 3 || got != sent {
+		t.Errorf("%d requests read the credential store %d times, want 3 requests and one read each", sent, got)
+	}
+}
+
+// A refresh the forge answered but the store could not take leaves the new pair
+// held in this process: a reader's request goes out with that pair's token, from
+// one read, and never with the token it replaced.
+func TestStoredToken_SendsAHeldRotatedPairsToken(t *testing.T) {
+	cfg := t.TempDir()
+	dir := filepath.Join(cfg, credentialStoreDir)
+	var (
+		mu        sync.Mutex
+		sent      []string
+		refreshes atomic.Int32
+	)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/login/oauth/access_token":
+			if refreshes.Add(1) == 1 {
+				if err := os.Chmod(dir, 0o750); err != nil {
+					t.Errorf("widen the store: %v", err)
+				}
+			}
+			_, _ = io.WriteString(w, rotatedAnswer)
+		case "/api/v3/user":
+			mu.Lock()
+			sent = append(sent, r.Header.Get("Authorization"))
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"login":"alice"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	ts := &tokenServer{srv: srv}
+	spec := ts.record()
+	key := slotKey(spec.ID, spec.Slot)
+	store := &failingLoads{FileStore: openTestStore(t, cfg), key: key}
+	if err := store.Save(key, rotatingCredential(srv.URL, time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	core, src, _, err := openConn(store, &spec, newFamilyClient, nil)
+	if err != nil {
+		t.Fatalf("openConn(%+v) = %v", spec, err)
+	}
+	if token, err := src.Token(t.Context()); err == nil || token != "" {
+		t.Fatalf("Setup: the refresh's Token() with the store refusing the write = (%q, %v), want the store's failure", token, err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("Setup: narrow the store: %v", err)
+	}
+	store.resetLoads()
+
+	acct, err := core.Whoami(t.Context())
+	if err != nil || acct.Login != "alice" {
+		t.Errorf("Whoami() with a rotated pair held = (%+v, %v), want alice", acct, err)
+	}
+	if got := store.loads(); got != 1 {
+		t.Errorf("the request read the credential store %d times, want 1", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 1 || !strings.HasSuffix(sent[0], " token-new") {
+		t.Errorf("the forge saw Authorization %q, want one request carrying the held pair's token-new", sent)
+	}
+	if slices.ContainsFunc(sent, func(h string) bool { return strings.Contains(h, "token-old") }) {
+		t.Errorf("the forge saw Authorization %q, want the replaced token-old never sent", sent)
+	}
+	if n := refreshes.Load(); n != 1 {
+		t.Errorf("the forge saw %d token requests, want 1: a reader's request never refreshes", n)
+	}
+}
+
+func TestStoredToken_HandsOverOrRefusesFromOneRead(t *testing.T) {
+	spec := specFor(KindGitHub, "ghe.example.com")
+	spec.WebBaseURL = "https://ghe.example.com"
+	key := slotKey(spec.ID, 0)
+	now := time.Now().Truncate(time.Second)
+	rotating := func(expiry time.Time, mark creds.Usability) *creds.Record {
+		return &creds.Record{
+			Family: forgeapi.FamilyGitHub, WebBaseURL: spec.WebBaseURL, Kind: forgeapi.CredKindRotatingOAuth,
+			Token: "token-old", Issued: now.Add(-8 * time.Hour), Expiry: expiry, Usability: mark,
+			RefreshToken: "refresh-old", RefreshExpiry: now.Add(30 * 24 * time.Hour), ClientID: "client", Account: "alice",
+		}
+	}
+	static := staticCredential(&spec, "alice", "ghe-token")
+	reconnect := &forgeapi.Error{Kind: forgeapi.KindUnauthorized, Code: forgeapi.CodeReconnectRequired, Message: reconnectReason}
+	renewed := &forgeapi.Error{Kind: forgeapi.KindTransient, Retryable: true, Message: "the token expired; it is renewed on the next check"}
+	unreadable := &forgeapi.Error{Kind: forgeapi.KindTransient, Retryable: true, Message: "the credential store could not be read"}
+	cases := []struct {
+		rec        *creds.Record
+		want       *forgeapi.Error
+		name       string
+		token      string
+		unreadable bool
+	}{
+		{name: "a valid static token is handed over", rec: &static, token: "ghe-token"},
+		{name: "a token due for refresh is handed over until it expires", rec: rotating(now.Add(time.Minute), creds.UsabilityUnmarked), token: "token-old"},
+		{name: "an expired token waits for the next check", rec: rotating(now.Add(-time.Minute), creds.UsabilityUnmarked), want: renewed},
+		{name: "a refused record requires a reconnect", rec: rotating(now.Add(8*time.Hour), creds.UsabilityReconnectRequired), want: reconnect},
+		{name: "a spent record requires a reconnect", rec: rotating(now.Add(8*time.Hour), creds.UsabilitySpent), want: reconnect},
+		{name: "no record requires a reconnect", want: reconnect},
+		{name: "an unreadable store fails as transient", rec: &static, unreadable: true, want: unreadable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &failingLoads{FileStore: openTestStore(t, t.TempDir()), key: key}
+			if tc.rec != nil {
+				if err := store.Save(key, *tc.rec); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, _, cred, err := openConn(store, &spec, newFamilyClient, nil)
+			if err != nil {
+				t.Fatalf("openConn(%+v) = %v", spec, err)
+			}
+			store.resetLoads()
+			if tc.unreadable {
+				store.fail = map[int]bool{1: true}
+			}
+
+			token, err := cred.Token(t.Context())
+			if token != tc.token {
+				t.Errorf("Token() = %q, want %q", token, tc.token)
+			}
+			var ferr *forgeapi.Error
+			switch {
+			case tc.want == nil && err != nil:
+				t.Errorf("Token() error = %v, want none", err)
+			case tc.want != nil && (!errors.As(err, &ferr) || ferr.Kind != tc.want.Kind || ferr.Code != tc.want.Code ||
+				ferr.Retryable != tc.want.Retryable || ferr.Message != tc.want.Message):
+				t.Errorf("Token() error = %#v, want %#v", err, tc.want)
+			}
+			if got := store.loads(); got != 1 {
+				t.Errorf("Token() read the credential store %d times, want 1", got)
+			}
+			if stored, _, _ := store.FileStore.Load(key); tc.rec != nil && stored.Token != tc.rec.Token {
+				t.Errorf("the stored token became %q, want %q: a read never refreshes", stored.Token, tc.rec.Token)
+			}
+		})
 	}
 }
 
