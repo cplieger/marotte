@@ -156,8 +156,7 @@ func writeGrantStartError(w http.ResponseWriter, r *http.Request, err error) {
 		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeWebBaseInvalid))
 	case errors.Is(err, errHostInvalid):
 		httpreply.BadRequest(w, err.Error())
-	case errors.Is(err, errConnectionUnusable):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+	case writeMutationError(w, err):
 	default:
 		writeOpsError(w, r, err)
 	}

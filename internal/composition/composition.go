@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/keyenc"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/auth"
 	"github.com/cplieger/marotte/internal/bridge"
@@ -206,8 +205,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	h.SetPreBridgeSpawn(func(ctx context.Context) { steer.Generate(ctx) })
 	h.SetChatSteering(steer.ChatDocs)
 
-	// The manager notifies nothing before the routes serve or the keeper runs, both after
-	// forgeNotify is wired below; forgeNotifier.notify logs a call that comes earlier.
+	// The manager notifies nothing before the routes serve, the keeper runs or a forge snapshot
+	// is read, all after forgeNotify is wired below; forgeNotifier.notify logs a call that comes earlier.
 	forgeNotify := &forgeNotifier{hub: h}
 	forgesManager := forges.NewManager(cfg.ConfigDir, forgeNotify.notify)
 	forgesManager.Load(ctx)
@@ -238,14 +237,11 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	go authHandler.Run(appCtx)
 	forgesHTTP := forges.NewHTTPHandler(forgesManager)
 
-	repoNames := newRepoNamesCache(appCtx, steer, repoNamesOf(forgesManager))
-	steer.SetForgeSnapshot(func() steering.ForgeSnapshot { return forgeSnapshot(forgesManager, repoNames) })
-	go repoNames.refresh()
-
 	prPoller := newPRStatusPoller(forgesManager, gitHandler, h, prPollGate(presence, pushSvc),
 		forges.WithInventoryPush(versions, h), forges.WithViewers(presence))
 	forgesHTTP.SetPoller(prPoller)
-	forgeNotify.poller, forgeNotify.names = prPoller, repoNames
+	forgeSteer := forgeNotify.wire(appCtx, prPoller, forgesManager, steer)
+	go forgeSteer.sync()
 	stopPRPoller := runBackground(ctx, "pr status poller", prPoller.Run)
 	stopForgeKeeper := runBackground(ctx, "forge credential keeper", forges.NewKeeper(forgesManager).Run)
 
@@ -487,136 +483,79 @@ type eventHub interface {
 	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
 
-// forgeNotifier is the forge manager's notify. Its poller and names cache are
-// set after the manager is built, so a call before that logs and broadcasts
+// forgeNotifier is the forge manager's notify. Its poller and steering are
+// set by wire after the manager is built, so a call before that logs and broadcasts
 // nothing rather than dereferencing nil or silently skipping the drop.
 type forgeNotifier struct {
 	hub    eventHub
 	poller *forges.PRStatusPoller
-	names  *repoNamesCache
+	steer  *forgeSteering
 }
 
 // notify drops a replaced account's inventory before any tab is told, so no
-// tab re-reads the old account's entry, then refreshes the repository names
-// behind the caller.
+// tab re-reads the old account's entry, then syncs the steering file behind
+// the caller. A stored repository page changes no row, so no tab is told.
 func (n *forgeNotifier) notify(ctx context.Context, c forges.Change) {
-	if n.poller == nil || n.names == nil {
+	if n.poller == nil || n.steer == nil {
 		slog.Error("forges: a change was notified before the forge poller was wired", "connection", c.ID)
+		return
+	}
+	if c.ReposListed {
+		go n.steer.sync()
 		return
 	}
 	if c.AccountChanged {
 		n.poller.DropInventory(c.ID)
 	}
 	n.hub.Broadcast(ctx, marotte.NewEvent(marotte.EventForgesChanged, "", marotte.ForgesChangedPayload{}))
-	go n.names.refresh()
+	go n.steer.sync()
 }
 
-// repoNamesTTL bounds how stale the cached repository names may get before a read kicks a
-// background revalidation: a repository list drifts upstream with no notice to marotte.
-const repoNamesTTL = 5 * time.Minute
-
-// repoNamesCache is a stale-while-revalidate cache of each connection's repository names, keyed
-// by connection and account: lookup never blocks on a forge request, refresh rebuilds in the
-// caller and regenerates the steering file only on a change.
-type repoNamesCache struct {
-	// appCtx is the app's lifetime, required at construction: both entry points are
-	// context-free callbacks, and both reach rebuild, which must not outlive the process.
-	appCtx context.Context
-	build  func(context.Context) map[string][]string
-	steer  *steering.Generator
-	at     time.Time
-	names  map[string][]string
-	mu     sync.Mutex
-	busy   bool
-	dirty  bool
+// wire makes n notify poller and a steering sync over m that renders into steer,
+// and returns that sync for the caller's boot run. n is wired before steer reads
+// a snapshot, because a read can start a repository fill whose landing notifies;
+// the sync exists only once steer renders the forge section.
+func (n *forgeNotifier) wire(appCtx context.Context, poller *forges.PRStatusPoller, m *forges.Manager,
+	steer *steering.Generator,
+) *forgeSteering {
+	s := &forgeSteering{appCtx: appCtx, m: m, generate: steer.Generate}
+	n.poller, n.steer = poller, s
+	steer.SetForgeSnapshot(func() steering.ForgeSnapshot { return forgeSnapshot(appCtx, m) })
+	return s
 }
 
-// newRepoNamesCache wires a cache around build that regenerates steer on a change.
-// ctx is the app's lifetime and is required; see the appCtx field.
-func newRepoNamesCache(ctx context.Context, steer *steering.Generator,
-	build func(context.Context) map[string][]string,
-) *repoNamesCache {
-	return &repoNamesCache{appCtx: ctx, build: build, steer: steer}
+// forgeSteering regenerates the steering file when its forge section moved.
+type forgeSteering struct {
+	// appCtx is the app's lifetime: sync runs behind context-free callers and
+	// must not outlive the process.
+	appCtx   context.Context
+	m        *forges.Manager
+	generate func(context.Context)
+	last     steering.ForgeSnapshot
+	mu       sync.Mutex
 }
 
-// lookup answers the names held for connection id signed in as account, nil when none are,
-// kicking a single-flight background refresh when stale. Safe on the pre-bridge-spawn path.
-func (c *repoNamesCache) lookup(id, account string) []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if time.Since(c.at) >= repoNamesTTL && !c.busy {
-		c.busy = true
-		go c.rebuild()
-	}
-	return c.names[keyenc.Join(id, account)]
-}
-
-// refresh rebuilds the names, then regenerates the steering file if they changed. A request
-// arriving mid-rebuild is coalesced, not dropped: that rebuild may predate the change. Callers run
-// refresh in their own goroutine.
-func (c *repoNamesCache) refresh() {
-	c.mu.Lock()
-	if c.busy {
-		c.dirty = true
-		c.mu.Unlock()
-		return
-	}
-	c.busy = true
-	c.mu.Unlock()
-	c.rebuild()
-}
-
-// rebuild does the rebuild and conditional regen, looping while coalesced requests are
-// pending. Entered only with busy already claimed by the caller; clears it when done.
-func (c *repoNamesCache) rebuild() {
-	for {
-		names := c.build(c.appCtx)
-		c.mu.Lock()
-		changed := !reflect.DeepEqual(c.names, names)
-		c.names = names
-		c.at = time.Now()
-		again := c.dirty
-		c.dirty = false
-		c.busy = again
-		c.mu.Unlock()
-		// Generate skips byte-identical writes anyway; skipping the RENDER for the common
-		// no-change TTL refresh is what avoids a pointless workspace scan.
-		if changed {
-			c.steer.Generate(c.appCtx)
-		}
-		if !again {
-			return
-		}
-	}
-}
-
-// repoNamesOf reads the first page of every usable connection's repository list, keyed by the
-// connection and the account it was read through. A connection whose list cannot be read has no
-// names.
-func repoNamesOf(m *forges.Manager) func(context.Context) map[string][]string {
-	return func(ctx context.Context) map[string][]string {
-		out := map[string][]string{}
-		rows := m.List()
-		for i := range rows {
-			f := &rows[i]
-			if f.Status != forges.ForgeConnected && f.Status != forges.ForgeRetrying {
-				continue
-			}
-			rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			account, names, err := m.RepoNames(rctx, f.ID)
-			cancel()
-			if err == nil {
-				out[keyenc.Join(f.ID, account)] = names
-			}
-		}
-		return out
+// sync regenerates the steering file when the snapshot it renders moved. A
+// repository page the snapshot found missing or stale is read behind it, and
+// its arrival syncs again (forgeNotifier.notify). Callers run it in their own
+// goroutine.
+func (s *forgeSteering) sync() {
+	// Taken under mu, so last is never replaced by a snapshot older than it.
+	s.mu.Lock()
+	snap := forgeSnapshot(s.appCtx, s.m)
+	changed := !reflect.DeepEqual(s.last, snap)
+	s.last = snap
+	s.mu.Unlock()
+	// Generate scans the workspace, so an unmoved snapshot skips it.
+	if changed {
+		s.generate(s.appCtx)
 	}
 }
 
 // forgeSnapshot builds the steering forge snapshot from memory: one provider per connection, read
-// live so a sign-in or a sign-out reaches the next chat at once, with the repository names held
-// for its current account.
-func forgeSnapshot(m *forges.Manager, names *repoNamesCache) steering.ForgeSnapshot {
+// live so a sign-in or a sign-out reaches the next chat at once, with the repository names the
+// forge cache holds for its current account.
+func forgeSnapshot(ctx context.Context, m *forges.Manager) steering.ForgeSnapshot {
 	rows := m.List()
 	providers := make([]steering.ForgeProvider, 0, len(rows))
 	for i := range rows {
@@ -626,7 +565,7 @@ func forgeSnapshot(m *forges.Manager, names *repoNamesCache) steering.ForgeSnaps
 			Host:  f.Host,
 			User:  f.Username,
 			Email: f.Email,
-			Repos: names.lookup(f.ID, f.Account),
+			Repos: m.HeldRepoNames(ctx, f.ID, f.Account),
 		})
 	}
 	return steering.ForgeSnapshot{Providers: providers}

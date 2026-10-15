@@ -59,6 +59,8 @@ vi.mock("./forge-store.js", () => ({
   forgeRows: () => null,
   forgeRowsFailed: () => false,
   usablePairs: () => [],
+  usableAccount: () => undefined,
+  onRowsApplied: vi.fn(),
   ensureListing: vi.fn(),
   refreshListing: vi.fn(),
   readMoreListing: vi.fn(),

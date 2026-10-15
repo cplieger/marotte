@@ -18,11 +18,11 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   apiPost: vi.fn(),
 }));
 vi.mock("./forge-store.js", async (importOriginal) => {
-  const { forgeRow, forgesList } = await import("./__test-helpers__/forge-rows.js");
+  const { forgeRow, forgesList, staticStore } = await import("./__test-helpers__/forge-rows.js");
   return {
     ...(await importOriginal<Record<string, unknown>>()),
     ensureForges,
-    forgeRows: () => forgesList([forgeRow()]),
+    ...staticStore(() => forgesList([forgeRow()])),
     usablePairs: () => [],
   };
 });

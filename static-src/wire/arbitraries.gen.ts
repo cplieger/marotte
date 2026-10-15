@@ -1679,7 +1679,6 @@ const arbModel = fc.letrec<{
   ProbeResult: fc.record(
     {
       forge: tie("ConfiguredForge"),
-      error: fc.string(),
     },
     { requiredKeys: [] },
   ),

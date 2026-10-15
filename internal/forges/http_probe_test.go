@@ -48,9 +48,8 @@ func TestProbeRoute_AScopeRefusalRefusesTheRow(t *testing.T) {
 	if e := got.Forge.Error; e.Code != forgeapi.CodeScopeInsufficient || e.Kind != "forbidden" {
 		t.Errorf("row error code, kind = %q, %q, want %q, forbidden", e.Code, e.Kind, forgeapi.CodeScopeInsufficient)
 	}
-	if !strings.Contains(got.Forge.Error.Message, "[User: Read]") || got.Error != got.Forge.Error.Message {
-		t.Errorf("check error %q, row message %q, want both the same sentence naming what the token lacks",
-			got.Error, got.Forge.Error.Message)
+	if !strings.Contains(got.Forge.Error.Message, "[User: Read]") {
+		t.Errorf("row message %q, want the sentence naming what the token lacks", got.Forge.Error.Message)
 	}
 }
 
@@ -62,8 +61,8 @@ func TestProbeRoute_ATemporaryFailureAnswersRetryingWithItsSentence(t *testing.T
 	if got.Forge.Status != ForgeRetrying || got.Forge.Error == nil || got.Forge.Error.Kind != "transient" {
 		t.Fatalf("check over a dead network = %+v, want retrying with kind transient", got.Forge)
 	}
-	if got.Error == "" || got.Error != got.Forge.Error.Message {
-		t.Errorf("check error %q, row message %q, want both the same sentence", got.Error, got.Forge.Error.Message)
+	if got.Forge.Error.Message == "" {
+		t.Errorf("row message is empty, want the failure's sentence")
 	}
 }
 
@@ -91,7 +90,7 @@ func TestProbeRoute_ASuccessClearsTheCodedError(t *testing.T) {
 
 	core.err = nil
 	got := postProbe(t, mux)
-	if got.Forge.Status != ForgeConnected || got.Error != "" || got.Forge.Error != nil {
+	if got.Forge.Status != ForgeConnected || got.Forge.Error != nil {
 		t.Errorf("check after the limit lifted = %+v, want connected with no error left from the refusal", got)
 	}
 }
@@ -103,13 +102,12 @@ func TestProbeRoute_TheRowsErrorIsSanitized(t *testing.T) {
 	}}
 	got := postProbe(t, repoRoutes(recordManager(t, core)))
 
-	for name, text := range map[string]string{"error": got.Error, "message": got.Forge.Error.Message} {
-		if strings.ContainsAny(text, "\u202e\u202c\n") {
-			t.Errorf("check %s = %q, want the upstream text's bidi controls and line break gone", name, text)
-		}
-		if !strings.Contains(text, "denied") {
-			t.Errorf("check %s = %q, want the upstream sentence kept", name, text)
-		}
+	text := got.Forge.Error.Message
+	if strings.ContainsAny(text, "\u202e\u202c\n") {
+		t.Errorf("check message = %q, want the upstream text's bidi controls and line break gone", text)
+	}
+	if !strings.Contains(text, "denied") {
+		t.Errorf("check message = %q, want the upstream sentence kept", text)
 	}
 }
 

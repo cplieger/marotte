@@ -29,6 +29,9 @@ type Change struct {
 	// AccountChanged is a sign-in or a sign-out: state keyed by ID's account
 	// is dropped.
 	AccountChanged bool
+	// ReposListed is a first repository page of ID stored in the cache: no
+	// row changed, only what HeldRepoNames answers may have.
+	ReposListed bool
 }
 
 type coreFactory func(spec *connectionSpec, opts []forgeapi.Option) (forgeapi.Core, error)
@@ -110,9 +113,10 @@ const codeConnectionUnusable = "connection_unusable"
 
 // NewManager builds a Manager over the records and the credential store in
 // configDir; Load reads them. notify is required: it is told every change a
-// mutation, a check or a healing Load makes, and must not block.
+// mutation, a check, a healing Load or a stored repository page makes, and
+// must not block.
 func NewManager(configDir string, notify func(context.Context, Change)) *Manager {
-	return &Manager{
+	m := &Manager{
 		notify:     notify,
 		executable: resolvedExecutable,
 		newCore:    newFamilyClient,
@@ -122,6 +126,10 @@ func NewManager(configDir string, notify func(context.Context, Change)) *Manager
 		records:    newRecordsFile(configDir),
 		deadlines:  mutationDeadlines{total: mutationDeadline, reserve: durableReserve},
 	}
+	m.lists.repos.stored = func(ctx context.Context, key cacheKey) {
+		m.notify(ctx, Change{ID: key.conn, ReposListed: true})
+	}
+	return m
 }
 
 // MakeID returns the canonical ID for a kind+host pair, the kind's default
@@ -133,12 +141,16 @@ func MakeID(kind Kind, host string) string {
 	return keyenc.Join(string(kind), host)
 }
 
+func reconnectStatus(message string) status {
+	return status{kind: statusReconnect, fault: &fault{
+		message: message, code: forgeapi.CodeReconnectRequired, kind: forgeapi.KindUnauthorized.String(),
+	}}
+}
+
 func decode(st standing) status {
 	switch st {
 	case standingReconnect:
-		return status{kind: statusReconnect, fault: &fault{
-			message: reconnectReason, code: forgeapi.CodeReconnectRequired, kind: forgeapi.KindUnauthorized.String(),
-		}}
+		return reconnectStatus(reconnectReason)
 	case standingRefused:
 		return status{kind: statusRefused, fault: &fault{message: refusedReason, kind: forgeapi.KindForbidden.String()}}
 	}
@@ -464,19 +476,14 @@ func (m *Manager) open(store creds.Store, recs []connectionRecord) (map[string]*
 		c.login = cred.Account
 		c.spec.OwnerScopes = loadedOwners(rec, cred.Account)
 		if !ok {
-			c.status = status{kind: statusReconnect, fault: &fault{
-				message: emptySlotReason, code: forgeapi.CodeReconnectRequired, kind: forgeapi.KindUnauthorized.String(),
-			}}
+			c.status = reconnectStatus(emptySlotReason)
 			continue
 		}
 		core, src, st, err := openConn(store, &c.spec, m.newCore, m.extraOpts)
 		if err != nil {
 			slog.Warn("forges: a connection cannot be opened with its saved settings", "connection", rec.ID, "error", err)
-			c.status = status{kind: statusReconnect, fault: &fault{
-				message: fmt.Sprintf("marotte cannot open this connection with its saved settings (%s). Sign in to it again",
-					logsafe.Field(err.Error())),
-				code: forgeapi.CodeReconnectRequired, kind: forgeapi.KindUnauthorized.String(),
-			}}
+			c.status = reconnectStatus(fmt.Sprintf("marotte cannot open this connection with its saved settings (%s). "+
+				"Sign in to it again", logsafe.Field(err.Error())))
 			continue
 		}
 		c.conn, c.src, c.cred = core, src, st
@@ -526,26 +533,25 @@ func sweep(store creds.Store, keys []string, recs []connectionRecord) {
 	}
 }
 
-// RepoNames lists the display paths on the first page of connection id's
-// repository list, with the account it was read through.
-func (m *Manager) RepoNames(ctx context.Context, id string) (account string, names []string, err error) {
+// HeldRepoNames answers the display paths on the cached first page of
+// connection id's repository list: nil when id is unusable, no longer signed
+// in as account, or holds no page. It never waits on the forge: a missing or
+// stale page is read behind the caller, detached from ctx's cancellation, and
+// a Change with ReposListed is notified when it lands.
+func (m *Manager) HeldRepoNames(ctx context.Context, id, account string) []string {
 	h, err := m.reader(id)
-	if err != nil {
-		return "", nil, err
+	if err != nil || h.account != account {
+		return nil
 	}
-	req, err := resolveList()
-	if err != nil {
-		return "", nil, err
+	page, ok := m.lists.repos.peek(ctx, firstRepoPage(&h), repoFill(&h, nil))
+	if !ok {
+		return nil
 	}
-	page, err := m.repoPage(ctx, &h, &req, false)
-	if err != nil {
-		return "", nil, err
-	}
-	names = make([]string, 0, len(page.Repos))
+	names := make([]string, 0, len(page.Repos))
 	for i := range page.Repos {
 		names = append(names, page.Repos[i].FullName)
 	}
-	return h.account, names, nil
+	return names
 }
 
 // capabilities answers what h's instance and credential can do, through the

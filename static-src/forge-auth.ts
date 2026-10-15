@@ -586,7 +586,7 @@ async function onProbe(id: string): Promise<void> {
   await readForges();
   const forge = o.value.forge;
   if (forge !== undefined && forge.status !== "connected") {
-    throw new Error(forge.error?.message ?? o.value.error ?? "the check failed");
+    throw new Error(forge.error?.message ?? "the check failed");
   }
 }
 

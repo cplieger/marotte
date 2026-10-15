@@ -5,7 +5,7 @@
 import { join } from "@cplieger/keyenc";
 
 import { usableStatus } from "./forge-auth-status.js";
-import { forgeRows } from "./forge-store.js";
+import { forgeRows, onRowsApplied, usableAccount } from "./forge-store.js";
 
 import type { GitPR as PR, GitRepoGroup as RepoGroup } from "./git-types.js";
 import type {
@@ -50,33 +50,20 @@ export function cycleAfter(a: string, b: string): boolean {
   return a.length !== b.length ? a.length > b.length : a > b;
 }
 
-function rowsById(): Map<string, ConfiguredForge> | null {
-  const rows = forgeRows();
-  return rows === null ? null : new Map(rows.forges.map((f) => [f.id, f]));
-}
-
-/** Whether `e` was read through its row's current sign-in while that row is usable. */
-function admitted(e: InventoryEntry, rows: Map<string, ConfiguredForge>): boolean {
-  const f = rows.get(e.forge_id);
-  return f !== undefined && usableStatus(f.status) && f.account === e.account;
-}
-
-/**
- * Drop every held entry whose row is gone, no longer usable or signed in as another account, so no reader sees a
- * previous sign-in's or an unusable row's pull requests while the next inventory read is pending. Every reader below
- * calls it; the tab calls it when the store applies rows. Holds everything while no rows have been read.
- */
-export function adoptForgeRows(): void {
-  const rows = rowsById();
-  if (rows === null) {
-    return;
-  }
+// An entry read through an account its row no longer holds goes as the rows apply, so no reader sees a previous
+// sign-in's or an unusable row's pull requests while the next inventory read is pending.
+onRowsApplied(() => {
   for (const e of [...entries.values()]) {
-    if (!admitted(e, rows)) {
+    if (usableAccount(e.forge_id) !== e.account) {
       entries.delete(e.forge_id);
       dropMarks(e.forge_id);
     }
   }
+});
+
+/** Whether `e` may be adopted: read through its row's usable account, or arriving before any rows are read. */
+function admitted(e: InventoryEntry): boolean {
+  return forgeRows() === null || usableAccount(e.forge_id) === e.account;
 }
 
 /** The usable connections, in id order: the order the inventory answers in. */
@@ -100,8 +87,6 @@ export function lapsedForges(): ConfiguredForge[] {
  * the adopted entries.
  */
 export function applyInventoryList(list: InventoryList, opts: { reset?: boolean } = {}): number[] {
-  adoptForgeRows();
-  const rows = rowsById();
   const named = new Set(list.entries.map((e) => e.forge_id));
   for (const id of [...entries.keys()]) {
     if (!named.has(id)) {
@@ -111,7 +96,7 @@ export function applyInventoryList(list: InventoryList, opts: { reset?: boolean 
   }
   const adopted: number[] = [];
   list.entries.forEach((e, i) => {
-    if (rows !== null && !admitted(e, rows)) {
+    if (!admitted(e)) {
       return;
     }
     const cur = entries.get(e.forge_id);
@@ -134,9 +119,7 @@ export function applyInventoryList(list: InventoryList, opts: { reset?: boolean 
  *  another sign-in than the row's is a stale one; both are ignored. Answers
  *  whether the entry was replaced. */
 export function applyInventoryEntry(e: InventoryEntry): boolean {
-  adoptForgeRows();
-  const rows = rowsById();
-  if (rows !== null && !admitted(e, rows)) {
+  if (!admitted(e)) {
     return false;
   }
   const cur = entries.get(e.forge_id);
@@ -150,7 +133,6 @@ export function applyInventoryEntry(e: InventoryEntry): boolean {
 
 /** The held entry of one connection. */
 export function heldEntry(forgeId: string): InventoryEntry | undefined {
-  adoptForgeRows();
   return entries.get(forgeId);
 }
 
@@ -161,7 +143,6 @@ export function inventoryHeld(): boolean {
 
 /** The workspace clone checked out in `dir`, as the inventory joined it. */
 export function cloneInDir(dir: string): CloneRepo | undefined {
-  adoptForgeRows();
   for (const e of entries.values()) {
     const c = e.clones.find((x) => x.dir === dir);
     if (c !== undefined) {
@@ -173,7 +154,6 @@ export function cloneInDir(dir: string): CloneRepo | undefined {
 
 /** The directory of a workspace clone of the repository, or undefined. */
 export function cloneDirOf(forgeId: string, repoId: string): string | undefined {
-  adoptForgeRows();
   return entries.get(forgeId)?.clones.find((c) => c.repo_id === repoId)?.dir;
 }
 
@@ -203,11 +183,10 @@ interface Derived {
 }
 
 function listed(): Derived[] {
-  adoptForgeRows();
-  const rows = rowsById();
+  const rows = forgeRows()?.forges ?? [];
   const out: Derived[] = [];
   for (const e of [...entries.values()].sort((a, b) => cmp(a.forge_id, b.forge_id))) {
-    const f = rows?.get(e.forge_id);
+    const f = rows.find((r) => r.id === e.forge_id);
     if (f !== undefined && (e.state === "ready" || e.state === "partial")) {
       out.push(derive(e, f));
     }
@@ -310,7 +289,6 @@ export function settleRemoval(result: PRRemoveResult, cycleId: string): void {
   if (mark === undefined) {
     return;
   }
-  adoptForgeRows();
   const cur = entries.get(forgeId);
   if (cur !== undefined && !cycleAfter(cycleId, cur.cycle_id)) {
     hidden.delete(key);

@@ -14,12 +14,12 @@ vi.mock("../api-client.js", () => ({
   // Inert: present only so real-ESM linking succeeds.
   apiGetTyped: vi.fn(),
 }));
-vi.mock("../forge-store.js", () => ({
-  forgeRows: () => ({
+vi.mock("../forge-store.js", async () =>
+  (await import("../__test-helpers__/forge-rows.js")).staticStore(() => ({
     forges: [{ id: "gh1", kind: "github", host: "github.com", account: "a1", status: "connected" }],
     kinds: ["github"],
-  }),
-}));
+  })),
+);
 import { _resetForTest, applyInventoryList, bindPRPaint, getPRGroups } from "../git-prs-state.js";
 import type { PR } from "../wire/types.gen.js";
 import * as toast from "../toast.js";

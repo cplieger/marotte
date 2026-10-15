@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { ForgesListResponse } from "./actions/forge-list.js";
 
 const mocks = vi.hoisted(() => ({
   loadSettings: vi.fn(),
@@ -18,11 +19,12 @@ vi.mock("./actions/git-prs.js", () => ({
 // The dialog follows the held rows through a signal, so the double holds them in one.
 vi.mock("./forge-store.js", async () => {
   const { signal } = await import("@cplieger/reactive");
-  const held = signal<unknown>(null);
+  const { staticStore } = await import("./__test-helpers__/forge-rows.js");
+  const held = signal<ForgesListResponse | null>(null);
   mocks.setHeld = (v: unknown) => {
-    held.value = v;
+    held.value = v as ForgesListResponse | null;
   };
-  return { ensureForges: mocks.ensureForges, forgeRows: () => held.value };
+  return { ensureForges: mocks.ensureForges, ...staticStore(() => held.value) };
 });
 
 import { openMergeMethodDialog } from "./merge-dialog.js";

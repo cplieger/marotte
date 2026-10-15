@@ -7,9 +7,7 @@ import { computed, effect, el } from "@cplieger/reactive";
 import { loadSettings } from "./persist.js";
 import { patchAppSettings } from "./actions/settings.js";
 import { readAffordances } from "./actions/git-prs.js";
-import { usableStatus } from "./forge-auth-status.js";
-import { ensureForges, forgeRows } from "./forge-store.js";
-import type { ForgesListResponse } from "./forge-store.js";
+import { ensureForges, usableAccount } from "./forge-store.js";
 
 /** What the caller renders into the dialog chrome, and the repository whose
  *  merge methods it offers. */
@@ -79,17 +77,13 @@ const ACCOUNT_GONE = "This forge account can no longer be used. Check it in Sour
 const ACCOUNT_CHANGED =
   "This forge account changed while the dialog was open. Close it and open it again.";
 
-/** Why methods read through `account` cannot be offered for connection `forgeId` under `rows`; "" when they can. */
-function accountProblem(
-  rows: ForgesListResponse | null,
-  forgeId: string,
-  account: string | undefined,
-): string {
-  const row = rows?.forges.find((f) => f.id === forgeId);
-  if (row === undefined || !usableStatus(row.status)) {
+/** Why methods read through `account` cannot be offered for connection `forgeId`; "" when they can. */
+function accountProblem(forgeId: string, account: string | undefined): string {
+  const now = usableAccount(forgeId);
+  if (now === undefined) {
     return ACCOUNT_GONE;
   }
-  return row.account === account ? "" : ACCOUNT_CHANGED;
+  return now === account ? "" : ACCOUNT_CHANGED;
 }
 
 /**
@@ -110,15 +104,14 @@ async function readMethods(
         error: `Could not read this repository's merge methods. ${why}`,
       };
     }
-    const rows = await ensureForges();
-    if (rows === null) {
+    if ((await ensureForges()) === null) {
       return {
         methods: [],
         error:
           "Could not read this repository's merge methods. The forge accounts could not be read.",
       };
     }
-    const problem = accountProblem(rows, opts.forge_id, o.value.account);
+    const problem = accountProblem(opts.forge_id, o.value.account);
     if (problem === ACCOUNT_GONE) {
       return { methods: [], error: ACCOUNT_GONE };
     }
@@ -255,7 +248,7 @@ export async function openMergeMethodDialog(opts: MergeDialogOpts): Promise<stri
       initial = read.methods.includes(remembered) ? remembered : (read.methods[0] ?? "");
       // Until close, the methods are offered only while the row is still signed in as the account they were read
       // through: the merge itself goes through whichever account the row holds.
-      const problem = computed(() => accountProblem(forgeRows(), opts.forge_id, read.account));
+      const problem = computed(() => accountProblem(opts.forge_id, read.account));
       unfollow = effect(() => {
         for (const row of methods.querySelectorAll(".pr-merge-method")) {
           row.remove();

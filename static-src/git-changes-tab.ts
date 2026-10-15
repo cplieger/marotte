@@ -29,7 +29,7 @@ import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { gitRepoSkeleton, paintPlaceholder } from "./skeleton.js";
 import { reconcile } from "./reconcile.js";
 import { openChange } from "./navigate.js";
-import { effect, el } from "@cplieger/reactive";
+import { effect, el, on } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
@@ -197,17 +197,14 @@ export function initChangesTab(): void {
   };
   onSSE("turn_closed", debouncedRefresh);
   // A usable account's sign-in or sign-out changes what the rows link to; a retrying row's new message does not.
-  let pairs: readonly string[] | null = null;
-  effect(() => {
-    const now = usablePairs();
-    if (now === null) {
-      return;
-    }
-    if (pairs !== null && pairs !== now) {
-      debouncedRefresh();
-    }
-    pairs = now;
-  });
+  effect(
+    on(usablePairs, (now, prev) => {
+      if (now !== null && prev !== null && prev !== undefined) {
+        debouncedRefresh();
+      }
+      return undefined;
+    }),
+  );
 }
 
 /**

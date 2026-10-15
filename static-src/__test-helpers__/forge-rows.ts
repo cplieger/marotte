@@ -22,3 +22,24 @@ export function forgesList(
 ): ForgesListResponse {
   return { forges: [...forges], kinds: ["github", "gitlab", "codeberg", "gitea"], ...over };
 }
+
+/** forge-store's usableAccount over staged `rows`, for a suite that stubs the store. */
+export function usableAccountIn(rows: ForgesListResponse | null, id: string): string | undefined {
+  const row = rows?.forges.find((f) => f.id === id);
+  return row !== undefined && (row.status === "connected" || row.status === "retrying")
+    ? row.account
+    : undefined;
+}
+
+/** forge-store's row accessors over static `rows`: no read ever applies, so no apply hook runs. */
+export function staticStore(rows: () => ForgesListResponse | null): {
+  forgeRows: () => ForgesListResponse | null;
+  usableAccount: (id: string) => string | undefined;
+  onRowsApplied: (fn: () => void) => void;
+} {
+  return {
+    forgeRows: rows,
+    usableAccount: (id) => usableAccountIn(rows(), id),
+    onRowsApplied: () => undefined,
+  };
+}
