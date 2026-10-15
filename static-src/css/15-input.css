@@ -91,7 +91,7 @@
      and 2.25rem on a coarse one, so the `max()` yields 32 under a mouse
      (unchanged) and 36 under a finger.
      Measured at 390 coarse: painted 32 -> 36, glyph clear 5 -> 7px matching the
-     labelled controls, ink 39.1 -> 30.9% on Send and 27.2 -> 24.2% on `+`. The ROW
+     labelled controls, ink 39.1 -> 30.9% on Send and 27.2 -> 24.2% on the chat-options button (then a `+`). The ROW
      does not move, because --composer-pill-pad gives back exactly what the box
      takes (6 -> 4px), so the composer's height and the textarea's band are
      unchanged on every tier. */
@@ -155,7 +155,7 @@
    * on the way down and true again on mouseup's click. Order is mousedown ->
    * blur -> mouseup -> click.
    *
-   * The reported case was the "Supervised mode" row in the `+` menu, the one
+   * The reported case was the "Supervised mode" row in the chat-options menu, the one
    * <label> in a card of <button>s (chat-options.ts). It was never one row's
    * bug: #context-card is built entirely from spans, so a press-and-hold on
    * "Tokens used" did the same thing, and so does a press on `.prompt-pills`
@@ -493,7 +493,7 @@
 
 /* There is no `.pill-label` rule. It styled the optional text label on the
  * Attach and Autopilot pills, and both are gone — Autopilot with the staged-write
- * store, Attach into the chat-actions menu — so the rule and its
+ * store, Attach into the chat-options menu — so the rule and its
  * `@container pill-row (width < 24rem)` hide had no emitter left. The two pills
  * that still carry a label use their own classes (`.pill-role-label`, and the
  * model pill's `#ctx-model-pill`), each with its own ellipsis handling, because
@@ -1655,7 +1655,7 @@
   border-color: var(--c-text-tertiary);
 }
 
-/* The chat actions card: the strip, the action rows, then the two switches.
+/* The chat options card: the strip, the action rows, then the two switches.
  *
  * `white-space: normal` overrides .pill-expand-content's nowrap, which is right
  * for a one-line detail card and wrong here: every row carries a hint sentence,

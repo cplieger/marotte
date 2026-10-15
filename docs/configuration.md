@@ -104,7 +104,7 @@ environment:
 
 ## Uploads
 
-Files you attach to a message, by drag and drop, paste or the `+` menu, are written to `/uploads`, and the agent reads them from there. The image creates the folder itself, so attaching works with no volume. Without a volume, though, the files are lost when the container is recreated, and a saved draft that still lists them points at files that no longer exist. Mount a volume, owned by the same user as the other mounts, to keep them. The file browser shows `/uploads`, so you can rename and delete files there.
+Files you attach to a message, by drag and drop, paste or the composer's **Chat options** menu, are written to `/uploads`, and the agent reads them from there. The image creates the folder itself, so attaching works with no volume. Without a volume, though, the files are lost when the container is recreated, and a saved draft that still lists them points at files that no longer exist. Mount a volume, owned by the same user as the other mounts, to keep them. The file browser shows `/uploads`, so you can rename and delete files there.
 
 ## What `/config` holds
 

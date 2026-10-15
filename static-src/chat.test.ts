@@ -793,7 +793,7 @@ describe("openTangentChat", () => {
 });
 
 // No transcript context menu: a tangent inherits the whole conversation, so a
-// phrase-scoped gesture would mislead. The `+` menu is the door.
+// phrase-scoped gesture would mislead. The chat-options menu is the door.
 describe("no transcript context menu", () => {
   it("exports no initTranscriptContextMenu", () => {
     expect(chatModule).not.toHaveProperty("initTranscriptContextMenu");

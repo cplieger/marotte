@@ -1,4 +1,4 @@
-// The chat-actions menu: pins each row's dispatch (the card is TS-built, so this is also
+// The chat-options menu: pins each row's dispatch (the card is TS-built, so this is also
 // the markup test). The goal row's string is run through KAS's transcribed parser.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -207,7 +207,7 @@ beforeEach(() => {
   });
 });
 
-describe("the chat-actions menu", () => {
+describe("the chat-options menu", () => {
   // Six actions, then the two switches: an addition or loss shows here.
   it("holds exactly eight entries, the switches last", async () => {
     const { card } = await mountMenu();

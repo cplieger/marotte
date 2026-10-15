@@ -127,7 +127,7 @@ const POPUPS: readonly Popup[] = [
   },
   {
     cls: "chat-options-card",
-    name: "the chat-actions card",
+    name: "the chat-options card",
     bodyRow: ".chat-opt-name",
     // The only card whose rows WRAP: every row carries a hint sentence, so its floor is a measure
     // for prose rather than a minimum for a one-line strip.
@@ -273,7 +273,7 @@ describe("every popup answers one geometry", () => {
     ).toBe("432px");
   });
 
-  it("lets the chat-actions card take the whole measured room", () => {
+  it("lets the chat-options card take the whole measured room", () => {
     // A fixed list of rows: under the shape bound a short screen scrolled its last row away.
     document.documentElement.dataset["pointer"] = "fine";
     const card = mount({ cls: "chat-options-card", name: "", bodyRow: "", rows: () => [] });

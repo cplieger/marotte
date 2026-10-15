@@ -264,7 +264,7 @@ describe("the supervised-mode hint", () => {
   it("states the review, the per-chat override and the on-disk hazard", () => {
     expect(lead()).toContain("review its file changes");
     expect(lead()).toContain("default for new chats");
-    expect(lead()).toContain("chat-actions menu");
+    expect(lead()).toContain("chat-options menu");
     expect(lead()).toContain("on disk");
   });
 

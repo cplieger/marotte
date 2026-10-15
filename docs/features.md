@@ -6,11 +6,11 @@ This page describes each part of the marotte page. Everything here works from an
 
 Conversations stay in sync across devices, so a chat open on a phone and a desktop shows the same messages. Replies stream in as formatted text, and the agent's reasoning shows in blocks you can fold.
 
-- Send a message while the agent is working and it joins the running turn, or with **Queue messages** switched on in the composer's `+` menu, runs after it. On a touch screen, Return adds a new line, so send it with the **Steer** or **Queue** button beside Cancel.
+- Send a message while the agent is working and it joins the running turn, or with **Queue messages** switched on in the composer's **Chat options** menu, runs after it. On a touch screen, Return adds a new line, so send it with the **Steer** or **Queue** button beside Cancel.
 - Start a message with `!` to run a shell command.
 - `/compact` compacts the context now. `/drop` ends a turn that is stuck. `/goal` sets an objective the agent works toward across turns, until it meets the goal or runs out of attempts.
 - A Mermaid diagram in a reply (a fenced `mermaid` block) is drawn as a picture. Its buttons switch to the source, copy it, download the SVG, or open the diagram full screen, where a pinch, the mouse wheel or the zoom buttons enlarge it. A diagram that cannot be drawn shows its source with a note saying why.
-- Attach files by drag and drop, paste or the composer's `+` menu. PDF, CSV and Office documents reach the agent as documents and images as images. Any other file reaches it as a path it opens with its file tools.
+- Attach files by drag and drop, paste or the composer's **Chat options** menu. PDF, CSV and Office documents reach the agent as documents and images as images. Any other file reaches it as a path it opens with its file tools.
 
 You can also search inside a chat, export a chat, search across chats, and browse past conversations and workflow runs in **History**. Settings decides how long closed chats are kept.
 
@@ -19,7 +19,7 @@ You can also search inside a chat, export a chat, search across chats, and brows
 - Switch modes: Default, Spec, Quick Spec, Bug Fix, Plan and Autonomous, or the bundled Semantic Reviewer agent, plus your own agents from `.kiro/agents/` in the workspace or in your home folder.
 - Switch models during a conversation, and set reasoning effort from low to max.
 - Answer permission requests, the agent's questions and the forms an MCP server asks you to fill in.
-- Fork a tangent, a new chat that starts with this chat's context and leaves the original untouched. **Merge into parent chat** in the composer's `+` menu, or `/tangent merge`, sends a summary of the tangent's findings back to the chat it came from.
+- Fork a tangent, a new chat that starts with this chat's context and leaves the original untouched. **Merge into parent chat** in the composer's **Chat options** menu, or `/tangent merge`, sends a summary of the tangent's findings back to the chat it came from.
 
 The **Workflows** switch in Settings decides how the agent hands work off. On: the agent hands work to workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Either kind of handed-off work shows as a card you can open on its own page. A question a workflow step asks goes to the agent that launched the workflow, not to you: the chat shows that the run is waiting for an answer, and to answer the step yourself, open the run's tab. A step's permission requests still come to you in the chat. The agent's own terminals show their output on the tool card that started them.
 

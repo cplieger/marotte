@@ -173,7 +173,7 @@ func writeUIGuide(b *strings.Builder) {
 	b.WriteString("on; a run or subagent tab's × closes the view only\n")
 	b.WriteString("- Composer: the textarea (\"Message Kiro...\"), then a pill row: context pie (click: ")
 	b.WriteString("tokens, credits, turns), model pill (model + reasoning effort), mode pill (\"Default\", ")
-	b.WriteString("Spec, Plan, … and every custom agent), \"Chat actions\" `+` with rows \"Attach a file\", ")
+	b.WriteString("Spec, Plan, … and every custom agent), \"Chat options\" (sliders icon) with rows \"Attach a file\", ")
 	b.WriteString("\"Start a tangent\", \"Set a goal\", \"Supervised mode\", a \"Task list\" pill while a plan ")
 	b.WriteString("exists, and Send, which swaps to a cancel button (tooltip \"Cancel this turn\") while a ")
 	b.WriteString("turn streams; mid-turn, text or a staged file adds a \"Steer\" (or \"Queue\") button beside ")

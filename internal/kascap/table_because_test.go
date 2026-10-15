@@ -226,7 +226,7 @@ exactly the lie typed /compact used to tell. With it, the verb either
 launches a real run or is not offered.
 
 This row is LOAD-BEARING for a real affordance, not a muscle-memory
-fallback: the composer's chat-actions menu has a Set-a-goal row, and it
+fallback: the composer's chat-options menu has a Set-a-goal row, and it
 composes exactly "/goal <text> [--max N]" and sends it through the
 ordinary prompt path, because the parser is the only route that can set
 the iteration bound. The bundled recipe's repeat node is written
