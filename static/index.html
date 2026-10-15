@@ -388,24 +388,23 @@
                 </button>
                 <span id="role-list" class="pill-expand-content pill-role-list hidden"></span>
               </span>
-              <!-- Chat actions: the composer's tray for everything that acts on
+              <!-- Chat options: the composer's tray for everything that acts on
                    THIS chat without changing per message — attach a file, start
                    a goal run, branch a tangent, and the supervised switch. A
                    menu rather than four more pills: a pill earns its slot by
                    changing per message (model, mode), and four that do not
                    would grow the row without bound on a phone.
 
-                   `+` because three of the four ADD something to the chat, and
-                   it is the conventional composer glyph for such a tray. The
-                   tooltip and the aria-label say "Chat actions" — one wording
-                   for both, so the accessible name cannot drift from the visible
-                   one, and it is the wording that stays true for the switch too.
+                   Sliders, not `+`: the menu holds settings and actions alike,
+                   and a `+` reads as attach. The tooltip and the aria-label say
+                   "Chat options" — one wording for both, so the accessible name
+                   cannot drift from the visible one.
 
                    Every row is appended by chat-options.ts; the card is
                    deliberately empty here. -->
               <span class="pill-slot">
-                <button id="chat-options-btn" class="pill pill-expandable" type="button" data-tooltip="Chat actions" aria-label="Chat actions">
-                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <button id="chat-options-btn" class="pill pill-expandable" type="button" data-tooltip="Chat options" aria-label="Chat options">
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
                 </button>
                 <span id="chat-options-card" class="pill-expand-content chat-options-card hidden"></span>
               </span>
@@ -941,7 +940,7 @@
 
           <!-- Permissions: active (Cedar) policy + supervised mode + agent ignore files -->
           <div class="settings-panel hidden" data-settings-panel="permissions">
-            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces, including shell commands. Supervised mode and agent ignore files are separate layers under it. The review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the chat-actions menu next to the prompt changes the conversation you are in.</p>
+            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces, including shell commands. Supervised mode and agent ignore files are separate layers under it. The review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the chat-options menu next to the prompt changes the conversation you are in.</p>
 
             <div class="page-section" id="security-profile-section">
               <h2 class="section-title">Security profile</h2>
@@ -1018,7 +1017,7 @@
                 <h2 class="section-title">Supervised mode, the default for new chats</h2>
                 <span class="settings-save-status hidden" data-save-status="supervised_default" aria-live="polite"></span>
               </div>
-              <p class="section-hint">Pauses each turn so you can review its file changes: every file starts ticked, and any you untick is undone. This sets the default for new chats, which you can change per chat from the chat-actions menu, and the changes are already on disk during review, so a running dev server may pick them up.</p>
+              <p class="section-hint">Pauses each turn so you can review its file changes: every file starts ticked, and any you untick is undone. This sets the default for new chats, which you can change per chat from the chat-options menu, and the changes are already on disk during review, so a running dev server may pick them up.</p>
               <div class="section-option">
                 <label class="toggle">
                   <input type="checkbox" id="supervised-default-checkbox" aria-label="Turn on Supervised mode for new conversations">

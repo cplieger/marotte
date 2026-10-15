@@ -1,4 +1,4 @@
-// The chat-actions menu, and the test a new row has to pass: a pill earns its prompt-row
+// The chat-options menu, and the test a new row has to pass: a pill earns its prompt-row
 // slot by changing per MESSAGE, which none of these do. Every row is built here;
 // static/index.html carries an empty card. Actions first, the two switches last.
 
@@ -55,7 +55,7 @@ const GOAL_MAX_CEILING = 200;
 
 let bound = false;
 
-/** Wire the chat actions pill. Idempotent; called once from app.ts. */
+/** Wire the chat options pill. Idempotent; called once from app.ts. */
 export function initChatOptions(): void {
   if (bound) {
     return;

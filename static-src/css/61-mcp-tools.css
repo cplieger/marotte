@@ -485,13 +485,13 @@
 /* A NATIVE CHECKBOX OR RADIO PAINTS AT ITS OWN DECLARED SIZE, so the floor grows
  * the MARK rather than the target. Measured before this rule: a 16px box
  * rendering 24x24 on a mouse and 44x44 under a finger, in Settings >
- * Permissions, the composer's `+` menu and every task list in the transcript.
+ * Permissions, the composer's chat-options menu and every task list in the transcript.
  * 44px is Apple HIG's minimum TARGET and WCAG 2.5.5's, never a minimum control,
  * so the box keeps its size and the expander carries the target.
  *
  * A control whose own LABEL already clears the floor may drop the expander,
  * because a target that overhangs its row reaches into its neighbour's: the
- * composer's `+` menu is the one such case (15-input.css). */
+ * composer's chat-options menu is the one such case (15-input.css). */
 input[type="checkbox"],
 input[type="radio"] {
   min-width: 0;

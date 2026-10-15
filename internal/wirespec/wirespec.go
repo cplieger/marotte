@@ -357,7 +357,7 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"AlwaysAllowBlock":       {},
 	// One definition of the tab kinds; TabSubject.kind fails the decoder on an unknown one.
 	"TabKind": {},
-	// The composer's placeholder and the + menu's radio branch on it.
+	// The composer's placeholder and the chat-options menu's radio branch on it.
 	"InterruptMode": {},
 	// The spec page labels a segment by its role.
 	"SpecDocRole": {},

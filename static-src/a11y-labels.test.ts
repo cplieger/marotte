@@ -170,6 +170,19 @@ describe("a11y: autocomplete on every autocompletable input (static markup)", ()
   });
 });
 
+describe("a11y: the composer's chat options button (static markup)", () => {
+  it("names the button once, for the tooltip and the accessible name, and draws two sliders", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      /<button\b[^>]*id="chat-options-btn"[\s\S]*?<\/button>/.exec(indexHtml)?.[0] ?? "";
+    const btn = host.querySelector("#chat-options-btn");
+    expect(btn?.getAttribute("aria-label")).toBe("Chat options");
+    expect(btn?.getAttribute("data-tooltip")).toBe("Chat options");
+    expect(btn?.querySelectorAll("svg circle")).toHaveLength(2);
+    expect(btn?.querySelectorAll("svg line")).toHaveLength(0);
+  });
+});
+
 describe("a11y: keyboard navigation on picker grid", () => {
   it("rovingFocus makes items focusable via tabindex", async () => {
     const { rovingFocus } = await import("@cplieger/ui-primitives/roving-focus");
