@@ -15,7 +15,7 @@ interface GitRepoFilesArgs extends GitRepoArgs {
 
 /** Result envelope of every /api/git mutation. decodeGitResult throws on the error arm, so a
  *  RESOLVED dispatch is a genuine success. */
-export interface GitCmdResult {
+interface GitCmdResult {
   output?: string;
 }
 
