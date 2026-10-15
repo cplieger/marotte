@@ -1944,6 +1944,8 @@ const arbModel = fc.letrec<{
     {
       inputs: fc.dictionary(arbMapKey, fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       source: fc.string(),
+      model: fc.string(),
+      effort: fc.string(),
     },
     { requiredKeys: ["source"] },
   ),
@@ -2161,6 +2163,7 @@ const arbModel = fc.letrec<{
       name: fc.string(),
       description: fc.string(),
       default_effort_level: fc.string(),
+      effort_tiers: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       rate_multiplier: fc.double({ noNaN: true, noDefaultInfinity: true }),
       has_effort: fc.boolean(),
       thinking_toggleable: fc.boolean(),

@@ -57,8 +57,11 @@ type Entry struct {
 	Name       string    `json:"name,omitempty"`
 	LastStatus status    `json:"last_status,omitempty"`
 	LastReason string    `json:"last_reason,omitempty"`
-	Spec       Spec      `json:"spec"`
-	Enabled    bool      `json:"enabled"`
+	// Model and Effort are sent at each fire as the run's marotte.RunDefaults; empty sends none.
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+	Spec    Spec   `json:"spec"`
+	Enabled bool   `json:"enabled"`
 }
 
 // Writes never emit it.

@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // tickInterval is how often the runner looks for due schedules. One shared ticker
@@ -19,7 +21,9 @@ const missGrace = 3 * time.Minute
 // attribute the run's outcome to the row. slotAt is an input to the run's bound; zero means
 // no slot.
 type Launcher interface {
-	LaunchScheduled(ctx context.Context, source, scheduleID string, slotAt time.Time) (id, name string, err error)
+	LaunchScheduled(
+		ctx context.Context, source, scheduleID string, defaults marotte.RunDefaults, slotAt time.Time,
+	) (id, name string, err error)
 }
 
 // Runner fires due schedules. Construct with NewRunner and call Run in a
@@ -94,7 +98,8 @@ func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
 			"id", e.ID, "source", e.Source, "error", dErr)
 		slotAt = time.Time{}
 	}
-	runID, name, err := r.launcher.LaunchScheduled(ctx, e.Source, e.ID, slotAt)
+	runID, name, err := r.launcher.LaunchScheduled(ctx, e.Source, e.ID,
+		marotte.RunDefaults{Model: e.Model, Effort: e.Effort}, slotAt)
 	outcome := Outcome{Status: statusStarted}
 	if err != nil {
 		// An overlap (one live run per recipe) is the expected refusal: this slot is skipped.

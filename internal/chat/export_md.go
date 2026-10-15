@@ -324,21 +324,22 @@ func writeModelRoutedMarkdown(b *strings.Builder, e *marotte.Entry) {
 }
 
 // writeModelFallbackMarkdown names KAS's decision in its own codes, as the log stores them: the
-// transcript's wording is the client's.
+// transcript's wording is the client's. A retry whose model now serves the session says so; a
+// sub-agent's fallback is left out, as the transcript leaves it out.
 func writeModelFallbackMarkdown(b *strings.Builder, e *marotte.Entry) {
 	var p marotte.EntryModelFallback
-	if !decodePayload(e, &p) {
+	if !decodePayload(e, &p) || p.Subagent {
 		return
 	}
 	line := "**Event: model_fallback** " + oneLine(p.Trigger) + ": " + oneLine(p.From)
 	if p.To != "" {
 		line += " → " + oneLine(p.To)
 	}
-	if p.Reason != "" {
+	switch {
+	case p.Reason != "":
 		line += ", declined: " + oneLine(p.Reason)
-	}
-	if p.Subagent {
-		line += ", for a sub-agent"
+	case p.To != "" && p.Scope == marotte.ModelFallbackScopeSession:
+		line += ", now serves the session"
 	}
 	fmt.Fprintf(b, "%s\n\n", line)
 }

@@ -43,6 +43,11 @@ export function payloadOf<K extends EntryKind>(e: Entry, kind: K): EntryPayload[
   return isEntryKind(e, kind) ? e.payload : undefined;
 }
 
+/** Whether `e` is a sub-agent's `model_fallback`, which never moves the chat's model and is not shown. */
+export function isSubagentFallback(e: Entry): boolean {
+  return payloadOf(e, "model_fallback")?.subagent === true;
+}
+
 /** The entry as a discriminated union, so a dispatcher's switch is total by type.
  *  The one unchecked kind-to-payload cast in the client's entry path: `decodeEntry`
  *  validates the envelope and leaves `payload` as the server wrote it. */
@@ -397,9 +402,13 @@ export function turnFoldHides(t: Turn): boolean {
       case "safety_blocked":
       case "model_switched":
       case "model_routed":
-      case "model_fallback":
       case "mode_switched":
         return true;
+      case "model_fallback":
+        if (!isSubagentFallback(e)) {
+          return true;
+        }
+        break;
       case "text":
         if ((payloadOf(e, "text")?.text ?? "").trim() !== "") {
           texts++;

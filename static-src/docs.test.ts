@@ -70,6 +70,7 @@ vi.mock("./bus.js", () => ({
   BUS_RUNS_CHANGED: undefined,
   BUS_USER_INPUT_ANSWERED: undefined,
   BUS_ACTIVATE_CHAT: undefined,
+  BUS_CATALOG_MODELS: undefined,
   BUS_COMMAND_FAILED: undefined,
   BUS_EDITOR_VIEW_CHANGED: undefined,
   BUS_KEYS_ESCAPE: undefined,

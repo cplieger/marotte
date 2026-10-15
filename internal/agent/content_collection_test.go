@@ -53,7 +53,7 @@ func spawnSites() []spawnSite {
 		{name: "run_launch", spawn: func(t *testing.T, h *Runtime, _ *testChatStore, br *fakeBridge) {
 			br.callResults = workflowReplies
 			br.callResults[methodKiroWorkflowList] = json.RawMessage(`{"runs":[]}`)
-			if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
+			if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 				t.Fatalf("Launch: %v", err)
 			}
 		}},

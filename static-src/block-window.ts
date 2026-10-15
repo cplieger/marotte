@@ -4,7 +4,7 @@
 import { toolResultID } from "./entry-ids.js";
 import { isInternalToolTitle } from "./tool-schema.js";
 import type { Entry } from "./types.js";
-import { payloadOf, type Turn } from "./turns.js";
+import { isSubagentFallback, payloadOf, type Turn } from "./turns.js";
 
 /**
  * What one paint's WINDOW may mount. Two budgets (a tool card is a whole disclosure, a text
@@ -158,10 +158,12 @@ export function foldsByLane(entries: readonly Entry[]): Map<string, TurnFolds> {
  *  fallback never moves the chat's model, so it explains no chat re-pin. */
 function fallsBackFrom(prev: Entry, fallback: Entry): boolean {
   const switched = payloadOf(prev, "model_switched");
-  const fb = payloadOf(fallback, "model_fallback");
-  const to = fb?.to ?? "";
+  const to = payloadOf(fallback, "model_fallback")?.to ?? "";
   return (
-    switched?.reason === "unavailable" && fb?.subagent !== true && to !== "" && switched.to === to
+    switched?.reason === "unavailable" &&
+    !isSubagentFallback(fallback) &&
+    to !== "" &&
+    switched.to === to
   );
 }
 

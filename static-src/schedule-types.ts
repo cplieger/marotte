@@ -48,6 +48,9 @@ export interface ScheduleView {
   last_status?: "started" | "failed" | "unknown";
   /** Why, as plain text for a person to read. */
   last_reason?: string;
+  /** The run's model and effort pick, sent at each fire; absent is Default. */
+  model?: string;
+  effort?: string;
 }
 
 export interface SchedulesResponse {

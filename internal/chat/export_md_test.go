@@ -336,7 +336,7 @@ func TestRenderChatMarkdown_SaysWhichModelSwitchedTriggerFired(t *testing.T) {
 	}
 }
 
-// A fallback line carries KAS's trigger, both models, a decline's code and the sub-agent marker.
+// A fallback line carries KAS's trigger, both models, a decline's code and a session-wide move.
 func TestRenderChatMarkdown_NamesAModelFallbacksDecision(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -344,19 +344,19 @@ func TestRenderChatMarkdown_NamesAModelFallbacksDecision(t *testing.T) {
 		want    string
 	}{
 		{
-			name:    "retried",
+			name:    "retried_for_the_turn",
+			payload: marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Scope: "turn", Trigger: "availability"},
+			want:    "**Event: model_fallback** availability: opus-5 → sonnet-5\n",
+		},
+		{
+			name:    "retried_for_the_session",
 			payload: marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Scope: "session", Trigger: "refusal"},
-			want:    "**Event: model_fallback** refusal: opus-5 → sonnet-5\n",
+			want:    "**Event: model_fallback** refusal: opus-5 → sonnet-5, now serves the session\n",
 		},
 		{
 			name:    "declined",
-			payload: marotte.EntryModelFallback{From: "opus-5", Trigger: "availability", Reason: "chainExhausted"},
+			payload: marotte.EntryModelFallback{From: "opus-5", Scope: "session", Trigger: "availability", Reason: "chainExhausted"},
 			want:    "**Event: model_fallback** availability: opus-5, declined: chainExhausted\n",
-		},
-		{
-			name:    "subagent",
-			payload: marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Trigger: "availability", Subagent: true},
-			want:    "**Event: model_fallback** availability: opus-5 → sonnet-5, for a sub-agent\n",
 		},
 	}
 	for _, tc := range cases {
@@ -368,6 +368,17 @@ func TestRenderChatMarkdown_NamesAModelFallbacksDecision(t *testing.T) {
 				t.Errorf("renderChatMarkdown(%+v) missing %q\n---\n%s", tc.payload, tc.want, md)
 			}
 		})
+	}
+}
+
+// A sub-agent's fallback is left out of the export, as the transcript leaves it out.
+func TestRenderChatMarkdown_LeavesOutASubagentsModelFallback(t *testing.T) {
+	entries, _ := chatOf(openTurn("t-1", 1, nil).
+		add("", "fb-1", marotte.EntryKindModelFallback, marotte.EntryModelFallback{
+			From: "opus-5", To: "sonnet-5", Scope: "session", Trigger: "refusal", Subagent: true,
+		}))
+	if md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Fallback"}, entries); strings.Contains(md, "model_fallback") {
+		t.Errorf("export names a sub-agent's fallback:\n%s", md)
 	}
 }
 

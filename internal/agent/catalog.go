@@ -91,8 +91,13 @@ type modelTiers struct {
 func (c *catalog) tiersOf(model string) modelTiers {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for i := range c.models {
-		m := &c.models[i]
+	return tiersIn(c.models, model)
+}
+
+// tiersIn is models' account of model's effort tiers.
+func tiersIn(models []marotte.SessionModel, model string) modelTiers {
+	for i := range models {
+		m := &models[i]
 		switch {
 		case m.ID != model:
 			continue

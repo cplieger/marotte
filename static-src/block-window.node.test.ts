@@ -273,6 +273,17 @@ describe("turnFolds", () => {
         [entry(1, "model_switched", { from: "opus-5", to: "sonnet-5" }), fallback(2)],
       ],
       [
+        "was declined, naming no model",
+        [
+          repin(1),
+          entry(2, "model_fallback", {
+            from: "opus-5",
+            trigger: "availability",
+            reason: "chainExhausted",
+          }),
+        ],
+      ],
+      [
         "was a sub-agent's",
         [
           repin(1),
@@ -282,17 +293,6 @@ describe("turnFolds", () => {
             trigger: "availability",
             scope: "session",
             subagent: true,
-          }),
-        ],
-      ],
-      [
-        "was declined, naming no model",
-        [
-          repin(1),
-          entry(2, "model_fallback", {
-            from: "opus-5",
-            trigger: "availability",
-            reason: "chainExhausted",
           }),
         ],
       ],

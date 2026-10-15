@@ -875,8 +875,9 @@ export interface EntryModeSwitched {
 /**
  * EntryModelFallback is the model_fallback payload: KAS's fallback decision after From refused a
  * turn or was unavailable. A non-empty Reason marks a decline; KAS's notice for a retry carries To
- * and Scope and no Reason. Every string is KAS's open vocabulary, display-sanitized; Subagent marks
- * a sub-agent's fallback, which never moves the chat's model.
+ * and Scope and no Reason, and ModelFallbackScopeSession means To now serves the session. Every
+ * string is KAS's open vocabulary, display-sanitized. Subagent is set only in an entry an earlier
+ * build recorded: the translator now drops a sub-agent's fallback, and readers hide such an entry.
  */
 export interface EntryModelFallback {
   from: string;
@@ -2723,6 +2724,9 @@ export interface RunFinishedPayload {
 export interface RunLaunchRequest {
   inputs?: Record<string, string>;
   source: string;
+  /** Model and Effort are the run's step defaults (RunDefaults); empty sends none. */
+  model?: string;
+  effort?: string;
 }
 
 /**
@@ -3166,6 +3170,8 @@ export interface SessionModel {
   description?: string;
   /** DefaultEffortLevel is this MODEL's default level, the last rung of a chat's first level on it. */
   default_effort_level?: string;
+  /** EffortTiers are the model's tier ids, lowest first; empty when KAS named none. */
+  effort_tiers?: string[];
   rate_multiplier?: number;
   /**
  * HasEffort reports whether this model offers effort tiers. KAS silently drops a

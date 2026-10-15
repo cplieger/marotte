@@ -204,7 +204,7 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
 	}
 
-	id, name, err := h.runs.launch(t.Context(), "bundled://publish", nil)
+	id, name, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestLaunchRun_RunBridgeDeclaresHooks(t *testing.T) {
 		methodKiroWorkflowNew:         json.RawMessage(`{"workflowId":"wf_9"}`),
 		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
 	}
-	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
+	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
 	opts := br.lastStartOpts()
@@ -258,7 +258,7 @@ func TestLaunchRun_RefusesAnUnknownSource(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`),
 	}
-	if _, _, err := h.runs.launch(t.Context(), "/etc/passwd", nil); err == nil {
+	if _, _, err := h.runs.launch(t.Context(), "/etc/passwd", nil, marotte.RunDefaults{}); err == nil {
 		t.Fatal("an unlisted source launched")
 	}
 	if !strings.Contains(br.lastCall(), "listRecipes") {
@@ -298,7 +298,7 @@ func TestLaunchRun_AnAgentSourceGoesStraightToNew(t *testing.T) {
 		methodKiroWorkflowNew:    json.RawMessage(`{"workflowId":"wf_9"}`),
 		methodKiroWorkflowInvoke: json.RawMessage(`{}`),
 	}
-	_, name, err := h.runs.launch(t.Context(), "agent://wf-coder", map[string]string{"prompt": "fix the build"})
+	_, name, err := h.runs.launch(t.Context(), "agent://wf-coder", map[string]string{"prompt": "fix the build"}, marotte.RunDefaults{})
 	if err != nil {
 		t.Fatalf("Launch(agent://wf-coder) = %v, want nil", err)
 	}
@@ -326,7 +326,7 @@ func TestLaunchRun_AnAgentSourceIsValidatedBeforeAnyCall(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
-			if _, _, err := h.runs.launch(t.Context(), tc.source, tc.inputs); err == nil {
+			if _, _, err := h.runs.launch(t.Context(), tc.source, tc.inputs, marotte.RunDefaults{}); err == nil {
 				t.Errorf("Launch(%q, %v) = nil, want an error", tc.source, tc.inputs)
 			}
 			if calls := br.callLog(); slices.Contains(calls, methodKiroWorkflowNew) {
@@ -344,7 +344,7 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 		// Both name fields as the wire sends them; they agree only while unlabelled.
 		methodKiroWorkflowList: json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish","workflowName":"publish","status":"running"}]}`),
 	}
-	_, _, err := h.runs.launch(t.Context(), "bundled://publish", nil)
+	_, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
 	if err == nil || !strings.Contains(err.Error(), "live run") {
 		t.Fatalf("err = %v, want the single-run refusal", err)
 	}
@@ -354,7 +354,7 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 	)
 	br.callResults[methodKiroWorkflowNew] = json.RawMessage(`{"workflowId":"wf_2"}`)
 	br.callResults[methodKiroWorkflowInvoke] = json.RawMessage(`{}`)
-	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
+	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 		t.Fatalf("a terminal run blocked a relaunch: %v", err)
 	}
 }
@@ -718,7 +718,7 @@ func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 		methodKiroWorkflowNew: {Code: -32602, Message: "inputs.branch: Required"},
 	}
 
-	_, _, err := h.runs.launch(t.Context(), "bundled://publish", nil)
+	_, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
 	if err == nil {
 		t.Fatal("a launch KAS refused reported success")
 	}
@@ -913,7 +913,7 @@ func TestLaunchRun_SendsTheRunBridgesOwnSessionAsParent(t *testing.T) {
 		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
 	}
 
-	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
+	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
 
@@ -947,7 +947,7 @@ func TestLaunchRun_RefusesABridgeWithNoSession(t *testing.T) {
 	br.sessionID = ""
 	br.mu.Unlock()
 
-	_, _, err := h.runs.launch(t.Context(), "bundled://publish", nil)
+	_, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
 	if err == nil {
 		t.Fatal("Launch succeeded on a bridge with no session; want a refusal")
 	}

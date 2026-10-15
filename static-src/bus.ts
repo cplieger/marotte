@@ -258,6 +258,11 @@ export const BUS_COMMAND_FAILED = "command:failed" as const;
  * the bus: a direct call would close a ring, and no listener may exist.
  */
 export const BUS_USER_INPUT_ANSWERED = "user-input:answered" as const;
+/**
+ * The model catalog landed or changed. On the bus so a form holding its own copy (a workflow's Run
+ * or Schedule pick) follows it without the catalog reader knowing the form.
+ */
+export const BUS_CATALOG_MODELS = "catalog:models" as const;
 
 /** Payload shape per bus event. Events with no payload use `undefined`. */
 interface BusPayloads {
@@ -274,6 +279,7 @@ interface BusPayloads {
     readonly message: string;
   };
   readonly [BUS_USER_INPUT_ANSWERED]: { readonly chatID: string; readonly answer: string };
+  readonly [BUS_CATALOG_MODELS]: undefined;
 }
 
 // The generic bus is @cplieger/reactive's createBus; the SSE surface stays bespoke

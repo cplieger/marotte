@@ -254,6 +254,8 @@ export interface ModelInfo {
   /** This model's default tier (`_meta.kiro.defaultEffortLevel`): the pre-session fallback for the
    *  live-level highlight. The tier LIST is Session.effort_levels. */
   default_effort_level?: string;
+  /** This model's tier ids, lowest first (`_meta.kiro.effortLevels`); absent when it has none. */
+  effort_tiers?: readonly string[];
   /** Whether thinking can be turned off on this model
    *  (`_meta.kiro.thinkingToggleable`); the effort slider then offers an Off stop. */
   thinking_toggleable?: boolean;
