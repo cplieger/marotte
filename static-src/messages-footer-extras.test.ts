@@ -90,9 +90,11 @@ function cards(): HTMLElement[] {
   return root === null ? [] : [...root.querySelectorAll<HTMLElement>(":scope > .turn")];
 }
 
-async function paint(turnEntries: readonly (readonly Entry[])[]): Promise<HTMLElement[]> {
+async function paint(
+  turnEntries: readonly (readonly Entry[])[],
+  expected = turnEntries.length,
+): Promise<HTMLElement[]> {
   const id = nextChat();
-  const expected = turnEntries.length;
   const turns = new Map<string, TurnState>();
   const order: string[] = [];
   for (const entries of turnEntries) {
@@ -100,7 +102,13 @@ async function paint(turnEntries: readonly (readonly Entry[])[]): Promise<HTMLEl
     if (first === undefined) {
       continue;
     }
-    turns.set(first.turn, { entries: [...entries], openEntries: new Map() });
+    // `closeAt` as the store seats it, or the turn reads as still running.
+    const closeAt = entries.find((e) => e.kind === "turn_close")?.seq;
+    turns.set(first.turn, {
+      entries: [...entries],
+      openEntries: new Map(),
+      ...(closeAt === undefined ? {} : { closeAt }),
+    });
     order.push(first.turn);
   }
   // A held `chat` version marks the window fresh, or the activation refetches into the mocked loader.
@@ -208,5 +216,39 @@ describe("a footer earned by an extra mounts that extra's control", () => {
       buttons.every((b) => controlShows(b)),
       "every one of them visible",
     ).toBe(true);
+  });
+});
+
+describe("Rewind beside a turn the agent started", () => {
+  it("is enabled once every turn has closed", async () => {
+    const [first] = await paint([promptTurn(1, ""), promptTurn(2, "reply")]);
+    const btn = footerOf(first as HTMLElement)?.querySelector<HTMLButtonElement>(
+      ":scope > .turn-rewind",
+    );
+    expect(btn?.disabled).toBe(false);
+  });
+
+  it("is disabled while that turn is open, before anything streams", async () => {
+    // `thinking` stays false: only a streamed entry latches it, and this turn has none yet.
+    const wake: Entry[] = [
+      {
+        id: "t3-e0",
+        turn: "t3",
+        kind: "turn_open",
+        seq: 0,
+        ts: 1000,
+        payload: { source: "wire_turn_start", n: 3 },
+      } as Entry,
+    ];
+    // An open turn with nothing in it draws no card yet.
+    const [first] = await paint([promptTurn(1, ""), promptTurn(2, "reply"), wake], 2);
+    const btn = footerOf(first as HTMLElement)?.querySelector<HTMLButtonElement>(
+      ":scope > .turn-rewind",
+    );
+    expect(btn, "turn 1 has a rewind target").toBeDefined();
+    expect(btn?.disabled, "KAS refuses a revert while a turn runs").toBe(true);
+    expect(btn?.getAttribute("data-tooltip")).toBe(
+      "Cannot rewind while the agent is running. Cancel the turn first",
+    );
   });
 });

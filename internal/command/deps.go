@@ -268,6 +268,9 @@ type terminalAccess interface {
 // (the empty-turn retry) sees it whichever bridge the signal reached.
 type turnStopper interface {
 	RequestStop(chatID marotte.ChatID)
+	// ArmWireCancelGrace closes the agent-started turn a cancel targets unless its own end arrives
+	// within d; false when no such turn is open.
+	ArmWireCancelGrace(chatID marotte.ChatID, d time.Duration) bool
 }
 
 // shellReader reads the built-in shell's output for a `#` terminal reference.
@@ -371,9 +374,9 @@ type AdmissionOutcome int
 const (
 	// AdmissionAcquired means the caller holds the chat's admission slot.
 	AdmissionAcquired AdmissionOutcome = iota
-	// AdmissionBusy is the holder a steer can reach: a prompt-class turn
-	// with a live bridge. Answered as the plain 409, on which the client's
-	// 409→steer conversion works.
+	// AdmissionBusy is the holder a steer can reach
+	// (marotte.TurnOpenSource.SteerableHolder). Answered as the plain 409, on
+	// which the client steers or queues, per the chat's mode.
 	AdmissionBusy
 	// AdmissionStarting is every other holder: a cold spawn, or a shell on a
 	// bridged or bridgeless chat. Answered as 409 with the additive

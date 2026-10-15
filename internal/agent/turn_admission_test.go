@@ -320,6 +320,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 		}
 	}()
 	waitForCall(t, first, marotte.MethodPrompt)
+	first.deliver(newTurnStartMsg())
 	first.deliver(newTurnEndMsg("end_turn"))
 	close(gate)
 
@@ -658,21 +659,58 @@ func TestShutdown_AUserCancelCauseOutranksTheShutdownCause(t *testing.T) {
 	}
 }
 
-// A wire turn holds no reservation, so only a reserve that reads every holder in the same acquisition keeps a
-// rewind from reserving beside it.
-func TestTryReserveIdleTurn_RefusesBesideAWireTurnTheBareReserveAdmits(t *testing.T) {
-	h, cs, _ := newTestHub()
-	seedChat(t, cs, "c1")
-	h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
-	if _, open := ownID(h, "c1"); !open {
-		t.Fatal("setup: a turn_start with nothing pending opened no wire turn")
+// Every reserve refuses beside a turn KAS bracketed, since each one sends a session/prompt or opens a turn; beside a
+// fold-opened wire turn only the idle reserve, which reads every holder, refuses.
+func TestTryReserve_BesideAWireTurn(t *testing.T) {
+	cases := []struct {
+		name      string
+		open      func(t *testing.T, h *Runtime)
+		wantBare  bool
+		wantFence bool
+	}{
+		{
+			name: "a bracketed wire turn",
+			open: func(_ *testing.T, h *Runtime) { h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg()) },
+		},
+		{
+			name: "a fold-opened wire turn",
+			open: func(t *testing.T, h *Runtime) {
+				if h.stageWireTurn(t, "c1") == nil {
+					t.Fatal("setup: the fold opened no wire turn")
+				}
+			},
+			wantBare:  true,
+			wantFence: true,
+		},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			seedChat(t, cs, "c1")
+			tc.open(t, h)
+			if _, open := ownID(h, "c1"); !open {
+				t.Fatal("setup: no wire turn is open")
+			}
 
-	if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceLocalShell) {
-		t.Error("TryReserveIdleTurn(c1) reserved beside an open wire turn, want refused")
-	}
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
-		t.Fatal("setup: TryReserveTurn refused, so this chat does not show a wire turn holding no reservation")
+			if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceLocalShell) {
+				t.Error("TryReserveIdleTurn reserved beside an open wire turn, want refused")
+				h.coord.ReleaseTurnReservation("c1")
+			}
+			got := h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt)
+			if got {
+				h.coord.ReleaseTurnReservation("c1")
+			}
+			if got != tc.wantBare {
+				t.Errorf("TryReserveTurn = %t, want %t", got, tc.wantBare)
+			}
+			got = h.coord.TryReserveTurnFenced("c1", marotte.TurnSourcePrompt, command.TurnFence{})
+			if got {
+				h.coord.ReleaseTurnReservation("c1")
+			}
+			if got != tc.wantFence {
+				t.Errorf("TryReserveTurnFenced = %t, want %t", got, tc.wantFence)
+			}
+		})
 	}
 }
 
@@ -687,5 +725,217 @@ func TestTryReserveIdleTurn_TakesAnIdleSlotAndRefusesAHeldOne(t *testing.T) {
 	}
 	if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt) {
 		t.Error("a second TryReserveIdleTurn(c1) took a held slot")
+	}
+}
+
+// A turn KAS starts itself (a send_message wake) holds no reservation, yet a prompt beside it must answer Busy: KAS
+// aborts its running turn on any session/prompt. A fold-opened wire turn admits: no turn_end is owed for it, so a
+// refusal would last until a later turn_start or the bridge's death.
+func TestReserveTurnForPrompt_BesideAWireTurn(t *testing.T) {
+	cases := []struct {
+		name string
+		open func(t *testing.T, h *Runtime)
+		want command.AdmissionOutcome
+	}{
+		{
+			name: "a bracketed wire turn answers busy",
+			open: func(_ *testing.T, h *Runtime) { h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg()) },
+			want: command.AdmissionBusy,
+		},
+		{
+			name: "a bracketed wire turn that ended admits",
+			open: func(_ *testing.T, h *Runtime) {
+				h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
+				h.translateACPEvent("c1", h.originOf("c1"), newTurnEndMsg("end_turn"))
+			},
+			want: command.AdmissionAcquired,
+		},
+		{
+			name: "a fold-opened wire turn admits",
+			open: func(t *testing.T, h *Runtime) {
+				if h.stageWireTurn(t, "c1") == nil {
+					t.Fatal("setup: the fold opened no wire turn")
+				}
+			},
+			want: command.AdmissionAcquired,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			seedChat(t, cs, "c1")
+			tc.open(t, h)
+
+			got := h.coord.ReserveTurnForPrompt(t.Context(), "c1", 60*time.Millisecond)
+			if got == command.AdmissionAcquired {
+				h.coord.ReleaseTurnReservation("c1")
+			}
+			if got != tc.want {
+				t.Errorf("ReserveTurnForPrompt = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// wakeTurnHub is a chat with a live bridge and a turn KAS opened itself, nothing streamed into it yet.
+func wakeTurnHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
+	t.Helper()
+	s, cs, br := steerOpsHub(t)
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+	if _, open := ownID(s.h, "c1"); !open {
+		t.Fatal("setup: a turn_start with nothing pending opened no wire turn")
+	}
+	return s.h, cs, br
+}
+
+// The composer's Send beside an agent-initiated turn answers the plain 409 the client steers or queues on, and
+// reaches neither the log nor KAS.
+func TestCmdPrompt_BesideAWireTurnAnswersThePlainBusyAndSendsNothing(t *testing.T) {
+	h, cs, br := wakeTurnHub(t)
+	opens := len(opensOf(t, logOf(t, cs, "c1")))
+
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
+	})
+	joinInflight(t, h)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body %s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal body %q: %v", rec.Body.String(), err)
+	}
+	if body.Reason != "" {
+		t.Errorf("reason = %q, want the plain 409 the client converts into its busy verb", body.Reason)
+	}
+	if got := len(opensOf(t, logOf(t, cs, "c1"))); got != opens {
+		t.Errorf("turn_open entries = %d, want %d: a refused prompt opens no turn", got, opens)
+	}
+	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
+		t.Errorf("bridge calls = %v, want no session/prompt beside the running turn", br.callLog())
+	}
+}
+
+// A message marotte delivers for the user (a loop-limit wake) joins an agent-initiated turn as a steer.
+func TestDeliverForUser_SteersAWireTurnAndNeverPrompts(t *testing.T) {
+	h, _, br := wakeTurnHub(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	if err := h.dispatcher.DeliverForUser(ctx, "c1", "the loop paused", "Loop limit reached"); err != nil {
+		t.Fatalf("DeliverForUser = %v, want delivered", err)
+	}
+	joinInflight(t, h)
+
+	calls := br.callLog()
+	if !slices.Contains(calls, marotte.MethodSessionSteer) {
+		t.Errorf("bridge calls = %v, want a _session/steer into the running turn", calls)
+	}
+	if slices.Contains(calls, marotte.MethodPrompt) {
+		t.Errorf("bridge calls = %v, want no session/prompt beside the running turn", calls)
+	}
+}
+
+// A `!cmd` beside an agent-initiated turn is refused as busy: its turn cannot open beside an open one.
+func TestShell_BesideAWireTurnIsRefusedAsBusy(t *testing.T) {
+	h, cs, _ := wakeTurnHub(t)
+	opens := len(opensOf(t, logOf(t, cs, "c1")))
+
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"!echo hi","message_id":"m-1"}`),
+	})
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409 (body %s)", rec.Code, rec.Body.String())
+	}
+	if got := len(opensOf(t, logOf(t, cs, "c1"))); got != opens {
+		t.Errorf("turn_open entries = %d, want %d", got, opens)
+	}
+}
+
+// mergeHub is a hub whose every bridge lists the tangent "c-tangent" (session s-fork) as forked from the parent "c1"
+// (s-parent) and answers a prompt with a summary.
+func mergeHub(t *testing.T) (*Runtime, *testChatStore, func(method string) int) {
+	t.Helper()
+	cs := newTestChatStore()
+	var mu sync.Mutex
+	var spawned []*fakeBridge
+	rows := sessionRowsJSON(t, map[string]string{"s-fork": "s-parent", "s-parent": ""})
+	h := New(context.Background(), "/tmp/work", func() ACPBridge {
+		b := newFakeBridge()
+		b.callResults = map[string]json.RawMessage{marotte.MethodSessionList: rows}
+		b.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"Found it."}}
+		mu.Lock()
+		spawned = append(spawned, b)
+		mu.Unlock()
+		return b
+	}, cs)
+	h.runs.cancelRetryBase = time.Hour
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	seedChain(t, cs, "c1", "s-parent")
+	seedChain(t, cs, "c-tangent", "s-fork")
+	calls := func(method string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		n := 0
+		for _, b := range spawned {
+			n += countCalls(b, method)
+		}
+		return n
+	}
+	return h, cs, calls
+}
+
+func mergeCmd(tangent marotte.ChatID) marotte.ClientCommand {
+	return marotte.ClientCommand{Type: marotte.CmdMergeTangent, ChatID: tangent, Payload: json.RawMessage(`{"op_id":"op-1"}`)}
+}
+
+// Merging a tangent while KAS runs a turn of its own there is refused as busy, like any running turn: the summary
+// prompt would abort it.
+func TestMergeTangent_ATangentRunningAWakeTurnIsRefusedBusy(t *testing.T) {
+	h, _, calls := mergeHub(t)
+	h.translateACPEvent("c-tangent", h.originOf("c-tangent"), newTurnStartMsg())
+
+	rec := postCmd(t, h, mergeCmd("c-tangent"))
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"busy"`) {
+		t.Errorf("merge_tangent = %d %s, want 409 busy", rec.Code, rec.Body.String())
+	}
+	if n := calls(marotte.MethodPrompt); n != 0 {
+		t.Errorf("session/prompt calls = %d, want none beside the running turn", n)
+	}
+}
+
+// The findings for a parent running a turn KAS started are queued behind it, never prompted into it.
+func TestMergeTangent_QueuesTheFindingsBehindAParentsWakeTurn(t *testing.T) {
+	h, cs, calls := mergeHub(t)
+	h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
+
+	if rec := postCmd(t, h, mergeCmd("c-tangent")); rec.Code != http.StatusOK {
+		t.Fatalf("merge_tangent = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	waitFor(t, func() bool {
+		c, _ := cs.Get(t.Context(), "c-tangent")
+		return len(c.TangentMerges) == 1 && c.TangentMerges[0].State != marotte.TangentMergeRunning
+	})
+
+	if c, _ := cs.Get(t.Context(), "c-tangent"); c.TangentMerges[0].State != marotte.TangentMergeSucceeded {
+		t.Errorf("merge state = %q, want succeeded", c.TangentMerges[0].State)
+	}
+	rows := queuedRows(t, cs, "c1")
+	if len(rows) != 1 || !strings.Contains(rows[0].Text, "Found it.") {
+		t.Errorf("parent's queue = %+v, want the findings queued", rows)
+	}
+	if n := calls(marotte.MethodPrompt); n != 1 {
+		t.Errorf("session/prompt calls = %d, want the tangent's summary only", n)
+	}
+	if ids := promptIDs(t, cs, "c1"); len(ids) != 0 {
+		t.Errorf("parent prompt turns = %v, want none beside the running turn", ids)
 	}
 }

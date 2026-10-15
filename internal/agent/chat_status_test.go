@@ -348,7 +348,7 @@ func TestEmitChatStatus_DoesNotStageAMergedDescription(t *testing.T) {
 	rt.bus.Broadcast(t.Context(), marotte.NewEvent(marotte.EventChatStatus, "c1",
 		marotte.ChatStatusPayload{Status: "in_progress"}))
 
-	// Read the field directly: claimOwn would move the turn into finalizing.
+	// Read the field directly: claimTurn would move the turn into finalizing.
 	lc, ok := rt.coord.turns.lookup("c1")
 	if !ok {
 		t.Fatal("no chat lifecycle for c1")

@@ -399,6 +399,50 @@ export function isThinking(id: string): boolean {
   return get(id)?.thinking ?? false;
 }
 
+/** Is a turn RUNNING as Send and every mid-turn gate read it? `thinking` alone misses a turn the
+ *  agent started itself until it streams, and a prompt sent beside that turn cancels it;
+ *  `turnLive` alone misses Send's optimistic window before `turn_opened`. `/drop` waives the
+ *  turns open when it ran (`Session.turn_dropped`). */
+export function sessionBusy(s: Session): boolean {
+  return s.thinking || (s.turn_dropped !== true && turnLive(s));
+}
+
+/** `sessionBusy` by id, untracked. */
+export function isBusy(id: string): boolean {
+  const s = get(id);
+  return s !== undefined && sessionBusy(s);
+}
+
+/** `sessionBusy` as a TRACKED read. Opening or closing a turn changes the turn map in place and
+ *  bumps only the transcript version, so the read subscribes to that too. */
+export function watchBusy(id: string): boolean {
+  touch(messagesVersionOf(id));
+  const s = watchSession(id);
+  return s !== undefined && sessionBusy(s);
+}
+
+/** `/drop`: the chat reads idle to the composer until a new turn opens (`clearTurnDropped`) or
+ *  streams (`setThinking`). */
+export function dropTurnLocally(id: string): void {
+  if (get(id) === undefined) {
+    return;
+  }
+  setThinking(id, false);
+  sessions.update(id, (s) => ({ ...s, turn_dropped: true }));
+}
+
+/** A live `turn_opened` ends a `/drop`'s waiver: the new turn is running. */
+export function clearTurnDropped(id: string): void {
+  if (get(id)?.turn_dropped !== true) {
+    return;
+  }
+  sessions.update(id, (s) => {
+    const next = { ...s };
+    delete next.turn_dropped;
+    return next;
+  });
+}
+
 /** Whether a chat holds no conversation at all: nothing on the record and nothing resident. Both
  *  halves are load-bearing, which is why this is one predicate. */
 export function isEmptyChat(s: Session | undefined): boolean {
@@ -419,6 +463,7 @@ export function setThinking(id: string, v: boolean): void {
     if (v) {
       delete next.agent_status;
       delete next.turn_open;
+      delete next.turn_dropped;
     }
     return next;
   });

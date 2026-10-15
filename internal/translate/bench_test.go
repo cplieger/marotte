@@ -450,7 +450,7 @@ type runCall struct {
 	elapsedMs float64
 }
 
-// The three turn-bracket operations, recorded rather than performed: the host
+// The turn-bracket operations, recorded rather than performed: the host
 // owns the turn lifecycle, and what this package is responsible for is calling
 // the right one on the right frame.
 func (d *baseDeps) WireTurnStart(_ context.Context, chatID marotte.ChatID) {
@@ -459,6 +459,14 @@ func (d *baseDeps) WireTurnStart(_ context.Context, chatID marotte.ChatID) {
 
 func (d *baseDeps) WireTurnEnd(_ context.Context, chatID marotte.ChatID, stop marotte.StopReason) {
 	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "end", stop: stop})
+}
+
+func (d *baseDeps) WireTurnActivity(chatID marotte.ChatID, active bool) {
+	kind := "idle"
+	if active {
+		kind = "active"
+	}
+	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: kind})
 }
 
 func (d *baseDeps) ReviseTurnBinding(_ context.Context, chatID marotte.ChatID) {

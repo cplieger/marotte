@@ -22,7 +22,7 @@ import {
 } from "../run-store.js";
 import { isBroken } from "../turn-severity.js";
 import { payloadOf } from "../turns.js";
-import { isThinking } from "../store.js";
+import { isBusy } from "../store.js";
 import { trackRun } from "../run-dots.js";
 import { dropRunRequests, dropTurnDecisions } from "../decision-dock.js";
 import { applyRunAsks, runAskPosition } from "../run-asks.js";
@@ -107,7 +107,7 @@ onSSE("run_finished", (chatID, p) => {
     // whose `turn_closed` trigger never fires for a step-driven turn. Gate 1 spares the turn of a user
     // who prompted meanwhile (a live JSON-RPC request); gate 2 spares a still-running sibling run's
     // orphan. An empty chat id is a parentless run, already reached through `run:<id>`.
-    if (chatID !== "" && !isThinking(chatID) && !hasLiveRunForChat(chatID)) {
+    if (chatID !== "" && !isBusy(chatID) && !hasLiveRunForChat(chatID)) {
       dropTurnDecisions(chatID);
     }
   }

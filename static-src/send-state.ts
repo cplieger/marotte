@@ -1,7 +1,7 @@
 // Derives the send-button state from the global pieces of the world:
 
 import { signal, computed, effect } from "@cplieger/reactive";
-import { activeSession } from "./store.js";
+import { activeSession, watchBusy } from "./store.js";
 import { setSendState } from "./prompt-input.js";
 import type { SendState } from "./prompt-input.js";
 import type { ConnectionStatus } from "./types.js";
@@ -21,7 +21,7 @@ const sendState = computed<SendState>(() => {
   if (session === undefined) {
     return { kind: "idle" };
   }
-  if (session.thinking) {
+  if (watchBusy(session.id)) {
     return { kind: "streaming" };
   }
   return { kind: "idle" };

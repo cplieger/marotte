@@ -47,8 +47,8 @@ func handleShellInterception(ctx context.Context, roles *promptRoles, cmd *marot
 	}
 
 	// The same per-chat reservation a prompt takes, as a try: one mechanism serializes prompts and
-	// shells.
-	if !roles.admission.TryReserveTurn(cmd.ChatID, marotte.TurnSourceLocalShell) {
+	// shells. Idle, because a wire turn holds no reservation and the shell turn's open refuses beside it.
+	if !roles.admission.TryReserveIdleTurn(cmd.ChatID, marotte.TurnSourceLocalShell) {
 		return nil, StatusError(http.StatusConflict, errBusy)
 	}
 	defer roles.admission.ReleaseTurnReservation(cmd.ChatID)

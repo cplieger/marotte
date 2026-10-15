@@ -14,7 +14,7 @@ const { PRIOR_PROMPT } = vi.hoisted(() => ({ PRIOR_PROMPT: "the prompt before th
 vi.mock("./store.js", () => ({
   // No active chat: the busy placeholder reads Steer, which no case here observes.
   activeSession: { value: undefined, peek: () => undefined },
-  turnLive: () => false,
+  sessionBusy: () => false,
   promptOpened: () => false,
   messagesVersionOf: () => ({ value: 0 }),
   getActive: () => ({

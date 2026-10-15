@@ -62,15 +62,16 @@ func (bc *bridgeCoordinator) OpenTurn(ctx context.Context, chatID marotte.ChatID
 	return t.ID, nil
 }
 
-// Nil when refused, and the caller drops the frame. It takes no completion handle: nobody would
-// release it.
-func (bc *bridgeCoordinator) openWireTurn(ctx context.Context, chatID marotte.ChatID) *activeTurn {
+// Nil when refused, and the caller drops the frame. bracketed is whether a turn_start opens it. It takes no
+// completion handle: nobody would release it.
+func (bc *bridgeCoordinator) openWireTurn(ctx context.Context, chatID marotte.ChatID, bracketed bool) *activeTurn {
 	var t *activeTurn
 	created := false
 	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
 		if lc.own != nil && !lc.own.finalizing {
 			// Lost the open race: fold into the turn already announced.
 			t = lc.own
+			t.bracketed = t.bracketed || bracketed
 			return nil
 		}
 		if lc.own != nil {
@@ -87,6 +88,7 @@ func (bc *bridgeCoordinator) openWireTurn(ctx context.Context, chatID marotte.Ch
 		}
 		t = lc.openLocked(chatID, opened, marotte.TurnSourceWireTurnStart, model, log)
 		t.acked = true
+		t.bracketed = bracketed
 		created = true
 		return nil
 	})

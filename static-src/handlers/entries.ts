@@ -6,6 +6,7 @@ import {
   appendEntry,
   applyDelta,
   applyToolProgress,
+  clearTurnDropped,
   get,
   markSteersCompacted,
   openEntry,
@@ -28,6 +29,7 @@ onSSE("turn_opened", (chatID, p) => {
   if (forRun(p)) {
     return;
   }
+  clearTurnDropped(chatID);
   openTurn(chatID, p.entry);
 });
 

@@ -56,16 +56,16 @@ func TestTurnRegistry_InterruptIsFirstWinsPerTurn(t *testing.T) {
 // winner's unlocked persistence and broadcast rather than a half-finalized turn.
 func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 	reg := newTurnRegistry()
-	openTestTurn(t, reg, "c1")
+	open := openTestTurn(t, reg, "c1")
 
-	turn, won := reg.claimOwn(t.Context(), "c1")
+	turn, won := reg.claimTurn(t.Context(), "c1", open.ID)
 	if !won {
 		t.Fatal("claiming an open turn must be taken")
 	}
 
 	second := make(chan bool, 1)
 	go func() {
-		_, ok := reg.claimOwn(context.WithoutCancel(t.Context()), "c1")
+		_, ok := reg.claimTurn(context.WithoutCancel(t.Context()), "c1", open.ID)
 		second <- ok
 	}()
 	select {
@@ -90,7 +90,7 @@ func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 	reg := newTurnRegistry()
 	first := openTestTurn(t, reg, "c1")
-	if _, won := reg.claimOwn(t.Context(), "c1"); !won {
+	if _, won := reg.claimTurn(t.Context(), "c1", first.ID); !won {
 		t.Fatal("claiming the open turn must be taken")
 	}
 
@@ -131,8 +131,8 @@ func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 // TestTurnRegistry_OpenIsCancellable pins that a channel, unlike sync.Cond, lets a waiter give up on a wedged chat.
 func TestTurnRegistry_OpenIsCancellable(t *testing.T) {
 	reg := newTurnRegistry()
-	openTestTurn(t, reg, "c1")
-	if _, won := reg.claimOwn(t.Context(), "c1"); !won {
+	open := openTestTurn(t, reg, "c1")
+	if _, won := reg.claimTurn(t.Context(), "c1", open.ID); !won {
 		t.Fatal("claiming the open turn must be taken")
 	}
 
@@ -220,10 +220,10 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 	const chatID marotte.ChatID = "c1"
 
 	lc := r.lifecycleFor(chatID)
-	openTestTurn(t, r, chatID)
-	claimed, won := r.claimOwn(ctx, chatID)
+	open := openTestTurn(t, r, chatID)
+	claimed, won := r.claimTurn(ctx, chatID, open.ID)
 	if !won {
-		t.Fatal("claimOwn lost the claim on a freshly opened turn")
+		t.Fatal("claimTurn lost the claim on a freshly opened turn")
 	}
 
 	r.forget(chatID)
@@ -291,10 +291,10 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 	// ReleaseTurn leaves the turn open, so it must be finalized for the chat to be idle.
 	t.Run("a settled chat is not busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		h.stagePromptTurn(t, "c1")
-		turn, won := h.coord.turns.claimOwn(t.Context(), "c1")
+		id, _ := h.stagePromptTurn(t, "c1")
+		turn, won := h.coord.turns.claimTurn(t.Context(), "c1", id)
 		if !won {
-			t.Fatal("claimOwn lost the claim on a freshly opened turn")
+			t.Fatal("claimTurn lost the claim on a freshly opened turn")
 		}
 		h.coord.turns.finish(turn, marotte.TurnResult{})
 		if busySet(t, h.coord.turns)["c1"] {

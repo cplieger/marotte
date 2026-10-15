@@ -4,7 +4,7 @@
 // The server is the source of truth: a prompt posts a command and SSE drives rendering.
 
 import type { ServerEvent } from "./types.js";
-import { getActiveId, getSessions, isThinking } from "./store.js";
+import { getActiveId, getSessions, isBusy } from "./store.js";
 import { effect } from "@cplieger/reactive";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js";
 import { findGlyph } from "./icons.js";
@@ -453,7 +453,7 @@ function setupInput(): void {
       if (getActiveId() === "") {
         return;
       }
-      if (!isThinking(getActiveId())) {
+      if (!isBusy(getActiveId())) {
         return;
       }
       void cancelTurn.dispatch({ chatID: getActiveId() });

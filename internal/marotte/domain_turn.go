@@ -64,10 +64,10 @@ const (
 )
 
 // PromptClass reports whether a turn opened by this source is a user prompt
-// marotte dispatched — the holders a second prompt can reach with a steer, which
-// is what the admission refusal arm keys on and its ONLY reader. A workflow
-// step's turn is deliberately not one: a steer aimed into it is read as that
-// step's own input rather than as the reader's correction.
+// marotte dispatched, which steer routing, parked-steer delivery and admission
+// (SteerableHolder) key on. A workflow step's turn is deliberately not one: a
+// steer aimed into it is read as that step's own input rather than as the
+// reader's correction.
 func (s TurnOpenSource) PromptClass() bool {
 	switch s {
 	case TurnSourcePrompt, TurnSourceEmptyRetry:
@@ -77,11 +77,19 @@ func (s TurnOpenSource) PromptClass() bool {
 	}
 }
 
+// SteerableHolder reports whether a prompt refused by a holder of this source is
+// answered Busy, which the client turns into a steer or a queued follow-up. A
+// wire turn qualifies: KAS reads a steer at its next node boundary as for any
+// turn, and a session/prompt beside it would abort it.
+func (s TurnOpenSource) SteerableHolder() bool {
+	return s.PromptClass() || s == TurnSourceWireTurnStart
+}
+
 // UserAnswered reports whether opening a turn from this source IS the user
 // answering a question the agent left standing, which is what discharges the
 // retained waiting_on_user status. A `!cmd` is not one: it reaches no agent.
-// Separate from PromptClass because that predicate answers for admission, and
-// widening one for admission reasons must not move a cache lifecycle.
+// Separate from PromptClass because that predicate answers for steering and
+// admission, and widening one for those reasons must not move a cache lifecycle.
 func (s TurnOpenSource) UserAnswered() bool {
 	switch s {
 	case TurnSourcePrompt, TurnSourceEmptyRetry:

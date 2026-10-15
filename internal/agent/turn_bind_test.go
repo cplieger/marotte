@@ -72,9 +72,8 @@ func TestWireTurnStart_BindsThePendingPreOpen(t *testing.T) {
 func TestWireTurnStart_ClosesATurnWhoseEndNeverArrived(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
+	// streamingPromptTurn's turn_start acknowledges it, so the next bracket finds nothing pending.
 	first, _ := streamingPromptTurn(t, h, chatID, "the first turn's reply")
-	// Acknowledge it, so the next bracket finds nothing pending.
-	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
 
 	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
 

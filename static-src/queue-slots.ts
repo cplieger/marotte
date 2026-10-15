@@ -1,5 +1,5 @@
 import { touch } from "@cplieger/reactive";
-import { messagesVersionOf, promptOpened, turnLive } from "./store.js";
+import { messagesVersionOf, promptOpened, sessionBusy } from "./store.js";
 import type { PendingSteer, QueuedPrompt, Session } from "./types.js";
 
 /** When the server sends a queued row. `turns` counts turn ends, the running turn's included, or
@@ -45,7 +45,7 @@ function drainSlots(
  *  place and bumps only the transcript version, so the read subscribes to that too. */
 export function sessionDrain(s: Session): { rows: QueuedSlot[]; next: number } {
   touch(messagesVersionOf(s.id));
-  return drainSlots(s.steers ?? [], s.queued ?? [], turnLive(s), (id) => promptOpened(s, id));
+  return drainSlots(s.steers ?? [], s.queued ?? [], sessionBusy(s), (id) => promptOpened(s, id));
 }
 
 /** The turns a wait covers, as "after …" completes it. */

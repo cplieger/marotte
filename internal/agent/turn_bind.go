@@ -88,6 +88,7 @@ func (lc *chatLifecycle) revisableLocked() *activeTurn {
 // turn drops back to pending, owed its bracket. Sealed entries stay. Caller holds mu.
 func (lc *chatLifecycle) reviseLocked(pre, agent *activeTurn) {
 	agent.acked = true
+	agent.bracketed = true
 	agent.Opened = pre.Opened
 	pre.acked = false
 	lc.pending = pre

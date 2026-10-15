@@ -106,6 +106,7 @@ func TestHandleShellInterception_HandsTheOutputToTheTurnCloserOnce(t *testing.T)
 	}
 	store, bus, deps := storeAndBus(t)
 	seedEmptyChat(t, store, "c1")
+	deps.holderOpen = false
 	closer := &shellStoreDeps{benchDeps: deps.benchDeps}
 	roles := &recordingRoles{storeDeps: deps, bus: bus}
 	pr := promptRolesOf(deps)

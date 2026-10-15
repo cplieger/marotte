@@ -4,7 +4,7 @@
 
 import { el, effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";
-import { activeSession, isThinking, isEmptyChat } from "./store.js";
+import { activeSession, isBusy, isEmptyChat, watchBusy } from "./store.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { iconEl } from "./icon-el.js";
 import {
@@ -252,7 +252,7 @@ function mergeRow(): HTMLElement {
       if (session?.tangent !== true) {
         return;
       }
-      if (isThinking(session.id)) {
+      if (isBusy(session.id)) {
         chatNotice(session.id, MERGE_HINT_BUSY, "error");
         return;
       }
@@ -265,7 +265,7 @@ function mergeRow(): HTMLElement {
   effect(() => {
     const session = activeSession.value;
     const shown = session?.tangent === true;
-    const busy = session !== undefined && isThinking(session.id);
+    const busy = session !== undefined && watchBusy(session.id);
     const nextHint = busy ? MERGE_HINT_BUSY : MERGE_HINT;
     if (row.classList.contains("hidden") !== !shown) {
       row.classList.toggle("hidden", !shown);
@@ -305,7 +305,7 @@ function compactRow(): HTMLElement {
         chatNotice(session.id, "Send a message first, then compact the conversation", "error");
         return;
       }
-      if (isThinking(session.id)) {
+      if (isBusy(session.id)) {
         chatNotice(
           session.id,
           "Wait for this turn to finish, then compact the conversation",
@@ -323,7 +323,7 @@ function compactRow(): HTMLElement {
   effect(() => {
     const session = activeSession.value;
     const empty = isEmptyChat(session);
-    const busy = session !== undefined && isThinking(session.id);
+    const busy = session !== undefined && watchBusy(session.id);
     const nextHint = empty ? COMPACT_HINT_EMPTY : busy ? COMPACT_HINT_BUSY : COMPACT_HINT;
     if (hint.textContent === nextHint) {
       return;
@@ -403,7 +403,7 @@ function goalForm(): HTMLElement {
       chatNotice(id, "Describe the goal before setting it", "error");
       return;
     }
-    if (isThinking(id)) {
+    if (isBusy(id)) {
       // Mid-turn Send means STEER, and `_session/steer` never reaches parseGoalCommand.
       chatNotice(id, "Wait for this turn to finish, then set the goal", "error");
       return;

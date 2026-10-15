@@ -15,7 +15,7 @@ import { renderMarkdownInto } from "./markdown.js";
 import { paintIfChanged, sigChanged } from "./paint-sig.js";
 import { initSegmentedBar } from "./segmented-bar.js";
 import { editorDocSkeleton } from "./skeleton.js";
-import { get, isThinking, watchSession } from "./store.js";
+import { get, isBusy, watchBusy } from "./store.js";
 import { openChatRefs, openSpecRefs, parentChatRef, setTabParent, tabIdFor } from "./tabs.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { SharedScroll } from "./view-scroll.js";
@@ -255,7 +255,7 @@ function installOnce(): void {
       return;
     }
     const chat = targetChat(ref);
-    const thinking = chat === "" ? false : (watchSession(chat)?.thinking ?? false);
+    const thinking = chat !== "" && watchBusy(chat);
     onThinking(ref, thinking);
   });
 }
@@ -337,7 +337,7 @@ function armRunAll(ref: string, scope: RunScope): void {
     return;
   }
   st.armedRunAll = scope;
-  if (!isThinking(targetChat(ref))) {
+  if (!isBusy(targetChat(ref))) {
     void fireArmedRunAll(ref);
   }
 }
@@ -689,7 +689,7 @@ async function runTask(ref: string, id: string, hash: string): Promise<void> {
     return;
   }
   const tasks = tasksDoc(st.spec)?.tasks ?? [];
-  const verdict = eligibility(tasks, id, hash, isThinking(chat));
+  const verdict = eligibility(tasks, id, hash, isBusy(chat));
   if (!verdict.ok) {
     st.failure = verdict.reason;
     paint(ref);
@@ -891,7 +891,7 @@ function paint(ref: string): void {
   }
   const page = st.page;
   const chat = targetChat(ref);
-  const thinking = chat !== "" && isThinking(chat);
+  const thinking = chat !== "" && isBusy(chat);
 
   const headParts = [
     String(st.gone),

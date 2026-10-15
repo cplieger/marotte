@@ -31,10 +31,14 @@ type focusActivity struct {
 	TurnActive bool `json:"turnActive"`
 }
 
-// handleFocusUpdate adopts the title onto the chat record unless a rule refuses it, and
-// broadcasts status/description as an ephemeral chat_status. Parent-only. The door rule runs
-// here; the derivation filter needs the chat's prompts and runs in applyFocusTitle.
+// handleFocusUpdate hands the engine's activity to the turn lifecycle, adopts the title onto the
+// chat record unless a rule refuses it, and broadcasts status/description as an ephemeral
+// chat_status. Parent-only. The door rule runs here; the derivation filter needs the chat's
+// prompts and runs in applyFocusTitle.
 func (t *Translator) handleFocusUpdate(ctx context.Context, chatID marotte.ChatID, f *focusUpdate, activity *focusActivity) {
+	if activity != nil {
+		t.bracket.WireTurnActivity(chatID, activity.TurnActive)
+	}
 	if title := SanitizeTitle(f.Title); title != "" {
 		t.adoptOrRefuseTitle(ctx, chatID, title)
 	}

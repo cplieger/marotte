@@ -102,7 +102,7 @@ type heldAdmissionDeps struct {
 	tried int
 }
 
-func (d *heldAdmissionDeps) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool {
+func (d *heldAdmissionDeps) TryReserveIdleTurn(marotte.ChatID, marotte.TurnOpenSource) bool {
 	d.tried++
 	return false
 }
@@ -125,7 +125,7 @@ func TestHandleShellInterception_HeldAdmissionReturns409Immediately(t *testing.T
 		t.Errorf("body = %q, want it to mention busy", errText(err))
 	}
 	if deps.tried != 1 {
-		t.Errorf("TryReserveTurn called %d times, want 1: the shell door admits through the reservation", deps.tried)
+		t.Errorf("TryReserveIdleTurn called %d times, want 1: the shell door admits through the reservation", deps.tried)
 	}
 	if elapsed > time.Second {
 		t.Errorf("refusal took %v, want an immediate answer", elapsed)
@@ -165,7 +165,7 @@ func TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand(t *tes
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skipf("sh not available: %v", err)
 	}
-	deps := &shellStoreDeps{benchDeps: newBenchDeps()}
+	deps := &shellStoreDeps{benchDeps: &benchDeps{}}
 	cmd := &marotte.ClientCommand{Type: "prompt", ChatID: "c1"}
 	// Units of 1000, not 1024: 1 MiB is a multiple of 1024 and of io.Copy's 32 KiB buffer, so an
 	// aligned producer would miss the short-write path.
@@ -241,7 +241,7 @@ func TestHandleShellInterception_SuccessLogsTheOutcomeHonestly(t *testing.T) {
 		t.Skipf("sh not available: %v", err)
 	}
 	logs := captureLogs(t)
-	deps := &shellStoreDeps{benchDeps: newBenchDeps()}
+	deps := &shellStoreDeps{benchDeps: &benchDeps{}}
 	cmd := &marotte.ClientCommand{Type: "prompt", ChatID: "c1"}
 	p := &marotte.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
 

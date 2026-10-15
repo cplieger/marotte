@@ -5,7 +5,7 @@
 // second button beside Cancel sends it, because a touch Return is a new line.
 
 import { $, byId } from "./dom.js";
-import { activeSession, getActive, getActiveId, turnLive } from "./store.js";
+import { activeSession, getActive, getActiveId, sessionBusy } from "./store.js";
 import { sessionDrain, turnsPhrase } from "./queue-slots.js";
 import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
@@ -29,7 +29,7 @@ const queueWait = computed(() => {
   if (s === undefined) {
     return turnsPhrase(1, true);
   }
-  return turnsPhrase(sessionDrain(s).next, turnLive(s));
+  return turnsPhrase(sessionDrain(s).next, sessionBusy(s));
 });
 
 /** While a turn runs the placeholder names what Send will do with the text. */
