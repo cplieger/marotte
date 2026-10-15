@@ -70,21 +70,7 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 	cctx, cancel := context.WithTimeout(r.Context(), configTemplateTimeout)
 	defer cancel()
 	// No early return: a template outage still serves the live catalog.
-	var out *configTemplateAssembly
-	raw, err := u.session.configTemplateRaw(cctx)
-	switch {
-	case err != nil:
-		slog.Warn("config template failed", "error", err)
-		out = unavailableTemplate(marotte.CatalogReasonRPC)
-	default:
-		var tpl kasConfigTemplate
-		if uErr := json.Unmarshal(raw, &tpl); uErr != nil {
-			slog.Warn("config template decode failed", "error", uErr)
-			out = unavailableTemplate(marotte.CatalogReasonDecode)
-		} else {
-			out = templateToResponse(&tpl)
-		}
-	}
+	out := readTemplate(cctx, u.session)
 	modes, models, stamp := rt.catalog.modesModelsStamped()
 	if len(modes) > 0 {
 		out.response.Modes = modes
@@ -97,6 +83,35 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 	stamp.Epoch = rt.Epoch()
 	out.response.Subject = stamp
 	webhttp.WriteJSON(w, withCatalogVerdict(out))
+}
+
+// readTemplate reads and decodes `_kiro/config/template`; a failed read or decode is an
+// unavailable catalog with its reason.
+func readTemplate(ctx context.Context, us *utilitySession) *configTemplateAssembly {
+	raw, err := us.configTemplateRaw(ctx)
+	if err != nil {
+		slog.Warn("config template failed", "error", err)
+		return unavailableTemplate(marotte.CatalogReasonRPC)
+	}
+	var tpl kasConfigTemplate
+	if uErr := json.Unmarshal(raw, &tpl); uErr != nil {
+		slog.Warn("config template decode failed", "error", uErr)
+		return unavailableTemplate(marotte.CatalogReasonDecode)
+	}
+	return templateToResponse(&tpl)
+}
+
+// servedModels is the model list GET /api/config-template serves, and false when that read
+// has no catalog to serve (CatalogReady unmet). The template is read only when no session has
+// reported a live list, since the live one wins.
+func (rt *Runtime) servedModels(ctx context.Context) ([]marotte.SessionModel, bool) {
+	if _, models, _ := rt.catalog.modesModelsStamped(); len(models) > 0 {
+		return models, true
+	}
+	cctx, cancel := context.WithTimeout(ctx, configTemplateTimeout)
+	defer cancel()
+	out := withCatalogVerdict(readTemplate(cctx, rt.utility.get().session))
+	return out.Models, out.Catalog == marotte.CatalogReady
 }
 
 // workspaceAgents is KAS's custom-agent list for workDir, or nil when getState fails: the catalog

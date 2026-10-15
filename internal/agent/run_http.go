@@ -441,7 +441,11 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.DecodeJSON(w, r, &req) {
 		return
 	}
-	id, name, err := rr.runs.launch(r.Context(), req.Source, req.Inputs)
+	defaults := marotte.RunDefaults{Model: req.Model, Effort: req.Effort}
+	if err := rr.runs.checkRunDefaults(r.Context(), defaults); writeDefaultsErr(w, err) {
+		return
+	}
+	id, name, err := rr.runs.launch(r.Context(), req.Source, req.Inputs, defaults)
 	if err != nil {
 		if errors.Is(err, errRecipeBusy) {
 			httpreply.Conflict(w, errRecipeBusy.Error())

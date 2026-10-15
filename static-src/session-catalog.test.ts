@@ -39,6 +39,7 @@ vi.mock("./store.js", { spy: true });
 const store = await import("./store.js");
 const { MODEL_CONTEXT_SIZES } = store;
 const { fetchCatalog } = await import("./session-catalog.js");
+const { BUS_CATALOG_MODELS, onBus } = await import("./bus.js");
 
 /** A catalog answer with the three lists the wire declares non-null. */
 function catalog(over: Partial<ConfigTemplateResponse> = {}): ConfigTemplateResponse {
@@ -187,6 +188,35 @@ describe("the one catalog reader", () => {
     const models = mockSetPickerModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
     expect(models?.[0]?.has_effort).toBe(true);
     expect(models?.[0]?.default_effort_level).toBe("high");
+  });
+
+  it("carries the model's tier list, which the Run and Schedule forms offer", async () => {
+    reply = catalog({
+      models: [
+        { id: "m-big", name: "Big", effort_tiers: ["low", "high"] },
+        { id: "m-auto", name: "Auto", effort_tiers: [] },
+      ],
+    });
+
+    await fetchCatalog();
+
+    const models = mockSetPickerModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
+    expect(models?.[0]?.effort_tiers).toEqual(["low", "high"]);
+    expect(models?.[1]).not.toHaveProperty("effort_tiers");
+  });
+
+  it("tells the bus once a model list lands, after the picker holds it", async () => {
+    const seen: number[] = [];
+    const off = onBus(BUS_CATALOG_MODELS, () => {
+      seen.push(mockSetPickerModels.mock.calls.length);
+    });
+    reply = catalog();
+    await fetchCatalog();
+    expect(seen).toEqual([]);
+    reply = catalog({ models: [model("m-big")] });
+    await fetchCatalog();
+    off();
+    expect(seen).toEqual([1]);
   });
 
   it("carries whether the model's thinking can be turned off", async () => {

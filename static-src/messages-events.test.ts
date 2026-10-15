@@ -65,15 +65,26 @@ describe("model_fallback", () => {
   const label = (payload: KindedEntry<"model_fallback">["payload"]): string =>
     labelOf(buildEvent(event("model_fallback", payload)));
 
-  it("says a refused request was retried on the next model", () => {
-    expect(label({ from: "opus-5", to: "sonnet-5", scope: "session", trigger: "refusal" })).toBe(
-      "opus-5 declined this request, retried on sonnet-5",
-    );
+  it.each([
+    ["refusal", "opus-5 refused this request, retried on sonnet-5"],
+    ["availability", "opus-5 was unavailable, retried on sonnet-5"],
+    ["latency", "opus-5 stopped for an unknown reason, retried on sonnet-5"],
+  ])("names the %s cause and the model the turn moved to", (trigger, want) => {
+    expect(label({ from: "opus-5", to: "sonnet-5", scope: "turn", trigger })).toBe(want);
   });
 
-  it("says an unavailable model was replaced by the next one", () => {
-    expect(label({ from: "opus-5", to: "sonnet-5", trigger: "availability" })).toBe(
-      "opus-5 was unavailable, retried on sonnet-5",
+  it("says a session-wide fallback's model now serves the session, in the same row", () => {
+    const node = buildEvent(
+      event("model_fallback", {
+        from: "opus-5",
+        to: "sonnet-5",
+        scope: "session",
+        trigger: "refusal",
+      }),
+    );
+    expect(node.className).toContain("boundary-switched");
+    expect(labelOf(node)).toBe(
+      "opus-5 refused this request, retried on sonnet-5, which now serves this session",
     );
   });
 
@@ -88,10 +99,22 @@ describe("model_fallback", () => {
     );
   });
 
+  it("names a decline's cause from its trigger", () => {
+    expect(label({ from: "opus-5", trigger: "refusal", reason: "chainExhausted" })).toBe(
+      "opus-5 refused this request, no fallback model available \u00b7 every fallback model was already tried",
+    );
+  });
+
   // KAS's decline log carries the model it would have tried; the notice decides on `reason` alone.
   it("reads a reason as a decline even when a model is named", () => {
     expect(
-      label({ from: "opus-5", to: "sonnet-5", trigger: "availability", reason: "raceLost" }),
+      label({
+        from: "opus-5",
+        to: "sonnet-5",
+        scope: "session",
+        trigger: "availability",
+        reason: "raceLost",
+      }),
     ).toBe(
       "opus-5 was unavailable, no fallback model available \u00b7 the model changed while Kiro was switching",
     );
@@ -106,22 +129,8 @@ describe("model_fallback", () => {
     );
   });
 
-  it("names both models for a trigger it does not know, and the source alone with no target", () => {
-    expect(label({ from: "opus-5", to: "sonnet-5", trigger: "latency" })).toBe(
-      "Model changed from opus-5 to sonnet-5",
-    );
-    expect(label({ from: "opus-5", trigger: "refusal" })).toBe("Model changed from opus-5");
-  });
-
-  it("marks a sub-agent's fallback", () => {
-    expect(label({ from: "opus-5", to: "sonnet-5", trigger: "refusal", subagent: true })).toBe(
-      "opus-5 declined this request, retried on sonnet-5 for a sub-agent",
-    );
-    expect(
-      label({ from: "opus-5", trigger: "availability", reason: "chainExhausted", subagent: true }),
-    ).toBe(
-      "opus-5 was unavailable, no fallback model available for a sub-agent \u00b7 every fallback model was already tried",
-    );
+  it("names the cause alone with no target", () => {
+    expect(label({ from: "opus-5", trigger: "refusal" })).toBe("opus-5 refused this request");
   });
 });
 

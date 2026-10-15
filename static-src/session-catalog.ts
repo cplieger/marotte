@@ -4,6 +4,7 @@
 
 import type { ModelInfo, SessionModel } from "./types.js";
 import { apiGetTyped } from "./api-client.js";
+import { BUS_CATALOG_MODELS, emitBus } from "./bus.js";
 import { observeStamp } from "./subject-versions.js";
 import { decodeConfigTemplateResponse } from "./wire/decoders.gen.js";
 import type { ConfigTemplateResponse } from "./wire/types.gen.js";
@@ -27,6 +28,9 @@ function toModelInfo(m: SessionModel): ModelInfo {
     ...(m.default_effort_level === undefined || m.default_effort_level === ""
       ? {}
       : { default_effort_level: m.default_effort_level }),
+    ...(m.effort_tiers === undefined || m.effort_tiers.length === 0
+      ? {}
+      : { effort_tiers: m.effort_tiers }),
   };
 }
 
@@ -97,4 +101,5 @@ function populatePickerModels(models: ModelInfo[], activeModel: string): void {
   }
   setPickerModels(models);
   refreshPickerIfVisible(activeModel === "" ? undefined : activeModel);
+  emitBus(BUS_CATALOG_MODELS);
 }

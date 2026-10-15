@@ -213,7 +213,7 @@ export const clearRunStepSteers = apiAction<StepAddress & { edit?: string }, { o
 /** The server's error sentence, or null. `@cplieger/fetch` falls back to the literal
  *  `HTTP <status>` for an empty body, and a transport failure (`status === 0`) carries a browser
  *  sentence, so both are compared exactly. */
-function serverSentence(err: {
+export function serverSentence(err: {
   readonly message: string;
   readonly status?: number;
 }): string | null {

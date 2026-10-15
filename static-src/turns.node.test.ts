@@ -908,10 +908,19 @@ describe("turnFoldHides", () => {
     ["compaction_failed", {}],
     ["safety_blocked", {}],
     ["model_switched", { from: "a", to: "b" }],
+    ["model_fallback", { from: "a", to: "b", trigger: "refusal" }],
     ["mode_switched", { from: "spec", to: "vibe", source: "user" }],
   ] as const)("hides a %s entry", (kind, payload) => {
     const t = oneTurn([sealed("t1", 1, kind, payload), textEntry("t1", 2, "done")]);
     expect(turnFoldHides(t)).toBe(true);
+  });
+
+  it("hides nothing behind a sub-agent's model_fallback, which the body does not draw", () => {
+    const t = oneTurn([
+      textEntry("t1", 1, "the answer"),
+      sealed("t1", 2, "model_fallback", { from: "a", to: "b", trigger: "refusal", subagent: true }),
+    ]);
+    expect(turnFoldHides(t)).toBe(false);
   });
 
   it("hides a delegate's output, and the LANE is what reports it", () => {

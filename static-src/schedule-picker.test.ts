@@ -10,6 +10,7 @@ import {
   buildSchedulePicker,
   buildUnattendedNote,
 } from "./schedule-picker.js";
+import { buildRunDefaultsPicker } from "./run-defaults-picker.js";
 import { LAST_DAY, INTERVAL_BOUNDS } from "./schedule-types.js";
 import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./schedule-types.js";
 
@@ -131,6 +132,7 @@ function mount(
     enabled: stored?.enabled ?? false,
     exists: stored !== undefined,
     autoApprove,
+    picks: buildRunDefaultsPicker({ models: [], initial: {} }),
     onSave: (s: ScheduleSpec, enabled: boolean) => {
       saved = s;
       savedEnabled = enabled;
@@ -307,6 +309,7 @@ describe("the unattended note", () => {
         enabled: false,
         exists: false,
         autoApprove,
+        picks: buildRunDefaultsPicker({ models: [], initial: {} }),
         onSave: vi.fn(),
         onRemove: vi.fn(),
         onClose: vi.fn(),
@@ -532,5 +535,61 @@ describe("pausing a schedule", () => {
     expect(mount(daily(), false, { enabled: false }).remove()).not.toBeNull();
     expect(mount(daily(), false, { enabled: true }).remove()).not.toBeNull();
     expect(mount(daily()).remove()).toBeNull();
+  });
+});
+
+describe("the run's model and effort pick", () => {
+  const models = [
+    { model_id: "opus", model_name: "Opus", effort_tiers: ["low", "high"] },
+    { model_id: "auto", model_name: "Auto" },
+  ];
+
+  function build(defaults: { model?: string; effort?: string }): {
+    body: HTMLElement;
+    saved: () => unknown;
+  } {
+    let saved: unknown;
+    const body = buildSchedulePicker({
+      spec: defaultSpec(),
+      enabled: true,
+      exists: true,
+      autoApprove: false,
+      picks: buildRunDefaultsPicker({ models, initial: defaults }),
+      onSave: (_s, _e, picked) => {
+        saved = picked;
+      },
+      onRemove: vi.fn(),
+      onClose: vi.fn(),
+      onOpenPermissions: vi.fn(),
+    });
+    return { body, saved: () => saved };
+  }
+
+  function clickSave(body: HTMLElement): void {
+    [...body.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent === "Save")
+      ?.click();
+  }
+
+  it("opens on the stored pick and saves it unchanged", () => {
+    const { body, saved } = build({ model: "opus", effort: "high" });
+    const [model, effort] = [...body.querySelectorAll<HTMLSelectElement>(".run-pick-select")];
+    expect(model?.value).toBe("opus");
+    expect(effort?.value).toBe("high");
+    clickSave(body);
+    expect(saved()).toEqual({ model: "opus", effort: "high" });
+  });
+
+  // The server refuses the tier at save; the form dropping it would save a different schedule.
+  it("saves a stored tier its model no longer offers, for the server to refuse", () => {
+    const { body, saved } = build({ model: "opus", effort: "max" });
+    clickSave(body);
+    expect(saved()).toEqual({ model: "opus", effort: "max" });
+  });
+
+  it("saves nothing for a schedule left on Default", () => {
+    const { body, saved } = build({});
+    clickSave(body);
+    expect(saved()).toEqual({});
   });
 });

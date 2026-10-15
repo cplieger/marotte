@@ -43,6 +43,8 @@ vi.mock("./actions/runs.js", () => ({
   },
 }));
 vi.mock("./run-view.js", () => ({ openRunView: vi.fn() }));
+const catalog = vi.hoisted(() => ({ models: [] as ModelInfo[] }));
+vi.mock("./picker.js", () => ({ getCachedModels: () => catalog.models }));
 // The unattended note's auto-approve read-out. Unmocked, refreshAutoApprove reaches /api/settings
 // through the actions transport (which the api-client mock does not cover), fire-and-forget, so the
 // request was still open when the window tore down and printed an unhandled AbortError.
@@ -57,10 +59,11 @@ vi.mock("./actions/schedules.js", () => ({
 }));
 
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
-import { dispatch } from "./bus.js";
+import { BUS_CATALOG_MODELS, dispatch, emitBus } from "./bus.js";
+import { saveSchedule } from "./actions/schedules.js";
 import { openRunView } from "./run-view.js";
 import { launchRun, cancelRun } from "./actions/runs.js";
-import type { RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
+import type { ModelInfo, RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
 import type { RunStatus } from "./wire/types.gen.js";
 
 let recipesReply: RecipesResponse = { recipes: [] };
@@ -141,16 +144,56 @@ describe("the Run ⇄ Cancel row", () => {
     expect(buttonFor(panel, "bundled://goal")?.textContent).toBe("Run");
   });
 
-  it("launches an input-less recipe on click and opens its run tab", async () => {
+  it("opens the form for an input-less recipe, its Launch focused, and sends Default as nothing", async () => {
     recipesReply = { recipes: [recipe("goal")] };
     const panel = await render();
 
     buttonFor(panel, "bundled://goal")?.click();
+    expect(vi.mocked(launchRun.dispatch)).not.toHaveBeenCalled();
+    const launchBtn = panel.querySelector<HTMLButtonElement>(".recipe-launch-btn");
+    expect(document.activeElement).toBe(launchBtn);
+    launchBtn?.click();
     expect(vi.mocked(launchRun.dispatch).mock.calls[0]?.[0]).toEqual({
       source: "bundled://goal",
       inputs: {},
     });
     expect(vi.mocked(openRunView)).toHaveBeenCalledWith("wf_new", "goal");
+  });
+
+  it("launches with the model and effort picked on the form", async () => {
+    catalog.models = [{ model_id: "opus", model_name: "Opus", effort_tiers: ["low", "high"] }];
+    recipesReply = { recipes: [recipe("picked")] };
+    const panel = await render();
+    buttonFor(panel, "bundled://picked")?.click();
+    const [model, effort] = [...panel.querySelectorAll<HTMLSelectElement>(".run-pick-select")];
+    if (model === undefined || effort === undefined) {
+      throw new Error("the Run form has no Model or no Effort select");
+    }
+    model.value = "opus";
+    model.dispatchEvent(new Event("change"));
+    effort.value = "high";
+    effort.dispatchEvent(new Event("change"));
+    panel.querySelector<HTMLButtonElement>(".recipe-launch-btn")?.click();
+    catalog.models = [];
+    expect(vi.mocked(launchRun.dispatch).mock.calls[0]?.[0]).toEqual({
+      source: "bundled://picked",
+      inputs: {},
+      model: "opus",
+      effort: "high",
+    });
+  });
+
+  it("gives an open Run form the catalog that lands after it opened", async () => {
+    catalog.models = [];
+    recipesReply = { recipes: [recipe("late")] };
+    const panel = await render();
+    buttonFor(panel, "bundled://late")?.click();
+    const model = panel.querySelector<HTMLSelectElement>(".run-pick-select");
+    expect([...(model?.options ?? [])].map((o) => o.value)).toEqual([""]);
+    catalog.models = [{ model_id: "opus", model_name: "Opus" }];
+    emitBus(BUS_CATALOG_MODELS);
+    catalog.models = [];
+    expect([...(model?.options ?? [])].map((o) => o.value)).toEqual(["", "opus"]);
   });
 
   it("cancels the LIVE run on click, whoever launched it", async () => {
@@ -603,7 +646,68 @@ describe("the filter", () => {
     recipesReply = { recipes: [recipe("goal"), recipe("triage")] };
     const panel = await render("triage");
     buttonFor(panel, "bundled://triage")?.click();
+    panel.querySelector<HTMLButtonElement>(".recipe-launch-btn")?.click();
     expect(dispatched.filter((d) => d.name === "launch")).toHaveLength(1);
     expect(dispatched.at(-1)?.args).toMatchObject({ source: "bundled://triage" });
+  });
+});
+
+describe("the Schedule form", () => {
+  async function openSchedule(): Promise<HTMLButtonElement> {
+    recipesReply = { recipes: [recipe("nightly")] };
+    const panel = await render();
+    const btn = panel.querySelector<HTMLButtonElement>(".recipe-sched-btn");
+    if (btn === null) {
+      throw new Error("the row has no Schedule button");
+    }
+    btn.click();
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    return btn;
+  }
+
+  function scheduleModel(): HTMLSelectElement {
+    const sel = document.querySelector<HTMLSelectElement>(".sched-picker .run-pick-select");
+    if (sel === null) {
+      throw new Error("the Schedule form has no Model select");
+    }
+    return sel;
+  }
+
+  function clickSave(): void {
+    [...document.querySelectorAll<HTMLButtonElement>(".sched-picker button")]
+      .find((b) => b.textContent === "Save")
+      ?.click();
+  }
+
+  it("takes the catalog that lands after it opened", async () => {
+    catalog.models = [];
+    await openSchedule();
+    expect([...scheduleModel().options].map((o) => o.value)).toEqual([""]);
+    catalog.models = [{ model_id: "opus", model_name: "Opus" }];
+    emitBus(BUS_CATALOG_MODELS);
+    catalog.models = [];
+    expect([...scheduleModel().options].map((o) => o.value)).toEqual(["", "opus"]);
+  });
+
+  it("stays open with the reader's edits when the save is refused", async () => {
+    vi.mocked(saveSchedule.dispatch).mockClear();
+    const btn = await openSchedule();
+    clickSave();
+    await vi.waitFor(() => {
+      expect(vi.mocked(saveSchedule.dispatch)).toHaveBeenCalledTimes(1);
+    });
+    await Promise.resolve();
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("closes once the save lands", async () => {
+    vi.mocked(saveSchedule.dispatch).mockImplementationOnce(
+      (async () => ({})) as unknown as typeof saveSchedule.dispatch,
+    );
+    const btn = await openSchedule();
+    clickSave();
+    await vi.waitFor(() => {
+      expect(btn.getAttribute("aria-expanded")).toBe("false");
+    });
   });
 });

@@ -122,27 +122,35 @@ const SWITCH_REASONS: Record<
 };
 
 /**
- * KAS's fallback notice. A non-empty `reason` is a decline whatever `to` holds; without one the trigger says why the
- * turn moved. Model ids stay raw, as `switchedLabel` shows them.
+ * KAS's fallback notice: the cause from `trigger`, then a decline's reason (a non-empty `reason`, whatever `to`
+ * holds) or the model the turn moved to, which a `session` scope keeps for the rest of the session. Model ids stay
+ * raw, as `switchedLabel` shows them.
  */
 function fallbackLabel(p: EntryModelFallback): string {
-  const scope = p.subagent === true ? " for a sub-agent" : "";
+  const cause = `${p.from} ${fallbackCause(p.trigger)}`;
   const reason = p.reason ?? "";
   if (reason !== "") {
     const why = DECLINE_REASONS.get(reason) ?? reason;
-    return `${p.from} was unavailable, no fallback model available${scope} \u00b7 ${why}`;
+    return `${cause}, no fallback model available \u00b7 ${why}`;
   }
   const to = p.to ?? "";
   if (to === "") {
-    return `Model changed from ${p.from}${scope}`;
+    return cause;
   }
-  switch (p.trigger) {
+  return p.scope === "session"
+    ? `${cause}, retried on ${to}, which now serves this session`
+    : `${cause}, retried on ${to}`;
+}
+
+/** KAS's `trigger` is open: a value it adds later reads as an unknown cause. */
+function fallbackCause(trigger: string): string {
+  switch (trigger) {
     case "refusal":
-      return `${p.from} declined this request, retried on ${to}${scope}`;
+      return "refused this request";
     case "availability":
-      return `${p.from} was unavailable, retried on ${to}${scope}`;
+      return "was unavailable";
     default:
-      return `Model changed from ${p.from} to ${to}${scope}`;
+      return "stopped for an unknown reason";
   }
 }
 

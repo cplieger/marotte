@@ -323,8 +323,8 @@ type SessionModel struct {
 	// ThinkingOffEffortCap is the tier KAS runs xhigh and max at on this model while thinking is
 	// off (CapEffortForThinkingOff over its tiers), empty when none is lower. Server-side only.
 	ThinkingOffEffortCap string `json:"-"`
-	// EffortTiers are the model's tier ids, lowest first; empty when KAS named none. Server-side only.
-	EffortTiers    []string `json:"-"`
+	// EffortTiers are the model's tier ids, lowest first; empty when KAS named none.
+	EffortTiers    []string `json:"effort_tiers,omitempty"`
 	RateMultiplier float64  `json:"rate_multiplier,omitempty"`
 	// HasEffort reports whether this model offers effort tiers. KAS silently drops a
 	// level sent to a tierless model (`auto`), so the effort row hides.

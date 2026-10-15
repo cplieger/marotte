@@ -211,6 +211,49 @@
   }
 }
 
+/* The run's Model and Effort selects, on the input form and the schedule form.
+   Labelled like the form's input fields; `hidden` needs its own rule, since
+   the field sets `display`. */
+.run-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: end;
+}
+
+.run-pick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  font-size: var(--fs-form-label);
+  color: var(--c-text-secondary);
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.run-pick-select {
+  min-block-size: var(--btn-h);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--c-bg-primary);
+  color: var(--c-text-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  font-size: var(--fs-sm);
+
+  &:focus {
+    border-color: var(--c-accent);
+  }
+}
+
+/* The schedule form's controls are dense. */
+.sched-row .run-pick-select {
+  min-block-size: var(--ctl-h-dense);
+  background: var(--c-bg-secondary);
+  border-radius: var(--r-sm);
+}
+
 /* --- Workflow schedules --------------------------------------------------- */
 
 /* An active schedule is a state, marked the way every other on-state is. */

@@ -299,7 +299,7 @@ func (t *Translator) handleTurnEvent(ctx context.Context, chatID marotte.ChatID,
 	case k.Kind == infoKindModelRouted:
 		t.handleModelRouted(ctx, chatID, k)
 		return true
-	case k.Kind == infoKindModelFallback:
+	case isModelFallbackKind(k.Kind):
 		t.handleModelFallback(ctx, chatID, k)
 		return true
 	}

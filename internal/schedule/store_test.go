@@ -67,3 +67,24 @@ func TestNewStore_ReadsLegacyLastResult(t *testing.T) {
 		}
 	}
 }
+
+// A schedule's model and effort survive a restart, so every later fire sends the same pick.
+func TestStore_KeepsTheModelPickAcrossAReopen(t *testing.T) {
+	dir := t.TempDir()
+	st, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	e := Entry{ID: "p", Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 3}, Enabled: true, Model: "opus", Effort: "high"}
+	if err := st.Put(t.Context(), &e); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore (reopen): %v", err)
+	}
+	list := reopened.List()
+	if len(list) != 1 || list[0].Model != "opus" || list[0].Effort != "high" {
+		t.Errorf("reopened store = %+v, want the opus/high row", list)
+	}
+}

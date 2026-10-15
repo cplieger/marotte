@@ -374,6 +374,17 @@ const (
 type RunLaunchRequest struct {
 	Inputs map[string]string `json:"inputs,omitempty"`
 	Source string            `json:"source"`
+	// Model and Effort are the run's step defaults (RunDefaults); empty sends none.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+}
+
+// RunDefaults are `_kiro/workflow/new`'s `modelId` and `effortLevel`: the model and effort tier
+// of every step that pins neither, over the recipe's own root values. The zero value sends
+// nothing, so KAS's own order applies.
+type RunDefaults struct {
+	Model  string
+	Effort string
 }
 
 // RunLaunchedResponse is POST /api/runs's reply. Name is the recipe's, so the

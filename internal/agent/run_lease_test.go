@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 )
@@ -35,7 +36,7 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_manual")
 
-		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
+		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 			t.Fatalf("Launch: %v", err)
 		}
 		l, ok := h.runs.lease("wf_manual")
@@ -66,7 +67,7 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
 
-		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1", slot); err != nil {
+		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1", marotte.RunDefaults{}, slot); err != nil {
 			t.Fatalf("LaunchScheduled: %v", err)
 		}
 		l, ok := h.runs.lease("wf_sched")
@@ -110,7 +111,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	h.runs.schedules = st
 
 	before := time.Now()
-	if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil); lErr != nil {
+	if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
 		t.Fatalf("Launch: %v", lErr)
 	}
 	wantSlot, err := schedule.NextRunFrom(spec, anchor, before)
@@ -182,7 +183,7 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 			}
 			h.runs.schedules = st
 
-			if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil); lErr != nil {
+			if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
 				t.Fatalf("Launch: %v", lErr)
 			}
 			l, _ := h.runs.lease("wf_manual")
@@ -196,7 +197,7 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 	t.Run("no schedule store at all", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_manual")
-		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
+		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 			t.Fatalf("Launch: %v", err)
 		}
 		if l, _ := h.runs.lease("wf_manual"); !l.SlotAt.IsZero() {
@@ -212,7 +213,7 @@ func TestLaunchRun_ReleasesTheLeaseWhenInvokeFails(t *testing.T) {
 	delete(br.callResults, methodKiroWorkflowInvoke)
 	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errRecipeBusy}
 
-	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err == nil {
+	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err == nil {
 		t.Fatal("a failed invoke reported success")
 	}
 	if _, ok := h.runs.lease("wf_1"); ok {

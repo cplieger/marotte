@@ -476,6 +476,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	}
 	// The lease's own accessor, so neither collaborator references the Runtime.
 	runs.utility = h.utility.get
+	runs.servedModels = h.servedModels
 	runs.coord = h.coord
 	configP.utility = h.utility.get
 	configP.broadcast = sseP.Broadcast

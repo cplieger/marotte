@@ -713,6 +713,20 @@ describe("an event kind renders a row at its own seq", () => {
       trigger: "refusal",
     });
 
+  it("draws no row for a sub-agent's fallback, and keeps the re-pin row it does not explain", () => {
+    const r = render([
+      text("t", 1, "tried"),
+      repin(2),
+      sealed("t", 3, "model_fallback", {
+        from: "opus-5",
+        to: "sonnet-5",
+        trigger: "refusal",
+        subagent: true,
+      }),
+    ]);
+    expect(shape(r.body)).toEqual(["text(tried)", "event(model_switched)"]);
+  });
+
   it("folds the re-pin row a fallback explains when both are in the log", () => {
     const r = render([text("t", 1, "tried"), repin(2), fallback(3)]);
     expect(shape(r.body)).toEqual(["text(tried)", "event(model_fallback)"]);

@@ -33,6 +33,8 @@ type Runs struct {
 	// plans holds each run's newest plan revision (run_plan.go), under mu.
 	plans   runPlans
 	utility func() *utilityRuntime
+	// servedModels is GET /api/config-template's model list (Runtime.servedModels), for checkRunDefaults.
+	servedModels func(context.Context) ([]marotte.SessionModel, bool)
 	// runEnded asks the retention purge for a pass when a run ends.
 	runEnded  func() `wiring:"optional"`
 	lifecycle *lifetime

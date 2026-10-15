@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func mustStore(t *testing.T) *Store {
@@ -35,14 +37,17 @@ type fakeLauncher struct {
 	// deadlines records the run bound each launch carried, so a test can assert
 	// the interval was derived rather than merely passed.
 	deadlines []time.Time
-	err       error
+	// defaults records the model and effort each launch carried.
+	defaults []marotte.RunDefaults
+	err      error
 }
 
 func (f *fakeLauncher) LaunchScheduled(
-	_ context.Context, source, scheduleID string, deadline time.Time,
+	_ context.Context, source, scheduleID string, defaults marotte.RunDefaults, deadline time.Time,
 ) (string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.defaults = append(f.defaults, defaults)
 	f.sources = append(f.sources, source)
 	f.schedules = append(f.schedules, scheduleID)
 	f.deadlines = append(f.deadlines, deadline)
@@ -117,6 +122,26 @@ func TestSweep_FiresADueSlot(t *testing.T) {
 	// no row to report itself on.
 	if _, schedules, _ := l.snap(); len(schedules) != 1 || schedules[0] != "s1" {
 		t.Errorf("launch must carry the schedule id, got %v", schedules)
+	}
+}
+
+// A schedule's stored model and effort go out with each fire; a row with none sends the zero
+// value, which launches on KAS's own defaults.
+func TestSweep_SendsTheSchedulesModelPick(t *testing.T) {
+	due := at(2026, time.August, 4, 2, 0)
+	st, l, r := newFixture(t, due.Add(30*time.Second))
+	e := st.List()[0]
+	e.Model, e.Effort = "opus", "high"
+	if err := st.Put(t.Context(), &e); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	r.sweep(t.Context())
+
+	l.mu.Lock()
+	got := slices.Clone(l.defaults)
+	l.mu.Unlock()
+	if want := []marotte.RunDefaults{{Model: "opus", Effort: "high"}}; !slices.Equal(got, want) {
+		t.Errorf("launch defaults = %+v, want %+v", got, want)
 	}
 }
 

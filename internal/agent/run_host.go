@@ -54,16 +54,22 @@ const launchTimeout = 120 * time.Second
 var errRecipeBusy = errors.New("this recipe already has a live run")
 
 // launch starts one parentless attended run of the recipe and returns its workflow id and name.
-func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]string) (id, name string, err error) {
-	return rs.launchAs(ctx, source, inputs, manualLaunch())
+func (rs *Runs) launch(
+	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults,
+) (id, name string, err error) {
+	return rs.launchAs(ctx, source, inputs, defaults, manualLaunch())
 }
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window and backstop.
-func (rs *Runs) LaunchScheduled(ctx context.Context, source, scheduleID string, slotAt time.Time) (id, name string, err error) {
-	return rs.launchAs(ctx, source, nil, scheduledLaunch(scheduleID, slotAt))
+func (rs *Runs) LaunchScheduled(
+	ctx context.Context, source, scheduleID string, defaults marotte.RunDefaults, slotAt time.Time,
+) (id, name string, err error) {
+	return rs.launchAs(ctx, source, nil, defaults, scheduledLaunch(scheduleID, slotAt))
 }
 
-func (rs *Runs) launchAs(ctx context.Context, source string, inputs map[string]string, o launchOrigin) (id, name string, err error) {
+func (rs *Runs) launchAs(
+	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults, o launchOrigin,
+) (id, name string, err error) {
 	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
 	defer cancel()
 
@@ -108,7 +114,7 @@ func (rs *Runs) launchAs(ctx context.Context, source string, inputs map[string]s
 		return "", "", errors.New("run bridge started with no ACP session; cannot launch a workflow")
 	}
 
-	wfID, err := rs.workflowNew(cctx, bridge, recipe.Source, inputs, parent, o.runLabel(recipe.Name))
+	wfID, err := rs.workflowNew(cctx, bridge, recipe.Source, inputs, defaults, parent, o.runLabel(recipe.Name))
 	if err != nil {
 		bridge.Stop()
 		return "", "", err
@@ -1519,7 +1525,8 @@ func (rs *Runs) listRecipes(ctx context.Context) ([]marotte.Recipe, error) {
 // workflowNew creates the run on bridge and returns its id. parent is the run bridge's own session, so
 // frames route back to the executing process. workspacePaths stays for pre-0.63.3 engines.
 func (rs *Runs) workflowNew(
-	ctx context.Context, bridge acpCaller, source string, inputs map[string]string, parent marotte.SessionID, label string,
+	ctx context.Context, bridge acpCaller, source string, inputs map[string]string,
+	defaults marotte.RunDefaults, parent marotte.SessionID, label string,
 ) (string, error) {
 	// Always a map: KAS answers "inputs is not iterable" without one.
 	in := map[string]any{}
@@ -1534,6 +1541,12 @@ func (rs *Runs) workflowNew(
 	}
 	if label != "" {
 		params["runLabel"] = label
+	}
+	if defaults.Model != "" {
+		params["modelId"] = defaults.Model
+	}
+	if defaults.Effort != "" {
+		params["effortLevel"] = defaults.Effort
 	}
 	resp, err := bridge.Call(ctx, methodKiroWorkflowNew, params)
 	if cErr := runCallErr(resp, err); cErr != nil {

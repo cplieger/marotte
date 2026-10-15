@@ -175,7 +175,7 @@ func TestRunBridge_AnEditLandingDuringItsSpawnReachesItOnceStarted(t *testing.T)
 				methodKiroWorkflowList:        json.RawMessage(`{"runs":[]}`),
 			},
 			start: func(t *testing.T, h *Runtime) {
-				if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
+				if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 					t.Fatalf("Launch: %v", err)
 				}
 			},
@@ -225,7 +225,7 @@ func TestOpenBridge_AHandEditReachesALiveRunBridgeFromAChatOpen(t *testing.T) {
 			br.callResults = replies
 			return br
 		})
-		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
+		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 			t.Fatalf("Launch: %v", err)
 		}
 		run := h.bridge.mgr.get(runChatID("wf_9"))

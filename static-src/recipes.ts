@@ -3,11 +3,17 @@
 
 import { el } from "@cplieger/reactive";
 import { join as joinKey } from "@cplieger/keyenc";
-import { onBus, onSSE, BUS_RUNS_CHANGED } from "./bus.js";
+import { onBus, onSSE, BUS_CATALOG_MODELS, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
 import { loadRecipes, loadRuns, launchRun, cancelRun } from "./actions/runs.js";
 import { loadSchedules, saveSchedule, deleteSchedule } from "./actions/schedules.js";
 import { buildSchedulePicker, defaultSpec, summaryLine } from "./schedule-picker.js";
+import {
+  buildRunDefaultsPicker,
+  type RunDefaults,
+  type RunDefaultsPicker,
+} from "./run-defaults-picker.js";
+import { getCachedModels } from "./picker.js";
 import type { ScheduleSpec, ScheduleView } from "./schedule-types.js";
 import { createPopup } from "@cplieger/ui-primitives/popup";
 import { openRunView } from "./run-view.js";
@@ -94,6 +100,16 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
       if (isShowing()) {
         void refreshRecipes();
       }
+    });
+    // An open Run or Schedule form holds the catalog it opened with, which can be empty when it
+    // opened before the boot fetch landed.
+    onBus(BUS_CATALOG_MODELS, () => {
+      const models = getCachedModels();
+      const detail = container?.querySelector<HTMLElement>(".entry-detail") ?? null;
+      if (detail !== null) {
+        formPicks.get(detail)?.setModels(models);
+      }
+      schedulePicks?.setModels(models);
     });
   }
   if (recipes.length === 0) {
@@ -182,6 +198,9 @@ function syncSchedule(row: HTMLElement, r: Recipe): void {
   }
 }
 
+/** The open schedule form's Model and Effort selects; one popup of the group is open at a time. */
+let schedulePicks: RunDefaultsPicker | null = null;
+
 function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
   let popup: ReturnType<typeof createPopup> | null = null;
   let open = false;
@@ -203,22 +222,35 @@ function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
       popup?.hide();
       open = false;
     };
+    const picks = buildRunDefaultsPicker({
+      models: getCachedModels(),
+      initial: {
+        ...(view?.model === undefined ? {} : { model: view.model }),
+        ...(view?.effort === undefined ? {} : { effort: view.effort }),
+      },
+    });
+    schedulePicks = picks;
     body.appendChild(
       buildSchedulePicker({
         spec: view?.spec ?? defaultSpec(),
         enabled: view?.enabled ?? false,
         exists: view !== undefined,
         autoApprove,
+        picks,
         onOpenPermissions: () => {
           close();
           void openSettingsView("permissions");
         },
         // The picker's flag is carried through rather than re-decided here: it was hardcoded true
         // at both ends, so a paused schedule was unreachable even once the form could express it.
-        onSave: (spec: ScheduleSpec, enabled: boolean) => {
-          close();
+        // Closed only once saved: a refused pick leaves the reader's edits on the form beside the
+        // server's sentence.
+        onSave: (spec: ScheduleSpec, enabled: boolean, defaults: RunDefaults) => {
           void (async () => {
-            await saveSchedule.dispatch({ source, spec, enabled });
+            if ((await saveSchedule.dispatch({ source, spec, enabled, ...defaults })) === null) {
+              return;
+            }
+            close();
             await refreshSchedules();
           })();
         },
@@ -328,7 +360,11 @@ function paint(): void {
   if (detail !== null) {
     forceReflow(detail);
     detail.classList.add("open");
-    detail.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    // Launch when the recipe declares no inputs, so Enter still launches it on Default.
+    (
+      detail.querySelector<HTMLElement>("input") ??
+      detail.querySelector<HTMLElement>(".recipe-launch-btn")
+    )?.focus({ preventScroll: true });
   }
 }
 
@@ -435,7 +471,7 @@ function syncButton(row: HTMLElement, r: Recipe): void {
   const reason = live === undefined ? invalidReason(r) : "";
   btn.disabled = reason !== "" && openForm !== r.source;
   toggleTooltip(btn, reason);
-  if (live === undefined && Object.keys(r.inputs ?? {}).length > 0) {
+  if (live === undefined) {
     btn.setAttribute("aria-expanded", String(openForm === r.source));
   } else {
     btn.removeAttribute("aria-expanded");
@@ -457,13 +493,13 @@ function onRunButton(r: Recipe): void {
   if (invalidReason(r) !== "") {
     return;
   }
-  if (Object.keys(r.inputs ?? {}).length === 0) {
-    launch(r, {});
-    return;
-  }
+  // Always the form, inputs or not: it is the one place a run's model and effort are picked.
   openForm = r.source;
   paint();
 }
+
+/** Each open form's Model and Effort selects, for its repaint to hand a newer catalog. */
+const formPicks = new WeakMap<HTMLElement, RunDefaultsPicker>();
 
 /** Inline input collection in the `.entry-detail` region under the row — deliberately not a
  *  modal. Empty values are allowed (KAS accepts them; templates resolve empty), so this collects
@@ -481,6 +517,8 @@ function inputForm(r: Recipe): HTMLElement {
     fields.set(key, input);
     form.appendChild(el("label", { className: "recipe-input-label" }, `${key}: `, input));
   }
+  const picks = buildRunDefaultsPicker({ models: getCachedModels(), initial: {} });
+  form.appendChild(picks.el);
   form.appendChild(
     el("button", { type: "submit", className: "btn-small recipe-launch-btn" }, "Launch"),
   );
@@ -500,9 +538,10 @@ function inputForm(r: Recipe): HTMLElement {
     }
     openForm = null;
     paint();
-    launch(current, inputs);
+    launch(current, inputs, picks.value());
   });
   const detail = entryDetail(form);
+  formPicks.set(detail, picks);
   syncLaunch(detail, r);
   return detail;
 }
@@ -516,11 +555,12 @@ function syncLaunch(detail: HTMLElement, r: Recipe): void {
   const reason = invalidReason(r);
   btn.disabled = reason !== "";
   toggleTooltip(btn, reason);
+  formPicks.get(detail)?.setModels(getCachedModels());
 }
 
-function launch(r: Recipe, inputs: Record<string, string>): void {
+function launch(r: Recipe, inputs: Record<string, string>, defaults: RunDefaults): void {
   void launchRun.dispatch(
-    { source: r.source, inputs },
+    { source: r.source, inputs, ...defaults },
     {
       onSuccess: (d) => {
         // Optimistic flip: the run_started event confirms it, and the refetch corrects a failed

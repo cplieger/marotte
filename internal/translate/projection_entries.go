@@ -504,13 +504,22 @@ func (p *EntryProjection) ingestInfo(raw json.RawMessage) {
 		p.sealLanes()
 		p.appendEntry(marotte.EntryKindModelRouted, p.newID(), "", p.frameTS(""),
 			modelRoutedPayload(u.Meta.Kiro.Message))
-	case infoKindModelFallback:
-		p.flushUser()
-		p.ensureTurn(marotte.TurnOpenNameEvent)
-		p.sealLanes()
-		p.appendEntry(marotte.EntryKindModelFallback, p.newID(), "", p.frameTS(""),
-			modelFallbackPayload(&u.Meta.Kiro.modelFallbackFields))
+	case infoKindModelFallback, infoKindModelFallbackPromoted:
+		p.ingestModelFallback(&u.Meta.Kiro)
 	}
+}
+
+// ingestModelFallback is the replayed twin of handleModelFallback: a frame the transcript does
+// not show seals nothing.
+func (p *EntryProjection) ingestModelFallback(k *replayInfoKiro) {
+	payload, show := modelFallbackPayload(k.Kind, &k.modelFallbackFields)
+	if !show {
+		return
+	}
+	p.flushUser()
+	p.ensureTurn(marotte.TurnOpenNameEvent)
+	p.sealLanes()
+	p.appendEntry(marotte.EntryKindModelFallback, p.newID(), "", p.frameTS(""), payload)
 }
 
 // The credit sum matches the live path's: an empty unit or the credit unit counts, anything else is

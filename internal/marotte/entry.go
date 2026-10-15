@@ -331,8 +331,9 @@ type EntryModelRouted struct {
 
 // EntryModelFallback is the model_fallback payload: KAS's fallback decision after From refused a
 // turn or was unavailable. A non-empty Reason marks a decline; KAS's notice for a retry carries To
-// and Scope and no Reason. Every string is KAS's open vocabulary, display-sanitized; Subagent marks
-// a sub-agent's fallback, which never moves the chat's model.
+// and Scope and no Reason, and ModelFallbackScopeSession means To now serves the session. Every
+// string is KAS's open vocabulary, display-sanitized. Subagent is set only in an entry an earlier
+// build recorded: the translator now drops a sub-agent's fallback, and readers hide such an entry.
 type EntryModelFallback struct {
 	From     string `json:"from"`
 	To       string `json:"to,omitempty"`
@@ -341,6 +342,9 @@ type EntryModelFallback struct {
 	Reason   string `json:"reason,omitempty"`
 	Subagent bool   `json:"subagent,omitempty"`
 }
+
+// ModelFallbackScopeSession is the EntryModelFallback.Scope of a fallback that now serves the session.
+const ModelFallbackScopeSession = "session"
 
 // ModelSwitchReason says why KAS moved a chat off its model. A closed enum
 // because the client words it, so the wording table must be total.

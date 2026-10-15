@@ -2273,6 +2273,10 @@ export const decodeRunLaunchRequest: Decoder<RunLaunchRequest> = (v) => {
     source: reqStr(o, "source", "$.run_launch_request"),
   };
   if (o["inputs"] !== undefined && o["inputs"] !== null) out.inputs = decodeRecord(o["inputs"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.run_launch_request.inputs");
+  const model = o["model"] === null ? undefined : optStr(o, "model", "$.run_launch_request");
+  if (model !== undefined) out.model = model;
+  const effort = o["effort"] === null ? undefined : optStr(o, "effort", "$.run_launch_request");
+  if (effort !== undefined) out.effort = effort;
   return out;
 };
 
@@ -2580,6 +2584,7 @@ export const decodeSessionModel: Decoder<SessionModel> = (v) => {
   if (description !== undefined) out.description = description;
   const defaultEffortLevel = o["default_effort_level"] === null ? undefined : optStr(o, "default_effort_level", "$.session_model");
   if (defaultEffortLevel !== undefined) out.default_effort_level = defaultEffortLevel;
+  if (o["effort_tiers"] !== undefined && o["effort_tiers"] !== null) out.effort_tiers = decodeArray(o["effort_tiers"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.session_model.effort_tiers");
   const rateMultiplier = o["rate_multiplier"] === null ? undefined : optNum(o, "rate_multiplier", "$.session_model");
   if (rateMultiplier !== undefined) out.rate_multiplier = rateMultiplier;
   const hasEffort = o["has_effort"] === null ? undefined : optBool(o, "has_effort", "$.session_model");
