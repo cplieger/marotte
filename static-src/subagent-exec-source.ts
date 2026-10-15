@@ -116,7 +116,6 @@ function toLeaf(subtaskID: string, invocation: ToolCall | undefined, turnLive: b
 export function subagentToExec(subtaskID: string, slice: SubagentSlice, turnLive = true): ExecRun {
   const leaf = toLeaf(subtaskID, slice.invocation, turnLive);
   return {
-    id: subtaskID,
     label: leaf.label,
     state: leaf.state,
     nodes: [leaf],

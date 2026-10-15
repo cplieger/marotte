@@ -213,7 +213,7 @@ describe("composerMode against the server's availability table", () => {
       workflowID: "wf_1",
       runLive: !runStatusTerminal(run),
       runPaused: run === "paused",
-      step: workNodes(runToExec("wf_1", state, undefined, asks).nodes)[0],
+      step: workNodes(runToExec(state, undefined, asks).nodes)[0],
     });
     expect(mode.kind === "disabled" ? undefined : mode.verb).toBe(c.verb);
   });

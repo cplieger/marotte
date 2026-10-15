@@ -107,7 +107,7 @@ async function play(events: readonly Event[]): Promise<void> {
     }
     const state = store.peekRunState("wf");
     if (state !== undefined) {
-      page.render(runToExec("wf", state, undefined, NO_ASKS));
+      page.render(runToExec(state, undefined, NO_ASKS));
     }
   }
 }

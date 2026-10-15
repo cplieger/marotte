@@ -300,7 +300,7 @@ function execOf(id: string): ExecRun | undefined {
   const st = runState(id);
   return st === undefined
     ? undefined
-    : runToExec(id, st, runPlan(id), runPendingAsks(id), "", runStepEnds(id));
+    : runToExec(st, runPlan(id), runPendingAsks(id), "", runStepEnds(id));
 }
 
 /** Join the shared 1s clock for every run on screen and leave it for every run that left. ONE

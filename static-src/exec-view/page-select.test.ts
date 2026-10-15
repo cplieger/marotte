@@ -27,7 +27,7 @@ function loop(last: ExecState): ExecRun {
     state: last,
     children: [pass(0, step("loop:iter-0:a", "fail")), pass(1, step("loop:iter-1:a", last))],
   };
-  return { id: "wf_1", label: "run", state: "running", nodes: [repeat], live: true };
+  return { label: "run", state: "running", nodes: [repeat], live: true };
 }
 
 let host: HTMLElement | undefined;

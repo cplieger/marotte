@@ -122,7 +122,6 @@ describe("the run tab's layout", () => {
       const { byId, runView } = mountRunView(h);
       const row = verbs(false);
       const run: ExecRun = {
-        id: "wf",
         label: "nightly",
         state: "running",
         nodes: fan(),
@@ -163,7 +162,6 @@ describe("the run tab's layout", () => {
       })),
     ];
     mountPage(byId, verbs(true)).render({
-      id: "wf",
       label: "nightly",
       state: "waiting",
       nodes,

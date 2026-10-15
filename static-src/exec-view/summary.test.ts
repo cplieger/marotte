@@ -9,7 +9,7 @@ function step(id: string, state: ExecState): ExecNode {
 }
 
 function run(nodes: ExecNode[], over: Partial<ExecRun> = {}): ExecRun {
-  return { id: "wf", label: "nightly", state: "running", nodes, live: true, ...over };
+  return { label: "nightly", state: "running", nodes, live: true, ...over };
 }
 
 let wash: HTMLElement;

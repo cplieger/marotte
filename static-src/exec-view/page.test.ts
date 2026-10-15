@@ -26,7 +26,7 @@ function step(
 }
 
 function run(nodes: ExecNode[], live = true): ExecRun {
-  return { id: "wf_1", label: "release", state: live ? "running" : "ok", nodes, live };
+  return { label: "release", state: live ? "running" : "ok", nodes, live };
 }
 
 let dock: HTMLElement;

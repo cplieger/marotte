@@ -17,7 +17,7 @@ function step(id: string, output?: string): ExecNode {
 }
 
 function finished(nodes: ExecNode[]): ExecRun {
-  return { id: "wf_1", label: "release", state: "ok", nodes, live: false };
+  return { label: "release", state: "ok", nodes, live: false };
 }
 
 // Every table the results region rendered is watched by the shared observer, whose own report of a

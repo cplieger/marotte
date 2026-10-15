@@ -510,9 +510,7 @@ export function buildRunCard(
     lastAsks = asks;
     lastDetail = detail;
     const exec =
-      state === undefined
-        ? undefined
-        : runToExec(workflowID, state, detail.plan, asks, "", detail.ends);
+      state === undefined ? undefined : runToExec(state, detail.plan, asks, "", detail.ends);
     lastNodes = exec?.nodes ?? [];
     const label = state?.runLabel ?? state?.workflowName ?? "";
     if (label !== "") {

@@ -79,8 +79,6 @@ export function latestPass(repeat: Pick<ExecNode, "children">): ExecNode | undef
 
 /** The whole execution, plus the facts its run dock states. */
 export interface ExecRun {
-  /** The id the route and the store key on. */
-  id: string;
   label: string;
   /** The overall state, NOT derivable from the nodes: a run can be `paused` with
    *  every node settled, and only the source knows its own answer. */

@@ -815,14 +815,7 @@ function paint(
   // the nodes are doing, and the dock says which of them is blocked on a person.
   const focus = focusRequest?.workflowID === workflowID ? focusRequest.path : "";
   shownAsks = runPendingAsks(workflowID);
-  const run = runToExec(
-    workflowID,
-    state,
-    runPlan(workflowID),
-    shownAsks,
-    focus,
-    runStepEnds(workflowID),
-  );
+  const run = runToExec(state, runPlan(workflowID), shownAsks, focus, runStepEnds(workflowID));
   for (const node of workNodes(run.nodes)) {
     const tail = lastPrintedLine(turnsForStep(turns, node.path).map(([, t]) => t));
     if (tail !== "") {
