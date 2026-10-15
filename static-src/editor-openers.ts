@@ -7,7 +7,6 @@ import { batch, effect, el } from "@cplieger/reactive";
 import { openEditorView, tabIdFor, setTabDirty, getActiveTabId } from "./tabs.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
-import { abortSuggestion, clearSuggestionState } from "./editor-conflict.js";
 import { apiGetTypedOrError } from "./api-client.js";
 import { editorDocSkeleton, paintPlaceholder } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
@@ -284,7 +283,6 @@ export function activateFile(path: string): void {
   if (leaving !== undefined) {
     invalidate(leaving);
   }
-  abortSuggestion();
   activeLoadController?.abort();
   activeLoadController = new AbortController();
   // Created BEFORE `setActiveFilePath`: that write is the signal editor-core's effects re-run on,
@@ -641,16 +639,11 @@ export function refreshEditorFile(path: string): void {
  *  calls it; to close a file programmatically, close its tab. Deleting the record retires it, so
  *  every answer still in flight for it is dropped (`owns`). */
 export function closeEditorFile(path: string): void {
-  const state = fileStates.get(path);
-  if (state?.mode.value.kind === "conflict") {
-    abortSuggestion(path);
-  }
   liveDispose(path);
   dirtyTabUnbinds.get(path)?.();
   dirtyTabUnbinds.delete(path);
   fileStates.delete(path);
   clearAgentLineCache(path);
-  clearSuggestionState(path);
   const activeFilePath = getActiveFilePath();
   if (activeFilePath === path) {
     setActiveFilePath("");

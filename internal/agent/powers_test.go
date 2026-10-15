@@ -304,7 +304,7 @@ func TestHandlePowerInstall_OutlivesTheRequestButNotShutdown(t *testing.T) {
 
 func TestHandlePowerInstall_RefreshesARunningUtilitySession(t *testing.T) {
 	h, utility := newPowersHub(t, &fakePowers{})
-	if _, err := h.utility.get().session.acquire(t.Context()); err != nil {
+	if _, err := h.utility.get().acquire(t.Context()); err != nil {
 		t.Fatalf("start utility: %v", err)
 	}
 	rec := httptest.NewRecorder()
@@ -503,7 +503,7 @@ func TestPowersItemsChanged_FromAChatBridgeSyncsAndBroadcasts(t *testing.T) {
 func TestPowersItemsChanged_FromTheUtilitySession(t *testing.T) {
 	backend := &fakePowers{}
 	h, _ := newPowersHub(t, backend)
-	if !h.utility.get().session.dispatchNotification(itemsChangedMsg("success")) {
+	if !h.utility.get().dispatchNotification(itemsChangedMsg("success")) {
 		t.Fatal("the utility session did not claim items_changed")
 	}
 	waitFor(t, func() bool { return powersChangedCount(t, h) == 1 })

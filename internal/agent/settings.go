@@ -12,7 +12,7 @@ import (
 type Settings struct {
 	governance *governanceCache
 	// utility is the bridgeless runtime every call here goes through.
-	utility func() *utilityRuntime
+	utility func() *utilitySession
 	// lifecycle supplies the workspace dir and the process lifetime.
 	lifecycle *lifetime
 	broadcast func(context.Context, marotte.ServerEvent)

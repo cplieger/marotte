@@ -8,7 +8,6 @@ import { describe, it, expect, beforeEach, onTestFinished, vi } from "vitest";
 import type * as TabsModule from "./tabs.js";
 import type * as ApiClientModule from "./api-client.js";
 import type * as RouterModule from "./router.js";
-import type * as EditorConflictModule from "./editor-conflict.js";
 import type * as EditorModesModule from "./editor-modes.js";
 import type * as EditorUiModule from "./editor-ui.js";
 import type * as EditorScrollModule from "./editor-scroll.js";
@@ -48,11 +47,6 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 vi.mock("./router.js", async (importOriginal) => ({
   ...(await importOriginal<typeof RouterModule>()),
   pushRoute: vi.fn(),
-}));
-vi.mock("./editor-conflict.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof EditorConflictModule>()),
-  abortSuggestion: vi.fn(),
-  clearSuggestionState: vi.fn(),
 }));
 vi.mock("./editor-modes.js", async (importOriginal) => ({
   ...(await importOriginal<typeof EditorModesModule>()),

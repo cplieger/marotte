@@ -70,12 +70,12 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 	cctx, cancel := context.WithTimeout(r.Context(), configTemplateTimeout)
 	defer cancel()
 	// No early return: a template outage still serves the live catalog.
-	out := readTemplate(cctx, u.session)
+	out := readTemplate(cctx, u)
 	modes, models, stamp := rt.catalog.modesModelsStamped()
 	if len(modes) > 0 {
 		out.response.Modes = modes
 	}
-	out.response.Modes = mergeCustomAgents(out.response.Modes, workspaceAgents(cctx, u.session, rt.lifecycle.workDir))
+	out.response.Modes = mergeCustomAgents(out.response.Modes, workspaceAgents(cctx, u, rt.lifecycle.workDir))
 	if len(models) > 0 {
 		out.response.Models = models
 	}
@@ -110,7 +110,7 @@ func (rt *Runtime) servedModels(ctx context.Context) ([]marotte.SessionModel, bo
 	}
 	cctx, cancel := context.WithTimeout(ctx, configTemplateTimeout)
 	defer cancel()
-	out := withCatalogVerdict(readTemplate(cctx, rt.utility.get().session))
+	out := withCatalogVerdict(readTemplate(cctx, rt.utility.get()))
 	return out.Models, out.Catalog == marotte.CatalogReady
 }
 

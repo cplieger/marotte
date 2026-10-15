@@ -62,11 +62,11 @@ func restartSweptRun(t *testing.T, method string) (*Runtime, *fakeBridge, *claim
 	t.Helper()
 	h, _, br := newTestHub()
 	addressableStep(t, h, br, "wf_1", "review")
-	if h.runs.utility().session.liveID() == "" {
+	if h.runs.utility().liveID() == "" {
 		t.Fatal("Setup: the warming read did not start the utility session")
 	}
 	carrier := &claimedCarrier{fakeBridge: newFakeBridge(), method: method}
-	carrier.held = func() bool { return h.runs.utility().session.liveID() != "" }
+	carrier.held = func() bool { return h.runs.utility().liveID() != "" }
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: carrier, state: bridgeIdle})
 	return h, br, carrier
 }
@@ -108,7 +108,7 @@ func TestRunVerbs_AStampTheUtilitySessionHoldsIsReleased(t *testing.T) {
 			if got := carrier.sent(); len(got) != 2 || !got[0] || got[1] {
 				t.Errorf("%s calls (true = refused) = %v, want one refused and one that landed", tc.method, got)
 			}
-			if id := h.runs.utility().session.liveID(); id != "" {
+			if id := h.runs.utility().liveID(); id != "" {
 				t.Errorf("utility session = %q after the reclaim, want it stopped", id)
 			}
 		})
@@ -118,7 +118,7 @@ func TestRunVerbs_AStampTheUtilitySessionHoldsIsReleased(t *testing.T) {
 // The utility may already be stopped by a concurrent verb; this one still resends.
 func TestResume_AUtilitySessionAnotherVerbStoppedStillResends(t *testing.T) {
 	h, _, carrier := restartSweptRun(t, methodKiroWorkflowResume)
-	h.runs.utility().session.Stop()
+	h.runs.utility().Stop()
 	refusedOnce := false
 	carrier.held = func() bool {
 		was := refusedOnce
@@ -139,7 +139,7 @@ func TestResume_AStampThatOutlivesTheStopBrieflyIsReleased(t *testing.T) {
 	h, _, carrier := restartSweptRun(t, methodKiroWorkflowResume)
 	lingering := 2
 	carrier.held = func() bool {
-		if h.runs.utility().session.liveID() != "" {
+		if h.runs.utility().liveID() != "" {
 			return true
 		}
 		lingering--

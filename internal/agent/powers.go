@@ -49,7 +49,7 @@ func WithPowers(b powersBackend) Option {
 
 type powersSurface struct {
 	backend   powersBackend `wiring:"optional"`
-	utility   func() *utilityRuntime
+	utility   func() *utilitySession
 	bridges   *bridgeManager
 	broadcast func(context.Context, marotte.ServerEvent)
 	locks     func() map[string]marotte.GovernanceLock
@@ -190,7 +190,7 @@ func (ps *powersSurface) handleList(w http.ResponseWriter, r *http.Request) {
 func (ps *powersSurface) installed(ctx context.Context) ([]kasPower, []powerLoadError, error) {
 	cctx, cancel := context.WithTimeout(ctx, powersCallTimeout)
 	defer cancel()
-	raw, err := ps.utility().session.rawCall(cctx, "powers list", methodKiroPowersList, callerParams(nil))
+	raw, err := ps.utility().rawCall(cctx, "powers list", methodKiroPowersList, callerParams(nil))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -406,7 +406,7 @@ func (ps *powersSurface) refresh(ctx context.Context) {
 		})
 	}
 	wg.Go(func() {
-		if err := ps.utility().session.notifyIfLive(cctx, methodKiroPowersRefresh, map[string]any{}); err != nil {
+		if err := ps.utility().notifyIfLive(cctx, methodKiroPowersRefresh, map[string]any{}); err != nil {
 			slog.Warn("powers: refresh not sent to the utility session", "error", err)
 		}
 	})

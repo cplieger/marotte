@@ -375,7 +375,7 @@ func (bc *bridgeCoordinator) sessionChoices(
 	ctx context.Context, chatID marotte.ChatID, rec *marotte.Chat, modelOverride string,
 ) sessionAsk {
 	ask := sessionAsk{model: rec.Model}
-	if modelOverride != "" && modelOverride != modelAuto {
+	if modelOverride != "" && modelOverride != marotte.ModelAuto {
 		ask.model = modelOverride
 	}
 	// Withhold a model the account cannot run: it is inherited, not a fresh pick (refused in

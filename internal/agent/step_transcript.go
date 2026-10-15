@@ -108,7 +108,7 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]tran
 		return nil, marotte.RunStepTranscriptUnavailable
 	}
 	// A `{"result":null}` reply would otherwise wait out the budget.
-	raw, at, err := u.session.rawCallAt(cctx, "step transcript load", marotte.MethodSessionLoad,
+	raw, at, err := u.rawCallAt(cctx, "step transcript load", marotte.MethodSessionLoad,
 		callerParams(map[string]any{marotte.KeySessionID: sessionID}))
 	if err != nil || len(raw) == 0 {
 		// KAS's reason is machine prose: logged, not forwarded.

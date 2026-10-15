@@ -134,7 +134,7 @@ func (rt *Runtime) reconcileSettingsWrite(ctx context.Context, reason string) {
 func (rt *Runtime) reconcileUtilityUse(ctx context.Context) {
 	rt.reconcileSessionSettings(ctx, "session settings", time.Now().Add(ignorePushTimeout))
 	if u := rt.utility.peek(); u != nil {
-		u.session.syncLive(ctx, rt.liveSettings)
+		u.syncLive(ctx, rt.liveSettings)
 	}
 	rt.fanOutLive(liveSurface{utility: true})
 }
@@ -183,8 +183,8 @@ func (rt *Runtime) claimUtilityRetire(ctx context.Context, start <-chan struct{}
 			defer close(done)
 			<-start
 			// It serves the leases it holds until Stop.
-			utility.session.syncLive(ctx, rt.liveSettings)
-			utility.session.Stop()
+			utility.syncLive(ctx, rt.liveSettings)
+			utility.Stop()
 		}
 	})
 	if !claimed {

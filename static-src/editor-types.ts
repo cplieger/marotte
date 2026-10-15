@@ -179,7 +179,6 @@ export interface FileState {
   mode: Signal<FileMode>;
   /** True when `current` differs from `original`. */
   dirty: ReadonlySignal<boolean>;
-  suggestions: Map<number, HunkSuggestion>;
   returnToGitDiff: { ref: string; repo: string } | null;
   /** Repo identifier for git-diff sources (empty string = default). */
   repo: string;
@@ -262,12 +261,6 @@ export function repaint(state: FileState): void {
   painter(state);
 }
 
-interface HunkSuggestion {
-  loading: boolean;
-  preview: string | null;
-  error: string;
-}
-
 // --- EditorState class: encapsulates shared mutable state ---
 
 class EditorState {
@@ -321,7 +314,6 @@ class EditorState {
       gen: 0,
       mode,
       dirty,
-      suggestions: new Map(),
       returnToGitDiff: null,
       repo: "",
       cachedDiff,

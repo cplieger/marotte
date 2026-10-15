@@ -811,7 +811,7 @@
                     <span class="section-option-label">Share content with AWS for service improvement</span>
                     <span class="settings-save-status hidden" data-save-status="content_collection_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Lets AWS use what Marotte sends the model to improve its service: your chats, workflow runs, and the code and diffs behind generated commit messages, PR descriptions and error explanations. A change applies at the next model request.</p>
+                  <p class="section-hint">Lets AWS use what Marotte sends the model to improve its service: your chats and workflow runs. A change applies at the next model request.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -1237,7 +1237,7 @@
             <input type="text" id="pr-title" class="tool-form-input" autocomplete="off">
           </label>
           <label class="pr-dialog-field">
-            <span class="forge-field-label">Description: Markdown, AI-generated, edit freely</span>
+            <span class="forge-field-label">Description: Markdown, starts as the branch's commits, edit freely</span>
             <textarea id="pr-body" class="tool-form-input pr-body-textarea" rows="10" spellcheck="false"></textarea>
           </label>
           <label class="pr-dialog-check">
@@ -1248,7 +1248,6 @@
         </div>
         <footer class="pr-dialog-footer">
           <button type="button" class="btn-small" data-pr-close>Cancel</button>
-          <button type="button" id="pr-generate-btn" class="btn-small">Regenerate description</button>
           <button type="button" id="pr-submit-btn" class="btn-small btn-primary">Open pull request</button>
         </footer>
       </dialog>

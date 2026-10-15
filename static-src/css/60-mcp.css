@@ -466,13 +466,13 @@
  * button (14-tools.css). What this rule held was a near-copy of it — the same
  * `--c-bg-secondary` fill and the same `--c-bg-tertiary` hover, differing only in
  * padding, `--r-sm` for `--r`, primary ink for secondary, and `inline-flex` for
- * `flex` — which is drift rather than a variant. The class stays on all four buttons
+ * `flex` — which is drift rather than a variant. The class stays on all three buttons
  * with nothing selecting it: it is the family's grep handle, and `40-a11y.css` names
- * it as the busy-face example, so deleting it would leave that comment unresolvable.
+ * it in the busy face's history, so deleting it would leave that comment unresolvable.
  *
  * THE DENSE TIER IS THE ONE THING THAT STAYS LOCAL, and it is the pattern copied
  * whole from `.list-row .btn-small` (14-tools.css), `padding-block: 0` included:
- * a hunk row is four actions beside a mono title in a strip padded `--sp-1`, so
+ * a hunk row is three actions beside a mono title in a strip padded `--sp-1`, so
  * `--btn-h` would make the buttons the tallest thing in it and therefore the row's
  * own height. `max()` and not a bare token, because the universal hit-target floor
  * scores zero (61-mcp-tools.css) and so loses to this rule, and `--ctl-h-dense` is
@@ -482,54 +482,10 @@
  *
  * `> .btn-small` and not `.conflict-btn`, because the tier is a property of the ROW
  * rather than of these buttons: a `.btn-small` added to a hunk row later wants it too,
- * and the row holds no other button (its siblings are the title and the pill spans). */
+ * and the row holds no other button (its one sibling is the title span). */
 .conflict-hunk-row > .btn-small {
   min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
   padding-block: 0;
-}
-
-/* The AI-merge action's accent variant — the one thing `.btn-small` has no opinion
- * about, exactly as `.confirm-allow`'s green does for the ask dialog's OK. It marks
- * the one button in the row that proposes rather than applies.
- *
- * The hover re-states `color` because it has to: `.btn-small`'s own hover moves ink
- * to `--c-text-primary` and ties this rule's specificity, so without it the accent
- * identity would drop the moment a pointer arrived. */
-.conflict-btn-suggest {
-  border-color: var(--c-accent);
-  color: var(--c-accent);
-}
-
-.conflict-btn-suggest:hover {
-  background: color-mix(in oklch, var(--c-accent) 10%, transparent);
-  color: var(--c-accent);
-}
-
-.conflict-suggest-pill {
-  padding: 2px var(--sp-2);
-  border-radius: var(--r-pill);
-  background: color-mix(in oklch, var(--c-accent) 12%, transparent);
-  color: var(--c-accent);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-}
-
-.conflict-suggest-preview {
-  margin: var(--sp-1) 0 var(--sp-2);
-  padding: var(--sp-2);
-  border: 1px dashed var(--c-accent);
-  border-radius: var(--r);
-  background: color-mix(in oklch, var(--c-accent) 6%, var(--c-bg-secondary));
-  color: var(--c-text-primary);
-  font-family: ui-monospace, monospace;
-  font-size: var(--fs-sm);
-  white-space: pre;
-  overflow-x: auto;
-}
-
-.conflict-suggest-error {
-  color: var(--c-red);
-  font-size: var(--fs-xs);
 }
 
 /* Notification sub-option indent */

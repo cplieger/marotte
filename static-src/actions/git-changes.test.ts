@@ -106,26 +106,6 @@ describe("git.commit", () => {
   });
 });
 
-describe("git.generateCommitMessage", () => {
-  it("POSTs to /api/git/commit-message and lifts the output field", async () => {
-    // Real wire shape: {"output": "<message>"} (internal/git/handlers_ai.go).
-    respondWith({ output: "feat: add X" });
-    const { generateCommitMessage } = await import("./git-changes.js");
-    const r = await generateCommitMessage.dispatch({ repo: "main" });
-    expect(r).toEqual({ output: "feat: add X" });
-    const [url] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/git/commit-message");
-  });
-
-  it("rejects the 200 {error} envelope (no staged changes)", async () => {
-    respondWith({ error: "no_staged_changes" });
-    const { generateCommitMessage } = await import("./git-changes.js");
-    const o = await generateCommitMessage.dispatch({ repo: "main" }).outcome;
-    expect(o.status === "error" ? o.error.message : o.status).toBe("no_staged_changes");
-    expect(toast.error).not.toHaveBeenCalled();
-  });
-});
-
 describe("error envelope (HTTP 200 + {error})", () => {
   it("pull: {error} body → git's message in the outcome, no toast, no retry", async () => {
     respondWith({ error: "fatal: Not possible to fast-forward, aborting." });

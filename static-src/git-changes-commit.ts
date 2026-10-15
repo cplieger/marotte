@@ -1,10 +1,8 @@
 import { apiGet } from "./api-client.js";
-import { commit as commitAction, generateCommitMessage } from "./actions/git-changes.js";
+import { commit as commitAction } from "./actions/git-changes.js";
 import type { ActionOutcome } from "./actions/index.js";
 import { el } from "@cplieger/reactive";
 import { isSafeURL } from "./url-safety.js";
-import { iconEl } from "./icon-el.js";
-import { ICON_SPARKLE } from "./icons.js";
 import type { GitRepoStatus } from "./git-types.js";
 
 type RepoStatus = GitRepoStatus;
@@ -151,8 +149,8 @@ export function renderRecentCommits(r: RepoStatus, deps: CommitDeps): HTMLElemen
 }
 
 /**
- * Render the commit message box, AI generate and the Commit button. `stagedCount` is the staged file count, which
- * the button names so the one control that writes history says what it will write.
+ * Render the commit message box and the Commit button. `stagedCount` is the staged file count, which the button
+ * names so the one control that writes history says what it will write.
  */
 export function renderCommitArea(
   r: RepoStatus,
@@ -175,41 +173,6 @@ export function renderCommitArea(
 
   const row = el("div", { className: "git-commit-row" });
 
-  const ai = el(
-    "button",
-    {
-      type: "button",
-      className: "btn-small",
-      "data-tooltip": "Generate commit message from staged changes",
-    },
-    iconEl(ICON_SPARKLE),
-    "AI message",
-  ) as HTMLButtonElement;
-  row.appendChild(
-    deps.press(
-      ai,
-      r.repo,
-      "ai-message",
-      async () => {
-        const o = await generateCommitMessage.dispatch({ repo: r.repo }).outcome;
-        if (o.status !== "success") {
-          return refusalOf(o, "write a commit message");
-        }
-        // Only fill when non-empty, so a failed generation never wipes a typed message.
-        const generated = o.value.output ?? "";
-        if (generated !== "") {
-          deps.commitMessages.set(r.repo, generated);
-          const box = liveBox(r.repo);
-          if (box !== null) {
-            box.value = generated;
-          }
-        }
-        return null;
-      },
-      { refresh: false },
-    ),
-  );
-
   const commit = el(
     "button",
     { type: "button", className: "btn-small btn-primary" },
@@ -228,7 +191,8 @@ export function renderCommitArea(
       if (refused !== null) {
         return refused;
       }
-      box.value = "";
+      // Re-read: a repaint during the request replaced the box, and carries the typed message into the new one.
+      (liveBox(r.repo) ?? box).value = "";
       deps.commitMessages.delete(r.repo);
       return null;
     }),

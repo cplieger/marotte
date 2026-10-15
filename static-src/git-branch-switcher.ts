@@ -3,13 +3,12 @@
 // rovingFocus supplies the menu keyboard contract. This module keeps the content, the load and the checkout actions.
 
 import { apiGet } from "./api-client.js";
-import { checkoutBranch, suggestBranchName } from "./actions/git-branch.js";
+import { checkoutBranch } from "./actions/git-branch.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
-import { withAsyncFeedback } from "./async-button.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
-import { ICON_GIT_BRANCH, ICON_SEND, ICON_SPARKLE, findGlyph } from "./icons.js";
+import { ICON_GIT_BRANCH, ICON_SEND, findGlyph } from "./icons.js";
 import { createPopover, type PopoverController } from "@cplieger/ui-primitives/popover";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 
@@ -80,37 +79,6 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     autocomplete: "off",
     "aria-label": "New branch name",
   }) as HTMLInputElement;
-  // Fills the create input from the repo's work in progress; the user edits, then accepts.
-  const suggestBtn = el(
-    "button",
-    {
-      type: "button",
-      className: "btn-small icon-only git-branch-popover-suggest",
-      "data-tooltip": "Suggest a branch name for the work in progress",
-      "aria-label": "Suggest a branch name",
-    },
-    iconEl(ICON_SPARKLE),
-  ) as HTMLButtonElement;
-  suggestBtn.addEventListener("click", () => {
-    void withAsyncFeedback(suggestBtn, async () => {
-      const o = await suggestBranchName.dispatch({ repo }).outcome;
-      if (o.status !== "success") {
-        // Reject so the feedback helper shows ✗ with the real failure (the framework already toasted it).
-        throw new Error(o.status === "error" ? o.error.message : "suggestion cancelled");
-      }
-      const res = o.value;
-      // Only while this popover is still the open one, and never over a name the user typed.
-      if (res.output !== undefined && res.output !== "" && openPopover === pop) {
-        createInput.value = res.output;
-        createInput.focus();
-        // Select the whole name and scroll to its head: a plain focus() leaves a long name showing its tail, and the
-        // selection marks it a suggestion that typing replaces.
-        createInput.setSelectionRange(0, res.output.length);
-        createInput.scrollLeft = 0;
-      }
-    });
-  });
-  // Enter already submits, but after a suggestion a reader looks for a button that accepts it.
   const createBtn = el(
     "button",
     {
@@ -125,7 +93,6 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     "form",
     { className: "git-branch-popover-create" },
     branchField(ICON_GIT_BRANCH, createInput),
-    suggestBtn,
     createBtn,
   ) as HTMLFormElement;
   pop.append(branchField(findGlyph("filter"), filter), list, status, createForm);

@@ -433,8 +433,7 @@
   align-items: stretch;
 }
 
-/* The two actions stay square beside the field, whatever the field wants. */
-.git-branch-popover-suggest,
+/* The action stays square beside the field, whatever the field wants. */
 .git-branch-popover-go {
   flex: 0 0 auto;
 }

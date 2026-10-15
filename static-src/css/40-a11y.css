@@ -172,7 +172,7 @@ a.run-step-head:focus-visible,
  * `:where()` scores ZERO, so this is a floor and not a mandate — the two states
  * that are NOT "unavailable" opt out on their own specificity and say why at
  * their own rule:
- *   - a disabled control that is BUSY (`.conflict-btn`) dims
+ *   - a disabled control that is BUSY (`aria-busy`, the next rule) dims
  *     less and takes `cursor: progress`, because it is coming back;
  *   - a control disabled because it is a READOUT rather than a refusal
  *     (`.turn-ledger-summary` with no files to list, `.send-btn`) declares
@@ -197,8 +197,8 @@ a.run-step-head:focus-visible,
  * every one of them DIMMED it.
  *
  * Dimming is what this removes rather than re-numbers. A busy control is
- * communicating: it grows a spinner and its label becomes "Suggesting…",
- * "Delivering…", "Cancel". Fading the very words that report the work is the
+ * communicating: it grows a spinner and its label becomes "Delivering…" or
+ * "Cancel". Fading the very words that report the work is the
  * defect the three opacities were arguing about, so the answer is `opacity: 1`
  * and no second token.
  *

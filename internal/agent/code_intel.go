@@ -40,7 +40,7 @@ func (rt *Runtime) EnsureCodeIntelligence(ctx context.Context) {
 	defer rt.ciBusy.Store(false)
 	ctx, cancel := context.WithTimeout(ctx, codeIntelInitBudget)
 	defer cancel()
-	msg, err := rt.utility.get().session.codeIntelligenceInit(ctx)
+	msg, err := rt.utility.get().codeIntelligenceInit(ctx)
 	if err != nil {
 		slog.Warn("code intelligence init failed; will retry on the next trigger",
 			"error", err)

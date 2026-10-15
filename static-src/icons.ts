@@ -90,13 +90,6 @@ export const ICON_CHEVRON_UP = svg("ui", '<path d="M18 15l-6-6-6 6"/>');
 export const ICON_STEP_PREV = svg("ui", '<path d="M7 14.5l5-5 5 5"/>');
 export const ICON_STEP_NEXT = svg("ui", '<path d="M7 9.5l5 5 5-5"/>');
 export const ICON_SEND = svg("ui", PATH_SEND);
-// The AI-generate glyph (Lucide "sparkles") for buttons that ask a model to fill a field. Not an emoji: a colour
-// font beside a stroked arrow renders at its own weight and baseline.
-export const ICON_SPARKLE = svg(
-  "ui",
-  '<path d="m12 3-1.9 5.8a2 2 0 01-1.3 1.3L3 12l5.8 1.9a2 2 0 011.3 1.3L12 21l1.9-5.8a2 2 0 011.3-1.3L21 12l-5.8-1.9a2 2 0 01-1.3-1.3z"/>' +
-    '<path d="M5 3v4M3 5h4M19 17v4M17 19h4"/>',
-);
 // Rotated by 15-input.css. Not a marching `stroke-dashoffset`: under `non-scaling-stroke` Chromium computes the dash
 // in a space `stroke-dasharray` disagrees with, collapsing the arc to a dot.
 export const ICON_SPINNER =

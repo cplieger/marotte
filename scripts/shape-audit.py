@@ -73,7 +73,6 @@ RECEIVER = {
     "sharedBridge": "sb",
     "utilityLease": "l",
     "utilitySession": "us",
-    "utilityAgent": "ua",
     "ShellManager": "sm",
     "mcpRecorder": "r",
 }

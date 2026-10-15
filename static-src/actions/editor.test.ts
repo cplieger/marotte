@@ -108,20 +108,6 @@ describe("editor.fetch_agent_lines", () => {
   });
 });
 
-describe("editor.suggest_resolution", () => {
-  it("POSTs to /api/utility/resolve-conflict", async () => {
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ output: "resolved" }), { status: 200 }),
-    );
-    const { suggestResolution } = await import("./editor.js");
-    const r = await suggestResolution.dispatch({ ours: "a", theirs: "b", context: "merge" });
-    expect(r).toEqual({ output: "resolved" });
-    const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/utility/resolve-conflict");
-    expect(opts.method).toBe("POST");
-  });
-});
-
 /** A staged answer: the status and the JSON body the server sent. */
 interface Staged {
   readonly status: number;

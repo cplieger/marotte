@@ -75,7 +75,6 @@ vi.mock("./actions/editor.js", () => ({
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
   loadDiff: undefined,
-  suggestResolution: undefined,
   fetchAgentLines: { cancel: () => undefined, dispatch: () => Promise.resolve(null) },
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened
   // this graph and these names are imported somewhere in it. No case here calls

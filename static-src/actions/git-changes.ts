@@ -167,14 +167,3 @@ export const commit = apiAction<{ repo: string; message: string }, GitCmdResult>
   idempotencyKey: true,
   // Not retryable: a timed-out commit may have succeeded; a retry duplicates it.
 });
-
-export const generateCommitMessage = apiAction<GitRepoArgs, GitCmdResult>({
-  name: "git.generate_message",
-  scope: (args) => "git:" + args.repo,
-  dedupe: (args) => args.repo,
-  request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
-  decode: decodeGitResult,
-  error: false,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-});

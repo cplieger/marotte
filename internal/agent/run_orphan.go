@@ -332,7 +332,7 @@ func (rs *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMess
 	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
-	raw, err := u.session.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
+	raw, err := u.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
 		callerParams(map[string]any{keyWorkflowID: workflowID}))
 	if err != nil {
 		return nil, workflow.Classify(err)

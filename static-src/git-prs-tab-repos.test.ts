@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as ModPRs from "./git-prs-tab.js";
 import { prIdentity } from "./push-subject.js";
 import {
-  H,
   actions,
   applyFilter,
   entry,
@@ -15,6 +14,7 @@ import {
   mount,
   pr,
   repos,
+  requestedURLs,
   routeAPI,
   serve,
   serveRows,
@@ -83,7 +83,7 @@ describe("opening a new pull request from a clone", () => {
       `<dialog id="pr-create-dialog">
         <input id="pr-base"><input id="pr-head"><input id="pr-title"><textarea id="pr-body"></textarea>
         <input id="pr-draft" type="checkbox"><div id="pr-dialog-status"></div>
-        <button id="pr-submit-btn"></button><button id="pr-generate-btn"></button>
+        <button id="pr-submit-btn"></button>
       </dialog>`,
     );
     const { openNewPRForRepo } = await load();
@@ -94,16 +94,14 @@ describe("opening a new pull request from a clone", () => {
         outcome: Promise.resolve({ status: "cancelled" as const }),
       }),
     );
-    H.apiPost.mockResolvedValue({ output: "drafted" });
 
     await openNewPRForRepo("one-clone", "feat/x");
     expect((document.getElementById("pr-head") as HTMLInputElement).value).toBe("feat/x");
     expect(mount().querySelector(".git-multirepo-error")).toBeNull();
-    // The description is drafted from the clone's own directory.
-    expect(H.apiPost.mock.calls[0]?.slice(0, 2)).toEqual([
-      "/api/git/pr-description",
-      { repo: "one-clone", branch: "main" },
-    ]);
+    // The commit list is read from the clone's own directory.
+    expect(requestedURLs()).toContain(
+      "/api/git/branch-commits?repo=one-clone&base=main&head=feat%2Fx",
+    );
 
     document.getElementById("pr-submit-btn")?.click();
     await vi.advanceTimersByTimeAsync(0);
@@ -114,8 +112,8 @@ describe("opening a new pull request from a clone", () => {
     });
   });
 
-  it("drafts a listed repository's description from its clone's directory", async () => {
-    // The section is named by the forge's path; the description is git's, read from the clone's directory.
+  it("reads a listed repository's commit list from its clone's directory", async () => {
+    // The section is named by the forge's path; the commit list is git's, read from the clone's directory.
     routeAPI();
     serve(
       entry(githubForge, "1", [pr(1, 0)], {
@@ -127,7 +125,7 @@ describe("opening a new pull request from a clone", () => {
       `<dialog id="pr-create-dialog">
         <input id="pr-base"><input id="pr-head"><input id="pr-title"><textarea id="pr-body"></textarea>
         <input id="pr-draft" type="checkbox"><div id="pr-dialog-status"></div>
-        <button id="pr-submit-btn"></button><button id="pr-generate-btn"></button>
+        <button id="pr-submit-btn"></button>
       </dialog>`,
     );
     const { refreshPRs } = await load();
@@ -136,7 +134,7 @@ describe("opening a new pull request from a clone", () => {
       .find((b) => b.textContent === "+ New PR")
       ?.click();
     await vi.advanceTimersByTimeAsync(0);
-    expect(H.apiPost.mock.calls[0]?.[1]).toEqual({ repo: "one-clone", branch: "main" });
+    expect(requestedURLs()).toContain("/api/git/branch-commits?repo=one-clone&base=main&head=");
   });
 
   // The page's head field is read-only (static/index.html), as these two fixtures are.
@@ -148,7 +146,7 @@ describe("opening a new pull request from a clone", () => {
       `<dialog id="pr-create-dialog">
         <input id="pr-base"><input id="pr-head" readonly><input id="pr-title"><textarea id="pr-body"></textarea>
         <input id="pr-draft" type="checkbox"><div id="pr-dialog-status"></div>
-        <button id="pr-submit-btn"></button><button id="pr-generate-btn"></button>
+        <button id="pr-submit-btn"></button>
       </dialog>`,
     );
     const { refreshPRs } = await load();
@@ -174,7 +172,7 @@ describe("opening a new pull request from a clone", () => {
       `<dialog id="pr-create-dialog">
         <input id="pr-base"><input id="pr-head" readonly><input id="pr-title"><textarea id="pr-body"></textarea>
         <input id="pr-draft" type="checkbox"><div id="pr-dialog-status"></div>
-        <button id="pr-submit-btn"></button><button id="pr-generate-btn"></button>
+        <button id="pr-submit-btn"></button>
       </dialog>`,
     );
     const { openNewPRForRepo, refreshPRs } = await load();
@@ -213,10 +211,9 @@ describe("opening a new pull request from a clone", () => {
       `<dialog id="pr-create-dialog">
         <input id="pr-base"><input id="pr-head"><input id="pr-title"><textarea id="pr-body"></textarea>
         <input id="pr-draft" type="checkbox"><div id="pr-dialog-status"></div>
-        <button id="pr-submit-btn"></button><button id="pr-generate-btn"></button>
+        <button id="pr-submit-btn"></button>
       </dialog>`,
     );
-    H.apiPost.mockResolvedValue({ output: "drafted" });
     const { openNewPRForRepo, refreshPRs } = await load();
 
     const opening = openNewPRForRepo("one-clone", "feat/x");

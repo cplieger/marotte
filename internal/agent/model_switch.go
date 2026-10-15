@@ -18,7 +18,7 @@ import (
 
 // resolveSwitchModel is the model a request names: the chat's own for none or auto.
 func resolveSwitchModel(chat *marotte.Chat, p marotte.SwitchModelCommand) string {
-	if p.Model == "" || p.Model == modelAuto {
+	if p.Model == "" || p.Model == marotte.ModelAuto {
 		return chat.Model
 	}
 	return p.Model

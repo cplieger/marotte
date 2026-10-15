@@ -30,7 +30,7 @@ func TestACPArgsReachChatBridges(t *testing.T) {
 }
 
 // TestACPArgsNeverReachTheUtilityBridge pins the per-spawn exclusion: the utility bridge
-// shares the chat factory, and an operator `--effort max` there spends credits on titles.
+// shares the chat factory, and the operator's flags are for prompted chats.
 func TestACPArgsNeverReachTheUtilityBridge(t *testing.T) {
 	cs := newTestChatStore()
 	br := newFakeBridge()
@@ -38,10 +38,10 @@ func TestACPArgsNeverReachTheUtilityBridge(t *testing.T) {
 	cs.wire(h)
 
 	u := h.utility.get()
-	if _, err := u.session.acquire(t.Context()); err != nil {
+	if _, err := u.acquire(t.Context()); err != nil {
 		t.Fatalf("acquire utility session: %v", err)
 	}
-	defer u.session.Stop()
+	defer u.Stop()
 
 	opts := br.lastStartOpts()
 	if opts == nil {

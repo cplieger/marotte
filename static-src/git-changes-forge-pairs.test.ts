@@ -52,7 +52,6 @@ vi.mock("./actions/git-changes.js", async (importOriginal) => {
     stash: stub,
     stashPop: stub,
     commit: stub,
-    generateCommitMessage: stub,
   };
 });
 

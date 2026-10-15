@@ -114,7 +114,7 @@ func (rt *Runtime) callSessionExport(ctx context.Context, chatID marotte.ChatID,
 		}
 		return resp.Result, nil
 	}
-	return rt.utility.get().session.exportSessionRaw(ctx, sid)
+	return rt.utility.get().exportSessionRaw(ctx, sid)
 }
 
 // kasExport is one opened KAS export, holding the export directory and os.TempDir open so cleanup unlinks

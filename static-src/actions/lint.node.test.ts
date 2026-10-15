@@ -18,8 +18,6 @@ const BACKGROUND_ALLOWLIST = new Set<string>([
 
   // Modal dialogs surface errors inline.
   "modals.ts",
-
-  "git-prs-tab.ts", // AI PR-description generation: the error surfaces in the dialog status line.
 ]);
 
 /** Forbidden patterns: `void apiX(` (fire-and-forget) and `await apiX(` (bypassing the framework). */

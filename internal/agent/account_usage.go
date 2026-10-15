@@ -19,7 +19,7 @@ const accountUsageCallTimeout = 45 * time.Second
 func (rt *Runtime) AccountUsage(ctx context.Context) (*marotte.AccountUsage, error) {
 	cctx, cancel := context.WithTimeout(ctx, accountUsageCallTimeout)
 	defer cancel()
-	raw, err := rt.utility.get().session.accountUsageRaw(cctx)
+	raw, err := rt.utility.get().accountUsageRaw(cctx)
 	if err != nil {
 		return nil, err
 	}

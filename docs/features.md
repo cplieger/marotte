@@ -33,7 +33,7 @@ The **Workflows** switch in Settings decides how the agent hands work off. On: t
 
 ## Git and forges
 
-marotte works with GitHub, GitLab, Codeberg, and Gitea or Forgejo. You can stage, commit, diff and switch branches, and list, create, merge and close pull requests. The agent can write commit messages and pull request descriptions.
+marotte works with GitHub, GitLab, Codeberg, and Gitea or Forgejo. You can stage, commit, diff and switch branches, and list, create, merge and close pull requests. A new pull request's description starts as the list of the branch's commits, which you can edit before you open it.
 
 An account connects by signing in through your browser on GitHub or GitLab, or with an access token on any of them. marotte keeps the credential in its own store, uses it for the forge's API, and answers git over HTTPS with it through its own credential helper, so no forge command-line tool is needed. SSH remotes are not covered. A forge on a private or loopback address, such as one on your own network, needs **Allow private addresses** under **Connection options** when you connect it.
 

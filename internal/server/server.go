@@ -28,19 +28,17 @@ var listenPort = port
 
 // Server holds shared state and registers all HTTP handlers.
 type Server struct {
-	forges        routeHandler
-	mcpConfig     routeHandler
-	chats         routeHandler
-	git           routeHandler
-	gitAI         routeHandler
-	files         routeHandler
-	auth          routeHandler
-	push          routeHandler
-	mcpStatus     routeHandler
-	utilityPrompt utilityPrompter
-	accountUsage  AccountUsageProvider
-	policy        policyProvider
-	policyReload  policyReloader
+	forges       routeHandler
+	mcpConfig    routeHandler
+	chats        routeHandler
+	git          routeHandler
+	files        routeHandler
+	auth         routeHandler
+	push         routeHandler
+	mcpStatus    routeHandler
+	accountUsage AccountUsageProvider
+	policy       policyProvider
+	policyReload policyReloader
 	// governance answers the administrator's lock map; nil means nothing is locked.
 	governance governanceLocks
 	// kiroDefaults fills GET /api/settings' kiro_defaults; nil leaves it empty.
@@ -99,11 +97,8 @@ func WithAgent(a chatEngine) Option { return func(s *Server) { s.agent = a } }
 // WithChats sets the chat store, whose own router owns the chat HTTP surface.
 func WithChats(c routeHandler) Option { return func(s *Server) { s.chats = c } }
 
-// WithGit sets the git handler for non-AI git HTTP endpoints.
+// WithGit sets the git handler for the /api/git endpoints.
 func WithGit(g routeHandler) Option { return func(s *Server) { s.git = g } }
-
-// WithGitAI sets the route handler for AI-assisted git operations.
-func WithGitAI(r routeHandler) Option { return func(s *Server) { s.gitAI = r } }
 
 // WithFiles sets the file handler for workspace file read/write endpoints.
 func WithFiles(f routeHandler) Option { return func(s *Server) { s.files = f } }
@@ -131,11 +126,6 @@ func WithForges(r routeHandler) Option { return func(s *Server) { s.forges = r }
 
 // WithTools sets the source of the tools engine backing the /api/tools surface.
 func WithTools(src toolsSource) Option { return func(s *Server) { s.tools = src } }
-
-// WithUtilityPrompt sets the utility prompter used for AI-assisted tasks.
-func WithUtilityPrompt(p utilityPrompter) Option {
-	return func(s *Server) { s.utilityPrompt = p }
-}
 
 // WithAccountUsage sets the provider backing GET /api/account/usage.
 func WithAccountUsage(p AccountUsageProvider) Option {
@@ -296,9 +286,6 @@ func (s *Server) routes() *http.ServeMux {
 	}
 	mux.HandleFunc("/api/tools/status", handleToolStatus)
 	s.git.RegisterRoutes(mux)
-	if s.gitAI != nil {
-		s.gitAI.RegisterRoutes(mux)
-	}
 	s.files.RegisterRoutes(mux)
 	mux.HandleFunc("/api/settings", s.handleSettings)
 	mux.HandleFunc("/api/tabs", s.handleTabs)
@@ -315,7 +302,6 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("/api/permissions/explain", s.handlePolicyExplain)
 	mux.HandleFunc("/api/permissions/rules", s.handlePolicyRules)
 	mux.HandleFunc("/api/permissions/profile", s.handlePolicyProfile)
-	mux.HandleFunc("/api/utility/resolve-conflict", s.handleUtilityResolveConflict)
 	mux.HandleFunc("/api/account/usage", s.handleAccountUsage)
 	s.push.RegisterRoutes(mux)
 	if s.preview != nil {

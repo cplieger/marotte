@@ -22,26 +22,3 @@ func FuzzStatusLabel(f *testing.F) {
 		}
 	})
 }
-
-func FuzzTruncateDiff(f *testing.F) {
-	f.Add("short diff", 100)
-	f.Add("hello world", 5)
-	f.Add("", 0)
-	f.Add("abc", -1)
-
-	f.Fuzz(func(t *testing.T, diff string, maxBytes int) {
-		if maxBytes < 0 {
-			return
-		}
-		result := truncateDiff(diff, maxBytes)
-		if len(diff) <= maxBytes {
-			if result != diff {
-				t.Fatalf("no truncation needed but result differs")
-			}
-		} else {
-			if len(result) > maxBytes+len(diffTruncatedSuffix) {
-				t.Fatalf("result too long: %d", len(result))
-			}
-		}
-	})
-}

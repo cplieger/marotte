@@ -9,7 +9,7 @@ let bootSeq = 0;
 const apiGetTyped = vi.fn();
 const ensureForges = vi.fn();
 
-vi.mock("./api-client.js", () => ({ apiGetTyped, apiPost: vi.fn() }));
+vi.mock("./api-client.js", () => ({ apiGetTyped, apiGet: vi.fn() }));
 vi.mock("./forge-store.js", async () => {
   const { forgeRow, forgesList } = await import("./__test-helpers__/forge-rows.js");
   return {

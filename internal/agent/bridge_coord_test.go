@@ -584,7 +584,7 @@ func TestPersistEffortChange_OnAnEmptyLogAnnouncesAClosedCarrier(t *testing.T) {
 		return true
 	})
 
-	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortMedium)
+	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortLevel("medium"))
 
 	var kinds []string
 	for _, e := range logOf(t, cs, "c1") {

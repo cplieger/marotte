@@ -47,8 +47,6 @@ vi.mock("./api-client.js", () => ({
 }));
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./editor-conflict.js", () => ({
-  abortSuggestion: vi.fn(),
-  clearSuggestionState: vi.fn(),
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened
   // this graph and these names are imported somewhere in it. No case here calls
   // them.

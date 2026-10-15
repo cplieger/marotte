@@ -13,7 +13,6 @@ import { forgeRow, forgesList } from "./forge-rows.js";
 export const H = {
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
-  apiPost: vi.fn(),
   ensureForges: vi.fn(),
   sse: new Map<string, (chatID: string, payload: unknown) => void>(),
   bus: new Map<string, (payload: unknown) => void>(),
@@ -64,7 +63,7 @@ export function applyRows(forges: readonly ConfiguredForge[]): void {
 }
 
 export const mocks = {
-  apiClient: () => ({ apiGet: H.apiGet, apiGetTyped: H.apiGetTyped, apiPost: H.apiPost }),
+  apiClient: () => ({ apiGet: H.apiGet, apiGetTyped: H.apiGetTyped }),
   forgeStore: () => ({
     ensureForges: H.ensureForges,
     forgeRows: () => store.rows.value,
@@ -332,8 +331,6 @@ export async function resetPRsTab(): Promise<void> {
   vi.useFakeTimers();
   H.apiGet.mockReset();
   H.apiGetTyped.mockReset();
-  H.apiPost.mockReset();
-  H.apiPost.mockResolvedValue(null);
   H.ensureForges.mockReset();
   store = newStore();
   H.sse.clear();

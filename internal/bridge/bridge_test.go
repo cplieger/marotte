@@ -77,7 +77,7 @@ func TestIsDeprecatedOrLegacy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		if got := modeltext.Hidden(tc.desc); got != tc.want {
-			t.Errorf("TagExcluded(%q, HiddenTags) = %v, want %v", tc.desc, got, tc.want)
+			t.Errorf("Hidden(%q) = %v, want %v", tc.desc, got, tc.want)
 		}
 	}
 }
