@@ -157,7 +157,7 @@ type Bridge struct {
 	configurationState bool
 	// knowledge gates the two knowledge rows; immutable after Start: KAS freezes it at session creation.
 	knowledge bool
-	// disableTelemetry drives kascap's telemetryEnabled row; immutable after Start.
+	// disableTelemetry drives kascap's telemetryEnabled row and toolkitTelemetryEnv; immutable after Start.
 	disableTelemetry bool
 	// supervised records that the session accepted `autopilot: off`, not that the chat asked; the request lives on the
 	// chat record. False covers refused and unasked, so the coordinator reads it with the chat's request.

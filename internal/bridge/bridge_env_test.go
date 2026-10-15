@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/kascap"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -365,6 +366,39 @@ func TestStart_SpawnEnvCarriesModelFallback(t *testing.T) {
 		if strings.HasPrefix(line, "KIRO_FEATURE_MODEL_FALLBACK_") {
 			t.Errorf("child environment with ModelFallback off carries %q; off must leave KAS's default", line)
 		}
+	}
+}
+
+// One switch turns both of kiro-cli's telemetry paths off: KAS's export through telemetryEnabled and the Rust
+// binary's toolkit client through the variable. On, an inherited value must not survive, since its mere presence
+// disables the client. Not parallel: it sets an environment variable.
+func TestStart_TelemetrySwitchDrivesTheToolkitClient(t *testing.T) {
+	t.Setenv(toolkitTelemetryEnvVar, "ambient")
+	for _, tc := range []struct {
+		name    string
+		want    []string
+		disable bool
+	}{
+		{name: "switch off", disable: true, want: []string{toolkitTelemetryEnvVar + "=1"}},
+		{name: "switch on", disable: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := New("unused", t.TempDir())
+			b.disableTelemetry = tc.disable
+			if got := kascap.Capabilities(b.spawn())["telemetryEnabled"]; got != !tc.disable {
+				t.Errorf("DisableTelemetry %v: initialize telemetryEnabled = %v, want %v", tc.disable, got, !tc.disable)
+			}
+			lines := spawnEnvDump(t, &marotte.StartOpts{DisableTelemetry: tc.disable})
+			var carried []string
+			for _, line := range lines {
+				if isToolkitTelemetryEnv(line) {
+					carried = append(carried, line)
+				}
+			}
+			if !slices.Equal(carried, tc.want) {
+				t.Errorf("DisableTelemetry %v: child environment carries %q, want %q", tc.disable, carried, tc.want)
+			}
+		})
 	}
 }
 

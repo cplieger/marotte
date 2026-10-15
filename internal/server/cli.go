@@ -111,6 +111,7 @@ const (
 )
 
 type settingMeta struct {
+	// Seed is written where kiro-cli holds no value; empty seeds nothing, so kiro-cli's own default applies.
 	Seed string
 	Kind settingKind
 }
@@ -123,7 +124,7 @@ var allowedKiroSettings = map[string]settingMeta{
 	"chat.enableSubagent":    {Kind: settingBool, Seed: kiroTrue},
 	"chat.enablePromptHints": {Kind: settingBool, Seed: kiroTrue},
 	"hooks.showStatus":       {Kind: settingBool, Seed: kiroTrue},
-	"telemetry.enabled":      {Kind: settingBool, Seed: kiroFalse},
+	"telemetry.enabled":      {Kind: settingBool},
 	// cleanup.periodDays is NOT here: marotte owns chat retention and pins kiro-cli's purge off.
 	"chat.disableInheritingDefaultResources": {Kind: settingBool, Seed: kiroFalse},
 }

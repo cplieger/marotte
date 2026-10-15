@@ -365,7 +365,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		workDir:       workDir,
 		uploadsDir:    marotte.DefaultUploadDir,
 		done:          make(chan struct{}),
-		kiroTelemetry: newCachedBoolField(kiroSettingsPath(), kiroTelemetryKey, false),
+		kiroTelemetry: newCachedBoolField(kiroSettingsPath(), kiroTelemetryKey, kiroTelemetryDefault),
 	}
 	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
 	// Best-effort: an unopenable workDir fails closed at the handlers, not at construction.

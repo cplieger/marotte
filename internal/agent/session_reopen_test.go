@@ -255,7 +255,7 @@ var kiroCLIWrites = []struct {
 	reach settingReach
 	value bool
 }{
-	{key: kiroTelemetryKey, value: true, reach: reachReopen},
+	{key: kiroTelemetryKey, value: false, reach: reachReopen},
 	{key: "hooks.showStatus", value: false, reach: reachLive},
 	{key: "chat.enableKnowledge", value: true, reach: reachNoChat},
 	{key: "chat.enableSubagent", value: true, reach: reachNoChat},

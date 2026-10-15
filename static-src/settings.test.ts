@@ -580,8 +580,7 @@ describe("initExperimentalToggles", () => {
 
   /** Wire the toggles and wait out the initial read, so a late arrival of it cannot land between
    *  a test's own toggle and its assertion. The default mock answers no value for any key, and
-   *  `hooks.showStatus` is the one row whose own default is ON, so it is what says the read has
-   *  landed. */
+   *  `hooks.showStatus`'s own default is ON, so it is what says the read has landed. */
   async function initFlags(): Promise<void> {
     initExperimentalToggles();
     await vi.waitFor(() => {
@@ -697,9 +696,8 @@ describe("initExperimentalToggles", () => {
   });
 
   // The endpoint answers "" for a key `cli.json` does not carry AND for a read it could not make,
-  // and the three rows do not share a polarity — so one blanket unset-means-on rule claimed
-  // telemetry was on while it was off, and claimed default-resource inheritance was disabled while
-  // it was not.
+  // and the three rows do not share a polarity, so one blanket rule claims default-resource
+  // inheritance is disabled while it is not.
   it("renders an absent key at that row's own default, not at one shared rule", async () => {
     const { apiGet } = await import("./api-client.js");
     vi.mocked(apiGet).mockResolvedValueOnce({ settings: {} });
@@ -709,7 +707,7 @@ describe("initExperimentalToggles", () => {
     await vi.waitFor(() => {
       expect(box("flag-hooks-status").checked).toBe(true);
     });
-    expect(box("flag-telemetry").checked).toBe(false);
+    expect(box("flag-telemetry").checked).toBe(true);
     expect(box("flag-disable-inherit-resources").checked).toBe(false);
   });
 

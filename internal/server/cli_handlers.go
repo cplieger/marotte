@@ -106,9 +106,13 @@ func (s *Server) overlayHeldKiroPrefs(out map[string]string) {
 	s.heldKiroPrefs.mu.Lock()
 	defer s.heldKiroPrefs.mu.Unlock()
 	for key, pref := range s.heldKiroPrefs.held {
-		if _, asked := out[key]; asked && pref != "" {
-			out[key] = pref
+		if _, asked := out[key]; !asked || pref == "" {
+			continue
 		}
+		if pref == heldUnset {
+			pref = ""
+		}
+		out[key] = pref
 	}
 }
 
@@ -220,6 +224,10 @@ func (s *Server) kiroSettingLock(key string) (marotte.GovernanceLock, bool) {
 	return marotte.GovernanceLock{}, false
 }
 
+// heldUnset is held for a setting kiro-cli had no value for, so lifting the lock deletes the
+// organization's value and kiro-cli's own default applies again. No setting kind accepts it.
+const heldUnset = "\x00unset"
+
 // heldKiroPrefs is the user's own value of each kiro-cli setting a lock currently
 // pins, keyed by setting. kiro-cli has one store, so the value is captured before a
 // lock overwrites it and written back when the lock lifts. mu serializes every
@@ -262,7 +270,7 @@ func (s *Server) applyKiroSettingLock(ctx context.Context, setting string, l mar
 	switch {
 	case locked:
 		if !holding {
-			s.heldKiroPrefs.held[setting] = s.readKiroSettingFor(ctx, setting)
+			s.heldKiroPrefs.held[setting] = s.readHeldKiroSetting(ctx, setting)
 		}
 		if err := s.runKiroSetting(ctx, setting, strconv.FormatBool(l.Value)); err != nil {
 			slog.Warn("governance: a locked kiro-cli setting was not written", "key", setting, "error", err)
@@ -271,7 +279,7 @@ func (s *Server) applyKiroSettingLock(ctx context.Context, setting string, l mar
 		delete(s.heldKiroPrefs.held, setting)
 		slog.Warn("governance: a lock lifted with no readable prior value; the organization's value stays", "key", setting)
 	case holding:
-		if err := s.runKiroSetting(ctx, setting, pref); err != nil {
+		if err := s.restoreKiroSetting(ctx, setting, pref); err != nil {
 			slog.Warn("governance: the user's kiro-cli setting was not restored after a lock lifted", "key", setting, "error", err)
 			return
 		}
@@ -279,10 +287,29 @@ func (s *Server) applyKiroSettingLock(ctx context.Context, setting string, l mar
 	}
 }
 
-func (s *Server) readKiroSettingFor(ctx context.Context, setting string) string {
+// readHeldKiroSetting reads the value a lock is about to overwrite: heldUnset when the listed
+// document lacks it, "" when kiro-cli cannot say. A failed list falls back to the per-key read,
+// which answers "" for unset too, so that lift keeps the organization's value.
+func (s *Server) readHeldKiroSetting(ctx context.Context, setting string) string {
 	cctx, cancel := context.WithTimeout(ctx, s.cliTimeouts.Settings)
 	defer cancel()
+	if listed := s.readKiroSettingsList(cctx); listed != nil {
+		if v, ok := listed[setting]; ok {
+			return v
+		}
+		return heldUnset
+	}
 	return s.readOneKiroSetting(cctx, setting)
+}
+
+func (s *Server) restoreKiroSetting(ctx context.Context, setting, pref string) error {
+	if pref != heldUnset {
+		return s.runKiroSetting(ctx, setting, pref)
+	}
+	cctx, cancel := context.WithTimeout(ctx, s.cliTimeouts.Settings)
+	defer cancel()
+	_, err := s.cliRunner.Run(cctx, "settings", "--delete", setting)
+	return err
 }
 
 func (s *Server) runKiroSetting(ctx context.Context, setting, value string) error {

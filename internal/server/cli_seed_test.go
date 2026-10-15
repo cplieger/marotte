@@ -25,6 +25,13 @@ func (f *seedStoreCLI) Run(_ context.Context, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	switch {
+	case len(args) == 3 && args[0] == "settings" && args[1] == "--delete":
+		if _, ok := f.store[args[2]]; !ok {
+			return nil, errors.New("seedStoreCLI: no settings found")
+		}
+		delete(f.store, args[2])
+		f.writes = append(f.writes, [2]string{args[2], ""})
+		return nil, nil
 	case len(args) == 2 && args[0] == "settings":
 		v, ok := f.store[args[1]]
 		if !ok {
@@ -77,8 +84,19 @@ var wantKiroSeeds = map[string]string{
 	"chat.enableSubagent":                    "true",
 	"chat.enablePromptHints":                 "true",
 	"hooks.showStatus":                       "true",
-	"telemetry.enabled":                      "false",
 	"chat.disableInheritingDefaultResources": "false",
+}
+
+// kiro-cli's own default for telemetry.enabled is on, and marotte follows it rather than writing it.
+func TestSeedKiroSettings_LeavesTelemetryToKiroCLIsDefault(t *testing.T) {
+	cli := &seedStoreCLI{store: map[string]string{"unrelated.key": "1"}}
+	s := &Server{cliRunner: cli, cliTimeouts: defaultCLITimeouts()}
+
+	s.SeedKiroSettings(t.Context())
+
+	if v, set := cli.value("telemetry.enabled"); set {
+		t.Errorf("after SeedKiroSettings on an unset store telemetry.enabled = %q, want it left unset", v)
+	}
 }
 
 func opposite(v string) string {
@@ -160,7 +178,7 @@ func TestSeedKiroSettings_LeavesALockedKeyToItsLock(t *testing.T) {
 			t.Errorf("after lock then seed %s = %q, want the lock's \"true\"", key, got)
 		}
 	})
-	t.Run("lock_after_the_seed_restores_it_on_lift", func(t *testing.T) {
+	t.Run("lock_over_an_unset_value_unsets_it_on_lift", func(t *testing.T) {
 		cli := &seedStoreCLI{}
 		gov := &liveLocks{}
 		s := &Server{cliRunner: cli, cliTimeouts: defaultCLITimeouts(), governance: gov}
@@ -173,8 +191,22 @@ func TestSeedKiroSettings_LeavesALockedKeyToItsLock(t *testing.T) {
 		}
 		gov.set(nil)
 		s.ApplyGovernanceLocks(t.Context())
+		if got, set := cli.value(key); set {
+			t.Errorf("after the lock lifted %s = %q, want it unset again so kiro-cli's default applies", key, got)
+		}
+	})
+	t.Run("lock_over_a_stored_off_restores_it_on_lift", func(t *testing.T) {
+		cli := &seedStoreCLI{store: map[string]string{key: "false"}}
+		gov := &liveLocks{}
+		s := &Server{cliRunner: cli, cliTimeouts: defaultCLITimeouts(), governance: gov}
+
+		s.SeedKiroSettings(t.Context())
+		gov.set(lock)
+		s.ApplyGovernanceLocks(t.Context())
+		gov.set(nil)
+		s.ApplyGovernanceLocks(t.Context())
 		if got, _ := cli.value(key); got != "false" {
-			t.Errorf("after the lock lifted %s = %q, want the seeded \"false\" back", key, got)
+			t.Errorf("after the lock lifted %s = %q, want the user's stored \"false\" back", key, got)
 		}
 	})
 }
@@ -199,7 +231,10 @@ func TestSeedKiroSettings_ReconcilesOnlyAfterAWrite(t *testing.T) {
 
 func TestAllowedKiroSettings_EverySeedIsAValueTheKeyAccepts(t *testing.T) {
 	for key, meta := range allowedKiroSettings {
-		if got := safeKiroSettingValueFor(meta.Seed, meta.Kind); got == "" || got != meta.Seed {
+		if meta.Seed == "" {
+			continue
+		}
+		if got := safeKiroSettingValueFor(meta.Seed, meta.Kind); got != meta.Seed {
 			t.Errorf("allowedKiroSettings[%q].Seed = %q, which its kind refuses", key, meta.Seed)
 		}
 	}
