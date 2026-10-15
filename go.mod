@@ -25,7 +25,7 @@ require (
 	github.com/cplieger/pathinside/v2 v2.0.3
 	github.com/cplieger/pinstall/v3 v3.1.0-dev.1
 	github.com/cplieger/runesafe/v3 v3.0.0
-	github.com/cplieger/slogx v1.6.7
+	github.com/cplieger/slogx v1.7.0-dev.1
 	github.com/cplieger/sse v1.3.0-dev.2
 	github.com/cplieger/ssrf/v4 v4.4.0
 	github.com/cplieger/toolbelt/v3 v3.11.0-dev.3
