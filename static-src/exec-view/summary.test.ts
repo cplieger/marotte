@@ -161,7 +161,7 @@ describe("the run summary", () => {
     expect(view.describe()).toBe("nightly, running");
   });
 
-  for (const kind of ["input", "paused", "failed"] as const) {
+  for (const kind of ["paused", "failed"] as const) {
     it(`gives a run-bar row's ${kind} alert a second line and its kind to the row`, () => {
       const view = build(true);
       view.paint(run([step("a", "waiting")], { alert: { kind, text: `about ${kind}` } }));
@@ -172,6 +172,31 @@ describe("the run summary", () => {
       expect(view.describe()).toBe(`nightly: about ${kind}`);
     });
   }
+
+  it("gives a run-bar row's open question its line and kind, the CSS placing it in the progress's place", () => {
+    const view = build(true);
+    view.paint(run([step("a", "waiting")], { alert: { kind: "input", text: "about input" } }));
+    expect(host.dataset["alert"]).toBe("input");
+    expect(view.root.querySelector(".ev-alert-line")?.textContent).toBe("about input");
+    expect(part(view, "ev-sum-label")).toBe("nightly");
+    expect(view.describe()).toBe("nightly: about input");
+  });
+
+  it("puts an open question whole in the tooltip of its line, and no other alert", () => {
+    const view = build(true);
+    const tip = (): string | null =>
+      view.root.querySelector(".ev-alert-line")?.getAttribute("data-tooltip") ?? null;
+    view.paint(
+      run([step("a", "waiting")], { alert: { kind: "input", text: "Waiting for answer: A?" } }),
+    );
+    expect(tip()).toBe("Waiting for answer: A?");
+    view.paint(
+      run([step("a", "waiting")], { alert: { kind: "input", text: "Waiting for answer: B?" } }),
+    );
+    expect(tip()).toBe("Waiting for answer: B?");
+    view.paint(run([step("a", "waiting")], { alert: { kind: "paused", text: "Waiting: host" } }));
+    expect(tip()).toBeNull();
+  });
 
   it("uses no live role on a row that already announces elsewhere", () => {
     const view = build(true);
