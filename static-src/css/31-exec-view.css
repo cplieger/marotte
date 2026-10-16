@@ -1205,8 +1205,9 @@
   }
 }
 
-/* A run-bar row's second line: what wants the reader. The mark sits on the
-   sentence's first line. */
+/* What wants the reader on a run-bar row: an open question in the progress's place, any other
+   alert on a line of its own under the columns (see 26-dock.css). Where the mark shows (every
+   alert but an open question), it sits on the sentence's first line. */
 .ev-alert-line {
   display: flex;
   align-items: flex-start;

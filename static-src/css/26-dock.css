@@ -984,7 +984,8 @@
     justify-self: end;
   }
 
-  /* What wants the reader is a second line under the columns, so the columns stay. */
+  /* A failed or paused alert is a line of its own under the columns, so the columns stay. An open
+     question is the exception, placed in the progress's place below. */
   & .ev-alert-line {
     grid-column: title / end;
     grid-row: 2;
@@ -993,6 +994,29 @@
 
   & .ev-alert-text {
     -webkit-line-clamp: 1;
+  }
+
+  /* An open question has the progress phrase's and the bar's place, from the phrase column to the
+     clock, on the row's one line. `contain: inline-size` keeps the sentence from sizing the
+     auto progress column, which the other rows' phrases own. */
+  &[data-alert="input"] {
+    & :is(.ev-sum-progress, .ev-mini, .ev-alert-icon) {
+      display: none;
+    }
+
+    & .ev-alert-line {
+      grid-column: progress / clock;
+      grid-row: 1;
+      contain: inline-size;
+    }
+
+    /* One line cut by an ellipsis: a line-clamp wraps at word breaks first, so a long word near
+       the edge would cut the sentence short of the room it has. */
+    & .ev-alert-text {
+      display: block;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
   }
 }
 
@@ -1006,7 +1030,9 @@
   }
 }
 
-/* An alert that wants the reader: its mark is the cue, the row stays on the box's surface. */
+/* An alert that wants the reader: a failed or paused alert's mark is the cue (an open question
+   hides its mark, the "needs input" state word and the square mark it), the row stays on the
+   box's surface. */
 .run-bar-open[data-alert] {
   --ev-alert-mark: var(--c-yellow);
 
@@ -1103,6 +1129,12 @@
 
     & .ev-alert-line {
       grid-row: 3;
+    }
+
+    /* The question takes the second line's progress column, the row stays two lines tall. */
+    &[data-alert="input"] .ev-alert-line {
+      grid-column: progress / end;
+      grid-row: 2;
     }
   }
 }

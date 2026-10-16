@@ -1,6 +1,7 @@
 // The run's one-line summary: name, state word, progress, mini bar and clock. One painter for the
 // run dock's head and the chat's run bar rows, so the two never word a run differently. A run bar
-// row also shows what wants the reader as a second line; the dock gives that a region of its own.
+// row also shows what wants the reader: an open question in the progress's place, any other alert
+// on a line of its own; the dock gives that a region of its own.
 
 import { el } from "@cplieger/reactive";
 import { reconcile } from "../reconcile.js";
@@ -29,8 +30,8 @@ export interface ExecSummaryView {
 }
 
 interface SummaryOpts {
-  /** Where the alert that wants the reader shows as a second line, taking `data-alert="<kind>"` for
-   *  its mark's colour; absent where the consumer shows the alert itself (the dock). */
+  /** Where the alert that wants the reader shows, taking `data-alert="<kind>"` for its mark's colour
+   *  and the layout (`26-dock.css`); absent where the consumer shows the alert itself (the dock). */
   readonly alertHost?: HTMLElement;
 }
 
@@ -58,6 +59,12 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
     }
     host.dataset["alert"] = alert.kind;
     line.paint(alert);
+    // An open question takes the progress's place in one clipped line, so the tooltip carries it whole.
+    if (alert.kind !== "input") {
+      line.root.removeAttribute("data-tooltip");
+    } else if (line.root.getAttribute("data-tooltip") !== alert.text) {
+      line.root.setAttribute("data-tooltip", alert.text);
+    }
     if (line.root.parentElement !== root) {
       root.append(line.root);
     }
