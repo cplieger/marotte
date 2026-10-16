@@ -1,10 +1,12 @@
 // Package turnlog is the in-memory accumulator for one open turn: per lane, the text or
 // thinking entry still coalescing deltas and the steer carry withheld beside it, frozen
-// into a marotte.Entry the moment anything else appends.
+// into a marotte.Entry when an append ends it.
 //
 // It never touches disk or assigns a position: a seal hands the entry to the injected
-// Sink, which fills Seq and Ts. Every append seals, so within one lane plus the lane-less
-// entries, seq order is arrival order.
+// Sink, which fills Seq and Ts. An append seals what it ends: a laned entry its own lane, a
+// boundary lane-less entry every lane, so within one lane plus those, seq order is arrival
+// order. A message entry (Steer, SteerDelivered) arrives on its own clock and seals nothing:
+// it takes the next seq, so it sits before the segment that was streaming when it arrived.
 package turnlog
 
 import (
@@ -112,7 +114,7 @@ type Turn struct {
 	// plan is the newest plan entry's payload bytes, for the byte-equal dedupe.
 	plan []byte
 	id   string
-	// order is the lane keys in first-seen order, so a lane-less append seals
+	// order is the lane keys in first-seen order, so a boundary append seals
 	// every lane deterministically.
 	order []string
 	// issuer is the lane the newest text or thinking delta arrived in, where a subagent
@@ -467,11 +469,11 @@ func (t *Turn) keepSay(key string, op func() ([]Sealed, error)) ([]Sealed, error
 	return sealed, err
 }
 
-// SteerDelivered appends a workflow message's take-up, lane-less like the steer it replaces.
+// SteerDelivered appends a workflow message's take-up, an interjection like the steer it settles.
 func (t *Turn) SteerDelivered(ctx context.Context, d *marotte.EntrySteerDelivered) ([]Sealed, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.laneless(ctx, marotte.EntryKindSteerDelivered, marotte.SteerDeliveredID(d.SteerID), *d)
+	return t.interject(ctx, marotte.EntryKindSteerDelivered, marotte.SteerDeliveredID(d.SteerID), *d)
 }
 
 // TurnBind appends the id KAS holds the prompt under. Lane-less with no
@@ -490,17 +492,17 @@ func (t *Turn) TurnBind(ctx context.Context, bind marotte.EntryTurnBind) ([]Seal
 	return sealed, err
 }
 
-// Steer appends a steer, read or dropped. Lane-less because it is the model's
-// input for what follows in every lane.
+// Steer appends a steer in any state as an interjection: it seals no lane, whatever is streaming.
 func (t *Turn) Steer(ctx context.Context, steerID string, steer *marotte.EntrySteer) ([]Sealed, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.laneless(ctx, marotte.EntryKindSteer, steerID, steer)
+	return t.interject(ctx, marotte.EntryKindSteer, steerID, steer)
 }
 
 // SteerRead appends a steer whose read lane key's ack marker evidences, ahead of that ack. A
 // delegate's goes in its lane, sealing only it, so the lane records WHICH agent read the steer;
-// the agent's own (key "") is lane-less like any steer. Either way lane key keeps its say.
+// the agent's own (key "") is a lane-less boundary, since the marker sits in its stream. Either
+// way lane key keeps its say.
 func (t *Turn) SteerRead(ctx context.Context, key, steerID string, steer *marotte.EntrySteer) ([]Sealed, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -661,7 +663,7 @@ func (t *Turn) laned(ctx context.Context, key string, kind marotte.EntryKind, id
 	return append(sealed, s), nil
 }
 
-// laneless appends an entry belonging to no lane, sealing EVERY lane first: at the
+// laneless appends a boundary entry belonging to no lane, sealing EVERY lane first: at the
 // moment it takes a seq, no open entry at all is still open.
 func (t *Turn) laneless(ctx context.Context, kind marotte.EntryKind, id string, payload any) ([]Sealed, error) {
 	if t.closed {
@@ -676,6 +678,19 @@ func (t *Turn) laneless(ctx context.Context, kind marotte.EntryKind, id string, 
 		return sealed, err
 	}
 	return append(sealed, s), nil
+}
+
+// interject appends a lane-less entry that seals nothing: every open entry keeps its id and
+// text, and seals later at a seq above this one.
+func (t *Turn) interject(ctx context.Context, kind marotte.EntryKind, id string, payload any) ([]Sealed, error) {
+	if t.closed {
+		return nil, ErrClosed
+	}
+	s, err := t.append(ctx, "", kind, id, payload, "")
+	if err != nil {
+		return nil, err
+	}
+	return []Sealed{s}, nil
 }
 
 func (t *Turn) sealAll(ctx context.Context) ([]Sealed, error) {

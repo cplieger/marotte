@@ -1523,6 +1523,15 @@ function entryIsLive(st: TurnRender, e: Entry): boolean {
 }
 
 function sealLiveBubble(st: TurnRender): void {
+  // A sealed entry arriving while the open text streams lands above it (`appendEntry`), so the caret stays.
+  const tail = st.openTail;
+  if (
+    tail?.kind === "text" &&
+    tail.run.bubble === st.liveBubble &&
+    openEntryOf(st)?.id === tail.id
+  ) {
+    return;
+  }
   // finishNow, not end: the lane's tail moved, and one streaming caret is the invariant. The last entry drains.
   st.liveBubble?.finishNow();
   st.liveBubble = null;
@@ -2604,15 +2613,71 @@ function sealReasoning(st: TurnRender, container: HTMLElement): void {
 }
 
 /**
- * Append into a container, sealing its open trace first: the wire has no thinking-ended signal, so the next
- * element's arrival is the end. The one door, so no later mounter can skip it.
+ * Append into a container. With no open entry standing there, its open trace is sealed first: the wire has no
+ * thinking-ended signal, so the next element's arrival is the end. The one door, so no later mounter can skip it.
+ *
+ * While the lane's open entry stands, an arriving sealed entry took its `seq` first (an interjection the stream
+ * did not end), so it goes above the open surface, which stays the container's last element and keeps streaming.
  */
 function appendEntry(st: TurnRender, container: HTMLElement, el: HTMLElement): void {
   if (st.insertBefore === null) {
+    const open = openSurfaceIn(st, container);
+    if (open !== null) {
+      container.insertBefore(el, open);
+      return;
+    }
     // Only a tail append supersedes; an inserted entry is posted after nothing.
     sealReasoning(st, container);
   }
   placeInContainer(st, container, el);
+}
+
+/**
+ * The open entry's own surface in `container`, or null. An open text sharing its run's row with sealed members
+ * is split off first: the arriving entry ends that run on reload, so the open text remounts below it.
+ */
+function openSurfaceIn(st: TurnRender, container: HTMLElement): HTMLElement | null {
+  const tail = st.openTail;
+  if (tail === null) {
+    return null;
+  }
+  if (tail.kind === "thinking") {
+    return tail.view.root.parentElement === container ? tail.view.root : null;
+  }
+  if (tail.run.row.parentElement !== container) {
+    return null;
+  }
+  if (tail.run.head < 0) {
+    return tail.run.row;
+  }
+  detachOpenText(st, tail.run);
+  return null;
+}
+
+/**
+ * Retire the open tail from `view` and redraw the run's sealed members on a settled bubble: a bubble only grows,
+ * so the open text cannot be taken out of the one it streamed into. `syncOpenTail` remounts the open entry.
+ */
+function detachOpenText(st: TurnRender, view: ProseRun): void {
+  releaseOpenTail(st);
+  const old = view.bubble;
+  old.finishNow();
+  st.bubbles = st.bubbles.filter((b) => b !== old);
+  if (st.liveBubble === old) {
+    st.liveBubble = null;
+  }
+  if (st.topLiveEl === old.root) {
+    clearLiveAnchor(old.root);
+    st.topLiveEl = null;
+  }
+  const fresh = buildAssistantBubble(proseText(st, view.seqs), false, {
+    onBlankChange: (blank): void => {
+      view.row.classList.toggle("is-empty", blank);
+    },
+  });
+  st.bubbles.push(fresh);
+  old.root.replaceWith(fresh.root);
+  view.bubble = fresh;
 }
 
 /**

@@ -186,8 +186,8 @@ func stripNotificationPrefix(text string) string {
 	return notificationPrefixRe.ReplaceAllString(text, "")
 }
 
-// appendSteer writes a steer's DURABLE entry, lane-less: into the open turn (sealing every lane), else
-// after the newest close. A chat's steer is the chat's whatever execution read it; a step's is its
+// appendSteer writes a steer's DURABLE entry, lane-less: into the open turn (turnlog.Turn.Steer, which
+// seals nothing), else after the newest close. A chat's steer is the chat's whatever execution read it; a step's is its
 // run's. The id is KAS's steer id, which the replay stamps too.
 func (t *Translator) appendSteer(ctx context.Context, sc steerScope, steerID string, steer *marotte.EntrySteer) {
 	if sc.run != "" {

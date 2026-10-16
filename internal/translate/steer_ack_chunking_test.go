@@ -116,20 +116,44 @@ var steerChunkingIDs = []string{"steer-A", "steer-B", "steer-X", "steer-Y", "ste
 // queued first when queued is set, so each ack also files the steer's read.
 func liveSteerRecord(t *testing.T, chunks []steerChunk, queued bool) []string {
 	t.Helper()
+	spans, _ := liveInterjectedRecord(t, chunks, queued, 0)
+	return spans
+}
+
+// liveInterjectedRecord is liveSteerRecord with a user steer read after chunk k wherever bit k%64
+// of interject is set, as KAS's steering_injected lands mid-stream. It also answers the ids of the
+// record's text and steer_ack entries, in order.
+func liveInterjectedRecord(t *testing.T, chunks []steerChunk, queued bool, interject uint64) (spans, ids []string) {
+	t.Helper()
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
 	if queued {
 		queueSteers(t, tr, chatID, steerChunkingIDs...)
 	}
-	for _, c := range chunks {
+	for k, c := range chunks {
 		say := ""
 		if c.id {
 			say = "m1-say"
 		}
 		feedSay(t, tr, chatID, say, c.text)
+		if interject&(1<<(k%64)) != 0 {
+			tr.HandleSessionInfoUpdate(t.Context(), chatID, steerFrame(t, "steering_injected", map[string]any{
+				"messageId": fmt.Sprintf("steer-mid-%d", k), "content": "use the other file",
+			}), FrameAttribution{})
+		}
 	}
-	return proseAndAckSpans(t, deps, chatID)
+	for _, e := range deps.chatEntries(chatID) {
+		if e.Kind == marotte.EntryKindText || e.Kind == marotte.EntryKindSteerAck {
+			ids = append(ids, e.ID)
+		}
+	}
+	if turn := deps.turns.chats[chatID]; turn != nil {
+		for _, o := range turn.OpenEntries() {
+			ids = append(ids, o.ID)
+		}
+	}
+	return proseAndAckSpans(t, deps, chatID), ids
 }
 
 // steerOpenings are what the say holds before a sample: nothing, or prose with or without the

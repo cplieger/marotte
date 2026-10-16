@@ -171,7 +171,7 @@ func (t *Translator) appendBetweenTurns(ctx context.Context, chatID marotte.Chat
 }
 
 // appendLaneless files a chat's lane-less entry: through the open turn, where
-// inTurn is that kind's own turnlog operation and every lane seals first, else
+// inTurn is that kind's own turnlog operation and decides what it seals, else
 // after the newest turn's close by the between-turns rule. id is the entry id the
 // between-turns arm files under, empty for a kind whose id the store derives from
 // its position; the turn arm mints its own.
