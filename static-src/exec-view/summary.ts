@@ -30,7 +30,7 @@ export interface ExecSummaryView {
 
 interface SummaryOpts {
   /** Where the alert that wants the reader shows as a second line, taking `data-alert="<kind>"` for
-   *  its mark, and a failure's wash; absent where the consumer shows the alert itself (the dock). */
+   *  its mark's colour; absent where the consumer shows the alert itself (the dock). */
   readonly alertHost?: HTMLElement;
 }
 

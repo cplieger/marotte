@@ -1006,17 +1006,12 @@
   }
 }
 
-/* An alert that wants the reader. A waiting run's row stays on the box's surface:
-   its yellow mark is the cue. A failure takes its state's wash, an image layer over
-   the fill so hover still shows beneath it. */
+/* An alert that wants the reader: its mark is the cue, the row stays on the box's surface. */
 .run-bar-open[data-alert] {
   --ev-alert-mark: var(--c-yellow);
 
   &[data-alert="failed"] {
-    --ev-alert-wash: color-mix(in srgb, var(--c-red) 10%, transparent);
     --ev-alert-mark: var(--c-red);
-
-    background-image: linear-gradient(var(--ev-alert-wash), var(--ev-alert-wash));
   }
 }
 
