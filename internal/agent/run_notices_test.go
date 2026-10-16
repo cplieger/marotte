@@ -84,6 +84,28 @@ func TestTurnClosed_ClearsTheBufferOfASettledChatHoldingANotice(t *testing.T) {
 	}
 }
 
+// Shutdown stops the bridge itself, so a close once it began sends no clear.
+func TestTurnClosed_OnceShutdownBeganSendsNoClear(t *testing.T) {
+	h, _, br := newTestHub()
+	defer shutdownHub(t, h)
+	br.callResults = map[string]json.RawMessage{
+		marotte.MethodSessionSteerClear: json.RawMessage(`{"cleared":true,"messageIds":["notify-wf-1"]}`),
+	}
+	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	turnID, _ := h.stagePromptTurn(t, "c1")
+	h.runs.observeComplete(t.Context(), "c1", runComplete("wf_1", "completed"))
+	beginDraining(h)
+
+	h.coord.finalizeTurn(t.Context(), "c1", &turnClose{
+		Closer: closerWireEnd, Stop: marotte.StopReasonCancelled, Turn: turnID,
+	})
+	joinInflight(t, h)
+
+	if slices.Contains(br.callLog(), marotte.MethodSessionSteerClear) {
+		t.Errorf("_session/steer/clear went out once Shutdown began: %v", br.callLog())
+	}
+}
+
 // No held notice, no clear.
 func TestTurnClosed_LeavesAChatHoldingNoNoticeAlone(t *testing.T) {
 	h, _, br := newTestHub()

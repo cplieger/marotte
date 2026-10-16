@@ -134,11 +134,14 @@ func (bc *bridgeCoordinator) publishClose(ctx context.Context, t *activeTurn, cf
 		bc.onTurnClosed(t.Chat, t.ID)
 	}
 	bc.autoCompact.noteTurnClosed(t.Chat)
-	// Its own goroutine, on inflight so a drained prompt joins a held count instead of racing Shutdown's Wait.
+	// Its own goroutine, on inflight so a drained prompt joins a held count instead of racing Shutdown's Wait. None
+	// once Shutdown began: a parked model pick lands at the next spawn, and the rest needs a live bridge.
 	after := func() { bc.afterTurnClose(ctx, t.Chat, cf) }
-	if bc.lifecycle == nil || !bc.lifecycle.goUnlessDraining(after) {
+	if bc.lifecycle == nil {
 		go after()
+		return
 	}
+	bc.lifecycle.goUnlessDraining(after)
 }
 
 // engineAccount is a broken turn's sentence when the closer supplied none: the engine's latched display_error,

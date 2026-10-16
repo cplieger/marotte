@@ -17,6 +17,7 @@ import (
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/sse"
 	"github.com/cplieger/sse/ssetest"
@@ -320,9 +321,17 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 	}{
 		{"event stream", http.MethodGet, "/api/events", ""},
 		{"command", http.MethodPost, "/api/command", `{"type":"create_chat","request_id":"r1"}`},
+		{"sync", http.MethodPost, "/api/sync", `{}`},
+		{"run launch", http.MethodPost, "/api/runs", `{}`},
+		{"run step verb", http.MethodPost, "/api/runs/wf_1/steps/a/cancel", ""},
+		{"run delete", http.MethodDelete, "/api/runs/wf_1", ""},
+		{"schedule put", http.MethodPost, "/api/schedules", `{}`},
+		{"schedule delete", http.MethodDelete, "/api/schedules/s1", ""},
+		{"engine restart", http.MethodPost, "/api/engine/restart", ""},
+		{"merge status", http.MethodGet, "/api/chats/c1/merges/op1", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, _, _ := newTestHub()
+			h := newDrainGateHub(t)
 			mux := http.NewServeMux()
 			h.RegisterRoutes(mux)
 			h.lifecycle.draining.Store(true)
@@ -348,19 +357,31 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 	}
 
 	t.Run("an ungated route still answers while draining", func(t *testing.T) {
-		h, _, _ := newTestHub()
+		h := newDrainGateHub(t)
 		mux := http.NewServeMux()
 		h.RegisterRoutes(mux)
 		h.lifecycle.draining.Store(true)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/config-template", nil)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-
-		if rec.Code == http.StatusServiceUnavailable {
-			t.Error("an ungated route answered 503: the drain gate has become global")
+		for _, path := range []string{"/api/config-template", "/api/runs/live", "/api/schedules", "/api/engine"} {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if rec.Code == http.StatusServiceUnavailable {
+				t.Errorf("GET %s answered 503: the drain gate has become global", path)
+			}
 		}
 	})
+}
+
+// newDrainGateHub carries a schedule store, so the schedule routes are registered at all.
+func newDrainGateHub(t *testing.T) *Runtime {
+	t.Helper()
+	h, _, _ := newTestHub()
+	st, err := schedule.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	h.runs.schedules = st
+	return h
 }
 
 type nonFlusherWriter struct {

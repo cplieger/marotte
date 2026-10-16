@@ -22,6 +22,12 @@ func (rt *Runtime) PurgeParentlessRuns(ctx context.Context, window time.Duration
 	if rt.sessionRefs == nil {
 		return RunPurgeResult{}
 	}
+	// The purge scheduler outlives Shutdown; once draining, the next boot's pass purges.
+	release, ok := rt.lifecycle.enterUnlessDraining()
+	if !ok {
+		return RunPurgeResult{}
+	}
+	defer release()
 	runs, err := rt.runs.listRaw(ctx)
 	if err != nil {
 		slog.Warn("run purge: run list unavailable, purging nothing this pass", "error", err)

@@ -550,9 +550,7 @@ func (rs *Runs) endStepSteerOp(key marotte.ChatID) func(opID string) {
 }
 
 func (rt *Runtime) runStepSteerJob(job command.SteerJob) {
-	rt.lifecycle.InflightAdd(1)
-	go func() {
-		defer rt.lifecycle.InflightDone()
+	rt.lifecycle.inflight.Go(func() {
 		ctx, cancel := rt.lifecycle.TurnContext(context.Background())
 		defer cancel()
 		steers := rt.runs.steers
@@ -577,5 +575,5 @@ func (rt *Runtime) runStepSteerJob(job command.SteerJob) {
 			return
 		}
 		command.SendPlanned(ctx, steers.steerTarget(lease, session), steers.queue.PlanFlush(job.Chat))
-	}()
+	})
 }

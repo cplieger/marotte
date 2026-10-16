@@ -65,6 +65,12 @@ func (rs *Runs) launch(
 func (rs *Runs) LaunchScheduled(
 	ctx context.Context, source, scheduleID string, defaults marotte.RunDefaults, slotAt time.Time,
 ) (id, name string, err error) {
+	// The schedule runner outlives Shutdown, so a launch is held on inflight and refused once draining.
+	release, ok := rs.lifecycle.enterUnlessDraining()
+	if !ok {
+		return "", "", errRuntimeDraining
+	}
+	defer release()
 	return rs.launchAs(ctx, source, nil, defaults, scheduledLaunch(scheduleID, slotAt))
 }
 
@@ -274,7 +280,7 @@ func (rs *Runs) reconcileDelete(ctx context.Context, d *runDeletion, cause error
 }
 
 func (rs *Runs) reconcileLater(d *runDeletion) {
-	time.AfterFunc(deleteReconcileRetry, func() {
+	rs.lifecycle.afterUnlessDraining(deleteReconcileRetry, func() {
 		ctx := rs.lifecycle.shutdownCtx
 		if ctx.Err() != nil {
 			return
@@ -954,8 +960,7 @@ func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID marotte.ChatID
 	}
 	slog.Info("rehydrate: a run is still listed running; re-reading it once KAS reconciles it",
 		"chat_id", chatID, "delay", orphanResumeDelay)
-	// Untracked, as healPaused's: the sweep re-reads and acts only on a run still parked.
-	time.AfterFunc(orphanResumeDelay, func() {
+	rs.lifecycle.afterUnlessDraining(orphanResumeDelay, func() {
 		hctx, cancel := rs.lifecycle.derivedContext()
 		defer cancel()
 		rs.resumeChainRuns(hctx, chatID)
@@ -1035,8 +1040,7 @@ func (rs *Runs) healPaused(
 		slog.Info("scheduling the automatic resume of an involuntarily paused run",
 			"workflow_id", scrubLog(f.WorkflowID), "chat_id", chatID,
 			"pause_reason", scrubLog(f.PauseReason), "delay", delay)
-		// Untracked: it re-reads and does nothing unless still parked.
-		time.AfterFunc(delay, func() {
+		rs.lifecycle.afterUnlessDraining(delay, func() {
 			hctx, cancel := rs.lifecycle.derivedContext()
 			defer cancel()
 			rs.resumeIfInterrupted(hctx, chatID, f.WorkflowID)

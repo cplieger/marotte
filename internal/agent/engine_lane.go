@@ -19,9 +19,9 @@ const hostCallbackBudget = 30 * time.Second
 
 // attachEngineLane starts generation gen's engine-lane consumer before Start writes initialize: KAS asks for the
 // sign-in around initialize, and an unanswered ask holds the next session door. It lives as long as the engine, which
-// Shutdown stops before it waits on loops.
+// Shutdown stops before it joins the lanes.
 func (rt *Runtime) attachEngineLane(h engineHandle, gen uint64) {
-	rt.lifecycle.goLoopUnlessDraining(func() {
+	rt.lifecycle.goLaneUnlessDraining(func() {
 		lane := laneRef{gen: gen}
 		for n := range h.EngineNotifCh() {
 			rt.engineFrame(h, n.Msg)
@@ -65,7 +65,7 @@ func (rt *Runtime) engineRequest(h engineHandle, msg *marotte.RPCResponse) {
 func (rt *Runtime) answerConnectionRequest(origin acpResponder, msg *marotte.RPCResponse) bool {
 	if answer, ok := rt.signin.hostCallback(msg.Method); ok {
 		id := *msg.ID
-		rt.lifecycle.inflight.Go(func() {
+		rt.answerUnlessDraining(origin, msg, func() {
 			ctx, cancel := context.WithTimeout(rt.lifecycle.shutdownCtx, hostCallbackBudget)
 			defer cancel()
 			result, rpcErr := answer(ctx)
@@ -81,7 +81,7 @@ func (rt *Runtime) answerConnectionRequest(origin acpResponder, msg *marotte.RPC
 	}
 	switch msg.Method {
 	case methodKiroSecretGet, methodKiroSecretStore, methodKiroSecretDelete, methodKiroOpenExternalURL:
-		rt.lifecycle.inflight.Go(func() {
+		rt.answerUnlessDraining(origin, msg, func() {
 			ctx, cancel := rt.lifecycle.derivedContext()
 			defer cancel()
 			if !rt.inbound.handleKiroSecretRequest(ctx, "", origin, msg) {
@@ -94,6 +94,15 @@ func (rt *Runtime) answerConnectionRequest(origin acpResponder, msg *marotte.RPC
 		return true
 	}
 	return false
+}
+
+// answerUnlessDraining runs answer, which answers msg, on inflight; once Shutdown has begun msg is answered at once
+// as an unknown session's. An observer pass's or a host relay's frame pump calls it unjoined by Shutdown, so an
+// ungated inflight.Go could race Shutdown's Wait.
+func (rt *Runtime) answerUnlessDraining(origin acpResponder, msg *marotte.RPCResponse, answer func()) {
+	if !rt.lifecycle.goUnlessDraining(answer) {
+		rt.answerUnknownSession(origin, msg)
+	}
 }
 
 // heldStepRequest makes a resumed run's owner resident, then hands it the request its step sent before the owner

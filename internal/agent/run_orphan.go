@@ -69,8 +69,14 @@ func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
 }
 
 // BootSweep is the boot pass: the orphan sweep, then one read of every leased run's asks. Reports whether it reached
-// KAS; when it did not, nothing was read.
+// KAS; when it did not, nothing was read. Its loop outlives Shutdown, so the pass is held on inflight and none runs
+// once draining.
 func (rs *Runs) BootSweep(ctx context.Context) (reached bool) {
+	release, ok := rs.lifecycle.enterUnlessDraining()
+	if !ok {
+		return false
+	}
+	defer release()
 	if !rs.sweepOrphaned(ctx) {
 		return false
 	}

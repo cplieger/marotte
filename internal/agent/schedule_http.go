@@ -30,13 +30,13 @@ type scheduleView struct {
 	Enabled    bool          `json:"enabled"`
 }
 
-func (rr *runRoutes) registerSchedule(mux *http.ServeMux) {
+func (rr *runRoutes) registerSchedule(mux *http.ServeMux, write func(string, http.HandlerFunc)) {
 	if rr.runs.schedules == nil {
 		return
 	}
 	mux.HandleFunc("GET /api/schedules", rr.handleScheduleList)
-	mux.HandleFunc("POST /api/schedules", rr.handleSchedulePut)
-	mux.HandleFunc("DELETE /api/schedules/{id}", rr.handleScheduleDelete)
+	write("POST /api/schedules", rr.handleSchedulePut)
+	write("DELETE /api/schedules/{id}", rr.handleScheduleDelete)
 }
 
 // handleScheduleList: GET /api/schedules → every schedule with its next run.

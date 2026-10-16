@@ -260,11 +260,11 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// the store cannot import the agent.
 	chat.WithLiveTurn(h.TurnLive)(chatStore)
 	chat.WithOpenTurns(h.OpenTurns)(chatStore)
-	chat.WithOnPurge(func(id marotte.ChatID, sessionChain []string) {
+	chat.WithOnPurge(heldUnlessDraining(h.HoldUnlessDraining, func(id marotte.ChatID, sessionChain []string) {
 		// After the per-chat record lock is released, keeping the lock order acyclic.
 		// RetentionClose reaps the chain itself, so no second reap here.
 		h.Membership().RetentionClose(appCtx, id, sessionChain)
-	})(chatStore)
+	}))(chatStore)
 	// An exempt chat contributes no wake-up deadline, so closing its tab must trigger
 	// a pass; without this the purge noticed up to an hour later.
 	h.Membership().SetRetentionWake(purgeScheduler.Trigger)
@@ -758,6 +758,22 @@ func openSpecApprovalStore(dir string) *specapproval.Store {
 		slog.Warn("spec approvals starting empty", "error", err)
 	}
 	return st
+}
+
+// heldUnlessDraining wraps the store's purge callback so closeChain runs held on the runtime's in-flight wait
+// (hold): the purge scheduler outlives the runtime's Shutdown. Skipped once Shutdown began; the next boot's
+// orphan-session sweep, parentless-run purge and tab prune reap what the chain left.
+func heldUnlessDraining(hold func() (release func(), ok bool),
+	closeChain func(marotte.ChatID, []string),
+) func(marotte.ChatID, []string) {
+	return func(id marotte.ChatID, sessionChain []string) {
+		release, ok := hold()
+		if !ok {
+			return
+		}
+		defer release()
+		closeChain(id, sessionChain)
+	}
 }
 
 // pruneTabs is the tab set's one-shot LOAD-TIME crash recovery for a crash between the

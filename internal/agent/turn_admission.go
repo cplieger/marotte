@@ -200,9 +200,9 @@ func (bc *bridgeCoordinator) ArmWireCancelGrace(chatID marotte.ChatID, d time.Du
 	if !open {
 		return false
 	}
-	time.AfterFunc(d, func() {
-		// Shutdown closes its own turns, with its own account.
-		if _, open := bc.turns.turnByID(chatID, t.ID); !open || bc.draining() {
+	// Refused once Shutdown began: it closes its own turns, with its own account.
+	bc.lifecycle.afterUnlessDraining(d, func() {
+		if _, open := bc.turns.turnByID(chatID, t.ID); !open {
 			return
 		}
 		slog.Warn("cancel unacked within grace; closing the agent's turn", "chat_id", chatID, "turn", t.ID, "grace", d)
@@ -225,8 +225,9 @@ func (bc *bridgeCoordinator) WireTurnActivity(chatID marotte.ChatID, active bool
 		return
 	}
 	grace := cmp.Or(bc.idleEndGrace, defaultIdleEndGrace)
-	time.AfterFunc(grace, func() {
-		if !bc.turns.idleSince(chatID, t, arm) || bc.draining() {
+	// Refused once Shutdown began, as ArmWireCancelGrace's.
+	bc.lifecycle.afterUnlessDraining(grace, func() {
+		if !bc.turns.idleSince(chatID, t, arm) {
 			return
 		}
 		slog.Warn("the agent went idle without ending its turn; closing it", "chat_id", chatID, "turn", t.ID, "grace", grace)

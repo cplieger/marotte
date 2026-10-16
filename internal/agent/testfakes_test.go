@@ -116,6 +116,17 @@ func newFakeBridge() *fakeBridge {
 	}
 }
 
+// reopen makes a closed fake a new session handle: a fresh stream, as the engine gives each door. The engine fake
+// calls it before attach, since an attached forward may read NotifCh before the door runs.
+func (b *fakeBridge) reopen() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.stopped {
+		b.stopped, b.streamClosed = false, false
+		b.notifCh = make(chan marotte.Notification, 16)
+	}
+}
+
 // door is the fake's session/new (load false) or session/load: it records the options and, on a load, replays the
 // transcript before returning, as KAS does.
 func (b *fakeBridge) door(ctx context.Context, so *marotte.SessionOpts, eo *marotte.EngineOpts, load bool) error {
@@ -141,11 +152,6 @@ func (b *fakeBridge) door(ctx context.Context, so *marotte.SessionOpts, eo *maro
 	}
 	b.mu.Lock()
 	b.started = true
-	if b.stopped {
-		// A door on a closed fake is a new session handle: a fresh stream, as the engine gives each door.
-		b.stopped, b.streamClosed = false, false
-		b.notifCh = make(chan marotte.Notification, 16)
-	}
 	b.starts++
 	b.sessionOpts, b.engineOpts = so, eo
 	if so.SessionID != "" {

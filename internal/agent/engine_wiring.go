@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-	"time"
 
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -144,7 +143,7 @@ func (rt *Runtime) resumeParentless(ctx context.Context, workflowID string) {
 	}
 	rt.runs.resumeIfInterrupted(ctx, runChatID(workflowID), workflowID)
 	if st, ok := rt.runs.inspect(ctx, workflowID); ok && st.State.Status == marotte.RunStatusRunning {
-		time.AfterFunc(orphanResumeDelay, func() {
+		rt.lifecycle.afterUnlessDraining(orphanResumeDelay, func() {
 			hctx, cancel := rt.lifecycle.derivedContext()
 			defer cancel()
 			rt.runs.resumeIfInterrupted(hctx, runChatID(workflowID), workflowID)

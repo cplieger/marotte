@@ -226,7 +226,7 @@ func (rs *Runs) setTimerLocked(workflowID string, deadline time.Time) {
 		rs.bounds.timers = map[string]*time.Timer{}
 	}
 	// The deadline travels into the callback, which compares it with the lease at fire time.
-	rs.bounds.timers[workflowID] = time.AfterFunc(time.Until(deadline),
+	rs.bounds.timers[workflowID] = rs.lifecycle.afterUnlessDraining(time.Until(deadline),
 		func() { rs.cancelExpired(workflowID, deadline) })
 }
 
@@ -463,8 +463,7 @@ func (rs *Runs) retryTermination(workflowID, reason string, stop runStop) {
 	delay := cmp.Or(rs.cancelRetryBase, defaultCancelRetryBase) * time.Duration(1<<(attempt-1))
 	slog.Warn("a run's cancel was refused; re-attempting it, and the run stays bounded",
 		"workflow_id", workflowID, "attempt", attempt, "delay", delay)
-	// Untracked: it re-issues a stop already earned, and the guards below re-read.
-	time.AfterFunc(delay, func() {
+	rs.lifecycle.afterUnlessDraining(delay, func() {
 		// Parked or released: marotte no longer bounds this run.
 		if !rs.bounded(workflowID) {
 			return

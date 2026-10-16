@@ -128,6 +128,13 @@ func joinInflight(t testing.TB, h *Runtime) {
 	}
 }
 
+// beginDraining flips draining as Shutdown's first step does, without the teardown that follows it.
+func beginDraining(h *Runtime) {
+	h.lifecycle.drainGate.Lock()
+	h.lifecycle.draining.Store(true)
+	h.lifecycle.drainGate.Unlock()
+}
+
 // shutdownHub uses context.Background(): from t.Cleanup t.Context() is already done. 30s is above any unit test and below go test's timeout.
 func shutdownHub(t *testing.T, h *Runtime) {
 	t.Helper()

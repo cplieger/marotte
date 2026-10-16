@@ -908,9 +908,7 @@ func (rs *Runs) repliedPending(ctx context.Context, c *askCell, p *pendingPrompt
 		return
 	}
 	if rs.lifecycle != nil {
-		p.ceiling = time.AfterFunc(askPendingCeiling, func() {
-			rs.lifecycle.goUnlessDraining(func() { rs.expirePending(c, p) })
-		})
+		p.ceiling = rs.lifecycle.afterUnlessDraining(askPendingCeiling, func() { rs.expirePending(c, p) })
 	}
 	c.mu.Unlock()
 }

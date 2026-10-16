@@ -71,6 +71,9 @@ type lifetime struct {
 	inflight   sync.WaitGroup
 	// loops covers background goroutines exiting on done, separate from inflight so a timed-out shutdown names which wedged.
 	loops sync.WaitGroup
+	// lanes covers the engine-lane consumers. Shutdown waits on inflight only once every lane has returned: a lane
+	// frame's handlers make ungated inflight Adds, which are legal only once ordered before that Wait.
+	lanes sync.WaitGroup
 	// drainGate orders each goClaimed claim and its Add before Shutdown's draining flip: what a claim takes is waited
 	// for through inflight, and what a refused claim leaves is still there for Shutdown's own teardown.
 	drainGate sync.RWMutex
@@ -80,6 +83,16 @@ type lifetime struct {
 // goUnlessDraining runs fn on inflight unless Shutdown has begun, reporting whether it did.
 func (lt *lifetime) goUnlessDraining(fn func()) bool {
 	return lt.goClaimed(func() func() { return fn })
+}
+
+// afterUnlessDraining runs fn on inflight after d unless Shutdown has begun by then: a bare AfterFunc body runs off
+// inflight, so Shutdown would neither wait for its writes nor order its inflight Adds before Wait. A nil lt, a
+// fixture with no runtime, runs fn bare.
+func (lt *lifetime) afterUnlessDraining(d time.Duration, fn func()) *time.Timer {
+	if lt == nil {
+		return time.AfterFunc(d, fn)
+	}
+	return time.AfterFunc(d, func() { lt.goUnlessDraining(fn) })
 }
 
 // goClaimed runs claim, then the work it returns on inflight, unless Shutdown has begun, reporting whether work
@@ -99,15 +112,46 @@ func (lt *lifetime) goClaimed(claim func() (work func())) bool {
 	return true
 }
 
-// goLoopUnlessDraining runs fn on loops unless Shutdown has begun: for a goroutine that lives as long as something
-// Shutdown ends before it waits on loops.
-func (lt *lifetime) goLoopUnlessDraining(fn func()) {
+// goLaneUnlessDraining runs fn on lanes unless Shutdown has begun: for an engine-lane consumer, which lives as long as
+// its engine.
+func (lt *lifetime) goLaneUnlessDraining(fn func()) {
 	lt.drainGate.RLock()
 	defer lt.drainGate.RUnlock()
 	if lt.draining.Load() {
 		return
 	}
-	lt.loops.Go(fn)
+	lt.lanes.Go(fn)
+}
+
+// enterUnlessDraining holds inflight for the caller's own synchronous work unless Shutdown has begun; release ends
+// the hold. Only this Add(1) is ordered before Shutdown's Wait (it is taken under the drain gate); an inflight Add
+// the work makes later is legal because the held count keeps inflight above zero until release.
+func (lt *lifetime) enterUnlessDraining() (release func(), ok bool) {
+	lt.drainGate.RLock()
+	defer lt.drainGate.RUnlock()
+	if lt.draining.Load() {
+		return nil, false
+	}
+	lt.inflight.Add(1)
+	return lt.inflight.Done, true
+}
+
+// admitUnlessDraining serves next held on inflight (enterUnlessDraining), answering 503 once Shutdown has begun. A nil
+// lt, a fixture with no runtime, serves next bare. Never around a stream Shutdown ends only after its inflight wait:
+// the stream would hold that wait to its deadline.
+func (lt *lifetime) admitUnlessDraining(next http.Handler) http.Handler {
+	if lt == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		release, ok := lt.enterUnlessDraining()
+		if !ok {
+			writeShuttingDown(w)
+			return
+		}
+		defer release()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // derivedContext returns a cancellable child of the process lifetime, for
@@ -454,6 +498,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	runs.mutations.executing = runs.bounded
 	runs.mutations.inspect = runs.observeInspected
 	runs.mutations.ctx = func() context.Context { return lc.shutdownCtx }
+	runs.mutations.after = lc.afterUnlessDraining
 	runs.mutations.onSettle(h.engine.poke)
 	h.standing = newConfigStanding(lc, func(c context.Context) (json.RawMessage, error) {
 		return h.engine.workspaceConfigurationRaw(c, []string{workDir})
@@ -581,11 +626,10 @@ func (rt *Runtime) SetChatSteering(fn func(context.Context) []marotte.ClientStee
 
 // RegisterRoutes wires /api/events (SSE), /api/command (POST) and /api/shell/ws (WebSocket PTY).
 func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
-	// Only these two refuse once Shutdown flips draining (refuseWhenDraining).
 	mux.Handle("/api/events", rt.refuseWhenDraining(http.HandlerFunc(rt.handleSSE)))
-	mux.Handle("/api/command", rt.refuseWhenDraining(rt.dispatcher))
+	mux.Handle("/api/command", rt.lifecycle.admitUnlessDraining(rt.dispatcher))
 	// Behind the same drain gate, under a RouteTimeout so a resolution parked on a lock frees its slot.
-	mux.Handle("POST /api/sync", rt.refuseWhenDraining(
+	mux.Handle("POST /api/sync", rt.lifecycle.admitUnlessDraining(
 		webhttp.RouteTimeout(rt.bus.fanout.DigestHandler(rt.resolveDigest), digestTimeout, "digest timed out"),
 	))
 	// Not drain-gated: a late receipt changes nothing.
@@ -604,7 +648,8 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/config-template", rt.handleConfigTemplate)
 	mux.HandleFunc("GET /api/sessions", rt.handleSessionList)
 	mux.HandleFunc("GET /api/chats/{id}/kiro-session", rt.handleKiroSessionExport)
-	mux.HandleFunc("GET /api/chats/{id}/merges/{op}", rt.dispatcher.ServeMergeStatus)
+	// A GET, but reading a running merge an ended process left resumes it.
+	mux.Handle("GET /api/chats/{id}/merges/{op}", rt.lifecycle.admitUnlessDraining(http.HandlerFunc(rt.dispatcher.ServeMergeStatus)))
 	mux.HandleFunc("GET /api/slash-commands", rt.handleSlashCommands)
 	mux.HandleFunc("GET /api/steering/issues", rt.handleSteeringIssues)
 }
@@ -643,9 +688,17 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 
 	// Each wait below is bounded by ctx; an expired one is abandoned, not cancelled.
 
-	// 2. Wait for in-flight prompt handlers to clean up.
-	if handlersErr := awaitBounded(ctx, "in-flight handlers", rt.lifecycle.inflight.Wait); teardownErr == nil {
-		teardownErr = handlersErr
+	// 1d. After the cancel, which ends a generation spawned too late for step 1, so every lane's channel closes.
+	lanesErr := awaitBounded(ctx, "engine lanes", rt.lifecycle.lanes.Wait)
+	if teardownErr == nil {
+		teardownErr = lanesErr
+	}
+
+	// 2. Wait for in-flight prompt handlers to clean up. Never after an unjoined lane, whose next inflight Add would race Wait.
+	if lanesErr == nil {
+		if handlersErr := awaitBounded(ctx, "in-flight handlers", rt.lifecycle.inflight.Wait); teardownErr == nil {
+			teardownErr = handlersErr
+		}
 	}
 
 	// 2a. The unread steers the skipped death closer would have recorded, durably. The gone flag refuses a late fold.
@@ -773,17 +826,27 @@ func (rt *Runtime) Epoch() string {
 	return rt.bus.fanout.Position().Epoch
 }
 
-// refuseWhenDraining answers 503 once Shutdown flips draining, for commands and the event stream only. A route
-// wrapper, so health, version and static stay up; webhttp's own gate flips later, at srv.Shutdown.
+// HoldUnlessDraining holds Shutdown's in-flight wait for a caller off the runtime's own goroutines (a background loop
+// the app stops after Shutdown), until release; ok is false, and nothing is held, once Shutdown has begun.
+func (rt *Runtime) HoldUnlessDraining() (release func(), ok bool) {
+	return rt.lifecycle.enterUnlessDraining()
+}
+
+// refuseWhenDraining answers 503 once Shutdown flips draining, holding nothing: for the event stream, which Shutdown
+// ends after its inflight wait, so it must not be admitted (admitUnlessDraining). A route wrapper, so health,
+// version and static stay up; webhttp's own gate flips later, at srv.Shutdown.
 func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if rt.lifecycle.draining.Load() {
-			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
-				httpreply.ErrorJSON("shutting down"))
+			writeShuttingDown(w)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func writeShuttingDown(w http.ResponseWriter) {
+	webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("shutting down"))
 }
 
 // sweepSessionsInterval is how often the orphan-session sweep runs after
