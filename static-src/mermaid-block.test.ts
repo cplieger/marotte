@@ -2,9 +2,10 @@
 // with its source one toggle away, and full screen with zoom. Measured over the shipped stylesheet.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
+import { emulateA11yMedia, resetA11yMedia } from "./__test-helpers__/a11y-media.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { setCopyCallback } from "./code-blocks.js";
-import { createMarkdownStream, renderMarkdownInto } from "./markdown.js";
+import { createMarkdownStream, renderMarkdownInto, type MarkdownStream } from "./markdown.js";
 import { exportableSvg, loadPele } from "./mermaid-svg.js";
 
 const FLOW =
@@ -97,6 +98,22 @@ function render(md: string): HTMLElement {
   return host;
 }
 
+/** A live reply's renderer, parsing each write as it lands (the reveal's pacing). */
+function live(): { host: HTMLElement; stream: MarkdownStream } {
+  const host = document.createElement("div");
+  column.appendChild(host);
+  return { host, stream: createMarkdownStream(host, { flushIntervalMs: 0 }) };
+}
+
+/** Whether any of a fence's source is on screen: `hidden`, a CSS rule or a missing `<pre>` all answer false. */
+function sourceShown(host: HTMLElement): boolean {
+  return host.querySelector("pre")?.checkVisibility() === true;
+}
+
+function skeleton(host: HTMLElement): HTMLElement | null {
+  return host.querySelector<HTMLElement>(".mermaid-skeleton");
+}
+
 function parts(host: HTMLElement): {
   wrap: HTMLElement;
   pre: HTMLElement;
@@ -147,29 +164,166 @@ describe("which fences are drawn", () => {
     expect(wrap.hasAttribute("data-mermaid")).toBe(false);
   });
 
-  it("never draws an unterminated fence, live or replayed", () => {
-    expect(parts(render("```mermaid\n" + FLOW)).canvas).toBeNull();
-    const host = document.createElement("div");
-    column.appendChild(host);
-    const stream = createMarkdownStream(host, { flushIntervalMs: 0 });
+  it("never draws an unterminated fence, live or replayed, and shows its source", () => {
+    const replayed = render("```mermaid\n" + FLOW);
+    expect(parts(replayed).canvas).toBeNull();
+    expect(sourceShown(replayed)).toBe(true);
+    const { host, stream } = live();
     stream.writeDelta("```mermaid\n" + FLOW);
     stream.end();
     expect(host.querySelector(".mermaid-canvas")).toBeNull();
+    expect(skeleton(host)).toBeNull();
+    expect(sourceShown(host)).toBe(true);
   });
 });
 
 describe("while the fence streams in", () => {
-  it("shows code until the closing fence, then the diagram", () => {
-    const host = document.createElement("div");
-    column.appendChild(host);
-    const stream = createMarkdownStream(host, { flushIntervalMs: 0 });
-    stream.writeDelta("```mermaid\nflowchart TD\n  A --> B\n");
-    expect(host.querySelector(".code-wrap")).not.toBeNull();
-    expect(host.querySelector(".mermaid-canvas")).toBeNull();
-    stream.writeDelta("  B --> C\n```\n");
+  it("shows a skeleton, never the source, from the opening fence until the diagram", () => {
+    const { host, stream } = live();
+    const chunks = [
+      "Here it is:\n\n```merm",
+      "aid\n",
+      "flowchart TD\n  accTitle: Order",
+      " flow\n  A[Start] --> B{Paid?}\n",
+      "  B -- yes --> C[Ship]\n",
+    ];
+    const names: (string | null)[] = [];
+    for (const chunk of chunks) {
+      stream.writeDelta(chunk);
+      expect(sourceShown(host), `source on screen after ${JSON.stringify(chunk)}`).toBe(false);
+      expect(host.querySelector(".mermaid-canvas")).toBeNull();
+      names.push(skeleton(host)?.getAttribute("aria-label") ?? null);
+    }
+    expect(
+      names,
+      "a skeleton from the info string on, named by the accTitle once it is whole",
+    ).toEqual([null, "Drawing diagram", "Drawing diagram", "Order flow", "Order flow"]);
+    const skel = skeleton(host) as HTMLElement;
+    expect(skel.getAttribute("role")).toBe("img");
+    expect(skel.getAttribute("aria-busy")).toBe("true");
+    expect(skel.getBoundingClientRect().height).toBeGreaterThan(0);
+
+    const wrap = host.querySelector(".code-wrap");
+    const pre = host.querySelector("pre");
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(host, { childList: true, subtree: true });
+    stream.writeDelta("```\n\nAfter.\n");
+    const removed = observer
+      .takeRecords()
+      .flatMap((r) => [...r.removedNodes])
+      .filter((n) => n instanceof Element);
+    observer.disconnect();
     expect(host.querySelector(".mermaid-canvas > svg")).not.toBeNull();
+    expect(skeleton(host)).toBeNull();
+    expect(sourceShown(host)).toBe(false);
+    expect(removed, "the skeleton is the one element taken out").toHaveLength(1);
+    expect(removed[0]).toBe(skel);
+    expect(host.querySelector(".code-wrap"), "the block itself stays in place").toBe(wrap);
+    expect(host.querySelector("pre")).toBe(pre);
     stream.end();
     expect(host.querySelectorAll(".mermaid-canvas")).toHaveLength(1);
+  });
+
+  it("keeps the source toggle working on a diagram drawn from a stream", async () => {
+    const { host, stream } = live();
+    stream.writeDelta("```mermaid\n" + FLOW);
+    stream.writeDelta("```\n");
+    stream.end();
+    const { pre, canvas, button } = parts(host);
+    await userEvent.click(button("Show source") as HTMLButtonElement);
+    expect(pre.checkVisibility()).toBe(true);
+    expect(canvas?.hidden).toBe(true);
+    expect(skeleton(host)).toBeNull();
+  });
+
+  it("pulses while it waits", () => {
+    const { host, stream } = live();
+    stream.writeDelta("```mermaid\nflowchart TD\n");
+    const box = host.querySelector(".mermaid-skeleton > .skeleton") as HTMLElement;
+    const [pulse] = box.getAnimations();
+    expect(pulse?.effect?.getTiming().iterations).toBe(Infinity);
+    expect(pulse?.playState).toBe("running");
+  });
+
+  it("streams every other fence as code", () => {
+    const { host, stream } = live();
+    stream.writeDelta("```go\npackage main\n");
+    expect(sourceShown(host)).toBe(true);
+    expect(skeleton(host)).toBeNull();
+    stream.writeDelta("```\n");
+    expect(sourceShown(host)).toBe(true);
+    expect(skeleton(host)).toBeNull();
+  });
+
+  // Only a top-level fence is drawn (markdown.ts `decorate`), so a nested one would never leave its skeleton.
+  it("streams a fence nested in a list as code", () => {
+    const { host, stream } = live();
+    stream.writeDelta("- step\n  ```mermaid\n  flowchart TD\n");
+    expect(host.querySelector("li pre")).not.toBeNull();
+    expect(sourceShown(host)).toBe(true);
+    expect(skeleton(host)).toBeNull();
+  });
+
+  it("shows an empty fence as code once it closes", () => {
+    const { host, stream } = live();
+    stream.writeDelta("```mermaid\n");
+    expect(skeleton(host)).not.toBeNull();
+    stream.writeDelta("```\n");
+    expect(skeleton(host)).toBeNull();
+    expect(sourceShown(host)).toBe(true);
+    expect(host.querySelector(".code-wrap")?.hasAttribute("data-mermaid")).toBe(false);
+  });
+
+  it("ends in the source under the notice when the streamed diagram cannot be drawn", () => {
+    const { host, stream } = live();
+    stream.writeDelta("```mermaid\nflowchart TD\n");
+    stream.writeDelta("  A -->\n");
+    expect(sourceShown(host)).toBe(false);
+    stream.writeDelta("```\n");
+    const { wrap, pre } = parts(host);
+    expect(wrap.getAttribute("data-mermaid")).toBe("failed");
+    expect(skeleton(host)).toBeNull();
+    expect(pre.checkVisibility()).toBe(true);
+    const notice = wrap.querySelector(".mermaid-notice");
+    expect(notice?.textContent).toBe("Diagram could not be rendered: Parse error on line 3");
+    expect(notice?.nextElementSibling).toBe(pre);
+  });
+});
+
+describe("a diagram whose renderer is still loading", () => {
+  // `pie` is the one type this file leaves unloaded, so its first block takes the async path.
+  it("shows a skeleton in place of the source, then the diagram", async () => {
+    const host = render(fence('pie\n  accTitle: Pets\n  "Dogs" : 386\n  "Cats" : 85\n'));
+    const { wrap } = parts(host);
+    expect(wrap.getAttribute("data-mermaid")).toBe("pending");
+    expect(sourceShown(host)).toBe(false);
+    expect(skeleton(host)?.getAttribute("aria-label")).toBe("Pets");
+    await vi.waitFor(() => {
+      expect(wrap.getAttribute("data-mermaid")).toBe("drawn");
+    });
+    expect(skeleton(host)).toBeNull();
+    expect(host.querySelector(".mermaid-canvas > svg")).not.toBeNull();
+    expect(sourceShown(host)).toBe(false);
+  });
+});
+
+describe("the skeleton under reduced motion", () => {
+  beforeAll(async () => {
+    await emulateA11yMedia({ reducedMotion: "reduce" });
+  });
+
+  afterAll(async () => {
+    await resetA11yMedia();
+  });
+
+  it("holds still", async () => {
+    const { host, stream } = live();
+    stream.writeDelta("```mermaid\nflowchart TD\n");
+    const box = host.querySelector(".mermaid-skeleton > .skeleton") as HTMLElement;
+    await vi.waitFor(() => {
+      expect(box.getAnimations().filter((a) => a.playState === "running")).toEqual([]);
+    });
+    expect(getComputedStyle(box).opacity, "parked at the pulse's mean").toBe("0.275");
   });
 });
 

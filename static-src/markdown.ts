@@ -8,7 +8,7 @@ import { domRenderer } from "./smd-renderer.js";
 import { linkifyPaths } from "./linkify.js";
 import { decorateCodeBlocks, decorateStreamingCodeTail } from "./code-blocks.js";
 import { renderSvgBlock } from "./svg-block.js";
-import { renderMermaidBlock } from "./mermaid-block.js";
+import { holdStreamingMermaid, releaseOpenMermaid, renderMermaidBlock } from "./mermaid-block.js";
 import { syncScrollableTables } from "./table-scroll.js";
 
 /** Buffered deltas reach the append-only parser at most once per interval; nothing re-parses. */
@@ -123,8 +123,12 @@ export function createMarkdownStream(
     const slice = pendingParse.slice(0, sliceEnd);
     pendingParse = pendingParse.slice(sliceEnd);
     parser_write(p, slice);
-    // An open fence reaches no per-block callback, so this sweep gives a streaming block its label and Copy button.
-    decorateStreamingCodeTail(host);
+    // An open fence reaches no per-block callback, so this sweep gives a streaming block its label and Copy button,
+    // and a streaming diagram its skeleton.
+    const tail = decorateStreamingCodeTail(host);
+    if (tail !== null) {
+      holdStreamingMermaid(host, tail);
+    }
     if (pendingParse !== "") {
       nextTick(drain);
     } else {
@@ -191,6 +195,7 @@ export function createMarkdownStream(
       syncScrollableTables(host);
       // parser_end does not close an open fence, so finalize it here: highlighting and Run are withheld while streaming.
       decorateCodeBlocks(host);
+      releaseOpenMermaid(host);
     },
   };
 }

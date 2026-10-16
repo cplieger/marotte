@@ -1,7 +1,8 @@
-// A closed ```mermaid fence becomes a diagram drawn by pele, imported the first time one is seen. The fence stays a
-// decorated code block (hidden) beside the drawing, so Copy, the source toggle and the failure fallback all read
-// the one `<pre>`. pele's SVG is inserted as markup: its security policy lets an app do that when it meets the duties
-// `mermaid-svg.ts` RENDER_OPTIONS and `adoptSvg` carry, and the CSP's `script-src 'self'` refuses any handler anyway.
+// A closed ```mermaid fence becomes a diagram drawn by pele, imported the first time one is seen; until it is drawn,
+// from its opening fence on, a skeleton stands in for its source. The fence stays a decorated code block (hidden)
+// beside the drawing, so Copy, the source toggle and the failure fallback all read the one `<pre>`. pele's SVG is
+// inserted as markup: its security policy lets an app do that when it meets the duties `mermaid-svg.ts`
+// RENDER_OPTIONS and `adoptSvg` carry, and the CSP's `script-src 'self'` refuses any handler anyway.
 
 import { el } from "@cplieger/reactive";
 import type { Mounted } from "pele/lazy";
@@ -27,6 +28,9 @@ const STATE_ATTR = "data-mermaid";
  *  sideways rather than shrinking labels below reading size. The full-screen view zooms further. */
 const MIN_INLINE_SCALE = 0.6;
 
+const SKELETON_CLASS = "mermaid-skeleton";
+const DRAWING_LABEL = "Drawing diagram";
+
 const RENDER_FAILED = "Diagram could not be rendered";
 const LOAD_FAILED = "Diagram renderer could not be loaded";
 
@@ -40,10 +44,41 @@ function failureText(pele: Pele, err: unknown): string {
   return first === "" ? RENDER_FAILED : `${RENDER_FAILED}: ${first}`;
 }
 
+/** The `accTitle` the given lines declare, or null. */
+function accTitle(lines: string): string | null {
+  return /^[ \t]*accTitle[ \t]*:[ \t]*(\S.*?)[ \t]*$/m.exec(lines)?.[1] ?? null;
+}
+
+/** Put the skeleton in place of the source, named by the `accTitle` in `finished` (only whole lines, so a title
+ *  still arriving is not announced word by word). */
+function holdSkeleton(wrap: HTMLElement, pre: HTMLElement, finished: string): void {
+  let skel = wrap.querySelector<HTMLElement>(`:scope > .${SKELETON_CLASS}`);
+  if (skel === null) {
+    skel = el(
+      "div",
+      { className: SKELETON_CLASS, role: "img", "aria-busy": "true" },
+      el("div", { className: "skeleton" }),
+    );
+    wrap.insertBefore(skel, pre);
+  }
+  const label = accTitle(finished) ?? DRAWING_LABEL;
+  if (skel.getAttribute("aria-label") !== label) {
+    skel.setAttribute("aria-label", label);
+  }
+  pre.hidden = true;
+}
+
+/** The block's source back on screen, with no skeleton. */
+function releaseSource(wrap: HTMLElement, pre: HTMLElement): void {
+  wrap.querySelector(`:scope > .${SKELETON_CLASS}`)?.remove();
+  pre.hidden = false;
+}
+
 /** The source stays the block's body; the notice sits between its title bar and its text. Text only, because a
  *  PeleError quotes the diagram (pele's security policy). */
 function showFailure(wrap: HTMLElement, pre: HTMLElement, text: string): void {
   wrap.setAttribute(STATE_ATTR, "failed");
+  releaseSource(wrap, pre);
   const notice = el("p", { className: "mermaid-notice" });
   notice.textContent = text;
   wrap.insertBefore(notice, pre);
@@ -121,6 +156,7 @@ function draw(pele: Pele, wrap: HTMLElement, pre: HTMLElement, source: string): 
     showFailure(wrap, pre, failureText(pele, err));
     return;
   }
+  wrap.querySelector(`:scope > .${SKELETON_CLASS}`)?.remove();
   wrap.setAttribute(STATE_ATTR, "drawn");
   pre.id = `${prefix}source`;
   pre.hidden = true;
@@ -149,9 +185,35 @@ async function drawWhenLoaded(wrap: HTMLElement, pre: HTMLElement, source: strin
 }
 
 /**
+ * While a top-level ```mermaid fence is still streaming into `host` (its decorated `pre`), hold its source behind
+ * the skeleton. A nested fence is left as code, because only a top-level block reaches `renderMermaidBlock`.
+ */
+export function holdStreamingMermaid(host: HTMLElement, pre: HTMLElement): void {
+  const code = pre.querySelector("code");
+  const wrap = pre.parentElement;
+  if (code === null || wrap?.parentElement !== host || extractLang(pre, code) !== "mermaid") {
+    return;
+  }
+  const text = code.textContent;
+  holdSkeleton(wrap, pre, text.slice(0, text.lastIndexOf("\n") + 1));
+}
+
+/** Give back the source of every streamed mermaid fence in `host` that never closed, which is never drawn. */
+export function releaseOpenMermaid(host: HTMLElement): void {
+  for (const wrap of host.querySelectorAll<HTMLElement>(
+    `:scope > .code-wrap:not([${STATE_ATTR}])`,
+  )) {
+    const pre = wrap.querySelector<HTMLElement>(":scope > pre");
+    if (pre !== null && wrap.querySelector(`:scope > .${SKELETON_CLASS}`) !== null) {
+      releaseSource(wrap, pre);
+    }
+  }
+}
+
+/**
  * Upgrade a CLOSED, decorated ```mermaid fence to a diagram; any other block is left alone, as is one already
  * upgraded. Synchronous once pele and the diagram's type are loaded (a replayed chat repaints in one pass); the
- * first diagram of a type draws when its chunk arrives, showing the source until then.
+ * first diagram of a type draws when its chunk arrives, behind the skeleton until then.
  */
 export function renderMermaidBlock(pre: HTMLElement): void {
   const code = pre.querySelector("code");
@@ -166,6 +228,7 @@ export function renderMermaidBlock(pre: HTMLElement): void {
   }
   const source = code.textContent;
   if (source.trim() === "") {
+    releaseSource(wrap, pre);
     return;
   }
   wrap.setAttribute(STATE_ATTR, "pending");
@@ -175,5 +238,6 @@ export function renderMermaidBlock(pre: HTMLElement): void {
     draw(pele, wrap, pre, source);
     return;
   }
+  holdSkeleton(wrap, pre, source);
   void drawWhenLoaded(wrap, pre, source);
 }

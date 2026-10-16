@@ -21,6 +21,7 @@ describe("when the diagram's renderer cannot be loaded", () => {
     document.body.appendChild(host);
     renderMarkdownInto(host, "```mermaid\nflowchart TD\n  A --> B\n```\n");
     const wrap = host.querySelector<HTMLElement>(".code-wrap");
+    expect(wrap?.querySelector(".mermaid-skeleton")).not.toBeNull();
     await vi.waitFor(() => {
       expect(wrap?.getAttribute("data-mermaid")).toBe("failed");
     });
@@ -29,5 +30,6 @@ describe("when the diagram's renderer cannot be loaded", () => {
     );
     expect(wrap?.querySelector("pre")?.hidden).toBe(false);
     expect(wrap?.querySelector(".mermaid-canvas")).toBeNull();
+    expect(wrap?.querySelector(".mermaid-skeleton")).toBeNull();
   });
 });
