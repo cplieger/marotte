@@ -99,8 +99,7 @@ type TypedCommand =
         attachments?: readonly { path: string; name: string }[];
       };
     }
-  // `edit`: the reader took the row back to change it, so it leaves no transcript entry.
-  | { type: "steer_remove"; chat_id: string; payload: { steer_id: string; edit?: boolean } }
+  | { type: "steer_remove"; chat_id: string; payload: { steer_id: string } }
   // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
   // messageId and refuses a non-user one.
   | { type: "rewind_chat"; chat_id: string; payload: { message_id: string } }

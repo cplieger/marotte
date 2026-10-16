@@ -51,11 +51,9 @@ type steerRecord struct {
 	probe     string
 	op        string
 	opTarget  string
-	// opEdit is the key of the row the op's reader took back to change: it retires with no entry.
-	opEdit string
-	lead   string
-	rows   []dockRow
-	others []marotte.SteerQueuedPayload
+	lead      string
+	rows      []dockRow
+	others    []marotte.SteerQueuedPayload
 	// ends are the turn ends whose rows wait for a close pipeline or a starting
 	// prompt, oldest first.
 	ends []pendingEnd
@@ -357,21 +355,6 @@ func retire(w *dockRow, steer *marotte.EntrySteer, fx *steerFx) {
 	}
 	w.noted = true
 	fx.notes = append(fx.notes, steerNote{id: w.key, steer: steer})
-}
-
-// removedNote is the entry a deleted row leaves: none for the row being edited, whose new text
-// arrives as a steer of its own.
-func (rec *steerRecord) removedNote(w *dockRow) *marotte.EntrySteer {
-	if rec.opEdit != "" && w.key == rec.opEdit {
-		return nil
-	}
-	return deletedSteer(w)
-}
-
-func deletedSteer(w *dockRow) *marotte.EntrySteer {
-	return &marotte.EntrySteer{
-		Text: w.text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonDeleted,
-	}
 }
 
 func boundarySteer(w *dockRow) *marotte.EntrySteer {

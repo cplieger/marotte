@@ -40,7 +40,7 @@ const SHOW_REFUSAL_CODES = ["too_large", "binary", "not_utf8"] as const;
 const SLASH_COMMAND_KINDS = ["steering", "prompt", "goal"] as const;
 const SPEC_DOC_ROLES = ["requirements", "design", "tasks", "other"] as const;
 const STEER_ORIGINS = ["user", "agent", "parent", "step"] as const;
-const STEER_REASONS = ["restart", "boundary", "deleted"] as const;
+const STEER_REASONS = ["restart", "boundary"] as const;
 const STEER_ROW_STATES = ["queued", "unsent", "removed"] as const;
 const STEER_STATES = ["read", "dropped"] as const;
 const TAB_KINDS = ["chat", "editor", "run", "subagent", "settings", "git", "files", "history", "docs", "spec", "web"] as const;
@@ -2402,8 +2402,6 @@ export const decodeRunStepSteerRequest: Decoder<RunStepSteerRequest> = (v) => {
   const out: RunStepSteerRequest = {
     steer_id: reqStr(o, "steer_id", "$.run_step_steer_request"),
   };
-  const edit = o["edit"] === null ? undefined : optBool(o, "edit", "$.run_step_steer_request");
-  if (edit !== undefined) out.edit = edit;
   return out;
 };
 

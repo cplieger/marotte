@@ -103,13 +103,6 @@ describe("the reason clause", () => {
     expect(n.getAttribute("aria-label")).toBe("Not read \u00b7 the turn ended first: use tabs");
   });
 
-  it("words a deleted row as the reader's own removal", () => {
-    const n = note({ text: "use tabs", dropped: true, reason: "deleted" });
-
-    expect(textOf(n, ".steer-note-label")).toBe("Not read \u00b7 you deleted it");
-    expect(n.getAttribute("aria-label")).toBe("Not read \u00b7 you deleted it: use tabs");
-  });
-
   // TOTAL over the enum: a new SteerReason fails the client's type check until it is worded.
   // Asserted as a TYPE because the table is not public.
   it("cannot hold a reason it has no wording for", () => {

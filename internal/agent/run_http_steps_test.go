@@ -131,9 +131,8 @@ func TestStepRoutes_ReachTheStepTheClientAddresses(t *testing.T) {
 	}
 }
 
-// Edit beside a workflow result discards the whole buffer: the body names the row taken back, which
-// leaves no note, so the step's log stays empty.
-func TestStepRoutes_AClearForAnEditLeavesTheEditedRowNoNote(t *testing.T) {
+// Discard all deletes the step's unread rows, so the step's log gets no note for them.
+func TestStepRoutes_AClearLeavesTheStepsLogNoNote(t *testing.T) {
 	tc := stepRouteCases(t)[0]
 	h, br, mux := stepRouteHub(t, tc)
 	if rec := postStep(t, mux, tc.StepURL+"/message", marotte.RunStepMessageRequest{Text: "hi", MessageID: "m-1"}); rec.Code != http.StatusOK {
@@ -141,13 +140,13 @@ func TestStepRoutes_AClearForAnEditLeavesTheEditedRowNoNote(t *testing.T) {
 	}
 	releaseSteerClear(t, h, br, tc.WorkflowID, 3, "steer-m-1")
 
-	rec := postStep(t, mux, tc.StepURL+"/steer-clear", marotte.RunStepSteerRequest{SteerID: "steer-m-1", Edit: true})
+	rec := postStep(t, mux, tc.StepURL+"/steer-clear", nil)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST %s/steer-clear = %d %s, want 200", tc.StepURL, rec.Code, rec.Body.String())
 	}
 	if got := stepSteersAt(t, h, tc.WorkflowID); len(got) != 0 {
-		t.Errorf("run log steers = %+v, want none for the edited row", got)
+		t.Errorf("run log steers = %+v, want none for a discarded row", got)
 	}
 }
 

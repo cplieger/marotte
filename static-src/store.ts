@@ -742,9 +742,9 @@ export function recordSteerQueued(id: string, frame: SteerFrame): void {
 }
 
 /** Remove every CONFIRMED waiting steer, returning a snapshot to restore from. The optimistic
- *  half of `chat.clear_steers`; the transcript's record is the `steer` entry the server appends
- *  for each cleared id, so nothing here writes one. A `pending` entry STAYS — it is not in KAS's
- *  buffer yet, so removing it locally would hide a message still on its way. */
+ *  half of `chat.clear_steers`; a discarded row leaves on the server's `removed` frame and writes
+ *  no transcript entry. A `pending` entry STAYS — it is not in KAS's buffer yet, so removing it
+ *  locally would hide a message still on its way. */
 export function dropConfirmedSteers(id: string): readonly PendingSteer[] {
   const s = get(id);
   if (s?.steers === undefined) {

@@ -239,19 +239,24 @@ describe("a persisted UNDELIVERED steer says so", () => {
   });
 
   // A drop value the note has no wording for adds no clause, which keeps upstream text off this surface.
-  it("states a recorded drop reason and ignores one it has no wording for", async () => {
+  it("states each recorded drop reason and ignores one it has no wording for", async () => {
     const c = freshID("c-steer-reason");
     const t = `${c}-t1`;
     const view = await paint(c, t, [
       turnOpen(t),
       steer(t, 1, "restarted under me", { state: "dropped", reason: "restart" }),
-      steer(t, 2, "unknown reason", { state: "dropped", reason: "who knows" }),
-      reply(t, 3, "done"),
-      turnClose(t, 4),
+      steer(t, 2, "the turn ended", { state: "dropped", reason: "boundary" }),
+      steer(t, 3, "unknown reason", { state: "dropped", reason: "who knows" }),
+      reply(t, 4, "done"),
+      turnClose(t, 5),
     ]);
 
     const labels = notes(view).map((n) => labelOf(n));
-    expect(labels).toEqual(["Not read · the session restarted", "Not read"]);
+    expect(labels).toEqual([
+      "Not read · the session restarted",
+      "Not read · the turn ended first",
+      "Not read",
+    ]);
   });
 
   it("reads the two states apart from one transcript", async () => {
@@ -266,5 +271,38 @@ describe("a persisted UNDELIVERED steer says so", () => {
     ]);
 
     expect(notes(view).map((n) => n.dataset["state"])).toEqual(["read", "dropped"]);
+  });
+});
+
+// The server writes a row the reader deleted no entry: it leaves the dock on its `removed` frame.
+describe("a steer the reader deleted", () => {
+  it("paints no note, beside a boundary drop that does", async () => {
+    const c = freshID("c-steer-deleted");
+    const t = `${c}-t1`;
+    const view = await paint(c, t, [turnOpen(t)]);
+    store.recordSteerQueued(c, { id: "steer-del", text: "never mind", origin: "user" });
+    store.recordSteerQueued(c, { id: "steer-end", text: "too late", origin: "user" });
+
+    store.recordSteerQueued(c, {
+      id: "steer-del",
+      text: "never mind",
+      origin: "user",
+      state: "removed",
+    });
+    store.appendEntry(
+      c,
+      sealed(
+        t,
+        1,
+        "steer",
+        { text: "too late", origin: "user", state: "dropped", reason: "boundary" },
+        "steer-end",
+      ),
+    );
+    await flushed();
+
+    expect(store.get(c)?.steers ?? []).toEqual([]);
+    const painted = notes(view).map((n) => n.querySelector(".steer-note-text")?.textContent);
+    expect(painted).toEqual(["too late"]);
   });
 });

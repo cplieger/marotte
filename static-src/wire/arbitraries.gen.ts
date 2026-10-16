@@ -50,7 +50,7 @@ export const arbShowRefusalCode: fc.Arbitrary<ShowRefusalCode> = fc.constantFrom
 export const arbSlashCommandKind: fc.Arbitrary<SlashCommandKind> = fc.constantFrom("steering", "prompt", "goal");
 export const arbSpecDocRole: fc.Arbitrary<SpecDocRole> = fc.constantFrom("requirements", "design", "tasks", "other");
 export const arbSteerOrigin: fc.Arbitrary<SteerOrigin> = fc.constantFrom("user", "agent", "parent", "step");
-export const arbSteerReason: fc.Arbitrary<SteerReason> = fc.constantFrom("restart", "boundary", "deleted");
+export const arbSteerReason: fc.Arbitrary<SteerReason> = fc.constantFrom("restart", "boundary");
 export const arbSteerRowState: fc.Arbitrary<SteerRowState> = fc.constantFrom("queued", "unsent", "removed");
 export const arbSteerState: fc.Arbitrary<SteerState> = fc.constantFrom("read", "dropped");
 export const arbStopReason: fc.Arbitrary<StopReason> = fc.constantFrom("end_turn", "cancelled", "interrupted", "refusal", "unknown", "error", "content_filtered", "max_tokens", "max_turn_requests", "tool_use", "unterminated");
@@ -2031,7 +2031,6 @@ const arbModel = fc.letrec<{
   RunStepSteerRequest: fc.record(
     {
       steer_id: fc.string(),
-      edit: fc.boolean(),
     },
     { requiredKeys: ["steer_id"] },
   ),

@@ -82,7 +82,7 @@ export type SpecDocRole = "requirements" | "design" | "tasks" | "other";
 
 export type SteerOrigin = "user" | "agent" | "parent" | "step";
 
-export type SteerReason = "restart" | "boundary" | "deleted";
+export type SteerReason = "restart" | "boundary";
 
 export type SteerRowState = "queued" | "unsent" | "removed";
 
@@ -2878,13 +2878,10 @@ export interface RunStepStart {
 
 /**
  * RunStepSteerRequest is POST /api/runs/{id}/steps/{path}/steer-remove's body: the unread row to
- * delete, and Edit as on the chat's SteerRemoveCommand. Its sibling /steer-clear, every unread row
- * of the step, takes it optionally: with Edit set, SteerID is the row the reader took back, which
- * leaves no entry.
+ * delete. Its sibling /steer-clear, every unread row of the step, takes no body.
  */
 export interface RunStepSteerRequest {
   steer_id: string;
-  edit?: boolean;
 }
 
 /**

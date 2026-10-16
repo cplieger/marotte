@@ -162,59 +162,6 @@ func TestCmdSteerRemove_ARowKASDoesNotHoldGoesWithoutAClear(t *testing.T) {
 	}
 }
 
-// Edit is the reader taking the row back: the record is told, so the row leaves no entry, and a
-// plain delete and a discard tell it nothing of the kind.
-func TestCmdSteerRemove_AnEditReachesTheRecordAsAnEdit(t *testing.T) {
-	cases := []struct {
-		name    string
-		run     func(roles *promptRoles) error
-		wantLog string
-	}{
-		{"edit", func(roles *promptRoles) error {
-			cmd := &marotte.ClientCommand{Type: marotte.CmdSteerRemove, ChatID: "c1", Payload: json.RawMessage(`{"steer_id":"steer-a","edit":true}`)}
-			_, err := cmdSteerRemove(t.Context(), roles, cmd)
-			return err
-		}, "begin-edit steer-a"},
-		{"delete", func(roles *promptRoles) error {
-			_, err := cmdSteerRemove(t.Context(), roles, removeReq(t, "c1", "steer-a"))
-			return err
-		}, "begin-remove steer-a"},
-		{"edit by clear", func(roles *promptRoles) error {
-			cmd := &marotte.ClientCommand{Type: marotte.CmdSteerClear, ChatID: "c1", Payload: json.RawMessage(`{"edit":"steer-a"}`)}
-			_, err := cmdSteerClear(t.Context(), roles, cmd)
-			return err
-		}, "begin-discard edit steer-a"},
-		{"discard", func(roles *promptRoles) error {
-			_, err := cmdSteerClear(t.Context(), roles, clearReq("c1"))
-			return err
-		}, "begin-discard"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			q := newStubSteerQueue()
-			if err := tc.run(steerRolesOf(removeHost(newSteerBridge()), NewSteerLedger(), q)); err != nil {
-				t.Fatalf("command = %v, want success", err)
-			}
-			if log := q.callLog(); !slices.Contains(log, tc.wantLog) {
-				t.Errorf("record calls = %v, want %q", log, tc.wantLog)
-			}
-		})
-	}
-}
-
-// A clear whose payload is not the clear's shape is refused before anything is touched.
-func TestCmdSteerClear_AMalformedPayloadIsABadRequest(t *testing.T) {
-	q := newStubSteerQueue()
-	cmd := &marotte.ClientCommand{Type: marotte.CmdSteerClear, ChatID: "c1", Payload: json.RawMessage(`{"edit":7}`)}
-	_, err := cmdSteerClear(t.Context(), steerRolesOf(removeHost(newSteerBridge()), NewSteerLedger(), q), cmd)
-	if statusOf(err) != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", statusOf(err))
-	}
-	if log := q.callLog(); slices.Contains(log, "begin-discard") {
-		t.Errorf("record calls = %v, want no discard", log)
-	}
-}
-
 // A row KAS may hold costs a clear, and the rows the reader kept go back as ONE
 // steer under a fresh id, recorded in the ledger as the user's.
 func TestCmdSteerRemove_ClearsThenResendsTheKeptRowsAsOneSteer(t *testing.T) {

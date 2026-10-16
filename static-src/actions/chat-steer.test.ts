@@ -149,19 +149,6 @@ describe("steerChat — the command on the wire", () => {
 });
 
 describe("removeSteer — one row out of the buffer", () => {
-  it("marks an edit's row, so it leaves no transcript entry", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200, body: {} });
-
-    await removeSteer.dispatch({ chatID: "c1", steerID: "steer-m2", edit: true }).outcome;
-
-    const [cmd] = mockSend.mock.calls[0] ?? [];
-    expect(cmd).toEqual({
-      type: "steer_remove",
-      chat_id: "c1",
-      payload: { steer_id: "steer-m2", edit: true },
-    });
-  });
-
   it("sends steer_remove naming the row, with transport's own failure notice off", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200, body: {} });
 
@@ -205,15 +192,13 @@ describe("removeSteer — one row out of the buffer", () => {
 });
 
 describe("clearSteers — the whole buffer", () => {
-  it("names no row for a plain discard, and the edited row for an edit", async () => {
+  it("sends steer_clear naming no row", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200, body: {} });
 
     await clearSteers.dispatch({ chatID: "c1" }).outcome;
-    await clearSteers.dispatch({ chatID: "c1", edit: "steer-m2" }).outcome;
 
     expect(mockSend.mock.calls.map(([cmd]) => cmd)).toMatchObject([
       { type: "steer_clear", chat_id: "c1" },
-      { type: "steer_clear", chat_id: "c1", payload: { edit: "steer-m2" } },
     ]);
     expect(mockSend.mock.calls[0]?.[0]).not.toHaveProperty("payload");
   });

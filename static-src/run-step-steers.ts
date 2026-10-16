@@ -1,5 +1,6 @@
 // The one owner of a run step's dock rows, from the optimistic draw on Send to the `steer` entry in
-// the run's log that retires them. `run-store.ts` reports each such entry and each forgotten run.
+// the run's log or the `removed` frame that retires them. `run-store.ts` reports each such entry and
+// each forgotten run.
 
 import { signal, touch } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";

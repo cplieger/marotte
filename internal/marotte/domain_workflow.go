@@ -305,12 +305,9 @@ type RunStepMessageRequest struct {
 }
 
 // RunStepSteerRequest is POST /api/runs/{id}/steps/{path}/steer-remove's body: the unread row to
-// delete, and Edit as on the chat's SteerRemoveCommand. Its sibling /steer-clear, every unread row
-// of the step, takes it optionally: with Edit set, SteerID is the row the reader took back, which
-// leaves no entry.
+// delete. Its sibling /steer-clear, every unread row of the step, takes no body.
 type RunStepSteerRequest struct {
 	SteerID string `json:"steer_id"`
-	Edit    bool   `json:"edit,omitempty"`
 }
 
 // RunStepMessageVerb is how the server delivered a step message, picked from the step's live state.
