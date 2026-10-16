@@ -96,7 +96,7 @@ beforeEach(async () => {
   _resetForTest();
   document.body.innerHTML = '<div id="tab-list"></div>';
   m.chats = new Set(["c-launcher", "c-other"]);
-  vi.mocked(switchSession).mockReset().mockResolvedValue(undefined);
+  vi.mocked(switchSession).mockReset().mockResolvedValue("activated");
   vi.mocked(runChatID).mockReset().mockReturnValue("");
   _resetNotificationOpenerForTest();
   // The composition root's registration (app.ts).
