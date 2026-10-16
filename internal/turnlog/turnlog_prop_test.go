@@ -13,16 +13,22 @@ import (
 	"pgregory.net/rapid"
 )
 
-// They render in EVERY view, which is what makes them part of both orderings the property checks.
+// The boundary kinds render in EVERY view, which is what makes them part of both orderings the
+// property checks. The message kinds are interjections, which checkInterjection holds instead.
 var laneless = map[marotte.EntryKind]bool{
 	marotte.EntryKindTurnBind:         true,
-	marotte.EntryKindSteer:            true,
 	marotte.EntryKindPlan:             true,
 	marotte.EntryKindCompaction:       true,
 	marotte.EntryKindCompactionFailed: true,
 	marotte.EntryKindSafetyBlocked:    true,
 	marotte.EntryKindModelSwitched:    true,
 	marotte.EntryKindTurnClose:        true,
+}
+
+// The kinds the driver appends only as interjections (it never calls SteerRead).
+var interjectionKinds = map[marotte.EntryKind]bool{
+	marotte.EntryKindSteer:          true,
+	marotte.EntryKindSteerDelivered: true,
 }
 
 // The step vocabulary the generator draws from: every sealing-table event plus the two
@@ -36,6 +42,8 @@ const (
 	stepSteerRead
 	stepSteerDropped
 	stepSteerAck
+	stepStepMessage
+	stepTakeUp
 	stepPlan
 	stepCompaction
 	stepCarryPartial
@@ -44,9 +52,10 @@ const (
 )
 
 // Arrival order equals persisted order equals broadcast order, over a random interleaving
-// into a real entry-log sink. Two oracles, neither a copy of the sealing rules: within one
-// VIEW, seq order is arrival order (a text entry arrives with its FIRST delta), and the log
-// read off disk matches the sequence handed back for broadcast.
+// into a real entry-log sink. Three oracles, none a copy of the sealing rules: within one
+// VIEW, seq order is arrival order (a text entry arrives with its FIRST delta) for every entry
+// but an interjection; an interjection hands back only itself and leaves every open entry as it
+// was; and the log read off disk matches the sequence handed back for broadcast.
 func TestArrivalOrderIsPersistedOrder(t *testing.T) {
 	ctx := t.Context()
 	base := t.TempDir()
@@ -111,9 +120,13 @@ type driver struct {
 }
 
 func (d *driver) step(at, kind int, lane string) {
+	before := d.turn.OpenEntries()
 	sealed, err := d.apply(at, kind, lane)
 	if err != nil {
 		d.rt.Fatalf("step %d (kind %d, lane %q): %v", at, kind, lane, err)
+	}
+	if interjects(kind) {
+		d.checkInterjection(at, sealed, before)
 	}
 	for _, s := range sealed {
 		if _, known := d.arrival[s.Entry.ID]; !known {
@@ -184,6 +197,14 @@ func (d *driver) apply(at, kind int, lane string) ([]Sealed, error) {
 		})
 	case stepSteerAck:
 		return d.turn.SteerAck(d.ctx, lane, fmt.Sprintf("steer-%d", at), "handled")
+	case stepStepMessage:
+		return d.turn.Steer(d.ctx, fmt.Sprintf("wfmsg-%d", at), &marotte.EntrySteer{
+			Text: "APPROVE", Origin: marotte.SteerOriginStep, ProducedTs: int64(at),
+		})
+	case stepTakeUp:
+		return d.turn.SteerDelivered(d.ctx, &marotte.EntrySteerDelivered{
+			SteerID: fmt.Sprintf("wfmsg-%d", at), ReadTs: int64(at),
+		})
 	case stepPlan:
 		d.plans++
 		return d.turn.Plan(d.ctx, marotte.EntryPlan{
@@ -201,6 +222,40 @@ func (d *driver) apply(at, kind int, lane string) ([]Sealed, error) {
 		return nil, nil
 	}
 	return nil, nil
+}
+
+func interjects(kind int) bool {
+	switch kind {
+	case stepSteerRead, stepSteerDropped, stepStepMessage, stepTakeUp:
+		return true
+	}
+	return false
+}
+
+// checkInterjection is the interjection's oracle: it hands back exactly itself, lane-less, and
+// every open entry keeps its id and text, so no say is cut where the message landed.
+func (d *driver) checkInterjection(at int, sealed []Sealed, before []marotte.OpenEntry) {
+	if len(sealed) != 1 || sealed[0].Entry.Lane != "" ||
+		(sealed[0].Entry.Kind != marotte.EntryKindSteer && sealed[0].Entry.Kind != marotte.EntryKindSteerDelivered) {
+		d.rt.Fatalf("step %d: an interjection handed back %v, want only itself", at, sealedShape(sealed))
+	}
+	after := d.turn.OpenEntries()
+	if len(after) != len(before) {
+		d.rt.Fatalf("step %d: an interjection moved the open entries from %+v to %+v", at, before, after)
+	}
+	for i := range before {
+		if before[i] != after[i] {
+			d.rt.Fatalf("step %d: an interjection moved an open entry from %+v to %+v", at, before[i], after[i])
+		}
+	}
+}
+
+func sealedShape(sealed []Sealed) []string {
+	out := make([]string, 0, len(sealed))
+	for _, s := range sealed {
+		out = append(out, s.Entry.Lane+"/"+string(s.Entry.Kind))
+	}
+	return out
 }
 
 func (d *driver) checkPersistedMatchesBroadcast(persisted []marotte.Entry) {
@@ -231,7 +286,7 @@ func (d *driver) checkViewOrder(persisted []marotte.Entry, lane string) {
 	prev, prevID := -1, ""
 	for i := range persisted {
 		e := &persisted[i]
-		if e.Lane != lane && !laneless[e.Kind] {
+		if (e.Lane != lane && !laneless[e.Kind]) || interjectionKinds[e.Kind] {
 			continue
 		}
 		got := d.arrival[e.ID]

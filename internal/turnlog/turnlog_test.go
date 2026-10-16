@@ -172,14 +172,14 @@ func TestSealingTable(t *testing.T) {
 		}
 	})
 
-	t.Run("a steer seals EVERY lane", func(t *testing.T) {
+	t.Run("a steer seals NO lane", func(t *testing.T) {
 		turn, rec := open(t)
 		rec.seal(turn.TextDelta(ctx, "", "s1-say", "parent"))
 		rec.seal(turn.TextDelta(ctx, "d1", "s2-say", "delegate"))
 		rec.seal(turn.Steer(ctx, "steer-1", &marotte.EntrySteer{Text: "also do X"}))
-		equalShape(t, rec.shape(), []string{"/text", "d1/text", "/steer"}, "a steer")
-		if got := turn.OpenEntries(); len(got) != 0 {
-			t.Errorf("open entries after a steer are %+v, want none", got)
+		equalShape(t, rec.shape(), []string{"/steer"}, "a steer")
+		if got := turn.OpenEntries(); len(got) != 2 {
+			t.Errorf("open entries after a steer are %+v, want both lanes still open", got)
 		}
 	})
 
@@ -257,7 +257,7 @@ func TestASplitSayTakesASegmentSuffix(t *testing.T) {
 	rec.seal(turn.TextDelta(ctx, "", "s1-say", "before "))
 	rec.seal(turn.Plan(ctx, marotte.EntryPlan{Entries: []marotte.PlanEntry{{Content: "a"}}}))
 	rec.seal(turn.TextDelta(ctx, "", "s1-say", "after"))
-	rec.seal(turn.Steer(ctx, "steer-1", &marotte.EntrySteer{}))
+	rec.seal(turn.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}))
 	want := []string{"s1-say", "s1-say#2"}
 	got := []string{rec.ids()[0], rec.ids()[2]}
 	if strings.Join(got, ",") != strings.Join(want, ",") {

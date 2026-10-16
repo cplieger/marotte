@@ -57,8 +57,8 @@ function turnOpen(): Entry {
   });
 }
 
-function open(id: string, text: string): OpenEntry {
-  return { turn: TURN, id, kind: "text", text, n: 1 };
+function open(id: string, text: string, kind: OpenEntry["kind"] = "text"): OpenEntry {
+  return { turn: TURN, id, kind, text, n: 1 };
 }
 
 /**
@@ -123,6 +123,56 @@ function reloaded(chatID: string, e: Entry): void {
   store.bumpMessages(chatID, "load");
 }
 
+/** Mount a chat mid-stream: one open turn whose `kind` entry `say-1` holds `text` so far. */
+async function streamingAs(chatID: string, kind: OpenEntry["kind"], text: string): Promise<void> {
+  store.setSessions([session(chatID)]);
+  store.setActive(chatID);
+  store.openTurn(chatID, turnOpen());
+  store.openEntry(chatID, open("say-1", text, kind));
+  await vi.waitFor(() => {
+    expect(bodyRows()).toEqual(["open"]);
+  });
+}
+
+/** An interjection: the entry takes the next seq while `say-1` stays open and keeps streaming. */
+function interject(chatID: string, e: Entry, seq: number): void {
+  store.appendEntry(chatID, { ...e, seq });
+}
+
+/** A reload of a stream an interjection landed in: the entry, then the whole say, then the close. */
+function reloadedWhole(
+  chatID: string,
+  kind: Entry["kind"],
+  e: Entry,
+  text: string,
+  lead: Entry[] = [],
+): void {
+  const s = session(chatID);
+  s.thinking = false;
+  const at = 1 + lead.length;
+  s.turns.set(TURN, {
+    entries: [
+      turnOpen(),
+      ...lead,
+      { ...e, seq: at },
+      sealed(at + 1, kind, { text }, "say-1"),
+      sealed(at + 2, "turn_close", { outcome: "completed" }),
+    ],
+    openEntries: new Map(),
+  });
+  s.turn_order = [TURN];
+  s.turn_count = 1;
+  store.setSessions([s]);
+  store.setActive(chatID);
+  store.bumpMessages(chatID, "load");
+}
+
+function reasoningTexts(): string[] {
+  return [...viewRoot().querySelectorAll<HTMLElement>(".turn-body > .reasoning-block")].map(
+    (b) => b.querySelector(".reasoning-body")?.textContent ?? b.textContent ?? "",
+  );
+}
+
 beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
@@ -142,6 +192,19 @@ const STEER: Entry = sealed(2, "steer", {
   origin: "user",
   state: "read",
 });
+// A step's `send_message` received by the launching chat, not yet taken up.
+const STEP_MESSAGE: Entry = sealed(
+  1,
+  "steer",
+  {
+    text: "Task 12 round 3, Claude seat: APPROVE.",
+    origin: "step",
+    step: "review-claude",
+    produced_ts: 5,
+  },
+  "wfmsg-1",
+);
+const TAKE_UP: Entry = sealed(1, "steer_delivered", { steer_id: "wfmsg-0", read_ts: 9 });
 
 describe("an entry appended mid-turn renders at its own seq", () => {
   it("puts the plan between the prose it split, in one card, with the caret on the open tail", async () => {
@@ -192,14 +255,15 @@ describe("an entry appended mid-turn renders at its own seq", () => {
     expect([...new Set(streamingRows())]).toEqual(["open"]);
   });
 
-  it("puts a mid-turn steer between the prose it split, and reloads it there", async () => {
+  it("puts a mid-turn steer above the reply it arrived inside, and reloads it there", async () => {
     // Both paths in one test: the claim is that the two orders are the same order.
     const chat = "mto-steer";
-    await streamingChat(chat);
-    interrupt(chat, STEER);
+    await streamingAs(chat, "text", "the reply so f");
+    interject(chat, { ...STEER, seq: 1 }, 1);
+    store.applyDelta(chat, TURN, "say-1", "", 2, "ar");
 
     await vi.waitFor(() => {
-      expect(bodyRows()).toEqual(["say-1", "e-2", "open"]);
+      expect(bodyRows()).toEqual(["e-2", "open"]);
     });
     expect(viewRoot().querySelectorAll(".turn").length).toBe(1);
     // A steer opens no turn either, so a mid-turn correction cannot be hoisted out of the reply.
@@ -207,12 +271,22 @@ describe("an entry appended mid-turn renders at its own seq", () => {
     expect(note).not.toBeNull();
     expect(note?.dataset["state"]).toBe("read");
     expect(note?.querySelector(".steer-note-label")?.textContent).toBe("Mid-turn message");
-    // The caret is on the open tail, never on the prose above the note.
+    // The caret stays on the reply, which is still one bubble.
     expect([...new Set(streamingRows())]).toEqual(["open"]);
+    expect(
+      viewRoot().querySelectorAll(
+        ".turn-body > .message.assistant, .turn-body > * .message.assistant",
+      ).length,
+    ).toBe(1);
 
-    reloaded(chat, STEER);
+    store.sealEntry(chat, TURN, "say-1", "", 2, 3, 2);
     await vi.waitFor(() => {
-      expect(bodyRows()).toEqual(["say-1", "e-2", "say-1#2"]);
+      expect(bodyRows()).toEqual(["e-2", "say-1"]);
+    });
+
+    reloadedWhole(chat, "text", STEER, "the reply so far");
+    await vi.waitFor(() => {
+      expect(bodyRows()).toEqual(["e-2", "say-1"]);
     });
     expect(viewRoot().querySelector(".turn-body > .steer-note")).not.toBeNull();
     expect(streamingRows()).toEqual([]);
@@ -232,5 +306,137 @@ describe("an entry appended mid-turn renders at its own seq", () => {
     });
     expect(viewRoot().querySelectorAll(".turn").length).toBe(1);
     expect(streamingRows()).toEqual([]);
+  });
+});
+
+describe("an entry arriving mid-stream does not cut the stream", () => {
+  it("keeps one reasoning block around a step message, live and on reload", async () => {
+    const chat = "mto-think-card";
+    await streamingAs(chat, "thinking", "I need to locate the arrapi agent on Ag");
+    interject(chat, STEP_MESSAGE, 1);
+    store.applyDelta(chat, TURN, "say-1", "", 2, "ent Mail, register");
+
+    // The card goes above the trace, which keeps streaming as the container's last element.
+    await vi.waitFor(() => {
+      expect(bodyRows()).toEqual(["wfmsg-1", "open"]);
+    });
+    const trace = viewRoot().querySelector<HTMLElement>(".turn-body > .reasoning-block");
+    expect(trace).not.toBeNull();
+    await vi.waitFor(() => {
+      expect(trace?.textContent).toContain("arrapi agent on Agent Mail, register");
+    });
+
+    store.sealEntry(chat, TURN, "say-1", "", 2, 3, 2);
+    await vi.waitFor(() => {
+      expect(bodyRows()).toEqual(["wfmsg-1", "say-1"]);
+    });
+    // The open trace sealed in place: one block, the same element.
+    expect(viewRoot().querySelectorAll(".turn-body > .reasoning-block").length).toBe(1);
+    expect(viewRoot().querySelector(".turn-body > .reasoning-block")).toBe(trace);
+
+    reloadedWhole(
+      chat,
+      "thinking",
+      STEP_MESSAGE,
+      "I need to locate the arrapi agent on Agent Mail, register",
+    );
+    await vi.waitFor(() => {
+      expect(bodyRows()).toEqual(["wfmsg-1", "say-1"]);
+    });
+    expect(viewRoot().querySelectorAll(".turn-body > .reasoning-block").length).toBe(1);
+    expect(reasoningTexts()[0]).toContain("arrapi agent on Agent Mail, register");
+  });
+
+  it("keeps one reply bubble around a step message, with the caret on it, live and on reload", async () => {
+    const chat = "mto-say-card";
+    await streamingAs(chat, "text", "I need to locate the arrapi agent on Ag");
+    interject(chat, STEP_MESSAGE, 1);
+    store.applyDelta(chat, TURN, "say-1", "", 2, "ent Mail, register");
+
+    await vi.waitFor(() => {
+      expect(bodyRows()).toEqual(["wfmsg-1", "open"]);
+    });
+    expect([...new Set(streamingRows())]).toEqual(["open"]);
+    // One bubble holds both halves; the reveal may still hold back the last characters.
+    expect(viewRoot().querySelectorAll(".turn-body .message.assistant").length).toBe(1);
+    await vi.waitFor(() => {
+      expect(viewRoot().querySelector(".streaming")?.textContent).toContain("agent on Agent Mail");
+    });
+
+    store.sealEntry(chat, TURN, "say-1", "", 2, 3, 2);
+    await vi.waitFor(() => {
+      expect(bodyRows()).toEqual(["wfmsg-1", "say-1"]);
+    });
+
+    reloadedWhole(
+      chat,
+      "text",
+      STEP_MESSAGE,
+      "I need to locate the arrapi agent on Agent Mail, register",
+    );
+    await vi.waitFor(() => {
+      expect(bodyRows()).toEqual(["wfmsg-1", "say-1"]);
+    });
+    expect(streamingRows()).toEqual([]);
+  });
+
+  it("splits an open reply off its run's sealed member at a step message, as the reload draws it", async () => {
+    // Two says back to back share one bubble; the card ends that run on reload, so it must live too.
+    const chat = "mto-run-card";
+    const first = sealed(1, "text", { text: "Done with the first part. " }, "say-0");
+    store.setSessions([session(chat)]);
+    store.setActive(chat);
+    store.openTurn(chat, turnOpen());
+    store.openEntry(chat, open("say-0", "Done with the first part. "));
+    store.sealEntry(chat, TURN, "say-0", "", 1, 2, 1);
+    store.openEntry(chat, open("say-1", "Next I"));
+    await vi.waitFor(() => {
+      expect(bodyRows()).toEqual(["say-0"]);
+      expect(viewRoot().querySelector(".turn-body .message.assistant")?.textContent).toContain(
+        "Next",
+      );
+    });
+
+    interject(chat, { ...STEP_MESSAGE, seq: 2 }, 2);
+    store.applyDelta(chat, TURN, "say-1", "", 2, " will register");
+    await vi.waitFor(() => {
+      expect(bodyRows()).toEqual(["say-0", "wfmsg-1", "open"]);
+    });
+    const bubbles = [...viewRoot().querySelectorAll<HTMLElement>(".turn-body .message.assistant")];
+    expect(bubbles.length).toBe(2);
+    expect(bubbles[0]?.textContent).not.toContain("Next I");
+    expect(bubbles[0]?.textContent).toContain("Done with the first part.");
+    await vi.waitFor(() => {
+      expect(bubbles[1]?.textContent).toContain("Next I will");
+    });
+    expect([...new Set(streamingRows())]).toEqual(["open"]);
+
+    store.sealEntry(chat, TURN, "say-1", "", 3, 4, 2);
+    await vi.waitFor(() => {
+      expect(bodyRows()).toEqual(["say-0", "wfmsg-1", "say-1"]);
+    });
+
+    reloadedWhole(chat, "text", STEP_MESSAGE, "Next I will register", [first]);
+    await vi.waitFor(() => {
+      expect(bodyRows()).toEqual(["say-0", "wfmsg-1", "say-1"]);
+    });
+  });
+
+  it("keeps one reasoning block across a take-up, which draws nothing", async () => {
+    const chat = "mto-think-takeup";
+    await streamingAs(chat, "thinking", "The checkpoint rule of counting after every 5");
+    interject(chat, TAKE_UP, 1);
+    store.applyDelta(chat, TURN, "say-1", "", 2, " merged landings looks right.");
+    await vi.waitFor(() => {
+      expect(viewRoot().querySelector(".turn-body > .reasoning-block")?.textContent).toContain(
+        "every 5 merged landings",
+      );
+    });
+
+    store.sealEntry(chat, TURN, "say-1", "", 2, 3, 2);
+    await vi.waitFor(() => {
+      expect(bodyRows()).toEqual(["say-1"]);
+    });
+    expect(viewRoot().querySelectorAll(".turn-body > .reasoning-block").length).toBe(1);
   });
 });

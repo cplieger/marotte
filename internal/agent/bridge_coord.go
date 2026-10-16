@@ -1527,7 +1527,7 @@ func (bc *bridgeCoordinator) dropUnreadSteers(ctx context.Context, chatID marott
 	}
 }
 
-// recordSteer writes a minted steer entry into the open turn (lanes sealed first), else after the newest close.
+// recordSteer writes a minted steer entry into the open turn, else after the newest close.
 func (bc *bridgeCoordinator) recordSteer(ctx context.Context, chatID marotte.ChatID, steerID string, steer *marotte.EntrySteer) {
 	if log, ok := bc.turns.foldTarget(chatID); ok {
 		sealed, err := log.Steer(ctx, steerID, steer)
