@@ -134,9 +134,7 @@ func TestCmdSteerRemove_TwoDeletesInFlightTakeTurns(t *testing.T) {
 			if got := removedBody(t, answers[i].code, answers[i].body); got["deleted"] != key {
 				t.Errorf("delete %s = %v, want deleted with its kept rows resent", key, got)
 			}
-			if n := s.spy.note(key); n == nil || n.Reason != marotte.SteerReasonDeleted {
-				t.Errorf("entry %s = %+v, want deleted", key, n)
-			}
+			wantGoneUnnoted(t, s, key)
 		}
 		want := []string{marotte.MethodSessionSteerClear, marotte.MethodSessionSteer, marotte.MethodSessionSteerClear, marotte.MethodSessionSteer}
 		var got []string
@@ -238,9 +236,7 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 			if got := removedBody(t, rec.Code, rec.Body.Bytes()); got["deleted"] != "steer-a" {
 				t.Errorf("body = %v, want steer-a deleted and the rest left to the turn end", got)
 			}
-			if n := s.spy.note("steer-a"); n == nil || n.Reason != marotte.SteerReasonDeleted {
-				t.Errorf("target entry = %+v, want deleted", n)
-			}
+			wantGoneUnnoted(t, s, "steer-a")
 			if tc.closed != nil {
 				tc.closed(t, s)
 			}
@@ -539,7 +535,7 @@ func TestCmdSteerRemove_ATurnStartingUnderADeleteWaitsAndLaterDeletesAreRefused(
 		}
 		late, _ := s.q.RouteSteer("c1", "steer-c", "c", promptHolder)
 		s.kas(late)
-		if _, refuse := s.q.BeginRemove("c1", "steer-c", "op-late", false); refuse != command.SteerRefuseStarting {
+		if _, refuse := s.q.BeginRemove("c1", "steer-c", "op-late"); refuse != command.SteerRefuseStarting {
 			t.Errorf("a delete after StartTurn = %q, want starting", refuse)
 		}
 
@@ -588,9 +584,7 @@ func TestCmdSteerRemove_AFailedResubmitKeepsEveryKeptRowInCustody(t *testing.T) 
 	if got := removedBody(t, rec.Code, rec.Body.Bytes()); got["deleted"] != "steer-a" {
 		t.Errorf("body = %v, want steer-a deleted", got)
 	}
-	if n := s.spy.note("steer-a"); n == nil || n.Reason != marotte.SteerReasonDeleted {
-		t.Errorf("target entry = %+v, want deleted", n)
-	}
+	wantGoneUnnoted(t, s, "steer-a")
 	probe := s.probe()
 	for _, key := range []string{"steer-b", "steer-c"} {
 		s.mustState(key, rowOutstanding)

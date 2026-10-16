@@ -392,7 +392,7 @@ async function editSteer(steer: PendingSteer): Promise<void> {
   setComposerValue(steer.text);
   $.promptInput.focus();
   announce("Message taken back for editing");
-  const outcome = await removeSteer.dispatch({ chatID, steerID: steer.id, edit: true }).outcome;
+  const outcome = await removeSteer.dispatch({ chatID, steerID: steer.id }).outcome;
   if (outcome.status !== "error") {
     return;
   }
@@ -439,7 +439,7 @@ async function editSteerByClear(steer: PendingSteer): Promise<void> {
   setComposerValue(steer.text);
   $.promptInput.focus();
   announce("Message taken back for editing");
-  await clearSteers.dispatch({ chatID, edit: steer.id });
+  await clearSteers.dispatch({ chatID });
 }
 
 /** Drop every steer the agent has not read. Confirms only when more than one would go: with a
@@ -460,7 +460,7 @@ async function discardSteers(waiting: number): Promise<void> {
     }
   }
   announce("Discarding messages the agent has not read");
-  // The stack repaints from the `steer` entry the clear produces, not from this reply, so every
+  // The stack repaints from the `removed` frames the clear produces, not from this reply, so every
   // device agrees.
   await clearSteers.dispatch({ chatID });
 }

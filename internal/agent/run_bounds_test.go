@@ -25,6 +25,21 @@ func leased(t *testing.T, h *Runs, workflowID string) {
 	h.grantLease(t.Context(), workflowID, "publish", manualLaunch())
 }
 
+// boundsRuns is a bare Runs whose deadline timers stop at cleanup: it has no lifetime, so a timer
+// firing after its test (the floor is minutes) would cancel through a nil one and crash the package.
+func boundsRuns(t *testing.T) *Runs {
+	t.Helper()
+	h := &Runs{}
+	t.Cleanup(func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for id := range h.bounds.timers {
+			h.stopTimerLocked(id)
+		}
+	})
+	return h
+}
+
 // undurableLeaseStore returns a store whose every write fails (its parent is a regular file: ENOTDIR at any uid); memory is untouched.
 func undurableLeaseStore(t *testing.T) *runlease.Store {
 	t.Helper()
@@ -55,7 +70,7 @@ func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 		"a spent backstop is honoured, not floored": {0, runBackstop + time.Hour, -time.Hour},
 	} {
 		t.Run(name, func(t *testing.T) {
-			h := &Runs{}
+			h := boundsRuns(t)
 			const id = "wf_1"
 			o := manualLaunch()
 			if tc.slotIn != 0 {
@@ -238,7 +253,8 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 // TestDisarmRunDeadline_ParksInMemoryWhenTheParkCannotBePersisted is the disarm's half of that split.
 func TestDisarmRunDeadline_ParksInMemoryWhenTheParkCannotBePersisted(t *testing.T) {
 	logs := captureLogs(t)
-	h := &Runs{leases: undurableLeaseStore(t)}
+	h := boundsRuns(t)
+	h.leases = undurableLeaseStore(t)
 	const id = "wf_1"
 	leased(t, h, id)
 	h.armDeadline(t.Context(), id)
@@ -293,7 +309,7 @@ func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
 
 // TestArmRunDeadline_IsIdempotent pins that the earliest arm wins, or a run extends its own budget.
 func TestArmRunDeadline_IsIdempotent(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
 
@@ -318,7 +334,7 @@ func TestArmRunDeadline_IsIdempotent(t *testing.T) {
 
 // TestArmRunDeadline_RefusesARunWithNoLease pins that a TUI run has no cancel path marotte owns.
 func TestArmRunDeadline_RefusesARunWithNoLease(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	h.armDeadline(t.Context(), "wf_tui")
 	if h.bounded("wf_tui") {
 		t.Error("a run with no lease was bounded")
@@ -333,7 +349,7 @@ func TestArmRunDeadline_RefusesARunWithNoLease(t *testing.T) {
 
 // TestDisarmRunDeadline_ParksTheLeaseAndStopsTheTimer pins that a stale lease deadline makes the next re-arm skip the run forever.
 func TestDisarmRunDeadline_ParksTheLeaseAndStopsTheTimer(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
 	h.armDeadline(t.Context(), id)
@@ -369,7 +385,7 @@ func TestDisarmRunDeadline_ParksTheLeaseAndStopsTheTimer(t *testing.T) {
 // TestRunDeadline_ResumeGetsAFreshBudgetRatherThanARemainder asserts a full idle window from the resume,
 // which "later than the first deadline" cannot.
 func TestRunDeadline_ResumeGetsAFreshBudgetRatherThanARemainder(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
 
@@ -406,7 +422,7 @@ func TestRunDeadline_ResumeGetsAFreshBudgetRatherThanARemainder(t *testing.T) {
 // TestCancelExpiredRun_ASupersededTimerDoesNothing pins that a callback in flight across a pause and resume
 // arrives with the old deadline.
 func TestCancelExpiredRun_ASupersededTimerDoesNothing(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
 
@@ -568,7 +584,7 @@ func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *test
 // TestClaimRunTermination_IsTakenOnce pins that user cancel, schedule, clock and turn cap race; one wins.
 func TestClaimRunTermination_IsTakenOnce(t *testing.T) {
 	t.Parallel()
-	h := &Runs{}
+	h := boundsRuns(t)
 
 	if !h.claimTermination("wf_1") {
 		t.Fatal("the first claim failed")
@@ -587,7 +603,7 @@ func TestClaimRunTermination_IsTakenOnce(t *testing.T) {
 
 // TestClaimRunTermination_UserCancelBeatsALaterBound pins that a user cancel records nothing, so a later bound must not record over it.
 func TestClaimRunTermination_UserCancelBeatsALaterBound(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
 	h.armDeadline(t.Context(), id)
@@ -612,7 +628,7 @@ func TestClaimRunTermination_UserCancelBeatsALaterBound(t *testing.T) {
 // TestClaimRunTermination_OrphanSweepAndScheduleDeadlineCannotBothRecord pins that the first reason stands.
 func TestClaimRunTermination_OrphanSweepAndScheduleDeadlineCannotBothRecord(t *testing.T) {
 	t.Parallel()
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 
 	// The orphan sweep gets there first.
@@ -633,7 +649,7 @@ func TestClaimRunTermination_OrphanSweepAndScheduleDeadlineCannotBothRecord(t *t
 // TestReleaseRunTermination_ReopensAFailedCancel pins that a held claim after a failed cancel mutes the Cancel button.
 func TestReleaseRunTermination_ReopensAFailedCancel(t *testing.T) {
 	t.Parallel()
-	h := &Runs{}
+	h := boundsRuns(t)
 
 	if !h.claimTermination("wf_1") {
 		t.Fatal("the first claim failed")
@@ -646,7 +662,7 @@ func TestReleaseRunTermination_ReopensAFailedCancel(t *testing.T) {
 
 // TestForgetRunBounds_ClearsTheClaimOnATerminalRun pins that the claim map holds only runs terminating now.
 func TestForgetRunBounds_ClearsTheClaimOnATerminalRun(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
 	h.armDeadline(t.Context(), id)
@@ -686,7 +702,7 @@ func (b *refillingBus) Broadcast(ctx context.Context, _ marotte.ServerEvent) {
 // TestForgetRunBounds_ARefillInsideTheTeardownLeavesNoTimer pins the order: lease first, so the timer
 // clear is final (bounds.timers has no eviction).
 func TestForgetRunBounds_ARefillInsideTheTeardownLeavesNoTimer(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 	bus := &refillingBus{rs: h, id: id}
 	h.bus = bus
@@ -723,7 +739,7 @@ func TestForgetRunBounds_ARefillInsideTheTeardownLeavesNoTimer(t *testing.T) {
 // TestClearRunEnd_RestoresARetriedRunToUnbounded pins that retry reuses the workflow id, so the old reason and claim must go.
 func TestClearRunEnd_RestoresARetriedRunToUnbounded(t *testing.T) {
 	t.Parallel()
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 
 	h.claimTermination(id)
@@ -754,7 +770,7 @@ func TestClearRunEnd_RestoresARetriedRunToUnbounded(t *testing.T) {
 // TestClearRunEnd_ClearsTheClaimOfAUserCancelledRun pins that a user cancel holds a claim with no reason.
 func TestClearRunEnd_ClearsTheClaimOfAUserCancelledRun(t *testing.T) {
 	t.Parallel()
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 
 	h.claimTermination(id) // the user's cancel
@@ -767,7 +783,7 @@ func TestClearRunEnd_ClearsTheClaimOfAUserCancelledRun(t *testing.T) {
 
 // TestRearmRetriedRun_GivesAFreshClock pins that an aborted run without a terminal frame still carries its launch deadline.
 func TestRearmRetriedRun_GivesAFreshClock(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
 
@@ -788,7 +804,7 @@ func TestRearmRetriedRun_GivesAFreshClock(t *testing.T) {
 // TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt pins that the minted lease carries the recipe
 // name the single-run rule needs.
 func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 
 	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "nightly"})
@@ -882,7 +898,7 @@ func TestObserveRunStart_AParentlessFrameMintsASweepableLease(t *testing.T) {
 // TestRunEndReason_DistinguishesABoundFromAUserCancel pins that both land on `aborted`, so only the recorded reason tells them apart.
 func TestRunEndReason_DistinguishesABoundFromAUserCancel(t *testing.T) {
 	t.Parallel()
-	h := &Runs{}
+	h := boundsRuns(t)
 
 	if got := h.endReason("wf_user_cancelled"); got != "" {
 		t.Errorf("a run nothing recorded reported %q; a user cancel must read as empty", got)
@@ -905,7 +921,7 @@ func TestRunEndReason_DistinguishesABoundFromAUserCancel(t *testing.T) {
 // TestRecordRunEnd_IsBounded pins that the record outlives its run, so FIFO eviction is the only bound.
 func TestRecordRunEnd_IsBounded(t *testing.T) {
 	t.Parallel()
-	h := &Runs{}
+	h := boundsRuns(t)
 
 	for i := range maxRunEndReasons + 10 {
 		h.recordEnd("wf_"+strconv.Itoa(i), runEndOverran)
@@ -934,7 +950,7 @@ func TestRecordRunEnd_IsBounded(t *testing.T) {
 // TestRecordRunEnd_RewriteDoesNotDoubleQueue pins that a second record must not enqueue twice.
 func TestRecordRunEnd_RewriteDoesNotDoubleQueue(t *testing.T) {
 	t.Parallel()
-	h := &Runs{}
+	h := boundsRuns(t)
 
 	h.recordEnd("wf_1", runEndOverran)
 	h.recordEnd("wf_1", runEndOrphaned)

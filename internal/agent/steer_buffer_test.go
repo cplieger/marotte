@@ -151,7 +151,7 @@ func (s *steerHarness) clearKAS() []string {
 
 func (s *steerHarness) remove(key string) (res command.SteerOpResult, needsClear bool, refuse string) {
 	op := "op-" + key
-	needsClear, refuse = s.q.BeginRemove(s.chat, key, op, false)
+	needsClear, refuse = s.q.BeginRemove(s.chat, key, op)
 	if refuse != "" || !needsClear {
 		return res, needsClear, refuse
 	}
@@ -378,7 +378,7 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		{name: "E6 discards and leaves UNCONFIRMED", key: "steer-a", row: rowDone, channel: chanUnconfirmed, run: func(s *steerHarness) {
 			s.bind()
 			s.steer("steer-a", "a")
-			s.q.BeginDiscard(s.chat, "op-d", "")
+			s.q.BeginDiscard(s.chat, "op-d")
 			s.clearKAS()
 			s.q.DiscardCleared(s.chat, "op-d", true)
 		}},
@@ -590,7 +590,7 @@ func TestSteerRecords_AKeptRowARacingClearMovedJoinsTheProbe(t *testing.T) {
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")
 	op := "op-steer-a"
-	if needsClear, refuse := s.q.BeginRemove(s.chat, "steer-a", op, false); !needsClear || refuse != "" {
+	if needsClear, refuse := s.q.BeginRemove(s.chat, "steer-a", op); !needsClear || refuse != "" {
 		t.Fatalf("BeginRemove = %v %q", needsClear, refuse)
 	}
 	s.recs.SteerCleared(s.chat, []string{"steer-b"})
@@ -604,14 +604,14 @@ func TestSteerRecords_AKeptRowARacingClearMovedJoinsTheProbe(t *testing.T) {
 }
 
 // The target the agent read before the clear landed was delivered, so the delete
-// answers consumed and writes no deleted entry; the rows the reader kept still go.
+// answers consumed; the rows the reader kept still go.
 func TestSteerRecords_ATargetReadBeforeTheClearIsConsumed(t *testing.T) {
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")
 	op := "op-steer-a"
-	s.q.BeginRemove(s.chat, "steer-a", op, false)
+	s.q.BeginRemove(s.chat, "steer-a", op)
 	s.recs.SteerRead(s.chat, s.kasID("steer-a"))
 
 	res := s.q.RemoveCleared(s.chat, op, s.clearKAS(), true)
@@ -627,79 +627,76 @@ func TestSteerRecords_ATargetReadBeforeTheClearIsConsumed(t *testing.T) {
 	}
 }
 
-// The deleted row's entry says the reader deleted it.
-func TestSteerRecords_TheDeletedRowIsNotedDeleted(t *testing.T) {
-	s := newSteerHarness(t)
-	s.bind()
-	s.steer("steer-a", "first")
-	res, _, _ := s.remove("steer-a")
-	s.resubmit("steer-a", res)
-
-	n := s.spy.note("steer-a")
-	if n == nil || n.State != marotte.SteerStateDropped || n.Reason != marotte.SteerReasonDeleted || n.Text != "first" {
-		t.Errorf("entry = %+v, want dropped/deleted carrying the text", n)
+// wantGoneUnnoted: a deleted row leaves the dock on its removed frame and writes no transcript entry.
+func wantGoneUnnoted(t *testing.T, s *steerHarness, key string) {
+	t.Helper()
+	if n := s.spy.note(key); n != nil {
+		t.Errorf("the deleted row %s got entry %+v, want none", key, n)
 	}
-	if _, live := s.state("steer-a"); live {
-		t.Error("the deleted row is still in the dock")
+	if _, live := s.state(key); live {
+		t.Errorf("the deleted row %s is still in the dock", key)
 	}
-	if s.channel() != chanUnconfirmed {
-		t.Errorf("channel = %v, want UNCONFIRMED: nothing is outstanding after the clear", s.channel())
+	if f := s.spy.framesFor(key); len(f) == 0 || f[len(f)-1].State != marotte.SteerRowRemoved {
+		t.Errorf("frames for %s = %+v, want the last one removed", key, f)
 	}
 }
 
-// An edit takes the row back to change it: it leaves the dock on a removed frame and writes no
-// entry, since the edited text arrives as a steer of its own. The rows beside it are untouched.
-func TestSteerRecords_AnEditedRowLeavesNoEntry(t *testing.T) {
-	gone := func(t *testing.T, s *steerHarness, key string) {
-		t.Helper()
-		if n := s.spy.note(key); n != nil {
-			t.Errorf("the edited row got entry %+v, want none", n)
-		}
-		if _, live := s.state(key); live {
-			t.Errorf("the edited row %s is still in the dock", key)
-		}
-		if f := s.spy.framesFor(key); len(f) == 0 || f[len(f)-1].State != marotte.SteerRowRemoved {
-			t.Errorf("frames for %s = %+v, want the last one removed", key, f)
-		}
-	}
+// Every way the reader deletes a row writes no entry for it; the rows beside it are untouched.
+func TestSteerRecords_ADeletedRowLeavesNoEntry(t *testing.T) {
 	t.Run("through the clear and resubmit", func(t *testing.T) {
 		s := newSteerHarness(t)
 		s.bind()
 		s.steer("steer-a", "first")
 		s.steer("steer-b", "second")
-		op := "op-steer-a"
-		if needs, refuse := s.q.BeginRemove(s.chat, "steer-a", op, true); !needs || refuse != "" {
-			t.Fatalf("BeginRemove = %v %q, want a clear", needs, refuse)
+		res, needs, refuse := s.remove("steer-a")
+		if !needs || refuse != "" {
+			t.Fatalf("remove = %v %q, want a clear", needs, refuse)
 		}
-		res := s.q.RemoveCleared(s.chat, op, s.clearKAS(), true)
 		s.resubmit("steer-a", res)
-		gone(t, s, "steer-a")
+		wantGoneUnnoted(t, s, "steer-a")
 		if res.Resend == nil || !slices.Equal(res.Resend.Keys, []string{"steer-b"}) {
 			t.Errorf("resend = %+v, want the kept steer-b", res.Resend)
+		}
+	})
+	t.Run("the only row, leaving nothing outstanding", func(t *testing.T) {
+		s := newSteerHarness(t)
+		s.bind()
+		s.steer("steer-a", "first")
+		res, _, _ := s.remove("steer-a")
+		s.resubmit("steer-a", res)
+		wantGoneUnnoted(t, s, "steer-a")
+		if s.channel() != chanUnconfirmed {
+			t.Errorf("channel = %v, want UNCONFIRMED: nothing is outstanding after the clear", s.channel())
 		}
 	})
 	t.Run("at once, for a row KAS does not hold", func(t *testing.T) {
 		s := newSteerHarness(t)
 		s.q.RouteSteer(s.chat, "steer-a", "first", command.SteerHolder{Held: true, PromptClass: true})
-		if needs, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-a", true); needs || refuse != "" {
-			t.Fatalf("BeginRemove = %v %q, want an immediate delete", needs, refuse)
+		if _, needs, refuse := s.remove("steer-a"); needs || refuse != "" {
+			t.Fatalf("remove = %v %q, want an immediate delete", needs, refuse)
 		}
-		gone(t, s, "steer-a")
+		wantGoneUnnoted(t, s, "steer-a")
 	})
-	t.Run("by a discard beside a workflow result", func(t *testing.T) {
+	t.Run("by Discard all", func(t *testing.T) {
 		s := newSteerHarness(t)
 		s.bind()
 		s.steer("steer-a", "first")
 		s.steer("steer-b", "second")
-		if needs, _ := s.q.BeginDiscard(s.chat, "op-d", "steer-a"); !needs {
+		if needs, _ := s.q.BeginDiscard(s.chat, "op-d"); !needs {
 			t.Fatal("discard of rows KAS holds needs no clear")
 		}
 		s.clearKAS()
 		s.q.DiscardCleared(s.chat, "op-d", true)
-		gone(t, s, "steer-a")
-		if n := s.spy.note("steer-b"); n == nil || n.Reason != marotte.SteerReasonDeleted {
-			t.Errorf("steer-b entry = %+v, want deleted: only the edited row is spared", n)
+		wantGoneUnnoted(t, s, "steer-a")
+		wantGoneUnnoted(t, s, "steer-b")
+	})
+	t.Run("by Discard all with nothing in KAS", func(t *testing.T) {
+		s := newSteerHarness(t)
+		s.q.RouteSteer(s.chat, "steer-a", "first", command.SteerHolder{Held: true, PromptClass: true})
+		if needs, refuse := s.q.BeginDiscard(s.chat, "op-d"); needs || refuse != "" {
+			t.Fatalf("BeginDiscard = %v %q, want an immediate discard", needs, refuse)
 		}
+		wantGoneUnnoted(t, s, "steer-a")
 	})
 }
 
@@ -714,9 +711,7 @@ func TestSteerRecords_ARowKASDoesNotHoldIsDeletedWithoutAClear(t *testing.T) {
 	if needsClear || refuse != "" {
 		t.Errorf("remove = %v %q, want an immediate delete", needsClear, refuse)
 	}
-	if n := s.spy.note("steer-a"); n == nil || n.Reason != marotte.SteerReasonDeleted {
-		t.Errorf("entry = %+v, want deleted", n)
-	}
+	wantGoneUnnoted(t, s, "steer-a")
 }
 
 // A delete before the turn that will read the rows has bound would clear what that
@@ -728,13 +723,13 @@ func TestSteerRecords_ADeleteInNoneIsRefusedOnlyWhileATurnIsStarting(t *testing.
 	s.kas(sends)
 	s.mustState("steer-a", rowQueued)
 
-	if _, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-1", false); refuse != "" {
+	if _, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-1"); refuse != "" {
 		t.Fatalf("with no started turn BeginRemove refused %q", refuse)
 	}
 	s.q.EndOp(s.chat, "op-1")
 
 	s.h.stagePromptTurn(t, s.chat)
-	if _, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-2", false); refuse != command.SteerRefuseStarting {
+	if _, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-2"); refuse != command.SteerRefuseStarting {
 		t.Errorf("with a started, unbound turn BeginRemove = %q, want starting", refuse)
 	}
 }
@@ -748,12 +743,12 @@ func TestSteerRecords_AJobsRowIsTakenOverOrRefusedSettling(t *testing.T) {
 	s.endTurn()
 	s.spy.takeJobs()
 
-	if _, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-1", false); refuse != command.SteerRefuseSettling {
+	if _, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-1"); refuse != command.SteerRefuseSettling {
 		t.Fatalf("delete of a job's row KAS may hold = %q, want settling", refuse)
 	}
 	s.recs.SteerCleared(s.chat, []string{s.kasID("steer-a")})
 	s.mustState("steer-a", rowCleared)
-	if needsClear, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-2", false); needsClear || refuse != "" {
+	if needsClear, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-2"); needsClear || refuse != "" {
 		t.Errorf("delete of a job's row KAS cleared = %v %q, want taken over at once", needsClear, refuse)
 	}
 }
@@ -767,7 +762,7 @@ func TestSteerRecords_ATurnEndingUnderTheOpRecordsTheEndWithItsLead(t *testing.T
 	s.steer("steer-c", "third")
 	s.steer("steer-b", "second")
 	op := "op-steer-a"
-	s.q.BeginRemove(s.chat, "steer-a", op, false)
+	s.q.BeginRemove(s.chat, "steer-a", op)
 	undo := s.q.SetSteerLead(s.chat, "steer-b")
 	defer undo()
 	s.endTurn()
@@ -801,7 +796,7 @@ func TestSteerRecords_ATurnEndingAfterTheResubmitIsAnsweredByEndOp(t *testing.T)
 	s.steer("steer-a", "a")
 	s.steer("steer-b", "b")
 	const op = "op-steer-a"
-	if needs, refuse := s.q.BeginRemove(s.chat, "steer-a", op, false); !needs || refuse != "" {
+	if needs, refuse := s.q.BeginRemove(s.chat, "steer-a", op); !needs || refuse != "" {
 		t.Fatalf("BeginRemove = %v %q, want a clear", needs, refuse)
 	}
 	res := s.q.RemoveCleared(s.chat, op, s.clearKAS(), true)
@@ -839,7 +834,7 @@ func TestSteerRecords_ATurnEndingUnderADeleteHandsItTheParkedRowsToo(t *testing.
 	}
 	s.mustState("steer-c", rowParked)
 	const op = "op-steer-a"
-	if needs, refuse := s.q.BeginRemove(s.chat, "steer-a", op, false); !needs || refuse != "" {
+	if needs, refuse := s.q.BeginRemove(s.chat, "steer-a", op); !needs || refuse != "" {
 		t.Fatalf("BeginRemove = %v %q, want a clear", needs, refuse)
 	}
 	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
@@ -866,7 +861,7 @@ func TestSteerRecords_ATurnEndingUnderADiscardLeavesALaterRowToItsEnd(t *testing
 	s := newSteerHarness(t)
 	s.steer("steer-a", "a")
 	const op = "op-discard"
-	if needs, refuse := s.q.BeginDiscard(s.chat, op, ""); !needs || refuse != "" {
+	if needs, refuse := s.q.BeginDiscard(s.chat, op); !needs || refuse != "" {
 		t.Fatalf("BeginDiscard = %v %q, want a clear", needs, refuse)
 	}
 	if _, refuse := s.q.RouteSteer(s.chat, "steer-b", "b",
@@ -1056,14 +1051,14 @@ func TestSteerRecords_ThePostLoadClearParksARowSentDuringTheWait(t *testing.T) {
 	}
 }
 
-// Discard all: every row goes deleted, except one the agent read before the clear,
-// which keeps its read and gets no second entry.
+// Discard all: a row the agent read before the clear keeps its read and gets no second entry;
+// the unread row leaves with none.
 func TestSteerRecords_DiscardLeavesARowReadBeforeTheClearRead(t *testing.T) {
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")
-	needsClear, _ := s.q.BeginDiscard(s.chat, "op-d", "")
+	needsClear, _ := s.q.BeginDiscard(s.chat, "op-d")
 	if !needsClear {
 		t.Fatal("discard of rows KAS holds needs no clear")
 	}
@@ -1075,9 +1070,7 @@ func TestSteerRecords_DiscardLeavesARowReadBeforeTheClearRead(t *testing.T) {
 	if n := s.spy.note("steer-a"); n != nil {
 		t.Errorf("the read row got entry %+v, want none", n)
 	}
-	if n := s.spy.note("steer-b"); n == nil || n.Reason != marotte.SteerReasonDeleted {
-		t.Errorf("steer-b entry = %+v, want deleted", n)
-	}
+	wantGoneUnnoted(t, s, "steer-b")
 }
 
 // The teardown marks the record gone before its cancel: the turn end that cancel
@@ -1287,7 +1280,7 @@ func TestSteerRecords_AnUnsettledPostLoadClearHoldsTheReloadedRows(t *testing.T)
 }
 
 // Steps publish in the order they took the lock: a later step's frame waits behind
-// an earlier step's note still being written, so a client never meets them reversed.
+// an earlier step's frame still being published, so a client never meets them reversed.
 func TestSteerRecords_StepsPublishInTheOrderTheyRan(t *testing.T) {
 	s := newSteerHarness(t)
 	parked := command.SteerHolder{Held: true, PromptClass: true}
@@ -1295,21 +1288,19 @@ func TestSteerRecords_StepsPublishInTheOrderTheyRan(t *testing.T) {
 	var mu sync.Mutex
 	var order []string
 	entered, release := make(chan struct{}), make(chan struct{})
-	s.recs.note = func(_ context.Context, _ marotte.ChatID, id string, _ *marotte.EntrySteer) {
-		close(entered)
-		<-release
-		mu.Lock()
-		order = append(order, "note "+id)
-		mu.Unlock()
-	}
 	s.recs.broadcast = func(e marotte.ServerEvent) {
+		p := e.Payload.(marotte.SteerQueuedPayload)
+		if p.SteerID == "steer-a" && p.State == marotte.SteerRowRemoved {
+			close(entered)
+			<-release
+		}
 		mu.Lock()
-		order = append(order, "frame "+e.Payload.(marotte.SteerQueuedPayload).SteerID)
+		order = append(order, "frame "+p.SteerID)
 		mu.Unlock()
 	}
 
 	var wg sync.WaitGroup
-	wg.Go(func() { s.q.BeginRemove(s.chat, "steer-a", "op-a", false) })
+	wg.Go(func() { s.q.BeginRemove(s.chat, "steer-a", "op-a") })
 	<-entered
 	wg.Go(func() { s.q.RouteSteer(s.chat, "steer-b", "b", parked) })
 	deadline := time.Now().Add(5 * time.Second)
@@ -1329,9 +1320,9 @@ func TestSteerRecords_StepsPublishInTheOrderTheyRan(t *testing.T) {
 	wg.Wait()
 
 	if len(early) != 0 {
-		t.Errorf("published %v while the first step's note was still being written", early)
+		t.Errorf("published %v while the first step's frame was still being published", early)
 	}
-	if want := []string{"note steer-a", "frame steer-b"}; !slices.Equal(order, want) {
+	if want := []string{"frame steer-a", "frame steer-b"}; !slices.Equal(order, want) {
 		t.Errorf("publication order = %v, want %v", order, want)
 	}
 }

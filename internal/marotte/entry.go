@@ -235,9 +235,6 @@ const (
 	// chat's tab closed (the close cancels the turn and no prompt carries the steer), or an agent
 	// note KAS's turn-end clear named.
 	SteerReasonBoundary SteerReason = "boundary"
-	// SteerReasonDeleted is the reason on a steer the reader deleted from the
-	// dock before the agent read it.
-	SteerReasonDeleted SteerReason = "deleted"
 )
 
 // EntrySteer is the steer payload. Text has the `[notification/<sev>]` prefix stripped; Severity

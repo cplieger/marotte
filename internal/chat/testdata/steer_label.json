@@ -164,17 +164,8 @@
       "label": "Not read · the turn ended first",
       "sites": [
         "internal/agent/command_chat_ops.go:58",
-        "internal/agent/steer_buffer.go:378",
+        "internal/agent/steer_buffer.go:361",
         "internal/translate/steering.go:141"
-      ]
-    },
-    {
-      "origin": "user",
-      "state": "dropped",
-      "reason": "deleted",
-      "label": "Not read · you deleted it",
-      "sites": [
-        "internal/agent/steer_buffer.go:372"
       ]
     },
     {
@@ -283,14 +274,7 @@
       "reason": "restart"
     },
     {
-      "site": "internal/agent/steer_buffer.go:372",
-      "form": "literal",
-      "origin": "user",
-      "state": "dropped",
-      "reason": "deleted"
-    },
-    {
-      "site": "internal/agent/steer_buffer.go:378",
+      "site": "internal/agent/steer_buffer.go:361",
       "form": "literal",
       "origin": "user",
       "state": "dropped",

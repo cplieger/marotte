@@ -290,7 +290,6 @@ const stepStackSource: SteerStackSource = {
       workflowID: t.workflowID,
       nodePath: t.nodePath,
       steer_id: steer.id,
-      edit: true,
     }).outcome;
     if (outcome.status !== "error") {
       return;
@@ -309,7 +308,7 @@ const stepStackSource: SteerStackSource = {
       return;
     }
     announce("Message taken back for editing");
-    await clearRunStepSteers.dispatch({ ...t, edit: steer.id }).outcome;
+    await clearRunStepSteers.dispatch(t).outcome;
   },
   remove: async (steerID) => {
     const t = stackTarget.peek();

@@ -75,7 +75,7 @@ func cmdSteerRemove(ctx context.Context, roles *promptRoles, cmd *marotte.Client
 		return nil, StatusError(http.StatusServiceUnavailable, err)
 	}
 	defer unlock()
-	if err := RemoveSteerFrom(ctx, roles.steerTarget(cmd.ChatID), p.SteerID, p.Edit, func(opID string) {
+	if err := RemoveSteerFrom(ctx, roles.steerTarget(cmd.ChatID), p.SteerID, func(opID string) {
 		endSteerOp(ctx, roles, cmd.ChatID, opID)
 	}); err != nil {
 		return nil, err
@@ -84,11 +84,11 @@ func cmdSteerRemove(ctx context.Context, roles *promptRoles, cmd *marotte.Client
 }
 
 // RemoveSteerFrom deletes the row steerID from t's buffer: a row KAS cannot hold goes at once, else
-// one clear and one combined resubmit of the kept rows. An edit's row leaves no entry. endOp ends
-// the op under the steer lock the caller holds; it runs only when a clear was issued.
-func RemoveSteerFrom(ctx context.Context, t SteerTarget, steerID string, edit bool, endOp func(opID string)) error {
+// one clear and one combined resubmit of the kept rows. endOp ends the op under the steer lock the
+// caller holds; it runs only when a clear was issued.
+func RemoveSteerFrom(ctx context.Context, t SteerTarget, steerID string, endOp func(opID string)) error {
 	opID := ids.NewMessageID()
-	needsClear, refuse := t.Queue.BeginRemove(t.Key, steerID, opID, edit)
+	needsClear, refuse := t.Queue.BeginRemove(t.Key, steerID, opID)
 	if refuse != "" {
 		return steerRefusal(refuse)
 	}

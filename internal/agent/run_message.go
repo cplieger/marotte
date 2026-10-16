@@ -505,19 +505,19 @@ func (rs *Runs) bindStepSteers(at stepAddr, host marotte.ChatID) {
 }
 
 // removeStepSteer deletes one unread row from a step's dock, as the chat's steer_remove does.
-func (rs *Runs) removeStepSteer(ctx context.Context, workflowID, nodePath, steerID string, edit bool) error {
+func (rs *Runs) removeStepSteer(ctx context.Context, workflowID, nodePath, steerID string) error {
 	if steerID == "" {
 		return command.StatusError(http.StatusBadRequest, command.ErrInvalidPayload)
 	}
 	return rs.withStepSteers(ctx, workflowID, nodePath, func(t command.SteerTarget) error {
-		return command.RemoveSteerFrom(ctx, t, steerID, edit, rs.endStepSteerOp(t.Key))
+		return command.RemoveSteerFrom(ctx, t, steerID, rs.endStepSteerOp(t.Key))
 	})
 }
 
 // clearStepSteers discards every unread row of a step's dock, as the chat's steer_clear does.
-func (rs *Runs) clearStepSteers(ctx context.Context, workflowID, nodePath, edit string) error {
+func (rs *Runs) clearStepSteers(ctx context.Context, workflowID, nodePath string) error {
 	return rs.withStepSteers(ctx, workflowID, nodePath, func(t command.SteerTarget) error {
-		_, err := command.ClearSteersIn(ctx, t, edit, rs.endStepSteerOp(t.Key))
+		_, err := command.ClearSteersIn(ctx, t, rs.endStepSteerOp(t.Key))
 		return err
 	})
 }
