@@ -52,6 +52,19 @@
   }
 }
 
+/* Stands in for a diagram from its opening fence until it is drawn: the
+ * canvas's own surface and padding, at about a small diagram's height so the
+ * swap barely moves the reply. `.skeleton` (30-utilities.css) owns the pulse
+ * and its reduced-motion and forced-colours arms. */
+.mermaid-skeleton {
+  padding: var(--sp-3);
+  background: var(--c-turn-body);
+
+  & > .skeleton {
+    block-size: 12rem;
+  }
+}
+
 /* One line between the block's title bar and the source it falls back to. */
 .mermaid-notice {
   margin: 0;
