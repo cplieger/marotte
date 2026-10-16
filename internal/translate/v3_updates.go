@@ -100,8 +100,8 @@ func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	// The live frame also spreads every event field flat beside its nested block; those of
-	// display_error, interaction_resolved and pending_interaction (its `_meta`, a plan
-	// approval's workflowPlan) are read from the block or declined there.
+	// display_error and interaction_resolved are read from the block, and a plan approval's
+	// flat `_meta` (its workflowPlan) is declined unread.
 	censusMeta("session_info_update._meta.kiro", data, reflect.TypeFor[sessionInfoKiroShadow](),
 		"errorType", "retryErrorType", "toolCallId", "outcome", "selectedOption",
 		"interactionType", "question", "options", "agentSubtaskId", "status", "_meta")

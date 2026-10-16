@@ -631,8 +631,7 @@ func (s *Session) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 	}
 }
 
-// models is for display, without end-of-life entries; the catalog is every advertised id, the only sound input to an
-// entitlement check.
+// An empty or cold-pin choice list keeps the previous catalog (marotte.ColdCatalogPin owns the pin's shape).
 func (s *Session) applyModelOptionLocked(opt *sessionConfigOption) {
 	var current string
 	_ = json.Unmarshal(opt.CurrentValue, &current) // string; ignore non-string
