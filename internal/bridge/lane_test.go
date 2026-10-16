@@ -174,13 +174,33 @@ func TestLane_OverflowEndsOnlyThatSession(t *testing.T) {
 	}
 }
 
+// waitPumpHolds waits until l's pump has taken its one appended frame out of the queue, failing after 2 s.
+func waitPumpHolds(t *testing.T, l *lane) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		l.mu.Lock()
+		held := l.seq == 1 && len(l.queue) == 0
+		l.mu.Unlock()
+		if held {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the lane's pump never took its first frame")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestEngineLane_OverflowAnswersARequestOnce(t *testing.T) {
 	_ = capture.Default(t)
 	shrinkLanes(t, 2, 4)
 	k := newFakeKAS(t)
-	// Nobody reads the engine lane, so it fills to the cap with requests. Whether the pump already holds one outside
-	// the queue is timing, so the last queued request may be past the cap too.
-	for i := range laneHardCap + 1 {
+	// Nobody reads the engine lane, so its pump takes the first request and holds it. Wait for that before filling
+	// the queue: a pump that took it only after the cap refused a later request would free a slot for 799.
+	k.request(700, "_test/queued", map[string]any{})
+	waitPumpHolds(t, k.e.engineLane)
+	for i := 1; i <= laneHardCap; i++ {
 		k.request(int64(700+i), "_test/queued", map[string]any{})
 	}
 	k.request(799, "_test/overflow", map[string]any{})
@@ -212,7 +232,7 @@ func TestEngineLane_OverflowAnswersARequestOnce(t *testing.T) {
 		if n != 1 {
 			t.Errorf("request %d answered %d times, want once", id, n)
 		}
-		if id < int64(700+laneHardCap) && id != 799 {
+		if id != 799 {
 			t.Errorf("request %d, inside the cap, was answered; it should stay queued", id)
 		}
 	}
