@@ -209,10 +209,6 @@ function paintSummary(bar: HTMLUListElement, total: number, waiting: number, ope
     count.textContent = text;
   }
   btn.setAttribute("aria-expanded", String(open));
-  btn.toggleAttribute("data-alert", waiting > 0);
-  if (waiting > 0) {
-    btn.dataset["alert"] = "input";
-  }
   const glyph = btn.querySelector<HTMLElement>(".run-bar-glyph");
   if (glyph !== null) {
     glyph.dataset["status"] = waiting > 0 ? "input" : "working";

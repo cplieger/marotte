@@ -109,15 +109,12 @@ describe("the run page claims its height", () => {
     );
   });
 
-  // ONE OWNER for every clamp opener in the app, none restyled on this page.
-  it("gives every clamp opener one rule rather than a copy each", () => {
-    const sheets = ["10-shell-app.css", "13-messages.css", "26-dock.css", "31-exec-view.css"];
-    const owners = sheets.flatMap((name) =>
-      allRules(loadCSS(name))
-        .filter((r) => /(^|,)\s*\.clamp-more\s*$/m.test(r.selector))
-        .map(() => name),
-    );
-    expect(owners).toEqual(["10-shell-app.css"]);
+  // ONE OWNER for the two clamp openers on this page.
+  it("gives both clamp openers one rule rather than a copy each", () => {
+    const css = loadCSS("31-exec-view.css");
+    const owners = allRules(css).filter((r) => /(^|,)\s*\.ev-r-more\s*$/m.test(r.selector));
+    expect(owners).toHaveLength(1);
+    expect(owners[0]?.selector).toBe(".ev-dock-ask-more,\n.ev-r-more");
   });
 
   // A container's state is a ROLL-UP of its children and must never repaint them.

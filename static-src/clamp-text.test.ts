@@ -174,7 +174,42 @@ describe("deciding whether the opener is needed", () => {
     const p = mount(ONE_LINE, 400);
     await observerRuns();
     expect(p.more.hidden).toBe(true);
-    expect(p.text.hasAttribute("data-clamped"), "clamped even so, harmlessly").toBe(true);
+    expect(p.text.hasAttribute("data-clamped")).toBe(false);
+  });
+
+  /** `n` lines of 20px each under the 3-line clamp, one per text line. */
+  function mountLines(n: number): Pair {
+    host.style.inlineSize = "400px";
+    const text = document.createElement("div");
+    text.className = "ct-text";
+    text.style.whiteSpace = "pre-line";
+    text.textContent = Array.from({ length: n }, (_, i) => `line ${String(i + 1)}`).join("\n");
+    const more = document.createElement("button");
+    more.type = "button";
+    host.replaceChildren(text, more);
+    attachClamp(text, more, { lines: 3 });
+    return { text, more };
+  }
+
+  for (const [n, cut] of [
+    [4, 1],
+    [5, 2],
+  ] as const) {
+    it(`shows a text the clamp would cut by ${String(cut)} line${cut > 1 ? "s" : ""} in full, with no opener`, async () => {
+      const p = mountLines(n);
+      await observerRuns();
+      expect(p.more.hidden).toBe(true);
+      expect(p.text.hasAttribute("data-clamped")).toBe(false);
+      expect(p.text.getBoundingClientRect().height).toBe(n * 20);
+    });
+  }
+
+  it("clamps a text cut by three lines behind its opener", async () => {
+    const p = mountLines(6);
+    await settles(p, false, "offered for a three-line cut");
+    expect(p.text.hasAttribute("data-clamped")).toBe(true);
+    expect(p.text.getBoundingClientRect().height).toBe(3 * 20);
+    expect(p.more.textContent).toBe("Show more");
   });
 
   it("shows the opener for a text that overflows", async () => {
@@ -215,18 +250,18 @@ describe("opening and closing", () => {
   it("drops the clamp on the opener's click and restores it on the next", async () => {
     const p = mount(LONG, 400);
     await settles(p, false, "offered");
-    expect(p.more.getAttribute("aria-label")).toBe("Show more");
+    expect(p.more.textContent).toBe("Show more");
     expect(p.more.getAttribute("aria-expanded")).toBe("false");
 
     p.more.click();
     expect(p.text.hasAttribute("data-clamped")).toBe(false);
-    expect(p.more.getAttribute("aria-label")).toBe("Show less");
+    expect(p.more.textContent).toBe("Show less");
     expect(p.more.getAttribute("aria-expanded")).toBe("true");
 
     p.more.click();
     await finishSlides(p.text);
     expect(p.text.hasAttribute("data-clamped")).toBe(true);
-    expect(p.more.getAttribute("aria-label")).toBe("Show more");
+    expect(p.more.textContent).toBe("Show more");
     expect(p.more.getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -253,7 +288,7 @@ describe("opening and closing", () => {
     p.more.click();
     await finishSlides(p.text);
     p.more.click();
-    expect(p.more.getAttribute("aria-label"), "the label flips at once").toBe("Show more");
+    expect(p.more.textContent, "the label flips at once").toBe("Show more");
     host.style.inlineSize = "380px";
     await observerRuns();
     expect(p.text.getAnimations(), "still sliding").not.toHaveLength(0);
@@ -310,53 +345,6 @@ describe("opening and closing", () => {
   });
 });
 
-describe("the opener and the cut text", () => {
-  it("is a named chevron button that controls the text, its name in the tooltip", async () => {
-    const p = mount(LONG, 400);
-    await settles(p, false, "offered");
-    expect(p.more.querySelector(".disclosure-chevron")).not.toBeNull();
-    expect(p.more.textContent).toBe("");
-    expect(p.more.getAttribute("aria-controls")).toBe(p.text.id);
-    expect(p.more.getAttribute("data-tooltip")).toBe("Show more");
-    p.more.click();
-    expect(p.more.getAttribute("data-tooltip")).toBe("Show less");
-  });
-
-  it("marks a cut text, and only a cut one", async () => {
-    const cut = mount(LONG, 400);
-    await settles(cut, false, "offered");
-    expect(cut.text.hasAttribute("data-cut")).toBe(true);
-    const fits = mount(ONE_LINE, 400);
-    await observerRuns();
-    expect(fits.text.hasAttribute("data-cut")).toBe(false);
-  });
-
-  it("opens on a click on the cut text, and a click on the open text leaves it open", async () => {
-    const p = mount(LONG, 400);
-    await settles(p, false, "offered");
-    p.text.click();
-    expect(p.text.hasAttribute("data-clamped")).toBe(false);
-    expect(p.more.getAttribute("aria-expanded")).toBe("true");
-    expect(p.text.hasAttribute("data-cut")).toBe(false);
-    p.text.click();
-    expect(p.more.getAttribute("aria-expanded"), "only the chevron closes it").toBe("true");
-  });
-
-  it("does not open on a click that lands on a link inside the text", async () => {
-    const p = mount(LONG, 400);
-    const link = document.createElement("a");
-    link.href = "#nowhere";
-    link.textContent = "a link";
-    link.addEventListener("click", (e) => {
-      e.preventDefault();
-    });
-    p.text.prepend(link);
-    await settles(p, false, "offered");
-    link.click();
-    expect(p.more.getAttribute("aria-expanded")).toBe("false");
-  });
-});
-
 describe("the handle", () => {
   it("collapse() forgets an expansion, for content that has changed", async () => {
     const p = mount(LONG, 400);
@@ -367,7 +355,7 @@ describe("the handle", () => {
 
     handle.collapse();
     expect(p.text.hasAttribute("data-clamped")).toBe(true);
-    expect(p.more.getAttribute("aria-label")).toBe("Show more");
+    expect(p.more.textContent).toBe("Show more");
     expect(p.more.hidden, "and it is still offered, since the text still overflows").toBe(false);
   });
 
@@ -511,7 +499,7 @@ describe("inside the transcript's own observer set", () => {
       paintTurns(chat, [turnWithSteer("u1", 1, "a request", body)]);
 
       const text = document.querySelector<HTMLElement>(".steer-note-text");
-      const more = document.querySelector<HTMLButtonElement>(".clamp-more");
+      const more = document.querySelector<HTMLButtonElement>(".steer-note-more");
       expect(text, "the steer note painted").not.toBeNull();
       expect(more, "with its opener").not.toBeNull();
       if (text === null || more === null) {

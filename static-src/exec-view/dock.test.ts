@@ -289,10 +289,9 @@ describe("what wants the reader", () => {
       // The transcript's prose size (`--fs-base`), not the dock's small print.
       expect(getComputedStyle(text).fontSize).toBe("13px");
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      const more = q<HTMLButtonElement>(".ev-dock-ask .clamp-more");
+      const more = q<HTMLButtonElement>(".ev-dock-ask .ev-dock-ask-more");
       expect(more.hidden).toBe(false);
-      expect(more.getAttribute("aria-label")).toBe("Show more");
-      expect(more.getAttribute("aria-controls")).toBe(text.id);
+      expect(more.textContent).toBe("Show more");
       expect(q(".ev-dock-ask-count").hidden).toBe(true);
     } finally {
       style.remove();

@@ -225,7 +225,7 @@ describe("the run bar", () => {
   });
 
   // The chat's row reads the run dock's own summary, so a run stuck on a person says why here too,
-  // in the alert's wash, and returns to its summary once it clears.
+  // and returns to its summary once it clears.
   // A fan-out folds behind one row, so the transcript and the composer stay on a phone.
   it("folds three or more runs behind one summary row that opens in place", async () => {
     localStorage.removeItem("marotte.ui-state");
@@ -241,7 +241,7 @@ describe("the run bar", () => {
     const toggle = bar.querySelector<HTMLButtonElement>(".run-bar-summary .run-bar-toggle")!;
     expect(toggle.textContent).toBe("4 workflows, 1 needs you");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(toggle.dataset["alert"]).toBe("input");
+    expect(toggle.querySelector<HTMLElement>(".run-bar-glyph")?.dataset["status"]).toBe("input");
     const rows = (): HTMLElement[] => [...bar.querySelectorAll<HTMLElement>("li.run-bar-row")];
     expect(rows().every((r) => r.hidden)).toBe(true);
     expect(rows()[0]?.querySelector(".ev-sum-label")?.textContent).toBe(ids[2]);

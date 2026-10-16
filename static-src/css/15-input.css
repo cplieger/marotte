@@ -132,8 +132,8 @@
      needs an EQUAL inset on both edges of the corner. Cloud Four's form
      (https://cloudfour.com/thinks/the-math-behind-nesting-rounded-corners/) omits
      the border term. The inset term is the ROW's padding, not --pill-inset, since
-     the row pays for its controls' target expander out of its own inset: 6 − 1 − 4
-     = 1px on both pointer tiers, and `max()` holds 0 once an inset passes the
+     the row pays for its controls' target expander out of its own inset: 12 − 1 − 4
+     = 7px on both pointer tiers, and `max()` holds 0 once an inset passes the
      corner. A per-container derivation, so not a token. */
   --pill-radius: max(0px, calc(var(--stack-r) - 1px - var(--composer-pill-pad)));
 
@@ -808,7 +808,7 @@
   color: var(--c-on-accent);
 
   /* A COUNT BADGE IS A STADIUM, and saying so is the fix. It declared --r-md
-     (8px) inside a squarer `--pill-radius` pill, so the inner box was rounder than
+     (8px) inside a 7px `--pill-radius` pill, so the inner box was rounder than
      its container -- and at 14px tall, 8px exceeds half the height, so the
      browser clamped it to a stadium and the declared rung never rendered. The
      ladder reserves --r-pill for non-interactive status chips, which is exactly

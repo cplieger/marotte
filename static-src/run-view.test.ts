@@ -1237,7 +1237,7 @@ describe("run view step results", () => {
       "without producing any text",
     );
     // Unclamped: one sentence never overflows, and an opener under it would open nothing.
-    expect(body.querySelectorAll(".clamp-more")).toHaveLength(0);
+    expect(body.querySelectorAll(".ev-r-more")).toHaveLength(0);
   });
 
   it("renders a non-empty capture as MARKDOWN, not as preformatted text", async () => {
@@ -1297,14 +1297,13 @@ describe("run view step results have no toggle", () => {
 
   it("carries no chevron, no role=button, and no aria-expanded of its own", async () => {
     const el = await region();
-    // The one chevron is a clamp opener's, which opens one report's text, not the region.
-    expect(el.querySelectorAll(".disclosure-chevron:not(.clamp-more > *)")).toHaveLength(0);
+    expect(el.querySelectorAll(".disclosure-chevron")).toHaveLength(0);
     expect(el.querySelectorAll('[role="button"]')).toHaveLength(0);
     expect(el.querySelectorAll("[tabindex]")).toHaveLength(0);
     // The clamp opener is EXEMPT and its `aria-expanded` is not the toggle's: it states whether the
     // report below it is clipped, which is a fact about that one box's text, not about whether the
     // region is showing anything.
-    expect(el.querySelectorAll("[aria-expanded]:not(.clamp-more)")).toHaveLength(0);
+    expect(el.querySelectorAll("[aria-expanded]:not(.ev-r-more)")).toHaveLength(0);
   });
 
   // The clamp opener is the ONE button the region may hold, and it is a real `<button>` rather than
@@ -1313,7 +1312,7 @@ describe("run view step results have no toggle", () => {
     const el = await region();
     const buttons = [...el.querySelectorAll("button")];
     for (const b of buttons) {
-      expect(b.className).toBe("clamp-more");
+      expect(b.className).toBe("ev-r-more");
     }
   });
 
@@ -1364,7 +1363,7 @@ describe("run view step results placement", () => {
 });
 
 // THE CLAMP on a result box: `clamp-text.ts` `attachClamp`, the `data-clamped` attribute and the
-// shared `.clamp-more` chevron opener.
+// `.ev-r-more` text opener.
 
 describe("run view step result clamp", () => {
   async function capture(output: string): Promise<HTMLElement> {
@@ -1376,7 +1375,7 @@ describe("run view step result clamp", () => {
   }
 
   function openers(body: HTMLElement): HTMLButtonElement[] {
-    return [...body.querySelectorAll<HTMLButtonElement>(".clamp-more")];
+    return [...body.querySelectorAll<HTMLButtonElement>(".ev-r-more")];
   }
 
   it("offers NO opener on a short capture", async () => {
@@ -1401,18 +1400,18 @@ describe("run view step result clamp", () => {
     expect(more?.hidden).toBe(false);
     expect(more?.tagName).toBe("BUTTON");
     expect(more?.getAttribute("aria-expanded")).toBe("false");
-    expect(more?.getAttribute("aria-label")).toBe("Show more");
+    expect(more?.textContent).toBe("Show more");
     expect(text.hasAttribute("data-clamped")).toBe(true);
 
     more?.click();
     expect(text.hasAttribute("data-clamped")).toBe(false);
     expect(more?.getAttribute("aria-expanded")).toBe("true");
-    expect(more?.getAttribute("aria-label")).toBe("Show less");
+    expect(more?.textContent).toBe("Show less");
 
     more?.click();
     expect(text.hasAttribute("data-clamped")).toBe(true);
     expect(more?.getAttribute("aria-expanded")).toBe("false");
-    expect(more?.getAttribute("aria-label")).toBe("Show more");
+    expect(more?.textContent).toBe("Show more");
   });
 
   // THE MEASUREMENT CASE. Longer than `RESULT_CLAMP.fallbackChars` and still inside twelve lines at

@@ -30,6 +30,12 @@ const SELF_SCROLL_MAX_MS = 1500;
  *  distinguishes. */
 const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 const SCROLL_DOWN_KEYS = new Set(["ArrowDown", "PageDown", " "]);
+/** What Space activates rather than scrolls; a link scrolls on Space. */
+const SPACE_PRESSES = 'button, summary, [role="button"]';
+/** How far a touch travels before it is a scroll rather than a tap: a tap with a slight wobble still clicks, and an
+ *  engine may deliver its `touchmove`s. Android's touch slop (8dp, `ViewConfiguration.getScaledTouchSlop`), where the
+ *  platform starts a drag. */
+const TAP_SLOP_PX = 8;
 /** The transcript's `content-visibility: auto` boxes (`transcript-layout-css.test.ts` `BULK`). */
 const SKIPPABLE = ".msg-row, .tool-call, .subagent-block, .plan-message, .run-card";
 /** How far past the scrollport, in scrollport heights, a skippable box is laid out ahead (`[data-near]`). Chromium's
@@ -149,6 +155,10 @@ export class ScrollController {
    *  a position rather than a delta (null = no gesture in progress). */
   private lastTouchY: number | null = null;
   private lastBarY: number | null = null;
+  /** Where the touch in progress started, and whether it has left `TAP_SLOP_PX` of it: one that never did is a tap,
+   *  which scrolls nothing. */
+  private touchStart: { x: number; y: number } | null = null;
+  private touchMoved = false;
 
   /** Last value written to `--scrollbar-w`, so a resize storm costs at most one style
    *  invalidation. */
@@ -235,9 +245,10 @@ export class ScrollController {
     // `.prompt-box` unless the scroller gives that width back.
     this.publishScrollbarWidth();
 
-    // Every input marks the quiet period; the ones that carry a DIRECTION also aim it. `touchend`
-    // marks but cannot aim, which costs nothing: a fling's direction is already known from the
-    // `touchmove` that started it.
+    // Every scrolling input marks the quiet period; the ones that carry a DIRECTION also aim it.
+    // `touchend` marks but cannot aim, which costs nothing: a fling's direction is already known from
+    // the `touchmove` that started it. A tap or a Space press on a control is a PRESS, and marking it
+    // would hold the live edge off while what it opened grows.
     const markInput = (dir: -1 | 0 | 1 = 0): void => {
       // Input is what ends an epoch, and it ends it BEFORE the scroll event it produces arrives, so
       // the reader's own gesture publishes normally.
@@ -257,7 +268,9 @@ export class ScrollController {
     this.scrollEl.addEventListener(
       "touchend",
       () => {
-        markInput();
+        if (this.touchMoved) {
+          markInput();
+        }
       },
       { passive: true },
     );
@@ -266,8 +279,16 @@ export class ScrollController {
     this.scrollEl.addEventListener(
       "touchmove",
       (e) => {
-        const y = e.touches[0]?.clientY ?? null;
-        markInput(y === null || this.lastTouchY === null ? 0 : y > this.lastTouchY ? -1 : 1);
+        const t = e.touches[0];
+        const y = t?.clientY ?? null;
+        // A move with no position, or no start to measure from, cannot prove a tap.
+        this.touchMoved ||=
+          t === undefined ||
+          this.touchStart === null ||
+          Math.hypot(t.clientX - this.touchStart.x, t.clientY - this.touchStart.y) > TAP_SLOP_PX;
+        if (this.touchMoved) {
+          markInput(y === null || this.lastTouchY === null ? 0 : y > this.lastTouchY ? -1 : 1);
+        }
         this.lastTouchY = y;
       },
       { passive: true },
@@ -275,7 +296,10 @@ export class ScrollController {
     this.scrollEl.addEventListener(
       "touchstart",
       (e) => {
-        this.lastTouchY = e.touches[0]?.clientY ?? null;
+        const t = e.touches[0];
+        this.lastTouchY = t?.clientY ?? null;
+        this.touchStart = t === undefined ? null : { x: t.clientX, y: t.clientY };
+        this.touchMoved = false;
       },
       { passive: true },
     );
@@ -404,6 +428,9 @@ export class ScrollController {
       // Activating a control in the transcript is a press, like the pointer's.
       if ((e.key === "Enter" || e.key === " ") && t !== null && this.viewEl.contains(t)) {
         this.readLine = null;
+        if (e.key === " " && t.closest(SPACE_PRESSES) !== null) {
+          return;
+        }
       }
       // Under a modifier too, and BEFORE the resume arm's guard: Ctrl+Home scrolls this box, so
       // dropping it leaves the reader at a position with no fingerprint on it, which reads as
@@ -1212,6 +1239,8 @@ export class ScrollController {
     this.barDragging = false;
     this.lastTouchY = null;
     this.lastBarY = null;
+    this.touchStart = null;
+    this.touchMoved = false;
   }
 
   /** The one window three rules read: it suppresses this controller's own writes, it blocks a

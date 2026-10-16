@@ -114,8 +114,11 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   // Live regions are never `hidden`: one must already be rendered when its first line arrives.
   const askLive = el("div", { className: "ev-dock-ask-live", role: "status" });
   const askCount = el("p", { className: "ev-dock-ask-count" });
-  const askText = el("p", { className: "ev-dock-ask-q", id: `${id}-ask` });
-  const askMore = el("button", { type: "button", className: "clamp-more" }) as HTMLButtonElement;
+  const askText = el("p", { className: "ev-dock-ask-q" });
+  const askMore = el("button", {
+    type: "button",
+    className: "ev-dock-ask-more",
+  }) as HTMLButtonElement;
   const ask = el("div", { className: "ev-dock-ask" }, askCount, askText, askMore);
   attachClamp(askText, askMore, ASK_CLAMP);
   const notes = el("ul", { className: "ev-dock-notes", role: "status" });

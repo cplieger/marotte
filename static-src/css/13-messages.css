@@ -1641,10 +1641,10 @@
   overflow-wrap: anywhere;
 }
 
-/* THE CLAMP, four lines, behind the attribute the opener toggles — the turn
- * header's own mechanism (29-turns.css, clamp-text.ts). Not an ellipsis that
- * cuts: every character stays in the DOM and in the accessibility tree, which is
- * what keeps find-in-chat able to match the reader's own words. */
+/* THE CLAMP on the reader's own message, four lines, behind the attribute the
+ * opener toggles (clamp-text.ts); a workflow's message never clamps. Not an
+ * ellipsis that cuts: every character stays in the DOM and in the accessibility
+ * tree, which is what keeps find-in-chat able to match the reader's own words. */
 .steer-note-text[data-clamped] {
   display: -webkit-box;
   -webkit-line-clamp: 4;
@@ -1741,6 +1741,29 @@ button.steer-note-run:focus-visible {
   border-radius: 0;
   border-top: 1px solid color-mix(in srgb, var(--c-border) 55%, transparent);
   animation: none;
+}
+
+/* The clamp's opener: a text button, like the run page's (`.ev-r-more`). */
+.steer-note-more {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (any-hover: hover) {
+  .steer-note-more:hover {
+    color: var(--c-accent);
+  }
+}
+
+.steer-note-more:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 /* What the agent said it DID about the steer, from its own acknowledgement

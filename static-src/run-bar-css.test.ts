@@ -2,6 +2,7 @@
 // reasoned about.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { page as browser } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { buildExecSummary } from "./exec-view/summary.js";
@@ -389,5 +390,91 @@ describe("the run bar's box", () => {
       document.documentElement.removeAttribute("data-pointer");
       host.remove();
     }
+  });
+
+  const SEVEN = Array.from({ length: 7 }, (_, i) => runOf(`run-${String(i)}`, 1, 4));
+
+  /** The open list's lines, and how many sit wholly inside the list's own box, once each row's
+   *  entry rise has landed. */
+  function visibleLines(bar: HTMLElement): { all: number; whole: number } {
+    for (const a of bar.getAnimations({ subtree: true })) {
+      if (a instanceof CSSTransition) {
+        a.finish();
+      }
+    }
+    const box = bar.getBoundingClientRect();
+    const lines = [...bar.querySelectorAll<HTMLElement>(":scope > li")];
+    const whole = lines.filter((l) => l.getBoundingClientRect().bottom <= box.bottom + 0.5);
+    return { all: lines.length, whole: whole.length };
+  }
+
+  describe("on a phone, an open list", () => {
+    afterAll(async () => {
+      await browser.viewport(1280, 720);
+    });
+
+    it("shows every run while they fit in half the viewport", async () => {
+      await browser.viewport(390, 844);
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      try {
+        const bar = mountRows(SEVEN.slice(0, 4), true, 374);
+        const { all, whole } = visibleLines(bar);
+        expect(whole).toBe(all);
+        expect(bar.scrollHeight).toBeLessThanOrEqual(bar.clientHeight + 1);
+      } finally {
+        document.documentElement.removeAttribute("data-pointer");
+        host.remove();
+      }
+    });
+
+    it("grows to half the viewport and scrolls only past it", async () => {
+      await browser.viewport(360, 740);
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      try {
+        const bar = mountRows([...SEVEN, ...SEVEN], true, 344);
+        expect(bar.scrollHeight).toBeGreaterThan(bar.clientHeight);
+        expect(bar.getBoundingClientRect().height).toBeCloseTo(0.5 * 740, 0);
+      } finally {
+        document.documentElement.removeAttribute("data-pointer");
+        host.remove();
+      }
+    });
+  });
+
+  it("keeps the desktop cap at a quarter of the viewport, 16rem at most", async () => {
+    await browser.viewport(1280, 900);
+    try {
+      const bar = mountRows(SEVEN, true);
+      expect(getComputedStyle(bar).maxBlockSize).toBe("225px");
+    } finally {
+      host.remove();
+      await browser.viewport(1280, 720);
+    }
+  });
+
+  describe("a run that waits on the reader", () => {
+    const waiting: ExecRun = {
+      ...runOf("needs-an-answer", 1, 3),
+      state: "input",
+      alert: { kind: "input", text: "Waiting for answer: ship it?" },
+    };
+
+    it("draws no wash: its yellow mark says it waits, on the box's own surface", () => {
+      const bar = mountRows([waiting, RUNS[0]!], false);
+      const box = bar.parentElement!;
+      const btn = bar.querySelector<HTMLElement>(".run-bar-open[data-alert]")!;
+      const cs = getComputedStyle(btn);
+      expect(cs.backgroundImage).toBe("none");
+      expect(cs.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+      const glyph = btn.querySelector<HTMLElement>(".run-bar-glyph")!;
+      glyph.dataset["status"] = "input";
+      const mark = document.createElement("div");
+      mark.style.color = "var(--c-dot-input)";
+      host.append(mark);
+      expect(getComputedStyle(glyph).borderTopColor).toBe(getComputedStyle(mark).color);
+      expect(getComputedStyle(box).borderTopLeftRadius).toBe("12px");
+      expect(getComputedStyle(btn).borderTopLeftRadius).toBe("7px");
+      host.remove();
+    });
   });
 });
