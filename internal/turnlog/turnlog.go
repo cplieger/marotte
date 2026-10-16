@@ -22,10 +22,17 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// SteerAckPrefix is the shortest span committing a `[` to a steering acknowledgement
-// marker; a carry starting with it is an unclosed marker and a seal drops it. Shorter
-// spans are released as prose (`[STEERING ` alone can open real prose).
+// SteerAckPrefix is the shortest span a seal can drop as an unclosed steering acknowledgement
+// marker (SealDropsSteerCarry owns the rule); a shorter carry is shown, since `[STEERING ` alone
+// can open real prose.
 const SteerAckPrefix = "[STEERING steer-"
+
+// SealDropsSteerCarry reports whether a seal drops carry: it starts with SteerAckPrefix and holds
+// no `]`. Carry holding a `]` is shown even while still a marker prefix (`[STEERING steer-0: ]`),
+// because a reply can end on such a span (`see [STEERING steer-x].`) and hiding prose is worse.
+func SealDropsSteerCarry(carry string) bool {
+	return strings.HasPrefix(carry, SteerAckPrefix) && !strings.Contains(carry, "]")
+}
 
 // ErrClosed reports an append to a turn whose turn_close is already on disk. The
 // between-turns rule sends such an entry to the store, not here.
@@ -683,8 +690,8 @@ func (t *Turn) sealAll(ctx context.Context) ([]Sealed, error) {
 	return sealed, nil
 }
 
-// A carry released with nothing open opens a text entry and seals it in the same step; a carry that
-// is an unclosed marker is dropped. The lane's say ends.
+// A carry released with nothing open opens a text entry and seals it in the same step; settleCarry
+// decides what is released. The lane's say ends.
 func (t *Turn) sealLane(ctx context.Context, key string) ([]Sealed, error) {
 	l := t.lanes[key]
 	if l == nil {
@@ -721,13 +728,10 @@ func (t *Turn) sealLane(ctx context.Context, key string) ([]Sealed, error) {
 	return []Sealed{s}, nil
 }
 
-// settleCarry applies the seal's rule to what the lane withheld and clears it: a
-// carry bearing the committing prefix is an unclosed marker and is dropped,
-// anything else is prose and becomes the sealed entry's last delta.
 func (l *lane) settleCarry() (released string, say sayRef) {
 	carry, carrySay := l.carry, l.carrySay
 	l.carry, l.carrySay = "", sayRef{}
-	if carry == "" || strings.HasPrefix(carry, SteerAckPrefix) {
+	if carry == "" || SealDropsSteerCarry(carry) {
 		return "", sayRef{}
 	}
 	return carry, carrySay

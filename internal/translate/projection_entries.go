@@ -339,12 +339,12 @@ func (p *EntryProjection) setCarry(lane, sayID, held string) {
 	p.carrySay[lane] = sayID
 }
 
-// sealLane settles one lane's carry and closes its say: a carry starting with SteerAckPrefix
-// is an unclosed marker and is dropped, anything else returns to its say (turnlog's seal rule).
+// sealLane settles one lane's carry and closes its say: turnlog.SealDropsSteerCarry owns which
+// carry is dropped; anything else returns to its say.
 func (p *EntryProjection) sealLane(lane string) {
 	held, sayID := p.carry[lane], p.carrySay[lane]
 	p.setCarry(lane, "", "")
-	if held != "" && !strings.HasPrefix(held, turnlog.SteerAckPrefix) {
+	if held != "" && !turnlog.SealDropsSteerCarry(held) {
 		p.extendSay(marotte.EntryKindText, sayID, lane, 0, held)
 	}
 	delete(p.laneOpen, lane)

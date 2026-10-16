@@ -268,8 +268,6 @@ func TestASplitSayTakesASegmentSuffix(t *testing.T) {
 	}
 }
 
-// The carry rule at a seal: a carry bearing the committing prefix is DROPPED; anything
-// shorter becomes the sealed entry's last delta.
 func TestSteerCarryIsSettledAtTheSeal(t *testing.T) {
 	ctx := t.Context()
 
@@ -284,6 +282,16 @@ func TestSteerCarryIsSettledAtTheSeal(t *testing.T) {
 		}
 		if rec.entries[0].Seq >= rec.entries[1].Seq {
 			t.Error("the text entry did not seal before the card")
+		}
+	})
+
+	t.Run("a prefix-bearing carry holding a bracket is shown", func(t *testing.T) {
+		turn, rec := open(t)
+		rec.seal(turn.TextDelta(ctx, "", "s1-say", "see "))
+		turn.SetSteerCarry("", "s1-say", SteerAckPrefix+"abc].")
+		rec.seal(turn.ToolCall(ctx, "", &marotte.EntryToolCall{ID: "call-1"}))
+		if got := rec.text(0); got != "see "+SteerAckPrefix+"abc]." {
+			t.Errorf("sealed text is %q, want the carry appended", got)
 		}
 	})
 

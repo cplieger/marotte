@@ -74,15 +74,35 @@ func stripSteerAcks(carry, incoming string) (emit, newCarry string, acks []steer
 	return strings.Join(texts, ""), newCarry, acks
 }
 
-// couldBecomeSteerAck reports whether s (starting at `[`) might still become a complete
-// marker: shorter than the committing prefix, it must be a prefix of it; at or past it, it
-// must carry it and have no `]` yet.
+// couldBecomeSteerAck reports whether s, starting at `[` and holding no complete marker (the
+// caller removes those first), could still be extended into a string steerAckRe matches from
+// its start. It must track steerAckRe: the id may hold `]`, and so may the body's first character.
 func couldBecomeSteerAck(s string) bool {
-	if len(s) < len(turnlog.SteerAckPrefix) {
-		return turnlog.SteerAckPrefix[:len(s)] == s
+	p := turnlog.SteerAckPrefix
+	if len(s) <= len(p) {
+		return p[:len(s)] == s
 	}
-	if !strings.HasPrefix(s, turnlog.SteerAckPrefix) {
+	if !strings.HasPrefix(s, p) {
 		return false
 	}
-	return !strings.Contains(s, "]")
+	rest := s[len(p):]
+	// `\s` in RE2 is [\t\n\f\r ]; the id ends at the first of these or `:`.
+	end := strings.IndexAny(rest, ":\t\n\f\r ")
+	switch {
+	case end < 0:
+		return true
+	case end == 0 || rest[end] != ':':
+		return false
+	}
+	body := rest[end+1:]
+	if body == "" {
+		return true
+	}
+	if body[0] != ' ' {
+		return false
+	}
+	body = body[1:]
+	// A `]` after the body's first character would close the marker; `]` is ASCII, so no
+	// multi-byte first character hides one past byte 0.
+	return body == "" || !strings.Contains(body[1:], "]")
 }
