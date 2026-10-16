@@ -91,6 +91,8 @@ export interface RunAskAddress {
   path?: string;
   /** A step question's ask id, which words sent to that step name. */
   askID?: string;
+  /** What the ask says, whole; absent where the source has no text. */
+  text?: string;
 }
 
 export interface AskedSteps {
@@ -98,6 +100,9 @@ export interface AskedSteps {
   waiting: ReadonlySet<RunNode>;
   /** The paused executions whose question the run tab's words answer, each with its ask id. */
   answerable: ReadonlyMap<RunNode, string>;
+  /** Each address's step as a node path key (`nodePathKey`), index-aligned with `RunAsks.asked`;
+   *  undefined where the server's match places none. */
+  paths: readonly (string | undefined)[];
 }
 
 interface PlacedStep {
@@ -130,24 +135,25 @@ export function askedSteps(root: RunNode | undefined, asks: RunAsks): AskedSteps
   const steps = placedSteps(root);
   const waiting = new Set<RunNode>();
   const answerable = new Map<RunNode, string>();
-  for (const a of asks.asked) {
+  const paths = asks.asked.map((a) => {
     const hit = askedStep(steps, a);
     if (hit === undefined) {
-      continue;
+      return undefined;
     }
-    waiting.add(hit);
-    if (a.answer && hit.status === "paused") {
-      answerable.set(hit, a.askID ?? "");
+    waiting.add(hit.node);
+    if (a.answer && hit.node.status === "paused") {
+      answerable.set(hit.node, a.askID ?? "");
     }
-  }
-  return { waiting, answerable };
+    return hit.key;
+  });
+  return { waiting, answerable, paths };
 }
 
-function askedStep(steps: readonly PlacedStep[], a: RunAskAddress): RunNode | undefined {
+function askedStep(steps: readonly PlacedStep[], a: RunAskAddress): PlacedStep | undefined {
   if (a.sessionID !== "") {
     const own = steps.find((s) => s.node.sessionId === a.sessionID);
     if (own !== undefined) {
-      return own.node;
+      return own;
     }
   }
   const candidates = a.answer
@@ -158,7 +164,7 @@ function askedStep(steps: readonly PlacedStep[], a: RunAskAddress): RunNode | un
           s.node.nodeId === a.nodeID &&
           (s.node.status === "paused" || s.node.status === "running"),
       );
-  return candidates.length === 1 ? candidates[0]?.node : undefined;
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 /** Reset the store between tests. */

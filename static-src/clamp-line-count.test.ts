@@ -31,12 +31,12 @@ interface ClampPair {
 // `.steer-text`. Their counts are asserted against layout in `disclosure-row-css.test.ts` and `pending-steers.test.ts`.
 const PAIRS: readonly ClampPair[] = [
   {
-    what: "the run dock's inputs",
+    what: "the run dock's question",
     tsFile: "exec-view/dock.ts",
     tsSrc: execDockSrc,
-    constant: "CLAMP",
+    constant: "ASK_CLAMP",
     sheet: "31-exec-view.css",
-    selector: ".ev-in-text[data-clamped]",
+    selector: ".ev-dock-ask-q[data-clamped]",
   },
   {
     what: "the run page's results",

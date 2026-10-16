@@ -550,6 +550,46 @@ describe("radius", () => {
     expect(findingsFor(r, "fx-unclipped")[0]?.ideal).toBe(12);
   });
 
+  it("exempts a corner on an edge content scrolls past, and judges it at the scroll's end", () => {
+    // A 1px-radius list capped at 59px: the second row ends 1px above the clip at scroll 0, an
+    // offset the scroll position decides. The rows past it are 3px, too round wherever judged.
+    mount(
+      `<div class="fx-scroller" style="border-radius:1px;overflow:hidden auto;width:80px;height:59px;display:flex;flex-direction:column;gap:2px;scrollbar-width:none">
+         <div class="fx-srow" style="border-radius:3px;background:#eee;height:28px;flex:none"></div>
+         <div class="fx-srow2" style="border-radius:1px;background:#eee;height:28px;flex:none"></div>
+         <div class="fx-srow3" style="border-radius:3px;background:#eee;height:28px;flex:none"></div>
+       </div>`,
+    );
+    const scroller = document.querySelector<HTMLElement>(".fx-scroller")!;
+    const atStart = run<RadiusResult>("radius", { tol: 0.75 });
+    expect(findingsFor(atStart, "fx-srow2")).toHaveLength(0);
+    expect(
+      atStart.exempt.some((e) => hasClass(e.child, "fx-srow2") && e.why.includes("scrolled")),
+    ).toBe(true);
+    // The first row's top corners are the layout's at scroll 0: still judged, and too round.
+    expect(findingsFor(atStart, "fx-srow")[0]?.corners).toBe("tl,tr");
+    scroller.scrollTop = scroller.scrollHeight;
+    const atEnd = run<RadiusResult>("radius", { tol: 0.75 });
+    expect(findingsFor(atEnd, "fx-srow")).toHaveLength(0);
+    // At the end the bottom offset is the layout's again, so the last row's corners are judged.
+    expect(findingsFor(atEnd, "fx-srow3")[0]?.corners).toBe("br,bl");
+  });
+
+  it("judges a corner 1px off a static clip's edge, since no reader scrolls an overflow: hidden box", () => {
+    mount(
+      `<div class="fx-clipcap" style="border-radius:1px;overflow:hidden;width:80px;height:59px;display:flex;flex-direction:column;gap:2px">
+         <div style="border-radius:1px;background:#eee;height:28px;flex:none"></div>
+         <div class="fx-crow2" style="border-radius:1px;background:#eee;height:28px;flex:none"></div>
+         <div style="border-radius:1px;background:#eee;height:28px;flex:none"></div>
+       </div>`,
+    );
+    const r = run<RadiusResult>("radius", { tol: 0.75 });
+    expect(findingsFor(r, "fx-crow2")[0]?.verdict).toBe("anisotropic");
+    expect(r.exempt.some((e) => hasClass(e.child, "fx-crow2") && e.why.includes("scrolled"))).toBe(
+      false,
+    );
+  });
+
   it("calls an anisotropic inset unsatisfiable and offers NO ideal radius", () => {
     mount(
       `<div class="fx-aniso" style="border-radius:12px;padding:8px 4px;width:80px;background:#ddd">

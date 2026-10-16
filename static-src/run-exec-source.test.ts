@@ -837,6 +837,41 @@ describe("runToExec question targeting", () => {
   });
 });
 
+describe("the run's questions", () => {
+  const root = {
+    nodeId: "wf_1",
+    type: "sequence",
+    status: "paused",
+    children: [
+      step("fix", "paused", { sessionId: "sess_fix" }),
+      step("review", "paused", { sessionId: "sess_rev" }),
+    ],
+  };
+  const QUESTION = "Phase A fix: which contract do you want? ".repeat(20);
+
+  it("carries every step question whole, placed at its step, and never a request decision", () => {
+    const run = runToExec(stateWith(root, { status: "paused" }), undefined, {
+      count: 3,
+      asked: [
+        { nodeID: "fix", sessionID: "sess_fix", answer: true, askID: "a1", text: QUESTION },
+        { nodeID: "review", sessionID: "sess_rev", answer: true, askID: "a2", text: "Ship?" },
+        { nodeID: "fix", sessionID: "", answer: false, text: "Allow git push?" },
+      ],
+      label: QUESTION,
+    });
+    expect(run.questions).toEqual([
+      { text: QUESTION, path: nodePathKey(["wf_1", "fix"]), step: "fix" },
+      { text: "Ship?", path: nodePathKey(["wf_1", "review"]), step: "review" },
+    ]);
+    // The head line keeps its one-line form; the region is where the whole question lives.
+    expect(run.alert?.kind).toBe("input");
+  });
+
+  it("carries none when nothing asks", () => {
+    expect(runToExec(stateWith(root), undefined, NO_ASKS).questions).toBeUndefined();
+  });
+});
+
 describe("a step's detail line", () => {
   it("names a retry wait on a running step and a pause on a paused one, verbatim", () => {
     const run = runToExec(

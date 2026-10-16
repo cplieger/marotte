@@ -1505,6 +1505,12 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
     return;
   }
   btn.dataset["bound"] = "";
+  // The fold opens the request and the body together; a stub's body takes its id when it is built.
+  const req = header.querySelector<HTMLElement>(":scope > .turn-req");
+  if (req !== null) {
+    req.id = `${card.id}-req`;
+  }
+  btn.setAttribute("aria-controls", `${card.id}-req ${turnBodyID(card)}`);
   btn.addEventListener("click", () => {
     // A no-fold turn's header is not a control; `isTurnOpen` ignores overrides for the newest and running turns, so
     // recording one would spring a surprise fold later.
@@ -1536,6 +1542,10 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
   });
   // The whole header band folds, like the tool and delegate cards; `wireRowToggle` keeps nested clicks and selection.
   wireRowToggle(header, btn);
+}
+
+function turnBodyID(card: HTMLElement): string {
+  return `${card.id}-body`;
 }
 
 /** Show a turn's search-hit count, so the folded list says which turns are worth opening. */
@@ -1756,7 +1766,7 @@ function buildTurn(t: Turn): HTMLElement {
   // The window entry is `plan.mounted`, so no whole-turn fallback.
   const range = wantedWindow.get(t.id);
   if (range !== undefined) {
-    const body = el("div", { className: "turn-body" });
+    const body = el("div", { className: "turn-body", id: turnBodyID(card) });
     card.appendChild(body);
     startFirstSlice(body, t, bodyRange(t, range));
   } else {
@@ -1912,7 +1922,7 @@ function existingOrNewBody(card: HTMLElement): HTMLElement | null {
   if (header === null) {
     return null;
   }
-  const body = el("div", { className: "turn-body" });
+  const body = el("div", { className: "turn-body", id: turnBodyID(card) });
   header.after(body);
   return body;
 }

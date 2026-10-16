@@ -28,9 +28,6 @@ type Ask struct {
 	// AskedAt is display only.
 	AskedAt  string
 	NodePath []string
-	// CanContinue is a fact of the reply alone: the run is paused and KAS's `update` would target
-	// this execution, its path and its session. A card combines it with Blocked.
-	CanContinue bool
 }
 
 // Blocked is the one blocker a card and the wire carry.
@@ -44,7 +41,7 @@ type RunLog struct {
 	Epoch string
 	// Stopping: a marotte cancel or delete is queued on the run.
 	Stopping bool
-	// Pending: marotte has a prompt or a Continue on the run not yet settled.
+	// Pending: marotte has a prompt on the run not yet settled.
 	Pending bool
 	// HostLost: the run's host bridge ended after its latest arm.
 	HostLost bool
@@ -81,6 +78,25 @@ func ParkedSteps(reply Inspect) []StepSession {
 	return out
 }
 
+// PausedOnAsks reports whether reply is a paused run whose every paused leaf waits on a person, the
+// state where KAS's resume leaves each step's need_input signal and re-parks it at once.
+func PausedOnAsks(reply Inspect) bool {
+	if !reply.OK || reply.State == nil || reply.State.Status != statusPaused {
+		return false
+	}
+	asking := false
+	for _, v := range nodes(reply.State) {
+		if len(v.n.Children) > 0 || v.n.Status != statusPaused {
+			continue
+		}
+		if !v.n.waits() {
+			return false
+		}
+		asking = true
+	}
+	return asking
+}
+
 // AskPosition is one step execution's ask identity across its turns: an Ask's Position, and the
 // first component of every Ask.ID asked there.
 func AskPosition(workflowID string, st StepSession) string {
@@ -95,7 +111,6 @@ func OpenAsks(reply Inspect, log RunLog) []Ask {
 	}
 	s := reply.State
 	all := nodes(s)
-	target, hasTarget := StatusUpdateTarget(s)
 	sole := len(ParkedSteps(reply)) == 1
 	var out []Ask
 	for i, v := range all {
@@ -118,9 +133,7 @@ func OpenAsks(reply Inspect, log RunLog) []Ask {
 			Reason:        unsignalledReason(s, v.n, sole),
 			Hold:          hold(log),
 			Wait:          wait(s, all, i, log),
-			CanContinue: s.Status == statusPaused && hasTarget &&
-				PathKey(target.Path) == PathKey(v.path) && target.SessionID == v.n.SessionID,
-			AskedAt: step.EndedAt,
+			AskedAt:       step.EndedAt,
 		})
 	}
 	return out

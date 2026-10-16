@@ -64,9 +64,9 @@ describe("the run's controls row", () => {
     const row = buildRunControlsView("wf").current();
     expect(names(row)).toEqual(labels);
     for (const btn of row?.querySelectorAll("button") ?? []) {
-      expect(btn.querySelector(".run-control-label")?.textContent).toBe(
-        btn.getAttribute("aria-label"),
-      );
+      // Icon-only at every width: the name is the label and the tooltip, never a word on screen.
+      expect(btn.textContent).toBe("");
+      expect(btn.querySelector("svg")).not.toBeNull();
       expect(btn.getAttribute("data-tooltip")).not.toBe("");
     }
   });

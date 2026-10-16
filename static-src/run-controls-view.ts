@@ -60,7 +60,7 @@ const ICON: Record<RunVerb, string> = {
   retry: ICON_REFRESH,
 };
 
-/** What each verb says on hover, where its word is hidden by the dock's width. */
+/** What each verb says on hover; a button shows its icon alone, its name in `aria-label`. */
 const TIP: Record<RunVerb, string> = {
   pause: "Pause the run at the end of its current step",
   resume: "Resume the run",
@@ -181,6 +181,5 @@ function button(verb: RunVerb, onclick: () => void): HTMLButtonElement {
       onclick,
     },
     iconEl(ICON[verb]),
-    el("span", { className: "run-control-label" }, CONTROL_LABEL[verb]),
   ) as HTMLButtonElement;
 }

@@ -152,8 +152,8 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		"pause": {methodKiroWorkflowPause, func(h *Runtime) error {
 			return h.runs.pause(context.Background(), "wf_1")
 		}},
-		"set_step_status": {methodKiroWorkflowUpdate, func(h *Runtime) error {
-			return h.runs.setStepStatus(context.Background(), "wf_1", marotte.RunStepStatusRequest{NodeID: "review", Status: runStepCompleted})
+		"finish_loop": {methodKiroWorkflowUpdate, func(h *Runtime) error {
+			return h.runs.finishRepeat(context.Background(), "wf_1", "review")
 		}},
 	}
 
@@ -207,14 +207,14 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 	})
 
 	// A decline writes nothing, so no run_complete would ever close the re-host's process.
-	t.Run("a DECLINED step status tears the carrier it started back down", func(t *testing.T) {
+	t.Run("a DECLINED finish-loop tears the carrier it started back down", func(t *testing.T) {
 		h, br := seed(t)
 		br.callResults[methodKiroWorkflowUpdate] = json.RawMessage(
 			`{"workflowId":"wf_1","updated":false,"queued":false,` +
 				`"message":"No current step to update: the workflow has no running or paused step."}`,
 		)
 
-		err := h.runs.setStepStatus(t.Context(), "wf_1", marotte.RunStepStatusRequest{NodeID: "review", Status: runStepCompleted})
+		err := h.runs.finishRepeat(t.Context(), "wf_1", "review")
 		if !errors.Is(err, errStepStatusRefused) {
 			t.Fatalf("a declined update = %v, want errStepStatusRefused", err)
 		}
@@ -515,10 +515,10 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 			},
 		},
 		// The other two verbs; Retry is counted too, since an earlier bound may target this carrier.
-		"a step-status write in flight": {
+		"a finish-loop write in flight": {
 			methodKiroWorkflowUpdate,
 			func(t *testing.T, h *Runtime) error {
-				return h.runs.setStepStatus(t.Context(), "wf_1", marotte.RunStepStatusRequest{NodeID: "review", Status: runStepCompleted})
+				return h.runs.finishRepeat(t.Context(), "wf_1", "review")
 			},
 		},
 		"a retry in flight": {
@@ -864,7 +864,7 @@ func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- h.runs.setStepStatus(t.Context(), "wf_1", marotte.RunStepStatusRequest{NodeID: "review", Status: runStepCompleted})
+		done <- h.runs.finishRepeat(t.Context(), "wf_1", "review")
 	}()
 
 	// The fake's own log, never carriers.busy.

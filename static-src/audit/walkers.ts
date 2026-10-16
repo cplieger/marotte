@@ -107,6 +107,46 @@ function distortedUnder(el: Element): Element | null {
   return null;
 }
 
+/** The edges of `host` that content scrolls past, checked on every scroll container from `el`'s
+ *  parent up to `host`: where a scroller has more content beyond an edge, a child's offset from that
+ *  edge is the scroll position, which no radius or inset can answer. At a scroller's start or end
+ *  the offset is the layout's, so that edge is still judged. */
+function scrolledEdges(el: Element, host: Element): Set<"top" | "bottom" | "left" | "right"> {
+  const edges = new Set<"top" | "bottom" | "left" | "right">();
+  // Not `hidden`: no reader can scroll a clip, so a child's offset from its edge stays put.
+  const scrolls = (v: string): boolean => v === "auto" || v === "scroll";
+  let cur: Element | null = el.parentElement;
+  while (cur !== null) {
+    const cs = getComputedStyle(cur);
+    // Integer scroll sizes round a subpixel box, so an overflow of a pixel or less is no scroll.
+    if (scrolls(cs.overflowY) && cur.scrollHeight > cur.clientHeight + 1) {
+      if (cur.scrollTop > 0.5) {
+        edges.add("top");
+      }
+      if (cur.scrollTop + cur.clientHeight < cur.scrollHeight - 0.5) {
+        edges.add("bottom");
+      }
+    }
+    if (scrolls(cs.overflowX) && cur.scrollWidth > cur.clientWidth + 1) {
+      // `scrollLeft` counts from the start edge, which is the right one in RTL (and negative there).
+      const [start, end] =
+        cs.direction === "rtl" ? (["right", "left"] as const) : (["left", "right"] as const);
+      const from = Math.abs(cur.scrollLeft);
+      if (from > 0.5) {
+        edges.add(start);
+      }
+      if (from + cur.clientWidth < cur.scrollWidth - 0.5) {
+        edges.add(end);
+      }
+    }
+    if (cur === host) {
+      break;
+    }
+    cur = cur.parentElement;
+  }
+  return edges;
+}
+
 function bucket<T>(rows: readonly (readonly [string, T])[]): (T & { count: number })[] {
   const seen = new Map<string, T & { count: number }>();
   for (const [key, payload] of rows) {
@@ -488,8 +528,9 @@ function controlHeight(opts: { tol: number; floor?: number }): unknown {
 /** Every nested rounded corner that does not nest. Concentric arcs need
  *  `inner = outer - outer-border - inset` with EQUAL insets on the corner's two edges, so an
  *  anisotropic inset is its own verdict with no ideal. Exempt (reported): a stadium or circle
- *  (radius >= half the short side) and a child flush inside a clipping parent. A child that paints
- *  nothing at rest is judged and flagged hover-only. */
+ *  (radius >= half the short side), a child flush inside a clipping parent, and a corner on an edge
+ *  content scrolls past (`scrolledEdges`). A child that paints nothing at rest is judged and flagged
+ *  hover-only. */
 function radius(opts: { tol: number }): unknown {
   const tol = opts.tol;
   const CORNERS = [
@@ -591,6 +632,7 @@ function radius(opts: { tol: number }): unknown {
     };
     const clips = hostCS.overflow === "hidden" || hostCS.overflow === "clip";
     const shortSide = Math.min(cr.width, cr.height);
+    const scrolled = scrolledEdges(child, host);
 
     const bad: string[] = [];
     let worst: {
@@ -633,6 +675,10 @@ function radius(opts: { tol: number }): unknown {
       // and small children all read "anisotropic". Skipped corners are not counted in `pairs`.
       const nests = (gap: number): boolean => gap >= -tol && gap <= parentR + tol;
       if (!nests(gapV) || !nests(gapH)) {
+        continue;
+      }
+      if (scrolled.has(vEdge) || scrolled.has(hEdge)) {
+        exemptWhy = "scrolled under its parent's edge (the scroll offset, not an inset)";
         continue;
       }
       pairs += 1;
@@ -1053,6 +1099,7 @@ const HELPERS = {
   tokenPx,
   hasNoBox,
   distortedUnder,
+  scrolledEdges,
   bucket,
   ownsPoint,
   targetExtent,

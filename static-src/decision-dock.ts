@@ -141,7 +141,7 @@ export function mountDecisionDock(hostEl: HTMLElement): void {
 /**
  * Wire the run view's dock: the current run's decisions, whether keyed to the launching chat or `run:<id>`. The run is
  * a getter because one view element serves every run tab. Idempotent per host element. A step's question is answered
- * in the run composer, marked by its attention border (`run-composer.ts`).
+ * in the run composer, whose placeholder names the step and whose Send reads "Send answer" (`run-composer.ts`).
  */
 export function mountRunDecisionDock(hostEl: HTMLElement, runID: () => string): void {
   addHost(hostEl, (d) => {
@@ -329,6 +329,7 @@ export function runPendingAsks(workflowID: string): RunAsks {
         answer: true,
         path: nodePathKey(a.node_path),
         askID: a.ask_id,
+        text: runAskLabel(a),
       });
       if (label === "") {
         label = runAskLabel(a);
@@ -345,6 +346,7 @@ export function runPendingAsks(workflowID: string): RunAsks {
         nodeID: d.payload.node_id ?? "",
         sessionID: d.payload.sub_session_id ?? "",
         answer: false,
+        text: requestLabel(d),
       });
       if (label === "") {
         label = requestLabel(d);

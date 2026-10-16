@@ -18,12 +18,13 @@ import {
   isWork,
   latestPass,
   passText,
-  progressText,
+  progressPhrase,
   window as execWindow,
   type ExecKind,
   type ExecNode,
   type ExecRun,
 } from "../exec-view/model.js";
+import { buildProgress } from "../exec-view/summary.js";
 import { reconcile } from "../reconcile.js";
 import { kindGlyph } from "../exec-view/tree.js";
 import { paintLabel } from "../exec-view/label.js";
@@ -161,7 +162,9 @@ export function buildRunCard(
   // The step counter is the only fact this row carries besides the name: the status
   // word and the elapsed clock are `.run-foot`'s, which states both 44px below and
   // outside the disclosure, so a second rendering here was one fact with two owners.
-  const countEl = el("span", { className: "run-count" });
+  const count = buildProgress();
+  const countEl = count.root;
+  countEl.classList.add("run-count");
   // A span, not a button: the head is `role="button"`, so a nested `<button>`
   // is axe's `nested-interactive` regardless of aria-hidden/tabindex="-1".
   const chevron = el("span", { className: "run-toggle", "aria-hidden": "true" }, chevronEl());
@@ -524,7 +527,7 @@ export function buildRunCard(
     // ask blocks it, so `data-status` keeps the status and this says what is wanted.
     const word = asks.count > 0 ? "needs input" : runWord(state?.status);
 
-    countEl.textContent = exec === undefined ? "" : progressText(exec);
+    count.paint(exec === undefined ? undefined : progressPhrase(exec));
 
     liveClock = runIsLive(state);
 

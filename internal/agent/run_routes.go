@@ -23,7 +23,6 @@ func (rr *runRoutes) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/runs/{id}/resume", rr.handleResume)
 	mux.HandleFunc("POST /api/runs/{id}/retry", rr.handleRetry)
 	mux.HandleFunc("DELETE /api/runs/{id}", rr.handleDelete)
-	mux.HandleFunc("POST /api/runs/{id}/step", rr.handleStepStatus)
 	mux.HandleFunc("POST /api/runs/{id}/extend", rr.handleExtend)
 	mux.HandleFunc("POST /api/runs/{id}/finish-loop", rr.handleFinishLoop)
 	mux.HandleFunc("POST /api/runs/{id}/answer", rr.handleAnswer)

@@ -279,7 +279,7 @@ func TestOpenAsks_Branches(t *testing.T) {
 			t.Errorf("Wait = %q, want branch_running", got[0].Wait)
 		}
 	})
-	t.Run("two parked branches are two asks and Continue targets the first", func(t *testing.T) {
+	t.Run("two parked branches are two asks", func(t *testing.T) {
 		t.Parallel()
 		in := recombined(t, "paused", parallel(
 			stepNode("a", "paused", fixtureSession, "need_input", true),
@@ -292,15 +292,11 @@ func TestOpenAsks_Branches(t *testing.T) {
 		if got[0].ID == got[1].ID || got[0].Position == got[1].Position {
 			t.Error("two branches share an identity, so one settle retires both")
 		}
-		if !got[0].CanContinue || got[1].CanContinue {
-			t.Errorf("CanContinue = %v, %v; want only KAS's update target, even with marotte's own pending set",
-				got[0].CanContinue, got[1].CanContinue)
-		}
 		if got[0].Wait != "" || got[0].Hold != marotte.RunAskPending {
 			t.Errorf("a paused run's ask = wait %q hold %q, want no wait and pending held", got[0].Wait, got[0].Hold)
 		}
 	})
-	t.Run("a fan-out sharing one path offers Continue on KAS's target session only", func(t *testing.T) {
+	t.Run("a fan-out sharing one path is two asks", func(t *testing.T) {
 		t.Parallel()
 		in := recombined(t, "paused", parallel(
 			stepNode("a", "paused", fixtureSession, "need_input", true),
@@ -309,17 +305,6 @@ func TestOpenAsks_Branches(t *testing.T) {
 		got := OpenAsks(in, RunLog{})
 		if len(got) != 2 || PathKey(got[0].NodePath) != PathKey(got[1].NodePath) {
 			t.Fatalf("OpenAsks = %+v, want two asks at one path", got)
-		}
-		if !got[0].CanContinue || got[1].CanContinue {
-			t.Errorf("CanContinue = %v, %v; want only the first session's, the one update targets",
-				got[0].CanContinue, got[1].CanContinue)
-		}
-	})
-	t.Run("a live run offers no Continue", func(t *testing.T) {
-		t.Parallel()
-		in := recombined(t, "running", stepNode("ask", "paused", fixtureSession, "need_input", true))
-		if got := OpenAsks(in, RunLog{}); got[0].CanContinue {
-			t.Error("CanContinue on a live loop, where update queues and can erase a sibling's signal")
 		}
 	})
 	t.Run("repeat iterations sharing a node id are distinct asks", func(t *testing.T) {
@@ -397,21 +382,6 @@ func TestDecodeInspect_ARunNamedOnlyOnTheReplyKeysItsAsks(t *testing.T) {
 	}
 }
 
-func TestStatusUpdateTarget(t *testing.T) {
-	t.Parallel()
-	in := recombined(t, "running",
-		stepNode("a", "paused", fixtureSession, "need_input", true),
-		stepNode("b", "running", "sess_b", "", nil))
-	got, ok := StatusUpdateTarget(in.State)
-	if !ok || got.NodeID != "b" {
-		t.Errorf("StatusUpdateTarget = %+v, %v; want the running step ahead of the earlier paused one", got, ok)
-	}
-	none := recombined(t, "running", stepNode("a", "completed", fixtureSession, "", nil))
-	if _, ok := StatusUpdateTarget(none.State); ok {
-		t.Error("StatusUpdateTarget found a target in a run with no running or paused step")
-	}
-}
-
 func TestParkedSteps_MatchesOpenAsks(t *testing.T) {
 	t.Parallel()
 	in := decoded(t, fixture(t, "parked"))
@@ -431,7 +401,7 @@ func TestParkedSteps_MatchesOpenAsks(t *testing.T) {
 }
 
 // A send_message signal KAS could not save parks the step with no signal: it is still one ask,
-// Continue reaches it, and the card carries KAS's reason rather than reading as a question.
+// and the card carries KAS's reason rather than reading as a question.
 func TestOpenAsks_UnsavedSignalParkCarriesItsReason(t *testing.T) {
 	t.Parallel()
 	const (
@@ -452,8 +422,8 @@ func TestOpenAsks_UnsavedSignalParkCarriesItsReason(t *testing.T) {
 	if a.Reason != reason {
 		t.Errorf("Reason = %q, want %q", a.Reason, reason)
 	}
-	if !a.CanContinue || a.Blocked() != "" {
-		t.Errorf("CanContinue = %v Blocked = %q, want Continue offered and nothing blocking", a.CanContinue, a.Blocked())
+	if a.Blocked() != "" {
+		t.Errorf("Blocked = %q, want nothing blocking", a.Blocked())
 	}
 	if a.TextSource != marotte.RunAskTextLastMessage || a.Text != "All three files are updated." {
 		t.Errorf("text = %q (%s), want the step's last message", a.Text, a.TextSource)
@@ -479,5 +449,46 @@ func TestOpenAsks_ReasonOnlyWhereItNamesThisPark(t *testing.T) {
 		if a.Reason != "" {
 			t.Errorf("%s: Reason = %q, want none while two steps wait", a.NodeID, a.Reason)
 		}
+	}
+}
+
+// PausedOnAsks is the fact that withholds Resume: only a paused run whose every paused leaf waits on
+// a person qualifies, since one ordinary pause beside an ask is a pause Resume undoes.
+func TestPausedOnAsks(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		in   Inspect
+		want bool
+	}{
+		"one step asks": {
+			in:   recombined(t, statusPaused, stepNode("ask", statusPaused, fixtureSession, needInput, true)),
+			want: true,
+		},
+		"two steps ask": {
+			in: recombined(t, statusPaused,
+				stepNode("a", statusPaused, fixtureSession, needInput, true),
+				stepNode("b", statusPaused, "sess_other", needInput, true)),
+			want: true,
+		},
+		"an ask beside an ordinary paused step": {
+			in: recombined(t, statusPaused,
+				stepNode("a", statusPaused, fixtureSession, needInput, true),
+				stepNode("b", statusPaused, "sess_other", "", false)),
+		},
+		"a paused step that asks nothing": {
+			in: recombined(t, statusPaused, stepNode("a", statusPaused, fixtureSession, "", false)),
+		},
+		"a running run holding a parked step": {
+			in: recombined(t, statusRunning, stepNode("a", statusPaused, fixtureSession, needInput, true)),
+		},
+		"an unreadable reply": {in: Inspect{}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := PausedOnAsks(tc.in); got != tc.want {
+				t.Errorf("PausedOnAsks = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

@@ -489,6 +489,16 @@ export const ICON_TAB_RUN = svg(
   "ui",
   '<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/>',
 );
+/** The run dock's Steps segment: Lucide `list-tree`. */
+export const ICON_SEG_STEPS = svg(
+  "ui",
+  '<path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/><path d="M3 6v4c0 1.1.9 2 2 2h3"/><path d="M3 10v6c0 1.1.9 2 2 2h3"/>',
+);
+/** The run dock's Timeline segment: Lucide `chart-gantt`. */
+export const ICON_SEG_TIMELINE = svg(
+  "ui",
+  '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 6h8"/><path d="M12 11h7"/><path d="M9 16h5"/>',
+);
 /**
  * A sub-tab's nesting marker (Lucide "corner-down-right"), a real element so the activity dot sits beside it.
  * Written out for stroke-width 3: the shared weight reads as a hairline at 14px.

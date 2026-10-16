@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import { userEvent } from "vitest/browser";
 import { makeSession } from "./__test-helpers__/model.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 
@@ -772,6 +773,65 @@ describe("expanding a stub", () => {
       expect(hasBody("u1")).toBe(true);
       expect(isFolded("u1")).toBe(false);
     });
+  });
+
+  it("a click on a stub's cut prompt opens the prompt and the body the toggle names", async () => {
+    const style = mountAppCSS();
+    try {
+      const id = chatID();
+      const prompt = Array.from({ length: 12 }, (_, i) => `line ${String(i + 1)}`).join("\n");
+      const long = toolTurn("u1");
+      long[0] = turnOpen("u1", 1, prompt);
+      activate(id, [long, heavyTurn("big", RESIDENT_ENTRIES + 64, 2)]);
+      const c = card("u1");
+      const text = c.querySelector<HTMLElement>(".turn-req-text")!;
+      const toggle = c.querySelector<HTMLElement>(".turn-fold-toggle")!;
+      expect(hasBody("u1")).toBe(false);
+      expect(isFolded("u1")).toBe(true);
+      expect(toggle.getAttribute("aria-controls")).toBe(`${c.id}-req ${c.id}-body`);
+      expect(c.querySelector(":scope > .turn-header > .turn-req")?.id).toBe(`${c.id}-req`);
+      await vi.waitFor(() => {
+        expect(text.hasAttribute("data-cut")).toBe(true);
+      });
+      expect(text.scrollHeight - text.clientHeight).toBeGreaterThan(1);
+
+      text.click();
+      await vi.waitFor(() => {
+        expect(hasBody("u1")).toBe(true);
+        expect(isFolded("u1")).toBe(false);
+      });
+      expect(c.querySelector(":scope > .turn-body")?.id).toBe(`${c.id}-body`);
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(text.scrollHeight - text.clientHeight).toBeLessThanOrEqual(1);
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("a labelled prompt's full text opens with the turn, through the same click", async () => {
+    const style = mountAppCSS();
+    try {
+      const id = chatID();
+      const long = toolTurn("u1");
+      long[0] = sealed("u1", 0, "turn_open", {
+        prompt: { id: "u1-p", text: "the whole instruction", label: "Run task 2" },
+        source: "prompt",
+        n: 1,
+      });
+      activate(id, [long, heavyTurn("big", RESIDENT_ENTRIES + 64, 2)]);
+      const c = card("u1");
+      const full = c.querySelector<HTMLElement>(".turn-req-full")!;
+      expect(full.textContent).toBe("the whole instruction");
+      expect(getComputedStyle(full).display).toBe("none");
+
+      c.querySelector<HTMLElement>(".turn-req-text")!.click();
+      await vi.waitFor(() => {
+        expect(hasBody("u1")).toBe(true);
+        expect(getComputedStyle(full).display).not.toBe("none");
+      });
+    } finally {
+      style.remove();
+    }
   });
 
   it("a stub header keeps the disclosure contract while closed", () => {

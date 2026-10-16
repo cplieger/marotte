@@ -34,9 +34,6 @@ interface ExecPageOpts {
   /** The execution's verbs. Returns null for a state with no verbs, and may return the SAME
    *  element it returned last time to say nothing changed, which the dock then leaves in place. */
   controls?: (run: ExecRun) => HTMLElement | null;
-  /** What the dock's alert offers beside the verbs (an ask's Answer), under the same contract.
-   *  Asked on every repaint, alert or not. */
-  alertAction?: (run: ExecRun) => HTMLElement | null;
   /** The consumer's own statements about the execution (a control refusal), as dock notes. */
   notes?: (run: ExecRun) => readonly string[];
   /** Fired when the node the DETAIL PANE is showing changes, or when that node's
@@ -50,7 +47,7 @@ interface ExecPageOpts {
   /** How the page picks a node without a click. `attention` (the default) opens the one that wants
    *  something. `newest` keeps the most recently started step selected, switching when a newer one
    *  starts; a click holds until then, and a container click picks its newest step, so a step is
-   *  always selected. */
+   *  always selected. Either way, a question that opens selects its step, as a click would. */
   follow?: "attention" | "newest";
 }
 
@@ -129,6 +126,19 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   let timer: ReturnType<typeof setInterval> | undefined;
   const follow = opts.follow ?? "attention";
   let seenGen = 0;
+  /** The steps whose question was open at the last render, so only a question that OPENS moves the
+   *  selection, and a reader who picks another step afterwards keeps it. */
+  let asking = new Set<string>();
+
+  /** The step of a question opened since the last render, if any. */
+  function openedAsk(run: ExecRun): string | undefined {
+    const now = new Set(
+      (run.questions ?? []).flatMap((q) => (q.path === undefined ? [] : [q.path])),
+    );
+    const opened = [...now].find((p) => !asking.has(p) && nodeAt(run.nodes, p) !== undefined);
+    asking = now;
+    return opened;
+  }
 
   function advance(node: ExecNode | undefined): boolean {
     if (node?.startGen === undefined || node.startGen <= seenGen) {
@@ -182,7 +192,6 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     notes = opts.notes?.(run) ?? [];
     dock.paint(run, selected, notes);
     dock.setControls(opts.controls?.(run) ?? null);
-    dock.setAlertAction(opts.alertAction?.(run) ?? null);
     const node = nodeAt(run.nodes, selected);
     detail.render(node);
     // In `repaint` rather than in `render`, because the region is the SELECTED node's:
@@ -257,7 +266,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       );
     }
     const text = el("div", { className: "ev-r-text" }, buildAssistantBubble(value, false).root);
-    const more = el("button", { type: "button", className: "ev-r-more" }) as HTMLButtonElement;
+    const more = el("button", { type: "button", className: "clamp-more" }) as HTMLButtonElement;
     attachClamp(text, more, RESULT_CLAMP);
     return el(
       "div",
@@ -303,11 +312,13 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       // the auto-follow. Guarded on the value having changed, or re-asserting the
       // same focus on every invalidation would fight a reader who clicked
       // elsewhere. A focus naming an absent node falls through to auto-follow.
+      let doorPicked = false;
       if (
         run.focus !== undefined &&
         run.focus !== focused &&
         nodeAt(run.nodes, run.focus) !== undefined
       ) {
+        doorPicked = true;
         focused = run.focus;
         selected = run.focus;
         userPicked = true;
@@ -318,6 +329,14 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
         selected = followNewest(run);
       } else if (!userPicked || nodeAt(run.nodes, selected) === undefined) {
         selected = autoSelect(run);
+      }
+      // Read on every render so `asking` stays current; a door honoured in this same render is the
+      // newer choice, and a new page's first render sees every open question as just opened.
+      const opened = openedAsk(run);
+      if (opened !== undefined && !doorPicked) {
+        selected = opened;
+        userPicked = true;
+        advance(newestStarted(run.nodes));
       }
       repaint();
       setClock(run.live);

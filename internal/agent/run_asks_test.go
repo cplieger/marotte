@@ -278,7 +278,7 @@ func TestRunAsks_AReplyKeepsTheTurnMarkerFromBeforeItsInspect(t *testing.T) {
 	}
 }
 
-// A successful pause is not a stop: every ask stays sendable and Continue-able.
+// A successful pause is not a stop: every ask stays sendable.
 func TestRunAsks_APauseLeavesEveryAskSendable(t *testing.T) {
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	readNow(t, h, "wf_1")
@@ -286,8 +286,8 @@ func TestRunAsks_APauseLeavesEveryAskSendable(t *testing.T) {
 		t.Fatalf("pause = %v", err)
 	}
 	r := readNow(t, h, "wf_1")
-	if a := r.asks[0]; a.Blocked() != "" || !a.CanContinue {
-		t.Errorf("after a pause the ask = blocked %q continue %v, want sendable and Continue-able", a.Blocked(), a.CanContinue)
+	if a := r.asks[0]; a.Blocked() != "" {
+		t.Errorf("after a pause the ask = blocked %q, want sendable", a.Blocked())
 	}
 }
 
@@ -405,7 +405,7 @@ func TestRunAsks_AResumeIsRefusedWhileAnAnswerIsPending(t *testing.T) {
 	}
 }
 
-// Every verb on a run marotte holds no lease for: an answer or Continue has nothing to address,
+// Every verb on a run marotte holds no lease for: an answer has nothing to address,
 // and the run's controls go out unserialized.
 func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
 	cases := []struct {
@@ -418,12 +418,6 @@ func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
 		{
 			name: "answer", wantErr: errAskGone,
 			do: func(h *Runtime) error { return h.runs.answerInput(context.Background(), "wf_1", "a1", "teal") },
-		},
-		{
-			name: "continue", wantErr: errStepStatusMistargeted,
-			do: func(h *Runtime) error {
-				return h.runs.setStepStatus(context.Background(), "wf_1", marotte.RunStepStatusRequest{NodeID: "review", Status: runStepRunning})
-			},
 		},
 		{
 			name: "cancel", method: methodKiroWorkflowCancel,

@@ -33,7 +33,6 @@ function run(nodes: ExecNode[], live = true): ExecRun {
 let host: HTMLElement;
 let page: ExecPageView;
 let verbs: HTMLElement | null;
-let answer: HTMLButtonElement | null;
 let notes: readonly string[];
 let shown: (ExecNode | undefined)[];
 
@@ -41,14 +40,12 @@ beforeEach(() => {
   host = document.createElement("div");
   host.className = "ev-dock-host";
   verbs = null;
-  answer = null;
   notes = [];
   shown = [];
   page = buildExecPage({
     emptyNote: () => "",
     dock: host,
     controls: () => verbs,
-    alertAction: () => answer,
     notes: () => notes,
     onShowNode: (n) => {
       shown.push(n);
@@ -85,8 +82,8 @@ describe("the dock", () => {
     });
     expect(q(".ev-sum-label").textContent).toBe("release");
     expect(q(".ev-sum-state").textContent).toBe("running");
-    expect(q(".ev-sum-progress").textContent).toBe("step 2 of 2");
-    for (const gone of [".ev-head", ".ev-inputs", ".ev-alert-line", ".ev-tree", ".ev-tl"]) {
+    expect(q(".ev-sum-compact").textContent).toBe("2/2");
+    for (const gone of [".ev-head", ".ev-dock-inputs", ".ev-alert-line", ".ev-tree", ".ev-tl"]) {
       expect(page.root.querySelector(gone), gone).toBeNull();
     }
     expect(page.root.querySelector(".ev-d-title")?.textContent).toBe("build");
@@ -113,27 +110,77 @@ describe("the dock", () => {
     );
   });
 
-  it("holds Steps, Timeline and Inputs, withdrawing Inputs when the run has none", () => {
+  it("holds two segments with icons, and the run's inputs above them, absent with none", () => {
     page.render({ ...run([step("plan", "running", 0)]), inputs: { repo: "marotte" } });
+    const segs = [...host.querySelectorAll<HTMLButtonElement>(".ev-dock-seg .seg")];
+    expect(segs.map((b) => b.getAttribute("aria-label"))).toEqual(["Steps", "Timeline"]);
+    expect(segs.every((b) => b.querySelector("svg.seg-icon") !== null)).toBe(true);
     expect(segment("steps").getAttribute("aria-selected")).toBe("true");
     expect(q(".ev-dock-body .ev-tree")).not.toBeNull();
-    segment("inputs").click();
-    expect(q(".ev-in-k").textContent).toBe("repo");
-    expect(q(".ev-in-text").textContent).toBe("marotte");
+    const inputs = q(".ev-dock-inputs");
+    expect(inputs.nextElementSibling).toBe(q(".ev-dock-seg"));
+    expect([...inputs.querySelectorAll("dt, dd")].map((n) => n.textContent)).toEqual([
+      "repo",
+      "marotte",
+    ]);
     page.render(run([step("plan", "running", 0)]));
-    expect(segment("inputs").classList.contains("hidden")).toBe(true);
-    expect(segment("steps").getAttribute("aria-selected")).toBe("true");
+    expect(inputs.hidden).toBe(true);
     segment("timeline").click();
     expect(q<HTMLElement>(".ev-tl").closest<HTMLElement>(".ev-dock-pane")?.hidden).toBe(false);
   });
 
+  it("draws each input on one line with its whole value in the tooltip", () => {
+    const style = mountAppCSS();
+    try {
+      const long = "a ".repeat(200).trim();
+      page.render({ ...run([step("plan", "running", 0)]), inputs: { note: long } });
+      toggle().click();
+      const value = q(".ev-dock-input-v");
+      expect(value.getAttribute("data-tooltip")).toBe(long);
+      const dd = value.closest("dd")!;
+      expect(getComputedStyle(dd).whiteSpace).toBe("nowrap");
+      expect(getComputedStyle(dd).textOverflow).toBe("ellipsis");
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("links a workspace path input to its file", () => {
+    page.render({
+      ...run([step("plan", "running", 0)]),
+      inputs: { brief: "/workspace/briefs/plan.md" },
+    });
+    const link = q<HTMLAnchorElement>("a.ev-dock-input-path");
+    expect(link.textContent).toBe("/workspace/briefs/plan.md");
+    expect(link.getAttribute("href")).toContain("briefs/plan.md");
+  });
+
   it("keeps the inputs list across repaints while the set holds", () => {
     page.render({ ...run([step("plan", "running", 0)]), inputs: { repo: "marotte" } });
-    const before = q(".ev-in-v");
+    const before = q(".ev-dock-input");
     page.render({ ...run([step("plan", "running", 1)]), inputs: { repo: "marotte" } });
-    expect(q(".ev-in-v")).toBe(before);
+    expect(q(".ev-dock-input")).toBe(before);
     page.render({ ...run([step("plan", "running", 1)]), inputs: { repo: "subflux" } });
-    expect(q(".ev-in-v")).not.toBe(before);
+    expect(q(".ev-dock-input")).not.toBe(before);
+  });
+
+  it("boxes the open pane below the switcher, apart from it, at the concentric corner", () => {
+    const style = mountAppCSS();
+    try {
+      page.render(run([step("plan", "running", 0)]));
+      toggle().click();
+      const seg = q(".ev-dock-seg").getBoundingClientRect();
+      const box = q(".ev-dock-body");
+      const cs = getComputedStyle(box);
+      expect(box.getBoundingClientRect().top - seg.bottom).toBeGreaterThan(0);
+      expect(cs.borderTopWidth).toBe("1px");
+      const dock = getComputedStyle(q(".ev-dock"));
+      const want =
+        Number.parseFloat(dock.borderTopLeftRadius) - 1 - Number.parseFloat(dock.paddingTop);
+      expect(Number.parseFloat(cs.borderTopLeftRadius)).toBe(Math.max(0, want));
+    } finally {
+      style.remove();
+    }
   });
 });
 
@@ -178,7 +225,8 @@ describe("the live rows", () => {
     const list = q(".ev-dock-rows");
     const rowH = q(".ev-dock-row").offsetHeight;
     expect(rowH).toBeGreaterThan(0);
-    expect(list.clientHeight).toBe(5.5 * rowH);
+    const gap = Number.parseFloat(getComputedStyle(list).rowGap);
+    expect(list.clientHeight).toBe(5.5 * rowH + 5 * gap);
     expect(getComputedStyle(list).overflowY).toBe("auto");
     style.remove();
   });
@@ -214,99 +262,219 @@ describe("the live rows", () => {
   });
 });
 
-describe("the alert", () => {
-  const alerts: [string, NonNullable<ExecRun["alert"]>][] = [
-    ["a step waiting on an answer", { kind: "input", text: "Waiting for answer: Which?" }],
-    [
-      "a loop at its limit",
-      {
-        kind: "paused",
-        text: "Waiting: Repeat 'review' reached maxIterations. \u00b7 3 of 3 passes",
-      },
-    ],
-    ["an interrupted run", { kind: "paused", text: "Waiting: Interrupted by agent restart" }],
-    ["an unreachable host", { kind: "paused", text: "Waiting: host unreachable (ECONNREFUSED)" }],
-    ["a failure", { kind: "failed", text: "build failed: exit status 2" }],
-    ["a validation error", { kind: "failed", text: "plan failed: input 'branch' is required" }],
-  ];
-
-  for (const [name, alert] of alerts) {
-    it(`replaces the summary with ${name}, in its live region, and gives it back`, () => {
-      page.render({ ...run([step("plan", "ok", 0), step("loop", "waiting", 1)]), alert });
-      const head = q(".ev-dock-head");
-      expect(head.dataset["alert"]).toBe(alert.kind);
-      const line = q(".ev-alert-line");
-      expect(line.querySelector(".ev-alert-text")?.textContent).toBe(alert.text);
-      expect(line.parentElement?.getAttribute("role")).toBe(
-        alert.kind === "failed" ? "alert" : "status",
-      );
-      expect(q(".ev-sum").hasAttribute("data-alerting")).toBe(true);
-      page.render(run([step("plan", "ok", 0), step("loop", "running", 1)]));
-      expect(head.dataset["alert"]).toBeUndefined();
-      expect(host.querySelector(".ev-alert-line")).toBeNull();
-      expect(q(".ev-sum").hasAttribute("data-alerting")).toBe(false);
-    });
-  }
-
-  it("keeps both live regions mounted, so the first alert is announced", () => {
-    page.render(run([step("loop", "running", 0)]));
-    const regions = [...host.querySelectorAll("[role=status], [role=alert]")];
-    expect(regions.map((r) => r.getAttribute("role")).sort()).toEqual([
-      "alert",
-      "status",
-      "status",
-    ]);
+describe("what wants the reader", () => {
+  const QUESTION =
+    "Phase A fix: I've fixed every blocking finding except one, adv-claude-3, which needs your " +
+    "decision. The problem: the suppression core matches a suppression comment by line, so a " +
+    "comment above a multi-line declaration silences only its first line. Option A changes the " +
+    "contract so a suppression covers the whole declaration. Option B keeps the line contract " +
+    "and documents it. Which do you want? ".repeat(3);
+  const asking = (questions: ExecRun["questions"], nodes?: ExecNode[]): ExecRun => ({
+    ...run(nodes ?? [step("fix", "input", 0)]),
+    state: "input",
+    alert: { kind: "input", text: "Waiting for answer" },
+    ...(questions === undefined ? {} : { questions }),
   });
 
-  it("keeps the empty notes region rendered", () => {
+  it("shows the whole question in its own region under the head, clamped with an opener", async () => {
     const style = mountAppCSS();
     try {
-      page.render(run([step("loop", "running", 0)]));
-      const notesHost = q(".ev-dock-notes");
-      expect(notesHost.childElementCount).toBe(0);
-      expect(getComputedStyle(notesHost).display).not.toBe("none");
-      expect(notesHost.getBoundingClientRect().height).toBe(0);
+      page.render(asking([{ text: QUESTION, path: "root/fix", step: "fix" }]));
+      const region = q(".ev-dock-ask");
+      expect(region.parentElement?.getAttribute("role")).toBe("status");
+      expect(region.getAttribute("aria-label")).toBe("fix asks");
+      const text = q(".ev-dock-ask-q");
+      expect(text.textContent).toBe(QUESTION);
+      expect(q(".ev-dock-head").nextElementSibling).toBe(region.parentElement);
+      // The transcript's prose size (`--fs-base`), not the dock's small print.
+      expect(getComputedStyle(text).fontSize).toBe("13px");
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const more = q<HTMLButtonElement>(".ev-dock-ask .clamp-more");
+      expect(more.hidden).toBe(false);
+      expect(more.getAttribute("aria-label")).toBe("Show more");
+      expect(more.getAttribute("aria-controls")).toBe(text.id);
+      expect(q(".ev-dock-ask-count").hidden).toBe(true);
     } finally {
       style.remove();
     }
   });
 
-  it("writes nothing on a repaint that changes nothing", () => {
-    const alert = { kind: "paused", text: "Waiting" } as const;
-    page.render({ ...run([step("loop", "waiting", 0)]), alert });
-    const text = q(".ev-alert-text").firstChild;
-    page.render({ ...run([step("loop", "waiting", 0)]), alert });
-    expect(q(".ev-alert-text").firstChild).toBe(text);
-  });
-
-  it("paints a wash and no leading edge, per kind", () => {
+  it("puts nothing of the question in the head, which never takes a wash", () => {
     const style = mountAppCSS();
-    for (const kind of ["input", "paused", "failed"] as const) {
-      page.render({ ...run([step("loop", "waiting", 0)]), alert: { kind, text: kind } });
-      const cs = getComputedStyle(q(".ev-dock-head"));
-      expect(cs.borderInlineStartWidth).toBe("0px");
-      expect(cs.boxShadow).toBe("none");
-      expect(cs.backgroundImage).toContain("linear-gradient");
+    try {
+      page.render(asking([{ text: QUESTION, path: "root/fix", step: "fix" }]));
+      const head = q(".ev-dock-head");
+      expect(head.hasAttribute("data-alert")).toBe(false);
+      expect(head.textContent).not.toContain("Phase A");
+      expect(getComputedStyle(head).backgroundImage).toBe("none");
+      expect(host.querySelector(".ev-dock-alert-act")).toBeNull();
+    } finally {
+      style.remove();
     }
-    style.remove();
   });
 
-  it("seats the consumer's action and verbs, moving neither on a repaint", () => {
-    verbs = document.createElement("span");
-    answer = document.createElement("button");
-    const asking: ExecRun = {
-      ...run([step("ask", "input", 0)]),
-      alert: { kind: "input", text: "Waiting for answer" },
-    };
-    page.render(asking);
-    expect(q(".ev-dock-alert-act").firstChild).toBe(answer);
-    expect(q(".ev-dock-alert-act").nextElementSibling?.firstChild).toBe(verbs);
-    answer.focus();
-    page.render(asking);
-    expect(document.activeElement).toBe(answer);
-    answer = null;
+  it("shows the shown step's question among several, counting them", () => {
+    const nodes = [step("a", "input", 0), step("b", "input", 1)];
+    page.render(
+      asking(
+        [
+          { text: "Question from a", path: "root/a", step: "a" },
+          { text: "Question from b", path: "root/b", step: "b" },
+        ],
+        nodes,
+      ),
+    );
+    expect(q(".ev-dock-ask-count").textContent).toBe("1 of 2 questions");
+    expect(q(".ev-dock-ask-q").textContent).toBe("Question from a");
+    page.select("root/b");
+    expect(q(".ev-dock-ask-count").textContent).toBe("2 of 2 questions");
+    expect(q(".ev-dock-ask-q").textContent).toBe("Question from b");
+  });
+
+  it("selects the asking step when its question opens, and keeps a later pick", () => {
+    page.render(run([step("plan", "running", 0), step("fix", "running", 1)]));
+    page.select("root/plan");
+    page.render(
+      asking(
+        [{ text: "Which?", path: "root/fix", step: "fix" }],
+        [step("plan", "running", 0), step("fix", "input", 1)],
+      ),
+    );
+    expect(shown.at(-1)?.path).toBe("root/fix");
+    page.select("root/plan");
+    page.render(
+      asking(
+        [{ text: "Which?", path: "root/fix", step: "fix" }],
+        [step("plan", "running", 0), step("fix", "input", 1)],
+      ),
+    );
+    expect(shown.at(-1)?.path).toBe("root/plan");
+  });
+
+  it("keeps a door's step on a new page's first render while another step asks", () => {
+    page.render({
+      ...asking(
+        [{ text: "Which?", path: "root/fix", step: "fix" }],
+        [step("plan", "running", 0), step("fix", "input", 1)],
+      ),
+      focus: "root/plan",
+    });
+    expect(shown.at(-1)?.path).toBe("root/plan");
+  });
+
+  it("removes the region once the question is answered, leaving its live wrapper", () => {
+    page.render(asking([{ text: "Which?", path: "root/fix", step: "fix" }]));
+    page.render(run([step("fix", "running", 0)]));
+    expect(host.querySelector(".ev-dock-ask")).toBeNull();
+    expect(q(".ev-dock-ask-live").getAttribute("role")).toBe("status");
+  });
+
+  it("states a failure as a note on the red wash, in the urgent region", () => {
+    page.render({
+      ...run([step("build", "fail", 0)], false),
+      alert: { kind: "failed", text: "build failed: exit status 2" },
+    });
+    const urgent = q('.ev-dock-notes[role="alert"]');
+    const note = urgent.querySelector(".ev-dock-note")!;
+    expect(note.textContent).toBe("build failed: exit status 2");
+    expect(note.hasAttribute("data-failed")).toBe(true);
+    expect(q(".ev-dock-head").hasAttribute("data-alert")).toBe(false);
+  });
+
+  it("states a pause reason as a plain note", () => {
+    page.render({
+      ...run([step("loop", "waiting", 0)]),
+      alert: { kind: "paused", text: "Waiting: host unreachable" },
+    });
+    const note = q('.ev-dock-notes[role="status"] .ev-dock-note');
+    expect(note.textContent).toBe("Waiting: host unreachable");
+    expect(note.hasAttribute("data-failed")).toBe(false);
+  });
+
+  it("keeps every live region mounted, so the first line is announced", () => {
+    page.render(run([step("loop", "running", 0)]));
+    const roles = [...host.querySelectorAll("[role=status], [role=alert]")].map((r) =>
+      r.getAttribute("role"),
+    );
+    expect(roles.sort()).toEqual(["alert", "status", "status"]);
+  });
+
+  it("keeps the empty regions rendered at no height", () => {
+    const style = mountAppCSS();
+    try {
+      page.render(run([step("loop", "running", 0)]));
+      for (const sel of [".ev-dock-ask-live", ".ev-dock-notes"]) {
+        const region = q(sel);
+        expect(getComputedStyle(region).display, sel).not.toBe("none");
+        expect(region.getBoundingClientRect().height, sel).toBe(0);
+      }
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("seats the consumer's verbs, moving nothing on a repaint", () => {
+    verbs = document.createElement("button");
     page.render(run([step("ask", "running", 0)]));
-    expect(q(".ev-dock-alert-act").childElementCount).toBe(0);
+    expect(q(".ev-dock-act").firstChild).toBe(verbs);
+    verbs.focus();
+    page.render(run([step("ask", "running", 0)]));
+    expect(document.activeElement).toBe(verbs);
+  });
+});
+
+describe("the head and rows, as surfaces", () => {
+  it("keeps the head's hover box clear of the row below it", () => {
+    const style = mountAppCSS();
+    try {
+      page.render(run([step("plan", "running", 0)]));
+      const head = q(".ev-dock-head").getBoundingClientRect();
+      const row = q(".ev-dock-row").getBoundingClientRect();
+      expect(row.top - head.bottom).toBeGreaterThanOrEqual(4);
+      const cs = getComputedStyle(q(".ev-dock-head"));
+      expect(Number.parseFloat(cs.borderTopLeftRadius)).toBe(
+        Number.parseFloat(getComputedStyle(q(".ev-dock")).borderTopLeftRadius) - 1 - 4,
+      );
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("draws no kind glyph on a step row", () => {
+    page.render(run([step("plan", "running", 0)]));
+    expect(q(".ev-dock-row .ev-kind").hidden).toBe(true);
+    expect(q(".ev-dock-row .ev-kind").childElementCount).toBe(0);
+  });
+
+  it("fills the shown row only among several", () => {
+    const style = mountAppCSS();
+    try {
+      page.render(run([step("plan", "running", 0)]));
+      const one = getComputedStyle(q(".ev-dock-row[aria-current]")).backgroundColor;
+      expect(one).toBe("rgba(0, 0, 0, 0)");
+      page.render(run([step("a", "running", 0), step("b", "running", 1)]));
+      const many = getComputedStyle(q(".ev-dock-row[aria-current]")).backgroundColor;
+      expect(many).not.toBe("rgba(0, 0, 0, 0)");
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("lines the rows' columns up across rows", () => {
+    const style = mountAppCSS();
+    try {
+      page.render(
+        run([
+          step("a", "running", 0, { tail: "short" }),
+          step("a-much-longer-step-name", "running", 1, { tail: "tail" }),
+        ]),
+      );
+      const tails = [...host.querySelectorAll<HTMLElement>(".ev-dock-tail")];
+      const [x0, x1] = tails.map((t) => t.getBoundingClientRect().left);
+      expect(x0).toBe(x1);
+    } finally {
+      style.remove();
+    }
   });
 });
 
@@ -627,7 +795,9 @@ describe("the phone budget", () => {
       verbs.className = "run-controls";
       verbs.append(document.createElement("button"), document.createElement("button"));
       page.render(run(fan()));
-      expect(dockHeight()).toBeLessThanOrEqual(96);
+      // Two 44px rows (the head and the lead), the card's 4px inset above and below and the 4px
+      // between them, and its two border lines.
+      expect(dockHeight()).toBeLessThanOrEqual(2 * 44 + 3 * 4 + 2);
     } finally {
       await restore(style);
     }

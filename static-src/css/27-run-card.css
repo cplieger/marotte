@@ -318,7 +318,7 @@
    and copy-link work, and a plain click is intercepted by the app's own routing.
    It therefore has to opt OUT of link ink: the reset layer's `a { color:
    var(--c-link) }` would reach it, and this app spends link ink on TEXT controls
-   (`.steer-note-more`, `.ev-in-more`, a PR row's title) while a NAVIGATOR row keeps
+   (a PR row's title) while a NAVIGATOR row keeps
    its own — `.tab` and `.ev-row-main` are the precedent. */
 .run-step-head {
   display: flex;

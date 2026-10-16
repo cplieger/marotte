@@ -184,9 +184,9 @@ describe("the run tab's layout", () => {
     });
     const head = byId("run-exec-dock").querySelector<HTMLElement>(".ev-dock-head")!;
     expect(head.getBoundingClientRect().height).toBeLessThanOrEqual(80);
-    const short = head.querySelector<HTMLElement>(".ev-sum-short")!;
-    expect(getComputedStyle(short).display).not.toBe("none");
-    expect(short.textContent).toBe("7/8 \u00b7 1 of 4");
+    const compact = head.querySelector<HTMLElement>(".ev-sum-compact")!;
+    expect(getComputedStyle(compact).display).not.toBe("none");
+    expect(compact.textContent).toBe("7/8\u00b70/4");
   });
 
   it("keeps the composer on a phone with the keyboard up, the panel open and an ask showing", async () => {
@@ -313,7 +313,7 @@ const REST_STATES = (Object.keys(STATE_WORD) as ExecState[]).filter((s) => s !==
 /** The rightmost edge any rendered part of the summary paints to. */
 function contentRight(sum: Element): number {
   return Math.max(
-    ...[...sum.querySelectorAll<HTMLElement>(":scope > *, .ev-sum-short > *")]
+    ...[...sum.querySelectorAll<HTMLElement>(":scope > *, .ev-sum-compact > *")]
       .filter(
         (e) => getComputedStyle(e).position !== "absolute" && e.getBoundingClientRect().width > 1,
       )
@@ -325,7 +325,7 @@ function contentRight(sum: Element): number {
  *  part made to ellipse. */
 function unclipped(sum: Element, what: string): void {
   for (const e of sum.querySelectorAll<HTMLElement>(
-    ".ev-sum-state, .ev-sum-short-text, .ev-sum-clock",
+    ".ev-sum-state, .ev-sum-compact, .ev-sum-clock",
   )) {
     if (e.getBoundingClientRect().width > 1) {
       expect(e.scrollWidth, `${what}: ${e.className} clipped`).toBeLessThanOrEqual(e.clientWidth);
@@ -386,7 +386,7 @@ describe("the run summary on a phone", () => {
       const glyph = document.createElement("span");
       glyph.className = "run-bar-glyph";
       glyph.dataset["status"] = "working";
-      const summary = buildExecSummary({ washHost: btn, live: false });
+      const summary = buildExecSummary({ alertHost: btn });
       btn.append(glyph, summary.root);
       const li = document.createElement("li");
       li.className = "run-bar-row";

@@ -217,7 +217,7 @@ function paint(): void {
     : sending
       ? "Sending"
       : mode.kind === "answer"
-        ? "Send your answer"
+        ? "Send answer"
         : "Send";
   if (send.getAttribute("data-tooltip") !== tip) {
     send.setAttribute("data-tooltip", tip);

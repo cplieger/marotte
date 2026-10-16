@@ -4,6 +4,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { buildExecSummary } from "./exec-view/summary.js";
+import type { ExecNode, ExecRun } from "./exec-view/model.js";
 
 /** A token's rendered length, read off a real element rather than restated. */
 function lengthPx(root: HTMLElement, expr: string): number {
@@ -114,7 +116,10 @@ function mountBand(states: readonly string[]): {
   ta.id = "prompt-input";
   box.appendChild(ta);
 
-  form.append(dock, bar, box);
+  const barHost = document.createElement("div");
+  barHost.className = "run-bar-host";
+  barHost.append(bar);
+  form.append(dock, barHost, box);
   host.append(outer, form);
   document.body.appendChild(host);
   return { bar, wrap, box, dock, rows };
@@ -129,7 +134,8 @@ describe("the run bar's geometry", () => {
     const { bar, box, dock } = mountBand(["running"]);
     dock.classList.remove("hidden");
 
-    const barRect = bar.getBoundingClientRect();
+    // The host draws the box; the list is its content.
+    const barRect = bar.parentElement!.getBoundingClientRect();
     const boxRect = box.getBoundingClientRect();
     const dockRect = dock.getBoundingClientRect();
 
@@ -143,15 +149,16 @@ describe("the run bar's geometry", () => {
   it("shrinks the transcript by exactly its own height and covers nothing", () => {
     const { bar, wrap } = mountBand(["running", "waiting"]);
     const shown = wrap.getBoundingClientRect();
-    const barRect = bar.getBoundingClientRect();
+    const box = bar.parentElement!;
+    const barRect = box.getBoundingClientRect();
     expect(barRect.height).toBeGreaterThan(0);
     // The MARGIN box is what the band grows by: the region carries the same `margin-block-end` the
     // dock and the steer stack do, which is the gap between them rather than part of the bar.
-    const margin = Number.parseFloat(getComputedStyle(bar).marginBlockEnd);
+    const margin = Number.parseFloat(getComputedStyle(box).marginBlockEnd);
     expect(margin).toBeGreaterThan(0);
 
-    // The `.hidden` utility is `display: none !important`, so the region's whole box leaves the
-    // flex column and the transcript takes the space back.
+    // The `.hidden` utility is `display: none !important` and the host follows its list, so the
+    // region's whole box leaves the flex column and the transcript takes the space back.
     bar.classList.add("hidden");
     const hidden = wrap.getBoundingClientRect();
 
@@ -245,5 +252,142 @@ describe("the run bar's state column", () => {
       expect(box.height, `${row.dataset["state"]} height`).toBeCloseTo(dot, 1);
     }
     host.remove();
+  });
+});
+
+// One box for every run count, its rows plain lines on one column grid.
+describe("the run bar's box", () => {
+  const step = (id: string, state: ExecNode["state"]): ExecNode => ({
+    path: id,
+    label: id,
+    kind: "step",
+    state,
+    children: [],
+  });
+  const runOf = (label: string, done: number, total: number): ExecRun => ({
+    label,
+    state: "running",
+    live: true,
+    nodes: Array.from({ length: total }, (_, i) =>
+      step(`${label}-${String(i)}`, i < done ? "ok" : i === done ? "running" : "pending"),
+    ),
+  });
+
+  /** The chat's band with real summary rows, and the fold row first when `fold` is set. */
+  function mountRows(runs: readonly ExecRun[], fold: boolean, width = 1000): HTMLUListElement {
+    host = document.createElement("div");
+    host.style.inlineSize = `${String(width)}px`;
+    const form = document.createElement("form");
+    form.className = "bottom-bar";
+    const barHost = document.createElement("div");
+    barHost.className = "run-bar-host";
+    const bar = document.createElement("ul");
+    bar.className = "run-bar";
+    if (fold) {
+      const li = document.createElement("li");
+      li.className = "run-bar-summary";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "run-bar-open run-bar-toggle";
+      btn.textContent = `${String(runs.length)} workflows running`;
+      li.append(btn);
+      bar.append(li);
+    }
+    for (const r of runs) {
+      const li = document.createElement("li");
+      li.className = "run-bar-row";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "run-bar-open";
+      const glyph = document.createElement("span");
+      glyph.className = "run-bar-glyph";
+      glyph.dataset["status"] = "working";
+      const summary = buildExecSummary({ alertHost: btn });
+      btn.append(glyph, summary.root);
+      summary.paint(r);
+      li.append(btn);
+      bar.append(li);
+    }
+    barHost.append(bar);
+    form.append(barHost);
+    host.append(form);
+    document.body.append(host);
+    return bar;
+  }
+
+  const RUNS = [
+    runOf("fix-wake-turn-send-cancels", 1, 3),
+    runOf("investigate-run-dock-waiting-redesign", 8, 27),
+    runOf("feat-forgeapi-stored-token-read", 6, 12),
+  ];
+
+  for (const [count, fold] of [
+    [1, false],
+    [2, false],
+    [3, true],
+  ] as const) {
+    it(`draws ${String(count)} run${count > 1 ? "s" : ""} as lines of one bordered box`, () => {
+      const bar = mountRows(RUNS.slice(0, count), fold);
+      const box = bar.parentElement!;
+      expect(getComputedStyle(box).borderTopWidth).toBe("1px");
+      for (const btn of bar.querySelectorAll<HTMLElement>(".run-bar-open")) {
+        expect(getComputedStyle(btn).borderTopWidth, "a line, not a box").toBe("0px");
+        const inner = box.getBoundingClientRect();
+        const line = btn.getBoundingClientRect();
+        expect(line.left).toBeGreaterThan(inner.left);
+        expect(line.right).toBeLessThan(inner.right);
+      }
+      host.remove();
+    });
+  }
+
+  it("starts and ends every bar at one x, whatever the titles and phrases", () => {
+    const bar = mountRows(RUNS, false);
+    const minis = [...bar.querySelectorAll<HTMLElement>(".ev-mini")].map((m) =>
+      m.getBoundingClientRect(),
+    );
+    expect(new Set(minis.map((r) => Math.round(r.left))).size).toBe(1);
+    expect(new Set(minis.map((r) => Math.round(r.right))).size).toBe(1);
+    const titles = [...bar.querySelectorAll<HTMLElement>(".ev-sum-label")];
+    expect(titles.every((t) => getComputedStyle(t).textOverflow === "ellipsis")).toBe(true);
+    host.remove();
+  });
+
+  it("caps the title column, so a very long title ellipsizes", () => {
+    const long = runOf(
+      "a-workflow-title-that-is-far-longer-than-any-column-should-ever-hold",
+      1,
+      4,
+    );
+    const bar = mountRows([long, RUNS[0]!], false);
+    const title = bar.querySelector<HTMLElement>(".ev-sum-label")!;
+    const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+    expect(title.getBoundingClientRect().width).toBeLessThanOrEqual(18 * rem + 0.5);
+    expect(title.scrollWidth).toBeGreaterThan(title.clientWidth);
+    host.remove();
+  });
+
+  it("keeps a row's hover clear of its neighbour", () => {
+    const bar = mountRows(RUNS, false);
+    const [a, b] = [...bar.querySelectorAll<HTMLElement>(".run-bar-open")].map((x) =>
+      x.getBoundingClientRect(),
+    );
+    expect(b!.top - a!.bottom).toBeGreaterThan(0);
+    host.remove();
+  });
+
+  it("lays a phone row out as two lines inside the hit floor's height", () => {
+    document.documentElement.setAttribute("data-pointer", "coarse");
+    try {
+      const bar = mountRows(RUNS.slice(0, 1), false, 360);
+      const btn = bar.querySelector<HTMLElement>(".run-bar-open")!;
+      const title = btn.querySelector<HTMLElement>(".ev-sum-label")!.getBoundingClientRect();
+      const state = btn.querySelector<HTMLElement>(".ev-sum-state")!.getBoundingClientRect();
+      expect(state.top).toBeGreaterThanOrEqual(title.bottom - 1);
+      expect(btn.getBoundingClientRect().height).toBeLessThanOrEqual(48);
+    } finally {
+      document.documentElement.removeAttribute("data-pointer");
+      host.remove();
+    }
   });
 });

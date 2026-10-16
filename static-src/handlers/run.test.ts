@@ -637,7 +637,6 @@ describe("a run's step questions", () => {
       agent_name: "reviewer",
       text: "Ship it?",
       text_source: "asked",
-      can_continue: true,
       ...over,
     };
   }

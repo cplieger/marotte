@@ -157,7 +157,8 @@ describe("the mark reads one ink and one size wherever it renders", () => {
 
     // The run bar renders only unsettled states, so a settled ink there would be unreachable CSS.
     expect(inkOf(tabs, '.tab-run-dot[data-status="input"]')).toBe("--c-dot-input");
-    expect(dock).not.toContain(".run-bar-glyph {");
+    // The run bar lays the mark into its columns; its ink is 12-tabs.css's alone.
+    expect(dock).not.toMatch(/\.run-bar-glyph\s*\{[^}]*\bcolor\s*:/);
   });
 
   it("keeps the three amber states on ONE declaration", () => {

@@ -476,137 +476,6 @@ var errStepStatusRefused = errors.New("this run's step status was not changed")
 // updateStatusAction is `_kiro/workflow/update`'s step-status action, sent explicitly because the tool schema requires it.
 const updateStatusAction = "update_status"
 
-// errStepStatusMistargeted means the named node is not the one KAS would mark, so the write was withheld. Wraps errStepStatusRefused.
-var errStepStatusMistargeted = fmt.Errorf(
-	"%w: this run is not waiting at the step you asked to mark", errStepStatusRefused,
-)
-
-// errStepStatusUnreadable means the pre-send read failed, so the write was withheld: a `completed` on the
-// wrong node publishes its capture irreversibly.
-var errStepStatusUnreadable = fmt.Errorf(
-	"%w: this run's state could not be read just now, so try again in a moment",
-	errStepStatusRefused,
-)
-
-// setStepStatus marks a step completed, failed or running so a wedged run advances. KAS targets
-// positionally, so the tree is read first and the write withheld unless the targets agree.
-func (rs *Runs) setStepStatus(ctx context.Context, workflowID string, req marotte.RunStepStatusRequest) (err error) {
-	nodeID, status := req.NodeID, req.Status
-	if nodeID == "" {
-		return errors.New("missing node id")
-	}
-	if !slices.Contains(runStepStatuses, status) {
-		return fmt.Errorf("step status must be one of %v", runStepStatuses)
-	}
-	// The position lock spans read and write, since a chat open can heal this run.
-	release, lockErr := rs.positions.acquire(ctx, workflowID)
-	if lockErr != nil {
-		return lockErr
-	}
-	defer release()
-	if status == runStepRunning {
-		return rs.continueStep(ctx, workflowID, nodeID, req.AskID)
-	}
-	if addrErr := rs.stepStatusAddress(ctx, workflowID, nodeID); addrErr != nil {
-		return addrErr
-	}
-	host, err := rs.hostRun(ctx, workflowID)
-	if err != nil {
-		return err
-	}
-	// A decline releases with a cause too: no run_complete follows.
-	defer func() { host.release(err) }()
-	return rs.controlSerialized(ctx, workflowID, func(cctx context.Context) error {
-		return rs.sendStepStatus(cctx, host, workflowID, status)
-	})
-}
-
-func (rs *Runs) sendStepStatus(ctx context.Context, host *runHost, workflowID, status string) error {
-	resp, callErr := rs.callReclaiming(ctx, host.sb.bridge, workflowID, methodKiroWorkflowUpdate, map[string]any{
-		keyWorkflowID: workflowID,
-		"action":      updateStatusAction,
-		"status":      status,
-	})
-	if callErr != nil {
-		return callErr
-	}
-	// Both declines answer {updated:false} with 200, so the reply is read.
-	if refusal := stepStatusRefusal(resp); refusal != "" {
-		return fmt.Errorf("%w: %s", errStepStatusRefused, refusal)
-	}
-	return nil
-}
-
-// continueStep drives a parked step on without an answer. Its pending registration lasts until the
-// step's turn_start: until then a read can show the node paused with no signal and still awaiting
-// input, which would offer the card again.
-func (rs *Runs) continueStep(ctx context.Context, workflowID, nodeID, askID string) (err error) {
-	c := rs.cellFor(workflowID)
-	if c == nil {
-		return errStepStatusMistargeted
-	}
-	host, err := rs.hostRun(ctx, workflowID)
-	if err != nil {
-		return err
-	}
-	defer func() { host.release(err) }()
-	lease, err := rs.life.admit(workflowID)
-	if err != nil {
-		return errAskStopping
-	}
-	defer lease.end()
-	if aErr := c.acquire(ctx); aErr != nil {
-		return aErr
-	}
-	defer rs.kickCell(c)
-	defer c.release()
-	if refusal := c.holdRefusal(); refusal != nil {
-		return refusal
-	}
-	p := rs.registerPending(ctx, c)
-	r, err := rs.readAsks(ctx, c, host.sb)
-	if err != nil {
-		rs.clearPending(ctx, c, p)
-		return errStepStatusUnreadable
-	}
-	ask, err := continuedAsk(r.asks, nodeID, askID)
-	if err != nil {
-		rs.clearPending(ctx, c, p)
-		if errors.Is(err, errStepStatusMistargeted) {
-			slog.Info("a run is not waiting at the step being continued, so the write was withheld",
-				"workflow_id", workflowID, "node_id", scrubLog(nodeID))
-		}
-		return err
-	}
-	c.sendingPending(p, ask.StepSessionID)
-	if sErr := rs.sendStepStatus(ctx, host, workflowID, runStepRunning); sErr != nil {
-		rs.clearPending(ctx, c, p)
-		return sErr
-	}
-	rs.repliedPending(ctx, c, p)
-	return nil
-}
-
-// continuedAsk is the ask a Continue drives on: the one askID names, else the only ask at nodeID.
-// Fan-out executions share a node id and KAS's `update` targets one of them, so the ask must be
-// that target (CanContinue).
-func continuedAsk(asks []workflow.Ask, nodeID, askID string) (*workflow.Ask, error) {
-	i := slices.IndexFunc(asks, func(a workflow.Ask) bool { return a.NodeID == nodeID })
-	switch {
-	case askID != "":
-		var err error
-		if i, err = namedAsk(asks, askID); err != nil {
-			return nil, err
-		}
-	case i >= 0 && slices.ContainsFunc(asks[i+1:], func(a workflow.Ask) bool { return a.NodeID == nodeID }):
-		return nil, errAskUnnamed
-	}
-	if i < 0 || asks[i].NodeID != nodeID || !asks[i].CanContinue {
-		return nil, errStepStatusMistargeted
-	}
-	return &asks[i], nil
-}
-
 // stepStatusRefusal returns KAS's reason for a declined update, else "". `Updated` is a *bool so absent reads as taken.
 func stepStatusRefusal(resp *marotte.RPCResponse) string {
 	if resp == nil || len(resp.Result) == 0 {
@@ -628,45 +497,8 @@ func stepStatusRefusal(resp *marotte.RPCResponse) string {
 	return reply.Message
 }
 
-// stepStatusAddress reports whether the named node is the one KAS would mark, refusing when unsure: a wrong guess writes irreversibly.
-func (rs *Runs) stepStatusAddress(ctx context.Context, workflowID, nodeID string) error {
-	raw, err := rs.rawInspect(ctx, workflowID)
-	if err != nil {
-		slog.Warn("could not read a run's state, so its step status was left alone",
-			"workflow_id", workflowID, "error", err)
-		return errStepStatusUnreadable
-	}
-	in, err := workflow.DecodeInspect(workflowID, raw)
-	if err != nil {
-		slog.Warn("a run's state did not decode, so its step status was left alone",
-			"workflow_id", workflowID, "error", err)
-		return errStepStatusUnreadable
-	}
-	target, ok := workflow.StatusUpdateTarget(in.State)
-	if !ok {
-		slog.Info("a run holds no running or paused step, so nothing was marked",
-			"workflow_id", workflowID, "node_id", scrubLog(nodeID),
-			"status", scrubLog(in.State.Status))
-		return errStepStatusMistargeted
-	}
-	if target.NodeID != nodeID {
-		slog.Info("a run's current step is not the one being marked, "+
-			"so the status write was withheld", "workflow_id", workflowID,
-			"asked_node_id", scrubLog(nodeID), "target_node_id", scrubLog(target.NodeID))
-		return errStepStatusMistargeted
-	}
-	return nil
-}
-
-// The step statuses a human may set. `running` is continue-without-answering, which plain Resume cannot substitute.
-const (
-	runStepCompleted = "completed"
-	runStepFailed    = "failed"
-	runStepRunning   = "running"
-)
-
-// runStepStatuses is the allowlist, in the order the refusal names them.
-var runStepStatuses = []string{runStepCompleted, runStepFailed, runStepRunning}
+// runStepCompleted is the step status finishRepeat writes on a repeat paused at its cap.
+const runStepCompleted = "completed"
 
 // answerInput answers one parked step with the user's words, as a `session/prompt` to its own
 // session. The ask is checked against a fresh read of the run's host under the run's serializer,
@@ -1784,11 +1616,6 @@ func decodeNodeFrame(msg *marotte.RPCResponse) nodeFrame {
 }
 
 func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID marotte.ChatID, workflowID string) {
-	release, err := rs.positions.acquire(ctx, workflowID)
-	if err != nil {
-		return
-	}
-	defer release()
 	// The wider involuntary set, because this resumes; the orphan sweep's narrower `restartPaused` cancels.
 	if !rs.involuntarilyPaused(ctx, workflowID) {
 		return

@@ -48,26 +48,6 @@ const (
 	needInput = "need_input"
 )
 
-// StatusUpdateTarget mirrors KAS's `update` resolver: the first running step node in pre-order,
-// else the first paused one. False when the run holds neither.
-func StatusUpdateTarget(s *State) (StepSession, bool) {
-	var paused *StepSession
-	for _, st := range Steps(s) {
-		switch st.Status {
-		case statusRunning:
-			return st, true
-		case statusPaused:
-			if paused == nil {
-				paused = &st
-			}
-		}
-	}
-	if paused == nil {
-		return StepSession{}, false
-	}
-	return *paused, true
-}
-
 // visit is one node of a state tree with its wire path.
 type visit struct {
 	n    *node

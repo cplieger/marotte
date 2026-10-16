@@ -308,7 +308,10 @@
                Same mechanical property as the dock (see 26-dock.css): the bar
                GROWS upward and #messages-wrap shrinks by exactly this region's
                height, so nothing is covered. -->
-          <ul id="run-bar" class="run-bar hidden" aria-label="Workflow runs from this chat"></ul>
+          <!-- The host is the rows' container, so a container query can change the list's own columns. -->
+          <div class="run-bar-host">
+            <ul id="run-bar" class="run-bar hidden" aria-label="Workflow runs from this chat"></ul>
+          </div>
           <!-- Mid-turn messages KAS is holding, oldest at the top: a new one
                appears at the bottom and pushes the older ones up. A SIBLING of
                .prompt-box for the same reason the dock is one — these are

@@ -144,6 +144,12 @@
   .page-content {
     padding: var(--sp-3);
   }
+
+  /* The run and subagent scroller's sticky band (18-pages.css): 8 + 4 = 12px at rest,
+     the phone's `.page-shell` gap. */
+  :is([id="run-view"], [id="subagent-view"]) .page-content::before {
+    margin-block-end: var(--sp-1);
+  }
 }
 
 /* AN INSTALLED IPHONE SPENDS THE WHOLE HOME-INDICATOR INSET below the composer card,

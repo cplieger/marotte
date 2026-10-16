@@ -19,7 +19,7 @@ function textOf(root: HTMLElement, sel: string): string | null {
  *  CLAMP's opener is the one button the note may hold. */
 function controls(root: HTMLElement): HTMLButtonElement[] {
   return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).filter(
-    (b) => !b.classList.contains("steer-note-more"),
+    (b) => !b.classList.contains("clamp-more"),
   );
 }
 
@@ -237,9 +237,9 @@ describe("the clamp measured on the page", () => {
   }
 
   function moreEl(n: HTMLElement): HTMLButtonElement {
-    const b = n.querySelector<HTMLButtonElement>(".steer-note-more");
+    const b = n.querySelector<HTMLButtonElement>(".clamp-more");
     if (b === null) {
-      throw new Error("no .steer-note-more");
+      throw new Error("no .clamp-more");
     }
     return b;
   }
@@ -288,12 +288,12 @@ describe("the clamp measured on the page", () => {
 
     btn.click();
     expect(textEl(n).hasAttribute("data-clamped")).toBe(false);
-    expect(btn.textContent).toBe("Show less");
+    expect(btn.getAttribute("aria-label")).toBe("Show less");
     expect(btn.getAttribute("aria-expanded")).toBe("true");
 
     btn.click();
     expect(textEl(n).hasAttribute("data-clamped")).toBe(true);
-    expect(btn.textContent).toBe("Show more");
+    expect(btn.getAttribute("aria-label")).toBe("Show more");
     expect(btn.getAttribute("aria-expanded")).toBe("false");
   });
 

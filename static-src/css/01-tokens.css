@@ -607,6 +607,17 @@
     --r: 0.375rem;
     --r-sm: 0.25rem;
 
+    /* ---- The bottom bar's stack ------------------------------------------ *
+     * Every box above and including the composer (decision cards, the run
+     * bar, steer rows, the run dock, the slash menu, the prompt box) is a card
+     * of the app's card radius, the turn and tool cards' `--r`, with one 1px
+     * `--c-border` edge, `--stack-gap` from its neighbours. A surface inside one
+     * sits `--stack-in` from its edge at the concentric corner, 6 - 1 - 4. */
+    --stack-r: var(--r);
+    --stack-gap: var(--sp-2);
+    --stack-in: var(--sp-1);
+    --stack-in-r: calc(var(--stack-r) - 1px - var(--stack-in));
+
     /* RESERVED FOR NON-INTERACTIVE STATUS BADGES. A stadium button reads as a tag
      * rather than as something you press, so a control takes a rung above. */
     --r-pill: 999px;

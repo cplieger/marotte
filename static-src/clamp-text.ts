@@ -1,5 +1,7 @@
-// A text element capped to N lines with a show-more opener. The measurement facts are on `watchClamp`.
+// A text element capped to N lines with a chevron opener, its cut last line faded and the text
+// itself a way in. The measurement facts are on `watchClamp`.
 
+import { chevronEl } from "./chevron.js";
 import { isSliding, slideBox } from "./disclosure-row.js";
 
 /** Above this, assume overflow when layout cannot be measured. Generous: a false positive costs one frame of opener. */
@@ -45,7 +47,8 @@ interface ClampHandle {
 }
 
 interface ClampState {
-  readonly more: HTMLButtonElement;
+  /** Absent for a cue-only watch (`watchCut`): the caller's own fold opens the text. */
+  readonly more: HTMLButtonElement | undefined;
   readonly lines: number;
   readonly fallbackChars: number;
   readonly snapToLine: boolean;
@@ -53,6 +56,8 @@ interface ClampState {
   readonly setExpanded: (on: boolean) => void;
   /** Set by `disable`: a resize must not put the clamp back. */
   off: boolean;
+  /** A cue-only watch's report of whether the text is cut. */
+  readonly onCut?: (cut: boolean) => void;
 }
 
 interface ClampEntry {
@@ -65,9 +70,12 @@ const clamps = new WeakMap<HTMLElement, ClampEntry>();
 /** Exists because a WeakMap cannot be enumerated and a subtree sweep must be. */
 const observed = new Set<HTMLElement>();
 
+let clampIds = 0;
+
 /**
- * Clamp `text` behind `more`; returns the handle a repaint drives. Idempotent: a repeat call returns the existing
- * handle. The caller stores the expanded flag (`isExpanded`).
+ * Clamp `text` behind `more`, a chevron button this fills; returns the handle a repaint drives. Idempotent: a repeat
+ * call returns the existing handle. The caller stores the expanded flag (`isExpanded`). While the text is cut, a
+ * click on it opens it too; once open, only `more` closes it, so the text stays selectable.
  */
 export function attachClamp(
   text: HTMLElement,
@@ -106,18 +114,74 @@ export function attachClamp(
     disable: () => {
       state.off = true;
       text.removeAttribute("data-clamped");
+      text.removeAttribute("data-cut");
       more.hidden = true;
     },
   };
   clamps.set(text, { state, handle });
 
   more.hidden = true;
+  if (text.id === "") {
+    text.id = `clamp-${String(++clampIds)}`;
+  }
+  more.setAttribute("aria-controls", text.id);
+  more.replaceChildren(chevronEl());
+  labelOpener(more, false);
   more.addEventListener("click", () => {
     writeExpanded(text, state, !state.isExpanded(), true);
+  });
+  text.addEventListener("click", (e) => {
+    if (!text.hasAttribute("data-cut") || state.isExpanded() || pickedInside(text, e)) {
+      return;
+    }
+    writeExpanded(text, state, true, true);
   });
   watchClamp(text);
   reviewClamp(text, state);
   return handle;
+}
+
+/** A click that lands on a control inside the text, or ends a selection, is not a request to open it. */
+function pickedInside(text: HTMLElement, e: MouseEvent): boolean {
+  const hit = e.target instanceof Element ? e.target.closest("a, button") : null;
+  if (hit !== null && text.contains(hit)) {
+    return true;
+  }
+  return (window.getSelection()?.toString() ?? "") !== "";
+}
+
+/** The opener's name and tooltip, one string, and its state. */
+function labelOpener(more: HTMLButtonElement, open: boolean): void {
+  const name = open ? LABEL_LESS : LABEL_MORE;
+  more.setAttribute("aria-label", name);
+  more.setAttribute("data-tooltip", name);
+  more.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+/**
+ * Report whether `text` is cut, as `data-cut` and through `onCut`, for text whose own fold clamps it in CSS: the
+ * fade and the cue follow a real overflow, re-measured on every resize. Released by {@link releaseClamp}.
+ */
+export function watchCut(text: HTMLElement, onCut: (cut: boolean) => void): void {
+  if (clamps.has(text)) {
+    return;
+  }
+  const state: ClampState = {
+    more: undefined,
+    lines: CLAMP_LINES,
+    fallbackChars: CLAMP_FALLBACK_CHARS,
+    snapToLine: false,
+    isExpanded: () => false,
+    setExpanded: () => undefined,
+    off: false,
+    onCut,
+  };
+  const review = (): void => {
+    reviewClamp(text, state);
+  };
+  clamps.set(text, { state, handle: { sync: review, collapse: review, disable: review } });
+  watchClamp(text);
+  review();
 }
 
 /** Measurement decides when layout exists, the character fallback otherwise, so a long text always has an opener. */
@@ -126,13 +190,22 @@ function reviewClamp(text: HTMLElement, s: ClampState): void {
   if (s.off || isSliding(text)) {
     return;
   }
+  const more = s.more;
+  if (more === undefined) {
+    const cut = text.scrollHeight - text.clientHeight > 1;
+    if (text.hasAttribute("data-cut") !== cut) {
+      text.toggleAttribute("data-cut", cut);
+      s.onCut?.(cut);
+    }
+    return;
+  }
   if (s.isExpanded()) {
-    s.more.hidden = false;
+    text.removeAttribute("data-cut");
+    more.hidden = false;
     return;
   }
   text.setAttribute("data-clamped", "");
-  s.more.textContent = LABEL_MORE;
-  s.more.setAttribute("aria-expanded", "false");
+  labelOpener(more, false);
 
   // Withdraw a previous snap first, or it becomes the next review's budget and each resize loses a line.
   if (s.snapToLine) {
@@ -145,7 +218,8 @@ function reviewClamp(text: HTMLElement, s: ClampState): void {
     measured > 0 && visible > 0
       ? measured - visible > 1
       : body.length > s.fallbackChars || countLines(body) > s.lines;
-  s.more.hidden = !overflows;
+  more.hidden = !overflows;
+  text.toggleAttribute("data-cut", overflows);
   // Gated on overflow: a height written for text that fits makes `scrollHeight > clientHeight` by a fraction and offers
   // Show more over nothing.
   if (s.snapToLine && overflows && measured > 0 && visible > 0) {
@@ -291,6 +365,9 @@ function snapClampToLine(text: HTMLElement): void {
 /** `motion` is the reader's own toggle: a content change collapses at once. */
 function writeExpanded(text: HTMLElement, s: ClampState, on: boolean, motion = false): void {
   s.setExpanded(on);
+  if (on) {
+    text.removeAttribute("data-cut");
+  }
   slideBox(
     text,
     on,
@@ -299,8 +376,9 @@ function writeExpanded(text: HTMLElement, s: ClampState, on: boolean, motion = f
     },
     motion,
   );
-  s.more.textContent = on ? LABEL_LESS : LABEL_MORE;
-  s.more.setAttribute("aria-expanded", on ? "true" : "false");
+  if (s.more !== undefined) {
+    labelOpener(s.more, on);
+  }
 }
 
 /**

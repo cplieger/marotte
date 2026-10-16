@@ -139,7 +139,6 @@ function pushRunAsk(chat: string, runID: string): void {
         agent_name: "",
         text: "which branch?",
         text_source: "asked",
-        can_continue: false,
       },
     ],
   });
@@ -384,7 +383,7 @@ describe("the run bar", () => {
     await activate(c);
 
     // Withheld for one step, as the run dock does: "step 1 of 1" cannot progress.
-    expect(rowText(".ev-sum-progress")).toEqual([""]);
+    expect(rowText(".ev-sum-progress .sr-only")).toEqual([""]);
     // `formatElapsed`'s sub-minute spelling, a tenth of a second.
     expect(rowText(".ev-sum-clock")[0]).toMatch(/^\d+\.\ds$/);
   });
@@ -406,7 +405,7 @@ describe("the run bar", () => {
   // The visible span is ellipsized by CSS, responsively. A length cut in TS would travel into two
   // places a cut does not belong: `openRunView` makes this string the run TAB's name, and it is the
   // button's accessible name.
-  it("passes the run's whole name to the opener and to the accessible name", async () => {
+  it("passes the run's whole name to the opener, the accessible name and the title's tooltip", async () => {
     const c = chatID();
     chats.push(c);
     const id = runID("long");
@@ -417,6 +416,7 @@ describe("the run bar", () => {
 
     const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open");
     expect(rowText(".ev-sum-label")).toEqual([label]);
+    expect(bar.querySelector(".ev-sum-label")?.getAttribute("data-tooltip")).toBe(label);
     expect(btn?.getAttribute("aria-label")).toContain(label);
 
     btn?.click();
@@ -602,7 +602,7 @@ describe("a render patches its rows rather than rebuilding them", () => {
     );
     live(id, c);
     await activate(c);
-    expect(rowText(".ev-sum-progress")).toEqual(["step 2 of 2"]);
+    expect(rowText(".ev-sum-progress .sr-only")).toEqual(["step 2 of 2"]);
     const before = parts();
 
     await advance(id, {
@@ -620,7 +620,7 @@ describe("a render patches its rows rather than rebuilding them", () => {
     });
 
     // The text moved, so the render definitely ran.
-    expect(rowText(".ev-sum-progress")).toEqual(["step 3 of 3"]);
+    expect(rowText(".ev-sum-progress .sr-only")).toEqual(["step 3 of 3"]);
     const after = parts();
     expect(after.row).toBe(before.row);
     // The mark is what carries the beat, and the clock is the element the shared 1s tick holds a
@@ -654,13 +654,13 @@ describe("a render patches its rows rather than rebuilding them", () => {
     inspect.set(id, state(tree([pass(0, "running", "pending")])));
     live(id, c);
     await activate(c);
-    expect(rowText(".ev-sum-long")).toEqual(["pass 1 \u00b7 step 1 of 2"]);
+    expect(rowText(".ev-sum-progress .sr-only")).toEqual(["loop pass 1, step 1 of 2"]);
     const before = parts();
 
     // The same totals, done count, position, state, label and alert: only the pass differs.
     await advance(id, tree([pass(0, "completed", "completed"), pass(1, "running", "pending")]));
 
-    expect(rowText(".ev-sum-long")).toEqual(["pass 2 \u00b7 step 1 of 2"]);
+    expect(rowText(".ev-sum-progress .sr-only")).toEqual(["loop pass 2, step 1 of 2"]);
     expect(parts().row).toBe(before.row);
   });
 

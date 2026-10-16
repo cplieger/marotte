@@ -6,7 +6,6 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { slideBox, slideTurnFold } from "./disclosure-row.js";
 import { buildReasoning } from "./fundamentals/reasoning.js";
 import { buildTurnFooter } from "./fundamentals/turn-footer.js";
-import { buildTurnHeader } from "./fundamentals/turn-header.js";
 import { buildEvent } from "./messages-events.js";
 import { syncCodeReferences } from "./code-refs.js";
 
@@ -209,39 +208,6 @@ describe("the turn footer's info panel slides with the footer", () => {
     await finish(footer);
     expect(footer.dataset["info"]).toBeUndefined();
     expect(footer.getBoundingClientRect().height).toBeCloseTo(shut, 2);
-  });
-});
-
-describe("a labelled request's full text slides with its request block", () => {
-  it("opens and closes through the same slide, the text shown until the close ends", async () => {
-    const header = mount(
-      buildTurnHeader({
-        n: 1,
-        outcome: "completed",
-        ts: 0,
-        request: "the whole instruction, ".repeat(12),
-        label: "Run task 2",
-        attachments: [],
-      }),
-    );
-    const req = header.querySelector<HTMLElement>(":scope > .turn-req");
-    const more = header.querySelector<HTMLElement>(".turn-req-more");
-    const full = header.querySelector<HTMLElement>(".turn-req-full");
-    if (req === null || more === null || full === null) {
-      throw new Error("no labelled request");
-    }
-    const shut = req.getBoundingClientRect().height;
-    more.click();
-    expect(slideOn(req).from).toBeCloseTo(shut, 2);
-    await finish(req);
-    expect(req.getBoundingClientRect().height).toBeGreaterThan(shut);
-
-    more.click();
-    expect(more.getAttribute("aria-expanded"), "the opener flips at once").toBe("false");
-    expect(full.classList.contains("hidden"), "the text renders through the close").toBe(false);
-    expect(slideOn(req).to).toBeCloseTo(shut, 2);
-    await finish(req);
-    expect(full.classList.contains("hidden")).toBe(true);
   });
 });
 

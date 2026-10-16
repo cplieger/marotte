@@ -96,7 +96,7 @@ describe("the head against the foot", () => {
     expect(c.root.querySelector(".run-head-meta")).toBeNull();
     expect(
       [...(c.root.querySelector(".run-head")?.children ?? [])].map((e) => e.className),
-    ).toEqual(["run-toggle", "run-icon", "run-name", "run-count"]);
+    ).toEqual(["run-toggle", "run-icon", "run-name", "ev-sum-progress run-count"]);
     expect(ledger(c.root)).toContain("running");
   });
 });
@@ -1135,7 +1135,11 @@ describe("the card shows the run's structure, and only steps and watches as work
   it("counts the steps a reader sees, in the head and the foot alike", () => {
     const c = card();
     c.render(liveLoop(), NO_ASKS, { plan: PLAN });
-    expect(c.root.querySelector(".run-count")?.textContent).toBe("pass 1 of 3 \u00b7 step 1 of 4");
+    // The one compact phrase every run surface draws, its words in the name and the tooltip.
+    expect(c.root.querySelector(".run-count .ev-sum-compact")?.textContent).toBe("1/3\u00b71/4");
+    expect(c.root.querySelector(".run-count")?.getAttribute("data-tooltip")).toBe(
+      "build-loop pass 1 of 3, step 1 of 4",
+    );
     expect(ledger(c.root)).toMatch(/^4 steps \u00b7 running \u00b7 2m/);
   });
 
@@ -1144,6 +1148,6 @@ describe("the card shows the run's structure, and only steps and watches as work
     c.render(loopStarting(), NO_ASKS, { plan: PLAN });
     expect(spinning(c.root)).toEqual([]);
     expect(outline(c.root)[0]).toBe("group:build-loop");
-    expect(c.root.querySelector(".run-count")?.textContent).toBe("0 of 4");
+    expect(c.root.querySelector(".run-count .ev-sum-compact")?.textContent).toBe("0/4");
   });
 });

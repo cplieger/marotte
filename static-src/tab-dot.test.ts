@@ -1885,7 +1885,6 @@ describe("a run's wait ending releases the launching chat's dot", () => {
         agent_name: "reviewer",
         text: "Ship it?",
         text_source: "asked",
-        can_continue: false,
       })),
     });
   }
