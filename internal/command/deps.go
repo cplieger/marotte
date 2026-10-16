@@ -125,8 +125,11 @@ type stepSessions interface {
 // It excludes List, RegisterRoutes and every append but the turn_open the turn
 // registry writes. Exported because *agent.Runtime names this.
 type chatStore interface {
-	// Get returns the chat header at id, or false if it does not exist.
+	// Get returns the chat header at id, or false if it does not exist or could not be read.
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
+	// Lookup is Get keeping missing apart from unreadable: found is false with
+	// a nil error only when no record exists.
+	Lookup(ctx context.Context, id marotte.ChatID) (c *marotte.Chat, found bool, err error)
 	// Mutate is the header write primitive: load, apply, save, broadcast
 	// chat_created / chat_updated.
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)

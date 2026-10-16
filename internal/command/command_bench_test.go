@@ -42,6 +42,10 @@ func newBenchDeps() *benchDeps {
 // Roles holds chatStore, so benchDeps answers the store methods directly.
 func (*benchDeps) Get(context.Context, marotte.ChatID) (*marotte.Chat, bool) { return nil, false }
 
+func (*benchDeps) Lookup(context.Context, marotte.ChatID) (*marotte.Chat, bool, error) {
+	return nil, false, nil
+}
+
 func (*benchDeps) Mutate(context.Context, marotte.ChatID, func(*marotte.Chat, bool) bool) (string, error) {
 	return "", nil
 }

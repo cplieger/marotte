@@ -145,10 +145,11 @@ function installViewEffect(): void {
   });
 }
 
-/** Open a run's tab on request — every MANUAL door: the Workflows tab's Run button, a History
- *  row, the run card's footer link, a `/run/{id}` deep link. */
-/** RETURNS the open, so a DEEP LINK can await it — see `subagent-view.ts` `openSubagentView` for
- *  the measurement. Every other caller is a click with nothing to wait for and voids it. */
+/** The one door a run's tab opens through: the Workflows tab's Run button, a History row, the run
+ *  bar, a run card, a notification click and a `/run/{id}` deep link. A launching chat whose tab
+ *  this page holds is sent as the parent; otherwise the server decides (`Membership.OpenTab`).
+ *  RETURNS the open, so a DEEP LINK can await it — see `subagent-view.ts` `openSubagentView` for
+ *  the measurement; every other caller voids it. */
 export function openRunView(
   workflowID: string,
   name: string,

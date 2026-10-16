@@ -125,3 +125,27 @@ func TestPublishIfPresent_AHeaderThatDoesNotDecodeIsUnreadable(t *testing.T) {
 			got, published)
 	}
 }
+
+// Lookup keeps a missing record apart from one that exists and does not decode: a caller deciding
+// something permanent on "gone" must not decide it on a read fault.
+func TestLookup_KeepsMissingApartFromUnreadable(t *testing.T) {
+	s, _ := newTestStore(t)
+	for _, id := range []marotte.ChatID{"c1", "c2"} {
+		if _, err := s.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+			t.Fatalf("Setup: seed %s: %v", id, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir(), "c2", headerFileName), []byte("{"), 0o600); err != nil {
+		t.Fatalf("Setup: malformed header: %v", err)
+	}
+
+	if c, found, err := s.Lookup(t.Context(), "c1"); err != nil || !found || c.Name != "A" {
+		t.Errorf("Lookup(c1) = %+v, %v, %v; want the record", c, found, err)
+	}
+	if c, found, err := s.Lookup(t.Context(), "c-missing"); err != nil || found || c != nil {
+		t.Errorf("Lookup(c-missing) = %+v, %v, %v; want not found and no error", c, found, err)
+	}
+	if c, found, err := s.Lookup(t.Context(), "c2"); err == nil || found || c != nil {
+		t.Errorf("Lookup(c2) over a malformed header = %+v, %v, %v; want an error", c, found, err)
+	}
+}

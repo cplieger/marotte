@@ -203,22 +203,35 @@ func chatIDPattern(id marotte.ChatID) bool {
 	return ids.ValidChatID(string(id))
 }
 
-// Get returns the chat's header at chatID, or false if it does not exist.
+// Get returns the chat's header at chatID, or false if it does not exist or could not be read.
 func (s *Store) Get(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, bool) {
 	if ctx.Err() != nil {
 		return nil, false
+	}
+	c, found, err := s.Lookup(ctx, chatID)
+	if err != nil {
+		slog.Error("chat get", "chat_id", chatID, "error", err)
+	}
+	return c, found
+}
+
+// Lookup returns the chat's header at chatID and whether it was found: not found with a nil error
+// only when no record exists; an error means the record could not be read, so it may still exist.
+func (s *Store) Lookup(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
 	}
 	m := s.lock(chatID)
 	m.Lock()
 	defer m.Unlock()
 	c, err := s.load(ctx, chatID)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			slog.Error("chat get", "chat_id", chatID, "error", err)
-		}
-		return nil, false
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
 	}
-	return c, true
+	if err != nil {
+		return nil, false, err
+	}
+	return c, true, nil
 }
 
 // restStamp builds a REST envelope's stamp: the version with the hub epoch.

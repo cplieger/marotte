@@ -58,6 +58,8 @@ interface State {
   held: (() => void)[] | null;
   /** The read bound `ack_tab` clamps to, per tab id; an id absent here is unbounded. */
   readBounds: Map<string, number>;
+  /** The chat that launched each run, as the server's run owner answers it. */
+  runLaunchers: Map<string, string>;
 }
 
 const state: State = {
@@ -72,6 +74,7 @@ const state: State = {
   listCalls: 0,
   held: null,
   readBounds: new Map(),
+  runLaunchers: new Map(),
 };
 
 export const tabServer = {
@@ -88,6 +91,13 @@ export const tabServer = {
     state.listCalls = 0;
     state.held = null;
     state.readBounds = new Map();
+    state.runLaunchers = new Map();
+  },
+
+  /** Record the chat that launched a run, so an `open_tab` for it naming no open parent nests
+   *  under that chat's tab (the server's `Membership.runTabParent`). */
+  setRunLauncher(workflowID: string, chatID: string): void {
+    state.runLaunchers.set(workflowID, chatID);
   },
 
   /** The read position the server's state names for a tab: `ack_tab` clamps to it. */
@@ -201,6 +211,15 @@ export const tabServer = {
     return commitOpen(spec);
   },
 
+  /** Close a tab the way ANOTHER device does and withhold its frame, so the next command still
+   *  names it; `flushFrames` delivers the frame afterwards. */
+  closeElsewhere(id: string): void {
+    const removed = descendants(id);
+    state.subjects = state.subjects.filter((s) => !removed.includes(s.id));
+    state.version++;
+    state.pending.push({ removed_ids: removed, version: state.version });
+  },
+
   /** Close a tab the way ANOTHER device does: commit it and emit a frame with no
    *  `op_id`, so the projection runs its local cleanup and dispatches nothing. */
   closeRemotely(id: string): void {
@@ -230,6 +249,16 @@ function mint(): string {
 
 function subjectFor(kind: TabKind, ref: string): TabSubject | undefined {
   return state.subjects.find((s) => s.kind === kind && s.ref === ref);
+}
+
+/** The tab a run's launching chat holds, reopened when it was closed (the server's
+ *  `Membership.launcherTab`); "" for any other kind or an unrecorded run. */
+function runLauncherTab(kind: TabKind, ref: string): string {
+  const chatID = kind === "run" ? (state.runLaunchers.get(ref) ?? "") : "";
+  if (chatID === "") {
+    return "";
+  }
+  return (subjectFor("chat", chatID) ?? commitOpen({ kind: "chat", ref: chatID, owns: true })).id;
 }
 
 /** Append a subject at its canonical position: a child after its parent's
@@ -326,10 +355,12 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
           body: { subject: existing, created: false, version: state.version },
         };
       }
+      const asked = (payload["parent"] as string | undefined) ?? "";
+      const held = asked !== "" && state.subjects.some((s) => s.id === asked);
       const subject = commitOpen({
         kind,
         ref,
-        parent: (payload["parent"] as string | undefined) ?? "",
+        parent: held ? asked : runLauncherTab(kind, ref),
         owns: payload["owns"] === true,
       });
       stamp(payload);
