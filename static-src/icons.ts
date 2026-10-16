@@ -33,7 +33,7 @@ const PATH_PIN = '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3
  * `ICON_TAB_DOCS`.
  */
 const PATH_BOOK_OPEN =
-  '<path d="M12 4.5C9 3.5 6 3 4.5 3Q3 3 3 4.5V18Q3 19.5 4.5 19.5C6 19.5 9 20 12 21C15 20 18 19.5 19.5 19.5Q21 19.5 21 18V4.5Q21 3 19.5 3C18 3 15 3.5 12 4.5Z"/><path d="M12 4.5v16.5"/>';
+  '<path d="M12 6.25C10 4.7 7.5 3.5 4.5 3.5Q3 3.5 3 5V16.75Q3 18.25 4.5 18.25C7.5 18.25 10 19.45 12 21C14 19.45 16.5 18.25 19.5 18.25Q21 18.25 21 16.75V5Q21 3.5 19.5 3.5C16.5 3.5 14 4.7 12 6.25Z"/><path d="M12 6.25v14.75"/>';
 
 /** Lucide `eye`. */
 const PATH_EYE =
@@ -480,8 +480,9 @@ export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path 
 /**
  * The configuration browser's open book: one closed outline plus one spine line (two covers sharing a spine paint
  * it double). Rounded corners and curved page edges. The bottom flaps are the top ones translated, never mirrored.
- * The rise is 1.5; much lower renders as a closed book, which is `ICON_REPO`'s meaning. Straight strokes stay on the
- * 3-unit grid; pinned to the sidebar button by `menu-icons.test.ts`.
+ * The rise is 2.75: at 16px each page edge must drop a full device pixel toward the spine, or it rasterises flat;
+ * much lower renders as a closed book, which is `ICON_REPO`'s meaning. Straight strokes stay on the 3-unit grid;
+ * pinned to the sidebar button by `menu-icons.test.ts`.
  */
 export const ICON_TAB_DOCS = svg("ui", PATH_BOOK_OPEN);
 /** Workflow run: three nodes top to bottom, distinct from the chat and subagent glyphs. */
