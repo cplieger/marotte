@@ -41,8 +41,11 @@ type runMutations struct {
 	covered   func(workflowID string) bool
 	executing func(workflowID string) bool
 	// inspect reads the run once and feeds its status to the run clock.
-	inspect  func(ctx context.Context, workflowID string) error
-	ctx      func() context.Context
+	inspect func(ctx context.Context, workflowID string) error
+	ctx     func() context.Context
+	// after arms a ceiling. The runtime's runs it through the drain gate on inflight: inspect drives a run's
+	// deadline, which Shutdown must wait for and refuse once it began.
+	after    func(d time.Duration, fn func()) *time.Timer
 	settled  []func()
 	ceiling  time.Duration
 	retryMax time.Duration
@@ -78,6 +81,7 @@ func newRunMutations() *runMutations {
 		consumed: map[laneRef]uint64{},
 		ceiling:  mutationSettleCeiling,
 		retryMax: mutationRetryMax,
+		after:    time.AfterFunc,
 	}
 }
 
@@ -211,7 +215,7 @@ func (m *runMutations) armLocked(e *runMutation, d time.Duration) {
 	if e.timer != nil {
 		e.timer.Stop()
 	}
-	e.timer = time.AfterFunc(d, func() { m.ceilingFired(e) })
+	e.timer = m.after(d, func() { m.ceilingFired(e) })
 }
 
 func (m *runMutations) ceilingFired(e *runMutation) {

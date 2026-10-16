@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -104,6 +105,7 @@ func TestCmdCancel_AWireTurnWithNoTurnEndClosesAtTheGrace(t *testing.T) {
 		t.Fatal("no session/cancel reached the bridge")
 	}
 	waitFor(t, func() bool { _, open := ownID(h, "c1"); return !open })
+	joinInflight(t, h)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 || closes[0].Outcome != marotte.TurnOutcomeCancelled {
@@ -178,6 +180,7 @@ func TestKASIdle_ClosesAWireTurnWhoseEndNeverCame(t *testing.T) {
 	send(t, h, newSessionChunkMsg("", "reading the notification"), newActivityMsg(false))
 
 	waitFor(t, func() bool { _, open := ownID(h, "c1"); return !open })
+	joinInflight(t, h)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 || closes[0].Outcome != marotte.TurnOutcomeUnknown || closes[0].FailureReason != kasIdleReason {
@@ -405,6 +408,80 @@ func TestKASIdle_ALateEndLeavesTheDrainedPromptToReachKAS(t *testing.T) {
 			}
 			if rows := queuedRows(t, cs, "c1"); len(rows) != 0 {
 				t.Errorf("queue = %+v, want empty", rows)
+			}
+		})
+	}
+}
+
+var wireBackstops = []struct {
+	name string
+	fire func(t *testing.T, h *Runtime)
+}{
+	{"kas idle", func(t *testing.T, h *Runtime) { send(t, h, newActivityMsg(false)) }},
+	{"cancel grace", func(t *testing.T, h *Runtime) {
+		if !h.coord.ArmWireCancelGrace("c1", 20*time.Millisecond) {
+			t.Fatal("setup: no wire turn for the cancel grace to arm on")
+		}
+	}},
+}
+
+func TestWireTurnBackstop_ShutdownWaitsForACloseUnderway(t *testing.T) {
+	for _, tc := range wireBackstops {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, br := idleWakeHub(t, 20*time.Millisecond)
+			var enter sync.Once
+			entered, release := make(chan struct{}), make(chan struct{})
+			closed := h.coord.onTurnClosed
+			h.coord.onTurnClosed = func(chatID marotte.ChatID, turnID string) {
+				enter.Do(func() { close(entered) })
+				<-release
+				closed(chatID, turnID)
+			}
+			tc.fire(t, h)
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				close(release)
+				t.Fatal("the backstop never closed the turn")
+			}
+			// Shutdown stops the engine, not this fake session, and awaits its forward: end it first, so only the
+			// held close can keep Shutdown waiting.
+			br.end()
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				shutdownHub(t, h)
+			}()
+			select {
+			case <-done:
+				t.Error("Shutdown returned while the backstop's close was still running")
+			case <-time.After(200 * time.Millisecond):
+			}
+			close(release)
+			<-done
+
+			if closes := closesOf(t, logOf(t, cs, "c1")); len(closes) != 1 {
+				t.Errorf("turn_close = %+v, want the backstop's one close", closes)
+			}
+		})
+	}
+}
+
+func TestWireTurnBackstop_ClosesNothingOnceShutdownBegan(t *testing.T) {
+	for _, tc := range wireBackstops {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, _ := idleWakeHub(t, 20*time.Millisecond)
+			beginDraining(h)
+
+			tc.fire(t, h)
+			time.Sleep(80 * time.Millisecond) // The backstop runs on a real timer.
+
+			if _, open := ownID(h, "c1"); !open {
+				t.Error("the backstop closed the turn after Shutdown began, want it left open")
+			}
+			if closes := closesOf(t, logOf(t, cs, "c1")); len(closes) != 0 {
+				t.Errorf("turn_close = %+v, want none", closes)
 			}
 		})
 	}

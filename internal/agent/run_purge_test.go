@@ -88,6 +88,21 @@ func TestPurgeParentlessRuns_DeletesOnlyFinishedUnclaimedRunsPastTheWindow(t *te
 	}
 }
 
+func TestPurgeParentlessRuns_PurgesNothingOnceShutdownBegan(t *testing.T) {
+	old := time.Now().Add(-10 * 24 * time.Hour)
+	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_old_done", "completed", "sess_runbridge", old)), nil, true)
+	beginDraining(h)
+
+	res := h.PurgeParentlessRuns(t.Context(), 7*24*time.Hour)
+
+	if got := deletedRunIDs(rig); len(got) != 0 {
+		t.Errorf("PurgeParentlessRuns once Shutdown began deleted %v, want none", got)
+	}
+	if res.Purged != 0 {
+		t.Errorf("PurgeParentlessRuns once Shutdown began reported %d purged, want 0", res.Purged)
+	}
+}
+
 func TestPurgeParentlessRuns_ZeroWindowSparesARunATabShows(t *testing.T) {
 	recent := time.Now().Add(-time.Minute)
 	runs := purgeRuns(t,

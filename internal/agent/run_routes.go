@@ -9,7 +9,11 @@ type runRoutes struct {
 	epoch func() string
 }
 
+// register admits every write through the drain gate (lifetime.admitUnlessDraining); the reads stay up.
 func (rr *runRoutes) register(mux *http.ServeMux) {
+	write := func(pattern string, h http.HandlerFunc) {
+		mux.Handle(pattern, rr.runs.lifecycle.admitUnlessDraining(h))
+	}
 	mux.HandleFunc("GET /api/runs/{id}", rr.handleRun)
 	mux.HandleFunc("GET /api/runs/{id}/controls", rr.handleControls)
 	mux.HandleFunc("GET /api/runs/live", rr.handleLiveRuns)
@@ -17,16 +21,16 @@ func (rr *runRoutes) register(mux *http.ServeMux) {
 	// travels as %2F inside the segment.
 	mux.HandleFunc("GET /api/runs/{id}/steps/{path}", rr.handleStepTranscript)
 	mux.HandleFunc("GET /api/runs/{id}/turns/{turn}", rr.handleTurnRange)
-	mux.HandleFunc("POST /api/runs", rr.handleLaunch)
-	mux.HandleFunc("POST /api/runs/{id}/cancel", rr.handleCancel)
-	mux.HandleFunc("POST /api/runs/{id}/pause", rr.handlePause)
-	mux.HandleFunc("POST /api/runs/{id}/resume", rr.handleResume)
-	mux.HandleFunc("POST /api/runs/{id}/retry", rr.handleRetry)
-	mux.HandleFunc("DELETE /api/runs/{id}", rr.handleDelete)
-	mux.HandleFunc("POST /api/runs/{id}/extend", rr.handleExtend)
-	mux.HandleFunc("POST /api/runs/{id}/finish-loop", rr.handleFinishLoop)
-	mux.HandleFunc("POST /api/runs/{id}/answer", rr.handleAnswer)
-	mux.HandleFunc("POST /api/runs/{id}/steps/{path}/{verb}", rr.handleStepPost)
+	write("POST /api/runs", rr.handleLaunch)
+	write("POST /api/runs/{id}/cancel", rr.handleCancel)
+	write("POST /api/runs/{id}/pause", rr.handlePause)
+	write("POST /api/runs/{id}/resume", rr.handleResume)
+	write("POST /api/runs/{id}/retry", rr.handleRetry)
+	write("DELETE /api/runs/{id}", rr.handleDelete)
+	write("POST /api/runs/{id}/extend", rr.handleExtend)
+	write("POST /api/runs/{id}/finish-loop", rr.handleFinishLoop)
+	write("POST /api/runs/{id}/answer", rr.handleAnswer)
+	write("POST /api/runs/{id}/steps/{path}/{verb}", rr.handleStepPost)
 	mux.HandleFunc("GET /api/recipes", rr.handleRecipes)
-	rr.registerSchedule(mux)
+	rr.registerSchedule(mux, write)
 }

@@ -23,7 +23,7 @@ const launchSessionUnavailableText = "This run's launching session cannot be ope
 // errRunNotListed means KAS's inventory does not list the run. Answered 404.
 var errRunNotListed = errors.New("run not found")
 
-// errRuntimeDraining settles a host load refused because marotte is shutting down.
+// errRuntimeDraining settles a host load or scheduled launch refused because marotte is shutting down.
 var errRuntimeDraining = errors.New("marotte is shutting down")
 
 // drivenHost is the resident session a driving verb writes on: the run's launching session, which holds the profile's

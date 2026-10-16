@@ -10,7 +10,7 @@ import (
 // registerEngineRoutes mounts the engine's status, its confirmed restart and the configuration standing.
 func (rt *Runtime) registerEngineRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/engine", rt.handleEngineStatus)
-	mux.HandleFunc("POST /api/engine/restart", rt.handleEngineRestart)
+	mux.Handle("POST /api/engine/restart", rt.lifecycle.admitUnlessDraining(http.HandlerFunc(rt.handleEngineRestart)))
 	mux.HandleFunc("GET /api/config/standing", rt.standing.handle)
 }
 

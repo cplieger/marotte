@@ -306,6 +306,9 @@ func (e *fakeEngine) open(ctx context.Context, o *marotte.SessionOpts, attach fu
 		factory = e.src.observerFactory()
 	}
 	s := factory()
+	if r, ok := s.(interface{ reopen() }); ok {
+		r.reopen()
+	}
 	if attach != nil {
 		attach(s)
 	}

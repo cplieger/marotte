@@ -72,9 +72,9 @@ func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
 		scheduleID := l.ScheduleID
 		acpID := *msg.ID
 		tool := permissionToolName(msg.Params)
-		// AfterFunc parks no goroutine and is a no-op once answered: both paths claim from the tracker.
+		// A timer parks no goroutine and is a no-op once answered: both paths claim from the tracker.
 		params := msg.Params
-		time.AfterFunc(unattendedApprovalBudget, func() {
+		rs.lifecycle.afterUnlessDraining(unattendedApprovalBudget, func() {
 			rs.answerUnattended(chatID, origin, acpID, scheduleID, tool, params)
 		})
 	}

@@ -146,9 +146,9 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		reapSession: func(sessionID string) { h.reapSessions([]string{sessionID}) },
 		onTurnClosed: func(chatID marotte.ChatID, turnID string) {
 			h.agentTerms.closeTurn(chatID, turnID)
-			// Its own goroutine: a bridge Call has no deadline and a closer must not wait on one.
-			// On inflight, so Shutdown waits for it.
-			h.lifecycle.inflight.Go(func() {
+			// Its own goroutine: a bridge Call has no deadline and a closer must not wait on one. Gated, since a
+			// closer need not run on inflight; Shutdown stops every bridge, so a refused clear has nothing to clear.
+			h.lifecycle.goUnlessDraining(func() {
 				ctx, cancel := h.lifecycle.derivedContext()
 				defer cancel()
 				h.runs.clearStaleNotices(ctx, chatID)
@@ -1037,9 +1037,12 @@ func (bc *bridgeCoordinator) Notify(ctx context.Context, chatID marotte.ChatID, 
 		return
 	}
 	bc.noSubscribers.Store(false)
-	bc.lifecycle.inflight.Go(func() {
-		bc.push.Send(ctx, n)
-	})
+	// Gated, since a caller need not run on inflight (the PR status poller outlives Shutdown). Once draining the send
+	// still goes, unwaited: push.Close in Shutdown unblocks it and owns its writes.
+	send := func() { bc.push.Send(ctx, n) }
+	if !bc.lifecycle.goUnlessDraining(send) {
+		go send()
+	}
 }
 
 // retractPush drops any held ask push about subj: the ask was settled elsewhere.

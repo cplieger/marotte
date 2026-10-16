@@ -223,23 +223,11 @@ func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.
 		doc[kasServerKey] = rendered
 		resent = &renderedWait{waitForReady: policy.waitAll, known: true}
 	}
-	if len(servers) == 0 {
-		delete(block, kasServerKey)
-	} else {
-		rendered, err := json.Marshal(servers)
-		if err != nil {
-			return false, fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
-		}
-		block[kasServerKey] = rendered
+	if err := setOrDelete(block, kasServerKey, servers); err != nil {
+		return false, err
 	}
-	if len(block) == 0 {
-		delete(doc, kasPowersKey)
-	} else {
-		rendered, err := json.Marshal(block)
-		if err != nil {
-			return false, fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
-		}
-		doc[kasPowersKey] = rendered
+	if err := setOrDelete(doc, kasPowersKey, block); err != nil {
+		return false, err
 	}
 	if err := s.writeKASDoc(ctx, doc); err != nil {
 		return true, err
@@ -258,6 +246,19 @@ func powersBlockMatches(block map[string]json.RawMessage, hasBlock bool, servers
 		return !hasCurrent && (!hasBlock || len(block) > 0)
 	}
 	return sameServers(objectOrEmpty(rawCurrent), servers)
+}
+
+func setOrDelete(obj map[string]json.RawMessage, key string, value map[string]json.RawMessage) error {
+	if len(value) == 0 {
+		delete(obj, key)
+		return nil
+	}
+	rendered, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
+	}
+	obj[key] = rendered
+	return nil
 }
 
 // objectOrEmpty decodes a member that must be a JSON object. Anything else,

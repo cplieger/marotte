@@ -17,7 +17,7 @@ func TestRegisterSchedule_MountsTheSurfaceOnlyWithAStoreBehindIt(t *testing.T) {
 			t.Fatalf("schedule.NewStore: %v", err)
 		}
 		mux := http.NewServeMux()
-		(&runRoutes{runs: &Runs{schedules: st}}).registerSchedule(mux)
+		(&runRoutes{runs: &Runs{schedules: st}}).register(mux)
 
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/schedules", nil))
@@ -29,7 +29,7 @@ func TestRegisterSchedule_MountsTheSurfaceOnlyWithAStoreBehindIt(t *testing.T) {
 
 	t.Run("no store means no routes, not broken ones", func(t *testing.T) {
 		mux := http.NewServeMux()
-		(&runRoutes{runs: &Runs{}}).registerSchedule(mux)
+		(&runRoutes{runs: &Runs{}}).register(mux)
 
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/schedules", nil))
