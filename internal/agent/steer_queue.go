@@ -15,7 +15,7 @@ type steerQueue struct {
 	recs  *steerRecords
 	coord *bridgeCoordinator
 	locks *chatlock.Set
-	// steps names the carrier whose read loop folds a step key's frames.
+	// steps names the host session whose read loop folds a step key's frames.
 	steps *stepSteers
 }
 

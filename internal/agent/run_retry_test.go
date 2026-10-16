@@ -107,8 +107,9 @@ func TestHandleRetry_AnswersTheOutcomeRatherThanOk(t *testing.T) {
 	}
 }
 
-// TestRetry_AddressesTheRunsRealHost pins that keying on runChatID alone would spawn a second engine for a chat run whose process lives.
-func TestRetry_AddressesTheRunsRealHost(t *testing.T) {
+// A retry of a chat-parented run goes out on the chat's resident session: keying on runChatID alone would load a
+// second host session.
+func TestRetry_AChatParentedRunWhoseChatIsResidentOpensNoSession(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	aff := gateAnswer(t, h, "wf_1")
 	starts := br.startCount()
@@ -125,16 +126,16 @@ func TestRetry_AddressesTheRunsRealHost(t *testing.T) {
 		t.Fatalf("the verb never reached KAS; calls were %v", calls)
 	}
 	if got := br.startCount() - starts; got != 0 {
-		t.Errorf("%d processes started for a run whose launching chat's process is alive", got)
+		t.Errorf("%d session doors opened for a run whose launching chat's session is resident", got)
 	}
 	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
-		t.Error("a bridge was registered under the run's synthetic id for a run its launching " +
+		t.Error("a host session was registered under the run's synthetic id for a run its launching " +
 			"chat already hosts")
 	}
 }
 
 // A retried agent-launched run stays its chat's: the lease the retry mints names the chat and its
-// session, so the run's park is read through the chat's bridge and opening it starts no carrier.
+// session, so the run's park is read through the chat's bridge and opening it opens no run host.
 func TestRetry_AChatParentedRunKeepsItsChatOnTheLease(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
 
@@ -157,12 +158,12 @@ func TestRetry_AChatParentedRunKeepsItsChatOnTheLease(t *testing.T) {
 		t.Errorf("open_asks = %+v reachable %v, want the parked step: %s", got.OpenAsks, got.AsksReachable, body)
 	}
 	if h.bridge.mgr.get(runChatID("wf_1")) != nil || br.startCount() != starts {
-		t.Error("opening the retried run started a carrier, loading its chat's live session onto a second process")
+		t.Error("opening the retried run opened a run host, loading its chat's live session a second time")
 	}
 }
 
-// TestRetry_ReachesAnUnhostedChatRunThroughItsChat pins that retried on the launching chat's bridge.
-func TestRetry_ReachesAnUnhostedChatRunThroughItsChat(t *testing.T) {
+// TestRetry_ReachesANonResidentChatRunThroughItsChat pins that the retry goes out on the launching chat's session.
+func TestRetry_ReachesANonResidentChatRunThroughItsChat(t *testing.T) {
 	// Nothing here holds the run.
 	h, br := seedChatParentedRun(t, false, "phase-c-loop")
 
@@ -178,12 +179,12 @@ func TestRetry_ReachesAnUnhostedChatRunThroughItsChat(t *testing.T) {
 		t.Error("the launching chat's bridge was not opened, so its session is not live")
 	}
 	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
-		t.Error("a run bridge was registered for a chat-parented run")
+		t.Error("a run host session was registered for a chat-parented run")
 	}
 }
 
-// TestRetry_ARefusedRetryOnAReHostedRunLeavesNothingBehind pins that no stray subprocess or lease; the chat's bridge stays.
-func TestRetry_ARefusedRetryOnAReHostedRunLeavesNothingBehind(t *testing.T) {
+// TestRetry_ARefusedRetryThroughTheLaunchingChatLeavesNothingBehind pins that no stray host session or lease is left; the chat's session stays.
+func TestRetry_ARefusedRetryThroughTheLaunchingChatLeavesNothingBehind(t *testing.T) {
 	h, br := seedChatParentedRun(t, false)
 	br.setCallRPCErr(methodKiroWorkflowRetry,
 		&marotte.RPCError{Code: -32603, Message: "Workflow wf_1 not found on disk"})
@@ -192,7 +193,7 @@ func TestRetry_ARefusedRetryOnAReHostedRunLeavesNothingBehind(t *testing.T) {
 		t.Fatal("Retry = nil for a retry KAS refused")
 	}
 	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
-		t.Error("a run bridge was left registered for a run that never re-drove")
+		t.Error("a run host session was left registered for a run that never re-drove")
 	}
 	if h.bridge.mgr.get("c1") == nil {
 		t.Error("a failed retry closed the chat's bridge, which belongs to the conversation")
@@ -243,7 +244,7 @@ func TestHandleRetry_ForwardsKASsOwnSentence(t *testing.T) {
 }
 
 // TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow pins that the browser aborts at 30s, so the
-// verb answers 503 first rather than letting the client tear down its fresh bridge.
+// verb answers 503 first rather than letting the client abort the request first.
 func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *testing.T) {
 	if retryTimeout >= clientRequestBudget {
 		t.Errorf("retryTimeout = %v, want it below the client's %v request budget, or the "+
@@ -251,9 +252,9 @@ func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *te
 	}
 
 	h, br := seedChatParentedRun(t, false)
-	// Start the utility bridge first, or the gate parks the status read and the test hangs.
+	// Start the engine first, or the gate parks the status read and the test hangs.
 	if _, err := h.runs.rawInspect(t.Context(), "wf_1"); err != nil {
-		t.Fatalf("Setup: warming the utility bridge: %s", err)
+		t.Fatalf("Setup: warming the engine: %s", err)
 	}
 	// A never-returning Start stands in for a cold runtime unpack.
 	br.setStartGate(make(chan struct{}))
@@ -369,7 +370,7 @@ func TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry(t *testing.T) {
 			}
 		})
 
-		t.Run(name+", on a re-hosted run", func(t *testing.T) {
+		t.Run(name+", on a reloaded host session", func(t *testing.T) {
 			h, br := seedChatParentedRun(t, false)
 			br.setCallResult(methodKiroWorkflowRetry, reply)
 
@@ -378,7 +379,7 @@ func TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry(t *testing.T) {
 				t.Fatalf("Retry = %v, want errRetryOutcomeUnreadable", err)
 			}
 			if h.bridge.mgr.get("c1") == nil {
-				t.Error("the chat bridge that just started re-driving the run was closed because " +
+				t.Error("the chat session that just started re-driving the run was closed because " +
 					"its reply could not be parsed")
 			}
 			if _, held := h.runs.lease("wf_1"); !held {
@@ -411,9 +412,9 @@ func TestHandleRetry_AnUnreadableOutcomeTellsTheReaderToRefresh(t *testing.T) {
 	}
 }
 
-// TestRetry_ReadsTheParentTheGateResolved pins that the verb uses the gate's answer, since a second read can lose
-// the parent and re-host a live run. Asserted as a mechanism: background listing makes counts unstable.
-func TestRetry_ReadsTheParentTheGateResolved(t *testing.T) {
+// TestRetry_UsesTheParentTheGateResolved pins that the verb uses the gate's answer, since a second read can lose
+// the parent and load a second host for a live run. Asserted as a mechanism: background listing makes counts unstable.
+func TestRetry_UsesTheParentTheGateResolved(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	// Resolved while the inventory carries the parent.
 	aff := gateAnswer(t, h, "wf_1")
@@ -427,10 +428,10 @@ func TestRetry_ReadsTheParentTheGateResolved(t *testing.T) {
 		t.Fatalf("Retry = %v, want nil: the verb re-asked and got a different answer", err)
 	}
 	if got := br.startCount() - starts; got != 0 {
-		t.Errorf("%d processes started although the gate had already resolved the run's live host", got)
+		t.Errorf("%d session doors opened although the gate had already resolved the run's launching session", got)
 	}
 	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
-		t.Error("a second engine was registered under the run's synthetic id for a run its " +
+		t.Error("a host session was registered under the run's synthetic id for a run its " +
 			"launching chat already hosts")
 	}
 }

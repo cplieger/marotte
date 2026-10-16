@@ -170,7 +170,7 @@ func (rt *Runtime) clearPendingModel(ctx context.Context, chatID marotte.ChatID)
 	}
 }
 
-// refuseUnservedModel refuses a fresh pick the account cannot run (a spawn withholds an inherited
+// refuseUnservedModel refuses a fresh pick the account cannot run (a session door withholds an inherited
 // one silently); KAS would reject it mid-prompt every turn. The chat record is the evidence:
 // config_option_update refreshes it. An empty set is unknowable and allows.
 func (rt *Runtime) refuseUnservedModel(

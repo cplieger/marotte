@@ -25,7 +25,7 @@ func readAgentIgnoreFiles(ctx context.Context, configDir string) (files []string
 	return settings.AgentIgnoreList(list), true
 }
 
-// spawnIgnoreFiles resolves StartOpts.IgnoreFiles for every spawn site. An unreadable
+// spawnIgnoreFiles resolves EngineOpts.IgnoreFiles for the engine spawn. An unreadable
 // document yields the FLOOR: sending nothing would leave `.kiroignore` unenforced for the session.
 func spawnIgnoreFiles(ctx context.Context, configDir string) []string {
 	files, ok := readAgentIgnoreFiles(ctx, configDir)
@@ -36,22 +36,21 @@ func spawnIgnoreFiles(ctx context.Context, configDir string) []string {
 	return files
 }
 
-// reportIgnoreFilesUnreadable tells the operator and the client what is enforced while the list cannot be read: a
-// running process keeps its previous list, because an empty push would CLEAR enforcement in KAS, and a process spawned
-// meanwhile gets only the floor (spawnIgnoreFiles). It reports whether it did; with no chat process there is nothing
-// to report.
+// reportIgnoreFilesUnreadable tells the operator and the client what is enforced while the list cannot be read: the
+// running engine keeps its previous list, because an empty push would CLEAR enforcement in KAS, and an engine spawned
+// meanwhile gets only the floor (spawnIgnoreFiles). It reports whether it did; with no engine up there is nothing to
+// report.
 func (rt *Runtime) reportIgnoreFilesUnreadable(ctx context.Context) bool {
-	bridges := rt.bridge.mgr.count()
-	if bridges == 0 {
+	if h, _ := rt.engine.current(); h == nil {
 		return false
 	}
-	slog.Error("agent ignore files not pushed; running chats keep their previous list, a chat started before the file is fixed enforces only the floor",
-		"key", settings.KeyAgentIgnoreFiles, "floor", settings.AgentIgnoreFloor, "bridges", bridges)
+	slog.Error("agent ignore files not pushed; the agent engine keeps its previous list, and an engine started before the file is fixed enforces only the floor",
+		"key", settings.KeyAgentIgnoreFiles, "floor", settings.AgentIgnoreFloor)
 	rt.Broadcast(ctx, marotte.NewEvent(marotte.EventPolicyError, "", marotte.PolicyErrorPayload{
 		Errors: []marotte.PolicyErrorItem{{
 			Source: settings.Filename,
-			Message: "The agent ignore file list could not be read. Chats already running keep enforcing their previous list; " +
-				"a chat started before the file is fixed enforces only " + settings.AgentIgnoreFloor + ".",
+			Message: "The agent ignore file list could not be read. The agent engine keeps enforcing its previous list; " +
+				"if it restarts before the file is fixed it enforces only " + settings.AgentIgnoreFloor + ".",
 		}},
 	}))
 	return true

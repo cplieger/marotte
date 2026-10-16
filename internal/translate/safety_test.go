@@ -178,19 +178,19 @@ func TestHandleSafetyPropertiesChanged_EmptyDropped(t *testing.T) {
 	}
 }
 
-// TestHandleSafetyPropertiesChanged_SkipsSubagent pins that a subagent-keyed
-// copy is skipped (properties belong to the parent chat's surface).
-func TestHandleSafetyPropertiesChanged_SkipsSubagent(t *testing.T) {
-	t.Run("SubagentSkipped", func(t *testing.T) {
+// TestHandleSafetyPropertiesChanged_SkipsAForeignCopy pins that a copy keyed to another
+// session is skipped (properties belong to the parent chat's surface).
+func TestHandleSafetyPropertiesChanged_SkipsAForeignCopy(t *testing.T) {
+	t.Run("ForeignCopySkipped", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
 		tr := New(rolesOf(deps))
 		tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &marotte.RPCResponse{Params: mustJSON(t, map[string]any{
-			"sessionId":  "sess-sub",
+			"sessionId":  "sess-step",
 			"properties": []any{"no public S3 buckets"},
 		})})
 		if got := safetyPropsPayloads(t, events); len(got) != 0 {
-			t.Fatalf("want no broadcast for subagent-keyed copy, got %+v", got)
+			t.Fatalf("want no broadcast for a foreign copy, got %+v", got)
 		}
 	})
 	t.Run("ParentProcessed", func(t *testing.T) {

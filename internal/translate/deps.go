@@ -208,7 +208,7 @@ type Broadcaster interface {
 type pendingPermAdder interface {
 	// PendingPermsAdd records the ask KAS sent as acpID with the bridge it arrived on, which carries
 	// its answer and whose end retires it, and returns evt carrying the ask's own id: the request_id
-	// a client sees and echoes, since acpID restarts on every bridge.
+	// a client sees and echoes, since acpID restarts with every engine generation.
 	PendingPermsAdd(acpID int64, evt marotte.ServerEvent, origin AskOrigin) marotte.ServerEvent
 	// PendingPermsWithdraw retires the chat's ask for toolCallID, which KAS
 	// stopped waiting on, reporting whether one was open.
@@ -346,15 +346,6 @@ func New(r *Roles, opts ...Option) *Translator {
 
 // Option configures a Translator.
 type Option func(*Translator)
-
-// deriveSubSession returns the sessionID when it belongs to a subagent, and ""
-// for the launching chat itself or for a workflow step.
-func (t *Translator) deriveSubSession(chatID marotte.ChatID, sessionID string) string {
-	if t.classifyFrame(chatID, sessionID, false) == ownerSubagent {
-		return sessionID
-	}
-	return ""
-}
 
 // runOriginAccess answers where a run-shaped fact came from. In-memory on the host: a
 // run that outlives a restart reports false afterwards.

@@ -116,7 +116,7 @@ func TestHubContextIsLiveOnAFreshHub(t *testing.T) {
 // TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver pins that an unwritten refusal is the same wedge, and the line is
 // its only diagnosis, so it must not fire on success.
 func TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver(t *testing.T) {
-	const wantLine = "chat bridge: refusal could not be delivered; the turn may be wedged"
+	const wantLine = "chat session: refusal could not be delivered; the turn may be wedged"
 
 	t.Run("a refusal that went nowhere is reported", func(t *testing.T) {
 		logs := captureLogs(t)

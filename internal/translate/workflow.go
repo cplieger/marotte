@@ -1,7 +1,7 @@
 package translate
 
 // v3 workflow-run lifecycle handlers: KAS's nine notifications become three SSE events
-// (seven invalidations share one handler). They arrive on the LAUNCHING CHAT's bridge.
+// (seven invalidations share one handler). They arrive on the LAUNCHING session's lane.
 
 import (
 	"cmp"
@@ -70,7 +70,7 @@ type kasRunComplete struct {
 // logAgentRun writes the one durable trace an agent-launched run gets: two lines correlated
 // by workflow_id, since such a run has no record or supervisor. Silent for a run marotte
 // launched. The discriminator is the DELIVERY ADDRESS, not `parentSessionId` (which
-// _kiro/workflow/new requires): (*Runtime).dispatch hands a run-bridge frame an EMPTY chat
+// _kiro/workflow/new requires): (*Runtime).dispatch hands a run host session's frame an EMPTY chat
 // id. Not the lease: observeComplete releases it BEFORE HandleRunComplete.
 func logAgentRun(msg string, chatID marotte.ChatID, workflowID, recipe string, extra ...any) {
 	if chatID == "" {

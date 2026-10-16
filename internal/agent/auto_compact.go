@@ -66,7 +66,7 @@ type autoCompactState struct {
 type autoCompactor struct {
 	chats    map[marotte.ChatID]*autoCompactState
 	live     func(marotte.ChatID) bool
-	bridgeOf func(marotte.ChatID) ACPBridge
+	bridgeOf func(marotte.ChatID) engineSession
 	usage    func(context.Context, marotte.ChatID) (marotte.Usage, bool)
 	policy   func(context.Context) (enabled bool, pct int)
 	compact  func(context.Context, command.CompactBridge) (bool, error)
@@ -77,12 +77,12 @@ func newAutoCompactor(bc *bridgeCoordinator) *autoCompactor {
 	return &autoCompactor{
 		chats: map[marotte.ChatID]*autoCompactState{},
 		live:  bc.turns.live,
-		bridgeOf: func(chatID marotte.ChatID) ACPBridge {
+		bridgeOf: func(chatID marotte.ChatID) engineSession {
 			if !bc.bridgeLive(chatID) {
 				return nil
 			}
 			if sb := bc.bridgeFor(chatID); sb != nil {
-				return sb.bridge
+				return sb.current()
 			}
 			return nil
 		},
@@ -132,7 +132,7 @@ func (a *autoCompactor) forget(chatID marotte.ChatID) {
 }
 
 // read gathers the policy's inputs, or false with no live bridge or chat record.
-func (a *autoCompactor) read(ctx context.Context, chatID marotte.ChatID) (ACPBridge, compactReading, bool) {
+func (a *autoCompactor) read(ctx context.Context, chatID marotte.ChatID) (engineSession, compactReading, bool) {
 	b := a.bridgeOf(chatID)
 	if b == nil {
 		return nil, compactReading{}, false
@@ -235,7 +235,7 @@ func (*autoCompactor) await(ctx context.Context, chatID marotte.ChatID, running 
 }
 
 // A refusal or error changes nothing and is retried at the next trigger.
-func (a *autoCompactor) run(ctx context.Context, chatID marotte.ChatID, st *autoCompactState, done chan struct{}, b ACPBridge, atPct float64, trigger string) {
+func (a *autoCompactor) run(ctx context.Context, chatID marotte.ChatID, st *autoCompactState, done chan struct{}, b engineSession, atPct float64, trigger string) {
 	callCtx, cancel := context.WithTimeout(ctx, autoCompactPreSendBudget)
 	accepted, err := a.compact(callCtx, b)
 	cancel()

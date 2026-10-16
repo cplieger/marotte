@@ -5,6 +5,8 @@ package agent
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 type bufferedEvent struct {
@@ -21,11 +24,12 @@ type bufferedEvent struct {
 }
 
 // bufferedEvents decodes the SSE replay buffer, so a test asserts what a client sees.
+// bufferedEvents is every buffered event but engine_status, which the engine's own start publishes asynchronously.
 func bufferedEvents(h *Runtime) []bufferedEvent {
 	var out []bufferedEvent
 	for _, e := range h.bus.fanout.Snapshot() {
 		var evt bufferedEvent
-		if json.Unmarshal(e.Event.Data, &evt) == nil {
+		if json.Unmarshal(e.Event.Data, &evt) == nil && evt.Type != string(marotte.EventEngineStatus) {
 			out = append(out, evt)
 		}
 	}
@@ -129,7 +133,7 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 		t.Error("a step chunk opened a chat turn for the synthetic chat id")
 	}
 	// The unhandled-notification line stays quiet, so it still flags genuinely unknown frames.
-	const unhandled = "run bridge: unhandled notification"
+	const unhandled = "run host session: unhandled notification"
 	if out := logs.String(); strings.Contains(out, `"msg":"`+unhandled+`"`) {
 		t.Errorf("a step's session/update was reported as %q: %s", unhandled, out)
 	}
@@ -212,7 +216,7 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 		t.Errorf("Launch = (%q, %q), want (wf_9, publish)", id, name)
 	}
 	if h.bridge.mgr.get("run:wf_9") == nil {
-		t.Error("the run bridge is not registered under its synthetic id")
+		t.Error("the run host session is not registered under its synthetic id")
 	}
 	// invoke after new, on the same bridge.
 	calls := br.callLog()
@@ -227,28 +231,6 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 	}
 	if newIdx == -1 || invokeIdx == -1 || invokeIdx < newIdx {
 		t.Errorf("call order wrong: %v", calls)
-	}
-}
-
-// A run step's workspace hooks autofire only when its bridge declares the v2 hook
-// engine at initialize, as a chat bridge does.
-func TestLaunchRun_RunBridgeDeclaresHooks(t *testing.T) {
-	h, _, br := newTestHub()
-	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
-		methodKiroWorkflowList:        json.RawMessage(`{"runs":[]}`),
-		methodKiroWorkflowNew:         json.RawMessage(`{"workflowId":"wf_9"}`),
-		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
-	}
-	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-	opts := br.lastStartOpts()
-	if opts == nil {
-		t.Fatal("the run bridge was never started")
-	}
-	if !opts.EnableHooks {
-		t.Error("Launch started the run bridge with EnableHooks=false, so workspace hooks never fire during its steps")
 	}
 }
 
@@ -287,6 +269,107 @@ func TestListRecipes_CarriesKASsValidationError(t *testing.T) {
 	}
 	if got[1].ValidationError != "" {
 		t.Errorf("launchable recipe ValidationError = %q, want empty", got[1].ValidationError)
+	}
+}
+
+// workflowStandingCapture is testdata/workflow_standing_capture.json: kiro-cli 2.31.1's getState and listRecipes over
+// a workspace holding wsonly, a home layer holding homeonly, and shared in both.
+type workflowStandingCapture struct {
+	GetState    json.RawMessage `json:"getState"`
+	ListRecipes json.RawMessage `json:"listRecipes"`
+}
+
+func (c workflowStandingCapture) withWorkflowStanding(t *testing.T, name string, standing map[string]any) json.RawMessage {
+	t.Helper()
+	var state map[string]any
+	if err := json.Unmarshal(c.GetState, &state); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range state["resources"].([]any) {
+		res := r.(map[string]any)
+		if res["type"] != "workflow" {
+			continue
+		}
+		for _, i := range res["items"].([]any) {
+			it := i.(map[string]any)
+			if it["value"].(map[string]any)["name"] == name {
+				it["standing"], found = standing, true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the capture holds no workflow item %q", name)
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func badgedRows(t *testing.T, getState json.RawMessage, keys map[string]string) []string {
+	t.Helper()
+	standing, ok := translate.DecodeConfigurationStanding(getState)
+	if !ok {
+		t.Fatal("getState does not decode")
+	}
+	var badged []string
+	for _, s := range standing {
+		if s.Type != "workflow" {
+			continue
+		}
+		for name, key := range keys {
+			if key == s.Key {
+				badged = append(badged, name)
+			}
+		}
+	}
+	return badged
+}
+
+func TestListRecipes_KeysEachRecipeAsTheCapturedStandingKeysItsFile(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "workflow_standing_capture.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var capture workflowStandingCapture
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatal(err)
+	}
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowListRecipes: capture.ListRecipes}
+	recipes, err := h.runs.listRecipes(t.Context())
+	if err != nil {
+		t.Fatalf("listRecipes = %v", err)
+	}
+	keys := map[string]string{}
+	for _, r := range recipes {
+		if r.BuiltIn {
+			if r.DocKey != "" {
+				t.Errorf("bundled recipe %q DocKey = %q, want empty", r.Name, r.DocKey)
+			}
+			continue
+		}
+		keys[r.Name] = r.DocKey
+	}
+	if keys["shared"] != "workspace/project/.kiro/workflows/shared.workflow.json" {
+		t.Errorf("shared DocKey = %q, want the workspace file listRecipes resolves it to", keys["shared"])
+	}
+
+	if got := badgedRows(t, capture.GetState, keys); len(got) != 0 {
+		t.Errorf("captured standing badges %v, want none: kiro-cli reports every workflow it lists active", got)
+	}
+
+	// The home shared is the file listRecipes shadows; its standing names that file, never the workspace winner.
+	shadowed := capture.withWorkflowStanding(t, "shared", map[string]any{"kind": "displaced", "compose": "override", "decidedBy": "workspace"})
+	if got := badgedRows(t, shadowed, keys); len(got) != 0 {
+		t.Errorf("rows joined by the home shared item's standing = %v, want none", got)
+	}
+
+	off := capture.withWorkflowStanding(t, "homeonly", map[string]any{"kind": "disabled", "decidedBy": "workspace"})
+	if got := badgedRows(t, off, keys); !slices.Equal(got, []string{"homeonly"}) {
+		t.Errorf("rows joined by the home-only item's standing = %v, want [homeonly]", got)
 	}
 }
 
@@ -359,7 +442,7 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 	}
 }
 
-// TestBridgeManagerInsert_RefusesReplacement pins that inserting over a live entry would orphan its process.
+// TestBridgeManagerInsert_RefusesReplacement pins that inserting over a live entry would orphan its session.
 func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 	h, _, br := newTestHub()
 	first := &sharedBridge{bridge: br, state: bridgeIdle}
@@ -422,14 +505,14 @@ func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	}
 }
 
-// TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable pins that a re-hosted parentless run's first frame
+// TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable pins that a reloaded parentless run's first frame
 // can beat the retry reply; blockOn holds the call open so the frame lands inside the window.
 func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
-		// The run list supplies a re-hosted run's recipe.
+		// The run list supplies a reloaded run's recipe.
 		methodKiroWorkflowList: json.RawMessage(
 			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted",` +
 				`"parentSessionId":"` + testLaunchSession + `"}]}`,
@@ -486,8 +569,8 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 	}
 }
 
-// TestRetry_ReHostedRunTakesItsRecipeFromTheRunList pins that the lease needs the recipe the single-run rule compares.
-func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
+// TestRetry_ALoadedHostRunTakesItsRecipeFromTheRunList pins that the lease needs the recipe the single-run rule compares.
+func TestRetry_ALoadedHostRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
@@ -497,7 +580,7 @@ func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 				`"parentSessionId":"` + testLaunchSession + `"}]}`,
 		),
 	}
-	// No bridge in the manager: the re-hosting path.
+	// No host session in the manager: the reload path.
 	if h.bridge.mgr.get(runChatID(id)) != nil {
 		t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 	}
@@ -512,7 +595,7 @@ func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	}
 	l, ok := h.runs.lease(id)
 	if !ok {
-		t.Fatal("the re-hosted run holds no lease, so nothing bounds it")
+		t.Fatal("the reloaded run holds no lease, so nothing bounds it")
 	}
 	if l.Recipe != "nightly" {
 		t.Errorf("recipe = %q, want nightly off KAS's run list", l.Recipe)
@@ -522,7 +605,7 @@ func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 			"own and must stay sweepable", l.Origin)
 	}
 	if !l.Bounded() {
-		t.Error("the re-hosted run took no deadline")
+		t.Error("the reloaded run took no deadline")
 	}
 }
 
@@ -580,7 +663,7 @@ func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-	h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
+	h.runs.grantLease(t.Context(), id, "publish", manualLaunch(), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 
 	if err := h.runs.cancel(t.Context(), id); err != nil {
@@ -676,7 +759,7 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 				}
 			}
 			if !found {
-				t.Errorf("%s on a run bridge emitted %v, want a %s; the step is blocked on an "+
+				t.Errorf("%s on a run host session emitted %v, want a %s; the step is blocked on an "+
 					"answer the user was never shown", c.method, got, c.want)
 			}
 			if br.respondCount() != 0 {
@@ -687,9 +770,9 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_TerminalCompletionClosesTheRunsBridge pins the close on run_complete; it runs on its own
+// TestRunDispatch_TerminalCompletionClosesTheRunsHostSession pins the close on run_complete; it runs on its own
 // goroutine (it closes the forward loop's channel), hence the bounded poll.
-func TestRunDispatch_TerminalCompletionClosesTheRunsBridge(t *testing.T) {
+func TestRunDispatch_TerminalCompletionClosesTheRunsHostSession(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
@@ -700,7 +783,7 @@ func TestRunDispatch_TerminalCompletionClosesTheRunsBridge(t *testing.T) {
 	stop := time.Now().Add(5 * time.Second)
 	for h.bridge.mgr.get(runChatID(id)) != nil {
 		if time.Now().After(stop) {
-			t.Fatal("a run that reported completion kept its bridge, so its kiro-cli subprocess " +
+			t.Fatal("a run that reported completion kept its host session, so the session " +
 				"outlives the run that needed it")
 		}
 		time.Sleep(time.Millisecond)
@@ -750,7 +833,7 @@ func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
 				methodKiroWorkflowCancel: json.RawMessage(`{}`),
 			}
 			h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-			h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
+			h.runs.grantLease(t.Context(), id, "publish", manualLaunch(), hostSec())
 			// No chat record exists.
 
 			h.runs.cancelForChat(t.Context(), "c-doomed", userStop(stopWhyTabClosed))
@@ -901,10 +984,9 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_SendsTheRunBridgesOwnSessionAsParent pins that `parentSessionId` is required on `_kiro/workflow/new`
-// since kiro-cli 2.21.4. It must be the run bridge's own session: lifecycle frames route to the parent's
-// connection, and any other would silently lose them.
-func TestLaunchRun_SendsTheRunBridgesOwnSessionAsParent(t *testing.T) {
+// TestLaunchRun_SendsTheHostSessionAsParent pins that `parentSessionId` is required on `_kiro/workflow/new` since
+// kiro-cli 2.21.4. It must be the host session: lifecycle frames name the parent and arrive on its lane.
+func TestLaunchRun_SendsTheHostSessionAsParent(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
@@ -923,11 +1005,11 @@ func TestLaunchRun_SendsTheRunBridgesOwnSessionAsParent(t *testing.T) {
 	}
 	got, ok := params["parentSessionId"].(string)
 	if !ok || got == "" {
-		t.Fatalf("parentSessionId = %#v, want the run bridge's own session id; "+
+		t.Fatalf("parentSessionId = %#v, want the host session id; "+
 			"0.63.3 throws without it and the launch fails", params["parentSessionId"])
 	}
 	if want := string(br.SessionID()); got != want {
-		t.Errorf("parentSessionId = %q, want %q (the bridge the call travels on)", got, want)
+		t.Errorf("parentSessionId = %q, want %q (the session the call names)", got, want)
 	}
 	// workspacePaths stays for pre-0.63.3 engines.
 	if _, ok := params[keyWorkspacePaths]; !ok {
@@ -935,8 +1017,9 @@ func TestLaunchRun_SendsTheRunBridgesOwnSessionAsParent(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_RefusesABridgeWithNoSession pins that a session-less started bridge is refused before the RPC.
-func TestLaunchRun_RefusesABridgeWithNoSession(t *testing.T) {
+// TestLaunchRun_RefusesAHostSessionDoorWithNoSessionID pins that a host door answering no id is refused before the
+// RPC, and nothing is registered for a run that does not exist.
+func TestLaunchRun_RefusesAHostSessionDoorWithNoSessionID(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
@@ -948,13 +1031,13 @@ func TestLaunchRun_RefusesABridgeWithNoSession(t *testing.T) {
 	br.mu.Unlock()
 
 	_, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
-	if err == nil {
-		t.Fatal("Launch succeeded on a bridge with no session; want a refusal")
+	if !errors.Is(err, errRunHostStart) {
+		t.Fatalf("Launch on a door with no session id = %v, want errRunHostStart", err)
 	}
 	if br.called(methodKiroWorkflowNew) {
 		t.Error("the RPC went out anyway; the refusal must precede it")
 	}
-	if !br.isStopped() {
-		t.Error("the started bridge was left running after the refusal")
+	if len(h.bridge.mgr.all()) != 0 {
+		t.Errorf("sessions registered after the refusal = %v, want none", h.bridge.mgr.all())
 	}
 }

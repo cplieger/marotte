@@ -43,14 +43,15 @@ func (r *loopWakeRecorder) sent() []loopWakeCall {
 func newLoopWakeHub(t *testing.T, opts ...Option) (*Runtime, *loopWakeRecorder) {
 	t.Helper()
 	cs := newTestChatStore()
-	h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, opts...)
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, opts...)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
+	settleBoot(t, h)
 	rec := &loopWakeRecorder{}
 	h.runs.loopWake.deliver = rec.deliver
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "Ship it" })
 	if _, held := h.runs.lease("wf_1"); !held {
-		h.runs.grantLease(t.Context(), "wf_1", "fix-loop", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"})
+		h.runs.grantLease(t.Context(), "wf_1", "fix-loop", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"}, hostSec())
 	}
 	return h, rec
 }
@@ -205,7 +206,9 @@ func TestLoopLimitWake_AClaimThatCannotBeWrittenIsNotSent(t *testing.T) {
 	}
 }
 
+// Serial: captureLogs swaps the global logger.
 func TestLoopLimitWake_APauseSeenDuringShutdownIsSentAfterTheRestart(t *testing.T) {
+	logs := captureLogs(t)
 	dir := t.TempDir()
 	first, err := runlease.NewStore(dir)
 	if err != nil {
@@ -219,6 +222,10 @@ func TestLoopLimitWake_APauseSeenDuringShutdownIsSentAfterTheRestart(t *testing.
 
 	if n := len(rec.sent()); n != 0 {
 		t.Errorf("draining process deliveries = %d, want 0", n)
+	}
+	if out := logs.String(); !strings.Contains(out, `"level":"WARN"`) || !strings.Contains(out, "shutting down") ||
+		!strings.Contains(out, `"workflow_id":"wf_1"`) {
+		t.Errorf("logs = %s, want a WARN naming the run whose wake shutdown refused", out)
 	}
 	reopened, err := runlease.NewStore(dir)
 	if err != nil {
@@ -234,7 +241,7 @@ func TestLoopLimitWake_APauseSeenDuringShutdownIsSentAfterTheRestart(t *testing.
 	}
 }
 
-// The run's carrier and its parent's bridge can each deliver the same frame.
+// The run's host session and its parent's bridge can each deliver the same frame.
 func TestLoopLimitWake_ConcurrentFramesSendOnce(t *testing.T) {
 	h, rec := newLoopWakeHub(t)
 
@@ -295,36 +302,36 @@ func TestLoopLimitWake_SendsNothing(t *testing.T) {
 		name     string
 		workflow string
 		door     marotte.ChatID
+		config   string
 	}{
 		{
 			name: "for a parentless run", workflow: "wf_2", door: runChatID("wf_2"), pause: capPause(5),
 			setup: func(t *testing.T, h *Runtime) {
-				h.runs.grantLease(t.Context(), "wf_2", "fix-loop", manualLaunch())
+				h.runs.grantLease(t.Context(), "wf_2", "fix-loop", manualLaunch(), hostSec())
 			},
 		},
 		{
 			name: "for a run whose launching chat is gone", workflow: "wf_2", door: "c-gone", pause: capPause(5),
 			setup: func(t *testing.T, h *Runtime) {
-				h.runs.grantLease(t.Context(), "wf_2", "fix-loop", launchOrigin{origin: runlease.OriginAgent, chatID: "c-gone"})
+				h.runs.grantLease(t.Context(), "wf_2", "fix-loop", launchOrigin{origin: runlease.OriginAgent, chatID: "c-gone"}, hostSec())
 			},
 		},
 		{name: "for a step waiting on input", workflow: "wf_1", door: "c1", pause: otherPause("stepInput")},
 		{name: "for a retry wait", workflow: "wf_1", door: "c1", pause: otherPause("retry-wait")},
 		{name: "for a pause the user asked for", workflow: "wf_1", door: "c1", pause: otherPause("")},
 		{name: "for a cap pause naming no loop", workflow: "wf_1", door: "c1", pause: map[string]any{"kind": "maxIterations", "iterationsRun": 5}},
-		{
-			name: "with the setting off", workflow: "wf_1", door: "c1", pause: capPause(5),
-			setup: func(t *testing.T, h *Runtime) {
-				dir := t.TempDir()
-				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"loop_limit_wake": false}`), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				h.lifecycle.configDir = dir
-			},
-		},
+		{name: "with the setting off", workflow: "wf_1", door: "c1", pause: capPause(5), config: `{"loop_limit_wake": false}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, rec := newLoopWakeHub(t)
+			var opts []Option
+			if tc.config != "" {
+				dir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tc.config), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				opts = append(opts, WithConfigDir(dir))
+			}
+			h, rec := newLoopWakeHub(t, opts...)
 			if tc.setup != nil {
 				tc.setup(t, h)
 			}
@@ -381,7 +388,7 @@ func TestLoopLimitWake_AnIdleChatGetsOneLabelledPrompt(t *testing.T) {
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
-	h.runs.grantLease(t.Context(), "wf_1", "fix-loop", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"})
+	h.runs.grantLease(t.Context(), "wf_1", "fix-loop", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"}, hostSec())
 	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method == marotte.MethodPrompt {
 			h.translateACPEvent("c1", h.originOf("c1"), newSessionInfoMsg(map[string]any{
@@ -410,7 +417,7 @@ func TestLoopLimitWake_AChatMidTurnGetsOneSteer(t *testing.T) {
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
-	h.runs.grantLease(t.Context(), "wf_1", "fix-loop", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"})
+	h.runs.grantLease(t.Context(), "wf_1", "fix-loop", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"}, hostSec())
 	br.callResults = map[string]json.RawMessage{marotte.MethodSessionSteer: json.RawMessage(`{"queued":true}`)}
 	unblock := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: unblock}
@@ -429,5 +436,99 @@ func TestLoopLimitWake_AChatMidTurnGetsOneSteer(t *testing.T) {
 	}
 	if prompts != 1 {
 		t.Errorf("session/prompt calls = %d while the turn ran, want only the user's own", prompts)
+	}
+}
+
+// Through the real steer record: a steer KAS drops because its turn already ended (queued false) is carried by the
+// record into the next prompt once marotte sees that turn end, so the agent reads the wake exactly once and no row
+// is left in the chat's steer dock.
+func TestLoopLimitWake_ADroppedSteerReachesTheAgentOnceAndLeavesNoRow(t *testing.T) {
+	h, cs, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	seedChat(t, cs, "c1")
+	h.runs.grantLease(t.Context(), "wf_1", "fix-loop", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"}, hostSec())
+	br.callResults = map[string]json.RawMessage{
+		marotte.MethodSessionSteer: json.RawMessage(`{"queued":false,"dropped":"epoch_changed"}`),
+	}
+	unblock := make(chan struct{})
+	br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: unblock}
+	postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1", Payload: json.RawMessage(`{"text":"start","message_id":"m-1"}`),
+	})
+	waitForCall(t, br, marotte.MethodPrompt)
+
+	h.runs.observeComplete(t.Context(), "c1", loopPausedFrame(capPause(5)))
+	waitFor(t, func() bool {
+		l, _ := h.runs.lease("wf_1")
+		return l.LoopWake.State == runlease.LoopWakeDelivered || l.LoopWake.State == runlease.LoopWakeFailed
+	})
+	br.mu.Lock()
+	delete(br.blockOn, marotte.MethodPrompt)
+	br.mu.Unlock()
+	close(unblock)
+	waitFor(t, func() bool { return countCalls(br, marotte.MethodPrompt) == 2 && liveSteerRows(h, "c1") == 0 })
+
+	if l, _ := h.runs.lease("wf_1"); l.LoopWake.State != runlease.LoopWakeDelivered {
+		t.Errorf("lease LoopWake = %+v, want the wake recorded delivered", l.LoopWake)
+	}
+	if n := countCalls(br, marotte.MethodSessionSteer); n != 1 {
+		t.Errorf("steers = %d, want the one KAS dropped", n)
+	}
+	if n := countCalls(br, marotte.MethodPrompt); n != 2 {
+		t.Errorf("session/prompt calls = %d, want the user's and the one carrying the wake", n)
+	}
+	if text := kasReplayedUserText(t, br.paramsFor(marotte.MethodPrompt)); strings.Count(text, "reached its iteration limit") != 1 {
+		t.Errorf("the carried prompt = %q, want the wake's text exactly once", text)
+	}
+	if n := liveSteerRows(h, "c1"); n != 0 {
+		t.Errorf("steer dock rows still live = %d, want the carried row retired", n)
+	}
+}
+
+func liveSteerRows(h *Runtime, chatID marotte.ChatID) int {
+	h.bus.steers.mu.Lock()
+	defer h.bus.steers.mu.Unlock()
+	n := 0
+	if rec := h.bus.steers.chats[chatID]; rec != nil {
+		rec.live(func(*dockRow) { n++ })
+	}
+	return n
+}
+
+// nestedCapFrame is the run tree of an outer repeat on pass outer whose inner repeat "review-loop" paused at its cap.
+func nestedCapFrame(outer, iterations int) *marotte.RPCResponse {
+	inner := map[string]any{"nodeId": "review-loop", "type": "repeat", "status": "paused"}
+	done := map[string]any{"nodeId": "review-loop", "type": "repeat", "status": "completed"}
+	passes := make([]any, 0, outer)
+	for i := 1; i <= outer; i++ {
+		child := done
+		if i == outer {
+			child = inner
+		}
+		passes = append(passes, map[string]any{
+			"nodeId": "outer", "type": "iteration", "iteration": i, "status": "running", "children": []any{child},
+		})
+	}
+	root := map[string]any{"nodeId": "outer", "type": "repeat", "status": "running", "children": passes}
+	return runNotif(methodWFRunComplete, map[string]any{
+		"workflowId": "wf_1", "status": "paused",
+		"finalState": map[string]any{"runLabel": "Fix the flaky tests", "root": root, "pause": capPause(iterations)},
+	})
+}
+
+// KAS restarts an inner repeat's count on each outer pass: the inner loop's cap on a later outer pass is a new pause,
+// while the same pass's pause seen again is not.
+func TestLoopLimitWake_AnInnerLoopsCapOnALaterOuterPassSendsAgain(t *testing.T) {
+	h, rec := newLoopWakeHub(t)
+
+	h.runs.observeComplete(t.Context(), "c1", nestedCapFrame(1, 3))
+	joinInflight(t, h)
+	h.runs.observeComplete(t.Context(), "c1", nestedCapFrame(1, 3))
+	joinInflight(t, h)
+	h.runs.observeComplete(t.Context(), "c1", nestedCapFrame(2, 3))
+	joinInflight(t, h)
+
+	if n := len(rec.sent()); n != 2 {
+		t.Errorf("deliveries = %d, want 2: one per outer pass whose inner loop reached its cap", n)
 	}
 }

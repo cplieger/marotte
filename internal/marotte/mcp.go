@@ -84,7 +84,7 @@ type MCPFailedPayload struct {
 }
 
 // MCPDisconnectedPayload is the payload for type="mcp_disconnected".
-// Emitted when the runtime's last bridge exits: kiro-cli's MCP subprocesses
+// Emitted per server when the agent engine ends: kiro-cli's MCP subprocesses
 // shut down with it, so no configured server is currently live.
 // Clients use this to clear their runtime-state map.
 type MCPDisconnectedPayload struct {

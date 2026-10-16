@@ -10,6 +10,8 @@ export type ContentKind = "text" | "binary" | "not_utf8" | "too_large";
 
 export type DecisionKind = "permission" | "elicitation" | "user_input";
 
+export type EngineState = "starting" | "ready" | "restarting" | "down";
+
 export type EntryKind = "turn_open" | "turn_bind" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
@@ -50,9 +52,9 @@ export type RefusalCode = "changed" | "too_large" | "binary" | "invalid_file_id"
 
 export type RegistryFailureReason = "rate_limited" | "rejected" | "unavailable";
 
-export type RunAskBlocker = "stopping" | "pending" | "recovering" | "branch_running" | "unsettled" | "settling";
+export type RunAskBlocker = "stopping" | "pending" | "branch_running" | "unsettled" | "settling";
 
-export type RunAskRefusal = "ask_stopping" | "ask_pending" | "ask_stale" | "ask_gone" | "ask_recovering" | "ask_branch_running" | "ask_unsettled" | "ask_settling" | "ask_unreadable" | "ask_unnamed" | "run_answer_pending";
+export type RunAskRefusal = "ask_stopping" | "ask_pending" | "ask_stale" | "ask_gone" | "ask_branch_running" | "ask_unsettled" | "ask_settling" | "ask_unreadable" | "ask_unnamed" | "run_answer_pending";
 
 export type RunAskText = "asked" | "last_message" | "unseen";
 
@@ -142,7 +144,7 @@ export interface AccountUsage {
   overages_enabled: boolean;
   /**
  * Stale is true when this snapshot was served from the last-known
- * cache because a fresh fetch failed (no live bridge, rate limit).
+ * cache because a fresh fetch failed (the engine not running, rate limit).
  */
   stale?: boolean;
 }
@@ -181,6 +183,13 @@ export interface Affordance {
   support: string;
   source: string;
   detail: string;
+}
+
+/** AgentLoadError is the last load error kiro-cli reported for an agent file. */
+export interface AgentLoadError {
+  at: string;
+  reason_code: string;
+  error: string;
 }
 
 /**
@@ -373,7 +382,7 @@ export interface CodeReference {
  * attributions on the in-flight turn. References is the full deduped list, so a later
  * notification REPLACES rather than appends. Live only; the durable value is the
  * turn_close aggregate's code_references. Chat-scoped: KAS broadcasts one references
- * list to every session in the bridge process, so a step's copy carries the chat's own
+ * list to every session on the engine, so a step's copy carries the chat's own
  * attributions and there is nothing a run-scoped frame could report that this one does
  * not.
  */
@@ -398,6 +407,30 @@ export interface CommitChecks {
   checks_neutral: number;
   checks_unknown: number;
   checks_total: number;
+}
+
+/**
+ * ConfigStanding is one non-active item of the workspace's composed configuration. Key is the Docs row's Path for a
+ * file-backed item (steering, agent, workflow) and the server name for an MCP server; an item with neither has no
+ * row to join. Kind is kiro-cli's reason (`displaced`, `disabled`), kept as it came.
+ */
+export interface ConfigStanding {
+  type: string;
+  key: string;
+  kind: string;
+  decided_by: string;
+  decided_by_name: string;
+  compose?: string;
+  setting?: string;
+}
+
+/**
+ * ConfigStandingResponse is GET /api/config/standing's answer. LoadErrors is keyed by the Docs row's Path, and is
+ * shown whether or not the row also has a standing.
+ */
+export interface ConfigStandingResponse {
+  load_errors: Record<string, AgentLoadError>;
+  standing: ConfigStanding[];
 }
 
 /**
@@ -696,6 +729,8 @@ export interface EffectiveSettings {
  * unset (kiro-cli's 120 s).
  */
   terminal_command_timeout_ms: number;
+  /** EngineHeapMiB is the agent engine's JavaScript heap limit in MiB; 0 is kiro-cli's default. */
+  engine_heap_mib: number;
   /**
  * AutoCompactionEnabled defaults TRUE: off means nothing compacts a chat
  * until the reader presses Compact.
@@ -769,7 +804,6 @@ export interface ElicitationNeededPayload {
   message?: string;
   url?: string;
   tool_call_id?: string;
-  sub_session_id?: string;
   /**
  * RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
  * attributed to its run and node from the step-session registry.
@@ -807,6 +841,57 @@ export interface ElicitationRequestSchema {
   description?: string;
   properties?: Record<string, ElicitationPropertySchema>;
   required?: string[];
+}
+
+/** EngineBusy is what a restart now would interrupt. */
+export interface EngineBusy {
+  turns: EngineBusyTurn[];
+  runs: EngineBusyRun[];
+}
+
+/** EngineBusyRun is a workflow run a restart would pause and resume. */
+export interface EngineBusyRun {
+  workflow_id: string;
+  name: string;
+}
+
+/** EngineBusyTurn is a chat whose reply a restart would stop. */
+export interface EngineBusyTurn {
+  chat_id: string;
+  name: string;
+}
+
+/** EngineExit is the engine's last end: its cause and when. */
+export interface EngineExit {
+  at: string;
+  reason: string;
+}
+
+/** EngineRestart is whether a restart is pending and what it would apply. */
+export interface EngineRestart {
+  reasons: string[];
+  pending: boolean;
+}
+
+/** EngineStatus is GET /api/engine's answer and the engine_status event's payload. */
+export interface EngineStatus {
+  since: string;
+  last_exit?: EngineExit;
+  state: EngineState;
+  busy: EngineBusy;
+  restart: EngineRestart;
+  version: EngineStatusVersion;
+}
+
+/**
+ * EngineStatusVersion orders snapshots that reach a reader by two paths, the GET and the event, in any order, and
+ * across marotte restarts: BootMS is the Unix millisecond the process's engine owner was built and Seq rises with each
+ * snapshot it takes. A snapshot is newer when (BootMS, Seq) is higher, compared in that order. The order across
+ * processes holds while the wall clock does not step back past a restart.
+ */
+export interface EngineStatusVersion {
+  boot_ms: number;
+  seq: number;
 }
 
 /**
@@ -1203,7 +1288,7 @@ export interface ErrorPayload {
   /**
  * TurnScoped reports that this failure finalized a turn whose entry log now carries
  * the same text durably, so the reason is already in that turn's card. A property of the EMISSION,
- * not of the Code: the recovery's respawn failure shares ErrCodeRecoveryFailed with
+ * not of the Code: the recovery's reopen failure shares ErrCodeRecoveryFailed with
  * the retry turn's abandon and closes no turn, so no per-code answer fits. Absent
  * means NO, the safe direction — report the failure rather than trust an inline row
  * that may not exist.
@@ -1802,6 +1887,16 @@ export interface LoginOptions {
 }
 
 /**
+ * LoginResponse is POST /api/login's answer: what the user opens and enters, and the attempt whoami reports on, so a
+ * switch whose old account stays signed in is told apart from the new sign-in's outcome.
+ */
+export interface LoginResponse {
+  url: string;
+  code: string;
+  attempt: number;
+}
+
+/**
  * LoginResult is a token sign-in's 200 answer: the id the server minted for the
  * saved connection.
  */
@@ -1819,7 +1914,7 @@ export interface MCPConnectedPayload {
 
 /**
  * MCPDisconnectedPayload is the payload for type="mcp_disconnected".
- * Emitted when the runtime's last bridge exits: kiro-cli's MCP subprocesses
+ * Emitted per server when the agent engine ends: kiro-cli's MCP subprocesses
  * shut down with it, so no configured server is currently live.
  * Clients use this to clear their runtime-state map.
  */
@@ -2102,10 +2197,9 @@ export interface PermissionNeededPayload {
  * (switch_mode gets a different dialog from an execute_bash prompt).
  */
   kind?: ToolKind;
-  sub_session_id?: string;
   /**
  * RunID + NodeID attribute a WORKFLOW STEP's ask to its run, stamped from the
- * step-session registry whichever bridge the ask arrived on, so a run tab can render
+ * step-session registry whichever lane the ask arrived on, so a run tab can render
  * the ask of a run it is watching even though the ask is keyed to the launching chat.
  */
   run_id?: string;
@@ -2136,7 +2230,7 @@ export interface PermissionNeededPayload {
   consent_round?: number;
   /**
  * RequestID is marotte's id for this ask, unique in the process, which the answer echoes;
- * never the ACP request id, which every bridge mints from zero. All three asks share it.
+ * never the ACP request id, which KAS mints and may repeat after an engine restart. All three asks share it.
  */
   request_id: number;
   /**
@@ -2241,8 +2335,8 @@ export interface PolicyRuleCore {
 
 /**
  * PolicyView is the GET /api/permissions response: the native policy rule
- * set plus the metadata the editor needs. Available is false when no bridge
- * could answer (the view falls back to reading the editable files directly).
+ * set plus the metadata the editor needs. Available is false when the engine
+ * could not answer (the view falls back to reading the editable files directly).
  * Capabilities is what the rule-adder's dropdown OFFERS: the suggested set
  * unioned with every capability the live rules already use, so it can learn a
  * name marotte shipped without.
@@ -2367,10 +2461,15 @@ export interface Recipe {
  */
   validation_error?: string;
   /**
- * Source is the launch key: `bundled://<name>` or a workspace
+ * Source is the launch key: `bundled://<name>` or a workspace or home
  * `*.workflow.json` path. Echoed back verbatim in RunLaunchRequest.
  */
   source: string;
+  /**
+ * DocKey is a file-backed recipe's file as the configuration standing keys it (translate.DocKeyFromAbs of Source),
+ * so its row joins that item's standing; empty for a bundled recipe.
+ */
+  doc_key?: string;
   /**
  * Plan is KAS's node plan, forwarded VERBATIM: what the recipe will do and on
  * which model, raw for the reason at the top of this file. Last of the
@@ -3449,10 +3548,10 @@ export interface SubjectStamp {
 
 /**
  * SystemNoticePayload is the payload for type="system_notice". The frame names no
- * session, so the chat id is the bridge that received it: a chat's, a run's
- * (`run:<id>`), or empty for the utility session. Live only, never persisted.
+ * session, so the chat id is the lane that received it: a chat's, a run's
+ * (`run:<id>`), or empty for the engine's own lane. Live only, never persisted.
  * ChatName is the chat's name when the notice was raised, so a client whose row is
- * gone or renamed still names it; empty for a run, the utility session, or no record.
+ * gone or renamed still names it; empty for a run, the engine lane, or no record.
  */
 export interface SystemNoticePayload {
   level: NoticeLevel;
@@ -4014,7 +4113,6 @@ export interface Usage {
 export interface UserInputNeededPayload {
   question: string;
   tool_call_id?: string;
-  sub_session_id?: string;
   /**
  * RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
  * attributed to its run and node from the step-session registry.
@@ -4049,7 +4147,8 @@ export interface UserInputSubOption {
 
 /**
  * WhoamiResponse is /api/whoami's typed wire shape. State is the discriminator and each other field belongs to one
- * arm. Unlisted kiro-cli fields are dropped, so a compromised or upgraded CLI cannot leak attributes to the browser.
+ * arm. The Login* fields report the latest sign-in attempt on every arm: a poll waits for its own attempt to leave
+ * pending, since a switch keeps the old account signed in until the new one commits.
  */
 export interface WhoamiResponse {
   state: WhoamiState;
@@ -4059,8 +4158,14 @@ export interface WhoamiResponse {
   accountType?: string;
   startUrl?: string;
   region?: string;
-  /** Reason belongs to the unavailable arm: a server-authored phrase, never CLI output. */
+  /** Reason belongs to the unavailable arm: a server-authored phrase. */
   reason?: string;
+  /** LoginState is the attempt's signin.AttemptState, LoginError a failed attempt's user text. */
+  loginState?: string;
+  loginError?: string;
+  loginAttempt?: number;
+  /** APIKey is true while KIRO_API_KEY signs the engine in: sign-in and sign-out answer 409, so the UI offers neither. */
+  apiKey?: boolean;
 }
 
 /**

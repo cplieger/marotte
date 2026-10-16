@@ -136,6 +136,11 @@
                  Its separator hides with it, or a hidden row leaves a dangling rule. -->
             <span class="pill-sep" id="st-auth-sep" hidden></span>
             <span class="pill-detail" id="st-auth" hidden></span>
+            <!-- How the account signed in: the method, start URL and region. -->
+            <span class="pill-sep" id="st-signin-sep" hidden></span>
+            <span class="pill-detail" id="st-signin-method" hidden></span>
+            <span class="pill-detail" id="st-signin-url" hidden></span>
+            <span class="pill-detail" id="st-signin-region" hidden></span>
             <a class="pill-account" id="st-account" hidden
                href="https://app.kiro.dev/account/usage" target="_blank" rel="noopener">
               <span class="pill-account-lines">
@@ -587,7 +592,7 @@
 
             <div class="page-section" id="general-agent-section">
               <h2 class="section-title">Agent capabilities</h2>
-              <p class="section-hint">What the agent can use. Changes reach new chats, and open chats at their next message.</p>
+              <p class="section-hint">What the agent can use. Changes reach new chats, and open chats at their next message, except a row that says it applies after the agent engine restarts.</p>
               <div class="section-option">
                 <label class="toggle">
                   <input type="checkbox" id="flag-knowledge" aria-label="Knowledge base search" checked>
@@ -800,6 +805,28 @@
               </div>
             </div>
 
+            <div class="page-section" id="general-engine-section">
+              <h2 class="section-title">Agent engine</h2>
+              <p class="section-hint">One kiro-cli agent engine runs every chat and workflow. It restarts by itself when a setting below needs it and nothing is running.</p>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <span class="section-option-label">Restart the agent engine</span>
+                  <button type="button" id="engine-restart" class="btn-small" aria-describedby="engine-restart-hint">Restart now</button>
+                  <p class="section-hint" id="engine-restart-hint">Applies any pending setting at once, or recovers an engine that stopped answering. Running replies stop, and running workflows pause and resume by themselves. Restarting also stops a signed-out account at once.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="engine-heap-mib">Agent engine memory limit</label>
+                    <span class="settings-save-status hidden" data-save-status="engine_heap_mib" aria-live="polite"></span>
+                  </div>
+                  <input type="number" id="engine-heap-mib" class="rf-input rf-number" autocomplete="off" min="1024" max="65536" step="256" inputmode="numeric" placeholder="Default" aria-describedby="engine-heap-mib-hint">
+                  <p class="section-hint" id="engine-heap-mib-hint">The most memory, in MiB, the agent engine's JavaScript heap may use, from 1024 to 65536 and at most the container's memory limit minus 512. Empty keeps kiro-cli's default, about 4 GB. It bounds the JavaScript heap only, not the engine's native memory.</p>
+                </div>
+              </div>
+            </div>
+
             <div class="page-section" id="general-data-section">
               <h2 class="section-title">Data sharing</h2>
               <p class="section-hint">What Marotte and kiro-cli share with AWS. Both are off by default.</p>
@@ -826,7 +853,7 @@
                     <span class="section-option-label">kiro-cli telemetry</span>
                     <span class="settings-save-status hidden" data-save-status="telemetry.enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Covers both kinds of kiro-cli telemetry: its usage telemetry, which sends usage data from kiro-cli and the chats it runs to the Kiro team, linked to your signed-in account, and its legacy toolkit telemetry. On by default, as in kiro-cli. Open chats switch at their next message; a workflow already running may keep the old setting until it finishes.</p>
+                  <p class="section-hint">Covers both kinds of kiro-cli telemetry: its usage telemetry, which sends usage data from kiro-cli and the chats it runs to the Kiro team, linked to your signed-in account, and its legacy toolkit telemetry. On by default, as in kiro-cli.</p>
                 </div>
               </div>
             </div>

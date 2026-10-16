@@ -78,10 +78,9 @@ type PermissionNeededPayload struct {
 	Title      string           `json:"title,omitempty"`
 	// Kind forwards the ACP toolCall.kind so the client can style distinctive prompts
 	// (switch_mode gets a different dialog from an execute_bash prompt).
-	Kind         ToolKind `json:"kind,omitempty"`
-	SubSessionID string   `json:"sub_session_id,omitempty"`
+	Kind ToolKind `json:"kind,omitempty"`
 	// RunID + NodeID attribute a WORKFLOW STEP's ask to its run, stamped from the
-	// step-session registry whichever bridge the ask arrived on, so a run tab can render
+	// step-session registry whichever lane the ask arrived on, so a run tab can render
 	// the ask of a run it is watching even though the ask is keyed to the launching chat.
 	RunID  string `json:"run_id,omitempty"`
 	NodeID string `json:"node_id,omitempty"`
@@ -102,7 +101,7 @@ type PermissionNeededPayload struct {
 	// again for the same toolCallId.
 	ConsentRound int `json:"consent_round,omitempty"`
 	// RequestID is marotte's id for this ask, unique in the process, which the answer echoes;
-	// never the ACP request id, which every bridge mints from zero. All three asks share it.
+	// never the ACP request id, which KAS mints and may repeat after an engine restart. All three asks share it.
 	RequestID int64 `json:"request_id"`
 	// AdminRequired marks an ask raised by the administrator's rules, which a
 	// person must answer: the card says so, and unattended runs refuse it.
@@ -179,8 +178,8 @@ const (
 	// one of them would tell the reader their question was decided. A request KAS withdrew
 	// itself (interaction_resolved, outcome cancelled) carries it.
 	SettledByMoot SettledBy = "moot"
-	// SettledByEnded means nobody answered and nobody now can: the bridge the ask arrived on
-	// ended, and an answer may only go back on that bridge. Separate from moot because the
+	// SettledByEnded means nobody answered and nobody now can: the session the ask arrived on
+	// ended, and an answer may only go back on that session. Separate from moot because the
 	// reader is owed the reason the card went.
 	SettledByEnded SettledBy = "ended"
 )
@@ -268,7 +267,7 @@ type ErrorPayload struct {
 	OpID string `json:"op_id,omitempty"`
 	// TurnScoped reports that this failure finalized a turn whose entry log now carries
 	// the same text durably, so the reason is already in that turn's card. A property of the EMISSION,
-	// not of the Code: the recovery's respawn failure shares ErrCodeRecoveryFailed with
+	// not of the Code: the recovery's reopen failure shares ErrCodeRecoveryFailed with
 	// the retry turn's abandon and closes no turn, so no per-code answer fits. Absent
 	// means NO, the safe direction — report the failure rather than trust an inline row
 	// that may not exist.
@@ -285,7 +284,7 @@ type WorkingLabelPayload struct {
 // attributions on the in-flight turn. References is the full deduped list, so a later
 // notification REPLACES rather than appends. Live only; the durable value is the
 // turn_close aggregate's code_references. Chat-scoped: KAS broadcasts one references
-// list to every session in the bridge process, so a step's copy carries the chat's own
+// list to every session on the engine, so a step's copy carries the chat's own
 // attributions and there is nothing a run-scoped frame could report that this one does
 // not.
 type CodeReferencesPayload struct {
@@ -488,12 +487,10 @@ const (
 	RPCCodeMethodNotFound = -32601
 	// RPCCodeNotIdle indicates the session is still processing a prior turn.
 	RPCCodeNotIdle = -32001
-	// RPCCodeBridgeExited says the ACP bridge process exited. COLLISION: -32000 is also
-	// KAS's code for a MAPPED backend error, throttles included. They never reach one
-	// reader today because Call intercepts the bridge-exited frame by POINTER IDENTITY, but
-	// a `switch re.Code` on this constant would swallow every throttle. Classify by
-	// errors.Is(err, ErrBridgeExited), never by this code.
-	RPCCodeBridgeExited = -32000
+	// RPCCodeBridgeExited marks the engine-exited reply marotte hands its own pending calls. It
+	// sits outside the JSON-RPC reserved range (-32768 to -32000), so no KAS code can equal it;
+	// classify by errors.Is(err, ErrBridgeExited), since callers never see this reply.
+	RPCCodeBridgeExited = -33000
 )
 
 // TerminalOutputPayload is the payload for type="terminal_output". Data is PLAIN text with
@@ -614,6 +611,10 @@ type PowersChangedPayload struct{}
 // empty. The client refetches GET /api/recipes on receipt.
 type RecipesChangedPayload struct{}
 
+// ConfigStandingChangedPayload is the payload for type="config_standing_changed": a refetch signal for
+// GET /api/config/standing.
+type ConfigStandingChangedPayload struct{}
+
 // ToolJobChangedPayload is the payload for type="tool_job_changed", workspace-global, on
 // every job state transition. The job carries no output tail; output streams via
 // tool_job_output.
@@ -674,7 +675,7 @@ const (
 	// SteerRowQueued is a row waiting to be read.
 	SteerRowQueued SteerRowState = "queued"
 	// SteerRowUnsent is an unread row the server holds with no turn to deliver it to:
-	// its bridge died, its buffer was cleared with no turn running, or a turn-end resend
+	// its session ended, its buffer was cleared with no turn running, or a turn-end resend
 	// failed. The chat's next prompt carries it; a server restart discards it.
 	SteerRowUnsent SteerRowState = "unsent"
 	// SteerRowRemoved retires a row that leaves with no steer entry to leave on.
@@ -704,10 +705,10 @@ const (
 )
 
 // SystemNoticePayload is the payload for type="system_notice". The frame names no
-// session, so the chat id is the bridge that received it: a chat's, a run's
-// (`run:<id>`), or empty for the utility session. Live only, never persisted.
+// session, so the chat id is the lane that received it: a chat's, a run's
+// (`run:<id>`), or empty for the engine's own lane. Live only, never persisted.
 // ChatName is the chat's name when the notice was raised, so a client whose row is
-// gone or renamed still names it; empty for a run, the utility session, or no record.
+// gone or renamed still names it; empty for a run, the engine lane, or no record.
 type SystemNoticePayload struct {
 	Level    NoticeLevel `json:"level"`
 	Message  string      `json:"message"`

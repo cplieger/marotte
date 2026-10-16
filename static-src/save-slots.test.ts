@@ -45,6 +45,8 @@ const EXPECTED_KEYS = [
   "hooks.showStatus",
   "chat.disableInheritingDefaultResources",
   "debug_logs",
+  // Agent engine (settings.ts): the memory limit
+  "engine_heap_mib",
   // Permissions
   "supervised_default",
   "scheduled_auto_approve",

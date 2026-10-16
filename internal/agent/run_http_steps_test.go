@@ -72,7 +72,7 @@ func postStep(t *testing.T, mux *http.ServeMux, target string, body any) *httpte
 	return rec
 }
 
-// releaseSteerClear answers the next _session/steer/clear with steerIDs and moves the carrier's read loop
+// releaseSteerClear answers the next _session/steer/clear with steerIDs and moves the host session's lane
 // past its reply, the barrier a remove or a clear awaits.
 func releaseSteerClear(t *testing.T, h *Runtime, br *fakeBridge, workflowID string, seq uint64, steerIDs ...string) {
 	t.Helper()

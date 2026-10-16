@@ -43,20 +43,26 @@ func (f *fakeMCPConfig) copyOf(src map[string]struct{}) map[string]struct{} {
 	return out
 }
 
-func newHubWithMCPConfig(cfg mcpNameSets) *Runtime {
+func newHubWithMCPConfig(t testing.TB, cfg mcpNameSets) *Runtime {
+	t.Helper()
 	cs := newTestChatStore()
-	factory := func() ACPBridge { return newFakeBridge() }
+	factory := func() engineSession { return newFakeBridge() }
 	var opts []Option
 	if cfg != nil {
 		opts = append(opts, WithMCPConfig(cfg))
 	}
-	h := New(context.Background(), "/tmp/work", factory, cs, opts...)
+	h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(factory, nil), cs, opts...)
 	cs.wire(h)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = h.Shutdown(ctx)
+	})
 	return h
 }
 
 func TestMCPRegistry_RecordConnectedPopulatesSnapshot(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "github", marotte.MCPSource{}, nil, nil, nil, nil)
 	snap := h.mcpRegistry.snapshot()
 	if len(snap) != 1 {
@@ -68,7 +74,7 @@ func TestMCPRegistry_RecordConnectedPopulatesSnapshot(t *testing.T) {
 }
 
 func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "linear", marotte.MCPSource{}, nil, nil, nil, nil)
 	h.mcpRegistry.RecordOAuth(t.Context(), "linear", marotte.MCPSource{}, "https://oauth.example/auth")
 
@@ -85,7 +91,7 @@ func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
 }
 
 func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	before := h.bus.fanout.Position().Head
 	h.mcpRegistry.RecordInitFailure(t.Context(), "broken", marotte.MCPSource{}, "connection refused")
 
@@ -112,7 +118,7 @@ func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
 }
 
 func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "a", marotte.MCPSource{}, nil, nil, nil, nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "b", marotte.MCPSource{}, nil, nil, nil, nil)
 
@@ -135,7 +141,7 @@ func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 }
 
 func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	before := h.bus.fanout.Position().Head
 	h.mcpRegistry.clearAll(t.Context())
 	if head := h.bus.fanout.Position().Head; head != before {
@@ -177,7 +183,7 @@ func TestMCPRegistry_RecordsUnconfiguredServerWithOrigin(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			h := newHubWithMCPConfig(enabledConfig("mine"))
+			h := newHubWithMCPConfig(t, enabledConfig("mine"))
 			h.mcpRegistry.RecordConnected(t.Context(), "theirs", tc.src, []string{"do_thing"}, nil, nil, nil)
 
 			snap := h.mcpRegistry.snapshot()
@@ -202,7 +208,7 @@ func TestMCPRegistry_RecordsUnconfiguredServerWithOrigin(t *testing.T) {
 // TestMCPRegistry_WireOriginBeatsTheName pins that a workspace definition can override marotte's name, so the
 // status says workspace and marks the shadowing.
 func TestMCPRegistry_WireOriginBeatsTheName(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("github"))
+	h := newHubWithMCPConfig(t, enabledConfig("github"))
 	src := marotte.MCPSource{Origin: "workspace", Root: "/workspace/app"}
 	h.mcpRegistry.RecordConnected(t.Context(), "github", src, nil, nil, nil, nil)
 
@@ -219,7 +225,7 @@ func TestMCPRegistry_WireOriginBeatsTheName(t *testing.T) {
 func TestMCPRegistry_RecordsAWorkspaceServerShadowingADisabledOne(t *testing.T) {
 	cfg := enabledConfig()
 	cfg.configured["github"] = struct{}{}
-	h := newHubWithMCPConfig(cfg)
+	h := newHubWithMCPConfig(t, cfg)
 	src := marotte.MCPSource{Origin: "workspace", Root: "/workspace/app"}
 	h.mcpRegistry.RecordConnected(t.Context(), "github", src, nil, nil, nil, nil)
 
@@ -241,7 +247,7 @@ func TestMCPRegistry_UserStampOnADisabledOwnedNameIsMarottes(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := enabledConfig()
 			cfg.configured["github"] = struct{}{}
-			h := newHubWithMCPConfig(cfg)
+			h := newHubWithMCPConfig(t, cfg)
 			h.mcpRegistry.RecordConnected(t.Context(), "github", src, nil, nil, nil, nil)
 			snap := h.mcpRegistry.snapshot()
 			if len(snap) != 1 || snap[0].Origin != marotte.OriginUser || snap[0].Shadows {
@@ -258,7 +264,7 @@ func TestMCPRegistry_UserStampOnADisabledOwnedNameIsMarottes(t *testing.T) {
 
 // TestMCPRegistry_NoMetaFallsBackToTheName pins the fallback for an unstamped entry.
 func TestMCPRegistry_NoMetaFallsBackToTheName(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("github"))
+	h := newHubWithMCPConfig(t, enabledConfig("github"))
 	h.mcpRegistry.RecordConnected(t.Context(), "github", marotte.MCPSource{}, nil, nil, nil, nil)
 
 	snap := h.mcpRegistry.snapshot()
@@ -278,7 +284,7 @@ func TestMCPRegistry_UserStampOnlyAttributesANameMarotteHolds(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			h := newHubWithMCPConfig(enabledConfig("github"))
+			h := newHubWithMCPConfig(t, enabledConfig("github"))
 			h.mcpRegistry.RecordConnected(t.Context(), tc.server, marotte.MCPSource{Origin: "user"}, nil, nil, nil, nil)
 			snap := h.mcpRegistry.snapshot()
 			if len(snap) != 1 {
@@ -293,7 +299,7 @@ func TestMCPRegistry_UserStampOnlyAttributesANameMarotteHolds(t *testing.T) {
 
 // TestMCPRegistry_StampsUserOriginOnConfiguredServers pins that the user's own server never claims a foreign origin.
 func TestMCPRegistry_StampsUserOriginOnConfiguredServers(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("github"))
+	h := newHubWithMCPConfig(t, enabledConfig("github"))
 	ctx := t.Context()
 	h.mcpRegistry.RecordConnected(ctx, "github", marotte.MCPSource{}, nil, nil, nil, nil)
 	h.mcpRegistry.RecordOAuth(ctx, "github", marotte.MCPSource{}, "https://oauth.example/auth")
@@ -338,7 +344,7 @@ func TestMCPRegistry_RecordDisabled(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			h := newHubWithMCPConfig(tc.cfg())
+			h := newHubWithMCPConfig(t, tc.cfg())
 			h.mcpRegistry.RecordDisabled(t.Context(), "mine", tc.src)
 
 			snap := h.mcpRegistry.snapshot()
@@ -363,7 +369,7 @@ func TestMCPRegistry_RecordDisabled(t *testing.T) {
 
 // TestMCPRegistry_StatusJSONCarriesOrigin pins origin on the wire, never omitted.
 func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("mine"))
+	h := newHubWithMCPConfig(t, enabledConfig("mine"))
 	h.mcpRegistry.RecordConnected(t.Context(), "mine", marotte.MCPSource{}, nil, nil, nil, nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "theirs", marotte.MCPSource{Origin: "power", Power: "aws-docs"}, nil, nil, nil, nil)
 
@@ -388,7 +394,7 @@ func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
 
 // TestMCPStatus_CarriesProvenanceFields pins the workspace root, power name and shadow mark on the wire.
 func TestMCPStatus_CarriesProvenanceFields(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("github"))
+	h := newHubWithMCPConfig(t, enabledConfig("github"))
 	h.mcpRegistry.RecordConnected(t.Context(), "github", marotte.MCPSource{Origin: "workspace", Root: "/workspace/app"}, nil, nil, nil, nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "docs", marotte.MCPSource{Origin: "power", Power: "aws-docs"}, nil, nil, nil, nil)
 
@@ -418,7 +424,7 @@ func TestMCPStatus_CarriesProvenanceFields(t *testing.T) {
 }
 
 func TestMCPRegistry_SnapshotIsStableAlphabetically(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "zulu", marotte.MCPSource{}, nil, nil, nil, nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "alpha", marotte.MCPSource{}, nil, nil, nil, nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "mike", marotte.MCPSource{}, nil, nil, nil, nil)
@@ -433,7 +439,7 @@ func TestMCPRegistry_SnapshotIsStableAlphabetically(t *testing.T) {
 }
 
 func TestMCPRegistry_OnChangeFiresOutsideLock(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	var mu sync.Mutex
 	count := 0
 	done := make(chan struct{}, 10)
@@ -477,7 +483,7 @@ drained:
 // environment.md per call. The bubble's clock makes the window exact.
 func TestMCPRegistry_SignalsInsideOneWindowFireOneCallback(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h := newHubWithMCPConfig(nil)
+		h := newHubWithMCPConfig(t, nil)
 		// A defer, not t.Cleanup: Test waits for bubble goroutines before cleanups, so a cleanup close deadlocks.
 		defer close(h.lifecycle.done)
 		start := time.Now()
@@ -508,7 +514,7 @@ func TestMCPRegistry_SignalsInsideOneWindowFireOneCallback(t *testing.T) {
 // The window coalesces a burst but never swallows a later edit.
 func TestMCPRegistry_SignalsBeyondTheWindowFireSeparateCallbacks(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h := newHubWithMCPConfig(nil)
+		h := newHubWithMCPConfig(t, nil)
 		defer close(h.lifecycle.done) // see the sibling test for why not t.Cleanup
 		var mu sync.Mutex
 		calls := 0
@@ -532,7 +538,7 @@ func TestMCPRegistry_SignalsBeyondTheWindowFireSeparateCallbacks(t *testing.T) {
 }
 
 func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "github", marotte.MCPSource{}, nil, nil, nil, nil)
 	h.mcpRegistry.RecordInitFailure(t.Context(), "broken", marotte.MCPSource{}, "no auth")
 
@@ -564,11 +570,11 @@ func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
 	}
 }
 
-// BenchmarkMCPRegistrySnapshot measures Snapshot, called on every SSE reconnect and bridge spawn.
+// BenchmarkMCPRegistrySnapshot measures Snapshot, called on every SSE reconnect and session door.
 func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 	for _, n := range []int{1, 5, 20} {
 		b.Run(fmt.Sprintf("servers=%d", n), func(b *testing.B) {
-			h := newHubWithMCPConfig(nil)
+			h := newHubWithMCPConfig(b, nil)
 			for i := range n {
 				h.mcpRegistry.RecordConnected(b.Context(), fmt.Sprintf("server-%02d", i), marotte.MCPSource{}, nil, nil, nil, nil)
 			}
@@ -582,76 +588,61 @@ func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 
 // The real *mcp.Store's MCPConfigContractTest run lives in internal/mcp (TestStore_MCPConfigContract).
 
-// The `#` menu lists the active chat's own pool: a mention resolves only there.
-func TestMCPRegistry_PoolAnswersOnlyThatChatsResources(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
-	ba, bb := newFakeBridge(), newFakeBridge()
-	h.bridge.mgr.insert("c-a", &sharedBridge{bridge: ba, state: bridgeIdle})
-	h.bridge.mgr.insert("c-b", &sharedBridge{bridge: bb, state: bridgeIdle})
-	h.mcpRegistry.setPool(ba, []translate.MCPPoolServer{{Name: "docs", Resources: []marotte.MCPResourceInfo{{Name: "a", URI: "a://x"}}}})
-	h.mcpRegistry.setPool(bb, []translate.MCPPoolServer{
+// A status frame lists every server, so a server a later frame omits leaves the pool.
+func TestMCPRegistry_StatusFrameReplacesThePoolWhole(t *testing.T) {
+	h := newHubWithMCPConfig(t, nil)
+	h.coord.recordPool(mcpStatusFrame(t, map[string]string{"docs": "d://x", "extra": "e://x"}))
+	h.coord.recordPool(mcpStatusFrame(t, map[string]string{"docs": "d://x"}))
+
+	want := `{"servers":[{"name":"docs","resources":[{"name":"d://x","uri":"d://x"}],"resource_templates":[]}]}`
+	if got := poolBody(t, h, ""); got != want {
+		t.Errorf("pool after a frame without extra = %s, want %s", got, want)
+	}
+}
+
+// Every chat shares the engine's one pool, so a chat_id names nothing and changes nothing.
+func TestMCPRegistry_ThePoolIsTheEnginesForEveryChat(t *testing.T) {
+	h := newHubWithMCPConfig(t, nil)
+	h.mcpRegistry.setPool([]translate.MCPPoolServer{
 		{Name: "extra", Resources: []marotte.MCPResourceInfo{{Name: "e", URI: "e://x"}}},
 		{
 			Name: "docs", Resources: []marotte.MCPResourceInfo{{Name: "b", URI: "b://x"}},
 			ResourceTemplates: []marotte.MCPResourceTemplateInfo{{Name: "t", URITemplate: "b://{id}"}},
 		},
 	})
-
-	if got, want := poolBody(t, h, "c-a"), `{"servers":[{"name":"docs","resources":[{"name":"a","uri":"a://x"}],"resource_templates":[]}]}`; got != want {
-		t.Errorf("chat A pool = %s, want %s", got, want)
-	}
-	wantB := `{"servers":[{"name":"docs","resources":[{"name":"b","uri":"b://x"}],"resource_templates":[{"name":"t","uri_template":"b://{id}"}]},` +
+	want := `{"servers":[{"name":"docs","resources":[{"name":"b","uri":"b://x"}],"resource_templates":[{"name":"t","uri_template":"b://{id}"}]},` +
 		`{"name":"extra","resources":[{"name":"e","uri":"e://x"}],"resource_templates":[]}]}`
-	if got := poolBody(t, h, "c-b"); got != wantB {
-		t.Errorf("chat B pool = %s, want %s", got, wantB)
-	}
-	if got, want := poolBody(t, h, "c-none"), `{"servers":[]}`; got != want {
-		t.Errorf("pool of a chat with no bridge = %s, want %s", got, want)
-	}
-}
-
-// A status frame lists every server, so a server a later frame omits leaves the pool.
-func TestMCPRegistry_StatusFrameReplacesThePoolWhole(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
-	br := newFakeBridge()
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
-	h.coord.recordPool(br, mcpStatusFrame(t, map[string]string{"docs": "d://x", "extra": "e://x"}))
-	h.coord.recordPool(br, mcpStatusFrame(t, map[string]string{"docs": "d://x"}))
-
-	want := `{"servers":[{"name":"docs","resources":[{"name":"d://x","uri":"d://x"}],"resource_templates":[]}]}`
-	if got := poolBody(t, h, "c1"); got != want {
-		t.Errorf("pool after a frame without extra = %s, want %s", got, want)
+	for _, query := range []string{"", "?chat_id=c-a", "?chat_id=c-none"} {
+		if got := poolBody(t, h, query); got != want {
+			t.Errorf("pool%s = %s, want %s", query, got, want)
+		}
 	}
 }
 
-// The last-bridge wipe must leave every bridge's pool to that bridge's own exit.
-func TestMCPRegistry_ClearAllLeavesALiveBridgesPool(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
-	br := newFakeBridge()
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
-	h.mcpRegistry.setPool(br, []translate.MCPPoolServer{{Name: "docs", Resources: []marotte.MCPResourceInfo{{Name: "d", URI: "d://x"}}}})
+// An engine end takes its MCP servers, and the pool with them.
+func TestMCPRegistry_AnEngineEndClearsThePool(t *testing.T) {
+	h := newHubWithMCPConfig(t, nil)
+	h.mcpRegistry.setPool([]translate.MCPPoolServer{{Name: "docs", Resources: []marotte.MCPResourceInfo{{Name: "d", URI: "d://x"}}}})
 
 	h.mcpRegistry.clearAll(t.Context())
 
-	want := `{"servers":[{"name":"docs","resources":[{"name":"d","uri":"d://x"}],"resource_templates":[]}]}`
-	if got := poolBody(t, h, "c1"); got != want {
+	if got, want := poolBody(t, h, ""), `{"servers":[]}`; got != want {
 		t.Errorf("pool after clearAll = %s, want %s", got, want)
 	}
 }
 
-// A pool replaced or dropped is announced, so a client holding pool rows re-reads
+// A pool replaced or cleared is announced, so a client holding pool rows re-reads
 // them even when no server changed state.
 func TestMCPRegistry_PoolChangesAreAnnounced(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
-	br := newFakeBridge()
+	h := newHubWithMCPConfig(t, nil)
 	before := h.bus.fanout.Position().Head
 
-	h.coord.recordPool(br, mcpStatusFrame(t, map[string]string{"docs": "d://x"}))
-	h.mcpRegistry.dropPool(br)
+	h.coord.recordPool(mcpStatusFrame(t, map[string]string{"docs": "d://x"}))
+	h.mcpRegistry.clearAll(t.Context())
 
 	want := string(marotte.EventMCPPoolChanged)
 	if got := extractTypes(t, bufferedSince(h, before)); len(filterTypes(got, want)) != 2 {
-		t.Errorf("events after a pool set and drop = %v, want two %s", got, want)
+		t.Errorf("events after a pool set and clear = %v, want two %s", got, want)
 	}
 }
 
@@ -663,106 +654,4 @@ func filterTypes(types []string, want string) []string {
 		}
 	}
 	return out
-}
-
-func onPoolSelected(t *testing.T, fn func()) {
-	t.Helper()
-	prev := poolSelected
-	poolSelected = fn
-	t.Cleanup(func() { poolSelected = prev })
-}
-
-// A read straddling a bridge swap answers the bridge serving the chat afterwards, never the departed one.
-func TestMCPRegistry_PoolFollowsABridgeReplacedMidRead(t *testing.T) {
-	poolOf := func(uri string) []translate.MCPPoolServer {
-		return []translate.MCPPoolServer{{Name: "docs", Resources: []marotte.MCPResourceInfo{{Name: uri, URI: uri}}}}
-	}
-	newWant := `{"servers":[{"name":"docs","resources":[{"name":"new://r","uri":"new://r"}],"resource_templates":[]}]}`
-	cases := []struct {
-		name  string
-		moves int
-		swap  func(h *Runtime, sb *sharedBridge, next ACPBridge)
-		want  string
-	}{
-		{
-			name: "bridge swapped in the entry", moves: 1, want: newWant,
-			swap: func(_ *Runtime, sb *sharedBridge, next ACPBridge) { sb.swapBridge(next) },
-		},
-		{
-			name: "entry replaced", moves: 1, want: newWant,
-			swap: func(h *Runtime, sb *sharedBridge, next ACPBridge) {
-				h.bridge.mgr.removeIfSame("c1", sb)
-				h.bridge.mgr.insert("c1", &sharedBridge{bridge: next, state: bridgeIdle})
-			},
-		},
-		{
-			name: "bridge keeps moving", moves: servingPoolAttempts, want: `{"servers":[]}`,
-			swap: func(_ *Runtime, sb *sharedBridge, next ACPBridge) { sb.swapBridge(next) },
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h := newHubWithMCPConfig(nil)
-			old := newFakeBridge()
-			sb := &sharedBridge{bridge: old, state: bridgeIdle}
-			h.bridge.mgr.insert("c1", sb)
-			h.mcpRegistry.setPool(old, poolOf("old://r"))
-			moved := 0
-			onPoolSelected(t, func() {
-				if moved == tc.moves {
-					return
-				}
-				moved++
-				next := newFakeBridge()
-				h.mcpRegistry.setPool(next, poolOf("new://r"))
-				tc.swap(h, h.bridge.mgr.get("c1"), next)
-			})
-
-			if got := poolBody(t, h, "c1"); got != tc.want {
-				t.Errorf("c1 pool after %d replacement(s) mid-read = %s, want %s", tc.moves, got, tc.want)
-			}
-		})
-	}
-}
-
-// The endpoint and a failed load's swap run on different goroutines (-race).
-func TestMCPRegistry_PoolReadRacesABridgeSwap(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
-	a, b := newFakeBridge(), newFakeBridge()
-	sb := &sharedBridge{bridge: a, state: bridgeIdle}
-	h.bridge.mgr.insert("c1", sb)
-	pool := []translate.MCPPoolServer{{Name: "docs", Resources: []marotte.MCPResourceInfo{{Name: "d", URI: "d://x"}}}}
-	h.mcpRegistry.setPool(a, pool)
-	h.mcpRegistry.setPool(b, pool)
-
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		next := ACPBridge(b)
-		for {
-			select {
-			case <-done:
-				return
-			default:
-				next = sb.swapBridge(next)
-			}
-		}
-	})
-	want := `{"servers":[{"name":"docs","resources":[{"name":"d","uri":"d://x"}],"resource_templates":[]}]}`
-	for range 200 {
-		if got := poolBody(t, h, "c1"); got != want && got != `{"servers":[]}` {
-			t.Fatalf("c1 pool during swaps = %s, want %s or an empty pool", got, want)
-		}
-	}
-	close(done)
-	wg.Wait()
-}
-
-func TestMCPRegistry_PoolRequiresAChatID(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
-	rec := httptest.NewRecorder()
-	h.mcpRegistry.handlePool(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/pool", nil))
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("GET /api/mcp/pool with no chat_id status = %d, want 400", rec.Code)
-	}
 }

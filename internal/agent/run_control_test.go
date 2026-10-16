@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // runStatuses reads the run-status vocabulary off the fixture internal/marotte and internal/kascap share.
@@ -78,114 +79,6 @@ func TestRunVerbsAreWired(t *testing.T) {
 			t.Errorf("run verb %q is gated; it must reach a run from any status", verb.name)
 		}
 	}
-}
-
-// TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat pins that KAS parents an agent run on the launching chat's
-// session, so that bridge hosts it. A dead chat or the utility bridge cannot execute the run.
-func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
-	setup := func(t *testing.T, parentSession string, sessions ...string) (*Runtime, *fakeBridge) {
-		t.Helper()
-		h, cs, br := newTestHub()
-		br.callResults = map[string]json.RawMessage{
-			methodKiroWorkflowList: kasRuns(t, map[string]any{
-				"workflowId": "wf_1", "status": "paused", "parentSessionId": parentSession,
-			}),
-			methodKiroWorkflowPause: json.RawMessage(`{"paused":true}`),
-		}
-		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-			c.Name = "A"
-			for _, s := range sessions {
-				c.RecordSession(s)
-			}
-			return true
-		}); err != nil {
-			t.Fatalf("seed the chat: %v", err)
-		}
-		return h, br
-	}
-
-	t.Run("the launching chat's live bridge hosts the run", func(t *testing.T) {
-		h, _ := setup(t, "sess_owned", "sess_owned")
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-			t.Fatalf("OpenBridge: %v", err)
-		}
-		if sb := h.runs.hostBridge(t.Context(), "wf_1"); sb == nil {
-			t.Fatal("hostBridge = nil for a run parented on a chat with a live bridge; " +
-				"every pause and resume on an agent-launched run would answer 409")
-		}
-	})
-
-	// A run launched before a session change is parented on a retired id.
-	t.Run("a run parented on a RETIRED session in the chain still resolves", func(t *testing.T) {
-		h, _ := setup(t, "sess_old", "sess_old", "sess_current")
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-			t.Fatalf("OpenBridge: %v", err)
-		}
-		if sb := h.runs.hostBridge(t.Context(), "wf_1"); sb == nil {
-			t.Fatal("hostBridge = nil for a run parented on a session the chat has since retired")
-		}
-	})
-
-	t.Run("a chat with no live bridge is no carrier", func(t *testing.T) {
-		// Seeded but never opened: neither a nil call nor the toolless utility bridge is acceptable.
-		h, _ := setup(t, "sess_owned", "sess_owned")
-		if sb := h.runs.hostBridge(t.Context(), "wf_1"); sb != nil {
-			t.Error("hostBridge returned a bridge for a chat that has none")
-		}
-	})
-
-	t.Run("a PARENTLESS run resolves to nothing", func(t *testing.T) {
-		h, _ := setup(t, "", "sess_owned")
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-			t.Fatalf("OpenBridge: %v", err)
-		}
-		if sb := h.runs.hostBridge(t.Context(), "wf_1"); sb != nil {
-			t.Error("hostBridge matched a parentless run to a chat; an empty parent session " +
-				"must never match a chat's chain")
-		}
-	})
-
-	t.Run("a session no open chat owns resolves to nothing", func(t *testing.T) {
-		h, _ := setup(t, "sess_stranger", "sess_owned")
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-			t.Fatalf("OpenBridge: %v", err)
-		}
-		if sb := h.runs.hostBridge(t.Context(), "wf_1"); sb != nil {
-			t.Error("hostBridge matched a run parented on a session this chat does not own")
-		}
-	})
-
-	// The RPC reaches KAS on the chat's own bridge, with no re-host.
-	t.Run("Pause reaches KAS through the chat's bridge", func(t *testing.T) {
-		h, br := setup(t, "sess_owned", "sess_owned")
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-			t.Fatalf("OpenBridge: %v", err)
-		}
-		if err := h.runs.pause(t.Context(), "wf_1"); err != nil {
-			t.Fatalf("Pause(agent-launched run) = %v, want nil", err)
-		}
-		if !slices.Contains(br.callLog(), methodKiroWorkflowPause) {
-			t.Error("Pause returned nil without issuing the RPC")
-		}
-	})
-
-	t.Run("an unreadable run inventory refuses rather than guessing", func(t *testing.T) {
-		h, cs, br := newTestHub()
-		br.callErrs = map[string]error{methodKiroWorkflowList: errRecipeBusy}
-		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-			c.Name = "A"
-			c.RecordSession("sess_owned")
-			return true
-		}); err != nil {
-			t.Fatalf("seed the chat: %v", err)
-		}
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-			t.Fatalf("OpenBridge: %v", err)
-		}
-		if sb := h.runs.hostBridge(t.Context(), "wf_1"); sb != nil {
-			t.Error("hostBridge returned a bridge while the run inventory was unreadable")
-		}
-	})
 }
 
 // pausedFrame builds `_kiro/workflow/paused` with only `{workflowId, pauseReason}`, KAS's shape for an unclassified pause.
@@ -277,6 +170,8 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
+		// The lease names the chat's session the run was launched from, which the heal resumes it on.
+		leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_owned", Origin: runlease.OriginAgent})
 		return h, br
 	}
 

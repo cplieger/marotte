@@ -44,7 +44,7 @@ func (st *Settings) cacheConfigurationState(raw json.RawMessage) {
 }
 
 // KiroDefaults answers what each kiroDefaultKeys setting resolves to in kiro-cli, keyed by the
-// marotte setting key; empty until the utility bridge has reported a view. The caller drops the
+// marotte setting key; empty until the engine has reported a view. The caller drops the
 // keys the user has set.
 func (st *Settings) KiroDefaults() map[string]marotte.KiroDefault {
 	st.kiroDefaults.mu.Lock()

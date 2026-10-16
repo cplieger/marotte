@@ -82,6 +82,6 @@ func TestCmdSetSupervisedMode_PersistsTheChoiceOnTheChat(t *testing.T) {
 		t.Fatal("chat vanished")
 	}
 	if !c.SupervisedMode {
-		t.Error("SupervisedMode = false, want true; the choice has to survive to reach StartOpts.Supervised")
+		t.Error("SupervisedMode = false, want true; the choice has to survive to reach SessionOpts.Supervised")
 	}
 }

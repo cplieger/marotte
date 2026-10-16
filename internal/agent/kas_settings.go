@@ -7,7 +7,7 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// Settings whose value must reach the agent, resolved into StartOpts per spawn. KAS's ACP path
+// Settings whose value must reach the agent, resolved into EngineOpts per spawn or SessionOpts per door. KAS's ACP path
 // never reads kiro-cli's settings store (2.19.2), so these ride levers it does read.
 
 // knowledgeEnabled reports whether a session gets the knowledge index in msg0 and KAS's
@@ -31,15 +31,15 @@ func memoryPreference(ctx context.Context, configDir string) marotte.MemoryPrefe
 	return settings.MemoryPreferenceFor(mode)
 }
 
-// agentFeatures resolves the Agent-capabilities settings a spawn sends KAS; an absent or invalid
-// value takes its default, and an administrator lock wins.
-func agentFeatures(ctx context.Context, configDir string, locks map[string]marotte.GovernanceLock) marotte.AgentFeatures {
-	var f marotte.AgentFeatures
-	if plan := settingString(ctx, configDir, settings.KeySpecPlanning, settings.ValidSpecPlanning); plan != settings.SpecPlanningOff {
+// sessionFeatures resolves the Agent-capabilities settings a session door sends KAS; an absent or
+// invalid value takes its default, and an administrator lock wins.
+func sessionFeatures(ctx context.Context, configDir string, locks map[string]marotte.GovernanceLock) marotte.SessionFeatures {
+	var f marotte.SessionFeatures
+	// An unset value is the default, off: ask-first is read only while planning is on.
+	if plan := settingString(ctx, configDir, settings.KeySpecPlanning, settings.ValidSpecPlanning); plan != "" && plan != settings.SpecPlanningOff {
 		f.SpecPlan = plan
+		f.SpecAskClarification = settingBool(ctx, configDir, settings.KeySpecPlanningAskFirst)
 	}
-	f.SpecAskClarification = settingBool(ctx, configDir, settings.KeySpecPlanningAskFirst)
-	f.SteeringReminders = settingBool(ctx, configDir, settings.KeySteeringReminders)
 	f.Workflows = settings.DefaultWorkflowsEnabled
 	var workflows bool
 	if settings.FieldInto(ctx, configDir, settings.KeyWorkflowsEnabled, &workflows) {
@@ -47,12 +47,19 @@ func agentFeatures(ctx context.Context, configDir string, locks map[string]marot
 	}
 	f.Workflows = lockedBool(locks, marotte.LockWorkflows, f.Workflows)
 	f.WorkValidation = settingString(ctx, configDir, settings.KeyWorkValidation, settings.ValidFeatureChoice)
-	f.InfraSafetyMonitor = settingString(ctx, configDir, settings.KeyCloudFormationSafety, settings.ValidFeatureChoice)
-	f.AutoRouting = settingString(ctx, configDir, settings.KeyAutoRouting, settings.ValidFeatureChoice)
-	f.AutoDelegation = settingString(ctx, configDir, settings.KeyAutoDelegation, settings.ValidFeatureChoice)
-	f.ModelFallback = settingBool(ctx, configDir, settings.KeyModelFallback)
-	f.TerminalCommandTimeoutMs = terminalCommandTimeoutMs(ctx, configDir)
 	return f
+}
+
+// engineFeatures resolves the Agent-capabilities settings the engine is spawned with.
+func engineFeatures(ctx context.Context, configDir string) marotte.EngineFeatures {
+	return marotte.EngineFeatures{
+		SteeringReminders:        settingBool(ctx, configDir, settings.KeySteeringReminders),
+		InfraSafetyMonitor:       settingString(ctx, configDir, settings.KeyCloudFormationSafety, settings.ValidFeatureChoice),
+		AutoRouting:              settingString(ctx, configDir, settings.KeyAutoRouting, settings.ValidFeatureChoice),
+		AutoDelegation:           settingString(ctx, configDir, settings.KeyAutoDelegation, settings.ValidFeatureChoice),
+		ModelFallback:            settingBool(ctx, configDir, settings.KeyModelFallback),
+		TerminalCommandTimeoutMs: terminalCommandTimeoutMs(ctx, configDir),
+	}
 }
 
 // terminalCommandTimeoutMs reads the shell tool's default timeout; 0 is unset.
@@ -107,8 +114,8 @@ const (
 	kiroTelemetryDefault = true
 )
 
-// telemetryDisabled resolves a spawn's telemetryEnabled: kiro-cli's own setting, overridden by an
-// organization's telemetry lock. KAS reads neither, so the spawn carries it.
+// telemetryDisabled resolves the engine's telemetryEnabled: kiro-cli's own setting, overridden by an
+// organization's telemetry lock. KAS reads neither, so the engine spawn carries it.
 func (lt *lifetime) telemetryDisabled(locks func() map[string]marotte.GovernanceLock) bool {
 	return !lockedBool(currentLocks(locks), marotte.LockTelemetry, lt.kiroTelemetry.get())
 }

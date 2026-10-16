@@ -28,9 +28,8 @@ type UserInputOption struct {
 // slice means a free-form question (the client renders a text field).
 // RequestID is the user_input_response command's echo (PermissionNeededPayload.RequestID).
 type UserInputNeededPayload struct {
-	Question     string `json:"question"`
-	ToolCallID   string `json:"tool_call_id,omitempty"`
-	SubSessionID string `json:"sub_session_id,omitempty"`
+	Question   string `json:"question"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
 	// RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
 	// attributed to its run and node from the step-session registry.
 	RunID     string            `json:"run_id,omitempty"`

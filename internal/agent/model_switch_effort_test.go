@@ -86,7 +86,7 @@ func TestSwitchModel_ATierPickedWithTheSwitchIsWhatTheNewSessionRuns(t *testing.
 	}
 
 	crash(t, h)
-	if opts := reopenStartOpts(t, h); opts.SessionID == "" || opts.Effort != "high" {
+	if opts := reopenSessionOpts(t, h); opts.SessionID == "" || opts.Effort != "high" {
 		t.Errorf("the respawn = {SessionID %q, Effort %q}, want a session/load at high", opts.SessionID, opts.Effort)
 	}
 }
@@ -171,7 +171,7 @@ func TestSwitchModel_APickTheCatalogCannotJudgeKeepsItsTier(t *testing.T) {
 	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "opus" || c.Effort != "xhigh" {
 		t.Errorf("header = {Model %q, Effort %q}, want {opus, xhigh}: not opus's seed, medium", c.Model, c.Effort)
 	}
-	if opts := reopenStartOpts(t, h); opts.Effort != "xhigh" {
+	if opts := reopenSessionOpts(t, h); opts.Effort != "xhigh" {
 		t.Errorf("the next session asked effort %q, want xhigh", opts.Effort)
 	}
 }
@@ -448,7 +448,7 @@ func parkOnBridgelessChat(t *testing.T, d *effortDrift, h *Runtime, pair pending
 	}
 }
 
-// A spawn's fold waits for a switch being admitted, so it lands the pair that switch parked, not
+// A session open's fold waits for a switch being admitted, so it lands the pair that switch parked, not
 // the one parked before it. gpt lacks max, so the landing takes gpt's default.
 func TestSwitchModel_TheSpawnsFoldWaitsForASwitchBeingAdmitted(t *testing.T) {
 	d, h := heldSwitchFixture(t)
@@ -574,12 +574,12 @@ func TestSwitchModel_ABridgelessPickOpensItsSessionAtTheTier(t *testing.T) {
 	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "opus" || c.Effort != "xhigh" || c.PendingModel != "" {
 		t.Errorf("header = {Model %q, Effort %q, PendingModel %q}, want {opus, xhigh, \"\"}", c.Model, c.Effort, c.PendingModel)
 	}
-	if opts := reopenStartOpts(t, h); opts.Effort != "xhigh" {
+	if opts := reopenSessionOpts(t, h); opts.Effort != "xhigh" {
 		t.Errorf("the next session asked effort %q, want xhigh", opts.Effort)
 	}
 }
 
-// A pair parked with no bridge lands when the next session opens: the spawn folds it onto the
+// A pair parked with no bridge lands when the next session opens: the open folds it onto the
 // record first, so the session opens on the model at the parked tier.
 func TestSwitchModel_TheSpawnLandsAParkedPair(t *testing.T) {
 	d, h := switchFixture(t)
@@ -591,7 +591,7 @@ func TestSwitchModel_TheSpawnLandsAParkedPair(t *testing.T) {
 		t.Fatalf("park the pair: %v", err)
 	}
 
-	opts := reopenStartOpts(t, h)
+	opts := reopenSessionOpts(t, h)
 
 	if opts.Model != "opus" || opts.Effort != "xhigh" {
 		t.Errorf("the session = {Model %q, Effort %q}, want {opus, xhigh}", opts.Model, opts.Effort)
@@ -619,7 +619,7 @@ func TestSwitchModel_ASwitchByRestartCarriesTheChatsLevel(t *testing.T) {
 		t.Fatalf("open on opus: %v", err)
 	}
 
-	if opts := fakeOf(sb).lastStartOpts(); opts == nil || opts.Model != "opus" || opts.Effort != "high" {
+	if opts := fakeOf(sb).lastSessionOpts(); opts == nil || opts.Model != "opus" || opts.Effort != "high" {
 		t.Errorf("the session = %+v, want one on opus at high, not opus's seed, medium", opts)
 	}
 }
@@ -697,7 +697,7 @@ func TestSwitchModel_ACarriedLevelRidesAPickTheCatalogCannotJudge(t *testing.T) 
 	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "opus" || c.Effort != "high" {
 		t.Errorf("header = {Model %q, Effort %q}, want {opus, high}: not opus's seed, medium", c.Model, c.Effort)
 	}
-	if opts := reopenStartOpts(t, h); opts.Effort != "high" {
+	if opts := reopenSessionOpts(t, h); opts.Effort != "high" {
 		t.Errorf("the next session asked effort %q, want high", opts.Effort)
 	}
 }

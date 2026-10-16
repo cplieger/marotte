@@ -237,8 +237,6 @@ const (
 	RunAskStopping RunAskBlocker = "stopping"
 	// RunAskPending means a prompt marotte sent to a step of this run is still being delivered.
 	RunAskPending RunAskBlocker = "pending"
-	// RunAskRecovering means the run's process ended and kiro-cli still lists it live.
-	RunAskRecovering RunAskBlocker = "recovering"
 	// RunAskBranchRunning means another leaf node of the run, of any type, is still running.
 	RunAskBranchRunning RunAskBlocker = "branch_running"
 	// RunAskUnsettled means the run looks live but nothing has moved for a while.
@@ -258,7 +256,6 @@ const (
 	RunAskRefusedPending       RunAskRefusal = "ask_pending"
 	RunAskRefusedStale         RunAskRefusal = "ask_stale"
 	RunAskRefusedGone          RunAskRefusal = "ask_gone"
-	RunAskRefusedRecovering    RunAskRefusal = "ask_recovering"
 	RunAskRefusedBranchRunning RunAskRefusal = "ask_branch_running"
 	RunAskRefusedUnsettled     RunAskRefusal = "ask_unsettled"
 	RunAskRefusedSettling      RunAskRefusal = "ask_settling"
@@ -385,9 +382,12 @@ type Recipe struct {
 	// ValidationError is KAS's reason the recipe cannot launch (a schema error, a shadowed name,
 	// an include that fails to expand), verbatim; empty for a launchable recipe.
 	ValidationError string `json:"validation_error,omitempty"`
-	// Source is the launch key: `bundled://<name>` or a workspace
+	// Source is the launch key: `bundled://<name>` or a workspace or home
 	// `*.workflow.json` path. Echoed back verbatim in RunLaunchRequest.
 	Source string `json:"source"`
+	// DocKey is a file-backed recipe's file as the configuration standing keys it (translate.DocKeyFromAbs of Source),
+	// so its row joins that item's standing; empty for a bundled recipe.
+	DocKey string `json:"doc_key,omitempty"`
 	// Plan is KAS's node plan, forwarded VERBATIM: what the recipe will do and on
 	// which model, raw for the reason at the top of this file. Last of the
 	// pointer-bearing fields on purpose — a slice's len/cap words end the GC scan

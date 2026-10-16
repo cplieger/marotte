@@ -8,7 +8,6 @@ import type { MCPResourceInfo, MCPResourceTemplateInfo } from "./mcp-state.js";
 import { fileQuery, mentionable, parseTemplate, splitFileQuery } from "./context-mentions.js";
 import type { MentionProvider, UriTemplate } from "./context-mentions.js";
 import { specDirOf } from "./spec-path.js";
-import { getActiveId } from "./store.js";
 import { asObject, decodeArray, reqStr } from "./validators.js";
 import type { Decoder } from "./validators.js";
 import { decodeFileSearchResult, decodeKiroDocsResponse } from "./wire/decoders.gen.js";
@@ -184,14 +183,9 @@ const decodePoolServer: Decoder<PoolServer> = (v) => {
 const decodePool: Decoder<PoolServer[]> = (v) =>
   decodeArray(asObject(v, "$.mcp_pool")["servers"], decodePoolServer, "$.mcp_pool.servers");
 
-// The active chat's own pool: a token resolves on the bridge its prompt is sent on.
+// The engine's one pool: every session's token resolves on it.
 async function mcpItems(query: string): Read<MentionItem[]> {
-  const chatID = getActiveId();
-  if (chatID === "") {
-    return [];
-  }
-  const params = new URLSearchParams({ chat_id: chatID });
-  const pool = await apiGetTyped(`/api/mcp/pool?${params.toString()}`, decodePool);
+  const pool = await apiGetTyped("/api/mcp/pool", decodePool);
   if (pool === null) {
     return null;
   }

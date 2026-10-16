@@ -106,38 +106,7 @@ func TestRunLog_ASecondNodeStartContinuesTheOpenTurn(t *testing.T) {
 	}
 }
 
-// A host's end marks only the runs it hosted, with the process that ended, and a step turn opening
-// again clears the mark.
-func TestRunLog_HostLostLastsUntilAStepTurnOpens(t *testing.T) {
-	r := newRunLog(t.TempDir())
-	step := &translate.RunStep{RunID: "wf1", NodePath: workflow.PathKey([]string{"wf1", "a"})}
-	if _, _, err := r.open(t.Context(), step, "c-1"); err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	dead := newFakeBridge()
-	c := marotte.ConcludeStopReason(marotte.StopReasonInterrupted)
-	if _, err := r.closeHost(t.Context(), "c-2", dead, c); err != nil {
-		t.Fatal(err)
-	}
-	if r.lostHost("wf1") != nil {
-		t.Error("another chat's bridge ending marked this run's host lost")
-	}
-	if _, err := r.closeHost(t.Context(), "c-1", dead, c); err != nil {
-		t.Fatal(err)
-	}
-	if got := r.lostHost("wf1"); got != ACPBridge(dead) || r.hasOpen("wf1") {
-		t.Errorf("after its host ended: lostHost = %v, hasOpen = %t; want the dead bridge, false", got, r.hasOpen("wf1"))
-	}
-	step.NodePath = workflow.PathKey([]string{"wf1", "b"})
-	if _, _, err := r.open(t.Context(), step, "c-1"); err != nil {
-		t.Fatalf("Open(after the resume): %v", err)
-	}
-	if r.lostHost("wf1") != nil {
-		t.Error("a step turn opening again left the run's host marked lost")
-	}
-}
-
-func TestRunLog_AnEmptyChatIDRecordsTheParentlessBridgeAsHost(t *testing.T) {
+func TestRunLog_AnEmptyChatIDRecordsTheParentlessHostSessionAsHost(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	if _, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: "root/step"}, ""); err != nil {
 		t.Fatal(err)
@@ -422,7 +391,7 @@ func TestRunLog_StepStartsKeepsAnAttemptAcrossAResume(t *testing.T) {
 			first := openStepTurn(t, r, step)
 			assertStarts(t, r, step, startOf(first, false))
 			time.Sleep(time.Minute)
-			if _, err := r.closeHost(t.Context(), "c-1", nil, marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
+			if _, err := r.closeHost(t.Context(), "c-1", marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
 				t.Fatal(err)
 			}
 			assertStarts(t, r, step, startOf(first, false))
@@ -643,7 +612,7 @@ func TestRunLog_TheDeathArmClosesTheDeadHostsRunsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := marotte.ConcludeStopReason(marotte.StopReasonInterrupted)
-	out, err := r.closeHost(ctx, "c-1", nil, c)
+	out, err := r.closeHost(ctx, "c-1", c)
 	if err != nil {
 		t.Fatal(err)
 	}

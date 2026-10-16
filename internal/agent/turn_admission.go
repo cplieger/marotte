@@ -80,10 +80,14 @@ func (r *turnRegistry) promptHolder(chatID marotte.ChatID) (string, bool) {
 func (r *turnRegistry) releaseReservation(chatID marotte.ChatID) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
-	defer lc.mu.Unlock()
 	lc.reserved = false
 	lc.reservedSource = 0
 	lc.wakeLocked()
+	idle := !lc.liveLockedState()
+	lc.mu.Unlock()
+	if idle {
+		r.idle(chatID)
+	}
 }
 
 // bracketedWireLocked reports an open wire turn a prompt must not reach: KAS aborts its running turn on any client
@@ -280,5 +284,5 @@ func (bc *bridgeCoordinator) expiredAdmission(chatID marotte.ChatID) command.Adm
 // The manager registers before Start, so presence is not liveness.
 func (bc *bridgeCoordinator) bridgeLive(chatID marotte.ChatID) bool {
 	sb := bc.bridge.mgr.get(chatID)
-	return sb != nil && sb.startedPastSpawn()
+	return sb != nil && sb.startedPastOpen()
 }

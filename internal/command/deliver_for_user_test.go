@@ -84,46 +84,29 @@ func TestDeliverForUser_ATurnEndingBeforeTheSteerGetsThePrompt(t *testing.T) {
 
 var droppedSteer = map[string]any{"queued": false, "dropped": "epoch_changed"}
 
-// KAS refuses a steer whose turn already ended inside it; once marotte sees the end, prompt the chat.
-func TestDeliverForUser_ASteerKASDroppedGetsThePrompt(t *testing.T) {
-	f := newMergeFixture(t)
-	f.host.admit, f.host.holder, f.host.holderOpen = AdmissionBusy, marotte.TurnSourcePrompt, true
-	f.host.onReserve = func() {
-		f.host.onReserve = func() { f.host.admit, f.host.holderOpen = AdmissionAcquired, false }
-	}
-	b := f.host.bridge.(*steerBridge)
-	b.results[marotte.MethodSessionSteer] = droppedSteer
-
-	if err := deliverForUser(t.Context(), f.roles, "c-parent", wakeText, wakeLabel); err != nil {
-		t.Fatalf("deliverForUser = %v, want delivered", err)
-	}
-	f.host.waitInflight(t)
-
-	if n := steerCalls(b); n != 1 {
-		t.Errorf("steers sent = %d, want the 1 KAS dropped", n)
-	}
-	if n := f.host.promptCount(); n != 1 {
-		t.Errorf("prompts opened = %d, want 1 carrying the dropped wake", n)
-	}
-}
-
-func TestDeliverForUser_ASteerKASKeepsDroppingFails(t *testing.T) {
+// KAS refuses a steer whose turn already ended inside it: the steer record carries the row into the next prompt, so
+// the delivery opens no prompt of its own and sends no second steer.
+func TestDeliverForUser_ASteerKASDroppedIsLeftToTheRecord(t *testing.T) {
 	b := newSteerBridge()
 	b.results[marotte.MethodSessionSteer] = droppedSteer
 	h := newResendHost(b, AdmissionBusy, marotte.TurnSourcePrompt, true)
 	q := newStubSteerQueue()
 	roles := steerRolesOf(h, NewSteerLedger(), q)
 
-	if err := deliverForUser(t.Context(), roles, "c1", wakeText, wakeLabel); err == nil {
-		t.Error("deliverForUser = nil, want an error: the agent never received the steer")
+	if err := deliverForUser(t.Context(), roles, "c1", wakeText, wakeLabel); err != nil {
+		t.Fatalf("deliverForUser = %v, want delivered through the record", err)
 	}
-	if n := steerCalls(b); n != 2 {
-		t.Errorf("steers sent = %d, want 2, one per admission pass", n)
+
+	if n := steerCalls(b); n != 1 {
+		t.Errorf("steers sent = %d, want the 1 KAS dropped", n)
+	}
+	if len(h.opened) != 0 {
+		t.Errorf("prompts opened = %d, want none: the record sends the dropped row", len(h.opened))
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if len(q.sent) != 2 || q.sent[0].queued || q.sent[1].queued {
-		t.Errorf("steer record told = %+v, want both sends reported unqueued so their rows clear", q.sent)
+	if len(q.sent) != 1 || q.sent[0].queued {
+		t.Errorf("steer record told = %+v, want the one send reported unqueued", q.sent)
 	}
 }
 

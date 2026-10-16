@@ -11,6 +11,10 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
+// kasServerError is KAS's code for a mapped backend error, throttles included: the first of JSON-RPC 2.0's
+// implementation-defined server errors (-32000 to -32099).
+const kasServerError = -32000
+
 func rpcErr(t *testing.T, code int, msg string, data any) error {
 	t.Helper()
 	e := &marotte.RPCError{Code: code, Message: msg}
@@ -123,7 +127,7 @@ func TestClassifyPromptFailure(t *testing.T) {
 			want: classFatal,
 		},
 		"throttle is not retryable": {
-			err: rpcErr(t, marotte.RPCCodeBridgeExited, "Too many requests, please wait.", rpcerr.Mapped{
+			err: rpcErr(t, kasServerError, "Too many requests, please wait.", rpcerr.Mapped{
 				ErrorType:      "ClientThrottleError",
 				RetryErrorType: "THROTTLING",
 				RequestID:      "abc-123",
@@ -133,21 +137,21 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// A mapped error is classified by its fields, never by the mere presence of the data block,
 		// which every mapped error carries.
 		"validation error is not a throttle": {
-			err: rpcErr(t, marotte.RPCCodeBridgeExited, "The request was invalid.", rpcerr.Mapped{
+			err: rpcErr(t, kasServerError, "The request was invalid.", rpcerr.Mapped{
 				ErrorType:      "GenericValidationError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
 			want: classFatal,
 		},
 		"access denied is auth, and is not a throttle": {
-			err: rpcErr(t, marotte.RPCCodeBridgeExited, "Access denied.", rpcerr.Mapped{
+			err: rpcErr(t, kasServerError, "Access denied.", rpcerr.Mapped{
 				ErrorType:      "AccessDeniedError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
 			want: classAuth,
 		},
 		"a mapped auth class is auth": {
-			err: rpcErr(t, marotte.RPCCodeBridgeExited, "Authentication failed. Please sign in again.", rpcerr.Mapped{
+			err: rpcErr(t, kasServerError, "Authentication failed. Please sign in again.", rpcerr.Mapped{
 				ErrorType:      "TokenExpiredError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
@@ -155,28 +159,28 @@ func TestClassifyPromptFailure(t *testing.T) {
 		},
 		// ModelRegistryAccessDeniedError is left out: no sign-in fixes missing model access.
 		"an entitlement refusal is not auth": {
-			err: rpcErr(t, marotte.RPCCodeBridgeExited, "…this account does not have access to them.", rpcerr.Mapped{
+			err: rpcErr(t, kasServerError, "…this account does not have access to them.", rpcerr.Mapped{
 				ErrorType:      "ModelRegistryAccessDeniedError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
 			want: classFatal,
 		},
 		"a throttle outranks auth prose": {
-			err: rpcErr(t, marotte.RPCCodeBridgeExited, "Authentication token refresh throttled.", rpcerr.Mapped{
+			err: rpcErr(t, kasServerError, "Authentication token refresh throttled.", rpcerr.Mapped{
 				ErrorType:      "ClientThrottleError",
 				RetryErrorType: "THROTTLING",
 			}),
 			want: classThrottled,
 		},
 		"server error is not a throttle": {
-			err: rpcErr(t, marotte.RPCCodeBridgeExited, "The service failed.", rpcerr.Mapped{
+			err: rpcErr(t, kasServerError, "The service failed.", rpcerr.Mapped{
 				ErrorType:      "InternalServerError",
 				RetryErrorType: "SERVER_ERROR",
 			}),
 			want: classFatal,
 		},
 		"mapped error with no retry classification is fatal": {
-			err:  rpcErr(t, marotte.RPCCodeBridgeExited, "some other mapped failure", nil),
+			err:  rpcErr(t, kasServerError, "some other mapped failure", nil),
 			want: classFatal,
 		},
 		"nil is fatal":         {err: nil, want: classFatal},
@@ -218,7 +222,7 @@ func TestClassifyPromptFailure(t *testing.T) {
 			want: classFatal,
 		},
 		"a proxy 407 is final, not retried": {
-			err: rpcErr(t, marotte.RPCCodeBridgeExited, "Your network proxy refused the connection because it requires authentication (HTTP 407).", rpcerr.Mapped{
+			err: rpcErr(t, kasServerError, "Your network proxy refused the connection because it requires authentication (HTTP 407).", rpcerr.Mapped{
 				ErrorType: "ProxyAuthenticationRequiredError", RetryErrorType: "TRANSIENT", RequestID: "req-407",
 			}),
 			want: classFatal,
@@ -228,7 +232,7 @@ func TestClassifyPromptFailure(t *testing.T) {
 			want: classFatal,
 		},
 		"a session owning live runs is final": {
-			err: rpcErr(t, marotte.RPCCodeBridgeExited, "This session owns live workflows.", map[string]any{
+			err: rpcErr(t, kasServerError, "This session owns live workflows.", map[string]any{
 				"errorType": "SessionOwnsLiveWorkflowsError", "sessionId": "sess_x", "workflowIds": []string{"wf_1"},
 			}),
 			want: classFatal,
@@ -273,7 +277,7 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 		t.Error("a dead bridge is reported retryable; every attempt fails instantly against a closed done channel")
 	}
 
-	throttle := rpcErr(t, marotte.RPCCodeBridgeExited, "Too many requests.", rpcerr.Mapped{
+	throttle := rpcErr(t, kasServerError, "Too many requests.", rpcerr.Mapped{
 		ErrorType:      "ClientThrottleError",
 		RetryErrorType: "THROTTLING",
 	})
@@ -297,7 +301,7 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 // turn's reason names the cause and the remedy, the one failure where both are known.
 func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 	const kasMsg = "Too many requests, please wait before trying again."
-	err := rpcErr(t, marotte.RPCCodeBridgeExited, kasMsg, rpcerr.Mapped{
+	err := rpcErr(t, kasServerError, kasMsg, rpcerr.Mapped{
 		ErrorType:      "ClientThrottleError",
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-9",
@@ -313,7 +317,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 		}
 	}
 
-	other := rpcErr(t, marotte.RPCCodeBridgeExited, "The request was invalid.", rpcerr.Mapped{
+	other := rpcErr(t, kasServerError, "The request was invalid.", rpcerr.Mapped{
 		ErrorType:      "GenericValidationError",
 		RetryErrorType: "CLIENT_ERROR",
 	})
@@ -321,7 +325,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 		t.Errorf("a validation error was given throttle advice: %q", reason)
 	}
 
-	blank := rpcErr(t, marotte.RPCCodeBridgeExited, "", rpcerr.Mapped{
+	blank := rpcErr(t, kasServerError, "", rpcerr.Mapped{
 		ErrorType:      "ClientThrottleError",
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-11",
@@ -346,12 +350,12 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 }
 
 func TestPromptFailureReason_ModelRegistryUnavailableNamesLoginRemedy(t *testing.T) {
-	err := rpcErr(t, marotte.RPCCodeBridgeExited, "Kiro could not load the available models.", rpcerr.Mapped{
+	err := rpcErr(t, kasServerError, "Kiro could not load the available models.", rpcerr.Mapped{
 		ErrorType:      "ModelRegistryUnavailableError",
 		RetryErrorType: "SERVER_ERROR",
 	})
 	got := promptFailureReason(err, false)
-	for _, want := range []string{"Kiro could not load the available models.", "kiro-cli login"} {
+	for _, want := range []string{"Kiro could not load the available models.", "Sign in to Kiro from the account menu"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("promptFailureReason(ModelRegistryUnavailableError) = %q, want it to mention %q", got, want)
 		}
@@ -360,11 +364,11 @@ func TestPromptFailureReason_ModelRegistryUnavailableNamesLoginRemedy(t *testing
 		t.Error("ModelRegistryUnavailableError is retryable, want a terminal login remedy")
 	}
 
-	other := rpcErr(t, marotte.RPCCodeBridgeExited, "The service failed.", rpcerr.Mapped{
+	other := rpcErr(t, kasServerError, "The service failed.", rpcerr.Mapped{
 		ErrorType:      "InternalServerError",
 		RetryErrorType: "SERVER_ERROR",
 	})
-	if got := promptFailureReason(other, false); strings.Contains(got, "kiro-cli login") {
+	if got := promptFailureReason(other, false); strings.Contains(got, "Sign in to Kiro from the account menu") {
 		t.Errorf("promptFailureReason(InternalServerError) = %q, want no login remedy", got)
 	}
 }
@@ -374,7 +378,7 @@ func TestPromptFailureReason_ModelRegistryUnavailableNamesLoginRemedy(t *testing
 // KAS's sentence names the server, so it reaches the reader verbatim.
 func TestClassifyRPCFailure_McpServersNotReadyIsFatalWithKASProse(t *testing.T) {
 	const prose = "Required MCP server github did not become ready in time. Check the MCP Servers panel, then try again."
-	err := rpcErr(t, marotte.RPCCodeBridgeExited, prose, rpcerr.Mapped{
+	err := rpcErr(t, kasServerError, prose, rpcerr.Mapped{
 		ErrorType:      "McpServersNotReadyError",
 		RetryErrorType: "SERVER_ERROR",
 	})
@@ -417,7 +421,7 @@ func TestPromptFailureReason_NamesTheRefusalAsTerminal(t *testing.T) {
 // enough on its own.
 func TestPromptFailureReason_HandlesAHalfFilledTriplet(t *testing.T) {
 	t.Run("retryErrorType alone still classifies the throttle", func(t *testing.T) {
-		err := rpcErr(t, marotte.RPCCodeBridgeExited, "Too many requests.", rpcerr.Mapped{
+		err := rpcErr(t, kasServerError, "Too many requests.", rpcerr.Mapped{
 			RetryErrorType: "THROTTLING",
 		})
 		if got := classifyPromptFailure(err); got != classThrottled {
@@ -429,7 +433,7 @@ func TestPromptFailureReason_HandlesAHalfFilledTriplet(t *testing.T) {
 	})
 
 	t.Run("errorType alone still names the failure", func(t *testing.T) {
-		err := rpcErr(t, marotte.RPCCodeBridgeExited, "", rpcerr.Mapped{
+		err := rpcErr(t, kasServerError, "", rpcerr.Mapped{
 			ErrorType: "ImprovementServiceUnavailable",
 		})
 		got := promptFailureReason(err, false)
@@ -468,7 +472,7 @@ func TestPromptFailureReason_PromptShapedRefusalKeepsSmallerAdvice(t *testing.T)
 // actually sends with its auto-compaction off: -32000, the mapped triplet, and a
 // message naming a setting the reader has no control for.
 func TestContextWindowExceededIsPermanentAndNamesRecovery(t *testing.T) {
-	err := rpcErr(t, marotte.RPCCodeBridgeExited,
+	err := rpcErr(t, kasServerError,
 		"Context limit reached because the disableAutoCompaction setting is enabled. Compact the conversation manually, then try again. (Request ID: req-1)",
 		rpcerr.Mapped{
 			ErrorType:      "ContextWindowExceededError",
@@ -501,7 +505,7 @@ func TestContextWindowExceededIsPermanentAndNamesRecovery(t *testing.T) {
 // TestFailureKind_OnlyTheContextOverflowIsClassified pins that the predicate
 // keys on the error TYPE: a sibling -32000 class carries no kind.
 func TestFailureKind_OnlyTheContextOverflowIsClassified(t *testing.T) {
-	err := rpcErr(t, marotte.RPCCodeBridgeExited, "Kiro could not load the available models.", rpcerr.Mapped{
+	err := rpcErr(t, kasServerError, "Kiro could not load the available models.", rpcerr.Mapped{
 		ErrorType:      "ModelRegistryUnavailableError",
 		RetryErrorType: "SERVER_ERROR",
 	})
@@ -516,7 +520,7 @@ func TestPromptFailureReason_SanitizesUpstreamText(t *testing.T) {
 	const bidi = "\u202e"
 	const c1 = "\u0085"
 
-	err := rpcErr(t, marotte.RPCCodeBridgeExited, "Agent 'a"+bidi+"b' pins model 'm"+c1+"n'.", rpcerr.Mapped{
+	err := rpcErr(t, kasServerError, "Agent 'a"+bidi+"b' pins model 'm"+c1+"n'.", rpcerr.Mapped{
 		ErrorType:      "AgentModelPinUnservableError",
 		RetryErrorType: "CLIENT_ERROR",
 		RequestID:      "req" + bidi + "-3",
@@ -532,7 +536,7 @@ func TestPromptFailureReason_SanitizesUpstreamText(t *testing.T) {
 		t.Errorf("reason %q lost KAS's own user-facing text", got)
 	}
 
-	blank := rpcErr(t, marotte.RPCCodeBridgeExited, "", rpcerr.Mapped{
+	blank := rpcErr(t, kasServerError, "", rpcerr.Mapped{
 		ErrorType:      "Bad" + bidi + "Error",
 		RetryErrorType: "CLIENT_ERROR",
 	})
@@ -540,14 +544,14 @@ func TestPromptFailureReason_SanitizesUpstreamText(t *testing.T) {
 		t.Errorf("errorType reached the reader unsanitized: %q", reason)
 	}
 
-	login := rpcErr(t, marotte.RPCCodeBridgeExited, "Kiro could not"+bidi+" load models.", rpcerr.Mapped{
+	login := rpcErr(t, kasServerError, "Kiro could not"+bidi+" load models.", rpcerr.Mapped{
 		ErrorType: "ModelRegistryUnavailableError",
 	})
 	reason := promptFailureReason(login, false)
 	if strings.Contains(reason, bidi) {
 		t.Errorf("the login-remedy branch passed its message through raw: %q", reason)
 	}
-	if !strings.Contains(reason, "kiro-cli login") {
+	if !strings.Contains(reason, "Sign in to Kiro from the account menu") {
 		t.Errorf("the login-remedy branch lost its remedy: %q", reason)
 	}
 }
@@ -559,7 +563,7 @@ func TestPromptFailureReason_SanitizesUpstreamText(t *testing.T) {
 // a reader can act on — the remedy sentence and the request id.
 func TestPromptFailureReason_BoundsUpstreamProseAndKeepsTheRemedy(t *testing.T) {
 	huge := strings.Repeat("model-id-that-is-not-served, ", 4000)
-	err := rpcErr(t, marotte.RPCCodeBridgeExited, huge, rpcerr.Mapped{
+	err := rpcErr(t, kasServerError, huge, rpcerr.Mapped{
 		ErrorType:      "AgentModelPinUnservableError",
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-42",
@@ -576,7 +580,7 @@ func TestPromptFailureReason_BoundsUpstreamProseAndKeepsTheRemedy(t *testing.T) 
 		}
 	}
 
-	long := rpcErr(t, marotte.RPCCodeBridgeExited, "refused", rpcerr.Mapped{
+	long := rpcErr(t, kasServerError, "refused", rpcerr.Mapped{
 		ErrorType: "AgentModelPinUnservableError",
 		RequestID: strings.Repeat("z", 5000),
 	})

@@ -16,9 +16,9 @@ type kasKnowledgeIndexing struct {
 }
 
 // HandleKnowledgeIndexing returns the handler for one phase of a custom agent's
-// knowledge-base build. Only the chat's own session counts: a step's or a
-// subagent's agent indexes into a store of its own, so its build says nothing
-// about what the chat's agent can search.
+// knowledge-base build. Only the chat's own session counts: a step's agent
+// indexes into a store of its own, so its build says nothing about what the
+// chat's agent can search.
 func (t *Translator) HandleKnowledgeIndexing(phase marotte.KnowledgeIndexingPhase) func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
 	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 		p, ok := unmarshalParams[kasKnowledgeIndexing](msg, "knowledge/indexing")

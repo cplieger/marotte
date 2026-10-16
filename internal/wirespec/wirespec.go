@@ -220,6 +220,18 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.TerminalCreatedPayload](),
 	wiregen.TypeRef[marotte.TerminalOutputPayload](),
 	wiregen.TypeRef[marotte.TerminalExitedPayload](),
+	// GET /api/engine and the engine_status event, after the parts it holds.
+	wiregen.TypeRef[marotte.EngineRestart](),
+	wiregen.TypeRef[marotte.EngineBusyTurn](),
+	wiregen.TypeRef[marotte.EngineBusyRun](),
+	wiregen.TypeRef[marotte.EngineBusy](),
+	wiregen.TypeRef[marotte.EngineExit](),
+	wiregen.TypeRef[marotte.EngineStatusVersion](),
+	wiregen.TypeRef[marotte.EngineStatus](),
+	// GET /api/config/standing, after the parts it holds.
+	wiregen.TypeRef[marotte.ConfigStanding](),
+	wiregen.TypeRef[marotte.AgentLoadError](),
+	wiregen.TypeRef[marotte.ConfigStandingResponse](),
 	// GET /api/settings. No omitempty, so the client holds no defaults of its own.
 	wiregen.TypeRef[marotte.KiroDefault](),
 	wiregen.TypeRef[marotte.EffectiveSettings](),
@@ -266,6 +278,8 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[forges.LoginResult](),
 	wiregen.TypeRef[forges.Detection](),
 	wiregen.TypeRef[auth.WhoamiResponse](),
+	// POST /api/login's 200 answer: the attempt the login poll waits on.
+	wiregen.TypeRef[auth.LoginResponse](),
 	wiregen.TypeRef[auth.LoginOptions](),
 	// The search replies embed textsearch.Tally, which wiregen flattens, so
 	// `scanned`/`matched`/`truncated` are REQUIRED on every one.
@@ -368,6 +382,8 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// "marotte could not ask" must render a retry, not a sign-in prompt.
 	"WhoamiState": {},
 	"Transport":   {},
+	// The engine banner and the Settings restart control branch on it.
+	"EngineState": {},
 	// Each kind resolves to a different rendered surface; the decoder is strict.
 	"SegmentKind": {},
 	// The client branches on it to say "wait" or "narrow the query".
@@ -454,6 +470,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "spec_changed", TypeName: "SpecChangedPayload"},
 	{EventType: "spec_approved", TypeName: "SpecApprovedPayload"},
 	{EventType: "forge_inventory", TypeName: "InventoryChangedPayload"},
+	{EventType: "engine_status", TypeName: "EngineStatus"},
 }
 
 // Registry returns the fully-populated wiregen registry: the generator options plus the

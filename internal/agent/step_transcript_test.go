@@ -3,7 +3,6 @@ package agent
 // The fixture is the measured `inspect` shape: two repeat iterations holding the same step id, which makes path addressing necessary.
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -68,11 +67,38 @@ func armStepInspect(br *fakeBridge) {
 	br.callResults[methodKiroWorkflowInspect] = json.RawMessage(stepInspect)
 }
 
-// armStepReplay answers `session/load` with a replay of texts stamped with the loaded session id, foreign to the utility session.
+// replayFrame is one `session/load` replay frame of sessionID: KAS tags every replayed update
+// `_meta.kiro.replay: true` (kiro-cli/acp-surface.md).
+func replayFrame(sessionID, update string) *marotte.RPCResponse {
+	var u map[string]any
+	if err := json.Unmarshal([]byte(update), &u); err != nil {
+		panic(err)
+	}
+	meta, _ := u["_meta"].(map[string]any)
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	kiro, _ := meta["kiro"].(map[string]any)
+	if kiro == nil {
+		kiro = map[string]any{}
+	}
+	kiro["replay"] = true
+	meta["kiro"] = kiro
+	u["_meta"] = meta
+	tagged, _ := json.Marshal(u)
+	params, _ := json.Marshal(map[string]any{"sessionId": sessionID, "update": json.RawMessage(tagged)})
+	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
+}
+
+// armStepReplay answers `session/load` with a replay of texts stamped with the loaded session id.
 func armStepReplay(br *fakeBridge, sessionID string, texts ...string) {
 	frames := make([]*marotte.RPCResponse, 0, len(texts))
 	for _, tx := range texts {
-		frames = append(frames, newSessionChunkMsg(sessionID, tx))
+		chunk, _ := json.Marshal(map[string]any{
+			"sessionUpdate": "agent_message_chunk",
+			"content":       map[string]any{"type": "text", "text": tx},
+		})
+		frames = append(frames, replayFrame(sessionID, string(chunk)))
 	}
 	br.mu.Lock()
 	defer br.mu.Unlock()
@@ -266,16 +292,18 @@ func TestStepTranscript_AnUnreadableRunIsUnavailable(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_TheBudgetBoundsTheBarrier pins that the utility forward goroutine is not wired to the registry, the shape of a wedged replay.
+// TestStepTranscript_TheBudgetBoundsTheBarrier pins that a replay the engine lane never drains answers unavailable
+// inside the budget.
 func TestStepTranscript_TheBudgetBoundsTheBarrier(t *testing.T) {
 	shortStepBudget(t, 40*time.Millisecond)
-	br := newFakeBridge()
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	fakeSourceOf(t, h).withholdLane(true)
 	armStepInspect(br)
 	armStepReplay(br, "sess_pass0", "never drained")
-	rs := unwiredStepRuns(t, br)
 
 	start := time.Now()
-	got, err := rs.stepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
+	got, err := h.Runs().stepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
@@ -326,13 +354,7 @@ func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
-	replay := func(update string) *marotte.RPCResponse {
-		params, _ := json.Marshal(map[string]any{
-			"sessionId": "sess_pass0",
-			"update":    json.RawMessage(update),
-		})
-		return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
-	}
+	replay := func(update string) *marotte.RPCResponse { return replayFrame("sess_pass0", update) }
 	br.mu.Lock()
 	br.notifsOnCall = map[string][]*marotte.RPCResponse{
 		marotte.MethodSessionLoad: {
@@ -376,33 +398,60 @@ func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_TheUtilitySessionKeepsItsOwnIdentity pins that a raw `session/load` must not rebind the utility's
-// session id, or the reaper deletes a live subprocess's state.
-func TestStepTranscript_TheUtilitySessionKeepsItsOwnIdentity(t *testing.T) {
+// A step session is replayed by an engine-level load, never opened as a session: no door, no lane, and the
+// reaper's keep-list is unchanged.
+func TestStepTranscript_TheLoadOpensNoSessionLane(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
 	armStepReplay(br, "sess_pass0", "hello")
-
-	// Settle the utility's id before the read.
-	if err := h.utility.get().ensureStarted(t.Context()); err != nil {
-		t.Fatalf("start utility session: %v", err)
+	if !awaitEngine(h) {
+		t.Fatal("Setup: the engine never became ready")
 	}
-	before := h.utility.get().liveID()
-	if before == "" {
-		t.Fatal("the utility session reports no id")
-	}
+	doors := br.startCount()
+	lanes := len(h.bridge.mgr.all())
+	keep := h.liveSessionIDs()
 
 	if _, err := h.Runs().stepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build"); err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}
 
-	if after := h.utility.get().liveID(); after != before {
-		t.Errorf("the utility session's id moved from %q to %q across a step read — "+
-			"the orphan reaper's keep-list now names the wrong session", before, after)
+	if got := br.startCount() - doors; got != 0 {
+		t.Errorf("%d session doors during a step read, want 0", got)
 	}
-	if after := before; after == "sess_pass0" {
-		t.Error("the utility session adopted the step's id")
+	if got := len(h.bridge.mgr.all()); got != lanes {
+		t.Errorf("registered sessions = %d after a step read, want %d", got, lanes)
+	}
+	if got := h.liveSessionIDs(); !slices.Equal(got, keep) {
+		t.Errorf("the reaper keep-list moved from %v to %v across a step read", keep, got)
+	}
+	if !slices.Contains(br.callLog(), marotte.MethodSessionLoad) {
+		t.Errorf("the step session was never loaded; calls were %v", br.callLog())
+	}
+}
+
+// TestEngineCallAt_CarriesTheResponsePosition pins that a zero would make the condition trivially true. It also names
+// the generation, since a restarted engine's lane restarts at zero.
+func TestEngineCallAt_CarriesTheResponsePosition(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	armStepReplay(br, "sess_pass0", "one ", "two ", "three")
+
+	raw, at, err := h.engine.callRawAt(t.Context(), "step transcript load",
+		marotte.MethodSessionLoad, map[string]any{marotte.KeySessionID: "sess_pass0"})
+	if err != nil {
+		t.Fatalf("callRawAt: %v", err)
+	}
+	if len(raw) == 0 {
+		t.Fatal("callRawAt returned an empty result, so the load did not answer")
+	}
+	if at.seq != 3 {
+		t.Errorf("load position = %d, want 3 — the three replay frames all precede "+
+			"the result on the wire, so the consumer has to reach their position", at.seq)
+	}
+	if at.gen == 0 {
+		t.Error("the load position names no generation, so a straggling observation " +
+			"from a previous engine generation could satisfy it")
 	}
 }
 
@@ -636,8 +685,8 @@ func TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
 	}
 }
 
-// TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing pins that the utility session can restart, and an old
-// forward's positions run far ahead of a restarted sequence.
+// TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing pins that the engine restarts, and the previous
+// generation's positions run far ahead of a restarted sequence.
 func TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing(t *testing.T) {
 	var sr stepReplays
 	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
@@ -648,24 +697,24 @@ func TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing(t *testing.
 
 	sr.settleConsumed(drainPoint{gen: testFwdGen, seq: 900}, false)
 	if closedNow(sr.barrier("sess_a")) {
-		t.Fatal("a straggling observation from the previous subprocess settled a " +
+		t.Fatal("a straggling observation from the previous engine generation settled a " +
 			"replay loaded on the live one")
 	}
 	// Nor its exit seal.
 	sr.settleConsumed(drainPoint{gen: testFwdGen}, true)
 	if closedNow(sr.barrier("sess_a")) {
-		t.Fatal("the previous subprocess's exit seal settled the live replay")
+		t.Fatal("the previous engine generation's exit seal settled the live replay")
 	}
-	// Nor its position stored: the live session's first frame would then settle on nothing folded.
+	// Nor its position stored: the live generation's first frame would then settle on nothing folded.
 	sr.settleConsumed(drainPoint{gen: live, seq: 1}, false)
 	if closedNow(sr.barrier("sess_a")) {
-		t.Fatal("the live subprocess's FIRST frame settled the replay: the straggler's " +
+		t.Fatal("the live generation's FIRST frame settled the replay: the straggler's " +
 			"position was adopted")
 	}
 
 	sr.settleConsumed(drainPoint{gen: live, seq: testLoadSeq}, false)
 	if !closedNow(sr.barrier("sess_a")) {
-		t.Error("the live attachment reaching the load position did not settle it")
+		t.Error("the live generation reaching the load position did not settle it")
 	}
 }
 
@@ -720,7 +769,7 @@ func TestStepReplays_TakeIsIdempotentAndClosesTheBarrier(t *testing.T) {
 	sr.settleConsumed(atFrame(testLoadSeq), false)
 }
 
-// TestStepReplays_IngestReportsWhetherItConsumed lets the utility session tell a replay frame from a foreign one.
+// TestStepReplays_IngestReportsWhetherItConsumed lets the engine lane tell a replay frame from a foreign one.
 func TestStepReplays_IngestReportsWhetherItConsumed(t *testing.T) {
 	var sr stepReplays
 	raw := json.RawMessage(`{"content":{"type":"text","text":"x"}}`)
@@ -765,32 +814,6 @@ func TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget(t *testing.T) {
 	}
 }
 
-// TestUtilityRawCallAt_CarriesTheResponsePosition pins that a zero would make the condition trivially true. It also
-// names the attachment, since recycled sessions restart at zero.
-func TestUtilityRawCallAt_CarriesTheResponsePosition(t *testing.T) {
-	br := newFakeBridge()
-	armStepReplay(br, "sess_pass0", "one ", "two ", "three")
-	rs := unwiredStepRuns(t, br)
-
-	raw, at, err := rs.utility().rawCallAt(t.Context(), "step transcript load",
-		marotte.MethodSessionLoad,
-		callerParams(map[string]any{marotte.KeySessionID: "sess_pass0"}))
-	if err != nil {
-		t.Fatalf("rawCallAt: %v", err)
-	}
-	if len(raw) == 0 {
-		t.Fatal("rawCallAt returned an empty result, so the load did not answer")
-	}
-	if at.seq != 3 {
-		t.Errorf("load position = %d, want 3 — the three replay frames all precede "+
-			"the result on the wire, so the consumer has to reach their position", at.seq)
-	}
-	if at.gen == 0 {
-		t.Error("the load position names no attachment, so a straggling observation " +
-			"from a recycled subprocess could satisfy it")
-	}
-}
-
 // closedNow reports whether a barrier is already closed, without waiting.
 func closedNow(ch <-chan struct{}) bool {
 	select {
@@ -798,21 +821,6 @@ func closedNow(ch <-chan struct{}) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-// unwiredStepRuns builds a Runs whose utility session has no forward goroutine feeding the registry: a wedged
-// replay, driving the budget deterministically.
-func unwiredStepRuns(t *testing.T, br *fakeBridge) *Runs {
-	t.Helper()
-	session := &utilitySession{
-		shutdownCtx:   context.Background(),
-		bridgeFactory: func() ACPBridge { return br },
-	}
-	t.Cleanup(session.Stop)
-	return &Runs{
-		translate: noopRunTranslator{},
-		utility:   func() *utilitySession { return session },
 	}
 }
 

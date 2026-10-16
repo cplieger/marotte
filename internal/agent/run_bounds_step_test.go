@@ -23,7 +23,7 @@ func openStep(t *testing.T, h *Runtime, workflowID string, path []string, sessio
 	}
 }
 
-// stepFixture is a manual run on its own carrier with a run log, whose cancel KAS would take.
+// stepFixture is a manual run on its own host session with a run log, whose cancel KAS would take.
 func stepFixture(t *testing.T, id string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, _, br := newTestHub()
@@ -64,12 +64,12 @@ func TestCancelExpired_AStepReasoningSilentlyPastTheWindowIsNotStopped(t *testin
 func TestCancelExpired_AStepInsideALongKASToolIsNotStopped(t *testing.T) {
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
-	carrier := runChatID(id)
+	host := runChatID(id)
 	start := map[string]any{"workflowId": id, "nodeId": "review", "nodePath": []string{id, "review"}, "type": stepNodeType}
-	h.dispatch(t.Context(), carrier, h.originOf(carrier), runNotif(methodWFNodeStart, start))
+	h.dispatch(t.Context(), host, h.originOf(host), runNotif(methodWFNodeStart, start))
 	start["sessionId"] = "step-session-a"
-	h.dispatch(t.Context(), carrier, h.originOf(carrier), runNotif(methodWFNodeStart, start))
-	h.dispatch(t.Context(), carrier, h.originOf(carrier), stepToolCall(t, "step-session-a", map[string]any{
+	h.dispatch(t.Context(), host, h.originOf(host), runNotif(methodWFNodeStart, start))
+	h.dispatch(t.Context(), host, h.originOf(host), stepToolCall(t, "step-session-a", map[string]any{
 		"workflowId": id, "nodeId": "review", "nodePath": []string{id, "review"},
 	}))
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
@@ -84,16 +84,16 @@ func TestCancelExpired_AStepInsideALongKASToolIsNotStopped(t *testing.T) {
 func TestCancelExpired_ACommandWatchPollingIdleIsNotStopped(t *testing.T) {
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
-	carrier := runChatID(id)
+	host := runChatID(id)
 	watch := []string{id, "watching", "iter-0", "mail"}
-	h.dispatch(t.Context(), carrier, h.originOf(carrier), runNotif(methodWFNodeStart, map[string]any{
+	h.dispatch(t.Context(), host, h.originOf(host), runNotif(methodWFNodeStart, map[string]any{
 		"workflowId": id, "nodeId": "watching", "nodePath": []string{id, "watching"}, "type": "repeat",
 	}))
-	h.dispatch(t.Context(), carrier, h.originOf(carrier), runNotif(methodWFNodeStart, map[string]any{
+	h.dispatch(t.Context(), host, h.originOf(host), runNotif(methodWFNodeStart, map[string]any{
 		"workflowId": id, "nodeId": "mail", "nodePath": watch, "type": "watch",
 	}))
 	for range 3 {
-		h.dispatch(t.Context(), carrier, h.originOf(carrier), runNotif(methodWFWatchPoll, map[string]any{
+		h.dispatch(t.Context(), host, h.originOf(host), runNotif(methodWFWatchPoll, map[string]any{
 			"workflowId": id, "nodeId": "mail", "nodePath": watch, "outcome": "idle",
 		}))
 	}

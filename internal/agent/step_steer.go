@@ -19,7 +19,7 @@ import (
 type stepSteerTarget struct {
 	workflowID string
 	nodePath   string
-	// host is the chat whose bridge carries the run: the launching chat, or `run:<id>`.
+	// host is the chat whose session carries the run: the launching chat, or `run:<id>`.
 	host marotte.ChatID
 }
 
@@ -27,15 +27,17 @@ type stepSteerTarget struct {
 //
 // gate orders a step message's transition against the step's turn ends: the verb decision and its
 // delivery, every step `_session/steer` and every step steering turn end take it, so nothing decided
-// before an end reaches KAS after it. Its holders never wait on a carrier's read loop or a steer op
+// before an end reaches KAS after it. Its holders never wait on a host session's read loop or a steer op
 // lock, because the ends run on that read loop.
 type stepSteers struct {
 	recs    *steerRecords
 	queue   steerQueue
 	ledger  command.SteerRecorder
 	targets map[string]stepSteerTarget
-	gate    runLocks
-	mu      sync.Mutex
+	// engine carries every steer as an engine call naming the step's session.
+	engine *engineOwner
+	gate   runLocks
+	mu     sync.Mutex
 }
 
 func newStepSteers(recs *steerRecords, ledger command.SteerRecorder) *stepSteers {
@@ -151,21 +153,20 @@ func (s *stepSteers) event(key marotte.ChatID, p *marotte.SteerQueuedPayload) (m
 }
 
 // steerTarget addresses a step's steers. Its lease is the run's admission of the whole operation, so
-// a step's session is mutated only by a caller holding one.
-func (s *stepSteers) steerTarget(_ runLease, carrier acpSessionCaller, session string) command.SteerTarget {
+// a step's session is mutated only by a caller holding one. The steer is an engine call naming the step's session.
+func (s *stepSteers) steerTarget(_ runLease, session string) command.SteerTarget {
 	t := command.SteerTarget{Queue: s.queue, Ledger: s.ledger, Key: marotte.StepSteerKey(session)}
-	if carrier != nil {
-		t.Caller = stepCaller{carrier: carrier, steers: s, session: marotte.SessionID(session)}
+	if s.engine != nil {
+		t.Caller = stepCaller{via: engineCaller{o: s.engine}, steers: s, session: marotte.SessionID(session)}
 	}
 	return t
 }
 
 var errStepSteerEnded = errors.New("the step's turn ended before the message was sent")
 
-// Every step session is resident on its run's carrier. A `_session/steer` goes out under the run's gate,
-// and only while the step's steering turn is bound.
+// A `_session/steer` goes out under the run's gate, and only while the step's steering turn is bound.
 type stepCaller struct {
-	carrier acpSessionCaller
+	via     engineCaller
 	steers  *stepSteers
 	session marotte.SessionID
 }
@@ -174,7 +175,7 @@ var _ command.SessionCaller = stepCaller{}
 
 func (c stepCaller) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
 	if method != marotte.MethodSessionSteer {
-		return c.carrier.Call(ctx, method, params)
+		return c.via.Call(ctx, method, params)
 	}
 	key := marotte.StepSteerKey(string(c.session))
 	t, ok := c.steers.target(key)
@@ -189,11 +190,11 @@ func (c stepCaller) Call(ctx context.Context, method string, params any) (*marot
 	if !c.steers.recs.stepOpen(key) {
 		return nil, errStepSteerEnded
 	}
-	return c.carrier.Call(ctx, method, params)
+	return c.via.Call(ctx, method, params)
 }
 
 func (c stepCaller) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
-	return c.carrier.CallAt(ctx, method, params)
+	return c.via.CallAt(ctx, method, params)
 }
 
 func (c stepCaller) SessionID() marotte.SessionID { return c.session }
@@ -286,4 +287,17 @@ func (s *stepSteers) runsHostedBy(host marotte.ChatID) []string {
 		}
 	}
 	return slices.Sorted(maps.Keys(runs))
+}
+
+// engineCaller is an engine-level caller, for a step session marotte holds no lane for: the reply comes back by id.
+type engineCaller struct{ o *engineOwner }
+
+func (c engineCaller) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
+	resp, _, err := c.o.callAt(ctx, method, params)
+	return resp, err
+}
+
+func (c engineCaller) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
+	resp, at, err := c.o.callAt(ctx, method, params)
+	return resp, at.seq, err
 }

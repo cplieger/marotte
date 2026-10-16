@@ -97,7 +97,8 @@ func (s *Store) ListStamped() (leases []Lease, version string) {
 func (s *Store) sortedLocked() []Lease {
 	out := make([]Lease, 0, len(s.leases))
 	for _, id := range slices.Sorted(maps.Keys(s.leases)) {
-		out = append(out, s.leases[id])
+		l := s.leases[id]
+		out = append(out, l.clone())
 	}
 	return out
 }
@@ -110,7 +111,7 @@ func (s *Store) Get(workflowID string) (Lease, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l, ok := s.leases[workflowID]
-	return l, ok
+	return l.clone(), ok
 }
 
 // Put grants a lease, replacing any held for the run. On a persist failure the lease is
@@ -124,7 +125,7 @@ func (s *Store) Put(ctx context.Context, l *Lease) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.leases[l.WorkflowID] = *l
+	s.leases[l.WorkflowID] = l.clone()
 	s.version++
 	return s.persistLocked(ctx)
 }

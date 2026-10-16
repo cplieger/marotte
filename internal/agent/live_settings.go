@@ -93,112 +93,56 @@ func (l *surfaceLock) unlock() { <-l.ch }
 // failure to log or retry.
 func heldContext(ctx context.Context) context.Context { return context.WithoutCancel(ctx) }
 
-// bridgeLive is what one chat or run process last confirmed of the ignore list and the shell timeout; nil files or
-// !terminalKnown is unconfirmed. Content collection's record is the bridge's own (RefreshContentCollection).
-type bridgeLive struct {
+// engineLive is what the engine last confirmed of the ignore list and the shell timeout; nil files or !terminalKnown
+// is unconfirmed. Content collection's record is the engine's own (RefreshContentCollection).
+type engineLive struct {
 	ignoreFiles       []string
 	terminalTimeoutMs int
 	terminalKnown     bool
 }
 
-// startedLive is what b's Start left its process holding; read only after Start returned nil.
-func startedLive(b utilityBridge) bridgeLive {
-	files, ms := b.StartLive()
-	return bridgeLive{ignoreFiles: slices.Clone(files), terminalTimeoutMs: ms, terminalKnown: true}
-}
-
-func (sb *sharedBridge) adoptSpawn() {
-	live := startedLive(sb.current())
-	sb.liveLock.lock(context.Background())
-	sb.live = live
-	sb.liveLock.unlock()
-}
-
-// syncLive sends sb each live setting the document holds that its process has not confirmed. The document is read
-// under sb's lock, so a later push never carries an older read. A spawning bridge is skipped: its spawn reads the
-// document itself and adoptSpawn records what it delivered. A failed push keeps the record, so the next use resends.
-func (sb *sharedBridge) syncLive(ctx context.Context, chatID marotte.ChatID, read func(context.Context) liveSettings) {
-	if !sb.liveLock.lock(ctx) {
+// syncLive sends the engine each live setting the document holds that it has not confirmed, once for every session.
+// The document is read under the engine's live lock, so a later push never carries an older read. A down engine reads
+// the document itself at its spawn. A failed push keeps the record, so the next use resends.
+func (o *engineOwner) syncLive(ctx context.Context, read func(context.Context) liveSettings) {
+	if !o.liveLock.lock(ctx) {
 		return
 	}
-	defer sb.liveLock.unlock()
+	defer o.liveLock.unlock()
 	ctx = heldContext(ctx)
-	if !sb.startedPastSpawn() {
+	h, gen := o.current()
+	if h == nil {
 		return
 	}
-	refreshContentCollection(ctx, sb.current(), "chat_id", chatID)
+	cctx, cancel := context.WithTimeout(ctx, ignorePushTimeout)
+	if enabled, err := h.RefreshContentCollection(cctx); err != nil {
+		slog.Error("content collection not pushed; model requests may still be opted in",
+			"generation", gen, "enabled", enabled, "error", err)
+	}
+	cancel()
 	now := read(ctx)
 	if !now.readable {
 		return
 	}
-	if now.ignoreReadable && !slices.Equal(sb.live.ignoreFiles, now.ignoreFiles) &&
-		sb.notifyLive(ctx, chatID, marotte.MethodPolicyIgnoreFilesChanged, map[string]any{marotte.ParamIgnoreFiles: now.ignoreFiles}) {
-		sb.live.ignoreFiles = now.ignoreFiles
+	if now.ignoreReadable && !slices.Equal(o.live.ignoreFiles, now.ignoreFiles) &&
+		notifyLive(ctx, h, marotte.MethodPolicyIgnoreFilesChanged, map[string]any{marotte.ParamIgnoreFiles: now.ignoreFiles}) {
+		o.live.ignoreFiles = now.ignoreFiles
 	}
-	if (!sb.live.terminalKnown || sb.live.terminalTimeoutMs != now.terminalTimeoutMs) &&
-		sb.notifyLive(ctx, chatID, marotte.MethodTerminalSettingsChanged, marotte.TerminalSettingsParams(now.terminalTimeoutMs)) {
-		sb.live.terminalTimeoutMs, sb.live.terminalKnown = now.terminalTimeoutMs, true
+	if (!o.live.terminalKnown || o.live.terminalTimeoutMs != now.terminalTimeoutMs) &&
+		notifyLive(ctx, h, marotte.MethodTerminalSettingsChanged, marotte.TerminalSettingsParams(now.terminalTimeoutMs)) {
+		o.live.terminalTimeoutMs, o.live.terminalKnown = now.terminalTimeoutMs, true
 	}
 }
 
-func (sb *sharedBridge) notifyLive(ctx context.Context, chatID marotte.ChatID, method string, params any) bool {
+func notifyLive(ctx context.Context, h engineHandle, method string, params any) bool {
 	cctx, cancel := context.WithTimeout(ctx, ignorePushTimeout)
 	defer cancel()
-	if err := sb.Notify(cctx, method, params); err != nil {
+	if err := h.Notify(cctx, method, params); err != nil {
 		slog.Warn("live setting not pushed; it is resent at the next chat message or settings write",
-			"chat_id", chatID, "method", method, "error", err)
+			"method", method, "error", err)
 		return false
 	}
 	return true
-}
-
-// refreshContentCollection sends whatever the document's readability: the bridge's resolver answers an organization
-// lock over an unreadable config.json.
-func refreshContentCollection(ctx context.Context, b utilityBridge, attrs ...any) {
-	cctx, cancel := context.WithTimeout(ctx, ignorePushTimeout)
-	defer cancel()
-	if enabled, err := b.RefreshContentCollection(cctx); err != nil {
-		slog.Error("content collection not pushed; model requests from this process may still be opted in",
-			append(attrs, "enabled", enabled, "error", err)...)
-	}
-}
-
-func (us *utilitySession) syncLive(ctx context.Context, read func(context.Context) liveSettings) {
-	if !us.liveLock.lock(ctx) {
-		return
-	}
-	defer us.liveLock.unlock()
-	ctx = heldContext(ctx)
-	us.mu.Lock()
-	running, b, gen, sent := us.started, us.bridge, us.gen, us.liveIgnore
-	us.mu.Unlock()
-	if !running || b == nil {
-		return
-	}
-	refreshContentCollection(ctx, b, "session", "utility")
-	now := read(ctx)
-	if !now.readable {
-		return
-	}
-	if us.hooks.ignoreFiles != nil && now.ignoreReadable && !slices.Equal(sent, now.ignoreFiles) {
-		cctx, cancel := context.WithTimeout(ctx, ignorePushTimeout)
-		err := b.Notify(cctx, marotte.MethodPolicyIgnoreFilesChanged, map[string]any{marotte.ParamIgnoreFiles: now.ignoreFiles})
-		cancel()
-		if err != nil {
-			slog.Warn("live setting not pushed; it is resent at the next chat message or settings write",
-				"session", "utility", "method", marotte.MethodPolicyIgnoreFilesChanged, "error", err)
-		} else {
-			us.recordIgnore(gen, now.ignoreFiles)
-		}
-	}
-}
-
-func (us *utilitySession) recordIgnore(gen uint64, files []string) {
-	us.mu.Lock()
-	defer us.mu.Unlock()
-	if us.started && us.gen == gen {
-		us.liveIgnore = files
-	}
 }
 
 // processLive serializes the syncs of the settings this server applies itself (log level, notification toggles)
@@ -257,25 +201,6 @@ func (rt *Runtime) syncProcessLive(ctx context.Context) {
 	}
 }
 
-// reportUnreadableOwed re-reads the ignore list once an open's own process is live, so the report describes the
-// document that process was spawned over rather than the one the pre-spawn sync read. Like syncProcessLive it waits
-// for the lock until ignorePushTimeout or ctx's deadline, whichever is first; a report it skips is owed again at the
-// next open.
-func (rt *Runtime) reportUnreadableOwed(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, ignorePushTimeout)
-	defer cancel()
-	p := &rt.processLive
-	if !p.lock.lock(ctx) {
-		warnIfLockWaitTimedOut(ctx, "settings: another live-settings sync held the lock past the bound; "+
-			"an unreadable agent ignore list is reported at the next chat open")
-		return
-	}
-	defer p.lock.unlock()
-	ctx = heldContext(ctx)
-	_, readable := readAgentIgnoreFiles(ctx, rt.lifecycle.configDir)
-	rt.noteIgnoreReadable(ctx, readable)
-}
-
 // warnIfLockWaitTimedOut logs msg when a lock wait under ctx ended on its deadline; a caller who left needs no line.
 func warnIfLockWaitTimedOut(ctx context.Context, msg string) {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -292,91 +217,5 @@ func (rt *Runtime) noteIgnoreReadable(ctx context.Context, readable bool) {
 	}
 	if p.ignoreUnreadable && !p.unreadableReported {
 		p.unreadableReported = rt.reportIgnoreFilesUnreadable(ctx)
-	}
-}
-
-func (rt *Runtime) pushLiveToAll(ctx context.Context) {
-	rt.syncLiveExcept(ctx, liveSurface{})
-}
-
-type liveSurface struct {
-	chat    marotte.ChatID
-	utility bool
-}
-
-func (rt *Runtime) syncLiveExcept(ctx context.Context, skip liveSurface) {
-	var wg sync.WaitGroup
-	for chatID, sb := range rt.bridge.mgr.all() {
-		if skip.chat != "" && chatID == skip.chat {
-			continue
-		}
-		wg.Go(func() { sb.syncLive(ctx, chatID, rt.liveSettings) })
-	}
-	if u := rt.utility.peek(); u != nil && !skip.utility {
-		wg.Go(func() { u.syncLive(ctx, rt.liveSettings) })
-	}
-	wg.Wait()
-}
-
-// liveFanout runs the passes that carry a hand edit found at one process's use to every other live process, off
-// that use's path so a wedged process delays no open. One pass runs at a time; requests made during it coalesce
-// into one more pass, which skips a process only when every coalesced request had synced it already.
-type liveFanout struct {
-	skip    liveSurface
-	mu      sync.Mutex
-	running bool
-	queued  bool
-}
-
-func (f *liveFanout) request(skip liveSurface) (startRunner bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	switch {
-	case !f.queued:
-		f.skip, f.queued = skip, true
-	case f.skip != skip:
-		f.skip = liveSurface{}
-	}
-	if f.running {
-		return false
-	}
-	f.running = true
-	return true
-}
-
-func (f *liveFanout) takeOrStop() (skip liveSurface, ok bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if !f.queued {
-		f.running = false
-		return liveSurface{}, false
-	}
-	skip, f.skip, f.queued = f.skip, liveSurface{}, false
-	return skip, true
-}
-
-func (f *liveFanout) abandon() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.skip, f.queued, f.running = liveSurface{}, false, false
-}
-
-// fanOutLive drops its pass at shutdown, which stops every process the pass would sync.
-func (rt *Runtime) fanOutLive(skip liveSurface) {
-	if !rt.fanout.request(skip) {
-		return
-	}
-	if !rt.lifecycle.goUnlessDraining(rt.runFanOut) {
-		rt.fanout.abandon()
-	}
-}
-
-func (rt *Runtime) runFanOut() {
-	for {
-		skip, ok := rt.fanout.takeOrStop()
-		if !ok {
-			return
-		}
-		rt.syncLiveExcept(rt.lifecycle.shutdownCtx, skip)
 	}
 }

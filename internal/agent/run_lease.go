@@ -33,8 +33,8 @@ func manualLaunch() launchOrigin {
 	return launchOrigin{origin: runlease.OriginManual}
 }
 
-// retryLaunch leases a retried run as its gate found it: an agent's run keeps its launching chat,
-// whose bridge hosts the retry and is the one its asks and verbs are read through.
+// retryLaunch leases a retried run as its gate found it: an agent's run keeps its launching chat, whose session hosts
+// the retry.
 func retryLaunch(o *runOrigin) launchOrigin {
 	if o.parent.chat == "" {
 		return manualLaunch()
@@ -42,10 +42,15 @@ func retryLaunch(o *runOrigin) launchOrigin {
 	return launchOrigin{origin: runlease.OriginAgent, chatID: string(o.parent.chat)}
 }
 
-// grantRetryLease leases a retried run from its gate's origin, parent session included: the
-// retry's run_start finds the lease held and adds no chat to it.
+// grantRetryLease leases a retried run from its gate's origin, parent session included: the retry's run_start finds
+// the lease held and adds no chat to it. A parentless retry is a new launch decision, so its host session reloads
+// with the profile's presets as they are now, recorded here.
 func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOrigin) {
-	rs.grantLease(ctx, workflowID, o.recipe, retryLaunch(o))
+	var host *runlease.HostSecurity
+	if o.parent.chat == "" {
+		host = hostSecurityOf(securityPresets(ctx, rs.lifecycle.configDir))
+	}
+	rs.grantLease(ctx, workflowID, o.recipe, retryLaunch(o), host)
 	rs.recordParentSession(ctx, workflowID, o.parent.session)
 }
 
@@ -130,7 +135,9 @@ func (rs *Runs) leaseStore() *runlease.Store {
 
 // grantLease records a run's envelope between `new` and `invoke`, before anything executes. Unattended
 // only for a scheduled run. A persist failure is logged: the in-memory lease still bounds the run.
-func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o launchOrigin) {
+// grantLease records a run marotte put on the wire; host is a parentless launch's host-session security input, nil
+// for a chat-parented run.
+func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o launchOrigin, host *runlease.HostSecurity) {
 	if workflowID == "" {
 		return
 	}
@@ -143,6 +150,7 @@ func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o lau
 		Origin:     o.origin,
 		ScheduleID: o.scheduleID,
 		Unattended: o.origin == runlease.OriginScheduled,
+		Host:       host,
 	}
 	if err := rs.leaseStore().Put(ctx, &l); err != nil {
 		slog.Error("run lease not persisted; this run's envelope will not survive a restart",
@@ -158,10 +166,15 @@ func (rs *Runs) releaseLease(ctx context.Context, workflowID string) {
 	if workflowID == "" {
 		return
 	}
+	l, held := rs.lease(workflowID)
 	if err := rs.leaseStore().Release(ctx, workflowID); err != nil {
 		slog.Warn("run lease not released on disk", "workflow_id", workflowID, "error", err)
 	}
 	rs.endAsks(ctx, workflowID)
+	rs.quietEdge()
+	if held && rs.coord != nil {
+		rs.coord.releaseIfUnheld(marotte.ChatID(l.ChatID))
+	}
 }
 
 // recordParentSession stamps the run's parent session on its lease, the one host its asks are read through.
@@ -178,10 +191,9 @@ func (rs *Runs) recordParentSession(ctx context.Context, workflowID, session str
 	}
 }
 
-// leaseOrigin routes a verb on a leased run from its lease alone, never a run-list read on the
-// utility, which can stamp the utility as the run's owner. A lease with no recorded parent session
-// names no host, so the verb is refused. Only a run with no lease is looked up in the run list.
-func (rs *Runs) leaseOrigin(ctx context.Context, workflowID string) runOrigin {
+// originFromLease routes a verb on a leased run from its lease alone. A lease with no recorded parent session names no
+// host, so the verb is refused. Only a run with no lease is looked up in the run list.
+func (rs *Runs) originFromLease(ctx context.Context, workflowID string) runOrigin {
 	l, held := rs.lease(workflowID)
 	if !held {
 		return rs.originOf(ctx, workflowID)
@@ -219,7 +231,7 @@ func (rs *Runs) LiveRuns(workflowIDs []string) []command.LiveRunRef {
 // CancelRun cancels one run for the reader and waits for its lease release. command.ErrRunStillLive
 // when the wait runs out; the cancel landed either way.
 func (rs *Runs) CancelRun(ctx context.Context, workflowID string) error {
-	if err := rs.cancelOn(ctx, workflowID, userStop(stopWhyRewound), nil); err != nil {
+	if err := rs.cancelAs(ctx, workflowID, userStop(stopWhyRewound)); err != nil {
 		return err
 	}
 	deadline := time.NewTimer(rewindCancelWait)

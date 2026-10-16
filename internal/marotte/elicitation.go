@@ -44,7 +44,6 @@ type ElicitationNeededPayload struct {
 	Message         string                    `json:"message,omitempty"`
 	URL             string                    `json:"url,omitempty"`
 	ToolCallID      string                    `json:"tool_call_id,omitempty"`
-	SubSessionID    string                    `json:"sub_session_id,omitempty"`
 	// RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
 	// attributed to its run and node from the step-session registry.
 	RunID     string `json:"run_id,omitempty"`

@@ -1,6 +1,6 @@
 // Package secretstore persists the opaque credential blobs KAS asks marotte to hold via the
 // v3 `_kiro/secret/*` requests. KAS runs MCP OAuth but persists none of it, so without this
-// store every bridge spawn re-runs Dynamic Client Registration.
+// store every engine start re-runs Dynamic Client Registration.
 //
 // One file, <configDir>/mcp-secrets.json, mode 0600, written atomically: a flat
 // `{"secrets": {"<key>": "<base64 value>"}}` map. Values are base64 so they round-trip
@@ -56,8 +56,8 @@ type file struct {
 	Secrets map[string]string `json:"secrets"`
 }
 
-// Store is a process-global keyed credential store shared by EVERY bridge: KAS's key
-// namespace is global, so a second chat reuses the first chat's registration.
+// Store is a process-global keyed credential store shared by every engine generation: KAS's
+// key namespace is global, so a restarted engine reuses the first one's registration.
 type Store struct {
 	// Field order is govet fieldalignment's.
 	secrets map[string]string

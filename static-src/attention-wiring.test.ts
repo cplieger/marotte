@@ -741,7 +741,7 @@ describe("initAttention", () => {
     expect(iconVariant()).toBe("/favicon-alert.svg");
   });
 
-  it("counts a sub-tab chat, which owns its own bridge and its own cue", async () => {
+  it("counts a sub-tab chat, which owns its own session and its own cue", async () => {
     await openChat("parent", { activate: false });
     const tangent = await openChat("tangent", { activate: false, parentRef: "parent" });
     finish(tangent, "tangent", "done");

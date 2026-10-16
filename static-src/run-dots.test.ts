@@ -54,7 +54,7 @@ const queueVersion = signal(0);
 vi.mock("./decision-dock.js", () => ({
   // The RUN-scoped reader, and the fake performs the real join rather than a set lookup:
   // `hasPendingDecision` is a CHAT-keyed predicate, so passing it a workflow id matched nothing
-  // ever and an agent-launched run's ask — the one population whose asks arrive on a chat bridge —
+  // ever and an agent-launched run's ask — the one population whose asks arrive on a chat's lane —
   // never reached this dot.
   runPendingAsks: vi.fn((workflowID: string) => {
     void queueVersion.value;

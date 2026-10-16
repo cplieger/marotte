@@ -17,12 +17,12 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		Bus:      r.Bus,
 		Teardown: r.Teardown,
 		CloseChat: func(ctx context.Context, chatID marotte.ChatID) {
-			closeChatTeardown(ctx, r.Bridges, r.Stops, r.Teardown, chatID)
+			closeChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID)
 		},
 		// The delete grade, for a chat the close already erased: everything
 		// travels on the captured chain, since the record is gone by now.
 		DeleteChat: func(ctx context.Context, chatID marotte.ChatID, sessionChain []string) {
-			deleteChatTeardown(ctx, r.Bridges, r.Stops, r.Teardown, chatID, sessionChain)
+			deleteChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID, sessionChain)
 		},
 		// Fails toward KEEPING — deliberately not the purge's reader, whose
 		// 0-sentinel points the other way.
@@ -70,7 +70,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 
 	d.Register(marotte.CmdQueuePrompt, bind1(r.Queue, cmdQueuePrompt))
 	d.Register(marotte.CmdSetInterruptMode, bind1[chatMutator](r.Chats, cmdSetInterruptMode))
-	d.Register(marotte.CmdRenameChat, bind3(r.Bridges, r.Chats, r.Renamer, cmdRenameChat))
+	d.Register(marotte.CmdRenameChat, bind2(r.Chats, r.Renamer, cmdRenameChat))
 
 	prompt := &promptRoles{
 		bridges:     r.Bridges,

@@ -6,6 +6,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -239,6 +240,8 @@ func TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame(t *testing.T) {
 	ids := busyChatsWithHugeTurns(t, rt, 2)
 	rt.bus.steers.SteerWaiting(ids[1], &marotte.SteerQueuedPayload{SteerID: "s1", Text: "steer text"})
 
+	// Read before the connect: the connect's own re-read of every leased run runs after the pending frame is written.
+	version, _ := rt.versions.Current(subject.KindPending, "")
 	frames := connectFrames(t, rt, false)
 
 	if got := countType(frames, marotte.EventPendingSnapshot); got != 1 {
@@ -270,7 +273,6 @@ func TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame(t *testing.T) {
 		t.Errorf("pending_snapshot item kinds = %v, want %d permission_needed, %d run_asks, 1 steer_queued",
 			kinds, fixturePendingPerms, fixturePendingRunAsks)
 	}
-	version, _ := rt.versions.Current(subject.KindPending, "")
 	want := marotte.SubjectStamp{Kind: "pending", Version: version}
 	if snap.Subject == nil || *snap.Subject != want {
 		t.Errorf("pending_snapshot Subject = %+v, want %+v", snap.Subject, want)
@@ -386,7 +388,7 @@ func TestConnect_LegacyKeepsThePerItemReplayAndNumericBounds(t *testing.T) {
 	}
 	// The v2 client reads numbers.
 	body := coldConnectAs(t, rt, true).Body.String()
-	if !strings.Contains(body, `"floor":0`) || !strings.Contains(body, `"head":`+string(rune('0'+int(*p.Head)))) {
+	if !strings.Contains(body, `"floor":0`) || !strings.Contains(body, `"head":`+strconv.FormatUint(*p.Head, 10)) {
 		t.Errorf("legacy connected does not carry numeric floor/head: %s", body)
 	}
 }

@@ -13,27 +13,25 @@
 // and the whole exported surface.
 package kascap
 
-// KAS decides it: the connection door is read once per subprocess, the session door once per
+// KAS decides it: the connection and environment doors are read once per engine, the session door once per
 // session, the prompt door once per prompt. The zero value is deliberately not a door: a row
 // that forgets to declare one fails TestDeclIsWellFormed rather than default onto a door.
 type door string
 
 const (
-	// doorConnection is the initialize handshake, sent once per kiro-cli
-	// subprocess before any session exists.
+	// doorConnection is the initialize handshake, sent once per engine before any session exists.
 	doorConnection door = "connection"
 	// doorSession is the per-session door, sent on BOTH session/new and session/load. Both, or a
 	// resumed chat quietly gets a different agent from a fresh one: KAS resolves a session key from
 	// the call's own _meta first and falls back to the value persisted at creation, so a session
 	// created before a key existed never gains it on load unless the client sends it there too.
 	doorSession door = "session"
-	// doorEnvironment is the kiro-cli child process environment, fixed at
-	// spawn. It carries the KIRO_FEATURE_* overrides KAS's env provider reads
+	// doorEnvironment is the engine's process environment, fixed at spawn. It carries the KIRO_FEATURE_* overrides KAS's env provider reads
 	// ahead of the experiment service, and the KIRO_DISABLE_* switches. A row on
 	// it uses resolverEnv (or resolverEnvJSON) and its key is the variable's whole name.
 	doorEnvironment door = "environment"
 	// doorPrompt is session/prompt's _meta.kiro, sent per prompt. Its rows read a Prompt through
-	// promptGate, never a Spawn.
+	// promptGate.
 	doorPrompt door = "prompt"
 )
 
@@ -80,66 +78,53 @@ const (
 
 func inSettings(r resolver) bool { return r == resolverSetting || r == resolverSettingObject }
 
-// Spawn carries the per-bridge facts the gated rows read. Every field is a
-// decision the caller has already made for THIS subprocess, never a preference
-// this package could look up for itself.
-type Spawn struct {
-	// MemoryMode and MemoryReflection are the session's `settings.memory`
-	// preference. An EMPTY mode is sent as "disabled", so a spawn that resolves
-	// no setting (the utility bridge) fails closed.
-	MemoryMode string
-	// SpecPlan is "" (off), "quick" or "full"; SpecAskClarification asks the
-	// spec's clarifying questions first. Value-gated, always sent: on load KAS
-	// falls back to the persisted value when the key is absent.
-	SpecPlan string
-	// WorkValidation, InfraSafetyMonitor, AutoRouting and AutoDelegation are
-	// "", "on" or "off". Empty withholds the key so kiro-cli's own experiment
-	// decides.
-	WorkValidation     string
+// EngineSpawn carries the engine-wide facts the connection and environment rows read: each is fixed when the engine
+// starts, so changing one needs an engine restart. Every field is a decision the caller already made.
+type EngineSpawn struct {
+	// InfraSafetyMonitor, AutoRouting and AutoDelegation are "", "on" or "off". Empty withholds the key so kiro-cli's
+	// own experiment decides.
 	InfraSafetyMonitor string
 	AutoRouting        string
 	AutoDelegation     string
-	// Presets are the KAS policy-preset ids of the active security profile (policyfile.Profile).
-	// EMPTY means the Custom profile, so the key is withheld. KAS re-reads the ids on session/new
-	// and session/load and persists neither, so both doors must resolve from this one field.
-	Presets []string
-	// TerminalCommandTimeoutMs is the shell tool's default timeout; 0 withholds
-	// the key (KAS's 120 s).
+	// TerminalCommandTimeoutMs is the shell tool's default timeout; 0 withholds the key (KAS's 120 s).
 	TerminalCommandTimeoutMs int
-	// SecretStorage is whether the caller has a credential store standing
-	// behind the secretStorage capability. See that row's Because: declaring
-	// the capability without a store is worse than declining it.
+	// SecretStorage is whether a credential store stands behind the secretStorage capability. See that row's because:
+	// declaring the capability without a store is worse than declining it.
 	SecretStorage bool
-	// ConfigurationState declares configurationState; set by the utility bridge only.
-	ConfigurationState bool
-	// Hooks is whether this bridge opts into KAS's v2 hook engine.
-	Hooks bool
-	// Knowledge gates TWO rows, the `knowledge` capability and the `knowledge`
-	// setting: splitting them shipped a knowledge UI over a store the agent had
-	// no tool to query.
-	//
-	// Value-gated rather than presence-gated: the capability's resolver compares
+	// Knowledge gates TWO rows, the `knowledge` capability and the `knowledge` setting: splitting them shipped a
+	// knowledge UI over a store the agent had no tool to query. Value-gated: the capability's resolver compares
 	// `=== true`, so its key is present with a real boolean either way.
-	Knowledge        bool
-	MemoryReflection bool
-	// DisableSessionTitles writes KIRO_DISABLE_SESSION_TITLE_LLM=true. Set on
-	// run bridges only.
-	DisableSessionTitles bool
-	// DisableAutoCompaction turns KAS's own 80%/95% compaction off for this
-	// session. The zero value keeps it on, which is what run and utility bridges
-	// send; the disableAutoCompaction row is value-gated so false is sent too.
-	DisableAutoCompaction bool
-	SpecAskClarification  bool
+	Knowledge bool
 	// SteeringReminders is a value-gated setting, always sent.
 	SteeringReminders bool
-	// Workflows gives the agent its workflow tools; value-gated, always sent on
-	// both session doors.
-	Workflows bool
-	// DisableTelemetry sends telemetryEnabled false at initialize; the zero value
-	// is KAS's own default, on.
+	// DisableTelemetry sends telemetryEnabled false at initialize; the zero value is KAS's own default, on.
 	DisableTelemetry bool
 	// ModelFallback writes both KIRO_FEATURE_MODEL_FALLBACK_*_ENABLED=true; false writes neither.
 	ModelFallback bool
+}
+
+// SessionSpawn carries the per-session facts the session rows read, sent on both session/new and session/load.
+type SessionSpawn struct {
+	// OverrideSessionID is the id marotte minted for a session/new; empty on session/load, which names its id itself.
+	OverrideSessionID string
+	// MemoryMode and MemoryReflection are the session's `settings.memory` preference. An EMPTY mode is sent as
+	// "disabled", so a session that resolves no setting fails closed.
+	MemoryMode string
+	// SpecPlan is "" (off), "quick" or "full"; SpecAskClarification asks the spec's clarifying questions first.
+	// Value-gated, always sent: on load KAS falls back to the persisted value when the key is absent.
+	SpecPlan string
+	// WorkValidation is "", "on" or "off"; empty withholds the key so kiro-cli's own experiment decides.
+	WorkValidation string
+	// Presets are the KAS policy-preset ids of the active security profile (policyfile.Profile). EMPTY means the
+	// Custom profile, so the key is withheld. KAS persists neither door's ids, so both doors resolve from this field.
+	Presets          []string
+	MemoryReflection bool
+	// DisableAutoCompaction turns KAS's own 80%/95% compaction off for this session; the row is value-gated, so false
+	// is sent too.
+	DisableAutoCompaction bool
+	SpecAskClarification  bool
+	// Workflows gives the agent its workflow tools; value-gated, always sent on both session doors.
+	Workflows bool
 }
 
 // Prompt carries the per-prompt facts the prompt door's rows read.
@@ -165,13 +150,14 @@ type decl struct {
 	// A gated row leaves this nil and its gate supplies the value.
 	value any
 
-	// gate, when non-nil, decides this row at spawn time, returning the value and whether to send
-	// the key at all: secretStorage is always present with a runtime value, hooks is present only
-	// when enabled.
-	gate func(*Spawn) (value any, present bool)
+	// engineGate decides a connection or environment row when the engine starts, returning the value and whether to
+	// send the key at all: secretStorage is always present with a runtime value, the terminal setting only when set.
+	engineGate func(*EngineSpawn) (value any, present bool)
 
-	// promptGate is gate for a doorPrompt row, the only door decided per prompt rather than per
-	// spawn.
+	// sessionGate decides a session row at each session door.
+	sessionGate func(*SessionSpawn) (value any, present bool)
+
+	// promptGate decides a prompt row per prompt.
 	promptGate func(*Prompt) (value any, present bool)
 
 	// door is the call that carries this key.

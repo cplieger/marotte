@@ -105,18 +105,14 @@ func lastAsksOf(t *testing.T, h *Runtime, workflowID string) marotte.RunAsksPayl
 	return c.last
 }
 
-// readNow is an explicit read of a leased run through its own carrier.
+// readNow is an explicit read of a leased run.
 func readNow(t *testing.T, h *Runtime, workflowID string) askRead {
 	t.Helper()
 	c := h.runs.cellFor(workflowID)
 	if c == nil {
 		t.Fatalf("no cell for %s: is it leased?", workflowID)
 	}
-	host := h.runs.askHost(workflowID)
-	if host == nil {
-		t.Fatalf("no host for %s", workflowID)
-	}
-	r, err := h.runs.readAsks(t.Context(), c, host)
+	r, err := h.runs.readAsks(t.Context(), c)
 	if err != nil {
 		t.Fatalf("readAsks: %v", err)
 	}

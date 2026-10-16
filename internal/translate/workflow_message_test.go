@@ -163,7 +163,7 @@ func TestWorkflowMessage_IgnoresFramesThatAreNotThisChatsMessages(t *testing.T) 
 		{"another chat's target", testChat, workflowNotify("step", testStep, "sess_elsewhere", "info", "hi")},
 		{"a parent message from elsewhere", testChat, workflowNotify("parent", "sess_elsewhere", testStep, "info", "hi")},
 		{"no sender", testChat, workflowNotify("", testStep, testParent, "info", "hi")},
-		{"a run bridge", marotte.ChatID("run:" + testWfRun), workflowNotify("step", testStep, testParent, "info", "hi")},
+		{"a run host session", marotte.ChatID("run:" + testWfRun), workflowNotify("step", testStep, testParent, "info", "hi")},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

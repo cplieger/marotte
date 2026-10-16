@@ -200,7 +200,7 @@ func TestHandleSessionInfoUpdate_ModelFallbackFromStepSessionNotOnChat(t *testin
 	}
 }
 
-// A parentless run bridge reads a step's frame through HandleStepInfoUpdate.
+// A parentless run's host session reads a step's frame through HandleStepInfoUpdate.
 func TestHandleStepInfoUpdate_ModelFallbackLandsInTheStepsTurn(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))

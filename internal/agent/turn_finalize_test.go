@@ -104,7 +104,7 @@ func TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn(t *testing.T) {
 	const partial = "the model got this far before the pipe died"
 	streamingPromptTurn(t, h, "c1", partial)
 
-	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", nil, marotte.TurnOutcomeInterrupted)
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 
 	entries := logOf(t, cs, "c1")
 	if got := textsOf(t, entries); !slices.Equal(got, []string{partial}) {
@@ -133,7 +133,7 @@ func TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
 
-	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", nil, marotte.TurnOutcomeInterrupted)
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 
 	if got := logOf(t, cs, "c1"); len(got) != 0 {
 		t.Errorf("entries = %+v, want none", got)
@@ -148,7 +148,7 @@ func TestCloseTurnOnBridgeDeath_ACancelledOutcomeConcludesCancelled(t *testing.T
 	h, cs, _ := newTestHub()
 	streamingPromptTurn(t, h, "c1", "half an answer")
 
-	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", nil, marotte.TurnOutcomeCancelled)
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", marotte.TurnOutcomeCancelled)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 {
@@ -171,7 +171,7 @@ func TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow(t *testin
 		SteerID: "s-2", Text: "and rename it", Origin: marotte.SteerOriginAgent,
 	})
 
-	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", nil, marotte.TurnOutcomeInterrupted)
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 
 	// One entry per id; the order is arbitrary.
 	recorded := map[string]marotte.EntrySteer{}

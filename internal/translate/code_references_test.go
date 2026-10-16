@@ -119,12 +119,12 @@ func TestHandleCodeReferences_NoTurnInFlight(t *testing.T) {
 	}
 }
 
-// TestHandleCodeReferences_SkipsSubagentFanout pins the KAS fan-out dedup:
+// TestHandleCodeReferences_SkipsAForeignCopy pins the KAS fan-out dedup:
 // KAS broadcasts the same references under every live session id, so a copy
-// keyed to a subagent session (differing from the parent) is skipped; the
-// parent-session copy is processed.
-func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
-	t.Run("SubagentCopySkipped", func(t *testing.T) {
+// keyed to another session (a step's, differing from the parent) is skipped;
+// the parent-session copy is processed.
+func TestHandleCodeReferences_SkipsAForeignCopy(t *testing.T) {
+	t.Run("ForeignCopySkipped", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
 		tr := New(rolesOf(deps))
@@ -135,7 +135,7 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 			{"licenseName": "MIT", "repository": "r", "url": "https://example.com"},
 		}))
 		if n := countCodeRefEvents(events); n != 0 {
-			t.Errorf("broadcast count = %d, want 0 (subagent-keyed copy must be skipped)", n)
+			t.Errorf("broadcast count = %d, want 0 (a copy keyed to another session must be skipped)", n)
 		}
 	})
 	t.Run("ParentCopyProcessed", func(t *testing.T) {

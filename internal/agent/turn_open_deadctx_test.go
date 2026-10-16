@@ -69,13 +69,13 @@ func TestStartTurn_RefusesADeadContextAfterTheOpen(t *testing.T) {
 	}
 }
 
-// A prompt parked in its bridge spawn when Shutdown lands still reaches a terminal frame. Unlike
+// A prompt parked in its session open when Shutdown lands still reaches a terminal frame. Unlike
 // TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn, which passes through a closer race, this pins that no turn
 // opens and the prompt takes its zero-epoch branch.
 func TestPromptTurn_ShutdownBeforeTheTurnOpensStartsNoTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	entered, gate := gateSpawn(h)
+	entered, gate := gateSessionOpen(h)
 	defer close(gate)
 
 	if rec := postCmd(t, h, marotte.ClientCommand{

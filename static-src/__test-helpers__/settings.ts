@@ -31,6 +31,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     auto_delegation: "",
     output_style: "default",
     terminal_command_timeout_ms: 0,
+    engine_heap_mib: 0,
     mcp_wait_for_ready: false,
     notifications_enabled: false,
     notify_agent_finished: true,

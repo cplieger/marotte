@@ -59,7 +59,7 @@ func TestSwitchModel_ChatNotFound(t *testing.T) {
 	}
 }
 
-// An idle chat with no bridge takes the pick on the record alone: no entry, no spawn, session id kept.
+// An idle chat with no bridge takes the pick on the record alone: no entry, no session open, session id kept.
 func TestSwitchModel_ANoBridgeChatTakesThePickOnTheRecord(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -88,7 +88,7 @@ func TestSwitchModel_ANoBridgeChatTakesThePickOnTheRecord(t *testing.T) {
 		t.Errorf("model_switched entries = %+v, want none: no session was switched", switches)
 	}
 	if sb := h.coord.bridgeFor("c1"); sb != nil {
-		t.Error("a bridge was spawned for a pick on an idle bridgeless chat")
+		t.Error("a session was opened for a pick on an idle bridgeless chat")
 	}
 }
 
@@ -130,7 +130,7 @@ func TestSwitchModel_ALiveIdleChatRecordsTheSwitchAndResetsUsage(t *testing.T) {
 	if _, err := h.coord.openBridge(t.Context(), "c1", "m-old"); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	// The spawn records the fake's model, so re-seed m-old after it.
+	// The session open records the fake's model, so re-seed m-old after it.
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Model = "m-old"; return true })
 
 	rec := postCmd(t, h, marotte.ClientCommand{
@@ -251,7 +251,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	})
 	sb, err := h.coord.openBridge(t.Context(), "c1", "old-model")
 	if err != nil {
-		t.Fatalf("getOrCreateBridge: %v", err)
+		t.Fatalf("openBridge: %v", err)
 	}
 	fb := sb.bridge.(*fakeBridge)
 	origSessionID := fb.SessionID()
@@ -311,7 +311,7 @@ func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 		t.Fatalf("code = %d, want 409; body = %s", rec.Code, rec.Body.String())
 	}
 
-	// Nothing changed, and no bridge was torn down or spawned.
+	// Nothing changed, and no bridge was torn down or opened.
 	c, _ := cs.Get(t.Context(), "c1")
 	if c.Model != "m-old" {
 		t.Errorf("chat.Model = %q, want the previous model preserved", c.Model)
@@ -428,7 +428,7 @@ func TestSwitchModel_ARefusedSwapClearsThePickAndReportsIt(t *testing.T) {
 	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	// The spawn records the fake's model, so re-seed m-old after it.
+	// The session open records the fake's model, so re-seed m-old after it.
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Model = "m-old"; return true })
 	origSessionID := br.SessionID()
 	br.mu.Lock()
@@ -521,12 +521,12 @@ func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
 	if entries := logOf(t, cs, "c1"); len(entries) != 0 {
 		t.Errorf("entries = %+v, want none: a pre-session pick is not a switch event", entries)
 	}
-	if opts := br.lastStartOpts(); opts != nil {
-		t.Errorf("a bridge was spawned for a pre-session pick: StartOpts = %+v", opts)
+	if opts := br.lastSessionOpts(); opts != nil {
+		t.Errorf("a session was opened for a pre-session pick: SessionOpts = %+v", opts)
 	}
 }
 
-// A pick parked with no bridge lands at the next spawn, so the session opens on it.
+// A pick parked with no bridge lands at the next session open, so the session opens on it.
 func TestOpenBridge_APendingPickLandsBeforeTheSessionOpens(t *testing.T) {
 	h, cs, br := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -541,17 +541,17 @@ func TestOpenBridge_APendingPickLandsBeforeTheSessionOpens(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	opts := br.lastStartOpts()
+	opts := br.lastSessionOpts()
 	if opts == nil {
-		t.Fatal("no bridge spawned")
+		t.Fatal("no session opened")
 	}
 	if opts.Model != "m-new" {
-		t.Errorf("StartOpts.Model = %q, want m-new: the session must open on the parked pick", opts.Model)
+		t.Errorf("SessionOpts.Model = %q, want m-new: the session must open on the parked pick", opts.Model)
 	}
 	// The record's model is then the session's report, so the landing is read off the cleared pending field.
 	c, _ := cs.Get(t.Context(), "c1")
 	if c.PendingModel != "" {
-		t.Errorf("pending_model = %q, want cleared by the spawn", c.PendingModel)
+		t.Errorf("pending_model = %q, want cleared by the session open", c.PendingModel)
 	}
 	if c.Effort != "" {
 		t.Errorf("effort = %q, want cleared: the tier was chosen under m-old", c.Effort)

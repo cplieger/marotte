@@ -9,13 +9,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
 	"slices"
 	"strconv"
-	"time"
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -41,7 +39,7 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	read, err := rr.runs.positionedRead(r.Context(), id)
 	if err != nil {
-		writeRunReadErr(w, id, err)
+		writeInspectErr(w, id, err)
 		return
 	}
 	raw := read.raw
@@ -103,10 +101,6 @@ func writeInspectErr(w http.ResponseWriter, id string, err error) {
 	httpreply.NotFound(w, "workflow run not found")
 }
 
-// errRunUnhosted means no process holding the run could be reached, so neither its state nor its
-// asks were read.
-var errRunUnhosted = errors.New("the workflow run could not be read")
-
 // runRead is GET /api/runs/{id}'s reads: the run's state, and its asks with whether they were read.
 type runRead struct {
 	raw       json.RawMessage
@@ -114,11 +108,9 @@ type runRead struct {
 	reachable bool
 }
 
-// openRun reads a leased run's state and asks together, through the process its lease records and
-// never the utility, whose read can stamp it as the run's owner: one reply can then never pair a
-// step paused on its question with no asks. Opening a dormant parentless run starts its carrier,
-// closed again once the read shows the run stopped. An unleased run (a TUI launch) has no recorded
-// host, so its state is the utility's and its asks are none, read only when the run is over.
+// openRun reads a leased run's state and asks together, from one engine read, so one reply can never pair a step
+// paused on its question with no asks. An unleased run (a TUI launch) has no cell, so its asks are none, read only
+// when the run is over.
 func (rs *Runs) openRun(ctx context.Context, workflowID string) (runRead, error) {
 	c := rs.cellFor(workflowID)
 	if c == nil {
@@ -129,19 +121,12 @@ func (rs *Runs) openRun(ctx context.Context, workflowID string) (runRead, error)
 		in, dErr := workflow.DecodeInspect(workflowID, raw)
 		return runRead{raw: raw, reachable: dErr == nil && marotte.RunStatus(in.State.Status).Terminal()}, nil
 	}
-	host, err := rs.acquireHost(ctx, workflowID, rs.leaseOrigin)
-	if err != nil {
-		rs.markUnreadable(ctx, c, nil)
-		return runRead{}, fmt.Errorf("%w: %w", errRunUnhosted, err)
-	}
-	r, err := rs.readAsks(ctx, c, host.sb)
-	host.release(nil)
-	rs.closeIfStopped(host, r)
+	r, err := rs.readAsks(ctx, c)
 	switch {
 	case err == nil:
 		return runRead{raw: r.raw, asks: wireAsks(r.asks), reachable: true}, nil
 	case r.raw != nil:
-		// The host answered something this build cannot read: the state goes out as KAS gave it.
+		// The engine answered something this build cannot read: the state goes out as KAS gave it.
 		return runRead{raw: r.raw, asks: rs.lastAsks(c), reachable: false}, nil
 	}
 	return runRead{}, err
@@ -151,60 +136,6 @@ func (rs *Runs) lastAsks(c *askCell) []marotte.RunAsk {
 	rs.asks.mu.Lock()
 	defer rs.asks.mu.Unlock()
 	return c.last.Asks
-}
-
-// closeIfStopped ends a carrier a read started once that read shows its run not executing, or KAS
-// answered it has no such run. Any other unreadable read says nothing about that, and closing a
-// carrier kills the run it drives, so the carrier is kept and read again (rereadKeptCarrier).
-func (rs *Runs) closeIfStopped(host *runHost, r askRead) {
-	if !host.started {
-		return
-	}
-	switch {
-	case r.gone:
-		rs.closeStoppedCarrier(host.chatID, host.workflowID, host.sb)
-	case !r.in.OK:
-		rs.rereadKeptCarrier(host.chatID, host.workflowID, host.sb)
-	case r.in.State.Status != string(marotte.RunStatusRunning):
-		rs.closeStoppedCarrier(host.chatID, host.workflowID, host.sb)
-	}
-}
-
-// unreadCarrierReread is how long a carrier kept on an unreadable read waits before its run is read
-// through it again. A var for tests.
-var unreadCarrierReread = askRequery
-
-// rereadKeptCarrier reads kept's run through kept after unreadCarrierReread, and decides again as
-// closeIfStopped, while kept is still the run's carrier and the run still leased.
-func (rs *Runs) rereadKeptCarrier(chatID marotte.ChatID, workflowID string, kept *sharedBridge) {
-	time.AfterFunc(unreadCarrierReread, func() {
-		rs.lifecycle.goUnlessDraining(func() {
-			c := rs.cellFor(workflowID)
-			if c == nil || rs.bridges.get(chatID) != kept {
-				return
-			}
-			ctx, cancel := rs.lifecycle.derivedContext()
-			defer cancel()
-			rs.carriers.hold(kept)
-			r, _ := rs.readAsks(ctx, c, kept)
-			rs.carriers.leave(kept)
-			rs.closeIfStopped(&runHost{rs: rs, sb: kept, chatID: chatID, workflowID: workflowID, started: true}, r)
-		})
-	})
-}
-
-// writeRunReadErr grades a failed run read; one that reached no host says its asks are unknown too.
-func writeRunReadErr(w http.ResponseWriter, id string, err error) {
-	if !errors.Is(err, errRunUnhosted) {
-		writeInspectErr(w, id, err)
-		return
-	}
-	slog.Warn("workflow inspect: no process holding the run could be reached",
-		"workflow_id", logsafe.Field(id), "error", err)
-	webhttp.WriteJSONStatus(w, http.StatusBadGateway, struct {
-		Error         string `json:"error"`
-		AsksReachable bool   `json:"asks_reachable"`
-	}{Error: errRunUnhosted.Error()})
 }
 
 // runExtras are marotte's top-level keys on GET /api/runs/{id}.
@@ -601,7 +532,7 @@ func (rr *runRoutes) handleFinishLoop(w http.ResponseWriter, r *http.Request) {
 	rr.writeRepeatResult(w, verbFinishLoop, id, rr.runs.finishRepeat(r.Context(), id, body.NodeID))
 }
 
-// writeRepeatResult answers the repeat verbs: failed spawn 500, an {updated:false} decline 409 with KAS's reason.
+// writeRepeatResult answers the repeat verbs: failed host session 500, an {updated:false} decline 409 with KAS's reason.
 func (rr *runRoutes) writeRepeatResult(w http.ResponseWriter, verb, id string, err error) {
 	switch {
 	case err == nil:
@@ -686,7 +617,7 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, errLaunchSessionUnavailable):
 		httpreply.Conflict(w, launchSessionUnavailableText)
 	case errors.Is(err, errRunHostStart):
-		// A failed spawn is this server's fault.
+		// A failed host session is this server's fault.
 		slog.Warn("run answer: could not host the run", "workflow_id", logsafe.Field(id),
 			"ask_id", logsafe.Field(body.AskID), "error", err)
 		httpreply.InternalError(w, errors.New("answer failed"))
@@ -757,7 +688,7 @@ func writeStatusErr(w http.ResponseWriter, err error) bool {
 	return true
 }
 
-// A refusal keeps its status and reason; a failed read or re-host is graded as the run verbs grade it.
+// A refusal keeps its status and reason; a failed read or host load is graded as the run verbs grade it.
 func (rr *runRoutes) writeStepErr(w http.ResponseWriter, verb, id, nodePath string, err error) {
 	if writeStatusErr(w, err) {
 		return
@@ -859,7 +790,7 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 	switch {
 	case writeStatusErr(w, err):
 	case errors.Is(err, errRunHostStart):
-		// First: a re-host KAS refused wraps an *RPCError under this sentinel.
+		// First: a host load KAS refused wraps an *RPCError under this sentinel.
 		slog.Warn("run control failed",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
 		httpreply.InternalError(w, errors.New(verb+" failed"))
@@ -870,8 +801,8 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		slog.Info("run control unavailable: the run's launching session cannot be opened here",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		httpreply.Conflict(w, launchSessionUnavailableText)
-	case errors.Is(err, errRetryEngineSlow):
-		slog.Warn("run control timed out starting an engine", "verb", verb, "workflow_id", logsafe.Field(id))
+	case errors.Is(err, errRetrySlow):
+		slog.Warn("run control timed out loading the run's session", "verb", verb, "workflow_id", logsafe.Field(id))
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
 	case errors.Is(err, errRunDeleting):
 		httpreply.Conflict(w, "This run is already being deleted.")
@@ -886,7 +817,8 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON(errRetryOutcomeUnreadable.Error()))
 	case errors.Is(err, workflow.ErrJustClaimed):
-		// KAS says "another process", but usually it is a second verb on this carrier (the host lock is not held across the RPC).
+		// KAS says "another process", but on one engine it queues a second claim and refuses only once the holder
+		// overstayed its 30 s claim TTL (kiro-cli 2.31.0 takeLocalClaimTurn).
 		slog.Info("run control refused: another claim on the run is in flight",
 			"verb", verb, "workflow_id", logsafe.Field(id), "detail", rpcerr.Details(err))
 		httpreply.Conflict(w, runClaimInFlightText)

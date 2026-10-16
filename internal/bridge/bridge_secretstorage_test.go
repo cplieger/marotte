@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,9 +10,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestInitialize_SecretStorageTracksTheStore pins that `_meta.kiro.secretStorage` follows StartOpts.SecretStorage.
+// TestInitialize_SecretStorageTracksTheStore pins that `_meta.kiro.secretStorage` follows EngineOpts.SecretStorage.
 // The false case matters more: KAS rethrows a client store failure into MCP connect, so offering storage with no
-// store fails every MCP OAuth connect, while not offering it costs one `POST /register` per spawn.
+// store fails every MCP OAuth connect, while not offering it costs one `POST /register` per engine start.
 func TestInitialize_SecretStorageTracksTheStore(t *testing.T) {
 	script := `#!/bin/sh
 while IFS= read -r line; do
@@ -42,9 +43,9 @@ done
 		t.Helper()
 		capture := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capture)
-		b := New(scriptPath, dir)
+		b := NewEngine(scriptPath, dir)
 		// Knowledge on, so the check below has a true capability to find.
-		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "m", SecretStorage: secretStorage, Knowledge: true}); err != nil {
+		if err := b.Start(t.Context(), &marotte.EngineOpts{Lifetime: context.Background(), SecretStorage: secretStorage, Knowledge: true}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()

@@ -26,14 +26,42 @@ function lastCall(): { url: string; init: RequestInit } {
 }
 
 describe("reconnectServer", () => {
-  it("POSTs the server name to /api/mcp/reconnect and returns the count", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ reconnected: 2 }), { status: 200 }));
-    const res = await reconnectServer.dispatch({ server: "everything" });
+  it("POSTs the server name to /api/mcp/reconnect and takes a 204 as done", async () => {
+    const toast = await import("../toast.js");
+    mockFetch.mockResolvedValue(new Response(null, { status: 204 }));
+    const done = vi.fn();
+    await reconnectServer.dispatch({ server: "everything" }, { onSuccess: done });
     const { url, init } = lastCall();
-    expect(url).toContain("/api/mcp/reconnect");
+    expect(new URL(url, location.href).pathname).toBe("/api/mcp/reconnect");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ server: "everything" });
-    expect(res?.reconnected).toBe(2);
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [503, "The agent engine is not running. Try again once it is back."],
+    [502, "kiro-cli did not reset the server."],
+  ])("a %i shows the server's sentence and never reports success", async (status, sentence) => {
+    const toast = await import("../toast.js");
+    vi.mocked(toast.error).mockClear();
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ error: sentence }), { status })),
+    );
+    const done = vi.fn();
+    const settled = reconnectServer
+      .dispatch({ server: "everything" }, { onSuccess: done })
+      .catch(() => undefined);
+    // Each retry's delay is armed only after the previous response settles, so step past each one.
+    for (let i = 0; i < 5; i++) {
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    await settled;
+    expect(done).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      `Could not reconnect integration: ${sentence}`,
+      expect.anything(),
+    );
   });
 });
 

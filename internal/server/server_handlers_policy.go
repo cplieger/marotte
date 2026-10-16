@@ -22,8 +22,8 @@ import (
 // permissions.yaml write KAS hot-reloads). The writer is conservative: a new rule defaults to
 // `ask`, only user and workspace scopes are writable, and widening needs an explicit confirm.
 
-// handlePolicyView serves GET /api/permissions via _kiro/permissions/list on the utility
-// bridge, degrading to the editable files (Available=false) when no bridge answers.
+// handlePolicyView serves GET /api/permissions via _kiro/permissions/list on an observer
+// session, degrading to the editable files (Available=false) when the engine does not answer.
 func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	// Gated here, not on the pattern (see ListenAndServe).
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
@@ -47,7 +47,7 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("policy view: live list failed, falling back to file read", "error", logsafe.Field(err.Error()))
 	}
 	// Fallback: read the editable files directly so the editor works even
-	// when no bridge can answer (e.g. not signed in).
+	// when the engine cannot answer (e.g. not signed in).
 	view.Available = false
 	view.Rules = dedupePolicyRules(s.policyRulesFromFiles(scope))
 	view.Capabilities = pickerCapabilities(view.Rules)

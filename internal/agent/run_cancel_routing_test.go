@@ -1,7 +1,6 @@
 package agent
 
-// The cancel's carrier, and the deadline's fate when that cancel is refused: one defect, since KAS
-// refuses a cancel on the wrong session.
+// A run's cancel, and the deadline's fate when that cancel is refused.
 
 import (
 	"encoding/json"
@@ -13,30 +12,31 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// spawnRecorder hands out a distinct fake per spawn, so a test can tell which session a call took.
-type spawnRecorder struct {
+// doorRecorder hands out a distinct fake per door and serves the engine lane from one too, so every call is counted.
+type doorRecorder struct {
 	results map[string]json.RawMessage
 	errs    map[string]error
-	spawned []*fakeBridge
+	opened  []*fakeBridge
 	mu      sync.Mutex
 }
 
-func (s *spawnRecorder) factory() ACPBridge {
+func (s *doorRecorder) factory() engineSession {
 	br := newFakeBridge()
 	br.callResults = s.results
 	br.callErrs = s.errs
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.spawned = append(s.spawned, br)
+	s.opened = append(s.opened, br)
 	return br
 }
 
-func (s *spawnRecorder) sawCall(method string) (bridges, calls int) {
+func (s *doorRecorder) sawCall(method string) (bridges, calls int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, br := range s.spawned {
+	for _, br := range s.opened {
 		hits := 0
 		for _, m := range br.callLog() {
 			if m == method {
@@ -51,91 +51,12 @@ func (s *spawnRecorder) sawCall(method string) (bridges, calls int) {
 	return bridges, calls
 }
 
-// chatBridge is the fake the coordinator handed this chat, resolved through the map: the utility session starts lazily.
-func chatBridge(t *testing.T, h *Runtime, chatID marotte.ChatID) *fakeBridge {
-	t.Helper()
-	sb := h.runs.bridges.get(chatID)
-	if sb == nil {
-		t.Fatalf("chat %q holds no bridge", chatID)
-	}
-	br, ok := sb.bridge.(*fakeBridge)
-	if !ok {
-		t.Fatalf("chat %q holds a %T, not a fake", chatID, sb.bridge)
-	}
-	return br
-}
-
-func agentLaunchedRun(t *testing.T, results map[string]json.RawMessage, errs map[string]error) (*Runtime, *spawnRecorder) {
-	t.Helper()
-	rec := &spawnRecorder{results: results, errs: errs}
-	cs := newTestChatStore()
-	h := New(t.Context(), "/tmp/work", rec.factory, cs)
-	cs.wire(h)
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "A"
-		c.RecordSession("sess_owner")
-		return true
-	}); err != nil {
-		t.Fatalf("seed the chat: %v", err)
-	}
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	return h, rec
-}
-
 func agentRunList(t *testing.T, status string) json.RawMessage {
 	t.Helper()
 	return kasRuns(t, map[string]any{
 		"workflowId": "wf_1", "name": "publish", "status": status,
 		"parentSessionId": "sess_owner",
 	})
-}
-
-// TestCancel_IsCarriedOnTheOWNINGChatsBridge asserts the carrier: KAS refuses a cancel on the utility
-// session while the owner lives (35 of 36 bound-driven cancels, measured).
-func TestCancel_IsCarriedOnTheOWNINGChatsBridge(t *testing.T) {
-	h, rec := agentLaunchedRun(t, map[string]json.RawMessage{
-		methodKiroWorkflowList:    agentRunList(t, "running"),
-		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
-		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "aborted", ""),
-	}, nil)
-	owner := chatBridge(t, h, "c1")
-	leased(t, h.runs, "wf_1")
-
-	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
-		t.Fatalf("Cancel: %v", err)
-	}
-
-	if !slices.Contains(owner.callLog(), methodKiroWorkflowCancel) {
-		t.Error("the cancel did not reach the launching chat's bridge, so KAS answers it " +
-			"from the write helper and refuses while that process is alive")
-	}
-	if bridges, calls := rec.sawCall(methodKiroWorkflowCancel); bridges != 1 || calls != 1 {
-		t.Errorf("the cancel reached %d bridge(s) in %d call(s), want exactly 1 and 1: "+
-			"a second carrier means the utility session was used as well", bridges, calls)
-	}
-}
-
-// TestDelete_IsCarriedOnTheOWNINGChatsBridge pins that KAS's delete cancels a live run and meets the same check.
-func TestDelete_IsCarriedOnTheOWNINGChatsBridge(t *testing.T) {
-	h, rec := agentLaunchedRun(t, map[string]json.RawMessage{
-		methodKiroWorkflowList:   agentRunList(t, "paused"),
-		methodKiroWorkflowDelete: json.RawMessage(`{}`),
-	}, nil)
-	owner := chatBridge(t, h, "c1")
-	leased(t, h.runs, "wf_1")
-
-	if err := h.runs.delete(t.Context(), "wf_1"); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-
-	if !slices.Contains(owner.callLog(), methodKiroWorkflowDelete) {
-		t.Error("the delete did not reach the launching chat's bridge")
-	}
-	if bridges, _ := rec.sawCall(methodKiroWorkflowDelete); bridges != 1 {
-		t.Errorf("the delete reached %d bridges, want exactly the owner's", bridges)
-	}
 }
 
 // TestCancelForSessions_ReadsTheRunInventoryOnce pins one `workflow/list` for a tab close, not N+1. The
@@ -175,103 +96,43 @@ func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
 	}
 	if got := callsOf(br, methodKiroWorkflowList); got != 1 {
 		t.Errorf("`workflow/list` went out %d times to cancel 2 runs, want 1: the loop "+
-			"already holds every row the carrier resolver would re-read", got)
+			"already holds every row a per-run lookup would re-read", got)
 	}
 }
 
 // TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED pins that with retention off the record is gone
-// before the teardown, so routing must come from the bridge map.
+// before the teardown, so the cancel's lane comes from the lease and the resident session, once.
 func TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED(t *testing.T) {
-	rec := &spawnRecorder{results: map[string]json.RawMessage{
+	rec := &doorRecorder{results: map[string]json.RawMessage{
 		methodKiroWorkflowList:   agentRunList(t, "running"),
 		methodKiroWorkflowCancel: json.RawMessage(`{}`),
 		// Named for no run here, so the lease stays put.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
 	}}
 	cs := newTestChatStore()
-	h := New(t.Context(), "/tmp/work", rec.factory, cs)
+	lane, _ := rec.factory().(*fakeBridge)
+	h := newRuntimeOn(t.Context(), "/tmp/work", fakeEngineOf(rec.factory, lane), cs)
 	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	owner, ok := rec.factory().(*fakeBridge)
 	if !ok {
 		t.Fatal("Setup: the recorder handed back something other than a fake")
 	}
+	owner.sessionID = "sess_owner"
 	h.bridge.mgr.insert("c1", &sharedBridge{bridge: owner, state: bridgeIdle})
 	if _, found := cs.Get(t.Context(), "c1"); found {
 		t.Fatal("Setup: the chat record exists, so this is not the delete-grade state")
 	}
-	leased(t, h.runs, "wf_1")
+	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_owner", Origin: runlease.OriginAgent})
 
 	h.runs.cancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
 
 	if !slices.Contains(owner.callLog(), methodKiroWorkflowCancel) {
-		t.Error("the cancel did not reach the launching chat's bridge for a chat whose " +
-			"record is already deleted, so KAS answers it from the write helper and " +
-			"refuses while that process is alive")
+		t.Error("the cancel did not ride the launching chat's resident session for a chat whose record is already " +
+			"deleted, so its lifecycle frames are not positioned on the lane they reach")
 	}
-	if bridges, calls := rec.sawCall(methodKiroWorkflowCancel); bridges != 1 || calls != 1 {
-		t.Errorf("the cancel reached %d bridge(s) in %d call(s), want exactly 1 and 1: "+
-			"a second carrier means the utility session was used as well", bridges, calls)
-	}
-}
-
-// TestCancelForSessions_PrefersTheRunsOWNProcess pins runOwnBridge's `run:<id>`-first preference: a
-// re-hosted run is registered only in the process that re-hosted it.
-func TestCancelForSessions_PrefersTheRunsOWNProcess(t *testing.T) {
-	rec := &spawnRecorder{results: map[string]json.RawMessage{
-		methodKiroWorkflowList:    agentRunList(t, "paused"),
-		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
-		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
-	}}
-	cs := newTestChatStore()
-	h := New(t.Context(), "/tmp/work", rec.factory, cs)
-	cs.wire(h)
-	chatBr, ok := rec.factory().(*fakeBridge)
-	if !ok {
-		t.Fatal("Setup: the recorder handed back something other than a fake")
-	}
-	runBr, ok := rec.factory().(*fakeBridge)
-	if !ok {
-		t.Fatal("Setup: the recorder handed back something other than a fake")
-	}
-	// Both carriers live, so the order is observable.
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: chatBr, state: bridgeIdle})
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: runBr, state: bridgeIdle})
-	leased(t, h.runs, "wf_1")
-
-	h.runs.cancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
-
-	if !slices.Contains(runBr.callLog(), methodKiroWorkflowCancel) {
-		t.Error("the cancel did not reach the run's own re-hosted process, which is the " +
-			"one holding its registry entry")
-	}
-	if slices.Contains(chatBr.callLog(), methodKiroWorkflowCancel) {
-		t.Error("the cancel went to the launching chat's process while a re-hosted " +
-			"carrier existed, so KAS meets the ownership check and refuses it")
-	}
-}
-
-// TestCancel_FallsBackToTheUtilitySessionWhenNothingHostsTheRun pins that with the owner gone, KAS's check passes on a stale stamp.
-func TestCancel_FallsBackToTheUtilitySessionWhenNothingHostsTheRun(t *testing.T) {
-	h, rec := agentLaunchedRun(t, map[string]json.RawMessage{
-		// Parented on a session no open chat owns.
-		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_1", "status": "paused", "parentSessionId": "sess_stranger",
-		}),
-		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
-		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "aborted", ""),
-	}, nil)
-	owner := chatBridge(t, h, "c1")
-	leased(t, h.runs, "wf_1")
-
-	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
-		t.Fatalf("Cancel: %v", err)
-	}
-
-	if slices.Contains(owner.callLog(), methodKiroWorkflowCancel) {
-		t.Error("the cancel went to a chat whose session does not own the run")
-	}
-	if bridges, _ := rec.sawCall(methodKiroWorkflowCancel); bridges != 1 {
-		t.Errorf("the cancel reached %d bridges, want the utility session alone", bridges)
+	if fakes, calls := rec.sawCall(methodKiroWorkflowCancel); fakes != 1 || calls != 1 {
+		t.Errorf("the cancel reached %d lane(s) in %d call(s), want exactly 1 and 1", fakes, calls)
 	}
 }
 

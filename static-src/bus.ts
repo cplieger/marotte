@@ -3,7 +3,7 @@
 
 import { createBus } from "@cplieger/reactive";
 
-import type { NotificationPayload, RunAsksPayload } from "./wire/types.gen.js";
+import type { EngineStatus, NotificationPayload, RunAsksPayload } from "./wire/types.gen.js";
 import type {
   ServerEvent,
   ChatHeader,
@@ -143,6 +143,11 @@ export interface SSEPayloads {
   readonly run_asks: RunAsksPayload;
   // internal/notice's notification: the page shows it while its chat or run is off screen.
   readonly notification: NotificationPayload;
+  // The agent engine's whole status, on every state change and every pending or busy change while a restart is
+  // pending. Workspace-global.
+  readonly engine_status: EngineStatus;
+  // GET /api/config/standing changed. Workspace-global.
+  readonly config_standing_changed: undefined;
 }
 
 export type SSEHandler<K extends keyof SSEPayloads> = SSEPayloads[K] extends undefined

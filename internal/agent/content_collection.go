@@ -7,7 +7,7 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// contentCollectionEnabled resolves the value every kiro-cli process gets: the organization lock,
+// contentCollectionEnabled resolves the value the engine gets: the organization lock,
 // else the stored switch, default off. readable is false only when no lock decides and the
 // document cannot be read; enabled is then off.
 func contentCollectionEnabled(ctx context.Context, configDir string, locks map[string]marotte.GovernanceLock) (enabled, readable bool) {
@@ -17,7 +17,7 @@ func contentCollectionEnabled(ctx context.Context, configDir string, locks map[s
 	return settings.FieldOr(ctx, configDir, settings.KeyContentCollectionEnabled, settings.DefaultContentCollectionEnabled)
 }
 
-// contentCollectionResolver is StartOpts.ContentCollection, called on every assert so a mid-spawn change is not lost.
+// contentCollectionResolver is EngineOpts.ContentCollection, called on every assert so a mid-spawn change is not lost.
 func contentCollectionResolver(configDir string, locks func() map[string]marotte.GovernanceLock) func(context.Context) (bool, bool) {
 	return func(ctx context.Context) (bool, bool) {
 		return contentCollectionEnabled(ctx, configDir, currentLocks(locks))

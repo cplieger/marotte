@@ -39,7 +39,7 @@ func (s *Server) SeedKiroSettings(ctx context.Context) {
 		}
 		seeded = true
 	}
-	// A seed is a kiro-cli write like a user's, so it reconciles open chats the same way.
+	// A seed is a kiro-cli write like a user's, so it reconciles resident chat sessions the same way.
 	if seeded && s.agent != nil {
 		s.agent.ReconcileSessionSettings(ctx)
 	}

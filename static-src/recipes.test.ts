@@ -58,13 +58,24 @@ vi.mock("./actions/schedules.js", () => ({
   deleteSchedule: { dispatch: vi.fn(async () => null) },
 }));
 
+const standing = vi.hoisted(() => ({ files: new Map<string, ConfigStanding>() }));
+vi.mock("./config-standing.js", async (importOriginal) => {
+  const { signal } = await import("@cplieger/reactive");
+  const view = signal({ files: standing.files, servers: new Map(), loadErrors: new Map() });
+  return {
+    ...(await importOriginal<typeof ConfigStandingModule>()),
+    configStanding: view,
+  };
+});
+
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { BUS_CATALOG_MODELS, dispatch, emitBus } from "./bus.js";
 import { saveSchedule } from "./actions/schedules.js";
 import { openRunView } from "./run-view.js";
 import { launchRun, cancelRun } from "./actions/runs.js";
 import type { ModelInfo, RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
-import type { RunStatus } from "./wire/types.gen.js";
+import type { ConfigStanding, RunStatus } from "./wire/types.gen.js";
+import type * as ConfigStandingModule from "./config-standing.js";
 
 let recipesReply: RecipesResponse = { recipes: [] };
 let runsReply: { sessions: ResumableSession[]; runs: WorkflowRun[] } = {
@@ -111,6 +122,64 @@ beforeEach(() => {
   vi.mocked(cancelRun.dispatch).mockClear();
   recipesReply = { recipes: [] };
   runsReply = { sessions: [], runs: [] };
+});
+
+describe("configuration standing", () => {
+  const ROOT_A = "/workspace/a/.kiro/workflows/deploy.workflow.json";
+  const ROOT_B = "/workspace/b/.kiro/workflows/deploy.workflow.json";
+
+  function workspaceRecipe(source: string): RecipesResponse["recipes"][0] {
+    return { name: "deploy", source, doc_key: source.slice(1) };
+  }
+
+  function badges(panel: HTMLElement, source: string): string[] {
+    return [...panel.querySelectorAll(`[data-recipe="${source}"] .docs-badge-standing`)].map(
+      (b) => b.textContent ?? "",
+    );
+  }
+
+  beforeEach(() => {
+    standing.files.clear();
+  });
+
+  it("badges only the row whose file kiro-cli replaced, not a same-named one in another root", async () => {
+    standing.files.set(ROOT_A.slice(1), {
+      type: "workflow",
+      key: ROOT_A.slice(1),
+      kind: "displaced",
+      decided_by: "user-local",
+      decided_by_name: "Local Settings (~/.kiro)",
+    });
+    recipesReply = { recipes: [workspaceRecipe(ROOT_A), workspaceRecipe(ROOT_B), recipe("goal")] };
+    const panel = await render();
+    expect(badges(panel, ROOT_A)).toEqual(["Replaced by Local Settings (~/.kiro)"]);
+    expect(badges(panel, ROOT_B)).toEqual([]);
+    expect(badges(panel, "bundled://goal")).toEqual([]);
+    const rowB = panel.querySelector(`[data-recipe="${ROOT_B}"] .entry-badges`);
+    expect(rowB?.classList.contains("hidden"), "a row with no badge shows no badge strip").toBe(
+      true,
+    );
+  });
+
+  it("adds and drops the badge on a kept row as the standing changes", async () => {
+    recipesReply = { recipes: [workspaceRecipe(ROOT_A)] };
+    const panel = await render();
+    expect(badges(panel, ROOT_A)).toEqual([]);
+    standing.files.set(ROOT_A.slice(1), {
+      type: "workflow",
+      key: ROOT_A.slice(1),
+      kind: "disabled",
+      decided_by: "workspace",
+      decided_by_name: "Workspace",
+    });
+    renderRecipesPanel(panel);
+    expect(badges(panel, ROOT_A)).toEqual(["Off by Workspace"]);
+    const strip = panel.querySelector(`[data-recipe="${ROOT_A}"] .entry-badges`);
+    expect(strip?.classList.contains("hidden")).toBe(false);
+    standing.files.clear();
+    renderRecipesPanel(panel);
+    expect(badges(panel, ROOT_A)).toEqual([]);
+  });
 });
 
 describe("the Run ⇄ Cancel row", () => {

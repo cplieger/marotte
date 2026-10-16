@@ -80,14 +80,18 @@ func (*benchDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, e
 	return nil, nil
 }
 
-// BridgeLive answers true: the stub models a chat whose bridge is past its spawn,
+// BridgeLive answers true: the stub models a chat whose bridge is past its session open,
 // so a steer takes the wire arm rather than parking. bridgeDeps overrides it to
 // follow the bridge it holds.
 func (*benchDeps) BridgeLive(marotte.ChatID) bool { return true }
 
 func (*benchDeps) CloseBridge(context.Context, marotte.ChatID, marotte.TurnOutcome) {}
 
-func (*benchDeps) ClearPendingPermsForChat(marotte.ChatID) {}
+func (*benchDeps) ClearPendingInputAsks(marotte.ChatID, CancelScope) {}
+
+func (*benchDeps) CancelPendingPermissions(context.Context, marotte.ChatID, CancelScope) error {
+	return nil
+}
 
 func (*benchDeps) TakePendingPerm(marotte.ChatID, int64, marotte.DecisionKind, marotte.SettledBy) (AskReply, bool) {
 	return nopReply{}, true
@@ -207,7 +211,7 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 
 	d.Broadcast(t.Context(), marotte.ServerEvent{})
 	d.CloseBridge(t.Context(), "x", marotte.TurnOutcomeCancelled)
-	d.ClearPendingPermsForChat("x")
+	d.ClearPendingInputAsks("x", ScopeChatSession)
 	d.TakePendingPerm("x", 0, marotte.DecisionKindPermission, marotte.SettledByUser)
 	d.InflightAdd(1)
 	d.InflightDone()
@@ -239,7 +243,7 @@ func TestBenchDeps_Contract(t *testing.T) {
 	t.Run("no_panic_zero_value_calls", func(t *testing.T) {
 		d.Broadcast(t.Context(), marotte.ServerEvent{})
 		d.CloseBridge(t.Context(), "x", marotte.TurnOutcomeCancelled)
-		d.ClearPendingPermsForChat("x")
+		d.ClearPendingInputAsks("x", ScopeChatSession)
 		d.TakePendingPerm("x", 0, marotte.DecisionKindPermission, marotte.SettledByUser)
 		d.InflightAdd(1)
 		d.InflightDone()

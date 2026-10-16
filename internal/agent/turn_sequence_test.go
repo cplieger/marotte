@@ -167,7 +167,9 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	epoch, _ := streamingPromptTurn(t, h, chatID, "half an answer")
 	sb, _ := h.bridge.mgr.orInsert(chatID)
-	sb.bridge = br
+	// A session past its door: one still opening has its door retire it.
+	sb.attach(br)
+	sb.setIdle()
 
 	forwardDone := make(chan struct{})
 	go func() {
@@ -183,8 +185,8 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	}()
 	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 99)
 
-	// Stop without removing the bridge: the process died on its own.
-	br.Stop()
+	// End without removing the session: it ended on its own.
+	br.end()
 	<-forwardDone
 	<-settled
 

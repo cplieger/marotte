@@ -149,7 +149,7 @@ if [ -d /config/kiro ] && [ "$KIRO_HOME" != /config/kiro ]; then
 fi
 
 # Reclaim superseded kiro-cli agent-server runtimes: each version unpacks a
-# ~240 MB tree under <data-dir>/kas/<version>-<hash>/ on its first bridge launch,
+# ~240 MB tree under <data-dir>/kas/<version>-<hash>/ at the engine's first launch,
 # and nothing removes the old ones. Unrelated to KAS session state. Data-dir
 # resolution mirrors kiro-cli's (XDG_DATA_HOME, else $HOME/.local/share). Warn,
 # never fail the boot. It stays here because it must run before the server can

@@ -16,35 +16,26 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
+// deleteGate holds the engine lane's delete at KAS until release, then answers outcome.
 type deleteGate struct {
-	*fakeBridge
 	entered chan struct{}
 	release chan struct{}
 	outcome func() (*marotte.RPCResponse, error)
 	once    sync.Once
 }
 
-func (g *deleteGate) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
-	resp, err := g.fakeBridge.Call(ctx, method, params)
+func (g *deleteGate) gate(ctx context.Context, method string, resp *marotte.RPCResponse, err error) (*marotte.RPCResponse, error) {
 	if method != methodKiroWorkflowDelete {
 		return resp, err
 	}
 	g.once.Do(func() { close(g.entered) })
-	// The real bridge's arms: the reply, or the caller's ctx ending after the write.
+	// The real engine's arms: the reply, or the caller's ctx ending after the write.
 	select {
 	case <-g.release:
 		return g.outcome()
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-}
-
-func (g *deleteGate) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
-	resp, err := g.Call(ctx, method, params)
-	g.mu.Lock()
-	seq := g.deliveredSeq
-	g.mu.Unlock()
-	return resp, seq, err
 }
 
 type lifecycleOp struct {
@@ -123,7 +114,7 @@ func deleteAnswer(resp *marotte.RPCResponse, err error) func() (*marotte.RPCResp
 	return func() (*marotte.RPCResponse, error) { return resp, err }
 }
 
-var bridgeExited = &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true}
+var engineExited = &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true}
 
 var deleteOutcomes = []deleteOutcome{
 	{
@@ -147,18 +138,18 @@ var deleteOutcomes = []deleteOutcome{
 	{
 		name: "unknown_unreadable", after: "closed", wantErr: true, unconfirm: true,
 		arm: func(g *deleteGate, br *fakeBridge, _ *stepScript) {
-			g.outcome = deleteAnswer(nil, bridgeExited)
-			br.setCallErr(methodKiroWorkflowInspect, errors.New("the utility session is down"))
+			g.outcome = deleteAnswer(nil, engineExited)
+			br.setCallErr(methodKiroWorkflowInspect, errors.New("the engine is down"))
 		},
 	},
 	{
 		name: "unknown_run_kept", after: "open", wantErr: true,
-		arm: func(g *deleteGate, _ *fakeBridge, _ *stepScript) { g.outcome = deleteAnswer(nil, bridgeExited) },
+		arm: func(g *deleteGate, _ *fakeBridge, _ *stepScript) { g.outcome = deleteAnswer(nil, engineExited) },
 	},
 	{
 		name: "unknown_run_gone", after: "gone",
 		arm: func(g *deleteGate, br *fakeBridge, _ *stepScript) {
-			g.outcome = deleteAnswer(nil, bridgeExited)
+			g.outcome = deleteAnswer(nil, engineExited)
 			br.setCallRPCErr(methodKiroWorkflowInspect, &marotte.RPCError{
 				Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`),
 			})
@@ -172,13 +163,13 @@ func gatedHub(t *testing.T, op *lifecycleOp) (*Runtime, *fakeBridge, *deleteGate
 	// First, so a setup's own cleanup runs before the shutdown.
 	t.Cleanup(func() { shutdownHub(t, h) })
 	g := &deleteGate{
-		fakeBridge: br, entered: make(chan struct{}), release: make(chan struct{}),
+		entered: make(chan struct{}), release: make(chan struct{}),
 		outcome: deleteAnswer(&marotte.RPCResponse{Result: json.RawMessage(`{}`)}, nil),
 	}
-	h.bridge.mgr.remove(runChatID("wf_1"))
-	if !h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: g, state: bridgeIdle}) {
-		t.Fatal("Setup: the gated carrier was not registered for wf_1")
-	}
+	src := fakeSourceOf(t, h)
+	src.mu.Lock()
+	src.callGate = g.gate
+	src.mu.Unlock()
 	s := newStepScript(t, br, op.state)
 	if op.setup != nil {
 		op.setup(t, h, br)

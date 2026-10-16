@@ -12,10 +12,11 @@ import (
 // which would become a non-nil interface.
 type bridgeRole struct{ coord *bridgeCoordinator }
 
-// Bridge returns the active bridge for a chat, or nil.
+// Bridge returns the chat's bridge once its door has attached a session, or nil: a record still
+// in its door has no session to address, so a command sees no bridge there.
 func (b bridgeRole) Bridge(chatID marotte.ChatID) command.Bridge {
 	sb := b.coord.bridgeFor(chatID)
-	if sb == nil {
+	if sb == nil || sb.current() == nil {
 		return nil
 	}
 	return sb
@@ -30,12 +31,11 @@ func (b bridgeRole) OpenBridge(ctx context.Context, chatID marotte.ChatID, model
 	return sb, nil
 }
 
-// CloseBridge closes every turn the bridge hosted with outcome, then stops it.
 func (b bridgeRole) CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome) {
 	b.coord.closeBridge(ctx, chatID, outcome)
 }
 
-// BridgeLive reports a bridge for the chat that is past its spawn.
+// BridgeLive reports a bridge for the chat that is past its session open.
 func (b bridgeRole) BridgeLive(chatID marotte.ChatID) bool { return b.coord.bridgeLive(chatID) }
 
 // DeleteChatStateByChain deletes a chat's runs and KAS sessions from a captured chain. Order is
@@ -179,9 +179,9 @@ func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatI
 
 var _ command.SessionRenamer = (*Runtime)(nil)
 
-// RenameSession renames a session no chat bridge holds, through the utility session.
+// RenameSession renames a session, resident or not, with an engine call.
 func (rt *Runtime) RenameSession(ctx context.Context, sessionID, title string) error {
-	raw, err := rt.utility.get().renameSessionRaw(ctx, sessionID, title)
+	raw, err := rt.engine.renameSessionRaw(ctx, sessionID, title)
 	if err != nil {
 		return err
 	}

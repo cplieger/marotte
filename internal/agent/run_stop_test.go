@@ -122,7 +122,7 @@ func TestDeleteChatStateByChain_AttributesByCause(t *testing.T) {
 			h, _, rig := newDeleteRig(t, kasRuns(t, map[string]any{
 				"workflowId": "wf_live", "name": "r", "status": "running", "parentSessionId": "sess_cur",
 			}))
-			insertChatBridge(t, h, rig, "c1", "sess_cur")
+			insertChatSession(t, h, rig, "c1", "sess_cur")
 
 			h.DeleteChatStateByChain(t.Context(), "c1", []string{"sess_cur"}, tc.cause)
 
@@ -145,7 +145,7 @@ func TestDeleteChatStateByChain_NamesTheChatDeletion(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	insertChatBridge(t, h, rig, "c1", "sess_cur")
+	insertChatSession(t, h, rig, "c1", "sess_cur")
 
 	h.DeleteChatStateByChain(t.Context(), "c1", []string{"sess_cur"}, command.RunStopChatDeleted)
 
@@ -166,7 +166,7 @@ func TestCloseChatState_NamesTheTabClose(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	insertChatBridge(t, h, rig, "c1", "sess_cur")
+	insertChatSession(t, h, rig, "c1", "sess_cur")
 
 	h.CloseChatState(t.Context(), "c1")
 

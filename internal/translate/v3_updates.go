@@ -155,12 +155,8 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	if t.handleSteeringUpdate(ctx, sc, &u) {
 		return
 	}
-	// Before the gate too: a subagent's or a step's ask is filed under this chat.
+	// Before the step gate: a step's ask is filed under this chat too.
 	if t.handleAskInfo(chatID, &u.Meta.Kiro, attr) {
-		return
-	}
-	// By session, never by payload: `_meta.kiro.workflow` never reaches a session_info_update.
-	if attr.Subagent {
 		return
 	}
 	// A step's frame stops here: its model fallback and metering go to its run turn, and only its
@@ -211,7 +207,7 @@ func (t *Translator) handleStepFrame(ctx context.Context, chatID marotte.ChatID,
 	}
 }
 
-// HandleStepInfoUpdate is the parentless run bridge's reading of a step's
+// HandleStepInfoUpdate is the parentless run host session's reading of a step's
 // session_info_update: the run turn's metering and model fallback, the withdrawal of an ask
 // filed under `run:<id>`, and the step's own steering frames. It never reaches a chat header.
 func (t *Translator) HandleStepInfoUpdate(ctx context.Context, key marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {

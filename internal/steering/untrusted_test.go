@@ -219,7 +219,7 @@ func seedRepo(t *testing.T, workDir, name, branch string) string {
 }
 
 // TestReadCappedFile_RefusesAFIFO pins, against a deadline, that a FIFO is refused rather
-// than hanging Generate (which runs before every bridge spawn).
+// than hanging Generate (which runs before every session door).
 func TestReadCappedFile_RefusesAFIFO(t *testing.T) {
 	fifo := filepath.Join(t.TempDir(), "README.md")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {

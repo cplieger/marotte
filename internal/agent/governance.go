@@ -8,6 +8,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"reflect"
@@ -19,8 +20,9 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// governanceWarmTimeout bounds the cold GET /api/governance: a utility bridge spawn plus the first push.
-const governanceWarmTimeout = 12 * time.Second
+// governanceWarmTimeout bounds the cold GET /api/governance: an observer pass's door plus the first push. A var so
+// the package's tests, whose fake engine pushes no profile, do not hold the boot pass for it.
+var governanceWarmTimeout = 12 * time.Second
 
 // warm closes once, on the first profile.
 type governanceCache struct {
@@ -189,15 +191,19 @@ func (st *Settings) publishGovernance(ctx context.Context, ch governanceChange) 
 	st.lifecycle.goUnlessDraining(func() { st.onLocksChanged(st.lifecycle.shutdownCtx) })
 }
 
-// cacheGovernanceFromUtility captures the utility bridge's profile and re-reads the administrator
-// rules: this arrives once per utility start and KAS does not watch the managed file.
-func (st *Settings) cacheGovernanceFromUtility(raw json.RawMessage) {
+// applyGovernance captures a session's governance profile, which KAS sends at every session door, and re-reads the
+// administrator rules when it moved: KAS does not watch the managed file. A repeat copy re-reads nothing, so the
+// observer pass that reads the rules cannot trigger another.
+func (st *Settings) applyGovernance(raw json.RawMessage) {
 	payload, ok := translate.DecodeGovernanceState(raw)
 	if !ok {
 		return
 	}
-	st.SetGovernance(st.lifecycle.shutdownCtx, payload)
-	st.refreshAdminPolicy()
+	ch := st.governance.setProfile(payload)
+	st.publishGovernance(st.lifecycle.shutdownCtx, ch)
+	if ch.changed {
+		st.refreshAdminPolicy()
+	}
 }
 
 // adminRefresh coalesces administrator-rule reads: one in flight, at most one queued.
@@ -207,10 +213,10 @@ type adminRefresh struct {
 	again   bool
 }
 
-// refreshAdminPolicy schedules an administrator-rule read off the caller's goroutine: the utility
-// forward loop is a caller, and a synchronous utility Call there deadlocks.
+// refreshAdminPolicy schedules an administrator-rule read off the caller's goroutine: a session's forward loop is a
+// caller, and the read's observer pass must not wait on that loop.
 func (st *Settings) refreshAdminPolicy() {
-	if st.utility == nil || st.lifecycle == nil {
+	if st.observe == nil || st.lifecycle == nil {
 		return
 	}
 	st.adminRefresh.mu.Lock()
@@ -248,24 +254,33 @@ func (st *Settings) runAdminRefresh() {
 	}
 }
 
-// governanceState returns the cached state, starting the utility bridge and waiting up to
-// governanceWarmTimeout when cold. A failed warm returns Known=false so clients stay permissive.
+// governanceState returns the cached state, opening an observer pass and waiting up to governanceWarmTimeout when
+// cold: KAS sends the profile only at a session door. A failed warm returns Known=false so clients stay permissive.
 func (st *Settings) governanceState(ctx context.Context) marotte.GovernanceStatePayload {
 	if p, ok := st.governance.get(); ok {
 		return p
 	}
-	u := st.utility()
 	warmCtx, cancel := context.WithTimeout(ctx, governanceWarmTimeout)
 	defer cancel()
-	if err := u.ensureStarted(warmCtx); err != nil {
-		slog.Warn("governance: utility bridge start failed", "error", err)
+	if err := st.warmGovernance(warmCtx); err != nil {
+		slog.Warn("governance: the observer pass that reads it failed", "error", err)
 		return st.governance.peek()
 	}
-	select {
-	case <-st.governance.warm:
-	case <-warmCtx.Done():
-	}
 	return st.governance.peek()
+}
+
+// warmGovernance holds an observer pass open until the governance profile arrived or ctx ends.
+func (st *Settings) warmGovernance(ctx context.Context) error {
+	if st.observe == nil {
+		return errors.New("no engine")
+	}
+	return st.observe(ctx, func(ctx context.Context, _ engineSession) error {
+		select {
+		case <-st.governance.warm:
+		case <-ctx.Done():
+		}
+		return nil
+	})
 }
 
 func (st *Settings) handleGovernance(w http.ResponseWriter, r *http.Request) {

@@ -17,7 +17,7 @@ func newDropHub(t *testing.T) (*Runtime, *recordingPush) {
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	fp.noSubs.Store(true)
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 	cs.wire(h)
 	return h, fp
 }

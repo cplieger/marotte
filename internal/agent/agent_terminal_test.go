@@ -325,7 +325,7 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 
 // A rune split across the 4 KB read boundary must arrive intact in the live broadcast while the ring keeps every raw byte.
 func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T) {
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newTestChatStore())
+	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), newTestChatStore())
 	term := newAgentTerminal(nil, "c1", 1024)
 	// Reads split every multi-byte rune: é = C3 A9, € = E2 82 AC, 😀 = F0 9F 98 80.
 	r := &chunkReader{chunks: [][]byte{
@@ -440,7 +440,7 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 	// chunkSize 1 makes the boundary real.
 	f.Add([]byte("\x1b0"), uint8(1))
 	f.Add([]byte("a\x1b0b"), uint8(1))
-	h := New(f.Context(), f.TempDir(), func() ACPBridge { return newFakeBridge() }, newTestChatStore())
+	h := newRuntimeOn(f.Context(), f.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), newTestChatStore())
 	f.Fuzz(func(t *testing.T, data []byte, chunkRaw uint8) {
 		if len(data) > 512 {
 			data = data[:512] // keep this iteration's emits under the 1024-event ring cap
@@ -616,7 +616,7 @@ func processAlive(pid int) bool {
 
 // A stream ending mid-escape must still deliver the held bytes, or a command killed mid-write loses its tail.
 func TestPumpTerminalOutput_ReleasesATruncatedEscapeSequenceAtEOF(t *testing.T) {
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newTestChatStore())
+	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), newTestChatStore())
 
 	// "\x1b[3" has no final byte, so the parser holds it and neutralizes the ESC on release.
 	_, broadcast := pumpBroadcast(t, h, []byte("hi\x1b[3"), 8)
@@ -652,7 +652,7 @@ func TestExitStatusFromState_CleanExitIsACodeNotASignal(t *testing.T) {
 
 // An incomplete rune held at EOF must still reach the transcript, matching the ring.
 func TestPumpTerminalOutput_DeliversTheHeldRuneTailAtEOF(t *testing.T) {
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newTestChatStore())
+	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), newTestChatStore())
 
 	// "hi" then the first two bytes of "€".
 	data := []byte{'h', 'i', 0xE2, 0x82}

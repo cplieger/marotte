@@ -55,7 +55,7 @@ var durableWriteSites = []durableSite{{
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "restoreUnservedModel",
 	calls:   []string{"Mutate"},
-	because: "the selection a failed spawn puts back for the next spawn to record",
+	because: "the selection a failed session open puts back for the next open to record",
 }, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "closeTurnOnBridgeDeath",
@@ -120,12 +120,17 @@ var abandonableWriteSites = []durableSite{{
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "tryLoadSession",
 	calls:   []string{"Mutate"},
-	because: "session-chain bookkeeping — no conversational record, and the next spawn records it again",
+	because: "session-chain bookkeeping — no conversational record, and the next session open records it again",
+}, {
+	file:    "internal/agent/bridge_coord.go",
+	fn:      "detachSession",
+	calls:   []string{"Mutate"},
+	because: "session-chain bookkeeping — a lost detach leaves the refused id, whose next load KAS refuses again and detaches",
 }, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "persistNewSessionMetadata",
 	calls:   []string{"Mutate"},
-	because: "the new session's id and facts — no conversational record; a record that did not take them fails the generation, which reaps the session, and the next open spawns again",
+	because: "the new session's id and facts — no conversational record; a record that did not take them fails the generation, which reaps the session, and the next open runs again",
 }, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "ReviseTurnBinding",
@@ -223,7 +228,7 @@ var inheritedWriteSites = []durableSite{{
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "persistModelPick",
 	calls:   []string{"Mutate"},
-	because: "applyPendingModel's detach, and the spawn's own ctx at its fold",
+	because: "applyPendingModel's detach, and the session open's own ctx at its fold",
 }, {
 	file:    "internal/agent/model_switch.go",
 	fn:      "parkSwitch",

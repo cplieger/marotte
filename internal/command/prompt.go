@@ -144,7 +144,7 @@ func recoverEmptyTurn(ctx context.Context, roles *promptRoles, chatID marotte.Ch
 	}
 	defer roles.admission.ReleaseTurnReservation(chatID)
 	// The reader stopped the turn this retry would replace. Read before the
-	// refresh, so a stop already recorded costs no session teardown or respawn.
+	// refresh, so a stop already recorded costs no session close or reload.
 	if roles.turnOutcome.StopRequestedAfter(chatID, turnID) {
 		slog.Info("empty turn: a stop was requested, not retrying", "chat_id", chatID, "turn", turnID)
 		return
@@ -182,13 +182,13 @@ func refreshRetrySession(ctx context.Context, bridges bridgeAccess, chats chatSt
 	}
 }
 
-// retryEmptyTurnPrompt respawns the bridge and re-sends the prompt as a turn of
+// retryEmptyTurnPrompt reloads the session and re-sends the prompt as a turn of
 // its own: turn_open{source: empty_retry} with the same prompt. The caller holds
 // the retry's admission reservation; emptyTurnID is the turn the retry replaces.
 func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, emptyTurnID string, p *marotte.PromptCommand, params map[string]any) {
 	sb2, err2 := roles.bridges.OpenBridge(ctx, chatID, p.Model)
 	if err2 != nil {
-		slog.Error("empty turn: respawn failed",
+		slog.Error("empty turn: reload failed",
 			"chat_id", chatID, keyError, err2)
 		// The retry's turn never opens, so no turn carries this failure and the
 		// toast this code routes to is its only surface.
@@ -217,7 +217,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, chatID marott
 	// After BeginPromptCall: cmdCancel records its stop before it arms, so a stop this read misses
 	// finds the prompt registered and owns it through the grace budget.
 	if roles.turnOutcome.StopRequestedAfter(chatID, emptyTurnID) {
-		slog.Info("empty turn: a stop arrived during the respawn, not retrying", "chat_id", chatID, "turn", emptyTurnID)
+		slog.Info("empty turn: a stop arrived during the reload, not retrying", "chat_id", chatID, "turn", emptyTurnID)
 		return
 	}
 
@@ -332,7 +332,7 @@ func settleComposerOnPrompt(ctx context.Context, chats chatStore, bus broadcaste
 var AdmissionWait = 20 * time.Second
 
 // reasonStarting is the 409 refusal class whose holder cannot receive a
-// steer: a cold spawn or a shell. The client renders the busy face and retries
+// steer: a cold session open or a shell. The client renders the busy face and retries
 // instead of converting the 409 to a steer.
 const reasonStarting = "starting"
 
@@ -488,7 +488,7 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 		roles.compactor.PreSendCompact(ctx, chatID)
 	}
 	// At bridge-ready, so the model and credit baseline are captured with the bridge live and the
-	// spawn is not timed.
+	// session open is not timed.
 	if !roles.turnOutcome.StartTurn(ctx, chatID, turnID) {
 		// Dead ctx, or the death closer took the turn: the turn end rule runs here, and a closed
 		// turn writes nothing.

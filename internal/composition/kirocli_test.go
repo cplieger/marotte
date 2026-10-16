@@ -12,6 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/marotte/internal/signin"
 	"github.com/cplieger/pinstall/v3"
 )
 
@@ -51,8 +52,8 @@ func TestStartKiroCLIShapes(t *testing.T) {
 			if got := kiro.cliPath(); got != tc.wantPath {
 				t.Errorf("cliPath() = %q, want %q", got, tc.wantPath)
 			}
-			// Called unconditionally by the bridge factory on every spawn, so a nil here panics on
-			// the first chat.
+			// Called unconditionally at every engine start, so a nil here panics on the first
+			// start.
 			if got := kiro.env(); tc.wantPath == "" && got != nil {
 				t.Errorf("env() = %v, want nil when no version is active", got)
 			}
@@ -372,5 +373,18 @@ func waitKiroReason(t *testing.T, kiro *kiroRuntime, want pinstall.Reason) {
 			t.Fatalf("Setup: ready() = (%v, %s) at the deadline, want (false, %s)", ready, reason, want)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Open panics on a duplicate backend id or host callback, so building the compiled-in set is the check that none
+// ships; the engine's backend must be among them, or the engine spawns with no sign-in.
+func TestCompiledBackends_AreUnique(t *testing.T) {
+	vault := signin.Open(t.Context(), t.TempDir(), signinBackends()...)
+	d, ok := vault.Declaration(engineBackend)
+	if !ok {
+		t.Fatalf("Declaration(%q) not found among the compiled-in backends", engineBackend)
+	}
+	if d.HostCallback == "" {
+		t.Errorf("the engine backend %q declares no host callback, so KAS's token request goes unanswered", engineBackend)
 	}
 }

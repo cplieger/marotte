@@ -30,8 +30,8 @@ type bridgeCaller interface {
 	CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error)
 }
 
-// SessionCaller is one call addressed to one session: a chat bridge's own, or a run step's on its
-// run's carrier.
+// SessionCaller is one call addressed to one session: a chat's own, or the session of one of a
+// run's steps.
 type SessionCaller interface {
 	bridgeCaller
 	sessionScoped
@@ -88,11 +88,11 @@ type bridgeAccess interface {
 	Bridge(chatID marotte.ChatID) Bridge
 	// OpenBridge answers once the chat's log holds KAS's account of its session (sessionLoader).
 	OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (Bridge, error)
-	// BridgeLive reports a bridge for the chat that is past its spawn: the state
-	// a steer can be delivered into, where a spawning one parks it.
+	// BridgeLive reports a bridge for the chat that is past its session open: the state
+	// a steer can be delivered into, where an opening one parks it.
 	BridgeLive(chatID marotte.ChatID) bool
-	// CloseBridge closes every turn the bridge hosted with outcome, then stops the
-	// process: `cancelled` for a stop the reader asked for, `interrupted` otherwise.
+	// CloseBridge closes every turn the session hosted with outcome, then closes the
+	// session: `cancelled` for a stop the reader asked for, `interrupted` otherwise.
 	CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome)
 }
 
@@ -208,8 +208,19 @@ type chatTeardown interface {
 // pendingPermAccess provides the pending-permission bookkeeping handlers
 // need: an unanswered request is replayed to a reconnecting client, so
 // answering or abandoning one has to retire the entry.
+// permissionCanceller answers a chat's pending permission asks `cancelled` ahead of a session/cancel.
+type permissionCanceller interface {
+	// CancelPendingPermissions takes each pending permission ask of chatID in scope, in ask order, and answers it
+	// cancelled. An ask a card answer claimed first is skipped. It returns an error wrapping marotte.ErrBridgeExited
+	// when the session ended under an answer, and one wrapping ErrCancelNotDelivered when an answer failed on a live
+	// session after its retries; either stops before the next ask.
+	CancelPendingPermissions(ctx context.Context, chatID marotte.ChatID, scope CancelScope) error
+}
+
 type pendingPermAccess interface {
-	ClearPendingPermsForChat(chatID marotte.ChatID)
+	permissionCanceller
+	// ClearPendingInputAsks drops chatID's elicitation and user-input asks in scope, silently.
+	ClearPendingInputAsks(chatID marotte.ChatID, scope CancelScope)
 	// TakePendingPerm claims the request before its answer is sent, reporting false
 	// when another surface already answered it, its bridge ended, or it is not a
 	// kind ask of chatID's. settledBy travels with the claim because the delivered
@@ -378,7 +389,7 @@ const (
 	// (marotte.TurnOpenSource.SteerableHolder). Answered as the plain 409, on
 	// which the client steers or queues, per the chat's mode.
 	AdmissionBusy
-	// AdmissionStarting is every other holder: a cold spawn, or a shell on a
+	// AdmissionStarting is every other holder: a cold session open, or a shell on a
 	// bridged or bridgeless chat. Answered as 409 with the additive
 	// `reason: "starting"`.
 	AdmissionStarting
@@ -757,7 +768,7 @@ type Roles struct {
 	// Compactor runs the compaction policy before a prompt is sent. Nil sends
 	// with no pre-send check.
 	Compactor preSendCompactor
-	// Renamer renames a KAS session no live bridge holds, so a closed chat's
+	// Renamer renames every KAS session in a chat's chain, so a closed chat's
 	// rename reaches History at once.
 	Renamer SessionRenamer
 	// SpecApprovals is the spec-phase approval record, and it may be nil: a build

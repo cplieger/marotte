@@ -17,8 +17,8 @@ import (
 func contentCollectionOff(context.Context) (bool, bool) { return false, true }
 func contentCollectionOn(context.Context) (bool, bool)  { return true, true }
 
-// Content collection is process-scoped in KAS and never persisted, so both session doors carry it, as a string: a
-// boolean is ignored.
+// Content collection is process-scoped in KAS and never persisted, and it is set through a session, so both session
+// doors carry it, as a string: a boolean is ignored.
 func TestSessionDoors_AssertContentCollection(t *testing.T) {
 	for _, tc := range []struct {
 		resolve func(context.Context) (bool, bool)
@@ -31,8 +31,8 @@ func TestSessionDoors_AssertContentCollection(t *testing.T) {
 		{name: "load_off", resolve: contentCollectionOff, session: "sess_resumed", want: marotte.ConfigValueContentCollectionDisabled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			line := captureRequest(t, "session/set_config_option",
-				&marotte.StartOpts{Lifetime: t.Context(), SessionID: tc.session, ContentCollection: tc.resolve},
+			line := captureEngineRequest(t, "session/set_config_option",
+				&marotte.EngineOpts{ContentCollection: tc.resolve}, &marotte.SessionOpts{SessionID: tc.session},
 				`"configId":"`+marotte.ConfigOptionContentCollection+`"`)
 			params := digObject(t, "the contentCollection params", line, "params")
 			if got, ok := params[keyConfigValue].(string); !ok || got != tc.want {
@@ -43,9 +43,9 @@ func TestSessionDoors_AssertContentCollection(t *testing.T) {
 }
 
 func TestSessionDoors_NoResolverSendsNoContentCollection(t *testing.T) {
-	data := captureRequests(t, &marotte.StartOpts{Lifetime: t.Context()})
+	data := captureRequests(t, &marotte.SessionOpts{})
 	if strings.Contains(data, `"`+marotte.ConfigOptionContentCollection+`"`) {
-		t.Errorf("a spawn with no resolver sent contentCollection:\n%s", data)
+		t.Errorf("an engine with no resolver sent contentCollection:\n%s", data)
 	}
 }
 
@@ -54,12 +54,13 @@ const contentCollectionScript = `#!/bin/sh
 while IFS= read -r line; do
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  sid=$(echo "$line" | sed -n 's/.*"overrideSessionId":"\([^"]*\)".*/\1/p')
   case "$method" in
     initialize)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
       ;;
     session/new|session/load)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess_doortest"}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s"}}\n' "$id" "$sid"
       ;;
     *)
       if [ -n "$id" ]; then
@@ -78,15 +79,15 @@ func TestSetContentCollection_ReportsAMismatchedReply(t *testing.T) {
 		t.Fatalf("write fake script: %v", err)
 	}
 	t.Setenv("HOME", t.TempDir())
-	b := New(scriptPath, dir)
-	if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context()}); err != nil {
-		t.Fatalf("Start: %v", err)
+	b := NewEngine(scriptPath, dir)
+	s, err := openSessionOn(t, b, &marotte.SessionOpts{})
+	if err != nil {
+		t.Fatalf("open session: %v", err)
 	}
-	defer b.Stop()
-	if err := b.setContentCollection(t.Context(), false); err == nil {
+	if err := b.setContentCollection(t.Context(), s.SessionID(), false); err == nil {
 		t.Error("setContentCollection(false) against a reply reporting enabled = nil, want an error")
 	}
-	if err := b.setContentCollection(t.Context(), true); err != nil {
+	if err := b.setContentCollection(t.Context(), s.SessionID(), true); err != nil {
 		t.Errorf("setContentCollection(true) against a reply reporting enabled = %v, want nil", err)
 	}
 }
@@ -107,13 +108,14 @@ func TestContentCollectionApplied_IsKnownOnlyOnceKASConfirmedTheValue(t *testing
 				t.Fatalf("write fake script: %v", err)
 			}
 			t.Setenv("HOME", t.TempDir())
-			b := New(scriptPath, dir)
-			if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), ContentCollection: tc.resolve}); err != nil {
-				t.Fatalf("Start: %v", err)
+			b := NewEngine(scriptPath, dir)
+			if _, err := openSessionWith(t, b, &marotte.EngineOpts{ContentCollection: tc.resolve}, &marotte.SessionOpts{}); err != nil {
+				t.Fatalf("open session: %v", err)
 			}
-			defer b.Stop()
 
-			enabled, known := b.contentCollectionState()
+			b.mu.Lock()
+			enabled, known := b.contentCollectionApplied, b.contentCollectionKnown
+			b.mu.Unlock()
 			if known != tc.wantKnown || (known && !enabled) {
 				t.Errorf("ContentCollectionApplied() after the session door against a reply reporting enabled = (%v, %v), want known %v",
 					enabled, known, tc.wantKnown)
@@ -134,10 +136,11 @@ func TestAssertContentCollection_AStaleDoorWriteNeverLandsLast(t *testing.T) {
 	capturePath := filepath.Join(t.TempDir(), "rpc.jsonl")
 	t.Setenv("RPC_CAPTURE", capturePath)
 
-	b := New(scriptPath, dir)
+	b := NewEngine(scriptPath, dir)
 	var (
 		mu       sync.Mutex
 		resolves int
+		minted   atomic.Pointer[marotte.SessionID]
 	)
 	pushResolved := make(chan struct{})
 	pushDone := make(chan error, 1)
@@ -151,7 +154,13 @@ func TestAssertContentCollection_AStaleDoorWriteNeverLandsLast(t *testing.T) {
 			return false, true
 		}
 		go func() {
-			_, err := b.assertContentCollection(t.Context())
+			// The door's own session: the only one the engine holds while its door runs.
+			b.lanesMu.Lock()
+			for id := range b.sessions {
+				minted.Store(&id)
+			}
+			b.lanesMu.Unlock()
+			_, err := b.assertContentCollection(t.Context(), *minted.Load())
 			pushDone <- err
 		}()
 		select {
@@ -160,8 +169,8 @@ func TestAssertContentCollection_AStaleDoorWriteNeverLandsLast(t *testing.T) {
 		}
 		return true, true
 	}
-	if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), ContentCollection: resolve}); err != nil {
-		t.Fatalf("Start: %v", err)
+	if _, err := openSessionWith(t, b, &marotte.EngineOpts{ContentCollection: resolve}, &marotte.SessionOpts{}); err != nil {
+		t.Fatalf("open session: %v", err)
 	}
 	if err := <-pushDone; err != nil {
 		t.Fatalf("push AssertContentCollection: %v", err)
@@ -221,9 +230,9 @@ func TestRefreshContentCollection_SendsOnlyAReadableValueKASHasNotConfirmed(t *t
 				}
 				return tc.live(ctx)
 			}
-			b := New(scriptPath, dir)
-			if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), ContentCollection: resolve}); err != nil {
-				t.Fatalf("Start: %v", err)
+			b := NewEngine(scriptPath, dir)
+			if _, err := openSessionWith(t, b, &marotte.EngineOpts{ContentCollection: resolve}, &marotte.SessionOpts{}); err != nil {
+				t.Fatalf("open session: %v", err)
 			}
 			atDoor.Store(false)
 
@@ -261,9 +270,9 @@ func TestRefreshContentCollection_SendsOverAnUnreadableDocumentWhenKASConfirmedN
 		}
 		return false, false
 	}
-	b := New(scriptPath, dir)
-	if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), ContentCollection: resolve}); err != nil {
-		t.Fatalf("Start: %v", err)
+	b := NewEngine(scriptPath, dir)
+	if _, err := openSessionWith(t, b, &marotte.EngineOpts{ContentCollection: resolve}, &marotte.SessionOpts{}); err != nil {
+		t.Fatalf("open session: %v", err)
 	}
 	atDoor.Store(false)
 	// The state a failed door assert leaves.
@@ -280,5 +289,19 @@ func TestRefreshContentCollection_SendsOverAnUnreadableDocumentWhenKASConfirmedN
 	got := contentCollectionValues(t, capturePath)
 	if want := []string{marotte.ConfigValueContentCollectionEnabled, marotte.ConfigValueContentCollectionDisabled}; !slices.Equal(got, want) {
 		t.Errorf("RefreshContentCollection over an unreadable document with nothing confirmed sent %q, want %q", got, want)
+	}
+}
+
+// With no session open, a refresh has nothing to send through and sends nothing: the next session door asserts.
+func TestRefreshContentCollection_WithNoOpenSessionSendsNothing(t *testing.T) {
+	b := NewEngine("/nonexistent", "/work")
+	w := &captureWriter{}
+	b.stdin.Store(&stdinPipe{w: w})
+	b.contentCollection = contentCollectionOff
+	if _, err := b.RefreshContentCollection(t.Context()); err != nil {
+		t.Fatalf("RefreshContentCollection: %v", err)
+	}
+	if w.wrote() {
+		t.Error("RefreshContentCollection wrote with no session to carry it")
 	}
 }

@@ -1,6 +1,6 @@
 // The workspace's mode, model and effort catalog: ONE reader of `GET /api/config-template`, because
-// the endpoint is a utility-bridge RPC and a second reader seeding the same surfaces costs another
-// subprocess round trip per boot and per gap.
+// the endpoint is an agent engine call and a second reader seeding the same surfaces costs another
+// engine round trip per boot and per gap.
 
 import type { ModelInfo, SessionModel } from "./types.js";
 import { apiGetTyped } from "./api-client.js";
@@ -58,8 +58,8 @@ export function fetchCatalog(
         // value, so it never replaces one an earlier answer landed. Per list because each arrives
         // empty on its own, a merely COLD cache included.
         if (d.effort_levels.length > 0) {
-          // A chat with no bridge has no session catalog, so without this the effort control has
-          // neither its tier list nor the level the next session would run at.
+          // A chat with no resident session has no session catalog, so without this the effort
+          // control has neither its tier list nor the level the next session would run at.
           setCatalogEfforts(d.effort_levels, d.effort_active ?? "");
         }
         if (d.modes.length > 0) {

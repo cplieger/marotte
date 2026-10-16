@@ -68,9 +68,8 @@ func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
 	return true
 }
 
-// BootSweep is the boot pass: the orphan sweep, then one read of every leased run's asks. The sweep
-// goes first, so the utility is the first process to start and its startup sweep the only one that
-// takes over crashed runs. Reports whether it reached KAS; when it did not, nothing was read.
+// BootSweep is the boot pass: the orphan sweep, then one read of every leased run's asks. Reports whether it reached
+// KAS; when it did not, nothing was read.
 func (rs *Runs) BootSweep(ctx context.Context) (reached bool) {
 	if !rs.sweepOrphaned(ctx) {
 		return false
@@ -79,10 +78,8 @@ func (rs *Runs) BootSweep(ctx context.Context) (reached bool) {
 	return true
 }
 
-// askBootPass reads each leased run through the process its lease records, one at a time. A
-// chat-parented run's chat bridge is opened for it, which resumes that chat's restart-paused runs
-// now rather than at the user's return; a parentless run's carrier is started and closed again
-// once its read shows it stopped.
+// askBootPass reads each leased run through the engine, one at a time. A chat-parented run's chat session is made
+// resident for it, which resumes that chat's restart-paused runs now rather than at the user's return.
 func (rs *Runs) askBootPass(ctx context.Context) {
 	leases := rs.leaseStore().List()
 	if len(leases) == 0 {
@@ -96,16 +93,12 @@ func (rs *Runs) askBootPass(ctx context.Context) {
 		if c == nil {
 			continue
 		}
-		host, err := rs.acquireHost(ctx, id, rs.leaseOrigin)
-		if err != nil {
-			slog.Warn("boot: a leased run's host could not be opened, so its questions are unread",
-				"workflow_id", id, "error", err)
-			continue
+		if leases[i].Origin == runlease.OriginAgent {
+			if _, err := rs.ensureResident(ctx, id); err != nil {
+				slog.Warn("boot: a chat-parented run's chat could not be reopened", "workflow_id", id, "error", err)
+			}
 		}
-		r, err := rs.readAsks(ctx, c, host.sb)
-		host.release(nil)
-		rs.closeIfStopped(host, r)
-		if err != nil {
+		if _, err := rs.readAsks(ctx, c); err != nil {
 			slog.Warn("boot: a leased run could not be read", "workflow_id", id, "error", err)
 			continue
 		}
@@ -239,7 +232,7 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 		return false
 	}
 	rs.disarmDeadline(ctx, l.WorkflowID)
-	if err := rs.cancelRPC(ctx, l.WorkflowID, runStop{}, nil); err != nil {
+	if err := rs.cancelRPC(ctx, l.WorkflowID, runStop{}); err != nil {
 		rs.releaseTermination(l.WorkflowID)
 		slog.Error("could not cancel a restart-orphaned run; its recipe stays busy until the next try",
 			"workflow_id", l.WorkflowID, "error", err)
@@ -329,14 +322,60 @@ func (rs *Runs) inspect(ctx context.Context, workflowID string) (inspectRunState
 // successful read seeds the step-session registry before any caller acts on it: after a restart it is
 // the only attribution a step's unmarked frames get, and a caller may send to a step from this read.
 func (rs *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMessage, error) {
-	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
-	raw, err := u.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
-		callerParams(map[string]any{keyWorkflowID: workflowID}))
+	raw, err := rs.engine.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
+		map[string]any{keyWorkflowID: workflowID})
 	if err != nil {
 		return nil, workflow.Classify(err)
 	}
 	rs.translate.RecordRunSteps(raw)
+	rs.seedRouterSteps(workflowID, raw)
 	return raw, nil
+}
+
+// seedRouterSteps teaches the router every step session an inspect names, so a step's frames after a restart reach
+// its run's owner before any node_start is read again.
+func (rs *Runs) seedRouterSteps(workflowID string, raw json.RawMessage) {
+	if rs.router == nil {
+		return
+	}
+	var res workflow.InspectResult
+	if json.Unmarshal(raw, &res) != nil {
+		return
+	}
+	var ids []string
+	for _, st := range workflow.Steps(res.State) {
+		if st.SessionID != "" {
+			ids = append(ids, st.SessionID)
+		}
+	}
+	rs.router.seedSteps(workflowID, ids)
+}
+
+// observeInspected reads workflowID once and feeds its status to the run clock: an executing run is armed, a stopped
+// one disarmed. It decides a run mutation no frame settled.
+func (rs *Runs) observeInspected(ctx context.Context, workflowID string) error {
+	raw, err := rs.rawInspect(ctx, workflowID)
+	if err != nil {
+		if workflowNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	in, err := workflow.DecodeInspect(workflowID, raw)
+	if err != nil {
+		return err
+	}
+	switch marotte.RunStatus(in.State.Status) {
+	case marotte.RunStatusRunning:
+		if !rs.bounded(workflowID) {
+			rs.armDeadline(ctx, workflowID)
+		}
+	default:
+		if rs.bounded(workflowID) {
+			rs.disarmDeadline(ctx, workflowID)
+		}
+	}
+	return nil
 }

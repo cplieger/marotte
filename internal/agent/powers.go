@@ -49,8 +49,7 @@ func WithPowers(b powersBackend) Option {
 
 type powersSurface struct {
 	backend   powersBackend `wiring:"optional"`
-	utility   func() *utilitySession
-	bridges   *bridgeManager
+	engine    *engineOwner
 	broadcast func(context.Context, marotte.ServerEvent)
 	locks     func() map[string]marotte.GovernanceLock
 	// adminKnown is false until the administrator rules resolve; servers stay off until then.
@@ -190,7 +189,7 @@ func (ps *powersSurface) handleList(w http.ResponseWriter, r *http.Request) {
 func (ps *powersSurface) installed(ctx context.Context) ([]kasPower, []powerLoadError, error) {
 	cctx, cancel := context.WithTimeout(ctx, powersCallTimeout)
 	defer cancel()
-	raw, err := ps.utility().rawCall(cctx, "powers list", methodKiroPowersList, callerParams(nil))
+	raw, err := ps.engine.rawCall(cctx, "powers list", methodKiroPowersList, map[string]any{})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -393,24 +392,17 @@ func (ps *powersSurface) runVerb(w http.ResponseWriter, r *http.Request, done st
 	webhttp.Ok(w)
 }
 
-// refresh tells every live process to rescan installed Powers: each chat and run bridge, and a running utility session.
+// refresh tells the engine to rescan installed Powers, once for every session; a down engine rescans at its spawn.
 func (ps *powersSurface) refresh(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(ctx, ignorePushTimeout)
 	defer cancel()
-	var wg sync.WaitGroup
-	for chatID, sb := range ps.bridges.all() {
-		wg.Go(func() {
-			if err := sb.Notify(cctx, methodKiroPowersRefresh, map[string]any{}); err != nil {
-				slog.Warn("powers: refresh not sent", "chat_id", chatID, "error", err)
-			}
-		})
+	h, _ := ps.engine.current()
+	if h == nil {
+		return
 	}
-	wg.Go(func() {
-		if err := ps.utility().notifyIfLive(cctx, methodKiroPowersRefresh, map[string]any{}); err != nil {
-			slog.Warn("powers: refresh not sent to the utility session", "error", err)
-		}
-	})
-	wg.Wait()
+	if err := h.Notify(cctx, methodKiroPowersRefresh, map[string]any{}); err != nil {
+		slog.Warn("powers: refresh not sent", "error", err)
+	}
 }
 
 // itemsChanged handles `_kiro/powers/items_changed`: the legacy block re-renders and clients

@@ -130,12 +130,11 @@ func TestHandleSessionInfoUpdate_NoPromptTurnAppendsNothing(t *testing.T) {
 	}
 }
 
-// The bind is positional, so a foreign id (a workflow step's or a subagent's) landing on
-// the reader's prompt turn would make rewind revert the wrong thing.
+// The bind is positional, so a foreign id (a workflow step's) landing on the reader's prompt
+// turn would make rewind revert the wrong thing.
 func TestHandleSessionInfoUpdate_AForeignFrameBindsNothing(t *testing.T) {
 	for name, attr := range map[string]FrameAttribution{
 		"a workflow step's own session": {Step: true},
-		"a subagent's session":          {Subagent: true, SessionID: "sess_sub"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			deps, events, _ := depsWithStore(t, "c1")

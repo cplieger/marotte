@@ -274,7 +274,7 @@ func telemetryEngine(runner *argsRunner) *fakeEngine {
 	return &fakeEngine{sessionSettings: func(context.Context) string { return runner.value("telemetry.enabled") }}
 }
 
-func TestWriteKiroSetting_ReopensOpenChatsWhenTheSwitchMoved(t *testing.T) {
+func TestWriteKiroSetting_ReachesResidentSessionsWhenTheSwitchMoved(t *testing.T) {
 	runner := &argsRunner{store: map[string]string{"telemetry.enabled": "true"}}
 	eng := telemetryEngine(runner)
 	eng.settle(t.Context())
@@ -296,8 +296,8 @@ func TestWriteKiroSetting_ReopensOpenChatsWhenTheSwitchMoved(t *testing.T) {
 }
 
 // Lifting a lock writes the user's own value back after the agent reconciled the lock change,
-// so the restore itself must reopen chats still on the organization's value.
-func TestApplyGovernanceLocks_ReopensOpenChatsWhenALiftRestoresTheUserValue(t *testing.T) {
+// so the restore itself must reach resident sessions still on the organization's value.
+func TestApplyGovernanceLocks_ReachesResidentSessionsWhenALiftRestoresTheUserValue(t *testing.T) {
 	runner := &argsRunner{store: map[string]string{"telemetry.enabled": "false"}}
 	gov := &liveLocks{m: map[string]marotte.GovernanceLock{marotte.LockTelemetry: {Value: true}}}
 	eng := telemetryEngine(runner)
@@ -314,8 +314,8 @@ func TestApplyGovernanceLocks_ReopensOpenChatsWhenALiftRestoresTheUserValue(t *t
 	}
 }
 
-// internal/agent's kiroCLIWrites routes each of these to open chats; a new key needs a row there.
-func TestAllowedKiroSettings_EachHasARouteToOpenChats(t *testing.T) {
+// internal/agent's kiroCLIWrites routes each of these (live, reload, engine restart or none); a new key needs a row there.
+func TestAllowedKiroSettings_EachHasARoute(t *testing.T) {
 	want := []string{
 		"chat.disableInheritingDefaultResources", "chat.enableKnowledge", "chat.enablePromptHints",
 		"chat.enableSubagent", "hooks.showStatus", "telemetry.enabled",

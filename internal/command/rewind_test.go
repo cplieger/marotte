@@ -82,7 +82,7 @@ type bridgeDeps struct {
 
 func (d *bridgeDeps) Bridge(marotte.ChatID) Bridge { return d.bridge }
 
-// BridgeLive follows the live bridge: a spawning or absent one parks a steer.
+// BridgeLive follows the live bridge: an opening or absent one parks a steer.
 func (d *bridgeDeps) BridgeLive(marotte.ChatID) bool { return d.bridge != nil }
 
 func (d *bridgeDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {

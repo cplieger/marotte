@@ -178,12 +178,12 @@ func TestToResumable_TieBreakIgnoresArrivalOrder(t *testing.T) {
 }
 
 // Only ownership separates conversations: session/list carries no message count, and a session no chat owns can
-// carry a title; unfiltered, the utility session sorted to the top.
+// carry a title; unfiltered, an observer pass's session sorts to the top.
 func TestToResumable_ExcludesEverySessionNoChatOwns(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"sess_real"}})
 	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
 		// Newest, so it would sort first.
-		row("sess_utility_live", "New Session", "2026-08-02T13:00:00.000Z", false),
+		row("sess_observer_live", "New Session", "2026-08-02T13:00:00.000Z", false),
 		row("sess_real", "A real conversation", "2026-08-02T12:00:00.000Z", false),
 		// An unowned session with a title of its own.
 		row("sess_unowned_titled", "Review the change", "2026-08-02T11:00:00.000Z", false),

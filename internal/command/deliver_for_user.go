@@ -73,8 +73,9 @@ func steerForUser(ctx context.Context, roles *promptRoles, chatID marotte.ChatID
 	refuse, dropped, err := steerInto(ctx, roles.steerTarget(chatID), steerHolder(roles, chatID, ""), steerID, text)
 	switch {
 	case dropped:
-		// KAS's turn ended before marotte saw it (`epoch_changed`): the chat is idle to KAS.
-		return SteerRefuseNoTurn, nil
+		// KAS's turn ended before marotte saw it (`epoch_changed`). The steer record keeps the row and sends it as the
+		// next prompt at that turn's end, so a prompt here would deliver the text twice.
+		slog.Info("steer dropped; it goes out as the next prompt", "chat", chatID, "steer_id", steerID)
 	case refuse == "" && err == nil:
 		slog.Info("steer accepted", "chat", chatID, "steer_id", steerID)
 	}

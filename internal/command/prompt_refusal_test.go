@@ -53,10 +53,10 @@ func promptReq(t *testing.T, chatID marotte.ChatID, text string) *marotte.Client
 	return &marotte.ClientCommand{Type: marotte.CmdPrompt, ChatID: chatID, Payload: payload}
 }
 
-// TestCmdPrompt_RefusesATombstonedChatBeforeSpawning: a prompt on a tombstoned chat is a 409 before
-// the bridge is spawned, because every later step depends on the record the store declined to
+// TestCmdPrompt_RefusesATombstonedChatBeforeOpeningASession: a prompt on a tombstoned chat is a 409 before
+// the session is opened, because every later step depends on the record the store declined to
 // create.
-func TestCmdPrompt_RefusesATombstonedChatBeforeSpawningABridge(t *testing.T) {
+func TestCmdPrompt_RefusesATombstonedChatBeforeOpeningASession(t *testing.T) {
 	spy := &promptSpy{hostDouble: newTestHost(t, tombstonedChats{testsupport.NewInMemoryChatStore()})}
 	roles := promptRolesOf(spy)
 	roles.bridges = spy
@@ -109,7 +109,7 @@ func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 			wantCode: marotte.ErrCodePromptFailed,
 		},
 		"an entitlement refusal is not a sign-in problem": {
-			callErr: rpcErr(t, marotte.RPCCodeBridgeExited, "this account does not have access to them.", rpcerr.Mapped{
+			callErr: rpcErr(t, kasServerError, "this account does not have access to them.", rpcerr.Mapped{
 				ErrorType:      "ModelRegistryAccessDeniedError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),

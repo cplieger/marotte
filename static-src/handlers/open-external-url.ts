@@ -1,6 +1,6 @@
 // KAS asks the client to open a URL (usually an MCP OAuth page). An SSE event is no user gesture,
 // so window.open() would be popup-blocked: a persistent banner with a link, http/https only,
-// keyed to the chat whose bridge asked.
+// keyed to the chat whose session asked.
 
 import { onSSE } from "../bus.js";
 import { showBanner } from "../banner-stack.js";

@@ -32,7 +32,7 @@ effect(() => {
 });
 
 // Clear a stale send-blocked state when the active chat changes. The signal is global but it is
-// raised for ONE chat: a bridge that could not start (or an admission refusal) belongs to the chat
+// raised for ONE chat: a session door that failed (or an admission refusal) belongs to the chat
 // that asked, and the next chat may be perfectly sendable.
 let sendBlockedActiveID = "";
 effect(() => {
@@ -55,9 +55,9 @@ export function setSSEStatus(s: ConnectionStatus): void {
   }
 }
 
-/** Report that there is no agent to send to: the ACP subprocess for this chat could not be
- *  started. Advisory — it changes the button's face and tooltip and never whether a send is
- *  allowed, because the next prompt is what retries the spawn. Anything that is merely a FAILED
+/** Report that there is no agent to send to: the agent engine is not running or this chat's
+ *  session could not open. Advisory — it changes the button's face and tooltip and never whether
+ *  a send is allowed, because the next prompt retries it. Anything that is merely a FAILED
  *  ATTEMPT goes to failure-notice.ts. */
 export function setAgentDown(reason: string): void {
   sendBlocked.value = reason;
@@ -70,8 +70,8 @@ export function reportSendRefused(reason: string): void {
   sendBlocked.value = reason;
 }
 
-/** Clear the send-blocked state. Called on every send attempt and at every turn end, so a bridge
- *  that has since started — or an admission slot that has since freed — leaves no residue on the
+/** Clear the send-blocked state. Called on every send attempt and at every turn end, so a session
+ *  that has since opened — or an admission slot that has since freed — leaves no residue on the
  *  button. */
 export function clearAgentDown(): void {
   sendBlocked.value = "";

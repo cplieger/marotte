@@ -5,6 +5,7 @@
 // verdict is restorable. `settings.ts` is real here; its heavy graph is mocked.
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
+import { signedIn } from "./__test-helpers__/identity.js";
 
 // Everything `settings.ts` reaches that touches network, shell, file browser or chat view.
 vi.mock("./modals.js", () => ({ initAllModals: vi.fn(), showLoginModal: vi.fn() }));
@@ -33,7 +34,12 @@ vi.mock("./settings-steering.js", () => ({
   loadSteeringDoc: vi.fn(),
 }));
 vi.mock("./settings-notifications.js", () => ({ initNotificationToggles: vi.fn() }));
-vi.mock("./api-client.js", () => ({ apiGet: vi.fn(async () => null), apiPost: vi.fn() }));
+vi.mock("./api-client.js", () => ({
+  apiGet: vi.fn(async () => null),
+  apiPost: vi.fn(),
+  // Linked, never called here: the MCP panel settings.ts imports reads through it.
+  apiGetTyped: vi.fn(),
+}));
 vi.mock("./governance.js", () => ({
   paintSettingLocks: vi.fn(),
   writeSwitch: (input: HTMLInputElement, value: boolean) => {
@@ -64,7 +70,12 @@ function seedCard(): { row: HTMLElement; sep: HTMLElement; addr: HTMLElement } {
       <span class="pill-detail" id="st-kiro">-</span>
       <span class="pill-sep" id="st-auth-sep" hidden></span>
       <span class="pill-detail" id="st-auth" hidden></span>
-    </span>`;
+      <span class="pill-sep" id="st-signin-sep" hidden></span>
+      <span class="pill-detail" id="st-signin-method" hidden></span>
+      <span class="pill-detail" id="st-signin-url" hidden></span>
+      <span class="pill-detail" id="st-signin-region" hidden></span>
+    </span>
+    <button type="button" id="logout-btn" data-tooltip="Log out" aria-label="Log out"></button>`;
   return {
     row: document.getElementById("st-auth") as HTMLElement,
     sep: document.getElementById("st-auth-sep") as HTMLElement,
@@ -83,7 +94,7 @@ beforeEach(() => {
 describe("the row and its separator are one fact", () => {
   it("hides BOTH for signed_in, because the address already says it", () => {
     const { row, sep, addr } = seedCard();
-    renderIdentity({ state: "signed_in", email: "someone@example.invalid" });
+    renderIdentity(signedIn("someone@example.invalid"));
     expect(addr.textContent, "the address carries the statement").toBe("someone@example.invalid");
     expect(row.textContent, "the row says nothing").toBe("");
     expect(row.hidden, "so the row hides").toBe(true);
@@ -106,7 +117,7 @@ describe("the row and its separator are one fact", () => {
     // Every ordered pair of arms: a second writer would forget one element on ONE path.
     const { row, sep } = seedCard();
     const arms = [
-      { state: "signed_in", email: "a@b.invalid" },
+      signedIn("a@b.invalid"),
       { state: "signed_out" },
       { state: "unavailable", reason: "x" },
     ] as const;
@@ -123,12 +134,53 @@ describe("the row and its separator are one fact", () => {
   });
 });
 
+describe("the sign-in rows and Sign out", () => {
+  function shown(id: string): string | null {
+    const row = document.getElementById(id) as HTMLElement;
+    return row.hidden ? null : row.textContent;
+  }
+
+  function logoutBtn(): HTMLButtonElement {
+    return document.getElementById("logout-btn") as HTMLButtonElement;
+  }
+
+  it("shows the method, start URL and region of a vault sign-in, and offers Sign out", () => {
+    renderIdentity(signedIn(""));
+    expect(shown("st-signin-method")).toBe("Logged in with IAM Identity Center");
+    expect(shown("st-signin-url")).toBe("https://example.awsapps.com/start");
+    expect(shown("st-signin-region")).toBe("us-east-1");
+    expect(shown("st-signin-sep"), "the separator shows with the rows").toBe("");
+    expect(logoutBtn().disabled).toBe(false);
+    expect(logoutBtn().getAttribute("data-tooltip")).toBe("Log out");
+  });
+
+  it("names the API key and disables Sign out while KIRO_API_KEY signs the engine in", () => {
+    renderIdentity(
+      signedIn("", { method: "API key (KIRO_API_KEY)", startUrl: "", region: "", apiKey: true }),
+    );
+    expect(shown("st-signin-method")).toBe("API key (KIRO_API_KEY)");
+    expect(shown("st-signin-url"), "an unreported label hides").toBeNull();
+    expect(shown("st-signin-region")).toBeNull();
+    expect(logoutBtn().disabled, "the server refuses a sign-out here").toBe(true);
+    expect(logoutBtn().getAttribute("data-tooltip")).toContain("KIRO_API_KEY");
+  });
+
+  it("hides every sign-in row and offers Sign out again for the arms that name nobody", () => {
+    renderIdentity(signedIn("", { apiKey: true }));
+    renderIdentity({ state: "signed_out" });
+    for (const id of ["st-signin-sep", "st-signin-method", "st-signin-url", "st-signin-region"]) {
+      expect(shown(id), id).toBeNull();
+    }
+    expect(logoutBtn().disabled).toBe(false);
+  });
+});
+
 describe("currentIdentity", () => {
   it("answers what renderIdentity last rendered", () => {
     // The export exists for the logout rollback, which receives the VALUE; nothing else
     // retains the verdict.
     seedCard();
-    const v = { state: "signed_in", email: "someone@example.invalid" } as const;
+    const v = signedIn("someone@example.invalid");
     renderIdentity(v);
     expect(currentIdentity()).toEqual(v);
     const u = { state: "unavailable", reason: "whoami unreachable" } as const;
@@ -141,7 +193,7 @@ describe("logout through the REAL action", () => {
   it("leaves the row and its separator visible on success", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
     const { row, sep, addr } = seedCard();
-    renderIdentity({ state: "signed_in", email: "someone@example.invalid" });
+    renderIdentity(signedIn("someone@example.invalid"));
 
     await logout.dispatch({ render: renderIdentity, prev: currentIdentity() });
 
@@ -172,7 +224,7 @@ describe("logout through the REAL action", () => {
     // rollback simply doing nothing.
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "nope" }), { status: 500 }));
     const { row, sep, addr } = seedCard();
-    renderIdentity({ state: "signed_in", email: "someone@example.invalid" });
+    renderIdentity(signedIn("someone@example.invalid"));
 
     await logout.dispatch({ render: renderIdentity, prev: currentIdentity() });
 

@@ -2,6 +2,8 @@
 
 import { apiGetTyped, CancellableSlot } from "./api-client.js";
 import { registerCleanup } from "./actions/index.js";
+import { configStanding } from "./config-standing.js";
+import type { ConfigStanding } from "./wire/types.gen.js";
 import {
   SignalMap,
   createCollection,
@@ -366,6 +368,12 @@ const statusMap = new SignalMap<RuntimeStatus>();
 
 function idleStatus(name: string): RuntimeStatus {
   return { name, origin: "user", state: "idle" };
+}
+
+/** kiro-cli's standing for a server it loaded but another layer replaced or switched off, undefined while the server
+ *  is in use. Distinct from marotte's own Enabled toggle. Reactive inside an effect. */
+export function standingFor(name: string): ConfigStanding | undefined {
+  return configStanding.value.servers.get(name);
 }
 
 /** Reactive per-server runtime-status signal, created lazily as "idle". */

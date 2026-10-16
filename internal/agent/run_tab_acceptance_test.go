@@ -50,7 +50,7 @@ func newTabbedRuntime(t *testing.T) (*Runtime, string) {
 	}
 	cs := newTestChatStore()
 	br := newFakeBridge()
-	h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs,
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return br }, laneOf(br)), cs,
 		WithTabs(st), WithConfigDir(dir))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })

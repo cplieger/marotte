@@ -23,6 +23,8 @@ import { forceReflow } from "./dom.js";
 import type { Recipe, WorkflowRun } from "./types.js";
 import { entryDetail, entryList, entryRow } from "./entry-row.js";
 import { classifyRunStatus, runStatusTerminal } from "./run-status.js";
+import { configStanding, standingBadge, standingLabel } from "./config-standing.js";
+import type { ConfigStanding } from "./wire/types.gen.js";
 
 /** Last fetched recipe list, kept so a repaint needs no refetch. */
 let recipes: Recipe[] = [];
@@ -51,12 +53,14 @@ interface RecipeCounts {
 
 /** Every field of a recipe row a reader could plausibly type at, folded once. */
 function filterHaystack(r: Recipe): string {
+  const standing = standingOf(r);
   return [
     r.name,
     r.description ?? "",
     r.source,
     ...Object.keys(r.inputs ?? {}),
     r.built_in === true ? "bundled" : "",
+    standing === undefined ? "" : standingLabel(standing),
   ]
     .join("\n")
     .toLowerCase();
@@ -349,6 +353,7 @@ function paint(): void {
       if (e.kind === "row") {
         syncButton(node, e.recipe);
         syncSchedule(node, e.recipe);
+        syncStanding(node, e.recipe);
       } else {
         // Only Launch is synced: the fields hold what the reader has typed.
         syncLaunch(node, e.recipe);
@@ -392,12 +397,18 @@ function recipeRow(r: Recipe): HTMLElement {
   schedBtn.textContent = "Schedule";
   wireSchedulePopup(schedBtn, r.source);
 
+  // A slot, so a standing change updates a kept row; only a file-backed recipe has a file to join.
+  const standingSlot =
+    r.doc_key === undefined ? null : el("span", { className: "recipe-standing hidden" });
   // No `open`: a recipe row is not a door. Its one destination is the run its button launches, and
   // that run opens its own tab.
   const row = entryRow({
     key: r.source,
     title: r.name,
-    badges: r.built_in === true ? [el("span", { className: "docs-badge" }, "bundled")] : undefined,
+    badges: [
+      ...(r.built_in === true ? [el("span", { className: "docs-badge" }, "bundled")] : []),
+      ...(standingSlot === null ? [] : [standingSlot]),
+    ],
     sub: {
       kind: "lines",
       lines: [{ text: r.description ?? "" }, { text: scheduleLine(r) }],
@@ -407,7 +418,28 @@ function recipeRow(r: Recipe): HTMLElement {
   });
   syncButton(row, r);
   syncSchedule(row, r);
+  syncStanding(row, r);
   return row;
+}
+
+function standingOf(r: Recipe): ConfigStanding | undefined {
+  return r.doc_key === undefined ? undefined : configStanding.peek().files.get(r.doc_key);
+}
+
+function syncStanding(row: HTMLElement, r: Recipe): void {
+  const slot = row.querySelector<HTMLElement>(".recipe-standing");
+  if (slot === null) {
+    return;
+  }
+  const s = standingOf(r);
+  slot.replaceChildren(...(s === undefined ? [] : [standingBadge(s)]));
+  // `.hidden`, not the attribute: `.entry-badges` declares `display`, which beats the UA's `[hidden]`.
+  slot.classList.toggle("hidden", s === undefined);
+  const badges = slot.parentElement;
+  badges?.classList.toggle(
+    "hidden",
+    [...badges.children].every((b) => b.classList.contains("hidden")),
+  );
 }
 
 /** KAS's reason the recipe cannot launch, or "" for one it can. */

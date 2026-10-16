@@ -18,11 +18,11 @@ const (
 	methodV3ProgressiveContext   = "_kiro/progressive_context/items_changed" // recognised-ignored (skills/steering list; REST-sourced)
 	methodV3Powers               = "_kiro/powers/items_changed"              // installed Powers moved: re-render the legacy block, broadcast powers_changed
 	methodV3CodeReferences       = "_kiro/code_references"                   // licensed-code attributions → per-turn chip (HandleCodeReferences)
-	methodKiroConfigurationState = "_kiro/configuration/state"               // utility bridge only (configurationState declared): Settings' kiro_defaults
+	methodKiroConfigurationState = "_kiro/configuration/state"               // the engine declares configurationState; Settings' kiro_defaults
 	methodKiroConfigurationGet   = "_kiro/configuration/getState"            // C→A request: {observer, roots?} → the same composed view; the picker's custom agents
 )
 
-// KAS native Cedar policy methods: list/explain are utility-bridge requests for the read-only
+// KAS native Cedar policy methods: list/explain are observer-pass requests for the read-only
 // view; changed/error are notifications. policy/check is never used: it raises a real
 // session/request_permission. explain raises none.
 const (
@@ -32,7 +32,7 @@ const (
 	methodV3PolicyError        = "_kiro/policy/error"        // A→C notification: {sessionId, errors[]}
 )
 
-// v3 request names outside the notification set: openExternalUrl is A→C (bridge_v3_hostreq.go), the others C→A on the utility bridge.
+// v3 request names outside the notification set: openExternalUrl is A→C (bridge_v3_hostreq.go), the others C→A on the engine.
 const (
 	methodKiroOpenExternalURL = "_kiro/openExternalUrl"  // A→C request: {url} — open a URL for the user (MCP OAuth); needs the openExternalUrl client capability
 	methodKiroGetUsage        = "_kiro/account/getUsage" // C→A request: account/subscription usage; needs the authenticated profile
@@ -65,7 +65,7 @@ const (
 
 // `_kiro/spec/*` is deliberately unwired: its invoke verbs drive fire-and-forget turns with no turn-end signal.
 
-// KAS memory verbs, utility-bridge requests with no sessionId: list {limit 1..1000, cursor?,
+// KAS memory verbs, session-less engine requests: list {limit 1..1000, cursor?,
 // scopes?} → {memories, nextCursor?}; get/update → {memory}; delete → {id, title}. Ineligible
 // accounts get -32602.
 const (
@@ -106,7 +106,7 @@ const (
 
 // C→A workflow verbs beyond list/inspect. listRecipes' `source` is the launch key
 // (`bundled://<name>` or a *.workflow.json path). new requires `parentSessionId` (kiro-cli 2.21.4);
-// marotte sends the run bridge's own session, which then routes all nine lifecycle frames and
+// marotte sends the run host session's id, which then routes all nine lifecycle frames and
 // supplies the workspace roots and model/effort fallbacks. invoke is fire-and-forget; cancel
 // and resume act at node boundaries.
 const (
@@ -133,7 +133,7 @@ const (
 	methodKiroWorkflowRecipesChanged = "_kiro/workflow/recipes_changed"
 )
 
-// KAS hook methods: list/setEnabled are utility-bridge requests gated on v2Hooks, didChange a
+// KAS hook methods: list/setEnabled are session-less engine requests gated on v2Hooks, didChange a
 // notification. triggerHook and executeHook are deliberately absent: naming one makes it reachable.
 const (
 	methodKiroHooksList       = "_kiro/hooks/list"       // C→A request: {workspacePaths?,trigger?,toolId?,includeDisabled?} → {hooks[]}

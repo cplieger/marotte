@@ -161,7 +161,7 @@ func TestTakePendingPerm_RetractsTheAsksOwnSubject(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cs := newTestChatStore()
 			fp := &recordingPush{sends: make(chan string, 4)}
-			h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+			h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 			cs.wire(h)
 			askID := requestIDOf(t, h.bus.pendingPerms.add(9, marotte.ServerEvent{Type: marotte.EventPermissionNeeded, ChatID: tc.chatID, Payload: tc.payload}, newFakeBridge()))
 			reply, ok := h.bus.TakePendingPerm(tc.chatID, askID, marotte.DecisionKindPermission, marotte.SettledByUser)

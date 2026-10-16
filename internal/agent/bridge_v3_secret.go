@@ -1,8 +1,8 @@
 // `_kiro/secret/{get,store,delete}`, answered from internal/secretstore. KAS keeps MCP OAuth
 // results only in memory and asks the client to hold them, gated on
 // `_meta.kiro.secretStorage`, declared only when a store exists: KAS rethrows a store failure
-// into MCP connect. Keys and values are never logged; one store serves every bridge
-// because KAS's key namespace is global.
+// into MCP connect. Keys and values are never logged; one store serves the engine's
+// every session because KAS's key namespace is global.
 
 package agent
 

@@ -21,75 +21,85 @@ const (
 	updateGoldenCmd       = "UPDATE_GOLDEN=1 go test ./internal/kascap/ -run 'TestInitializeDeclaresExactly|TestSessionDoorDeclaresExactly|TestEnvironmentDoorDeclaresExactly|TestPromptDoorDeclaresExactly'"
 )
 
-// Exhaustive is what makes the golden a contract rather than a sample.
-var spawnMatrix = []struct {
+// Exhaustive is what makes the golden a contract rather than a sample. One matrix per spawn type: a door reads only
+// its own.
+var engineMatrix = []struct {
 	name  string
-	spawn Spawn
+	spawn EngineSpawn
 }{
-	{"gates off", Spawn{}},
-	{"secret storage only", Spawn{SecretStorage: true}},
-	{"hooks only", Spawn{Hooks: true}},
-	{"both gates on", Spawn{SecretStorage: true, Hooks: true}},
-	// Presets need both states: an empty set withholds the policyPreset key entirely (the Custom
-	// profile).
-	{"one preset", Spawn{Presets: []string{"read-workspace"}}},
-	{"several presets", Spawn{Presets: []string{"read-workspace", "read-only-shell", "read-all"}}},
-	{"presets with both gates", Spawn{
-		SecretStorage: true, Hooks: true,
-		Presets: []string{"allow-all"},
-	}},
+	{"gates off", EngineSpawn{}},
+	{"secret storage", EngineSpawn{SecretStorage: true}},
 	// Knowledge is value-gated across TWO keys, the capability (`=== true`) and settings.knowledge
 	// (isSettingEnabled).
-	{"knowledge on", Spawn{Knowledge: true}},
-	{"memory read only", Spawn{MemoryMode: "read_only"}},
-	{"memory read write", Spawn{MemoryMode: "read_write"}},
-	{"memory learn", Spawn{MemoryMode: "read_write", MemoryReflection: true}},
-	{"run bridge titles off", Spawn{DisableSessionTitles: true}},
-	{"auto compaction off", Spawn{DisableAutoCompaction: true}},
-	{"spec planning quick", Spawn{SpecPlan: "quick"}},
-	{"spec planning full, ask first", Spawn{SpecPlan: "full", SpecAskClarification: true}},
-	{"steering reminders on", Spawn{SteeringReminders: true}},
-	{"work validation and safety check on", Spawn{WorkValidation: "on", InfraSafetyMonitor: "on"}},
-	{"work validation and safety check off", Spawn{WorkValidation: "off", InfraSafetyMonitor: "off"}},
-	{"auto routing and smart helpers on", Spawn{AutoRouting: "on", AutoDelegation: "on"}},
-	{"auto routing and smart helpers off", Spawn{AutoRouting: "off", AutoDelegation: "off"}},
-	{"shell timeout set", Spawn{TerminalCommandTimeoutMs: 300000}},
-	{"workflows on", Spawn{Workflows: true}},
-	{"model fallback on", Spawn{ModelFallback: true}},
-	{"telemetry off", Spawn{DisableTelemetry: true}},
-	{"utility bridge configuration state", Spawn{ConfigurationState: true}},
-	{"every gate on", Spawn{
-		SecretStorage: true, Hooks: true,
-		Presets:   []string{"read-workspace"},
-		Knowledge: true, MemoryMode: "read_write", MemoryReflection: true,
-		DisableAutoCompaction: true, DisableSessionTitles: true,
-		SpecPlan: "full", SpecAskClarification: true,
-		WorkValidation: "on", InfraSafetyMonitor: "on",
+	{"knowledge on", EngineSpawn{Knowledge: true}},
+	{"steering reminders on", EngineSpawn{SteeringReminders: true}},
+	{"safety check on", EngineSpawn{InfraSafetyMonitor: "on"}},
+	{"safety check off", EngineSpawn{InfraSafetyMonitor: "off"}},
+	{"auto routing and smart helpers on", EngineSpawn{AutoRouting: "on", AutoDelegation: "on"}},
+	{"auto routing and smart helpers off", EngineSpawn{AutoRouting: "off", AutoDelegation: "off"}},
+	{"shell timeout set", EngineSpawn{TerminalCommandTimeoutMs: 300000}},
+	{"model fallback on", EngineSpawn{ModelFallback: true}},
+	{"telemetry off", EngineSpawn{DisableTelemetry: true}},
+	{"every gate on", EngineSpawn{
+		SecretStorage: true, Knowledge: true, InfraSafetyMonitor: "on",
 		AutoRouting: "on", AutoDelegation: "on",
 		TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
-		Workflows: true, DisableTelemetry: true, ConfigurationState: true,
-		ModelFallback: true,
+		DisableTelemetry: true, ModelFallback: true,
 	}},
 }
 
-func spawnNames() []string {
-	names := make([]string, len(spawnMatrix))
-	for i := range spawnMatrix {
-		names[i] = spawnMatrix[i].name
+var sessionMatrix = []struct {
+	name  string
+	spawn SessionSpawn
+}{
+	{"gates off", SessionSpawn{}},
+	{"a minted id", SessionSpawn{OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000"}},
+	// Presets need both states: an empty set withholds the policyPreset key entirely (the Custom
+	// profile).
+	{"one preset", SessionSpawn{Presets: []string{"read-workspace"}}},
+	{"several presets", SessionSpawn{Presets: []string{"read-workspace", "read-only-shell", "read-all"}}},
+	{"memory read only", SessionSpawn{MemoryMode: "read_only"}},
+	{"memory read write", SessionSpawn{MemoryMode: "read_write"}},
+	{"memory learn", SessionSpawn{MemoryMode: "read_write", MemoryReflection: true}},
+	{"auto compaction off", SessionSpawn{DisableAutoCompaction: true}},
+	{"spec planning quick", SessionSpawn{SpecPlan: "quick"}},
+	{"spec planning full, ask first", SessionSpawn{SpecPlan: "full", SpecAskClarification: true}},
+	{"work validation on", SessionSpawn{WorkValidation: "on"}},
+	{"work validation off", SessionSpawn{WorkValidation: "off"}},
+	{"workflows on", SessionSpawn{Workflows: true}},
+	{"every gate on", SessionSpawn{
+		OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000",
+		Presets:           []string{"read-workspace"},
+		MemoryMode:        "read_write", MemoryReflection: true,
+		DisableAutoCompaction: true, SpecPlan: "full", SpecAskClarification: true,
+		WorkValidation: "on", Workflows: true,
+	}},
+}
+
+func engineNames() []string {
+	names := make([]string, len(engineMatrix))
+	for i := range engineMatrix {
+		names[i] = engineMatrix[i].name
 	}
 	return names
 }
 
-// renderMatrix marshals one projection across the matrix, one compact JSON object per line;
-// encoding/json sorts map keys, so the output is deterministic.
+func sessionNames() []string {
+	names := make([]string, len(sessionMatrix))
+	for i := range sessionMatrix {
+		names[i] = sessionMatrix[i].name
+	}
+	return names
+}
 
-func renderMatrix[T any](t *testing.T, build func(*Spawn) T) string {
+// renderLines marshals one value per line; encoding/json sorts map keys, so the output is deterministic.
+func renderLines[T any](t *testing.T, names []string, build func(i int) T) string {
 	t.Helper()
 	var out strings.Builder
-	for _, tc := range spawnMatrix {
-		raw, err := json.Marshal(build(&tc.spawn))
+	for i, name := range names {
+		raw, err := json.Marshal(build(i))
 		if err != nil {
-			t.Fatalf("%s: marshal: %v", tc.name, err)
+			t.Fatalf("%s: marshal: %v", name, err)
 		}
 		out.Write(raw)
 		out.WriteString("\n")
@@ -146,19 +156,22 @@ regenerate with:
 // TestInitializeDeclaresExactly pins the exact _meta.kiro payload of the initialize handshake for
 // every spawn combination.
 func TestInitializeDeclaresExactly(t *testing.T) {
-	checkGolden(t, initializeGoldenPath, renderMatrix(t, Capabilities), spawnNames())
+	got := renderLines(t, engineNames(), func(i int) map[string]any { return Capabilities(&engineMatrix[i].spawn) })
+	checkGolden(t, initializeGoldenPath, got, engineNames())
 }
 
 // TestSessionDoorDeclaresExactly pins the payload session/new and session/load carry for every
-// spawn combination.
+// session combination.
 func TestSessionDoorDeclaresExactly(t *testing.T) {
-	checkGolden(t, sessionGoldenPath, renderMatrix(t, SessionMeta), spawnNames())
+	got := renderLines(t, sessionNames(), func(i int) map[string]any { return SessionMeta(&sessionMatrix[i].spawn) })
+	checkGolden(t, sessionGoldenPath, got, sessionNames())
 }
 
 // TestEnvironmentDoorDeclaresExactly pins the KIRO_* assignments ChildEnv hands
-// the bridge for every spawn combination, one JSON array per line.
+// the engine spawn for every engine combination, one JSON array per line.
 func TestEnvironmentDoorDeclaresExactly(t *testing.T) {
-	checkGolden(t, environmentGoldenPath, renderMatrix(t, ChildEnv), spawnNames())
+	got := renderLines(t, engineNames(), func(i int) []string { return ChildEnv(&engineMatrix[i].spawn) })
+	checkGolden(t, environmentGoldenPath, got, engineNames())
 }
 
 // promptMatrix is every per-prompt state; its order is prompt.golden's line order.
@@ -189,53 +202,79 @@ func TestPromptDoorDeclaresExactly(t *testing.T) {
 	checkGolden(t, promptGoldenPath, out.String(), names)
 }
 
-// TestInitialize_ConfigurationStateOnlyWhereDeclared pins the capability to the spawn that asks for
-// it: a chat spawn carries no configurationState key at all.
-func TestInitialize_ConfigurationStateOnlyWhereDeclared(t *testing.T) {
-	if got, present := Capabilities(&Spawn{ConfigurationState: true})["configurationState"]; !present || got != true {
-		t.Errorf("Capabilities(ConfigurationState) = %#v (present %v), want true", got, present)
+// TestInitialize_InactiveItemsRidesConfigurationState pins that the one engine declares both halves of u4's
+// configuration view on every spawn: configurationState makes KAS push the view, inactiveItems adds the items another
+// layer displaced or switched off. Neither is a session key.
+func TestInitialize_InactiveItemsRidesConfigurationState(t *testing.T) {
+	for _, tc := range engineMatrix {
+		caps := Capabilities(&tc.spawn)
+		for _, key := range []string{"configurationState", "inactiveItems"} {
+			if got := caps[key]; got != true {
+				t.Errorf("%s: Capabilities()[%q] = %#v, want true", tc.name, key, got)
+			}
+		}
 	}
-	if got, present := Capabilities(&Spawn{})["configurationState"]; present {
-		t.Errorf("Capabilities(chat spawn) carries configurationState = %#v, want the key absent", got)
+	for _, tc := range sessionMatrix {
+		meta := SessionMeta(&tc.spawn)
+		for _, key := range []string{"configurationState", "inactiveItems"} {
+			if _, present := meta[key]; present {
+				t.Errorf("%s: SessionMeta carries %s; KAS reads it at initialize only", tc.name, key)
+			}
+		}
 	}
-	if _, onSession := SessionMeta(&Spawn{ConfigurationState: true})["configurationState"]; onSession {
-		t.Error("SessionMeta carries configurationState; KAS reads it at initialize only")
+}
+
+// TestSessionDoor_OverrideSessionIDOnlyWhenMinted pins that a minted id rides session/new's door and a load, which
+// names its id itself, sends no override.
+func TestSessionDoor_OverrideSessionIDOnlyWhenMinted(t *testing.T) {
+	const id = "sess_00000000-0000-4000-8000-000000000000"
+	if got := SessionMeta(&SessionSpawn{OverrideSessionID: id})["overrideSessionId"]; got != id {
+		t.Errorf("SessionMeta(minted) overrideSessionId = %#v, want %q", got, id)
+	}
+	if got, present := SessionMeta(&SessionSpawn{})["overrideSessionId"]; present {
+		t.Errorf("SessionMeta(load) carries overrideSessionId = %#v, want it absent", got)
 	}
 }
 
 // TestMemoryRow_FailsClosedAndNeverVetoes pins the memory preference's two
-// load-bearing facts: a zero Spawn (the utility bridge) sends mode disabled on
+// load-bearing facts: a zero SessionSpawn (an observer pass) sends mode disabled on
 // the session door, and the legacy userMemoryOptIn veto is on no door, because
 // sending it refuses the sessionless _kiro/memory/* calls the Memories tab makes.
 func TestMemoryRow_FailsClosedAndNeverVetoes(t *testing.T) {
-	settings, _ := SessionMeta(&Spawn{})[settingsKey].(map[string]any)
+	settings, _ := SessionMeta(&SessionSpawn{})[settingsKey].(map[string]any)
 	want := map[string]any{"mode": "disabled", "reflection": false}
 	if got := settings["memory"]; !reflect.DeepEqual(got, want) {
-		t.Errorf("SessionMeta(&Spawn{}) memory = %#v, want %#v", got, want)
+		t.Errorf("SessionMeta(&SessionSpawn{}) memory = %#v, want %#v", got, want)
 	}
-	for _, build := range []func(*Spawn) map[string]any{Capabilities, SessionMeta} {
-		for _, tc := range spawnMatrix {
-			s, _ := build(&tc.spawn)[settingsKey].(map[string]any)
-			if _, present := s["userMemoryOptIn"]; present {
-				t.Errorf("%s: userMemoryOptIn is sent; want it withheld on every door", tc.name)
-			}
+	for _, tc := range sessionMatrix {
+		s, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any)
+		if _, present := s["userMemoryOptIn"]; present {
+			t.Errorf("session %s: userMemoryOptIn is sent; want it withheld on every door", tc.name)
 		}
 	}
-	if _, present := Capabilities(&Spawn{MemoryMode: "read_write"})[settingsKey].(map[string]any)["memory"]; present {
-		t.Error("memory rides initialize; want the session door only (only it upgrades a legacy session)")
+	for _, tc := range engineMatrix {
+		s, _ := Capabilities(&tc.spawn)[settingsKey].(map[string]any)
+		if _, present := s["userMemoryOptIn"]; present {
+			t.Errorf("engine %s: userMemoryOptIn is sent; want it withheld on every door", tc.name)
+		}
+		if _, present := s["memory"]; present {
+			t.Errorf("engine %s: memory rides initialize; want the session door only (only it upgrades a legacy session)", tc.name)
+		}
 	}
 }
 
-// TestChildEnv_PinsNoArmByDefault pins that a zero Spawn writes no KIRO_* variable, so every arm
-// follows the experiment ramp unless a Settings control or a spawn fact decides it.
+// TestChildEnv_PinsNoArmByDefault pins that a zero EngineSpawn writes no KIRO_* variable, so every arm
+// follows the experiment ramp unless a Settings control decides it.
 func TestChildEnv_PinsNoArmByDefault(t *testing.T) {
-	if got := ChildEnv(&Spawn{}); len(got) != 0 {
-		t.Errorf("ChildEnv(&Spawn{}) = %q, want nothing", got)
+	if got := ChildEnv(&EngineSpawn{}); len(got) != 0 {
+		t.Errorf("ChildEnv(&EngineSpawn{}) = %q, want nothing", got)
 	}
-	got := ChildEnv(&Spawn{DisableSessionTitles: true})
-	want := []string{"KIRO_DISABLE_SESSION_TITLE_LLM=true"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ChildEnv(DisableSessionTitles) = %q, want %q", got, want)
+	for _, tc := range engineMatrix {
+		for _, kv := range ChildEnv(&tc.spawn) {
+			if strings.HasPrefix(kv, "KIRO_DISABLE_SESSION_TITLE_LLM=") {
+				t.Errorf("%s: ChildEnv writes %q; the switch has no per-session seat on one engine", tc.name, kv)
+			}
+		}
 	}
 }
 
@@ -256,16 +295,18 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":false}`,
 		}},
 	} {
-		got := ChildEnv(&Spawn{AutoRouting: tc.choice, AutoDelegation: tc.choice})
+		got := ChildEnv(&EngineSpawn{AutoRouting: tc.choice, AutoDelegation: tc.choice})
 		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("ChildEnv(AutoRouting=AutoDelegation=%q) = %q, want %q", tc.choice, got, tc.want)
 		}
 	}
-	if got := ChildEnv(&Spawn{AutoRouting: "on"}); len(got) != 1 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
+	if got := ChildEnv(&EngineSpawn{AutoRouting: "on"}); len(got) != 1 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
 		t.Errorf("ChildEnv(AutoRouting=on alone) = %q, want only the cascade arm", got)
 	}
-	if settings, _ := SessionMeta(&Spawn{AutoRouting: "on"})[settingsKey].(map[string]any); settings["cascade"] != nil {
-		t.Errorf("SessionMeta(AutoRouting=on) sends settings.cascade = %#v; the env arm carries the choice", settings["cascade"])
+	for _, tc := range sessionMatrix {
+		if settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any); settings["cascade"] != nil {
+			t.Errorf("%s: SessionMeta sends settings.cascade = %#v; the env arm carries the choice", tc.name, settings["cascade"])
+		}
 	}
 }
 
@@ -282,14 +323,14 @@ func TestChildEnv_ModelFallbackSendsBothFlagsOnlyWhenOn(t *testing.T) {
 			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
 		}},
 	} {
-		if got := ChildEnv(&Spawn{ModelFallback: tc.on}); !reflect.DeepEqual(got, tc.want) {
+		if got := ChildEnv(&EngineSpawn{ModelFallback: tc.on}); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("ChildEnv(ModelFallback=%v) = %q, want %q", tc.on, got, tc.want)
 		}
 	}
 }
 
 // OwnsEnv claims the environment rows a Settings control decides, a withheld arm included, and
-// leaves a spawn-fact row, a row marotte never sends and every other name to the operator.
+// leaves a row marotte never sends and every other name to the operator.
 func TestOwnsEnv_ClaimsOnlyTheSettingOwnedRows(t *testing.T) {
 	for _, tc := range []struct {
 		kv   string
@@ -316,13 +357,15 @@ func TestOwnsEnv_ClaimsOnlyTheSettingOwnedRows(t *testing.T) {
 // false is SENT, because an absent key falls back to KAS's persisted value.
 func TestSessionDoor_WorkflowsFollowsTheSetting(t *testing.T) {
 	for _, on := range []bool{false, true} {
-		settings, _ := SessionMeta(&Spawn{Workflows: on})[settingsKey].(map[string]any)
+		settings, _ := SessionMeta(&SessionSpawn{Workflows: on})[settingsKey].(map[string]any)
 		if got, want := settings["workflows"], enabledIf(on); !reflect.DeepEqual(got, want) {
 			t.Errorf("SessionMeta(Workflows=%v) workflows = %#v, want %#v", on, got, want)
 		}
-		connection, _ := Capabilities(&Spawn{Workflows: on})[settingsKey].(map[string]any)
+	}
+	for _, tc := range engineMatrix {
+		connection, _ := Capabilities(&tc.spawn)[settingsKey].(map[string]any)
 		if _, present := connection["workflows"]; present {
-			t.Errorf("Capabilities(Workflows=%v) carries workflows; KAS reads it on the session door only", on)
+			t.Errorf("%s: Capabilities carries workflows; KAS reads it on the session door only", tc.name)
 		}
 	}
 }
@@ -331,7 +374,7 @@ func TestSessionDoor_WorkflowsFollowsTheSetting(t *testing.T) {
 // every session carries whatever the spawn: the control_process class as an
 // {enabled} object (a bare true resolves undefined) and the shell type.
 func TestSessionDoor_BackgroundExecutionAndShellTypeAreUngated(t *testing.T) {
-	for _, tc := range spawnMatrix {
+	for _, tc := range sessionMatrix {
 		meta := SessionMeta(&tc.spawn)
 		settings, _ := meta[settingsKey].(map[string]any)
 		if got, want := settings["backgroundExecution"], enabled(); !reflect.DeepEqual(got, want) {
@@ -341,7 +384,7 @@ func TestSessionDoor_BackgroundExecutionAndShellTypeAreUngated(t *testing.T) {
 			t.Errorf("%s: shellType = %#v, want \"bash\"", tc.name, got)
 		}
 	}
-	if _, present := Capabilities(&Spawn{})["backgroundProcesses"]; !present {
+	if _, present := Capabilities(&EngineSpawn{})["backgroundProcesses"]; !present {
 		t.Error("backgroundProcesses left initialize; it is the fallback for sessions resolving backgroundExecution false")
 	}
 }
@@ -352,13 +395,15 @@ func TestSessionDoor_BackgroundExecutionAndShellTypeAreUngated(t *testing.T) {
 // and the key never reaches initialize, where step sessions would inherit it.
 func TestDisableAutoCompaction_ValueGatedOnSessionDoorOnly(t *testing.T) {
 	for _, disabled := range []bool{false, true} {
-		settings, _ := SessionMeta(&Spawn{DisableAutoCompaction: disabled})[settingsKey].(map[string]any)
+		settings, _ := SessionMeta(&SessionSpawn{DisableAutoCompaction: disabled})[settingsKey].(map[string]any)
 		if got, want := settings["disableAutoCompaction"], enabledIf(disabled); !reflect.DeepEqual(got, want) {
 			t.Errorf("SessionMeta(DisableAutoCompaction=%v) disableAutoCompaction = %#v, want %#v", disabled, got, want)
 		}
-		connection, _ := Capabilities(&Spawn{DisableAutoCompaction: disabled})[settingsKey].(map[string]any)
+	}
+	for _, tc := range engineMatrix {
+		connection, _ := Capabilities(&tc.spawn)[settingsKey].(map[string]any)
 		if _, present := connection["disableAutoCompaction"]; present {
-			t.Errorf("Capabilities(DisableAutoCompaction=%v) carries disableAutoCompaction; want it on the session door only", disabled)
+			t.Errorf("%s: Capabilities carries disableAutoCompaction; want it on the session door only", tc.name)
 		}
 	}
 }

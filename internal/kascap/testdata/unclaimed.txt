@@ -11,7 +11,6 @@
 capability c2sViews
 capability findFiles
 capability helpDocs
-capability inactiveItems
 capability specLinks
 capability telemetry
 capability textSearch

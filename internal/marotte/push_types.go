@@ -105,7 +105,7 @@ func PRSubject(forgeID, repoID string, number int) PushSubject {
 // halves of the contract are in different languages and one of them is TypeScript.
 //
 // The literal coincides with internal/agent's own private runChatPrefix
-// (run_host.go, the synthetic chat-id namespace a run bridge registers under) and
+// (run_host.go, the synthetic chat-id namespace a run host session registers under) and
 // neither may be derived from the other: that one is a chat-id namespace private to
 // that package, this one is a push-subject vocabulary shared with the worker.
 const RunSubjectPrefix = "run:"

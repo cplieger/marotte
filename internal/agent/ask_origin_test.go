@@ -210,11 +210,17 @@ func TestAskAnswer_AFailedWriteOnALiveBridgeRefusesTheAnswerAndReoffersTheAsk(t 
 // discharge the chat's wait; the transition that won owns the card and the chat's status.
 func TestAskAnswer_AnAskSettledDuringTheWriteRefusesTheAnswerAsWithdrawn(t *testing.T) {
 	transitions := map[string]func(h *Runtime, origin acpResponder){
-		"turnCancel":  func(h *Runtime, _ acpResponder) { h.bus.ClearPendingPermsForChat("c1") },
+		"turnCancel": func(h *Runtime, _ acpResponder) {
+			h.bus.ClearPendingInputAsks("c1", command.ScopeChatSession)
+		},
 		"bridgeEnded": func(h *Runtime, origin acpResponder) { h.bus.endAsksOf(origin) },
 	}
 	for name, tc := range askFamilies() {
 		for transition, settle := range transitions {
+			if transition == "turnCancel" && tc.event == marotte.EventPermissionNeeded {
+				// A cancel answers a permission ask itself, and skips one a card claimed first.
+				continue
+			}
 			t.Run(name+"_"+transition, func(t *testing.T) {
 				h, _, _ := newTestHub()
 				br := &duringWriteBridge{fakeBridge: newFakeBridge()}
@@ -257,7 +263,7 @@ func TestAskAnswer_ATerminalTransitionDuringTheWriteSettlesTheClaimOnce(t *testi
 		want       []marotte.SettledBy
 	}{
 		"turnCancel": {
-			transition: func(h *Runtime) bool { h.bus.ClearPendingPermsForChat("c1"); return true },
+			transition: func(h *Runtime) bool { h.bus.ClearPendingInputAsks("c1", command.ScopeChatAndRuns); return true },
 		},
 		"runFinished": {
 			transition: func(h *Runtime) bool { h.bus.ClearPendingPermsForRun(workflowID); return true },

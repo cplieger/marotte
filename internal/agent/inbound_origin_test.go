@@ -37,10 +37,10 @@ func TestInboundRequest_AnswersOnTheBridgeItArrivedOn(t *testing.T) {
 		{name: "unexpected_request_refusal", chat: "c1", msg: func(_ *testing.T, id int64) *marotte.RPCResponse {
 			return &marotte.RPCResponse{ID: &id, Method: "_kiro/not/a/method"}
 		}},
-		{name: "run_bridge_fs_read", chat: runChatID("wf_1"), msg: func(t *testing.T, id int64) *marotte.RPCResponse {
+		{name: "host_session_fs_read", chat: runChatID("wf_1"), msg: func(t *testing.T, id int64) *marotte.RPCResponse {
 			return &marotte.RPCResponse{ID: &id, Method: marotte.MethodFSRead, Params: mustJSON(t, map[string]any{"path": "f.txt"})}
 		}},
-		{name: "run_bridge_refusal", chat: runChatID("wf_1"), msg: func(_ *testing.T, id int64) *marotte.RPCResponse {
+		{name: "host_session_refusal", chat: runChatID("wf_1"), msg: func(_ *testing.T, id int64) *marotte.RPCResponse {
 			return &marotte.RPCResponse{ID: &id, Method: "_kiro/not/a/method"}
 		}},
 	}
@@ -76,9 +76,9 @@ func TestTerminalWaitForExit_AnswersOnTheBridgeItArrivedOn(t *testing.T) {
 	termID, term := spawnSleeper(t, h, "c1", first, 1)
 	h.translateACPEvent("c1", first, termIDMsg(t, 7, methodTermWaitForExit, termID))
 
-	// The tab reopened: a new bridge holds the chat while the process still runs.
+	// The tab reopened: a new session holds the chat while the process still runs.
 	successor := newRecordingTermBridge()
-	h.bridge.mgr.get("c1").swapBridge(successor)
+	h.bridge.mgr.get("c1").attach(successor)
 	_ = syscall.Kill(term.cmd.Process.Pid, syscall.SIGKILL)
 	waitClosed(t, term.done, "terminal")
 

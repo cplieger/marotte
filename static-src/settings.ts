@@ -29,7 +29,7 @@ import { el } from "@cplieger/reactive";
 import { initNotificationToggles } from "./settings-notifications.js";
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
-import { logout, setKiroSetting } from "./actions/settings.js";
+import { logout, setEngineHeap, setKiroSetting } from "./actions/settings.js";
 import { runDiagnostics } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { initSteeringEditor, loadSteeringDoc } from "./settings-steering.js";
@@ -206,6 +206,7 @@ export function applyGeneralPanel(s: EffectiveSettings): void {
   applyChatRetention(s);
   applyAgentCapabilities(s);
   applyPanelSwitches(s);
+  applyEngineHeap(s);
 }
 
 /** Register the General panel's `change` listeners. Once per page, from `initUI`: every one of
@@ -214,6 +215,7 @@ export function initGeneralPanelControls(): void {
   initChatRetentionControls();
   initAgentCapabilityControls();
   initPanelSwitchControls();
+  initEngineHeapControl();
   document.getElementById("settings-open-config")?.addEventListener("click", () => {
     void openConfigFile("config.json");
   });
@@ -543,12 +545,36 @@ const AUTH_LINE: Readonly<Record<IdentityVerdict["state"], string>> = {
 /** The verdict this module last rendered, held so the logout action can restore it on a refusal. */
 let lastVerdict: IdentityVerdict = { state: "unavailable", reason: "not resolved yet" };
 
-/** Paint the sidebar identity row and the status card's auth line. Takes the VERDICT rather than
- *  an email because three answers reach it and only one carries an address. */
+const TEXT_SIGN_OUT = "Log out";
+const TEXT_SIGN_OUT_API_KEY =
+  "marotte signs in with the KIRO_API_KEY environment variable. Remove it from marotte's environment to sign out.";
+
+/** Paint the sidebar identity row, the status card's auth and sign-in lines, and Sign out. Takes the VERDICT rather
+ *  than an email because three answers reach it and only one carries an address. */
 export function renderIdentity(v: IdentityVerdict): void {
   lastVerdict = v;
-  $.userEmail.textContent = v.state === "signed_in" ? v.email : "";
+  const account = v.state === "signed_in" ? v : null;
+  $.userEmail.textContent = account?.email ?? "";
   setAuthLine(AUTH_LINE[v.state]);
+  setSignInRows(account === null ? [] : [account.method, account.startUrl, account.region]);
+  // The server refuses a sign-out while the key signs the engine in.
+  const keyed = account?.apiKey === true;
+  $.logoutBtn.disabled = keyed;
+  $.logoutBtn.setAttribute("data-tooltip", keyed ? TEXT_SIGN_OUT_API_KEY : TEXT_SIGN_OUT);
+}
+
+/** ONE writer of the sign-in rows and their separator: method, start URL and region, each hidden when empty. */
+function setSignInRows([method = "", url = "", region = ""]: readonly string[]): void {
+  const rows: readonly [HTMLElement, string][] = [
+    [$.stSignInMethod, method],
+    [$.stSignInURL, url],
+    [$.stSignInRegion, region],
+  ];
+  for (const [row, text] of rows) {
+    row.textContent = text;
+    row.hidden = text === "";
+  }
+  $.stSignInSep.hidden = rows.every(([, text]) => text === "");
 }
 
 /** What `renderIdentity` last rendered. Exported for the logout action's rollback, which
@@ -661,8 +687,8 @@ export function initExperimentalToggles(): void {
 }
 
 // Toggles that look like the kiro-cli flags above and are a different mechanism: they write MAROTTE
-// settings through /api/settings, and internal/agent resolves each at spawn time into the lever KAS
-// reads.
+// settings through /api/settings, and internal/agent resolves each at the engine spawn or at each session
+// door into the lever KAS reads.
 const agentCapabilities: readonly {
   key:
     | "knowledge_enabled"
@@ -855,8 +881,8 @@ function initAgentCapabilityControls(): void {
   initAutoCompactionControls();
 }
 
-// A switch and, while it is on, a slider. Both write /api/settings; the server resolves them per
-// spawn into the session door, so a change reaches an open chat when it next opens.
+// A switch and, while it is on, a slider. Both write /api/settings; the server resolves them at
+// each session door, so a change reaches an open chat when it next opens.
 // `compactionPolicy` is updated at once, so the ring follows the setting without a reload.
 
 function autoCompactionEls(): {
@@ -951,4 +977,67 @@ function initPanelSwitchControls(): void {
       void patchSettings({ [sw.key]: input.checked }, input);
     });
   }
+}
+
+/** The heap limit for a typed value: 0 (kiro-cli's default) for an empty box, the whole number of MiB otherwise,
+ *  or null for text that is no whole number. The server owns the bounds. */
+export function engineHeapMiB(raw: string): number | null {
+  const t = raw.trim();
+  if (t === "") {
+    return 0;
+  }
+  return /^\d+$/.test(t) ? Number(t) : null;
+}
+
+/** The value the server last reported, which a refused entry goes back to. */
+let serverEngineHeap = 0;
+/** The newest edit still saving, which owns the box and the indicator: only its answer paints. */
+let heapEdit: { readonly gen: number; readonly mib: number } | null = null;
+let heapEdits = 0;
+
+function engineHeapInput(): HTMLInputElement | null {
+  return document.getElementById("engine-heap-mib") as HTMLInputElement | null;
+}
+
+function paintEngineHeap(input: HTMLInputElement, mib: number): void {
+  input.value = mib > 0 ? String(mib) : "";
+}
+
+function applyEngineHeap(s: EffectiveSettings): void {
+  serverEngineHeap = s.engine_heap_mib;
+  const input = engineHeapInput();
+  // Not while the reader is in the box, for retention's reason, nor over an edit still saving.
+  if (input !== null && document.activeElement !== input && heapEdit === null) {
+    paintEngineHeap(input, s.engine_heap_mib);
+  }
+}
+
+function initEngineHeapControl(): void {
+  const input = engineHeapInput();
+  input?.addEventListener("change", () => {
+    const mib = engineHeapMiB(input.value);
+    if (mib === null) {
+      showError("engine_heap_mib");
+      paintEngineHeap(input, heapEdit?.mib ?? serverEngineHeap);
+      return;
+    }
+    const edit = { gen: ++heapEdits, mib };
+    heapEdit = edit;
+    showSaving("engine_heap_mib");
+    void setEngineHeap.dispatch({ mib }).then((r) => {
+      if (r !== null) {
+        serverEngineHeap = mib;
+      }
+      if (heapEdit?.gen !== edit.gen) {
+        return;
+      }
+      heapEdit = null;
+      if (r === null) {
+        showError("engine_heap_mib");
+        paintEngineHeap(input, serverEngineHeap);
+        return;
+      }
+      showSaved("engine_heap_mib");
+    });
+  });
 }

@@ -17,7 +17,6 @@ import (
 // Runs owns the workflow-run surface: launch, cancel, retry, the durable lease, the deadline and turn-cap
 // arms, and the schedule store. It holds collaborators, not a *Runtime; `mu` guards bounds.
 type Runs struct {
-	locks     func() map[string]marotte.GovernanceLock
 	chats     runChatReader
 	translate runTranslator
 	perms     runPermClaimer
@@ -31,8 +30,14 @@ type Runs struct {
 	// notices queues per launching chat the finished runs whose notice KAS put in its steering buffer (run_notices.go).
 	notices map[marotte.ChatID][]runNotice
 	// plans holds each run's newest plan revision (run_plan.go), under mu.
-	plans   runPlans
-	utility func() *utilitySession
+	plans runPlans
+	// engine is the one agent engine every read and stop is an engine call on; router routes the run's frames.
+	engine *engineOwner
+	router *engineRouter
+	// mutations are the driving and stopping writes whose effect is not observed yet (run_mutations.go).
+	mutations *runMutations
+	// answerEarly answers a request a new host session's door sent before its run's lane was known.
+	answerEarly func(s engineSession, msg *marotte.RPCResponse)
 	// servedModels is GET /api/config-template's model list (Runtime.servedModels), for checkRunDefaults.
 	servedModels func(context.Context) ([]marotte.SessionModel, bool)
 	// runEnded asks the retention purge for a pass when a run ends.
@@ -43,17 +48,15 @@ type Runs struct {
 	steers  *stepSteers
 	// asks is the ask core's per-run cells (run_asks.go).
 	asks runAsks
-	// stepReplays holds the step-transcript reads in flight (step_replay.go), here so the utility session stays workflow-agnostic.
+	// stepReplays holds the step-transcript reads in flight (step_replay.go).
 	stepReplays stepReplays
-	// carriers counts which run carriers a verb holds now (run_host.go).
-	carriers carrierUse
-	// unconfirmed answers a retried step message whose carrier died before replying (run_message.go).
+	// unconfirmed answers a retried step message whose engine died before replying (run_message.go).
 	unconfirmed unconfirmedSends
 	// life admits every step-session mutation against a Delete (run_lifecycle.go).
 	life runLifecycle
 	// loopWake wakes a launching chat at its run's iteration-limit pause (run_loop_wake.go).
 	loopWake loopLimitWake
-	// hosts serializes, per run, finding or starting a verb's carrier with entering it (acquireHost).
+	// hosts serializes, per run, making its launching session resident (ensureResident).
 	hosts  runLocks
 	bounds runBoundsState
 	// cancelRetryBase is the refused-cancel ladder's first wait (retryTermination), a field because untracked
@@ -69,15 +72,9 @@ type runChatReader interface {
 	ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool)
 }
 
-// useLog installs the run record and hands it the host-loss park, so a dead host's agent-launched runs
-// stop their clocks and their asks are re-read, and has the bridge manager mark a removed host's runs
-// lost as it removes it.
+// useLog installs the run record.
 func (rs *Runs) useLog(l *runLog) {
-	l.hostEnded = rs.hostEnded
 	rs.log = l
-	if rs.bridges != nil {
-		rs.bridges.hostEnding = l.markHostLost
-	}
 }
 
 // No schedule or no store is a no-op.

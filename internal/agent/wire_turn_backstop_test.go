@@ -32,7 +32,17 @@ func kasSteerHub(t *testing.T, d time.Duration) (*Runtime, *testChatStore, *fake
 	t.Helper()
 	s, cs, br := steerOpsHub(t)
 	s.h.coord.idleEndGrace = d
-	go s.h.coord.Forward("c1", br)
+	forwarded := make(chan struct{})
+	go func() {
+		defer close(forwarded)
+		s.h.coord.Forward("c1", br)
+	}()
+	// The runtime's shutdown stops the engine, not this session, so the session ends first or the forward
+	// outlives the shutdown's wait. Registered after steerOpsHub's shutdown, so it runs before it.
+	t.Cleanup(func() {
+		br.end()
+		<-forwarded
+	})
 	br.onCall = func(method string, p map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		switch method {
 		case marotte.MethodSessionSteer:

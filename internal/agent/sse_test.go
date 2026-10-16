@@ -27,10 +27,11 @@ import (
 
 func TestEmit_AppendsToReplayBuffer(t *testing.T) {
 	h, _, _ := newTestHub()
+	base := h.bus.fanout.Position().Head
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 
-	evts := h.bus.fanout.Snapshot()
+	evts := ringSince(h, base)
 	if len(evts) != 2 {
 		t.Fatalf("replay len = %d, want 2", len(evts))
 	}
@@ -59,11 +60,12 @@ func TestEmit_CapsBufferAtReplayBufSize(t *testing.T) {
 func TestEmit_TopicCarriesChatID(t *testing.T) {
 	// emit maps ChatID onto the topic (empty is global); the stream is unfiltered, so the topic is diagnostic.
 	h, _, _ := newTestHub()
+	base := h.bus.fanout.Position().Head
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 	h.bus.emit(marotte.ServerEvent{Type: "connected"}) // global: empty topic
 
-	got := h.bus.fanout.Snapshot()
+	got := ringSince(h, base)
 	if len(got) != 3 {
 		t.Fatalf("buffered = %d events, want 3", len(got))
 	}
@@ -83,6 +85,7 @@ func TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	h, _, _ := newTestHub()
+	base := len(h.bus.fanout.Snapshot())
 
 	stamped := marotte.NewEvent(marotte.EventEntryAppended, "c1", marotte.EntryAppendedPayload{
 		Entry: textEntry(t, "t1", 1, strings.Repeat("o", sse.MaxFrameBytes+1)),
@@ -95,7 +98,7 @@ func TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged(t *testing.T) {
 	})
 	h.bus.emit(small)
 
-	ring := h.bus.fanout.Snapshot()
+	ring := h.bus.fanout.Snapshot()[base:]
 	if len(ring) != 2 {
 		t.Fatalf("ring holds %d frames, want 2 (the substitute and the intact entry_appended)", len(ring))
 	}
@@ -134,12 +137,13 @@ func TestEmit_AnUnstampedFrameOverTheCapIsDroppedWithAnError(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	h, _, _ := newTestHub()
+	base := len(h.bus.fanout.Snapshot())
 
 	h.bus.emit(marotte.NewEvent(marotte.EventError, "c1", marotte.ErrorPayload{
 		Code: "huge", Message: strings.Repeat("x", sse.MaxFrameBytes+1),
 	}))
 
-	if n := len(h.bus.fanout.Snapshot()); n != 0 {
+	if n := len(h.bus.fanout.Snapshot()) - base; n != 0 {
 		t.Errorf("ring holds %d frames, want 0: an unstamped over-cap frame has no substitute", n)
 	}
 	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "type=error") {
@@ -219,12 +223,24 @@ func TestHandleSSE_KeepaliveIsANamedIDLessFrameOutsideTheRing(t *testing.T) {
 	}
 }
 
+// ringSince is the replay ring after offset base, the head a test read before it emitted.
+func ringSince(h *Runtime, base uint64) []sse.ReplayEvent {
+	var out []sse.ReplayEvent
+	for _, e := range h.bus.fanout.Snapshot() {
+		if e.Offset > base {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 func cursorAt(h *Runtime, offset uint64) string {
 	return sse.Cursor{Epoch: h.bus.fanout.Position().Epoch, Offset: offset}.String()
 }
 
 func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 	h, _, _ := newTestHub()
+	base := h.bus.fanout.Position().Head
 
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
@@ -233,7 +249,7 @@ func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 	ctx := hookOnlyContext(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
 	req.Header.Set(wireHeader, "1")
-	req.Header.Set("Last-Event-ID", cursorAt(h, 1)) // skip event 1 only
+	req.Header.Set("Last-Event-ID", cursorAt(h, base+1)) // skip c1 only
 	rec := httptest.NewRecorder()
 
 	h.handleSSE(rec, req)
@@ -431,6 +447,8 @@ func TestHandleSSE_ThePendingSnapshotNamesEveryLeasedRunAndNoEndedOne(t *testing
 	if !strings.Contains(v3, `"type":"run_asks"`) || !strings.Contains(v3, "which branch?") {
 		t.Fatalf("the v3 pending_snapshot does not carry the run's asks: %q", v3)
 	}
+	// The connect re-read the run on the engine; its republish is a live frame, not the legacy connect's replay.
+	joinInflight(t, h)
 	if legacy := coldConnectAs(t, h, true).Body.String(); strings.Contains(legacy, `"type":"run_asks"`) {
 		t.Errorf("a legacy connect carried run_asks, which a v2 bundle cannot decode: %q", legacy)
 	}
@@ -455,8 +473,8 @@ func TestHandleSSE_OnlyAReconnectAppliesNotificationTogglesEditedWhileTheStreamW
 			cs := newTestChatStore()
 			configDir := t.TempDir()
 			rec := newLiveRecorder(t)
-			h := New(context.Background(), t.TempDir(),
-				func() ACPBridge { return newFakeBridge() }, cs, WithConfigDir(configDir), WithPush(rec))
+			h := newRuntimeOn(context.Background(), t.TempDir(),
+				fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithConfigDir(configDir), WithPush(rec))
 			cs.wire(h)
 			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})

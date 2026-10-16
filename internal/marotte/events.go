@@ -117,7 +117,7 @@ const (
 	EventMCPFailed         EventType = "mcp_failed"
 	EventMCPOAuthNeeded    EventType = "mcp_oauth_needed"
 	// EventMCPPoolChanged is an empty refetch signal for GET /api/mcp/pool: a
-	// bridge's pool was replaced or dropped.
+	// session's pool was replaced or dropped.
 	EventMCPPoolChanged  EventType = "mcp_pool_changed"
 	EventMCPPrewarm      EventType = "mcp_prewarm"
 	EventModeChanged     EventType = "mode_changed"
@@ -161,6 +161,11 @@ const (
 	// EventPowersChanged is an empty refetch signal for GET /api/powers.
 	EventPowersChanged   EventType = "powers_changed"
 	EventSettingsUpdated EventType = "settings_updated"
+	// EventEngineStatus carries EngineStatus on every engine state change, and on every pending or busy change while a
+	// restart is pending.
+	EventEngineStatus EventType = "engine_status"
+	// EventConfigStandingChanged is an empty refetch signal for GET /api/config/standing.
+	EventConfigStandingChanged EventType = "config_standing_changed"
 	// EventStatusSnapshot is every retained waiting_on_user row as ONE frame on a
 	// v3 connect, stamped with the `status` version; the per-row chat_status
 	// replay is the legacy-connect form. Possibly empty, for pending_snapshot's

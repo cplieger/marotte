@@ -1,6 +1,6 @@
 package agent
 
-// list and explain inject the utility sessionId, unlike the workspace-global knowledge calls.
+// list and explain ride an observer pass and name its session, unlike the workspace-global knowledge calls.
 
 import (
 	"encoding/json"
@@ -17,7 +17,9 @@ func seedPolicy(br *fakeBridge, list, explain string) {
 }
 
 func TestPolicyList(t *testing.T) {
-	h, _, br := newTestHub()
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br := oneObserver(t, h)
 	// Shape captured from a live v3 permissions/list reply.
 	seedPolicy(br, `{"rules":[`+
 		`{"capability":"fs_write","effect":"allow","match":["/x/**"],"scope":"user","source":"/u/permissions.yaml"},`+
@@ -42,7 +44,9 @@ func TestPolicyList(t *testing.T) {
 }
 
 func TestPolicyListOmitsEmptyScope(t *testing.T) {
-	h, _, br := newTestHub()
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br := oneObserver(t, h)
 	seedPolicy(br, `{"rules":[]}`, `{}`)
 	if _, err := h.config.PolicyList(t.Context(), ""); err != nil {
 		t.Fatalf("PolicyList: %v", err)
@@ -53,7 +57,9 @@ func TestPolicyListOmitsEmptyScope(t *testing.T) {
 }
 
 func TestPolicyExplainMapsCamelCase(t *testing.T) {
-	h, _, br := newTestHub()
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br := oneObserver(t, h)
 	seedPolicy(br, `{"rules":[]}`, `{"capability":"fs_write","resource":"/x/y","effect":"ask",`+
 		`"isExplicitAsk":true,"matchedRule":{"capability":"fs_write","match":["/x/**"],"effect":"ask"},`+
 		`"scope":"workspace","source":"/w/permissions.yaml"}`)
@@ -76,7 +82,9 @@ func TestPolicyExplainMapsCamelCase(t *testing.T) {
 }
 
 func TestPolicyExplainRequiresTarget(t *testing.T) {
-	h, _, br := newTestHub()
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br := oneObserver(t, h)
 	seedPolicy(br, `{}`, `{}`)
 	if _, err := h.config.PolicyExplain(t.Context(), marotte.PolicyExplainRequest{}); err == nil {
 		t.Error("PolicyExplain with no capability/toolId should error")

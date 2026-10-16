@@ -48,7 +48,15 @@ func (sr *stepReplays) open(sessionID string, proj *translate.EntryProjection) b
 	return true
 }
 
-// False (no reader) is ordinary, checked before a foreign-frame warning.
+// isOpen reports a step session whose transcript load is open, so the router hands its replay frames to the engine
+// lane's reader.
+func (sr *stepReplays) isOpen(sessionID marotte.SessionID) bool {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	return sr.replays[string(sessionID)] != nil
+}
+
+// False (no reader) is ordinary.
 func (sr *stepReplays) ingest(sessionID string, kind marotte.ACPUpdateKind, raw json.RawMessage) bool {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()

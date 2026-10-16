@@ -586,7 +586,8 @@ export const removeSteer = defineAction<
   },
 });
 
-// A live bridge switches in place (session/set_mode); an empty chat applies it at the first prompt.
+// A chat with a resident session switches in place (session/set_mode); an empty chat applies it at
+// the first prompt.
 
 export const setMode = transportAction<{ chatID: string; modeID: string }, { prev: string }>({
   name: "chat.set_mode",
@@ -631,7 +632,8 @@ export const loadSessions = apiAction<
   error: "Could not load previous sessions",
 });
 
-// The server resumes the parent's bridge and calls `session/fork`; nothing is copied client-side.
+// The server makes the parent's session resident and calls `session/fork`; nothing is copied
+// client-side.
 // `outcome` is informational; `opID` stops a retry forking twice.
 
 export const forkChat = defineAction<

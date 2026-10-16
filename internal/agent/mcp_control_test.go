@@ -3,31 +3,15 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
-
-func insertLiveBridge(t *testing.T, h *Runtime, chatID marotte.ChatID) *fakeBridge {
-	t.Helper()
-	sb, _ := h.bridge.mgr.orInsert(chatID)
-	fb, ok := sb.bridge.(*fakeBridge)
-	if !ok {
-		t.Fatalf("bridge is %T, want *fakeBridge", sb.bridge)
-	}
-	return fb
-}
-
-func bridgeCalled(b *fakeBridge, method string) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return slices.Contains(b.calls, method)
-}
 
 func enabledConfig(names ...string) *fakeMCPConfig {
 	return &fakeMCPConfig{enabled: nameSet(names...), configured: nameSet(names...)}
@@ -41,31 +25,8 @@ func nameSet(names ...string) map[string]struct{} {
 	return set
 }
 
-func TestReconnectMCPServer_FansOutToAllLiveBridges(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("everything"))
-	b1 := insertLiveBridge(t, h, "c1")
-	b2 := insertLiveBridge(t, h, "c2")
-
-	n := h.mcpRegistry.reconnectServer(t.Context(), "everything")
-	if n != 2 {
-		t.Fatalf("targeted = %d, want 2", n)
-	}
-	for i, b := range []*fakeBridge{b1, b2} {
-		if !bridgeCalled(b, methodV3MCPResetServer) {
-			t.Errorf("bridge %d did not receive %s", i, methodV3MCPResetServer)
-		}
-	}
-}
-
-func TestReconnectMCPServer_NoBridgesIsNoOp(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("everything"))
-	if n := h.mcpRegistry.reconnectServer(t.Context(), "everything"); n != 0 {
-		t.Fatalf("targeted = %d, want 0", n)
-	}
-}
-
 func TestHandleMCPReconnect_MethodNotAllowed(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("everything"))
+	h := newHubWithMCPConfig(t, enabledConfig("everything"))
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp/reconnect", nil)
 	rec := httptest.NewRecorder()
 	h.mcpRegistry.handleReconnect(rec, req)
@@ -75,7 +36,7 @@ func TestHandleMCPReconnect_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleMCPReconnect_UnknownServer(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("everything"))
+	h := newHubWithMCPConfig(t, enabledConfig("everything"))
 	rec := postJSON(h.mcpRegistry.handleReconnect, "/api/mcp/reconnect", `{"server":"nope"}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("code = %d, want 404", rec.Code)
@@ -83,20 +44,98 @@ func TestHandleMCPReconnect_UnknownServer(t *testing.T) {
 }
 
 func TestHandleMCPReconnect_OK(t *testing.T) {
-	h := newHubWithMCPConfig(enabledConfig("everything"))
-	insertLiveBridge(t, h, "c1")
+	h := newHubWithMCPConfig(t, enabledConfig("everything"))
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
+	}
 	rec := postJSON(h.mcpRegistry.handleReconnect, "/api/mcp/reconnect", `{"server":"everything"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("code = %d, want 204 (%s)", rec.Code, rec.Body.String())
 	}
+	if n := countCalls(fakeSourceOf(t, h).lane, methodV3MCPResetServer); n != 1 {
+		t.Errorf("resets sent = %d, want 1 on the engine", n)
+	}
+}
+
+// A reset the engine refuses is a failed reconnect, never a success.
+func TestHandleMCPReconnect_ARefusedResetIsABadGateway(t *testing.T) {
+	h := newHubWithMCPConfig(t, enabledConfig("everything"))
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
+	}
+	fakeSourceOf(t, h).lane.setCallRPCErr(methodV3MCPResetServer, &marotte.RPCError{Code: -32603, Message: "no such server"})
+	rec := postJSON(h.mcpRegistry.handleReconnect, "/api/mcp/reconnect", `{"server":"everything"}`)
 	var body struct {
-		Reconnected int `json:"reconnected"`
+		Error string `json:"error"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatal(err)
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil || rec.Code != http.StatusBadGateway || body.Error == "" {
+		t.Errorf("a refused reset = %d %+v (%v), want 502 with an error", rec.Code, body, err)
 	}
-	if body.Reconnected != 1 {
-		t.Errorf("reconnected = %d, want 1", body.Reconnected)
+}
+
+// With no engine running nothing can take the reset: the reconnect answers 503 and sends nothing.
+func TestHandleMCPReconnect_WithNoEngineIsUnavailable(t *testing.T) {
+	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
+	src.startGate = make(chan struct{})
+	cs := newTestChatStore()
+	h := newRuntimeOn(context.Background(), "/tmp/work", src, cs, WithMCPConfig(enabledConfig("everything")))
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+
+	rec := postJSON(h.mcpRegistry.handleReconnect, "/api/mcp/reconnect", `{"server":"everything"}`)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("code = %d, want 503 (%s)", rec.Code, rec.Body.String())
+	}
+	if n := countCalls(src.lane, methodV3MCPResetServer); n != 0 {
+		t.Errorf("resets sent = %d, want none", n)
+	}
+}
+
+// A reset in flight is a door: a restart requested meanwhile stops the engine only after the reset answered.
+func TestHandleMCPReconnect_ARestartWaitsForAResetInFlight(t *testing.T) {
+	h := newHubWithMCPConfig(t, enabledConfig("everything"))
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
+	}
+	src := fakeSourceOf(t, h)
+	inReset := make(chan struct{})
+	answer := make(chan struct{})
+	stopped := make(chan struct{})
+	var stopOnce sync.Once
+	src.mu.Lock()
+	src.callGate = func(_ context.Context, method string, resp *marotte.RPCResponse, err error) (*marotte.RPCResponse, error) {
+		if method == methodV3MCPResetServer {
+			close(inReset)
+			<-answer
+		}
+		return resp, err
+	}
+	src.stopHook = func() { stopOnce.Do(func() { close(stopped) }) }
+	src.mu.Unlock()
+	codes := make(chan int, 1)
+	go func() {
+		codes <- postJSON(h.mcpRegistry.handleReconnect, "/api/mcp/reconnect", `{"server":"everything"}`).Code
+	}()
+	<-inReset
+
+	if !h.engine.requestRestart(restartCause{Kind: restartConfirmed}) {
+		t.Fatal("the confirmed restart was refused")
+	}
+	select {
+	case <-stopped:
+		t.Fatal("the restart stopped the engine under a reset still in flight")
+	case <-time.After(quietWindow):
+	}
+	close(answer)
+
+	if code := <-codes; code != http.StatusNoContent {
+		t.Errorf("the reset in flight = %d, want 204", code)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Error("the restart never stopped the engine after the reset answered")
 	}
 }
 
@@ -111,13 +150,13 @@ func TestHandleMCPReconnect_ReachesAServerKASReportsLive(t *testing.T) {
 			record: func(ctx context.Context, h *Runtime) {
 				h.mcpRegistry.RecordConnected(ctx, "theirs", marotte.MCPSource{Origin: "workspace", Root: "/w"}, nil, nil, nil, nil)
 			},
-			want: http.StatusOK,
+			want: http.StatusNoContent,
 		},
 		"a power's server reported failed": {
 			record: func(ctx context.Context, h *Runtime) {
 				h.mcpRegistry.RecordInitFailure(ctx, "theirs", marotte.MCPSource{Origin: "power", Power: "p"}, "boom")
 			},
-			want: http.StatusOK,
+			want: http.StatusNoContent,
 		},
 		"a workspace server reported disabled": {
 			record: func(ctx context.Context, h *Runtime) {
@@ -128,8 +167,10 @@ func TestHandleMCPReconnect_ReachesAServerKASReportsLive(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			h := newHubWithMCPConfig(enabledConfig("mine"))
-			insertLiveBridge(t, h, "c1")
+			h := newHubWithMCPConfig(t, enabledConfig("mine"))
+			if !awaitEngine(h) {
+				t.Fatal("the engine never became ready")
+			}
 			tc.record(t.Context(), h)
 			rec := postJSON(h.mcpRegistry.handleReconnect, "/api/mcp/reconnect", `{"server":"theirs"}`)
 			if rec.Code != tc.want {
@@ -141,7 +182,7 @@ func TestHandleMCPReconnect_ReachesAServerKASReportsLive(t *testing.T) {
 
 // TestMCPRegistry_RecordConnectedStoresDiscovery pins connect-time prompts, resources and templates in /api/mcp/status.
 func TestMCPRegistry_RecordConnectedStoresDiscovery(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	prompts := []marotte.MCPPromptInfo{{Name: "Simple Prompt", PromptName: "simple-prompt", Description: "no args"}}
 	resources := []marotte.MCPResourceInfo{{Name: "doc", URI: "demo://doc", MimeType: "text/markdown"}}
 	templates := []marotte.MCPResourceTemplateInfo{{Name: "issue", URITemplate: "gh://issues/{number}"}}
@@ -168,42 +209,4 @@ func postJSON(handler http.HandlerFunc, path, body string) *httptest.ResponseRec
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 	return rec
-}
-
-// TestReconnectMCPServer_ReportsABridgeThatRefusedTheReset pins that the count is bridges targeted, so the
-// log line is the only record of a refusal, and must not fire on success.
-func TestReconnectMCPServer_ReportsABridgeThatRefusedTheReset(t *testing.T) {
-	const wantLine = "mcp reconnect: bridge call failed"
-
-	t.Run("a bridge that refused is reported", func(t *testing.T) {
-		logs := captureLogs(t)
-		h := newHubWithMCPConfig(enabledConfig("everything"))
-		b := insertLiveBridge(t, h, "c1")
-		b.callErrs = map[string]error{methodV3MCPResetServer: errors.New("bridge wedged")}
-
-		if n := h.mcpRegistry.reconnectServer(t.Context(), "everything"); n != 1 {
-			t.Fatalf("targeted = %d, want 1", n)
-		}
-		out := logs.String()
-		if !strings.Contains(out, `"msg":"`+wantLine+`"`) {
-			t.Errorf("a bridge that refused the reset said nothing, while the reply counts it as "+
-				"reconnected; want a line reading %q. Got: %s", wantLine, out)
-		}
-		if !strings.Contains(out, `"server":"everything"`) {
-			t.Errorf("the failure line does not name the server it is about: %s", out)
-		}
-	})
-
-	t.Run("an ordinary reconnect is quiet about it", func(t *testing.T) {
-		logs := captureLogs(t)
-		h := newHubWithMCPConfig(enabledConfig("everything"))
-		insertLiveBridge(t, h, "c1")
-
-		if n := h.mcpRegistry.reconnectServer(t.Context(), "everything"); n != 1 {
-			t.Fatalf("targeted = %d, want 1", n)
-		}
-		if out := logs.String(); strings.Contains(out, `"msg":"`+wantLine+`"`) {
-			t.Errorf("a reconnect every bridge accepted was reported as failed: %s", out)
-		}
-	})
 }

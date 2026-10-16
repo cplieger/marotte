@@ -405,7 +405,7 @@ func (at *agentTerminals) release(chatID marotte.ChatID, terminalID string) (*ag
 
 // releaseForBridge releases every terminal origin created, as KAS's session dispose would if
 // the closed connection could still carry it: retired, unregistered, its group killed. Like
-// terminal/release, a finished command's backgrounded child is left running. A run bridge's
+// terminal/release, a finished command's backgrounded child is left running. A run host session's
 // retired records go with it, since a run chat has no turn whose close would evict them.
 func (at *agentTerminals) releaseForBridge(chatID marotte.ChatID, origin acpResponder) {
 	if origin == nil {
@@ -477,14 +477,14 @@ func (rt *Runtime) handleTerminalRequest(ctx context.Context, chatID marotte.Cha
 		if msg.ID == nil {
 			return
 		}
-		slog.Warn("chat bridge: refusing an unimplemented terminal verb",
+		slog.Warn("chat session: refusing an unimplemented terminal verb",
 			"method", method, "chat_id", chatID, "id", *msg.ID)
 		if err := respondOn(ctx, rt.bridge.mgr, chatID, origin, msg, nil,
 			&marotte.RPCError{
 				Code:    marotte.RPCCodeMethodNotFound,
 				Message: "unimplemented terminal method: " + method,
 			}); err != nil {
-			slog.Error("chat bridge: terminal refusal could not be delivered; the turn may be wedged",
+			slog.Error("chat session: terminal refusal could not be delivered; the turn may be wedged",
 				"method", method, "chat_id", chatID, "error", err)
 		}
 	}

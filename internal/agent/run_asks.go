@@ -2,7 +2,7 @@ package agent
 
 // The ask core: which steps of a run wait on a person. Never a registry: each snapshot, published
 // whole as `run_asks`, holds workflow.OpenAsks of the newest `_kiro/workflow/inspect` reply decoded
-// from the process hosting the run, with what marotte itself saw and did on the run; it holds none
+// from the session hosting the run, with what marotte itself saw and did on the run; it holds none
 // before the first read, once KAS no longer knows the run, or after the lease ends. One cell per
 // leased run, living exactly as long as the lease; it also serializes marotte's own verbs on the
 // run, so a stop never overtakes an answer marotte already wrote.
@@ -104,10 +104,8 @@ type askCell struct {
 	requery  *time.Timer
 	quiet    *time.Timer
 	// serial is the per-run serializer, a cancellable mutex; query admits one inspect at a time.
-	serial chan struct{}
-	query  chan struct{}
-	// held is a carrier a trigger holds for the next background read (kickCellOn).
-	held       *sharedBridge
+	serial     chan struct{}
+	query      chan struct{}
 	workflowID string
 	chatID     marotte.ChatID
 	lastMotion time.Time
@@ -123,8 +121,6 @@ type askCell struct {
 	// transient is the cell of a run with no lease: it serializes step messages and publishes nothing.
 	transient   bool
 	decodeWarns bool
-	// hostLost is the newest read's, so a republish with no read keeps it.
-	hostLost bool
 }
 
 func newAskCell(workflowID string, chatID marotte.ChatID) *askCell {
@@ -328,11 +324,11 @@ func (c *askCell) basisLocked() askBasis {
 
 // runLogLocked is OpenAsks's second input: b, plus marotte's own requests as they stand now. The
 // caller holds c.mu.
-func (c *askCell) runLogLocked(b askBasis, epoch string, hostLost bool) workflow.RunLog {
+func (c *askCell) runLogLocked(b askBasis, epoch string) workflow.RunLog {
 	return workflow.RunLog{
 		Steps: b.steps, Epoch: epoch,
 		Stopping: c.stopping, Pending: c.pending != nil,
-		HostLost: hostLost, Quiet: time.Since(b.motion) >= settleQuiet,
+		Quiet: time.Since(b.motion) >= settleQuiet,
 	}
 }
 
@@ -434,85 +430,41 @@ func (rs *Runs) republishLocked(ctx context.Context, c *askCell) askNotice {
 	if !c.reply.OK {
 		return askNotice{}
 	}
-	asks := workflow.OpenAsks(c.reply, c.runLogLocked(c.basis, rs.asks.epochNow(), c.hostLost))
+	asks := workflow.OpenAsks(c.reply, c.runLogLocked(c.basis, rs.asks.epochNow()))
 	return rs.publishLocked(ctx, c, wireAsks(asks), c.last.Reachable)
 }
 
-// errNoAskHost means no live process holds the run, so nothing was read and the last snapshot stands.
-var errNoAskHost = errors.New("no live process holds this run")
-
-// askHost is the process holding the run, with no spawn and no run-list read: its own carrier,
-// else its launching chat's bridge while that is on the run's recorded parent session.
-func (rs *Runs) askHost(workflowID string) *sharedBridge {
-	if sb := rs.runOwnBridge(workflowID); sb != nil {
-		return sb
-	}
-	l, held := rs.lease(workflowID)
-	if !held || l.ChatID == "" || l.ParentSessionID == "" {
-		return nil
-	}
-	sb := rs.bridges.get(marotte.ChatID(l.ChatID))
-	if sb == nil || !sb.startedPastSpawn() || string(sb.SessionID()) != l.ParentSessionID {
-		return nil
-	}
-	return sb
-}
-
-// askRead is one refresh's result: the reply and the asks of it. gone is KAS's answer that it has
-// no such run, the one failed read that settles the run's state.
+// askRead is one refresh's result: the reply and the asks of it.
 type askRead struct {
 	raw  json.RawMessage
 	in   workflow.Inspect
 	asks []workflow.Ask
-	gone bool
 }
 
-// readAsks is an explicit refresh through host, waiting for any query in flight: a verb's pre-send
-// check or a run read. A failed or undecodable read keeps the last asks and reads unreachable.
-func (rs *Runs) readAsks(ctx context.Context, c *askCell, host *sharedBridge) (askRead, error) {
+// readAsks is an explicit refresh, waiting for any query in flight: a verb's pre-send check or a run read. A failed
+// or undecodable read keeps the last asks and reads unreachable.
+func (rs *Runs) readAsks(ctx context.Context, c *askCell) (askRead, error) {
 	select {
 	case c.query <- struct{}{}:
 	case <-ctx.Done():
 		return askRead{}, ctx.Err()
 	}
-	// This read serves any trigger owed one, so it takes over that trigger's carrier hold too.
-	held := c.takeOwed()
-	r, err := rs.refreshCell(ctx, c, host)
-	if held != nil {
-		rs.carriers.leave(held)
-	}
+	// This read serves any trigger owed one.
+	c.takeOwed()
+	r, err := rs.refreshCell(ctx, c)
 	if c.releaseQuery() {
 		rs.kickCell(c)
-	} else if left := c.leaveHeld(); left != nil {
-		rs.carriers.leave(left)
 	}
 	return r, err
 }
 
-// kickAsks schedules a background refresh of the run; a run with no lease has no cell and no card.
-func (rs *Runs) kickAsks(workflowID string) {
-	if c := rs.cellFor(workflowID); c != nil {
-		rs.kickCell(c)
-	}
-}
-
+// kickCell schedules a background read of the run.
 func (rs *Runs) kickCell(c *askCell) {
-	rs.kickCellOn(c, nil)
-}
-
-// kickCellOn schedules a background read through host when it is not nil. host is held in the
-// carrier count until that read ran, so a carrier the triggering frame closes (a parentless run's
-// `run_complete {paused}`) closes only after the read of that frame's state.
-func (rs *Runs) kickCellOn(c *askCell, host *sharedBridge) {
 	if rs.lifecycle == nil || c.transient {
 		return
 	}
 	c.mu.Lock()
 	c.dirty = true
-	if host != nil && c.held == nil {
-		rs.carriers.hold(host)
-		c.held = host
-	}
 	c.mu.Unlock()
 	select {
 	case c.query <- struct{}{}:
@@ -521,31 +473,15 @@ func (rs *Runs) kickCellOn(c *askCell, host *sharedBridge) {
 		return
 	}
 	if !rs.lifecycle.goUnlessDraining(func() { rs.refreshLoop(c) }) {
-		if held := c.leaveHeld(); held != nil {
-			rs.carriers.leave(held)
-		}
 		<-c.query
 	}
 }
 
-// leaveHeld hands back the carrier a trigger held for the next read, returning it.
-func (c *askCell) leaveHeld() *sharedBridge {
-	c.mu.Lock()
-	held := c.held
-	c.held = nil
-	c.mu.Unlock()
-	return held
-}
-
-// takeOwed is the start of a read under the query token: it settles every trigger owed a read and
-// returns the carrier one held, which the caller leaves after its read.
-func (c *askCell) takeOwed() *sharedBridge {
+// takeOwed is the start of a read under the query token: it settles every trigger owed a read.
+func (c *askCell) takeOwed() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.dirty = false
-	held := c.held
-	c.held = nil
-	return held
 }
 
 // refreshLoop owns the query token on entry and re-reads while a trigger landed during a read.
@@ -553,17 +489,11 @@ func (rs *Runs) refreshLoop(c *askCell) {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 	for {
-		held := c.takeOwed()
-		if _, err := rs.refreshCell(ctx, c, held); err != nil && !errors.Is(err, errNoAskHost) {
+		c.takeOwed()
+		if _, err := rs.refreshCell(ctx, c); err != nil {
 			slog.Debug("ask core: a background read of a run failed", "workflow_id", c.workflowID, "error", err)
 		}
-		if held != nil {
-			rs.carriers.leave(held)
-		}
 		if !c.releaseQuery() {
-			if left := c.leaveHeld(); left != nil {
-				rs.carriers.leave(left)
-			}
 			return
 		}
 		select {
@@ -582,26 +512,18 @@ func (c *askCell) releaseQuery() bool {
 	return c.dirty && !c.ended
 }
 
-// refreshCell is one read and publish. host nil resolves askHost and spawns nothing.
-func (rs *Runs) refreshCell(ctx context.Context, c *askCell, host *sharedBridge) (askRead, error) {
-	if host == nil {
-		host = rs.askHost(c.workflowID)
-		if host == nil {
-			return askRead{}, errNoAskHost
-		}
-		rs.carriers.hold(host)
-		defer rs.carriers.leave(host)
-	}
+// refreshCell is one read, an engine call, and its publish.
+func (rs *Runs) refreshCell(ctx context.Context, c *askCell) (askRead, error) {
 	c.mu.Lock()
 	basis := c.basisLocked()
 	c.mu.Unlock()
-	raw, err := rs.hostInspect(ctx, host, c.workflowID)
+	raw, err := rs.rawInspect(ctx, c.workflowID)
 	if workflowNotFound(err) {
 		rs.markGone(ctx, c)
-		return askRead{gone: true}, err
+		return askRead{}, err
 	}
 	if err != nil {
-		rs.markUnreadable(ctx, c, host)
+		rs.markUnreadable(ctx, c)
 		return askRead{}, err
 	}
 	in, decodeErr := workflow.DecodeInspect(c.workflowID, raw)
@@ -613,17 +535,16 @@ func (rs *Runs) refreshCell(ctx context.Context, c *askCell, host *sharedBridge)
 		if !warned {
 			slog.Warn("ask core: an inspect reply did not decode", "workflow_id", c.workflowID, "error", decodeErr)
 		}
-		rs.markUnreadable(ctx, c, host)
+		rs.markUnreadable(ctx, c)
 		return askRead{raw: raw}, decodeErr
 	}
 	rs.readSaid(ctx, c, in, basis)
-	hostLost := rs.hostLost(c.workflowID)
 	c.mu.Lock()
-	c.reply, c.basis, c.hostLost = in, basis, hostLost
-	asks := workflow.OpenAsks(in, c.runLogLocked(basis, rs.asks.epochNow(), hostLost))
+	c.reply, c.basis = in, basis
+	asks := workflow.OpenAsks(in, c.runLogLocked(basis, rs.asks.epochNow()))
 	c.settleOnReadLocked(in, asks)
 	// Settling can clear marotte's own holds, which are part of this snapshot.
-	asks = workflow.OpenAsks(in, c.runLogLocked(basis, rs.asks.epochNow(), hostLost))
+	asks = workflow.OpenAsks(in, c.runLogLocked(basis, rs.asks.epochNow()))
 	n := rs.publishLocked(ctx, c, wireAsks(asks), true)
 	rs.armTimersLocked(c, asks)
 	c.mu.Unlock()
@@ -663,16 +584,16 @@ func (rs *Runs) markGone(ctx context.Context, c *askCell) {
 	rs.sendNotices(ctx, c, n)
 }
 
-func (rs *Runs) markUnreadable(ctx context.Context, c *askCell, host *sharedBridge) {
+func (rs *Runs) markUnreadable(ctx context.Context, c *askCell) {
 	c.mu.Lock()
 	n := rs.publishLocked(ctx, c, c.last.Asks, false)
-	rs.armRequeryLocked(c, host != nil)
+	rs.armRequeryLocked(c)
 	c.mu.Unlock()
 	rs.sendNotices(ctx, c, n)
 }
 
 func (rs *Runs) armTimersLocked(c *askCell, asks []workflow.Ask) {
-	rs.armRequeryLocked(c, true)
+	rs.armRequeryLocked(c)
 	stopTimer(c.quiet)
 	if !slices.ContainsFunc(asks, func(a workflow.Ask) bool { return a.Wait == marotte.RunAskSettling }) {
 		return
@@ -681,32 +602,14 @@ func (rs *Runs) armTimersLocked(c *askCell, asks []workflow.Ask) {
 	c.quiet = time.AfterFunc(wait+time.Millisecond, func() { rs.kickCell(c) })
 }
 
-// armRequeryLocked re-reads a run holding an ask or a pending send every askRequery while a process
-// holds it. A hostless run keeps its last snapshot until a trigger finds a host, so a move made
-// outside marotte goes unseen until then.
-func (rs *Runs) armRequeryLocked(c *askCell, hosted bool) {
+// armRequeryLocked re-reads a run holding an ask or a pending send every askRequery, so a move made outside marotte
+// is seen.
+func (rs *Runs) armRequeryLocked(c *askCell) {
 	stopTimer(c.requery)
-	if c.ended || !hosted || (len(c.last.Asks) == 0 && c.pending == nil) {
+	if c.ended || (len(c.last.Asks) == 0 && c.pending == nil) {
 		return
 	}
 	c.requery = time.AfterFunc(askRequery, func() { rs.kickCell(c) })
-}
-
-// hostInspect is `inspect` on the process holding the run, seeding the step registry as rawInspect does.
-func (rs *Runs) hostInspect(ctx context.Context, host acpCaller, workflowID string) (json.RawMessage, error) {
-	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
-	defer cancel()
-	resp, err := host.Call(cctx, methodKiroWorkflowInspect, map[string]any{keyWorkflowID: workflowID})
-	if cErr := runCallErr(resp, err); cErr != nil {
-		return nil, cErr
-	}
-	if resp == nil || len(resp.Result) == 0 {
-		return nil, errors.New("inspect: the reply carried no result")
-	}
-	if rs.translate != nil {
-		rs.translate.RecordRunSteps(resp.Result)
-	}
-	return resp.Result, nil
 }
 
 // readSaid fills b with, from the run's own record, the last words of each parked step whose
@@ -822,7 +725,7 @@ func (rs *Runs) asksOnFrame(next chatHandler) chatHandler {
 			c.mu.Lock()
 			c.lastMotion = time.Now()
 			c.mu.Unlock()
-			rs.kickCellOn(c, rs.askHost(c.workflowID))
+			rs.kickCell(c)
 		}
 	}
 }
@@ -836,14 +739,6 @@ func (rs *Runs) asksOnMotion(next chatHandler) chatHandler {
 			c.lastMotion = time.Now()
 			c.mu.Unlock()
 		}
-	}
-}
-
-// hostEnded is runLog.hostEnded: park each agent-launched run the dead bridge held, then re-read them.
-func (rs *Runs) hostEnded(ctx context.Context, dead ACPBridge, workflowIDs []string) {
-	rs.parkHostLost(ctx, dead, workflowIDs)
-	for _, id := range workflowIDs {
-		rs.kickAsks(id)
 	}
 }
 
@@ -888,7 +783,6 @@ var (
 	errAskPending       = askRefusal(marotte.RunAskRefusedPending, "Another answer to this run is still being delivered.")
 	errAskStale         = askRefusal(marotte.RunAskRefusedStale, "The step has said more since you started typing.")
 	errAskGone          = askRefusal(marotte.RunAskRefusedGone, "This step is no longer waiting for an answer.")
-	errAskRecovering    = askRefusal(marotte.RunAskRefusedRecovering, "This run's process ended; marotte resumes it when kiro-cli releases it, within about three minutes.")
 	errAskBranchRunning = askRefusal(marotte.RunAskRefusedBranchRunning, "Another step of this run is still running; answer once it stops.")
 	errAskUnsettled     = askRefusal(marotte.RunAskRefusedUnsettled, "This run looks busy but nothing is moving; open the run to check it.")
 	errAskSettling      = askRefusal(marotte.RunAskRefusedSettling, "This run is moving; try again in a moment.")
@@ -903,7 +797,6 @@ func askRefusal(code marotte.RunAskRefusal, text string) error {
 }
 
 var waitRefusal = map[marotte.RunAskBlocker]error{
-	marotte.RunAskRecovering:    errAskRecovering,
 	marotte.RunAskBranchRunning: errAskBranchRunning,
 	marotte.RunAskUnsettled:     errAskUnsettled,
 	marotte.RunAskSettling:      errAskSettling,
@@ -1026,9 +919,7 @@ func (rs *Runs) repliedPending(ctx context.Context, c *askCell, p *pendingPrompt
 func (rs *Runs) expirePending(c *askCell, p *pendingPrompt) {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
-	if host := rs.askHost(c.workflowID); host != nil {
-		_, _ = rs.readAsks(ctx, c, host)
-	}
+	_, _ = rs.readAsks(ctx, c)
 	c.mu.Lock()
 	still := c.pending == p
 	c.mu.Unlock()

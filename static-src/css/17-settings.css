@@ -1840,3 +1840,13 @@ select.native-rule-effect:focus-visible {
   align-items: flex-start;
   gap: var(--sp-2);
 }
+
+/* --- Agent engine: the restart hint on an engine-wide row --- */
+
+/* The inline Restart now sits on the hint's own line, shown only while the row's change is pending. */
+.engine-restart-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}

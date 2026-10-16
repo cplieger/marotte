@@ -243,8 +243,8 @@ describe("the agent-ignore hint", () => {
 
 describe("agentIgnoreEntryError", () => {
   // The FLOOR arm is marotte's own and has no server counterpart, so nothing in internal/settings
-  // can fail if it goes: .kiroignore is a perfectly valid entry that is already sent on every
-  // spawn, and accepting it produces a duplicate row the panel then renders twice.
+  // can fail if it goes: .kiroignore is a perfectly valid entry that is already sent to the agent
+  // engine, and accepting it produces a duplicate row the panel then renders twice.
   it("refuses the floor, because it is already in the list", () => {
     expect(agentIgnoreEntryError(AGENT_IGNORE_FLOOR)).not.toBeNull();
   });

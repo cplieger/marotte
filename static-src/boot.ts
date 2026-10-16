@@ -57,6 +57,7 @@ import type { RouteOrigin } from "./router.js";
 import { createSession } from "./chat.js";
 import { initGovernance } from "./governance.js";
 import { initRuntimeHealth } from "./runtime-health.js";
+import { initEngineStatus } from "./engine-status.js";
 import { initStatusVersions, setStatus } from "./status.js";
 import type { ConnectionStatus } from "./types.js";
 import { loadVersions } from "./versions.js";
@@ -355,8 +356,10 @@ export function initPostAuth(): void {
   initPostAuthUI();
   // Degraded-runtime banner; re-checks on every gap so recovery self-heals.
   initRuntimeHealth();
-  // The FETCH-ONLY fan-outs a reduced boot withholds, each with a usable empty state; the two
-  // above stay (capability, degraded runtime).
+  // The engine banner and the Settings restart controls; the event keeps it current from here.
+  initEngineStatus();
+  // The FETCH-ONLY fan-outs a reduced boot withholds, each with a usable empty state; the three
+  // above stay (capability, degraded runtime, the agent engine).
   if (bootMode() === "full") {
     // The marotte + kiro-cli build pair. Fire-and-forget: the lines repaint through a
     // signal, so nothing waits on the `--version` subprocess behind it.

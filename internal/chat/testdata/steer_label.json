@@ -50,9 +50,9 @@
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
-        "internal/agent/bridge_coord.go:1429",
+        "internal/agent/bridge_coord.go:1520",
         "internal/agent/entry_merge.go:560",
-        "internal/agent/runtime.go:696"
+        "internal/agent/runtime.go:713"
       ]
     },
     {
@@ -61,8 +61,8 @@
       "reason": "",
       "label": "Workflow result",
       "sites": [
-        "internal/agent/run_appender.go:99",
-        "internal/agent/run_bounds.go:429",
+        "internal/agent/run_appender.go:102",
+        "internal/agent/run_bounds.go:412",
         "internal/agent/run_plan.go:95",
         "internal/translate/steering.go:117",
         "internal/translate/steering.go:213",
@@ -175,7 +175,7 @@
       "label": "Not read · the session restarted",
       "sites": [
         "internal/agent/entry_merge.go:560",
-        "internal/agent/runtime.go:691"
+        "internal/agent/runtime.go:708"
       ]
     },
     {
@@ -184,8 +184,8 @@
       "reason": "",
       "label": "Mid-turn message",
       "sites": [
-        "internal/agent/run_appender.go:215",
-        "internal/agent/run_message.go:492",
+        "internal/agent/run_appender.go:219",
+        "internal/agent/run_message.go:491",
         "internal/translate/steering.go:117",
         "internal/translate/steering.go:213",
         "internal/translate/workflow_message.go:39"
@@ -204,7 +204,7 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1429",
+      "site": "internal/agent/bridge_coord.go:1520",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
@@ -225,28 +225,28 @@
       "reason": "restart"
     },
     {
-      "site": "internal/agent/run_appender.go:215",
+      "site": "internal/agent/run_appender.go:102",
+      "form": "literal",
+      "origin": "agent",
+      "state": "read",
+      "reason": ""
+    },
+    {
+      "site": "internal/agent/run_appender.go:219",
       "form": "literal",
       "origin": "user",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/agent/run_appender.go:99",
+      "site": "internal/agent/run_bounds.go:412",
       "form": "literal",
       "origin": "agent",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/agent/run_bounds.go:429",
-      "form": "literal",
-      "origin": "agent",
-      "state": "read",
-      "reason": ""
-    },
-    {
-      "site": "internal/agent/run_message.go:492",
+      "site": "internal/agent/run_message.go:491",
       "form": "literal",
       "origin": "user",
       "state": "read",
@@ -260,14 +260,14 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:691",
+      "site": "internal/agent/runtime.go:708",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/runtime.go:696",
+      "site": "internal/agent/runtime.go:713",
       "form": "mutation",
       "origin": "agent",
       "state": "dropped",

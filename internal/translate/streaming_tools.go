@@ -70,7 +70,7 @@ func (*Translator) trackFileChanges(turn *turnlog.Turn, diffs []marotte.ToolDiff
 	}
 }
 
-// Shared with the run-bridge path and the session/load replay so one frame decodes one way. ts is
+// Shared with the run host session's path and the session/load replay so one frame decodes one way. ts is
 // the caller's: a replayed call keeps the frame's own timestamp.
 func toolCallFromWire(
 	tc *acpToolCallWire, subtask string, content toolUpdateContent, ts int64,

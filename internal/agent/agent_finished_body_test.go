@@ -12,7 +12,7 @@ import (
 func TestPushTurnOutcome_PushBodyCarriesAgentText(t *testing.T) {
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
-	h := New(context.Background(), "/tmp/push-desc", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	h := newRuntimeOn(context.Background(), "/tmp/push-desc", fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 	cs.wire(h)
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
@@ -64,7 +64,7 @@ func TestPushTurnOutcome_PushReadsTheSeverity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cs := newTestChatStore()
 			fp := &recordingPush{sends: make(chan string, 4)}
-			h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+			h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 			cs.wire(h)
 			ctx := t.Context()
 			_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
@@ -108,7 +108,7 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 		t.Helper()
 		cs := newTestChatStore()
 		fp := &recordingPush{sends: make(chan string, 4)}
-		h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+		h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 		cs.wire(h)
 		_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 		return h, fp
@@ -171,7 +171,7 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 func TestPushTurnOutcome_PushSubjectIsTheChat(t *testing.T) {
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
-	h := New(context.Background(), "/tmp/push-subject", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	h := newRuntimeOn(context.Background(), "/tmp/push-subject", fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 	cs.wire(h)
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })

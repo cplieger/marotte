@@ -69,6 +69,8 @@ type EffectiveSettings struct {
 	// TerminalCommandTimeoutMs is the shell tool's default timeout in ms; 0 is
 	// unset (kiro-cli's 120 s).
 	TerminalCommandTimeoutMs int `json:"terminal_command_timeout_ms"`
+	// EngineHeapMiB is the agent engine's JavaScript heap limit in MiB; 0 is kiro-cli's default.
+	EngineHeapMiB int `json:"engine_heap_mib"`
 	// AutoCompactionEnabled defaults TRUE: off means nothing compacts a chat
 	// until the reader presses Compact.
 	AutoCompactionEnabled bool `json:"auto_compaction_enabled"`

@@ -99,7 +99,7 @@ func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
 	// Interrupt through the coordinator so the wiring is exercised; the cause lands on the open turn.
 	id, _ := streamingPromptTurn(t, h, "c1", "about to call a tool")
 
-	// No real process here, so move the bridge to idle the way spawnBridge does at Start's return.
+	// No session door ran here, so move the bridge to idle the way openGeneration does once the session opens.
 	sb, _ := h.bridge.mgr.orInsert("c1")
 	sb.setIdle()
 	if !sb.tryAcquireForPrompt() {

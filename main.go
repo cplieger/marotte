@@ -1,6 +1,6 @@
 // Marotte for Kiro: ACP-based web interface for kiro-cli.
 //
-// One kiro-cli subprocess per active chat; browsers on the same chat share its bridge.
+// One kiro-cli agent engine hosts every chat's session; browsers on the same chat share it.
 // The server is the source of truth; the browser projects its state via SSE + GET /api/chats.
 package main
 

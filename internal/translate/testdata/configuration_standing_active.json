@@ -1,0 +1,435 @@
+{
+ "layers": [
+  {
+   "id": "kiro-agent-defaults",
+   "name": "Kiro Defaults"
+  },
+  {
+   "id": "client-defaults",
+   "name": "Client defaults"
+  },
+  {
+   "id": "kiro-service",
+   "name": "Kiro"
+  },
+  {
+   "id": "organization",
+   "name": "Your Organization"
+  },
+  {
+   "id": "machine",
+   "name": "Machine Administrator"
+  },
+  {
+   "id": "user-synced",
+   "name": "Cloud Config"
+  },
+  {
+   "id": "user-local",
+   "name": "Local Settings (~/.kiro)"
+  },
+  {
+   "id": "kiro-agent",
+   "name": "Kiro Agent"
+  },
+  {
+   "id": "client-connection",
+   "name": "marotte"
+  },
+  {
+   "id": "workspace",
+   "name": "Workspace"
+  },
+  {
+   "id": "agent",
+   "name": "Agent"
+  },
+  {
+   "id": "session",
+   "name": "This Session"
+  }
+ ],
+ "resources": [
+  {
+   "assertions": [
+    {
+     "compose": "append",
+     "layer": "workspace"
+    }
+   ],
+   "compose": "append",
+   "items": [
+    {
+     "krn": "krn:kiro-agent-defaults::steering/architecture-selection",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "inclusion": "manual",
+      "name": "architecture-selection",
+      "uri": "builtin:architecture-selection"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::steering/quick-spec",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "inclusion": "manual",
+      "name": "quick-spec",
+      "uri": "builtin:quick-spec"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::steering/bug-fix",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "inclusion": "manual",
+      "name": "bug-fix",
+      "uri": "builtin:bug-fix"
+     }
+    },
+    {
+     "krn": "krn:workspace:89bcb80485872fb7:steering/.kiro/steering/rules.md",
+     "layer": "workspace",
+     "readFrom": {
+      "krn": "krn:workspace:89bcb80485872fb7:file/.kiro/steering/rules.md",
+      "uri": "file:///workspace/project/.kiro/steering/rules.md"
+     },
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "inclusion": "always",
+      "name": "rules",
+      "uri": "file:///workspace/project/.kiro/steering/rules.md"
+     }
+    }
+   ],
+   "pureAssertions": [],
+   "type": "steering"
+  },
+  {
+   "assertions": [
+    {
+     "compose": "append",
+     "layer": "workspace"
+    }
+   ],
+   "compose": "append",
+   "items": [
+    {
+     "krn": "krn:kiro-agent-defaults::agent/wf-auto-researcher",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Autonomous research subagent. Reads directions, runs experiments, benchmarks results, and commits improvements.",
+      "id": "wf-auto-researcher",
+      "name": "wf-auto-researcher"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::agent/wf-coder",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Reads files, edits code, runs tests, and commits. General implementation agent.",
+      "id": "wf-coder",
+      "name": "wf-coder"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::agent/wf-design",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Authors requirements and technical design documents for a feature, exploring the codebase so designs fit existing patterns.",
+      "id": "wf-design",
+      "name": "wf-design"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::agent/wf-design-reviewer",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Reviews technical designs for ambiguity, gaps, and unverified assumptions before implementation begins. Mechanical verdict: any HIGH/MEDIUM finding blocks.",
+      "id": "wf-design-reviewer",
+      "name": "wf-design-reviewer"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::agent/wf-planner",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Investigates a codebase and produces an ordered implementation plan \u2014 from an approved design when one is provided, or by making the design decisions itself when not.",
+      "id": "wf-planner",
+      "name": "wf-planner"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::agent/wf-pr-responder",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Responds to PR review comments and CI feedback.",
+      "id": "wf-pr-responder",
+      "name": "wf-pr-responder"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::agent/wf-pr-submitter",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Opens a pull request from a branch and records the PR metadata.",
+      "id": "wf-pr-submitter",
+      "name": "wf-pr-submitter"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::agent/wf-review-aggregator",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Merges multiple review outputs into a single consolidated review verdict.",
+      "id": "wf-review-aggregator",
+      "name": "wf-review-aggregator"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::agent/wf-workflow-creator",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Generates a workflow for the run_workflow tool. Given a task description and context, builds a valid workflow definition, saves it server-side via save_workflow_definition, and returns a generated:// reference plus inputs and a short summary.",
+      "id": "wf-workflow-creator",
+      "name": "wf-workflow-creator"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::agent/semantic_reviewer",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Behavioral, narrative code review of a local or PR diff. Writes a review document and a verdict.",
+      "id": "semantic_reviewer",
+      "name": "semantic_reviewer"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::agent/Explore",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Analyze and understand a codebase using tree-sitter parsing and dependency graphs. Use when the user asks to analyze, explore, or generate specs for their codebase \u2014 runs code_to_spec to produce architectural documentation (.kiro/specs/) and answers structural questions about architecture, data flows, and dependencies.",
+      "id": "Explore",
+      "name": "Explore"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::agent/create-spec",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Encourages spec-driven development by producing guided artifacts \u2014 a requirements, design, and task-list specification \u2014 for a feature request.",
+      "id": "create-spec",
+      "name": "create-spec"
+     }
+    },
+    {
+     "krn": "krn:user-local::agent/reviewer.json",
+     "layer": "user-local",
+     "readFrom": {
+      "krn": "krn:user-local::file/agents/reviewer.json",
+      "uri": "file:///config/home/.kiro/agents/reviewer.json"
+     },
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Reviews diffs.",
+      "id": "reviewer",
+      "name": "reviewer"
+     }
+    },
+    {
+     "krn": "krn:workspace:89bcb80485872fb7:agent/.kiro/agents/reviewer.json",
+     "layer": "workspace",
+     "readFrom": {
+      "krn": "krn:workspace:89bcb80485872fb7:file/.kiro/agents/reviewer.json",
+      "uri": "file:///workspace/project/.kiro/agents/reviewer.json"
+     },
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "description": "Reviews diffs.",
+      "id": "reviewer",
+      "name": "reviewer"
+     }
+    }
+   ],
+   "pureAssertions": [],
+   "type": "agent"
+  },
+  {
+   "assertions": [
+    {
+     "compose": "append",
+     "layer": "kiro-agent-defaults"
+    }
+   ],
+   "compose": "append",
+   "items": [
+    {
+     "krn": "krn:kiro-agent-defaults::workflow/autoresearch",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "name": "autoresearch"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::workflow/feature-pipeline",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "name": "feature-pipeline"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::workflow/goal",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "name": "goal"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::workflow/investigate",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "name": "investigate"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::workflow/publish-pr",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "name": "publish-pr"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::workflow/ralph",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "name": "ralph"
+     }
+    },
+    {
+     "krn": "krn:kiro-agent-defaults::workflow/semantic-review-multi-model",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "name": "semantic-review-multi-model"
+     }
+    }
+   ],
+   "pureAssertions": [],
+   "type": "workflow"
+  },
+  {
+   "assertions": [
+    {
+     "compose": "append",
+     "layer": "workspace"
+    }
+   ],
+   "compose": "append",
+   "items": [],
+   "pureAssertions": [],
+   "type": "mcp-server"
+  }
+ ],
+ "settings": [
+  {
+   "assertions": [
+    {
+     "compose": "replace",
+     "layer": "workspace"
+    }
+   ],
+   "compose": "replace",
+   "contributions": [
+    {
+     "layer": "workspace",
+     "readFrom": {
+      "krn": "krn:workspace:89bcb80485872fb7:file/.kiro/settings/mcp.json",
+      "uri": "file:///workspace/project/.kiro/settings/mcp.json"
+     },
+     "stated": {
+      "used": true,
+      "value": "off"
+     }
+    }
+   ],
+   "krn": "krn:::setting/mcp-server/krn%3Aworkspace%3A89bcb80485872fb7%3Amcp-server/.kiro/settings/mcp.json#mcpServers/off-server/enabled",
+   "value": "off"
+  }
+ ],
+ "view": {
+  "observer": "workspace",
+  "roots": [
+   "/workspace/project"
+  ]
+ }
+}

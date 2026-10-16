@@ -97,6 +97,16 @@ vi.mock("../retention.js", () => ({ refreshRetention: vi.fn() }));
 const mockFetchCatalog = vi.fn(() => Promise.resolve());
 vi.mock("../session-catalog.js", () => ({ fetchCatalog: mockFetchCatalog }));
 
+// The engine banner's store is a boundary: the event and the gap hand it the status, and it paints.
+const { mockAdoptEngineStatus, mockReconcileEngineStatus } = vi.hoisted(() => ({
+  mockAdoptEngineStatus: vi.fn(),
+  mockReconcileEngineStatus: vi.fn(() => Promise.resolve()),
+}));
+vi.mock("../engine-status.js", () => ({
+  adoptEngineStatus: mockAdoptEngineStatus,
+  reconcileEngineStatus: mockReconcileEngineStatus,
+}));
+
 // PARTIAL: the gap door's two run readers are spies (they share a token and both fetch), while
 // `adoptConnectRuns` is REAL, since the state it seeds is what the connect door owns. `vi.hoisted`
 // for the api-client pair's reason below.
@@ -534,6 +544,13 @@ describe("BUS_RECONCILE handler", () => {
     const signal = fireReconcile();
     expect(mockLoadList).toHaveBeenCalledWith(signal);
     expect(mockFetchCatalog).toHaveBeenCalledWith({ signal });
+  });
+
+  // The engine_status event fires only on a change, so one lost in the gap would leave a stale banner.
+  it("re-reads the engine status under the run's signal", () => {
+    setSessions([makeSession("a")]);
+    const signal = fireReconcile();
+    expect(mockReconcileEngineStatus).toHaveBeenCalledWith(signal);
   });
 
   it("drops every held turn-rail index, which no stamp certifies", () => {
@@ -1028,7 +1045,7 @@ describe("the reconcile runs the shared turn teardown", () => {
   });
 });
 
-// `refreshRetention` and the spawn-time capability reads carry the EFFECT; this re-seeds the
+// `refreshRetention` and the session-door capability reads carry the EFFECT; this re-seeds the
 // controls on a second device (as `syncSettings` does for notifications).
 describe("settings_updated re-seeds the General panel", () => {
   it("hands the refetched payload to applyGeneralPanel", async () => {
@@ -1064,5 +1081,18 @@ describe("settings_updated re-seeds the General panel", () => {
     } finally {
       window.removeEventListener("unhandledrejection", onReject);
     }
+  });
+});
+
+describe("engine_status", () => {
+  it("hands the whole status to the engine store", () => {
+    const status = {
+      since: "2026-10-16T00:00:00Z",
+      state: "restarting",
+      busy: { turns: [], runs: [] },
+      restart: { pending: false, reasons: [] },
+    };
+    fireSSE("engine_status", "", status);
+    expect(mockAdoptEngineStatus).toHaveBeenCalledWith(status);
   });
 });

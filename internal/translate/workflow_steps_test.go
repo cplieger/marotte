@@ -29,15 +29,14 @@ func TestReportStepProgress_EveryStepFrameNamesTheRun(t *testing.T) {
 	}
 }
 
-// TestReportStepProgress_OnlyAStepFrameIsProgress pins that chat and SUBAGENT frames credit
-// no run: a subagent's work would keep a wedged run alive. An unplaced step credits none.
+// TestReportStepProgress_OnlyAStepFrameIsProgress pins that a chat's frames credit no run: its
+// work would keep a wedged run alive. An unplaced step credits none.
 func TestReportStepProgress_OnlyAStepFrameIsProgress(t *testing.T) {
 	tests := []struct {
 		name string
 		attr FrameAttribution
 	}{
 		{name: "the_chats_own_frame", attr: FrameAttribution{SessionID: "sess_chat"}},
-		{name: "a_subagents_frame", attr: FrameAttribution{Subagent: true, SessionID: "sub-1"}},
 		{name: "a_step_with_no_run", attr: FrameAttribution{SessionID: "sess_step", Step: true}},
 	}
 	for _, tc := range tests {

@@ -312,3 +312,31 @@ describe("banner-stack: the CTA is the app's shared button, not a text-link skin
     });
   }
 });
+
+describe("banner-stack: the app-global slot the engine banner uses", () => {
+  it("shows over every chat and the empty state, and leaves only by its own code", async () => {
+    const { container, mod } = await setup();
+
+    mod.ensureBound();
+    mod.showBanner(
+      mod.GLOBAL_BANNER,
+      "engine_restarting",
+      "The agent engine is restarting.",
+      "info",
+      false,
+    );
+    expect(container.textContent, "no chat open").toContain("restarting");
+
+    activeSig.value = { id: "A" };
+    mod.showBanner("A", "x", "chat's own", "error", false);
+    expect(container.querySelectorAll(".banner")).toHaveLength(2);
+    activeSig.value = { id: "B" };
+    expect(container.textContent, "another chat").toContain("restarting");
+
+    mod.clearBannersForChat("B");
+    expect(container.textContent, "a chat's sweep keeps the global banner").toContain("restarting");
+
+    mod.clearBannerCodes(mod.GLOBAL_BANNER, ["engine_restarting"]);
+    expect(container.querySelectorAll(".banner")).toHaveLength(0);
+  });
+});

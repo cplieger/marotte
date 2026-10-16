@@ -17,7 +17,7 @@ func newTestFrameReader(s string, window int) *frameReader {
 func drainFrames(t *testing.T, fr *frameReader) (frames []string, drops []int, err error) {
 	t.Helper()
 	for range 100 {
-		line, dropped, rerr := fr.readFrame()
+		line, dropped, _, rerr := fr.readFrame()
 		if dropped > 0 {
 			drops = append(drops, dropped)
 		}
@@ -132,7 +132,7 @@ func TestFrameReader_ManyOversizeFramesEachGetTheirOwnBudget(t *testing.T) {
 // Only an unterminated blob exhausts the budget, ending the read loop.
 func TestFrameReader_UnterminatedBlobExhaustsTheBudget(t *testing.T) {
 	fr := newFrameReader(bufio.NewReaderSize(&endlessReader{b: 'z'}, 64*1024))
-	line, dropped, err := fr.readFrame()
+	line, dropped, _, err := fr.readFrame()
 	if !errors.Is(err, errFrameDrainExhausted) {
 		t.Fatalf("err = %v, want errFrameDrainExhausted", err)
 	}
@@ -148,7 +148,7 @@ func TestFrameReader_UnterminatedBlobExhaustsTheBudget(t *testing.T) {
 func TestFrameReader_ReadErrorIsTerminal(t *testing.T) {
 	sentinel := errors.New("pipe broke")
 	fr := newFrameReader(bufio.NewReaderSize(errReader{failErr: sentinel}, 64))
-	line, dropped, err := fr.readFrame()
+	line, dropped, _, err := fr.readFrame()
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want %v", err, sentinel)
 	}
@@ -183,7 +183,7 @@ func FuzzFrameReader(f *testing.F) {
 		fr := newFrameReader(bufio.NewReaderSize(bytes.NewReader(input), 16))
 		var got [][]byte
 		for range len(input) + 2 {
-			line, dropped, err := fr.readFrame()
+			line, dropped, _, err := fr.readFrame()
 			if dropped != 0 {
 				t.Fatalf("no seed exceeds the %d-byte cap, yet %d bytes were dropped", scannerLineCap, dropped)
 			}

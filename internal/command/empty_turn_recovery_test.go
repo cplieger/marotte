@@ -99,7 +99,7 @@ func (*recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, str
 // "did the gate fire".
 type recoveryBridges struct {
 	*benchDeps
-	// onOpen runs inside OpenBridge, standing in for whatever lands mid-spawn.
+	// onOpen runs inside OpenBridge, standing in for whatever lands mid-open.
 	onOpen func()
 	bridge *recoveryBridge
 	closed int
@@ -225,10 +225,10 @@ func TestRecoverEmptyTurn_GateRequiresAllClauses(t *testing.T) {
 	}
 }
 
-// TestRecoverEmptyTurn_StopDuringRespawnSendsNothing: a stop landing while the
-// retry's bridge spawns reaches no bridge that could carry it, so the retry's own
+// TestRecoverEmptyTurn_StopDuringReopenSendsNothing: a stop landing while the
+// retry's session opens reaches no bridge that could carry it, so the retry's own
 // read is the only thing between the reader's Stop and a second paid prompt.
-func TestRecoverEmptyTurn_StopDuringRespawnSendsNothing(t *testing.T) {
+func TestRecoverEmptyTurn_StopDuringReopenSendsNothing(t *testing.T) {
 	outcome := &recoveryOutcome{}
 	bridges := &recoveryBridges{benchDeps: newBenchDeps()}
 	bridges.onOpen = func() {
@@ -250,7 +250,7 @@ func TestRecoverEmptyTurn_StopDuringRespawnSendsNothing(t *testing.T) {
 		t.Errorf("turns opened = %v, want none for a stopped retry", outcome.openedTurns)
 	}
 	if bridges.bridge == nil || bridges.bridge.calls != 0 {
-		t.Errorf("prompt calls on the respawned bridge = %v, want 0", bridges.bridge)
+		t.Errorf("prompt calls on the reloaded session = %v, want 0", bridges.bridge)
 	}
 }
 

@@ -56,6 +56,9 @@ func (rs *Runs) RunNodeComplete(ctx context.Context, runID string, path []string
 	}
 	translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
 	rs.noteStepEnded(ctx, runID, path, sealed)
+	if closed {
+		rs.quietEdge()
+	}
 }
 
 // stepNoteRefused and stepNoteModelCallLimit name why a step left the launching chat a note, in its steer id.
@@ -208,6 +211,7 @@ func (rs *Runs) closeRun(ctx context.Context, runID, status string) {
 		slog.Warn("run log: close run", "run", runID, "error", err)
 	}
 	translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
+	rs.quietEdge()
 	// Words KAS took but never opened a turn for still belong to the step's record.
 	staged := rs.log.takeStaged(runID)
 	for _, path := range slices.Sorted(maps.Keys(staged)) {
@@ -236,7 +240,7 @@ func (rs *Runs) deleteRunLog(ctx context.Context, runID string) {
 	translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
 }
 
-// The targets stay: a re-hosted run's next message binds them.
+// The targets stay: the run's next message on a reloaded host session binds them.
 func (rs *Runs) endHostedSteers(ctx context.Context, host marotte.ChatID) {
 	for _, workflowID := range rs.steers.runsHostedBy(host) {
 		rs.steers.end(ctx, workflowID, "", false)

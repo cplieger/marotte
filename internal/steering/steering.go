@@ -1,6 +1,6 @@
 // Package steering generates the steering kiro-cli reads, in two outputs. environment.md
 // holds container-wide facts and is read by every session on this HOME. ChatDocs renders the
-// chat-only guidance a chat bridge's session door carries. Both run synchronously on the
+// chat-only guidance a chat session's door carries. Both run synchronously on the
 // session-start path, so they stay network-free: slow data arrives through snapshot callbacks.
 package steering
 
@@ -156,7 +156,7 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 
 const chatSteeringName = "marotte"
 
-// ChatDocs renders the chat-only steering a chat bridge sends on the session door, writing
+// ChatDocs renders the chat-only steering a chat session sends on its door, writing
 // nothing to disk (a file would reach every session on this HOME).
 func (g *Generator) ChatDocs(context.Context) []marotte.ClientSteeringDoc {
 	g.mu.Lock()
@@ -187,7 +187,7 @@ func (g *Generator) renderChat(forges ForgeSnapshot) string {
 }
 
 // Errors are log-and-omit. It opens with atomicfile.OpenRegular: a FIFO would hang Generate, which
-// runs synchronously before every bridge spawn, and a symlinked README would copy whatever it names
+// runs synchronously before every session door, and a symlinked README would copy whatever it names
 // (an MCP credential, measured) into authoritative agent context. Truncation is kept: only the head
 // matters.
 func readCappedFile(path string, limit int64) ([]byte, error) {

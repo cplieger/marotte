@@ -141,11 +141,11 @@ func resumeForRevert(ctx context.Context, bridges bridgeAccess, chatID marotte.C
 		return nil, StatusError(http.StatusConflict, errRewindNoSession)
 	}
 
-	// Empty model on purpose: spawnBridge then keeps the chat's own, so a rewind
+	// Empty model on purpose: the session door then keeps the chat's own, so a rewind
 	// can never silently change which model the chat runs.
 	bridge, err := bridges.OpenBridge(ctx, chatID, "")
 	if err != nil || bridge == nil {
-		// The spawn's own error is logged, not forwarded: it names marotte's
+		// The session door's own error is logged, not forwarded: it names marotte's
 		// internals, and the client renders the reason verbatim to the user.
 		slog.Warn("rewind: no bridge to revert on", "chat", chatID, keyError, err)
 		return nil, StatusError(http.StatusBadGateway, errRewindNoBridge)
@@ -201,7 +201,7 @@ func explainRevertRefusal(kasMessageID string, err error) error {
 }
 
 // cmdSetEffort sets the chat's reasoning-effort level: switched in place on a running session,
-// persisted on the chat and applied to later sessions through StartOpts.Effort. A bridgeless chat
+// persisted on the chat and applied to later sessions through SessionOpts.Effort. A bridgeless chat
 // auto-creates like cmdSetMode. The level is recorded LAST as the new-chat seed for this model, so
 // a refused level is never remembered. Serialized with cmdSetThinking through configLocks.
 func cmdSetEffort(
@@ -260,7 +260,7 @@ func applyEffortPick(
 		}
 	}
 
-	// Fail fast so a refusal is reported, not persisted; a cold-spawning bridge is not a refusal
+	// Fail fast so a refusal is reported, not persisted; a bridge still opening its session is not a refusal
 	// (applySessionConfig).
 	if err := applySessionConfig(ctx, bridges, chatID, "set_effort",
 		marotte.MethodSetConfigOption, configOptionParams(marotte.ConfigOptionEffort, string(level))); err != nil {

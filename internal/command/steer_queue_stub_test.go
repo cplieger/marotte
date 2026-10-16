@@ -9,7 +9,7 @@ import (
 )
 
 // stubSteerQueue is a scripted SteerQueue: it routes a steer as itself (or parks
-// it while the bridge spawns) and answers each op step from the fields a test
+// it while the session opens) and answers each op step from the fields a test
 // sets, recording every call in order. The real record's transitions are pinned in
 // internal/agent; here the subject is what the commands DO with the answers.
 type stubSteerQueue struct {

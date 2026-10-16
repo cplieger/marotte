@@ -67,7 +67,7 @@ func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 	waitForSessionID(t, cs, "c-test-1")
 }
 
-// waitForSessionID polls until the chat carries an ACP session id: the prompt acks before the bridge spawns.
+// waitForSessionID polls until the chat carries an ACP session id: the prompt acks before the session opens.
 func waitForSessionID(t *testing.T, cs *testChatStore, chatID marotte.ChatID) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -76,7 +76,7 @@ func waitForSessionID(t *testing.T, cs *testChatStore, chatID marotte.ChatID) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("acp_session_id not persisted: the prompt turn never spawned its bridge")
+			t.Fatal("acp_session_id not persisted: the prompt turn never opened its session")
 		}
 		time.Sleep(time.Millisecond)
 	}

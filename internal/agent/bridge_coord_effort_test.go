@@ -38,9 +38,9 @@ func configOptionFrame(t *testing.T, running, sessionID string, workflow bool) *
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
-func healEffortFixture(t *testing.T, chose string) (*Runtime, *fakeBridge) {
+func healEffortFixture(t *testing.T, chose string, opts ...Option) (*Runtime, *fakeBridge) {
 	t.Helper()
-	h, cs, br := newTestHub()
+	h, cs, br := newTestHub(opts...)
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Effort = chose
@@ -59,7 +59,7 @@ func settleHeals(t *testing.T, h *Runtime) {
 	shutdownHub(t, h)
 }
 
-// TestHealEffort_RepairsALevelTheSessionMovedOnItsOwn covers the spawning turn, which repairEffort cannot reach.
+// TestHealEffort_RepairsALevelTheSessionMovedOnItsOwn covers the turn that opens the session, which repairEffort cannot reach.
 func TestHealEffort_RepairsALevelTheSessionMovedOnItsOwn(t *testing.T) {
 	h, br := healEffortFixture(t, "max")
 
@@ -189,7 +189,7 @@ func (d *effortDrift) boot(t *testing.T) *Runtime {
 // bootOver is boot with store, which reads and writes the drift's own, in front of it.
 func (d *effortDrift) bootOver(t *testing.T, store chatRecords) *Runtime {
 	t.Helper()
-	h := New(t.Context(), t.TempDir(), func() ACPBridge {
+	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession {
 		b := newFakeBridge()
 		d.mu.Lock()
 		if d.failLoads {
@@ -197,10 +197,8 @@ func (d *effortDrift) bootOver(t *testing.T, store chatRecords) *Runtime {
 		}
 		d.mu.Unlock()
 		return b
-	}, store)
-	h.runs.cancelRetryBase = time.Hour
+	}, nil), store, WithConfigDir(d.dir))
 	d.cs.wire(h)
-	h.coord.lifecycle.configDir = d.dir
 	return h
 }
 
@@ -212,18 +210,17 @@ func (d *effortDrift) firstSessionThenDrift(t *testing.T, h *Runtime) *sharedBri
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
-	if opts := fakeOf(sb).lastStartOpts(); opts == nil || opts.SessionID != "" || opts.Effort != "high" {
+	if opts := fakeOf(sb).lastSessionOpts(); opts == nil || opts.SessionID != "" || opts.Effort != "high" {
 		t.Fatalf("first session/new = %+v, want a new session at the seed, high", opts)
 	}
 	writeEffortSeed(t, d.dir, map[string]string{"fake-model": "medium"})
 	return sb
 }
 
-// crash ends the chat's process on its own, the forward loop's ended_itself arm, and waits for
-// the registry to drop it.
+// crash ends the engine on its own, which ends the chat's session, and waits for the registry to drop it.
 func crash(t *testing.T, h *Runtime) {
 	t.Helper()
-	fakeOf(h.coord.bridgeFor("c1")).Stop()
+	fakeSourceOf(t, h).current().crash()
 	deadline := time.Now().Add(5 * time.Second)
 	for h.coord.bridgeFor("c1") != nil {
 		if time.Now().After(deadline) {
@@ -233,13 +230,13 @@ func crash(t *testing.T, h *Runtime) {
 	}
 }
 
-func reopenStartOpts(t *testing.T, h *Runtime) *marotte.StartOpts {
+func reopenSessionOpts(t *testing.T, h *Runtime) *marotte.SessionOpts {
 	t.Helper()
 	sb, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	opts := fakeOf(sb).lastStartOpts()
+	opts := fakeOf(sb).lastSessionOpts()
 	if opts == nil {
 		t.Fatal("the reopen started no session")
 	}
@@ -262,18 +259,18 @@ func TestEffortDrift_ThePromptRepairKeepsTheChatsLevel(t *testing.T) {
 	}
 }
 
-// The respawn after a crash loads the session at the level it ran before the crash.
-func TestEffortDrift_ACrashRespawnLoadsTheChatsLevel(t *testing.T) {
+// The reopen after an engine crash loads the session at the level it ran before the crash.
+func TestEffortDrift_AnEngineRestartLoadsTheChatsLevel(t *testing.T) {
 	d := newEffortDrift(t)
 	h := d.boot(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	d.firstSessionThenDrift(t, h)
 	crash(t, h)
 
-	opts := reopenStartOpts(t, h)
+	opts := reopenSessionOpts(t, h)
 
 	if opts.SessionID == "" {
-		t.Fatalf("the respawn opened a new session, want a session/load: %+v", opts)
+		t.Fatalf("the reopen opened a new session, want a session/load: %+v", opts)
 	}
 	if opts.Effort != "high" {
 		t.Errorf("session/load asserted effort %q, want high (the level the chat ran before the crash)", opts.Effort)
@@ -289,7 +286,7 @@ func TestEffortDrift_ARestartLoadsTheChatsLevel(t *testing.T) {
 	h := d.boot(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 
-	opts := reopenStartOpts(t, h)
+	opts := reopenSessionOpts(t, h)
 
 	if opts.SessionID == "" || opts.Effort != "high" {
 		t.Errorf("the first open after a restart = {SessionID %q, Effort %q}, want a session/load at high",
@@ -311,7 +308,7 @@ func TestEffortDrift_ARefreshedSessionKeepsTheChatsLevel(t *testing.T) {
 		t.Fatalf("detach the session: %v", err)
 	}
 
-	opts := reopenStartOpts(t, h)
+	opts := reopenSessionOpts(t, h)
 
 	if opts.SessionID != "" || opts.Effort != "high" {
 		t.Errorf("the refreshed session = {SessionID %q, Effort %q}, want a session/new at high",
@@ -330,7 +327,7 @@ func TestEffortDrift_ANewSessionAfterAFailedLoadKeepsTheChatsLevel(t *testing.T)
 	d.failLoads = true
 	d.mu.Unlock()
 
-	opts := reopenStartOpts(t, h)
+	opts := reopenSessionOpts(t, h)
 
 	if opts.SessionID != "" || opts.Effort != "high" {
 		t.Errorf("the fallback session = {SessionID %q, Effort %q}, want a session/new at high",
@@ -360,7 +357,7 @@ func TestEffortDrift_ANewSessionAfterAFailedLoadKeepsTheLevelTheChatRan(t *testi
 	h := d.boot(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 
-	opts := reopenStartOpts(t, h)
+	opts := reopenSessionOpts(t, h)
 
 	if opts.SessionID != "" || opts.Effort != "high" {
 		t.Errorf("the fallback session = {SessionID %q, Effort %q}, want a session/new at high",
@@ -378,7 +375,7 @@ func TestEffortDrift_ALoadOfARecordWithoutLevelAssertsNone(t *testing.T) {
 	h := d.boot(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 
-	opts := reopenStartOpts(t, h)
+	opts := reopenSessionOpts(t, h)
 
 	if opts.SessionID != "sess-old" || opts.Effort != "" {
 		t.Errorf("the load = {SessionID %q, Effort %q}, want a session/load of sess-old asserting no level",
@@ -393,7 +390,7 @@ func TestEffortDrift_ARefreshedSessionKeepsTheLevelTheChatRan(t *testing.T) {
 	h := d.boot(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 
-	opts := reopenStartOpts(t, h)
+	opts := reopenSessionOpts(t, h)
 
 	if opts.SessionID != "" || opts.Effort != "high" {
 		t.Errorf("the refreshed session = {SessionID %q, Effort %q}, want a session/new at high",
@@ -417,7 +414,7 @@ func TestEffortDrift_AResumedSessionKeepsItsOwnLevel(t *testing.T) {
 	}
 	h := d.boot(t)
 
-	opts := reopenStartOpts(t, h)
+	opts := reopenSessionOpts(t, h)
 	if opts.SessionID != "sess-tui" || opts.Effort != "" {
 		shutdownHub(t, h)
 		t.Fatalf("the resume = {SessionID %q, Effort %q}, want a session/load of sess-tui asserting no level",
@@ -457,7 +454,7 @@ func TestEffortDrift_ABridgelessModelPickKeepsItsLevel(t *testing.T) {
 	// Another length than low's: the settings cache keys on size and mtime, and an in-place
 	// rewrite inside one mtime tick would read the old bytes.
 	writeEffortSeed(t, d.dir, map[string]string{"m2": "medium"})
-	opts := reopenStartOpts(t, h)
+	opts := reopenSessionOpts(t, h)
 
 	if opts.Model != "m2" || opts.Effort != "low" {
 		t.Errorf("the session after the pick = {Model %q, Effort %q}, want {m2, low}", opts.Model, opts.Effort)
@@ -466,10 +463,9 @@ func TestEffortDrift_ABridgelessModelPickKeepsItsLevel(t *testing.T) {
 
 // A heal never re-asserts the seed: a chat with a session and no level adopts what KAS reports.
 func TestHealEffort_AdoptsTheReportedLevelRatherThanTheSeed(t *testing.T) {
-	h, br := healEffortFixture(t, "")
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"fake-model": "medium"})
-	h.coord.lifecycle.configDir = dir
+	h, br := healEffortFixture(t, "", WithConfigDir(dir))
 	if _, err := h.chatStore.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Model = "fake-model"
 		c.RecordSession("sess-c1")
@@ -537,11 +533,10 @@ func catalogModel(t *testing.T, id, meta string) marotte.SessionModel {
 // never the old model's: fake-model's session reports thinking on and tiers topping out at medium.
 // The record keeps the uncapped level for when thinking comes back on.
 func TestApplyPendingModel_CapsTheSwitchLevelForThinkingOff(t *testing.T) {
-	h, cs, br := newTestHub()
-	t.Cleanup(func() { shutdownHub(t, h) })
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"m2": "max"})
-	h.coord.lifecycle.configDir = dir
+	h, cs, br := newTestHub(WithConfigDir(dir))
+	t.Cleanup(func() { shutdownHub(t, h) })
 	h.coord.catalog.SetModels([]marotte.SessionModel{
 		catalogModel(t, "fake-model", `{"kiro":{"thinkingToggleable":true,"effortLevels":["low","medium","max"]}}`),
 		catalogModel(t, "m2", `{"kiro":{"thinkingToggleable":true,"defaultThinkingEnabled":false,`+
@@ -582,7 +577,7 @@ func TestEffortDrift_AFirstSessionOnADefaultOffModelSendsTheCapAndPinsTheSeed(t 
 			`"effortLevels":["low","medium","high","xhigh","max"]}}`),
 	})
 
-	first := reopenStartOpts(t, h)
+	first := reopenSessionOpts(t, h)
 	if first.SessionID != "" || first.Effort != "high" {
 		t.Errorf("the first session = {SessionID %q, Effort %q}, want a session/new at high, max capped for thinking off",
 			first.SessionID, first.Effort)
@@ -592,7 +587,7 @@ func TestEffortDrift_AFirstSessionOnADefaultOffModelSendsTheCapAndPinsTheSeed(t 
 	}
 	crash(t, h)
 
-	again := reopenStartOpts(t, h)
+	again := reopenSessionOpts(t, h)
 	if again.SessionID == "" || again.Effort != "high" {
 		t.Errorf("the respawn = {SessionID %q, Effort %q}, want a session/load at high", again.SessionID, again.Effort)
 	}
@@ -684,7 +679,7 @@ func TestModelMove_TheOldModelsTierReachesNoLaterSession(t *testing.T) {
 			h.coord.catalog.SetModels([]marotte.SessionModel{{ID: "m-flat"}})
 			moveThenDoor(t, d, h)
 
-			opts := reopenStartOpts(t, h)
+			opts := reopenSessionOpts(t, h)
 
 			if opts.SessionID != "" || opts.Effort != "" {
 				t.Errorf("the next session = {SessionID %q, Effort %q}, want a session/new sending no level",

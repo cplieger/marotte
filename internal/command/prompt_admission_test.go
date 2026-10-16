@@ -278,7 +278,7 @@ func newAdmissionFixture(t *testing.T, result marotte.TurnResult, startRefused b
 	return host, roles, join
 }
 
-// The ack precedes the turn AND the bridge spawn: the POST answers while
+// The ack precedes the turn AND the session open: the POST answers while
 // OpenBridge is still parked, and the turn's call happens only afterwards.
 func TestCmdPrompt_AcksBeforeOpenBridgeAndTurnCompletion(t *testing.T) {
 	gate := make(chan struct{})

@@ -4,14 +4,12 @@ package translate
 // account-global: the runtime caches it and owns the governance_state SSE, which adds the lock map.
 
 import (
-	"context"
 	"encoding/json"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
 type v3GovernanceState struct {
-	SessionID      string               `json:"sessionId"`
 	DisabledReason string               `json:"disabledReason"`
 	Features       v3GovernanceFeatures `json:"features"`
 	IsEnterprise   bool                 `json:"isEnterprise"`
@@ -48,7 +46,7 @@ func (w v3GovernanceState) payload() marotte.GovernanceStatePayload {
 }
 
 // DecodeGovernanceState decodes a raw _kiro/governance/state params object into the domain
-// payload, false on empty/invalid params. Exported for the utility bridge's copy.
+// payload, false on empty/invalid params. Exported for the runtime's governance cache.
 func DecodeGovernanceState(raw json.RawMessage) (marotte.GovernanceStatePayload, bool) {
 	if len(raw) == 0 {
 		return marotte.GovernanceStatePayload{}, false
@@ -58,17 +56,4 @@ func DecodeGovernanceState(raw json.RawMessage) (marotte.GovernanceStatePayload,
 		return marotte.GovernanceStatePayload{}, false
 	}
 	return w.payload(), true
-}
-
-// HandleGovernanceState hands _kiro/governance/state to the runtime's cache. A subagent-session
-// copy is skipped: the parent copy carries the identical flags.
-func (t *Translator) HandleGovernanceState(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
-	p, ok := unmarshalParams[v3GovernanceState](msg, "governance/state")
-	if !ok {
-		return
-	}
-	if t.foreignSession(chatID, p.SessionID) {
-		return
-	}
-	t.governance.SetGovernance(ctx, p.payload())
 }

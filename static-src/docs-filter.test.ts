@@ -34,6 +34,7 @@ vi.mock("./bus.js", () => ({
   onSSE: vi.fn(() => () => undefined),
   onBus: vi.fn(() => () => undefined),
   BUS_RUNS_CHANGED: "runs:changed",
+  BUS_RECONCILE: "transport:reconcile",
 }));
 vi.mock("./git-status-store.js", () => ({
   initGitStatusStore: vi.fn(),
@@ -66,17 +67,21 @@ let refresh: () => void;
 let forceTab: (t: string) => void;
 let find: PageFind;
 
-/** The page's three GETs off one mock: the inventory through the caller's decoder, hooks and steering issues empty. */
+/** The page's four GETs off one mock: the inventory and the standing through the caller's decoder, hooks and
+ *  steering issues empty. */
 function serveDocsPage(
   inventory: unknown = { docs: [], truncated: false },
+  standing: unknown = { standing: [], load_errors: {} },
 ): (path: string, decode: (v: unknown) => unknown) => Promise<unknown> {
   return (path, decode) =>
     Promise.resolve(
       path === "/api/workspace/kiro-docs"
         ? decode(inventory)
-        : path === "/api/steering/issues"
-          ? { issues: {} }
-          : { hooks: [] },
+        : path === "/api/config/standing"
+          ? decode(standing)
+          : path === "/api/steering/issues"
+            ? { issues: {} }
+            : { hooks: [] },
     );
 }
 
@@ -238,6 +243,58 @@ describe("what it matches", () => {
     type("listdirectory");
     expect(names("agents")).toEqual(["planner"]);
     type("");
+    forceTab("steering");
+    render();
+  });
+
+  it("reaches an agent's standing and its load error", async () => {
+    forceTab("agents");
+    const { apiGetTyped } = await import("./api-client.js");
+    vi.mocked(apiGetTyped).mockImplementation(
+      serveDocsPage(
+        {
+          docs: [
+            { category: "agent", name: "reviewer", path: "w/.kiro/agents/r.json" },
+            { category: "agent", name: "planner", path: "w/.kiro/agents/p.json" },
+          ],
+          truncated: false,
+        },
+        {
+          standing: [
+            {
+              type: "agent",
+              key: "w/.kiro/agents/r.json",
+              kind: "displaced",
+              decided_by: "user-local",
+              decided_by_name: "Local Settings (~/.kiro)",
+              compose: "override",
+            },
+          ],
+          load_errors: {
+            "w/.kiro/agents/p.json": {
+              at: "2026-10-16T00:00:00Z",
+              reason_code: "invalid_config",
+              error: "unexpected token at line 3",
+            },
+          },
+        },
+      ) as typeof apiGetTyped,
+    );
+    refresh();
+    await vi.waitFor(() => {
+      expect(panel("agents").querySelector(".docs-badge-standing")).not.toBeNull();
+    });
+    type("replaced by local");
+    expect(names("agents")).toEqual(["reviewer"]);
+    type("unexpected token");
+    expect(names("agents")).toEqual(["planner"]);
+    type("");
+    // The standing is the module's; later cases start from none.
+    vi.mocked(apiGetTyped).mockImplementation(serveDocsPage() as typeof apiGetTyped);
+    refresh();
+    await vi.waitFor(() => {
+      expect(names("agents")).toEqual([]);
+    });
     forceTab("steering");
     render();
   });

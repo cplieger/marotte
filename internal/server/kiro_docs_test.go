@@ -13,6 +13,7 @@ import (
 	"testing/fstest"
 
 	"github.com/cplieger/marotte/internal/steering"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 func writeFile(t *testing.T, dir, rel, body string) {
@@ -550,5 +551,35 @@ func TestCollectKiroDocs_PerRepoTreeCounts(t *testing.T) {
 	}
 	if !strings.Contains(r.Path, "/myrepo/.kiro/steering/repo.md") {
 		t.Errorf("per-repo Path = %q, want the repo in the prefix", r.Path)
+	}
+}
+
+// A Docs row's Path is the key agent load errors are joined on, so it must equal translate.DocKeyFromAbs of the
+// file's absolute path for the root's own .kiro and every repository's.
+func TestKiroDocPath_EqualsDocKeyFromAbs(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"root-agent": filepath.Join(dir, ".kiro", "agents", "root-agent.json"),
+		"repo-agent": filepath.Join(dir, "repo", ".kiro", "agents", "repo-agent.md"),
+	}
+	writeFile(t, dir, ".kiro/agents/root-agent.json", `{"name":"root-agent"}`)
+	writeFile(t, dir, "repo/.kiro/agents/repo-agent.md", "---\nname: repo-agent\n---\n")
+	srv := &Server{workDir: dir}
+
+	docs := docsByCategory(srv.collectKiroDocs(t.Context()).Docs, catAgent)
+
+	if len(docs) != len(files) {
+		t.Fatalf("agent rows = %+v, want one per file in %v", docs, files)
+	}
+	for name, abs := range files {
+		d, ok := findDoc(docs, name)
+		if !ok {
+			t.Errorf("no row for %s", name)
+			continue
+		}
+		key, keyed := translate.DocKeyFromAbs(abs)
+		if !keyed || d.Path != key {
+			t.Errorf("%s: row Path %q, DocKeyFromAbs(%q) = %q (%v); the load-error join would miss", name, d.Path, abs, key, keyed)
+		}
 	}
 }

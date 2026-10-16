@@ -3,7 +3,7 @@
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import type { ScheduleSpec, SchedulesResponse, ScheduleView } from "../schedule-types.js";
 import type { RunDefaults } from "../run-defaults-picker.js";
-import { serverSentence } from "./runs.js";
+import { serverSentence } from "./server-sentence.js";
 
 export const loadSchedules = apiAction<
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args

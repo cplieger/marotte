@@ -143,6 +143,11 @@ var agentPatchChecks = map[string]func(json.RawMessage) error{
 // ValidateAgentPatch refuses a patch whose agent-capability keys carry a value
 // the UI cannot produce. A patch carrying none of them passes.
 func ValidateAgentPatch(patch map[string]json.RawMessage) error {
+	if raw, ok := patch[KeyEngineHeapMiB]; ok {
+		if err := validateEngineHeapMiB(raw, nodeOptionsEnv(), containerLimit); err != nil {
+			return err
+		}
+	}
 	for key, check := range agentPatchChecks {
 		raw, ok := patch[key]
 		if !ok {

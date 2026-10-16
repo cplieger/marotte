@@ -80,7 +80,7 @@ func TestTurnClosed_ClearsTheBufferOfASettledChatHoldingANotice(t *testing.T) {
 		t.Fatalf("no _session/steer/clear after the close of a chat holding a run notice; calls: %v", br.callLog())
 	}
 	if got := br.paramsFor(marotte.MethodSessionSteerClear)[marotte.KeySessionID]; got != br.SessionID() {
-		t.Errorf("clear sessionId = %v, want the chat bridge's own %q", got, br.SessionID())
+		t.Errorf("clear sessionId = %v, want the chat session's own %q", got, br.SessionID())
 	}
 }
 

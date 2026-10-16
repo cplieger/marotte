@@ -12,17 +12,17 @@ import (
 )
 
 // The agent-ignore list reaches KAS at the connection door through the real call, asserted on raw request bytes: a
-// notification that never leaves the process costs a connection all ignore enforcement. It precedes session/new,
-// so a returned Start means it was logged.
+// notification that never leaves the process costs the engine all ignore enforcement. Start sends it before it
+// returns, so a returned Start means it was logged.
 func TestStart_SendsTheAgentIgnoreFileList(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "requests.log")
 	scriptPath := configOptionFake(t, logPath)
 
-	b := New(scriptPath, dir)
+	b := NewEngine(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	opts := &marotte.StartOpts{
-		Lifetime: t.Context(),
+	opts := &marotte.EngineOpts{
+		Lifetime: context.Background(),
 		IgnoreFiles: func(context.Context) []string {
 			return []string{".kiroignore", ".dockerignore"}
 		},
@@ -30,6 +30,7 @@ func TestStart_SendsTheAgentIgnoreFileList(t *testing.T) {
 	if err := b.Start(t.Context(), opts); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	syncWithScript(t, b)
 
 	raw, err := os.ReadFile(logPath)
 	if err != nil {
@@ -63,9 +64,9 @@ func TestStart_SendsNoIgnoreFilesFrameWithoutAList(t *testing.T) {
 			logPath := filepath.Join(dir, "requests.log")
 			scriptPath := configOptionFake(t, logPath)
 
-			b := New(scriptPath, dir)
+			b := NewEngine(scriptPath, dir)
 			t.Cleanup(b.Stop)
-			opts := &marotte.StartOpts{Lifetime: t.Context(), IgnoreFiles: tc.resolve}
+			opts := &marotte.EngineOpts{Lifetime: context.Background(), IgnoreFiles: tc.resolve}
 			if err := b.Start(t.Context(), opts); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
@@ -84,11 +85,11 @@ func TestStart_SendsNoIgnoreFilesFrameWithoutAList(t *testing.T) {
 
 func TestStartLive_ReportsTheListSentAndTheTimeoutReappliedAfterInitialize(t *testing.T) {
 	dir := t.TempDir()
-	b := New(configOptionFake(t, filepath.Join(dir, "requests.log")), dir)
+	b := NewEngine(configOptionFake(t, filepath.Join(dir, "requests.log")), dir)
 	t.Cleanup(b.Stop)
 	reads := 0
-	opts := &marotte.StartOpts{
-		Lifetime:    t.Context(),
+	opts := &marotte.EngineOpts{
+		Lifetime:    context.Background(),
 		IgnoreFiles: func(context.Context) []string { return []string{".kiroignore", ".gitignore"} },
 		TerminalTimeout: func(context.Context) int {
 			reads++
@@ -98,6 +99,7 @@ func TestStartLive_ReportsTheListSentAndTheTimeoutReappliedAfterInitialize(t *te
 	if err := b.Start(t.Context(), opts); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	syncWithScript(t, b)
 
 	files, ms := b.StartLive()
 	if !slices.Equal(files, []string{".kiroignore", ".gitignore"}) || ms != 300000 {
@@ -105,10 +107,10 @@ func TestStartLive_ReportsTheListSentAndTheTimeoutReappliedAfterInitialize(t *te
 	}
 }
 
-// An unstarted bridge refuses every write (errBridgeNotStarted), which is a failed send.
+// An unstarted engine refuses every write (errBridgeNotStarted), which is a failed send.
 func TestStartSends_AFailedSendLeavesWhatKASAlreadyHeld(t *testing.T) {
-	b := New("/nonexistent/kiro-cli", t.TempDir())
-	b.features.TerminalCommandTimeoutMs = 1000
+	b := NewEngine("/nonexistent/kiro-cli", t.TempDir())
+	b.spawn.TerminalCommandTimeoutMs = 1000
 
 	if got := b.applyIgnoreFiles(t.Context(), func(context.Context) []string { return []string{".gitignore"} }); got != nil {
 		t.Errorf("applyIgnoreFiles over a failed send = %v, want nil: nothing reached KAS", got)

@@ -30,7 +30,7 @@ type steerRecords struct {
 	// promptHeld decides a cleared row's fate when no turn is bound.
 	promptHeld func(marotte.ChatID) bool `wiring:"optional"`
 	runJob     func(command.SteerJob)
-	// stepJob runs a step key's flush on the step's carrier; a chat key's goes to runJob.
+	// stepJob runs a step key's flush on the step's host session; a chat key's goes to runJob.
 	stepJob func(command.SteerJob) `wiring:"optional"`
 	endSeq  uint64
 	mu      sync.Mutex

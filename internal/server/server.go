@@ -91,7 +91,7 @@ type Option func(*Server)
 // WithSteering sets the steering generator used to produce environment.md for kiro-cli.
 func WithSteering(g SteeringGenerator) Option { return func(s *Server) { s.steering = g } }
 
-// WithAgent sets the agent runtime that manages bridge processes and SSE broadcasts.
+// WithAgent sets the agent runtime that owns the agent engine, its sessions and SSE broadcasts.
 func WithAgent(a chatEngine) Option { return func(s *Server) { s.agent = a } }
 
 // WithChats sets the chat store, whose own router owns the chat HTTP surface.

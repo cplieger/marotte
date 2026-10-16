@@ -3,6 +3,7 @@
 // Saves set no `retryable`: their args hold DOM refs that go stale, and a save is cheap to redo.
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { serverSentence } from "./server-sentence.js";
 import { decodeEffectiveSettings } from "../wire/decoders.gen.js";
 import type { EffectiveSettings } from "../wire/types.gen.js";
 import type { IdentityVerdict } from "../identity.js";
@@ -49,7 +50,36 @@ export const logout = apiAction<
     }
     render(op);
   },
-  error: "Could not log out",
+  // The engine keeps serving a token it holds until it expires (the vault advertises at most 240 s).
+  success:
+    "Signed out. Chats stop using this account within about four minutes. To stop at once, restart the agent engine from Settings.",
+  // 500 (the saved sign-in stayed, so nothing is signed out) and 503 (not confirmed yet) say why.
+  error: (_args, err) => serverSentence(err) ?? "Could not sign out",
+});
+
+/** Restart the agent engine now. 202 admits it; 409 means one is already running, and says so. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
+export const restartEngine = apiAction<void, true>({
+  name: "settings.restart_engine",
+  request: () => ({ method: "POST", path: "/api/engine/restart" }),
+  // The 202 has no body; the engine_status event carries what follows.
+  decode: () => true,
+  error: (_args, err) => serverSentence(err) ?? "Could not restart the agent engine",
+  success: false,
+});
+
+/** Write the engine heap limit on its own, so the server's refusal, which names the bounds this container allows,
+ *  reaches the reader. */
+export const setEngineHeap = apiAction<{ mib: number }>({
+  name: "settings.set_engine_heap",
+  scope: "settings",
+  request: ({ mib }) => ({
+    method: "PATCH",
+    path: "/api/settings",
+    body: { engine_heap_mib: mib },
+  }),
+  error: (_args, err) => serverSentence(err) ?? "Could not save the memory limit",
+  success: false,
 });
 
 interface KiroSettingArgs {
