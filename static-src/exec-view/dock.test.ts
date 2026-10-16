@@ -276,6 +276,32 @@ describe("what wants the reader", () => {
     ...(questions === undefined ? {} : { questions }),
   });
 
+  it("paints the question on the box's own surface, its yellow mark and text kept", () => {
+    const style = mountAppCSS();
+    try {
+      page.render(asking([{ text: "Which option?", path: "root/fix", step: "fix" }]));
+      const region = q(".ev-dock-ask");
+      const cs = getComputedStyle(region);
+      expect(cs.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+      expect(cs.backgroundImage).toBe("none");
+      expect(cs.borderTopWidth).toBe("0px");
+      expect(cs.boxShadow).toBe("none");
+      const dock = q(".ev-dock");
+      const surface = document.createElement("div");
+      surface.style.backgroundColor = "var(--c-bg-secondary)";
+      document.body.append(surface);
+      expect(getComputedStyle(dock).backgroundColor).toBe(
+        getComputedStyle(surface).backgroundColor,
+      );
+      surface.style.color = "var(--c-yellow)";
+      expect(getComputedStyle(q(".ev-dock-icon")).color).toBe(getComputedStyle(surface).color);
+      surface.remove();
+      expect(q(".ev-dock-ask-q").textContent).toBe("Which option?");
+    } finally {
+      style.remove();
+    }
+  });
+
   it("shows the whole question in its own region under the head, clamped with an opener", async () => {
     const style = mountAppCSS();
     try {

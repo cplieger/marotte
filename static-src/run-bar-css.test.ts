@@ -452,6 +452,30 @@ describe("the run bar's box", () => {
     }
   });
 
+  describe("a run that failed", () => {
+    const failed: ExecRun = {
+      ...runOf("broke-on-step-two", 1, 3),
+      state: "fail",
+      live: false,
+      alert: { kind: "failed", text: "Step two failed" },
+    };
+
+    it("draws no wash: its red mark and state word say it failed, on the box's own surface", () => {
+      const bar = mountRows([failed, RUNS[0]!], false);
+      const btn = bar.querySelector<HTMLElement>(".run-bar-open[data-alert='failed']")!;
+      const cs = getComputedStyle(btn);
+      expect(cs.backgroundImage).toBe("none");
+      expect(cs.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+      const mark = btn.querySelector<HTMLElement>(".ev-alert-icon")!;
+      const red = document.createElement("div");
+      red.style.color = "var(--c-red)";
+      host.append(red);
+      expect(getComputedStyle(mark).color).toBe(getComputedStyle(red).color);
+      expect(btn.querySelector(".ev-sum-state")!.textContent).toBe("failed");
+      host.remove();
+    });
+  });
+
   describe("a run that waits on the reader", () => {
     const waiting: ExecRun = {
       ...runOf("needs-an-answer", 1, 3),

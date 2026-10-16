@@ -1241,8 +1241,8 @@
 /* --- The question a step asks ------------------------------------------------ */
 
 /* The whole question, readable: prose at the transcript's size, four lines then the
-   clamp opener. The notice idiom, a hue wash of its state over its box; it leaves
-   with the ask. The live wrapper stays rendered, empty, between asks. */
+   clamp opener, on the dock's own surface. It leaves with the ask. The live wrapper
+   stays rendered, empty, between asks. */
 .ev-dock-ask {
   display: flex;
   flex-direction: column;
@@ -1250,7 +1250,6 @@
   gap: var(--sp-1);
   padding: var(--sp-2) var(--sp-3) var(--sp-2) calc(1.5rem + var(--sp-2));
   border-radius: var(--stack-in-r);
-  background: color-mix(in srgb, var(--c-yellow) 10%, transparent);
   color: var(--c-text-primary);
 }
 
