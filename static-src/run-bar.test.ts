@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // The graph reaches the shared DOM registry, which throws on a missing element. Every id has to
 // exist before the imports below are evaluated.
 for (const id of [
+  "run-bar-fold",
   "run-bar",
   "messages",
   "messages-wrap",
@@ -68,6 +69,7 @@ const { applyRunAsks, _resetRunAsksForTest } = await import("./run-asks.js");
 const { apiGetOrError } = await import("./api-client.js");
 
 const bar = document.getElementById("run-bar") as HTMLUListElement;
+const fold = document.getElementById("run-bar-fold")!;
 
 let seq = 0;
 /** A fresh chat id per case, so no case inherits another's live rows. */
@@ -238,7 +240,8 @@ describe("the run bar", () => {
     }
     inspect.set(ids[2]!, state({ runLabel: ids[2], status: "paused" }));
     await activate(c);
-    const toggle = bar.querySelector<HTMLButtonElement>(".run-bar-summary .run-bar-toggle")!;
+    const toggle = fold.querySelector<HTMLButtonElement>(".run-bar-toggle")!;
+    expect(fold.hidden).toBe(false);
     expect(toggle.textContent).toBe("4 workflows, 1 needs you");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(toggle.querySelector<HTMLElement>(".run-bar-glyph")?.dataset["status"]).toBe("input");
@@ -266,7 +269,7 @@ describe("the run bar", () => {
       live(id, c);
     }
     await activate(c);
-    expect(bar.querySelector(".run-bar-summary")).toBeNull();
+    expect(fold.hidden).toBe(true);
     expect([...bar.querySelectorAll<HTMLElement>("li.run-bar-row")].map((r) => r.hidden)).toEqual([
       false,
       false,

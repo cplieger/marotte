@@ -313,8 +313,10 @@
                Same mechanical property as the dock (see 26-dock.css): the bar
                GROWS upward and #messages-wrap shrinks by exactly this region's
                height, so nothing is covered. -->
-          <!-- The host is the rows' container, so a container query can change the list's own columns. -->
+          <!-- The host is the rows' container, so a container query can change the list's own columns.
+               The fold row sits above the list, outside its scroll clip. -->
           <div class="run-bar-host">
+            <div id="run-bar-fold" class="run-bar-fold" hidden></div>
             <ul id="run-bar" class="run-bar hidden" aria-label="Workflow runs from this chat"></ul>
           </div>
           <!-- Mid-turn messages KAS is holding, oldest at the top: a new one

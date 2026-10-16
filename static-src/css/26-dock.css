@@ -867,14 +867,27 @@
    their subject is a STEP — that is the line between the two vocabularies.
    ========================================================================== */
 
-/* ONE BOX FOR EVERY RUN COUNT, the bottom stack's card, drawn by the host: the list
-   inside it is the scroller, flush to the box's padding edge, so a row scrolled
-   under the cap is clipped by the list rather than standing near the box's corner.
-   The host is also the rows' container, so a container query can change the list's
-   own columns; the measure is .steer-stack's, .prompt-box's and .decision-dock's, so
-   all four band regions share one column. */
+/* ONE BOX FOR EVERY RUN COUNT, the bottom stack's card, drawn by the host. Its content is a
+   column: the fold row (from `FOLD_AT` runs) pinned on top, and the list below it as the
+   scroller. With no fold row the list is flush to the box's padding edge; with one, a row
+   scrolled under the cap is clipped at the list's top edge, under the fold row, in the middle
+   of the box.
+   The host is also the rows' container, so a container query can change the list's own
+   columns; the measure is .steer-stack's, .prompt-box's and .decision-dock's, so all four
+   band regions share one column.
+
+   THE CAP IS THE BOX'S, so the transcript and the composer are always on screen however
+   many runs are live: `--run-cap` bounds the fold row, its gap and the list together (the
+   box's padding and 1px borders come on top, as they always have), and the list shrinks and
+   scrolls past it. Measured against the visual viewport, keyboard up or down
+   (`--dock-viewport-h`, `dock-ask.ts`). */
 .run-bar-host {
+  --run-cap: min(calc(0.25 * var(--dock-viewport-h, 100dvh)), 16rem);
+
   container: run-dock / inline-size;
+  display: flex;
+  flex-direction: column;
+  max-block-size: calc(var(--run-cap) + 2 * var(--stack-in) + 2px);
   max-width: var(--content-max-w);
   width: 100%;
   margin: 0 auto var(--stack-gap);
@@ -883,8 +896,27 @@
   border-radius: var(--stack-r);
   background: var(--c-bg-secondary);
 
+  /* The narrow layout's distance from a pill edge to its ink: above and below the fold text, and
+     below a row's bar. Equal on those lines, so the box's top and bottom gaps and the fold-to-row
+     and row-to-row gaps match. A row's title keeps the `--sp-1` it always had above its cap, so
+     seven rows still fit under the phone cap; only a first row with no fold row above it takes
+     the air. The -1.5px and -0.5px below are the line box's
+     leading above a cap and below a descender. */
+  --run-air: 0.5rem;
+
   &:has(> .run-bar.hidden) {
     display: none;
+  }
+}
+
+/* The fold row sits outside the list's clip so its touch target can reach up into the box's
+   padding and the stack gap above, and it stays on screen while the list scrolls. The list's own
+   row gap is restored below it while open. */
+.run-bar-fold {
+  flex-shrink: 0;
+
+  &:has(> [aria-expanded="true"]) {
+    margin-block-end: var(--sp-05);
   }
 }
 
@@ -893,9 +925,8 @@
    sizes to the widest title up to 18rem and ellipsizes; the row's name and tooltip
    carry the whole.
 
-   A HARD CAP, so the transcript and the composer are always on screen however many
-   runs are live: the list scrolls inside itself past it, measured against the
-   visual viewport, keyboard up or down (`--dock-viewport-h`, `dock-ask.ts`). */
+   The list takes what the host's cap leaves under the fold row and scrolls inside itself
+   past it. */
 .run-bar {
   display: grid;
   grid-template-columns:
@@ -906,13 +937,19 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  max-block-size: min(calc(0.25 * var(--dock-viewport-h, 100dvh)), 16rem);
+  min-block-size: 0;
   overflow: hidden auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
 
-  /* The clip a scrolled row meets: the box's concentric corner, which is each row's. */
+  /* The clip a scrolled row meets at the list's corners: each row's concentric corner. Under the
+     fold row the top edge is square, since it is no corner of the box. */
   border-radius: var(--stack-in-r);
+
+  .run-bar-fold:not([hidden]) + & {
+    border-start-start-radius: 0;
+    border-start-end-radius: 0;
+  }
 
   & > li {
     display: grid;
@@ -1050,11 +1087,12 @@
   display: none;
 }
 
-/* From `FOLD_AT` runs the box's first line is the fold row, one line across the
-   grid: a chevron, the mark and the count. */
+/* From `FOLD_AT` runs the fold row heads the box, one line: a chevron, the mark and the
+   count. */
 .run-bar-toggle {
   display: flex;
   gap: var(--sp-2);
+  inline-size: 100%;
 }
 
 .run-bar-chev {
@@ -1077,7 +1115,7 @@
   color: var(--c-text-primary);
 }
 
-/* A phone: two lines in the row the hit floor already makes 44px tall. Line one is
+/* A phone: two lines in a row, never under the hit floor's 44px. Line one is
    the title and the clock, line two the state and the progress, each in shared
    columns; the bar is a band along the row's bottom edge. */
 @container run-dock (width < 30rem) {
@@ -1088,8 +1126,16 @@
     column-gap: var(--sp-1);
   }
 
+  /* With no fold row the first title is the box's first ink, so it gets the air the last bar has. */
+  .run-bar-fold[hidden] + .run-bar > li:first-child {
+    --row-top: calc(var(--run-air) - 1.5px);
+  }
+
   .run-bar-open {
-    padding-block: var(--sp-1) calc(var(--sp-1) + 3px);
+    /* Line two is as tall as an open question's line (`.ev-alert-text`, 31-exec-view.css), so a
+       question row is as tall as a progress row. */
+    grid-template-rows: auto calc(var(--fs-sm) * 1.35);
+    padding-block: var(--row-top, var(--sp-1)) calc(var(--run-air) + 3px);
 
     & > .run-bar-glyph {
       grid-row: 1 / span 2;
@@ -1118,7 +1164,7 @@
     & .ev-mini {
       position: absolute;
       inset-inline: var(--sp-3);
-      inset-block-end: 2px;
+      inset-block-end: var(--run-air);
       block-size: 3px;
       gap: 1px;
     }
@@ -1137,13 +1183,36 @@
       grid-row: 2;
     }
   }
+
+  /* Painted at 2 * air plus the ink, not at the hit floor: the ::after reaches up into the box's
+     padding, border and the stack gap, stopping short of the stack member above, and 2px down over
+     the row gap; the first row stacks above it. */
+  .run-bar-toggle {
+    min-block-size: 0;
+    padding-block: calc(var(--run-air) - 1.5px) calc(var(--run-air) - 0.5px);
+
+    &::after {
+      content: "";
+      position: absolute;
+      inset-inline: 0;
+      inset-block: calc(
+          -1 *
+            clamp(
+              0px,
+              calc(var(--hit-floor) - 100% - var(--sp-05)),
+              calc(var(--stack-in) + var(--stack-gap))
+            )
+        )
+        calc(-1 * clamp(0px, calc(var(--hit-floor) - 100%), var(--sp-05)));
+    }
+  }
 }
 
 /* A phone-shaped screen: an open run list shows every run up to half the visual
    viewport; the ask card keeps to a fifth. */
 @media (width <= 48rem), (height <= 30rem) {
-  .run-bar {
-    max-block-size: calc(0.5 * var(--dock-viewport-h, 100dvh));
+  .run-bar-host {
+    --run-cap: calc(0.5 * var(--dock-viewport-h, 100dvh));
   }
 
   .dock-card {

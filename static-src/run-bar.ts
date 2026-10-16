@@ -1,6 +1,6 @@
 // The run bar: one box holding a line per LIVE workflow run the active chat launched, in the bottom
-// bar between the interaction dock and the steer stack. From `FOLD_AT` runs its first line is the
-// fold row.
+// bar between the interaction dock and the steer stack. From `FOLD_AT` runs a fold row heads the
+// list, outside the list's clip so its touch target can reach past the row.
 
 import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
@@ -35,9 +35,6 @@ const FALLBACK_NAME = "Workflow run";
 /** From this many live runs the bar folds them behind one summary row, so a fan-out cannot push
  *  the transcript and the composer off a phone. */
 const FOLD_AT = 3;
-
-/** The summary row's reconcile key; a run id is never empty, so it cannot collide. */
-const SUMMARY_KEY = "";
 
 /** One bar row's painted parts, kept so a repaint and the clock patch them in place. */
 interface RowView {
@@ -139,14 +136,10 @@ function render(bar: HTMLUListElement): void {
   const focused = document.activeElement;
   const held = focused instanceof HTMLElement && bar.contains(focused) ? focused : null;
   // KEYED BY RUN ID, and each surviving row is PATCHED rather than rebuilt. Both halves are needed.
-  reconcile(bar, folds ? [SUMMARY_KEY, ...ids] : ids, {
+  reconcile(bar, ids, {
     key: (id: string) => id,
-    mount: (id: string) => (id === SUMMARY_KEY ? buildSummary(bar) : buildRow(id, chatID)),
-    update: (row: HTMLElement, id: string) => {
-      if (id !== SUMMARY_KEY) {
-        paintRow(row, id);
-      }
-    },
+    mount: (id: string) => buildRow(id, chatID),
+    update: paintRow,
   });
   for (const row of bar.querySelectorAll<HTMLElement>(":scope > .run-bar-row")) {
     row.hidden = !open;
@@ -154,8 +147,13 @@ function render(bar: HTMLUListElement): void {
   if (held !== null && held.isConnected && document.activeElement !== held) {
     held.focus({ preventScroll: true });
   }
+  const fold = $.runBarFold;
+  fold.hidden = !folds;
   if (folds) {
-    paintSummary(bar, ids.length, waiting.length, open);
+    if (fold.firstElementChild === null) {
+      fold.append(buildSummary(bar));
+    }
+    paintSummary(fold, ids.length, waiting.length, open);
   }
   if (ids.length === 0) {
     // Reset the announce baseline so arriving at a chat that already has runs reads them out fresh,
@@ -178,8 +176,8 @@ function render(bar: HTMLUListElement): void {
   prevChatID = chatID;
 }
 
-/** The folded bar's one row: how many runs and how many need the reader, opening the list in place. */
-function buildSummary(bar: HTMLUListElement): HTMLElement {
+/** The fold row: how many runs and how many need the reader, opening the list in place. */
+function buildSummary(bar: HTMLUListElement): HTMLButtonElement {
   const glyph = el("span", { className: "run-bar-glyph", "aria-hidden": "true" });
   const btn = el(
     "button",
@@ -187,16 +185,16 @@ function buildSummary(bar: HTMLUListElement): HTMLElement {
     el("span", { className: "run-bar-chev", "aria-hidden": "true" }, chevronEl()),
     glyph,
     el("span", { className: "run-bar-count" }),
-  );
+  ) as HTMLButtonElement;
   btn.addEventListener("click", () => {
     setRunBarOpen(!runBarOpen());
     render(bar);
   });
-  return el("li", { className: "run-bar-summary" }, btn);
+  return btn;
 }
 
-function paintSummary(bar: HTMLUListElement, total: number, waiting: number, open: boolean): void {
-  const btn = bar.querySelector<HTMLButtonElement>(":scope > .run-bar-summary > .run-bar-toggle");
+function paintSummary(fold: HTMLElement, total: number, waiting: number, open: boolean): void {
+  const btn = fold.querySelector<HTMLButtonElement>(".run-bar-toggle");
   if (btn === null) {
     return;
   }
