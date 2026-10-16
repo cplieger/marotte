@@ -33,7 +33,7 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-describe("the four fields this screen keeps to itself", () => {
+describe("the layout fields this screen keeps to itself", () => {
   it("reads back what it wrote, per field", () => {
     setActiveView("chat-x");
     setShellOpen(true);
@@ -105,8 +105,19 @@ describe("the four fields this screen keeps to itself", () => {
     localStorage.setItem(LS_UI_STATE_KEY, '"a string"');
     expect(loadDeviceView()).toEqual(defaults);
 
+    // `typeof null` is "object", and a field read off null throws.
+    localStorage.setItem(LS_UI_STATE_KEY, "null");
+    expect(loadDeviceView()).toEqual(defaults);
+
     localStorage.setItem(LS_UI_STATE_KEY, "{not json");
     expect(loadDeviceView()).toEqual(defaults);
+  });
+
+  it("replaces a blob that is not an object rather than merging into it", () => {
+    // Spreading a string merges its characters in as index keys.
+    localStorage.setItem(LS_UI_STATE_KEY, '"ab"');
+    setShellOpen(true);
+    expect(blob()).toEqual({ shell_open: true });
   });
 });
 

@@ -48,13 +48,9 @@ function browserProject(
       name,
       include,
       exclude,
-      // A later group, so touch never runs beside `browser`: a bail that lands while the other project
-      // is resolving a `vi.mock` factory can end the vitest process
-      // (https://github.com/vitest-dev/vitest/issues/11467).
-      ...(hasTouch ? { sequence: { groupOrder: 1 } } : {}),
       // Merged with the root list (`extends: true` merges arrays). Browser-only: both read `window`,
       // and a `ResizeObserver` loop is a real engine's verdict.
-      setupFiles: ["./ro-loop-gate.ts", "./page-lifecycle-setup.ts"],
+      setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
       // One test file at a time: the mocker's routes live on the shared Playwright CONTEXT and are
       // unrouted at each file end, so a still-resolving mock gets auto-continued (`route.fulfill: Route
       // is already handled!`, https://github.com/vitest-dev/vitest/issues/8339). vitest 5.0.4's
