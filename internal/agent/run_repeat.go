@@ -35,8 +35,7 @@ func (rs *Runs) extendRepeat(ctx context.Context, workflowID, nodeID string, n i
 	return nil
 }
 
-// finishRepeat ends a repeat paused at its cap and lets the run continue. Separate from SetStepStatus:
-// KAS refuses `nodeId` on an ordinary step write.
+// finishRepeat ends a repeat paused at its cap and lets the run continue.
 func (rs *Runs) finishRepeat(ctx context.Context, workflowID, nodeID string) (err error) {
 	if nodeID == "" {
 		return errors.New("missing node id")

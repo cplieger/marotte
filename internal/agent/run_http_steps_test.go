@@ -172,3 +172,18 @@ func TestStepRoutes_APathTheRunsTreeDoesNotHoldIsUnknown(t *testing.T) {
 		}
 	}
 }
+
+// TestRunRoutes_NoStepStatusWrite pins that marotte serves no ordinary step-status write: KAS's
+// update targets positionally, and continuing a step without an answer is a typed message.
+func TestRunRoutes_NoStepStatusWrite(t *testing.T) {
+	h, _, _ := newTestHub()
+	mux := http.NewServeMux()
+	(&runRoutes{runs: h.Runs()}).register(mux)
+	for _, body := range []string{`{"node_id":"review","status":"running"}`, `{"node_id":"review","status":"completed"}`} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/step", strings.NewReader(body)))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("POST /api/runs/wf_1/step %s = %d, want 404", body, rec.Code)
+		}
+	}
+}

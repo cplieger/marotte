@@ -27,7 +27,7 @@ interface AskHead {
 export function askHead(question: string): AskHead {
   const text = el("strong", { className: "dock-ask-question" }, question);
   const more = el("button", {
-    className: "dock-ask-more",
+    className: "clamp-more",
     type: "button",
   }) as HTMLButtonElement;
   const body = el("div", { className: "dock-ask-body" }, text, more);

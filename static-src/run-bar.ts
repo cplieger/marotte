@@ -1,5 +1,6 @@
-// The run bar: one line per LIVE workflow run the active chat launched, in the bottom bar between
-// the interaction dock and the steer stack.
+// The run bar: one box holding a line per LIVE workflow run the active chat launched, in the bottom
+// bar between the interaction dock and the steer stack. From `FOLD_AT` runs its first line is the
+// fold row.
 
 import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
@@ -17,7 +18,7 @@ import {
 } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { runToExec } from "./run-exec-source.js";
-import { counters, progressText, type ExecRun } from "./exec-view/model.js";
+import { compactText, counters, progressPhrase, type ExecRun } from "./exec-view/model.js";
 import { buildExecSummary, type ExecSummaryView } from "./exec-view/summary.js";
 import { wantsReader } from "./exec-view/alert.js";
 import { chevronEl } from "./chevron.js";
@@ -98,7 +99,7 @@ function key(): string {
         String(c.done),
         String(c.current),
         // A new pass can open on the same step counts.
-        run === undefined ? "" : progressText(run),
+        run === undefined ? "" : compactText(progressPhrase(run)),
       ].join("\u0002"),
     );
   }
@@ -223,7 +224,7 @@ function buildRow(id: string, chatID: string): HTMLElement {
   // No attribute means reserved box, nothing to show.
   const glyph = el("span", { className: "run-bar-glyph", "aria-hidden": "true" });
   const btn = el("button", { type: "button", className: "run-bar-open" }) as HTMLButtonElement;
-  const summary = buildExecSummary({ washHost: btn, live: false });
+  const summary = buildExecSummary({ alertHost: btn });
   btn.append(glyph, summary.root);
   // The NAME is resolved at click time rather than captured here, because this row outlives its
   // first paint: a run whose label arrives with its first fetch would otherwise open a tab called

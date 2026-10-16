@@ -105,21 +105,13 @@
      the cap, and an iPad's inset is under it. */
   --composer-inset-cap: 1.5rem;
 
-  /* THE ROW'S OWN PADDING PAYS FOR THE EXPANDER'S BLOCK REACH, which is what keeps
-     a pill's target from overhanging into `#prompt-input`'s box — the D4 geometry
-     class (a target reaching into its neighbour's) on the axis the ratified
-     arithmetic did not cover. The expander reaches (--hit-floor - box) / 2 = 6px
-     above the painted box on a coarse pointer against the row's 4px inset;
-     measured without this term, `elementFromPoint` gives a pill 1.75px of the
-     textarea's own box. Floored at --pill-inset, so the fine tier (where the box
-     already clears the floor) keeps the uniform 4px chrome inset and this term
-     changes nothing there.
-     It is the ROW's padding and NOT --pill-inset itself, deliberately: raising the
-     inset raises the GAP with it, and measured that costs exactly the label width
-     the smaller box just bought back (at 320 the model name disappears entirely).
-     So the row's inset is 6px on a finger while the gap between controls stays 4 —
-     the one place this box's "one inset" rule is broken, because the two numbers
-     now answer different questions. */
+  /* THE ROW'S OWN PADDING PAYS FOR THE EXPANDER'S BLOCK REACH, so a pill's target
+     never overhangs into `#prompt-input`'s box (a target reaching into its
+     neighbour's). The reach is (--hit-floor - box) / 2 above the painted box, 4px
+     on a coarse pointer, and the floor at --pill-inset keeps the 4px chrome inset
+     wherever the box already clears the target. It is the ROW's padding and NOT
+     --pill-inset, because raising the inset raises the gap between the controls
+     with it, which costs the pills' label width. */
   --composer-pill-pad: max(var(--pill-inset), calc((var(--hit-floor) - var(--composer-ctl-h)) / 2));
 }
 
@@ -131,17 +123,19 @@
   width: 100%;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  border-radius: var(--r-lg);
+
+  /* The bottom stack's card (01-tokens.css `--stack-r`), like every box above it. */
+  border-radius: var(--stack-r);
 
   /* CONCENTRIC WITH THIS BOX, not a rung off the radius ladder: an inner corner
      shares the outer corner's centre only at inner = outer − border − inset, which
      needs an EQUAL inset on both edges of the corner. Cloud Four's form
      (https://cloudfour.com/thinks/the-math-behind-nesting-rounded-corners/) omits
      the border term. The inset term is the ROW's padding, not --pill-inset, since
-     the row pays for its controls' target expander out of its own inset: 12 − 1 − 6
-     = 5px coarse, 12 − 1 − 4 = 7px fine. A per-container derivation, so not a
-     token. */
-  --pill-radius: calc(var(--r-lg) - 1px - var(--composer-pill-pad));
+     the row pays for its controls' target expander out of its own inset: 6 − 1 − 4
+     = 1px on both pointer tiers, and `max()` holds 0 once an inset passes the
+     corner. A per-container derivation, so not a token. */
+  --pill-radius: max(0px, calc(var(--stack-r) - 1px - var(--composer-pill-pad)));
 
   transition:
     border-color var(--dur-micro),
@@ -185,10 +179,10 @@
   border: none;
   /* The box's INNER curve, not its outer one. This textarea is flush against
      the border (inset 0), so the corner it has to follow is the padding-box arc
-     — one border-width shorter than the 12px the box paints. It carries no
-     background today, so the difference shows only through a focus ring or any
-     future fill; the honest value costs nothing. */
-  border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0;
+     — one border-width shorter than the box's own. It carries no background
+     today, so the difference shows only through a focus ring or any future fill;
+     the honest value costs nothing. */
+  border-radius: calc(var(--stack-r) - 1px) calc(var(--stack-r) - 1px) 0 0;
 
   /* THE BOX'S RESTING HEIGHT, and the source of its vertical padding. One line
      of text is CENTRED in this height, and every line after it adds exactly one
@@ -268,13 +262,12 @@
   gap: var(--sp-1);
 
   /* THE ROW'S PADDING PAYS FOR ITS CHIPS' TARGET REACH, exactly as `.prompt-pills`
-     pays for its controls': a chip's expander below reaches
-     (--hit-floor - box) / 2 = 6px past the painted box on a coarse pointer, and
-     without this term that target overhangs into `#prompt-input`'s box above and
-     into the pill row's own controls' targets below (measured 5px of overlap with
-     the row's old `0` bottom). Reading `--composer-pill-pad` rather than
-     `--pill-inset` also puts the chips on the same inline edge as the controls
-     under them; at 4px against the row's 6px they sat 2px to their left. */
+     pays for its controls': a chip's expander below reaches (--hit-floor - box) / 2
+     past the painted box on a coarse pointer, and without this term that target
+     overhangs into `#prompt-input`'s box above and into the pill row's own
+     controls' targets below. Reading `--composer-pill-pad` rather than
+     `--pill-inset` also keeps the chips on the same inline edge as the controls
+     under them, whichever of the two is larger. */
   padding: var(--composer-pill-pad);
 }
 
@@ -313,7 +306,10 @@
   padding-block: 0;
   padding-inline: var(--sp-2);
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
+
+  /* The composer's control corner (`--pill-radius` on `.prompt-box`), so a chip and the pills under
+     it read as one family; a sent turn's header, where that does not resolve, takes `--r`. */
+  border-radius: var(--pill-radius, var(--r));
   background: var(--c-bg-secondary);
   font-size: var(--fs-xs);
   list-style: none;
@@ -450,10 +446,9 @@
   /* THE LADDER'S RUNG, character for character with every other close button
      (`.tab-close`, `.shell-header-btn`, `.turn-action-btn`, `.native-rule-remove`:
      `--r-sm` on a 24px box; `radius-nesting.test.ts` holds the population). A
-     circle would be the app's only circular control. The concentric radius
-     (`--r` - 1px - gap) would be 2px on a mouse and 0px on a finger, neither a rung,
-     so this corner is deliberately `too-round` for a concentric audit. Closing it
-     needs the composer's row height or the pill's `--r` to move. */
+     circle would be the app's only circular control. The concentric radius (the
+     chip's corner - 1px - gap) is not a rung at either tier, so this corner is
+     deliberately rounder than its chip's. */
   border-radius: var(--r-sm);
   opacity: 0.5;
   transition:
@@ -524,7 +519,7 @@
 
   /* The CONCENTRIC radius, not height/2 and not the ladder's --r-md. A stadium
      reads as a tag — something labelled — where this is something pressed, and
-     a control sitting in the corner of the 12px .prompt-box nests only at the
+     a control sitting in the corner of the .prompt-box nests only at the
      radius that shares the box's corner centre. .send-btn takes the same value;
      they are one row of controls. Derivation and measurements: --pill-radius on
      .prompt-box. */
@@ -813,7 +808,7 @@
   color: var(--c-on-accent);
 
   /* A COUNT BADGE IS A STADIUM, and saying so is the fix. It declared --r-md
-     (8px) inside a 7px `--pill-radius` pill, so the inner box was rounder than
+     (8px) inside a squarer `--pill-radius` pill, so the inner box was rounder than
      its container -- and at 14px tall, 8px exceeds half the height, so the
      browser clamped it to a stadium and the declared rung never rendered. The
      ladder reserves --r-pill for non-interactive status chips, which is exactly
@@ -2036,7 +2031,7 @@
      global origin. Reduced motion runs it once and it rests at the `opacity: 0`
      declared here, leaving this face identical to a still one. 8% of the hue is ~5 points of depth
      wherever the ladder sits — 38 -> 43 resting, 46 -> 50 hovered, half the
-     rest-to-hover step. Radius 7 - 1 = 6px, concentric with the ring above. */
+     rest-to-hover step. Radius `--pill-radius` - 1px, concentric with the ring above. */
   &:where(.streaming)::before {
     content: "";
     position: absolute;
@@ -2272,13 +2267,13 @@
   max-width: var(--content-max-w);
   max-height: min(18rem, 40dvh);
   width: 100%;
-  margin: 0 auto var(--sp-2);
-  padding: var(--sp-1);
+  margin: 0 auto var(--stack-gap);
+  padding: var(--stack-in);
   overflow-y: auto;
   list-style: none;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  border-radius: var(--r-lg);
+  border-radius: var(--stack-r);
 
   &[hidden] {
     display: none;
@@ -2291,7 +2286,7 @@
   gap: var(--sp-2);
   min-height: var(--ctl-h-dense);
   padding: var(--sp-1) var(--sp-2);
-  border-radius: calc(var(--r-lg) - 1px - var(--sp-1));
+  border-radius: var(--stack-in-r);
   cursor: pointer;
 
   &[aria-selected="true"] {

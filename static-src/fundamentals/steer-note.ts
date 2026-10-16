@@ -145,7 +145,7 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   const text = el("div", { className: "steer-note-text" }, d.text);
   body.appendChild(text);
   const more = el("button", {
-    className: "steer-note-more",
+    className: "clamp-more",
     type: "button",
   }) as HTMLButtonElement;
   // OUTSIDE the clamped element, or the clamp hides its own opener.

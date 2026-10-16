@@ -75,7 +75,7 @@ const (
 	pendingReplied
 )
 
-// pendingPrompt is marotte's one unsettled prompt or Continue on a run. done closes when it clears.
+// pendingPrompt is marotte's one unsettled prompt on a run. done closes when it clears.
 type pendingPrompt struct {
 	done        chan struct{}
 	ceiling     *time.Timer
@@ -343,7 +343,7 @@ func wireAsks(asks []workflow.Ask) []marotte.RunAsk {
 		out = append(out, marotte.RunAsk{
 			AskID: a.ID, NodeID: a.NodeID, NodePath: a.NodePath, StepSessionID: a.StepSessionID,
 			AgentName: a.AgentName, Text: a.Text, TextSource: a.TextSource, Reason: a.Reason,
-			Blocked: a.Blocked(), CanContinue: a.CanContinue, AskedAt: a.AskedAt,
+			Blocked: a.Blocked(), AskedAt: a.AskedAt,
 		})
 	}
 	return out
@@ -352,7 +352,7 @@ func wireAsks(asks []workflow.Ask) []marotte.RunAsk {
 func sameAsks(x, y []marotte.RunAsk) bool {
 	return slices.EqualFunc(x, y, func(p, q marotte.RunAsk) bool {
 		return p.AskID == q.AskID && p.Text == q.Text && p.TextSource == q.TextSource && p.Reason == q.Reason &&
-			p.Blocked == q.Blocked && p.CanContinue == q.CanContinue && p.AskedAt == q.AskedAt &&
+			p.Blocked == q.Blocked && p.AskedAt == q.AskedAt &&
 			p.AgentName == q.AgentName && slices.Equal(p.NodePath, q.NodePath)
 	})
 }

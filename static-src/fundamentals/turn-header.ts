@@ -1,11 +1,12 @@
 // TurnHeader: the turn card's top band for the turn's TRIGGER (a user prompt or a typed system
-// line). A meta row (fold toggle, number, outcome dot, timestamp, hit count) over the request. A
-// FOLDED turn's request text clamps to four lines in CSS, since folded rows are the session's
-// navigation; attachment chips stay outside the clamp.
+// line). A meta row (fold toggle, number, outcome dot, timestamp, hit count) over the request. The
+// fold toggle opens the request with the body: a FOLDED turn's request text clamps to four lines in
+// CSS, since folded rows are the session's navigation, and a labelled request's full text shows only
+// while open; attachment chips stay outside the clamp.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
-import { slideBox } from "../disclosure-row.js";
+import { watchCut } from "../clamp-text.js";
 import { linkifyPaths } from "../linkify.js";
 import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
 // The dot's words, shared with the turn map — see turn-severity.ts.
@@ -41,7 +42,7 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
       {
         className: "turn-fold-toggle",
         type: "button",
-        "aria-label": "Expand or collapse this turn",
+        "aria-label": FOLD_LABEL,
         // `.turn-header` is a plain div — `aria-expanded` there is an axe
         // `aria-allowed-attr` violation, so the state lives on this button.
         "aria-expanded": "true",
@@ -49,6 +50,7 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
       chevronEl(),
     ),
   );
+  const toggle = row.lastElementChild as HTMLElement;
   row.appendChild(el("span", { className: "turn-n" }, `#${String(d.n)}`));
   row.appendChild(el("span", { className: "turn-dot", role: "img" }));
   row.appendChild(el("time", { className: "turn-ts" }));
@@ -57,14 +59,22 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   header.appendChild(row);
 
   const req = el("div", { className: "turn-req" });
-  req.appendChild(el("div", { className: "turn-req-text" }));
+  const text = el("div", { className: "turn-req-text" });
+  req.appendChild(text);
+  // Decorative: the toggle's name says the message is cut.
+  req.appendChild(el("span", { className: "turn-req-cut", "aria-hidden": "true" }, "\u2026"));
   // Sibling of `.turn-req-text`, so the clamp cannot hide the attachments.
   req.appendChild(el("ul", { className: "turn-req-attachments attachment-row hidden" }));
   header.appendChild(req);
+  watchCut(text, (cut) => {
+    toggle.setAttribute("aria-label", cut ? `${FOLD_LABEL}, message truncated` : FOLD_LABEL);
+  });
 
   updateTurnHeader(header, d);
   return header;
 }
+
+const FOLD_LABEL = "Expand or collapse this turn";
 
 /** The request band alone, for a turn drawn without card chrome: a run step's turn that the user's
  *  message resumed. */
@@ -134,20 +144,8 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   syncFullText(header, label === "" ? undefined : body);
 }
 
-const LABEL_SHOW = "Show full message";
-const LABEL_HIDE = "Hide full message";
-
-/** Slides `req`, the request block, since the full text has no box to slide while it is hidden. */
-function setFullShown(req: HTMLElement, more: HTMLElement, full: HTMLElement, on: boolean): void {
-  more.setAttribute("aria-expanded", on ? "true" : "false");
-  more.textContent = on ? LABEL_HIDE : LABEL_SHOW;
-  slideBox(req, on, (open) => {
-    full.classList.toggle("hidden", !open);
-  });
-}
-
-/** A labelled request's full text behind its opener, both siblings of the text so the folded clamp
- *  cannot hide them; `body` undefined removes both. The reader's open state survives a repaint. */
+/** A labelled request's full text, a sibling of the text so the folded clamp cannot hide it, shown
+ *  while the turn is open (29-turns.css); `body` undefined removes it. */
 function syncFullText(header: HTMLElement, body: string | undefined): void {
   const req = header.querySelector<HTMLElement>(":scope > .turn-req");
   if (req === null) {
@@ -155,23 +153,13 @@ function syncFullText(header: HTMLElement, body: string | undefined): void {
   }
   let full = req.querySelector<HTMLElement>(":scope > .turn-req-full");
   if (body === undefined) {
-    req.querySelector(":scope > .turn-req-more")?.remove();
     full?.remove();
     return;
   }
   if (full === null) {
-    const opener = el(
-      "button",
-      { className: "turn-req-more", type: "button", "aria-expanded": "false" },
-      LABEL_SHOW,
-    );
-    const shown = el("div", { className: "turn-req-full hidden" });
-    opener.addEventListener("click", () => {
-      setFullShown(req, opener, shown, opener.getAttribute("aria-expanded") !== "true");
-    });
-    // After the text and before the attachments, in reading order.
-    req.querySelector(":scope > .turn-req-text")?.after(opener, shown);
-    full = shown;
+    full = el("div", { className: "turn-req-full" });
+    // After the text and its cue and before the attachments, in reading order.
+    req.querySelector(":scope > .turn-req-cut")?.after(full);
   }
   if (full.textContent !== body) {
     full.textContent = body;

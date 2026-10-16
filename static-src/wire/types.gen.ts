@@ -2597,13 +2597,7 @@ export interface ResumableSession {
   turn_count?: number;
 }
 
-/**
- * RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.
- * //
- * Empty Text is a 400 rather than a waive. Continuing without an answer is a
- * DIFFERENT verb (POST /api/runs/{id}/step with status `running`) — it drives the
- * step with KAS's default continuation, and an empty box must not reach it.
- */
+/** RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step. Empty Text is a 400. */
 export interface RunAnswerRequest {
   ask_id: string;
   text: string;
@@ -2612,8 +2606,7 @@ export interface RunAnswerRequest {
 /**
  * RunAsk is one step waiting on a person, in run_asks and under `open_asks` in GET /api/runs/{id}.
  * AskID changes with every turn of the step marotte sees start, so an answer typed against an
- * older one is refused as stale. Blocked is absent when an answer may go; CanContinue is true on a blocked ask too, and
- * Continue is offered only when it is true and Blocked is absent.
+ * older one is refused as stale. Blocked is absent when an answer may go.
  */
 export interface RunAsk {
   ask_id: string;
@@ -2630,7 +2623,6 @@ export interface RunAsk {
   blocked?: RunAskBlocker;
   asked_at?: string;
   node_path: string[];
-  can_continue: boolean;
 }
 
 /**
@@ -2882,20 +2874,6 @@ export interface RunStepStart {
   /** StartedAt is RFC 3339. */
   started_at: string;
   ended: boolean;
-}
-
-/**
- * RunStepStatusRequest is POST /api/runs/{id}/step's body: Status `completed` or `failed` marks the
- * step at NodeID, `running` is Continue without answering.
- */
-export interface RunStepStatusRequest {
-  node_id: string;
-  status: string;
-  /**
- * AskID, on a Continue, is the ask the card shows; a Continue naming none is refused when more
- * than one ask shares NodeID, as a fan-out's executions do.
- */
-  ask_id?: string;
 }
 
 /**

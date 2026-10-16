@@ -62,9 +62,9 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+  gap: var(--stack-gap);
   max-width: var(--content-max-w);
-  margin: 0 auto var(--sp-2);
+  margin: 0 auto var(--stack-gap);
   width: 100%;
 
   /* Component-local, because neither is in the global duration vocabulary and
@@ -146,7 +146,7 @@
 .dock-outgoing {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+  gap: var(--stack-gap);
   flex: 0 0 auto;
   pointer-events: none;
 }
@@ -165,17 +165,17 @@
   }
 }
 
-/* One card shape for all three decision types. They differ in accent colour
-   only: the user is answering the same KIND of thing each time, and three
-   layouts would be three things to learn. */
+/* One card shape for all three decision types, the bottom stack's card
+   (01-tokens.css `--stack-r`): the user is answering the same KIND of thing each
+   time, and three layouts would be three things to learn. */
 .dock-card {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
   padding: var(--sp-3);
   background: var(--c-bg-secondary);
-  border: 1px solid var(--c-accent);
-  border-radius: var(--r);
+  border: 1px solid var(--c-border);
+  border-radius: var(--stack-r);
   color: var(--c-text-primary);
 
   /* THE ANSWER CONTROLS MAY NEVER LEAVE THE VIEWPORT, whatever the agent asked.
@@ -269,27 +269,13 @@
   flex: none;
 }
 
-/* YELLOW MEANS THE AGENT IS BLOCKED ON A DECISION IT CANNOT MAKE ITSELF, and
-   every kind of ask that reaches this dock now is one — a tool permission, a turn
-   approval, and the agent's own structured question. So the accent face on
-   `.dock-card` is the DEFAULT for a card that is not asking, and nothing in the
-   dock takes it today.
-
-   The user-input card joined this set for the same reason the permission ask
-   is in it: the work stops until somebody answers, and the only thing separating
-   them is how much work — one tool call or the turn. Reusing the existing
-   `data-kind` vocabulary rather than a hue per kind: the shape is already the ask
-   shape, and one more colour would be one more thing to learn.
-
-   `.dock-elicitation` is deliberately NOT here: an MCP server asking for form
-   input is a tool's own request for data rather than a decision the agent is
-   waiting on, so it keeps the accent face. */
-.dock-permission,
-.dock-approval,
-.dock-user-input {
-  border-color: var(--c-yellow);
-}
-
+/* YELLOW MEANS THE AGENT IS BLOCKED ON A DECISION IT CANNOT MAKE ITSELF: a tool
+   permission, a turn approval and the agent's own structured question each draw
+   their question in it. The card's edge is the stack's one border, so the state is
+   the question's ink and its words: a state is never drawn as a coloured edge.
+   `.dock-elicitation` is deliberately NOT here: an MCP server asking
+   for form input is a tool's own request for data rather than a decision the agent
+   is waiting on. */
 .dock-permission .approval-body strong,
 .dock-approval .approval-body strong {
   color: var(--c-yellow);
@@ -347,7 +333,7 @@
 /* FOUR lines behind the attribute the opener toggles, the same count and the same
    reason as `.steer-text` below: this is a region of the bar, and the bar grows
    UPWARD into the transcript. Not an ellipsis that cuts — the text is clipped by
-   overflow, so the whole question stays in the DOM and `.dock-ask-more` is what
+   overflow, so the whole question stays in the DOM and the clamp opener (`.clamp-more`) is what
    opens it. The clamp is the refinement rather than the guarantee: the card's own
    ceiling is what keeps the answer row reachable when a reader opens this. */
 .dock-ask-question[data-clamped] {
@@ -458,9 +444,8 @@
 }
 
 /* ONE right-aligned row per card, holding every button it has. Wraps rather than
-   overflowing: "Continue without answering" is a long label, the user-input card's
-   sub-option stage carries three buttons (Confirm, Back, Skip), and the dock is as
-   narrow as the composer on a phone. */
+   overflowing: the user-input card's sub-option stage carries three buttons
+   (Confirm, Back, Skip), and the dock is as narrow as the composer on a phone. */
 .dock-ask-actions {
   display: flex;
   flex-wrap: wrap;
@@ -635,13 +620,13 @@
 .steer-stack {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  gap: var(--stack-gap);
 
   /* Character-for-character .prompt-box's and .decision-dock's measure, so all
      three regions share one column and their edges line up. */
   max-width: var(--content-max-w);
   width: 100%;
-  margin: 0 auto var(--sp-2);
+  margin: 0 auto var(--stack-gap);
   padding: 0;
   list-style: none;
 }
@@ -664,20 +649,19 @@
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  border: 1px dashed color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
-  border-radius: var(--r);
+  border: 1px solid var(--c-border);
+  border-radius: var(--stack-r);
   background: color-mix(in srgb, var(--c-accent) 6%, var(--c-bg-secondary));
   font-size: var(--fs-sm);
 
-  /* The entry, plus the SETTLE into the confirmed state, so the row's edge and wash
-     do not snap between the two `data-state` treatments. Both are paint-only
-     properties at `--dur-micro`, the one exception to animating only transform and
-     opacity. Geometry is deliberately NOT animated: the row's height is reserved, so
-     there is nothing to interpolate. */
+  /* The entry, plus the SETTLE into the confirmed state, so the row's wash does not
+     snap between the two `data-state` treatments: a paint-only property at
+     `--dur-micro`, the one exception to animating only transform and opacity.
+     Geometry is deliberately NOT animated: the row's height is reserved, so there is
+     nothing to interpolate. */
   transition:
     opacity var(--dur-enter) var(--ease-enter),
     transform var(--dur-enter) var(--ease-enter),
-    border-color var(--dur-micro) var(--ease-standard),
     background var(--dur-micro) var(--ease-standard);
 
   /* Enters from below: a new message arrives at the bottom of the stack. */
@@ -692,7 +676,6 @@
    because an opacity multiplies the measured contrast and is invisible to the
    contrast gates. */
 .steer-row[data-state="sending"] {
-  border-color: var(--c-border);
   background: var(--c-bg-secondary);
 }
 
@@ -720,7 +703,7 @@
    1.4.11's 3:1 against the row's accent wash for half of every cycle, and motion
    means in flight while a steer is parked in KAS's buffer (12-tabs.css stops its
    `waiting` dot for the same reason). The state is carried by the word, the ink
-   and the dashed edge. */
+   and the wash. */
 .steer-state-icon svg {
   width: 0.85rem;
   height: 0.85rem;
@@ -763,31 +746,6 @@
   color: var(--c-text-primary);
   line-height: 1.35;
   transition: color var(--dur-micro) var(--ease-standard);
-}
-
-/* Skinned on `.steer-note-more` (13-messages.css) and the exec view's
-   `.ev-in-more`/`.ev-r-more` (31-exec-view.css), because every one is the same
-   control: a text button that opens a clamp. Aligned left with the message rather than stretched across the
-   row. */
-.dock-ask-more {
-  align-self: flex-start;
-  font-size: var(--fs-xs);
-  color: var(--c-text-secondary);
-  background: none;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.dock-ask-more:hover {
-  color: var(--c-accent);
-}
-
-.dock-ask-more:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset);
 }
 
 /* --- Actions column ----------------------------------------------------- */
@@ -884,37 +842,78 @@
    their subject is a STEP — that is the line between the two vocabularies.
    ========================================================================== */
 
-.run-bar {
+/* ONE BOX FOR EVERY RUN COUNT, the bottom stack's card, drawn by the host: the list
+   inside it is the scroller, flush to the box's padding edge, so a row scrolled
+   under the cap is clipped by the list rather than standing near the box's corner.
+   The host is also the rows' container, so a container query can change the list's
+   own columns; the measure is .steer-stack's, .prompt-box's and .decision-dock's, so
+   all four band regions share one column. */
+.run-bar-host {
   container: run-dock / inline-size;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-
-  /* Character-for-character .steer-stack's, .prompt-box's and .decision-dock's
-     measure, so all four band regions share one column. */
   max-width: var(--content-max-w);
   width: 100%;
-  margin: 0 auto var(--sp-2);
-  padding: 0;
-  list-style: none;
+  margin: 0 auto var(--stack-gap);
+  padding: var(--stack-in);
+  border: 1px solid var(--c-border);
+  border-radius: var(--stack-r);
+  background: var(--c-bg-secondary);
+
+  &:has(> .run-bar.hidden) {
+    display: none;
+  }
 }
 
-/* The row's control. NO `min-width` and NO `min-height`: the zero-specificity
-   floor in 61-mcp-tools.css already gives every `button` `--hit-floor` on both
-   tiers, and a class-level declaration here would BEAT it (0,1,0 against 0,0,0)
-   — the `.send-btn` precedent that file records. */
+/* The list is the grid and every row a subgrid, so the title, state, progress, bar
+   and clock columns are shared: every bar starts and ends at one x. The title column
+   sizes to the widest title up to 18rem and ellipsizes; the row's name and tooltip
+   carry the whole.
+
+   A HARD CAP, so the transcript and the composer are always on screen however many
+   runs are live: the list scrolls inside itself past it. With the ask card's own
+   ceiling, the band above the composer stays within about a third of a phone's
+   visual viewport, keyboard up or down (`--dock-viewport-h`, `dock-ask.ts`). */
+.run-bar {
+  display: grid;
+  grid-template-columns:
+    [glyph] auto [title] fit-content(18rem) [state] auto [progress] auto
+    [bar] minmax(3rem, 1fr) [clock] auto [end];
+  align-content: start;
+  gap: var(--sp-05) var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-block-size: min(calc(0.25 * var(--dock-viewport-h, 100dvh)), 16rem);
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+
+  /* The clip a scrolled row meets: the box's concentric corner, which is each row's. */
+  border-radius: var(--stack-in-r);
+
+  & > li {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+  }
+}
+
+/* A row's control: a line of the box, inset and rounded at the box's concentric
+   corner, so its hover never meets a neighbour. NO `min-height`: the
+   zero-specificity floor in 61-mcp-tools.css already gives every `button`
+   `--hit-floor`, and a class-level declaration here would BEAT it (0,1,0 against
+   0,0,0), the `.send-btn` precedent that file records. Its summary is the dock
+   head's own painter (`.ev-sum`, 31-exec-view.css), laid into the row's columns. */
 .run-bar-open {
-  /* The mark, then the run's summary (`.ev-sum`, 31-exec-view.css), the dock head's
-     own painter, so the two word a run alike. Positioned for the phone band. */
   position: relative;
-  display: flex;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: var(--sp-2);
-  width: 100%;
+  row-gap: 0;
   padding: var(--sp-1) var(--sp-2);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background-color: var(--c-bg-secondary);
+  border: 0;
+  border-radius: var(--stack-in-r);
+  background-color: transparent;
   font-size: var(--fs-sm);
   text-align: start;
   cursor: pointer;
@@ -929,6 +928,48 @@
     opacity: 0;
     transform: translateY(4px);
   }
+
+  & > .run-bar-glyph {
+    grid-column: glyph;
+  }
+
+  & > .ev-sum {
+    display: contents;
+  }
+
+  & .ev-sum-label {
+    grid-column: title;
+    min-inline-size: 0;
+  }
+
+  & .ev-sum-state {
+    grid-column: state;
+  }
+
+  & .ev-sum-progress {
+    grid-column: progress;
+  }
+
+  & .ev-mini {
+    grid-column: bar;
+    min-inline-size: 0;
+  }
+
+  & .ev-sum-clock {
+    grid-column: clock;
+    justify-self: end;
+  }
+
+  /* What wants the reader is a second line under the columns, so the columns stay. */
+  & .ev-alert-line {
+    grid-column: title / end;
+    grid-row: 2;
+    color: var(--c-text-secondary);
+  }
+
+  & .ev-alert-text {
+    -webkit-line-clamp: 1;
+  }
 }
 
 /* `any-hover`, never `hover`: those queries report the PRIMARY input only, so an
@@ -942,35 +983,41 @@
 }
 
 /* An alert that wants the reader: its state's wash, an image layer over the fill so
-   hover still shows beneath it. */
+   hover still shows beneath it. A notice is a hue wash of its state, never an edge. */
 .run-bar-open[data-alert] {
+  --ev-alert-wash: color-mix(in srgb, var(--c-yellow) 10%, transparent);
+  --ev-alert-mark: var(--c-yellow);
+
   background-image: linear-gradient(var(--ev-alert-wash), var(--ev-alert-wash));
+
+  &[data-alert="failed"] {
+    --ev-alert-wash: color-mix(in srgb, var(--c-red) 10%, transparent);
+    --ev-alert-mark: var(--c-red);
+  }
 }
 
 .run-bar-open:focus-visible {
   outline: var(--focus-ring);
-  outline-offset: var(--focus-offset);
-}
-
-/* --- The bar's height budget ------------------------------------------------ */
-
-/* A HARD CAP, so the transcript and the composer are always on screen however many
-   runs are live: the list scrolls inside itself past it. With the ask card's own
-   ceiling below, the band above the composer stays within about a third of a phone's
-   visual viewport, keyboard up or down (`--dock-viewport-h`, `dock-ask.ts`). */
-.run-bar {
-  max-block-size: min(calc(0.25 * var(--dock-viewport-h, 100dvh)), 16rem);
-  overflow: hidden auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
+  outline-offset: var(--focus-offset-inset);
 }
 
 .run-bar-row[hidden] {
   display: none;
 }
 
-/* The folded bar's one row: a chevron, the mark and the count, washed while a run
-   needs the reader. */
+/* From `FOLD_AT` runs the box's first line is the fold row, one line across the
+   grid: a chevron, the mark and the count. Folded, it is the box's only line and
+   carries the wash while a run needs the reader; open, the waiting run's own line
+   carries it, so the count does not repeat it. */
+.run-bar-toggle {
+  display: flex;
+  gap: var(--sp-2);
+
+  &[aria-expanded="true"][data-alert] {
+    background-image: none;
+  }
+}
+
 .run-bar-chev {
   display: grid;
   place-items: center;
@@ -991,19 +1038,68 @@
   color: var(--c-text-primary);
 }
 
-/* A phone keeps a row to one line: the alert's sentence truncates, the state and
-   the clock stay. */
+/* A phone: two lines in the row the hit floor already makes 44px tall. Line one is
+   the title and the clock, line two the state and the progress, each in shared
+   columns; the bar is a band along the row's bottom edge. */
 @container run-dock (width < 30rem) {
-  .run-bar-open .ev-alert-text {
-    -webkit-line-clamp: 1;
+  .run-bar {
+    grid-template-columns:
+      [glyph] auto [title state] auto [progress] minmax(0, 1fr)
+      [clock] auto [end];
+    column-gap: var(--sp-1);
+  }
+
+  .run-bar-open {
+    padding-block: var(--sp-1) calc(var(--sp-1) + 3px);
+
+    & > .run-bar-glyph {
+      grid-row: 1 / span 2;
+    }
+
+    & .ev-sum-label {
+      grid-column: title / clock;
+      grid-row: 1;
+    }
+
+    & .ev-sum-clock {
+      grid-row: 1;
+    }
+
+    & .ev-sum-state {
+      grid-column: state;
+      grid-row: 2;
+      font-size: var(--fs-xs);
+    }
+
+    & .ev-sum-progress {
+      grid-row: 2;
+      font-size: var(--fs-xs);
+    }
+
+    & .ev-mini {
+      position: absolute;
+      inset-inline: var(--sp-3);
+      inset-block-end: 2px;
+      block-size: 3px;
+      gap: 1px;
+    }
+
+    & .ev-mini-seg {
+      border-radius: 1px;
+    }
+
+    & .ev-alert-line {
+      grid-row: 3;
+    }
   }
 }
 
-/* A phone-shaped screen: the ask card (a fifth) and the run bar (an eighth, never
-   under its summary row) keep the band to about a third of the visual viewport. */
+/* A phone-shaped screen: the ask card (a fifth) and the run bar's list (an eighth,
+   never under one two-line row; the host's chrome is outside it) keep the band to
+   about a third of the visual viewport. */
 @media (width <= 48rem), (height <= 30rem) {
   .run-bar {
-    max-block-size: max(var(--btn-h), calc(0.13 * var(--dock-viewport-h, 100dvh)));
+    max-block-size: max(var(--btn-h), 0.13 * var(--dock-viewport-h, 100dvh));
   }
 
   .dock-card {

@@ -655,42 +655,6 @@ func (rr *runRoutes) handleDelete(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbDelete)
 }
 
-// handleStepStatus serves POST /api/runs/{id}/step: mark a step completed, failed or running. Its own handler: it has a body.
-func (rr *runRoutes) handleStepStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
-	id := r.PathValue("id")
-	if id == "" {
-		httpreply.BadRequest(w, "missing workflow id")
-		return
-	}
-	var body marotte.RunStepStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpreply.BadRequest(w, "invalid step-status payload")
-		return
-	}
-	err := rr.runs.setStepStatus(r.Context(), id, body)
-	switch {
-	case err == nil:
-		webhttp.Ok(w)
-	case writeStatusErr(w, err):
-	case errors.Is(err, errRunNotListed):
-		httpreply.NotFound(w, errRunNotListed.Error())
-	case errors.Is(err, errLaunchSessionUnavailable):
-		httpreply.Conflict(w, launchSessionUnavailableText)
-	case errors.Is(err, errRunHostStart):
-		slog.Warn("run step status: could not host the run", "workflow_id", logsafe.Field(id),
-			"node_id", logsafe.Field(body.NodeID), "error", err)
-		httpreply.InternalError(w, errors.New("step status update failed"))
-	case errors.Is(err, errStepStatusRefused):
-		httpreply.Conflict(w, rpcerr.Text(err))
-	default:
-		httpreply.BadRequest(w, rpcerr.Text(err))
-	}
-}
-
 // REST: a parentless run's ask has no chat id.
 func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

@@ -1,19 +1,31 @@
 // The run dock: one card above the bottom bar's composer holding everything about the execution as
-// a whole, so none of it scrolls away. A head (summary or alert, the alert's action, the verbs),
-// notes, the steps in flight as rows, and one disclosure panel with Steps, Timeline and Inputs.
-// Names no source: controls, alert actions and notes are the consumer's elements and sentences.
+// a whole, so none of it scrolls away. A head (the run's identity, its progress and the verbs), the
+// question a step asks, notes, the steps in flight as rows, and one disclosure panel with the run's
+// inputs over Steps and Timeline. Names no source: controls and notes are the consumer's.
 
 import { el } from "@cplieger/reactive";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
-import { attachClamp, releaseClampsIn } from "../clamp-text.js";
+import { attachClamp, releaseClamp } from "../clamp-text.js";
 import { chevronEl } from "../chevron.js";
 import { publishViewportHeight } from "../dock-ask.js";
 import { wireRowToggle } from "../disclosure-row.js";
 import { iconEl } from "../icon-el.js";
+import { ICON_SEG_STEPS, ICON_SEG_TIMELINE } from "../icons.js";
+import { bindFileLink } from "../linkify.js";
+import { fileOpenRoute } from "../preview-page.js";
 import { reconcile } from "../reconcile.js";
-import { initSegmentedBar, setSegmentHidden } from "../segmented-bar.js";
+import { buildPath } from "../route-path.js";
+import { initSegmentedBar } from "../segmented-bar.js";
 import { formatElapsed } from "../strings.js";
-import { currentWork, elapsed, newestStarted, type ExecNode, type ExecRun } from "./model.js";
+import { servedFileRoute } from "../utils-url.js";
+import {
+  currentWork,
+  elapsed,
+  newestStarted,
+  type ExecNode,
+  type ExecQuestion,
+  type ExecRun,
+} from "./model.js";
 import { STATE_WORD, inFlight, paintStateMark } from "./status.js";
 import { paintLabel } from "./label.js";
 import { kindGlyph, nodeAt } from "./tree.js";
@@ -25,8 +37,6 @@ export interface ExecDockView {
   /** Seat the run's verbs in the head; the same element again moves nothing, so focus inside it
    *  survives a repaint. */
   setControls(row: HTMLElement | null): void;
-  /** Seat the alert's own action beside the verbs, under `setControls`' contract. */
-  setAlertAction(action: HTMLElement | null): void;
   /** Release the panel, the clamps and the host. */
   dispose(): void;
 }
@@ -46,18 +56,15 @@ interface ExecDockOpts {
   readonly revealSteps: (scroller: HTMLElement) => void;
 }
 
-type Segment = "steps" | "timeline" | "inputs";
+type Segment = "steps" | "timeline";
 
-const SEGMENTS: readonly { id: Segment; label: string }[] = [
-  { id: "steps", label: "Steps" },
-  { id: "timeline", label: "Timeline" },
-  { id: "inputs", label: "Inputs" },
+const SEGMENTS: readonly { id: Segment; label: string; icon: string }[] = [
+  { id: "steps", label: "Steps", icon: ICON_SEG_STEPS },
+  { id: "timeline", label: "Timeline", icon: ICON_SEG_TIMELINE },
 ];
 
-/** The instructions clamp: the line count the STYLESHEET clamps to, plus the character threshold
- *  used only while the element is detached. `clamp-line-count.test.ts` holds the first to the
- *  stylesheet's own. */
-const CLAMP = { lines: 3, fallbackChars: 220 } as const;
+/** The question's clamp: the line count the STYLESHEET clamps to (`clamp-line-count.test.ts`). */
+const ASK_CLAMP = { lines: 4 } as const;
 
 let dockIds = 0;
 
@@ -75,11 +82,16 @@ interface LiveRow {
   readonly dur: HTMLElement;
 }
 
+interface DockNote {
+  text: string;
+  failed: boolean;
+}
+
 export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   publishViewportHeight();
   const id = `ev-dock-${String(++dockIds)}`;
   const head = el("div", { className: "ev-dock-head" });
-  const summary = buildExecSummary({ washHost: head, live: true });
+  const summary = buildExecSummary();
   summary.root.id = `${id}-sum`;
   const toggle = el(
     "button",
@@ -91,38 +103,44 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     },
     chevronEl(),
   );
-  const alertAct = el("span", { className: "ev-dock-act ev-dock-alert-act" });
   const act = el("span", { className: "ev-dock-act" });
   head.append(
     toggle,
     el("span", { className: "ev-dock-icon", "aria-hidden": "true" }, iconEl(opts.icon)),
     summary.root,
-    alertAct,
     act,
   );
 
-  // Never `hidden`: a live region must already be rendered when its first line arrives.
+  // Live regions are never `hidden`: one must already be rendered when its first line arrives.
+  const askLive = el("div", { className: "ev-dock-ask-live", role: "status" });
+  const askCount = el("p", { className: "ev-dock-ask-count" });
+  const askText = el("p", { className: "ev-dock-ask-q", id: `${id}-ask` });
+  const askMore = el("button", { type: "button", className: "clamp-more" }) as HTMLButtonElement;
+  const ask = el("div", { className: "ev-dock-ask" }, askCount, askText, askMore);
+  attachClamp(askText, askMore, ASK_CLAMP);
   const notes = el("ul", { className: "ev-dock-notes", role: "status" });
+  // A failure interrupts; anything else waits its turn.
+  const urgent = el("ul", { className: "ev-dock-notes", role: "alert" });
 
   const rows = el("ul", { className: "ev-dock-rows", "aria-label": "Steps in flight" });
   const more = el("button", { type: "button", className: "ev-dock-more" }) as HTMLButtonElement;
   more.hidden = true;
   const live = el("div", { className: "ev-dock-live" }, rows, more);
 
-  const inputs = el("dl", { className: "ev-inputs" });
+  const inputs = el("dl", { className: "ev-dock-inputs", "aria-label": "Inputs" });
   const bar = el("nav", { className: "seg-bar ev-dock-seg", "aria-label": "Run detail sections" });
   const panels = new Map<Segment, HTMLElement>();
-  const content: Record<Segment, HTMLElement> = {
-    steps: opts.tree,
-    timeline: opts.timeline,
-    inputs,
-  };
+  const content: Record<Segment, HTMLElement> = { steps: opts.tree, timeline: opts.timeline };
   const body = el("div", { className: "ev-dock-body" });
   for (const seg of SEGMENTS) {
+    const glyph = iconEl(seg.icon);
+    glyph.classList.add("seg-icon");
+    glyph.setAttribute("aria-hidden", "true");
     bar.append(
       el(
         "button",
-        { type: "button", className: "seg", "data-ev-seg": seg.id },
+        { type: "button", className: "seg", "data-ev-seg": seg.id, "data-tooltip": seg.label },
+        glyph,
         el("span", { className: "seg-label" }, seg.label),
       ),
     );
@@ -139,8 +157,8 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     panels.set(seg.id, panel);
     body.append(panel);
   }
-  const region = el("div", { className: "ev-dock-panel" }, bar, body);
-  const root = el("div", { className: "ev-dock" }, head, notes, live, region);
+  const region = el("div", { className: "ev-dock-panel" }, inputs, bar, body);
+  const root = el("div", { className: "ev-dock" }, head, askLive, notes, urgent, live, region);
 
   let active: Segment = "steps";
   const paintBar = initSegmentedBar(bar, {
@@ -219,8 +237,8 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       "button",
       { type: "button", className: "ev-dock-row" },
       mark,
-      kind,
-      label,
+      // One cell of the rows' shared grid: a kind glyph shows only where it says something.
+      el("span", { className: "ev-dock-name" }, kind, label),
       tail,
       dur,
     ) as HTMLButtonElement;
@@ -245,7 +263,9 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       row.btn.dataset["state"] = n.state;
     }
     if (row.btn.dataset["kind"] !== n.kind) {
-      row.kind.replaceChildren(kindGlyph(n.kind));
+      // Every row here is work, so only a kind other than a step says something.
+      row.kind.replaceChildren(...(n.kind === "step" ? [] : [kindGlyph(n.kind)]));
+      row.kind.hidden = n.kind === "step";
       row.btn.dataset["kind"] = n.kind;
     }
     paintLabel(row.label, n);
@@ -280,62 +300,68 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     return out;
   };
 
-  const paintNotes = (run: ExecRun, extra: readonly string[]): void => {
-    const list: { text: string; failed: boolean }[] = [];
-    if (run.alert?.kind === "stopped") {
-      list.push({ text: run.alert.text, failed: false });
+  /** The question region: the shown step's question, else the first, in full up to the clamp. */
+  const paintAsk = (run: ExecRun, selected: string): void => {
+    const questions = run.questions ?? [];
+    const q: ExecQuestion | undefined =
+      questions.find((x) => x.path !== undefined && x.path === selected) ?? questions[0];
+    if (q === undefined) {
+      if (ask.parentElement !== null) {
+        ask.remove();
+        setText(askText, "");
+      }
+      return;
     }
-    if (run.notice !== undefined) {
-      list.push(run.notice);
+    const at = questions.indexOf(q) + 1;
+    setText(
+      askCount,
+      questions.length > 1 ? `${String(at)} of ${String(questions.length)} questions` : "",
+    );
+    askCount.hidden = questions.length < 2;
+    const label = q.step === undefined ? "A step asks" : `${q.step} asks`;
+    setAttr(ask, "aria-label", label);
+    if (askText.textContent !== q.text) {
+      askText.textContent = q.text;
+      attachClamp(askText, askMore, ASK_CLAMP).collapse();
     }
-    for (const text of extra) {
-      list.push({ text, failed: false });
+    if (ask.parentElement !== askLive) {
+      askLive.replaceChildren(ask);
     }
-    reconcile(notes, list, {
-      key: (n) => n.text,
-      mount: (n) => {
-        const li = el(
-          "li",
-          { className: "ev-dock-note" },
-          el("span", { className: "ev-dock-note-text" }, n.text),
-        );
-        li.toggleAttribute("data-failed", n.failed);
-        return li;
-      },
-      update: (li, n) => {
-        li.toggleAttribute("data-failed", n.failed);
-      },
-    });
   };
 
-  /** Rebuilt only when the SET changed: an unguarded rebuild on every invalidation would discard
-   *  the reader's show-more expansion. */
+  const paintNotes = (run: ExecRun, extra: readonly string[]): void => {
+    const calm: DockNote[] = [];
+    const loud: DockNote[] = [];
+    const alert = run.alert;
+    if (alert !== undefined && alert.kind !== "input") {
+      (alert.kind === "failed" ? loud : calm).push({
+        text: alert.text,
+        failed: alert.kind === "failed",
+      });
+    }
+    if (run.notice !== undefined) {
+      calm.push(run.notice);
+    }
+    for (const text of extra) {
+      calm.push({ text, failed: false });
+    }
+    paintNoteList(notes, calm);
+    paintNoteList(urgent, loud);
+  };
+
+  /** Rebuilt only when the SET changed, so a reader's focus on an input link survives a repaint. */
   const paintInputs = (run: ExecRun): void => {
     const entries = Object.entries(run.inputs ?? {});
-    setSegmentHidden(bar, "data-ev-seg", "inputs", entries.length === 0);
-    if (entries.length === 0 && active === "inputs") {
-      show("steps");
-    }
     const sig = entries.map(([k, v]) => `${k}\u0001${v}`).join("\u0002");
     if (inputs.dataset["sig"] === sig) {
       return;
     }
     inputs.dataset["sig"] = sig;
-    // Before the discard, or the leaving rows keep their clamp observations on detached elements.
-    releaseClampsIn(inputs);
+    inputs.hidden = entries.length === 0;
     inputs.replaceChildren(
-      ...entries.flatMap(([k, v]) => {
-        const text = el("div", { className: "ev-in-text" }, v);
-        const opener = el("button", {
-          type: "button",
-          className: "ev-in-more",
-        }) as HTMLButtonElement;
-        attachClamp(text, opener, CLAMP);
-        return [
-          el("dt", { className: "ev-in-k" }, k),
-          el("dd", { className: "ev-in-v" }, text, opener),
-        ];
-      }),
+      ...entries.map(([k, v]) =>
+        el("div", { className: "ev-dock-input" }, el("dt", {}, k), el("dd", {}, inputValue(v))),
+      ),
     );
   };
 
@@ -343,6 +369,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     paint(run, selected, extra) {
       root.dataset["state"] = run.state;
       summary.paint(run);
+      paintAsk(run, selected);
       paintNotes(run, extra);
       const steps = liveSteps(run, selected);
       const lead = (steps.find((n) => n.path === selected) ?? steps[0])?.path;
@@ -371,15 +398,49 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     setControls(row) {
       seat(act, row);
     },
-    setAlertAction(action) {
-      seat(alertAct, action);
-    },
     dispose() {
       ctl.dispose();
-      releaseClampsIn(inputs);
+      releaseClamp(askText);
       opts.host.replaceChildren();
     },
   };
+}
+
+/** One input's value on one line, its whole text in the tooltip; a workspace path opens its file. */
+function inputValue(value: string): HTMLElement {
+  const file = servedFileRoute(value);
+  if (file === null) {
+    return el("span", { className: "ev-dock-input-v", "data-tooltip": value }, value);
+  }
+  const link = el(
+    "a",
+    {
+      className: "ev-dock-input-v ev-dock-input-path",
+      href: buildPath(fileOpenRoute(file.path, file.line)),
+      "data-tooltip": value,
+    },
+    value,
+  ) as HTMLAnchorElement;
+  bindFileLink(link, file.path, file.line);
+  return link;
+}
+
+function paintNoteList(list: HTMLElement, items: readonly DockNote[]): void {
+  reconcile(list, items, {
+    key: (n) => n.text,
+    mount: (n) => {
+      const li = el(
+        "li",
+        { className: "ev-dock-note" },
+        el("span", { className: "ev-dock-note-text" }, n.text),
+      );
+      li.toggleAttribute("data-failed", n.failed);
+      return li;
+    },
+    update: (li, n) => {
+      li.toggleAttribute("data-failed", n.failed);
+    },
+  });
 }
 
 /** Make `child` the host's only child, or empty it; the same element again moves nothing, since a

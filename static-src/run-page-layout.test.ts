@@ -1,7 +1,8 @@
 // The run page's LAYOUT contract, as CSS rules rather than as rendered pixels.
 
-import { describe, it, expect } from "vitest";
-import { loadCSS, ruleBody, allRules } from "./__test-helpers__/css-rules.js";
+import { describe, it, expect, afterEach } from "vitest";
+import { page as browser } from "vitest/browser";
+import { loadCSS, ruleBody, allRules, mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 /** A rule's DECLARATIONS, with its comments stripped. Required by every negative assertion
  *  below: `ruleBody` returns the authored text, and each of these rules explains in prose which
@@ -108,12 +109,15 @@ describe("the run page claims its height", () => {
     );
   });
 
-  // ONE OWNER for the two clamp openers on this page.
-  it("gives both clamp openers one rule rather than a copy each", () => {
-    const css = loadCSS("31-exec-view.css");
-    const owners = allRules(css).filter((r) => /(^|,)\s*\.ev-r-more\s*$/m.test(r.selector));
-    expect(owners).toHaveLength(1);
-    expect(owners[0]?.selector).toBe(".ev-in-more,\n.ev-r-more");
+  // ONE OWNER for every clamp opener in the app, none restyled on this page.
+  it("gives every clamp opener one rule rather than a copy each", () => {
+    const sheets = ["10-shell-app.css", "13-messages.css", "26-dock.css", "31-exec-view.css"];
+    const owners = sheets.flatMap((name) =>
+      allRules(loadCSS(name))
+        .filter((r) => /(^|,)\s*\.clamp-more\s*$/m.test(r.selector))
+        .map(() => name),
+    );
+    expect(owners).toEqual(["10-shell-app.css"]);
   });
 
   // A container's state is a ROLL-UP of its children and must never repaint them.
@@ -170,4 +174,64 @@ describe("the run page claims its height", () => {
   it("keeps the page measure a real token", () => {
     expect(loadCSS("01-tokens.css")).toMatch(/--content-max-w:\s*\d/);
   });
+});
+
+// The top edge: the first card stands as far under the toolbar as a list page's, and scrolled
+// content never meets the toolbar, through a sticky band of page colour.
+describe("the run page's top gap", () => {
+  let style: HTMLStyleElement | undefined;
+  let view: HTMLElement | undefined;
+  afterEach(async () => {
+    view?.remove();
+    style?.remove();
+    await browser.viewport(1280, 720);
+  });
+
+  function mountRunPage(): { scroller: HTMLElement; card: HTMLElement } {
+    style = mountAppCSS();
+    view = document.createElement("div");
+    view.id = "run-view";
+    view.style.blockSize = "600px";
+    const scroller = document.createElement("div");
+    scroller.className = "page-content";
+    const body = document.createElement("div");
+    body.id = "run-body";
+    const card = document.createElement("div");
+    card.style.blockSize = "3000px";
+    body.append(card);
+    scroller.append(body);
+    view.append(scroller);
+    document.body.append(view);
+    return { scroller, card };
+  }
+
+  for (const [width, rest] of [
+    [1280, 20],
+    [390, 12],
+  ] as const) {
+    it(`rests the first card ${String(rest)}px under the toolbar at ${String(width)}px`, async () => {
+      await browser.viewport(width, 844);
+      const { scroller, card } = mountRunPage();
+      const gap = card.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      expect(gap).toBe(rest);
+    });
+  }
+
+  for (const by of [4, 40, 400]) {
+    it(`keeps a sticky band of page colour over scrolled content at ${String(by)}px`, async () => {
+      await browser.viewport(1280, 720);
+      const { scroller } = mountRunPage();
+      scroller.scrollTop = by;
+      const band = getComputedStyle(scroller, "::before");
+      expect(band.position).toBe("sticky");
+      expect(band.top).toBe("0px");
+      expect(band.height).toBe("8px");
+      const page = document.createElement("div");
+      page.style.backgroundColor = "var(--c-bg-primary)";
+      document.body.append(page);
+      expect(band.backgroundColor).toBe(getComputedStyle(page).backgroundColor);
+      page.remove();
+      expect(Number.parseFloat(getComputedStyle(scroller).paddingTop)).toBe(0);
+    });
+  }
 });

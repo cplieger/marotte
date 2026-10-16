@@ -197,7 +197,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.RunAnswerRequest](),
 	wiregen.TypeRef[marotte.RunStepMessageRequest](),
 	wiregen.TypeRef[marotte.RunStepMessageResponse](),
-	wiregen.TypeRef[marotte.RunStepStatusRequest](),
 	wiregen.TypeRef[marotte.RunStepSteerRequest](),
 	wiregen.TypeRef[marotte.RunExtendRequest](),
 	wiregen.TypeRef[marotte.RunFinishLoopRequest](),

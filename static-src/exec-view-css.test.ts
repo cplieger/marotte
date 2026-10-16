@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { chevronEl } from "./chevron.js";
-import { attachClamp, releaseClampsIn } from "./clamp-text.js";
+import { attachClamp, releaseClamp, releaseClampsIn } from "./clamp-text.js";
 import execPageSrc from "./exec-view/page.ts?raw";
 import { buildExecTimeline } from "./exec-view/timeline.js";
 import { buildExecTree } from "./exec-view/tree.js";
@@ -309,28 +309,30 @@ describe("a row inside the group box is a band, not a pill", () => {
   });
 });
 
-// Two clamps, one opener skin; `run-page-layout.test.ts` pins the shared selector, this pins what it paints.
-describe("both clamp openers wear one skin", () => {
-  it("resolves to the same ink, size and underline", () => {
+// Every clamp with no fold of its own opens through one chevron button, the turn fold's skin.
+describe("the clamp opener", () => {
+  it("wears the turn fold chevron's size, ink and ghost skin, with no underline", () => {
     const row = document.createElement("div");
-    const instructions = document.createElement("button");
-    instructions.type = "button";
-    instructions.className = "ev-in-more";
-    instructions.textContent = "Show more";
-    const report = document.createElement("button");
-    report.type = "button";
-    report.className = "ev-r-more";
-    report.textContent = "Show more";
-    row.append(instructions, report);
+    const fold = document.createElement("button");
+    fold.type = "button";
+    fold.className = "turn-fold-toggle";
+    const text = document.createElement("div");
+    text.textContent = "words ".repeat(400);
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "clamp-more";
+    row.append(fold, text, more);
     mount(row);
-
-    // Premise: the skin is in force, not the UA button default.
-    expect(css(instructions, "text-decoration-line")).toBe("underline");
-    expect(css(instructions, "background-color")).toBe("rgba(0, 0, 0, 0)");
-
-    for (const prop of ["color", "font-size", "text-decoration-line", "border-top-width"]) {
-      expect(css(report, prop), prop).toBe(css(instructions, prop));
+    attachClamp(text, more, { lines: 3 });
+    expect(more.querySelector(".disclosure-chevron svg")).not.toBeNull();
+    expect(more.getAttribute("aria-label")).toBe("Show more");
+    expect(more.getAttribute("data-tooltip")).toBe("Show more");
+    expect(more.getAttribute("aria-controls")).toBe(text.id);
+    for (const prop of ["width", "height", "color", "border-top-left-radius", "background-color"]) {
+      expect(css(more, prop), prop).toBe(css(fold, prop));
     }
+    expect(css(more, "text-decoration-line")).toBe("none");
+    releaseClamp(text);
   });
 });
 

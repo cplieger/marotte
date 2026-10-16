@@ -2,6 +2,8 @@ package agent
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -259,4 +261,63 @@ func TestAffordance_ChatParentedRunIsHostedByItsChatsBridge(t *testing.T) {
 		t.Errorf("pause withheld from a run whose launching chat is live (%v, %v); that process "+
 			"holds the run's registry entry", open.Verbs, open.Refused)
 	}
+}
+
+// TestAffordance_AskingWithholdsResume pins the paused row while every paused step asks: KAS's
+// resume re-parks such a step at once, so Cancel alone is offered, with no sentence for Resume.
+func TestAffordance_AskingWithholdsResume(t *testing.T) {
+	for name, tc := range map[string]struct {
+		facts runFacts
+		want  []string
+	}{
+		"asking":                    {runFacts{status: "paused", hosted: true, asking: true}, []string{verbCancel}},
+		"an ordinary pause":         {runFacts{status: "paused", hosted: true}, []string{verbResume, verbCancel}},
+		"running while a step asks": {runFacts{status: "running", hosted: true, asking: true}, []string{verbPause, verbCancel}},
+		"a loop at its cap": {
+			runFacts{status: "paused", hosted: true, asking: true, pauseKind: pauseKindMaxIterations, pauseNodeID: "loop"},
+			maxIterationsVerbs,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := affordanceOf(&tc.facts)
+			if !slices.Equal(got.Verbs, tc.want) {
+				t.Errorf("verbs = %v, want %v", got.Verbs, tc.want)
+			}
+			if len(got.Refused) != 0 {
+				t.Errorf("refused = %v, want none: the composer is the way on", got.Refused)
+			}
+		})
+	}
+}
+
+// TestHandleControls_ReadsTheAskCell pins that the controls route takes `asking` from the run's ask cell.
+func TestHandleControls_ReadsTheAskCell(t *testing.T) {
+	controls := func(t *testing.T, h *Runtime) marotte.RunControlsResponse {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/runs/wf_1/controls", nil)
+		req.SetPathValue("id", "wf_1")
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleControls(rec, req)
+		var got marotte.RunControlsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("GET controls = %d %s: %v", rec.Code, rec.Body.String(), err)
+		}
+		return got
+	}
+	t.Run("every paused step asks", func(t *testing.T) {
+		h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
+		readNow(t, h, "wf_1")
+		if got := controls(t, h); !slices.Equal(got.Verbs, []string{verbCancel}) {
+			t.Errorf("verbs = %v, want Cancel alone", got.Verbs)
+		}
+	})
+	t.Run("an ordinary paused step beside the ask", func(t *testing.T) {
+		plain := askStepNode{id: "build", status: "paused", session: "sess_build"}
+		h, _, _ := askCoreHub(t, "wf_1",
+			inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step"), plain))
+		readNow(t, h, "wf_1")
+		if got := controls(t, h); !slices.Contains(got.Verbs, verbResume) {
+			t.Errorf("verbs = %v, want Resume offered", got.Verbs)
+		}
+	})
 }

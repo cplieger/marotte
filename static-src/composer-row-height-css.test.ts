@@ -84,7 +84,7 @@ describe("the height's declarations, read from source", () => {
 
   it("derives the textarea's resting band from that height and the row's own inset", () => {
     const input = ruleContaining(css, '[id="prompt-input"]', "top");
-    // The row's padding pays for the expander's block reach (`--composer-pill-pad`, 6px coarse vs `--pill-inset`'s 4).
+    // The row's padding pays for the expander's block reach (`--composer-pill-pad`, floored at `--pill-inset`).
     expect(input.body).toMatch(
       /--composer-rest-h:\s*calc\(var\(--composer-ctl-h\)\s*\+\s*2\s*\*\s*var\(--composer-pill-pad\)\)/,
     );

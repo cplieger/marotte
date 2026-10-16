@@ -2,7 +2,8 @@
 // pipelines each fold into `ExecRun` through an adapter (`run-exec-source.ts`); derived on read,
 // held by nobody, and the wire shape of nothing.
 
-import { inFlight, type ExecState } from "./status.js";
+import { join } from "@cplieger/keyenc";
+import { STATE_WORD, inFlight, type ExecState } from "./status.js";
 import type { RunStepMessageVerb } from "../wire/types.gen.js";
 
 /** What KIND of node this is. `group` is the catch-all, so an unseen source has a legal value. */
@@ -77,6 +78,15 @@ export function latestPass(repeat: Pick<ExecNode, "children">): ExecNode | undef
   return repeat.children[repeat.children.length - 1];
 }
 
+/** One question a person is asked, whole. */
+export interface ExecQuestion {
+  text: string;
+  /** The asking step's node path, when the source can place it. */
+  path?: string;
+  /** The asking step's label, for the region's name. */
+  step?: string;
+}
+
 /** The whole execution, plus the facts its run dock states. */
 export interface ExecRun {
   label: string;
@@ -89,6 +99,8 @@ export interface ExecRun {
   inputs?: Record<string, string>;
   /** One line about why the execution wants a person, pre-composed by the adapter. */
   alert?: { kind: "input" | "paused" | "stopped" | "failed"; text: string };
+  /** Every question waiting on a person, in the order the source lists them. */
+  questions?: readonly ExecQuestion[];
   /** A standing line about the execution's plan, beside the alert. */
   notice?: { text: string; failed: boolean };
   /** The node to open on before a click. A subagent expansion has one door PER delegate, so a
@@ -146,7 +158,7 @@ function currentNodes(nodes: readonly ExecNode[]): ExecNode[] {
 }
 
 /** The work of the plan as it stands NOW: every work node once, a repeat through its latest pass
- *  only, so "step N of M" counts one pass and the pass number stays the loop's. */
+ *  only, so the step count covers one pass and the pass number stays the loop's. */
 export function currentWork(nodes: readonly ExecNode[]): ExecNode[] {
   return currentNodes(nodes).filter(isWork);
 }
@@ -164,17 +176,18 @@ interface ExecCounters {
   total: number;
   done: number;
   failed: number;
-  /** The 1-based position of the first IN-FLIGHT work node, or 0 (a skipped one or a parallel node
-   *  breaks `done + 1`). */
+  /** The 1-based position of the run's ONE in-flight work node (a skipped one or a parallel node
+   *  breaks `done + 1`); 0 with none in flight, and with several, since parallel branches each stand
+   *  somewhere else and the first one's position reads as barely started: the count is then `done`. */
   current: number;
 }
 
-/** The step counter over the current pass (`currentWork`). */
+/** The step counter over the current pass (`currentWork`), for every run surface. */
 export function counters(nodes: readonly ExecNode[]): ExecCounters {
   const ls = currentWork(nodes);
   let done = 0;
   let failed = 0;
-  let current = 0;
+  const flying: number[] = [];
   ls.forEach((n, i) => {
     if (n.state === "ok" || n.state === "skipped") {
       done++;
@@ -183,11 +196,11 @@ export function counters(nodes: readonly ExecNode[]): ExecCounters {
       failed++;
     }
     // A paused or unknown step is where the run is, as much as a running one.
-    if (current === 0 && inFlight(n.state)) {
-      current = i + 1;
+    if (inFlight(n.state)) {
+      flying.push(i + 1);
     }
   });
-  return { total: ls.length, done, failed, current };
+  return { total: ls.length, done, failed, current: flying.length === 1 ? (flying[0] ?? 0) : 0 };
 }
 
 /** The work node with the largest `startGen`; one carrying none has not started. */
@@ -217,21 +230,77 @@ export function passBudgetText(max: number, added: number): string {
   return added > 0 ? `${bound} (${String(added)} added)` : bound;
 }
 
-interface LoopPass {
+/** One repeat around a step: its node id, the pass the step is in, and its budget. */
+interface LoopLevel {
+  id: string;
   pass: number;
   max?: number;
+  repeat: ExecNode;
 }
 
-/** The pass of the innermost repeat enclosing `target`, or undefined when no repeat does. */
-function passAround(nodes: readonly ExecNode[], target: ExecNode): LoopPass | undefined {
-  let found: LoopPass | undefined;
-  const walk = (n: ExecNode, around: LoopPass | undefined, parent?: ExecNode): boolean => {
-    const here: LoopPass | undefined =
+/** The repeats enclosing `target`, outermost first; empty when none does. */
+function loopsAround(nodes: readonly ExecNode[], target: ExecNode): readonly LoopLevel[] {
+  let found: readonly LoopLevel[] = [];
+  const walk = (n: ExecNode, around: readonly LoopLevel[], parent?: ExecNode): boolean => {
+    const here =
       parent?.kind === "repeat" && n.pass !== undefined
-        ? parent.maxPasses === undefined
-          ? { pass: n.pass }
-          : { pass: n.pass, max: parent.maxPasses }
+        ? [
+            ...around,
+            parent.maxPasses === undefined
+              ? { id: parent.label, pass: n.pass, repeat: parent }
+              : { id: parent.label, pass: n.pass, max: parent.maxPasses, repeat: parent },
+          ]
         : around;
+    if (n === target) {
+      found = here;
+      return true;
+    }
+    return n.children.some((k) => walk(k, here, n));
+  };
+  nodes.some((n) => walk(n, []));
+  return found;
+}
+
+/** What the progress phrase reads of a run. */
+export type ProgressSource = Pick<ExecRun, "nodes" | "state">;
+
+/** Where the run stands: every in-flight step of the plan as it stands, else the newest started
+ *  one while work is still to come. A run no longer in flight stands nowhere, though a failure or a
+ *  cancel leaves later steps pending. */
+function standingSteps({ nodes, state }: ProgressSource): ExecNode[] {
+  if (!inFlight(state)) {
+    return [];
+  }
+  const now = currentWork(nodes);
+  const flying = now.filter((n) => inFlight(n.state));
+  if (flying.length > 0) {
+    return flying;
+  }
+  const newest = now.some((n) => n.state === "pending") ? newestStarted(nodes) : undefined;
+  return newest === undefined ? [] : [newest];
+}
+
+/** The loop levels every standing step shares, outermost first: the common prefix of their chains,
+ *  a level shared when it is the same repeat at the same pass. Only a pass the whole run stands in
+ *  is the run's, so a step in no loop shares none. */
+function sharedLoops(nodes: readonly ExecNode[], at: readonly ExecNode[]): readonly LoopLevel[] {
+  const chains = at.map((n) => loopsAround(nodes, n));
+  const first = chains[0] ?? [];
+  const sharedAt = (i: number): boolean =>
+    chains.every((c) => c[i]?.repeat === first[i]?.repeat && c[i]?.pass === first[i]?.pass);
+  let depth = 0;
+  while (depth < first.length && sharedAt(depth)) {
+    depth++;
+  }
+  return first.slice(0, depth);
+}
+
+/** The parallel branch a node sits in, named by the branch's own label: the child of its innermost
+ *  enclosing `parallel` that holds it. */
+function branchOf(nodes: readonly ExecNode[], target: ExecNode): string | undefined {
+  let found: string | undefined;
+  const walk = (n: ExecNode, branch: string | undefined, parent?: ExecNode): boolean => {
+    const here = parent?.kind === "parallel" ? n.label : branch;
     if (n === target) {
       found = here;
       return true;
@@ -242,75 +311,194 @@ function passAround(nodes: readonly ExecNode[], target: ExecNode): LoopPass | un
   return found;
 }
 
-/** What the progress phrase reads of a run. */
-export type ProgressSource = Pick<ExecRun, "nodes" | "state">;
-
-/** The loop pass the run stands in: around the first in-flight step of the plan as it stands,
- *  else around the newest started one while work is still to come. A run no longer in flight is
- *  in no pass, though a failure or a cancel leaves later steps pending. */
-function loopAt({ nodes, state }: ProgressSource): LoopPass | undefined {
-  if (!inFlight(state)) {
-    return undefined;
-  }
-  const now = currentWork(nodes);
-  const where =
-    now.find((n) => inFlight(n.state)) ??
-    (now.some((n) => n.state === "pending") ? newestStarted(nodes) : undefined);
-  return where === undefined ? undefined : passAround(nodes, where);
+/** The levels the phrase names: the outermost repeat, then the innermost one past its first pass
+ *  (a first pass is the normal case and adds nothing). */
+function shownLoops(levels: readonly LoopLevel[]): { head?: LoopLevel; inner?: LoopLevel } {
+  const head = levels[0];
+  const inner = levels
+    .slice(1)
+    .reverse()
+    .find((l) => l.pass > 1);
+  return { ...(head === undefined ? {} : { head }), ...(inner === undefined ? {} : { inner }) };
 }
+
+const fraction = (n: number, max?: number): string =>
+  max === undefined ? String(n) : `${String(n)}/${String(max)}`;
 
 /** Where the run stands, in parts, for a surface that lays them out itself. */
-interface ProgressPhrase {
-  /** "pass 3 of 8"; "" outside a loop. */
+export interface ProgressPhrase {
+  /** The outermost loop's pass, "15/50" or "15" with no budget; "" outside a loop. */
   pass: string;
-  /** "step 2 of 5", or "4 of 5" with no step in flight; "" when withheld. */
+  /** The innermost inner loop past its first pass, "2/4"; "" when there is none. */
+  inner: string;
+  /** The step count, "9/27"; "" when withheld. */
   steps: string;
-  /** The two joined: "pass 3 of 8 · step 2 of 5". */
-  long: string;
-  /** The narrow form beside the repeat glyph, "3/8 · 2 of 5"; "" outside a loop. */
-  short: string;
+  /** Every level in words, with the loop ids: "tasks pass 15 of 50, build pass 1 of 4, step 1 of 4". */
+  words: string;
+  /** The tooltip: the words, or with branches in different passes each live loop with its branch,
+   *  "track-a ↻2/3 · 8/14". */
+  tip: string;
 }
+
+const NO_PROGRESS: ProgressPhrase = { pass: "", inner: "", steps: "", words: "", tip: "" };
 
 function progressOf(run: ProgressSource, withSteps: boolean): ProgressPhrase {
   const c = counters(run.nodes);
   if (c.total === 0) {
-    return { pass: "", steps: "", long: "", short: "" };
+    return NO_PROGRESS;
   }
-  const count =
-    c.current > 0
-      ? `${String(c.current)} of ${String(c.total)}`
-      : `${String(c.done)} of ${String(c.total)}`;
-  const steps = !withSteps
+  const at = c.current > 0 ? c.current : c.done;
+  const steps = withSteps ? fraction(at, c.total) : "";
+  const stepWords = !withSteps
     ? ""
     : c.current > 0
       ? `step ${String(c.current)} of ${String(c.total)}`
-      : count;
-  const loop = loopAt(run);
-  if (loop === undefined) {
-    return { pass: "", steps, long: steps, short: "" };
+      : `${String(c.done)} of ${String(c.total)} steps done`;
+  const standing = standingSteps(run);
+  const levels = sharedLoops(run.nodes, standing);
+  const { head, inner } = shownLoops(levels);
+  const pass = head === undefined ? "" : fraction(head.pass, head.max);
+  const innerText = inner === undefined ? "" : fraction(inner.pass, inner.max);
+  if (levels.length > 0 || standing.length < 2) {
+    const words = [...levels.map((l) => `${l.id} ${passText(l.pass, l.max)}`), stepWords]
+      .filter((s) => s !== "")
+      .join(", ");
+    return { pass, inner: innerText, steps, words, tip: words };
   }
-  const pass = passText(loop.pass, loop.max);
-  const narrow =
-    loop.max === undefined ? String(loop.pass) : `${String(loop.pass)}/${String(loop.max)}`;
-  const join = (parts: string[]): string => parts.filter((s) => s !== "").join(" \u00b7 ");
-  return {
-    pass,
-    steps,
-    long: join([pass, steps]),
-    short: join([narrow, withSteps ? count : ""]),
-  };
+  // Branches in different passes: the headline names no pass, and the tooltip names each live loop
+  // with its branch.
+  const live = new Map<string, { words: string; tip: string }>();
+  for (const n of standing) {
+    const top = loopsAround(run.nodes, n)[0];
+    if (top === undefined) {
+      continue;
+    }
+    const branch = branchOf(run.nodes, n) ?? top.id;
+    const key = join(branch, top.id, String(top.pass));
+    live.set(key, {
+      words: `${branch} ${top.id} ${passText(top.pass, top.max)}`,
+      tip: `${branch} ${REPEAT_MARK}${fraction(top.pass, top.max)}`,
+    });
+  }
+  const loops = [...live.values()];
+  const words = [...loops.map((l) => l.words), stepWords].filter((s) => s !== "").join(", ");
+  const tip = [loops.map((l) => l.tip).join(", "), steps].filter((s) => s !== "").join(" \u00b7 ");
+  return { pass: "", inner: "", steps, words, tip };
 }
 
-/** Where the run stands, as every run surface words it: the loop pass, then the in-flight step's
- *  position, else how many are done; "" for a plan with no work. */
-export function progressText(run: ProgressSource): string {
-  return progressOf(run, true).long;
+/** The repeat glyph's text stand-in, for a surface that compares or prints the phrase as text. */
+const REPEAT_MARK = "\u21bb";
+
+/** The phrase as one compact string, "↻15/50 › 2/4 · 1/4"; "" for a plan with no work. */
+export function compactText(p: ProgressPhrase): string {
+  const loop =
+    p.pass === "" ? "" : `${REPEAT_MARK}${p.pass}${p.inner === "" ? "" : ` \u203a ${p.inner}`}`;
+  return [loop, p.steps].filter((s) => s !== "").join(" \u00b7 ");
 }
 
-/** `progressText` in parts for the run summary, which withholds a one-step plan's count ("step 1
- *  of 1" cannot progress, and the state word says how it ended) and keeps the pass. */
+/** Where the run stands, as every run surface words it, in parts: the outermost loop's pass and an
+ *  inner loop past its first pass when the whole run stands in them, then the step count
+ *  (`counters` decides between the in-flight position and how many are done). */
+export function progressPhrase(run: ProgressSource): ProgressPhrase {
+  return progressOf(run, true);
+}
+
+/** `progressPhrase` for the run summary, which withholds a one-step plan's count (1/1 cannot
+ *  progress, and the state word says how it ended) and keeps the pass. */
 export function summaryProgress(run: ProgressSource): ProgressPhrase {
   return progressOf(run, counters(run.nodes).total > 1);
+}
+
+/** The most passes the mini bar draws one segment each; past it the passes are one continuous fill. */
+const PASS_SEGMENTS_MAX = 12;
+
+/** One segment of the mini bar, `weight` its share of the bar's length; `key` names its kind too, so
+ *  a pass segment never takes over a step's node. `branch` starts a sibling parallel branch. */
+export interface MiniSeg {
+  key: string;
+  state: ExecState;
+  tip: string;
+  weight: number;
+  branch: boolean;
+}
+
+/** The mini bar under the phrase: the outermost budgeted loop's passes while the whole run stands in
+ *  one, else the plan's steps in plan order. `continuous` draws the segments as one fill with no gaps. */
+interface MiniBar {
+  segs: MiniSeg[];
+  continuous: boolean;
+}
+
+export function miniBar(run: ProgressSource): MiniBar {
+  const head = sharedLoops(run.nodes, standingSteps(run))[0];
+  if (head?.max === undefined) {
+    const work = currentWork(run.nodes);
+    const splits = branchStarts(run.nodes);
+    return {
+      segs: work.map((n) => ({
+        key: join("step", n.path),
+        state: n.state,
+        tip: `${n.label}, ${STATE_WORD[n.state]}`,
+        weight: 1,
+        branch: splits.has(n),
+      })),
+      continuous: false,
+    };
+  }
+  const { pass, max, id, repeat } = head;
+  const current = repeat.children.find((k) => k.pass === pass)?.state ?? "running";
+  const seg = (key: string, state: ExecState, tip: string, weight: number): MiniSeg => ({
+    key,
+    state,
+    tip,
+    weight,
+    branch: false,
+  });
+  if (max > PASS_SEGMENTS_MAX) {
+    const segs = [
+      seg(join("fill", "done"), "ok", `${id}, ${passCountText(pass - 1, max)} done`, pass - 1),
+      seg(join("fill", "now"), current, `${id} ${passText(pass, max)}, ${STATE_WORD[current]}`, 1),
+      seg(join("fill", "left"), "pending", `${id}, ${String(max - pass)} passes left`, max - pass),
+    ];
+    return { segs: segs.filter((x) => x.weight > 0), continuous: true };
+  }
+  const segs: MiniSeg[] = [];
+  for (let i = 1; i <= max; i++) {
+    const state: ExecState =
+      i === pass
+        ? current
+        : i > pass
+          ? "pending"
+          : (repeat.children.find((k) => k.pass === i)?.state ?? "ok");
+    segs.push(
+      seg(join("pass", String(i)), state, `${id} ${passText(i, max)}, ${STATE_WORD[state]}`, 1),
+    );
+  }
+  return { segs, continuous: false };
+}
+
+/** The work nodes of the plan as it stands that open a sibling branch of a `parallel`: the first
+ *  work of each branch after the first that holds any. */
+function branchStarts(nodes: readonly ExecNode[]): Set<ExecNode> {
+  const out = new Set<ExecNode>();
+  const walk = (n: ExecNode): void => {
+    if (isWork(n)) {
+      return;
+    }
+    if (n.kind === "parallel") {
+      let seen = false;
+      for (const branch of n.children) {
+        const first = currentWork([branch])[0];
+        if (first !== undefined && seen) {
+          out.add(first);
+        }
+        seen ||= first !== undefined;
+      }
+    }
+    currentMembers(n).forEach(walk);
+  };
+  nodes.forEach(walk);
+  return out;
 }
 
 /** Elapsed ms between two ISO stamps, to NOW when only the end is absent; 0 when unusable. */

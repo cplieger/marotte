@@ -61,7 +61,6 @@ function stepAsk(over: Partial<RunAsk> = {}): RunAsk {
     agent_name: "reviewer",
     text: "Ship it?",
     text_source: "asked",
-    can_continue: true,
     ...over,
   };
 }
@@ -550,7 +549,7 @@ describe("the run tab's dock", () => {
       });
       const a = runPendingAsks("wf_1");
       expect(a.count).toBe(1);
-      expect(a.asked).toEqual([{ nodeID: "", sessionID: "", answer: false }]);
+      expect(a.asked).toEqual([{ nodeID: "", sessionID: "", answer: false, text: "ls -la" }]);
     });
 
     it("ignores a chat's own ask and another run's", () => {
@@ -689,8 +688,9 @@ describe("a workflow step's question", () => {
           answer: true,
           path: join("wf_1", "review"),
           askID: "ask:7",
+          text: "Ship it?",
         },
-        { nodeID: "build", sessionID: "", answer: false },
+        { nodeID: "build", sessionID: "", answer: false, text: "ls -la" },
       ]);
       expect(a.label).toBe("Ship it?");
     });
@@ -1427,7 +1427,7 @@ function question(h: HTMLElement = host()): HTMLElement | null {
 }
 
 function opener(h: HTMLElement = host()): HTMLButtonElement | null {
-  return liveCard(h)?.querySelector<HTMLButtonElement>(".dock-ask-more") ?? null;
+  return liveCard(h)?.querySelector<HTMLButtonElement>(".clamp-more") ?? null;
 }
 
 describe("a question longer than the card", () => {
@@ -1435,7 +1435,7 @@ describe("a question longer than the card", () => {
     longAsk("c1");
     expect(question()?.hasAttribute("data-clamped")).toBe(true);
     expect(opener()?.hidden).toBe(false);
-    expect(opener()?.textContent).toBe("Show more");
+    expect(opener()?.getAttribute("aria-label")).toBe("Show more");
   });
 
   it("keeps the whole question in the DOM, so opening it reveals rather than refetches", () => {
@@ -1444,7 +1444,7 @@ describe("a question longer than the card", () => {
 
     opener()?.click();
     expect(question()?.hasAttribute("data-clamped")).toBe(false);
-    expect(opener()?.textContent).toBe("Show less");
+    expect(opener()?.getAttribute("aria-label")).toBe("Show less");
   });
 
   it("leaves a SHORT question unclamped, so the opener is not permanent furniture", () => {

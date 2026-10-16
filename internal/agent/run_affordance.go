@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // The run-control verb names, shared by this table, the routes and the client's label map.
@@ -28,6 +29,10 @@ const pauseKindMaxIterations = "maxIterations"
 // maxIterationsVerbs is the paused row for a repeat at its cap. Neither new verb is
 // hosted-only: both KAS handlers load an unregistered run from disk.
 var maxIterationsVerbs = []string{verbExtend, verbFinishLoop, verbCancel}
+
+// askingVerbs is the paused row while every paused step asks: KAS's resume leaves each step's
+// need_input signal and re-parks it at once, so only an answer moves the run on.
+var askingVerbs = []string{verbCancel}
 
 // runStatusVerbs maps KAS's WorkflowStatusSchema to accepted verbs, mirroring KAS. An unknown
 // status is absent, so a future status degrades to read-only.
@@ -84,6 +89,8 @@ type runFacts struct {
 	hosted bool
 	// pausePending is a pause already asked for, which a second Pause cannot add to.
 	pausePending bool
+	// asking is workflow.PausedOnAsks of the run's newest read.
+	asking bool
 }
 
 // Pure, so the table tests over (status × parent × hosted).
@@ -93,10 +100,13 @@ func affordanceOf(f *runFacts) runAffordance {
 		return runAffordance{}
 	}
 	out := runAffordance{Verbs: make([]string, 0, len(byStatus))}
-	if marotte.RunStatus(f.status) == marotte.RunStatusPaused &&
-		f.pauseKind == pauseKindMaxIterations && f.pauseNodeID != "" {
+	paused := marotte.RunStatus(f.status) == marotte.RunStatusPaused
+	switch {
+	case paused && f.pauseKind == pauseKindMaxIterations && f.pauseNodeID != "":
 		out.PauseNodeID = f.pauseNodeID
 		byStatus = maxIterationsVerbs
+	case paused && f.asking:
+		byStatus = askingVerbs
 	}
 	for _, verb := range byStatus {
 		why := f.refusal(verb)
@@ -155,9 +165,21 @@ func (rs *Runs) affordance(ctx context.Context, workflowID, status string) *runA
 	}
 	f.hosted = rs.bridges.get(runChatID(workflowID)) != nil ||
 		(f.parentChat != "" && rs.bridges.get(f.parentChat) != nil)
+	f.asking = rs.pausedOnAsks(workflowID)
 	aff := affordanceOf(&f)
 	aff.origin = o
 	return &aff
+}
+
+// pausedOnAsks reads the run's ask cell: false with no cell, or before its first read.
+func (rs *Runs) pausedOnAsks(workflowID string) bool {
+	c := rs.asks.get(workflowID)
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return workflow.PausedOnAsks(c.reply)
 }
 
 // chatForSession resolves a run's parent session to its chat from the store alone, reporting

@@ -3,7 +3,7 @@
 import { vi, describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { page } from "vitest/browser";
 import type * as RunStore from "./run-store.js";
-import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
 /** The run store's own module type, so the partial mock below keeps every export it does not
  *  override. Spelled as a namespace type import rather than an inline `import()` annotation,
@@ -558,7 +558,7 @@ describe("run view controls", () => {
     const painted = await paint(openRunView, "aborted");
     const retry = [
       ...painted.body.querySelectorAll<HTMLButtonElement>(".run-controls button"),
-    ].find((b) => (b.textContent ?? "").includes("Retry"));
+    ].find((b) => (b.getAttribute("aria-label") ?? "").includes("Retry"));
     retry?.click();
     expect(m.dispatched).toEqual(["retry:wf_1"]);
   });
@@ -619,13 +619,11 @@ describe("run view controls", () => {
   function verbFaces(body: HTMLElement): {
     name: string | null;
     glyph: boolean;
-    word: HTMLElement | null;
     btn: HTMLButtonElement;
   }[] {
     return [...body.querySelectorAll<HTMLButtonElement>(".run-controls button")].map((btn) => ({
       name: btn.getAttribute("aria-label"),
       glyph: btn.querySelector(":scope > svg") !== null,
-      word: btn.querySelector<HTMLElement>(".run-control-label"),
       btn,
     }));
   }
@@ -636,17 +634,15 @@ describe("run view controls", () => {
     ["aborted", ["Retry failed steps"]],
   ];
 
-  it.each(ROWS)("leads each %s verb with its glyph, then its word", async (status, verbs) => {
+  it.each(ROWS)("draws each %s verb icon-only on a desktop, named", async (status, verbs) => {
     const painted = await paint(openRunView, status);
     const faces = verbFaces(painted.body);
     expect(faces.map((f) => f.name)).toEqual(verbs);
     for (const face of faces) {
       expect(face.glyph, `${face.name ?? ""} has no glyph`).toBe(true);
-      expect(face.btn.firstElementChild?.tagName.toLowerCase(), "the glyph comes first").toBe(
-        "svg",
-      );
-      expect(face.word?.textContent).toBe(face.name);
-      expect(getComputedStyle(face.word ?? face.btn).display).not.toBe("none");
+      expect(face.btn.textContent, `${face.name ?? ""} shows a word`).toBe("");
+      const box = face.btn.getBoundingClientRect();
+      expect(box.width, `${face.name ?? ""} is not square`).toBeCloseTo(box.height, 0);
     }
   });
 
@@ -659,7 +655,6 @@ describe("run view controls", () => {
       for (const face of faces) {
         expect(face.name, "the accessible name survives the hidden word").toBeTruthy();
         expect(face.glyph).toBe(true);
-        expect(getComputedStyle(face.word ?? face.btn).display).toBe("none");
         const box = face.btn.getBoundingClientRect();
         expect(box.width, `${face.name ?? ""} is not square`).toBeCloseTo(box.height, 0);
       }
@@ -679,10 +674,25 @@ describe("run view controls", () => {
     }
   });
 
-  it("marks Cancel as the destructive verb beside its glyph", async () => {
+  it("draws Cancel neutral at rest and red with the red wash under focus", async () => {
     const painted = await paint(openRunView, "running");
     const cancel = verbFaces(painted.body).find((f) => f.name === "Cancel");
+    const pause = verbFaces(painted.body).find((f) => f.name === "Pause");
     expect(cancel?.btn.classList.contains("is-danger")).toBe(true);
+    if (cancel === undefined || pause === undefined) {
+      throw new Error("no Cancel or Pause");
+    }
+    expect(getComputedStyle(cancel.btn).color).toBe(getComputedStyle(pause.btn).color);
+    const rule = ruleBody(loadCSS("31-exec-view.css"), ".run-icon-btn");
+    for (const state of ["&.is-danger:hover", "&.is-danger:focus-visible"]) {
+      const at = rule.indexOf(`${state} {`);
+      expect(at, state).toBeGreaterThan(-1);
+      const body = rule.slice(at, rule.indexOf("}", at));
+      expect(body, state).toContain("color: var(--c-red)");
+      expect(body, state).toContain(
+        "background: color-mix(in srgb, var(--c-red) 15%, transparent)",
+      );
+    }
   });
 
   it("draws no repeat control when the server named no paused node", async () => {
@@ -743,10 +753,11 @@ describe("the run dock", () => {
     }
     return btn;
   };
+  /** The dock's statement of what wants the reader: a note under the head, never in it. */
   const alertText = (): string =>
-    document.querySelector("#run-exec-dock .ev-alert-line .ev-alert-text")?.textContent ?? "";
+    document.querySelector("#run-exec-dock .ev-dock-note .ev-dock-note-text")?.textContent ?? "";
   const alertRole = (): string | null | undefined =>
-    document.querySelector("#run-exec-dock .ev-alert-line")?.parentElement?.getAttribute("role");
+    document.querySelector("#run-exec-dock .ev-dock-note")?.closest("ul")?.getAttribute("role");
 
   it("holds the run's name, state, progress and clock, and the page none of them", async () => {
     const { body } = await paint(openRunView, "running", {
@@ -770,7 +781,7 @@ describe("the run dock", () => {
     });
     const dock = document.getElementById("run-exec-dock")!;
     expect(dock.querySelector(".ev-sum-state")?.textContent).toBe("running");
-    expect(dock.querySelector(".ev-sum-progress")?.textContent).toBe("step 2 of 2");
+    expect(dock.querySelector(".ev-sum-compact")?.textContent).toBe("2/2");
     expect(dock.querySelector(".ev-sum-clock")?.textContent).not.toBe("");
     const page = body.querySelector("#run-body")!;
     for (const gone of [".ev-head", ".ev-inputs", ".ev-alert", ".ev-notice", ".run-controls"]) {
@@ -822,17 +833,26 @@ describe("the run dock", () => {
   });
 
   describe("each notice", () => {
-    it("waiting on a step's question it cannot answer yet: offers no Answer", async () => {
+    it("waiting on a step's question: shows it whole in its region, with no Answer", async () => {
       vi.mocked(runPendingAsks).mockReturnValue({
         count: 1,
-        asked: [{ nodeID: "coder", sessionID: "", answer: true, path: "", askID: "a1" }],
+        asked: [
+          {
+            nodeID: "coder",
+            sessionID: "",
+            answer: true,
+            path: "",
+            askID: "a1",
+            text: "Which branch?",
+          },
+        ],
         label: "Which branch?",
       });
       await paint(openRunView, "running", { root: live("running") });
-      expect(alertText()).toBe("Waiting for answer: Which branch?");
-      expect(document.querySelector("#run-exec-dock .ev-dock-alert-act")?.childElementCount).toBe(
-        0,
-      );
+      const dock = document.getElementById("run-exec-dock")!;
+      expect(dock.querySelector(".ev-dock-ask-q")?.textContent).toBe("Which branch?");
+      expect(dock.querySelector(".ev-dock-head")?.textContent).not.toContain("Which branch?");
+      expect(dock.querySelector('button[aria-label="Answer"], .ev-dock-alert-act')).toBeNull();
     });
 
     it("paused at a loop's limit: Add passes with its count and End this loop", async () => {
@@ -985,29 +1005,15 @@ describe("the run dock", () => {
     );
   });
 
-  it("moves Answer to a request decision's first shown button when it has no field", async () => {
+  it("offers no Answer for a request decision: its own card answers it", async () => {
     vi.mocked(runPendingAsks).mockReturnValue({
       count: 1,
-      asked: [{ nodeID: "", sessionID: "", answer: false }],
-      label: "",
+      asked: [{ nodeID: "", sessionID: "", answer: false, text: "Allow git push?" }],
+      label: "Allow git push?",
     });
     await paint(openRunView, "running", { root: live("running") });
-    const dock = document.getElementById("run-dock")!;
-    const hidden = Object.assign(document.createElement("textarea"), { hidden: true });
-    const allow = document.createElement("button");
-    dock.append(hidden, allow);
-    document
-      .querySelector<HTMLButtonElement>(
-        '#run-exec-dock .ev-dock-alert-act button[aria-label="Answer"]',
-      )
-      ?.click();
-    expect(document.activeElement).toBe(allow);
-  });
-
-  it("offers no Answer for an alert that asks nothing", async () => {
-    await paint(openRunView, "paused", { root: live("paused") });
-    expect(document.querySelector("#run-exec-dock .ev-alert-line")).not.toBeNull();
     expect(document.querySelector('#run-exec-dock button[aria-label="Answer"]')).toBeNull();
+    expect(document.querySelector("#run-exec-dock .ev-dock-ask")).toBeNull();
   });
 
   describe("a tab opened while parallel steps are printing", () => {
@@ -1231,7 +1237,7 @@ describe("run view step results", () => {
       "without producing any text",
     );
     // Unclamped: one sentence never overflows, and an opener under it would open nothing.
-    expect(body.querySelectorAll(".ev-r-more")).toHaveLength(0);
+    expect(body.querySelectorAll(".clamp-more")).toHaveLength(0);
   });
 
   it("renders a non-empty capture as MARKDOWN, not as preformatted text", async () => {
@@ -1291,13 +1297,14 @@ describe("run view step results have no toggle", () => {
 
   it("carries no chevron, no role=button, and no aria-expanded of its own", async () => {
     const el = await region();
-    expect(el.querySelectorAll(".disclosure-chevron")).toHaveLength(0);
+    // The one chevron is a clamp opener's, which opens one report's text, not the region.
+    expect(el.querySelectorAll(".disclosure-chevron:not(.clamp-more > *)")).toHaveLength(0);
     expect(el.querySelectorAll('[role="button"]')).toHaveLength(0);
     expect(el.querySelectorAll("[tabindex]")).toHaveLength(0);
     // The clamp opener is EXEMPT and its `aria-expanded` is not the toggle's: it states whether the
     // report below it is clipped, which is a fact about that one box's text, not about whether the
     // region is showing anything.
-    expect(el.querySelectorAll("[aria-expanded]:not(.ev-r-more)")).toHaveLength(0);
+    expect(el.querySelectorAll("[aria-expanded]:not(.clamp-more)")).toHaveLength(0);
   });
 
   // The clamp opener is the ONE button the region may hold, and it is a real `<button>` rather than
@@ -1306,7 +1313,7 @@ describe("run view step results have no toggle", () => {
     const el = await region();
     const buttons = [...el.querySelectorAll("button")];
     for (const b of buttons) {
-      expect(b.className).toBe("ev-r-more");
+      expect(b.className).toBe("clamp-more");
     }
   });
 
@@ -1356,9 +1363,8 @@ describe("run view step results placement", () => {
   });
 });
 
-// THE CLAMP on a result box, reusing the page's own affordance: `clamp-text.ts` `attachClamp`, the
-// `data-clamped` attribute and the `.ev-in-more` opener skin, the same three the header's
-// instructions use.
+// THE CLAMP on a result box: `clamp-text.ts` `attachClamp`, the `data-clamped` attribute and the
+// shared `.clamp-more` chevron opener.
 
 describe("run view step result clamp", () => {
   async function capture(output: string): Promise<HTMLElement> {
@@ -1370,7 +1376,7 @@ describe("run view step result clamp", () => {
   }
 
   function openers(body: HTMLElement): HTMLButtonElement[] {
-    return [...body.querySelectorAll<HTMLButtonElement>(".ev-r-more")];
+    return [...body.querySelectorAll<HTMLButtonElement>(".clamp-more")];
   }
 
   it("offers NO opener on a short capture", async () => {
@@ -1395,18 +1401,18 @@ describe("run view step result clamp", () => {
     expect(more?.hidden).toBe(false);
     expect(more?.tagName).toBe("BUTTON");
     expect(more?.getAttribute("aria-expanded")).toBe("false");
-    expect(more?.textContent).toBe("Show more");
+    expect(more?.getAttribute("aria-label")).toBe("Show more");
     expect(text.hasAttribute("data-clamped")).toBe(true);
 
     more?.click();
     expect(text.hasAttribute("data-clamped")).toBe(false);
     expect(more?.getAttribute("aria-expanded")).toBe("true");
-    expect(more?.textContent).toBe("Show less");
+    expect(more?.getAttribute("aria-label")).toBe("Show less");
 
     more?.click();
     expect(text.hasAttribute("data-clamped")).toBe(true);
     expect(more?.getAttribute("aria-expanded")).toBe("false");
-    expect(more?.textContent).toBe("Show more");
+    expect(more?.getAttribute("aria-label")).toBe("Show more");
   });
 
   // THE MEASUREMENT CASE. Longer than `RESULT_CLAMP.fallbackChars` and still inside twelve lines at
@@ -1426,81 +1432,25 @@ describe("run view step result clamp", () => {
   });
 });
 
-// The header's instructions: clamped to three lines with an opener that appears ONLY when the
-// content really overflows.
-describe("run view instructions", () => {
-  function openers(body: HTMLElement): HTMLButtonElement[] {
-    return [...body.querySelectorAll<HTMLButtonElement>(".ev-in-more")];
-  }
+// The run's inputs: one key/value line each above the dock panel's switcher, absent with none.
+describe("run view inputs", () => {
+  const keys = (body: HTMLElement): (string | null)[] =>
+    [...body.querySelectorAll("#run-exec-dock .ev-dock-input > dt")].map((n) => n.textContent);
+  const values = (body: HTMLElement): (string | null)[] =>
+    [...body.querySelectorAll("#run-exec-dock .ev-dock-input > dd")].map((n) => n.textContent);
 
-  /** Open the dock's panel on Inputs, where the list is laid out and so measured. */
-  async function showInputs(body: HTMLElement): Promise<void> {
-    body.querySelector<HTMLButtonElement>("#run-exec-dock .ev-box-toggle")?.click();
-    body.querySelector<HTMLButtonElement>('[data-ev-seg="inputs"]')?.click();
-    await settleClamp();
-  }
-
-  it("renders the value in its own clamped box", async () => {
+  it("draws one line per input in the dock's panel, and no Inputs segment", async () => {
     const { body } = await paint(openRunView, "running", {
       inputs: { repo: "marotte", target: "static-src" },
     });
-    expect([...body.querySelectorAll(".ev-in-k")].map((n) => n.textContent)).toEqual([
-      "repo",
-      "target",
-    ]);
-    expect([...body.querySelectorAll(".ev-in-text")].map((n) => n.textContent)).toEqual([
-      "marotte",
-      "static-src",
-    ]);
+    expect(keys(body)).toEqual(["repo", "target"]);
+    expect(values(body)).toEqual(["marotte", "static-src"]);
+    expect(body.querySelector('[data-ev-seg="inputs"]')).toBeNull();
   });
 
-  // A character count also gets this case right, so it is the floor rather than the proof.
-  it("offers NO opener on a short instruction", async () => {
-    const { body } = await paint(openRunView, "running", {
-      inputs: { repo: "marotte" },
-    });
-    expect(openers(body).map((b) => b.hidden)).toEqual([true]);
-    await settleClamp();
-    expect(openers(body).map((b) => b.hidden)).toEqual([true]);
-  });
-
-  it("offers an opener on an instruction that overflows the clamp", async () => {
-    // Long enough to overflow three lines at any width this suite can run at. Newlines would NOT do
-    // it: the value is not preformatted, so they collapse to spaces — which is exactly why the
-    // character/newline guess cannot be trusted and the observer has the last word.
-    const { body } = await paint(openRunView, "running", {
-      inputs: { task: "converge the chevrons and then the boxes ".repeat(80).trim() },
-    });
-    await showInputs(body);
-    const [more] = openers(body);
-    const text = body.querySelector<HTMLElement>(".ev-in-text");
-    // The premise: the clamp really is clipping this value.
-    expect(text!.scrollHeight - text!.clientHeight).toBeGreaterThan(1);
-    expect(more?.hidden).toBe(false);
-    expect(more?.tagName).toBe("BUTTON");
-    // A real control with a real state, reachable by keyboard because it is a button.
-    expect(more?.getAttribute("aria-expanded")).toBe("false");
-    expect(more?.textContent).toBe("Show more");
-    expect(text?.hasAttribute("data-clamped")).toBe(true);
-
-    more?.click();
-    expect(text?.hasAttribute("data-clamped")).toBe(false);
-    expect(more?.getAttribute("aria-expanded")).toBe("true");
-    expect(more?.textContent).toBe("Show less");
-  });
-
-  // THE MEASUREMENT CASE. This value is longer than the character fallback and still fits three
-  // lines at this width, so the pre-layout guess says "overflows" and the observer must overrule
-  // it. A character-count implementation leaves an opener here that opens nothing.
-  it("withdraws the opener when layout says the long value fits", async () => {
-    const long = "shipped ".repeat(40).trim();
-    expect(long.length).toBeGreaterThan(220);
-    const { body } = await paint(openRunView, "running", { inputs: { task: long } });
-    await showInputs(body);
-    const text = body.querySelector<HTMLElement>(".ev-in-text");
-    // The premise, or this case would assert nothing: the text really is not clipped at this width.
-    expect(text!.scrollHeight - text!.clientHeight).toBeLessThanOrEqual(1);
-    expect(openers(body).map((b) => b.hidden)).toEqual([true]);
+  it("hides the lines for a run with no inputs", async () => {
+    const { body } = await paint(openRunView, "running", {});
+    expect(body.querySelector<HTMLElement>("#run-exec-dock .ev-dock-inputs")?.hidden).toBe(true);
   });
 
   /** A settled step whose capture this render carries. */
@@ -1530,32 +1480,29 @@ describe("run view instructions", () => {
     }
   }
 
-  // `render` runs on every store invalidation — dozens of times a minute on a live run — so an
-  // unguarded rebuild would discard the reader's expansion and re-wire every clamp. Node identity
-  // is the assertion because that is what survives.
-  it("does not rebuild the list when the inputs are unchanged", async () => {
+  // `render` runs on every store invalidation, so an unguarded rebuild would take a reader's
+  // focus off an input's link. Node identity is the assertion because that is what survives.
+  it("does not rebuild the lines when the inputs are unchanged", async () => {
     const { body, tab } = await paint(openRunView, "running", {
       inputs: { repo: "marotte" },
       root: capturing("first"),
     });
-    const before = body.querySelector(".ev-in-v");
+    const before = body.querySelector(".ev-dock-input");
     await rerender(tab.id, { repo: "marotte" }, "second");
-
     // The premise, or this case asserts nothing: the page really did re-render.
     expect(body.querySelector(".ev-r-text")?.textContent).toContain("second");
-    expect(body.querySelector(".ev-in-v")).toBe(before);
+    expect(body.querySelector(".ev-dock-input")).toBe(before);
   });
 
-  it("rebuilds the list when the inputs change", async () => {
+  it("rebuilds the lines when the inputs change", async () => {
     const { body, tab } = await paint(openRunView, "running", {
       inputs: { repo: "marotte" },
       root: capturing("first"),
     });
-    const before = body.querySelector(".ev-in-v");
+    const before = body.querySelector(".ev-dock-input");
     await rerender(tab.id, { repo: "subflux" }, "second");
-
-    expect(body.querySelector(".ev-in-v")).not.toBe(before);
-    expect(body.querySelector(".ev-in-text")?.textContent).toBe("subflux");
+    expect(body.querySelector(".ev-dock-input")).not.toBe(before);
+    expect(values(body)).toEqual(["subflux"]);
   });
 });
 

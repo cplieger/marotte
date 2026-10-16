@@ -698,34 +698,31 @@ describe("the box", () => {
   });
 });
 
-describe("the attention border", () => {
-  it("is the yellow border on an open question, and typing the answer keeps it", () => {
+// A state is not drawn as a coloured edge: answering is named by the placeholder and Send.
+describe("answering a question", () => {
+  it("draws no ring: the box's edge is the same as a message's, and Send reads Send answer", () => {
     const style = mountAppCSS();
     const box = ui.form.querySelector<HTMLElement>(".prompt-box")!;
-    // The rendered colour, not mid-transition.
     box.style.transition = "none";
-    const probe = document.createElement("span");
-    probe.style.color = "var(--c-yellow)";
-    ui.form.appendChild(probe);
-    const yellow = getComputedStyle(probe).color;
     setRunComposerTarget({
       workflowID: "wf_4",
       runLive: true,
       runPaused: false,
       step: step("running", "steer"),
     });
-    expect(getComputedStyle(box).borderTopColor).not.toBe(yellow);
+    const steering = [getComputedStyle(box).borderTopColor, getComputedStyle(box).boxShadow];
     setRunComposerTarget({
       workflowID: "wf_4",
       runLive: true,
       runPaused: false,
       step: asking(),
     });
-    expect(getComputedStyle(box).borderTopColor).toBe(yellow);
-    ui.input.focus();
-    expect(getComputedStyle(box).borderTopColor).toBe(yellow);
-    ui.input.blur();
-    probe.remove();
+    expect(ui.form.dataset["mode"]).toBe("answer");
+    expect([getComputedStyle(box).borderTopColor, getComputedStyle(box).boxShadow]).toEqual(
+      steering,
+    );
+    expect(ui.send.getAttribute("aria-label")).toBe("Send answer");
+    expect(ui.send.getAttribute("data-tooltip")).toBe("Send answer");
     box.style.removeProperty("transition");
     style.remove();
   });

@@ -133,7 +133,6 @@ describe("a tap on a step question's banner", () => {
     agent_name: "",
     text: "Ship it?",
     text_source: "asked",
-    can_continue: false,
   };
 
   function tap(): void {

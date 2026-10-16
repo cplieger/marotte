@@ -200,8 +200,7 @@ type RunAsksPayload struct {
 
 // RunAsk is one step waiting on a person, in run_asks and under `open_asks` in GET /api/runs/{id}.
 // AskID changes with every turn of the step marotte sees start, so an answer typed against an
-// older one is refused as stale. Blocked is absent when an answer may go; CanContinue is true on a blocked ask too, and
-// Continue is offered only when it is true and Blocked is absent.
+// older one is refused as stale. Blocked is absent when an answer may go.
 type RunAsk struct {
 	AskID         string     `json:"ask_id"`
 	NodeID        string     `json:"node_id"`
@@ -211,11 +210,10 @@ type RunAsk struct {
 	TextSource    RunAskText `json:"text_source"`
 	// Reason is kiro-cli's sentence for why a step that has no completion signal is waiting, such
 	// as one whose signal it could not save; absent otherwise.
-	Reason      string        `json:"reason,omitempty"`
-	Blocked     RunAskBlocker `json:"blocked,omitempty"`
-	AskedAt     string        `json:"asked_at,omitempty"`
-	NodePath    []string      `json:"node_path"`
-	CanContinue bool          `json:"can_continue"`
+	Reason   string        `json:"reason,omitempty"`
+	Blocked  RunAskBlocker `json:"blocked,omitempty"`
+	AskedAt  string        `json:"asked_at,omitempty"`
+	NodePath []string      `json:"node_path"`
 }
 
 // RunAskText says where an ask's text came from, so a card labels it: only `asked` is the step's
@@ -237,7 +235,7 @@ type RunAskBlocker string
 const (
 	// RunAskStopping means a cancel or delete of the run is queued.
 	RunAskStopping RunAskBlocker = "stopping"
-	// RunAskPending means a prompt or Continue marotte sent to a step of this run is still being delivered.
+	// RunAskPending means a prompt marotte sent to a step of this run is still being delivered.
 	RunAskPending RunAskBlocker = "pending"
 	// RunAskRecovering means the run's process ended and kiro-cli still lists it live.
 	RunAskRecovering RunAskBlocker = "recovering"
@@ -250,7 +248,7 @@ const (
 	RunAskSettling RunAskBlocker = "settling"
 )
 
-// RunAskRefusal is the machine `code` of a refused answer, Continue or step message about an ask.
+// RunAskRefusal is the machine `code` of a refused answer or step message about an ask.
 // Only RunAskRefusedSettling and RunAskRefusedUnreadable are worth retrying unchanged.
 type RunAskRefusal string
 
@@ -290,11 +288,7 @@ type RunStepStart struct {
 	Ended     bool   `json:"ended"`
 }
 
-// RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.
-//
-// Empty Text is a 400 rather than a waive. Continuing without an answer is a
-// DIFFERENT verb (POST /api/runs/{id}/step with status `running`) — it drives the
-// step with KAS's default continuation, and an empty box must not reach it.
+// RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step. Empty Text is a 400.
 type RunAnswerRequest struct {
 	AskID string `json:"ask_id"`
 	Text  string `json:"text"`
@@ -307,16 +301,6 @@ type RunStepMessageRequest struct {
 	Text      string `json:"text"`
 	MessageID string `json:"message_id"`
 	// AskID, when set, is the ask the words answer: a different ask at the path refuses them as stale.
-	AskID string `json:"ask_id,omitempty"`
-}
-
-// RunStepStatusRequest is POST /api/runs/{id}/step's body: Status `completed` or `failed` marks the
-// step at NodeID, `running` is Continue without answering.
-type RunStepStatusRequest struct {
-	NodeID string `json:"node_id"`
-	Status string `json:"status"`
-	// AskID, on a Continue, is the ask the card shows; a Continue naming none is refused when more
-	// than one ask shares NodeID, as a fan-out's executions do.
 	AskID string `json:"ask_id,omitempty"`
 }
 

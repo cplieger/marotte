@@ -140,8 +140,9 @@
    speak this vocabulary. */
 .ev-row.ev-selected > .ev-row-main,
 .ev-tl-lane.ev-selected,
-/* The run dock's row for the step the page shows. */
-.ev-dock-row[aria-current="true"],
+/* The run dock's row for the step the page shows, among several: in a list of one the
+   row the transcript belongs to is the only row, and a fill there says nothing. */
+.ev-dock-rows:has(> li + li) .ev-dock-row[aria-current="true"],
 .pr-merge-method:has(input:checked),
 .editor-find-case[aria-pressed="true"],
 .sidebar-history-btn.active {

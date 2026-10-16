@@ -110,7 +110,6 @@ function ask(id: string, path: string[] = ["wf_1", "a"], session = "sess_a"): Ru
     agent_name: "",
     text: "Which branch?",
     text_source: "asked",
-    can_continue: false,
   };
 }
 

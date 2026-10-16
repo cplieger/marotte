@@ -1,6 +1,7 @@
-// The turn card's header band. The CLAMP is CSS-only and fold-conditional, so
-// `disclosure-row-css.test.ts` owns it against real layout.
-import { describe, it, expect } from "vitest";
+// The turn card's header band. The CLAMP is CSS and fold-conditional, so
+// `disclosure-row-css.test.ts` owns it against real layout; the cut cue is measured here.
+import { describe, it, expect, afterEach } from "vitest";
+import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 import { buildTurnHeader, updateTurnHeader, type TurnHeaderData } from "./turn-header.js";
 import { initAttachmentPillCallbacks } from "../attachment-pill.js";
 
@@ -101,11 +102,9 @@ describe("buildTurnHeader", () => {
     expect(text(h).contains(h.querySelector(".turn-head-row"))).toBe(false);
   });
 
-  it("offers no show-more", () => {
-    // The clamp is CSS-only and fold-conditional, so there is no control and no
-    // measurement machinery.
+  it("offers no show-more: the fold chevron opens the prompt", () => {
     const h = buildTurnHeader(data({ request: LONG }));
-    expect(h.querySelector(".turn-req-more")).toBeNull();
+    expect(h.querySelector(".turn-req-more, .clamp-more")).toBeNull();
     expect(text(h).hasAttribute("data-clamped")).toBe(false);
   });
 });
@@ -225,13 +224,6 @@ describe("the request's attachments", () => {
 });
 
 describe("a labelled request", () => {
-  function opener(h: HTMLElement): HTMLButtonElement {
-    const b = h.querySelector<HTMLButtonElement>(".turn-req-more");
-    if (b === null) {
-      throw new Error("no .turn-req-more");
-    }
-    return b;
-  }
   function full(h: HTMLElement): HTMLElement {
     const f = h.querySelector<HTMLElement>(".turn-req-full");
     if (f === null) {
@@ -240,28 +232,88 @@ describe("a labelled request", () => {
     return f;
   }
 
-  it("shows the label, with the full text one click away", () => {
+  it("shows the label, its full text part of the prompt the fold opens", () => {
     const h = buildTurnHeader(data({ request: "the whole instruction", label: "Run task 2" }));
     expect(text(h).textContent).toBe("Run task 2");
-    expect(full(h).classList.contains("hidden")).toBe(true);
-
-    opener(h).click();
     expect(full(h).textContent).toBe("the whole instruction");
-    expect(full(h).classList.contains("hidden")).toBe(false);
-    expect(opener(h).getAttribute("aria-expanded")).toBe("true");
-    expect(opener(h).textContent).toBe("Hide full message");
+    expect(h.querySelector(".turn-req-more")).toBeNull();
   });
 
-  it("keeps the reader's open state across a repaint", () => {
-    const h = buildTurnHeader(data({ request: "the whole instruction", label: "Run task 2" }));
-    opener(h).click();
-    updateTurnHeader(h, data({ request: "the whole instruction", label: "Run task 2", n: 2 }));
-    expect(full(h).classList.contains("hidden")).toBe(false);
+  it("hides the full text while the turn is folded, and shows it open", () => {
+    const style = mountAppCSS();
+    const card = document.createElement("div");
+    card.className = "turn";
+    try {
+      const h = buildTurnHeader(data({ request: "the whole instruction", label: "Run task 2" }));
+      card.append(h);
+      document.body.append(card);
+      expect(getComputedStyle(full(h)).display).not.toBe("none");
+      card.toggleAttribute("data-folded", true);
+      expect(getComputedStyle(full(h)).display).toBe("none");
+    } finally {
+      card.remove();
+      style.remove();
+    }
   });
 
   it("never relabels a typed request", () => {
     const h = buildTurnHeader(data({ request: "what I typed" }));
     expect(text(h).textContent).toBe("what I typed");
-    expect(h.querySelector(".turn-req-more, .turn-req-full")).toBeNull();
+    expect(h.querySelector(".turn-req-full")).toBeNull();
+  });
+});
+
+describe("a folded turn whose prompt is cut", () => {
+  let style: HTMLStyleElement | undefined;
+  let card: HTMLElement | undefined;
+  afterEach(() => {
+    card?.remove();
+    style?.remove();
+  });
+  // Three frames: the observer delivers after the first layout and the review runs a frame later.
+  const settle = (): Promise<void> =>
+    new Promise((r) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+    );
+  async function folded(request: string): Promise<HTMLElement> {
+    style = mountAppCSS();
+    card = document.createElement("div");
+    card.className = "turn";
+    card.toggleAttribute("data-folded", true);
+    card.style.inlineSize = "30rem";
+    const h = buildTurnHeader(data({ request }));
+    card.append(h);
+    document.body.append(card);
+    await settle();
+    return h;
+  }
+  const cue = (h: HTMLElement): HTMLElement => h.querySelector<HTMLElement>(".turn-req-cut")!;
+  const toggleName = (h: HTMLElement): string | null =>
+    h.querySelector(".turn-fold-toggle")?.getAttribute("aria-label") ?? null;
+
+  it("fades its last line, ends on a muted ellipsis, and says so in the chevron's name", async () => {
+    const h = await folded("a long line of words ".repeat(60));
+    expect(text(h).hasAttribute("data-cut")).toBe(true);
+    expect(getComputedStyle(text(h)).maskImage).toContain("linear-gradient");
+    expect(getComputedStyle(cue(h)).display).toBe("block");
+    expect(cue(h).getAttribute("aria-hidden")).toBe("true");
+    expect(cue(h).textContent).toBe("\u2026");
+    expect(toggleName(h)).toBe("Expand or collapse this turn, message truncated");
+  });
+
+  it("shows neither cue for a prompt that fits", async () => {
+    const h = await folded("short");
+    expect(text(h).hasAttribute("data-cut")).toBe(false);
+    expect(getComputedStyle(cue(h)).display).toBe("none");
+    expect(toggleName(h)).toBe("Expand or collapse this turn");
+  });
+
+  it("drops the cue once the turn opens", async () => {
+    const h = await folded("a long line of words ".repeat(60));
+    card?.toggleAttribute("data-folded", false);
+    await settle();
+    await settle();
+    expect(text(h).hasAttribute("data-cut")).toBe(false);
+    expect(getComputedStyle(cue(h)).display).toBe("none");
   });
 });

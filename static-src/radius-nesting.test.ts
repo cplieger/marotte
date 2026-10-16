@@ -34,8 +34,7 @@ function radiusOf(el: Element): number {
 }
 
 describe("the three menu surfaces derive one corner from one shape", () => {
-  // All three are a 1px border with a --sp-1 list inset, so one derivation serves them. It also
-  // closes the pair the user named, since the composer is --r-lg and the top-right menu was --r.
+  // All three are a 1px border with a --sp-1 list inset, so one derivation serves them.
   it.each([
     ["popup", "popup-list", "popup-item"],
     ["tab-context-menu", "", "tab-context-item"],
@@ -107,7 +106,7 @@ describe("a 24px icon button takes the ladder's small rung", () => {
 
 describe("an inner box is never rounder than the box holding it", () => {
   it("makes the pill's count badge a stadium rather than a rounder rung", () => {
-    // It declared --r-md (8px) inside a 7px --pill-radius pill. At 14px tall, 8px already exceeds
+    // It declared --r-md (8px) inside a squarer --pill-radius pill. At 14px tall, 8px already exceeds
     // half the height, so the browser clamped it to a stadium and the declared rung never rendered
     // — the fix is to say what it renders as.
     const badge = document.createElement("span");

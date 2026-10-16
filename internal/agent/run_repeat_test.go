@@ -164,20 +164,6 @@ func TestFinishRepeat_AnUpdatedFalseIsARefusal(t *testing.T) {
 	}
 }
 
-// TestSetStepStatus_NeverSendsNodeId pins that KAS refuses a nodeId on an ordinary step write.
-func TestSetStepStatus_NeverSendsNodeId(t *testing.T) {
-	h, _, br := newTestHub()
-	addressableStep(t, h, br, "wf_1", "review")
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-
-	if err := h.runs.setStepStatus(t.Context(), "wf_1", marotte.RunStepStatusRequest{NodeID: "review", Status: runStepCompleted}); err != nil {
-		t.Fatalf("SetStepStatus = %v, want nil", err)
-	}
-	if got, ok := br.paramsFor(methodKiroWorkflowUpdate)["nodeId"]; ok {
-		t.Errorf(`SetStepStatus params["nodeId"] = %v, want absent`, got)
-	}
-}
-
 func maxIterationsHub(t *testing.T) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, _, br := newTestHub()

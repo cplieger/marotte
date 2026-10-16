@@ -28,9 +28,8 @@ import { buildRunControlsView, type RunControlsView } from "./run-controls-view.
 import { get } from "./store.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight, neverRan, settled } from "./exec-view/status.js";
-import { flatten, workNodes, type ExecNode, type ExecRun } from "./exec-view/model.js";
+import { flatten, workNodes, type ExecNode } from "./exec-view/model.js";
 import { runToExec } from "./run-exec-source.js";
-import type { RunAsks } from "./run-asks.js";
 import { lastPrintedLine } from "./run-step-tail.js";
 import type { RunStepPaint, RunStepStream } from "./run-chat-steps.js";
 import {
@@ -57,7 +56,7 @@ import type { TurnState } from "./types.js";
 import { refreshRunDots, trackRun } from "./run-dots.js";
 import { buildPath } from "./route-path.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_EXTERNAL, ICON_TAB_CHAT } from "./icons.js";
+import { ICON_EXTERNAL } from "./icons.js";
 
 /** The run this view is currently showing, so an SSE invalidation knows whether it is about the
  *  run on screen. Cleared when the view loads a different one; a closed tab simply stops
@@ -381,7 +380,6 @@ function mountPage(
     dock: dockHost,
     controls: () => verbs.current(),
     notes: () => verbs.refusals(),
-    alertAction: answerAction,
     onShowNode: armStepRead,
     // A page still drawn while another run loads publishes nothing.
     onSelect: (node) => {
@@ -814,8 +812,13 @@ function paint(
   // Two inputs on different clocks, the same pair the transcript's card takes: `inspect` says what
   // the nodes are doing, and the dock says which of them is blocked on a person.
   const focus = focusRequest?.workflowID === workflowID ? focusRequest.path : "";
-  shownAsks = runPendingAsks(workflowID);
-  const run = runToExec(state, runPlan(workflowID), shownAsks, focus, runStepEnds(workflowID));
+  const run = runToExec(
+    state,
+    runPlan(workflowID),
+    runPendingAsks(workflowID),
+    focus,
+    runStepEnds(workflowID),
+  );
   for (const node of workNodes(run.nodes)) {
     const tail = lastPrintedLine(turnsForStep(turns, node.path).map(([, t]) => t));
     if (tail !== "") {
@@ -908,70 +911,4 @@ function leafPaints(
     }
   }
   return out;
-}
-
-/** What the shown run waits on a person for, as its last paint read it. */
-let shownAsks: RunAsks = { count: 0, asked: [], label: "" };
-
-/** The dock's Answer for a run waiting on an ask. One element for the module's life, so a repaint
- *  seats the same node and focus inside it survives. */
-let answerBtn: HTMLButtonElement | undefined;
-
-function answerButton(): HTMLButtonElement {
-  answerBtn ??= el(
-    "button",
-    {
-      type: "button",
-      className: "icon-btn run-icon-btn",
-      "aria-label": "Answer",
-      "data-tooltip": "Answer the step waiting for you",
-      onclick: answerWaitingAsk,
-    },
-    iconEl(ICON_TAB_CHAT),
-    el("span", { className: "run-control-label" }, "Answer"),
-  ) as HTMLButtonElement;
-  return answerBtn;
-}
-
-/** Where the dock's Answer takes the reader: a step whose question the server would take an answer
- *  for, answered in the run composer; else a request decision, answered in the decision dock
- *  (`mountRunDecisionDock`, which leaves step questions to the composer). Undefined while neither
- *  can be answered yet, and then no Answer is offered. */
-function answerTarget(run: ExecRun): { step: ExecNode } | { decision: true } | undefined {
-  const step = workNodes(run.nodes).find((n) => n.verb === "answer");
-  if (step !== undefined) {
-    return { step };
-  }
-  return shownAsks.asked.some((a) => !a.answer) ? { decision: true } : undefined;
-}
-
-/** The run the dock's Answer acts on, as the last paint offered it. */
-let answerRun: ExecRun | undefined;
-
-function answerAction(run: ExecRun): HTMLElement | null {
-  answerRun = run;
-  return run.alert?.kind === "input" && answerTarget(run) !== undefined ? answerButton() : null;
-}
-
-function answerWaitingAsk(): void {
-  const target = answerRun === undefined ? undefined : answerTarget(answerRun);
-  if (target === undefined) {
-    return;
-  }
-  if ("step" in target) {
-    page?.select(target.step.path);
-    document.getElementById("run-composer-input")?.focus();
-    return;
-  }
-  const fields = [
-    ...(document
-      .getElementById("run-dock")
-      ?.querySelectorAll<HTMLElement>("textarea:enabled, input:enabled, button:enabled") ?? []),
-  ].filter((n) => n.checkVisibility());
-  const typed = (n: HTMLElement): boolean =>
-    n instanceof HTMLTextAreaElement ||
-    (n instanceof HTMLInputElement && n.type !== "checkbox" && n.type !== "radio");
-  const field = fields.find(typed) ?? fields.find((n) => n instanceof HTMLButtonElement);
-  field?.scrollIntoView({ block: "nearest" });
-  field?.focus();
 }

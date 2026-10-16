@@ -1743,31 +1743,6 @@ button.steer-note-run:focus-visible {
   animation: none;
 }
 
-/* Skinned on `.steer-note-more` (13-messages.css): it is the same control, a text
- * button that opens a clamp. */
-.steer-note-more,
-.turn-req-more {
-  font-size: var(--fs-xs);
-  color: var(--c-text-secondary);
-  background: none;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.steer-note-more:hover,
-.turn-req-more:hover {
-  color: var(--c-accent);
-}
-
-.steer-note-more:focus-visible,
-.turn-req-more:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset);
-}
-
 /* What the agent said it DID about the steer, from its own acknowledgement
  * marker. One step down in weight, because the message above is the part the
  * reader wrote and already knows. */

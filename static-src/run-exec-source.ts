@@ -17,6 +17,7 @@ import { stateOf, withAsk, inFlight, settled, type ExecState } from "./exec-view
 import {
   currentMembers,
   failureOwner,
+  flatten,
   isWork,
   passBudgetText,
   passCountText,
@@ -24,6 +25,7 @@ import {
   type ExecFact,
   type ExecKind,
   type ExecNode,
+  type ExecQuestion,
   type ExecRun,
 } from "./exec-view/model.js";
 import {
@@ -587,6 +589,31 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
   return undefined;
 }
 
+/** The run's step questions whole (`decision-dock.ts` `runPendingAsks` owns the text), each placed
+ *  at its step where the server's match places one. A request decision is left out: its own card
+ *  in the bottom bar asks it. */
+function questionsOf(
+  asks: RunAsks,
+  paths: readonly (string | undefined)[],
+  nodes: readonly ExecNode[],
+): ExecQuestion[] {
+  const all = flatten(nodes);
+  return asks.asked.flatMap((a, i) => {
+    if (!a.answer || a.text === undefined) {
+      return [];
+    }
+    const path = paths[i];
+    const step = path === undefined ? undefined : all.find((n) => n.path === path)?.label;
+    return [
+      {
+        text: a.text,
+        ...(path === undefined ? {} : { path }),
+        ...(step === undefined ? {} : { step }),
+      },
+    ];
+  });
+}
+
 /** What became of a queued plan revision, each outcome KAS names today in Kiro's words. The
  *  vocabulary is open: a word missing here is shown as KAS sent it. */
 const PLAN_OUTCOMES = new Map<string, (reason: string) => string>([
@@ -653,6 +680,10 @@ export function runToExec(
   const alert = alertOf(state, asks, nodes);
   if (alert !== undefined) {
     out.alert = alert;
+  }
+  const questions = questionsOf(asks, ctx.asked.paths, nodes);
+  if (questions.length > 0) {
+    out.questions = questions;
   }
   if (state.planUpdate !== undefined) {
     out.notice = planNotice(state.planUpdate);

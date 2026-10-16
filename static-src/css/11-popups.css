@@ -39,16 +39,9 @@
    shape — a 1px border and a `--sp-1` list inset — so one derivation serves them,
    declared on the container the way `--card-radius` and `--pill-radius` are
    (01-tokens.css: "THE LADDER DOES NOT ANSWER A CORNER", so this is not a token).
-
-   The container moved from `--r` to `--r-lg`. At 6px the concentric inner radius
-   is 6 - 1 - 4 = 1px, which is square to the eye, and the items were shipping 6px
-   (identical to their container) or 3px (`calc(var(--r) / 2)`, a halving rather
-   than a derivation, 2px over). At 12px the inner is 7px — a real corner that is
-   visibly rounder than nothing and visibly tighter than its container.
-
-   It also closes the pair the user named: the composer is `--r-lg` and the
-   top-right menu was `--r`, so the two most-looked-at rounded boxes in the app
-   disagreed by a rung. */
+   The container is `--r-lg` because the item corner is container - 1 - 4: at 12px
+   that is a 7px corner, visibly tighter than its container, where 6px would leave
+   1px, square to the eye. */
 .popup-item {
   /* Row height comes from the TIER, not from the font. Without it this row
      resolved to its line box plus padding — the trap `--ctl-h-sm` exists to

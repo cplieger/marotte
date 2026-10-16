@@ -206,7 +206,6 @@ function stepAsk(workflowID: string, over: Partial<RunAsk> = {}): RunAsk {
     agent_name: "reviewer",
     text: "Ship it?",
     text_source: "asked",
-    can_continue: false,
     ...over,
   };
 }

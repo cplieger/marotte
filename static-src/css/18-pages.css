@@ -1045,6 +1045,25 @@
      is pinned outside it. ONE rule: `run-page-layout.test.ts` counts the
      occurrences. `hidden` across, `auto` down. */
   overflow: hidden auto;
+
+  /* No top padding: the band below is the top gap. Chromium sticks a child at the
+     padding edge, so padding above the band showed scrolled content above it. */
+  padding-block-start: 0;
+
+  /* A sticky band of page colour, so scrolled content stops `--sp-2` under the
+     toolbar as it does under a list page's sticky header (11-page-lists.css
+     `.page-header`); with its margin the rest gap is `.page-shell`'s, 8 + 12 = 20px
+     (8 + 4 on a phone, 50-mobile.css). */
+  &::before {
+    content: "";
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 1;
+    flex: none;
+    block-size: var(--sp-2);
+    margin-block-end: var(--sp-3);
+    background: var(--c-bg-primary);
+  }
 }
 
 /* The body sizes to its content (`flex: 1 0 auto`; `flex-basis: 0` plus
@@ -1076,15 +1095,16 @@
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
   max-block-size: calc(0.75 * var(--dock-viewport-h, 100dvh));
 
   & > * {
     flex: none;
   }
 
+  /* The stack's one gap is each member's own block-end margin, as in the chat's bar. */
   & > .ev-dock-host {
     flex: 0 1 auto;
+    margin-block-end: var(--stack-gap);
   }
 }
 
@@ -1093,18 +1113,13 @@
   align-items: flex-end;
 
   & > [id="run-composer-input"] {
-    border-radius: calc(var(--r-lg) - 1px) 0 0 calc(var(--r-lg) - 1px);
+    border-radius: calc(var(--stack-r) - 1px) 0 0 calc(var(--stack-r) - 1px);
     max-height: 8rem;
   }
 
   & > .send-btn {
     margin: var(--composer-pill-pad);
   }
-}
-
-[id="run-composer"][data-mode="answer"] > .prompt-box {
-  border-color: var(--c-yellow);
-  box-shadow: 0 0 0 1px var(--c-yellow);
 }
 
 [id="run-composer"][data-mode="disabled"] > .prompt-box {

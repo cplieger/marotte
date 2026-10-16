@@ -1,16 +1,17 @@
-// The run's one-line summary: name, state word, progress, mini timeline and clock, or the alert
-// that wants the reader in their place. One painter for the run dock's head and the chat's run bar
-// rows, so the two never word a run differently.
+// The run's one-line summary: name, state word, progress, mini bar and clock. One painter for the
+// run dock's head and the chat's run bar rows, so the two never word a run differently. A run bar
+// row also shows what wants the reader as a second line; the dock gives that a region of its own.
 
 import { el } from "@cplieger/reactive";
 import { reconcile } from "../reconcile.js";
 import { formatElapsed } from "../strings.js";
 import {
-  currentWork,
+  miniBar,
   summaryProgress,
   window as execWindow,
-  type ExecNode,
   type ExecRun,
+  type MiniSeg,
+  type ProgressPhrase,
 } from "./model.js";
 import { STATE_WORD } from "./status.js";
 import { buildAlertLine, wantsReader } from "./alert.js";
@@ -28,132 +29,160 @@ export interface ExecSummaryView {
 }
 
 interface SummaryOpts {
-  /** Receives `data-alert="<kind>"` while an alert wants the reader, so the consumer's container
-   *  takes the wash. */
-  readonly washHost: HTMLElement;
-  /** Whether the alert line sits in a `role=status` / `role=alert` pair (the dock) or is plain text
-   *  (a chat row, whose tab dot and notification already announce it). */
-  readonly live: boolean;
+  /** Where the alert that wants the reader shows as a second line, taking `data-alert="<kind>"` for
+   *  its wash; absent where the consumer shows the alert itself (the dock). */
+  readonly alertHost?: HTMLElement;
 }
 
-export function buildExecSummary(opts: SummaryOpts): ExecSummaryView {
+export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
   const label = el("span", { className: "ev-sum-label" });
   const state = el("span", { className: "ev-sum-state" });
-  // Two forms, the narrow container showing one (31-exec-view.css): the long one stays in the
-  // accessibility tree at every width, the glyph form never enters it.
-  const progressLong = el("span", { className: "ev-sum-long" });
-  const progressShort = el("span", { className: "ev-sum-short-text" });
-  const progress = el(
-    "span",
-    { className: "ev-sum-progress" },
-    progressLong,
-    el(
-      "span",
-      { className: "ev-sum-short", "aria-hidden": "true" },
-      kindGlyph("repeat"),
-      progressShort,
-    ),
-  );
+  const progress = buildProgress();
   const mini = el("span", { className: "ev-mini", "aria-hidden": "true" });
   const clock = el("span", { className: "ev-sum-clock" });
-  // A failure interrupts and anything else waits its turn: two live hosts that stay rendered (a
-  // region inserted together with its text is not announced), each with its own line, so a kind
-  // change never writes the new sentence inside the old severity's region.
-  const politeHost = el("span", { className: "ev-sum-live" });
-  const urgentHost = el("span", { className: "ev-sum-live" });
-  const politeLine = buildAlertLine("span", "ev-alert-line");
-  const urgentLine = buildAlertLine("span", "ev-alert-line");
-  if (opts.live) {
-    politeHost.setAttribute("role", "status");
-    urgentHost.setAttribute("role", "alert");
-  }
-  const root = el(
-    "span",
-    { className: "ev-sum" },
-    label,
-    state,
-    progress,
-    mini,
-    clock,
-    politeHost,
-    urgentHost,
-  );
+  // Plain text: a run bar row's tab dot and notification already announce it.
+  const line = buildAlertLine("span", "ev-alert-line");
+  const root = el("span", { className: "ev-sum" }, label, state, progress.root, mini, clock);
   let described = "";
 
-  const paintAlert = (run: ExecRun): void => {
-    const alert = wantsReader(run.alert) ? run.alert : undefined;
-    if (alert === undefined) {
-      delete root.dataset["alerting"];
-      delete opts.washHost.dataset["alert"];
-      politeHost.replaceChildren();
-      urgentHost.replaceChildren();
+  const paintAlert = (run: ExecRun | undefined): void => {
+    const host = opts.alertHost;
+    if (host === undefined) {
       return;
     }
-    root.dataset["alerting"] = "";
-    opts.washHost.dataset["alert"] = alert.kind;
-    const [into, line, away] =
-      alert.kind === "failed"
-        ? [urgentHost, urgentLine, politeHost]
-        : [politeHost, politeLine, urgentHost];
-    away.replaceChildren();
+    const alert = run !== undefined && wantsReader(run.alert) ? run.alert : undefined;
+    if (alert === undefined) {
+      delete host.dataset["alert"];
+      line.root.remove();
+      return;
+    }
+    host.dataset["alert"] = alert.kind;
     line.paint(alert);
-    if (line.root.parentElement !== into) {
-      into.replaceChildren(line.root);
+    if (line.root.parentElement !== root) {
+      root.append(line.root);
     }
   };
 
   return {
     root,
     paint(run) {
-      setText(label, run.label);
+      setLabel(label, run.label);
       const word = run.alert?.kind === "input" ? "needs input" : STATE_WORD[run.state];
       setText(state, word);
       const phrase = summaryProgress(run);
-      setText(progressLong, phrase.long);
-      setText(progressShort, phrase.short);
-      progress.toggleAttribute("data-loop", phrase.short !== "");
-      const paintSeg = (seg: HTMLElement, n: ExecNode): void => {
-        if (seg.dataset["state"] !== n.state) {
-          seg.dataset["state"] = n.state;
-        }
-        const tip = `${n.label}, ${STATE_WORD[n.state]}`;
-        if (seg.getAttribute("data-tooltip") !== tip) {
-          seg.setAttribute("data-tooltip", tip);
-        }
-      };
-      reconcile(mini, currentWork(run.nodes), {
-        key: (n) => n.path,
-        mount: (n) => {
-          const seg = el("span", { className: "ev-mini-seg" });
-          paintSeg(seg, n);
-          return seg;
-        },
-        update: paintSeg,
-      });
+      progress.paint(phrase);
+      paintMini(mini, miniBar(run));
       const win = execWindow(run.nodes, run.live);
       setText(clock, win === undefined ? "" : formatElapsed(win.span));
       paintAlert(run);
-      described = wantsReader(run.alert)
-        ? `${run.label}: ${run.alert.text}`
-        : [run.label, word, phrase.pass, phrase.steps].filter((s) => s !== "").join(", ");
+      described =
+        opts.alertHost !== undefined && wantsReader(run.alert)
+          ? `${run.label}: ${run.alert.text}`
+          : [run.label, word, phrase.words].filter((s) => s !== "").join(", ");
     },
     paintPending(name) {
-      setText(label, name);
-      for (const part of [state, progressLong, progressShort, clock]) {
+      setLabel(label, name);
+      for (const part of [state, clock]) {
         setText(part, "");
       }
-      progress.removeAttribute("data-loop");
+      progress.paint(undefined);
       mini.replaceChildren();
-      delete root.dataset["alerting"];
-      delete opts.washHost.dataset["alert"];
-      politeHost.replaceChildren();
-      urgentHost.replaceChildren();
+      delete mini.dataset["continuous"];
+      paintAlert(undefined);
       described = name;
     },
     describe() {
       return described;
     },
   };
+}
+
+interface ProgressView {
+  readonly root: HTMLElement;
+  /** Paint a phrase, or clear it with none. */
+  paint(phrase: ProgressPhrase | undefined): void;
+}
+
+/** The progress phrase as every run surface draws it: the compact form ("↻15/50 › 2/4 · 1/4", the
+ *  repeat glyph standing for "pass") on screen, the words in the accessibility tree, the phrase's
+ *  tip in the tooltip. The compact form never enters the accessibility tree. */
+export function buildProgress(): ProgressView {
+  const pass = el("span", { className: "ev-sum-pass" });
+  const passText = el("span", { className: "ev-sum-frac" });
+  pass.append(kindGlyph("repeat"), passText);
+  const inner = el("span", { className: "ev-sum-inner" });
+  const dot = el("span", { className: "ev-sum-dot" });
+  const steps = el("span", { className: "ev-sum-steps" });
+  const words = el("span", { className: "sr-only" });
+  const root = el(
+    "span",
+    { className: "ev-sum-progress" },
+    el("span", { className: "ev-sum-compact", "aria-hidden": "true" }, pass, inner, dot, steps),
+    words,
+  );
+  return {
+    root,
+    paint(phrase) {
+      const p = phrase ?? { pass: "", inner: "", steps: "", words: "", tip: "" };
+      setText(passText, p.pass);
+      setHidden(pass, p.pass === "");
+      setText(inner, p.inner === "" ? "" : `\u203a ${p.inner}`);
+      setHidden(inner, p.inner === "");
+      const joined = p.pass !== "" && p.steps !== "";
+      setText(dot, joined ? "\u00b7" : "");
+      setHidden(dot, !joined);
+      setText(steps, p.steps);
+      setHidden(steps, p.steps === "");
+      setText(words, p.words);
+      setHidden(root, p.words === "");
+      if (p.tip === "") {
+        root.removeAttribute("data-tooltip");
+      } else if (root.getAttribute("data-tooltip") !== p.tip) {
+        root.setAttribute("data-tooltip", p.tip);
+      }
+    },
+  };
+}
+
+function paintMini(mini: HTMLElement, bar: ReturnType<typeof miniBar>): void {
+  mini.toggleAttribute("data-continuous", bar.continuous);
+  const paintSeg = (seg: HTMLElement, s: MiniSeg): void => {
+    if (seg.dataset["state"] !== s.state) {
+      seg.dataset["state"] = s.state;
+    }
+    if (seg.getAttribute("data-tooltip") !== s.tip) {
+      seg.setAttribute("data-tooltip", s.tip);
+    }
+    seg.toggleAttribute("data-branch", s.branch);
+    const grow = String(s.weight);
+    if (seg.style.flexGrow !== grow) {
+      seg.style.flexGrow = grow;
+    }
+  };
+  reconcile(mini, bar.segs, {
+    key: (s) => s.key,
+    mount: (s) => {
+      const seg = el("span", { className: "ev-mini-seg" });
+      paintSeg(seg, s);
+      return seg;
+    },
+    update: paintSeg,
+  });
+}
+
+/** A `hidden` write that skips an unchanged value: a same-value write still records a mutation. */
+function setHidden(target: HTMLElement, hidden: boolean): void {
+  if (target.hidden !== hidden) {
+    target.hidden = hidden;
+  }
+}
+
+/** The run's name, whose column ellipsizes a long one: the full name is its tooltip too. */
+function setLabel(label: HTMLElement, name: string): void {
+  setText(label, name);
+  if (label.getAttribute("data-tooltip") !== name) {
+    label.setAttribute("data-tooltip", name);
+  }
 }
 
 /** A text write that skips an unchanged value, so a repaint announces nothing it did not change. */
