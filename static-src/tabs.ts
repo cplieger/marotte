@@ -1345,7 +1345,7 @@ export function activeChatRef(): string {
 
 /** The chat ref of the tab `tabID` hangs under, or "". The only client answer after a reload: a
  *  FINISHED run has no lease, so `runChatID` answers "", while `TabSubject.Parent` is persisted and
- *  was filled from the run's lease at open (`Membership.fillRunParent`). It changes only through
+ *  was settled at open (`Membership.runTabParent`). It changes only through
  *  `setTabParent`, which adopts the new subject, so the answer tracks it. */
 export function parentChatRef(tabID: string): string {
   const parentID = rowOfID(tabID)?.subject.parent ?? "";

@@ -68,7 +68,8 @@ type chatRecords interface {
 	SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error)
 	// Delete removes the chat directory; only cmdDeleteChat calls it.
 	Delete(ctx context.Context, id marotte.ChatID) (sessionChain []string, err error)
-	// Revert and the other log reads are command.chatStore's and translate.chatRecords'.
+	// Lookup, Revert and the other log reads are command.chatStore's and translate.chatRecords'.
+	Lookup(ctx context.Context, id marotte.ChatID) (c *marotte.Chat, found bool, err error)
 	Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error)
 	RewindTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error)
 	PromptReceipt(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.PromptReceipt, error)

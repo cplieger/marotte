@@ -13,6 +13,7 @@ import settingsSrc from "./settings.ts?raw";
 import filesSrc from "./files.ts?raw";
 import appSrc from "./app.ts?raw";
 import sidebarHistorySrc from "./sidebar-history.ts?raw";
+import runViewSrc from "./run-view.ts?raw";
 
 // Pinned literally: the trailing `\(` makes the guard read calls, not mentions in prose.
 const TOGGLE_CALL = /\btoggle[A-Za-z]*View\s*\(/;
@@ -59,6 +60,11 @@ const POPULATION: readonly { readonly name: string; readonly src: string; readon
       name: "docs.ts",
       src: docsSrc,
       why: "a PAGE module owns its content and its activation hooks, never a door that can close its own tab",
+    },
+    {
+      name: "run-view.ts",
+      src: runViewSrc,
+      why: "the one door every run opener goes through, a notification click among them",
     },
     {
       name: "history.ts",

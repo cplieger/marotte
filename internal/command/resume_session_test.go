@@ -27,6 +27,10 @@ func (d *storeDeps) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, 
 	return d.store.Get(ctx, id)
 }
 
+func (d *storeDeps) Lookup(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool, error) {
+	return d.store.Lookup(ctx, id)
+}
+
 func (d *storeDeps) Mutate(ctx context.Context, id marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
 	return d.store.Mutate(ctx, id, fn)
 }

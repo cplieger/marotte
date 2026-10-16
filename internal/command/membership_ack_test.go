@@ -64,7 +64,7 @@ func newAckRig(t *testing.T) *ackRig {
 		st:    st,
 		bus:   &tabBus{},
 		chats: &boundChats{InMemoryChatStore: testsupport.NewInMemoryChatStore()},
-		runs:  &fakeRunOwner{known: map[string]bool{"wf_1": true}, bounds: map[string]uint64{}},
+		runs:  &fakeRunOwner{bounds: map[string]uint64{}},
 	}
 	r.mem = newMembership(&membershipDeps{Chats: r.chats, Tabs: st, Bus: r.bus, Runs: r.runs})
 	return r

@@ -12,6 +12,7 @@ package command
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -31,9 +32,18 @@ var (
 	// errOpenChatUnknown is the 404 for an open_tab, or a fresh create, naming a chat
 	// that is gone — the delete-ordering gate's refusal.
 	errOpenChatUnknown = errors.New("that chat no longer exists")
+	// errChatUnread is the 503 for that gate when the record exists but could
+	// not be read: the 404 would tell the client the chat is gone.
+	errChatUnread = errors.New("could not read that conversation. Try again")
 	// errRunPurging is the 409 for an open_tab naming a run the retention purge is
 	// deleting, and for a create that would bind the session that run belongs to.
 	errRunPurging = errors.New("that workflow run is being deleted")
+	// errRunLauncherUnread is the 503 for a new run tab whose launching chat
+	// could not be read: Parent is immutable, so guessing top level is permanent.
+	errRunLauncherUnread = errors.New("could not tell which chat launched that workflow run. Try again")
+	// errSuppliedParentClosed is OpenTab's retry signal, never answered: the
+	// caller's parent tab closed before mu, so the run owner is asked after all.
+	errSuppliedParentClosed = errors.New("the supplied parent tab is not open")
 	// errTabUnknown is the 404 for a pin or a reparent naming an id the set does
 	// not hold.
 	errTabUnknown = errors.New("that tab is not open")
@@ -63,12 +73,11 @@ type TabSet interface {
 // runOwner is the run surface as the coordinator uses it: which chat's agent
 // launched a run, and its read bound. Declared here, at the consumer;
 // *agent.Runs satisfies it.
-//
-// `ok` is false for a run with no lease — one this server never put on the
-// wire, or one whose lease was released when it ended — so a finished run's
-// parent is unknown here and History supplies it instead.
 type runOwner interface {
-	RunChat(workflowID string) (chatID marotte.ChatID, ok bool)
+	// RunChat answers for a live run and a finished one alike, so it may read
+	// the engine's run inventory: never call it under mu. "" with a nil error
+	// names no launching chat; an error means the launcher could not be read.
+	RunChat(ctx context.Context, workflowID string) (marotte.ChatID, error)
 	// RunReadBound is the run's read position now, the clamp for an ack_tab.
 	RunReadBound(ctx context.Context, workflowID string) (uint64, error)
 }
@@ -222,9 +231,10 @@ type TabOpened struct {
 
 // CreateChatAndOpen writes a chat record and opens its tab as one operation, so the final slot
 // cannot be consumed between mint and open and no delete lands between the two writes. Returns
-// errOpenChatUnknown (404) when a required chat is absent, errTabsFull (409) at MaxOpenTabs, and
-// errChatNotCreated (409) when the record is absent after a Mutate that reported no error. A failed
-// tab write leaves the chat created; a retry with the same op_id finishes it.
+// errOpenChatUnknown (404) when a required chat is absent, errChatUnread (503) when it could not be
+// read, errTabsFull (409) at MaxOpenTabs, and errChatNotCreated (409) when the record is absent
+// after a Mutate that reported no error. A failed tab write leaves the chat created; a retry with
+// the same op_id finishes it.
 func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (ChatOpened, error) {
 	// Hoisted above every lock because the read is file I/O; resolved unconditionally (it is
 	// cached) so no conditional resolve has to run inside the lock.
@@ -235,8 +245,8 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (Cha
 
 	prior, replay := m.priorChat(req)
 	if req.RequireChat != "" && !replay {
-		if _, ok := m.chats.Get(ctx, req.RequireChat); !ok {
-			return ChatOpened{}, StatusError(http.StatusNotFound, errOpenChatUnknown)
+		if err := m.requireChat(ctx, req.RequireChat); err != nil {
+			return ChatOpened{}, err
 		}
 	}
 
@@ -306,43 +316,109 @@ func (m *Membership) resolvedChat(opID string) (marotte.ChatID, bool) {
 
 // OpenTab opens a tab for something that already exists; it never mints a chat.
 // For a chat tab it gates on the record existing — the other half of the delete
-// ordering — with the check and the open in one critical section.
+// ordering — with the check and the open in one critical section. A new run tab
+// whose caller named no open parent nests under its launching chat (launcherTab),
+// and is refused with a 503 when that chat could not be read.
 func (m *Membership) OpenTab(ctx context.Context, spec marotte.OpenTab, opID string) (TabOpened, error) {
 	if m.tabs == nil {
 		return TabOpened{}, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
 	}
+	opened, err := m.openTabLocked(ctx, spec, opID, m.runLauncher(ctx, spec))
+	if errors.Is(err, errSuppliedParentClosed) {
+		spec.Parent = ""
+		opened, err = m.openTabLocked(ctx, spec, opID, m.runLauncher(ctx, spec))
+	}
+	return opened, err
+}
+
+// launcherAnswer is the run owner's answer for a run tab, read before mu.
+type launcherAnswer struct {
+	err  error
+	chat marotte.ChatID
+}
+
+// openTabLocked is OpenTab's critical section.
+func (m *Membership) openTabLocked(ctx context.Context, spec marotte.OpenTab, opID string, launcher launcherAnswer) (TabOpened, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if spec.Kind == marotte.TabKindChat {
-		if _, ok := m.chats.Get(ctx, marotte.ChatID(spec.Ref)); !ok {
-			return TabOpened{}, StatusError(http.StatusNotFound, errOpenChatUnknown)
+		if err := m.requireChat(ctx, marotte.ChatID(spec.Ref)); err != nil {
+			return TabOpened{}, err
 		}
 	}
-	if _, purging := m.purgingRuns[spec.Ref]; purging && spec.Kind == marotte.TabKindRun {
-		return TabOpened{}, StatusError(http.StatusConflict, errRunPurging)
+	if spec.Kind == marotte.TabKindRun {
+		parent, err := m.runTabParent(ctx, spec, launcher)
+		if err != nil {
+			return TabOpened{}, err
+		}
+		spec.Parent = parent
 	}
-	spec.Parent = m.fillRunParent(spec)
 	return m.openTab(ctx, spec, opID)
 }
 
-// fillRunParent answers a run tab's Parent, resolving the launching chat's tab
-// when the caller supplied none — one rule for every door, so no door has to
-// hold the run's launch history. A CLIENT-supplied parent is never overwritten:
-// History knows the parent of a finished run whose lease is gone, and Parent is
-// immutable after open, so this is the only chance to get it right.
-//
+// runTabParent settles the Parent a run tab opens with, the value tabs.json
+// keeps: a supplied parent still open, else launcherTab. An open run tab only
+// gains focus, so the purge and lookup refusals apply to a new one alone.
 // Caller holds mu.
-func (m *Membership) fillRunParent(spec marotte.OpenTab) string {
+func (m *Membership) runTabParent(ctx context.Context, spec marotte.OpenTab, launcher launcherAnswer) (string, error) {
+	if m.runTabOpen(spec.Ref) {
+		return spec.Parent, nil
+	}
+	if _, purging := m.purgingRuns[spec.Ref]; purging {
+		return "", StatusError(http.StatusConflict, errRunPurging)
+	}
+	if spec.Parent != "" {
+		// The store would promote a run under a closed parent, and Parent is immutable.
+		if !m.tabOpen(spec.Parent) {
+			return "", errSuppliedParentClosed
+		}
+		return spec.Parent, nil
+	}
+	if launcher.err != nil {
+		return "", StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errRunLauncherUnread, launcher.err))
+	}
+	if launcher.chat == "" {
+		return "", nil
+	}
+	return m.launcherTab(ctx, launcher.chat)
+}
+
+// runLauncher asks the run owner which chat launched a run tab whose caller
+// named no parent: one rule for every door (a notification, a deep link, a run
+// card), so no door has to hold the run's launch history. A zero answer with a
+// nil error is a verified top-level run. Called before mu, because a finished
+// run's answer is an engine read.
+func (m *Membership) runLauncher(ctx context.Context, spec marotte.OpenTab) launcherAnswer {
 	if spec.Kind != marotte.TabKindRun || spec.Parent != "" || m.runs == nil {
-		return spec.Parent
+		return launcherAnswer{}
 	}
-	chatID, ok := m.runs.RunChat(spec.Ref)
-	if !ok || chatID == "" {
-		// A parentless run (manual, scheduled), or one this server never
-		// launched: top level.
-		return ""
+	chat, err := m.runs.RunChat(ctx, spec.Ref)
+	return launcherAnswer{chat: chat, err: err}
+}
+
+// launcherTab is the tab a new run tab nests under: the launching chat's open
+// tab, else that chat's tab reopened, so a run whose chat still exists never
+// opens top level. Both slots are counted before either opens. "" only when no
+// record exists; an unreadable one is the 503. Caller holds mu.
+func (m *Membership) launcherTab(ctx context.Context, launcher marotte.ChatID) (string, error) {
+	if id := m.tabForChat(launcher); id != "" {
+		return id, nil
 	}
-	return m.tabForChat(chatID)
+	if _, found, err := m.chats.Lookup(ctx, launcher); err != nil {
+		return "", StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errRunLauncherUnread, err))
+	} else if !found {
+		return "", nil
+	}
+	if open, _ := m.tabs.List(); len(open)+2 > tabs.MaxOpenTabs {
+		return "", StatusError(http.StatusConflict, errTabsFull)
+	}
+	// No op_id: the client settles its pending open on the first frame naming
+	// the op, and that frame must be the run's.
+	opened, err := m.openTab(ctx, marotte.OpenTab{Kind: marotte.TabKindChat, Ref: string(launcher), Owns: true}, "")
+	if err != nil {
+		return "", err
+	}
+	return opened.Subject.ID, nil
 }
 
 // closeTab closes a tab and its descendants, then tears down what an owned tab
@@ -736,6 +812,25 @@ func (m *Membership) AdmitRunPurge(ctx context.Context, workflowID, parentSessio
 			delete(m.purgingSessions, parentSessionID)
 		}
 	}, true
+}
+
+// requireChat is the delete-ordering gate: 404 when the record is gone, 503
+// when it could not be read. Caller holds mu.
+func (m *Membership) requireChat(ctx context.Context, chatID marotte.ChatID) error {
+	_, found, err := m.chats.Lookup(ctx, chatID)
+	if err != nil {
+		return StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errChatUnread, err))
+	}
+	if !found {
+		return StatusError(http.StatusNotFound, errOpenChatUnknown)
+	}
+	return nil
+}
+
+// tabOpen reports whether the set holds id. Caller holds mu.
+func (m *Membership) tabOpen(id string) bool {
+	open, _ := m.tabs.List()
+	return slices.ContainsFunc(open, func(t marotte.TabSubject) bool { return t.ID == id })
 }
 
 // Caller holds mu.

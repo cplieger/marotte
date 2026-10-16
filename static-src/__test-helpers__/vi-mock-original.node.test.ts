@@ -101,6 +101,9 @@ interface MockSite {
  *  test below and `vi.doUnmock` contains neither needle. A new verb is governed only by joining. */
 const NEEDLES = ["vi.mock", "vi.doMock"] as const;
 
+/** `{ spy: true }` is vitest's automocker calling through, which lists no exports. */
+const SPY_OPTIONS = /,\s*\{\s*spy:\s*true\s*\}\s*,?\s*$/;
+
 /** Every `vi.mock` call in one file. Unexported: knip runs with `includeEntryExports`. */
 function mockSites(src: string): MockSite[] {
   const out: MockSite[] = [];
@@ -114,7 +117,7 @@ function mockSites(src: string): MockSite[] {
     if (args === null) continue;
     out.push({
       specifier: firstSpecifier(args.text),
-      hasFactory: args.commas > 0,
+      hasFactory: args.commas > 0 && !SPY_OPTIONS.test(args.text),
       spreadsOriginal: args.text.includes("importOriginal"),
     });
   }
@@ -200,6 +203,7 @@ describe("the vi.mock ratchet", () => {
       `});`,
     ].join("\n");
     const bare = `vi.mock("./store.js");`;
+    const spy = `vi.mock("./chat.js", { spy: true });`;
     const pkg = `vi.mock("@cplieger/actions", () => ({ defineAction: vi.fn() }));`;
     const stringy = `vi.mock("./store.js", () => ({ label: "a ) ( ," }));`;
     // The DEFERRED verb reaches the identical defect.
@@ -218,6 +222,7 @@ describe("the vi.mock ratchet", () => {
     expect(mockSites(typed).map(offends)).toEqual([true]);
     expect(mockSites(typedSpread).map(offends)).toEqual([false]);
     expect(mockSites(bare).map(offends)).toEqual([false]);
+    expect(mockSites(spy).map(offends)).toEqual([false]);
     expect(mockSites(pkg).map(offends)).toEqual([false]);
     expect(mockSites(stringy).map(offends)).toEqual([true]);
     expect(mockSites(deferred).map(offends)).toEqual([true]);
