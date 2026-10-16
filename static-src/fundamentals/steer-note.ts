@@ -81,8 +81,7 @@ const GLYPHS: Record<SteerOrigin, string> = {
   step: ICON_TAB_RUN,
 };
 
-/** Lines the body shows before the opener appears. Four rather than the turn
- *  header's three: this is the message itself, not a navigation row. */
+/** Lines the reader's own message shows before the opener appears. */
 const CLAMP_LINES = 4;
 
 /** Each note's accessible name without the run, so a run label that arrives later can be prefixed. */
@@ -140,18 +139,20 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   }
 
   const body = el("div", { className: "steer-note-body" });
-  // NOT collapsed to one line: the clamp is an opener rather than a cut, so the
-  // message keeps the shape it was typed in (`white-space: pre-wrap`).
+  // NOT collapsed to one line: the message keeps the shape it was typed in (`white-space: pre-wrap`).
   const text = el("div", { className: "steer-note-text" }, d.text);
   body.appendChild(text);
+  root.appendChild(body);
+  // A workflow's message is the news itself and shows in full; only the reader's own words clamp.
+  if (d.origin !== "user") {
+    return root;
+  }
   const more = el("button", {
-    className: "clamp-more",
+    className: "steer-note-more",
     type: "button",
   }) as HTMLButtonElement;
   // OUTSIDE the clamped element, or the clamp hides its own opener.
   body.appendChild(more);
-  root.appendChild(body);
-
   attachClamp(text, more, { lines: CLAMP_LINES });
   return root;
 }

@@ -181,8 +181,6 @@ describe("the stylesheets carry exactly one chevron technique", () => {
   it("states the open angle as 0deg everywhere, and the closed angle only once", () => {
     const opens: string[] = [];
     let closedDecls = 0;
-    // The clamp opener points down while its text is cut and up once open: its one turned angle.
-    const turned: string[] = [];
     for (const sheet of SHEETS) {
       const body = stripComments(loadCSS(sheet));
       for (const m of body.matchAll(/--chev-turn:\s*(-?[\d.]+deg)/gu)) {
@@ -191,8 +189,6 @@ describe("the stylesheets carry exactly one chevron technique", () => {
           opens.push(sheet);
         } else if (v === "-90deg") {
           closedDecls++;
-        } else if (v === "180deg") {
-          turned.push(sheet);
         } else {
           opens.push(`${sheet}:UNEXPECTED ${String(v)}`);
         }
@@ -201,6 +197,5 @@ describe("the stylesheets carry exactly one chevron technique", () => {
     expect(opens.filter((o) => o.includes("UNEXPECTED"))).toEqual([]);
     expect(opens.length).toBeGreaterThanOrEqual(6);
     expect(closedDecls).toBe(1);
-    expect(turned).toEqual(["10-shell-app.css"]);
   });
 });

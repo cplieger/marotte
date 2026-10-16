@@ -309,29 +309,35 @@ describe("a row inside the group box is a band, not a pill", () => {
   });
 });
 
-// Every clamp with no fold of its own opens through one chevron button, the turn fold's skin.
-describe("the clamp opener", () => {
-  it("wears the turn fold chevron's size, ink and ghost skin, with no underline", () => {
+// Every clamp opener is the house text button; `run-page-layout.test.ts` pins the exec view's shared selector.
+describe("every clamp opener wears one text-button skin", () => {
+  it("resolves to the same ink, size and underline, and says what it does in words", () => {
     const row = document.createElement("div");
-    const fold = document.createElement("button");
-    fold.type = "button";
-    fold.className = "turn-fold-toggle";
+    const openers = ["ev-dock-ask-more", "ev-r-more", "dock-ask-more", "steer-note-more"].map(
+      (c) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = c;
+        return b;
+      },
+    );
     const text = document.createElement("div");
     text.textContent = "words ".repeat(400);
-    const more = document.createElement("button");
-    more.type = "button";
-    more.className = "clamp-more";
-    row.append(fold, text, more);
+    row.append(text, ...openers);
     mount(row);
-    attachClamp(text, more, { lines: 3 });
-    expect(more.querySelector(".disclosure-chevron svg")).not.toBeNull();
-    expect(more.getAttribute("aria-label")).toBe("Show more");
-    expect(more.getAttribute("data-tooltip")).toBe("Show more");
-    expect(more.getAttribute("aria-controls")).toBe(text.id);
-    for (const prop of ["width", "height", "color", "border-top-left-radius", "background-color"]) {
-      expect(css(more, prop), prop).toBe(css(fold, prop));
+    const [first, ...rest] = openers;
+    attachClamp(text, first!, { lines: 3 });
+
+    expect(first!.textContent).toBe("Show more");
+    expect(first!.querySelector(".disclosure-chevron")).toBeNull();
+    // Premise: the skin is in force, not the UA button default.
+    expect(css(first!, "text-decoration-line")).toBe("underline");
+    expect(css(first!, "background-color")).toBe("rgba(0, 0, 0, 0)");
+    for (const b of rest) {
+      for (const prop of ["color", "font-size", "text-decoration-line", "border-top-width"]) {
+        expect(css(b, prop), `${b.className} ${prop}`).toBe(css(first!, prop));
+      }
     }
-    expect(css(more, "text-decoration-line")).toBe("none");
     releaseClamp(text);
   });
 });
@@ -713,8 +719,14 @@ describe("the run page's collapsed report ends on a whole line", () => {
     line.append(document.createTextNode("lead "), img, document.createTextNode(" trail"));
     // The bait window is the font's descent; the negative margin slides the line into it.
     line.style.marginBlockStart = "-3.6px";
-    // A rule as the tail, so the walk does not close the cut band early on text below the clip.
-    const { text, more, handle } = resultBox(para(74, "alpha"), line, document.createElement("hr"));
+    // A rule as the tail, so the walk does not close the cut band early on text below the clip; the
+    // paragraph under it makes the cut more than the clamp leaves uncut.
+    const { text, more, handle } = resultBox(
+      para(74, "alpha"),
+      line,
+      document.createElement("hr"),
+      para(60, "omega"),
+    );
 
     expect(text.scrollHeight - text.clientHeight, "the report overflows the clamp").toBeGreaterThan(
       1,

@@ -19,7 +19,7 @@ function textOf(root: HTMLElement, sel: string): string | null {
  *  CLAMP's opener is the one button the note may hold. */
 function controls(root: HTMLElement): HTMLButtonElement[] {
   return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).filter(
-    (b) => !b.classList.contains("clamp-more"),
+    (b) => !b.classList.contains("steer-note-more"),
   );
 }
 
@@ -237,9 +237,9 @@ describe("the clamp measured on the page", () => {
   }
 
   function moreEl(n: HTMLElement): HTMLButtonElement {
-    const b = n.querySelector<HTMLButtonElement>(".clamp-more");
+    const b = n.querySelector<HTMLButtonElement>(".steer-note-more");
     if (b === null) {
-      throw new Error("no .clamp-more");
+      throw new Error("no .steer-note-more");
     }
     return b;
   }
@@ -288,12 +288,12 @@ describe("the clamp measured on the page", () => {
 
     btn.click();
     expect(textEl(n).hasAttribute("data-clamped")).toBe(false);
-    expect(btn.getAttribute("aria-label")).toBe("Show less");
+    expect(btn.textContent).toBe("Show less");
     expect(btn.getAttribute("aria-expanded")).toBe("true");
 
     btn.click();
     expect(textEl(n).hasAttribute("data-clamped")).toBe(true);
-    expect(btn.getAttribute("aria-label")).toBe("Show more");
+    expect(btn.textContent).toBe("Show more");
     expect(btn.getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -309,6 +309,19 @@ describe("the clamp measured on the page", () => {
     host.style.inlineSize = "150px";
     await settles(n, false, "offered once it no longer fits");
   });
+
+  for (const origin of ["agent", "parent", "step"] as const) {
+    it(`shows a workflow's ${origin} message in full, with no clamp, fade or opener`, async () => {
+      const n = mount({ text: FORTY_LINES, origin, step: "review", sentAt: 1 });
+      await observerRuns();
+      const t = textEl(n);
+      expect(t.hasAttribute("data-clamped")).toBe(false);
+      expect(t.scrollHeight).toBe(t.clientHeight);
+      expect(getComputedStyle(t).maskImage).toBe("none");
+      expect(n.querySelectorAll("button")).toHaveLength(0);
+      expect(n.querySelector(".disclosure-chevron")).toBeNull();
+    });
+  }
 });
 
 describe("the run label", () => {

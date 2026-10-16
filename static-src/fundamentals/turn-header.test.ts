@@ -104,7 +104,7 @@ describe("buildTurnHeader", () => {
 
   it("offers no show-more: the fold chevron opens the prompt", () => {
     const h = buildTurnHeader(data({ request: LONG }));
-    expect(h.querySelector(".turn-req-more, .clamp-more")).toBeNull();
+    expect(h.querySelector("button:not(.turn-fold-toggle)")).toBeNull();
     expect(text(h).hasAttribute("data-clamped")).toBe(false);
   });
 });

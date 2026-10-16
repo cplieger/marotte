@@ -575,13 +575,30 @@ describe("the reader's input surfaces", () => {
   });
 
   it("keeps the momentum after a lifted finger inside the reader's window", async () => {
-    // `touchend` marks but cannot aim. It is in the set for the SUPPRESSION only: iOS momentum
-    // outlives the finger, and a chunk arriving under it must not yank.
+    // `touchend` after a moving finger marks but cannot aim. It is in the set for the SUPPRESSION
+    // only: iOS momentum outlives the finger, and a chunk arriving under it must not yank.
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
     const el = scroll.getScrollEl();
+    el.dispatchEvent(touchEvent("touchstart", el));
+    el.dispatchEvent(touchEvent("touchmove", el));
     el.dispatchEvent(touchEvent("touchend", el));
     expect(await chunkLands(s)).toBe(1500);
   });
+
+  // A tap's wobble inside the slop scrolls nothing, so the pin runs; past it, the reader owns the scroller.
+  for (const [travel, reads, landed] of [
+    [6, "a tap", 2500],
+    [12, "the reader's scroll", 1500],
+  ] as const) {
+    it(`treats a ${String(travel)}px touch as ${reads}`, async () => {
+      const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+      const el = scroll.getScrollEl();
+      touchAt(el, "touchstart", 100);
+      touchAt(el, "touchmove", 100 - travel);
+      el.dispatchEvent(touchEvent("touchend", el));
+      expect(await chunkLands(s)).toBe(landed);
+    });
+  }
 
   // The premise the touch cases rest on, in the two halves they cannot check for themselves: the
   // event carries the position, and where the engine can build a real one the builder did not
@@ -1805,7 +1822,7 @@ describe("the bottom pin's settle window", () => {
   it("yields to an aimless reader move that lands inside the bottom tolerance", async () => {
     // The one input that marks the reader's window without aiming it: `touchend` does not end a
     // touch scroll, and the iOS momentum that outlives the finger carries a position with no
-    // direction attached.
+    // direction attached. The move carries no position, so it aims nothing either.
     const wrap = realScroller();
     block(3000);
     await land();
@@ -1814,6 +1831,8 @@ describe("the bottom pin's settle window", () => {
     scrollBtn.click();
     await land(60);
 
+    wrap.dispatchEvent(touchEvent("touchstart", wrap));
+    wrap.dispatchEvent(touchEvent("touchmove", wrap));
     wrap.dispatchEvent(touchEvent("touchend", wrap));
     wrap.scrollTo({ top: 2560, behavior: "instant" });
     await land(400);

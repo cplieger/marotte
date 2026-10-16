@@ -266,7 +266,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       );
     }
     const text = el("div", { className: "ev-r-text" }, buildAssistantBubble(value, false).root);
-    const more = el("button", { type: "button", className: "clamp-more" }) as HTMLButtonElement;
+    const more = el("button", { type: "button", className: "ev-r-more" }) as HTMLButtonElement;
     attachClamp(text, more, RESULT_CLAMP);
     return el(
       "div",

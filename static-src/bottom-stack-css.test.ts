@@ -43,7 +43,9 @@ function chatBar(): HTMLElement {
   box("li", "attachment-pill", box("ul", "attachment-row", prompt, ""), "notes.md").dataset[
     "chip"
   ] = "";
-  box("button", "pill", box("div", "prompt-pills", prompt, ""), "auto").dataset["pill"] = "";
+  const pills = box("div", "prompt-pills", prompt, "");
+  box("button", "pill", pills, "auto").dataset["pill"] = "";
+  box("button", "send-btn", pills, "").dataset["send"] = "";
   return form;
 }
 
@@ -87,17 +89,32 @@ const probes = (bar: HTMLElement): HTMLElement[] => [
 ];
 
 describe("the bottom stack", () => {
-  it("draws every box at the app's card radius", () => {
+  it("draws every box at the composer's radius", () => {
     const ref = document.createElement("div");
-    ref.style.borderRadius = "var(--r)";
+    ref.style.borderRadius = "var(--r-lg)";
     document.body.append(ref);
     const want = getComputedStyle(ref).borderTopLeftRadius;
     ref.remove();
-    expect(want).toBe("6px");
+    expect(want).toBe("12px");
     for (const el of bars.flatMap(probes)) {
       expect(getComputedStyle(el).borderTopLeftRadius, el.dataset["probe"]).toBe(want);
     }
   });
+
+  // 12 - 1px border - the row's 4px inset: a visibly rounded control, on a mouse and under a finger.
+  for (const pointer of ["fine", "coarse"] as const) {
+    it(`rounds the composer's controls at the concentric 7px on a ${pointer} pointer`, () => {
+      document.documentElement.dataset["pointer"] = pointer;
+      try {
+        for (const sel of ["[data-pill]", "[data-send]", "[data-chip]"]) {
+          const el = bars[0]!.querySelector<HTMLElement>(sel)!;
+          expect(getComputedStyle(el).borderTopLeftRadius, sel).toBe("7px");
+        }
+      } finally {
+        delete document.documentElement.dataset["pointer"];
+      }
+    });
+  }
 
   it("draws one border, one width and one colour, on every box", () => {
     const [first, ...rest] = bars.flatMap(probes).map((el) => {

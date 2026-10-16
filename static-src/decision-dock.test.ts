@@ -1427,7 +1427,7 @@ function question(h: HTMLElement = host()): HTMLElement | null {
 }
 
 function opener(h: HTMLElement = host()): HTMLButtonElement | null {
-  return liveCard(h)?.querySelector<HTMLButtonElement>(".clamp-more") ?? null;
+  return liveCard(h)?.querySelector<HTMLButtonElement>(".dock-ask-more") ?? null;
 }
 
 describe("a question longer than the card", () => {
@@ -1435,7 +1435,7 @@ describe("a question longer than the card", () => {
     longAsk("c1");
     expect(question()?.hasAttribute("data-clamped")).toBe(true);
     expect(opener()?.hidden).toBe(false);
-    expect(opener()?.getAttribute("aria-label")).toBe("Show more");
+    expect(opener()?.textContent).toBe("Show more");
   });
 
   it("keeps the whole question in the DOM, so opening it reveals rather than refetches", () => {
@@ -1444,7 +1444,7 @@ describe("a question longer than the card", () => {
 
     opener()?.click();
     expect(question()?.hasAttribute("data-clamped")).toBe(false);
-    expect(opener()?.getAttribute("aria-label")).toBe("Show less");
+    expect(opener()?.textContent).toBe("Show less");
   });
 
   it("leaves a SHORT question unclamped, so the opener is not permanent furniture", () => {

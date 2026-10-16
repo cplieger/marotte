@@ -1578,6 +1578,31 @@
   display: none;
 }
 
+/* `.steer-note-more`'s skin: a text control. One owner for both of the exec view's
+   clamp openers, the dock question's and a result's. */
+.ev-dock-ask-more,
+.ev-r-more {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  @media (any-hover: hover) {
+    &:hover {
+      color: var(--c-accent);
+    }
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset);
+  }
+}
+
 /* --- Phone: the container under 30rem, or a short viewport ---------------- */
 
 @container run-dock (width < 30rem) {
