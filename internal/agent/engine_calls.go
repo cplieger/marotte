@@ -85,7 +85,7 @@ func (o *engineOwner) exportSessionRaw(ctx context.Context, sessionID string) (j
 const observeBudget = 60 * time.Second
 
 // observe runs fn on an observer pass: a session opened on the engine with presets, no mode and no prompt, closed
-// when fn returns. KAS answers the policy, code-intelligence and governance reads only for a resident session, and a
+// when fn returns (closePass). KAS answers the policy, code-intelligence and governance reads only for a resident session, and a
 // pass that opens with the current presets answers for the profile as it is now. attach consumes the pass's own
 // frames (its workspace notifications and command list) from before the door writes; nil drains them.
 func (o *engineOwner) observe(
@@ -104,12 +104,28 @@ func (o *engineOwner) observe(
 	if err != nil {
 		return fmt.Errorf("observer pass: %w", err)
 	}
-	defer func() {
-		if cErr := s.Close(durable.Context(ctx)); cErr != nil {
-			slog.Warn("an observer pass did not close its session", "session_id", s.SessionID(), "error", cErr)
-		}
-	}()
+	defer o.closePass(durable.Context(ctx), s)
 	return fn(ctx, s)
+}
+
+// closePass ends a pass's session. A refused close leaves it live in KAS and on its lane, so the session is deleted
+// on the engine, which KAS refuses only for a session owning a live workflow (a pass never does), and closed again,
+// which KAS answers {} for a session it no longer holds. Anything still failing is a WARN.
+func (o *engineOwner) closePass(ctx context.Context, s engineSession) {
+	err := s.Close(ctx)
+	var refusal *marotte.RPCError
+	if errors.As(err, &refusal) {
+		dctx, cancel := context.WithTimeout(ctx, sessionDeleteTimeout)
+		_, err = o.rawCall(dctx, "observer pass delete", marotte.MethodSessionDelete,
+			map[string]any{marotte.KeySessionID: s.SessionID()})
+		cancel()
+		if err == nil {
+			err = s.Close(ctx)
+		}
+	}
+	if err != nil {
+		slog.Warn("an observer pass did not close its session", "session_id", s.SessionID(), "error", err)
+	}
 }
 
 // drainSession reads a session's frames to its close, answering none: an observer that consumes nothing.
