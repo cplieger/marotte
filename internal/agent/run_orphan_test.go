@@ -716,7 +716,7 @@ func TestOrphanSweepBudget_ExceedsThePerCallTimeout(t *testing.T) {
 			"time out before its first inspect could answer", orphanSweepBudget, sessionListTimeout)
 	}
 	if orphanSweepBudget > 5*time.Minute {
-		t.Errorf("orphanSweepBudget = %v; a boot goroutine holding a utility bridge that long "+
+		t.Errorf("orphanSweepBudget = %v; a boot goroutine holding the engine that long "+
 			"is a stall, not a sweep", orphanSweepBudget)
 	}
 }
@@ -993,10 +993,10 @@ func TestSweepOrphaned_ReportsWhetherItReachedKAS(t *testing.T) {
 		}
 	})
 
-	t.Run("a run list the utility bridge could not serve", func(t *testing.T) {
+	t.Run("a run list the engine could not serve", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callErrs = map[string]error{
-			methodKiroWorkflowList: errors.New("utility bridge start: kiro-cli is not available yet"),
+			methodKiroWorkflowList: errors.New("engine start: kiro-cli is not available yet"),
 		}
 		leased(t, h.runs, "wf_1")
 

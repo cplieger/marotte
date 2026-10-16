@@ -99,7 +99,7 @@ func (rt *Runtime) exportSession(ctx context.Context, chatID marotte.ChatID, sid
 	return openConfinedExport(res.FilePath, sid)
 }
 
-// Any process can answer from disk.
+// The engine answers from disk, whether or not the session is resident.
 func (rt *Runtime) callSessionExport(ctx context.Context, chatID marotte.ChatID, sid string) (json.RawMessage, error) {
 	if sb := rt.bridge.mgr.get(chatID); sb != nil && string(sb.SessionID()) == sid {
 		resp, err := sb.Call(ctx, marotte.MethodSessionExport, map[string]any{marotte.KeySessionID: sid})
@@ -114,7 +114,7 @@ func (rt *Runtime) callSessionExport(ctx context.Context, chatID marotte.ChatID,
 		}
 		return resp.Result, nil
 	}
-	return rt.utility.get().exportSessionRaw(ctx, sid)
+	return rt.engine.exportSessionRaw(ctx, sid)
 }
 
 // kasExport is one opened KAS export, holding the export directory and os.TempDir open so cleanup unlinks

@@ -95,7 +95,7 @@ func TestShellStatusLine(t *testing.T) {
 }
 
 // heldAdmissionDeps overrides the admission try on the bench stub to refuse, the
-// state a chat is in while ANY holder — a prompt's blocked spawn included — owns
+// state a chat is in while ANY holder — a prompt's blocked session open included — owns
 // the slot.
 type heldAdmissionDeps struct {
 	*benchDeps

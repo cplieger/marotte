@@ -1,6 +1,6 @@
 package agent
 
-// The fake utility bridge is seeded with one canned _kiro/knowledge result per method.
+// The fake session is seeded with one canned _kiro/knowledge result per method.
 
 import (
 	"encoding/json"
@@ -76,7 +76,7 @@ func seedKnowledge(br *fakeBridge, result string) {
 
 func TestHandleKnowledgeList_OK(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"entries":[`+
 		`{"name":"docs","id":"abc12345","item_count":7,"path":"/w/docs"},`+
 		`{"name":"big","id":"op1","item_count":0,"items_display":"42%","indexing":true}]}`)
@@ -111,7 +111,7 @@ func TestHandleKnowledgeList_OK(t *testing.T) {
 
 func TestHandleKnowledgeList_BridgeError(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":false,"message":"boom"}`)
 
 	rec := httptest.NewRecorder()
@@ -131,7 +131,7 @@ func TestHandleKnowledgeAdd_MissingPath(t *testing.T) {
 
 func TestHandleKnowledgeAdd_OK_ResolvesPathAndDerivesName(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"message":"Indexing 'docs' in background\nFiles: 3"}`)
 
 	rec := postJSON(h.config.handleKnowledgeAdd, "/api/knowledge", `{"path":"docs"}`)
@@ -155,7 +155,7 @@ func TestHandleKnowledgeAdd_OK_ResolvesPathAndDerivesName(t *testing.T) {
 
 func TestHandleKnowledgeAdd_ExplicitName(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"message":"Indexing 'Project docs' in background"}`)
 
 	rec := postJSON(h.config.handleKnowledgeAdd, "/api/knowledge", `{"path":"/abs/docs","name":"Project docs"}`)
@@ -170,7 +170,7 @@ func TestHandleKnowledgeAdd_ExplicitName(t *testing.T) {
 
 func TestHandleKnowledgeAdd_Failure(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":false,"message":"Usage: /knowledge add <name> <path>"}`)
 
 	rec := postJSON(h.config.handleKnowledgeAdd, "/api/knowledge", `{"path":"docs"}`)
@@ -191,7 +191,7 @@ func TestHandleKnowledgeRemove_MissingName(t *testing.T) {
 
 func TestHandleKnowledgeRemove_OK(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"message":"Removed 'docs'"}`)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/knowledge/docs", nil)
@@ -212,7 +212,7 @@ func TestHandleKnowledgeRemove_OK(t *testing.T) {
 
 func TestHandleKnowledgeRemove_NotFound(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":false,"message":"Entry not found: gone"}`)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/knowledge/gone", nil)
@@ -288,7 +288,7 @@ func TestRegisterKnowledgeRoutes_RefusedMethodsCarryAllow(t *testing.T) {
 // TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler is the control: a wall would 405 everything.
 func TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"entries":[{"name":"docs","id":"a1","item_count":1,"path":"/w/docs"}]}`)
 
 	tests := map[string]struct {
@@ -317,7 +317,7 @@ func TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler(t *testin
 // TestHandleKnowledgeReindex_ResolvesTheNameToItsPath pins that KAS's `update` matches on path, so the server looks it up.
 func TestHandleKnowledgeReindex_ResolvesTheNameToItsPath(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"entries":[`+
 		`{"name":"other","id":"b2","item_count":2,"path":"/w/other"},`+
 		`{"name":"docs","id":"a1","item_count":7,"path":"/w/docs"}]}`)
@@ -360,7 +360,7 @@ func TestHandleKnowledgeReindex_RefusesANameNoSettledBaseHolds(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
-			t.Cleanup(h.stopUtilityBridge)
+			t.Cleanup(func() { shutdownHub(t, h) })
 			seedKnowledge(br, `{"success":true,"entries":`+tc.entries+`}`)
 
 			req := httptest.NewRequest(http.MethodPost, "/api/knowledge/"+tc.name+"/reindex", nil)
@@ -395,7 +395,7 @@ func TestHandleKnowledgeReindex_MissingName(t *testing.T) {
 
 func TestHandleKnowledgeReindex_BridgeError(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallErr(methodKiroKnowledge, errKnowledgeProbe)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/knowledge/docs/reindex", nil)
@@ -411,7 +411,7 @@ func TestHandleKnowledgeReindex_BridgeError(t *testing.T) {
 // name, and only the in-flight id is cancellable.
 func TestHandleKnowledgeCancel_SendsTheInFlightEntrysOperationID(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"message":"Cancelled","entries":[`+
 		`{"name":"docs","id":"ctx12345","item_count":7,"path":"/w/docs"},`+
 		`{"name":"docs","id":"op987654","items_display":"42%","indexing":true}]}`)
@@ -438,7 +438,7 @@ func TestHandleKnowledgeCancel_SendsTheInFlightEntrysOperationID(t *testing.T) {
 // TestHandleKnowledgeCancel_RefusesANameWithNothingIndexing asserts the RPC count, so the 404 is never an empty-id cancel.
 func TestHandleKnowledgeCancel_RefusesANameWithNothingIndexing(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"entries":[{"name":"docs","id":"ctx12345","item_count":7,"path":"/w/docs"}]}`)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/knowledge/docs/cancel", nil)
@@ -462,7 +462,7 @@ func TestHandleKnowledgeCancel_RefusesANameWithNothingIndexing(t *testing.T) {
 // TestHandleKnowledgeCancel_KASRefusalIs404 covers the operation finishing between show and cancel.
 func TestHandleKnowledgeCancel_KASRefusalIs404(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	br.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method != methodKiroKnowledge {
 			return nil, nil, false
@@ -488,7 +488,7 @@ func TestHandleKnowledgeCancel_KASRefusalIs404(t *testing.T) {
 
 func TestHandleKnowledgeClear_SendsClearWithoutASession(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"message":"Cleared 2 knowledge bases"}`)
 
 	rec := httptest.NewRecorder()
@@ -507,7 +507,7 @@ func TestHandleKnowledgeClear_SendsClearWithoutASession(t *testing.T) {
 
 func TestHandleKnowledgeClear_RefusalIsAServerError(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":false,"message":"store locked"}`)
 
 	rec := httptest.NewRecorder()
@@ -567,7 +567,7 @@ func TestHandleKnowledgeAdd_RefusesAnUnaddressableName(t *testing.T) {
 	for desc, body := range tests {
 		t.Run(desc, func(t *testing.T) {
 			h, _, br := newTestHub()
-			t.Cleanup(h.stopUtilityBridge)
+			t.Cleanup(func() { shutdownHub(t, h) })
 			seedKnowledge(br, `{"success":true,"message":"Indexing in background"}`)
 
 			rec := postJSON(h.config.handleKnowledgeAdd, "/api/knowledge", body)

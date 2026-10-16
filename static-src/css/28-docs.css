@@ -114,6 +114,14 @@
   color: var(--c-text-secondary);
 }
 
+/* kiro-cli loaded the item, but another layer replaced it or switched it off:
+   a fact about the composed configuration, not a fault, so no warning ink. The
+   dashed edge sets it apart from the solid neutral badges beside it. */
+.docs-badge-standing {
+  background: transparent;
+  border-style: dashed;
+}
+
 /* KAS reports this hook as effectively off (an untrusted workspace, an empty
    command). Amber and advisory, matching the note it replaces: the row's toggle
    may well read enabled, and this is why that is not the whole story. */

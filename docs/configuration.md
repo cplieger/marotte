@@ -14,9 +14,9 @@ Variables go in the `environment:` block of `compose.yaml` and are read at start
 | `MAROTTE_BROWSE_ROOTS` | Extra folders the file browser shows, colon-separated absolute paths. | _(unset)_ |
 | `MAROTTE_ALLOW_AGENT_ENV` | Program-changing variables, such as `LD_PRELOAD`, the agent may set for its commands. | _(unset)_ |
 | `MAROTTE_ALLOW_BRIDGE_ENV` | Variable names that look like credentials but should still reach kiro-cli, comma-separated. | _(unset)_ |
-| `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for every chat. | _(unset)_ |
+| `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for the agent engine. | _(unset)_ |
 | `KIRO_WORK_DIR` | Folder chats and the terminal start in. It must exist, or startup fails. | `/workspace` |
-| `KIRO_CONFIG_DIR` | Folder for chats, the kiro-cli home, installed tools and settings. It must exist and be writable. | `/config` |
+| `KIRO_CONFIG_DIR` | Folder for chats, the Kiro sign-in, the kiro-cli home, installed tools and settings. It must exist and be writable. | `/config` |
 | `KIRO_HOME` | Where marotte and kiro-cli keep kiro-cli's own state: steering, settings, permissions and session files. A relative path, `/`, or a path that is `HOME` or holds `HOME` inside it is ignored with a warning at startup, as kiro-cli ignores it. kiro-cli's test for "inside" does not count a `HOME` whose path relative to `KIRO_HOME` starts with `..`, such as a `..home` folder directly below it, and marotte follows it. | `$HOME/.kiro` |
 | `MAROTTE_TOOLS_DIR` | Where the tools engine installs tools, on the persistent volume. | `<KIRO_CONFIG_DIR>/tools` |
 | `MAROTTE_TOOL_CATALOG` | Tool catalog built into the image, used at first start and offline. | `/opt/marotte/tool-catalog.json` |
@@ -70,7 +70,13 @@ Beside it, **Wake the chat when a workflow loop hits its limit**, on by default,
 
 ## kiro-cli telemetry
 
-kiro-cli's telemetry is a setting, not a variable: **kiro-cli telemetry** under **Data sharing** on the **General** tab in **Settings**. It is on by default, as in kiro-cli. One switch covers both kinds kiro-cli sends: its usage telemetry and its legacy toolkit telemetry. Off stops both. An existing install keeps the value it already has, so one that earlier versions started with telemetry off stays off. On an enterprise account, the organization's usage-analytics setting decides it instead, and the switch is locked. Open chats switch at their next message.
+kiro-cli's telemetry is a setting, not a variable: **kiro-cli telemetry** under **Data sharing** on the **General** tab in **Settings**. It is on by default, as in kiro-cli. One switch covers both kinds kiro-cli sends: its usage telemetry and its legacy toolkit telemetry. Off stops both. An existing install keeps the value it already has, so one that earlier versions started with telemetry off stays off. On an enterprise account, the organization's usage-analytics setting decides it instead, and the switch is locked. A change applies after the agent engine restarts, which it does by itself once no reply and no workflow is running.
+
+## Agent engine memory limit
+
+The agent engine's memory limit is a setting, not a variable: **Agent engine memory limit** under **Agent engine** on the **General** tab in **Settings**. Empty keeps kiro-cli's default, about 4 GB. A value is in MiB, from 1024 to 65536, and at most the container's memory limit minus 512 when the container has one. It bounds the engine's JavaScript heap only, not its native memory. A change applies after the agent engine restarts.
+
+marotte applies the limit through `NODE_OPTIONS`. A heap-size flag you set there gives way to the setting, and every other option in the variable is kept as written. A `NODE_OPTIONS` it cannot read, such as one with an unterminated quote, makes **Settings** refuse a limit until you fix the variable.
 
 ## Variables the agent sets (`MAROTTE_ALLOW_AGENT_ENV`)
 
@@ -89,7 +95,7 @@ This applies to what the agent asks for, not to variables you set on the contain
 
 The shell commands the agent runs inherit the container's full `environment:`. A `GITHUB_TOKEN` added there for another reason is a credential those commands can read and use. The kiro-cli process gets a screened copy instead.
 
-marotte drops credential-looking names from the kiro-cli process and logs which ones, by name only. That covers any name ending in `_TOKEN` or `_SECRET`, plus `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `KIRO_API_KEY`. Other variables pass unchanged, `AWS_REGION` and `AWS_PROFILE` included. An allowlisted `KIRO_API_KEY` makes the agent run as that key's identity instead of the signed-in account, and marotte logs a warning at start when it does.
+marotte drops credential-looking names from the kiro-cli process and logs which ones, by name only. That covers any name ending in `_TOKEN` or `_SECRET`, plus `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `KIRO_API_KEY`. Other variables pass unchanged, `AWS_REGION` and `AWS_PROFILE` included. An allowlisted `KIRO_API_KEY` makes the agent run as that key's identity instead of the account signed in on the page, because kiro-cli prefers the key, and marotte logs a warning at start when it does. While it does, the account menu shows the API key, and signing in or out on the page is refused. marotte keeps the saved sign-in, and it is used again once you remove the variable and recreate the container.
 
 Keep credentials out of the container environment anyway. Forge credentials belong in the git panel's Sources tab, which keeps them in marotte's own store. If a variable only looks like a credential, name it:
 
@@ -113,7 +119,8 @@ Files you attach to a message, by drag and drop, paste or the composer's **Chat 
 | Path | Contents |
 | --- | --- |
 | `/config/chats/` | Chat history, one folder per chat |
-| `/config/home/` | The container's home folder: sign-ins, SSH keys, git settings, build caches |
+| `/config/signin.json` | marotte's Kiro sign-in, readable only by the container's user |
+| `/config/home/` | The container's home folder: SSH keys, git settings, build caches, and the separate sign-in of a `kiro-cli` you run in the terminal |
 | `/config/home/.kiro/` | kiro-cli's sessions, settings, steering, agents and logs |
 | `/config/tools/` | Installed tools. `bin/` and `go/bin/` are on `PATH`, so link any other binary into `bin/` |
 | `/config/*.json` | marotte's settings, the tools list and its state, and the MCP server list |

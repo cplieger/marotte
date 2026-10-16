@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 
 	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/marotte/internal/memlimit"
+	"github.com/cplieger/marotte/internal/nodeopts"
 )
 
 // ErrUnreadable marks the Update failure about the STORED document: config.json exists and
@@ -97,4 +100,42 @@ func readDocument(path string) (map[string]json.RawMessage, error) {
 		return nil, fmt.Errorf("settings: %s contains a top-level null, not an object", path)
 	}
 	return doc, nil
+}
+
+// The bounds of KeyEngineHeapMiB's nonzero values, and the headroom a container limit keeps beyond the heap for the
+// engine's native memory.
+const (
+	minEngineHeapMiB      = 1024
+	maxEngineHeapMiB      = 65536
+	engineHeapHeadroomMiB = 512
+)
+
+// nodeOptionsEnv and containerLimit are what the heap check composes with; vars for tests.
+var (
+	nodeOptionsEnv = func() string { return os.Getenv("NODE_OPTIONS") }
+	containerLimit = memlimit.Limit
+)
+
+// validateEngineHeapMiB refuses a heap limit outside its bounds, one a container limit cannot hold beside the engine's
+// native memory, and a nonzero one marotte's own NODE_OPTIONS would make unappliable.
+func validateEngineHeapMiB(raw json.RawMessage, nodeOptions string, limit func() (int64, string)) error {
+	var n int
+	if decodeInto(&n, raw) != nil {
+		return fmt.Errorf("%s must be a whole number of MiB", KeyEngineHeapMiB)
+	}
+	if n == 0 {
+		return nil
+	}
+	upper := maxEngineHeapMiB
+	if bytes, _ := limit(); bytes > 0 {
+		upper = min(upper, int(bytes>>20)-engineHeapHeadroomMiB)
+	}
+	if n < minEngineHeapMiB || n > upper {
+		return fmt.Errorf("%s must be 0 (kiro-cli's default) or from %d to %d MiB", KeyEngineHeapMiB, minEngineHeapMiB, upper)
+	}
+	if _, err := nodeopts.WithHeapLimit(nodeOptions, n); err != nil {
+		return fmt.Errorf("marotte's NODE_OPTIONS environment variable is malformed (%w), so the memory limit cannot be applied. "+
+			"Fix the variable, or keep the limit at its default", err)
+	}
+	return nil
 }

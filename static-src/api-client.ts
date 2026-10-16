@@ -194,6 +194,16 @@ export async function apiPostTyped<T>(
   return collapse(await fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal)), "POST", path);
 }
 
+/** POST twin of `apiGetTypedOrError`, for a caller that shows the server's refusal sentence itself. Unlogged. */
+export async function apiPostTypedOrError<T>(
+  path: string,
+  body: unknown,
+  decoder: Decoder<T>,
+  signal?: AbortSignal,
+): Promise<ApiResult<T>> {
+  return toApiResult(await fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal)));
+}
+
 /** GET variant for a caller to whom a non-2xx body is itself meaningful —
  *  /api/health's 503 `reason` is the canonical consumer. */
 export async function apiGetOrError<T>(path: string, signal?: AbortSignal): Promise<ApiResult<T>> {

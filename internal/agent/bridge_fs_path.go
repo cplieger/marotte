@@ -115,10 +115,11 @@ func parseRequest(msg *marotte.RPCResponse, v any) error {
 	return json.Unmarshal(msg.Params, v)
 }
 
-// respondOn answers msg on origin, the bridge it arrived on, never on whatever bridge chatID maps to
-// at answer time: KAS settles a response by its per-connection request id, so an answer redirected to
-// a successor resolves an unrelated request pending there. A write that fails because origin exited
-// or is no longer chatID's bridge is the expected loss at its end and drops at Debug; other failures
+// respondOn answers msg on origin, the session it arrived on, never on whatever session chatID maps to
+// at answer time: KAS settles a response by its request id on the connection that asked, and a restarted
+// engine numbers its requests from zero, so an answer redirected across a restart resolves an unrelated
+// request. A write that fails because origin exited
+// or is no longer chatID's session is the expected loss at its end and drops at Debug; other failures
 // return.
 func respondOn(ctx context.Context, bridges *bridgeManager, chatID marotte.ChatID, origin acpResponder,
 	msg *marotte.RPCResponse, result any, err error,

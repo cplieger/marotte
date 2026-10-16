@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -281,5 +282,52 @@ func TestUpdate_WritesAnOwnerOnlyDocument(t *testing.T) {
 		if got := info.Mode().Perm(); got != want {
 			t.Errorf("%s mode = %#o, want %#o", p, got, want)
 		}
+	}
+}
+
+func TestEngineHeapMiB_BoundedByContainerLimit(t *testing.T) {
+	fourGiB := func() (int64, string) { return 4 << 30, "cgroup v2" }
+	for _, tc := range []struct {
+		name string
+		mib  int
+		ok   bool
+	}{
+		{"zero keeps kiro-cli's default", 0, true},
+		{"under the floor", 1023, false},
+		{"the floor", 1024, true},
+		{"within the container's limit less the headroom", 3584, true},
+		{"past the container's limit less the headroom", 3700, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateEngineHeapMiB(json.RawMessage(strconv.Itoa(tc.mib)), "", fourGiB)
+			if (err == nil) != tc.ok {
+				t.Errorf("validateEngineHeapMiB(%d) = %v, want ok=%v", tc.mib, err, tc.ok)
+			}
+		})
+	}
+	t.Run("no container limit keeps the absolute ceiling", func(t *testing.T) {
+		unlimited := func() (int64, string) { return 0, "" }
+		if err := validateEngineHeapMiB(json.RawMessage("65536"), "", unlimited); err != nil {
+			t.Errorf("65536 with no limit = %v, want accepted", err)
+		}
+		if err := validateEngineHeapMiB(json.RawMessage("65537"), "", unlimited); err == nil {
+			t.Error("65537 with no limit was accepted")
+		}
+	})
+	t.Run("a non-integer is refused", func(t *testing.T) {
+		if err := validateEngineHeapMiB(json.RawMessage(`"2048"`), "", fourGiB); err == nil {
+			t.Error("a string value was accepted")
+		}
+	})
+}
+
+func TestEngineHeapMiB_RefusedWhenNodeOptionsIsMalformed(t *testing.T) {
+	unlimited := func() (int64, string) { return 0, "" }
+	err := validateEngineHeapMiB(json.RawMessage("2048"), `--title="unterminated`, unlimited)
+	if err == nil || !strings.Contains(err.Error(), "NODE_OPTIONS environment variable is malformed") {
+		t.Errorf("a malformed NODE_OPTIONS = %v, want the malformed refusal", err)
+	}
+	if err := validateEngineHeapMiB(json.RawMessage("0"), `--title="unterminated`, unlimited); err != nil {
+		t.Errorf("the default with a malformed NODE_OPTIONS = %v, want accepted: 0 applies nothing", err)
 	}
 }

@@ -121,9 +121,9 @@ export function prIdentity(forgeID: string, repoID: string, number: number): str
 }
 
 export function chatTarget(chatID: string): PushTarget {
-  // `run:<workflowId>` is a BRIDGE KEY, not a chat: internal/agent/run_host.go registers a
-  // parentless run's bridge under it (`runChatPrefix`), so that run's asks are broadcast on it and
-  // arrive as the envelope chat id.
+  // `run:<workflowId>` is a session key, not a chat: internal/agent/run_host.go registers a
+  // parentless run's host session under it (`runChatPrefix`), so that run's asks are broadcast on
+  // it and arrive as the envelope chat id.
   if (chatID.startsWith(RUN_SUBJECT_PREFIX)) {
     return runTarget(chatID.slice(RUN_SUBJECT_PREFIX.length));
   }

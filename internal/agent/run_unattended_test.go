@@ -36,11 +36,11 @@ func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 	if h.IsScheduled("wf_1") {
 		t.Error("an unknown run reported scheduled; a manual launch must never be marked")
 	}
-	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch())
+	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch(), hostSec())
 	if h.IsScheduled("wf_manual") {
 		t.Error("a manual run reported scheduled")
 	}
-	h.grantLease(t.Context(), "wf_1", "publish", scheduledLaunch("sched-1", time.Time{}))
+	h.grantLease(t.Context(), "wf_1", "publish", scheduledLaunch("sched-1", time.Time{}), hostSec())
 	if !h.IsScheduled("wf_1") {
 		t.Error("a scheduled run did not report scheduled")
 	}
@@ -60,8 +60,8 @@ func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 
 func TestRunLabel_RebuildsTheLaunchLabelFromTheLease(t *testing.T) {
 	h := &Runs{}
-	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch())
-	h.grantLease(t.Context(), "wf_sched", "publish", scheduledLaunch("sched-1", time.Time{}))
+	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch(), hostSec())
+	h.grantLease(t.Context(), "wf_sched", "publish", scheduledLaunch("sched-1", time.Time{}), hostSec())
 	if got := h.RunLabel("wf_sched"); got != "publish · scheduled" {
 		t.Errorf("RunLabel(scheduled) = %q, want %q", got, "publish · scheduled")
 	}
@@ -82,7 +82,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	h := &Runs{leases: store}
-	h.grantLease(t.Context(), "wf_1", "nightly", scheduledLaunch("sched-1", time.Time{}))
+	h.grantLease(t.Context(), "wf_1", "nightly", scheduledLaunch("sched-1", time.Time{}), hostSec())
 
 	// The restart: a new store over the same directory, a runtime that launched nothing.
 	reopened, err := runlease.NewStore(dir)
@@ -111,7 +111,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
 	rs := &Runs{}
 	rs.grantLease(t.Context(), "wf_1", "nightly",
-		scheduledLaunch("sched-1", time.Now().Add(30*time.Second)))
+		scheduledLaunch("sched-1", time.Now().Add(30*time.Second)), hostSec())
 	if l, held := rs.lease("wf_1"); !held || !l.Unattended {
 		t.Fatal("the fixture did not produce the unattended lease the floor reaches through")
 	}
@@ -341,7 +341,6 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 
 // TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove pins that KAS treats any allow_once as satisfying an administrator ask.
 func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing.T) {
-	h, br := hubForFSTest(t, t.TempDir())
 	dir := t.TempDir()
 	body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: true})
 	if err != nil {
@@ -350,7 +349,7 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h.runs.lifecycle.configDir = dir
+	h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
 	chatID := runChatID("wf_admin")
 	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
 
@@ -423,7 +422,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	}
 }
 
-// An ask whose run bridge ended while the floor's refusal was being written was refused by nobody, so the
+// An ask whose run host session ended while the floor's refusal was being written was refused by nobody, so the
 // schedule row is not failed with a "nobody watching" reason that never reached the run.
 func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())

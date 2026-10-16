@@ -9,7 +9,7 @@ import (
 )
 
 // securityPresets resolves the configured security profile into the KAS preset ids a session opens with
-// (StartOpts.Presets), one resolver for every session. Empty is the Custom profile. A change reaches a
+// (SessionOpts.Presets), one resolver for every session. Empty is the Custom profile. A change reaches a
 // chat at its next session start or load.
 func securityPresets(ctx context.Context, configDir string) []string {
 	var id string

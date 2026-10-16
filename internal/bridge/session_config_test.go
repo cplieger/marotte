@@ -11,8 +11,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// configOptionFake writes a fake kiro-cli that logs every request line to logPath and answers Start's three methods.
-// session/new reports a model the caller did not ask for.
+// configOptionFake writes a fake kiro-cli that logs every request line to logPath, answers initialize and session/new
+// with the minted id, and everything else with an empty result. session/new reports a model the caller did not ask
+// for.
 func configOptionFake(t *testing.T, logPath string) string {
 	t.Helper()
 	script := `#!/bin/sh
@@ -20,12 +21,13 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "` + logPath + `"
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  sid=$(echo "$line" | sed -n 's/.*"overrideSessionId":"\([^"]*\)".*/\1/p')
   case "$method" in
     initialize)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
       ;;
     session/new)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess-cfg","configOptions":[{"id":"model","currentValue":"engine-default"}]}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s","configOptions":[{"id":"model","currentValue":"engine-default"}]}}\n' "$id" "$sid"
       ;;
     *)
       if [ -n "$id" ]; then
@@ -50,15 +52,15 @@ func TestNewSession_AppliesRequestedModelAndEffort(t *testing.T) {
 	logPath := filepath.Join(dir, "requests.log")
 	scriptPath := configOptionFake(t, logPath)
 
-	b := New(scriptPath, dir)
-	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background(), Model: "claude-opus-5", Effort: "high"}); err != nil {
-		t.Fatalf("Start: %v", err)
+	b := NewEngine(scriptPath, dir)
+	sess, err := openSessionOn(t, b, &marotte.SessionOpts{Model: "claude-opus-5", Effort: "high"})
+	if err != nil {
+		t.Fatalf("open session: %v", err)
 	}
 
-	raw, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read request log: %v", err)
+	raw, rErr := os.ReadFile(logPath)
+	if rErr != nil {
+		t.Fatalf("read request log: %v", rErr)
 	}
 	got := string(raw)
 
@@ -75,8 +77,8 @@ func TestNewSession_AppliesRequestedModelAndEffort(t *testing.T) {
 		}
 	}
 
-	// The bridge reports the model it selected; the chat header reads it.
-	if id := b.ModelID(); id != "claude-opus-5" {
+	// The session reports the model it selected; the chat header reads it.
+	if id := sess.ModelID(); id != "claude-opus-5" {
 		t.Errorf("ModelID() = %q, want claude-opus-5", id)
 	}
 }
@@ -97,10 +99,10 @@ func TestNewSession_SkipsRedundantModelConfigOption(t *testing.T) {
 			logPath := filepath.Join(dir, "requests.log")
 			scriptPath := configOptionFake(t, logPath)
 
-			b := New(scriptPath, dir)
+			b := NewEngine(scriptPath, dir)
 			t.Cleanup(b.Stop)
-			if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background(), Model: tc.model}); err != nil {
-				t.Fatalf("Start: %v", err)
+			if _, err := openSessionOn(t, b, &marotte.SessionOpts{Model: tc.model}); err != nil {
+				t.Fatalf("open session: %v", err)
 			}
 
 			raw, err := os.ReadFile(logPath)
@@ -121,10 +123,10 @@ func TestNewSession_DropsMalformedEffort(t *testing.T) {
 	logPath := filepath.Join(dir, "requests.log")
 	scriptPath := configOptionFake(t, logPath)
 
-	b := New(scriptPath, dir)
+	b := NewEngine(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background(), Effort: "Ultra!"}); err != nil {
-		t.Fatalf("Start: %v", err)
+	if _, err := openSessionOn(t, b, &marotte.SessionOpts{Effort: "Ultra!"}); err != nil {
+		t.Fatalf("open session: %v", err)
 	}
 
 	raw, err := os.ReadFile(logPath)
@@ -136,14 +138,13 @@ func TestNewSession_DropsMalformedEffort(t *testing.T) {
 	}
 }
 
-// An invalid model identifier is refused before spawn; Start is the one place that sees it.
-func TestStart_RefusesInvalidModelIdentifier(t *testing.T) {
+// An invalid model identifier is refused before anything is written; the door is the one place that sees it.
+func TestNewSession_RefusesInvalidModelIdentifier(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := configOptionFake(t, filepath.Join(dir, "requests.log"))
 
-	b := New(scriptPath, dir)
-	t.Cleanup(b.Stop)
-	err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background(), Model: "bad model; rm -rf /"})
+	b := NewEngine(scriptPath, dir)
+	_, err := openSessionOn(t, b, &marotte.SessionOpts{Model: "bad model; rm -rf /"})
 	if err == nil {
 		t.Fatal("Start accepted an invalid model identifier, want an error")
 	}
@@ -152,21 +153,21 @@ func TestStart_RefusesInvalidModelIdentifier(t *testing.T) {
 	}
 }
 
-// The handshake context must not own the subprocess. A per-turn context once closed stdin when the first prompt
-// returned; kiro-cli's helpers kept stdout open, so the bridge looked healthy while every write failed and each tree
+// The handshake context must not own the process. A per-turn context once closed stdin when the first prompt
+// returned; kiro-cli's helpers kept stdout open, so the engine looked healthy while every write failed and the tree
 // leaked about 250 MB. Asserted by a live round trip.
 func TestStart_HandshakeCtxDoesNotOwnTheSubprocess(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := configOptionFake(t, filepath.Join(dir, "requests.log"))
 
-	b := New(scriptPath, dir)
+	b := NewEngine(scriptPath, dir)
 	t.Cleanup(b.Stop)
 
 	handshakeCtx, cancelHandshake := context.WithCancel(context.Background())
 	lifetime, cancelLifetime := context.WithCancel(context.Background())
 	t.Cleanup(cancelLifetime)
 
-	if err := b.Start(handshakeCtx, &marotte.StartOpts{Lifetime: lifetime}); err != nil {
+	if err := b.Start(handshakeCtx, &marotte.EngineOpts{Lifetime: lifetime}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -178,26 +179,26 @@ func TestStart_HandshakeCtxDoesNotOwnTheSubprocess(t *testing.T) {
 	}
 }
 
-// The lifetime context owns the subprocess, so shutdown still reaps it if Stop races or panics.
+// The lifetime context owns the process, so shutdown still reaps it if Stop races or panics.
 func TestStart_LifetimeCtxOwnsTheSubprocess(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := configOptionFake(t, filepath.Join(dir, "requests.log"))
 
-	b := New(scriptPath, dir)
+	b := NewEngine(scriptPath, dir)
 	t.Cleanup(b.Stop)
 
 	lifetime, cancelLifetime := context.WithCancel(context.Background())
-	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: lifetime}); err != nil {
+	if err := b.Start(context.Background(), &marotte.EngineOpts{Lifetime: lifetime}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
 	cancelLifetime()
 
-	// Cancel closes stdin, the fake's read loop ends, readLoop closes notifCh.
+	// Cancel closes stdin, the fake's read loop ends, readLoop closes the engine lane.
 	select {
-	case <-b.NotifCh():
+	case <-b.EngineNotifCh():
 	case <-time.After(5 * time.Second):
-		t.Fatal("cancelling StartOpts.Lifetime did not tear the bridge down")
+		t.Fatal("cancelling EngineOpts.Lifetime did not tear the engine down")
 	}
 }
 
@@ -206,19 +207,19 @@ func TestStart_RefusesNilLifetime(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := configOptionFake(t, filepath.Join(dir, "requests.log"))
 
-	b := New(scriptPath, dir)
+	b := NewEngine(scriptPath, dir)
 	t.Cleanup(b.Stop)
 
-	err := b.Start(context.Background(), &marotte.StartOpts{})
+	err := b.Start(context.Background(), &marotte.EngineOpts{})
 	if err == nil {
-		t.Fatal("Start accepted a nil StartOpts.Lifetime; it must be refused rather than " +
-			"substituted with an uncancellable context at the point the subprocess is spawned")
+		t.Fatal("Start accepted a nil EngineOpts.Lifetime; it must be refused rather than " +
+			"substituted with an uncancellable context at the point the process is spawned")
 	}
 	if !strings.Contains(err.Error(), "Lifetime") {
 		t.Errorf("error = %v, want it to name the required Lifetime field", err)
 	}
-	if b.SessionID() != "" {
-		t.Errorf("refused Start left a session id (%q); nothing should have been spawned", b.SessionID())
+	if b.cmd != nil {
+		t.Error("a refused Start spawned a process")
 	}
 }
 
@@ -228,10 +229,10 @@ func TestNewSession_SendsModeAtTheDoor(t *testing.T) {
 	logPath := filepath.Join(dir, "requests.log")
 	scriptPath := configOptionFake(t, logPath)
 
-	b := New(scriptPath, dir)
+	b := NewEngine(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background(), Mode: "spec", Model: "claude-opus-5"}); err != nil {
-		t.Fatalf("Start: %v", err)
+	if _, err := openSessionOn(t, b, &marotte.SessionOpts{Mode: "spec", Model: "claude-opus-5"}); err != nil {
+		t.Fatalf("open session: %v", err)
 	}
 
 	raw, err := os.ReadFile(logPath)
@@ -239,7 +240,7 @@ func TestNewSession_SendsModeAtTheDoor(t *testing.T) {
 		t.Fatalf("read request log: %v", err)
 	}
 	if strings.Contains(string(raw), `"method":"session/set_mode"`) {
-		t.Errorf("Start sent session/set_mode; the mode belongs on the session/new door\nlog:\n%s", raw)
+		t.Errorf("the door sent session/set_mode; the mode belongs on the session/new door\nlog:\n%s", raw)
 	}
 	kiro := sessionNewKiroMeta(t, string(raw))
 	if kiro["modeId"] != "spec" {
@@ -259,10 +260,10 @@ func TestNewSession_UnsetModeSendsNoModeKey(t *testing.T) {
 	logPath := filepath.Join(dir, "requests.log")
 	scriptPath := configOptionFake(t, logPath)
 
-	b := New(scriptPath, dir)
+	b := NewEngine(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background()}); err != nil {
-		t.Fatalf("Start: %v", err)
+	if _, err := openSessionOn(t, b, &marotte.SessionOpts{}); err != nil {
+		t.Fatalf("open session: %v", err)
 	}
 
 	raw, err := os.ReadFile(logPath)
@@ -296,16 +297,14 @@ func TestNewSession_SuccessfulConfigCallsStayQuiet(t *testing.T) {
 
 	logs := captureLogs(t)
 
-	b := New(scriptPath, dir)
-	t.Cleanup(b.Stop)
-	opts := &marotte.StartOpts{
-		Lifetime: context.Background(),
-		Model:    "claude-opus-5",
-		Effort:   "high",
-		Mode:     "spec",
+	b := NewEngine(scriptPath, dir)
+	opts := &marotte.SessionOpts{
+		Model:  "claude-opus-5",
+		Effort: "high",
+		Mode:   "spec",
 	}
-	if err := b.Start(context.Background(), opts); err != nil {
-		t.Fatalf("Start: %v", err)
+	if _, err := openSessionOn(t, b, opts); err != nil {
+		t.Fatalf("open session: %v", err)
 	}
 
 	for _, unwanted := range []string{

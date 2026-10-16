@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -484,4 +485,80 @@ func TestStore_SetParentSessionIDIsDurable(t *testing.T) {
 	if err := s.SetParentSessionID(t.Context(), "wf_gone", "sess_parent"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("SetParentSessionID on no lease = %v, want ErrNotFound", err)
 	}
+}
+
+// TestStore_HostSecuritySurvivesAReopenAndIsNeverShared pins the parentless run's launch presets across a full
+// restart, an empty Custom profile included, and that no caller can edit the stored copy.
+func TestStore_HostSecuritySurvivesAReopenAndIsNeverShared(t *testing.T) {
+	t.Parallel()
+	for name, presets := range map[string][]string{
+		"a profile's presets": {"preset:read-only", "preset:no-shell"},
+		"the Custom profile":  {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			s, err := NewStore(dir)
+			if err != nil {
+				t.Fatalf("NewStore: %v", err)
+			}
+			l := Lease{WorkflowID: "wf_1", Recipe: "r", Origin: OriginManual, Host: &HostSecurity{Presets: slices.Clone(presets)}}
+			if err := s.Put(t.Context(), &l); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+			l.Host.Presets = append(l.Host.Presets, "preset:widened")
+			got, _ := s.Get("wf_1")
+			if len(got.Host.Presets) != len(presets) {
+				t.Errorf("an edit of the Put copy reached the store: %v", got.Host.Presets)
+			}
+			if len(got.Host.Presets) > 0 {
+				got.Host.Presets[0] = "edited"
+			}
+			reopened, err := NewStore(dir)
+			if err != nil {
+				t.Fatalf("reopen: %v", err)
+			}
+			back, ok := reopened.Get("wf_1")
+			if !ok {
+				t.Fatal("the lease did not survive the reopen")
+			}
+			reloaded, err := back.HostPresets()
+			if err != nil {
+				t.Fatalf("HostPresets after a reopen: %v", err)
+			}
+			if !slices.Equal(reloaded, presets) {
+				t.Errorf("presets after a reopen = %v, want %v", reloaded, presets)
+			}
+		})
+	}
+}
+
+// TestLease_HostPresetsRefusesAnUnrecordedLaunch: a parentless lease with no recorded security input fails closed.
+func TestLease_HostPresetsRefusesAnUnrecordedLaunch(t *testing.T) {
+	t.Parallel()
+	for name, l := range map[string]Lease{
+		"no host":             {WorkflowID: "wf_1", Origin: OriginManual},
+		"a host with no list": {WorkflowID: "wf_1", Origin: OriginManual, Host: &HostSecurity{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := l.HostPresets(); !errors.Is(err, errNoHostSecurity) {
+				t.Errorf("HostPresets() = %v, want errNoHostSecurity", err)
+			}
+		})
+	}
+	t.Run("an old file's record decodes with no host", func(t *testing.T) {
+		dir := t.TempDir()
+		body := `{"version":1,"leases":[{"workflow_id":"wf_1","recipe":"r","origin":"manual","parent_session_id":"sess_1"}]}`
+		if err := os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		s, err := NewStore(dir)
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		l, _ := s.Get("wf_1")
+		if _, err := l.HostPresets(); !errors.Is(err, errNoHostSecurity) {
+			t.Errorf("an old record's HostPresets() = %v, want errNoHostSecurity", err)
+		}
+	})
 }

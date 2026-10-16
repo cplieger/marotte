@@ -195,9 +195,9 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 			}
 
 			if second != first {
-				t.Fatalf("a hand edit of %s reopened the chat; a live setting is pushed into the running process", tc.body)
+				t.Fatalf("a hand edit of %s reopened the chat; a live setting is pushed into the running engine", tc.body)
 			}
-			if got := pushesSeen(fakeOf(first), rec); !reflect.DeepEqual(got, tc.want) {
+			if got := pushesSeen(fakeSourceOf(t, h).lane, rec); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("after a hand edit to %s the next open pushed %+v, want %+v", tc.body, got, tc.want)
 			}
 		})
@@ -206,10 +206,11 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 
 func TestOpenBridge_ADocumentTurnedUnreadableIsReportedOnce(t *testing.T) {
 	h, configDir := reopenFixture(t)
-	first, err := h.coord.openBridge(t.Context(), "c1", "")
-	if err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
+	lane := fakeSourceOf(t, h).lane
+	before := len(lane.notified(marotte.MethodPolicyIgnoreFilesChanged))
 	since := h.bus.fanout.Position().Head
 
 	rewriteConfigByHand(t, configDir, "{not json")
@@ -219,7 +220,7 @@ func TestOpenBridge_ADocumentTurnedUnreadableIsReportedOnce(t *testing.T) {
 		}
 	}
 
-	if frames := fakeOf(first).notified(marotte.MethodPolicyIgnoreFilesChanged); len(frames) != 0 {
+	if frames := lane.notified(marotte.MethodPolicyIgnoreFilesChanged)[before:]; len(frames) != 0 {
 		t.Errorf("an unreadable config.json pushed ignore lists %v; kiro-cli must keep enforcing the previous one", frames)
 	}
 	reports := 0
@@ -273,11 +274,12 @@ func TestOpenBridge_AnMCPFileTheBootRenderFailedToWriteIsRenderedAtTheFirstOpen(
 	}
 }
 
-func TestOpenBridge_ADocumentUnreadableAtBootIsReportedAtTheFirstOpenAndOnlyThen(t *testing.T) {
+// The engine starts at construction, so the report rides its spawn: counted from the ring's start.
+func TestEngineSpawn_ADocumentUnreadableAtBootIsReportedOnce(t *testing.T) {
 	configDir := t.TempDir()
 	rewriteConfigByHand(t, configDir, "{not json")
 	h := reopenFixtureIn(t, configDir, nil)
-	since := h.bus.fanout.Position().Head
+	const since = 0
 
 	for i := range 2 {
 		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
@@ -291,49 +293,50 @@ func TestOpenBridge_ADocumentUnreadableAtBootIsReportedAtTheFirstOpenAndOnlyThen
 		}
 		if reports != 1 {
 			t.Errorf("after open %d of a chat over a config.json unreadable since boot %d policy errors were broadcast, "+
-				"want 1: the first open spawns the process the report is about", i+1, reports)
+				"want 1: the engine's spawn reports it, and no chat open repeats it", i+1, reports)
 		}
 	}
 	msgs := policyErrorMessages(h, since)
-	if len(msgs) != 1 || !strings.Contains(msgs[0], "started before the file is fixed enforces only "+settings.AgentIgnoreFloor) {
-		t.Errorf("the boot-time report reads %q, want it to say a chat started meanwhile enforces only %s: "+
-			"the chat it reports on was spawned with no previous list", msgs, settings.AgentIgnoreFloor)
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "enforces only "+settings.AgentIgnoreFloor) {
+		t.Errorf("the boot-time report reads %q, want it to say an engine started over it enforces only %s: "+
+			"the engine it reports on started with no previous list", msgs, settings.AgentIgnoreFloor)
 	}
 }
 
-func TestOpenBridge_TheUnreadableReportFollowsTheDocumentTheNewProcessSpawnedOver(t *testing.T) {
+func TestEngineSpawn_TheUnreadableReportFollowsTheDocumentTheEngineSpawnedOver(t *testing.T) {
 	for _, tc := range []struct {
-		name, atOpen, atSpawn string
+		name, atBoot, atSpawn string
 		want                  int
 	}{
-		{name: "repaired_while_spawning", atOpen: "{not json", atSpawn: `{"agent_ignore_files":[".kiroignore"]}`, want: 0},
-		{name: "broken_while_spawning", atOpen: `{"agent_ignore_files":[".kiroignore"]}`, atSpawn: "{not json", want: 1},
+		{name: "repaired_while_spawning", atBoot: "{not json", atSpawn: `{"agent_ignore_files":[".kiroignore"]}`, want: 0},
+		{name: "broken_while_spawning", atBoot: `{"agent_ignore_files":[".kiroignore"]}`, atSpawn: "{not json", want: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			configDir := t.TempDir()
-			rewriteConfigByHand(t, configDir, tc.atOpen)
-			h := reopenFixtureIn(t, configDir, func(b *fakeBridge) {
-				// Start may run off the test goroutine (the utility session), so this reports rather than aborts.
-				b.onStart = func() {
-					tmp := filepath.Join(configDir, "spawn.tmp")
-					if err := os.WriteFile(tmp, []byte(tc.atSpawn), 0o600); err != nil {
-						t.Errorf("Setup: write %s: %v", tmp, err)
-						return
-					}
-					if err := os.Rename(tmp, filepath.Join(configDir, settings.Filename)); err != nil {
-						t.Errorf("Setup: rename over config.json: %v", err)
-					}
+			rewriteConfigByHand(t, configDir, tc.atBoot)
+			src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
+			// The engine starts off the test goroutine, so this reports rather than aborts.
+			src.onStart = func() {
+				tmp := filepath.Join(configDir, "spawn.tmp")
+				if err := os.WriteFile(tmp, []byte(tc.atSpawn), 0o600); err != nil {
+					t.Errorf("Setup: write %s: %v", tmp, err)
+					return
 				}
-			})
+				if err := os.Rename(tmp, filepath.Join(configDir, settings.Filename)); err != nil {
+					t.Errorf("Setup: rename over config.json: %v", err)
+				}
+			}
+			cs := newTestChatStore()
+			h := newRuntimeOn(context.Background(), t.TempDir(), src, cs, WithConfigDir(configDir))
+			cs.wire(h)
+			t.Cleanup(func() { shutdownHub(t, h) })
 			since := h.bus.fanout.Position().Head
 
-			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-				t.Fatalf("OpenBridge: %v", err)
-			}
+			openChat(t, h, "c1")
 
 			if got := len(policyErrorMessages(h, since)); got != tc.want {
-				t.Errorf("config.json %q at the open and %q while the process spawned: %d policy errors, want %d",
-					tc.atOpen, tc.atSpawn, got, tc.want)
+				t.Errorf("config.json %q at boot and %q while the engine spawned: %d policy errors, want %d",
+					tc.atBoot, tc.atSpawn, got, tc.want)
 			}
 		})
 	}
@@ -356,14 +359,12 @@ func policyErrorMessages(h *Runtime, since uint64) []string {
 	return out
 }
 
-func openChat(t *testing.T, h *Runtime, chatID marotte.ChatID) *sharedBridge {
+func openChat(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 	t.Helper()
 	_, _ = h.chatStore.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool { c.Name = string(chatID); return true })
-	sb, err := h.coord.openBridge(t.Context(), chatID, "")
-	if err != nil {
+	if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
 		t.Fatalf("OpenBridge %s: %v", chatID, err)
 	}
-	return sb
 }
 
 func TestReadLiveSettings_AWriteBetweenTwoFieldReadsIsReadAsOneDocument(t *testing.T) {
@@ -410,7 +411,8 @@ func TestOpenBridge_AnUnparseableDocumentPushesNothingAndTheFixedOnePushesItsVal
 	h, configDir := reopenFixture(t, rec.options()...)
 	rec.openWithStore(t, configDir)
 	rewriteConfigByHand(t, configDir, nonDefaultLiveValues)
-	br := fakeOf(openChat(t, h, "c1"))
+	openChat(t, h, "c1")
+	br := fakeSourceOf(t, h).lane
 	before := pushesSeen(br, rec)
 
 	rewriteConfigByHand(t, configDir, `{"terminal_command_timeout_ms":`)

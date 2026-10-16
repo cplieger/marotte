@@ -27,6 +27,7 @@ var marottePkgPath = wiregen.TypeRef[marotte.ChatHeader]().PkgPath
 // fails once one gains a field.
 var emptySignalPayloads = []string{
 	"CompactionStartedPayload",
+	"ConfigStandingChangedPayload",
 	"ForgesChangedPayload",
 	"HooksChangedPayload",
 	"MCPConfigChangedPayload",

@@ -43,8 +43,6 @@ type RunLog struct {
 	Stopping bool
 	// Pending: marotte has a prompt on the run not yet settled.
 	Pending bool
-	// HostLost: the run's host bridge ended after its latest arm.
-	HostLost bool
 	// Quiet: nothing on the run moved for the settle window.
 	Quiet bool
 }
@@ -173,8 +171,6 @@ func wait(s *State, all []visit, self int, log RunLog) marotte.RunAskBlocker {
 		return ""
 	}
 	switch {
-	case log.HostLost:
-		return marotte.RunAskRecovering
 	case otherLeafRunning(all, self):
 		return marotte.RunAskBranchRunning
 	case log.Quiet:

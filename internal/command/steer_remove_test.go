@@ -669,6 +669,32 @@ func TestCmdCancel_TheLeadIsSetBeforeTheCancelAndUndoneIfItFails(t *testing.T) {
 	}
 }
 
+// A Stop pressed while the chat's session door is still open (no bridge yet) ends the admitted turn, so
+// the send-now row still leads its hand-on; an answer that could not be delivered undoes it.
+func TestCmdCancel_InTheSessionDoorWindowTheLeadIsStillSet(t *testing.T) {
+	for _, tc := range []struct {
+		permErr error
+		name    string
+		want    []string
+	}{
+		{name: "the stop lands", want: []string{"lead steer-a"}},
+		{name: "an answer is not delivered", permErr: ErrCancelNotDelivered, want: []string{"lead steer-a", "lead-undone steer-a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newCancelDeps(nil)
+			d.err = tc.permErr
+			q := newStubSteerQueue()
+			cmd := &marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-a"}`)}
+
+			_, _ = cmdCancel(t.Context(), d, d, d, d, q, cmd)
+
+			if got := q.callLog(); !slices.Equal(got, tc.want) {
+				t.Errorf("record calls = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // orderTeardown records the teardown's steps into a log the bridge shares.
 type orderTeardown struct {
 	log *[]string
@@ -700,10 +726,10 @@ func TestChatTeardown_TheSteerRecordGoesBeforeTheCancel(t *testing.T) {
 		want []string
 	}{
 		{name: "close", run: func(ctx context.Context, h hostDouble, td chatTeardown) {
-			closeChatTeardown(ctx, h, h, td, "c1")
+			closeChatTeardown(ctx, h, h, h, td, "c1")
 		}, want: []string{"begin keep=true", marotte.MethodCancel, "close"}},
 		{name: "delete", run: func(ctx context.Context, h hostDouble, td chatTeardown) {
-			deleteChatTeardown(ctx, h, h, td, "c1", []string{"sess-1"})
+			deleteChatTeardown(ctx, h, h, h, td, "c1", []string{"sess-1"})
 		}, want: []string{"begin keep=false", marotte.MethodCancel, "delete-by-chain tab-closed"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

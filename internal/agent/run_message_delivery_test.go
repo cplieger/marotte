@@ -29,7 +29,7 @@ func TestMessageStep_AReaderLeavingAfterTheWriteKeepsTheWordsKASTook(t *testing.
 			h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 			if turn == "closed_turn" {
 				h.coord.runs = h.runs.log
-				h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), nil, marotte.StopReasonInterrupted)
+				h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
 			}
 			reply := make(chan struct{})
 			br.mu.Lock()
@@ -63,15 +63,15 @@ func TestMessageStep_AReaderLeavingAfterTheWriteKeepsTheWordsKASTook(t *testing.
 	}
 }
 
-// A carrier that dies between the write and the reply leaves the words recorded once, and a retry under
+// A host session that ends between the write and the reply leaves the words recorded once, and a retry under
 // the same message id answers the first verb without a second session/prompt.
-func TestMessageStep_ACarrierDyingBeforeItsReplyRecordsTheWordsOnceAndARetrySendsNothing(t *testing.T) {
+func TestMessageStep_AnEngineExitBeforeItsReplyRecordsTheWordsOnceAndARetrySendsNothing(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
 
 	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-21", "")
 	if err == nil {
-		t.Fatal("MessageStep whose carrier died before replying = nil, want an error the composer keeps the id for")
+		t.Fatal("MessageStep whose host session died before replying = nil, want an error the composer keeps the id for")
 	}
 	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-21", "")
 	if err != nil || out.Verb != marotte.RunStepMessagePrompt {
@@ -115,7 +115,7 @@ func TestDelete_AfterAnUnconfirmedSendClearsItsRetryRecord(t *testing.T) {
 		}
 		releaseRead()
 		if r := <-sent; !errors.Is(r.err, errStepUnconfirmed) {
-			t.Fatalf("MessageStep whose carrier died before replying = %v, want errStepUnconfirmed", r.err)
+			t.Fatalf("MessageStep whose host session died before replying = %v, want errStepUnconfirmed", r.err)
 		}
 		<-deleted
 		s.set("deleted")
@@ -137,7 +137,7 @@ func TestMessageStep_ARetryAfterDeleteIsNotAnsweredFromTheDeletedRun(t *testing.
 	s := newStepScript(t, br, "paused")
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
 	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-31", ""); !errors.Is(err, errStepUnconfirmed) {
-		t.Fatalf("Setup: MessageStep whose carrier died before replying = %v, want errStepUnconfirmed", err)
+		t.Fatalf("Setup: MessageStep whose host session died before replying = %v, want errStepUnconfirmed", err)
 	}
 
 	if err := h.runs.delete(t.Context(), "wf_1"); err != nil {
@@ -156,13 +156,13 @@ func TestMessageStep_ARetryAfterDeleteIsNotAnsweredFromTheDeletedRun(t *testing.
 
 // The answer route's twin: the words are recorded once, and a second answer is refused while the
 // first one's turn has not started, instead of reaching KAS again.
-func TestAnswerInput_ACarrierDyingBeforeItsReplyHoldsTheAsk(t *testing.T) {
+func TestAnswerInput_AnEngineExitBeforeItsReplyHoldsTheAsk(t *testing.T) {
 	h, br := askHub(t)
 	askID := readNow(t, h, "wf_1").asks[0].ID
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
 
 	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal"); !errors.Is(err, errStepUnconfirmed) {
-		t.Fatalf("AnswerInput whose carrier died before replying = %v, want the unconfirmed error", err)
+		t.Fatalf("AnswerInput whose host session died before replying = %v, want the unconfirmed error", err)
 	}
 	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal"); !errors.Is(err, errAskPending) {
 		t.Errorf("second AnswerInput = %v, want errAskPending", err)
@@ -185,7 +185,7 @@ func TestMessageStep_ARetryDuringADeleteIsNotAnsweredFromTheRecord(t *testing.T)
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
 	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-42", ""); !errors.Is(err, errStepUnconfirmed) {
-		t.Fatalf("Setup: MessageStep whose carrier died before replying = %v, want errStepUnconfirmed", err)
+		t.Fatalf("Setup: MessageStep whose host session died before replying = %v, want errStepUnconfirmed", err)
 	}
 	held := make(chan struct{})
 	br.mu.Lock()

@@ -14,7 +14,7 @@ func TestGetBridge_ReturnsNilForUnknown(t *testing.T) {
 	}
 }
 
-func TestGetOrCreateBridge_ReusesExisting(t *testing.T) {
+func TestOpenBridge_ReusesExisting(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -27,11 +27,11 @@ func TestGetOrCreateBridge_ReusesExisting(t *testing.T) {
 		t.Fatalf("second create error = %v", err)
 	}
 	if sb1 != sb2 {
-		t.Errorf("second call returned a different bridge")
+		t.Errorf("second call returned a different session entry")
 	}
 }
 
-func TestGetOrCreateBridge_MissingChatIsError(t *testing.T) {
+func TestOpenBridge_MissingChatIsError(t *testing.T) {
 	h, _, _ := newTestHub()
 	_, err := h.coord.openBridge(t.Context(), "no-chat", "")
 	if err == nil {
@@ -42,8 +42,9 @@ func TestGetOrCreateBridge_MissingChatIsError(t *testing.T) {
 	}
 }
 
-func TestCloseBridge_RemovesAndStops(t *testing.T) {
+func TestCloseBridge_RemovesAndClosesTheSession(t *testing.T) {
 	h, cs, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	sb, err := h.coord.openBridge(t.Context(), "c1", "")
@@ -53,11 +54,13 @@ func TestCloseBridge_RemovesAndStops(t *testing.T) {
 	fb := sb.bridge.(*fakeBridge)
 
 	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeCancelled)
+	// The close runs off the caller's path; the session's forward ends with it.
+	joinInflight(t, h)
 
 	if h.coord.bridgeFor("c1") != nil {
-		t.Error("bridge still in map after closeBridge")
+		t.Error("session still registered after closeBridge")
 	}
-	if !fb.stopped {
-		t.Error("bridge.Stop not called")
+	if !fb.isClosed() {
+		t.Error("the session was never closed")
 	}
 }

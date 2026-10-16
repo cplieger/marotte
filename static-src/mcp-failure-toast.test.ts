@@ -1,5 +1,5 @@
-// A toast when a broken MCP server is used. Dedupe keys on the state transition (every bridge emits its own status on
-// connect), and the notice carries kiro-cli's captured text, which tells a missing command from a timeout.
+// A toast when a broken MCP server is used. Dedupe keys on the state transition (KAS emits one status copy per
+// resident session), and the notice carries kiro-cli's captured text, which tells a missing command from a timeout.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const toastCalls: { message: string; level: string }[] = [];
@@ -58,7 +58,7 @@ describe("announceMCPFailure", () => {
   });
 
   it("fires once per transition into failed, not once per frame", () => {
-    // The reconnect storm: three bridges report the same wedged server; only the first crosses idle -> failed.
+    // The reconnect storm: three resident sessions report the same wedged server; only the first crosses idle -> failed.
     announceMCPFailure("github", "spawn ENOENT", "idle");
     announceMCPFailure("github", "spawn ENOENT", "failed");
     announceMCPFailure("github", "spawn ENOENT", "failed");

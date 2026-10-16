@@ -41,28 +41,17 @@ func (rt *Runtime) initDispatch() {
 		methodV3CustomAgentNotFound:  rt.translator.HandleAgentNotFound,
 		methodV3CustomAgentConfigErr: rt.translator.HandleAgentConfigError,
 		methodV3MCPStatus:            rt.translator.HandleMCPStatus,
-		methodV3SystemNotify:         rt.translator.HandleSystemNotify,
-		// Cedar policy reload or parse error → SSE refetch of GET /api/permissions.
-		methodV3PolicyChanged:  rt.translator.HandlePolicyChanged,
-		methodV3PolicyError:    rt.translator.HandlePolicyError,
-		methodV3CodeReferences: rt.translator.HandleCodeReferences,
+		methodV3CodeReferences:       rt.translator.HandleCodeReferences,
 		// Live once KAS installs the safety gate (translate/safety.go).
 		methodV3SafetyStatusChanged: rt.translator.HandleSafetyStatusChanged,
 		methodV3SafetyPropertiesChg: rt.translator.HandleSafetyPropertiesChanged,
-		methodV3Governance:          rt.translator.HandleGovernanceState,
 		// Wrapped so the run clock (run_bounds.go) sees start/pause/finish; run_start is an agent run's only frame.
 		methodWFRunStart:    rt.runs.observeStart,
 		methodWFRunComplete: rt.runs.observeComplete,
-		// A step's question text, its only carrier; also on the run bridge's door ((*Runtime).dispatch).
+		// A step's question text, its only carrier; also on a run host's door ((*Runtime).dispatch).
 		methodKiroSessionNotify: rt.runs.onNotify,
 		// An in-process spec write by a spec-mode session (spec_checkpoint.go).
 		methodV3SpecPhaseCheckpoint: rt.handleSpecPhaseCheckpoint,
-		// configIssues for the /docs steering badges.
-		methodV3SteeringDocs: rt.translator.HandleSteeringDocuments,
-		// The installed Powers moved; the legacy block and every Powers tab follow.
-		methodV3Powers: func(ctx context.Context, _ marotte.ChatID, msg *marotte.RPCResponse) {
-			rt.powers.itemsChanged(ctx, msg.Params)
-		},
 		// A custom agent's own knowledge bases; the Settings list never shows them.
 		methodKiroKnowledgeIndexingStarted:   rt.translator.HandleKnowledgeIndexing(marotte.KnowledgeIndexingStarted),
 		methodKiroKnowledgeIndexingCompleted: rt.translator.HandleKnowledgeIndexing(marotte.KnowledgeIndexingCompleted),
@@ -95,13 +84,11 @@ func (rt *Runtime) initDispatch() {
 	rt.chatHandlers[methodWFWatchPoll] = rt.runs.asksOnMotion(rt.chatHandlers[methodWFWatchPoll])
 	// Recognised and ignored, kept out of the Debug log.
 	rt.noopMethods = map[string]struct{}{
-		methodV3SessionsChanged:          {},
-		methodV3ToolsDidChange:           {},
-		methodV3ProgressiveContext:       {},
-		methodKiroWorkflowRecipesChanged: {},
-		// Only the utility bridge declares configurationState, and its own forward reads it.
-		methodKiroConfigurationState: {},
+		methodV3SessionsChanged:    {},
+		methodV3ToolsDidChange:     {},
+		methodV3ProgressiveContext: {},
 	}
+	rt.initWorkspaceHandlers()
 	// Eager: several bridge goroutines read it.
 	rt.sessUpdateHandlers = map[marotte.ACPUpdateKind]sessionUpdateHandler{
 		marotte.ACPUpdateAgentChunk: func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr translate.FrameAttribution) {
@@ -119,10 +106,10 @@ func (rt *Runtime) initDispatch() {
 		marotte.ACPUpdateUsage:       ignoreAttribution(rt.translator.HandleUsageUpdate),
 		// The only frame telling marotte that KAS moved the effort level itself.
 		marotte.ACPUpdateConfigOption: rt.coord.healEffort(rt.translator.HandleConfigOptionUpdate),
-		// The slash-menu catalog; only a chat's own frame feeds it.
+		// The slash-menu catalog; any session's own frame feeds it.
 		marotte.ACPUpdateAvailableCommands: rt.translator.HandleAvailableCommandsUpdate,
 	}
-	// A parentless run bridge folds content into the run record and reads step metering; chat-only kinds are
+	// A parentless run's host session folds content into the run record and reads step metering; chat-only kinds are
 	// dropped, since `run:<id>` has no chat record.
 	rt.runStepHandlers = map[marotte.ACPUpdateKind]sessionUpdateHandler{
 		marotte.ACPUpdateAgentChunk:   rt.sessUpdateHandlers[marotte.ACPUpdateAgentChunk],
@@ -133,19 +120,22 @@ func (rt *Runtime) initDispatch() {
 	}
 }
 
-// translateACPEvent is the sole entry point from the forward goroutine, origin being the bridge msg arrived
+// translateACPEvent is the sole entry point from a session's forward goroutine, origin being the session msg arrived
 // on. Every branch returns promptly; long work belongs in a goroutine.
 func (rt *Runtime) translateACPEvent(chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
 
-	// A run bridge's frames take their own door.
+	// A run host session's frames take their own door.
 	if isRunChat(chatID) {
 		rt.dispatch(ctx, chatID, origin, msg)
 		return
 	}
 
 	if msg.ID != nil && rt.routeInboundRequest(ctx, chatID, origin, msg) {
+		return
+	}
+	if rt.dispatchWorkspace(ctx, chatID, msg) {
 		return
 	}
 
@@ -161,14 +151,14 @@ func (rt *Runtime) translateACPEvent(chatID marotte.ChatID, origin acpResponder,
 	// An unrecognised request must be answered: KAS's ext-method calls have no timeout, so silence wedges the turn
 	// and every later prompt 409s. -32601, not -32603, so a deliberate refusal does not read as our fault.
 	if msg.ID != nil {
-		slog.Warn("chat bridge: refusing an unexpected peer request",
+		slog.Warn("chat session: refusing an unexpected peer request",
 			"method", msg.Method, "chat_id", chatID, "id", *msg.ID)
 		if err := respondOn(ctx, rt.bridge.mgr, chatID, origin, msg, nil,
 			&marotte.RPCError{
 				Code:    marotte.RPCCodeMethodNotFound,
 				Message: "unsupported on the chat session: " + msg.Method,
 			}); err != nil {
-			slog.Error("chat bridge: refusal could not be delivered; the turn may be wedged",
+			slog.Error("chat session: refusal could not be delivered; the turn may be wedged",
 				"method", msg.Method, "chat_id", chatID, "error", err)
 		}
 		return
@@ -208,7 +198,7 @@ func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID marotte.ChatI
 }
 
 // askReportsStepProgress reports a step's ask as progress before the handler, attributed by session id (a
-// request has no workflow meta), through the run bridge's key when it arrived on one.
+// request has no workflow meta), through the run host session's key when it arrived on one.
 func (rt *Runtime) askReportsStepProgress(inner askHandler) askHandler {
 	return func(ctx context.Context, chatID marotte.ChatID, origin translate.AskOrigin, msg *marotte.RPCResponse) {
 		var params struct {
@@ -258,7 +248,7 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatI
 		return
 	}
 
-	// The one shared classifier (also deriveSubSession), so a step frame classifies the same through either door.
+	// The one shared classifier, so a step frame classifies the same through either door.
 	attr := rt.translator.Attribute(chatID, env.Params.SessionID, base.Meta.Kiro.Workflow)
 
 	// A replayed frame is history: live handlers would open a phantom turn nothing ends. The gate is per frame, since current-state frames are untagged.
@@ -285,7 +275,7 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatI
 	fn(ctx, chatID, env.Params.Update, attr)
 }
 
-// handleRunStepFrame is a parentless run bridge's session/update door: every frame is a step's of the hosted
+// handleRunStepFrame is a parentless run host session's session/update door: every frame is a step's of the hosted
 // run, folded into the run record. Replayed frames are dropped.
 func (rt *Runtime) handleRunStepFrame(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var env struct {

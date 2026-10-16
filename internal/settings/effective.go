@@ -186,6 +186,7 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeyTerminalCommandTimeoutMs: func(r json.RawMessage) error {
 			return decodeChecked(&out.TerminalCommandTimeoutMs, r, KeyTerminalCommandTimeoutMs, ValidTerminalCommandTimeoutMs)
 		},
+		KeyEngineHeapMiB: func(r json.RawMessage) error { return decodeInto(&out.EngineHeapMiB, r) },
 	}
 }
 

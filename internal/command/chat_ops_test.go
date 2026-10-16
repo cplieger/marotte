@@ -41,7 +41,7 @@ func (b *cancelBridge) Notify(_ context.Context, method string, _ any) error {
 func TestCloseChatTeardown_TearsDownAChatWithNoBridge(t *testing.T) {
 	deps := &closeDeps{benchDeps: newBenchDeps()}
 
-	closeChatTeardown(t.Context(), deps, deps, deps, "c1")
+	closeChatTeardown(t.Context(), deps, deps, deps, deps, "c1")
 
 	if len(deps.closed) != 1 || deps.closed[0] != "c1" {
 		t.Errorf("closed state for %v, want exactly [c1]", deps.closed)
@@ -55,7 +55,7 @@ func TestCloseChatTeardown_CancelsTheTurnAndLogsNoFailure(t *testing.T) {
 	bridge := &cancelBridge{}
 	deps := &closeDeps{benchDeps: newBenchDeps(), bridge: bridge}
 
-	closeChatTeardown(t.Context(), deps, deps, deps, "c1")
+	closeChatTeardown(t.Context(), deps, deps, deps, deps, "c1")
 
 	if len(bridge.notified) != 1 || bridge.notified[0] != marotte.MethodCancel {
 		t.Errorf("bridge saw notifications %v, want exactly [%s]", bridge.notified, marotte.MethodCancel)
@@ -102,7 +102,7 @@ func TestCmdCancel_RecordsTheStopBeforeSignalling(t *testing.T) {
 			t.Errorf("stops = %v, want [c1]", deps.stops)
 		}
 	})
-	t.Run("with no bridge, the respawn window", func(t *testing.T) {
+	t.Run("with no bridge, the reload window", func(t *testing.T) {
 		deps := &closeDeps{benchDeps: newBenchDeps()}
 
 		if _, err := cmdCancel(t.Context(), deps, deps, deps, deps, newStubSteerQueue(), &marotte.ClientCommand{ChatID: "c1"}); err != nil {
@@ -115,13 +115,13 @@ func TestCmdCancel_RecordsTheStopBeforeSignalling(t *testing.T) {
 }
 
 // TestCloseChatTeardown_RecordsTheStopBeforeSignalling: closing the tab is a stop, so
-// a retry mid-respawn must not spawn a bridge and run the prompt for a closed tab.
+// a retry mid-reload must not open a session and run the prompt for a closed tab.
 func TestCloseChatTeardown_RecordsTheStopBeforeSignalling(t *testing.T) {
 	deps := &closeDeps{benchDeps: newBenchDeps()}
 	bridge := &stopOrderBridge{deps: deps}
 	deps.bridge = bridge
 
-	closeChatTeardown(t.Context(), deps, deps, deps, "c1")
+	closeChatTeardown(t.Context(), deps, deps, deps, deps, "c1")
 
 	if len(bridge.notified) != 1 || bridge.unrecorded != 0 {
 		t.Errorf("notifications = %v with %d before the stop was recorded, want one after it", bridge.notified, bridge.unrecorded)

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -215,42 +214,6 @@ func TestReconcileSessionSettings_AnUnreadableDocumentPushesNoDefaults(t *testin
 	}
 }
 
-func TestReconcileSessionSettings_AUtilityTakenForRestartGetsTheContentCollectionItMissedBeforeItStops(t *testing.T) {
-	cliJSON := withKiroTelemetry(t, `{"telemetry.enabled":true}`)
-	h, configDir := reopenFixture(t)
-	utility := acquireUtility(t, h)
-	utility.setCallErr(marotte.MethodSetConfigOption, errors.New("broken pipe"))
-	rewriteConfigByHand(t, configDir, `{"content_collection_enabled":true}`)
-	h.ReconcileSessionSettings(t.Context())
-
-	var mu sync.Mutex
-	var stoppedAtAssert []bool
-	utility.mu.Lock()
-	delete(utility.callErrs, marotte.MethodSetConfigOption)
-	utility.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
-		if method == marotte.MethodSetConfigOption {
-			mu.Lock()
-			stoppedAtAssert = append(stoppedAtAssert, stopped(utility))
-			mu.Unlock()
-		}
-		return nil, nil, false
-	}
-	utility.mu.Unlock()
-	writeKiroCLISettings(t, cliJSON, `{"telemetry.enabled":false}`)
-
-	h.ReconcileSessionSettings(t.Context())
-
-	if !stopped(utility) {
-		t.Fatal("Setup: turning telemetry off did not restart the utility session")
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if !slices.Equal(stoppedAtAssert, []bool{false}) {
-		t.Errorf("content-collection asserts on the restarting utility process (stopped at each: %v), want one before it stopped: "+
-			"it serves held leases until then, opted in", stoppedAtAssert)
-	}
-}
-
 func TestReconcileSessionSettings_AnMCPRenderOfAnotherWaitValueIsRetried(t *testing.T) {
 	render := &fakeMCPRender{render: func(_ context.Context, n int) (bool, error) { return n > 1, nil }}
 	h, configDir := reopenFixture(t, WithKASMCPRenderer(render))
@@ -322,79 +285,6 @@ func TestOpenBridge_AnMCPRenderQueuedBehindAHeldStoreWaitsOnlyThePushBound(t *te
 		}
 		if wait, known := render.RenderedWaitForReady(); !known || !wait {
 			t.Errorf("after the retry the rendered wait is (%t, %t), want (true, true)", wait, known)
-		}
-	})
-}
-
-func TestOpenBridge_AUtilityRestartWhoseStopHangsWaitsOnlyThePushBound(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		cliJSON := withKiroTelemetry(t, `{"telemetry.enabled":true}`)
-		h, _ := reopenFixture(t)
-		utility := acquireUtility(t, h)
-		teardown := make(chan struct{})
-		finish := sync.OnceFunc(func() { close(teardown) })
-		t.Cleanup(finish)
-		utility.mu.Lock()
-		utility.stopGate = teardown
-		utility.mu.Unlock()
-		writeKiroCLISettings(t, cliJSON, `{"telemetry.enabled":false}`)
-
-		if waited := openWithin(t, h, "c1", 2*ignorePushTimeout); waited > ignorePushTimeout {
-			t.Errorf("OpenBridge restarting a utility whose stop hangs returned after %v, want at most the %v push bound",
-				waited, ignorePushTimeout)
-		}
-		if stopped(utility) {
-			t.Fatal("Setup: the utility process stopped through a held teardown")
-		}
-
-		finish()
-		synctest.Wait()
-		if !stopped(utility) {
-			t.Error("the utility process taken for restart was not stopped once its teardown could finish")
-		}
-	})
-}
-
-func TestOpenBridge_AnMCPRenderAndAUtilityStopBothHeldShareThePushBound(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		logs := captureLogs(t)
-		cliJSON := withKiroTelemetry(t, `{"telemetry.enabled":true}`)
-		storeHeld := make(chan struct{})
-		releaseStore := sync.OnceFunc(func() { close(storeHeld) })
-		render := &fakeMCPRender{render: func(ctx context.Context, _ int) (bool, error) {
-			select {
-			case <-storeHeld:
-			case <-ctx.Done():
-				return false, ctx.Err()
-			}
-			return true, nil
-		}}
-		h, configDir := reopenFixture(t, WithKASMCPRenderer(render))
-		t.Cleanup(releaseStore)
-		utility := acquireUtility(t, h)
-		teardown := make(chan struct{})
-		finish := sync.OnceFunc(func() { close(teardown) })
-		t.Cleanup(finish)
-		utility.mu.Lock()
-		utility.stopGate = teardown
-		utility.mu.Unlock()
-		writeSetting(t, configDir, settings.KeyMCPWaitForReady, true)
-		writeKiroCLISettings(t, cliJSON, `{"telemetry.enabled":false}`)
-
-		if waited := openWithin(t, h, "c1", 3*ignorePushTimeout); waited > ignorePushTimeout {
-			t.Errorf("OpenBridge with the MCP store held and a utility stop hanging returned after %v, want at most the %v push bound in all",
-				waited, ignorePushTimeout)
-		}
-		if got := render.count(); got != 1 {
-			t.Fatalf("Setup: the open rendered %d times, want 1", got)
-		}
-		if got, want := logs.String(), `"msg":"utility session stop still running; it finishes in the background","waited_ms":0}`; !strings.Contains(got, want) {
-			t.Errorf("the render spent the whole bound, so the utility stop got no wait; logs lack %s:\n%s", want, got)
-		}
-		finish()
-		synctest.Wait()
-		if !stopped(utility) {
-			t.Error("the utility process taken for restart was not stopped once its teardown could finish")
 		}
 	})
 }
@@ -504,10 +394,7 @@ func TestSyncProcessLive_QueuedBehindAHeldSyncWaitsOnlyThePushBound(t *testing.T
 	})
 }
 
-const (
-	syncLockWaitWarn   = `"msg":"settings: another live-settings sync held the lock past the bound; the MCP render`
-	reportLockWaitWarn = `"msg":"settings: another live-settings sync held the lock past the bound; an unreadable agent ignore list`
-)
+const syncLockWaitWarn = `"msg":"settings: another live-settings sync held the lock past the bound; the MCP render`
 
 func TestProcessSync_ACallerWhoLeftWhileQueuedLogsNothing(t *testing.T) {
 	for _, tc := range []struct {
@@ -516,7 +403,6 @@ func TestProcessSync_ACallerWhoLeftWhileQueuedLogsNothing(t *testing.T) {
 		warn string
 	}{
 		{name: "sync", run: (*Runtime).syncProcessLive, warn: syncLockWaitWarn},
-		{name: "unreadable_report", run: (*Runtime).reportUnreadableOwed, warn: reportLockWaitWarn},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logs := captureLogs(t)
@@ -537,27 +423,7 @@ func TestProcessSync_ACallerWhoLeftWhileQueuedLogsNothing(t *testing.T) {
 	}
 }
 
-func TestReportUnreadableOwed_QueuedBehindAHeldProcessSyncWaitsOnlyThePushBound(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		logs := captureLogs(t)
-		h, _ := reopenFixture(t)
-		if !h.processLive.lock.lock(t.Context()) {
-			t.Fatal("Setup: could not take the process sync lock")
-		}
-		t.Cleanup(h.processLive.lock.unlock)
-
-		report := func() { h.reportUnreadableOwed(t.Context()) }
-		if waited := returnsWithin(t, "reportUnreadableOwed", 3*ignorePushTimeout, report); waited > ignorePushTimeout {
-			t.Errorf("reportUnreadableOwed queued behind a held process sync returned after %v, want at most the %v push bound",
-				waited, ignorePushTimeout)
-		}
-		if got := logs.String(); !strings.Contains(got, reportLockWaitWarn) {
-			t.Errorf("an unreadable report that gave up behind a held lock logged no %q line:\n%s", reportLockWaitWarn, got)
-		}
-	})
-}
-
-func TestOpenBridge_ReopeningARetiredChatWithTheMCPStoreHeldWaitsOnlyThePushBound(t *testing.T) {
+func TestOpenBridge_ReloadingAMarkedChatWithTheMCPStoreHeldWaitsOnlyThePushBound(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		storeHeld := make(chan struct{})
 		release := sync.OnceFunc(func() { close(storeHeld) })
@@ -579,11 +445,11 @@ func TestOpenBridge_ReopeningARetiredChatWithTheMCPStoreHeldWaitsOnlyThePushBoun
 		writeSetting(t, configDir, settings.KeyMCPWaitForReady, true)
 
 		if waited := openWithin(t, h, "c1", 3*ignorePushTimeout); waited > ignorePushTimeout {
-			t.Errorf("OpenBridge reopening a retired chat with the MCP store held returned after %v, want at most the %v push bound in all",
+			t.Errorf("OpenBridge reloading a marked chat with the MCP store held returned after %v, want at most the %v push bound in all",
 				waited, ignorePushTimeout)
 		}
-		if !stopped(fakeOf(first)) {
-			t.Fatal("Setup: the open kept the bridge spawned under the old profile")
+		if !sessionClosed(fakeOf(first)) {
+			t.Fatal("Setup: the open kept the session opened under the old profile")
 		}
 
 		release()
@@ -593,38 +459,8 @@ func TestOpenBridge_ReopeningARetiredChatWithTheMCPStoreHeldWaitsOnlyThePushBoun
 		if wait, known := render.RenderedWaitForReady(); !known || !wait {
 			t.Errorf("after the next open the rendered wait is (%t, %t), want (true, true): the render that gave up is retried there", wait, known)
 		}
-		// The reopen's session load resumes runs through the utility session on its own goroutine; it must finish
-		// before the fixture's Shutdown stops that session, or the bubble ends with its forward loop parked.
+		// The reload's session load resumes runs on its own goroutine; it must finish before the fixture's Shutdown,
+		// or the bubble ends with its forward loop parked.
 		synctest.Wait()
-	})
-}
-
-func TestOpenBridge_AUtilityRestartOnceDrainingLeavesTheStopToShutdown(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		cliJSON := withKiroTelemetry(t, `{"telemetry.enabled":true}`)
-		h, _ := reopenFixture(t)
-		utility := acquireUtility(t, h)
-		teardown := make(chan struct{})
-		finish := sync.OnceFunc(func() { close(teardown) })
-		t.Cleanup(finish)
-		utility.mu.Lock()
-		utility.stopGate = teardown
-		utility.mu.Unlock()
-		writeKiroCLISettings(t, cliJSON, `{"telemetry.enabled":false}`)
-		h.lifecycle.draining.Store(true)
-
-		if waited := openWithin(t, h, "c1", 2*ignorePushTimeout); waited > ignorePushTimeout {
-			t.Errorf("OpenBridge restarting a utility whose stop hangs, once draining, returned after %v, want at most the %v push bound",
-				waited, ignorePushTimeout)
-		}
-		if h.utility.peek() == nil {
-			t.Fatal("once draining, the restart took the utility session, which Shutdown's own utility stop no longer sees")
-		}
-
-		finish()
-		h.stopUtilityBridge()
-		if !stopped(utility) {
-			t.Error("Shutdown's utility stop did not stop the session the restart left to it")
-		}
 	})
 }

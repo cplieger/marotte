@@ -17,12 +17,11 @@ func (rs *Runs) extendRepeat(ctx context.Context, workflowID, nodeID string, n i
 	if n < 1 || n > maxExtendIterations {
 		return fmt.Errorf("iterations must be between 1 and %d", maxExtendIterations)
 	}
-	host, err := rs.hostRun(ctx, workflowID)
+	host, err := rs.ensureResident(ctx, workflowID)
 	if err != nil {
 		return err
 	}
-	defer func() { host.release(err) }()
-	if _, err = rs.callReclaiming(ctx, host.sb.bridge, workflowID, methodKiroWorkflowResume, map[string]any{
+	if _, err = host.call(ctx, rs, workflowID, methodKiroWorkflowResume, map[string]any{
 		keyWorkflowID: workflowID,
 		"extendRepeat": map[string]any{
 			"nodeId":               nodeID,
@@ -40,13 +39,11 @@ func (rs *Runs) finishRepeat(ctx context.Context, workflowID, nodeID string) (er
 	if nodeID == "" {
 		return errors.New("missing node id")
 	}
-	host, err := rs.hostRun(ctx, workflowID)
+	host, err := rs.ensureResident(ctx, workflowID)
 	if err != nil {
 		return err
 	}
-	// A decline releases with a cause too: no run_complete follows.
-	defer func() { host.release(err) }()
-	resp, err := rs.callReclaiming(ctx, host.sb.bridge, workflowID, methodKiroWorkflowUpdate, map[string]any{
+	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowUpdate, map[string]any{
 		keyWorkflowID: workflowID,
 		"action":      updateStatusAction,
 		"status":      runStepCompleted,

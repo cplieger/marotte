@@ -4,17 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"net/url"
-	"strings"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// SlashCatalog holds the workspace's slash-menu entries. A chat's frame wins
-// over the utility session's, because the utility session runs no MCP servers
-// and so lists no MCP prompts. Each setter reports whether the list changed.
+// SlashCatalog holds the workspace's slash-menu entries. Every session on the one engine lists the same commands,
+// MCP prompts included, so any session's frame sets it. Set reports whether the list changed.
 type SlashCatalog interface {
-	SetFromChat(cmds []marotte.SlashCommand) bool
+	Set(cmds []marotte.SlashCommand) bool
 }
 
 // SteeringIssues holds KAS's per-document steering configuration issues. Set
@@ -107,7 +104,7 @@ func slashKind(c *kasAvailableCommand) (marotte.SlashCommandKind, bool) {
 }
 
 // HandleAvailableCommandsUpdate feeds a chat's catalog frame into the workspace
-// slash catalog. A step's or a subagent's frame is not the workspace's.
+// slash catalog. A step's frame is not the workspace's.
 func (t *Translator) HandleAvailableCommandsUpdate(ctx context.Context, _ marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	if !attr.ChatOwned() || t.slash == nil {
 		return
@@ -116,7 +113,7 @@ func (t *Translator) HandleAvailableCommandsUpdate(ctx context.Context, _ marott
 	if !ok {
 		return
 	}
-	if t.slash.SetFromChat(cmds) {
+	if t.slash.Set(cmds) {
 		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSlashCommandsChanged, "", marotte.SlashCommandsChangedPayload{}))
 	}
 }
@@ -148,11 +145,10 @@ func readSteeringIssues(params json.RawMessage) (issues map[string][]marotte.Ste
 		if len(d.Meta.Kiro.ConfigIssues) == 0 {
 			continue
 		}
-		u, err := url.Parse(d.URI)
-		if err != nil || u.Scheme != "file" || u.Path == "" {
+		key, ok := docKeyFromFileURI(d.URI)
+		if !ok {
 			continue
 		}
-		key := strings.TrimPrefix(u.Path, "/")
 		for j := range d.Meta.Kiro.ConfigIssues {
 			issues[key] = append(issues[key], sanitizeSteeringIssue(&d.Meta.Kiro.ConfigIssues[j]))
 		}
@@ -174,16 +170,10 @@ func sanitizeSteeringIssue(is *marotte.SteeringIssue) marotte.SteeringIssue {
 // HandleSteeringDocuments consumes _kiro/steering/documents_changed for the
 // configuration issues KAS found in each steering document.
 func (t *Translator) HandleSteeringDocuments(ctx context.Context, _ marotte.ChatID, msg *marotte.RPCResponse) {
-	t.ApplySteeringDocuments(ctx, msg.Params)
-}
-
-// ApplySteeringDocuments is HandleSteeringDocuments's body, shared with the
-// utility session's forward.
-func (t *Translator) ApplySteeringDocuments(ctx context.Context, params json.RawMessage) {
 	if t.steeringIssues == nil {
 		return
 	}
-	issues, ok := readSteeringIssues(params)
+	issues, ok := readSteeringIssues(msg.Params)
 	if !ok {
 		slog.Debug("steering documents_changed: not a success frame")
 		return

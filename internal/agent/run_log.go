@@ -76,11 +76,7 @@ type runRecord struct {
 	ends map[string]marotte.RunStepEnd
 	// starts is each path's current attempt, nil until a read scans the log; every open and close then keeps it current.
 	starts map[string]stepAttempt
-	// lostHost is the host's bridge process that ended, with which the run's owning process died.
-	// open, or Runs.armDeadline stamping a deadline, sets it nil; Runs.hostLost honours it only while
-	// the run's latest arm was on that process.
-	lostHost ACPBridge
-	host     marotte.ChatID
+	host   marotte.ChatID
 	// removed is the tombstone: a frame arriving after Delete opens nothing.
 	removed bool
 }
@@ -88,11 +84,8 @@ type runRecord struct {
 // One mutex, held across the store call; nothing here runs under the log's own lock.
 type runLog struct {
 	runs map[string]*runRecord
-	// hostEnded receives the dead bridge and the runs closeHost marked host-lost, called outside mu
-	// (Runs.useLog sets it).
-	hostEnded func(ctx context.Context, dead ACPBridge, workflowIDs []string)
-	root      string
-	mu        sync.Mutex
+	root string
+	mu   sync.Mutex
 }
 
 func newRunLog(configDir string) *runLog {
@@ -372,46 +365,6 @@ func (r *runLog) hasOpen(workflowID string) bool {
 	return ok && len(rec.open) > 0
 }
 
-// lostHost is the bridge whose end the run has not executed since, nil for none.
-func (r *runLog) lostHost(workflowID string) ACPBridge {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if rec, ok := r.runs[workflowID]; ok {
-		return rec.lostHost
-	}
-	return nil
-}
-
-func (r *runLog) clearHostLost(workflowID string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if rec, ok := r.runs[workflowID]; ok {
-		rec.lostHost = nil
-	}
-}
-
-// markHostLost marks every run chatID's bridge hosts as lost to dead, ahead of the death closer's
-// closeHost, which marks them again.
-func (r *runLog) markHostLost(chatID marotte.ChatID, dead ACPBridge) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, rec := range r.runs {
-		if rec.host == chatID {
-			rec.lostHost = dead
-		}
-	}
-}
-
-// hostOf is the chat whose bridge carries the run's steps, empty until a step opened.
-func (r *runLog) hostOf(workflowID string) marotte.ChatID {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if rec, ok := r.runs[workflowID]; ok {
-		return rec.host
-	}
-	return ""
-}
-
 // openTops answers, in node path order, the top-level step each of the run's open step turns sits
 // under, skipping a turn whose opening frame carried no path.
 func (r *runLog) openTops(workflowID string) []string {
@@ -444,7 +397,6 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 	if rec.host == "" {
 		rec.host = hostFor(workflowID, chatID)
 	}
-	rec.lostHost = nil
 	if t := rec.open[nodePath]; t != nil {
 		// KAS sends node_start twice per step; the second continues this turn.
 		if t.top == "" {
@@ -619,17 +571,9 @@ func (r *runLog) closeRunTurns(ctx context.Context, workflowID string, c marotte
 	return sealed, err
 }
 
-// closeHost closes every open turn of every run chatID's dead bridge hosted (the death closer's run
-// arm), answering sealed entries per run, and marks each such run's host lost to dead for hostEnded.
-func (r *runLog) closeHost(ctx context.Context, chatID marotte.ChatID, dead ACPBridge, c marotte.TurnConclusion) (map[string][]turnlog.Sealed, error) {
-	out, lost, err := r.closeHostTurns(ctx, chatID, dead, c)
-	if len(lost) > 0 && r.hostEnded != nil {
-		r.hostEnded(ctx, dead, lost)
-	}
-	return out, err
-}
-
-func (r *runLog) closeHostTurns(ctx context.Context, chatID marotte.ChatID, dead ACPBridge, c marotte.TurnConclusion) (out map[string][]turnlog.Sealed, lost []string, err error) {
+// closeHost closes every open turn of every run chatID's ended session hosted (the death closer's run arm),
+// answering sealed entries per run.
+func (r *runLog) closeHost(ctx context.Context, chatID marotte.ChatID, c marotte.TurnConclusion) (out map[string][]turnlog.Sealed, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var errs []error
@@ -637,8 +581,6 @@ func (r *runLog) closeHostTurns(ctx context.Context, chatID marotte.ChatID, dead
 		if rec.host != chatID {
 			continue
 		}
-		rec.lostHost = dead
-		lost = append(lost, id)
 		if len(rec.open) == 0 {
 			continue
 		}
@@ -653,7 +595,7 @@ func (r *runLog) closeHostTurns(ctx context.Context, chatID marotte.ChatID, dead
 			out[id] = sealed
 		}
 	}
-	return out, lost, errors.Join(errs...)
+	return out, errors.Join(errs...)
 }
 
 // delete closes every open turn `cancelled`, drops the maps and tombstones the log; RemoveDir is last,

@@ -79,7 +79,7 @@ onSSE("knowledge_indexing", (chatID, p) => {
 onBus(BUS_PAGE_RESUMED, clearAll);
 onBus(BUS_RECONCILE, clearAll);
 
-// A deleted chat's bridge never delivers the completion, so its entries would
+// A deleted chat's session never delivers the completion, so its entries would
 // otherwise stay forever and a pending timer would raise a banner on a chat that
 // no longer exists.
 onSSE("chat_deleted", (_chatID, p) => {

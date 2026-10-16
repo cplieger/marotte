@@ -52,8 +52,6 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 		return
 	}
 
-	subSessionID := t.deriveSubSession(chatID, req.SessionID)
-
 	options := make([]marotte.PermissionOption, len(req.Options))
 	for i, o := range req.Options {
 		// Name is the button text, a decision surface like the title; OptionID and Kind are echoed
@@ -71,7 +69,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 		alwaysAllowBlocked = marotte.AlwaysAllowBlockUnparseable
 	}
 
-	// A step's ask is attributed to its run whichever bridge it arrived on; the node id says WHO asks.
+	// A step's ask is attributed to its run whichever lane it arrived on; the node id says WHO asks.
 	step, watch := t.askStep(req.SessionID, &req.Meta.Kiro)
 	var locations []string
 	for _, l := range req.ToolCall.Locations {
@@ -91,7 +89,6 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 		// could render `rm -rf /workspace` as a harmless command (see displayText).
 		Title:              title,
 		Kind:               toolKindFromWire(req.ToolCall.Kind),
-		SubSessionID:       subSessionID,
 		RunID:              step.WorkflowID,
 		NodeID:             step.NodeID,
 		Watch:              watch,

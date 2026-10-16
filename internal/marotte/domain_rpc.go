@@ -25,8 +25,8 @@ type RPCResponse struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
-// Notification is one frame a bridge delivered, carrying the monotonic
-// sequence its read loop stamped on it.
+// Notification is one frame a lane delivered, carrying the position the
+// engine's read loop stamped on it within that lane.
 //
 // The sequence travels WITH the frame rather than being recounted by the consumer:
 // a counter incremented on receipt skews the moment a frame is dropped or filtered
@@ -35,8 +35,8 @@ type RPCResponse struct {
 // numbers have to come from one source (Dijkstra and Scholten, EWD687a).
 type Notification struct {
 	Msg *RPCResponse
-	// Seq is the read loop's count of frames delivered up to and including this
-	// one. Monotonic per bridge and restarting at zero for a new one.
+	// Seq is the lane's count of frames appended up to and including this one.
+	// Monotonic per lane, and comparable only within one lane.
 	Seq uint64
 }
 
@@ -96,26 +96,35 @@ type RPCErrorOut struct {
 // path for callers that need errors.Is classification.
 var ErrNotIdle = errors.New("session not idle")
 
-// ErrBridgeExited is the sentinel for an ACP subprocess whose read loop has closed for good: a Call
-// pending when it died returns it wrapped in a TransportError, and a Respond after it returns it
-// wrapped directly, having written nothing. Distinct from a transient write failure because the two
-// want opposite actions: a retry on a dead bridge only burns time.
+// ErrBridgeExited is the sentinel for an engine whose read loop has closed for good, and for a
+// session handle from an engine that is gone: a Call pending when it died returns it wrapped in a
+// TransportError, and a Respond or write after it returns it wrapped directly. Distinct from a
+// transient failure because the two want opposite actions: a retry on a dead engine only burns time.
 var ErrBridgeExited = errors.New("ACP bridge exited")
 
-// ErrFrameTooLarge is the sentinel a Call returns (wrapped in a NON-retryable TransportError) when
-// one stdout frame exceeded the bridge's cap and was dropped. The process and session live, so
-// nothing is torn down. Every pending request fails, since the dropped frame cannot be attributed;
-// the text is user-facing. Not retryable: the same turn would likely overflow again.
+// ErrFrameTooLarge is the sentinel a Call returns (wrapped in a NON-retryable TransportError) when a
+// stdout frame exceeded the engine's cap and was dropped with this call's answer possibly inside it.
+// The engine and session live, so nothing is torn down; the text is user-facing. Not retryable: the
+// same turn would likely overflow again.
 var ErrFrameTooLarge = errors.New("a message from kiro-cli was too large to read and was dropped, so this turn was stopped")
 
-// ErrBridgeNotStarted is the sentinel every write on a bridge returns when there is no subprocess
-// to write to: Start has not run, or it failed. A bridge is registered before Start so opens
-// coalesce, so a command can hold one mid-spawn. Call wraps it retryable, letting the caller's
-// policy decide.
+// ErrBridgeNotStarted is the sentinel every write on an engine returns when there is no process to
+// write to: Start has not run, or it failed.
 var ErrBridgeNotStarted = errors.New("ACP bridge has not started")
 
-// TransportError wraps bridge-level transport failures (pipe closed,
-// write timeout, process exited) with explicit retryability semantics.
+// ErrSessionMetaRefused fails a session/new whose reply named another id than the one marotte
+// minted: KAS parses `_meta.kiro` all or nothing, so one field failing its schema dropped them all.
+var ErrSessionMetaRefused = errors.New("kiro-cli did not accept this chat's session settings; the server log names them")
+
+// ErrSessionClosing refuses a call on a session whose session/close is written but unconfirmed;
+// KAS's requests during the close are still answered.
+var ErrSessionClosing = errors.New("the agent engine did not finish closing this chat's session; restart the agent engine from Settings")
+
+// ErrSessionClosed refuses a call on a session that is closed.
+var ErrSessionClosed = errors.New("this session is closed")
+
+// TransportError wraps engine-level transport failures (pipe closed,
+// write stall, process exited) with explicit retryability semantics.
 // Callers use errors.As to classify without substring matching.
 type TransportError struct {
 	Err       error

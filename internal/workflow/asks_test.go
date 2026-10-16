@@ -107,10 +107,6 @@ func TestOpenAsks_RecordedReplies(t *testing.T) {
 			log: RunLog{Quiet: true}, wantN: 1, wantWait: marotte.RunAskUnsettled,
 		},
 		{
-			name: "a run whose host died is recovering", fixture: "first-after-reply",
-			log: RunLog{HostLost: true, Quiet: true}, wantN: 1, wantWait: marotte.RunAskRecovering,
-		},
-		{
 			name: "marotte's own pending holds without masking the wait", fixture: "first-after-reply",
 			log: RunLog{Pending: true}, wantN: 1, wantWait: marotte.RunAskSettling, wantHold: marotte.RunAskPending,
 		},

@@ -45,10 +45,11 @@ func newBudgetRuntime(t *testing.T) *Runtime {
 	}
 	cs := newTestChatStore()
 	br := newFakeBridge()
-	rt := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs,
+	rt := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return br }, laneOf(br)), cs,
 		WithTabs(st), WithConfigDir(dir))
 	cs.wire(rt)
 	t.Cleanup(func() { shutdownHub(t, rt) })
+	settleBoot(t, rt)
 	return rt
 }
 
@@ -145,6 +146,8 @@ func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []marotte.ChatID) {
 		}}, true)
 		c.mu.Unlock()
 	}
+	// Each lease kicked a background inspect on the engine; it lands before the test reads a version.
+	joinInflight(tb, rt)
 }
 
 // The recorder's Body is the measured bytes.

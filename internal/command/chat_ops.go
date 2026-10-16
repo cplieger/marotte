@@ -115,25 +115,30 @@ func cmdCancel(
 	// prompt call is then guaranteed a grace budget this cancel can arm.
 	stops.RequestStop(cmd.ChatID)
 
-	// Only pending permissions are cleared; KAS owns the write gate and
-	// cancelling a turn already reverts its own approval.
-	perms.ClearPendingPermsForChat(cmd.ChatID)
-
-	// Stopping the model does not stop the processes its turn already
-	// spawned. Scoped to the turn's own terminals only.
-	terms.KillForTurn(cmd.ChatID)
-
+	// The lead is steer-queue state: a stop in the session-door window (no bridge
+	// yet) still ends an admitted turn, whose hand-on sends the lead first.
 	sb := bridges.Bridge(cmd.ChatID)
-	if sb == nil {
-		return responseOK, nil
-	}
 	undoLead := func() {}
 	if queue != nil && p.Lead != "" {
 		undoLead = queue.SetSteerLead(cmd.ChatID, p.Lead)
 	}
-	if err := sb.Notify(ctx, marotte.MethodCancel, sessionParams(sb)); err != nil {
+	err := cancelSession(ctx, perms, sb, cmd.ChatID, ScopeChatSession)
+	if errors.Is(err, ErrCancelNotDelivered) {
+		undoLead()
+		return nil, StatusError(http.StatusBadGateway, errCancelNotDelivered)
+	}
+	perms.ClearPendingInputAsks(cmd.ChatID, ScopeChatSession)
+	// Stopping the model does not stop the processes its turn already
+	// spawned. Scoped to the turn's own terminals only.
+	terms.KillForTurn(cmd.ChatID)
+	if sb == nil {
+		return responseOK, nil
+	}
+	if err != nil {
+		// The session ended, so its turn closes on the death fan-out.
 		undoLead()
 		slog.Error("cancel failed", "chat_id", cmd.ChatID, keyError, err)
+		return responseOK, nil
 	}
 	// session/cancel is a notification nothing acks: the turn ends only when KAS answers
 	// session/prompt. If it never does, the grace budget cancels the prompt's context so the
@@ -145,20 +150,16 @@ func cmdCancel(
 	return responseOK, nil
 }
 
-// closeChatTeardown is the tab-close teardown: the turn, the runs and the process go; the chat
+// closeChatTeardown is the tab-close teardown: the turn, the runs and the session go; the chat
 // RECORD stays. Ordering is the contract: the turn is cancelled first (graceful stop), then the
-// runs (durable state a dead process would only pause), then the process teardown, which flushes
-// the in-flight buffer and kills the chat's agent terminals. Pending asks are left for that bridge's
+// runs (durable state a closed session would only pause), then the session teardown, which flushes
+// the in-flight buffer and kills the chat's agent terminals. Input asks are left for that session's
 // end to retire as ended: a clear here would drop the cards without saying why.
-func closeChatTeardown(ctx context.Context, bridges bridgeAccess, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID) {
-	slog.Info("chat tab closed; tearing down its bridge", "chat_id", chatID)
+func closeChatTeardown(ctx context.Context, bridges bridgeAccess, perms permissionCanceller, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID) {
+	slog.Info("chat tab closed; tearing down its session", "chat_id", chatID)
 	stops.RequestStop(chatID)
 	teardown.BeginChatTeardown(chatID, true)
-	if sb := bridges.Bridge(chatID); sb != nil {
-		if err := sb.Notify(ctx, marotte.MethodCancel, sessionParams(sb)); err != nil {
-			slog.Warn("close: turn cancel failed", "chat_id", chatID, keyError, err)
-		}
-	}
+	teardownCancel(ctx, bridges, perms, chatID)
 	teardown.CloseChatState(ctx, chatID)
 }
 
@@ -167,15 +168,19 @@ func closeChatTeardown(ctx context.Context, bridges bridgeAccess, stops turnStop
 // first, then the delete-grade teardown driven from the session chain the
 // record's delete answered (a record-reading teardown would no-op on a
 // deleted chat). Mirrors closeChatTeardown so the two grades cannot drift.
-func deleteChatTeardown(ctx context.Context, bridges bridgeAccess, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID, sessionChain []string) {
+func deleteChatTeardown(ctx context.Context, bridges bridgeAccess, perms permissionCanceller, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID, sessionChain []string) {
 	stops.RequestStop(chatID)
 	teardown.BeginChatTeardown(chatID, false)
-	if sb := bridges.Bridge(chatID); sb != nil {
-		if err := sb.Notify(ctx, marotte.MethodCancel, sessionParams(sb)); err != nil {
-			slog.Warn("close: turn cancel failed", "chat_id", chatID, keyError, err)
-		}
-	}
+	teardownCancel(ctx, bridges, perms, chatID)
 	teardown.DeleteChatStateByChain(ctx, chatID, sessionChain, RunStopTabClosed)
+}
+
+// teardownCancel is a teardown's turn cancel: every ask of the chat and its runs, which the teardown cancels next. A
+// failure is logged and the teardown continues, because the session's close settles what is left.
+func teardownCancel(ctx context.Context, bridges bridgeAccess, perms permissionCanceller, chatID marotte.ChatID) {
+	if err := cancelSession(ctx, perms, bridges.Bridge(chatID), chatID, ScopeChatAndRuns); err != nil {
+		slog.Warn("close: turn cancel failed", "chat_id", chatID, keyError, err)
+	}
 }
 
 // cmdPermission forwards the user's permission dialog choice to kiro-cli. An always answer

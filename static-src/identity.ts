@@ -10,9 +10,19 @@ import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
  * cannot be mistaken for signed out.
  */
 export type IdentityVerdict =
-  | { state: "signed_in"; email: string }
+  | ({ state: "signed_in" } & SignedInAccount)
   | { state: "signed_out" }
   | { state: "unavailable"; reason: string };
+
+/** The signed-in account as the account menu shows it; an empty string is a label the server did not report. */
+export interface SignedInAccount {
+  email: string;
+  method: string;
+  startUrl: string;
+  region: string;
+  /** KIRO_API_KEY signs the engine in, so marotte can neither sign in nor sign out. */
+  apiKey: boolean;
+}
 
 /**
  * A null response (fetch failed or did not decode) makes the same claim as the server's `unavailable`; only the
@@ -28,7 +38,14 @@ export async function resolveIdentity(): Promise<IdentityVerdict> {
   }
   switch (d.state) {
     case "signed_in":
-      return { state: "signed_in", email: d.email ?? "" };
+      return {
+        state: "signed_in",
+        email: d.email ?? "",
+        method: d.auth ?? "",
+        startUrl: d.startUrl ?? "",
+        region: d.region ?? "",
+        apiKey: d.apiKey === true,
+      };
     case "signed_out":
       return { state: "signed_out" };
     case "unavailable":

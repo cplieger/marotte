@@ -11,6 +11,7 @@ import type { BootSnapshot } from "./boot-snapshot.js";
 import type { IdentityVerdict } from "./identity.js";
 import type { EffectiveSettings } from "./persist.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
+import { signedIn } from "./__test-helpers__/identity.js";
 
 /** A promise plus the handle to settle it, so a test can hold one read open and
  *  watch what the boot does without it. */
@@ -108,6 +109,7 @@ const m = vi.hoisted(() => {
     }),
     initGovernance: vi.fn(),
     initRuntimeHealth: vi.fn(),
+    initEngineStatus: vi.fn(),
     initStatusVersions: vi.fn(),
     loadVersions: vi.fn(),
     fetchCatalog: vi.fn(),
@@ -198,6 +200,7 @@ vi.mock("./route-path.js", async (importOriginal) => ({
 vi.mock("./chat.js", () => ({ createSession: m.createSession }));
 vi.mock("./governance.js", () => ({ initGovernance: m.initGovernance }));
 vi.mock("./runtime-health.js", () => ({ initRuntimeHealth: m.initRuntimeHealth }));
+vi.mock("./engine-status.js", () => ({ initEngineStatus: m.initEngineStatus }));
 vi.mock("./status.js", () => ({
   initStatusVersions: m.initStatusVersions,
   setStatus: m.setStatus,
@@ -250,7 +253,7 @@ async function freshBoot(): Promise<typeof BootModule> {
   return (await import(/* @vite-ignore */ `./boot.ts?t=${bootSeq}`)) as typeof BootModule;
 }
 
-const SIGNED_IN: IdentityVerdict = { state: "signed_in", email: "someone@example.test" };
+const SIGNED_IN: IdentityVerdict = signedIn("someone@example.test");
 
 /** A record with something in it, so a paint that DID happen is distinguishable
  *  from the empty default. */
@@ -1050,7 +1053,7 @@ describe("a boot inside a reload loop", () => {
     );
   });
 
-  it("skips the fetch-only fan-outs and keeps the two that report state", async () => {
+  it("skips the fetch-only fan-outs and keeps the three that report state", async () => {
     m.bootMode.mockReturnValue("reduced");
 
     const { startBoot } = await freshBoot();
@@ -1059,9 +1062,10 @@ describe("a boot inside a reload loop", () => {
     expect(m.fetchCatalog).not.toHaveBeenCalled();
     expect(m.loadVersions).not.toHaveBeenCalled();
     expect(m.initStatusVersions).not.toHaveBeenCalled();
-    // Capability, and a degraded runtime: what a reader in this state needs most.
+    // Capability, a degraded runtime and the agent engine: what a reader in this state needs most.
     expect(m.initGovernance).toHaveBeenCalledTimes(1);
     expect(m.initRuntimeHealth).toHaveBeenCalledTimes(1);
+    expect(m.initEngineStatus).toHaveBeenCalledTimes(1);
     // The live-runs inventory is not fetched: the `connected` handshake states it.
     expect(m.rebuildLiveRuns).not.toHaveBeenCalled();
   });

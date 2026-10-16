@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"log/slog"
 	"net/http"
@@ -22,20 +23,50 @@ import (
 )
 
 // Call Shutdown to tear it down.
-func newTestHub() (*Runtime, *testChatStore, *fakeBridge) {
-	return newTestHubIn("/tmp/work")
+func newTestHub(opts ...Option) (*Runtime, *testChatStore, *fakeBridge) {
+	return newTestHubIn("/tmp/work", opts...)
+}
+
+// settleBoot is awaitBoot for a runtime a test built itself.
+func settleBoot(t *testing.T, h *Runtime) {
+	t.Helper()
+	if err := awaitBoot(h); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // Reassigning workDir afterwards misses the wiring's one read. Order-sensitive: cs.Bus can only be
 // set once New returned.
-func newTestHubIn(workDir string) (*Runtime, *testChatStore, *fakeBridge) {
+func newTestHubIn(workDir string, opts ...Option) (*Runtime, *testChatStore, *fakeBridge) {
 	cs := newTestChatStore()
 	br := newFakeBridge()
-	h := New(context.Background(), workDir, func() ACPBridge { return br }, cs)
-	// Park the cancel-retry ladder: its untracked timers outlive the test.
-	h.runs.cancelRetryBase = time.Hour
+	h := newRuntimeOn(context.Background(), workDir, fakeEngineOf(func() engineSession { return br }, br), cs, opts...)
 	cs.wire(h)
+	// The engine's boot work reads br's scripts; a test edits them unlocked, so only after this.
+	if err := awaitBoot(h); err != nil {
+		panic(err)
+	}
+	br.forgetCalls()
 	return h, cs, br
+}
+
+// awaitBoot waits for h's first engine generation and the work its readiness started, so the replay ring
+// already holds every boot frame (engine_status among them) and no boot call is still reading a fake.
+func awaitBoot(h *Runtime) error {
+	if !awaitEngine(h) {
+		return errors.New("setup: the fake engine was not ready within 5s")
+	}
+	drained := make(chan struct{})
+	go func() {
+		h.lifecycle.inflight.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+		return nil
+	case <-time.After(5 * time.Second):
+		return errors.New("setup: the engine's boot work did not drain within 5s")
+	}
 }
 
 // originOf is the bridge a frame for chatID arrives on in a test, which is what forwardAt passes:
@@ -47,9 +78,44 @@ func (rt *Runtime) originOf(chatID marotte.ChatID) acpResponder {
 	return nil
 }
 
-// Call only once nothing else will Add.
-func joinInflight(t *testing.T, h *Runtime) {
+// bootComing reports whether h's first engine generation is still going to become ready. Its ready hook adds
+// to inflight, and an Add from zero concurrent with a Wait is a WaitGroup misuse the race detector reports.
+func bootComing(h *Runtime) bool {
+	select {
+	case <-h.EngineReady():
+		return false
+	default:
+	}
+	if h.engine.unavailable {
+		return false
+	}
+	src, ok := h.engine.source.(*fakeEngineSource)
+	if !ok {
+		return false
+	}
+	src.mu.Lock()
+	startErr, gate := src.startErr, src.startGate
+	src.mu.Unlock()
+	if startErr != nil {
+		return false
+	}
+	if gate == nil {
+		return true
+	}
+	select {
+	case <-gate:
+		return true
+	default:
+		return false
+	}
+}
+
+// Call only once nothing else will Add; a first engine still coming up is waited for first.
+func joinInflight(t testing.TB, h *Runtime) {
 	t.Helper()
+	if bootComing(h) && !awaitEngine(h) {
+		t.Fatal("the fake engine was not ready within 5s")
+	}
 	drained := make(chan struct{})
 	go func() {
 		h.lifecycle.inflight.Wait()
@@ -95,6 +161,7 @@ func bufferedSince(h *Runtime, sinceID uint64) []sse.ReplayEvent {
 	return out
 }
 
+// extractTypes is the events' types, engine_status left out: the engine's own start publishes it asynchronously.
 func extractTypes(t *testing.T, events []sse.ReplayEvent) []string {
 	t.Helper()
 	out := make([]string, 0, len(events))
@@ -103,7 +170,9 @@ func extractTypes(t *testing.T, events []sse.ReplayEvent) []string {
 		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
 			t.Fatalf("unmarshal event: %v", err)
 		}
-		out = append(out, string(msg.Type))
+		if msg.Type != marotte.EventEngineStatus {
+			out = append(out, string(msg.Type))
+		}
 	}
 	return out
 }

@@ -277,10 +277,10 @@ func TestContentCollectionEnabled(t *testing.T) {
 func TestAgentFeatures_SubagentLockWins(t *testing.T) {
 	dir := writeSettings(t, `{"workflows_enabled":true}`)
 	locks := composeLocks(nil, reduceAdminRules([]marotte.PolicyRule{adminRule("subagent", "deny")}))
-	if got := agentFeatures(t.Context(), dir, locks); got.Workflows {
-		t.Error("agentFeatures(stored on, subagent denied) = workflows on, want off")
+	if got := sessionFeatures(t.Context(), dir, locks); got.Workflows {
+		t.Error("sessionFeatures(stored on, subagent denied) = workflows on, want off")
 	}
-	if got := agentFeatures(t.Context(), dir, nil); !got.Workflows {
-		t.Error("agentFeatures(stored on, no lock) = workflows off, want on")
+	if got := sessionFeatures(t.Context(), dir, nil); !got.Workflows {
+		t.Error("sessionFeatures(stored on, no lock) = workflows off, want on")
 	}
 }

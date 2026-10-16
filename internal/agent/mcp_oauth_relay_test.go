@@ -97,7 +97,7 @@ func relayState(t *testing.T, h *Runtime, server string) (relayed, pending bool)
 
 func TestOAuthRelay_DeliversAStrandedCallback(t *testing.T) {
 	l := newCallbackListener(t, http.StatusOK)
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-abc")
 
 	rec := postRelay(t, h, "linear", pastedFor(t, l.srv.URL, "the-code", "st-abc"))
@@ -117,7 +117,7 @@ func TestOAuthRelay_DeliversAStrandedCallback(t *testing.T) {
 // The relay is single use per attempt: the first delivery spends the code.
 func TestOAuthRelay_IsSingleUsePerAttempt(t *testing.T) {
 	l := newCallbackListener(t, http.StatusOK)
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-abc")
 	pasted := pastedFor(t, l.srv.URL, "the-code", "st-abc")
 
@@ -188,7 +188,7 @@ func (l *blockingListener) releaseAll() {
 // The single-use rule must be atomic: the listener holds the first relay open while a second paste tries.
 func TestOAuthRelay_ConcurrentPastesDeliverOnce(t *testing.T) {
 	l := newBlockingListener(t, http.StatusOK)
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-abc")
 	pasted := pastedFor(t, l.srv.URL, "the-code", "st-abc")
 
@@ -217,7 +217,7 @@ func TestOAuthRelay_ConcurrentPastesDeliverOnce(t *testing.T) {
 // An old relay's completion must not latch a newer attempt, or the new one's paste box is withheld.
 func TestOAuthRelay_AnOldRelayCannotLatchANewAttempt(t *testing.T) {
 	l := newBlockingListener(t, http.StatusOK)
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-one")
 	pastedA := pastedFor(t, l.srv.URL, "c1", "st-one")
 
@@ -251,7 +251,7 @@ func TestOAuthRelay_AnOldRelayCannotLatchANewAttempt(t *testing.T) {
 // A fresh attempt clears the latch through recordOAuth's whole-record rewrite.
 func TestOAuthRelay_ANewAttemptClearsTheLatch(t *testing.T) {
 	l := newCallbackListener(t, http.StatusOK)
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-one")
 	if rec := postRelay(t, h, "linear", pastedFor(t, l.srv.URL, "c1", "st-one")); rec.Code != http.StatusOK {
 		t.Fatalf("first relay status = %d, want 200", rec.Code)
@@ -276,7 +276,7 @@ func TestOAuthRelay_RefusesWithNoFlowInFlight(t *testing.T) {
 		"a server that does not exist at all":    "never-heard-of-it",
 	} {
 		t.Run(name, func(t *testing.T) {
-			h := newHubWithMCPConfig(nil)
+			h := newHubWithMCPConfig(t, nil)
 			if server == "linear" {
 				// Connected, not awaiting authorization.
 				h.mcpRegistry.RecordConnected(t.Context(), server, marotte.MCPSource{}, nil, nil, nil, nil)
@@ -295,7 +295,7 @@ func TestOAuthRelay_RefusesWithNoFlowInFlight(t *testing.T) {
 // A listener refusing the callback leaves the attempt retryable: a 4xx is usually KAS's own state check.
 func TestOAuthRelay_ARefusedCallbackStaysRetryable(t *testing.T) {
 	l := newCallbackListener(t, http.StatusBadRequest)
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-abc")
 
 	rec := postRelay(t, h, "linear", pastedFor(t, l.srv.URL, "the-code", "st-abc"))
@@ -313,7 +313,7 @@ func TestOAuthRelay_ADeadListenerIsAGatewayFailure(t *testing.T) {
 	l := newCallbackListener(t, http.StatusOK)
 	dead := l.srv.URL
 	l.srv.Close() // frees the port; nothing is listening now
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", dead, "st-abc")
 
 	rec := postRelay(t, h, "linear", pastedFor(t, dead, "the-code", "st-abc"))
@@ -324,7 +324,7 @@ func TestOAuthRelay_ADeadListenerIsAGatewayFailure(t *testing.T) {
 }
 
 func TestOAuthRelay_RejectsNonPOST(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/mcp/oauth-relay", nil)
 	rec := httptest.NewRecorder()
 	h.mcpRegistry.handleOAuthRelay(rec, req)
@@ -338,7 +338,7 @@ func TestOAuthRelay_NeverLogsTheCode(t *testing.T) {
 	const secret = "super-secret-authorization-code"
 	logs := captureLogs(t)
 	l := newCallbackListener(t, http.StatusOK)
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-abc")
 
 	// The third path is the one that leaked: *url.Error's message opens with the full request URL.

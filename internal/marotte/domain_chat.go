@@ -465,7 +465,7 @@ type Chat struct {
 	// Paths, not contents: BuildPromptBlocks reads and confines them at send time.
 	Attachments []string `json:"attachments,omitempty"`
 	// ServedModelIDs is every model id the last session advertised, UNFILTERED: the
-	// only evidence at spawn, before session/new answers, that the stored model still
+	// only evidence at the session door, before session/new answers, that the stored model still
 	// runs. Empty means unknowable, and ModelServed then allows the send.
 	ServedModelIDs []string `json:"served_model_ids,omitempty"`
 	// EffortLevels is the effort vocabulary the last session advertised, per chat

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,7 +25,6 @@ import (
 // bridgeCoordinator owns bridge lifecycle, notification forwarding, model
 // switching, and turn finalization.
 type bridgeCoordinator struct {
-	locks     func() map[string]marotte.GovernanceLock
 	bridge    *bridges
 	chatStore bridgeChatRecords
 	// catalog is the workspace mode and model vocabulary.
@@ -38,23 +38,22 @@ type bridgeCoordinator struct {
 	push        pushNotifier `wiring:"optional"`
 	mcpRegistry *mcpRegistry
 	lifecycle   *lifetime
-	// preBridgeSpawn is installed by SetPreBridgeSpawn.
-	preBridgeSpawn func(context.Context) `wiring:"optional"`
-	// chatSteering renders the chat-only steering both chat spawn sites send; never the utility or a run bridge.
+	// preSessionOpen is installed by SetPreSessionOpen.
+	preSessionOpen func(context.Context) `wiring:"optional"`
+	// chatSteering renders the chat-only steering both chat session doors send; never a run host or an observer.
 	chatSteering func(context.Context) []marotte.ClientSteeringDoc `wiring:"optional"`
-	// ensureIdentity confirms the account before a bridge attaches; nil leaves package tests inert.
-	ensureIdentity func(context.Context) `wiring:"optional"`
-	// reconcileSessions marks every chat for reopen when a setting read only at open moved, so it
+	// reconcileSessions marks every chat for reload when a setting read only at a session door moved, so it
 	// runs before this open checks the mark. It waits no later than its deadline.
 	reconcileSessions func(context.Context, time.Time)
-	// afterOpen runs once an open synced its own bridge, whose spawn may be the first chat process a report needs. It
-	// waits no later than its deadline.
-	afterOpen func(context.Context, marotte.ChatID, time.Time)
-	// retireUtility resets the utility session at the chat bridges' identity boundary.
-	retireUtility func()
+	// engine is the one agent engine every chat session opens on.
+	engine *engineOwner
+	// sessionOpts is what a chat's session door sends.
+	sessionOpts func(ctx context.Context, rec *marotte.Chat, ask *sessionAsk, steering []marotte.ClientSteeringDoc) *marotte.SessionOpts
+	// syncLive pushes the engine each live setting it has not confirmed.
+	syncLive func(context.Context)
 	// replayProjection is the session/load replay lifecycle; nil in tests without a load.
 	replayProjection replayProjector
-	// onSessionRehydrated fires after a successful session/load, off the spawn path, to heal paused runs.
+	// onSessionRehydrated fires after a successful session/load, off the session-open path, to heal paused runs.
 	onSessionRehydrated func(marotte.ChatID)
 	// reapSession removes one KAS session's on-disk state.
 	reapSession func(sessionID string)
@@ -62,6 +61,11 @@ type bridgeCoordinator struct {
 	dischargeWaiting func(context.Context, marotte.ChatID)
 	// endAsks retires the unanswered asks an ended bridge carried: nothing can receive their answers.
 	endAsks func(origin acpResponder)
+	// observeLaneFrame reports each frame a session's forward consumed to the run-mutation registry, which settles
+	// a host-session verb only once its lane read past the reply; forgetLane drops that position when the forward
+	// ends. Nil in tests.
+	observeLaneFrame func(origin acpResponder, seq uint64, msg *marotte.RPCResponse)
+	forgetLane       func(origin acpResponder)
 	// onTurnClosed fires from the winning closer so the terminal registry evicts the turn's output. Nil in tests.
 	onTurnClosed func(marotte.ChatID, string)
 	// applyPendingModel is the pending_model idle arm, dispatched by every closer on its own goroutine. Nil in tests.
@@ -86,18 +90,14 @@ type bridgeCoordinator struct {
 	steerTurnBound   func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerTurnRevised func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerBridgeGone  func(marotte.ChatID)                       `wiring:"optional"`
-	// secretStorage is read at SPAWN time: a captured bool would predate NewHub opening the store.
-	secretStorage func() bool `wiring:"optional"`
 	// chatHasLiveRun keeps pushTurnOutcome from claiming the work is over while a launched run continues. Nil means none.
 	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
+	// chatHasTab reports an open tab on the chat; it answers true when no tab set is wired, so nothing is released.
+	chatHasTab func(marotte.ChatID) bool
 	// runLabel is the name a run's tab shows, for a notification titled by it. Nil names none.
 	runLabel func(workflowID string) string `wiring:"optional"`
 	// unknownStops records stop reasons already warned about: one line per unmapped value.
 	unknownStops sync.Map
-	// agentEngine is hard-pinned to v3 by resolveAgentEngine.
-	agentEngine string
-	// acpArgs are the operator launch flags, CHAT spawns only.
-	acpArgs []string `wiring:"optional"`
 	// noSubscribers latches the no-subscriber report once per episode (reportNoSubscribers).
 	noSubscribers atomic.Bool
 	// idleEndGrace is WireTurnActivity's wait, zero meaning defaultIdleEndGrace; a field so a test shortens it.
@@ -117,18 +117,25 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		releaseTerminals: func(chatID marotte.ChatID, origin acpResponder) {
 			h.agentTerms.releaseForBridge(chatID, origin)
 		},
-		push:          h.push,
-		mcpRegistry:   h.mcpRegistry,
-		lifecycle:     h.lifecycle,
-		retireUtility: h.stopUtilityBridge,
+		push:        h.push,
+		mcpRegistry: h.mcpRegistry,
+		lifecycle:   h.lifecycle,
+		engine:      h.engine,
+		sessionOpts: h.chatSessionOpts,
+		syncLive:    func(ctx context.Context) { h.engine.syncLive(ctx, h.liveSettings) },
 		// h implements replayProjector (load_projection.go).
 		replayProjection: h.replay,
-		agentEngine:      resolveAgentEngine(),
-		acpArgs:          h.acpArgs,
-		secretStorage:    func() bool { return h.secrets != nil },
-		locks:            h.config.GovernanceLocks,
 		chatHasLiveRun: func(chatID marotte.ChatID) bool {
 			return chatHoldsLiveRun(h.runs.leaseStore().List(), chatID)
+		},
+		chatHasTab: func(chatID marotte.ChatID) bool {
+			if h.tabs == nil {
+				return true
+			}
+			open, _ := h.tabs.List()
+			return slices.ContainsFunc(open, func(t marotte.TabSubject) bool {
+				return t.Kind == marotte.TabKindChat && marotte.ChatID(t.Ref) == chatID
+			})
 		},
 		runLabel: func(workflowID string) string { return h.runs.tabLabel(workflowID) },
 		onSessionRehydrated: func(chatID marotte.ChatID) {
@@ -147,8 +154,12 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 				h.runs.clearStaleNotices(ctx, chatID)
 			})
 		},
-		dischargeWaiting:  h.DischargeWaiting,
-		endAsks:           h.bus.endAsksOf,
+		dischargeWaiting: h.DischargeWaiting,
+		endAsks:          h.bus.endAsksOf,
+		observeLaneFrame: func(origin acpResponder, seq uint64, msg *marotte.RPCResponse) {
+			h.runs.mutations.observeSessionFrame(laneRef{session: origin}, seq, msg, h.router.StepRun)
+		},
+		forgetLane:        func(origin acpResponder) { h.runs.mutations.forgetLane(laneRef{session: origin}) },
 		applyPendingModel: h.applyPendingModel,
 		resolveEnds: func(ctx context.Context, chatID marotte.ChatID, f command.TurnFence) command.EndFacts {
 			return h.dispatcher.ResolveAfterClose(ctx, chatID, f)
@@ -168,68 +179,123 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 	}
 }
 
-// hasSecretStorage reports whether a bridge may declare `_meta.kiro.secretStorage`. Nil-safe.
-func (bc *bridgeCoordinator) hasSecretStorage() bool {
-	return bc.secretStorage != nil && bc.secretStorage()
-}
-
-// processLifetimeCtx returns the runtime's shutdown context, which bounds a kiro-cli
-// subprocess; never the per-turn caller ctx.
-func (bc *bridgeCoordinator) processLifetimeCtx() context.Context {
-	return bc.lifecycle.shutdownCtx
-}
-
-// resolveAgentEngine returns v3 (KAS), ignoring KIRO_AGENT_ENGINE: marotte cannot talk to a legacy engine.
-func resolveAgentEngine() string {
-	return marotte.AgentEngineV3
-}
-
-// openBridge returns chatID's bridge once its generation is ready (sessionSettle), starting one when
-// none is registered. The spawn runs under the process lifetime, since a cancelled one would detach
+// openBridge returns chatID's session once its generation is ready (sessionSettle), opening one when
+// none is registered. The door runs under the runtime's lifetime, since a cancelled one would detach
 // the chat's session; ctx bounds only this caller's wait. A failed generation answers its failure and
-// is already gone, so the next call starts a fresh one. Before it returns it sends the bridge each
-// live setting it has not confirmed (sharedBridge.syncLive) and syncs every other live process in the
-// background; those waits end at one deadline ignorePushTimeout after the call.
+// is already gone, so the next call opens a fresh one. Before it returns it sends the engine each
+// live setting it has not confirmed, waiting no later than ignorePushTimeout after the call.
 func (bc *bridgeCoordinator) openBridge(ctx context.Context, chatID marotte.ChatID, modelOverride string) (*sharedBridge, error) {
 	syncBy := time.Now().Add(ignorePushTimeout)
 	sb, err := bc.openBridgeBy(ctx, chatID, modelOverride, syncBy)
 	if err != nil {
 		return nil, err
 	}
-	sb.syncLive(ctx, chatID, bc.readLiveSettings)
-	bc.afterOpen(ctx, chatID, syncBy)
+	syncCtx, cancel := context.WithDeadline(ctx, syncBy)
+	bc.syncLive(syncCtx)
+	cancel()
 	return sb, nil
 }
 
-func (bc *bridgeCoordinator) readLiveSettings(ctx context.Context) liveSettings {
-	return readLiveSettings(ctx, bc.lifecycle.configDir, readLiveFields)
-}
-
 func (bc *bridgeCoordinator) openBridgeBy(ctx context.Context, chatID marotte.ChatID, modelOverride string, syncBy time.Time) (*sharedBridge, error) {
-	// Before the registry read, so an account switch retires the existing bridge.
-	if bc.ensureIdentity != nil {
-		bc.ensureIdentity(ctx)
-	}
 	bc.reconcileSessions(ctx, syncBy)
 	for {
 		sb, existed := bc.bridge.mgr.orInsert(chatID)
 		if !existed {
-			bc.lifecycle.inflight.Go(func() { bc.spawnGeneration(bc.processLifetimeCtx(), chatID, sb, modelOverride) })
+			bc.lifecycle.inflight.Go(func() { bc.openGeneration(bc.lifecycle.shutdownCtx, chatID, sb, modelOverride) })
 		}
 		if err := sb.settled.wait(ctx); err != nil {
 			return nil, err
 		}
-		reopen, stopped := bc.bridge.mgr.closeIfRetired(chatID, sb)
+		reopen, err := bc.reloadIfMarked(ctx, chatID, sb)
+		if err != nil {
+			return nil, err
+		}
 		if !reopen {
 			if existed {
 				bc.repairEffort(ctx, chatID, sb)
 			}
 			return sb, nil
 		}
-		if stopped {
-			bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID, sb.current())
-		}
 	}
+}
+
+// reloadIfMarked closes sb's session once it is due its reload (bridgeManager.claimReload), so the next generation
+// loads it with the current door settings, and reports whether the caller must open that generation. A refused close
+// keeps the session and its mark, and the chat runs on it until a later open retries; an unconfirmed one fails this
+// open, and the next door waits for the close to settle. A session another reload or a release is closing is
+// waited out, then the caller asks again, so no open hands out a session being closed.
+func (bc *bridgeCoordinator) reloadIfMarked(ctx context.Context, chatID marotte.ChatID, sb *sharedBridge) (reopen bool, err error) {
+	claim := bc.bridge.mgr.claimReload(chatID, sb)
+	session := claim.session
+	switch {
+	case claim.busy != nil:
+		select {
+		case <-claim.busy:
+			return true, nil
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	case claim.stale:
+		return true, nil
+	case !claim.due:
+		return false, nil
+	case session == nil || !session.Open():
+		bc.bridge.mgr.finishReload(chatID, sb, true)
+		return true, nil
+	}
+	closeErr := session.Close(ctx)
+	switch {
+	case closeErr == nil:
+		bc.bridge.mgr.finishReload(chatID, sb, true)
+		slog.Info("chat session closed for its reload", "chat_id", chatID, "session_id", session.SessionID())
+		return true, nil
+	case session.Open():
+		bc.bridge.mgr.finishReload(chatID, sb, false)
+		slog.Warn("a chat's session refused its reload; it keeps its current settings until the next message",
+			"chat_id", chatID, "error", closeErr)
+		return false, nil
+	}
+	bc.bridge.mgr.finishReload(chatID, sb, true)
+	if errors.Is(closeErr, marotte.ErrSessionClosing) {
+		return false, closeErr
+	}
+	return false, fmt.Errorf("%w: %w", marotte.ErrSessionClosing, closeErr)
+}
+
+// releaseIfUnheld closes chatID's resident chat session once nothing holds it: no open tab, no live turn or
+// admission, no live run it launched and no run step it hosts. The turn check follows the claim and an open waits
+// on a claimed entry (reloadIfMarked), so a turn admitted after the check opens a fresh generation once the close
+// lands. Run host sessions are releaseEndedHost's. The close runs on the lifetime, since the edges that call this
+// hold the caller's goroutine.
+func (bc *bridgeCoordinator) releaseIfUnheld(chatID marotte.ChatID) {
+	if chatID == "" || isRunChat(chatID) || bc.chatHasTab == nil || bc.chatHasTab(chatID) ||
+		(bc.chatHasLiveRun != nil && bc.chatHasLiveRun(chatID)) {
+		return
+	}
+	sb, session, ok := bc.bridge.mgr.claimRelease(chatID)
+	if !ok {
+		return
+	}
+	if bc.turns.live(chatID) {
+		bc.bridge.mgr.finishReload(chatID, sb, false)
+		return
+	}
+	if !bc.lifecycle.goUnlessDraining(func() { bc.closeReleased(chatID, sb, session) }) {
+		bc.bridge.mgr.finishReload(chatID, sb, false)
+	}
+}
+
+func (bc *bridgeCoordinator) closeReleased(chatID marotte.ChatID, sb *sharedBridge, session engineSession) {
+	ctx, cancel := bc.lifecycle.derivedContext()
+	defer cancel()
+	err := session.Close(ctx)
+	bc.bridge.mgr.finishReload(chatID, sb, err == nil || !session.Open())
+	if err != nil && session.Open() {
+		slog.Warn("a chat's unused session refused its close; it stays until its next release check",
+			"chat_id", chatID, "error", err)
+		return
+	}
+	slog.Info("closed a chat session nothing holds", "chat_id", chatID, "session_id", session.SessionID())
 }
 
 // LoadSession answers once chatID's bridge generation is ready (openBridge).
@@ -238,7 +304,7 @@ func (bc *bridgeCoordinator) LoadSession(ctx context.Context, chatID marotte.Cha
 	return err
 }
 
-func (bc *bridgeCoordinator) spawnGeneration(ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, modelOverride string) {
+func (bc *bridgeCoordinator) openGeneration(ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, modelOverride string) {
 	rec, exists := bc.chatStore.Get(ctx, chatID)
 	if !exists {
 		bc.failGeneration(chatID, sb, errChatUnreadable)
@@ -255,46 +321,57 @@ func (bc *bridgeCoordinator) spawnGeneration(ctx context.Context, chatID marotte
 
 	// No mcpServers parameter: KAS reads the config file marotte renders (internal/mcp/kasfile.go),
 	// and an inline copy would win over the file.
-	if bc.preBridgeSpawn != nil {
-		bc.preBridgeSpawn(ctx)
+	if bc.preSessionOpen != nil {
+		bc.preSessionOpen(ctx)
 	}
 
 	ask := bc.sessionChoices(ctx, chatID, rec, modelOverride)
 	held := bc.holdUnservedModel(ctx, chatID, ask.withheld)
+	steering := bc.renderChatSteering(ctx)
 
 	if rec.ACPSessionID != "" {
-		if loaded, err := bc.tryLoadSession(ctx, chatID, sb, rec.ACPSessionID, ask.model, ask.effort, ask.thinking, rec.SupervisedMode, held); loaded {
+		so := bc.sessionOpts(ctx, rec, &ask, steering)
+		so.SessionID = rec.ACPSessionID
+		loaded, err := bc.tryLoadSession(ctx, chatID, sb, so, held)
+		switch {
+		case loaded:
 			bc.settleResumed(ctx, chatID, sb, err)
+			return
+		case err != nil:
+			bc.restoreUnservedModel(ctx, chatID, held)
+			bc.failGeneration(chatID, sb, err)
 			return
 		}
 		bc.replaceFailedLoad(ctx, rec, &ask)
 	}
 
-	// EnableHooks opts chat bridges into KAS's hook engine. Forward must drain NotifCh before
-	// Start: the handshake already delivers notifications and requests.
-	bc.goForward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), Steering: bc.renderChatSteering(ctx), Model: ask.model, Mode: rec.CurrentModeID, Effort: ask.effort, Thinking: ask.thinking, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: rec.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), IgnoreFiles: func(c context.Context) []string { return spawnIgnoreFiles(c, bc.lifecycle.configDir) }, TerminalTimeout: func(c context.Context) int { return terminalCommandTimeoutMs(c, bc.lifecycle.configDir) }, Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryPreference(ctx, bc.lifecycle.configDir), DisableAutoCompaction: sessionDisablesAutoCompaction(autoCompactionPolicy(ctx, bc.lifecycle.configDir)), Features: agentFeatures(ctx, bc.lifecycle.configDir, currentLocks(bc.locks)), ContentCollection: contentCollectionResolver(bc.lifecycle.configDir, bc.locks), DisableTelemetry: bc.lifecycle.telemetryDisabled(bc.locks)}); err != nil {
+	// The forward attaches before the door writes: KAS's requests during session/new must be answered for it to
+	// finish.
+	session, err := bc.engine.openSession(ctx, bc.sessionOpts(ctx, rec, &ask, steering), func(s engineSession) {
+		sb.attach(s)
+		bc.goForward(chatID, s)
+	})
+	if err != nil {
 		bc.restoreUnservedModel(ctx, chatID, held)
 		bc.failGeneration(chatID, sb, err)
 		return
 	}
-	sb.adoptSpawn()
-	if err := bc.persistNewSessionMetadata(ctx, chatID, sb.bridge, ask.first); err != nil {
-		sessionID := string(sb.bridge.SessionID())
+	if err := bc.persistNewSessionMetadata(ctx, chatID, session, ask.first); err != nil {
+		sessionID := string(session.SessionID())
 		bc.restoreUnservedModel(ctx, chatID, held)
 		bc.failGeneration(chatID, sb, err)
 		// A session no record holds is in no delete's chain, so this generation reaps it itself.
 		bc.reapSession(sessionID)
 		return
 	}
-	bc.commitUnservedModel(ctx, chatID, held, sb.bridge.ModelID())
-	// The session door's half of the supervised fail-open (the assert inside Start is best-effort).
-	bc.reportSupervisedNotApplied(ctx, chatID, rec.SupervisedMode, sb.bridge.SupervisedApplied())
+	bc.commitUnservedModel(ctx, chatID, held, session.ModelID())
+	// The session door's half of the supervised fail-open (the door's own assert is best-effort).
+	bc.reportSupervisedNotApplied(ctx, chatID, rec.SupervisedMode, session.SupervisedApplied())
 	sb.setIdle()
 	bc.publishGeneration(ctx, chatID, sb)
 }
 
-// errChatUnreadable is a spawn that could not read the record it opens; failGeneration decides
+// errChatUnreadable is a session open that could not read the record it opens; failGeneration decides
 // whether that is the chat's absence.
 var errChatUnreadable = errors.New("chat record could not be read")
 
@@ -327,7 +404,7 @@ func (bc *bridgeCoordinator) settleResumed(ctx context.Context, chatID marotte.C
 	}
 }
 
-// failGeneration publishes a spawn's failure, as ErrChatGone when the record is absent.
+// failGeneration publishes a session open's failure, as ErrChatGone when the record is absent.
 func (bc *bridgeCoordinator) failGeneration(chatID marotte.ChatID, sb *sharedBridge, err error) {
 	if bc.chatStore.Presence(chatID) == chat.PresenceAbsent {
 		err = fmt.Errorf("%w: %s", command.ErrChatGone, chatID)
@@ -335,12 +412,14 @@ func (bc *bridgeCoordinator) failGeneration(chatID marotte.ChatID, sb *sharedBri
 	bc.retireGeneration(chatID, sb, err)
 }
 
-// retireGeneration removes and stops a failed generation before its error publishes, so the next
-// open starts fresh; no caller holds it, since openBridge admits none before readiness.
+// retireGeneration removes a failed generation and closes its session before its error publishes, so the next open
+// starts fresh; no caller holds it, since openBridge admits none before readiness.
 func (bc *bridgeCoordinator) retireGeneration(chatID marotte.ChatID, sb *sharedBridge, err error) {
 	if bc.bridge.mgr.removeIfSame(chatID, sb) {
-		slog.Info("bridge retired: its session never reached the chat's log", "chat_id", chatID, "error", err)
-		sb.current().Stop()
+		if s := sb.current(); s != nil && s.Open() {
+			slog.Info("a chat's session never reached its log; it was closed", "chat_id", chatID, "error", err)
+			bc.bridge.mgr.closeSession(s)
+		}
 	}
 	sb.settled.settle(err)
 }
@@ -446,7 +525,7 @@ type unservedSelection struct {
 	onRecord      bool
 }
 
-// holdUnservedModel takes the model off the record before the spawn so a racing
+// holdUnservedModel takes the model off the record before the session opens so a racing
 // config_option_update reads a first pin, not KAS's repin, leaving commitUnservedModel the
 // switch's one writer. The effort stays for a rollback or a same-model commit.
 func (bc *bridgeCoordinator) holdUnservedModel(ctx context.Context, chatID marotte.ChatID, model string) unservedSelection {
@@ -467,7 +546,7 @@ func (bc *bridgeCoordinator) holdUnservedModel(ctx context.Context, chatID marot
 	return held
 }
 
-// restoreUnservedModel puts a held selection back after a failed spawn, so the next spawn
+// restoreUnservedModel puts a held selection back after a failed session open, so the next open
 // withholds and records it.
 func (bc *bridgeCoordinator) restoreUnservedModel(ctx context.Context, chatID marotte.ChatID, held unservedSelection) {
 	if !held.onRecord {
@@ -505,7 +584,7 @@ func (bc *bridgeCoordinator) commitUnservedModel(ctx context.Context, chatID mar
 		effort = held.effort
 	}
 	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
-		// Another value is a pick that landed during the spawn.
+		// Another value is a pick that landed during the session open.
 		if !ex || (c.Model != "" && c.Model != held.model && c.Model != to) {
 			return false
 		}
@@ -518,7 +597,7 @@ func (bc *bridgeCoordinator) commitUnservedModel(ctx context.Context, chatID mar
 }
 
 // reportSupervisedNotApplied tells the user the session refused `autopilot: off`. The
-// record keeps the request, so the next spawn re-asserts it.
+// record keeps the request, so the next session door re-asserts it.
 func (bc *bridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, chatID marotte.ChatID, requested, applied bool) {
 	if !requested || applied {
 		return
@@ -532,53 +611,45 @@ func (bc *bridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, cha
 	}))
 }
 
+// tryLoadSession loads so.SessionID for chatID. An error wraps ErrBridgeExited and keeps the chat's session for the
+// next open: the engine ended under the load and its one retry, or no engine became ready before ctx ended. Every
+// other failure (a KAS refusal, the replay budget, an unavailable engine, a session still resident or closing)
+// returns loaded false with a nil error and detaches the chat, so the generation opens session/new.
 func (bc *bridgeCoordinator) tryLoadSession(
-	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge,
-	acpSessionID, model, effort, thinking string, supervised bool, held unservedSelection,
+	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, so *marotte.SessionOpts, held unservedSelection,
 ) (loaded bool, ready error) {
-	// Forward attaches before Start. On failure the old bridge is swapped out before it is
-	// stopped, so the exit cleanup cannot evict the replacement. Open the projection first:
-	// KAS replays inside Start.
+	// Open the projection first: KAS replays inside the door. The forward attaches before the door writes; a failed
+	// load closed its session, and the generation still owns its entry (bridgeManager.removeIfBridge).
+	acpSessionID := so.SessionID
 	replayed := newSessionSettle()
 	if bc.replayProjection != nil {
 		bc.replayProjection.OpenReplayProjection(ctx, chatID, acpSessionID, replayed)
 	}
-	// The load's read-loop position is only comparable within this attachment (replay_drain.go).
-	gen := bc.goForward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), Steering: bc.renderChatSteering(ctx), SessionID: acpSessionID, Model: model, Effort: effort, Thinking: thinking, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: supervised, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), IgnoreFiles: func(c context.Context) []string { return spawnIgnoreFiles(c, bc.lifecycle.configDir) }, TerminalTimeout: func(c context.Context) int { return terminalCommandTimeoutMs(c, bc.lifecycle.configDir) }, Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryPreference(ctx, bc.lifecycle.configDir), DisableAutoCompaction: sessionDisablesAutoCompaction(autoCompactionPolicy(ctx, bc.lifecycle.configDir)), Features: agentFeatures(ctx, bc.lifecycle.configDir, currentLocks(bc.locks)), ContentCollection: contentCollectionResolver(bc.lifecycle.configDir, bc.locks), DisableTelemetry: bc.lifecycle.telemetryDisabled(bc.locks)}); err != nil {
-		slog.Warn("session/load failed, starting new",
-			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
+	session, gen, err := bc.loadOnEngine(ctx, chatID, sb, so, replayed)
+	if err != nil {
 		// A failed load must not keep a partial replay.
 		if bc.replayProjection != nil {
 			bc.replayProjection.DiscardReplayProjection(chatID)
 		}
-		old := sb.swapBridge(bc.bridge.mgr.factory())
-		// Off the user's path: Stop waits out kiro-cli's teardown.
-		bc.lifecycle.inflight.Go(old.Stop)
-		if _, mErr := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
-			if !ex {
-				return false
-			}
-			// Detach but keep the session in the chain: blanking the id makes the reaper sweep its transcript.
-			c.RecordSession("")
-			return true
-		}); mErr != nil {
-			slog.Error("clear stale acp_session_id", "chat_id", chatID, "error", mErr)
+		if errors.Is(err, marotte.ErrBridgeExited) {
+			return false, err
 		}
+		slog.Warn("session/load failed, starting new",
+			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
+		bc.detachSession(ctx, chatID)
 		return false, nil
 	}
-	sb.adoptSpawn()
-	bc.markReplayLoaded(chatID, gen, sb, replayed)
-	title := sb.bridge.SessionTitle()
-	bc.catalog.setModes(sb.bridge.Modes())
-	bc.catalog.SetModels(sb.bridge.Models())
+	bc.markReplayLoaded(chatID, gen, session, replayed)
+	title := session.SessionTitle()
+	bc.catalog.setModes(session.Modes())
+	bc.catalog.SetModels(session.Models())
 	var renameTo string
 	var dropped unservedSelection
 	if _, mErr := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
-		renameTo, dropped = applyLoadedSessionFacts(c, sb.bridge, title)
+		renameTo, dropped = applyLoadedSessionFacts(c, session, title)
 		return true
 	}); mErr != nil {
 		slog.Error("refresh session metadata", "chat_id", chatID, "error", mErr)
@@ -586,22 +657,68 @@ func (bc *bridgeCoordinator) tryLoadSession(
 	if held.model == "" {
 		held = dropped
 	}
-	bc.commitUnservedModel(ctx, chatID, held, sb.bridge.ModelID())
-	reassertUserName(ctx, chatID, sb.bridge, renameTo)
+	bc.commitUnservedModel(ctx, chatID, held, session.ModelID())
+	reassertUserName(ctx, chatID, session, renameTo)
 	sb.setIdle()
 	// The generation is ready only once its replay merged.
-	return true, replayed.wait(bc.processLifetimeCtx())
+	return true, replayed.wait(bc.lifecycle.shutdownCtx)
+}
+
+// loadOnEngine runs chatID's session/load and reports the forward attachment its lane position is comparable within
+// (replay_drain.go). A load the engine's end failed is still KAS's to load (design 4.5.3), so it runs again on the next
+// engine, once the first attempt's forward has folded what it replayed, into a fresh projection.
+func (bc *bridgeCoordinator) loadOnEngine(
+	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, so *marotte.SessionOpts, replayed *sessionSettle,
+) (session engineSession, gen uint64, err error) {
+	var forwardDone <-chan struct{}
+	attach := func(s engineSession) {
+		sb.attach(s)
+		gen = bc.goForward(chatID, s)
+		forwardDone = bc.turns.forwardExit(chatID)
+	}
+	session, engineGen, err := bc.engine.loadSessionAfter(ctx, 0, so, attach)
+	if !errors.Is(err, marotte.ErrBridgeExited) || engineGen == 0 {
+		return session, gen, err
+	}
+	slog.Info("the agent engine ended under a session load; loading again on the next engine",
+		"chat_id", chatID, "acp_session", so.SessionID, "generation", engineGen)
+	if forwardDone != nil {
+		select {
+		case <-forwardDone:
+		case <-ctx.Done():
+		}
+	}
+	if bc.replayProjection != nil {
+		bc.replayProjection.OpenReplayProjection(ctx, chatID, so.SessionID, replayed)
+	}
+	session, _, err = bc.engine.loadSessionAfter(ctx, engineGen, so, attach)
+	return session, gen, err
+}
+
+// detachSession blanks chatID's session id after a load that failed other than by the engine's end, so the
+// generation opens session/new. The
+// session stays in the chain: blanking the id is what makes the reaper sweep its transcript.
+func (bc *bridgeCoordinator) detachSession(ctx context.Context, chatID marotte.ChatID) {
+	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
+		if !ex {
+			return false
+		}
+		c.RecordSession("")
+		return true
+	}); err != nil {
+		slog.Error("clear stale acp_session_id", "chat_id", chatID, "error", err)
+	}
 }
 
 // markReplayLoaded records the read-loop position replay completion is measured against, with one
 // settle attempt (MarkReplayLoadedAt); the projection's swap settles replayed. With no projection
 // nothing was replayed.
-func (bc *bridgeCoordinator) markReplayLoaded(chatID marotte.ChatID, gen uint64, sb *sharedBridge, replayed *sessionSettle) {
+func (bc *bridgeCoordinator) markReplayLoaded(chatID marotte.ChatID, gen uint64, session engineSession, replayed *sessionSettle) {
 	if bc.replayProjection == nil {
 		replayed.settle(nil)
 		return
 	}
-	bc.replayProjection.MarkReplayLoadedAt(chatID, drainPoint{gen: gen, seq: sb.bridge.SessionLoadSeq()})
+	bc.replayProjection.MarkReplayLoadedAt(chatID, drainPoint{gen: gen, seq: session.SessionLoadSeq()})
 }
 
 // adoptKASTitle names a still-default chat from KAS's session title after the focus door's
@@ -742,7 +859,7 @@ type newSessionFacts interface {
 }
 
 // reportModeNotApplied tells the user the session did not get the requested mode. The
-// record keeps the actual mode, so the next spawn asks for the current one.
+// record keeps the actual mode, so the next session door asks for the current one.
 func (bc *bridgeCoordinator) reportModeNotApplied(ctx context.Context, chatID marotte.ChatID, requested, actual string) {
 	if requested == "" || requested == actual {
 		return
@@ -756,7 +873,7 @@ func (bc *bridgeCoordinator) reportModeNotApplied(ctx context.Context, chatID ma
 	}))
 }
 
-// renderChatSteering returns the chat-only steering for a chat spawn, nil without a renderer.
+// renderChatSteering returns the chat-only steering for a chat's session door, nil without a renderer.
 func (bc *bridgeCoordinator) renderChatSteering(ctx context.Context) []marotte.ClientSteeringDoc {
 	if bc.chatSteering == nil {
 		return nil
@@ -769,8 +886,8 @@ func (bc *bridgeCoordinator) bridgeFor(chatID marotte.ChatID) *sharedBridge {
 	return bc.bridge.mgr.get(chatID)
 }
 
-// HasLiveBridge reports whether a chat has a bridge; retention never purges such a chat (archive.WithLiveChats).
-func (rt *Runtime) HasLiveBridge(chatID marotte.ChatID) bool {
+// HasResidentSession reports whether a chat has a resident session; retention never purges such a chat (archive.WithLiveChats).
+func (rt *Runtime) HasResidentSession(chatID marotte.ChatID) bool {
 	return rt.bridge.mgr.get(chatID) != nil
 }
 
@@ -790,27 +907,11 @@ func (rt *Runtime) OpenTurns(chatID marotte.ChatID) []chat.OpenTurnTail {
 	return out
 }
 
-// closeBridge closes every turn the bridge hosted with outcome, then stops and removes it.
+// closeBridge closes every turn the chat's session hosted with outcome, then removes and closes the session.
 // The closer runs first, while the record still names the open turns.
 func (bc *bridgeCoordinator) closeBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome) {
-	var dead ACPBridge
-	if sb := bc.bridge.mgr.get(chatID); sb != nil {
-		dead = sb.current()
-	}
-	bc.closeTurnOnBridgeDeath(ctx, chatID, dead, outcome)
+	bc.closeTurnOnBridgeDeath(ctx, chatID, outcome)
 	bc.bridge.mgr.close(chatID)
-}
-
-// retireBridges closes idle chat bridges, marks busy ones for their next open and resets
-// the utility session. A bridge hosting a live run counts as busy (retireChatBridges).
-func (bc *bridgeCoordinator) retireBridges(reason string) {
-	victims, marked := bc.bridge.mgr.retireChatBridges()
-	for chatID, dead := range victims {
-		bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID, dead)
-	}
-	bc.retireUtility()
-	slog.Info("identity changed; retiring live chat bridges",
-		"reason", reason, "closed", len(victims), "marked", marked)
 }
 
 type replayProjector interface {
@@ -822,10 +923,10 @@ type replayProjector interface {
 
 // goForward starts a forward loop on the group Shutdown waits on: the loop's tail
 // (closeTurnOnBridgeDeath) must land before shutdown completes. No deadlock: Shutdown
-// stops every bridge before the wait, which ends the range. The attachment is taken before the
+// stops the engine before the wait, which closes every lane and ends the range. The attachment is taken before the
 // goroutine runs: a settle that captured the old generation reads a later attach as a gone forward
 // and drops its close.
-func (bc *bridgeCoordinator) goForward(chatID marotte.ChatID, bridge ACPBridge) uint64 {
+func (bc *bridgeCoordinator) goForward(chatID marotte.ChatID, bridge engineSession) uint64 {
 	att := bc.turns.attachForward(chatID)
 	bc.lifecycle.inflight.Go(func() { bc.forwardAt(chatID, bridge, att) })
 	return att.gen
@@ -833,13 +934,16 @@ func (bc *bridgeCoordinator) goForward(chatID marotte.ChatID, bridge ACPBridge) 
 
 // forwardAt is Forward on an attachment the caller already took: tryLoadSession orders its
 // read-loop position against it.
-func (bc *bridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge ACPBridge, att forwardAttachment) {
+func (bc *bridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge engineSession, att forwardAttachment) {
 	gen := att.gen
 	ch := bridge.NotifCh()
 	// The generation keeps a straggler from the previous bridge off a restarted counter.
 	for n := range ch {
-		bc.recordPool(bridge, n.Msg)
+		bc.recordPool(n.Msg)
 		bc.consumeFrame(chatID, bridge, gen, n)
+		if bc.observeLaneFrame != nil {
+			bc.observeLaneFrame(bridge, n.Seq, n.Msg)
+		}
 		// Settle a replay projection here: this goroutine folds the frames, so only its position is comparable (replay_drain.go).
 		if bc.replayProjection != nil {
 			bc.replayProjection.SettleReplayProjection(chatID, drainPoint{gen: gen, seq: n.Seq}, false)
@@ -852,45 +956,43 @@ func (bc *bridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge ACPBridge, 
 	// Wake anything parked on a position, before the death closer.
 	bc.turns.sealPosition(chatID, gen)
 	att.exited()
+	if bc.forgetLane != nil {
+		bc.forgetLane(bridge)
+	}
 	// For every end, before the death closer, whose turn close would drop the cards without saying why.
 	bc.endAsks(bridge)
 
-	// Still registered means the process died on its own, so this closer owns the open turn.
+	// Still registered means the session ended on its own (the engine ended, or its lane overflowed), so this closer
+	// owns the open turn.
 	endedItself := bc.bridge.mgr.removeIfBridge(chatID, bridge)
-	slog.Info("bridge exited", "chat_id", chatID, "session_id", bridge.SessionID(), "ended_itself", endedItself)
+	cause := "closed"
 	if endedItself {
-		// The only site that observes every death; readLoop reaps its own paths only.
-		bridge.Stop()
-		bc.closeTurnOnBridgeDeath(bc.lifecycle.shutdownCtx, chatID, bridge, marotte.TurnOutcomeInterrupted)
+		cause = "ended"
+	}
+	slog.Info("bridge exited", "chat_id", chatID, "session_id", bridge.SessionID(), "cause", cause)
+	if endedItself {
+		bc.closeTurnOnBridgeDeath(bc.lifecycle.shutdownCtx, chatID, marotte.TurnOutcomeInterrupted)
 		// A waiting_on_user claim is owed to the agent, which is gone.
 		if bc.dischargeWaiting != nil {
 			bc.dischargeWaiting(bc.lifecycle.shutdownCtx, chatID)
 		}
 	}
-
-	// Flush staged writes, or a parked fs-handler and a phantom pending op replay to reconnecting clients.
-	lastBridge := bc.bridge.mgr.count() == 0
-
-	bc.mcpRegistry.dropPool(bridge)
-	if lastBridge {
-		bc.mcpRegistry.clearAll(bc.lifecycle.shutdownCtx)
-	}
 	// A run chat has no record and nothing calls cleanupChatState for one.
 	if isRunChat(chatID) {
 		bc.turns.forget(chatID)
 	}
-	// Last, for every end (tab close, identity retire, crash): KAS's own dispose releases them on a
-	// connection that has already closed, and no later bridge can see, read or stop them.
+	// Last, for every end (tab close, reload, engine end): KAS's own dispose releases them on a session that is
+	// already closed, and no later session can see, read or stop them.
 	bc.releaseTerminals(chatID, bridge)
 }
 
-// Only this loop knows the sender.
-func (bc *bridgeCoordinator) recordPool(bridge ACPBridge, msg *marotte.RPCResponse) {
+// recordPool keeps the engine's MCP pool from any session's status copy.
+func (bc *bridgeCoordinator) recordPool(msg *marotte.RPCResponse) {
 	if msg == nil || msg.ID != nil || msg.Method != methodV3MCPStatus {
 		return
 	}
 	if pool, ok := translate.ReadMCPPool(msg); ok {
-		bc.mcpRegistry.setPool(bridge, pool)
+		bc.mcpRegistry.setPool(pool)
 	}
 }
 
@@ -1030,7 +1132,7 @@ func (bc *bridgeCoordinator) repairEffort(ctx context.Context, chatID marotte.Ch
 }
 
 // healEffort wraps the config-option handler to re-assert the chosen level when a
-// config_option_update reports another: the spawning turn never reaches repairEffort, and
+// config_option_update reports another: the turn that opened the session never reaches repairEffort, and
 // that is when KAS's first-prompt model pin moves the tier. Latched once per bridge: the
 // repair triggers another update.
 func (bc *bridgeCoordinator) healEffort(next sessionUpdateHandler) sessionUpdateHandler {
@@ -1067,7 +1169,7 @@ func (bc *bridgeCoordinator) healEffort(next sessionUpdateHandler) sessionUpdate
 		}
 		slog.Info("re-asserting the chat's reasoning effort: the session reported a different level",
 			"chat_id", chatID, "want", want, "running", running)
-		// On inflight: Shutdown stops every bridge before waiting on this group, which is what unblocks a stuck Call.
+		// On inflight: Shutdown stops the engine before waiting on this group, which is what unblocks a stuck Call.
 		bc.lifecycle.inflight.Go(func() {
 			hctx, cancel := bc.lifecycle.derivedContext()
 			defer cancel()
@@ -1364,11 +1466,10 @@ func (bc *bridgeCoordinator) ReviseTurnBinding(ctx context.Context, chatID marot
 	}
 }
 
-// closeTurnOnBridgeDeath closes everything the bridge hosted: the chat's own and pending
+// closeTurnOnBridgeDeath closes everything the session hosted: the chat's own and pending
 // turns, every hosted run's open step turns (run lock taken after the chat's, never
-// nested), then the unread steers. The second claim on a closed turn loses. dead is the
-// ended process, which the run park tells apart from a replacement generation's.
-func (bc *bridgeCoordinator) closeTurnOnBridgeDeath(ctx context.Context, chatID marotte.ChatID, dead ACPBridge, outcome marotte.TurnOutcome) {
+// nested), then the unread steers. The second claim on a closed turn loses.
+func (bc *bridgeCoordinator) closeTurnOnBridgeDeath(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome) {
 	// Detached once for all three steps.
 	ctx = durable.Context(ctx)
 	stop := marotte.StopReasonInterrupted
@@ -1378,21 +1479,11 @@ func (bc *bridgeCoordinator) closeTurnOnBridgeDeath(ctx context.Context, chatID 
 	for _, t := range bc.turns.openTurnIDs(chatID) {
 		bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerBridgeDeath, Stop: stop, Reason: deathInterruptCause, Turn: t.ID})
 	}
-	bc.closeHostedRuns(ctx, chatID, dead, stop)
+	bc.closeHostedRuns(ctx, chatID, stop)
 	bc.dropUnreadSteers(ctx, chatID)
 }
 
-// closeTurnsOnRetire is the death closer for the retire stops, inside a prompt's own
-// openBridge: it closes own only when wire_turn_start, never pending, plus hosted runs;
-// parked steers belong to the unstarted prompt.
-func (bc *bridgeCoordinator) closeTurnsOnRetire(ctx context.Context, chatID marotte.ChatID, dead ACPBridge) {
-	if t, ok := bc.turns.ownTurn(chatID); ok && t.Source == marotte.TurnSourceWireTurnStart {
-		bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerBridgeDeath, Stop: marotte.StopReasonInterrupted, Reason: deathInterruptCause, Turn: t.ID})
-	}
-	bc.closeHostedRuns(ctx, chatID, dead, marotte.StopReasonInterrupted)
-}
-
-func (bc *bridgeCoordinator) closeHostedRuns(ctx context.Context, chatID marotte.ChatID, dead ACPBridge, stop marotte.StopReason) {
+func (bc *bridgeCoordinator) closeHostedRuns(ctx context.Context, chatID marotte.ChatID, stop marotte.StopReason) {
 	if bc.runs == nil {
 		return
 	}
@@ -1400,12 +1491,12 @@ func (bc *bridgeCoordinator) closeHostedRuns(ctx context.Context, chatID marotte
 		bc.endHostedSteers(ctx, chatID)
 	}
 	c := bc.concludeStop(chatID, stop, deathInterruptCause, "")
-	byRun, err := bc.runs.closeHost(ctx, chatID, dead, c)
+	byRun, err := bc.runs.closeHost(ctx, chatID, c)
 	for runID, sealed := range byRun {
 		translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), "", runID, sealed)
 	}
 	if err != nil {
-		slog.Error("close the step turns a dead bridge hosted", "chat_id", chatID, "error", err)
+		slog.Error("close the step turns an ended session hosted", "chat_id", chatID, "error", err)
 	}
 }
 

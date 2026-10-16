@@ -107,7 +107,7 @@ type pushService interface {
 	Close()
 }
 
-// One ACP-bridge contract at several widths; *bridge.Bridge satisfies the widest.
+// One ACP-session contract at several widths; *bridge.Session satisfies the widest.
 
 type acpSession interface {
 	SessionID() marotte.SessionID
@@ -123,25 +123,13 @@ type acpResponder interface {
 	Respond(ctx context.Context, id int64, result any, err error) error
 }
 
-// At most once per bridge.
-type acpStopper interface {
-	Stop()
-}
-
-// acpSessionCaller is one call on the bridge's own session, used outside the session mutex.
+// acpSessionCaller is one call on a session, used outside the session mutex.
 type acpSessionCaller interface {
 	acpCaller
 	acpSession
 
-	// CallAt is Call plus the read-loop position the response arrived at.
+	// CallAt is Call plus the lane position the response arrived at.
 	CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error)
-}
-
-// acpSessionResponder is what the utility forward goroutine needs. The id comes off the
-// parameter so forward never takes us.mu, which stopLocked holds across <-forwardDone.
-type acpSessionResponder interface {
-	acpResponder
-	acpSession
 }
 
 // No mutators.
@@ -165,32 +153,16 @@ type acpSessionFacts interface {
 	Models() []marotte.SessionModel
 }
 
-// utilityBridge is the utility session's ACP surface: no model swap, no notification, no catalogue reads.
-type utilityBridge interface {
+// engineSession is one session on the agent engine (*bridge.Session). It has no way to stop the engine. Safe for
+// concurrent use.
+type engineSession interface {
+	acpSessionFacts
 	acpSessionCaller
 	acpResponder
-	acpStopper
 
-	// Start launches a kiro-cli ACP subprocess; ctx bounds the handshake only, StartOpts.Lifetime (required) the process.
-	Start(ctx context.Context, opts *marotte.StartOpts) error
-	// NotifCh yields notifications with their read-loop sequence and closes on exit, or at Stop
-	// if never started. It must be drained BEFORE Start: v3 session/new blocks on requests here.
+	// NotifCh yields the frames routed to this session, each with its lane position, and closes when the session
+	// closes or the engine ends.
 	NotifCh() <-chan marotte.Notification
-	// Notify sends a JSON-RPC notification (no response expected).
-	Notify(ctx context.Context, method string, params any) error
-	// RefreshContentCollection re-resolves StartOpts.ContentCollection onto the live session when KAS has not confirmed
-	// that value, returning it; an unreadable document or no resolver sends nothing.
-	RefreshContentCollection(ctx context.Context) (bool, error)
-	// StartLive reports the ignore list (nil: none delivered) and shell timeout Start left KAS holding.
-	StartLive() (ignoreFiles []string, terminalTimeoutMs int)
-}
-
-// ACPBridge manages one kiro-cli ACP subprocess for one chat (*bridge.Bridge). Safe for
-// concurrent use; Call and Notify serialize stdin writes.
-type ACPBridge interface {
-	acpSessionFacts
-	utilityBridge
-
 	// Notify sends a JSON-RPC notification (no response expected).
 	Notify(ctx context.Context, method string, params any) error
 	// SetModel swaps the model in session via session/set_config_option ("model").
@@ -204,14 +176,16 @@ type ACPBridge interface {
 	EnsureThinking(ctx context.Context, choice string) error
 	// ObserveThinking records a thinking value the session reported.
 	ObserveThinking(value string)
-	// SessionLoadSeq returns the read-loop position of the `session/load` response; zero on
-	// session/new, and also legal, so pair it with the load returning.
+	// SessionLoadSeq returns the lane position of the `session/load` response; zero on session/new, and also legal,
+	// so pair it with the load returning.
 	SessionLoadSeq() uint64
 	// SupervisedApplied reports whether the session accepted `autopilot: off`; the request itself is on the chat record.
 	SupervisedApplied() bool
 	// AutoCompactionDisabled reports the disableAutoCompaction value KAS froze for the session.
 	AutoCompactionDisabled() bool
+	// Close sends session/close: KAS quiesces and disposes the session in memory and keeps its persisted state. ctx
+	// bounds only the caller's wait. A refused close returns its error with the session still open.
+	Close(ctx context.Context) error
+	// Open reports whether calls may use the session: its door succeeded, no close is under way, its engine lives.
+	Open() bool
 }
-
-// ACPBridgeFactory creates a new ACPBridge per invocation.
-type ACPBridgeFactory func() ACPBridge

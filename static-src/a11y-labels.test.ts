@@ -417,3 +417,66 @@ describe("a11y: declined tool aria-expanded", () => {
     vi.doUnmock("./actions/index.js");
   });
 });
+
+describe("a11y: the agent engine controls", () => {
+  it("labels the memory limit and describes both controls by text that exists (static markup)", () => {
+    const doc = new DOMParser().parseFromString(indexHtml, "text/html");
+    const heap = doc.getElementById("engine-heap-mib");
+    expect(heap, "the memory limit row is in the markup").not.toBeNull();
+    expect(doc.querySelector('label[for="engine-heap-mib"]')?.textContent).toBe(
+      "Agent engine memory limit",
+    );
+    const restart = doc.getElementById("engine-restart");
+    expect(restart?.textContent).toBe("Restart now");
+    for (const el of [heap, restart]) {
+      const ids = el?.getAttribute("aria-describedby")?.split(" ") ?? [];
+      expect(ids.length).toBeGreaterThan(0);
+      for (const id of ids) {
+        expect(doc.getElementById(id), `#${id} describes a control`).not.toBeNull();
+      }
+    }
+  });
+
+  it("describes every engine-wide control by its restart hint in the real markup", async () => {
+    const host = document.createElement("div");
+    host.innerHTML = new DOMParser().parseFromString(indexHtml, "text/html").body.innerHTML;
+    document.body.appendChild(host);
+    try {
+      const { paintEngineRows } = await import("./engine-status.js");
+      paintEngineRows(null);
+      const hints = [...host.querySelectorAll(".engine-restart-hint")];
+      // One per engine-wide row; a control id the markup lost would leave its row without one.
+      expect(hints).toHaveLength(8);
+      for (const hint of hints) {
+        expect(hint.textContent).toContain("Applies after the agent engine restarts.");
+        const control = host.querySelector(`[aria-describedby~="${hint.id}"]`);
+        expect(control, `#${hint.id} describes its control`).not.toBeNull();
+        expect(hint.closest(".section-option")).toBe(control?.closest(".section-option"));
+      }
+    } finally {
+      document.body.removeChild(host);
+    }
+  });
+});
+
+describe("a11y: the configuration standing badge", () => {
+  it("names what happened and the layer in its own text, since a tooltip on a span is unreachable", async () => {
+    const { standingBadge } = await import("./config-standing.js");
+    const base = { type: "agent", key: "k", decided_by: "workspace", decided_by_name: "Workspace" };
+    expect(standingBadge({ ...base, kind: "displaced", compose: "override" }).textContent).toBe(
+      "Replaced by Workspace",
+    );
+    expect(
+      standingBadge({ ...base, kind: "disabled", decided_by: "machine", decided_by_name: "" })
+        .textContent,
+    ).toBe("Off by machine");
+    expect(
+      standingBadge({ ...base, kind: "displaced", decided_by: "", decided_by_name: "" })
+        .textContent,
+    ).toBe("Replaced by another layer");
+    expect(standingBadge({ ...base, kind: "undiscovered" }).textContent).toBe("Not in use");
+    expect(standingBadge({ ...base, kind: "undiscovered" }).getAttribute("data-tooltip")).toBe(
+      "kiro-cli loaded this but does not use it (undiscovered, decided by Workspace).",
+    );
+  });
+});

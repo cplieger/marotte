@@ -344,7 +344,7 @@ export function runPendingAsks(workflowID: string): RunAsks {
       }
       asked.push({
         nodeID: d.payload.node_id ?? "",
-        sessionID: d.payload.sub_session_id ?? "",
+        sessionID: "",
         answer: false,
         text: requestLabel(d),
       });
@@ -509,7 +509,7 @@ function markAnswering(card: HTMLElement, on: boolean): void {
   card.toggleAttribute("aria-busy", on);
 }
 
-/** In insertion order across queues (a run's asks come from one bridge). */
+/** In insertion order across queues (a run's asks come from one host session). */
 function matching(h: DockHost): Decision[] {
   const out: Decision[] = [];
   for (const q of queues.values()) {

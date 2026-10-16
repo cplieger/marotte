@@ -1,6 +1,6 @@
 package agent
 
-// The Memories tab: list, get, update and delete over KAS's _kiro/memory/* on the utility bridge.
+// The Memories tab: list, get, update and delete over KAS's _kiro/memory/* engine calls.
 // KAS owns the store. Calls carry no sessionId, so KAS answers from the account's entitlement
 // alone, whatever the Memory setting.
 
@@ -87,7 +87,7 @@ func rowFromKAS(m *kasMemory) memoryRow {
 func (st *Settings) memoryCall(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
 	cctx, cancel := context.WithTimeout(ctx, memoryCallTimeout)
 	defer cancel()
-	return st.utility().memoryRaw(cctx, method, params)
+	return st.engine.memoryRaw(cctx, method, params)
 }
 
 // One page normally covers it.

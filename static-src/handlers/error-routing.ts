@@ -60,8 +60,8 @@ export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   model_not_served: { surface: "toast" },
   // A merge stopped after it was accepted; the tangent keeps its summary and the toast says why.
   tangent_merge_failed: { surface: "toast" },
-  // The ONE code that earns the send button's alert face: kiro-cli could not be
-  // spawned, so this chat has no ACP connection behind it. Every other failure
-  // here happened to a live agent.
+  // The ONE code that earns the send button's alert face: the chat's session could
+  // not be opened, so nothing stands behind this chat to send to. Every other
+  // failure here happened to a live agent.
   bridge_start_failed: { surface: "agent-down" },
 };

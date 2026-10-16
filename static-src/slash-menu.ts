@@ -2,7 +2,7 @@
 // keeps from KAS's `available_commands_update` (already narrowed to what KAS resolves before the
 // model: saved prompts, steering docs, /goal) beside marotte's own verbs.
 
-import { effect, el, signal, untracked } from "@cplieger/reactive";
+import { el, signal } from "@cplieger/reactive";
 import { ask } from "@cplieger/ui-primitives/ask";
 import { apiGetTyped } from "./api-client.js";
 import { onBus, onSSE, BUS_RECONCILE } from "./bus.js";
@@ -13,7 +13,7 @@ import type { HashQuery, MentionProvider } from "./context-mentions.js";
 import { itemsFor, resetMentionSources } from "./context-sources.js";
 import type { MentionItem } from "./context-sources.js";
 import { join as joinKey } from "@cplieger/keyenc";
-import { getActiveId, isBusy, watchActiveId } from "./store.js";
+import { getActiveId, isBusy } from "./store.js";
 import { chatNotice, subjectName } from "./notice-subject.js";
 import { MAROTTE_COMMANDS } from "./typed-commands.js";
 import { decodeSlashCommandsResponse } from "./wire/decoders.gen.js";
@@ -182,14 +182,12 @@ let searchTimer: ReturnType<typeof setTimeout> | undefined;
 // Bumped by every close, so a read started for an earlier menu neither fills this menu's cache nor
 // reopens a menu the reader closed.
 let menuSession = 0;
-// An MCP list belongs to one chat's pool at one moment, so its key carries both and a moved pool or
-// chat misses the cache.
+// An MCP list is the engine pool at one moment, so its key carries the pool's generation and a moved
+// pool misses the cache.
 let mcpGen = 0;
 
 function itemsKey(provider: ItemProvider, query: string): string {
-  return provider === "mcp"
-    ? joinKey(provider, getActiveId(), String(mcpGen), query)
-    : joinKey(provider, query);
+  return provider === "mcp" ? joinKey(provider, String(mcpGen), query) : joinKey(provider, query);
 }
 
 /** Re-render an open `#mcp:` list, which re-reads it under its new key. */
@@ -462,10 +460,6 @@ export function initSlashMenu(openPicker: () => void): void {
   onSSE("mcp_pool_changed", () => {
     mcpGen++;
     refreshMcpRows();
-  });
-  effect(() => {
-    watchActiveId();
-    untracked(refreshMcpRows);
   });
   onSSE("slash_commands_changed", loadSlashCatalog);
   onBus(BUS_RECONCILE, loadSlashCatalog);

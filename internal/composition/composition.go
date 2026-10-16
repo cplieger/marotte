@@ -17,7 +17,6 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/auth"
-	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/chat/archive"
 	"github.com/cplieger/marotte/internal/command"
@@ -37,6 +36,7 @@ import (
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/server"
 	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/signin"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/marotte/internal/subject"
@@ -55,7 +55,7 @@ type App struct {
 	// stopKiro cancels the background kiro-cli install, so shutdown need not wait it out.
 	stopKiro func()
 	// stopOrphanSweep stops the boot orphan sweep and WAITS: a sweep in flight issues
-	// one `inspect` per lease over the utility bridge the teardown below is about to close.
+	// one `inspect` per lease over the agent engine the teardown below is about to stop.
 	stopOrphanSweep func()
 	// stopKiroSeed stops the kiro-cli settings seed and waits for its goroutine.
 	stopKiroSeed func()
@@ -65,6 +65,8 @@ type App struct {
 	stopForgeKeeper func()
 	// stopApp ends the app's LIFETIME: what every process-bound component is parented on.
 	stopApp func()
+	// waitSignIn waits for the sign-in vault's goroutines, which end with the app's lifetime.
+	waitSignIn func()
 }
 
 // Build constructs all services and wires them together. staticFS is the embedded
@@ -116,12 +118,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, err
 	}
 
-	// Resolved per SPAWN: resolving once per process would pin every chat to whatever
-	// version was installed first.
-	bridgeFactory := func() agent.ACPBridge {
-		return bridge.New(kiro.cliPath(), cfg.WorkDir,
-			bridge.WithEnv(kiro.env()), bridge.WithEnvAllow(cfg.BridgeEnvAllow))
-	}
+	// The sign-in the agent engine is answered from, on the app's lifetime: its poll and renewals outlive a request.
+	vault := signin.Open(appCtx, cfg.ConfigDir, signinBackends()...)
+	apiKey := apiKeyReachesEngine(cfg)
 
 	mcpStore, err := mcp.New(appCtx, cfg.ConfigDir, nil,
 		mcp.WithWaitForReady(func(ctx context.Context) (bool, bool) {
@@ -152,7 +151,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	approvalStore := openSpecApprovalStore(cfg.ConfigDir)
 	authReadiness := new(command.AuthReadiness)
 	lockedSettings := new(lateLockSink)
-	h := agent.New(appCtx, cfg.WorkDir, bridgeFactory, chatStore,
+	h := agent.New(appCtx, cfg.WorkDir, engineSource{kiro: kiro, allow: cfg.BridgeEnvAllow}, chatStore,
+		agent.WithSignIn(vault, engineBackend), agent.WithAPIKey(apiKey),
 		agent.WithConfigDir(cfg.ConfigDir), agent.WithMCPConfig(mcpStore), agent.WithPush(pushSvc),
 		agent.WithKASMCPRenderer(mcpStore),
 		agent.WithDebugLogs(logctl.Debug, logctl.SetDebug),
@@ -178,7 +178,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// BEFORE anything can launch: relying on the scheduler's first tick would make
 	// correctness a property of the tick interval. On the APP's lifetime, never Build's,
 	// or the sweep outlives App.Shutdown; backgrounded because a boot must not wait.
-	stopOrphanSweep := startOrphanSweep(appCtx, h.Runs().BootSweep, kiro.installed)
+	stopOrphanSweep := startOrphanSweep(appCtx, h.Runs().BootSweep, h.EngineReady())
 
 	startScheduleRunner(appCtx, scheduleStore, h.Runs())
 
@@ -193,7 +193,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	mcpStore.SetOnChange(func(ctx context.Context) {
 		h.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPConfigChanged, "", marotte.MCPConfigChangedPayload{}))
 		mcpPrewarm.Run(ctx)
-		// No bridge restart and nothing to forward: the persist renders KAS's own config
+		// No engine restart and nothing to forward: the persist renders KAS's own config
 		// file, whose watcher reconnects in place, so a change reaches every LIVE session.
 	})
 	mcpPrewarm.Run(ctx)
@@ -202,7 +202,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return steering.MCPSnapshot{Servers: h.MCPSnapshot()}
 	})
 	h.SetMCPOnChange(func() { steer.Generate(appCtx) })
-	h.SetPreBridgeSpawn(func(ctx context.Context) { steer.Generate(ctx) })
+	h.SetPreSessionOpen(func(ctx context.Context) { steer.Generate(ctx) })
 	h.SetChatSteering(steer.ChatDocs)
 
 	// The manager notifies nothing before the routes serve, the keeper runs or a forge snapshot
@@ -225,16 +225,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, err
 	}
 	fileHandler.AllowToolOutputs(filepath.Join(workspace.KiroHome(), "sessions"))
-	identity := auth.NewIdentity(kiro.cliPath, kiro.env, func() {
-		h.RetireBridges("account identity changed")
-	})
-	h.SetIdentityCheck(identity.EnsureCurrent)
-	authHandler := auth.NewHandler(kiro.cliPath,
-		auth.WithConfig(cfg.AuthConfig),
+	authHandler := auth.NewHandler(vault, engineBackend,
 		auth.WithTrustedProxies(cfg.TrustedProxies),
-		auth.WithIdentity(identity))
-	// Off the boot path: Run primes and refreshes the identity /api/whoami answers from.
-	go authHandler.Run(appCtx)
+		auth.WithAPIKey(apiKey))
 	forgesHTTP := forges.NewHTTPHandler(forgesManager)
 
 	prPoller := newPRStatusPoller(forgesManager, gitHandler, h, prPollGate(presence, pushSvc),
@@ -261,7 +254,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	})
 	// The purge scans the directory live chats live in, so this predicate keeps an old-but-open
 	// conversation out of it.
-	chat.WithLive(h.HasLiveBridge)(chatStore)
+	chat.WithLive(h.HasResidentSession)(chatStore)
 	chat.WithOpenTab(h.Membership().HasOpenTab)(chatStore)
 	// Not retention predicates: the transcript GET reads both. Injected post-construction because
 	// the store cannot import the agent.
@@ -335,6 +328,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopPRPoller:    stopPRPoller,
 		stopForgeKeeper: stopForgeKeeper,
 		stopApp:         stopApp,
+		waitSignIn:      vault.Wait,
 	}, nil
 }
 
@@ -357,8 +351,8 @@ func (a *App) Run() error {
 func (a *App) Shutdown() {
 	callIfSet(a.stopPRPoller)
 	callIfSet(a.stopForgeKeeper)
-	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the utility bridge
-	// the kiro teardown is about to close, so the reverse order leaves one mid-inspect.
+	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the agent engine the
+	// runtime teardown is about to stop, so the reverse order leaves one mid-inspect.
 	callIfSet(a.stopOrphanSweep)
 	callIfSet(a.stopKiroSeed)
 	callIfSet(a.stopKiro)
@@ -375,6 +369,8 @@ func (a *App) Shutdown() {
 	// push service's Done while the poller that consults it is still running.
 	callIfSet(a.stopApp)
 	a.shutdownHub()
+	// After the runtime's teardown, which may still call the vault: a renewal's save lands before exit.
+	callIfSet(a.waitSignIn)
 }
 
 // hubStopGrace bounds the runtime teardown App.Shutdown owns: the signal context is already
@@ -808,18 +804,18 @@ func openRunLeaseStore(dir string) *runlease.Store {
 	return st
 }
 
-// startOrphanSweep runs the boot orphan sweep and RETRIES it once the kiro-cli install
-// completes. sweep is a method VALUE rather than the run surface, so the retry POLICY is
+// startOrphanSweep runs the boot orphan sweep and RETRIES it once the first agent engine
+// is ready. sweep is a method VALUE rather than the run surface, so the retry POLICY is
 // testable with no agent runtime behind it.
 func startOrphanSweep(ctx context.Context, sweep func(context.Context) bool,
-	installed <-chan struct{},
+	engineReady <-chan struct{},
 ) (stop func()) {
 	return runBackground(ctx, "orphan sweep", func(bctx context.Context) {
 		if sweep(bctx) {
 			return
 		}
 		select {
-		case <-installed:
+		case <-engineReady:
 			sweep(bctx)
 		case <-bctx.Done():
 		}

@@ -89,8 +89,8 @@ func safetyBlockProperties(p v3SafetyStatusChanged) []string {
 }
 
 // HandleSafetyPropertiesChanged translates _kiro/safety/propertiesChanged into a chat-scoped
-// safety_properties SSE. A foreign-session copy is skipped so a subagent's or a step's
-// formalized properties are not attributed to the parent chat.
+// safety_properties SSE. A foreign-session copy is skipped so a step's formalized properties
+// are not attributed to the parent chat.
 func (t *Translator) HandleSafetyPropertiesChanged(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[v3SafetyPropertiesChanged](msg, "safety/propertiesChanged")
 	if !ok {

@@ -23,32 +23,32 @@ import (
 
 type recordingStartBridge struct {
 	*fakeBridge
-	lastStart marotte.StartOpts
-	recMu     sync.Mutex
+	lastDoor marotte.SessionOpts
+	recMu    sync.Mutex
 }
 
 func newRecordingStartBridge() *recordingStartBridge {
 	return &recordingStartBridge{fakeBridge: newFakeBridge()}
 }
 
-func (b *recordingStartBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
+func (b *recordingStartBridge) door(ctx context.Context, so *marotte.SessionOpts, eo *marotte.EngineOpts, load bool) error {
 	b.recMu.Lock()
-	b.lastStart = *opts
+	b.lastDoor = *so
 	b.recMu.Unlock()
-	return b.fakeBridge.Start(ctx, opts)
+	return b.fakeBridge.door(ctx, so, eo, load)
 }
 
-func (b *recordingStartBridge) startOpts() marotte.StartOpts {
+func (b *recordingStartBridge) startOpts() marotte.SessionOpts {
 	b.recMu.Lock()
 	defer b.recMu.Unlock()
-	return b.lastStart
+	return b.lastDoor
 }
 
 func newRecordingStartHub(t *testing.T) (*Runtime, *testChatStore, *recordingStartBridge) {
 	t.Helper()
 	cs := newTestChatStore()
 	rb := newRecordingStartBridge()
-	h := New(t.Context(), "/tmp/rec-start", func() ACPBridge { return rb }, cs)
+	h := newRuntimeOn(t.Context(), "/tmp/rec-start", fakeEngineOf(func() engineSession { return rb }, laneOf(rb)), cs)
 	cs.wire(h)
 	return h, cs, rb
 }
@@ -85,8 +85,8 @@ func (p *recordingPush) Send(_ context.Context, n *marotte.NotificationPayload) 
 	}
 }
 
-// On session/new the override model wins over the stored value, and the persisted model comes from the started bridge.
-func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
+// On session/new the override model wins over the stored value, and the persisted model comes from the opened session.
+func TestOpenBridge_ANewSessionTakesTheOverrideModel(t *testing.T) {
 	h, cs, rb := newRecordingStartHub(t)
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
@@ -101,7 +101,7 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 
 	opts := rb.startOpts()
 	if opts.Model != "model-override" {
-		t.Errorf("StartOpts.Model = %q, want %q (override must beat chat.Model)", opts.Model, "model-override")
+		t.Errorf("SessionOpts.Model = %q, want %q (override must beat chat.Model)", opts.Model, "model-override")
 	}
 
 	c, _ := cs.Get(ctx, "c1")
@@ -111,18 +111,17 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 }
 
 // A resume carries the chat's supervised choice on its door: KAS's fork copies no autopilot.
-func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
-	// A fresh bridge per spawn, found by session id: the rehydrate sweep starts the utility bridge on the same factory.
+func TestOpenBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 	var mu sync.Mutex
-	var spawned []*recordingStartBridge
+	var opened []*recordingStartBridge
 	cs := newTestChatStore()
-	h := New(t.Context(), t.TempDir(), func() ACPBridge {
+	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession {
 		rb := newRecordingStartBridge()
 		mu.Lock()
-		spawned = append(spawned, rb)
+		opened = append(opened, rb)
 		mu.Unlock()
 		return rb
-	}, cs)
+	}, nil), cs)
 	cs.wire(h)
 
 	ctx := t.Context()
@@ -140,21 +139,21 @@ func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	var opts marotte.StartOpts
+	var opts marotte.SessionOpts
 	var found bool
 	mu.Lock()
-	for _, rb := range spawned {
-		if o := rb.startOpts(); o.SessionID == acpSession {
+	for _, rb := range opened {
+		if o := rb.startOpts(); o.SessionID == acpSession && o.Role == marotte.SessionRoleChat {
 			opts, found = o, true
 		}
 	}
 	mu.Unlock()
 	if !found {
-		// Without a Start naming the stored session there is no load to assert on.
-		t.Fatalf("no bridge was started with SessionID %q, so the resume never happened", acpSession)
+		// Without a door naming the stored session there is no load to assert on.
+		t.Fatalf("no chat door loaded SessionID %q, so the resume never happened", acpSession)
 	}
 	if !opts.Supervised {
-		t.Error("the resume's StartOpts.Supervised = false although the chat is supervised, " +
+		t.Error("the resume's SessionOpts.Supervised = false although the chat is supervised, " +
 			"so KAS runs the loaded session in autopilot and its writes are applied unreviewed")
 	}
 }
@@ -294,8 +293,7 @@ func TestLevelRanOrFirst_ReadsTheSeedForItsOwnModel(t *testing.T) {
 			if test.seed != nil {
 				writeEffortSeed(t, dir, test.seed)
 			}
-			h, _, _ := newTestHub()
-			h.coord.lifecycle.configDir = dir
+			h, _, _ := newTestHub(WithConfigDir(dir))
 
 			if got, _ := h.coord.levelRanOrFirst(t.Context(), &marotte.Chat{Model: test.model}); got != test.want {
 				t.Errorf("levelRanOrFirst(%q, last_effort_by_model=%v) = %q, want %q",
@@ -309,8 +307,7 @@ func TestLevelRanOrFirst_ReadsTheSeedForItsOwnModel(t *testing.T) {
 func TestEffortSeedFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"m1": "max", "m2": "low"})
-	h, _, _ := newTestHub()
-	h.coord.lifecycle.configDir = dir
+	h, _, _ := newTestHub(WithConfigDir(dir))
 
 	for model, want := range map[string]string{"m1": "max", "m2": "low"} {
 		if got := h.coord.effortSeedFor(t.Context(), model); got != want {
@@ -334,8 +331,7 @@ func TestSessionEffort_CapsAHighTierOnADefaultOffModel(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			h, _, _ := newTestHub()
-			h.coord.lifecycle.configDir = t.TempDir()
+			h, _, _ := newTestHub(WithConfigDir(t.TempDir()))
 			h.coord.catalog.SetModels([]marotte.SessionModel{{ID: "m1", ThinkingToggleable: true, ThinkingDefaultOff: tc.defaultOff}})
 			rec := &marotte.Chat{ID: "c1", Model: "m1", Effort: "max", Thinking: tc.thinking, EffortLevels: five}
 
@@ -370,8 +366,7 @@ func TestLevelRanOrFirst_SeedThenModelDefault(t *testing.T) {
 			if test.seed != nil {
 				writeEffortSeed(t, dir, test.seed)
 			}
-			h, _, _ := newTestHub()
-			h.coord.lifecycle.configDir = dir
+			h, _, _ := newTestHub(WithConfigDir(dir))
 			h.coord.catalog.SetModels(catalog)
 
 			if got, _ := h.coord.levelRanOrFirst(t.Context(), &marotte.Chat{Model: test.target}); got != test.want {
@@ -386,8 +381,7 @@ func TestLevelRanOrFirst_SeedThenModelDefault(t *testing.T) {
 func TestSessionEffort_NeverReadsTheSeed(t *testing.T) {
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"m1": "max"})
-	h, _, _ := newTestHub()
-	h.coord.lifecycle.configDir = dir
+	h, _, _ := newTestHub(WithConfigDir(dir))
 	h.coord.catalog.SetModels([]marotte.SessionModel{{ID: "m1", DefaultEffortLevel: "high"}})
 
 	if got := h.coord.sessionEffort(&marotte.Chat{ID: "c1", Model: "m1"}); got != "" {
@@ -395,43 +389,11 @@ func TestSessionEffort_NeverReadsTheSeed(t *testing.T) {
 	}
 }
 
-// Forward clears the MCP registry only when its bridge is the last one.
-func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
-	seed := func(h *Runtime) {
-		h.mcpRegistry.mu.Lock()
-		h.mcpRegistry.servers["srv"] = &mcpServerRuntime{Name: "srv", State: mcpStateConnected}
-		h.mcpRegistry.mu.Unlock()
-	}
-
-	t.Run("clears_when_no_bridges_remain", func(t *testing.T) {
-		h, _, br := newTestHub()
-		seed(h)
-		br.Stop() // close notifCh so Forward's range exits immediately
-		h.coord.Forward("nochat", br)
-		if n := len(h.mcpRegistry.snapshot()); n != 0 {
-			t.Errorf("registry size = %d, want 0 (no bridges left must clearAll)", n)
-		}
-	})
-
-	t.Run("keeps_when_a_bridge_remains", func(t *testing.T) {
-		h, _, _ := newTestHub()
-		seed(h)
-		// Stays registered so count() stays >= 1.
-		h.bridge.mgr.orInsert("keep")
-		other := newFakeBridge()
-		other.Stop()
-		h.coord.Forward("other", other)
-		if n := len(h.mcpRegistry.snapshot()); n != 1 {
-			t.Errorf("registry size = %d, want 1 (a remaining bridge must NOT clearAll)", n)
-		}
-	})
-}
-
 // A non-cancelled turn fires the "Agent finished" push.
 func TestSettleTurnOnResponse_NonCancelledFiresPush(t *testing.T) {
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
-	h := New(t.Context(), "/tmp/push", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	h := newRuntimeOn(t.Context(), "/tmp/push", fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 	cs.wire(h)
 	ctx := t.Context()
 
@@ -455,7 +417,7 @@ func TestSettleTurnOnResponse_NonCancelledFiresPush(t *testing.T) {
 func TestNoticeTarget_TitlesTheTabTheClickOpens(t *testing.T) {
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 	cs.wire(h)
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "Fix the parser" })
 
@@ -873,7 +835,7 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 
 			// Wired at construction: New starts sweepSessionsLoop, so later assignment races (-race).
 			cs := newTestChatStore()
-			h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
+			h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
 				WithSessionReaper(
 					kirosession.New(sessionsDir, testReaperWorkDir),
 					func(context.Context) (map[string]struct{}, bool) {
@@ -897,34 +859,31 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 	}
 }
 
-// TestLiveSessionIDs_CoversEveryBridge pins that every live bridge's session is exempt; the
-// 10-minute guard is a create-race cushion, not a liveness test.
-func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
-	// A per-spawn factory: newTestHub's shares one fake, and this needs distinct session ids.
+// The 10-minute guard is a create-race cushion, not a liveness test: the on-disk sweep spares every resident
+// session, a run's host session included, which no chat file names.
+func TestLiveSessionIDs_CoversEveryResidentSession(t *testing.T) {
 	cs := newTestChatStore()
-	h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs)
+	h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs)
 	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
 
 	setSession := func(chatID marotte.ChatID, sessionID string) {
 		t.Helper()
 		sb, _ := h.bridge.mgr.orInsert(chatID)
-		fb, ok := sb.bridge.(*fakeBridge)
-		if !ok {
-			t.Fatalf("bridge for %s is not a *fakeBridge", chatID)
-		}
-		fb.mu.Lock()
+		fb := newFakeBridge()
 		fb.sessionID = sessionID
-		fb.mu.Unlock()
+		sb.attach(fb)
 	}
 
 	setSession("chatA", "sess_chatA")
 	setSession("chatB", "sess_chatB")
-	// A bridge with no session yet contributes nothing.
+	setSession(runChatID("wf_1"), "sess_host")
+	// An entry with no session yet contributes nothing.
 	setSession("chatC", "")
 
 	got := h.liveSessionIDs()
 	slices.Sort(got)
-	want := []string{"sess_chatA", "sess_chatB"}
+	want := []string{"sess_chatA", "sess_chatB", "sess_host"}
 	if !slices.Equal(got, want) {
 		t.Errorf("liveSessionIDs() = %v, want %v", got, want)
 	}
@@ -1031,9 +990,9 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 	}
 }
 
-// TestSpawnBridge_ReportsSupervisedThatWasNotApplied pins that a refused `autopilot: off`
-// reaches the user. The third case is why the report cannot key on the bridge flag alone.
-func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
+// TestOpenGeneration_ReportsSupervisedThatWasNotApplied pins that a refused `autopilot: off`
+// reaches the user. The third case is why the report cannot key on the session's flag alone.
+func TestOpenGeneration_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 	cases := []struct {
 		name        string
 		supervised  bool
@@ -1051,7 +1010,7 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 			br.mu.Lock()
 			br.supervisedAssertFails = tc.assertFails
 			br.mu.Unlock()
-			h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs)
+			h := newRuntimeOn(t.Context(), "/tmp/work", fakeEngineOf(func() engineSession { return br }, laneOf(br)), cs)
 			cs.wire(h)
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "A"
@@ -1064,10 +1023,10 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 
-			// The chat keeps the request: supervised is the safer intent, so the next spawn re-asserts.
+			// The chat keeps the request: supervised is the safer intent, so the next session door re-asserts.
 			c, _ := cs.Get(t.Context(), "c1")
 			if c.SupervisedMode != tc.supervised {
-				t.Errorf("chat.SupervisedMode = %v, want the request %v kept for the next spawn",
+				t.Errorf("chat.SupervisedMode = %v, want the request %v kept for the next session door",
 					c.SupervisedMode, tc.supervised)
 			}
 
@@ -1116,7 +1075,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 			writeSessionRecord(t, sessDir, testReaperWorkDir)
 
 			cs := newTestChatStore()
-			h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
+			h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
 				WithSessionReaper(
 					kirosession.New(sessionsDir, testReaperWorkDir),
 					func(context.Context) (map[string]struct{}, bool) {
@@ -1157,7 +1116,7 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 	writeSessionRecord(t, sessDir, testReaperWorkDir)
 
 	cs := newTestChatStore()
-	h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
+	h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
 		WithSessionReaper(
 			kirosession.New(sessionsDir, testReaperWorkDir),
 			func(context.Context) (map[string]struct{}, bool) {
@@ -1176,7 +1135,7 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 }
 
 // TestSessionLoad_HealsTheChatsRestartPausedRuns pins that a resumed chat heals the runs KAS
-// paused when its bridge died. The sweep is off the spawn path, so it is awaited.
+// paused when its bridge died. The sweep is off the session-open path, so it is awaited.
 func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 	h, cs, br := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -1327,7 +1286,7 @@ func TestOpenBridge_RecordsAWithheldModelAsAnUnavailableSwitch(t *testing.T) {
 	}
 
 	if got := rb.startOpts().Model; got != "" {
-		t.Errorf("StartOpts.Model = %q, want the unserved model withheld", got)
+		t.Errorf("SessionOpts.Model = %q, want the unserved model withheld", got)
 	}
 	want := []marotte.EntryModelSwitched{{From: "m-gone", To: "fake-model", Reason: marotte.ModelSwitchReasonUnavailable}}
 	if got := switchesOf(t, logOf(t, cs, "c1")); !slices.Equal(got, want) {
@@ -1362,7 +1321,7 @@ func TestOpenBridge_RecordsAModelTheLoadDropped(t *testing.T) {
 	}
 }
 
-func TestOpenBridge_ServedOrFailedSpawnRecordsNoUnavailableSwitch(t *testing.T) {
+func TestOpenBridge_ServedOrFailedOpenRecordsNoUnavailableSwitch(t *testing.T) {
 	t.Run("served", func(t *testing.T) {
 		h, cs, _ := newRecordingStartHub(t)
 		ctx := t.Context()
@@ -1379,20 +1338,20 @@ func TestOpenBridge_ServedOrFailedSpawnRecordsNoUnavailableSwitch(t *testing.T) 
 	})
 	t.Run("failed_spawn", func(t *testing.T) {
 		h, cs, rb := newRecordingStartHub(t)
-		rb.startErr = errors.New("spawn refused")
+		rb.startErr = errors.New("session open refused")
 		ctx := t.Context()
 		_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 			c.Name, c.Model, c.Effort, c.ServedModelIDs = "A", "m-gone", "max", []string{"m-other"}
 			return true
 		})
 		if _, err := h.coord.openBridge(ctx, "c1", ""); err == nil {
-			t.Fatal("OpenBridge = nil, want the spawn's error")
+			t.Fatal("OpenBridge = nil, want the open's error")
 		}
 		if got := switchesOf(t, logOf(t, cs, "c1")); len(got) != 0 {
 			t.Errorf("model_switched entries = %+v, want none", got)
 		}
 		if c, _ := cs.Get(ctx, "c1"); c.Model != "m-gone" || c.Effort != "max" {
-			t.Errorf("header = {Model %q, Effort %q}, want {m-gone, max} back for the next spawn to withhold and record",
+			t.Errorf("header = {Model %q, Effort %q}, want {m-gone, max} back for the next session open to withhold and record",
 				c.Model, c.Effort)
 		}
 	})

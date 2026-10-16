@@ -13,7 +13,7 @@ func hubWithRealStore(t *testing.T) (*Runtime, *testChatStore) {
 	t.Helper()
 	cs := newTestChatStore()
 	br := newRecordingTermBridge()
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return br }, cs)
+	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return br }, laneOf(br)), cs)
 	cs.wire(h)
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
 	return h, cs

@@ -141,21 +141,21 @@ func TestFocusUpdate_EngineActivityMarksTurnScoped(t *testing.T) {
 	}
 }
 
-// Subagent focus frames are dropped by the parent-only gate.
-func TestHandleSessionInfoUpdate_FocusDropsSubagent(t *testing.T) {
+// A step's focus frames are dropped by the parent-only gate.
+func TestHandleSessionInfoUpdate_FocusDropsAStepFrame(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"title": "Sub focus", "status": "in_progress",
-	}), FrameAttribution{Subagent: true, SessionID: "sub-1"})
+	}), FrameAttribution{Step: true, SessionID: "sess-step", RunID: "wf_1"})
 
 	c, _ := store.Get(t.Context(), "c1")
 	if c.Name != "A" {
 		t.Errorf("chat name = %q, want untouched", c.Name)
 	}
 	if got := chatStatusPayloads(t, events); len(got) != 0 {
-		t.Fatalf("chat_status from a subagent frame: %+v", got)
+		t.Fatalf("chat_status from a step frame: %+v", got)
 	}
 }
 

@@ -1,16 +1,15 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -42,22 +41,7 @@ func orgTelemetry(on bool) marotte.GovernanceStatePayload {
 	return p
 }
 
-func TestSpawnSites_CarryTelemetryOff(t *testing.T) {
-	for _, site := range spawnSites() {
-		t.Run(site.name, func(t *testing.T) {
-			withKiroTelemetry(t, `{"telemetry.enabled":false}`)
-			br := newFakeBridge()
-			h, cs := newContentCollectionHub(t, func() ACPBridge { return br })
-			site.spawn(t, h, cs, br)
-
-			if opts := br.lastStartOpts(); opts == nil || !opts.DisableTelemetry {
-				t.Errorf("%s spawn with telemetry.enabled false: DisableTelemetry = false, want true", site.name)
-			}
-		})
-	}
-}
-
-func TestChatSpawn_ResolvesTelemetryUnderTheOrganizationLock(t *testing.T) {
+func TestEngineSpawn_ResolvesTelemetryUnderTheOrganizationLock(t *testing.T) {
 	for _, tc := range []struct {
 		org     *marotte.GovernanceStatePayload
 		name    string
@@ -77,13 +61,9 @@ func TestChatSpawn_ResolvesTelemetryUnderTheOrganizationLock(t *testing.T) {
 			if tc.org != nil {
 				h.config.SetGovernance(t.Context(), *tc.org)
 			}
-			sb, err := h.coord.openBridge(t.Context(), "c1", "")
-			if err != nil {
-				t.Fatalf("OpenBridge: %v", err)
-			}
 
-			if got := fakeOf(sb).lastStartOpts().DisableTelemetry; got != tc.want {
-				t.Errorf("chat spawn under cli.json %q, org lock set %v: DisableTelemetry = %v, want %v", tc.cliJSON, tc.org != nil, got, tc.want)
+			if got := h.resolveEngine(t.Context(), "/fake/kiro-cli-chat").opts.DisableTelemetry; got != tc.want {
+				t.Errorf("engine spawn under cli.json %q, org lock set %v: DisableTelemetry = %v, want %v", tc.cliJSON, tc.org != nil, got, tc.want)
 			}
 		})
 	}
@@ -91,7 +71,7 @@ func TestChatSpawn_ResolvesTelemetryUnderTheOrganizationLock(t *testing.T) {
 
 // From the switch and the organization lock to what the real kiro-cli process receives: the toolkit variable in
 // its environment and telemetryEnabled on the initialize it reads. Not parallel: it sets environment variables.
-func TestChatSpawn_TelemetryReachesTheEngineProcess(t *testing.T) {
+func TestEngineSpawn_TelemetryReachesTheEngineProcess(t *testing.T) {
 	const toolkitVar = "KIRO_DISABLE_TOOLKIT_TELEMETRY"
 	for _, tc := range []struct {
 		org     *marotte.GovernanceStatePayload
@@ -109,16 +89,18 @@ func TestChatSpawn_TelemetryReachesTheEngineProcess(t *testing.T) {
 			withKiroTelemetry(t, tc.cliJSON)
 			t.Setenv(toolkitVar, "ambient")
 			engine := newEngineProcessFake(t)
-			h, cs := newContentCollectionHub(t, engine.factory)
-			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+			cs := newTestChatStore()
+			h := New(context.Background(), t.TempDir(), engine, cs, WithConfigDir(t.TempDir()))
+			cs.wire(h)
+			t.Cleanup(func() { shutdownHub(t, h) })
 			if tc.org != nil {
 				h.config.SetGovernance(t.Context(), *tc.org)
 			}
-			sb, err := h.coord.openBridge(t.Context(), "c1", "")
-			if err != nil {
-				t.Fatalf("OpenBridge: %v", err)
+			close(engine.installed)
+			if !awaitEngine(h) {
+				t.Fatal("the engine over the fake process never became ready")
 			}
-			env, initialize := engine.received(t, sb)
+			env, initialize := engine.received(t)
 
 			var carried []string
 			for _, kv := range env {
@@ -139,21 +121,20 @@ func TestChatSpawn_TelemetryReachesTheEngineProcess(t *testing.T) {
 	}
 }
 
-// engineProcessFake spawns real bridges over a shell script that records its environment and stdin, one directory
-// per process, since a chat open may also start the utility session.
+// engineProcessFake is an EngineSource over a shell script that records its environment and stdin; the engine
+// starts once installed closes, so a test sets the lock first.
 type engineProcessFake struct {
-	dirs map[*bridge.Bridge]string
-	t    *testing.T
-	mu   sync.Mutex
+	installed chan struct{}
+	dir       string
+	script    string
 }
+
+var _ EngineSource = (*engineProcessFake)(nil)
 
 func newEngineProcessFake(t *testing.T) *engineProcessFake {
-	return &engineProcessFake{t: t, dirs: map[*bridge.Bridge]string{}}
-}
-
-func (f *engineProcessFake) factory() ACPBridge {
-	dir := f.t.TempDir()
-	script := filepath.Join(dir, "kiro-cli")
+	t.Helper()
+	dir := t.TempDir()
+	script := filepath.Join(dir, "kiro-cli-chat")
 	body := `#!/bin/sh
 env > "` + dir + `/env"
 while IFS= read -r line; do
@@ -172,14 +153,15 @@ done
 	err := os.WriteFile(script, []byte(body), 0o700)
 	syscall.ForkLock.RUnlock()
 	if err != nil {
-		f.t.Errorf("write the engine fake: %v", err)
+		t.Fatalf("write the engine fake: %v", err)
 	}
-	b := bridge.New(script, dir)
-	f.mu.Lock()
-	f.dirs[b] = dir
-	f.mu.Unlock()
-	return b
+	return &engineProcessFake{installed: make(chan struct{}), dir: dir, script: script}
 }
+
+func (f *engineProcessFake) ChatPath() string            { return f.script }
+func (f *engineProcessFake) Installed() <-chan struct{}  { return f.installed }
+func (*engineProcessFake) Env() []string                 { return nil }
+func (*engineProcessFake) EnvAllow() map[string]struct{} { return nil }
 
 type initializeFrame struct {
 	Params struct {
@@ -194,23 +176,14 @@ type initializeFrame struct {
 	Method string `json:"method"`
 }
 
-// received is the environment and the initialize request of the process sb holds.
-func (f *engineProcessFake) received(t *testing.T, sb *sharedBridge) (env []string, initialize initializeFrame) {
+// received is the environment and the initialize request of the engine process.
+func (f *engineProcessFake) received(t *testing.T) (env []string, initialize initializeFrame) {
 	t.Helper()
-	sb.mu.Lock()
-	b, _ := sb.bridge.(*bridge.Bridge)
-	sb.mu.Unlock()
-	f.mu.Lock()
-	dir, ok := f.dirs[b]
-	f.mu.Unlock()
-	if !ok {
-		t.Fatalf("chat bridge %T was not spawned by the engine fake", sb.bridge)
-	}
-	rawEnv, err := os.ReadFile(filepath.Join(dir, "env"))
+	rawEnv, err := os.ReadFile(filepath.Join(f.dir, "env"))
 	if err != nil {
 		t.Fatalf("read the engine environment: %v", err)
 	}
-	rawIn, err := os.ReadFile(filepath.Join(dir, "stdin"))
+	rawIn, err := os.ReadFile(filepath.Join(f.dir, "stdin"))
 	if err != nil {
 		t.Fatalf("read the engine's stdin: %v", err)
 	}

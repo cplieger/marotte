@@ -19,8 +19,12 @@ const (
 	// workflow runs, refuses (-32000 SessionOwnsLiveWorkflowsError) while one is
 	// live, and answers {} for an id that never existed.
 	MethodSessionDelete = "session/delete"
-	MethodSetMode       = "session/set_mode"
-	MethodCancel        = "session/cancel"
+	// MethodSessionClose quiesces and disposes a session in KAS's memory, keeping its persisted
+	// state, so a later session/load restores it. KAS answers {} for an id it holds, one it already
+	// closed and one it never had.
+	MethodSessionClose = "session/close"
+	MethodSetMode      = "session/set_mode"
+	MethodCancel       = "session/cancel"
 	// MethodCheckpointRevertMultiple reverts a session to a USER message, dropping it and everything
 	// after and rolling files back from KAS's snapshots, with a durable `checkpoint_revert` tombstone
 	// a later session/load replays (applyCheckpointReverts). KAS refuses it mid-turn or concurrently.
@@ -36,12 +40,12 @@ const (
 	MethodSessionCompact = "_kiro/session/compact"
 	// MethodSessionRename sets a session's title as the USER's, latching
 	// titleSetByUser so KAS stops emitting agent titles for it. Served for a
-	// resident session and, on any other process, as a write to its stored metadata.
+	// resident session and, for one the engine does not hold, as a write to its stored metadata.
 	MethodSessionRename = "_kiro/session/rename"
 	// MethodSessionExport zips one persisted session ({sessionId} →
 	// {success, filePath, error?}) into KAS's own TMPDIR/kiro-exports-* directory
 	// under the fixed name kiro-session-<sessionId>.zip. It reads the session off
-	// disk, so any process answers it; the caller deletes the file.
+	// disk, so the engine answers it for any session; the caller deletes the file.
 	MethodSessionExport = "_kiro/session/export"
 
 	// MethodSessionSteer delivers a mid-turn steer (`_session/*`, KAS's spelling), read at the next
@@ -73,8 +77,8 @@ const (
 	MethodElicitationCreate = "_kiro/mcp/elicitation"
 )
 
-// MethodMCPGetResource reads one resource from the MCP pool of the process it
-// is sent to: {serverName, uri} → {contents[]}. Each bridge holds its own pool.
+// MethodMCPGetResource reads one resource from the engine's MCP pool, addressed
+// by session: {serverName, uri} → {contents[]}.
 const MethodMCPGetResource = "_kiro/mcp/getResource"
 
 // CreatedReasonTangent labels a forked session in KAS's roster, sent as `_meta.kiro.createdReason`
@@ -98,7 +102,7 @@ const (
 
 // MethodPolicyIgnoreFilesChanged is the whole door for which ignore FILES KAS enforces (no
 // `_meta.kiro` key exists). Connection-scope and hot. `{files: []}` CLEARS the list, so an empty
-// list is never sent (StartOpts.IgnoreFiles); a malformed payload is a no-op on KAS's side.
+// list is never sent (EngineOpts.IgnoreFiles); a malformed payload is a no-op on KAS's side.
 const (
 	MethodPolicyIgnoreFilesChanged = "_kiro/policy/ignore_files_changed"
 

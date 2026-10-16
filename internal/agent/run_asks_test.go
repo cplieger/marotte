@@ -33,17 +33,18 @@ func recordedReply(t *testing.T, name string) json.RawMessage {
 	return raw
 }
 
-// askCoreHub is a hub whose run wf_1 is leased and hosted by its own carrier, with a push that
+// askCoreHub is a hub whose run wf_1 is leased and hosted by its own host session, with a push that
 // records retractions.
 func askCoreHub(t *testing.T, workflowID string, reply json.RawMessage) (*Runtime, *fakeBridge, *askPush) {
 	t.Helper()
 	cs := newTestChatStore()
 	br := newFakeBridge()
 	fp := &askPush{}
-	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithPush(fp))
+	h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(func() engineSession { return br }, laneOf(br)), cs, WithPush(fp))
 	h.runs.cancelRetryBase = time.Hour
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
+	settleBoot(t, h)
 	leaseRun(t, h, runlease.Lease{WorkflowID: workflowID, ParentSessionID: testLaunchSession})
 	h.bridge.mgr.insert(runChatID(workflowID), &sharedBridge{bridge: br, state: bridgeIdle})
 	if reply != nil {
@@ -166,23 +167,6 @@ func TestRunAsks_ASeededCellIsUnreachableUntilRead(t *testing.T) {
 	}
 }
 
-// A trigger with no live host reads nothing and keeps the last snapshot, so the card stays
-// answerable.
-func TestRunAsks_AHostlessTriggerKeepsTheLastSnapshot(t *testing.T) {
-	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
-	readNow(t, h, "wf_1")
-	before := lastAsksOf(t, h, "wf_1")
-	h.bridge.mgr.remove(runChatID("wf_1"))
-
-	c := h.runs.asks.get("wf_1")
-	if _, err := h.runs.refreshCell(t.Context(), c, nil); !errors.Is(err, errNoAskHost) {
-		t.Fatalf("a hostless refresh = %v, want errNoAskHost", err)
-	}
-	if after := lastAsksOf(t, h, "wf_1"); after.Seq != before.Seq {
-		t.Errorf("a hostless trigger published %+v, want the last snapshot kept", after)
-	}
-}
-
 // An unreadable reply is "unknown", never "answered": the asks stay and the run reads unreachable.
 func TestRunAsks_AnUndecodableReplyKeepsTheAsks(t *testing.T) {
 	h, br, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
@@ -190,7 +174,7 @@ func TestRunAsks_AnUndecodableReplyKeepsTheAsks(t *testing.T) {
 	br.setCallResult(methodKiroWorkflowInspect, json.RawMessage(`{"workflowId":"wf_1","state":{"workflowId":"wf_1","status":7}}`))
 
 	c := h.runs.asks.get("wf_1")
-	if _, err := h.runs.readAsks(t.Context(), c, h.runs.askHost("wf_1")); err == nil {
+	if _, err := h.runs.readAsks(t.Context(), c); err == nil {
 		t.Fatal("an undecodable reply read as fine")
 	}
 	if p := lastAsksOf(t, h, "wf_1"); len(p.Asks) != 1 || p.Reachable {
@@ -257,7 +241,7 @@ func TestRunAsks_AReplyKeepsTheTurnMarkerFromBeforeItsInspect(t *testing.T) {
 	c := h.runs.cellFor("wf_1")
 	done := make(chan error, 1)
 	go func() {
-		_, err := h.runs.readAsks(t.Context(), c, h.runs.askHost("wf_1"))
+		_, err := h.runs.readAsks(t.Context(), c)
 		done <- err
 	}()
 	<-entered
@@ -547,7 +531,7 @@ func TestRunAsks_TheParkingTurnsWarningIsTheQuestion(t *testing.T) {
 	}
 }
 
-// A lifecycle frame through the run bridge's door is a trigger: the card appears with no request.
+// A lifecycle frame through the run host session is a trigger: the card appears with no request.
 func TestRunAsks_ALifecycleFrameIsATrigger(t *testing.T) {
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runNotif(methodWFNodePaused, map[string]any{
@@ -599,115 +583,6 @@ func TestRunAsks_AnAnswerToAnOlderQuestionIsStale(t *testing.T) {
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
 		t.Error("the stale answer reached KAS")
 	}
-}
-
-// A push landing opens a run whose host died with a question on screen, while KAS's record on disk
-// has the run over. The read goes through the process the lease records, never the utility session
-// (a utility read can stamp it as the run's owner), and the reply and every surface converge on no
-// question; the carrier started for the read is closed again.
-func TestOpenRun_ReadsThroughTheRecordedHostNeverTheUtility(t *testing.T) {
-	var (
-		mu    sync.Mutex
-		built []*fakeBridge
-	)
-	cs := newTestChatStore()
-	h := New(context.Background(), "/tmp/work", func() ACPBridge {
-		b := newFakeBridge()
-		b.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "completed", ""))
-		mu.Lock()
-		built = append(built, b)
-		mu.Unlock()
-		return b
-	}, cs)
-	cs.wire(h)
-	t.Cleanup(func() { shutdownHub(t, h) })
-	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ParentSessionID: testLaunchSession})
-	old := newFakeBridge()
-	old.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: old, state: bridgeIdle})
-	if len(readNow(t, h, "wf_1").asks) != 1 {
-		t.Fatal("Setup: the card was not up before its host died")
-	}
-	h.bridge.mgr.remove(runChatID("wf_1"))
-
-	got, body := getRun(t, h, "wf_1")
-
-	if len(got.OpenAsks) != 0 || !got.AsksReachable {
-		t.Errorf("open_asks = %+v reachable %v, want none, read: %s", got.OpenAsks, got.AsksReachable, body)
-	}
-	if p := lastAsksOf(t, h, "wf_1"); len(p.Asks) != 0 || !p.Reachable {
-		t.Errorf("the published snapshot = %+v, want no question on any surface", p)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	carriers := 0
-	for _, b := range built {
-		if opts := b.lastStartOpts(); opts != nil && opts.SessionID == testLaunchSession {
-			carriers++
-			continue
-		}
-		for _, m := range b.callLog() {
-			if len(m) > len("_kiro/workflow/") && m[:len("_kiro/workflow/")] == "_kiro/workflow/" {
-				t.Errorf("a process other than the run's recorded host got %s", m)
-			}
-		}
-	}
-	if carriers != 1 {
-		t.Errorf("%d carriers loaded the launching session, want 1", carriers)
-	}
-	waitFor(t, func() bool { return h.bridge.mgr.get(runChatID("wf_1")) == nil })
-}
-
-// A parentless run's carrier closes on `run_complete {paused}`, the very frame that announces the park:
-// the read that frame triggers holds the carrier, so the card is read before the process goes.
-func TestRunAsks_APausedCarrierClosesOnlyAfterItsParkIsRead(t *testing.T) {
-	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
-	lastAsksOf(t, h, "wf_1")
-
-	h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", "paused"))
-
-	waitFor(t, func() bool { return h.bridge.mgr.get(runChatID("wf_1")) == nil })
-	joinInflight(t, h)
-	if p := lastAsksOf(t, h, "wf_1"); len(p.Asks) != 1 || !p.Reachable {
-		t.Errorf("after the park's frame = %+v, want its question read before the carrier closed", p)
-	}
-}
-
-// A frame's carrier hold is always handed back: by the explicit read that takes the query token
-// after the frame's kick, and by a kick refused at shutdown. A stranded hold keeps a parentless
-// run's process up forever, since its close waits for the carrier to go idle.
-func TestRunAsks_AFramesCarrierHoldIsAlwaysLeft(t *testing.T) {
-	t.Run("an explicit read takes over the kick's hold", func(t *testing.T) {
-		h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
-		c := h.runs.cellFor("wf_1")
-		host := h.runs.askHost("wf_1")
-		c.query <- struct{}{}
-		h.runs.kickCellOn(c, host)
-		done := make(chan error, 1)
-		go func() {
-			_, err := h.runs.readAsks(t.Context(), c, host)
-			done <- err
-		}()
-		<-c.query
-		if err := <-done; err != nil {
-			t.Fatalf("readAsks = %v", err)
-		}
-		joinInflight(t, h)
-		if h.runs.carriers.busy(host) {
-			t.Error("the carrier is still held after every read ran, so its close never comes")
-		}
-	})
-	t.Run("a kick refused at shutdown", func(t *testing.T) {
-		h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
-		c := h.runs.cellFor("wf_1")
-		host := h.runs.askHost("wf_1")
-		h.lifecycle.draining.Store(true)
-		t.Cleanup(func() { h.lifecycle.draining.Store(false) })
-		h.runs.kickCellOn(c, host)
-		if h.runs.carriers.busy(host) {
-			t.Error("a kick refused at shutdown kept the carrier held")
-		}
-	})
 }
 
 // After a restart marotte saw no warning, so the card's text is the parked step's last words from the

@@ -1,0 +1,861 @@
+{
+ "getState": {
+  "view": {
+   "observer": "workspace",
+   "roots": [
+    "/workspace/project"
+   ]
+  },
+  "layers": [
+   {
+    "id": "kiro-agent-defaults",
+    "name": "Kiro Defaults"
+   },
+   {
+    "id": "client-defaults",
+    "name": "Client defaults"
+   },
+   {
+    "id": "kiro-service",
+    "name": "Kiro"
+   },
+   {
+    "id": "organization",
+    "name": "Your Organization"
+   },
+   {
+    "id": "machine",
+    "name": "Machine Administrator"
+   },
+   {
+    "id": "user-synced",
+    "name": "Cloud Config"
+   },
+   {
+    "id": "user-local",
+    "name": "Local Settings (~/.kiro)"
+   },
+   {
+    "id": "kiro-agent",
+    "name": "Kiro Agent"
+   },
+   {
+    "id": "client-connection",
+    "name": "marotte-p2-probe"
+   },
+   {
+    "id": "workspace",
+    "name": "Workspace"
+   },
+   {
+    "id": "agent",
+    "name": "Agent"
+   },
+   {
+    "id": "session",
+    "name": "This Session"
+   }
+  ],
+  "settings": [],
+  "resources": [
+   {
+    "type": "steering",
+    "compose": "append",
+    "assertions": [
+     {
+      "layer": "kiro-agent-defaults",
+      "compose": "append"
+     }
+    ],
+    "items": [
+     {
+      "krn": "krn:kiro-agent-defaults::steering/architecture-selection",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "architecture-selection",
+       "inclusion": "manual",
+       "uri": "builtin:architecture-selection"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::steering/quick-spec",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "quick-spec",
+       "inclusion": "manual",
+       "uri": "builtin:quick-spec"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::steering/bug-fix",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "bug-fix",
+       "inclusion": "manual",
+       "uri": "builtin:bug-fix"
+      }
+     }
+    ],
+    "pureAssertions": []
+   },
+   {
+    "type": "agent",
+    "compose": "append",
+    "assertions": [
+     {
+      "layer": "workspace",
+      "compose": "append"
+     }
+    ],
+    "items": [
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-auto-researcher",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-auto-researcher",
+       "name": "wf-auto-researcher",
+       "description": "Autonomous research subagent. Reads directions, runs experiments, benchmarks results, and commits improvements."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-coder",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-coder",
+       "name": "wf-coder",
+       "description": "Reads files, edits code, runs tests, and commits. General implementation agent."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-design",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-design",
+       "name": "wf-design",
+       "description": "Authors requirements and technical design documents for a feature, exploring the codebase so designs fit existing patterns."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-design-reviewer",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-design-reviewer",
+       "name": "wf-design-reviewer",
+       "description": "Reviews technical designs for ambiguity, gaps, and unverified assumptions before implementation begins. Mechanical verdict: any HIGH/MEDIUM finding blocks."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-planner",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-planner",
+       "name": "wf-planner",
+       "description": "Investigates a codebase and produces an ordered implementation plan \u2014 from an approved design when one is provided, or by making the design decisions itself when not."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-pr-responder",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-pr-responder",
+       "name": "wf-pr-responder",
+       "description": "Responds to PR review comments and CI feedback."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-pr-submitter",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-pr-submitter",
+       "name": "wf-pr-submitter",
+       "description": "Opens a pull request from a branch and records the PR metadata."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-review-aggregator",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-review-aggregator",
+       "name": "wf-review-aggregator",
+       "description": "Merges multiple review outputs into a single consolidated review verdict."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-workflow-creator",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-workflow-creator",
+       "name": "wf-workflow-creator",
+       "description": "Generates a workflow for the run_workflow tool. Given a task description and context, builds a valid workflow definition, saves it server-side via save_workflow_definition, and returns a generated:// reference plus inputs and a short summary."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/semantic_reviewer",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "semantic_reviewer",
+       "name": "semantic_reviewer",
+       "description": "Behavioral, narrative code review of a local or PR diff. Writes a review document and a verdict."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/Explore",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "Explore",
+       "name": "Explore",
+       "description": "Analyze and understand a codebase using tree-sitter parsing and dependency graphs. Use when the user asks to analyze, explore, or generate specs for their codebase \u2014 runs code_to_spec to produce architectural documentation (.kiro/specs/) and answers structural questions about architecture, data flows, and dependencies."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/create-spec",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "create-spec",
+       "name": "create-spec",
+       "description": "Encourages spec-driven development by producing guided artifacts \u2014 a requirements, design, and task-list specification \u2014 for a feature request."
+      }
+     },
+     {
+      "krn": "krn:user-local::agent/p3step.json",
+      "layer": "user-local",
+      "standing": {
+       "kind": "active"
+      },
+      "readFrom": {
+       "krn": "krn:user-local::file/agents/p3step.json",
+       "uri": "file:///config/home/.kiro/agents/p3step.json"
+      },
+      "value": {
+       "id": "p3step",
+       "name": "p3step",
+       "description": "P3 probe step."
+      }
+     },
+     {
+      "krn": "krn:workspace:9cee3c265fc1a1cf:agent/.kiro/agents/p3step.json",
+      "layer": "workspace",
+      "standing": {
+       "kind": "active"
+      },
+      "readFrom": {
+       "krn": "krn:workspace:9cee3c265fc1a1cf:file/.kiro/agents/p3step.json",
+       "uri": "file:///workspace/project/.kiro/agents/p3step.json"
+      },
+      "value": {
+       "id": "p3step",
+       "name": "p3step",
+       "description": "P3 probe step."
+      }
+     }
+    ],
+    "pureAssertions": []
+   },
+   {
+    "type": "workflow",
+    "compose": "append",
+    "assertions": [
+     {
+      "layer": "user-local",
+      "compose": "append"
+     }
+    ],
+    "items": [
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/autoresearch",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "autoresearch"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/feature-pipeline",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "feature-pipeline"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/goal",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "goal"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/investigate",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "investigate"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/publish-pr",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "publish-pr"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/ralph",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "ralph"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/semantic-review-multi-model",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "semantic-review-multi-model"
+      }
+     },
+     {
+      "krn": "krn:user-local::workflow/homeonly.workflow.json",
+      "layer": "user-local",
+      "standing": {
+       "kind": "active"
+      },
+      "readFrom": {
+       "krn": "krn:user-local::file/workflows/homeonly.workflow.json",
+       "uri": "file:///config/home/.kiro/workflows/homeonly.workflow.json"
+      },
+      "value": {
+       "name": "homeonly"
+      }
+     },
+     {
+      "krn": "krn:user-local::workflow/shared.workflow.json",
+      "layer": "user-local",
+      "standing": {
+       "kind": "active"
+      },
+      "readFrom": {
+       "krn": "krn:user-local::file/workflows/shared.workflow.json",
+       "uri": "file:///config/home/.kiro/workflows/shared.workflow.json"
+      },
+      "value": {
+       "name": "shared"
+      }
+     }
+    ],
+    "pureAssertions": []
+   }
+  ]
+ },
+ "listRecipes": {
+  "recipes": [
+   {
+    "name": "shared",
+    "source": "/workspace/project/.kiro/workflows/shared.workflow.json",
+    "builtIn": false,
+    "_meta": {
+     "kiro": {
+      "resource": {
+       "resourceType": "workflow",
+       "source": {
+        "origin": "workspace",
+        "root": "/workspace/project"
+       }
+      }
+     }
+    },
+    "description": "P3 probe (workspace).",
+    "plan": [
+     {
+      "nodeId": "s1",
+      "type": "step",
+      "agentName": "p3step"
+     }
+    ]
+   },
+   {
+    "name": "wsonly",
+    "source": "/workspace/project/.kiro/workflows/wsonly.workflow.json",
+    "builtIn": false,
+    "_meta": {
+     "kiro": {
+      "resource": {
+       "resourceType": "workflow",
+       "source": {
+        "origin": "workspace",
+        "root": "/workspace/project"
+       }
+      }
+     }
+    },
+    "description": "P3 probe (workspace).",
+    "plan": [
+     {
+      "nodeId": "s1",
+      "type": "step",
+      "agentName": "p3step"
+     }
+    ]
+   },
+   {
+    "name": "homeonly",
+    "source": "/config/home/.kiro/workflows/homeonly.workflow.json",
+    "builtIn": false,
+    "_meta": {
+     "kiro": {
+      "resource": {
+       "resourceType": "workflow",
+       "source": {
+        "origin": "user"
+       }
+      }
+     }
+    },
+    "description": "P3 probe (home).",
+    "plan": [
+     {
+      "nodeId": "s1",
+      "type": "step",
+      "agentName": "p3step"
+     }
+    ]
+   },
+   {
+    "name": "autoresearch",
+    "description": "Repeatedly proposes and applies one experiment at a time, runs the benchmark, and keeps changes only when they beat the current best result.",
+    "source": "bundled://autoresearch",
+    "inputs": {
+     "benchmark_path": "string",
+     "research_directions": "string"
+    },
+    "plan": [
+     {
+      "nodeId": "experiments",
+      "type": "repeat",
+      "steps": [
+       {
+        "nodeId": "experiment",
+        "type": "step",
+        "agentName": "wf-auto-researcher"
+       }
+      ],
+      "maxIterations": 1000,
+      "onMaxIterations": "pause"
+     }
+    ],
+    "builtIn": true,
+    "_meta": {
+     "kiro": {
+      "resource": {
+       "resourceType": "workflow",
+       "source": {
+        "origin": "bundled"
+       }
+      }
+     }
+    }
+   },
+   {
+    "name": "feature-pipeline",
+    "description": "Full feature pipeline in the given workdir: requirements, reviewed design loop, plan, implement-and-review loop with two-model review, fail-closed validation gate. Heavy; for hard multi-file tasks.",
+    "source": "bundled://feature-pipeline",
+    "inputs": {
+     "task": "prompt",
+     "workdir": "string"
+    },
+    "plan": [
+     {
+      "nodeId": "setup",
+      "type": "step",
+      "agentName": "wf-coder",
+      "effortLevel": "low"
+     },
+     {
+      "nodeId": "requirements",
+      "type": "step",
+      "agentName": "wf-design"
+     },
+     {
+      "nodeId": "design-loop",
+      "type": "repeat",
+      "steps": [
+       {
+        "nodeId": "design-draft",
+        "type": "step",
+        "agentName": "wf-design"
+       },
+       {
+        "nodeId": "design-review",
+        "type": "step",
+        "agentName": "wf-design-reviewer"
+       }
+      ],
+      "maxIterations": 3,
+      "onMaxIterations": "abort",
+      "stopCondition": {
+       "fileCheck": {
+        "path": "{{setup.output}}/design-review.json",
+        "jsonPath": "verdict",
+        "value": "APPROVED"
+       }
+      }
+     },
+     {
+      "nodeId": "plan",
+      "type": "step",
+      "agentName": "wf-planner",
+      "effortLevel": "high"
+     },
+     {
+      "nodeId": "code-loop",
+      "type": "repeat",
+      "steps": [
+       {
+        "nodeId": "implement",
+        "type": "step",
+        "agentName": "wf-coder"
+       },
+       {
+        "nodeId": "code-reviews",
+        "type": "parallel",
+        "branches": [
+         {
+          "nodeId": "review-fable",
+          "type": "step",
+          "agentName": "semantic_reviewer",
+          "modelId": "claude-fable-5",
+          "effortLevel": "xhigh"
+         },
+         {
+          "nodeId": "review-gpt",
+          "type": "step",
+          "agentName": "semantic_reviewer",
+          "modelId": "gpt-5.6-sol",
+          "effortLevel": "xhigh"
+         }
+        ]
+       },
+       {
+        "nodeId": "code-aggregate",
+        "type": "step",
+        "agentName": "wf-review-aggregator",
+        "effortLevel": "high"
+       }
+      ],
+      "maxIterations": 3,
+      "onMaxIterations": "abort",
+      "stopCondition": {
+       "fileCheck": {
+        "path": "{{setup.output}}/code-review.json",
+        "jsonPath": "verdict",
+        "value": "APPROVED"
+       }
+      }
+     },
+     {
+      "nodeId": "validate-gate",
+      "type": "repeat",
+      "steps": [
+       {
+        "nodeId": "validate",
+        "type": "step",
+        "agentName": "wf-coder"
+       }
+      ],
+      "maxIterations": 1,
+      "onMaxIterations": "abort",
+      "stopCondition": {
+       "fileCheck": {
+        "path": "{{setup.output}}/validation.json",
+        "jsonPath": "verdict",
+        "value": "PASS"
+       }
+      }
+     }
+    ],
+    "builtIn": true,
+    "_meta": {
+     "kiro": {
+      "resource": {
+       "resourceType": "workflow",
+       "source": {
+        "origin": "bundled"
+       }
+      }
+     }
+    }
+   },
+   {
+    "name": "goal",
+    "description": "Iterative agent loop toward a single verifiable goal until self-verified complete or the iteration budget is exhausted; no external progress state, each iteration re-derives progress from the repo.",
+    "source": "bundled://goal",
+    "inputs": {
+     "prompt": "prompt",
+     "max_iterations": "string"
+    },
+    "plan": [
+     {
+      "nodeId": "goal-loop",
+      "type": "repeat",
+      "steps": [
+       {
+        "nodeId": "work",
+        "type": "step",
+        "agentName": "wf-coder"
+       }
+      ],
+      "maxIterations": 200,
+      "onMaxIterations": "pause",
+      "stopCondition": {
+       "completionSignal": "success"
+      }
+     }
+    ],
+    "builtIn": true,
+    "_meta": {
+     "kiro": {
+      "resource": {
+       "resourceType": "workflow",
+       "source": {
+        "origin": "bundled"
+       }
+      }
+     }
+    }
+   },
+   {
+    "name": "investigate",
+    "description": "Single-step read-only investigation. The orchestrator supplies a self-contained brief; a planner agent investigates and writes a findings report.",
+    "source": "bundled://investigate",
+    "inputs": {
+     "brief": "prompt",
+     "report_path": "file"
+    },
+    "plan": [
+     {
+      "nodeId": "investigate",
+      "type": "step",
+      "agentName": "wf-planner"
+     }
+    ],
+    "builtIn": true,
+    "_meta": {
+     "kiro": {
+      "resource": {
+       "resourceType": "workflow",
+       "source": {
+        "origin": "bundled"
+       }
+      }
+     }
+    }
+   },
+   {
+    "name": "publish-pr",
+    "description": "Opens a PR from a branch (reuses an existing open PR), then watches and responds to feedback until a terminal state. run_dir: required per-run artifact dir; repo_dir: target repo (optional).",
+    "source": "bundled://publish-pr",
+    "inputs": {
+     "branch": "string",
+     "repo_dir": "string",
+     "run_dir": "string"
+    },
+    "plan": [
+     {
+      "nodeId": "submit",
+      "type": "step",
+      "agentName": "wf-pr-submitter"
+     },
+     {
+      "nodeId": "pr-loop",
+      "type": "repeat",
+      "steps": [
+       {
+        "nodeId": "wait",
+        "type": "watch",
+        "agentName": "github-pr"
+       },
+       {
+        "nodeId": "respond",
+        "type": "step",
+        "agentName": "wf-pr-responder"
+       }
+      ],
+      "maxIterations": 200,
+      "onMaxIterations": "pause",
+      "stopWhen": "wait.terminal"
+     }
+    ],
+    "builtIn": true,
+    "_meta": {
+     "kiro": {
+      "resource": {
+       "resourceType": "workflow",
+       "source": {
+        "origin": "bundled"
+       }
+      }
+     }
+    }
+   },
+   {
+    "name": "ralph",
+    "description": "Loops one coding agent through a JSON checklist file, one item per iteration, until every item is done; progress is durable and inspectable mid-run. For a single non-decomposable outcome, use goal.",
+    "source": "bundled://ralph",
+    "inputs": {
+     "goal": "prompt",
+     "prd_path": "file"
+    },
+    "plan": [
+     {
+      "nodeId": "ralph-loop",
+      "type": "repeat",
+      "steps": [
+       {
+        "nodeId": "iterate",
+        "type": "step",
+        "agentName": "wf-coder"
+       }
+      ],
+      "maxIterations": 200,
+      "onMaxIterations": "pause",
+      "stopCondition": {
+       "fileCheck": {
+        "path": "{{prd_path}}",
+        "jsonPath": "complete",
+        "value": true
+       }
+      }
+     }
+    ],
+    "builtIn": true,
+    "_meta": {
+     "kiro": {
+      "resource": {
+       "resourceType": "workflow",
+       "source": {
+        "origin": "bundled"
+       }
+      }
+     }
+    }
+   },
+   {
+    "name": "semantic-review-multi-model",
+    "description": "Reviews a change with two independent semantic reviewers in parallel on different models, then aggregates into one issues-only report under <workdir>/.agents/reviews/. Reviewers never see each other.",
+    "source": "bundled://semantic-review-multi-model",
+    "inputs": {
+     "target": "prompt",
+     "workdir": "string"
+    },
+    "plan": [
+     {
+      "nodeId": "setup",
+      "type": "step",
+      "agentName": "wf-coder",
+      "effortLevel": "low"
+     },
+     {
+      "nodeId": "reviews",
+      "type": "parallel",
+      "branches": [
+       {
+        "nodeId": "review-opus",
+        "type": "step",
+        "agentName": "semantic_reviewer",
+        "modelId": "claude-opus-5",
+        "effortLevel": "xhigh"
+       },
+       {
+        "nodeId": "review-gpt",
+        "type": "step",
+        "agentName": "semantic_reviewer",
+        "modelId": "gpt-5.6-sol",
+        "effortLevel": "xhigh"
+       }
+      ]
+     },
+     {
+      "nodeId": "aggregate",
+      "type": "step",
+      "agentName": "wf-coder",
+      "modelId": "claude-opus-5",
+      "effortLevel": "xhigh"
+     }
+    ],
+    "builtIn": true,
+    "_meta": {
+     "kiro": {
+      "resource": {
+       "resourceType": "workflow",
+       "source": {
+        "origin": "bundled"
+       }
+      }
+     }
+    }
+   }
+  ]
+ }
+}

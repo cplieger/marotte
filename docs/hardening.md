@@ -4,13 +4,13 @@ This page is for anyone deciding where to run marotte and who can reach it. It c
 
 ## Who can reach it
 
-marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and reads and writes files under `/workspace`. They can also use the kiro-cli sign-in stored in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login. Caddy forward-auth, oauth2-proxy and Authentik all work. Doing both is better.
+marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and reads and writes files under `/workspace`. They can also use the Kiro sign-in marotte keeps in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login. Caddy forward-auth, oauth2-proxy and Authentik all work. Doing both is better.
 
-Signing in on the page signs kiro-cli in to your Kiro account. That is the agent's identity, and it does not protect marotte itself.
+Signing in on the page gives the agent your Kiro account. That is the agent's identity, and it does not protect marotte itself. marotte keeps the sign-in in `/config/signin.json`, which only the container's user may read or write. marotte tightens a file that others can read, and refuses to use one it cannot tighten. It never reads the sign-in of a `kiro-cli` you run in the terminal.
 
 Set `ALLOWED_HOSTS` on any server that stays up, and set `TRUSTED_PROXIES` when a proxy sits in front. [Configuration](configuration.md) explains both. Requests that change state from another website are refused with `403`.
 
-The file browser shows only the folders it is given, `/workspace`, `/config` and `/uploads` by default. Credential and internal files under `/config`, such as SSH keys, cloud tokens, forge credentials, the chat store and the MCP configuration, stay hidden. The preview tab follows the same list. It refuses a page whose folder holds those files or sits among them.
+The file browser shows only the folders it is given, `/workspace`, `/config` and `/uploads` by default. Credential and internal files under `/config`, such as SSH keys, cloud tokens, forge credentials, the Kiro sign-in, the chat store and the MCP configuration, stay hidden. The preview tab follows the same list. It refuses a page whose folder holds those files or sits among them.
 
 ## The container user
 
@@ -28,7 +28,8 @@ The two kinds of source differ in what backs them. An `apt:` entry can only be a
 
 marotte sends no telemetry. Its outbound requests are these:
 
-- the AI provider kiro-cli is signed in to
+- the AI provider of the Kiro account you signed in with
+- AWS's sign-in service in your account's region, to sign in and to renew the sign-in, and Kiro's account service, to read the account's Kiro profile and email at sign-in
 - any MCP server you add
 - the API of each forge you connect in the git panel, never on a private address unless that connection allows it
 - the public MCP registry when you search it

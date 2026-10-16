@@ -14,10 +14,10 @@ import (
 	"github.com/cplieger/slogx/capture"
 )
 
-// startTeardownFixture runs script as the bridge's process, in its own group as startProcess spawns kiro-cli.
-func startTeardownFixture(t *testing.T, script string) *Bridge {
+// startTeardownFixture runs script as the engine's process, in its own group as startProcess spawns kiro-cli.
+func startTeardownFixture(t *testing.T, script string) *Engine {
 	t.Helper()
-	b := New("cli", t.TempDir())
+	b := NewEngine("cli", t.TempDir())
 	cmd := exec.Command("/bin/sh", "-c", script)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
@@ -110,7 +110,7 @@ func TestStop_SweepsTheEngineGroupAfterTheHeadExits(t *testing.T) {
 	outside := waitForBridgePID(t, pidFile)
 	t.Cleanup(func() { _ = syscall.Kill(-outside, syscall.SIGKILL) })
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"agentCapabilities":{}}`)}
-	if _, err := driveSessionCall(t, b, resp, b.initialize); err != nil {
+	if _, err := driveSessionCall(t, b, resp, false, b.initialize); err != nil {
 		t.Fatalf("Setup: initialize = %v, want nil", err)
 	}
 
@@ -147,7 +147,7 @@ func TestStop_EscalatesSweepOfAnOutsideGroupAndLogsIt(t *testing.T) {
 	if processAlive(outside) {
 		t.Errorf("Stop() left the TERM-ignoring outside group (pid %d) alive", outside)
 	}
-	if n := logs.CountExact("killed MCP/engine survivors after the bridge ended"); n != 1 {
+	if n := logs.CountExact("killed MCP and engine survivors after the engine ended"); n != 1 {
 		t.Errorf("survivor-kill Warn logged %d times, want 1", n)
 	}
 }
@@ -173,7 +173,7 @@ func TestSweepEngineGroups_KillsAGroupWhoseLeaderWasReaped(t *testing.T) {
 	if got, err := syscall.Getpgid(member.Process.Pid); err != nil || got != pgid {
 		t.Fatalf("Setup: member pgid = %d, %v; want the leader's group %d", got, err, pgid)
 	}
-	b := New("cli", t.TempDir())
+	b := NewEngine("cli", t.TempDir())
 	for _, g := range procgroup.GroupsBelow(os.Getpid()) {
 		if g.ID == pgid {
 			b.engineGroups = []procgroup.Group{g}
@@ -190,12 +190,12 @@ func TestSweepEngineGroups_KillsAGroupWhoseLeaderWasReaped(t *testing.T) {
 		t.Fatalf("Setup: a process still sits at the reaped leader's pid %d", pgid)
 	}
 
-	b.sweepEngineGroups("s1")
+	b.sweepEngineGroups()
 
 	if processAlive(member.Process.Pid) {
 		t.Errorf("sweep left the reaped leader's group member (pid %d) alive", member.Process.Pid)
 	}
-	if n := logs.CountExact("killed MCP/engine survivors after the bridge ended"); n != 1 {
+	if n := logs.CountExact("killed MCP and engine survivors after the engine ended"); n != 1 {
 		t.Errorf("survivor-kill Warn logged %d times, want 1", n)
 	}
 }
@@ -229,12 +229,12 @@ func TestSweepEngineGroups_SkipsAnIdALaterGroupHolds(t *testing.T) {
 		t.Fatalf("Setup: start the later group: %v", err)
 	}
 	t.Cleanup(func() { _ = syscall.Kill(-later.Process.Pid, syscall.SIGKILL); _ = later.Wait() })
-	b := New("cli", t.TempDir())
+	b := NewEngine("cli", t.TempDir())
 	// A zero leader stamp never matches the live leader's start time.
 	b.engineGroups = []procgroup.Group{{ID: later.Process.Pid}}
 
 	start := time.Now()
-	b.sweepEngineGroups("s1")
+	b.sweepEngineGroups()
 
 	if elapsed := time.Since(start); elapsed >= bridgeGroupGrace {
 		t.Errorf("sweep took %v on a reused id, want under the %v grace", elapsed, bridgeGroupGrace)

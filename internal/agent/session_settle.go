@@ -32,6 +32,19 @@ func (s *sessionSettle) settle(err error) {
 	})
 }
 
+// pending reports an outcome not settled yet.
+func (s *sessionSettle) pending() bool {
+	if s == nil {
+		return false
+	}
+	select {
+	case <-s.done:
+		return false
+	default:
+		return true
+	}
+}
+
 func (s *sessionSettle) wait(ctx context.Context) error {
 	if s == nil {
 		return nil

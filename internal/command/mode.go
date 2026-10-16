@@ -16,7 +16,7 @@ import (
 
 // cmdSetMode switches the chat's session mode: live via session/set_mode when a bridge runs, then
 // persisted and broadcast so every client's pill flips. For a chat with no bridge yet the mode is
-// persisted and applied at session/new (StartOpts.Mode).
+// persisted and applied at session/new (SessionOpts.Mode).
 func cmdSetMode(
 	ctx context.Context, bridges bridgeAccess, chats chatStore, bus broadcaster,
 	recorder modeRecorder, cmd *marotte.ClientCommand,
@@ -80,7 +80,7 @@ func configOptionParams(id, value string) map[string]any {
 }
 
 // applySessionConfig sends one live session-config change and grades the outcome, so set_mode,
-// set_effort and set_supervised_mode answer a cold spawn alike. A nil error means the caller may
+// set_effort and set_supervised_mode answer a cold session open alike. A nil error means the caller may
 // persist: the change landed, or there is no session yet to land it on.
 // A bridge that exists but has not started (registered before Start so opens coalesce, or whose
 // Start failed) refuses with marotte.ErrBridgeNotStarted, and is treated as no session. That is

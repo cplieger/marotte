@@ -35,18 +35,15 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID,
 
 	options := sanitizeUserInputOptions(p.Options)
 
-	subSessionID := t.deriveSubSession(chatID, p.SessionID)
-
 	step := t.steps.refFor(p.SessionID)
 	question := displayText(p.Question)
 	evt := marotte.NewEvent(marotte.EventUserInputNeeded, chatID, marotte.UserInputNeededPayload{
 		// The question is model-composed and unbounded on the wire; same rule as a permission title.
-		Question:     question,
-		Options:      options,
-		ToolCallID:   p.ToolCallID,
-		SubSessionID: subSessionID,
-		RunID:        step.WorkflowID,
-		NodeID:       step.NodeID,
+		Question:   question,
+		Options:    options,
+		ToolCallID: p.ToolCallID,
+		RunID:      step.WorkflowID,
+		NodeID:     step.NodeID,
 	})
 	t.bus.Broadcast(ctx, t.pendingPerms.PendingPermsAdd(reqID, evt, origin))
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID, marotte.WorkingLabelPayload{Label: marotte.WorkingLabelInput}))

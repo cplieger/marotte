@@ -84,10 +84,10 @@ func zipNames(t *testing.T, body []byte) []string {
 	return names
 }
 
-func TestKiroSessionExport_MergesTheChainAndRoutesTheLiveSegment(t *testing.T) {
+func TestKiroSessionExport_MergesTheChainThroughTheEngine(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	h, cs, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.seed(t, "c1", func(c *marotte.Chat) {
 		c.Name = "Fix the parser"
 		c.ACPSessionID = "sess_b"
@@ -96,8 +96,8 @@ func TestKiroSessionExport_MergesTheChainAndRoutesTheLiveSegment(t *testing.T) {
 	pathA, pathB := writeKASExport(t, "sess_a"), writeKASExport(t, "sess_b")
 
 	var mu sync.Mutex
-	var utilAsked, liveAsked []string
-	exportAnswer(br, map[string]string{"sess_a": pathA}, &utilAsked, &mu)
+	var engineAsked, liveAsked []string
+	exportAnswer(br, map[string]string{"sess_a": pathA}, &engineAsked, &mu)
 	live := newFakeBridge()
 	live.sessionID = "sess_b"
 	exportAnswer(live, map[string]string{"sess_b": pathB}, &liveAsked, &mu)
@@ -117,8 +117,8 @@ func TestKiroSessionExport_MergesTheChainAndRoutesTheLiveSegment(t *testing.T) {
 	if got := zipNames(t, rec.Body.Bytes()); !slices.Equal(got, want) {
 		t.Errorf("merged entries = %v, want %v", got, want)
 	}
-	if !slices.Equal(utilAsked, []string{"sess_a"}) {
-		t.Errorf("utility session asked for %v, want [sess_a]", utilAsked)
+	if !slices.Equal(engineAsked, []string{"sess_a"}) {
+		t.Errorf("the engine export asked for %v, want [sess_a]", engineAsked)
 	}
 	if !slices.Equal(liveAsked, []string{"sess_b"}) {
 		t.Errorf("live bridge asked for %v, want [sess_b]", liveAsked)
@@ -133,7 +133,7 @@ func TestKiroSessionExport_MergesTheChainAndRoutesTheLiveSegment(t *testing.T) {
 func TestKiroSessionExport_SkipsASegmentKASCannotFind(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	h, cs, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.seed(t, "c1", func(c *marotte.Chat) {
 		c.ACPSessionID = "sess_b"
 		c.PriorACPSessionIDs = []string{"sess_gone"}
@@ -154,7 +154,7 @@ func TestKiroSessionExport_SkipsASegmentKASCannotFind(t *testing.T) {
 func TestKiroSessionExport_NothingToExportIs404(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	h, cs, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.ACPSessionID = "sess_gone" })
 	var mu sync.Mutex
 	var asked []string
@@ -171,7 +171,7 @@ func TestKiroSessionExport_NothingToExportIs404(t *testing.T) {
 func TestKiroSessionExport_RefusesAPathOutsideTheExportDir(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	h, cs, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.ACPSessionID = "sess_a" })
 	outside := filepath.Join(t.TempDir(), "kiro-session-sess_a.zip")
 	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {

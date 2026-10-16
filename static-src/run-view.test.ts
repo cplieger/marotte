@@ -498,12 +498,16 @@ describe("run view controls", () => {
     const stuck = await paint(openRunView, "running", {
       controls: {
         verbs: [],
-        refused: { pause: "This run has no live engine on this server." },
+        refused: {
+          pause: "A pause is already requested; the run stops at the end of its current step.",
+        },
         parent_chat_id: "",
       },
     });
     expect(stuck.labels).toEqual([]);
-    expect(stuck.refusals).toEqual(["This run has no live engine on this server."]);
+    expect(stuck.refusals).toEqual([
+      "A pause is already requested; the run stops at the end of its current step.",
+    ]);
   });
 
   // Before the answer lands there is nothing to render.
@@ -953,13 +957,15 @@ describe("the run dock", () => {
         root: live("running"),
         controls: {
           verbs: [],
-          refused: { pause: "This run has no live engine on this server." },
+          refused: {
+            pause: "A pause is already requested; the run stops at the end of its current step.",
+          },
           parent_chat_id: "",
         },
       });
       expect(
         [...document.querySelectorAll("#run-exec-dock .ev-dock-note")].map((n) => n.textContent),
-      ).toEqual(["This run has no live engine on this server."]);
+      ).toEqual(["A pause is already requested; the run stops at the end of its current step."]);
       expect(names("#run-exec-dock")).toEqual([]);
     });
   });

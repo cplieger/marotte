@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from "vitest";
 import type * as GitStatusStore from "./git-status-store.js";
+import { join as joinKey } from "@cplieger/keyenc";
 
 type GitStatusStoreModule = typeof GitStatusStore;
 
@@ -21,21 +22,25 @@ vi.mock("./editor-openers.js", () => ({
 
 const DOCS_PATH = "/api/workspace/kiro-docs";
 const ISSUES_PATH = "/api/steering/issues";
+const STANDING_PATH = "/api/config/standing";
 
 /**
- * Served off one mock: the inventory through the caller's decoder, hooks empty, steering issues by `issues`.
- * `mockReset` runs between tests, so every case re-arms.
+ * Served off one mock: the inventory through the caller's decoder, hooks empty, steering issues by `issues`, the
+ * configuration standing by `standing`. `mockReset` runs between tests, so every case re-arms.
  */
 function serveDocsPage(
   inventory: Promise<unknown> | unknown = { docs: [], truncated: false },
   issues: unknown = { issues: {} },
+  standing: unknown = { standing: [], load_errors: {} },
 ): (path: string, decode: (v: unknown) => unknown) => Promise<unknown> {
   return (path, decode) =>
     path === DOCS_PATH
       ? Promise.resolve(inventory).then(decode)
       : path === ISSUES_PATH
         ? Promise.resolve(issues).then(decode)
-        : Promise.resolve({ hooks: [] });
+        : path === STANDING_PATH
+          ? Promise.resolve(standing).then(decode)
+          : Promise.resolve({ hooks: [] });
 }
 // toggleDocsView runs onShow, which wires and loads the page; swallowing it leaves the SSE cases on an unopened page.
 vi.mock("./tabs.js", () => ({
@@ -75,13 +80,13 @@ vi.mock("./bus.js", () => ({
   BUS_EDITOR_VIEW_CHANGED: undefined,
   BUS_KEYS_ESCAPE: undefined,
   BUS_PAGE_RESUMED: undefined,
-  BUS_RECONCILE: undefined,
+  BUS_RECONCILE: "transport:reconcile",
   BUS_TAB_CHANGED: undefined,
   decodeEnvelope: undefined,
   dispatch: undefined,
   emitBus: undefined,
   registerSSEDecoder: undefined,
-  onBus: undefined,
+  onBus: vi.fn(() => () => undefined),
   onSSE: vi.fn(() => () => undefined),
 }));
 // Only the subscription is replaced: subscribing fetches through the transport, which outlived teardown as an
@@ -899,6 +904,120 @@ describe("the Hooks tab: staying current", () => {
       "Fix the #[[file:x]] path",
     );
     expect(vi.mocked(apiGetTyped)).toHaveBeenCalledWith(ISSUES_PATH, expect.anything());
+    forceDocsTab("hooks");
+  });
+
+  it("standing badge: names the layer that replaced a row, on that row only, and follows config_standing_changed", async () => {
+    const { apiGetTyped } = await import("./api-client.js");
+    const replaced = "workspace/.kiro/steering/api.md";
+    const active = "workspace/.kiro/steering/style.md";
+    const inventory = {
+      docs: [
+        { category: "steering", name: "api", path: replaced },
+        { category: "steering", name: "style", path: active },
+      ],
+      truncated: false,
+    };
+    vi.mocked(apiGetTyped).mockClear().mockImplementation(serveDocsPage(inventory));
+    const { forceDocsTab, refreshDocsView } = await import("./docs.js");
+    forceDocsTab("steering");
+    refreshDocsView();
+    const panel = document.querySelector('[data-docs-panel="steering"]');
+    const row = (path: string): Element | null | undefined =>
+      panel?.querySelector(
+        `[data-key="${CSS.escape(joinKey("d", path, path === replaced ? "api" : "style"))}"]`,
+      );
+    await vi.waitFor(() => {
+      expect(row(active)).not.toBeNull();
+    });
+    expect(panel?.querySelector(".docs-badge-standing")).toBeNull();
+
+    vi.mocked(apiGetTyped).mockImplementation(
+      serveDocsPage(inventory, undefined, {
+        standing: [
+          {
+            type: "steering",
+            key: replaced,
+            kind: "displaced",
+            decided_by: "user-local",
+            decided_by_name: "Local Settings (~/.kiro)",
+            compose: "override",
+          },
+        ],
+        load_errors: {},
+      }),
+    );
+    sseHandlers.get("config_standing_changed")?.();
+    await vi.waitFor(() => {
+      expect(row(replaced)?.querySelector(".docs-badge-standing")?.textContent).toBe(
+        "Replaced by Local Settings (~/.kiro)",
+      );
+    });
+    expect(row(replaced)?.querySelector(".docs-badge-standing")?.getAttribute("data-tooltip")).toBe(
+      "Local Settings (~/.kiro) has an item that replaces this one (compose rule: override).",
+    );
+    expect(row(active)?.querySelector(".docs-badge-standing")).toBeNull();
+    vi.mocked(apiGetTyped).mockImplementation(serveDocsPage(inventory));
+    sseHandlers.get("config_standing_changed")?.();
+    await vi.waitFor(() => {
+      expect(panel?.querySelector(".docs-badge-standing")).toBeNull();
+    });
+    forceDocsTab("hooks");
+  });
+
+  it("agent load error under the badge: shown on its row whatever the row's standing", async () => {
+    const { apiGetTyped } = await import("./api-client.js");
+    const broken = "workspace/.kiro/agents/broken.json";
+    const both = "workspace/repo/.kiro/agents/broken.json";
+    const inventory = {
+      docs: [
+        { category: "agent", name: "broken", path: broken, description: "reviews code" },
+        { category: "agent", name: "broken", path: both },
+      ],
+      truncated: false,
+    };
+    const loadError = {
+      at: "2026-10-16T00:00:00Z",
+      reason_code: "invalid_config",
+      error: "expected value at line 1",
+    };
+    vi.mocked(apiGetTyped)
+      .mockClear()
+      .mockImplementation(
+        serveDocsPage(inventory, undefined, {
+          standing: [
+            {
+              type: "agent",
+              key: both,
+              kind: "disabled",
+              decided_by: "workspace",
+              decided_by_name: "Workspace",
+            },
+          ],
+          load_errors: { [broken]: loadError, [both]: loadError },
+        }),
+      );
+    document
+      .getElementById("docs-view")
+      ?.insertAdjacentHTML("beforeend", '<div data-docs-panel="agents" class="docs-panel"></div>');
+    const { forceDocsTab, refreshDocsView } = await import("./docs.js");
+    forceDocsTab("agents");
+    refreshDocsView();
+    const panel = document.querySelector('[data-docs-panel="agents"]');
+    const row = (path: string): Element | null | undefined =>
+      panel?.querySelector(`[data-key="${CSS.escape(joinKey("d", path, "broken"))}"]`);
+    const errorLine = (path: string): string | null | undefined =>
+      row(path)?.querySelector(".entry-sub-error")?.textContent;
+    await vi.waitFor(() => {
+      expect(errorLine(broken)).toBe(
+        "kiro-cli could not load this agent: expected value at line 1",
+      );
+    });
+    expect(row(broken)?.textContent).toContain("reviews code");
+    expect(row(broken)?.querySelector(".docs-badge-standing")).toBeNull();
+    expect(errorLine(both)).toBe("kiro-cli could not load this agent: expected value at line 1");
+    expect(row(both)?.querySelector(".docs-badge-standing")?.textContent).toBe("Off by Workspace");
+    panel?.remove();
     forceDocsTab("hooks");
   });
 

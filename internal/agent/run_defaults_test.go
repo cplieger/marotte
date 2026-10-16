@@ -142,7 +142,7 @@ func TestLaunchRoute_ChecksThePickAgainstTheTemplateWithNoLiveCatalog(t *testing
 	})
 	t.Run("no catalog can be read", func(t *testing.T) {
 		br, mux := newHub(t)
-		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("utility down")}
+		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("engine down")}
 		rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish","model":"m-default"}`)
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("POST /api/runs = %d %s, want 503", rec.Code, rec.Body.String())
@@ -153,7 +153,7 @@ func TestLaunchRoute_ChecksThePickAgainstTheTemplateWithNoLiveCatalog(t *testing
 	})
 	t.Run("a Default launch reads no catalog", func(t *testing.T) {
 		br, mux := newHub(t)
-		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("utility down")}
+		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("engine down")}
 		if rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish"}`); rec.Code != http.StatusOK {
 			t.Errorf("POST /api/runs = %d %s, want 200", rec.Code, rec.Body.String())
 		}

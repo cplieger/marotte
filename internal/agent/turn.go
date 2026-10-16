@@ -128,7 +128,7 @@ type chatLifecycle struct {
 	state    turnState
 	mu       sync.Mutex
 	// switchMu is held by every writer of pending_model (the switch's admission, the idle or
-	// turn-close apply, the spawn's fold): otherwise two appliers read one pick and apply it twice,
+	// turn-close apply, the session open's fold): otherwise two appliers read one pick and apply it twice,
 	// or a landing falls between an admission's read and its park. Held across the bridge call.
 	switchMu sync.Mutex
 }
@@ -136,7 +136,10 @@ type chatLifecycle struct {
 // turnRegistry holds one lifecycle per chat. Lock order registry.mu -> lifecycle.mu -> chat store: opens and
 // closers append under the lifecycle mutex, so log and registry agree.
 type turnRegistry struct {
-	chats  map[marotte.ChatID]*chatLifecycle
+	chats map[marotte.ChatID]*chatLifecycle
+	// onIdle runs, with no lock held, each time a chat leaves its last open turn or admission: an engine restart
+	// pending on quiescence re-checks there, and so does the chat's release check. Set once at construction.
+	onIdle func(marotte.ChatID)
 	epochs atomic.Uint64
 	mu     sync.Mutex
 }
@@ -324,10 +327,25 @@ func (lc *chatLifecycle) claimLocked(t *activeTurn) *activeTurn {
 
 // finish publishes a claimed turn's result and returns the chat to idle: result stored and done closed before the
 // state moves. It publishes on the turn's own lifecycle, which a forgotten chat would otherwise strand.
-func (*turnRegistry) finish(t *activeTurn, result marotte.TurnResult) {
+func (r *turnRegistry) finish(t *activeTurn, result marotte.TurnResult) {
 	lc := t.lc
 	lc.mu.Lock()
-	defer lc.mu.Unlock()
+	idle := lc.finishLocked(t, result)
+	lc.mu.Unlock()
+	if idle {
+		r.idle(t.Chat)
+	}
+}
+
+// idle reports a chat that left its last open turn or admission.
+func (r *turnRegistry) idle(chatID marotte.ChatID) {
+	if r.onIdle != nil {
+		r.onIdle(chatID)
+	}
+}
+
+// finishLocked is finish under mu, reporting whether the chat is now idle.
+func (lc *chatLifecycle) finishLocked(t *activeTurn, result marotte.TurnResult) bool {
 	result.Turn = t.ID
 	t.result = result
 	close(t.done)
@@ -347,9 +365,10 @@ func (*turnRegistry) finish(t *activeTurn, result marotte.TurnResult) {
 	// A pending turn from a revised binding is still owed a bracket.
 	if lc.own != nil || lc.pending != nil {
 		lc.setStateLocked(turnOpen)
-		return
+		return false
 	}
 	lc.setStateLocked(turnIdle)
+	return !lc.liveLockedState()
 }
 
 // turnLocked finds the record for one id, open or retained. Caller holds mu.

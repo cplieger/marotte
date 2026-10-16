@@ -104,7 +104,7 @@ const (
 	mappedProseCap                 = 1024
 	mappedRequestIDCap             = 128
 	contextLimitSentence           = "This chat reached the model's context limit. Compact the context, then send the prompt again."
-	modelRegistryUnavailableRemedy = " Run `kiro-cli login`, then send the prompt again."
+	modelRegistryUnavailableRemedy = " Sign in to Kiro from the account menu, then send the prompt again."
 	throttledRemedy                = " kiro-cli already retried. Wait a moment and send again, or switch to another model."
 	mappedFallbackProse            = "the model backend refused the request"
 )

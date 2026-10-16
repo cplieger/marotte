@@ -1,498 +1,350 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io/fs"
-	"log"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"sync"
-	"syscall"
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/procout"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/signin"
+	"github.com/cplieger/runesafe/v3"
 )
 
-// drainOne reads one message from urlCh under a budget so a buggy parser cannot hang the test.
-func drainOne(t *testing.T, ch <-chan map[string]string) map[string]string {
-	t.Helper()
+// fakeBackend is a device-flow backend whose Poll blocks until the test approves or fails it.
+type fakeBackend struct {
+	outcomes chan pollOutcome
+}
+
+type pollOutcome struct {
+	err     error
+	account string
+}
+
+var _ signin.Backend = (*fakeBackend)(nil)
+
+func newFakeBackend() *fakeBackend { return &fakeBackend{outcomes: make(chan pollOutcome, 4)} }
+
+func (*fakeBackend) Declaration() signin.Declaration {
+	return signin.Declaration{Backend: "fake", HostCallback: "_test/auth/token", Flows: []signin.FlowKind{signin.FlowDevice}}
+}
+
+func (*fakeBackend) Begin(context.Context, signin.FlowParams) (signin.DeviceStart, error) {
+	return signin.DeviceStart{
+		VerificationURL: "https://device.example/activate", UserCode: "ABCD-EFGH", ExpiresIn: 10 * time.Minute,
+	}, nil
+}
+
+func (f *fakeBackend) Poll(ctx context.Context, _ signin.DeviceStart) (signin.Credential, error) {
 	select {
-	case m := <-ch:
-		return m
-	default:
-		t.Fatal("urlCh empty after scanLoginOutput returned")
-		return nil
+	case o := <-f.outcomes:
+		if o.err != nil {
+			return signin.Credential{}, o.err
+		}
+		data, _ := json.Marshal(map[string]string{"account": o.account})
+		return signin.Credential{Data: data}, nil
+	case <-ctx.Done():
+		return signin.Credential{}, ctx.Err()
 	}
 }
 
-// Unix-only.
-func writeFakeCLI(t *testing.T, stdout string, exitCode int) string {
+func (*fakeBackend) Refresh(_ context.Context, c signin.Credential) (signin.Credential, error) {
+	return c, nil
+}
+func (*fakeBackend) Validate(signin.Credential) error { return nil }
+
+func (*fakeBackend) Label(c signin.Credential) signin.Identity {
+	var r struct {
+		Account string `json:"account"`
+	}
+	_ = json.Unmarshal(c.Data, &r)
+	return signin.Identity{Method: "Logged in with Builder ID", AccountType: "BuilderId", Email: r.Account}
+}
+
+func (*fakeBackend) LiveSwitchable(signin.Credential, signin.Credential) bool { return true }
+func (*fakeBackend) Fresh(signin.Credential, time.Time) bool                  { return true }
+func (*fakeBackend) Servable(signin.Credential, time.Time) bool               { return true }
+
+func (*fakeBackend) Result(signin.Credential, time.Time) (json.RawMessage, error) {
+	return json.RawMessage(`{}`), nil
+}
+
+func (*fakeBackend) Refusal(signin.Refusal) *marotte.RPCError {
+	return &marotte.RPCError{Code: -32000, Message: "not signed in"}
+}
+
+// harness is a vault over a temp config dir and the handler over it.
+type harness struct {
+	t       *testing.T
+	backend *fakeBackend
+	vault   *signin.Vault
+	h       *Handler
+	dir     string
+}
+
+func newHarness(t *testing.T, opts ...Option) *harness {
 	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fake-kiro-cli")
-	// Cat from a sibling file to avoid printf quoting.
-	dataPath := filepath.Join(dir, "stdout-data")
-	if err := os.WriteFile(dataPath, []byte(stdout), 0o644); err != nil {
-		t.Fatalf("writeFakeCLI data: %v", err)
-	}
-	script := fmt.Sprintf("#!/bin/sh\ncat %q\nexit %d\n", dataPath, exitCode)
-	if err := writeExecutable(path, script); err != nil {
-		t.Fatalf("writeFakeCLI: %v", err)
-	}
-	return path
+	b := newFakeBackend()
+	v := signin.Open(ctx, dir, b)
+	t.Cleanup(func() {
+		cancel()
+		v.Wait()
+	})
+	h := NewHandler(v, "fake", opts...)
+	h.managedSettingsPath = filepath.Join(dir, "no-managed-settings.json")
+	return &harness{t: t, backend: b, vault: v, h: h, dir: dir}
 }
 
-// ForkLock keeps a fork from another test from inheriting the write fd, which
-// fails the exec with ETXTBSY (golang/go#22315).
-func writeExecutable(path, content string) error {
-	syscall.ForkLock.RLock()
-	defer syscall.ForkLock.RUnlock()
-	return os.WriteFile(path, []byte(content), 0o755)
+func (hs *harness) do(method, path, body string) *httptest.ResponseRecorder {
+	hs.t.Helper()
+	mux := http.NewServeMux()
+	hs.h.RegisterRoutes(mux)
+	req := httptest.NewRequestWithContext(hs.t.Context(), method, path, strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
 }
 
-// Unix-only.
-func writeFakeCLIScript(t *testing.T, body string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "fake-kiro-cli")
-	script := "#!/bin/sh\n" + body
-	if err := writeExecutable(path, script); err != nil {
-		t.Fatalf("writeFakeCLIScript: %v", err)
+func (hs *harness) whoami() WhoamiResponse {
+	hs.t.Helper()
+	rec := hs.do(http.MethodGet, "/api/whoami", "")
+	var w WhoamiResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &w); err != nil {
+		hs.t.Fatalf("whoami body %q: %v", rec.Body.String(), err)
 	}
-	return path
+	return w
 }
 
-// writeCountingCLI writes a fake kiro-cli that records each invocation and prints stdout; calls proves a path forks
-// nothing. Unix-only.
-func writeCountingCLI(t *testing.T, stdout string) (path string, calls func() int) {
-	t.Helper()
-	dir := t.TempDir()
-	path = filepath.Join(dir, "fake-kiro-cli")
-	dataPath := filepath.Join(dir, "stdout-data")
-	countPath := filepath.Join(dir, "call-count")
-	if err := os.WriteFile(dataPath, []byte(stdout), 0o644); err != nil {
-		t.Fatalf("writeCountingCLI data: %v", err)
+// login starts a sign-in and returns its attempt.
+func (hs *harness) login() LoginResponse {
+	hs.t.Helper()
+	rec := hs.do(http.MethodPost, "/api/login", "")
+	if rec.Code != http.StatusOK {
+		hs.t.Fatalf("POST /api/login = %d %s", rec.Code, rec.Body.String())
 	}
-	script := fmt.Sprintf("#!/bin/sh\necho x >> %q\ncat %q\n", countPath, dataPath)
-	if err := writeExecutable(path, script); err != nil {
-		t.Fatalf("writeCountingCLI: %v", err)
+	var lr LoginResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &lr); err != nil {
+		hs.t.Fatalf("login body: %v", err)
 	}
-	return path, func() int {
-		b, err := os.ReadFile(countPath)
-		if err != nil {
-			return 0
+	return lr
+}
+
+// awaitAttempt polls whoami until attempt left pending, the client's own stop rule.
+func (hs *harness) awaitAttempt(attempt uint64) WhoamiResponse {
+	hs.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		w := hs.whoami()
+		if w.LoginAttempt == attempt && w.LoginState != string(signin.AttemptPending) {
+			return w
 		}
-		return bytes.Count(b, []byte("\n"))
+		time.Sleep(10 * time.Millisecond)
+	}
+	hs.t.Fatalf("attempt %d never left pending", attempt)
+	return WhoamiResponse{}
+}
+
+func (hs *harness) signIn(account string) {
+	hs.t.Helper()
+	lr := hs.login()
+	hs.backend.outcomes <- pollOutcome{account: account}
+	if w := hs.awaitAttempt(lr.Attempt); w.State != WhoamiSignedIn || w.Email != account {
+		hs.t.Fatalf("after signing in %s: whoami = %+v", account, w)
 	}
 }
 
-// skipIfNotUnix skips on Windows: the subprocess and signal helpers here need process groups and /bin/sh.
-func skipIfNotUnix(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("auth subprocess helpers are unix-only")
+func TestLogin_AnswersTheURLAndCodeShape(t *testing.T) {
+	hs := newHarness(t)
+	lr := hs.login()
+	if lr.URL != "https://device.example/activate" || lr.Code != "ABCD-EFGH" || lr.Attempt == 0 {
+		t.Errorf("login = %+v, want the device URL, the code and a numbered attempt", lr)
+	}
+	if rec := hs.do(http.MethodPost, "/api/login", ""); rec.Code != http.StatusConflict {
+		t.Errorf("a second login while one polls = %d, want 409", rec.Code)
 	}
 }
 
-// fakeErrReader returns its error on the first Read, so bufio.Scanner reports it with no lines.
-type fakeErrReader struct{ err error }
-
-func (f *fakeErrReader) Read([]byte) (int, error) { return 0, f.err }
-
-func TestScanLoginOutput(t *testing.T) {
-	buildLineCap := func() string {
-		var b strings.Builder
-		for i := range maxLoginLines + 5 {
-			fmt.Fprintf(&b, "noise line %d\n", i)
-		}
-		return b.String()
+func TestLogin_ClientDisconnectAfterTheResponseStillCompletes(t *testing.T) {
+	hs := newHarness(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	mux := http.NewServeMux()
+	hs.h.RegisterRoutes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/login", nil))
+	var lr LoginResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &lr); err != nil {
+		t.Fatalf("login: %v (%s)", err, rec.Body.String())
 	}
-	// maxLoginLines+5 lines of 200 bytes, for lineRing's per-line cap.
-	buildLongLines := func() string {
-		longLine := strings.Repeat("x", 200)
-		var b strings.Builder
-		for range maxLoginLines + 5 {
-			b.WriteString(longLine)
-			b.WriteByte('\n')
-		}
-		return b.String()
+	cancel()
+	hs.backend.outcomes <- pollOutcome{account: "a@example.com"}
+	if w := hs.awaitAttempt(lr.Attempt); w.State != WhoamiSignedIn {
+		t.Errorf("after the request ended, the approval = %+v, want signed in", w)
 	}
+}
 
-	tests := []struct {
-		name       string
-		input      string
-		buildInput func() string // used instead of input when non-nil
-		wantURL    string
-		wantCode   string
-		wantError  string
-		errContain []string // if non-nil, error must contain each substring
-	}{
-		{
-			name:     "CodeAndURL",
-			input:    "Code: ABCD-1234\nOpen this URL: https://example.com/auth\n",
-			wantURL:  "https://example.com/auth",
-			wantCode: "ABCD-1234",
-		},
-		{
-			name:    "BareHTTPSToken",
-			input:   "Please visit https://example.com/verify?token=xyz now\n",
-			wantURL: "https://example.com/verify?token=xyz",
-		},
-		{
-			name:     "StripsANSI",
-			input:    "\x1b[1mCode:\x1b[0m ZZZZ\n\x1b[32mOpen this URL:\x1b[0m https://example.com/path\n",
-			wantURL:  "https://example.com/path",
-			wantCode: "ZZZZ",
-		},
-		{
-			name:     "CodeBeforeURL",
-			input:    "Starting login...\nConnecting to identity provider\nCode: 4242\nExtra noise\nOpen this URL: https://idp.example.com/\n",
-			wantURL:  "https://idp.example.com/",
-			wantCode: "4242",
-		},
-		{
-			name:      "NoURL",
-			input:     "Some boring output\nNo link here\nJust text\n",
-			wantError: "non-empty",
-		},
-		{
-			name:      "EmptyInput",
-			input:     "",
-			wantError: "non-empty",
-		},
-		{
-			name:    "ExplicitPrefixWinsOverBareToken",
-			input:   "Open this URL: https://primary.example.com/\nAlso visit https://secondary.example.com/\n",
-			wantURL: "https://primary.example.com/",
-		},
-		{
-			name:    "URLEmbeddedWithTrailingText",
-			input:   "Go to https://example.com/path then come back\n",
-			wantURL: "https://example.com/path",
-		},
-		{
-			name:       "LineCap",
-			buildInput: buildLineCap,
-			wantError:  "CLI produced too much output without auth URL",
-		},
-		{
-			name:       "LineCapTruncatesLongLines",
-			buildInput: buildLongLines,
-			wantError:  "CLI produced too much output without auth URL",
-		},
-		{
-			// Exactly maxLoginLines URL-free lines trip the cap (`lineCount >= maxLoginLines`).
-			name: "LineCapBoundaryExactlyMax",
-			buildInput: func() string {
-				var b strings.Builder
-				for i := range maxLoginLines {
-					fmt.Fprintf(&b, "noise line %d\n", i)
-				}
-				return b.String()
-			},
-			wantError: "CLI produced too much output without auth URL",
-		},
-		{
-			name:      "AlreadyLoggedIn",
-			input:     "Error: already logged in; run `kiro-cli logout` first\n",
-			wantError: "already_logged_in",
-		},
+func TestWhoami_FromTheVault(t *testing.T) {
+	hs := newHarness(t)
+	if w := hs.whoami(); w.State != WhoamiSignedOut {
+		t.Errorf("an empty vault = %+v, want signed_out", w)
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			in := tc.input
-			if tc.buildInput != nil {
-				in = tc.buildInput()
-			}
-			ch := make(chan map[string]string, 1)
-			scanLoginOutput(strings.NewReader(in), ch)
-			got := drainOne(t, ch)
-
-			if tc.wantURL != "" {
-				if got["url"] != tc.wantURL {
-					t.Errorf("url = %q, want %q", got["url"], tc.wantURL)
-				}
-			} else {
-				if got["url"] != "" {
-					t.Errorf("url = %q, want empty", got["url"])
-				}
-			}
-			if tc.wantCode != "" {
-				if got["code"] != tc.wantCode {
-					t.Errorf("code = %q, want %q", got["code"], tc.wantCode)
-				}
-			}
-			if tc.wantError == "non-empty" {
-				if got["error"] == "" {
-					t.Errorf("expected error field, got %v", got)
-				}
-			} else if tc.wantError != "" {
-				if got["error"] != tc.wantError {
-					t.Errorf("error = %q, want %q", got["error"], tc.wantError)
-				}
-			}
-			for _, sub := range tc.errContain {
-				if !strings.Contains(got["error"], sub) {
-					t.Errorf("error = %q, want to contain %q", got["error"], sub)
-				}
-			}
-		})
+	hs.signIn("a@example.com")
+	w := hs.whoami()
+	if w.Auth != "Logged in with Builder ID" || w.AccountType != "BuilderId" {
+		t.Errorf("whoami labels = %+v, want the backend's", w)
 	}
+}
 
-	t.Run("ReaderError", func(t *testing.T) {
-		ch := make(chan map[string]string, 1)
-		scanLoginOutput(&fakeErrReader{err: errors.New("pipe exploded")}, ch)
-		got := drainOne(t, ch)
-		if got["error"] == "" {
-			t.Fatalf("scanLoginOutput(errReader) = %v, want error key", got)
-		}
-		if !strings.Contains(got["error"], "scanner error") {
-			t.Errorf("error = %q, want scanner-error sentinel", got["error"])
-		}
-		if !strings.Contains(got["error"], "pipe exploded") {
-			t.Errorf("error = %q, want to include underlying cause", got["error"])
-		}
-		if got["url"] != "" {
-			t.Errorf("url = %q, want empty on scanner error", got["url"])
+func TestLogout_ClearsTheVault(t *testing.T) {
+	hs := newHarness(t)
+	hs.signIn("a@example.com")
+	if rec := hs.do(http.MethodPost, "/api/logout", ""); rec.Code != http.StatusOK {
+		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
+	}
+	if w := hs.whoami(); w.State != WhoamiSignedOut {
+		t.Errorf("after logout whoami = %+v, want signed_out", w)
+	}
+}
+
+func TestLogout_RemoveFailureIs500AndKeepsTheAccount(t *testing.T) {
+	hs := newHarness(t)
+	hs.signIn("a@example.com")
+	// A non-empty directory where the file was: the removal fails with ENOTEMPTY, root or not.
+	path := filepath.Join(hs.dir, "signin.json")
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(path, "held"), 0o700); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	rec := hs.do(http.MethodPost, "/api/logout", "")
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "still signed in") {
+		t.Errorf("logout over an unremovable file = %d %s, want 500 naming the kept sign-in", rec.Code, rec.Body.String())
+	}
+	if w := hs.whoami(); w.State != WhoamiSignedIn {
+		t.Errorf("after a failed logout whoami = %+v, want still signed in", w)
+	}
+}
+
+func TestLoginControls_StillGateTheDoors(t *testing.T) {
+	hs := newHarness(t)
+	hs.h.managedSettingsPath = managedFile(t, `{"rules":[{"capability":"signin_method","effect":"deny","match":["builder_id","google","github"]}]}`)
+	if rec := hs.do(http.MethodPost, "/api/login", ""); rec.Code != http.StatusForbidden {
+		t.Errorf("a denied Builder ID login = %d, want 403", rec.Code)
+	}
+	body := `{"provider":"https://d-1234.awsapps.com/start","region":"eu-west-1"}`
+	if rec := hs.do(http.MethodPost, "/api/login", body); rec.Code != http.StatusOK {
+		t.Errorf("a permitted organization login = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWhoami_CarriesLoginErrorAfterAFailedSignIn(t *testing.T) {
+	failure := &signin.FailureError{Text: "This account has no Kiro profile marotte can use"}
+	t.Run("signed out", func(t *testing.T) {
+		hs := newHarness(t)
+		lr := hs.login()
+		hs.backend.outcomes <- pollOutcome{err: failure}
+		w := hs.awaitAttempt(lr.Attempt)
+		if w.State != WhoamiSignedOut || w.LoginState != string(signin.AttemptFailed) || w.LoginError != failure.Text {
+			t.Errorf("a failed first sign-in = %+v, want signed_out with the failure", w)
 		}
 	})
-
-	t.Run("AlreadyLoggedIn_CaseInsensitive", func(t *testing.T) {
-		inputs := []string{
-			"Already Logged In as foo@example.com\n",
-			"ALREADY LOGGED IN as foo@example.com\n",
-			"error: Already logged in\n",
+	t.Run("signed in after a failed switch", func(t *testing.T) {
+		hs := newHarness(t)
+		hs.signIn("a@example.com")
+		lr := hs.login()
+		// The old account stays signed in while the switch polls: a poll must not read that as the switch's success.
+		if w := hs.whoami(); w.State != WhoamiSignedIn || w.LoginAttempt != lr.Attempt || w.LoginState != string(signin.AttemptPending) {
+			t.Fatalf("during the switch whoami = %+v, want the old account and this attempt pending", w)
 		}
-		for _, in := range inputs {
-			t.Run(in, func(t *testing.T) {
-				ch := make(chan map[string]string, 1)
-				scanLoginOutput(strings.NewReader(in), ch)
-				got := drainOne(t, ch)
-				if got["error"] != "already_logged_in" {
-					t.Errorf("scanLoginOutput(%q) error = %q, want %q",
-						in, got["error"], "already_logged_in")
-				}
-			})
+		hs.backend.outcomes <- pollOutcome{err: failure}
+		w := hs.awaitAttempt(lr.Attempt)
+		if w.State != WhoamiSignedIn || w.Email != "a@example.com" || w.LoginError != failure.Text {
+			t.Errorf("a failed switch = %+v, want the old account kept and the failure named", w)
+		}
+	})
+	t.Run("a switch that commits is told from the old account", func(t *testing.T) {
+		hs := newHarness(t)
+		hs.signIn("a@example.com")
+		lr := hs.login()
+		hs.backend.outcomes <- pollOutcome{account: "b@example.com"}
+		if w := hs.awaitAttempt(lr.Attempt); w.LoginState != string(signin.AttemptSignedIn) || w.Email != "b@example.com" {
+			t.Errorf("a committed switch = %+v, want the new account", w)
 		}
 	})
 }
 
-func TestHumanizeAccountType(t *testing.T) {
-	tests := []struct {
-		in   string
-		want string
-	}{
-		{"BuilderId", "Logged in with Builder ID"},
-		{"builderid", "Logged in with Builder ID"},
-		{"BUILDERID", "Logged in with Builder ID"},
-		{"IdentityCenter", "Logged in with IAM Identity Center"},
-		{"identitycenter", "Logged in with IAM Identity Center"},
-		{"IAMIdentityCenter", "Logged in with IAM Identity Center"},
-		{"iamidentitycenter", "Logged in with IAM Identity Center"},
-		{"Social", "Logged in with social login"},
-		{"social", "Logged in with social login"},
-		{"Unknown", "Logged in with Unknown"},
-		{"custom-provider", "Logged in with custom-provider"},
-		{"", "Logged in with "},
-	}
-	for _, tc := range tests {
-		t.Run(tc.in, func(t *testing.T) {
-			got := humanizeAccountType(tc.in)
-			if got != tc.want {
-				t.Errorf("humanizeAccountType(%q) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
+func TestWhoami_LoginErrorClearsOnTheNextStart(t *testing.T) {
+	hs := newHarness(t)
+	lr := hs.login()
+	hs.backend.outcomes <- pollOutcome{err: &signin.FailureError{Text: "denied"}}
+	hs.awaitAttempt(lr.Attempt)
+	next := hs.login()
+	w := hs.whoami()
+	if w.LoginError != "" || w.LoginAttempt != next.Attempt || w.LoginState != string(signin.AttemptPending) {
+		t.Errorf("after a new start whoami = %+v, want no error and the new attempt pending", w)
 	}
 }
 
-func TestWhoamiInfo(t *testing.T) {
-	tests := []struct {
-		check   func(t *testing.T, got WhoamiResponse)
-		name    string
-		in      string
-		wantErr bool
-	}{
-		{
-			name: "BuilderId normalises account_type to auth",
-			in:   `{"account_type":"BuilderId","email":"a@b.com","start_url":"https://view.awsapps.com/start","region":"us-east-1"}`,
-			check: func(t *testing.T, got WhoamiResponse) {
-				if got.State != WhoamiSignedIn {
-					t.Errorf("State = %q, want %q", got.State, WhoamiSignedIn)
-				}
-				if got.Auth != "Logged in with Builder ID" {
-					t.Errorf("Auth = %q, want %q", got.Auth, "Logged in with Builder ID")
-				}
-				if got.Email != "a@b.com" {
-					t.Errorf("Email = %q, want preserved", got.Email)
-				}
-				if got.Region != "us-east-1" {
-					t.Errorf("Region = %q, want preserved", got.Region)
-				}
-				if got.StartURL != "https://view.awsapps.com/start" {
-					t.Errorf("StartURL = %q, want preserved (snake_case input)", got.StartURL)
-				}
-			},
-		},
-		{
-			name: "IdentityCenter drops extra profile fields",
-			// Unknown kiro-cli fields are dropped at the wire boundary; the typed struct narrows it on purpose.
-			in: `{"account_type":"IdentityCenter","email":"u@example.com","profile":"admin","account_id":"123"}`,
-			check: func(t *testing.T, got WhoamiResponse) {
-				if got.Auth != "Logged in with IAM Identity Center" {
-					t.Errorf("Auth = %q", got.Auth)
-				}
-				if got.Email != "u@example.com" {
-					t.Errorf("Email = %q", got.Email)
-				}
-				if got.AccountType != "IdentityCenter" {
-					t.Errorf("AccountType = %q, want preserved verbatim", got.AccountType)
-				}
-				// No profile or account_id on the wire.
-				b, err := json.Marshal(got)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if bytes.Contains(b, []byte(`"profile"`)) ||
-					bytes.Contains(b, []byte(`"account_id"`)) {
-					t.Errorf("WhoamiResponse marshal leaked extra fields: %s", b)
-				}
-			},
-		},
-		{
-			name: "missing account_type leaves Auth unset",
-			in:   `{"email":"x@y.com"}`,
-			check: func(t *testing.T, got WhoamiResponse) {
-				if got.Auth != "" {
-					t.Errorf("Auth = %q, want empty without account_type", got.Auth)
-				}
-				if got.Email != "x@y.com" {
-					t.Errorf("Email = %q", got.Email)
-				}
-			},
-		},
-		{
-			name: "empty account_type is ignored",
-			in:   `{"account_type":"","email":"x@y.com"}`,
-			check: func(t *testing.T, got WhoamiResponse) {
-				if got.Auth != "" {
-					t.Errorf("Auth = %q, want empty for empty account_type", got.Auth)
-				}
-				if got.AccountType != "" {
-					t.Errorf("AccountType = %q, want empty", got.AccountType)
-				}
-			},
-		},
-		{
-			name: "non-string account_type is ignored",
-			in:   `{"account_type":42,"email":"x@y.com"}`,
-			check: func(t *testing.T, got WhoamiResponse) {
-				if got.Auth != "" {
-					t.Errorf("Auth = %q, want empty for non-string account_type", got.Auth)
-				}
-			},
-		},
-		{
-			// A received payload with no email means signed out; unavailable is for not being able to ask.
-			name: "null json object is signed_out",
-			in:   `null`,
-			check: func(t *testing.T, got WhoamiResponse) {
-				if got != (WhoamiResponse{State: WhoamiSignedOut}) {
-					t.Errorf("whoamiInfo(null) = %+v, want the bare signed_out arm", got)
-				}
-			},
-		},
-		{
-			name: "empty json object is signed_out",
-			in:   `{}`,
-			check: func(t *testing.T, got WhoamiResponse) {
-				if got != (WhoamiResponse{State: WhoamiSignedOut}) {
-					t.Errorf("whoamiInfo({}) = %+v, want the bare signed_out arm", got)
-				}
-			},
-		},
-		{
-			// An emailless payload with account labels is still signed_out and carries nothing else.
-			name: "account_type without an email is still signed_out",
-			in:   `{"account_type":"BuilderId","region":"us-east-1"}`,
-			check: func(t *testing.T, got WhoamiResponse) {
-				if got != (WhoamiResponse{State: WhoamiSignedOut}) {
-					t.Errorf("whoamiInfo = %+v, want the bare signed_out arm", got)
-				}
-			},
-		},
-		{
-			name:    "malformed json returns error",
-			in:      `not-json`,
-			wantErr: true,
-		},
-		{
-			name:    "empty bytes returns error",
-			in:      ``,
-			wantErr: true,
-		},
-		{
-			name: "kiro-cli 2.0.1: camelCase accountType",
-			in:   `{"accountType":"IamIdentityCenter","email":"u@example.com","region":"us-east-1","startUrl":"https://view.awsapps.com/start"}`,
-			check: func(t *testing.T, got WhoamiResponse) {
-				if got.Auth != "Logged in with IAM Identity Center" {
-					t.Errorf("Auth = %q, want IAM Identity Center", got.Auth)
-				}
-				if got.Email != "u@example.com" {
-					t.Errorf("Email = %q", got.Email)
-				}
-				if got.StartURL != "https://view.awsapps.com/start" {
-					t.Errorf("StartURL = %q", got.StartURL)
-				}
-				if got.AccountType != "IamIdentityCenter" {
-					t.Errorf("AccountType = %q", got.AccountType)
-				}
-			},
-		},
-		{
-			name: "kiro-cli 2.0.1: trailing non-JSON footer is ignored",
-			// The shape a real container returned: JSON followed by a Profile:/ARN banner, which json.Unmarshal rejected.
-			in: "{\"accountType\":\"IamIdentityCenter\"," +
-				"\"email\":\"u@example.com\"," +
-				"\"region\":\"us-east-1\"," +
-				"\"startUrl\":\"https://view.awsapps.com/start\"}\n" +
-				"Profile:\nKiroProfile-us-east-1\n" +
-				"arn:aws:codewhisperer:us-east-1:123:profile/ABC\n",
-			check: func(t *testing.T, got WhoamiResponse) {
-				if got.Email != "u@example.com" {
-					t.Errorf("Email = %q, want u@example.com (trailing footer should be ignored)", got.Email)
-				}
-				if got.Auth != "Logged in with IAM Identity Center" {
-					t.Errorf("Auth = %q", got.Auth)
-				}
-			},
-		},
+func TestAPIKey_RefusesLoginAndLogoutAndKeepsTheStoredAccount(t *testing.T) {
+	hs := newHarness(t)
+	hs.signIn("a@example.com")
+	keyed := NewHandler(hs.vault, "fake", WithAPIKey(true))
+	keyed.managedSettingsPath = hs.h.managedSettingsPath
+	hk := &harness{t: t, backend: hs.backend, vault: hs.vault, h: keyed, dir: hs.dir}
+	if w := hk.whoami(); w.State != WhoamiSignedIn || w.Auth != textAPIKeyAuth || !w.APIKey {
+		t.Errorf("with the key whoami = %+v, want the API key named and flagged", w)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := whoamiInfo([]byte(tc.in))
-			if tc.wantErr {
-				if err == nil {
-					t.Errorf("whoamiInfo(%q) err = nil, want error", tc.in)
-				}
-				return
+	for _, path := range []string{"/api/login", "/api/logout"} {
+		if rec := hk.do(http.MethodPost, path, ""); rec.Code != http.StatusConflict {
+			t.Errorf("POST %s with the key = %d, want 409", path, rec.Code)
+		}
+	}
+	// Removing the key (a handler without it) reveals the account the vault kept.
+	if w := hs.whoami(); w.State != WhoamiSignedIn || w.Email != "a@example.com" || w.APIKey {
+		t.Errorf("without the key whoami = %+v, want the stored account, not flagged", w)
+	}
+}
+
+func TestWhoami_RejectsNonGET(t *testing.T) {
+	hs := newHarness(t)
+	if rec := hs.do(http.MethodPost, "/api/whoami", ""); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /api/whoami = %d, want 405", rec.Code)
+	}
+}
+
+func TestHandleLogin_RejectsBadBodies(t *testing.T) {
+	hs := newHarness(t)
+	for name, body := range map[string]string{
+		"malformed":     "{",
+		"http provider": `{"provider":"http://evil.com"}`,
+		"flag region":   `{"region":"--help"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if rec := hs.do(http.MethodPost, "/api/login", body); rec.Code != http.StatusBadRequest {
+				t.Errorf("login with %s = %d, want 400", name, rec.Code)
 			}
-			if err != nil {
-				t.Fatalf("whoamiInfo(%q) err = %v, want nil", tc.in, err)
-			}
-			tc.check(t, got)
 		})
+	}
+	big := `{"provider":"` + strings.Repeat("a", 2<<20) + `"}`
+	if rec := hs.do(http.MethodPost, "/api/login", big); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("an oversize body = %d, want 413", rec.Code)
+	}
+}
+
+func TestSignInErrorText_UsesTheBackendsWords(t *testing.T) {
+	if got := signInErrorText(&signin.FailureError{Text: "no profile"}); got != "no profile" {
+		t.Errorf("a backend failure = %q, want its text", got)
+	}
+	if got := signInErrorText(errors.New("dial tcp: refused")); strings.Contains(got, "dial") {
+		t.Errorf("an internal error leaked into the user text: %q", got)
 	}
 }
 
@@ -559,976 +411,58 @@ func TestValidateRegion(t *testing.T) {
 	}
 }
 
-func TestHandleWhoami_ServesThePrimedIdentity(t *testing.T) {
-	skipIfNotUnix(t)
+// The account row's strings are upstream text (the identity provider's, through the backend's label); these pin
+// that whoami bounds each to one line.
+func TestWhoamiFrom_SanitizesAndBoundsEveryIdentityString(t *testing.T) {
+	const rlo = "\u202e" // RIGHT-TO-LEFT OVERRIDE
 
-	cli := writeFakeCLI(t, `{"account_type":"BuilderId","email":"u@example.com"}`, 0)
-	h := NewHandler(fixedPath(cli))
-	h.identity.refresh()
+	// A 60 KiB email and a direction override in every field, which the output cap alone allowed.
+	huge := strings.Repeat("a", 60*1024) + "@example.com"
+	got := whoamiFrom(&signin.Status{Kind: signin.StatusSignedIn, Label: signin.Identity{
+		Email:       huge,
+		Method:      "Logged in with " + rlo + "detsurt",
+		AccountType: "SomethingNew" + rlo + "detsurt",
+		StartURL:    "https://" + rlo + "moc.live" + "/start",
+		Region:      "us-east-1" + rlo,
+	}})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
-	rr := httptest.NewRecorder()
-	h.handleWhoami(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rr.Code)
-	}
-	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q, want application/json", ct)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response not JSON: %v; body=%s", err, rr.Body.String())
-	}
-	if body["state"] != string(WhoamiSignedIn) {
-		t.Errorf("state = %v, want %q", body["state"], WhoamiSignedIn)
-	}
-	if body["email"] != "u@example.com" {
-		t.Errorf("email = %v, want u@example.com", body["email"])
-	}
-	if body["auth"] != "Logged in with Builder ID" {
-		t.Errorf("auth = %v, want humanized label", body["auth"])
-	}
-}
-
-// TestHandleWhoami_ForksNothing pins that page loads and SSE reconnects must reach memory only; the forking shape measured
-// p50 457 ms with a 5-second tail.
-func TestHandleWhoami_ForksNothing(t *testing.T) {
-	skipIfNotUnix(t)
-
-	cli, calls := writeCountingCLI(t, `{"account_type":"BuilderId","email":"u@example.com"}`)
-	h := NewHandler(fixedPath(cli))
-	h.identity.refresh()
-	if got := calls(); got != 1 {
-		t.Fatalf("prime invoked kiro-cli %d times, want 1", got)
-	}
-
-	for range 10 {
-		req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
-		rr := httptest.NewRecorder()
-		h.handleWhoami(rr, req)
-		if rr.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", rr.Code)
+	for name, v := range map[string]string{
+		"Email":       got.Email,
+		"Auth":        got.Auth,
+		"AccountType": got.AccountType,
+		"StartURL":    got.StartURL,
+		"Region":      got.Region,
+	} {
+		if len(v) > maxIdentityFieldBytes+len("...") {
+			t.Errorf("%s = %d bytes, want <= %d", name, len(v), maxIdentityFieldBytes+3)
+		}
+		for _, r := range v {
+			if runesafe.IsBidiControl(r) {
+				t.Errorf("%s = %q still carries U+%04X", name, v, r)
+			}
 		}
 	}
-	if got := calls(); got != 1 {
-		t.Errorf("10 requests invoked kiro-cli %d times, want the 1 from the prime", got)
+	// Bounded, not emptied: the field still identifies the account.
+	if !strings.HasPrefix(got.Email, "aaaa") || !strings.HasSuffix(got.Email, "...") {
+		t.Errorf("Email = %q..., want a truncated prefix ending in the cut marker", got.Email[:min(20, len(got.Email))])
 	}
 }
 
-// TestHandleWhoami_ColdReadIsUnavailableNotSignedOut pins that before the first read the server does not know, and
-// signed_out would put a sign-in prompt over a working app.
-func TestHandleWhoami_ColdReadIsUnavailableNotSignedOut(t *testing.T) {
-	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
-	rr := httptest.NewRecorder()
-	h.handleWhoami(rr, req)
-
-	var body map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response not JSON: %v", err)
-	}
-	if body["state"] != string(WhoamiUnavailable) {
-		t.Errorf("state = %v, want %q on a cold cache", body["state"], WhoamiUnavailable)
-	}
-	if body["reason"] != reasonNotRead {
-		t.Errorf("reason = %v, want %q", body["reason"], reasonNotRead)
-	}
-	if _, present := body["email"]; present {
-		t.Errorf("the unavailable arm carried an email: %v", body)
-	}
-}
-
-func TestReadIdentity_CLIFailureIsUnavailable(t *testing.T) {
-	skipIfNotUnix(t)
-
-	tests := []struct {
-		name       string
-		stdout     string
-		exitCode   int
-		wantReason string
-	}{
-		{"non-zero exit", "", 1, reasonCLIFailed},
-		{"output that is not json", "not-json-garbage", 0, reasonUnreadable},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			h := NewHandler(fixedPath(writeFakeCLI(t, tc.stdout, tc.exitCode)))
-			got := h.readIdentity(t.Context())
-			if got.State != WhoamiUnavailable {
-				t.Errorf("State = %q, want %q — a CLI that could not answer is not a sign-out",
-					got.State, WhoamiUnavailable)
-			}
-			if got.Reason != tc.wantReason {
-				t.Errorf("Reason = %q, want %q", got.Reason, tc.wantReason)
-			}
-		})
-	}
-}
-
-func TestHandleWhoami_RejectsNonGET(t *testing.T) {
-	h := NewHandler(fixedPath("/does-not-exist"))
-	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
-		t.Run(method, func(t *testing.T) {
-			req := httptest.NewRequest(method, "/api/whoami", nil)
-			rr := httptest.NewRecorder()
-			h.handleWhoami(rr, req)
-			if rr.Code != http.StatusMethodNotAllowed {
-				t.Errorf("handleWhoami(%s) status = %d, want 405", method, rr.Code)
-			}
-		})
-	}
-}
-
-func TestHandleLogin_RejectsNonPOST(t *testing.T) {
-	h := NewHandler(fixedPath("/does-not-exist-will-not-be-called"))
-	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch} {
-		t.Run(method, func(t *testing.T) {
-			req := httptest.NewRequest(method, "/api/login", nil)
-			rr := httptest.NewRecorder()
-			h.handleLogin(rr, req)
-			if rr.Code != http.StatusMethodNotAllowed {
-				t.Errorf("handleLogin(%s) status = %d, want 405", method, rr.Code)
-			}
-		})
-	}
-}
-
-func TestHandleLogin_SuccessWithProviderAndRegion(t *testing.T) {
-	skipIfNotUnix(t)
-	cli := writeFakeCLI(t,
-		"Code: WXYZ-9999\nOpen this URL: https://idp.example.com/auth\n",
-		0)
-	h := NewHandler(fixedPath(cli))
-
-	body := `{"provider":"https://view.awsapps.com/start","region":"us-east-1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.handleLogin(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("handleLogin success status = %d, want 200; body=%s",
-			rr.Code, rr.Body.String())
-	}
-	var got map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-		t.Fatalf("handleLogin response not JSON: %v; body=%s", err, rr.Body.String())
-	}
-	if got["url"] != "https://idp.example.com/auth" {
-		t.Errorf("url = %q, want %q", got["url"], "https://idp.example.com/auth")
-	}
-	if got["code"] != "WXYZ-9999" {
-		t.Errorf("code = %q, want %q", got["code"], "WXYZ-9999")
-	}
-}
-
-func TestHandleLogin_SuccessWithEmptyProviderAndRegion(t *testing.T) {
-	skipIfNotUnix(t)
-	cli := writeFakeCLI(t,
-		"Open this URL: https://builder.example.com/\n", 0)
-	h := NewHandler(fixedPath(cli))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/login",
-		strings.NewReader(`{}`))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.handleLogin(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("handleLogin status = %d, want 200", rr.Code)
-	}
-	var got map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-		t.Fatalf("response not JSON: %v", err)
-	}
-	if got["url"] != "https://builder.example.com/" {
-		t.Errorf("url = %q, want builder URL", got["url"])
-	}
-	if got["code"] != "" {
-		t.Errorf("code = %q, want empty (no Code: line)", got["code"])
-	}
-}
-
-func TestHandleLogin_MalformedBody(t *testing.T) {
-	h := NewHandler(fixedPath("/does-not-exist"))
-	req := httptest.NewRequest(http.MethodPost, "/api/login",
-		strings.NewReader(`{invalid json`))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.handleLogin(rr, req)
-
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("handleLogin malformed body status = %d, want 400", rr.Code)
-	}
-}
-
-func TestHandleLogin_InvalidProvider(t *testing.T) {
-	h := NewHandler(fixedPath("/does-not-exist"))
-	req := httptest.NewRequest(http.MethodPost, "/api/login",
-		strings.NewReader(`{"provider":"http://evil.com"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.handleLogin(rr, req)
-
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("handleLogin invalid provider status = %d, want 400", rr.Code)
-	}
-}
-
-func TestHandleLogin_InvalidRegion(t *testing.T) {
-	h := NewHandler(fixedPath("/does-not-exist"))
-	req := httptest.NewRequest(http.MethodPost, "/api/login",
-		strings.NewReader(`{"region":"--help"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.handleLogin(rr, req)
-
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("handleLogin invalid region status = %d, want 400", rr.Code)
-	}
-}
-
-func TestHandleLogin_TimesOutWhenCLIProducesNoURL(t *testing.T) {
-	skipIfNotUnix(t)
-	path := writeFakeCLIScript(t, "sleep 10\n")
-	h := NewHandler(fixedPath(path), WithConfig(Config{
-		LoginURLTimeout: 50 * time.Millisecond,
-		LoginTimeout:    DefaultConfig.LoginTimeout,
-		LogoutTimeout:   DefaultConfig.LogoutTimeout,
-		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
-	}))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/login",
-		strings.NewReader(`{}`))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.handleLogin(rr, req)
-
-	if rr.Code != http.StatusGatewayTimeout {
-		t.Fatalf("handleLogin timeout status = %d, want 504; body=%s",
-			rr.Code, rr.Body.String())
-	}
-	var got map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-		t.Fatalf("response not JSON: %v", err)
-	}
-	if !strings.Contains(got["error"], "timeout") {
-		t.Errorf("error = %q, want to contain 'timeout'", got["error"])
-	}
-}
-
-func TestHandleLogout_RejectsNonPOST(t *testing.T) {
-	h := NewHandler(fixedPath("/does-not-exist-will-not-be-called"))
-	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch} {
-		t.Run(method, func(t *testing.T) {
-			req := httptest.NewRequest(method, "/api/logout", nil)
-			rr := httptest.NewRecorder()
-			h.handleLogout(rr, req)
-			if rr.Code != http.StatusMethodNotAllowed {
-				t.Errorf("handleLogout(%s) status = %d, want 405", method, rr.Code)
-			}
-		})
-	}
-}
-
-func TestHandleLogout_Success(t *testing.T) {
-	skipIfNotUnix(t)
-
-	cli := writeFakeCLI(t, "\x1b[32mLogged out\x1b[0m\n", 0)
-	h := NewHandler(fixedPath(cli))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
-	rr := httptest.NewRecorder()
-	h.handleLogout(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rr.Code)
-	}
-	var body map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response not JSON: %v; body=%s", err, rr.Body.String())
-	}
-	if strings.Contains(body["output"], "\x1b[") {
-		t.Errorf("output contains ANSI escape: %q", body["output"])
-	}
-	if !strings.Contains(body["output"], "Logged out") {
-		t.Errorf("output = %q, want to contain %q", body["output"], "Logged out")
-	}
-	if _, has := body["error"]; has {
-		t.Errorf("unexpected error key on success: %v", body)
-	}
-}
-
-func TestRegisterRoutes_WiresAllEndpoints(t *testing.T) {
-	h := NewHandler(fixedPath("/bin/false"))
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-
-	tests := []struct {
-		method string
-		path   string
-	}{
-		{http.MethodGet, "/api/whoami"},
-		{http.MethodPost, "/api/login"},
-		{http.MethodPost, "/api/logout"},
-		// A 405 on non-POST also proves the mux reached the handler.
-		{http.MethodGet, "/api/login"},
-		{http.MethodGet, "/api/logout"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.method+"_"+tc.path, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, tc.path, nil)
-			rr := httptest.NewRecorder()
-			mux.ServeHTTP(rr, req)
-			if rr.Code == http.StatusNotFound {
-				t.Errorf("%s %s -> 404: route not registered", tc.method, tc.path)
-			}
-		})
-	}
-}
-
-func TestKillLoginProcess_NilProcess(t *testing.T) {
-	cmd := exec.Command("/bin/true")
-	// Start is never called; Process stays nil.
-	killProcessGroup(cmd)
-	if cmd.Process != nil {
-		t.Errorf("Process = %v, want nil (Start was not called)", cmd.Process)
-	}
-}
-
-func TestKillLoginProcess_AlreadyExited(t *testing.T) {
-	skipIfNotUnix(t)
-	cmd := exec.Command("/bin/true")
-	setProcGroup(cmd)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	if err := cmd.Wait(); err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
-	// Already reaped; must not panic.
-	killProcessGroup(cmd)
-}
-
-func TestNewHandler(t *testing.T) {
-	h := NewHandler(fixedPath("/bin/true"))
-	if h == nil {
-		t.Fatal("NewHandler returned nil")
-	}
-	if h.cliPath() != "/bin/true" {
-		t.Errorf("cliPath = %q, want %q", h.cliPath(), "/bin/true")
-	}
-}
-
-func TestReadIdentity_TimesOutWhenCLIHangs(t *testing.T) {
-	skipIfNotUnix(t)
-
-	path := writeFakeCLIScript(t, "sleep 10\n")
-	h := NewHandler(fixedPath(path), WithConfig(Config{
-		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
-		LoginTimeout:    DefaultConfig.LoginTimeout,
-		LogoutTimeout:   DefaultConfig.LogoutTimeout,
-		WhoamiTimeout:   50 * time.Millisecond,
-	}))
-
-	ctx, cancel := context.WithTimeout(t.Context(), h.cfg.WhoamiTimeout)
-	defer cancel()
-	got := h.readIdentity(ctx)
-
-	// A timeout read as a sign-out puts a sign-in prompt over a working session.
-	if got.State != WhoamiUnavailable {
-		t.Fatalf("State = %q, want %q on a timeout", got.State, WhoamiUnavailable)
-	}
-	if got.Reason != reasonTimedOut {
-		t.Errorf("Reason = %q, want %q", got.Reason, reasonTimedOut)
-	}
-}
-
-// TestReadIdentity_BinaryMissingIsUnavailable pins the ErrNotFound branch and its own log line, which an external
-// alert rule matches.
-func TestReadIdentity_BinaryMissingIsUnavailable(t *testing.T) {
-	// Missing and not on PATH: exec.ErrNotFound.
-	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
-
-	got := h.readIdentity(t.Context())
-
-	if got.State != WhoamiUnavailable {
-		t.Fatalf("State = %q, want %q", got.State, WhoamiUnavailable)
-	}
-	if got.Reason != reasonCLIMissing {
-		t.Errorf("Reason = %q, want %q", got.Reason, reasonCLIMissing)
-	}
-	// The reason is rendered in a banner, so no path or errno may reach it.
-	if strings.Contains(got.Reason, "fork/exec") ||
-		strings.Contains(got.Reason, "no-such-kiro-cli") {
-		t.Errorf("Reason = %q, leaks the binary path / exec details", got.Reason)
-	}
-}
-
-func TestHandleLogout_TimesOut(t *testing.T) {
-	skipIfNotUnix(t)
-
-	path := writeFakeCLIScript(t, "sleep 10\n")
-	h := NewHandler(fixedPath(path), WithConfig(Config{
-		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
-		LoginTimeout:    DefaultConfig.LoginTimeout,
-		LogoutTimeout:   50 * time.Millisecond,
-		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
-	}))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
-	rr := httptest.NewRecorder()
-	h.handleLogout(rr, req)
-
-	if rr.Code != http.StatusGatewayTimeout {
-		t.Fatalf("handleLogout timeout status = %d, want 504; body=%s",
-			rr.Code, rr.Body.String())
-	}
-	var body map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response not JSON: %v", err)
-	}
-	if body["error"] != "logout timed out" {
-		t.Errorf("error = %q, want %q", body["error"], "logout timed out")
-	}
-}
-
-func TestHandleLogout_BinaryMissing(t *testing.T) {
-	// Missing and not on PATH: exec.ErrNotFound.
-	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
-	rr := httptest.NewRecorder()
-	h.handleLogout(rr, req)
-
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("handleLogout missing-binary status = %d, want 503; body=%s",
-			rr.Code, rr.Body.String())
-	}
-	var body map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response not JSON: %v", err)
-	}
-	if body["error"] != "logout unavailable" {
-		t.Errorf("error = %q, want %q", body["error"], "logout unavailable")
-	}
-}
-
-// The generic CLI failure returns a sanitised sentinel, never err.Error().
-func TestHandleLogout_CLIFailsReturnsGenericSentinel(t *testing.T) {
-	skipIfNotUnix(t)
-
-	cli := writeFakeCLI(t, "auth error: no session\n", 2)
-	h := NewHandler(fixedPath(cli))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
-	rr := httptest.NewRecorder()
-	h.handleLogout(rr, req)
-
-	if rr.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502", rr.Code)
-	}
-	var body map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response not JSON: %v", err)
-	}
-	if body["error"] != "logout failed" {
-		t.Errorf("error = %q, want %q (generic sentinel, not err.Error())",
-			body["error"], "logout failed")
-	}
-	// err.Error() would read "exit status 2".
-	if strings.Contains(body["error"], "exit status") {
-		t.Errorf("error = %q, must not contain raw err.Error() prefix", body["error"])
-	}
-	// The CLI's own output still reaches the client for diagnosis.
-	if !strings.Contains(body["output"], "auth error") {
-		t.Errorf("output = %q, want to contain CLI output", body["output"])
-	}
-}
-
-func TestHandleLogin_BinaryMissingReturns503(t *testing.T) {
-	// Missing and not on PATH: exec.ErrNotFound from cmd.Start.
-	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/login",
-		strings.NewReader(`{}`))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.handleLogin(rr, req)
-
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("handleLogin missing-binary status = %d, want 503; body=%s",
-			rr.Code, rr.Body.String())
-	}
-	var body map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response not JSON: %v", err)
-	}
-	if body["error"] != "login unavailable" {
-		t.Errorf("error = %q, want %q", body["error"], "login unavailable")
-	}
-	// No filesystem paths or exec error shapes.
-	if strings.Contains(body["error"], "fork/exec") ||
-		strings.Contains(body["error"], "no-such-kiro-cli") ||
-		strings.Contains(body["error"], "not found") {
-		t.Errorf("error = %q, leaks binary path / exec details", body["error"])
-	}
-}
-
-func TestHandleLogin_BodyTooLargeReturns413(t *testing.T) {
-	h := NewHandler(fixedPath("/does-not-exist"))
-	big := strings.Repeat("a", int(webhttp.MaxJSONBody)+1024)
-	req := httptest.NewRequest(http.MethodPost, "/api/login",
-		strings.NewReader(`{"provider":"`+big+`"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.handleLogin(rr, req)
-
-	if rr.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("handleLogin oversize status = %d, want 413; body=%s",
-			rr.Code, rr.Body.String())
-	}
-	var body map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response not JSON: %v", err)
-	}
-	if body["error"] != "request too large" {
-		t.Errorf("error = %q, want %q", body["error"], "request too large")
-	}
-}
-
-func TestHandleLogin_ConcurrentAttemptReturns409(t *testing.T) {
-	skipIfNotUnix(t)
-	// A hanging CLI keeps the first request in flight.
-	path := writeFakeCLIScript(t, "sleep 5\n")
-	h := NewHandler(fixedPath(path), WithConfig(Config{
-		LoginURLTimeout: 100 * time.Millisecond,
-		LoginTimeout:    DefaultConfig.LoginTimeout,
-		LogoutTimeout:   DefaultConfig.LogoutTimeout,
-		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
-	}))
-
-	// Seat the semaphore directly to simulate an in-flight login.
-	h.loginSem <- struct{}{}
-	t.Cleanup(func() { <-h.loginSem })
-
-	req := httptest.NewRequest(http.MethodPost, "/api/login",
-		strings.NewReader(`{}`))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.handleLogin(rr, req)
-
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("concurrent login status = %d, want 409; body=%s",
-			rr.Code, rr.Body.String())
-	}
-	var body map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response not JSON: %v", err)
-	}
-	if body["error"] != "login in progress" {
-		t.Errorf("error = %q, want %q", body["error"], "login in progress")
-	}
-}
-
-// The first handler returns with the URL while kiro-cli still holds a device code, so the reap goroutine holds the
-// semaphore; a second POST would otherwise pin a second code.
-func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
-	skipIfNotUnix(t)
-	// Default LoginURLTimeout, so the first request returns on the URL path.
-	path := writeFakeCLIScript(t,
-		"echo 'Open this URL: https://example.com/auth'\n"+
-			"sleep 30\n")
-	// A 500ms hard cap kills the 30s sleep.
-	h := NewHandler(fixedPath(path), WithConfig(Config{
-		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
-		LoginTimeout:    500 * time.Millisecond,
-		LogoutTimeout:   DefaultConfig.LogoutTimeout,
-		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
-	}))
-
-	req1 := httptest.NewRequest(http.MethodPost, "/api/login",
-		strings.NewReader(`{}`))
-	req1.Header.Set("Content-Type", "application/json")
-	rr1 := httptest.NewRecorder()
-	h.handleLogin(rr1, req1)
-	if rr1.Code != http.StatusOK {
-		t.Fatalf("first login status = %d, want 200; body=%s",
-			rr1.Code, rr1.Body.String())
-	}
-	var body1 map[string]string
-	if err := json.Unmarshal(rr1.Body.Bytes(), &body1); err != nil {
-		t.Fatalf("first response not JSON: %v", err)
-	}
-	if body1["url"] != "https://example.com/auth" {
-		t.Fatalf("first url = %q, want https://example.com/auth", body1["url"])
-	}
-
-	// After the first handler returned, while the subprocess is alive.
-	req2 := httptest.NewRequest(http.MethodPost, "/api/login",
-		strings.NewReader(`{}`))
-	req2.Header.Set("Content-Type", "application/json")
-	rr2 := httptest.NewRecorder()
-	h.handleLogin(rr2, req2)
-
-	if rr2.Code != http.StatusConflict {
-		t.Fatalf("second login status = %d, want 409 (sem held by reap goroutine); body=%s",
-			rr2.Code, rr2.Body.String())
-	}
-	var body2 map[string]string
-	if err := json.Unmarshal(rr2.Body.Bytes(), &body2); err != nil {
-		t.Fatalf("second response not JSON: %v", err)
-	}
-	if body2["error"] != "login in progress" {
-		t.Errorf("second error = %q, want %q", body2["error"], "login in progress")
-	}
-
-	// Fails fast on a regression: the cap fires, cmd.Wait returns, the sem is released.
-	select {
-	case h.loginSem <- struct{}{}:
-		<-h.loginSem
-	case <-time.After(5 * time.Second):
-		t.Fatal("semaphore not released within 5s of hard-cap expiry")
-	}
-}
-
-func TestWhoamiInfo_CapitalEmailFallback(t *testing.T) {
-	tests := []struct {
-		name      string
-		in        string
-		wantEmail string
-	}{
-		{
-			name:      "capital Email without lowercase falls back",
-			in:        `{"account_type":"BuilderId","Email":"fallback@example.com"}`,
-			wantEmail: "fallback@example.com",
-		},
-		{
-			name:      "lowercase email wins over capital Email",
-			in:        `{"email":"lower@example.com","Email":"upper@example.com"}`,
-			wantEmail: "lower@example.com",
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := whoamiInfo([]byte(tc.in))
-			if err != nil {
-				t.Fatalf("whoamiInfo: %v", err)
-			}
-			if got.Email != tc.wantEmail {
-				t.Errorf("Email = %q, want %q", got.Email, tc.wantEmail)
-			}
-		})
-	}
-}
-
-func TestLoginKill_NilProcessReturnsESRCH(t *testing.T) {
-	skipIfNotUnix(t)
-	cmd := exec.Command("/bin/true")
-	// Start is never called; Process is nil.
-	err := killGroup(cmd)
-	if !errors.Is(err, syscall.ESRCH) {
-		t.Errorf("killGroup(unstarted) = %v, want syscall.ESRCH", err)
-	}
-}
-
-func TestExtractAuthURL(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"explicit prefix", "Open this URL: https://idp.example.com/a", "https://idp.example.com/a"},
-		{"bare URL token", "visit https://example.com/b then", "https://example.com/b"},
-		{"explicit wins over bare token on same line", "Open this URL: https://primary.example.com/ also https://secondary.example.com/", "https://primary.example.com/"},
-		{"no URL", "nothing to see", ""},
-		{"empty", "", ""},
-		{"http only is not extracted as bare", "visit http://insecure.example.com/", ""},
-		{"explicit prefix rejects javascript scheme", "Open this URL: javascript:alert(1)", ""},
-		{"explicit prefix skips http and picks https", "Open this URL: http://evil.com/ and https://legit.example.com/", "https://legit.example.com/"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := extractAuthURL(tc.in)
-			if got != tc.want {
-				t.Errorf("extractAuthURL(%q) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestBuildLoginArgs(t *testing.T) {
-	tests := []struct {
-		name     string
-		provider string
-		region   string
-		want     []string
-	}{
-		{
-			name: "both empty",
-			want: []string{"login", "--use-device-flow"},
-		},
-		{
-			name:     "provider only",
-			provider: "https://view.awsapps.com/start",
-			want: []string{
-				"login", "--use-device-flow",
-				"--identity-provider", "https://view.awsapps.com/start",
-			},
-		},
-		{
-			name:   "region only",
-			region: "us-east-1",
-			want: []string{
-				"login", "--use-device-flow",
-				"--region", "us-east-1",
-			},
-		},
-		{
-			name:     "both set",
-			provider: "https://view.awsapps.com/start",
-			region:   "us-east-1",
-			want: []string{
-				"login", "--use-device-flow",
-				"--identity-provider", "https://view.awsapps.com/start",
-				"--region", "us-east-1",
-			},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := buildLoginArgs(tc.provider, tc.region)
-			if len(got) != len(tc.want) {
-				t.Fatalf("buildLoginArgs = %v (len %d), want %v (len %d)",
-					got, len(got), tc.want, len(tc.want))
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Errorf("arg[%d] = %q, want %q", i, got[i], tc.want[i])
-				}
-			}
-		})
-	}
-}
-
-// TestClassifyLoginStartErr pins 503 for a missing binary and 500 for anything else, so EPERM or EACCES cannot be
-// swallowed into 503; an external alert rule tells redeploy from retry by it.
-func TestClassifyLoginStartErr(t *testing.T) {
-	tests := []struct {
-		err  error
-		name string
-		want int
-	}{
-		{
-			name: "exec.ErrNotFound maps to 503 (binary missing)",
-			err:  exec.ErrNotFound,
-			want: http.StatusServiceUnavailable,
-		},
-		{
-			name: "fs.ErrNotExist maps to 503 (fork/exec ENOENT)",
-			err:  fs.ErrNotExist,
-			want: http.StatusServiceUnavailable,
-		},
-		{
-			name: "wrapped ExecError(ErrNotFound) maps to 503",
-			err:  &exec.Error{Name: "kiro-cli", Err: exec.ErrNotFound},
-			want: http.StatusServiceUnavailable,
-		},
-		{
-			name: "generic error maps to 500 (transient fork failure)",
-			err:  errors.New("resource temporarily unavailable"),
-			want: http.StatusInternalServerError,
-		},
-		{
-			name: "EACCES-like error maps to 500 (not downgraded to 503)",
-			err:  errors.New("permission denied"),
-			want: http.StatusInternalServerError,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := classifyLoginStartErr(tc.err, "/fake/cli")
-			if got != tc.want {
-				t.Errorf("classifyLoginStartErr(%v) = %d, want %d",
-					tc.err, got, tc.want)
-			}
-		})
-	}
-}
-
-// syncBuffer is a bytes.Buffer safe for concurrent Write and read. captureSlogJSON's sink is process-wide, so a
-// login reap goroutine outliving its test writes into a later test's buffer.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-// Bytes returns a copy: a concurrent Write may grow the array after the lock is released.
-func (b *syncBuffer) Bytes() []byte {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return bytes.Clone(b.buf.Bytes())
-}
-
-// captureSlogJSON swaps the default slog logger for a JSON handler on an in-memory buffer at level, runs fn and
-// returns the parsed records. fn must be synchronous. Not for parallel tests; restored via t.Cleanup so nested
-// captures unwind in order. Records from other goroutines may land, so look records up by msg. The log package's
-// writer and flags are restored too: slog.SetDefault redirects log and does not restore it for the stock handler.
-func captureSlogJSON(t *testing.T, level slog.Level, fn func()) []map[string]any {
-	t.Helper()
-	var buf syncBuffer
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: level})))
-	fn()
-	var recs []map[string]any
-	for line := range bytes.SplitSeq(bytes.TrimSpace(buf.Bytes()), []byte{'\n'}) {
-		if len(line) == 0 {
-			continue
-		}
-		m := map[string]any{}
-		if err := json.Unmarshal(line, &m); err != nil {
-			t.Fatalf("captureSlogJSON: bad json log line %q: %v", line, err)
-		}
-		recs = append(recs, m)
-	}
-	return recs
-}
-
-func findLogRec(recs []map[string]any, msg string) map[string]any {
-	for _, r := range recs {
-		if m, _ := r["msg"].(string); m == msg {
-			return r
+// TestWhoamiFrom_LeavesOrdinaryIdentityFieldsByteIdentical pins that real emails, region ids and start URLs are untouched.
+func TestWhoamiFrom_LeavesOrdinaryIdentityFieldsByteIdentical(t *testing.T) {
+	got := whoamiFrom(&signin.Status{Kind: signin.StatusSignedIn, Label: signin.Identity{
+		Email: "jean-rené@société.example", Method: "Logged in with Builder ID", AccountType: "BuilderId",
+		StartURL: "https://d-9067f19e2b.awsapps.com/start", Region: "eu-west-3",
+	}})
+	for name, pair := range map[string][2]string{
+		"Email":       {got.Email, "jean-rené@société.example"},
+		"AccountType": {got.AccountType, "BuilderId"},
+		"StartURL":    {got.StartURL, "https://d-9067f19e2b.awsapps.com/start"},
+		"Region":      {got.Region, "eu-west-3"},
+		"Auth":        {got.Auth, "Logged in with Builder ID"},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("%s = %q, want byte-identical %q", name, pair[0], pair[1])
 		}
 	}
-	return nil
-}
-
-// drainErrReader yields its data, then a non-EOF error, so scanLoginOutputWithDrain's io.Copy fails after the URL.
-type drainErrReader struct {
-	err  error
-	data []byte
-	pos  int
-}
-
-func (r *drainErrReader) Read(p []byte) (int, error) {
-	if r.pos < len(r.data) {
-		n := copy(p, r.data[r.pos:])
-		r.pos += n
-		return n, nil
-	}
-	return 0, r.err
-}
-
-func (*drainErrReader) Close() error { return nil }
-
-// stderrAttr returns nil for empty stderr and a ["stderr", text] pair otherwise.
-func TestStderrAttr_EmptyVsNonEmpty(t *testing.T) {
-	empty := procout.NewBuffer(stderrCap)
-	if got := stderrAttr(empty); got != nil {
-		t.Errorf("stderrAttr(empty) = %v, want nil", got)
-	}
-
-	nonEmpty := procout.NewBuffer(stderrCap)
-	nonEmpty.Write([]byte("boom"))
-	got := stderrAttr(nonEmpty)
-	if len(got) != 2 {
-		t.Fatalf("stderrAttr(non-empty) len = %d, want 2; got=%v", len(got), got)
-	}
-	if got[0] != "stderr" {
-		t.Errorf("stderrAttr(non-empty)[0] = %v, want %q", got[0], "stderr")
-	}
-	if got[1] != "boom" {
-		t.Errorf("stderrAttr(non-empty)[1] = %v, want %q", got[1], "boom")
-	}
-}
-
-// scanLoginOutputWithDrain logs "login: stdout drain stopped" at Debug on a non-EOF drain error and still emits the
-// URL.
-func TestScanLoginOutputWithDrain_LogsOnDrainError(t *testing.T) {
-	r := &drainErrReader{
-		data: []byte("Open this URL: https://example.com/auth\n"),
-		err:  errors.New("drain boom"),
-	}
-	ch := make(chan map[string]string, 1)
-	recs := captureSlogJSON(t, slog.LevelDebug, func() {
-		scanLoginOutputWithDrain(r, ch)
-	})
-
-	got := <-ch
-	if got["url"] != "https://example.com/auth" {
-		t.Fatalf("url = %q, want https://example.com/auth", got["url"])
-	}
-	if findLogRec(recs, "login: stdout drain stopped") == nil {
-		t.Errorf("expected debug log %q on drain error; logs=%v",
-			"login: stdout drain stopped", recs)
-	}
-}
-
-// scanLoginOutput logs has_code on "auth URL extracted": true when a Code: line preceded the URL.
-func TestScanLoginOutput_LogsHasCodeAttribute(t *testing.T) {
-	withCode := captureSlogJSON(t, slog.LevelInfo, func() {
-		ch := make(chan map[string]string, 1)
-		scanLoginOutput(strings.NewReader(
-			"Code: ABCD-1234\nOpen this URL: https://idp.example.com/\n",
-		), ch)
-	})
-	rc := findLogRec(withCode, "login: auth URL extracted")
-	if rc == nil {
-		t.Fatalf("no 'auth URL extracted' log (with code); logs=%v", withCode)
-	}
-	if hc, _ := rc["has_code"].(bool); !hc {
-		t.Errorf("has_code = %v, want true (Code: line present)", rc["has_code"])
-	}
-
-	noCode := captureSlogJSON(t, slog.LevelInfo, func() {
-		ch := make(chan map[string]string, 1)
-		scanLoginOutput(strings.NewReader(
-			"Open this URL: https://idp.example.com/\n",
-		), ch)
-	})
-	rn := findLogRec(noCode, "login: auth URL extracted")
-	if rn == nil {
-		t.Fatalf("no 'auth URL extracted' log (no code); logs=%v", noCode)
-	}
-	if hc, _ := rn["has_code"].(bool); hc {
-		t.Errorf("has_code = %v, want false (no Code: line)", rn["has_code"])
-	}
-}
-
-// killProcessGroup logs "auth: kill group no-op (already reaped)" at Debug when killGroup returns ESRCH.
-func TestKillLoginProcess_ReapedLogsNoOp(t *testing.T) {
-	skipIfNotUnix(t)
-	cmd := exec.Command("/bin/true")
-	setProcGroup(cmd)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	if err := cmd.Wait(); err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
-	recs := captureSlogJSON(t, slog.LevelDebug, func() {
-		killProcessGroup(cmd)
-	})
-	if findLogRec(recs, "auth: kill group no-op (already reaped)") == nil {
-		t.Errorf("expected debug log %q for reaped process; logs=%v",
-			"auth: kill group no-op (already reaped)", recs)
-	}
-}
-
-// Production passes the install manager's CLIPath.
-func fixedPath(p string) func() string {
-	return func() string { return p }
 }

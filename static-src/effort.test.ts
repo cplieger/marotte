@@ -87,7 +87,7 @@ describe("the pill's reasoning-tier readout", () => {
   it("names the remembered pick on a chat with no session yet", () => {
     setCatalogEfforts(fiveTiers(), "high");
     const models = [model("opus-5", "high")];
-    // A new chat: the server resolves the same seed into StartOpts.Effort.
+    // A new chat: the server resolves the same seed into SessionOpts.Effort.
     const s = session({ model: "opus-5" });
 
     expect(effortPillLabel(s, models, "max")).toBe("max");

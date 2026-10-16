@@ -8,7 +8,7 @@ import (
 )
 
 // stepInfoMsg is a step session's session_info_update as KAS composes one: no _meta.kiro.workflow,
-// so a chat bridge attributes it by session id alone.
+// so a chat session attributes it by session id alone.
 func stepInfoMsg(t *testing.T, session string, kiro map[string]any) *marotte.RPCResponse {
 	t.Helper()
 	update := mustJSON(t, map[string]any{"sessionUpdate": "session_info_update", "_meta": map[string]any{"kiro": kiro}})
@@ -27,11 +27,11 @@ func stepTurnEnd(t *testing.T, session string) *marotte.RPCResponse {
 }
 
 // A step's turn brackets reach the ask core through the door its frames arrive at, a parentless
-// run's carrier or the launching chat's bridge: turn_start moves the ask's id and settles an
+// run's host session or the launching chat's bridge: turn_start moves the ask's id and settles an
 // answer marotte sent, and turn_end fixes the warning that turn sent as the question.
 func TestRunAsks_TurnBracketsArriveThroughEitherDoor(t *testing.T) {
 	doors := map[string]func(*testing.T) (h *Runtime, door marotte.ChatID, workflowID, session string){
-		"a parentless run's carrier": func(t *testing.T) (*Runtime, marotte.ChatID, string, string) {
+		"a parentless run's host session": func(t *testing.T) (*Runtime, marotte.ChatID, string, string) {
 			h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 			return h, runChatID("wf_1"), "wf_1", "sess_step"
 		},

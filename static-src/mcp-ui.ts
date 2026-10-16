@@ -11,6 +11,7 @@ import { onSSE } from "./bus.js";
 import { GOVERNANCE_UNAVAILABLE, governanceReasonKind, onGovernanceChange } from "./governance.js";
 import type { GovernanceMCPRegistry, GovernanceStatePayload } from "./types.js";
 import { onModalClose, openModal } from "./modals.js";
+import { refreshConfigStanding, standingBadge } from "./config-standing.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { showToast } from "./toast.js";
 import { ICON_EDIT_UI, ICON_TRASH_UI, ICON_PLUS_UI, ICON_REFRESH, ICON_SPINNER } from "./icons.js";
@@ -24,6 +25,7 @@ import {
   servers,
   unconfiguredNames,
   mcpState,
+  standingFor,
   statusSignalFor,
   prewarmSignalFor,
   discoverySignalFor,
@@ -391,13 +393,14 @@ registerCleanup(() => {
 export function mountForeignRow(name: string): HTMLElement {
   const dot = el("span", { className: "mcp-dot", role: "img" });
   const nameEl = el("span", { className: "mcp-row-name" }, name);
+  const standingSlot = el("span", { className: "mcp-row-standing" });
   const originChip = buildOriginChip();
   const metaText = el("span", { className: "mcp-row-meta-text" });
   const discoveryBox = el("div", { className: "mcp-discovery" }) as HTMLDivElement;
   const body = el(
     "div",
     { className: "mcp-row-body" },
-    el("div", { className: "mcp-row-name-line" }, dot, nameEl),
+    el("div", { className: "mcp-row-name-line" }, dot, nameEl, standingSlot),
     el("div", { className: "mcp-row-meta" }, originChip, metaText),
     discoveryBox,
   );
@@ -421,6 +424,7 @@ export function mountForeignRow(name: string): HTMLElement {
       applyStatusDotForeign(dot, name, st);
       applyOriginChip(originChip, st);
       metaText.textContent = renderForeignMeta(st);
+      applyStanding(standingSlot, name);
       const live = carriesLiveReport(st, false);
       reconnectBtn.hidden = !live;
       syncOAuth(st, live);
@@ -500,7 +504,15 @@ export function mountRow(s: Server, id: string): HTMLElement {
   const dot = el("span", { className: "mcp-dot", role: "img" });
   const nameEl = el("span", { className: "mcp-row-name" });
   const transportBadge = el("span", { className: "mcp-transport" });
-  const nameLine = el("div", { className: "mcp-row-name-line" }, dot, nameEl, transportBadge);
+  const standingSlot = el("span", { className: "mcp-row-standing" });
+  const nameLine = el(
+    "div",
+    { className: "mcp-row-name-line" },
+    dot,
+    nameEl,
+    transportBadge,
+    standingSlot,
+  );
   const metaText = el("span", { className: "mcp-row-meta-text" });
   const meta = el("div", { className: "mcp-row-meta" }, metaText);
   const body = el("div", { className: "mcp-row-body" }, nameLine, meta);
@@ -561,6 +573,7 @@ export function mountRow(s: Server, id: string): HTMLElement {
       transportBadge.textContent = cur.transport;
       applyStatusDot(dot, cur, st, notInRegistry);
       metaText.textContent = renderMeta(cur, st, notInRegistry);
+      applyStanding(standingSlot, cur.name);
 
       const live = carriesLiveReport(st, true);
       reconnectBtn.hidden = !live;
@@ -572,6 +585,15 @@ export function mountRow(s: Server, id: string): HTMLElement {
 
   rowCleanups.set(id, cleanups);
   return row;
+}
+
+function applyStanding(slot: HTMLElement, name: string): void {
+  const s = standingFor(name);
+  if (s === undefined) {
+    slot.replaceChildren();
+    return;
+  }
+  slot.replaceChildren(standingBadge(s));
 }
 
 /**
@@ -962,12 +984,9 @@ function renderReconnectBtn(label: string, serverName: () => string): HTMLButton
       .dispatch(
         { server: serverName() },
         {
-          onSuccess: (res) => {
-            // The reconnect re-emits _kiro/mcp/status on every bridge; refetch for the dot and discovery.
+          onSuccess: () => {
+            // The reset re-emits _kiro/mcp/status; refetch for the dot and discovery.
             mcpState.refetchStatus();
-            if (res.reconnected === 0) {
-              showToast("No active chat to reconnect through. Open a chat first.", "info");
-            }
           },
         },
       )
@@ -1044,7 +1063,7 @@ function discItemLabel(name: string, description: string | undefined): HTMLEleme
 }
 
 /** A listed prompt, resource or template: its name and description, nothing to press. The composer reaches
- *  them: a prompt is a slash command and a resource or template a `#mcp:` mention on the chat's own pool. */
+ *  them: a prompt is a slash command and a resource or template a `#mcp:` mention on the engine's pool. */
 function discItem(name: string, description: string | undefined): HTMLElement {
   return el("div", { className: "mcp-disc-item" }, discItemLabel(name, description));
 }
@@ -1107,6 +1126,7 @@ export function initMCP(): void {
 
   mcpState.refetchServers();
   mcpState.refetchStatus();
+  refreshConfigStanding();
 }
 
 function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed"): void {
@@ -1123,7 +1143,7 @@ function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed
 // A toast when a server turns out to be broken, with no proactive probing: the failure is the one kiro-cli reported.
 
 /**
- * Dedupe on the state transition: every bridge emits its own status on connect, so a reconnect storm is a broadcast
+ * Dedupe on the state transition: KAS emits one status copy per resident session, so one reconnect is a broadcast
  * storm. Leaving `failed` re-arms it.
  */
 export function announceMCPFailure(server: string, reason: string, prevState: RuntimeState): void {

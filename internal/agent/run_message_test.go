@@ -435,8 +435,8 @@ func TestRemoveStepSteer_DeletesARowKASHolds(t *testing.T) {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 	br.setCallResult(marotte.MethodSessionSteerClear, json.RawMessage(`{"messageIds":["steer-m-7"]}`))
-	// The clear's reply lands at seq 3, and the carrier's read loop has folded that far: only the
-	// carrier's position can release the barrier.
+	// The clear's reply lands at seq 3, and the host session's lane has folded that far: only the
+	// host session's position can release the barrier.
 	gen := h.coord.turns.attachForward(runChatID("wf_1")).gen
 	br.mu.Lock()
 	br.deliveredSeq = 3
@@ -553,8 +553,8 @@ func runTurnsAt(t *testing.T, h *Runtime, nodePath string) (kinds [][]marotte.En
 	return kinds, prompts
 }
 
-// A parentless run's carrier closes when the run pauses, and the paused step's turn with it. The message
-// rehosts the run and KAS opens a fresh turn for the step, which the typed words head as its prompt,
+// A parentless run's host session closes when the run pauses, and the paused step's turn with it. The message
+// reopens its host and KAS opens a fresh turn for the step, which the typed words head as its prompt,
 // whether its node_start lands while the send is in flight or after it returns.
 func TestStepMessage_AResumeAfterTheTurnClosedHeadsTheNextTurnAsItsPrompt(t *testing.T) {
 	for _, via := range []string{"answer_route", "message_route", "prompt_route"} {
@@ -562,7 +562,7 @@ func TestStepMessage_AResumeAfterTheTurnClosedHeadsTheNextTurnAsItsPrompt(t *tes
 			t.Run(via+"_"+timing, func(t *testing.T) {
 				h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 				h.coord.runs = h.runs.log
-				h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), nil, marotte.StopReasonInterrupted)
+				h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
 				if via != "prompt_route" {
 					leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
 					br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
@@ -621,7 +621,7 @@ func TestStepMessage_AResumeAfterTheTurnClosedHeadsTheNextTurnAsItsPrompt(t *tes
 func TestStepMessage_ARefusedResumeLeavesTheNextTurnWithoutAPrompt(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	h.coord.runs = h.runs.log
-	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), nil, marotte.StopReasonInterrupted)
+	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
 	br.setCallErr(marotte.MethodPrompt, errors.New("bridge died"))
 
 	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-13", ""); err == nil {
@@ -638,7 +638,7 @@ func TestStepMessage_ARefusedResumeLeavesTheNextTurnWithoutAPrompt(t *testing.T)
 func TestStepMessage_ARunEndingBeforeTheResumedTurnOpensKeepsTheWords(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	h.coord.runs = h.runs.log
-	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), nil, marotte.StopReasonInterrupted)
+	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
 	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-14", ""); err != nil {
 		t.Fatalf("MessageStep = %v, want nil", err)
 	}
@@ -748,15 +748,15 @@ func TestAnswerInput_AnAnswerTheRecordCannotHoldIsNotSentAndTheAskStays(t *testi
 	}
 }
 
-// A carrier's death ends the steering turns of the steps it hosted.
-func TestStepSteer_ACarrierDeathLeavesUnreadRowsNotRead(t *testing.T) {
+// A host session's end closes the steering turns of the steps it hosted.
+func TestStepSteer_AnEngineExitLeavesUnreadRowsNotRead(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-11", ""); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 
 	h.coord.runs = h.runs.log
-	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), nil, marotte.StopReasonInterrupted)
+	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
 
 	got := stepSteersIn(t, h)
 	if len(got) != 1 || got[0].Reason != marotte.SteerReasonBoundary {

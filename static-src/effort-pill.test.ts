@@ -192,7 +192,7 @@ describe("the model pill's reasoning tier", () => {
     expect(await tier()).toEqual({ text: "· max", hidden: false });
   });
 
-  // The remembered pick is what a new chat opens on; the server resolves the same seed into StartOpts.Effort.
+  // The remembered pick is what a new chat opens on; the server resolves the same seed into SessionOpts.Effort.
   it("names the remembered pick even with nothing in the catalog", async () => {
     staged.seed = "max";
     mount(session("b"));

@@ -126,17 +126,9 @@ const unknownMethodMarker = "has no persistence classification"
 // answer, unlike a transient failure. Callers ask errors.Is.
 var ErrUnknownMethod = errors.New("workflow verb not registered on this kiro-cli build")
 
-// The two refusals KAS's run-ownership gate throws as plain Errors: a -32603 whose
-// `error.data.details` is the sentence (acp-server.js acquireRunOwnership and
-// ensureRunOwnership, kiro-cli 2.27.0). Each marker is shared by the load and mutate variants.
-const (
-	ownedElsewhereMarker = "appears to be running in another process"
-	justClaimedMarker    = "was just claimed by another process"
-)
-
-// ErrOwnedElsewhere means another process's ownership stamp names the run and KAS does
-// not judge that stamp stale.
-var ErrOwnedElsewhere = errors.New("another process holds this run")
+// The refusal KAS's run-claim gate throws as a plain Error: a -32603 whose `error.data.details` is the sentence
+// (acp-server.js acquireRunOwnership and ensureRunOwnership, kiro-cli 2.27.0), shared by the load and mutate variants.
+const justClaimedMarker = "was just claimed by another process"
 
 // ErrJustClaimed means another claim on the run is in flight right now.
 var ErrJustClaimed = errors.New("another claim on this run is in flight")
@@ -154,7 +146,6 @@ func Classify(err error) error {
 		marker   string
 	}{
 		{ErrUnknownMethod, unknownMethodMarker},
-		{ErrOwnedElsewhere, ownedElsewhereMarker},
 		{ErrJustClaimed, justClaimedMarker},
 	} {
 		if strings.Contains(details, c.marker) {

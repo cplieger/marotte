@@ -18,7 +18,7 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// sessionListTimeout bounds the round-trip, which may start the utility bridge (configTemplateTimeout's value).
+// sessionListTimeout bounds the round-trip, which may wait for the engine to be ready (configTemplateTimeout's value).
 const sessionListTimeout = 45 * time.Second
 
 // maxSessionDescBytes bounds the agent's self-declared description for the History row: 512, as translate's
@@ -117,16 +117,15 @@ func withParentNames(runs []marotte.WorkflowRun, headers []marotte.ChatHeader) {
 	}
 }
 
-// workspaceSessionRows is KAS's session/list for this workspace, over the utility session.
+// workspaceSessionRows is KAS's session/list for this workspace, an engine call.
 func (rt *Runtime) workspaceSessionRows(ctx context.Context) ([]kasSessionRow, error) {
-	u := rt.utility.get()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
 
 	// cwd scopes the answer to this workspace; unscoped it returned 399 rows across 55 directories. The "user"
 	// scope is that unscoped answer.
-	raw, err := u.rawCall(cctx, "session list call", marotte.MethodSessionList,
-		callerParams(map[string]any{"cwd": rt.lifecycle.workDir}))
+	raw, err := rt.engine.rawCall(cctx, "session list call", marotte.MethodSessionList,
+		map[string]any{"cwd": rt.lifecycle.workDir})
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +149,7 @@ func (rt *Runtime) claimedSessions(ctx context.Context) map[string]marotte.ChatI
 	return claimed
 }
 
-// toResumable keeps only rows a marotte chat claims, dropping step, utility and subagent sessions. The chat
+// toResumable keeps only rows a marotte chat claims, dropping step, host, observer and subagent sessions. The chat
 // store decides what is offered; session/list whether KAS can resume it.
 func toResumable(claimed map[string]marotte.ChatID, rows []kasSessionRow) []marotte.ResumableSession {
 	out := make([]marotte.ResumableSession, 0, len(rows))
@@ -265,13 +264,12 @@ type kasWorkflowRun struct {
 }
 
 func (rs *Runs) list(ctx context.Context, claimed map[string]marotte.ChatID) ([]marotte.WorkflowRun, error) {
-	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
 
 	// workspacePaths is a required array (methodKiroWorkflowList).
-	raw, err := u.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
-		callerParams(map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}}))
+	raw, err := rs.engine.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
+		map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}})
 	if err != nil {
 		return nil, err
 	}

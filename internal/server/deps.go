@@ -21,14 +21,14 @@ type chatEngine interface {
 
 	// Broadcast fans one event out to every connected SSE client.
 	Broadcast(ctx context.Context, evt marotte.ServerEvent)
-	// Shutdown drains in-flight prompts and closes all bridges, bounded by ctx,
+	// Shutdown drains in-flight prompts and stops the agent engine, bounded by ctx,
 	// and reports which wait ran out of budget.
 	Shutdown(ctx context.Context) error
 	// Epoch is the SSE hub's current epoch, stamped on the tabs envelope.
 	Epoch() string
 	// ReconcileSessionSettings carries a write to open chats: it reopens them when a setting a
-	// session reads only at open moved, and pushes every live process each live setting it has
-	// not confirmed. Call it once the write has landed.
+	// session reads only at open moved, and pushes the engine each live setting it has not
+	// confirmed. Call it once the write has landed.
 	ReconcileSessionSettings(ctx context.Context)
 }
 

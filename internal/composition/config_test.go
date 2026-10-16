@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/auth"
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/toolbelt/v3"
@@ -30,18 +29,6 @@ func TestConfigFromEnv_Defaults(t *testing.T) {
 	}
 	if cfg.KiroCLIVersion != "" {
 		t.Errorf("KiroCLIVersion = %q, want empty outside the container", cfg.KiroCLIVersion)
-	}
-	if cfg.AuthConfig.LoginURLTimeout <= 0 {
-		t.Error("LoginURLTimeout is zero/negative, want positive default")
-	}
-	if cfg.AuthConfig.LoginTimeout <= 0 {
-		t.Error("LoginTimeout is zero/negative, want positive default")
-	}
-	if cfg.AuthConfig.LogoutTimeout <= 0 {
-		t.Error("LogoutTimeout is zero/negative, want positive default")
-	}
-	if cfg.AuthConfig.WhoamiTimeout <= 0 {
-		t.Error("WhoamiTimeout is zero/negative, want positive default")
 	}
 }
 
@@ -92,24 +79,15 @@ func TestConfigFromEnv_RelativeDirsBecomeAbsolute(t *testing.T) {
 	}
 }
 
-// TestConfigFromEnv_RemovedOverridesAreIgnored pins that the catalog refresh and
-// sign-in timeout variables are inert: set, they change nothing.
+// TestConfigFromEnv_RemovedOverridesAreIgnored pins that the catalog refresh variable is
+// inert: set, it changes nothing.
 func TestConfigFromEnv_RemovedOverridesAreIgnored(t *testing.T) {
 	t.Setenv("MAROTTE_TOOL_CATALOG_REFRESH", "off")
-	for _, name := range []string{
-		"MAROTTE_AUTH_LOGIN_URL_TIMEOUT", "MAROTTE_AUTH_LOGIN_TIMEOUT",
-		"MAROTTE_AUTH_LOGOUT_TIMEOUT", "MAROTTE_AUTH_WHOAMI_TIMEOUT",
-	} {
-		t.Setenv(name, "1s")
-	}
 
 	cfg := ConfigFromEnv()
 
 	if cfg.ToolCatalogRefresh != toolbelt.DefaultCatalogRefresh {
 		t.Errorf("ToolCatalogRefresh = %v, want toolbelt's default %v", cfg.ToolCatalogRefresh, toolbelt.DefaultCatalogRefresh)
-	}
-	if cfg.AuthConfig != auth.DefaultConfig {
-		t.Errorf("AuthConfig = %+v, want auth.DefaultConfig %+v", cfg.AuthConfig, auth.DefaultConfig)
 	}
 }
 
@@ -539,9 +517,31 @@ func TestConfigFromEnv_RecordsKiroAPIKeyPresenceNotValue(t *testing.T) {
 	}
 }
 
-// An allowlisted API key replaces the kiro-cli login as the agent's identity with
-// nothing on screen saying so, which is the one case that earns a boot line. Not
-// allowlisted is already named by the per-spawn drop warning, so it stays silent.
+// Only a key that is both set and allowlisted reaches the engine; the account surface and the engine's
+// restart reasons follow this one answer.
+func TestAPIKeyReachesEngine(t *testing.T) {
+	cases := []struct {
+		name   string
+		keySet bool
+		allow  string
+		want   bool
+	}{
+		{name: "key unset", allow: "KIRO_API_KEY"},
+		{name: "key set, not allowlisted", keySet: true, allow: "GH_TOKEN"},
+		{name: "key set and allowlisted", keySet: true, allow: "GH_TOKEN,KIRO_API_KEY", want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := apiKeyReachesEngine(&Config{KiroAPIKeySet: tc.keySet, BridgeEnvAllow: bridge.ParseEnvAllowlist(tc.allow)})
+			if got != tc.want {
+				t.Errorf("apiKeyReachesEngine(keySet=%t, allow=%q) = %t, want %t", tc.keySet, tc.allow, got, tc.want)
+			}
+		})
+	}
+}
+
+// An allowlisted API key replaces the signed-in account as the agent's identity, which
+// earns a boot line. Not allowlisted is already named by the per-spawn drop warning.
 //
 // Not parallel: it swaps the slog default.
 func TestLogBridgeEnvPosture(t *testing.T) {

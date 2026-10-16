@@ -50,12 +50,12 @@ const (
 	KeyGuardPayloadLinks = "guard_payload_links"
 
 	// KeyContentCollectionEnabled lets model requests be used by AWS for service
-	// improvement. Default off. internal/agent asserts it on every kiro-cli process
+	// improvement. Default off. internal/agent asserts it on the engine at each spawn
 	// and pushes a change live, because KAS holds it per process and persists none
 	// of it; an organization's lock overrides it.
 	KeyContentCollectionEnabled = "content_collection_enabled"
 
-	// KeyMemoryMode is the Memory dropdown (memory.go's Memory* values), resolved per spawn by
+	// KeyMemoryMode is the Memory dropdown (memory.go's Memory* values), resolved per session door by
 	// MemoryPreferenceFor. KAS freezes the mode per session; the reflection half is re-sent on
 	// session/load.
 	KeyMemoryMode = "memory_mode"
@@ -72,7 +72,7 @@ const (
 	KeyAutoCompactionEnabled = "auto_compaction_enabled"
 	KeyAutoCompactPct        = "auto_compact_pct"
 
-	// The Agent capabilities that ride KAS's doors, resolved per spawn by
+	// The Agent capabilities that ride KAS's doors, resolved per session door by
 	// internal/agent's agentFeatures (values in agent_features.go).
 	// KeyWorkValidation, KeyCloudFormationSafety, KeyAutoRouting and
 	// KeyAutoDelegation are three-state: empty sends nothing, so kiro-cli's own
@@ -90,9 +90,13 @@ const (
 
 	// KeyOutputStyle rides each chat prompt as _meta.kiro.outputStyle.
 	// KeyTerminalCommandTimeoutMs is the shell tool's default timeout (0 = KAS's
-	// 120 s), sent at initialize and pushed live to every bridge.
+	// 120 s), sent at initialize and pushed live to the engine.
 	KeyOutputStyle              = "output_style"
 	KeyTerminalCommandTimeoutMs = "terminal_command_timeout_ms"
+
+	// KeyEngineHeapMiB is the agent engine's JavaScript heap limit in MiB: 0 (the default) adds no flag and leaves
+	// kiro-cli's own, otherwise ValidEngineHeapMiB's range. It applies when the engine restarts.
+	KeyEngineHeapMiB = "engine_heap_mib"
 
 	// KeyTheme is "dark" | "light" | "system" ("system" is a stored choice; absent resolves to
 	// system at the client). The browser's localStorage copy is a pre-paint hint this value
@@ -127,6 +131,7 @@ var KnownKeys = map[string]struct{}{
 	KeyChatRetentionDays:        {},
 	KeyCloudFormationSafety:     {},
 	KeyDebugLogs:                {},
+	KeyEngineHeapMiB:            {},
 	KeyOutputStyle:              {},
 	KeySpecPlanning:             {},
 	KeySpecPlanningAskFirst:     {},

@@ -2200,6 +2200,7 @@ func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 		"config/home/.gitconfig",
 		"config/mcp.json",
 		"config/mcp-secrets.json",
+		"config/signin.json",
 	}
 	h := testHandlerAt(t, "/config")
 	for _, p := range credPaths {

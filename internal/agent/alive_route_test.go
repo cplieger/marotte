@@ -52,7 +52,7 @@ func TestHandleAlive_RecordsAValidTagAndAnswers204(t *testing.T) {
 	cs := newTestChatStore()
 	br := newFakeBridge()
 	table := &recordingPresence{}
-	h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs, WithPresence(table))
+	h := newRuntimeOn(t.Context(), "/tmp/work", fakeEngineOf(func() engineSession { return br }, laneOf(br)), cs, WithPresence(table))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 
@@ -82,7 +82,7 @@ func TestHandleAlive_RefusesAnAbsentOrMalformedTag(t *testing.T) {
 			cs := newTestChatStore()
 			br := newFakeBridge()
 			table := &recordingPresence{}
-			h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs, WithPresence(table))
+			h := newRuntimeOn(t.Context(), "/tmp/work", fakeEngineOf(func() engineSession { return br }, laneOf(br)), cs, WithPresence(table))
 			cs.wire(h)
 			t.Cleanup(func() { shutdownHub(t, h) })
 
@@ -118,7 +118,7 @@ func TestPresenceHook_ForwardsConnectAndDisconnectWithTheTag(t *testing.T) {
 	cs := newTestChatStore()
 	br := newFakeBridge()
 	table := &recordingPresence{}
-	h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs, WithPresence(table))
+	h := newRuntimeOn(t.Context(), "/tmp/work", fakeEngineOf(func() engineSession { return br }, laneOf(br)), cs, WithPresence(table))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 

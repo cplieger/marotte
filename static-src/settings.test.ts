@@ -17,6 +17,7 @@ const H = vi.hoisted(() => ({
   mockInitGitBadge: vi.fn(),
   mockInitGitPanel: vi.fn(),
   mockOpenConfigFile: vi.fn(() => Promise.resolve()),
+  mockHeapDispatch: vi.fn<(args: { mib: number }) => Promise<unknown>>(),
 }));
 
 vi.mock("./actions/tools.js", () => ({
@@ -38,6 +39,7 @@ vi.mock("./actions/settings.js", () => ({
   saveSteering: {},
   logout: {},
   setKiroSetting: { dispatch: (...a: unknown[]) => H.mockKiroDispatch(...a) },
+  setEngineHeap: { dispatch: (args: { mib: number }) => H.mockHeapDispatch(args) },
 }));
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve(undefined)),
@@ -133,6 +135,7 @@ const {
   initExperimentalToggles,
   initGeneralPanelControls,
   initPostAuthUI,
+  engineHeapMiB,
   shellTimeoutMs,
   themeStorage,
   _resetThemeForTest,
@@ -1022,5 +1025,108 @@ describe("the agent-capability selects and the shell timeout", () => {
     ["5000", 1_800_000],
   ])("shellTimeoutMs(%j) is %i", (raw, want) => {
     expect(shellTimeoutMs(raw)).toBe(want);
+  });
+});
+
+describe("the agent engine memory limit", () => {
+  function heap(): HTMLInputElement {
+    return document.getElementById("engine-heap-mib") as HTMLInputElement;
+  }
+
+  function enter(value: string): void {
+    heap().value = value;
+    heap().dispatchEvent(new Event("change"));
+  }
+
+  beforeEach(() => {
+    H.mockHeapDispatch.mockReset();
+    document.body.innerHTML = `<input type="number" id="engine-heap-mib">`;
+  });
+
+  it("reads an empty box as kiro-cli's default and refuses what is no whole number", () => {
+    expect(engineHeapMiB("")).toBe(0);
+    expect(engineHeapMiB("  ")).toBe(0);
+    expect(engineHeapMiB("2048")).toBe(2048);
+    expect(engineHeapMiB(" 4096 ")).toBe(4096);
+    expect(engineHeapMiB("1.5")).toBeNull();
+    expect(engineHeapMiB("-1")).toBeNull();
+    expect(engineHeapMiB("2e3")).toBeNull();
+    expect(engineHeapMiB("abc")).toBeNull();
+  });
+
+  it("shows the stored limit, empty for the default", () => {
+    initRetention(settingsPayload({ engine_heap_mib: 3072 }));
+    expect(heap().value).toBe("3072");
+    applyGeneralPanel(settingsPayload({ engine_heap_mib: 0 }));
+    expect(heap().value).toBe("");
+  });
+
+  it("writes the typed limit through its own action", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    H.mockHeapDispatch.mockResolvedValueOnce({});
+    initRetention(settingsPayload());
+    enter("2048");
+    expect(H.mockHeapDispatch).toHaveBeenCalledWith({ mib: 2048 });
+    await vi.waitFor(() => {
+      expect(showSaved).toHaveBeenCalledWith("engine_heap_mib");
+    });
+    expect(heap().value).toBe("2048");
+  });
+
+  it("puts the server's value back when the write is refused", async () => {
+    const { showError } = await import("./save-indicator.js");
+    H.mockHeapDispatch.mockResolvedValueOnce(null);
+    initRetention(settingsPayload({ engine_heap_mib: 3072 }));
+    enter("999999");
+    await vi.waitFor(() => {
+      expect(showError).toHaveBeenCalledWith("engine_heap_mib");
+    });
+    expect(heap().value).toBe("3072");
+  });
+
+  /** Two edits in flight, answered in call order as the settings scope serializes them. */
+  async function twoEdits(first: unknown, second: unknown): Promise<void> {
+    let answerFirst!: (v: unknown) => void;
+    let answerSecond!: (v: unknown) => void;
+    H.mockHeapDispatch
+      .mockReturnValueOnce(new Promise((r) => (answerFirst = r)))
+      .mockReturnValueOnce(new Promise((r) => (answerSecond = r)));
+    initRetention(settingsPayload({ engine_heap_mib: 3072 }));
+    enter("2048");
+    enter("4096");
+    answerFirst(first);
+    await Promise.resolve();
+    answerSecond(second);
+    await vi.waitFor(() => {
+      expect(H.mockHeapDispatch).toHaveBeenCalledTimes(2);
+    });
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  it("keeps a newer edit when an older one is refused", async () => {
+    const { showError, showSaved } = await import("./save-indicator.js");
+    vi.mocked(showError).mockClear();
+    vi.mocked(showSaved).mockClear();
+    await twoEdits(null, {});
+    expect(heap().value, "the refused older edit repaints nothing").toBe("4096");
+    expect(showError).not.toHaveBeenCalledWith("engine_heap_mib");
+    expect(showSaved).toHaveBeenCalledWith("engine_heap_mib");
+  });
+
+  it("goes back to the older saved edit when the newer one is refused", async () => {
+    const { showError } = await import("./save-indicator.js");
+    vi.mocked(showError).mockClear();
+    await twoEdits({}, null);
+    expect(heap().value, "the server holds the older edit").toBe("2048");
+    expect(showError).toHaveBeenCalledWith("engine_heap_mib");
+  });
+
+  it("sends nothing for text that is no whole number", async () => {
+    const { showError } = await import("./save-indicator.js");
+    initRetention(settingsPayload({ engine_heap_mib: 0 }));
+    enter("1.5");
+    expect(H.mockHeapDispatch).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith("engine_heap_mib");
+    expect(heap().value).toBe("");
   });
 });

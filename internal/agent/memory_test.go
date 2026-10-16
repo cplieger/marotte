@@ -13,7 +13,7 @@ import (
 
 func TestHandleMemoryCollection_ListsTheStoreWithoutASession(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{methodKiroMemoryList: json.RawMessage(`{"memories":[` +
 		`{"id":"m1","memoryType":"USER_PREFERENCE","scopes":["Global"],"title":"Tabs","summary":"use tabs","createdAt":"2026-10-01T00:00:00Z","updatedAt":"2026-10-02T00:00:00Z"},` +
 		`{"id":"m2","memoryType":"SEMANTIC","title":"Build","summary":"make"}]}`)}
@@ -48,7 +48,7 @@ func TestHandleMemoryCollection_ListsTheStoreWithoutASession(t *testing.T) {
 
 func TestHandleMemoryOne_AddressesByIDAndMapsTheEdit(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{methodKiroMemoryUpdate: json.RawMessage(
 		`{"memory":{"id":"m1","memoryType":"SEMANTIC","title":"New","summary":"s","content":"c"}}`,
 	)}
@@ -74,7 +74,7 @@ func TestHandleMemoryOne_AddressesByIDAndMapsTheEdit(t *testing.T) {
 
 func TestHandleMemoryOne_DeleteByID(t *testing.T) {
 	h, _, br := newTestHub()
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{methodKiroMemoryDelete: json.RawMessage(`{"id":"m9","title":"x"}`)}
 	req := httptest.NewRequest(http.MethodDelete, "/api/memory/m9", nil)
 	req.SetPathValue("id", "m9")

@@ -17,6 +17,7 @@ vi.mock("../api-client.js", () => ({
   apiGetTyped: vi.fn(),
 }));
 import * as toast from "../toast.js";
+import { signedIn } from "../__test-helpers__/identity.js";
 
 const mockFetch = vi.fn();
 
@@ -98,7 +99,7 @@ describe("logout", () => {
     const render = vi.fn();
 
     const { logout } = await import("./settings.js");
-    await logout.dispatch({ render, prev: { state: "signed_in", email: "user@test.com" } });
+    await logout.dispatch({ render, prev: signedIn("user@test.com") });
 
     expect(render).toHaveBeenCalledWith({ state: "signed_out" });
     expect(mockFetch).toHaveBeenCalledWith(
@@ -110,13 +111,33 @@ describe("logout", () => {
   it("rolls back to the verdict it replaced on failure", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "nope" }), { status: 500 }));
     const render = vi.fn();
-    const prev = { state: "signed_in", email: "user@test.com" } as const;
+    const prev = signedIn("user@test.com");
 
     const { logout } = await import("./settings.js");
     await logout.dispatch({ render, prev });
 
     expect(render).toHaveBeenNthCalledWith(1, { state: "signed_out" });
     expect(render).toHaveBeenLastCalledWith(prev);
+  });
+
+  it("says when a refused sign-out leaves the account signed in, in the server's words", async () => {
+    const kept =
+      "marotte could not remove the saved sign-in, so you are still signed in. The server log has the details.";
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: kept }), { status: 500 }));
+    const { logout } = await import("./settings.js");
+    await logout.dispatch({ render: vi.fn(), prev: signedIn("a@test.com") });
+    expect(toast.error).toHaveBeenCalledWith(kept, undefined);
+  });
+
+  it("says chats stop using the account within about four minutes, and how to stop them at once", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ output: "Signed out" }), { status: 200 }),
+    );
+    const { logout } = await import("./settings.js");
+    await logout.dispatch({ render: vi.fn(), prev: signedIn("a@test.com") });
+    expect(toast.success).toHaveBeenCalledWith(
+      "Signed out. Chats stop using this account within about four minutes. To stop at once, restart the agent engine from Settings.",
+    );
   });
 
   it("restores an UNAVAILABLE verdict rather than signed_out", async () => {
@@ -298,5 +319,49 @@ describe("a lockable switch crossing a lock", () => {
       gov.writeSwitch(input, true);
       expect(input.checked).toBe(true);
     });
+  });
+});
+
+describe("restartEngine", () => {
+  it("POSTs /api/engine/restart and takes the 202", async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 202 }));
+    const { restartEngine } = await import("./settings.js");
+    const r = await restartEngine.dispatch(undefined);
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/engine/restart");
+    expect(opts.method).toBe("POST");
+    expect(r).toBe(true);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("says a restart is already under way on a 409", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "The agent engine is already restarting." }), {
+        status: 409,
+      }),
+    );
+    const { restartEngine } = await import("./settings.js");
+    expect(await restartEngine.dispatch(undefined)).toBeNull();
+    expect(toast.error).toHaveBeenCalledWith("The agent engine is already restarting.", undefined);
+  });
+});
+
+describe("setEngineHeap", () => {
+  it("PATCHes engine_heap_mib alone and shows the server's refusal", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "engine_heap_mib must be 0, or 1024 to 3584" }), {
+        status: 400,
+      }),
+    );
+    const { setEngineHeap } = await import("./settings.js");
+    expect(await setEngineHeap.dispatch({ mib: 4096 })).toBeNull();
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/settings");
+    expect(opts.method).toBe("PATCH");
+    expect(JSON.parse(opts.body as string)).toEqual({ engine_heap_mib: 4096 });
+    expect(toast.error).toHaveBeenCalledWith(
+      "engine_heap_mib must be 0, or 1024 to 3584",
+      undefined,
+    );
   });
 });

@@ -266,15 +266,10 @@ export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult
   error: false,
 });
 
-// Reconnect on every live chat bridge (server-side fan-out); the refreshed status arrives via SSE
-// and a /api/mcp/status refetch, so no optimistic state.
-
-/** Result of POST /api/mcp/reconnect: how many live bridges were targeted. */
-export interface ReconnectResult {
-  reconnected: number;
-}
-
-export const reconnectServer = apiAction<{ server: string }, ReconnectResult>({
+// One reset on the agent engine: 204 once taken, 503 while the engine is down, 502 when it refused.
+// The refreshed status arrives via SSE and a /api/mcp/status refetch, so no optimistic state.
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no result
+export const reconnectServer = apiAction<{ server: string }, void>({
   name: "mcp.reconnect_server",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,

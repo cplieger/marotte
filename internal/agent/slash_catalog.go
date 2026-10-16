@@ -17,33 +17,23 @@ var (
 	_ translate.SteeringIssues = (*steeringIssues)(nil)
 )
 
-// slashCatalog is the workspace slash menu, held once: every bridge runs one cwd and the kinds do not depend on mode.
+// slashCatalog is the workspace slash menu, held once: every session runs on one engine in one cwd, and the kinds do
+// not depend on mode.
 type slashCatalog struct {
 	cmds []marotte.SlashCommand
 	mu   sync.Mutex
-	// fromChat doubles as readiness: only a chat frame is authoritative (the utility list lacks MCP prompts). It may be empty.
-	fromChat bool
+	// ready is set by the first list KAS sent; that list may be empty.
+	ready bool
 }
 
-// SetFromChat replaces the list with a chat frame's and marks it ready.
-func (c *slashCatalog) SetFromChat(cmds []marotte.SlashCommand) bool {
+// Set replaces the list with a session frame's and marks it ready.
+func (c *slashCatalog) Set(cmds []marotte.SlashCommand) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.fromChat && slashCommandsEqual(c.cmds, cmds) {
+	if c.ready && slashCommandsEqual(c.cmds, cmds) {
 		return false
 	}
-	c.fromChat = true
-	c.cmds = slices.Clone(cmds)
-	return true
-}
-
-// setFromUtility seeds the list before any chat bridge exists; once a chat set it, the utility list never overwrites it.
-func (c *slashCatalog) setFromUtility(cmds []marotte.SlashCommand) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.fromChat || slashCommandsEqual(c.cmds, cmds) {
-		return false
-	}
+	c.ready = true
 	c.cmds = slices.Clone(cmds)
 	return true
 }
@@ -68,7 +58,7 @@ func (c *slashCatalog) snapshot() (cmds []marotte.SlashCommand, ready bool) {
 	defer c.mu.Unlock()
 	out := make([]marotte.SlashCommand, len(c.cmds))
 	copy(out, c.cmds)
-	return out, c.fromChat
+	return out, c.ready
 }
 
 type steeringIssues struct {
@@ -123,9 +113,10 @@ func (rt *Runtime) handleSteeringIssues(w http.ResponseWriter, _ *http.Request) 
 	webhttp.WriteJSON(w, marotte.SteeringIssuesResponse{Issues: rt.steeringIssues.snapshot()})
 }
 
-func (rt *Runtime) applyUtilitySlashCommands(update json.RawMessage) {
+// applySlashCommands takes an observer pass's available_commands_update, the menu's seed before any chat opened.
+func (rt *Runtime) applySlashCommands(update json.RawMessage) {
 	cmds, ok := translate.ReadSlashCatalog(update)
-	if !ok || !rt.slash.setFromUtility(cmds) {
+	if !ok || !rt.slash.Set(cmds) {
 		return
 	}
 	rt.Broadcast(rt.lifecycle.shutdownCtx, marotte.NewEvent(marotte.EventSlashCommandsChanged, "", marotte.SlashCommandsChangedPayload{}))

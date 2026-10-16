@@ -146,8 +146,8 @@ const (
 )
 
 // SwitchModelCommand is the payload for type="switch_model". A live session is
-// switched in place. The fallback restarts the bridge and first attempts to load
-// the existing session before creating a fresh one.
+// switched in place; a chat with no live session records the pick, and its next
+// session opens on it.
 type SwitchModelCommand struct {
 	// Empty or "auto" names the model in force.
 	Model string `json:"model,omitempty"`
@@ -246,7 +246,7 @@ type SetAttachmentsCommand struct {
 // SetModeCommand is the payload for type="set_mode". ModeID names an entry in
 // the workspace mode catalog — bundled workflow modes and workspace custom agents
 // alike. Applied to a live session in place; for a chat whose bridge has not
-// started the mode is persisted and applied at session/new (StartOpts.Mode).
+// started the mode is persisted and applied at session/new (SessionOpts.Mode).
 type SetModeCommand struct {
 	ModeID string `json:"mode_id"`
 }

@@ -47,7 +47,7 @@ func (m *workflowMessage) row(scope steerScope, readTs int64) *marotte.EntryStee
 }
 
 // HandleWorkflowMessage records a notify's workflow message. A notify that is no workflow message
-// of this chat, or whose step this process does not know, records nothing.
+// of this chat, or whose step this translator does not know, records nothing.
 func (t *Translator) HandleWorkflowMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[kasSessionNotify](msg, "_kiro/session/notify")
 	if !ok || p.Message == "" {
@@ -67,7 +67,7 @@ func (t *Translator) HandleWorkflowMessage(ctx context.Context, chatID marotte.C
 
 // workflowMessageOf resolves both ends. A parent's message names the chat's own session as the
 // caller and a known step as the target; a step's names a known step as the caller and the chat's
-// session as the target. A run bridge's own session is no chat.
+// session as the target. A run host session is no chat.
 func (t *Translator) workflowMessageOf(chatID marotte.ChatID, p *kasSessionNotify) (*workflowMessage, bool) {
 	if strings.HasPrefix(string(chatID), marotte.RunSubjectPrefix) {
 		return nil, false

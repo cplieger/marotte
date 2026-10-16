@@ -361,7 +361,7 @@ func TestBuildPromptBlocks_MentionSpecCarriesItsDocumentsInOrder(t *testing.T) {
 	}
 }
 
-// mcpPool is one bridge's MCP pool: it answers getResource for its own servers.
+// mcpPool is the engine's MCP pool as one session reads it: it answers getResource for its own servers.
 type mcpPool struct {
 	contents map[string]string
 	calls    []map[string]any

@@ -44,6 +44,14 @@ import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
 import { setPageSubtitle } from "./page-title.js";
 import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
+import {
+  configStanding,
+  loadErrorText,
+  refreshConfigStanding,
+  standingBadge,
+  standingDetail,
+  standingLabel,
+} from "./config-standing.js";
 import type { Nouns } from "./textsearch/copy.js";
 
 /**
@@ -314,6 +322,7 @@ function loadDocs(): void {
   });
   loadHookState();
   loadSteeringIssues();
+  refreshConfigStanding();
 }
 
 function loadSteeringIssues(): void {
@@ -408,6 +417,9 @@ function initDocsView(): void {
   });
   refreshMemoryAvailability();
 
+  subscribe(configStanding, () => {
+    renderActive();
+  });
   // Git letters ride the shared status store; subscribing starts it.
   registerCleanup(
     onGitStatusChange(() => {
@@ -605,6 +617,7 @@ function rowText(doc: KiroDoc, hook: HookState | undefined): string[] {
     reason === "" ? "" : DISABLED_LABEL,
     reason,
     ...issueText(doc),
+    ...standingText(doc),
     MATCHER_WARNINGS[hook?.matcher_warning ?? ""]?.label ?? "",
     gates.explainDelete ? LINK_LABEL : "",
     gitLetter(doc, gates),
@@ -849,20 +862,24 @@ function rowSpec(doc: KiroDoc): EntryRowSpec {
 /** Most important first: the builder keeps two. Every label stays in `rowText`. */
 function badgesFor(doc: KiroDoc, hook: HookState | undefined, gates: RowGates): HTMLElement[] {
   const out: HTMLElement[] = [];
+  // First: an issue means the document does not do what it says; then kiro-cli not using it at all.
+  const issues = issuesFor(doc);
+  if (issues.length > 0) {
+    const badge = el(
+      "span",
+      { className: "docs-badge docs-badge-warn" },
+      issueLabel(issues.length),
+    );
+    badge.setAttribute("data-tooltip", issueTooltip(issues));
+    out.push(badge);
+  }
+  const standing = configStanding.peek().files.get(doc.path);
+  if (standing !== undefined) {
+    out.push(standingBadge(standing));
+  }
   switch (doc.category) {
     case "steering":
     case "skill": {
-      // First: an issue means the document does not do what it says.
-      const issues = issuesFor(doc);
-      if (issues.length > 0) {
-        const badge = el(
-          "span",
-          { className: "docs-badge docs-badge-warn" },
-          issueLabel(issues.length),
-        );
-        badge.setAttribute("data-tooltip", issueTooltip(issues));
-        out.push(badge);
-      }
       // Inclusion answers "does this cost tokens every session or only on matching files".
       const mode = doc.inclusion ?? "";
       if (mode !== "") {
@@ -939,6 +956,17 @@ function issueText(doc: KiroDoc): string[] {
   return issues.length === 0 ? [] : [issueLabel(issues.length), issueTooltip(issues)];
 }
 
+function standingText(doc: KiroDoc): string[] {
+  const { files, loadErrors } = configStanding.peek();
+  const s = files.get(doc.path);
+  const err = loadErrors.get(doc.path);
+  return [
+    s === undefined ? "" : standingLabel(s),
+    s === undefined ? "" : standingDetail(s),
+    err === undefined ? "" : loadErrorText(err),
+  ];
+}
+
 /** A description, or a pair of facts; a spec's second line is its group, a hook's first its matcher (mono). */
 function subFor(doc: KiroDoc, hook: HookState | undefined): EntrySub {
   switch (doc.category) {
@@ -957,8 +985,15 @@ function subFor(doc: KiroDoc, hook: HookState | undefined): EntrySub {
           { text: hookAction(doc, hook), mono: true },
         ],
       };
-    default:
-      return { kind: "clamp", text: doc.description ?? "" };
+    default: {
+      const err = configStanding.peek().loadErrors.get(doc.path);
+      return err === undefined
+        ? { kind: "clamp", text: doc.description ?? "" }
+        : {
+            kind: "lines",
+            lines: [{ text: doc.description ?? "" }, { text: loadErrorText(err), error: true }],
+          };
+    }
   }
 }
 

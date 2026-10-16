@@ -207,7 +207,7 @@ func TestCmdSetEffort_PersistsOnTheChatRecord(t *testing.T) {
 		t.Fatal("chat vanished")
 	}
 	if c.Effort != "high" {
-		t.Errorf("Effort = %q, want %q; the level has to survive a restart to reach StartOpts.Effort", c.Effort, "high")
+		t.Errorf("Effort = %q, want %q; the level has to survive a restart to reach SessionOpts.Effort", c.Effort, "high")
 	}
 	if b.gotMethod != marotte.MethodSetConfigOption {
 		t.Errorf("method = %q, want %q", b.gotMethod, marotte.MethodSetConfigOption)
@@ -244,7 +244,7 @@ type noBridgeDeps struct{ *storeDeps }
 func (*noBridgeDeps) Bridge(marotte.ChatID) Bridge { return nil }
 
 // A bridgeless chat is not a conflict: the persisted level is enough, because
-// spawnBridge applies it at session/new.
+// the session door applies it at session/new.
 func TestCmdSetEffort_NoBridgeIsNotAConflict(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
@@ -404,7 +404,7 @@ func TestCmdSetEffort_ARepeatOfTheHeldTierRecordsNoSecondRow(t *testing.T) {
 	}
 }
 
-// marotte.Chat.Effort is what spawnBridge reads for StartOpts.Effort, so the header
+// marotte.Chat.Effort is what the session door reads for SessionOpts.Effort, so the header
 // has to carry it too: the effort control renders the ACTIVE chat's level, and an
 // empty chat never fetches its full record.
 func TestChatHeader_CarriesEffort(t *testing.T) {

@@ -47,3 +47,9 @@ func New(byteLen int, enc Encoding) string {
 func NewMessageID() string {
 	return uuid.NewV7().String()
 }
+
+// NewSessionID returns a KAS-shaped session id, "sess_" plus a random UUID v4, for marotte to mint a session before
+// asking KAS for it (`_meta.kiro.overrideSessionId`). The mint half of ValidSessionID's rule.
+func NewSessionID() string {
+	return "sess_" + uuid.NewV4().String()
+}

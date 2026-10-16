@@ -326,7 +326,6 @@ func TestHandleSessionInfoUpdate_ActivityReachesTheTurnLifecycle(t *testing.T) {
 		{name: "the chat going idle", active: false, want: []turnBracket{{chat: "c1", kind: "idle"}}},
 		{name: "the chat running a turn", active: true, want: []turnBracket{{chat: "c1", kind: "active"}}},
 		{name: "a step going idle", active: false, attr: FrameAttribution{Step: true}, want: nil},
-		{name: "a subagent going idle", active: false, attr: FrameAttribution{Subagent: true}, want: nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -684,7 +683,6 @@ func TestHandleConfigOptionUpdate_AStepsFrameRefreshesTheCatalogAndWritesNoSessi
 
 	for _, attr := range []FrameAttribution{
 		{Step: true, SessionID: "sess-step", RunID: "wf_1", NodePath: "wf_1/step"},
-		{Subagent: true, SessionID: "sess-sub"},
 	} {
 		tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "fable", "high"), attr)
 
@@ -927,16 +925,16 @@ func TestHandleSessionInfoUpdate_DisplayErrorDropsAnMCPConnectFailure(t *testing
 	}
 }
 
-// A step's or a subagent's display_error is not the chat's own account.
+// A step's display_error is not the chat's own account.
 func TestHandleSessionInfoUpdate_DisplayErrorIgnoresAForeignFrame(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 	turn := startedTurn(deps, "c1")
 
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", displayErrorFrame(t, "Sub-agent stalled.", "ge"), FrameAttribution{Subagent: true, SessionID: "sess-sub"})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", displayErrorFrame(t, "Step stalled.", "ge"), FrameAttribution{Step: true, SessionID: "sess-step", RunID: "wf_1"})
 
 	if got := turn.EngineError(); got != nil {
-		t.Errorf("EngineError() = %+v, want nil for a subagent's frame", got)
+		t.Errorf("EngineError() = %+v, want nil for a step's frame", got)
 	}
 }
 

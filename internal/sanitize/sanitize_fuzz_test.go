@@ -62,12 +62,12 @@ func FuzzStripANSI(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
-		out := StripANSI(s)
+		out := stripANSI(s)
 		if ansiRe.MatchString(out) {
-			t.Errorf("StripANSI(%q) output still contains ANSI escapes", s)
+			t.Errorf("stripANSI(%q) output still contains ANSI escapes", s)
 		}
-		if out2 := StripANSI(out); out2 != out {
-			t.Errorf("StripANSI not idempotent: first=%q second=%q", out, out2)
+		if out2 := stripANSI(out); out2 != out {
+			t.Errorf("stripANSI not idempotent: first=%q second=%q", out, out2)
 		}
 	})
 }

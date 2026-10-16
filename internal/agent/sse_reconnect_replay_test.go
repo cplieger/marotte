@@ -56,7 +56,7 @@ func newReplayGapRuntime(t *testing.T) (*Runtime, *http.ServeMux) {
 	if err != nil {
 		t.Fatalf("chat.NewStore: %v", err)
 	}
-	rt = New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs,
+	rt = newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
 		WithTabs(ts), WithConfigDir(dir))
 	t.Cleanup(func() { shutdownHub(t, rt) })
 	mux := http.NewServeMux()

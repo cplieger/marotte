@@ -229,7 +229,7 @@ func TestCmdResumeSession_RefusesAWorkflowStepsSession(t *testing.T) {
 		want    int
 	}{
 		{steps, "sess_step", http.StatusConflict},
-		{stepSessionsDouble{err: errors.New("utility down")}, "sess_chat", http.StatusServiceUnavailable},
+		{stepSessionsDouble{err: errors.New("engine down")}, "sess_chat", http.StatusServiceUnavailable},
 		{steps, "sess_chat", http.StatusOK},
 	}
 	for _, tc := range cases {

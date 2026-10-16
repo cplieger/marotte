@@ -23,7 +23,7 @@ func TestAffordance_AMaxIterationsPauseOffersExtendAndFinishNotResume(t *testing
 		{
 			name: "a repeat at its cap",
 			facts: runFacts{
-				status: "paused", hosted: true,
+				status:    "paused",
 				pauseKind: pauseKindMaxIterations, pauseNodeID: "loop",
 			},
 			want: []string{verbExtend, verbFinishLoop, verbCancel},
@@ -31,14 +31,14 @@ func TestAffordance_AMaxIterationsPauseOffersExtendAndFinishNotResume(t *testing
 		},
 		{
 			name:  "an ordinary pause",
-			facts: runFacts{status: "paused", hosted: true},
+			facts: runFacts{status: "paused"},
 			want:  []string{verbResume, verbCancel},
 		},
 		{
 			// The pause kind is stale once the run moves on.
 			name: "a running run that once paused at a cap",
 			facts: runFacts{
-				status: "running", hosted: true,
+				status:    "running",
 				pauseKind: pauseKindMaxIterations, pauseNodeID: "loop",
 			},
 			want: []string{verbPause, verbCancel},
@@ -54,17 +54,6 @@ func TestAffordance_AMaxIterationsPauseOffersExtendAndFinishNotResume(t *testing
 				t.Errorf("affordanceOf(%+v).PauseNodeID = %q, want %q", tc.facts, got.PauseNodeID, tc.node)
 			}
 		})
-	}
-}
-
-// Both repeat verbs load an unregistered run themselves, so a pre-restart pause keeps them.
-func TestAffordance_AMaxIterationsPauseIsOfferedUnhosted(t *testing.T) {
-	got := affordanceOf(&runFacts{
-		status: "paused", pauseKind: pauseKindMaxIterations, pauseNodeID: "loop",
-	})
-	want := []string{verbExtend, verbFinishLoop, verbCancel}
-	if !slices.Equal(got.Verbs, want) {
-		t.Errorf("unhosted maxIterations pause Verbs = %v, want %v", got.Verbs, want)
 	}
 }
 

@@ -67,7 +67,7 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 	h, cs := runLoggingHub(t)
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
-		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
+		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 	refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{
 		Category:    "policy",
 		Explanation: "I will not continue with this request.",
@@ -123,7 +123,7 @@ func TestRunNodeComplete_AStepStoppedAtTheModelCallLimitTellsTheLaunchingChat(t 
 	h, cs := runLoggingHub(t)
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
-		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
+		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: "step-session-1"}, "")
 	if !h.runs.log.stopReason(id, nodePath, marotte.StopReasonToolUse) {
 		t.Fatal("StopReason(tool_use) refused on the open turn")
@@ -163,7 +163,7 @@ func TestRunNodeComplete_ARefusalWithNoMetadataStillLeavesANote(t *testing.T) {
 	h, cs := runLoggingHub(t)
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
-		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
+		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 	refuseStep(t, h.runs, id, []string{"build"}, nil)
 
 	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
@@ -196,7 +196,7 @@ func TestRunNodeComplete_AStepThatRanLeavesNoNote(t *testing.T) {
 			h, cs := runLoggingHub(t)
 			seedChat(t, cs, chatID)
 			h.runs.grantLease(t.Context(), id, "nightly",
-				launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
+				launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 			h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: "build", SessionID: "step-session-1"}, "")
 			if !h.runs.log.stopReason(id, "build", tc.raw) {
 				t.Fatalf("StopReason(%q) refused on the open turn", tc.raw)
@@ -239,7 +239,7 @@ func TestRunNodeComplete_ARefusalIsNotedOnce(t *testing.T) {
 	h, cs := runLoggingHub(t)
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
-		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
+		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 	refuseStep(t, h.runs, id, []string{"build"}, &marotte.RefusalInfo{Category: "policy"})
 
 	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")

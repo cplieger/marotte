@@ -24,7 +24,9 @@ vi.mock("./api-client.js", async (importOriginal) => ({
         ? { docs: [], truncated: false }
         : path === "/api/steering/issues"
           ? { issues: {} }
-          : { hooks: [] },
+          : path === "/api/config/standing"
+            ? { standing: [], load_errors: {} }
+            : { hooks: [] },
     ),
   ),
 }));

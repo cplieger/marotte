@@ -1,12 +1,11 @@
 package agent
 
-// A settings save landing mid-spawn reaches that bridge only through the spawn's own
-// send: a writer skips a spawning bridge, which is why StartOpts.IgnoreFiles is a resolver.
+// A settings save landing during the engine's spawn reaches it only through the spawn's own send, since a live push
+// skips an engine that is not ready: EngineOpts.IgnoreFiles and TerminalTimeout are resolvers read at send time.
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,74 +15,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 )
-
-// errProbeNotStarted mirrors bridge.ErrBridgeNotStarted, the refusal a write takes before `initialize`.
-var errProbeNotStarted = errors.New("bridge not started")
-
-type ignoreProbeBridge struct {
-	*fakeBridge
-	// arrival fires once Start has its StartOpts.
-	arrival chan struct{}
-	once    sync.Once
-	// release holds the spawn open; closing it is `initialize` returning.
-	release chan struct{}
-
-	mu       sync.Mutex
-	started  bool
-	resolved []string
-	refused  int
-}
-
-func newIgnoreProbeBridge() *ignoreProbeBridge {
-	return &ignoreProbeBridge{
-		fakeBridge: newFakeBridge(),
-		arrival:    make(chan struct{}),
-		release:    make(chan struct{}),
-	}
-}
-
-func (b *ignoreProbeBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
-	b.once.Do(func() { close(b.arrival) })
-	select {
-	case <-b.release:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	b.mu.Lock()
-	first := !b.started
-	b.started = true
-	b.mu.Unlock()
-	// Only the first spawn is recorded: one factory serves every bridge here.
-	if first && opts.IgnoreFiles != nil {
-		files := opts.IgnoreFiles(ctx)
-		b.mu.Lock()
-		b.resolved = files
-		b.mu.Unlock()
-	}
-	return b.fakeBridge.Start(ctx, opts)
-}
-
-func (b *ignoreProbeBridge) Notify(_ context.Context, _ string, _ any) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if !b.started {
-		b.refused++
-		return errProbeNotStarted
-	}
-	return nil
-}
-
-func (b *ignoreProbeBridge) resolvedIgnoreFiles() []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return slices.Clone(b.resolved)
-}
-
-func (b *ignoreProbeBridge) refusedNotifies() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.refused
-}
 
 func writeIgnoreFiles(t *testing.T, dir string, entries []string) {
 	t.Helper()
@@ -96,47 +27,102 @@ func writeIgnoreFiles(t *testing.T, dir string, entries []string) {
 	}
 }
 
-// TestSpawnIgnoreFiles_ConcurrentSaveReachesASpawningBridge pins send-time resolution; no
-// write reached the bridge before Start, so only the spawn's own send can carry the new list.
-func TestSpawnIgnoreFiles_ConcurrentSaveReachesASpawningBridge(t *testing.T) {
+// engineSpawnProbe holds the engine's Start at its gate until released, and reports when Start was entered.
+type engineSpawnProbe struct {
+	src      *fakeEngineSource
+	arrival  chan struct{}
+	release  chan struct{}
+	released func()
+}
+
+// newSpawnProbeHub builds a runtime whose engine spawn parks until the probe is released; save runs mid-spawn.
+func newSpawnProbeHub(t *testing.T, dir string) (*Runtime, *engineSpawnProbe) {
+	t.Helper()
+	p := &engineSpawnProbe{arrival: make(chan struct{}), release: make(chan struct{})}
+	p.released = sync.OnceFunc(func() { close(p.release) })
+	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
+	src.startGate = p.release
+	src.onStart = sync.OnceFunc(func() { close(p.arrival) })
+	p.src = src
+	cs := newTestChatStore()
+	h := newRuntimeOn(context.Background(), t.TempDir(), src, cs, WithConfigDir(dir))
+	cs.wire(h)
+	// Released on every exit path, or a parked spawn turns a failed assertion into a hang.
+	t.Cleanup(func() { p.released(); shutdownHub(t, h) })
+	return h, p
+}
+
+// TestEngineSpawn_AConcurrentIgnoreSaveReachesTheSpawningEngine pins send-time resolution: no push reached the engine
+// before its Start returned, so only the spawn's own send can carry the new list.
+func TestEngineSpawn_AConcurrentIgnoreSaveReachesTheSpawningEngine(t *testing.T) {
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{"pre.ignore"})
+	h, probe := newSpawnProbeHub(t, dir)
 
-	probe := newIgnoreProbeBridge()
-	cs := newTestChatStore()
-	h := New(context.Background(), t.TempDir(), func() ACPBridge { return probe }, cs, WithConfigDir(dir))
-	cs.wire(h)
-
-	released := sync.OnceFunc(func() { close(probe.release) })
-	// Released on every exit path, or a parked spawn turns a failed assertion into a hang.
-	t.Cleanup(func() { released(); shutdownHub(t, h) })
-
-	ctx := t.Context()
-	if _, err := cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
-		t.Fatalf("seed chat: %v", err)
-	}
-
-	opened := make(chan error, 1)
-	go func() {
-		_, err := h.coord.openBridge(ctx, "c1", "")
-		opened <- err
-	}()
-
-	<-probe.arrival // the StartOpts literal has been evaluated
-
+	<-probe.arrival
 	writeIgnoreFiles(t, dir, []string{"post.ignore"})
-	h.ReconcileSessionSettings(ctx)
-
-	released()
-	if err := <-opened; err != nil {
-		t.Fatalf("OpenBridge: %v", err)
+	h.ReconcileSessionSettings(t.Context())
+	if got := probe.src.lane.notified(marotte.MethodPolicyIgnoreFilesChanged); len(got) != 0 {
+		t.Errorf("ignore-list pushes written before the engine was ready = %v, want none", got)
 	}
 
-	if got := probe.refusedNotifies(); got != 0 {
-		t.Errorf("notifies sent to the spawning bridge before Start returned = %d, want 0: a writer skips a spawning bridge", got)
+	probe.released()
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
 	}
 	want := settings.AgentIgnoreList([]string{"post.ignore"})
-	if got := probe.resolvedIgnoreFiles(); !slices.Equal(got, want) {
-		t.Errorf("list the spawn sent = %v, want %v: IgnoreFiles must resolve at send time, not where the StartOpts literal is written", got, want)
+	if got, _ := probe.src.current().StartLive(); !slices.Equal(got, want) {
+		t.Errorf("list the spawn sent = %v, want %v: IgnoreFiles must resolve at send time", got, want)
+	}
+}
+
+// A mid-spawn timeout save reaches the engine through its own resolver.
+func TestEngineSpawn_AConcurrentTimeoutSaveReachesTheSpawningEngine(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentSettings(t, dir, `{"terminal_command_timeout_ms": 30000}`)
+	h, probe := newSpawnProbeHub(t, dir)
+
+	<-probe.arrival
+	writeAgentSettings(t, dir, `{"terminal_command_timeout_ms": 300000}`)
+	h.ReconcileSessionSettings(t.Context())
+	if got := probe.src.lane.notified(marotte.MethodTerminalSettingsChanged); len(got) != 0 {
+		t.Errorf("shell-timeout pushes written before the engine was ready = %v, want none", got)
+	}
+
+	probe.released()
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
+	}
+	if _, ms := probe.src.current().StartLive(); ms != 300000 {
+		t.Errorf("timeout the spawn resolved = %d, want 300000: TerminalTimeout must read at send time", ms)
+	}
+}
+
+// A settings write sends the shell timeout once, on the engine, however many sessions are open.
+func TestSettingsWrite_SendsTheShellTimeoutOnceOnTheEngine(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentSettings(t, dir, `{"terminal_command_timeout_ms": 30000}`)
+	cs := newTestChatStore()
+	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
+	h := newRuntimeOn(context.Background(), t.TempDir(), src, cs, WithConfigDir(dir))
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	for _, id := range []marotte.ChatID{"c1", "c2"} {
+		if _, err := cs.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool { c.Name = string(id); return true }); err != nil {
+			t.Fatalf("seed chat %s: %v", id, err)
+		}
+		if _, err := h.coord.openBridge(t.Context(), id, ""); err != nil {
+			t.Fatalf("OpenBridge %s: %v", id, err)
+		}
+	}
+	before := len(src.lane.notified(marotte.MethodTerminalSettingsChanged))
+
+	writeAgentSettings(t, dir, `{"terminal_command_timeout_ms": 45000}`)
+	h.ReconcileSessionSettings(t.Context())
+
+	frames := src.lane.notified(marotte.MethodTerminalSettingsChanged)[before:]
+	want := `{"terminal":{"commandTimeoutMs":45000,"enabled":true}}`
+	if len(frames) != 1 || frames[0] != want {
+		t.Errorf("engine shell-timeout frames = %v, want exactly [%s]", frames, want)
 	}
 }

@@ -166,3 +166,123 @@ func (d *agentSet) keep(m *marotte.SessionMode, rank int) {
 		d.out[j] = *m
 	}
 }
+
+// configurationStanding is a workspace getState answer read for its non-active items.
+type configurationStanding struct {
+	Layers []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"layers"`
+	Resources []struct {
+		Type  string         `json:"type"`
+		Items []standingItem `json:"items"`
+	} `json:"resources"`
+}
+
+// standingItem is one getState item, the fields the standing read uses.
+type standingItem struct {
+	ReadFrom struct {
+		URI string `json:"uri"`
+	} `json:"readFrom"`
+	Standing struct {
+		Kind      string `json:"kind"`
+		DecidedBy string `json:"decidedBy"`
+		Compose   string `json:"compose"`
+		Setting   string `json:"setting"`
+	} `json:"standing"`
+	Value struct {
+		URI    string `json:"uri"`
+		Server string `json:"server"`
+	} `json:"value"`
+}
+
+// mcpServerResource is the resource type of an MCP server, the one type joined by name.
+const mcpServerResource = "mcp-server"
+
+// DecodeConfigurationStanding reads the items kiro-cli loaded but does not use out of a workspace getState answer:
+// a displaced or disabled item, or one of a kind this build does not know, kept as it came. A file-backed item is
+// keyed by DocKeyFromAbs of the file it was read from, an MCP server by its name; an item with neither key is
+// dropped, since it joins no row. ok is false for an undecodable frame.
+func DecodeConfigurationStanding(raw json.RawMessage) ([]marotte.ConfigStanding, bool) {
+	var c configurationStanding
+	if json.Unmarshal(raw, &c) != nil {
+		return nil, false
+	}
+	names := make(map[string]string, len(c.Layers))
+	for _, l := range c.Layers {
+		names[l.ID] = displayText(l.Name)
+	}
+	out := []marotte.ConfigStanding{}
+	for i := range c.Resources {
+		res := &c.Resources[i]
+		for j := range res.Items {
+			it := &res.Items[j]
+			if it.Standing.Kind == "" || it.Standing.Kind == "active" {
+				continue
+			}
+			key := standingKey(res.Type, it)
+			if key == "" {
+				continue
+			}
+			out = append(out, marotte.ConfigStanding{
+				Type:          displayText(res.Type),
+				Key:           key,
+				Kind:          displayText(it.Standing.Kind),
+				DecidedBy:     displayText(it.Standing.DecidedBy),
+				DecidedByName: names[it.Standing.DecidedBy],
+				Compose:       displayText(it.Standing.Compose),
+				Setting:       displayText(it.Standing.Setting),
+			})
+		}
+	}
+	return out, true
+}
+
+// standingKey names an item the way the docs and MCP rows key it: an MCP server by its name, a file by its doc key
+// (read-from location first). "" means the item names neither.
+func standingKey(resourceType string, it *standingItem) string {
+	if resourceType == mcpServerResource {
+		if it.Value.Server == "" {
+			return ""
+		}
+		return displayText(it.Value.Server)
+	}
+	if key, ok := docKeyFromFileURI(it.ReadFrom.URI); ok {
+		return key
+	}
+	key, _ := docKeyFromFileURI(it.Value.URI)
+	return key
+}
+
+// agentLoadFrame is _kiro/customAgent/config_error's params, or not_found's skipped member.
+type agentLoadFrame struct {
+	Path       string `json:"path"`
+	ReasonCode string `json:"reasonCode"`
+	Error      string `json:"error"`
+}
+
+// DecodeAgentLoadError reads the agent file and the error of a _kiro/customAgent/config_error frame, or of a
+// not_found frame's skipped agent. ok is false for any other frame, and for one naming no path.
+func DecodeAgentLoadError(method string, params json.RawMessage) (path, reasonCode, text string, ok bool) {
+	var f agentLoadFrame
+	switch method {
+	case "_kiro/customAgent/config_error":
+		if json.Unmarshal(params, &f) != nil {
+			return "", "", "", false
+		}
+	case "_kiro/customAgent/not_found":
+		var p struct {
+			Skipped *agentLoadFrame `json:"skipped"`
+		}
+		if json.Unmarshal(params, &p) != nil || p.Skipped == nil {
+			return "", "", "", false
+		}
+		f = *p.Skipped
+	default:
+		return "", "", "", false
+	}
+	if f.Path == "" {
+		return "", "", "", false
+	}
+	return f.Path, displayText(f.ReasonCode), displayText(f.Error), true
+}

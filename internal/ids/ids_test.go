@@ -2,7 +2,9 @@ package ids
 
 import (
 	"math"
+	"strings"
 	"testing"
+	"uuid"
 
 	"pgregory.net/rapid"
 )
@@ -140,6 +142,31 @@ func TestNewMessageID_Uniqueness(t *testing.T) {
 		id := NewMessageID()
 		if _, ok := seen[id]; ok {
 			t.Fatalf("duplicate id after %d iterations: %s", i, id)
+		}
+		seen[id] = struct{}{}
+	}
+}
+
+func TestNewSessionID_PassesValidSessionIDAndHasKASShape(t *testing.T) {
+	seen := make(map[string]struct{}, 256)
+	for range 256 {
+		id := NewSessionID()
+		if !ValidSessionID(id) {
+			t.Fatalf("NewSessionID() = %q, refused by ValidSessionID", id)
+		}
+		rest, ok := strings.CutPrefix(id, "sess_")
+		if !ok {
+			t.Fatalf("NewSessionID() = %q, want the sess_ prefix", id)
+		}
+		u, err := uuid.Parse(rest)
+		if err != nil {
+			t.Fatalf("NewSessionID() = %q: suffix is not a UUID: %v", id, err)
+		}
+		if v := u[6] >> 4; v != 4 {
+			t.Fatalf("NewSessionID() = %q: UUID version %d, want 4", id, v)
+		}
+		if _, dup := seen[id]; dup {
+			t.Fatalf("NewSessionID() repeated %q", id)
 		}
 		seen[id] = struct{}{}
 	}

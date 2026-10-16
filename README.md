@@ -59,7 +59,7 @@ services:
 2. Give them to user 1000 with `sudo chown -R 1000:1000 /opt/appdata/marotte`. If you set `PUID` and `PGID` in `.env`, use those numbers.
 3. Run `docker compose up -d`.
 4. Open `http://<server>:9847`, where `<server>` is the address of the server on your network, for example `http://192.0.2.10:9847`.
-5. Sign in with your Kiro account when the page asks. Chats use that account's plan and credits, which the sidebar shows.
+5. Sign in with your Kiro account when the page asks. Chats use that account's plan and credits, which the sidebar shows. The sign-in is marotte's own, so a `kiro-cli` you start in the terminal keeps a separate one.
 
 The first start downloads kiro-cli, about 530 MB, which can take a few minutes. The page, files, git and the terminal work in the meantime, and chats say kiro-cli is still installing. Amazon publishes kiro-cli under the AWS Customer Agreement. marotte downloads it instead of shipping it in the image, so starting the container means you accept that agreement.
 
@@ -81,13 +81,13 @@ Settings in the compose `environment:` block are read at start, so recreate the 
 | `MAROTTE_BROWSE_ROOTS` | Extra folders the file browser shows, colon-separated absolute paths. | _(unset)_ |
 | `MAROTTE_ALLOW_AGENT_ENV` | Program-changing variables, such as `LD_PRELOAD`, the agent may set for its commands. | _(unset)_ |
 | `MAROTTE_ALLOW_BRIDGE_ENV` | Variable names that look like credentials but should still reach kiro-cli, comma-separated. | _(unset)_ |
-| `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for every chat. | _(unset)_ |
+| `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for the agent engine. | _(unset)_ |
 
 Every setting, with what each one checks, is in [Configuration](docs/configuration.md).
 
 | Mount | Description |
 | --- | --- |
-| `/config` | Chats, the kiro-cli sign-in and install, installed tools and settings |
+| `/config` | Chats, the Kiro sign-in, the kiro-cli install, installed tools and settings |
 | `/workspace` | Your repositories, and where chats and the terminal start |
 | `/uploads` | Files you attach to a message. Without a volume they are lost when the container is recreated |
 
@@ -97,7 +97,7 @@ Every setting, with what each one checks, is in [Configuration](docs/configurati
 
 ## Security
 
-marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and edits files under `/workspace`, and the Kiro sign-in in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page signs kiro-cli in to your Kiro account, not marotte itself.
+marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and edits files under `/workspace`, and the Kiro sign-in in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page gives the agent your Kiro account. It does not protect marotte itself.
 
 Set `ALLOWED_HOSTS` on any server that stays up. marotte then answers only at the addresses you list, so another website cannot use your browser to reach it.
 
@@ -112,6 +112,7 @@ Docker checks `/api/health` every 30 seconds. The container shows healthy once m
 - The container restarts in a loop with `failed to create required directories`. The host folders are missing or belong to another user. Repeat steps 1 and 2 of the quick start.
 - Health stays at `kiro-cli install retrying` or `kiro-cli unavailable`. The download failed. marotte tries four times, then waits for a container restart.
 - The logs say a folder under `/config` "can be modified by" another account. This happens on shared or network volumes. See `TRUSTED_INSTALL_UIDS` in [Configuration](docs/configuration.md#trusted-install-accounts-trusted_install_uids).
+- Health shows `sign-in required`. A chat's last turn failed because marotte is not signed in to Kiro, or Kiro refused the sign-in. Sign in from the account menu. The next turn that succeeds clears it.
 - The page answers `403`. The address you typed is not in `ALLOWED_HOSTS`.
 
 ## Documentation
@@ -119,7 +120,7 @@ Docker checks `/api/health` every 30 seconds. The container shows healthy once m
 - [Features](docs/features.md) describes every part of the page, knowledge bases included.
 - [Configuration](docs/configuration.md) lists every setting and what it checks.
 - [Security](docs/hardening.md) covers tool installs, the image and the kiro-cli install.
-- [How marotte works](docs/how-it-works.md) explains syncing across devices and how kiro-cli is installed and repaired.
+- [How marotte works](docs/how-it-works.md) explains syncing across devices, the agent engine, and how kiro-cli is installed and repaired.
 - [Launch flags](docs/launch-flags.md) and [OS packages](docs/os-packages.md) cover two less common setups.
 
 ## Credits

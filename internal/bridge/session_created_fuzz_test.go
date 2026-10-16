@@ -25,7 +25,7 @@ func FuzzSessionCreatedUnmarshal(f *testing.F) {
 		}
 
 		// An id passing ValidSessionID has no separators or traversal.
-		if ids.ValidSessionID(result.SessionID) {
+		if ids.ValidSessionID(string(result.SessionID)) {
 			for _, ch := range result.SessionID {
 				if ch == '/' || ch == '\\' || ch == 0 {
 					t.Fatalf("ValidSessionID accepted dangerous char in %q", result.SessionID)

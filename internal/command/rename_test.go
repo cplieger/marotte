@@ -58,46 +58,18 @@ func seedRenameChain(t *testing.T, store chatStore, id marotte.ChatID, sessions 
 	}
 }
 
-func bridgelessHost(store chatStore) *bridgeDeps {
-	return &bridgeDeps{storeDeps: &storeDeps{benchDeps: &benchDeps{}, store: store}}
-}
-
-func TestCmdRenameChat_LiveBridgeLatchesTheSessionAndNeverTheUtilityArm(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedRenameChat(t, store, "c1", "s1")
-	b := &recordingBridge{result: map[string]any{"success": true}, sessionID: "s1"}
-	host := newBridgeHost(store, b)
-	renamer := &spyRenamer{}
-
-	_, err := cmdRenameChat(t.Context(), host, host, renamer, renameReq(t, "c1", "  My chat  "))
-
-	if statusOf(err) != http.StatusOK {
-		t.Fatalf("CmdRenameChat status = %d, want 200 (%s)", statusOf(err), errText(err))
-	}
-	if b.gotMethod != marotte.MethodSessionRename || b.gotParams["sessionId"] != "s1" || b.gotParams["title"] != "My chat" {
-		t.Errorf("bridge call = %s %v, want %s {sessionId:s1 title:My chat}", b.gotMethod, b.gotParams, marotte.MethodSessionRename)
-	}
-	if len(renamer.calls) != 0 {
-		t.Errorf("utility renames = %v, want none while the chat's own bridge is live", renamer.calls)
-	}
-	c, _ := store.Get(t.Context(), "c1")
-	if c.Name != "My chat" || !c.NameSetByUser {
-		t.Errorf("record = {%q, set_by_user %v}, want {\"My chat\", true}", c.Name, c.NameSetByUser)
-	}
-}
-
-func TestCmdRenameChat_BridgelessChatUsesTheUtilityArm(t *testing.T) {
+func TestCmdRenameChat_RenamesThroughTheEngine(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedRenameChat(t, store, "c1", "s1")
 	renamer := &spyRenamer{}
 
-	_, err := cmdRenameChat(t.Context(), bridgelessHost(store), store, renamer, renameReq(t, "c1", "Closed chat"))
+	_, err := cmdRenameChat(t.Context(), store, renamer, renameReq(t, "c1", "Closed chat"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("CmdRenameChat status = %d, want 200 (%s)", statusOf(err), errText(err))
 	}
 	if want := "s1=Closed chat"; len(renamer.calls) != 1 || renamer.calls[0] != want {
-		t.Errorf("utility renames = %v, want [%s]", renamer.calls, want)
+		t.Errorf("engine renames = %v, want [%s]", renamer.calls, want)
 	}
 }
 
@@ -106,68 +78,37 @@ func TestCmdRenameChat_NoSessionSendsNothing(t *testing.T) {
 	seedRenameChat(t, store, "c1", "")
 	renamer := &spyRenamer{}
 
-	_, err := cmdRenameChat(t.Context(), bridgelessHost(store), store, renamer, renameReq(t, "c1", "Fresh"))
+	_, err := cmdRenameChat(t.Context(), store, renamer, renameReq(t, "c1", "Fresh"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("CmdRenameChat status = %d, want 200 (%s)", statusOf(err), errText(err))
 	}
 	if len(renamer.calls) != 0 {
-		t.Errorf("utility renames = %v, want none for a chat with no session", renamer.calls)
-	}
-}
-
-func TestCmdRenameChat_ABridgeOnAnotherSessionSendsNothing(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedRenameChat(t, store, "c1", "s1")
-	b := &recordingBridge{result: map[string]any{"success": true}, sessionID: "s2"}
-	renamer := &spyRenamer{}
-
-	_, err := cmdRenameChat(t.Context(), newBridgeHost(store, b), store, renamer, renameReq(t, "c1", "Name"))
-
-	if statusOf(err) != http.StatusOK {
-		t.Fatalf("CmdRenameChat status = %d, want 200 (%s)", statusOf(err), errText(err))
-	}
-	if b.callCount != 0 || len(renamer.calls) != 0 {
-		t.Errorf("bridge calls %d, utility renames %v; want none for a bridge on another session", b.callCount, renamer.calls)
+		t.Errorf("engine renames = %v, want none for a chat with no session", renamer.calls)
 	}
 }
 
 func TestCmdRenameChat_RenamesEverySessionInTheChain(t *testing.T) {
 	cases := []struct {
-		name        string
-		bridgeOn    marotte.SessionID
-		utilityErr  error
-		wantBridge  bool
-		wantUtility []string
+		name      string
+		renameErr error
 	}{
-		{"live bridge on the current session", "s1", nil, true, []string{"p1=Named", "p2=Named"}},
-		{"bridgeless chat", "", nil, false, []string{"p1=Named", "p2=Named", "s1=Named"}},
-		{"bridge on another session defers the current one", "s9", nil, false, []string{"p1=Named", "p2=Named"}},
-		{"a failed prior rename still answers 200", "s1", errors.New("utility down"), true, []string{"p1=Named", "p2=Named"}},
+		{"every chain session renamed once", nil},
+		{"a failed prior rename still answers 200", errors.New("engine down")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedRenameChain(t, store, "c1", "p1", "p2", "s1")
-			renamer := &spyRenamer{err: tc.utilityErr}
-			var host bridgeAccess = bridgelessHost(store)
-			var b *recordingBridge
-			if tc.bridgeOn != "" {
-				b = &recordingBridge{result: map[string]any{"success": true}, sessionID: tc.bridgeOn}
-				host = newBridgeHost(store, b)
-			}
+			renamer := &spyRenamer{err: tc.renameErr}
 
-			_, err := cmdRenameChat(t.Context(), host, store, renamer, renameReq(t, "c1", "Named"))
+			_, err := cmdRenameChat(t.Context(), store, renamer, renameReq(t, "c1", "Named"))
 
 			if statusOf(err) != http.StatusOK {
 				t.Fatalf("CmdRenameChat status = %d, want 200 (%s)", statusOf(err), errText(err))
 			}
-			if !slices.Equal(renamer.calls, tc.wantUtility) {
-				t.Errorf("utility renames = %v, want %v", renamer.calls, tc.wantUtility)
-			}
-			gotBridge := b != nil && b.callCount == 1 && b.gotParams["sessionId"] == "s1"
-			if gotBridge != tc.wantBridge {
-				t.Errorf("current session renamed through the bridge = %v, want %v", gotBridge, tc.wantBridge)
+			if want := []string{"p1=Named", "p2=Named", "s1=Named"}; !slices.Equal(renamer.calls, want) {
+				t.Errorf("engine renames = %v, want %v", renamer.calls, want)
 			}
 		})
 	}
@@ -188,7 +129,7 @@ func TestCmdRenameChat_RefusesEmptyAndOverlongNames(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedRenameChat(t, store, "c1", "")
 
-			_, err := cmdRenameChat(t.Context(), bridgelessHost(store), store, &spyRenamer{}, renameReq(t, "c1", tc.in))
+			_, err := cmdRenameChat(t.Context(), store, &spyRenamer{}, renameReq(t, "c1", tc.in))
 
 			if statusOf(err) != tc.want {
 				t.Errorf("CmdRenameChat(%q) status = %d, want %d", tc.in, statusOf(err), tc.want)
@@ -204,7 +145,7 @@ func TestCmdRenameChat_RefusesEmptyAndOverlongNames(t *testing.T) {
 func TestCmdRenameChat_UnknownChatIs404(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 
-	_, err := cmdRenameChat(t.Context(), bridgelessHost(store), store, &spyRenamer{}, renameReq(t, "nope", "x"))
+	_, err := cmdRenameChat(t.Context(), store, &spyRenamer{}, renameReq(t, "nope", "x"))
 
 	if statusOf(err) != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", statusOf(err))
@@ -217,9 +158,8 @@ func TestCmdRenameChat_UnknownChatIs404(t *testing.T) {
 func TestCmdRenameChat_ARefusedRPCStillRenamesTheRecord(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedRenameChat(t, store, "c1", "s1")
-	b := &recordingBridge{callErr: errors.New("bridge gone"), sessionID: "s1"}
 
-	_, err := cmdRenameChat(t.Context(), newBridgeHost(store, b), store, &spyRenamer{}, renameReq(t, "c1", "Kept"))
+	_, err := cmdRenameChat(t.Context(), store, &spyRenamer{err: errors.New("engine gone")}, renameReq(t, "c1", "Kept"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200: the record is canonical", statusOf(err))

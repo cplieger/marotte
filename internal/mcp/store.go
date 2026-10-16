@@ -1,6 +1,6 @@
 // Package mcp persists and serves the user's configured MCP servers: one ordered array of Server
 // records in <configDir>/mcp.json, mode 0600, written atomically. One user-global scope, shared by
-// every bridge in the container.
+// every session on the agent engine.
 // Env and header values often hold API keys: public reads mask them as "***", and Update keeps the
 // stored value when the client sends "***" back. On disk the file is plaintext 0600, the same
 // threat model as the chat files beside it.

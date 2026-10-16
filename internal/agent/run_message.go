@@ -170,8 +170,9 @@ type stepDecision struct {
 	verb marotte.RunStepMessageVerb
 }
 
-// preRefuse answers, before a carrier is hosted, the refusals no ask can change: those every
-// execution at nodePath gets. Its read is the utility's, so it never decides on an ask.
+// preRefuse answers, before a host session is resident, the refusals no ask can change: those
+// every execution at nodePath gets. Its read is a session-less engine inspect, so it never decides
+// on an ask.
 func (rs *Runs) preRefuse(ctx context.Context, workflowID, nodePath string) error {
 	n, err := rs.readRun(ctx, workflowID)
 	if err != nil {
@@ -207,15 +208,14 @@ func (rs *Runs) messageStep(ctx context.Context, workflowID, nodePath, raw, mess
 	if verb, ok, replayErr := rs.replayedVerb(workflowID, steerID); replayErr != nil || ok {
 		return marotte.RunStepMessageResponse{Verb: verb}, replayErr
 	}
-	// A refusal no carrier can change is answered before one is hosted.
+	// A refusal no residency can change is answered before the run's session is loaded.
 	if refused := rs.preRefuse(ctx, workflowID, nodePath); refused != nil {
 		return out, refused
 	}
-	host, err := rs.hostRun(ctx, workflowID)
+	host, err := rs.ensureResident(ctx, workflowID)
 	if err != nil {
 		return out, err
 	}
-	defer func() { host.release(err) }()
 	lease, err := rs.life.admit(workflowID)
 	if err != nil {
 		return out, stepRefusal(marotte.RunStepBusy)
@@ -230,13 +230,13 @@ func (rs *Runs) messageStep(ctx context.Context, workflowID, nodePath, raw, mess
 		return out, nil
 	}
 	out.SteerID = steerID
-	return out, rs.steerStep(ctx, lease, host, d.now.at, steerID, text)
+	return out, rs.steerStep(ctx, lease, d.now.at, steerID, text)
 }
 
 // deliverStepMessage decides the verb under the serializer and sends an answer or a prompt; a steer
 // is left to the caller, whose send takes the steer op lock, which comes before the gate. The
 // serializer is released before the send: a refused prompt runs a whole ordinary turn.
-func (rs *Runs) deliverStepMessage(ctx context.Context, host *runHost, workflowID, nodePath, text, steerID, askID string) (stepDecision, error) {
+func (rs *Runs) deliverStepMessage(ctx context.Context, host *drivenHost, workflowID, nodePath, text, steerID, askID string) (stepDecision, error) {
 	c, done := rs.verbCell(workflowID)
 	defer done()
 	defer rs.kickCell(c)
@@ -255,7 +255,7 @@ func (rs *Runs) deliverStepMessage(ctx context.Context, host *runHost, workflowI
 		return stepDecision{}, refusal
 	}
 	p := rs.registerPending(ctx, c)
-	d, err := rs.decideStep(ctx, c, host, nodePath, askID)
+	d, err := rs.decideStep(ctx, c, nodePath, askID)
 	if err != nil || d.verb == marotte.RunStepMessageSteer {
 		rs.clearPending(ctx, c, p)
 		release()
@@ -292,10 +292,10 @@ func (rs *Runs) deliverStepMessage(ctx context.Context, host *runHost, workflowI
 	return d, err
 }
 
-// decideStep reads the run through its host and picks the verb for nodePath, refusing on the step's
+// decideStep reads the run and picks the verb for nodePath, refusing on the step's
 // state or on its ask's wait.
-func (rs *Runs) decideStep(ctx context.Context, c *askCell, host *runHost, nodePath, askID string) (stepDecision, error) {
-	r, err := rs.readAsks(ctx, c, host.sb)
+func (rs *Runs) decideStep(ctx context.Context, c *askCell, nodePath, askID string) (stepDecision, error) {
+	r, err := rs.readAsks(ctx, c)
 	if err != nil {
 		return stepDecision{}, fmt.Errorf("%w: %w", errStepUnreadable, err)
 	}
@@ -328,14 +328,14 @@ func (rs *Runs) replayedVerb(workflowID, steerID string) (marotte.RunStepMessage
 	return verb, ok, nil
 }
 
-func (rs *Runs) steerStep(ctx context.Context, lease runLease, host *runHost, at stepAddr, steerID, text string) error {
+func (rs *Runs) steerStep(ctx context.Context, lease runLease, at stepAddr, steerID, text string) error {
 	key := marotte.StepSteerKey(at.session)
 	unlock, err := rs.steers.queue.LockSteerOps(ctx, key)
 	if err != nil {
 		return command.StatusError(http.StatusServiceUnavailable, err)
 	}
 	defer unlock()
-	t := rs.steers.steerTarget(lease, host.sb.bridge, at.session)
+	t := rs.steers.steerTarget(lease, at.session)
 	refuse, sendErr := command.SteerInto(ctx, t, command.SteerHolder{Held: true, Live: true}, steerID, text)
 	switch {
 	case refuse == command.SteerRefuseFull:
@@ -369,14 +369,13 @@ var errStepUnconfirmed = errors.New("the run's agent stopped before confirming t
 
 // sendStepWords places the words, then sends and settles them detached from the request: a reader
 // leaving after the write must not withdraw words KAS may hold.
-func (rs *Runs) sendStepWords(ctx context.Context, host *runHost, at stepAddr, text, entryID string) (kasVerdict, error) {
+func (rs *Runs) sendStepWords(ctx context.Context, host *drivenHost, at stepAddr, text, entryID string) (kasVerdict, error) {
 	place, err := rs.placeStepMessage(ctx, at, entryID, text)
 	if err != nil {
 		return kasRefused, err
 	}
 	ctx = durable.Context(ctx)
-	resp, cErr := host.sb.bridge.Call(ctx, marotte.MethodPrompt, stepPromptParams(at.session, text))
-	err = runCallErr(resp, cErr)
+	_, err = rs.drive(ctx, host.sb, at.workflowID, marotte.MethodPrompt, stepPromptParams(at.session, text), mutationDrive)
 	got := verdictOf(err)
 	if got == kasRefused {
 		place.withdraw(rs)
@@ -445,7 +444,7 @@ func stepPromptParams(session, text string) map[string]any {
 }
 
 // stepPlacement is where the words that resume a paused step are recorded. KAS continues a step's open
-// turn, so they join it as a read mid-turn entry; a turn that closed (a parentless run's carrier closes
+// turn, so they join it as a read mid-turn entry; a turn that closed (a parentless run's host session closes
 // when it pauses) reopens on KAS's next node_start, which takes them as its prompt. Staged before the
 // send: that node_start can arrive before the send returns.
 type stepPlacement struct {
@@ -522,8 +521,8 @@ func (rs *Runs) clearStepSteers(ctx context.Context, workflowID, nodePath string
 	})
 }
 
-// withStepSteers runs op, clear and resubmit alike, under one lease. It never starts a carrier: a
-// step with rows is running, and a dead carrier's rows were already retired.
+// withStepSteers runs op, clear and resubmit alike, under one lease. It never opens a host session: a
+// step with rows is running, and a dead host's rows were already retired.
 func (rs *Runs) withStepSteers(ctx context.Context, workflowID, nodePath string, op func(command.SteerTarget) error) error {
 	sessions := rs.steers.sessionsAt(workflowID, nodePath)
 	if nodePath == "" || len(sessions) == 0 {
@@ -542,13 +541,7 @@ func (rs *Runs) withStepSteers(ctx context.Context, workflowID, nodePath string,
 		return command.StatusError(http.StatusServiceUnavailable, err)
 	}
 	defer unlock()
-	var carrier acpSessionCaller
-	if t, ok := rs.steers.target(key); ok {
-		if sb := rs.bridges.get(t.host); sb != nil {
-			carrier = sb.bridge
-		}
-	}
-	return op(rs.steers.steerTarget(lease, carrier, sessions[0]))
+	return op(rs.steers.steerTarget(lease, sessions[0]))
 }
 
 // A step's rows are never rerouted: its turn end already retired them.
@@ -578,15 +571,11 @@ func (rt *Runtime) runStepSteerJob(job command.SteerJob) {
 			return
 		}
 		defer unlock()
-		t, ok = steers.target(job.Chat)
+		_, ok = steers.target(job.Chat)
 		session, _ := job.Chat.StepSession()
 		if !ok {
 			return
 		}
-		var carrier acpSessionCaller
-		if sb := rt.runs.bridges.get(t.host); sb != nil {
-			carrier = sb.bridge
-		}
-		command.SendPlanned(ctx, steers.steerTarget(lease, carrier, session), steers.queue.PlanFlush(job.Chat))
+		command.SendPlanned(ctx, steers.steerTarget(lease, session), steers.queue.PlanFlush(job.Chat))
 	}()
 }

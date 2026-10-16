@@ -12,8 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// SessionRenamer renames a KAS session no live process here holds, through the
-// utility session.
+// SessionRenamer renames a KAS session, resident or not, with a session-less engine call.
 type SessionRenamer interface {
 	RenameSession(ctx context.Context, sessionID, title string) error
 }
@@ -30,7 +29,6 @@ var (
 // open.
 func cmdRenameChat(
 	ctx context.Context,
-	bridges bridgeAccess,
 	chats chatStore,
 	renamer SessionRenamer,
 	cmd *marotte.ClientCommand,
@@ -49,7 +47,6 @@ func cmdRenameChat(
 	if userNameTooLong(name) {
 		return nil, StatusError(http.StatusBadRequest, errRenameTooLong)
 	}
-	var current string
 	var chain []string
 	found := false
 	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, exists bool) bool {
@@ -57,7 +54,6 @@ func cmdRenameChat(
 			return false
 		}
 		found = true
-		current = c.ACPSessionID
 		chain = c.SessionChain()
 		if c.Name == name && c.NameSetByUser {
 			return false
@@ -71,30 +67,14 @@ func cmdRenameChat(
 	if !found {
 		return nil, StatusError(http.StatusNotFound, ErrChatNotFound)
 	}
-	bridge := bridges.Bridge(cmd.ChatID)
 	for _, sessionID := range chain {
-		if err := renameSession(ctx, bridge, renamer, sessionID, sessionID == current, name); err != nil {
+		if err := renamer.RenameSession(ctx, sessionID, name); err != nil {
 			slog.Warn("chat renamed; KAS session rename failed, the next open repairs it",
 				"chat_id", cmd.ChatID, "acp_session", sessionID, "error", err)
 		}
 	}
 	slog.Info("chat renamed by user", "chat_id", cmd.ChatID)
 	return responseWith(map[string]any{"name": name}), nil
-}
-
-// renameSession picks the one process allowed to write one session's title: the bridge holding it
-// renames in place; otherwise the utility arm writes stored metadata, never for a session a bridge
-// holds. A bridge on another session (or still spawning) sends nothing; the session door reconcile
-// covers it.
-func renameSession(ctx context.Context, b Bridge, renamer SessionRenamer, sessionID string, current bool, name string) error {
-	if b != nil && string(b.SessionID()) == sessionID {
-		resp, err := b.Call(ctx, marotte.MethodSessionRename, map[string]any{"sessionId": sessionID, "title": name})
-		return RenameOutcome(resp, err)
-	}
-	if (current && b != nil) || renamer == nil {
-		return nil
-	}
-	return renamer.RenameSession(ctx, sessionID, name)
 }
 
 // userNameTooLong applies the user-name cap, counted in UTF-16 units because the

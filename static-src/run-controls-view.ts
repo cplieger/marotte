@@ -162,8 +162,8 @@ function render(
     // No optimistic flip: every verb settles at a node boundary, so the run still reads `running`
     // when the reply lands, and the `run_progress` invalidation repaints the row.
     const btn = button(verb, () => void action.dispatch(workflowID));
-    // A retry starts a process and can take tens of seconds; unbound, the button looks dead and can
-    // be clicked again meanwhile.
+    // A retry loads the run's session and can take tens of seconds; unbound, the button looks dead
+    // and can be clicked again meanwhile.
     bindings.push(bindLoadingState(action.name, btn));
     out.append(btn);
   }

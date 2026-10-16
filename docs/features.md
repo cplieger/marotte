@@ -21,7 +21,29 @@ You can also search inside a chat, export a chat, search across chats, and brows
 - Answer permission requests, the agent's questions and the forms an MCP server asks you to fill in.
 - Fork a tangent, a new chat that starts with this chat's context and leaves the original untouched. **Merge into parent chat** in the composer's **Chat options** menu, or `/tangent merge`, sends a summary of the tangent's findings back to the chat it came from.
 
+Pressing Stop on a reply answers that reply's open permission requests as cancelled, and their cards close as part of the stop. A card from a workflow step running in the same chat stays open, because Stop does not stop the workflow.
+
 The **Workflows** switch in Settings decides how the agent hands work off. On: the agent hands work to workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Either kind of handed-off work shows as a card you can open on its own page. A question a workflow step asks goes to the agent that launched the workflow, not to you: the chat shows that the run is waiting for an answer, and to answer the step yourself, open the run's tab. A step's permission requests still come to you in the chat. The agent's own terminals show their output on the tool card that started them.
+
+## Kiro account
+
+The agent uses the Kiro account you sign in with on the page, with AWS Builder ID or IAM Identity Center: marotte shows a code, and you approve it in your browser. The sign-in is marotte's own. marotte never reads the sign-in of a `kiro-cli` you start in the terminal, and the two can be different accounts. If you used marotte before it kept its own sign-in, sign in once more after updating.
+
+An IAM Identity Center account needs a Kiro profile, and without one the sign-in says "This account has no Kiro profile marotte can use". A Builder ID account signs in with or without one. When a sign-in fails after the browser step, the dialog says why instead of waiting. marotte reports the account's class the way kiro-cli does, so an organization's governance applies as it does in kiro-cli.
+
+The account menu shows the sign-in method, start URL and region, and the account's email when Kiro's account service returns one at sign-in.
+
+Signing in as another account reaches every open chat and running workflow with no restart. kiro-cli asks marotte for the account again at its first model call a minute or more after its last ask. That call can still use the previous account while kiro-cli renews in the background, and the call after it uses the new one. A call made after the previous account's token expired, about four minutes after the last ask, waits for the renewal and uses the new account.
+
+Two kinds of switch wait for the agent engine to restart, because kiro-cli would keep part of the old account: a switch from an account with a Kiro profile to one without, and a switch between account classes, such as Builder ID to IAM Identity Center. The restart banner then says "The new Kiro account applies after the agent engine restarts". Until the restart, chats keep using the previous account whole, and signing in to the previous account again clears the banner.
+
+Signing out stops the account within about four minutes, because kiro-cli keeps a token it already holds until it expires. **Restart now** under **Agent engine** in **Settings** stops it at once. If marotte cannot remove the saved sign-in, signing out says so and you stay signed in.
+
+## The agent engine
+
+One agent engine runs every chat and workflow. **Agent engine** on the **General** tab in **Settings** holds **Restart now** and **Agent engine memory limit**, which caps the engine's JavaScript heap and is empty by default, leaving kiro-cli's own limit of about 4 GB.
+
+These settings apply only when the engine restarts, and their rows say so: **Knowledge base search**, **Model fallback**, **Steering reminders**, **Auto model routing**, **Smart helper models**, **AWS CloudFormation safety check**, **kiro-cli telemetry** and **Agent engine memory limit**. After a change, a banner names them, and the engine restarts by itself as soon as no reply and no workflow is running. **Restart now**, in the banner or in **Settings**, asks first and names the chats whose reply would stop and the workflows that would pause. Those workflows resume by themselves once the engine is back. [How marotte works](how-it-works.md#the-agent-engine) describes restarts and crashes.
 
 ## Files, editor and terminal
 
@@ -60,7 +82,7 @@ Rewind and supervised review cover the agent's file-editing tool. Changes made t
 
 ## MCP servers
 
-Add, edit and remove servers, local ones or remote ones over HTTP or SSE. Each server can block individual tools, reconnects live, and lets you browse its prompts and resources. For a server that needs OAuth, marotte registers itself automatically or takes a client ID you already have, then shows a sign-in link.
+Add, edit and remove servers, local ones or remote ones over HTTP or SSE. Each server can block individual tools, reconnects live, and lets you browse its prompts and resources. For a server that needs OAuth, marotte registers itself automatically or takes a client ID you already have, then shows a sign-in link. The sign-in is kept for workflow steps too, so a step does not ask again on every run. A server that kiro-cli loaded but another layer replaced or switched off shows the same badge as a steering doc, and a server that failed to start shows its error on its card.
 
 ## Tools
 
@@ -73,6 +95,8 @@ Turning on a language server also turns on kiro-cli [code intelligence](https://
 ## Workspace configuration
 
 The `/docs` page lists every steering doc, skill, agent, spec and hook under `.kiro`, with its header fields. It is also where you turn hooks on and off, and start, pause, resume, cancel or schedule workflow runs. A run's tab has its own composer: send the selected step a message while it runs, or answer its question, and each message shows when it was sent and when the step read it. The **+** at the top right creates a new steering doc, skill, prompt, agent or hook in the workspace's `.kiro`. Steering docs, prompts, agents and hooks start from the template the matching Kiro client writes. A skill has no Kiro template, so it starts from the name and description Kiro's skill format requires. The new file opens in the editor. On **Specs** it starts a spec chat that drafts the requirements, as `/spec new` does in kiro-cli.
+
+A steering doc or agent that kiro-cli loaded but does not use carries a badge naming the layer that decided it: **Replaced by** a layer with an item that replaces it, or **Off by** a layer whose setting switched it off. Its tooltip gives the detail. An agent kiro-cli could not load shows the error on its row, with or without a badge. A row on the **Workflows** panel gets the same badge when kiro-cli reports its workflow as not in use. kiro-cli 2.31 reports no such workflow, so on that version no workflow row shows one.
 
 **Run** opens a form under the workflow with its inputs and a **Model** and **Effort** choice. The choice applies to every step that does not name its own model or effort. **Default** sends neither, so the workflow's own settings apply. A schedule keeps its own choice for every run it starts. When you launch or save, marotte refuses a model or effort level your account does not offer. Without that check, kiro-cli would accept it and fail the step later.
 

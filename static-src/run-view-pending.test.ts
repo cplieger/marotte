@@ -123,7 +123,7 @@ const RETRY_ONLY = { verbs: ["retry"], refused: {}, parent_chat_id: "" };
  *  the verb under test the same one. */
 const RETRY_PLUS_REFUSAL = {
   verbs: ["retry"],
-  refused: { pause: "This run has no live engine on this server." },
+  refused: { pause: "A pause is already requested; the run stops at the end of its current step." },
   parent_chat_id: "",
 };
 

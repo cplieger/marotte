@@ -3,6 +3,7 @@ package agent
 import (
 	"testing"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
@@ -66,8 +67,9 @@ func TestPendingPermsTracker_EveryMutationMovesTheSharedCounter(t *testing.T) {
 	tr.add(4, perm("c2", 4, "wf-2"), nil)
 	mustMove(t, v, "ClearForRun", func() { tr.clearForRun("wf-2") })
 	mustHold(t, v, "ClearForRun with nothing to drop", func() { tr.clearForRun("wf-2") })
-	mustMove(t, v, "ClearForChat", func() { tr.clearForChat("c2") })
-	mustHold(t, v, "ClearForChat with nothing to drop", func() { tr.clearForChat("c2") })
+	tr.add(6, marotte.NewEvent(marotte.EventElicitationNeeded, "c2", marotte.ElicitationNeededPayload{}), nil)
+	mustMove(t, v, "ClearInputs", func() { tr.clearInputs("c2", command.ScopeChatAndRuns) })
+	mustHold(t, v, "ClearInputs with nothing to drop", func() { tr.clearInputs("c2", command.ScopeChatAndRuns) })
 	origin := newFakeBridge()
 	tr.add(5, perm("c3", 5, ""), origin)
 	mustMove(t, v, "EndOrigin", func() { tr.endOrigin(origin) })

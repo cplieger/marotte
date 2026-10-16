@@ -294,7 +294,7 @@ class ModelSwitchController {
   private effortLevelsShown: readonly SessionEffortLevel[] = [];
 
   /** Never persisted: a service default written onto the chat would become a
-   *  choice `StartOpts.Effort` pins to every later session. */
+   *  choice `SessionOpts.Effort` pins to every later session. */
   private effortActive = "";
 
   /** The effort section is a SIBLING below this scroller, so the tiers stay fixed

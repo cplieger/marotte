@@ -57,7 +57,7 @@ type Reaper struct {
 
 // New returns a Reaper rooted at sessionsDir (typically
 // filepath.Join(workspace.KiroHome(), "sessions")) and confined to workspaceRoot
-// (the bridge's own cwd).
+// (the agent engine's cwd).
 func New(sessionsDir, workspaceRoot string) *Reaper {
 	root := workspaceRoot
 	if root != "" {
@@ -137,7 +137,7 @@ func (r *Reaper) Reap(sessionID string) {
 
 // Sweep removes orphaned session state: any session dir or cli sidecar whose id is not in
 // referenced and is older than the guard, plus dead v2-engine files. Returns the number reaped.
-// `referenced` must be the COMPLETE keep-list, every chat's chain unioned with every live bridge's
+// `referenced` must be the COMPLETE keep-list, every chat's chain unioned with every resident
 // session; anything less deletes live history.
 func (r *Reaper) Sweep(referenced map[string]struct{}) int {
 	if r == nil {

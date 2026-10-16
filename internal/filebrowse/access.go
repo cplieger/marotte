@@ -44,6 +44,8 @@ var sensitiveEntries = []sensitivePath{
 	// client private key and a proxy URL with credentials can live there).
 	{Path: "forge-store", IsDir: true},
 	{Path: "forge-connections.json", Family: true},
+	// The agent engine's sign-in: refresh and access tokens and the client secret.
+	{Path: "signin.json", Family: true},
 }
 
 // Sensitive is the deny list rooted at one config directory. The file

@@ -199,6 +199,19 @@ class Elements {
   get stAuthSep(): HTMLElement {
     return byId("st-auth-sep");
   }
+  /** The sign-in rows and their separator; `settings.ts`'s `setSignInRows` is their one writer. */
+  get stSignInSep(): HTMLElement {
+    return byId("st-signin-sep");
+  }
+  get stSignInMethod(): HTMLElement {
+    return byId("st-signin-method");
+  }
+  get stSignInURL(): HTMLElement {
+    return byId("st-signin-url");
+  }
+  get stSignInRegion(): HTMLElement {
+    return byId("st-signin-region");
+  }
   get stAccount(): HTMLElement {
     return byId("st-account");
   }

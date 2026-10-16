@@ -10,6 +10,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/kascap"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/nodeopts"
 )
 
 func envNames(env []string) []string {
@@ -234,9 +235,6 @@ while IFS= read -r line; do
     initialize)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
       ;;
-    session/new)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess-env"}}\n' "$id"
-      ;;
     *)
       if [ -n "$id" ]; then
         printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
@@ -264,9 +262,9 @@ func TestStart_ScreensCredentialsOutOfTheSpawnAndNamesThem(t *testing.T) {
 
 	logs := captureLogs(t)
 
-	b := New(scriptPath, dir)
+	b := NewEngine(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background()}); err != nil {
+	if err := b.Start(context.Background(), &marotte.EngineOpts{Lifetime: context.Background()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -282,15 +280,15 @@ func TestStart_ScreensCredentialsOutOfTheSpawnAndNamesThem(t *testing.T) {
 	}
 }
 
-// The session id joins a reap line to its chat. Not parallel: it swaps the slog default.
-func TestStop_ReapLineNamesTheSession(t *testing.T) {
+// The generation joins a reap line to its engine start. Not parallel: it swaps the slog default.
+func TestStop_ReapLineNamesTheGeneration(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := envDumpFake(t, dir, filepath.Join(dir, "child.env"))
 
 	logs := captureLogs(t)
 
-	b := New(scriptPath, dir)
-	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background()}); err != nil {
+	b := NewEngine(scriptPath, dir, WithGeneration(7))
+	if err := b.Start(context.Background(), &marotte.EngineOpts{Lifetime: context.Background()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	b.Stop()
@@ -304,17 +302,17 @@ func TestStop_ReapLineNamesTheSession(t *testing.T) {
 	if reap == "" {
 		t.Fatalf("Stop logged no reap line:\n%s", logs.String())
 	}
-	if !strings.Contains(reap, "session_id=sess-env ") {
-		t.Errorf("reap line = %q, want session_id=sess-env (the session the handshake returned)", reap)
+	if !strings.Contains(reap, "generation=7 ") {
+		t.Errorf("reap line = %q, want generation=7 (the engine's spawn count)", reap)
 	}
 }
 
-func spawnEnvDump(t *testing.T, opts *marotte.StartOpts) []string {
+func spawnEnvDump(t *testing.T, opts *marotte.EngineOpts) []string {
 	t.Helper()
 	dir := t.TempDir()
 	dumpPath := filepath.Join(dir, "child.env")
 	scriptPath := envDumpFake(t, dir, dumpPath)
-	b := New(scriptPath, dir)
+	b := NewEngine(scriptPath, dir)
 	t.Cleanup(b.Stop)
 	opts.Lifetime = context.Background()
 	if err := b.Start(context.Background(), opts); err != nil {
@@ -327,23 +325,21 @@ func spawnEnvDump(t *testing.T, opts *marotte.StartOpts) []string {
 	return strings.Split(string(dump), "\n")
 }
 
-// The session door's memory mode is the one memory switch, so a spawn leaves the memory arm to AWS's ramp.
+// The session door's memory mode is the one memory switch, so the engine leaves the memory arm to AWS's ramp.
 func TestStart_ChildEnvironmentPinsNoMemoryArm(t *testing.T) {
-	for _, line := range spawnEnvDump(t, &marotte.StartOpts{Memory: marotte.MemoryPreference{Mode: "disabled"}}) {
+	for _, line := range spawnEnvDump(t, &marotte.EngineOpts{}) {
 		if strings.HasPrefix(line, "KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED=") {
 			t.Errorf("child environment carries %q; the memory arm must follow the ramp", line)
 		}
 	}
 }
 
-// A run bridge turns KAS's LLM session title off; a chat bridge leaves it alone.
-func TestStart_SessionTitleSwitchOnlyWhenAsked(t *testing.T) {
-	const want = "KIRO_DISABLE_SESSION_TITLE_LLM=true"
-	if lines := spawnEnvDump(t, &marotte.StartOpts{DisableSessionTitles: true}); !slices.Contains(lines, want) {
-		t.Errorf("run-bridge child environment is missing %q", want)
-	}
-	if lines := spawnEnvDump(t, &marotte.StartOpts{}); slices.Contains(lines, want) {
-		t.Errorf("chat-bridge child environment carries %q; titles name History rows there", want)
+// The one engine serves chats, whose titles name History rows, so it never turns KAS's LLM session title off.
+func TestStart_NeverDisablesSessionTitles(t *testing.T) {
+	for _, line := range spawnEnvDump(t, &marotte.EngineOpts{Knowledge: true, DisableTelemetry: true}) {
+		if strings.HasPrefix(line, "KIRO_DISABLE_SESSION_TITLE_LLM=") {
+			t.Errorf("engine environment carries %q; the switch has no per-session seat", line)
+		}
 	}
 }
 
@@ -355,8 +351,8 @@ func TestStart_SpawnEnvCarriesModelFallback(t *testing.T) {
 		name, _, _ := strings.Cut(kv, "=")
 		t.Setenv(name, "ambient")
 	}
-	on := spawnEnvDump(t, &marotte.StartOpts{Features: marotte.AgentFeatures{ModelFallback: true}})
-	off := spawnEnvDump(t, &marotte.StartOpts{})
+	on := spawnEnvDump(t, &marotte.EngineOpts{Features: marotte.EngineFeatures{ModelFallback: true}})
+	off := spawnEnvDump(t, &marotte.EngineOpts{})
 	for _, want := range flags {
 		if !slices.Contains(on, want) {
 			t.Errorf("child environment with ModelFallback on is missing %q", want)
@@ -383,12 +379,10 @@ func TestStart_TelemetrySwitchDrivesTheToolkitClient(t *testing.T) {
 		{name: "switch on", disable: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b := New("unused", t.TempDir())
-			b.disableTelemetry = tc.disable
-			if got := kascap.Capabilities(b.spawn())["telemetryEnabled"]; got != !tc.disable {
+			if got := kascap.Capabilities(&kascap.EngineSpawn{DisableTelemetry: tc.disable})["telemetryEnabled"]; got != !tc.disable {
 				t.Errorf("DisableTelemetry %v: initialize telemetryEnabled = %v, want %v", tc.disable, got, !tc.disable)
 			}
-			lines := spawnEnvDump(t, &marotte.StartOpts{DisableTelemetry: tc.disable})
+			lines := spawnEnvDump(t, &marotte.EngineOpts{DisableTelemetry: tc.disable})
 			var carried []string
 			for _, line := range lines {
 				if isToolkitTelemetryEnv(line) {
@@ -411,9 +405,9 @@ func TestStart_ChildEnvironmentPinsTheLocale(t *testing.T) {
 	dumpPath := filepath.Join(dir, "child.env")
 	scriptPath := envDumpFake(t, dir, dumpPath)
 
-	b := New(scriptPath, dir)
+	b := NewEngine(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background()}); err != nil {
+	if err := b.Start(context.Background(), &marotte.EngineOpts{Lifetime: context.Background()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -430,5 +424,32 @@ func TestStart_ChildEnvironmentPinsTheLocale(t *testing.T) {
 	if slices.Contains(lines, localeEnvVar+"=ambient-should-lose") {
 		t.Errorf("the inherited %s survived; the pin must be appended AFTER the screen so it wins",
 			localeEnvVar)
+	}
+}
+
+// TestEngineEnv_NodeOptionsComposedByNodeopts pins that a heap setting reaches the engine's NODE_OPTIONS through
+// nodeopts.WithHeapLimit, with the inherited options kept, and that 0 leaves the inherited value untouched. Not
+// parallel: it sets an environment variable.
+func TestEngineEnv_NodeOptionsComposedByNodeopts(t *testing.T) {
+	const inherited = `--report-on-signal --title="a b"`
+	t.Setenv(nodeOptionsVar, inherited)
+	want, err := nodeopts.WithHeapLimit(inherited, 1024)
+	if err != nil {
+		t.Fatalf("WithHeapLimit: %v", err)
+	}
+	if lines := spawnEnvDump(t, &marotte.EngineOpts{HeapMiB: 1024}); !slices.Contains(lines, nodeOptionsVar+"="+want) {
+		t.Errorf("engine environment with a 1024 MiB limit lacks %s=%s:\n%s", nodeOptionsVar, want, strings.Join(lines, "\n"))
+	}
+	if lines := spawnEnvDump(t, &marotte.EngineOpts{}); !slices.Contains(lines, nodeOptionsVar+"="+inherited) {
+		t.Errorf("engine environment with no limit changed the inherited %s", nodeOptionsVar)
+	}
+}
+
+// A malformed inherited value is left for Node to refuse, never repaired into something else. Not parallel.
+func TestEngineEnv_AMalformedNodeOptionsIsLeftUntouched(t *testing.T) {
+	const inherited = `--title="unterminated`
+	got := withHeapLimit([]string{"PATH=/bin", nodeOptionsVar + "=" + inherited}, 1024, 1)
+	if !slices.Equal(got, []string{"PATH=/bin", nodeOptionsVar + "=" + inherited}) {
+		t.Errorf("withHeapLimit(malformed) = %q, want the environment unchanged", got)
 	}
 }

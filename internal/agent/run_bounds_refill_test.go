@@ -426,7 +426,7 @@ func TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline(t *
 			t.Fatalf("round %d: NewStore: %v", round, err)
 		}
 		h.runs.leases = st
-		h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
+		h.runs.grantLease(t.Context(), id, "publish", manualLaunch(), hostSec())
 		h.runs.armDeadline(t.Context(), id)
 		// Near-expiry, so a refill genuinely lands.
 		if sErr := st.SetDeadline(t.Context(), id, time.Now().Add(time.Minute)); sErr != nil {

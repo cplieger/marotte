@@ -143,6 +143,6 @@ func TestHandleAssistantChunk_SentinelEndsTheTurnOnce(t *testing.T) {
 
 	if len(deps.turnInterrupts) != 2 {
 		t.Errorf("got %d interrupts for 2 sentinel deltas, want 2; the one-shot lives on "+
-			"the host (sharedBridge.interruptTurn), not here", len(deps.turnInterrupts))
+			"the host (bridgeCoordinator.InterruptTurn), not here", len(deps.turnInterrupts))
 	}
 }

@@ -270,22 +270,6 @@ func TestSteering_IDlessFramesAreDroppedNotForwarded(t *testing.T) {
 	}
 }
 
-// TestSteering_SurvivesSubagentAttribution pins steering dispatch BEFORE the parent-only gate:
-// a steer is the chat's, consumed by whichever execution runs.
-func TestSteering_SurvivesSubagentAttribution(t *testing.T) {
-	deps, events, _ := depsWithStore(t, "c1")
-	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
-		steerFrame(t, "steering_injected", map[string]any{
-			"messageId": "steer-1",
-			"content":   "use tabs",
-		}), FrameAttribution{Subagent: true, SessionID: "sub-session-7"})
-
-	rows := appendedSteers(t, *events)
-	if len(rows) != 1 || rows[0].ID != "steer-1" || rows[0].State != marotte.SteerStateRead {
-		t.Fatalf("events = %v — a steer consumed inside a subagent must still be recorded as read", eventTypes(*events))
-	}
-}
-
 // Origin is the one field not decoded from the frame: every producer persists identically,
 // so the answer comes from the ledger of what THIS server sent.
 

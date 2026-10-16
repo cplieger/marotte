@@ -207,10 +207,10 @@ func TestAccount(t *testing.T) {
 			"Too many requests. kiro-cli already retried. Wait a moment and send again, or switch to another model.",
 		},
 		{
-			"an unreachable model registry names the login remedy",
+			"an unreachable model registry names the sign-in remedy",
 			Mapped{ErrorType: "ModelRegistryUnavailableError", RetryErrorType: "SERVER_ERROR"},
 			"Kiro could not load the available models.",
-			"Kiro could not load the available models. Run `kiro-cli login`, then send the prompt again.",
+			"Kiro could not load the available models. Sign in to Kiro from the account menu, then send the prompt again.",
 		},
 		{
 			"a transient class keeps KAS's prose alone",

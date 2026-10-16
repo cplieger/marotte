@@ -71,7 +71,7 @@ func (rt *Runtime) purgeCandidate(ctx context.Context, r *kasWorkflowRun, window
 		res.Kept++
 		return
 	}
-	err := rt.runs.deleteOn(ctx, r.WorkflowID, runStop{}, nil)
+	err := rt.runs.deleteAs(ctx, r.WorkflowID, runStop{})
 	done()
 	if err != nil {
 		res.Errors++

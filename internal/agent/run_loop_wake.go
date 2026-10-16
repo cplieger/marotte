@@ -40,7 +40,7 @@ func (rs *Runs) wakeAtLoopLimit(ctx context.Context, f *lifecycleFrame) {
 	if _, ok := rs.chats.Get(ctx, parent); !ok {
 		return
 	}
-	key := keyenc.Join(f.WorkflowID, pause.NodeID, strconv.Itoa(pause.IterationsRun))
+	key := loopWakeKey(f)
 	text, label := loopLimitMessage(rs.frameLabel(f), f.WorkflowID, pause.NodeID, pause.IterationsRun)
 	// Claiming under the drain gate means a frame Shutdown refuses leaves no claim, so the restarted
 	// process still sends it. The send runs off the frame's goroutine: the parent's own bridge delivers
@@ -64,9 +64,42 @@ func (rs *Runs) wakeAtLoopLimit(ctx context.Context, f *lifecycleFrame) {
 		}
 	})
 	if !tried {
-		slog.Info("left the iteration-limit wake for the restarted process: marotte is shutting down",
-			"chat_id", parent, "workflow_id", f.WorkflowID)
+		slog.Warn("the iteration-limit wake was not sent: marotte is shutting down; the restarted process sends it "+
+			"only if it sees the pause again", "chat_id", parent, "workflow_id", f.WorkflowID)
 	}
+}
+
+// loopWakeKey names one cap pause: the paused repeat's path through the run tree, each step with its iteration, and
+// the passes it ran. KAS restarts an inner repeat's count on each outer pass, so the node id and count alone would
+// make a later pass's pause read as one already sent. A frame with no tree keys on the node id alone.
+func loopWakeKey(f *lifecycleFrame) string {
+	pause := f.FinalState.Pause
+	path := pausedRepeatPath(f.FinalState.Root, pause.NodeID)
+	if path == nil {
+		path = []string{pause.NodeID}
+	}
+	return keyenc.Join(append(append([]string{f.WorkflowID}, path...), strconv.Itoa(pause.IterationsRun))...)
+}
+
+// pausedRepeatPath is the path to the paused node named nodeID, two fields per step (node id and iteration, "" when
+// the step has none), or nil when the tree holds no such node.
+func pausedRepeatPath(n *runTreeNode, nodeID string) []string {
+	if n == nil {
+		return nil
+	}
+	step := []string{n.NodeID, ""}
+	if n.Iteration != nil {
+		step[1] = strconv.Itoa(*n.Iteration)
+	}
+	if n.NodeID == nodeID && n.Status == marotte.RunNodeStatusPaused {
+		return step
+	}
+	for i := range n.Children {
+		if rest := pausedRepeatPath(&n.Children[i], nodeID); rest != nil {
+			return append(step, rest...)
+		}
+	}
+	return nil
 }
 
 func (rs *Runs) deliverLoopWake(ctx context.Context, parent marotte.ChatID, workflowID, key, text, label string) {

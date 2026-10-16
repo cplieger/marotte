@@ -1,4 +1,4 @@
-// System handlers: connected, settings_updated, transport:reconcile, transport:resumed, the two
+// System handlers: connected, settings_updated, engine_status, transport:reconcile, transport:resumed, the two
 // connect-hook snapshots, compaction_started, mode_changed. `transport:reconcile` fires when every
 // held claim is void (new hub epoch, or must_refetch) and re-reads the whole projection; the
 // everyday wake is the adapter's digest.
@@ -26,6 +26,7 @@ import { refreshRetention } from "../retention.js";
 import { adoptConnectRuns, invalidateCachedRuns, rebuildLiveRuns } from "../run-store.js";
 import { forgetAllStepSteers } from "../run-step-steers.js";
 import { fetchCatalog } from "../session-catalog.js";
+import { adoptEngineStatus, reconcileEngineStatus } from "../engine-status.js";
 import { invalidateTurnRails } from "../turn-rail.js";
 import type { SSEPayloads } from "../bus.js";
 import type { ServerEvent } from "../types.js";
@@ -103,11 +104,15 @@ onSSE("settings_updated", () => {
     // A theme chosen on another device lands here. Safe against a loop:
     // syncSettings already seeded the write tracker from this payload.
     adoptThemeFromSettings(s);
-    // Re-seeds the controls on a second device; `refreshRetention` and the spawn-time reads carry the
+    // Re-seeds the controls on a second device; `refreshRetention` and the session-door reads carry the
     // effect.
     applyGeneralPanel(s);
   });
   void refreshRetention();
+});
+
+onSSE("engine_status", (_chatID, p) => {
+  adoptEngineStatus(p);
 });
 
 onBus(BUS_RECONCILE, ({ cause, signal }) => {
@@ -139,6 +144,8 @@ onBus(BUS_RECONCILE, ({ cause, signal }) => {
   invalidateCachedRuns(token);
   // The catalog rides no frame, so a gap must re-read it.
   void fetchCatalog({ signal });
+  // A gap may have swallowed an engine_status, and the next one comes only on a change.
+  void reconcileEngineStatus(signal);
   // The rail's `GET /api/chats/{id}/turns` carries no stamp, so its records are
   // invalidated by hand here; each chat re-reads its index at its next activation.
   invalidateTurnRails();

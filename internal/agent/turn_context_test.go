@@ -13,7 +13,7 @@ import (
 func hubOnLifetime(t *testing.T) (*Runtime, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
-	h := New(ctx, "/tmp/work", func() ACPBridge { return newFakeBridge() }, newTestChatStore())
+	h := newRuntimeOn(ctx, "/tmp/work", fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), newTestChatStore())
 	return h, cancel
 }
 

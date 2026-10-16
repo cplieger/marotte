@@ -72,7 +72,7 @@ func (t *Translator) HandleRateLimit(ctx context.Context, chatID marotte.ChatID,
 }
 
 // HandleSystemNotify handles _kiro/system/notify ({level, message}). The frame carries
-// no sessionId, so chatID is the bridge that received it. The message is forwarded
+// no sessionId, so chatID is the chat whose session received it. The message is forwarded
 // verbatim and never parsed: KAS sends several unrelated texts on this one method.
 func (t *Translator) HandleSystemNotify(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[struct {

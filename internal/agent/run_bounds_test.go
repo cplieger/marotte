@@ -20,9 +20,11 @@ import (
 )
 
 // leased grants a manual lease: a lease-less run is unbounded, so a fixture forgetting it passes vacuously.
+// leased is a parentless manual run launched from testLaunchSession, so a driving verb can load its host session.
 func leased(t *testing.T, h *Runs, workflowID string) {
 	t.Helper()
-	h.grantLease(t.Context(), workflowID, "publish", manualLaunch())
+	h.grantLease(t.Context(), workflowID, "publish", manualLaunch(), hostSec())
+	h.recordParentSession(t.Context(), workflowID, testLaunchSession)
 }
 
 // boundsRuns is a bare Runs whose deadline timers stop at cleanup: it has no lifetime, so a timer
@@ -76,7 +78,7 @@ func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 			if tc.slotIn != 0 {
 				o = scheduledLaunch("sched-1", time.Now().Add(tc.slotIn))
 			}
-			h.grantLease(t.Context(), id, "publish", o)
+			h.grantLease(t.Context(), id, "publish", o, hostSec())
 			if tc.spent != 0 {
 				h.bounds.executed = map[string]time.Duration{id: tc.spent}
 			}
@@ -126,7 +128,7 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 			t.Fatalf("round %d: NewStore: %v", round, err)
 		}
 		h.runs.leases = st
-		h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
+		h.runs.grantLease(t.Context(), id, "publish", manualLaunch(), hostSec())
 
 		release, halt := make(chan struct{}), make(chan struct{})
 		torn := make(chan time.Time, 1)
@@ -209,7 +211,7 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 
 	h.runs.leases = undurableLeaseStore(t)
 
-	h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
+	h.runs.grantLease(t.Context(), id, "publish", manualLaunch(), hostSec())
 	if _, held := h.runs.lease(id); !held {
 		t.Fatal("a persist failure lost the lease from memory as well")
 	}
@@ -288,7 +290,7 @@ func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
 	}
 	h.runs.schedules = st
 
-	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-gone", time.Now().Add(30*time.Second)))
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-gone", time.Now().Add(30*time.Second)), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 
@@ -515,7 +517,7 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	h.runs.schedules = st
 
 	// A slot INSIDE the floor, so the armed deadline lands later than SlotAt.
-	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-1", time.Now().Add(30*time.Second)))
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-1", time.Now().Add(30*time.Second)), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 	if !l.Deadline.After(l.SlotAt) {
@@ -559,7 +561,7 @@ func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *test
 
 	// A manual lease carrying a slot, and no schedule id: no row asked for this run.
 	h.runs.grantLease(t.Context(), id, "publish",
-		launchOrigin{origin: runlease.OriginManual, slotAt: time.Now().Add(10 * time.Minute)})
+		launchOrigin{origin: runlease.OriginManual, slotAt: time.Now().Add(10 * time.Minute)}, hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 
@@ -804,7 +806,9 @@ func TestRearmRetriedRun_GivesAFreshClock(t *testing.T) {
 // TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt pins that the minted lease carries the recipe
 // name the single-run rule needs.
 func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testing.T) {
-	h := boundsRuns(t)
+	hub, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, hub) })
+	h := hub.runs
 	const id = "wf_1"
 
 	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "nightly"})
@@ -826,25 +830,28 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 	}
 	if !l.SlotAt.IsZero() {
 		t.Errorf("SlotAt = %v; the run list reports a name, not a launch source, so no slot is "+
-			"resolvable for a re-hosted run", l.SlotAt)
+			"resolvable for a retried run", l.SlotAt)
 	}
 	if l.Unattended {
 		t.Error("a retried run was marked unattended; the user clicked Retry and can answer")
 	}
+	if presets, err := l.HostPresets(); err != nil || !slices.Equal(presets, securityPresets(t.Context(), hub.lifecycle.configDir)) {
+		t.Errorf("host presets = %v, %v; want the profile's presets now, recorded so its host session can reload", presets, err)
+	}
 }
 
-// TestRunStartLaunch_ClassifiesByTheCarrier pins that a `run_start` up a chat's bridge is agent-launched; lease
-// absence cannot decide, since a retry grants its lease late.
-func TestRunStartLaunch_ClassifiesByTheCarrier(t *testing.T) {
+// TestRunStartLaunch_ClassifiesByTheLane pins that a `run_start` on a chat's lane is agent-launched; lease absence
+// cannot decide, since a retry grants its lease late.
+func TestRunStartLaunch_ClassifiesByTheLane(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
 		chatID     marotte.ChatID
 		want       runlease.Origin
 		wantChatID string
 	}{
-		"a run bridge's frame, dispatched with no chat id": {"", runlease.OriginManual, ""},
-		"the synthetic run chat id":                        {runChatID("wf_1"), runlease.OriginManual, ""},
-		"a real chat id, so the chat's agent asked":        {"c-abc123", runlease.OriginAgent, "c-abc123"},
+		"a host session's frame, dispatched with no chat id": {"", runlease.OriginManual, ""},
+		"the synthetic run chat id":                          {runChatID("wf_1"), runlease.OriginManual, ""},
+		"a real chat id, so the chat's agent asked":          {"c-abc123", runlease.OriginAgent, "c-abc123"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -976,7 +983,6 @@ type noopRunTranslator struct{}
 func (noopRunTranslator) HandleRunStart(context.Context, marotte.ChatID, *marotte.RPCResponse)    {}
 func (noopRunTranslator) HandleRunComplete(context.Context, marotte.ChatID, *marotte.RPCResponse) {}
 func (noopRunTranslator) RecordRunSteps(json.RawMessage)                                          {}
-func (noopRunTranslator) ForgetRunSteps(string)                                                   {}
 func (noopRunTranslator) HandleWorkflowMessage(context.Context, marotte.ChatID, *marotte.RPCResponse) {
 }
 
@@ -1239,17 +1245,18 @@ func TestCancel_LeavesTheLeaseOfARunThatIsStillRunning(t *testing.T) {
 func TestCancel_ReconcilesNothingWhenTheCancelFAILED(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("bridge gone")}
+	// A reconcile reading this would release the lease; the stop's own card refresh reads it too and releases
+	// nothing.
+	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusCancelled))
 	leased(t, h.runs, "wf_1")
 
 	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Cancel reported success for a cancel that failed")
 	}
+	joinInflight(t, h)
 
 	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("a FAILED cancel released the lease, stranding a live run with no clock " +
 			"and nothing to explain the row it blocks")
-	}
-	if slices.Contains(br.callLog(), methodKiroWorkflowInspect) {
-		t.Errorf("a failed cancel still paid for a reconcile: %v", br.callLog())
 	}
 }

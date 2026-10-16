@@ -61,9 +61,9 @@ func sendSteer(ctx context.Context, sb SessionCaller, steerID, text string) (ste
 	return decodeSteerReply(resp), err
 }
 
-// SteerTarget is one steering buffer and what reaches it: a chat's own session, or a run step's
-// session on its run's carrier. Key names the buffer's record in Queue and Ledger. Caller is nil
-// when no live process holds the session.
+// SteerTarget is one steering buffer and what reaches it: a chat's own session, or one of a
+// run's step sessions. Key names the buffer's record in Queue and Ledger. Caller is nil when the
+// session is not resident.
 type SteerTarget struct {
 	Caller SessionCaller
 	Queue  SteerQueue

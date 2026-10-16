@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -9,9 +8,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func newTestBridgeManager() *bridgeManager {
-	return newBridgeManager(func() ACPBridge { return newFakeBridge() })
-}
+func newTestBridgeManager() *bridgeManager { return newBridgeManager() }
 
 // removeIfSame removes only when the stored bridge is the given one.
 func TestBridgeManager_RemoveIfSame(t *testing.T) {
@@ -34,11 +31,13 @@ func TestBridgeManager_RemoveIfSame(t *testing.T) {
 	}
 }
 
-// removeIfBridge removes only when the stored bridge instance matches.
+// removeIfBridge removes only when the stored session instance matches.
 func TestBridgeManager_RemoveIfBridge(t *testing.T) {
 	bm := newTestBridgeManager()
 	sb, _ := bm.orInsert("c1")
-	stored := sb.bridge
+	stored := newFakeBridge()
+	sb.attach(stored)
+	sb.setIdle()
 	other := newFakeBridge()
 
 	if removed := bm.removeIfBridge("c1", other); removed {
@@ -58,8 +57,7 @@ func TestBridgeManager_RemoveIfBridge(t *testing.T) {
 
 func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 	quietLogs(b)
-	factory := func() ACPBridge { return newNoopBridge() }
-	bm := newBridgeManager(factory)
+	bm := newBridgeManager()
 
 	// Pre-populated so the "exists" path is exercised.
 	for i := range 100 {
@@ -81,7 +79,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 
 	b.Run("create", func(b *testing.B) {
 		// A separate manager so creates do not accumulate.
-		bm2 := newBridgeManager(factory)
+		bm2 := newBridgeManager()
 		var mu sync.Mutex
 		var counter int
 
@@ -99,119 +97,4 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 			}
 		})
 	})
-}
-
-func TestRetireBridges_ClosesIdleChatBridges(t *testing.T) {
-	h, cs, br := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-
-	h.RetireBridges("identity changed")
-
-	if h.bridge.mgr.get("c1") != nil {
-		t.Error("RetireBridges kept an idle chat bridge registered")
-	}
-	br.mu.Lock()
-	stopped := br.stopped
-	br.mu.Unlock()
-	if !stopped {
-		t.Error("RetireBridges did not stop the idle chat bridge")
-	}
-}
-
-func TestRetireBridges_MarksBusyBridgeAndReplacesItAtNextOpen(t *testing.T) {
-	cs := newTestChatStore()
-	h := New(t.Context(), "/tmp/retire-busy", func() ACPBridge { return newFakeBridge() }, cs)
-	cs.wire(h)
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	first, err := h.coord.openBridge(t.Context(), "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	if !first.tryAcquireForPrompt() {
-		t.Fatal("first bridge did not enter the prompting state")
-	}
-	// The chat's own bridge, not the factory's first product: a background run resume starts the utility bridge
-	// through the same factory.
-	firstFake := first.bridge.(*fakeBridge)
-
-	h.RetireBridges("identity changed")
-	if h.bridge.mgr.get("c1") != first {
-		t.Fatal("RetireBridges removed a busy bridge before its turn ended")
-	}
-	firstFake.mu.Lock()
-	stoppedDuringTurn := firstFake.stopped
-	firstFake.mu.Unlock()
-	if stoppedDuringTurn {
-		t.Fatal("RetireBridges stopped a busy bridge mid-turn")
-	}
-
-	first.releaseAfterPrompt()
-	second, err := h.coord.openBridge(t.Context(), "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge after retirement: %v", err)
-	}
-	if second == first {
-		t.Error("OpenBridge reused a bridge marked for retirement")
-	}
-	firstFake.mu.Lock()
-	stoppedAfterTurn := firstFake.stopped
-	firstFake.mu.Unlock()
-	if !stoppedAfterTurn {
-		t.Error("OpenBridge did not stop the retired bridge before replacing it")
-	}
-}
-
-func TestRetireBridges_LeavesRunBridgesUntouched(t *testing.T) {
-	h, _, _ := newTestHub()
-	br := newFakeBridge()
-	sb := &sharedBridge{bridge: br, state: bridgeIdle}
-	if !h.bridge.mgr.insert(runChatID("wf-1"), sb) {
-		t.Fatal("insert run bridge = false, want true")
-	}
-
-	h.RetireBridges("identity changed")
-
-	if h.bridge.mgr.get(runChatID("wf-1")) != sb {
-		t.Error("RetireBridges removed a run bridge")
-	}
-	br.mu.Lock()
-	stopped := br.stopped
-	br.mu.Unlock()
-	if stopped {
-		t.Error("RetireBridges stopped a run bridge")
-	}
-}
-
-func TestOpenBridge_ChecksIdentityBeforeReuse(t *testing.T) {
-	h, cs, _ := newTestHub()
-	checks := 0
-	h.SetIdentityCheck(func(context.Context) { checks++ })
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("OpenBridge reuse: %v", err)
-	}
-
-	if checks != 2 {
-		t.Errorf("OpenBridge identity checks = %d, want 2", checks)
-	}
-}
-
-func TestRetireBridges_ResetsUtilitySession(t *testing.T) {
-	h, _, _ := newTestHub()
-	if err := h.utility.get().ensureStarted(t.Context()); err != nil {
-		t.Fatalf("start the utility session: %v", err)
-	}
-
-	h.RetireBridges("identity changed")
-
-	if h.utility.peek() != nil {
-		t.Error("RetireBridges kept the utility session")
-	}
 }

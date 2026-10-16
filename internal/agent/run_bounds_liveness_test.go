@@ -18,7 +18,7 @@ import (
 
 func stagedExpiry(t *testing.T, rs *Runs, id string, launch launchOrigin) time.Time {
 	t.Helper()
-	rs.grantLease(t.Context(), id, "publish", launch)
+	rs.grantLease(t.Context(), id, "publish", launch, hostSec())
 	rs.armDeadline(t.Context(), id)
 	deadline := time.Now().Add(-time.Second)
 	if err := rs.leaseStore().SetDeadline(t.Context(), id, deadline); err != nil {
@@ -66,7 +66,7 @@ func TestCancelExpired_AnUnreadableRunWithNoOpenStepIsAStall(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	br.callErrs = map[string]error{methodKiroWorkflowInspect: errors.New("utility session unavailable")}
+	br.callErrs = map[string]error{methodKiroWorkflowInspect: errors.New("engine unavailable")}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 
@@ -249,12 +249,12 @@ func TestFinishTermination_TellsTheLaunchingChatWhy(t *testing.T) {
 		t.Fatalf("seed the chat: %v", err)
 	}
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	carrier := &sharedBridge{bridge: br, state: bridgeIdle}
-	h.bridge.mgr.insert(chatID, carrier)
-	h.runs.grantLease(t.Context(), id, "nightly", launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
+	host := &sharedBridge{bridge: br, state: bridgeIdle}
+	h.bridge.mgr.insert(chatID, host)
+	h.runs.grantLease(t.Context(), id, "nightly", launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 	before := time.Now().UnixMilli()
 
-	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}, carrier); err != nil {
+	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}); err != nil {
 		t.Fatalf("finishTermination: %v", err)
 	}
 
@@ -306,11 +306,11 @@ func TestFinishTermination_NotesTheStopWhenTheTerminalFrameWinsTheRace(t *testin
 		h.runs.forgetBounds(t.Context(), id)
 		return json.RawMessage(`{}`), nil, true
 	}
-	carrier := &sharedBridge{bridge: br, state: bridgeIdle}
-	h.bridge.mgr.insert(chatID, carrier)
-	h.runs.grantLease(t.Context(), id, "nightly", launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
+	host := &sharedBridge{bridge: br, state: bridgeIdle}
+	h.bridge.mgr.insert(chatID, host)
+	h.runs.grantLease(t.Context(), id, "nightly", launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 
-	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}, carrier); err != nil {
+	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}); err != nil {
 		t.Fatalf("finishTermination: %v", err)
 	}
 
@@ -331,11 +331,11 @@ func TestFinishTermination_AParentlessRunLeavesNoNote(t *testing.T) {
 	defer shutdownHub(t, h)
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	carrier := &sharedBridge{bridge: br, state: bridgeIdle}
-	h.bridge.mgr.insert(runChatID(id), carrier)
+	host := &sharedBridge{bridge: br, state: bridgeIdle}
+	h.bridge.mgr.insert(runChatID(id), host)
 	leased(t, h.runs, id)
 
-	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}, carrier); err != nil {
+	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}); err != nil {
 		t.Fatalf("finishTermination: %v", err)
 	}
 	if got := h.runs.endReason(id); got != runEndStalled {

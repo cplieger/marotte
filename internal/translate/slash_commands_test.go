@@ -95,7 +95,7 @@ func TestReadSlashCatalog_EmptyFrameIsNotACatalog(t *testing.T) {
 
 type slashCatalogDouble struct{ chat int }
 
-func (s *slashCatalogDouble) SetFromChat([]marotte.SlashCommand) bool { s.chat++; return true }
+func (s *slashCatalogDouble) Set([]marotte.SlashCommand) bool { s.chat++; return true }
 
 type countingBus struct{ events []marotte.EventType }
 
@@ -104,20 +104,19 @@ func (b *countingBus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 }
 
 // Only a chat's own frame feeds the workspace catalog.
-func TestAvailableCommandsUpdate_StepAndSubagentFramesAreIgnored(t *testing.T) {
+func TestAvailableCommandsUpdate_StepFramesAreIgnored(t *testing.T) {
 	slash := &slashCatalogDouble{}
 	bus := &countingBus{}
 	tr := New(&Roles{Bus: bus, Slash: slash})
 	raw := slashFrame(t, kasCmd("review", "prompt", nil))
 
 	tr.HandleAvailableCommandsUpdate(t.Context(), "c1", raw, FrameAttribution{Step: true})
-	tr.HandleAvailableCommandsUpdate(t.Context(), "c1", raw, FrameAttribution{Subagent: true, SessionID: "sub"})
 	if slash.chat != 0 || len(bus.events) != 0 {
-		t.Fatalf("after step and subagent frames: SetFromChat calls = %d, events = %v, want none", slash.chat, bus.events)
+		t.Fatalf("after a step frame: Set calls = %d, events = %v, want none", slash.chat, bus.events)
 	}
 	tr.HandleAvailableCommandsUpdate(t.Context(), "c1", raw, FrameAttribution{})
 	if slash.chat != 1 || len(bus.events) != 1 || bus.events[0] != marotte.EventSlashCommandsChanged {
-		t.Errorf("after a chat frame: SetFromChat calls = %d, events = %v, want 1 and one slash_commands_changed", slash.chat, bus.events)
+		t.Errorf("after a chat frame: Set calls = %d, events = %v, want 1 and one slash_commands_changed", slash.chat, bus.events)
 	}
 }
 

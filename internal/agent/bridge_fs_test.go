@@ -52,13 +52,14 @@ func (b *respondingBridge) Respond(_ context.Context, id int64, result any, err 
 	return writeErr
 }
 
-func hubForFSTest(t *testing.T, workDir string) (*Runtime, *respondingBridge) {
+func hubForFSTest(t *testing.T, workDir string, opts ...Option) (*Runtime, *respondingBridge) {
 	t.Helper()
 	cs := newTestChatStore()
 	br := newRespondingBridge()
-	factory := func() ACPBridge { return br }
-	h := New(t.Context(), workDir, factory, cs)
+	factory := func() engineSession { return br }
+	h := newRuntimeOn(t.Context(), workDir, fakeEngineOf(factory, nil), cs, opts...)
 	cs.wire(h)
+	settleBoot(t, h)
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	sb, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {

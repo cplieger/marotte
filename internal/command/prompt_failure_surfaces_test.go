@@ -24,14 +24,14 @@ type surfaceDeps struct {
 	mu        sync.Mutex
 	errors    []marotte.ErrorPayload
 	abandoned []abandonedTurn
-	// spawnErr, when set, is what OpenBridge answers: the respawn-failure path.
+	// spawnErr, when set, is what OpenBridge answers: the reload-failure path.
 	spawnErr error
 	// slotHeld makes TryAcquireForPrompt refuse, which is the held-bridge-slot path.
 	slotHeld bool
 	// closedReason, when set, is the reason AwaitTurn reports the turn closed with:
 	// the engine's turn_end winning the close.
 	closedReason string
-	// startRefused makes StartTurn answer false, the cancelled-during-spawn path.
+	// startRefused makes StartTurn answer false, the cancelled-during-open path.
 	startRefused bool
 	// callErr, when set, fails the prompt Call itself.
 	callErr error
@@ -167,7 +167,7 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 		turnScoped bool
 	}{
 		{
-			name:    "the bridge could not be spawned",
+			name:    "the chat's session could not be opened",
 			want:    marotte.ErrCodeBridgeStartFailed,
 			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
@@ -194,7 +194,7 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 			turnScoped: true,
 		},
 		{
-			name:    "empty-turn recovery could not respawn the session",
+			name:    "empty-turn recovery could not reload the session",
 			want:    marotte.ErrCodeRecoveryFailed,
 			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
@@ -266,10 +266,10 @@ func TestRetryEmptyTurnPrompt_WithholdsTheFrameOnAnUnackedCancel(t *testing.T) {
 	}
 }
 
-// A failed respawn names the cause in its frame: the empty turn already closed
+// A failed reload names the cause in its frame: the empty turn already closed
 // with its own outcome and the retry's turn never opened, so nothing else says
 // what stopped the retry.
-func TestRetryEmptyTurnPrompt_RespawnFailureNamesTheCause(t *testing.T) {
+func TestRetryEmptyTurnPrompt_ReopenFailureNamesTheCause(t *testing.T) {
 	deps := newSurfaceDeps()
 	deps.spawnErr = errors.New("no such binary")
 

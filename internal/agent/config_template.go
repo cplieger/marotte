@@ -1,7 +1,7 @@
 package agent
 
 // GET /api/config-template serves the mode and model catalog from kiro-cli's session-less
-// _kiro/config/template, over the utility bridge.
+// _kiro/config/template, with an engine call.
 
 import (
 	"cmp"
@@ -66,7 +66,7 @@ type configTemplateAssembly struct {
 // over the template, and the custom agents KAS would load for the workspace are merged over
 // either, so the picker lists them before any session has run.
 func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
-	u := rt.utility.get()
+	u := rt.engine
 	cctx, cancel := context.WithTimeout(r.Context(), configTemplateTimeout)
 	defer cancel()
 	// No early return: a template outage still serves the live catalog.
@@ -87,8 +87,8 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 
 // readTemplate reads and decodes `_kiro/config/template`; a failed read or decode is an
 // unavailable catalog with its reason.
-func readTemplate(ctx context.Context, us *utilitySession) *configTemplateAssembly {
-	raw, err := us.configTemplateRaw(ctx)
+func readTemplate(ctx context.Context, o *engineOwner) *configTemplateAssembly {
+	raw, err := o.configTemplateRaw(ctx)
 	if err != nil {
 		slog.Warn("config template failed", "error", err)
 		return unavailableTemplate(marotte.CatalogReasonRPC)
@@ -110,14 +110,14 @@ func (rt *Runtime) servedModels(ctx context.Context) ([]marotte.SessionModel, bo
 	}
 	cctx, cancel := context.WithTimeout(ctx, configTemplateTimeout)
 	defer cancel()
-	out := withCatalogVerdict(readTemplate(cctx, rt.utility.get()))
+	out := withCatalogVerdict(readTemplate(cctx, rt.engine))
 	return out.Models, out.Catalog == marotte.CatalogReady
 }
 
 // workspaceAgents is KAS's custom-agent list for workDir, or nil when getState fails: the catalog
 // then serves its base modes alone, under the same verdict.
-func workspaceAgents(ctx context.Context, us *utilitySession, workDir string) []marotte.SessionMode {
-	raw, err := us.workspaceConfigurationRaw(ctx, []string{workDir})
+func workspaceAgents(ctx context.Context, o *engineOwner, workDir string) []marotte.SessionMode {
+	raw, err := o.workspaceConfigurationRaw(ctx, []string{workDir})
 	if err != nil {
 		slog.Warn("workspace configuration failed", "error", err)
 		return nil

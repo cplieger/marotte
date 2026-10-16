@@ -6,9 +6,11 @@ import {
   insertConfiguredEntry,
   removeConfiguredEntry,
   mcpState,
+  standingFor,
   updateConfiguredEntry,
 } from "./mcp-state.js";
 import type { Server } from "./mcp-state.js";
+import { refreshConfigStanding } from "./config-standing.js";
 
 // Only the network edge is mocked: the decoder is real, so the fixture decodes as a GET /api/mcp body.
 const wire = vi.hoisted(() => ({ body: {} as unknown }));
@@ -336,5 +338,49 @@ describe("configured-server mutation helpers", () => {
     expect(prev).toEqual(a);
     expect(servers.get("a")).toEqual({ ...a, enabled: false });
     expect(updateConfiguredEntry("missing", { enabled: false })).toBeUndefined();
+  });
+});
+
+describe("disabled by layer", () => {
+  it("reports kiro-cli's standing for a server another layer switched off, and follows the next read", async () => {
+    const seen: (string | undefined)[] = [];
+    const stop = effect(() => {
+      seen.push(standingFor("off-server")?.kind);
+    });
+    wire.body = {
+      standing: [
+        {
+          type: "mcp-server",
+          key: "off-server",
+          kind: "disabled",
+          decided_by: "workspace",
+          decided_by_name: "Workspace",
+          setting: "krn:::setting/mcp-server/off-server/enabled",
+        },
+        // A file item with the same key is a Docs row's, never a server's.
+        {
+          type: "agent",
+          key: "on-server",
+          kind: "displaced",
+          decided_by: "user-local",
+          decided_by_name: "Local Settings (~/.kiro)",
+        },
+      ],
+      load_errors: {},
+    };
+    refreshConfigStanding();
+    await vi.waitFor(() => {
+      expect(standingFor("off-server")?.decided_by_name).toBe("Workspace");
+    });
+    expect(standingFor("on-server")).toBeUndefined();
+    expect(seen.at(-1)).toBe("disabled");
+
+    wire.body = { standing: [], load_errors: {} };
+    refreshConfigStanding();
+    await vi.waitFor(() => {
+      expect(standingFor("off-server")).toBeUndefined();
+    });
+    expect(seen.at(-1)).toBeUndefined();
+    stop();
   });
 });
