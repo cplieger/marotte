@@ -455,12 +455,14 @@ func TestAwaitTerminalExit_WaitsForTheCommandsProcessGroupToEmpty(t *testing.T) 
 	logs := captureLogs(t) // not parallel: swaps the slog default
 	withTerminalGroupGrace(t, 300*time.Millisecond)
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
+	// Started before the spawn: the head can exit and the grace begin before the create returns,
+	// so a clock started after it reads short of the grace.
+	start := time.Now()
 	// `sleep` joins the head's group and outlives it, with its pipe ends closed.
 	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1,
 		`sleep 30 >/dev/null 2>&1 </dev/null & printf 'head done\n'`, nil))
 	term := singleTerm(t, h)
 
-	start := time.Now()
 	waitClosed(t, term.done, "terminal exit")
 	elapsed := time.Since(start)
 
