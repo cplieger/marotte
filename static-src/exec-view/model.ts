@@ -424,7 +424,7 @@ export interface MiniSeg {
 
 /** The mini bar under the phrase: the outermost budgeted loop's passes while the whole run stands in
  *  one, else the plan's steps in plan order. `continuous` draws the segments as one fill with no gaps. */
-export interface MiniBar {
+interface MiniBar {
   segs: MiniSeg[];
   continuous: boolean;
 }
