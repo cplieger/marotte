@@ -78,6 +78,18 @@ const branchWrapperReason = "Parallel 'phase1' is waiting on branch 'live-verify
 // branchWaitReason is the same wrapper with no cause, which interruptions, failures and need-input parks all produce.
 const branchWaitReason = "Parallel 'phase1' is waiting on branch 'live-verify'."
 
+// KAS's pauseVerdict reasons verbatim (kiro-cli 2.32.0 unless suffixed), never derived from the production
+// prefixes, so a reword shows here.
+const (
+	interruptedReason      = "Step interrupted (agent shutdown or connection reset); resuming the run retries the step."
+	modelServiceReason     = "Model service error (service 5xx or throttling); resuming the run retries the step."
+	stallReason            = "Model stream stalled (no data received from the model); the run is paused and can be resumed."
+	permanentReason        = "Step paused after a transient error; resuming the run retries the step."
+	interruptedReason2311  = "Step interrupted (agent shutdown or connection reset); will resume."
+	modelServiceReason2311 = "Transient model service error (service 5xx/throttling); will resume."
+	permanentReason2311    = "Step paused after a transient error; will resume."
+)
+
 func transientDetail() pauseDetail {
 	return pauseDetail{
 		Class: transientErrorClass,
@@ -733,10 +745,18 @@ func TestResumablePause_CoversEveryInvoluntaryPauseAndNothingElse(t *testing.T) 
 	}{
 		// The reason arm, no detail. Involuntary.
 		"the reconcile's restart literal": {nil, stalePauseReason, true},
-		"an interrupted step":             {nil, interruptedPauseReason, true},
-		"a transient model 5xx":           {nil, modelServicePauseReason, true},
+		"an interrupted step":             {nil, interruptedReason, true},
+		"a transient model 5xx":           {nil, modelServiceReason, true},
 		"a transient network code":        {nil, "Transient connection error (EAI_AGAIN); the run is paused and can be resumed.", true},
 		"a different network code":        {nil, "Transient connection error (ECONNRESET); the run is paused and can be resumed.", true},
+		// A run paused before the upgrade keeps the older wording on disk.
+		"an interrupted step, 2.31.1 wording":   {nil, interruptedReason2311, true},
+		"a transient model 5xx, 2.31.1 wording": {&transient, modelServiceReason2311, true},
+		"a stalled stream":                      {&transient, stallReason, true},
+
+		// KAS's permanent arm: a resume retries the step, but nobody chose it as transient.
+		"a permanent fault":                 {nil, permanentReason, false},
+		"a permanent fault, 2.31.1 wording": {nil, permanentReason2311, false},
 
 		// Waiting on a human.
 		"a step that asked for input":   {nil, "Step requested user input via send_message.", false},
@@ -810,8 +830,8 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 	})
 
 	for name, reason := range map[string]string{
-		"an interrupted step":      interruptedPauseReason,
-		"a transient model 5xx":    modelServicePauseReason,
+		"an interrupted step":      interruptedReason,
+		"a transient model 5xx":    modelServiceReason,
 		"a transient network code": "Transient connection error (EAI_AGAIN); the run is paused and can be resumed.",
 	} {
 		t.Run(name+" is resumable but never cancellable", func(t *testing.T) {

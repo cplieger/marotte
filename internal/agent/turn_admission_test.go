@@ -821,26 +821,6 @@ func TestCmdPrompt_BesideAWireTurnAnswersThePlainBusyAndSendsNothing(t *testing.
 	}
 }
 
-// A message marotte delivers for the user (a loop-limit wake) joins an agent-initiated turn as a steer.
-func TestDeliverForUser_SteersAWireTurnAndNeverPrompts(t *testing.T) {
-	h, _, br := wakeTurnHub(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-
-	if err := h.dispatcher.DeliverForUser(ctx, "c1", "the loop paused", "Loop limit reached"); err != nil {
-		t.Fatalf("DeliverForUser = %v, want delivered", err)
-	}
-	joinInflight(t, h)
-
-	calls := br.callLog()
-	if !slices.Contains(calls, marotte.MethodSessionSteer) {
-		t.Errorf("bridge calls = %v, want a _session/steer into the running turn", calls)
-	}
-	if slices.Contains(calls, marotte.MethodPrompt) {
-		t.Errorf("bridge calls = %v, want no session/prompt beside the running turn", calls)
-	}
-}
-
 // A `!cmd` beside an agent-initiated turn is refused as busy: its turn cannot open beside an open one.
 func TestShell_BesideAWireTurnIsRefusedAsBusy(t *testing.T) {
 	h, cs, _ := wakeTurnHub(t)

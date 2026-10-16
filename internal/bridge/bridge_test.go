@@ -660,10 +660,10 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake-kiro"}}}\n' "$id"
       ;;
     session/new)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s","modes":{"currentModeId":"agent","availableModes":[{"id":"agent","name":"Agent","description":"agent mode"},{"id":"code","name":"Code","description":"code mode"}]},"configOptions":[{"id":"model","currentValue":"model-1","options":[{"value":"model-1","name":"Test Model","description":"A test model","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id" "$sid"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s","modes":{"currentModeId":"agent","availableModes":[{"id":"agent","name":"Agent","description":"agent mode"},{"id":"code","name":"Code","description":"code mode"}]},"configOptions":[{"id":"model","currentValue":"model-1","options":[{"value":"model-1","name":"Test Model","description":"A test model","_meta":{"kiro":{"rateMultiplier":1.0}}},{"value":"auto","name":"Auto"}]}]}}\n' "$id" "$sid"
       ;;
     session/load)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"modes":{"currentModeId":"agent","availableModes":[{"id":"agent","name":"Agent","description":"agent mode"}]},"configOptions":[{"id":"model","currentValue":"model-1","options":[{"value":"model-1","name":"Test Model","description":"A test model","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"modes":{"currentModeId":"agent","availableModes":[{"id":"agent","name":"Agent","description":"agent mode"}]},"configOptions":[{"id":"model","currentValue":"model-1","options":[{"value":"model-1","name":"Test Model","description":"A test model","_meta":{"kiro":{"rateMultiplier":1.0}}},{"value":"auto","name":"Auto"}]}]}}\n' "$id"
       ;;
     *)
       if [ -n "$id" ]; then
@@ -956,8 +956,8 @@ func TestSession_LifecycleContract(t *testing.T) {
 	if modes := s.Modes(); len(modes) != 2 {
 		t.Errorf("Modes len = %d, want 2", len(modes))
 	}
-	if models := s.Models(); len(models) != 1 {
-		t.Errorf("Models len = %d, want 1", len(models))
+	if models := s.Models(); len(models) != 2 {
+		t.Errorf("Models len = %d, want 2", len(models))
 	}
 
 	e.Stop()
@@ -1791,6 +1791,10 @@ func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 		"empty block": `{"sessionId":"acp-session-xyz",` +
 			`"modes":{"currentModeId":"vibe","availableModes":[]},` +
 			`"configOptions":[{"id":"model","currentValue":"seeded-model","options":[]}]}`,
+		// kiro-cli 2.32.0's cold pin: the saved model as the only choice while KAS's catalog is empty.
+		"cold-catalog pin": `{"sessionId":"acp-session-xyz","configOptions":[` +
+			`{"id":"model","currentValue":"seeded-model","options":[{"value":"seeded-model","name":"Seeded"}]},` +
+			`{"id":"effortLevel","currentValue":"high","options":[{"value":"high","name":"High"}]}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			// A second result on the same handle, as a load result folds over what the session holds.

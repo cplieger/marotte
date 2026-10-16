@@ -35,3 +35,23 @@ func TestApplyServedModels(t *testing.T) {
 		t.Errorf("served = %v, want [new]", chat.ServedModelIDs)
 	}
 }
+
+func TestColdCatalogPin(t *testing.T) {
+	for name, tc := range map[string]struct {
+		current string
+		choices []string
+		want    bool
+	}{
+		"the saved model alone":         {"opus", []string{"opus"}, true},
+		"one choice naming another":     {"opus", []string{"fable"}, false},
+		"a catalog holding the current": {"opus", []string{"auto", "opus"}, false},
+		"no current value":              {"", []string{""}, false},
+		"no choices":                    {"opus", nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := ColdCatalogPin(tc.current, tc.choices); got != tc.want {
+				t.Errorf("ColdCatalogPin(%q, %v) = %v, want %v", tc.current, tc.choices, got, tc.want)
+			}
+		})
+	}
+}

@@ -231,9 +231,9 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 	// A drifted detail must pass both the frame gate and the inspect guard; only the branch population is lost.
 	t.Run("a detail whose wire shape drifted still heals off the reason", func(t *testing.T) {
 		fastHeal(t)
-		h, br := seedReply(t, inspectDriftedDetail(t, "wf_1", interruptedPauseReason))
+		h, br := seedReply(t, inspectDriftedDetail(t, "wf_1", interruptedReason))
 		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
-		heal(t.Context(), "c1", pausedDriftedDetail(t, "wf_1", interruptedPauseReason))
+		heal(t.Context(), "c1", pausedDriftedDetail(t, "wf_1", interruptedReason))
 		if !waitForResume(t, br) {
 			t.Fatalf("no resume was issued for an interrupted step whose pauseDetail arrived in "+
 				"a shape marotte does not decode; discarding the whole frame there breaks the "+
@@ -244,9 +244,9 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 	// A plain step's interruption heals off its prose with no detail; dropping the reason arms would strand it.
 	t.Run("a plain-step interruption with no detail is still resumed", func(t *testing.T) {
 		fastHeal(t)
-		h, br := seed(t, interruptedPauseReason)
+		h, br := seed(t, interruptedReason)
 		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
-		heal(t.Context(), "c1", pausedFrame(t, "wf_1", interruptedPauseReason))
+		heal(t.Context(), "c1", pausedFrame(t, "wf_1", interruptedReason))
 		if !waitForResume(t, br) {
 			t.Fatalf("no resume was issued for an interruption, which carries NO pauseDetail; "+
 				"the reason arms cover that population. calls were %v", br.callLog())

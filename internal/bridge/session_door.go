@@ -620,35 +620,44 @@ func (s *Session) applyThinkingConfigOptionLocked(opts []sessionConfigOption) {
 	}
 }
 
-// models is for display, without end-of-life entries; the catalog is every advertised id, the only sound input to an
-// entitlement check.
 func (s *Session) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 	s.applyEffortConfigOptionLocked(opts)
 	s.applyThinkingConfigOptionLocked(opts)
 	for i := range opts {
-		opt := &opts[i]
-		if opt.ID != marotte.ConfigOptionModel {
-			continue
-		}
-		var current string
-		_ = json.Unmarshal(opt.CurrentValue, &current) // string; ignore non-string
-		if current != "" {
-			s.modelID = marotte.ModelID(current)
-		}
-		// No choices means the catalog is unknown, not empty; currentValue still applies.
-		if len(opt.Options) == 0 {
-			slog.Warn("session reported an empty model catalog; keeping the previous one",
-				"current_model", s.modelID)
+		if opts[i].ID == marotte.ConfigOptionModel {
+			s.applyModelOptionLocked(&opts[i])
 			return
 		}
-		catalog := make([]marotte.SessionModel, 0, len(opt.Options))
-		for _, c := range opt.Options {
-			if c.Value == "" {
-				continue
-			}
-			catalog = append(catalog, c.Meta.SessionModel(c.Value, c.Name, c.Description))
-		}
-		s.catalog.Store(&catalog)
+	}
+}
+
+// models is for display, without end-of-life entries; the catalog is every advertised id, the only sound input to an
+// entitlement check.
+func (s *Session) applyModelOptionLocked(opt *sessionConfigOption) {
+	var current string
+	_ = json.Unmarshal(opt.CurrentValue, &current) // string; ignore non-string
+	if current != "" {
+		s.modelID = marotte.ModelID(current)
+	}
+	// No choices means the catalog is unknown, not empty; currentValue still applies.
+	if len(opt.Options) == 0 {
+		slog.Warn("session reported an empty model catalog; keeping the previous one",
+			"current_model", s.modelID)
 		return
 	}
+	values := make([]string, len(opt.Options))
+	for i := range opt.Options {
+		values[i] = opt.Options[i].Value
+	}
+	if marotte.ColdCatalogPin(current, values) {
+		return
+	}
+	catalog := make([]marotte.SessionModel, 0, len(opt.Options))
+	for _, c := range opt.Options {
+		if c.Value == "" {
+			continue
+		}
+		catalog = append(catalog, c.Meta.SessionModel(c.Value, c.Name, c.Description))
+	}
+	s.catalog.Store(&catalog)
 }

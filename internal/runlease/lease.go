@@ -61,30 +61,10 @@ type Lease struct {
 	Origin Origin `json:"origin"`
 	// ScheduleID names the row that asked for the run. Set iff Origin is scheduled.
 	ScheduleID string `json:"schedule_id,omitempty"`
-	// LoopWake is the run's latest iteration-limit wake to its launching chat.
-	LoopWake loopWake `json:"loop_wake,omitzero"`
 	// Unattended marks a run with nobody to answer a permission request, which arms
 	// the deny-fast floor. Distinct from the origin: who launched it vs who watches.
 	Unattended bool `json:"unattended"`
 }
-
-// loopWake is one iteration-limit pause's wake. A pause whose Key is recorded is never sent again,
-// whatever its State, so a restart neither resends nor retries it.
-type loopWake struct {
-	Key   string        `json:"key"`
-	State LoopWakeState `json:"state"`
-}
-
-// LoopWakeState is how far a Lease.LoopWake got.
-type LoopWakeState string
-
-// The Lease.LoopWake states. Delivered and Failed are the send's outcome.
-const (
-	// loopWakeSending is recorded before the send: a process that dies mid-send leaves it.
-	loopWakeSending   LoopWakeState = "sending"
-	LoopWakeDelivered LoopWakeState = "delivered"
-	LoopWakeFailed    LoopWakeState = "failed"
-)
 
 // HostSecurity is what a parentless run's host session opens with.
 type HostSecurity struct {

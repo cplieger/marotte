@@ -43,7 +43,6 @@ const (
 	defaultSpecPlanningAskFirst     = false
 	defaultSteeringReminders        = false
 	DefaultWorkflowsEnabled         = true
-	DefaultLoopLimitWake            = true
 	defaultOutputStyle              = OutputStyleDefault
 	defaultWorkValidation           = FeatureFollowKiro
 	defaultCloudFormationSafety     = FeatureFollowKiro
@@ -136,7 +135,6 @@ var agentPatchChecks = map[string]func(json.RawMessage) error{
 	KeySpecPlanningAskFirst: func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeySteeringReminders:    func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeyWorkflowsEnabled:     func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
-	KeyLoopLimitWake:        func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeyModelFallback:        func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 }
 

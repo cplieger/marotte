@@ -766,7 +766,6 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 		}
 	} else if f.WorkflowID != "" && f.Status == marotte.RunStatusPaused {
 		rs.notifyRunOutcome(ctx, chatID, &f)
-		rs.wakeAtLoopLimit(ctx, &f)
 	}
 	rs.translate.HandleRunComplete(ctx, chatID, msg)
 }
@@ -833,24 +832,13 @@ type lifecycleFrame struct {
 	ParentSessionID string            `json:"parentSessionId"`
 	Status          marotte.RunStatus `json:"status"`
 	FinalState      struct {
-		WorkflowName string       `json:"workflowName"`
-		RunLabel     string       `json:"runLabel"`
-		StopReason   string       `json:"stopReason"`
-		Root         *runTreeNode `json:"root"`
+		WorkflowName string `json:"workflowName"`
+		RunLabel     string `json:"runLabel"`
+		StopReason   string `json:"stopReason"`
 		Pause        struct {
-			Kind          string `json:"kind"`
-			NodeID        string `json:"nodeId"`
-			IterationsRun int    `json:"iterationsRun"`
+			Kind string `json:"kind"`
 		} `json:"pause"`
 	} `json:"finalState"`
-}
-
-// runTreeNode is one node of KAS's execution tree (`finalState.root`), the fields the loop wake reads.
-type runTreeNode struct {
-	Iteration *int                  `json:"iteration"`
-	NodeID    string                `json:"nodeId"`
-	Status    marotte.RunNodeStatus `json:"status"`
-	Children  []runTreeNode         `json:"children"`
 }
 
 func decodeLifecycleFrame(msg *marotte.RPCResponse) lifecycleFrame {

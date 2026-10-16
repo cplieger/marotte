@@ -905,16 +905,16 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 	// Every shape a `pauseDetail` change can take; workflowId and pauseReason must survive all.
 	for name, params := range map[string]string{
 		"the detail became a string": `{"workflowId":"wf_1","pauseReason":"` +
-			interruptedPauseReason + `","pauseDetail":"transient-error"}`,
+			interruptedReason + `","pauseDetail":"transient-error"}`,
 		"the detail became a number": `{"workflowId":"wf_1","pauseReason":"` +
-			interruptedPauseReason + `","pauseDetail":7}`,
+			interruptedReason + `","pauseDetail":7}`,
 		"the detail became an array": `{"workflowId":"wf_1","pauseReason":"` +
-			interruptedPauseReason + `","pauseDetail":["transient-error"]}`,
+			interruptedReason + `","pauseDetail":["transient-error"]}`,
 		"class became an object": `{"workflowId":"wf_1","pauseReason":"` +
-			interruptedPauseReason + `","pauseDetail":{"class":{"kind":"transient-error"}}}`,
+			interruptedReason + `","pauseDetail":{"class":{"kind":"transient-error"}}}`,
 		// The drifted key also comes first, for a streaming decoder.
 		"the drifted detail comes first": `{"pauseDetail":"transient-error","workflowId":"wf_1",` +
-			`"pauseReason":"` + interruptedPauseReason + `"}`,
+			`"pauseReason":"` + interruptedReason + `"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := frame(t, params)
@@ -923,10 +923,10 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 					"with it, so healPaused returns at its addressing gate and logs nothing",
 					f.WorkflowID, "wf_1")
 			}
-			if f.PauseReason != interruptedPauseReason {
+			if f.PauseReason != interruptedReason {
 				t.Errorf("PauseReason = %q, want %q; the reason arms are what the heal degrades "+
 					"TO, so losing the reason is what turns a degradation into blindness",
-					f.PauseReason, interruptedPauseReason)
+					f.PauseReason, interruptedReason)
 			}
 			// The reason arm still decides.
 			if !resumablePause(f.PauseReason, f.PauseDetail) {
@@ -940,7 +940,7 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 	// json.Unmarshal must return no error.
 	t.Run("occurredAt's wire type cannot reach the predicate path", func(t *testing.T) {
 		var f pauseFrame
-		body := []byte(`{"workflowId":"wf_1","pauseReason":"` + interruptedPauseReason +
+		body := []byte(`{"workflowId":"wf_1","pauseReason":"` + interruptedReason +
 			`","pauseDetail":{"class":"transient-error","code":"EAI_AGAIN",` +
 			`"occurredAt":1730000000}}`)
 		if err := json.Unmarshal(body, &f); err != nil {

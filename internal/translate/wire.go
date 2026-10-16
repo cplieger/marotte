@@ -250,13 +250,14 @@ type acpPermissionKiroBlockShadow acpPermissionKiroBlock
 
 // UnmarshalJSON decodes the block and reports any member KAS sent that it does not read;
 // the declined ones are read elsewhere or belong to asks this frame does not render.
+// workflowPlan is a plan approval's structured step list, which the card has no view for.
 func (b *acpPermissionKiroBlock) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*acpPermissionKiroBlockShadow)(b)); err != nil {
 		return err
 	}
 	censusMeta("session/request_permission._meta.kiro", data, reflect.TypeFor[acpPermissionKiroBlockShadow](),
 		"command", "agentManagesTrust", "disclosedContext", "hookName", "executionId", "kind",
-		"requirementText", "question", "requirementRange", "requirementsFilePath")
+		"requirementText", "question", "requirementRange", "requirementsFilePath", "workflowPlan")
 	return nil
 }
 

@@ -141,7 +141,7 @@ func modelEffortFrame(t *testing.T, model, running string) *marotte.RPCResponse 
 			map[string]any{
 				"id":           marotte.ConfigOptionModel,
 				"currentValue": model,
-				"options":      []any{map[string]any{"value": model, "name": model}},
+				"options":      []any{map[string]any{"value": model, "name": model}, map[string]any{"value": "m-other", "name": "m-other"}},
 			},
 			map[string]any{
 				"id":           marotte.ConfigOptionEffort,
@@ -602,7 +602,7 @@ func modelOnlyFrame(t *testing.T, model string) *marotte.RPCResponse {
 		"configOptions": []any{map[string]any{
 			"id":           marotte.ConfigOptionModel,
 			"currentValue": model,
-			"options":      []any{map[string]any{"value": model, "name": model}},
+			"options":      []any{map[string]any{"value": model, "name": model}, map[string]any{"value": "m-other", "name": "m-other"}},
 		}},
 	}
 	params := mustJSON(t, map[string]any{"sessionId": "", "update": mustJSON(t, update)})

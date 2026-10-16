@@ -100,10 +100,11 @@ func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	// The live frame also spreads every event field flat beside its nested block; those of
-	// display_error and interaction_resolved are read from the block.
+	// display_error, interaction_resolved and pending_interaction (its `_meta`, a plan
+	// approval's workflowPlan) are read from the block or declined there.
 	censusMeta("session_info_update._meta.kiro", data, reflect.TypeFor[sessionInfoKiroShadow](),
 		"errorType", "retryErrorType", "toolCallId", "outcome", "selectedOption",
-		"interactionType", "question", "options", "agentSubtaskId", "status")
+		"interactionType", "question", "options", "agentSubtaskId", "status", "_meta")
 	return nil
 }
 
@@ -526,6 +527,11 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID marott
 	if len(cat.models) == 0 && !cat.sawEffort && !cat.sawThinking {
 		return
 	}
+	// A cold pin's model and effort are the session's saved ones, which the chat already holds; its one-entry
+	// lists would replace the catalog, the served set and the tiers.
+	if marotte.ColdCatalogPin(cat.currentModel, modelIDs(cat.models)) {
+		return
+	}
 	t.catalog.SetModels(cat.models)
 	var repin *marotte.EntryModelSwitched
 	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
@@ -707,6 +713,14 @@ func flattenModelChoices(choices []configChoice) []marotte.SessionModel {
 		out = append(out, meta.SessionModel(c.Value, c.Name, c.Description))
 	}
 	return out
+}
+
+func modelIDs(models []marotte.SessionModel) []string {
+	ids := make([]string, len(models))
+	for i := range models {
+		ids[i] = models[i].ID
+	}
+	return ids
 }
 
 // Absent meta yields the zero value, which the client reads as "not plumbed": no tiers and no

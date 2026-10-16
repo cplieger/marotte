@@ -631,6 +631,34 @@ func TestHandleConfigOptionUpdate_RefreshesTheEntitlementSet(t *testing.T) {
 	}
 }
 
+// TestHandleConfigOptionUpdate_AColdCatalogPinChangesNothing pins kiro-cli 2.32.0's cold pin (one Model
+// choice equal to currentValue, one Effort choice) as no catalog: read as one, refuseUnservedModel turns down
+// every other model until the catalog loads, and for good when its refresh fails.
+func TestHandleConfigOptionUpdate_AColdCatalogPinChangesNothing(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "opus", "high"), FrameAttribution{})
+	before, _ := store.Get(t.Context(), "c1")
+
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+		"configOptions": []map[string]any{
+			{"id": "model", "type": "select", "currentValue": "opus", "options": []map[string]any{{"value": "opus", "name": "Opus"}}},
+			{"id": "effortLevel", "type": "select", "currentValue": "high", "options": []map[string]any{{"value": "high", "name": "High"}}},
+		},
+	}), FrameAttribution{})
+
+	c, _ := store.Get(t.Context(), "c1")
+	if !slices.Equal(c.ServedModelIDs, []string{"opus", "fable"}) {
+		t.Errorf("ServedModelIDs = %v, want [opus fable] kept", c.ServedModelIDs)
+	}
+	if !slices.Equal(modelIDs(deps.catalogModels), []string{"opus", "fable"}) {
+		t.Errorf("catalog = %v, want [opus fable] kept", modelIDs(deps.catalogModels))
+	}
+	if !sameEffortLevels(c.EffortLevels, before.EffortLevels) || len(c.EffortLevels) != 2 {
+		t.Errorf("EffortLevels = %v, want the two tiers kept", c.EffortLevels)
+	}
+}
+
 // An end-of-life id stays in the entitlement set; the picker's filtering is the bridge's.
 func TestHandleConfigOptionUpdate_KeepsEndOfLifeIDsInTheServedSet(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
@@ -751,7 +779,7 @@ func TestHandleConfigOptionUpdate_AnUnsolicitedRepinIsRecorded(t *testing.T) {
 		return true
 	})
 
-	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "fable"), FrameAttribution{})
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "fable", marotte.ModelAuto), FrameAttribution{})
 
 	c, _ := store.Get(t.Context(), "c1")
 	if c.Model != "fable" {
@@ -789,7 +817,7 @@ func TestHandleConfigOptionUpdate_AdoptsTheRunningLevelWhenTheRecordHoldsNone(t 
 				return true
 			})
 			raw := mustJSON(t, map[string]any{"configOptions": []map[string]any{
-				{"id": "model", "type": "select", "currentValue": "fable", "options": []map[string]any{{"value": "fable", "name": "fable"}}},
+				{"id": "model", "type": "select", "currentValue": "fable", "options": []map[string]any{{"value": "fable", "name": "fable"}, {"value": "opus", "name": "opus"}}},
 				{"id": "effortLevel", "type": "select", "currentValue": "medium", "options": []map[string]any{{"value": "medium", "name": "Medium"}}},
 			}})
 
@@ -835,7 +863,7 @@ func TestHandleConfigOptionUpdate_AFailedWriteRecordsNoRepin(t *testing.T) {
 	deps.store = writeFailingStore{}
 	tr := New(rolesOf(deps))
 
-	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "fable"), FrameAttribution{})
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "fable", marotte.ModelAuto), FrameAttribution{})
 
 	if got := modelSwitchesOf(t, deps.between["c1"]); len(got) != 0 {
 		t.Errorf("model_switched entries = %+v, want none", got)
@@ -952,7 +980,7 @@ func TestHandleConfigOptionUpdate_ReportedEffortIsTheNamedModels(t *testing.T) {
 			return configModelOffering(t, marotte.ModelAuto, marotte.ModelAuto, "opus")
 		}},
 		{name: "the current model, now tierless", model: "opus", frame: func(t *testing.T) []byte {
-			return configModelOffering(t, "opus", "opus")
+			return configModelOffering(t, "opus", "opus", marotte.ModelAuto)
 		}},
 		{name: "a frame naming no model", model: "opus", wantActive: "high", wantLevels: 2, frame: func(t *testing.T) []byte {
 			return mustJSON(t, map[string]any{"configOptions": []map[string]any{
