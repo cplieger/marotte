@@ -94,7 +94,6 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
       }
       progress.paint(undefined);
       mini.replaceChildren();
-      delete mini.dataset["continuous"];
       paintAlert(undefined);
       described = name;
     },
@@ -151,8 +150,7 @@ export function buildProgress(): ProgressView {
   };
 }
 
-function paintMini(mini: HTMLElement, bar: ReturnType<typeof miniBar>): void {
-  mini.toggleAttribute("data-continuous", bar.continuous);
+function paintMini(mini: HTMLElement, segs: readonly MiniSeg[]): void {
   const paintSeg = (seg: HTMLElement, s: MiniSeg): void => {
     if (seg.dataset["state"] !== s.state) {
       seg.dataset["state"] = s.state;
@@ -161,12 +159,8 @@ function paintMini(mini: HTMLElement, bar: ReturnType<typeof miniBar>): void {
       seg.setAttribute("data-tooltip", s.tip);
     }
     seg.toggleAttribute("data-branch", s.branch);
-    const grow = String(s.weight);
-    if (seg.style.flexGrow !== grow) {
-      seg.style.flexGrow = grow;
-    }
   };
-  reconcile(mini, bar.segs, {
+  reconcile(mini, segs, {
     key: (s) => s.key,
     mount: (s) => {
       const seg = el("span", { className: "ev-mini-seg" });

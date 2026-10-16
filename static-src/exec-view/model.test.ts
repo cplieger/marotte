@@ -191,7 +191,11 @@ describe("the progress phrase states where the run stands", () => {
       const noInner = running([outer(branches(work("lint", "running")))]);
       expect(compact(noInner)).toBe("\u21bb15/50 \u00b7 0/3");
       expect(progressPhrase(noInner).words).toBe("tasks pass 15 of 50, 0 of 3 steps done");
-      expect(miniBar(noInner).continuous).toBe(true);
+      expect(miniBar(noInner).map((s) => [s.state, s.branch])).toEqual([
+        ["running", false],
+        ["running", true],
+        ["pending", false],
+      ]);
       const otherInner = running([outer(branches(retry("lint-loop", 3, "lint")))]);
       expect(compact(otherInner)).toBe("\u21bb15/50 \u00b7 0/3");
     });
@@ -311,9 +315,8 @@ describe("the progress phrase states where the run stands", () => {
 
     it("draws the bar in plan order with a double gap before each sibling branch", () => {
       const bar = miniBar(running(fan(trackC("running"))));
-      expect(bar.continuous).toBe(false);
-      expect(bar.segs).toHaveLength(14);
-      expect(bar.segs.flatMap((s, i) => (s.branch ? [i] : []))).toEqual([6, 7]);
+      expect(bar).toHaveLength(14);
+      expect(bar.flatMap((s, i) => (s.branch ? [i] : []))).toEqual([6, 7]);
     });
 
     it("keeps the pass when every branch in flight shares one loop pass", () => {
@@ -334,45 +337,73 @@ describe("the progress phrase states where the run stands", () => {
   });
 });
 
-describe("miniBar follows the headline", () => {
+describe("miniBar draws one segment per step of the current pass", () => {
   const running = (nodes: ExecNode[]): ProgressSource => ({ nodes, state: "running" });
-  const loopAt = (pass: number, max: number): ExecNode => ({
-    ...group("tasks", "repeat", [
+  const steps = (prefix: string, states: readonly ExecState[]): ExecNode[] =>
+    states.map((s, i) => ({
+      ...work(`${prefix}${String(i + 1)}`, s),
+      path: `${prefix}/${String(i + 1)}`,
+    }));
+  /** A loop at `pass` of `max`, every earlier pass done, the current one holding `now`. */
+  const loopAt = (pass: number, max: number, now: ExecNode[], id = "tasks"): ExecNode => ({
+    ...group(id, "repeat", [
       ...Array.from({ length: pass - 1 }, (_, i) => ({
-        ...group(`pass ${String(i + 1)}`, "sequence", [work(`t${String(i + 1)}`, "ok")]),
-        path: `tasks#${String(i + 1)}`,
+        ...group(
+          `pass ${String(i + 1)}`,
+          "sequence",
+          steps(`${id}${String(i + 1)}-`, ["ok", "ok"]),
+        ),
+        path: `${id}#${String(i + 1)}`,
         state: "ok" as const,
         pass: i + 1,
       })),
-      {
-        ...group(`pass ${String(pass)}`, "sequence", [work("now", "running")]),
-        path: `tasks#${String(pass)}`,
-        pass,
-      },
+      { ...group(`pass ${String(pass)}`, "sequence", now), path: `${id}#${String(pass)}`, pass },
     ]),
+    path: id,
     maxPasses: max,
   });
+  const labels = (run: ProgressSource): string[] =>
+    miniBar(run).map((s) => s.tip.slice(0, s.tip.indexOf(",")));
 
-  it("draws the steps with no loop", () => {
-    const bar = miniBar(running([work("a", "ok"), work("b", "running")]));
-    expect(bar.segs.map((s) => s.state)).toEqual(["ok", "running"]);
+  it("draws the pass's steps in a loop of 20, the set its 4/5 counts", () => {
+    const run = running([loopAt(2, 20, steps("s", ["ok", "ok", "ok", "running", "pending"]))]);
+    expect(compactText(progressPhrase(run))).toBe("\u21bb2/20 \u00b7 4/5");
+    expect(miniBar(run).map((s) => s.state)).toEqual(["ok", "ok", "ok", "running", "pending"]);
   });
 
-  it("draws one segment per pass up to 12", () => {
-    const bar = miniBar(running([loopAt(3, 12)]));
-    expect(bar.continuous).toBe(false);
-    expect(bar.segs).toHaveLength(12);
-    expect(bar.segs.slice(0, 4).map((s) => s.state)).toEqual(["ok", "ok", "running", "pending"]);
-  });
-
-  it("draws one continuous fill past 12 passes, weighted done, now and left", () => {
-    const bar = miniBar(running([loopAt(15, 50)]));
-    expect(bar.continuous).toBe(true);
-    expect(bar.segs.map((s) => [s.state, s.weight])).toEqual([
-      ["ok", 14],
-      ["running", 1],
-      ["pending", 35],
+  it("draws the pass's steps in a loop of 3, never one segment per pass", () => {
+    const run = running([
+      loopAt(2, 3, steps("s", ["running", "pending"])),
+      work("land", "pending"),
     ]);
+    expect(labels(run)).toEqual(["s1", "s2", "land"]);
+    expect(miniBar(run).map((s) => s.state)).toEqual(["running", "pending", "pending"]);
+  });
+
+  it("draws a plain run's steps in plan order, each with its name and state", () => {
+    const run = running(steps("s", ["ok", "ok", "running", "pending"]));
+    expect(miniBar(run).map((s) => [s.tip, s.branch])).toEqual([
+      ["s1, succeeded", false],
+      ["s2, succeeded", false],
+      ["s3, running", false],
+      ["s4, not started", false],
+    ]);
+  });
+
+  it("draws a nested loop's innermost current pass, the outer pass's other steps beside it", () => {
+    const inner = loopAt(2, 4, steps("b", ["running"]), "build-loop");
+    const run = running([loopAt(15, 50, [inner, work("check", "pending")])]);
+    expect(compactText(progressPhrase(run))).toBe("\u21bb15/50 \u203a 2/4 \u00b7 1/2");
+    expect(labels(run)).toEqual(["b1", "check"]);
+  });
+
+  it("keeps the double gap before a sibling parallel branch inside a long loop", () => {
+    const fan = group("review", "parallel", [
+      { ...group("gpt", "sequence", steps("g", ["running", "pending"])), path: "gpt" },
+      { ...group("claude", "sequence", steps("c", ["running"])), path: "claude" },
+    ]);
+    const bar = miniBar(running([loopAt(2, 20, [fan, work("agg", "pending")])]));
+    expect(bar.map((s) => s.branch)).toEqual([false, false, true, false]);
   });
 });
 

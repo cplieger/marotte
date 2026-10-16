@@ -233,6 +233,42 @@ describe("the run summary", () => {
     expect(segs.map((s) => s.hasAttribute("data-branch"))).toEqual([false, true]);
   });
 
+  it("draws a long loop's bar as the current pass's steps, gapped like any run's", () => {
+    const view = build(false);
+    const pass = (n: number, states: ExecState[]): ExecNode => ({
+      path: `r/loop/${String(n)}`,
+      label: `pass ${String(n)}`,
+      kind: "sequence",
+      state: states.includes("running") ? "running" : "ok",
+      pass: n,
+      children: states.map((s, i) => step(`p${String(n)}-${String(i)}`, s)),
+    });
+    const loop: ExecNode = {
+      path: "r/loop",
+      label: "tasks",
+      kind: "repeat",
+      state: "running",
+      maxPasses: 20,
+      children: [pass(1, ["ok", "ok"]), pass(2, ["ok", "ok", "ok", "running", "pending"])],
+    };
+    const style = mountAppCSS();
+    try {
+      host.className = "ev-dock";
+      host.style.inlineSize = "40rem";
+      view.paint(run([loop]));
+      expect(compact(view)).toBe("2/20\u00b74/5");
+      const mini = view.root.querySelector<HTMLElement>(".ev-mini")!;
+      const segs = [...mini.querySelectorAll<HTMLElement>(".ev-mini-seg")];
+      expect(segs.map((s) => s.dataset["state"])).toEqual(["ok", "ok", "ok", "running", "pending"]);
+      // A plain run's look: equal segments with a gap between.
+      const boxes = segs.map((s) => s.getBoundingClientRect());
+      expect(new Set(boxes.map((b) => Math.round(b.width))).size).toBe(1);
+      expect(boxes.slice(1).every((b, i) => b.left > boxes[i]!.right)).toBe(true);
+    } finally {
+      style.remove();
+    }
+  });
+
   it("paints a run with no model as its name alone", () => {
     const view = build(true);
     view.paint(run([step("a", "waiting")], { alert: { kind: "paused", text: "Waiting" } }));

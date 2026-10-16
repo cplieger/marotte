@@ -1156,10 +1156,9 @@
   }
 }
 
-/* The mini bar: one segment per step of the plan as it stands in plan order, or one
-   per pass of the loop the whole run stands in (`model.ts` `miniBar`). A sibling
-   parallel branch starts after twice the gap, so a grey stretch reads as one track's
-   remaining steps. `--ev-state-fill` is the timeline's. */
+/* The mini bar: one segment per step of the plan as it stands (`model.ts` `miniBar`).
+   A sibling parallel branch starts after twice the gap, so a grey stretch reads as one
+   track's remaining steps. `--ev-state-fill` is the timeline's. */
 .ev-mini {
   --mini-gap: 0.125rem;
 
@@ -1182,26 +1181,6 @@
 
   &[data-branch] {
     margin-inline-start: var(--mini-gap);
-  }
-}
-
-/* Past `PASS_SEGMENTS_MAX` passes the bar is one continuous fill: the done, current
-   and remaining passes as weighted runs with no gaps. */
-.ev-mini[data-continuous] {
-  --mini-gap: 0;
-
-  & > .ev-mini-seg {
-    border-radius: 0;
-  }
-
-  & > .ev-mini-seg:first-child {
-    border-start-start-radius: var(--r-sm);
-    border-end-start-radius: var(--r-sm);
-  }
-
-  & > .ev-mini-seg:last-child {
-    border-start-end-radius: var(--r-sm);
-    border-end-end-radius: var(--r-sm);
   }
 }
 

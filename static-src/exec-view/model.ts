@@ -409,72 +409,24 @@ export function summaryProgress(run: ProgressSource): ProgressPhrase {
   return progressOf(run, counters(run.nodes).total > 1);
 }
 
-/** The most passes the mini bar draws one segment each; past it the passes are one continuous fill. */
-const PASS_SEGMENTS_MAX = 12;
-
-/** One segment of the mini bar, `weight` its share of the bar's length; `key` names its kind too, so
- *  a pass segment never takes over a step's node. `branch` starts a sibling parallel branch. */
+/** One segment of the mini bar, one step; `branch` starts a sibling parallel branch. */
 export interface MiniSeg {
   key: string;
   state: ExecState;
   tip: string;
-  weight: number;
   branch: boolean;
 }
 
-/** The mini bar under the phrase: the outermost budgeted loop's passes while the whole run stands in
- *  one, else the plan's steps in plan order. `continuous` draws the segments as one fill with no gaps. */
-interface MiniBar {
-  segs: MiniSeg[];
-  continuous: boolean;
-}
-
-export function miniBar(run: ProgressSource): MiniBar {
-  const head = sharedLoops(run.nodes, standingSteps(run))[0];
-  if (head?.max === undefined) {
-    const work = currentWork(run.nodes);
-    const splits = branchStarts(run.nodes);
-    return {
-      segs: work.map((n) => ({
-        key: join("step", n.path),
-        state: n.state,
-        tip: `${n.label}, ${STATE_WORD[n.state]}`,
-        weight: 1,
-        branch: splits.has(n),
-      })),
-      continuous: false,
-    };
-  }
-  const { pass, max, id, repeat } = head;
-  const current = repeat.children.find((k) => k.pass === pass)?.state ?? "running";
-  const seg = (key: string, state: ExecState, tip: string, weight: number): MiniSeg => ({
-    key,
-    state,
-    tip,
-    weight,
-    branch: false,
-  });
-  if (max > PASS_SEGMENTS_MAX) {
-    const segs = [
-      seg(join("fill", "done"), "ok", `${id}, ${passCountText(pass - 1, max)} done`, pass - 1),
-      seg(join("fill", "now"), current, `${id} ${passText(pass, max)}, ${STATE_WORD[current]}`, 1),
-      seg(join("fill", "left"), "pending", `${id}, ${String(max - pass)} passes left`, max - pass),
-    ];
-    return { segs: segs.filter((x) => x.weight > 0), continuous: true };
-  }
-  const segs: MiniSeg[] = [];
-  for (let i = 1; i <= max; i++) {
-    const state: ExecState =
-      i === pass
-        ? current
-        : i > pass
-          ? "pending"
-          : (repeat.children.find((k) => k.pass === i)?.state ?? "ok");
-    segs.push(
-      seg(join("pass", String(i)), state, `${id} ${passText(i, max)}, ${STATE_WORD[state]}`, 1),
-    );
-  }
-  return { segs, continuous: false };
+/** The mini bar under the phrase: one segment per step of the plan as it stands (`currentWork`, the
+ *  set the step count counts) in plan order, inside a loop of any length; the pass is the phrase's. */
+export function miniBar(run: Pick<ExecRun, "nodes">): MiniSeg[] {
+  const splits = branchStarts(run.nodes);
+  return currentWork(run.nodes).map((n) => ({
+    key: n.path,
+    state: n.state,
+    tip: `${n.label}, ${STATE_WORD[n.state]}`,
+    branch: splits.has(n),
+  }));
 }
 
 /** The work nodes of the plan as it stands that open a sibling branch of a `parallel`: the first
