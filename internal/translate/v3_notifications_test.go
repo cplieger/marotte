@@ -1,6 +1,8 @@
 package translate
 
 import (
+	"maps"
+	"reflect"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -174,5 +176,52 @@ func TestHandleMCPStatus_ConfigInvalidArrivesAsFailed(t *testing.T) {
 	}
 	if len(failures) != 1 || failures[0].reason != "Invalid MCP server configuration: missing command" {
 		t.Errorf("failures = %+v, want the configuration reason verbatim", failures)
+	}
+}
+
+// KAS reports a registry only while the organization runs registry entries alone; any other
+// access mode clears it, whatever registry fields the frame still carries.
+func TestHandleMCPStatus_CarriesTheRegistryOnlyInRegistryMode(t *testing.T) {
+	frame := map[string]any{
+		"servers":                   []map[string]any{},
+		"accessModeFilteredServers": []string{"local-tool", ""},
+		"unresolvedRegistryServers": []string{"gone"},
+		"registryServers": []map[string]any{
+			{"name": "docs", "version": "1.2.0", "description": "Docs search", "enabled": true},
+			{"name": ""},
+		},
+	}
+	for _, tc := range []struct {
+		name, mode string
+		want       *marotte.GovernanceMCPRegistry
+	}{
+		{name: "registry", mode: "registry", want: &marotte.GovernanceMCPRegistry{
+			Servers: []marotte.GovernanceRegistryServer{
+				{Name: "docs", Version: "1.2.0", Description: "Docs search", Enabled: true},
+			},
+			Filtered:   []string{"local-tool"},
+			Unresolved: []string{"gone"},
+		}},
+		{name: "nonRegistry", mode: "nonRegistry"},
+		{name: "absent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, _ := newEventCaptureDeps()
+			var got []*marotte.GovernanceMCPRegistry
+			deps.onSetRegistry = func(r *marotte.GovernanceMCPRegistry) { got = append(got, r) }
+			params := maps.Clone(frame)
+			if tc.mode != "" {
+				params["accessMode"] = tc.mode
+			}
+
+			New(rolesOf(deps)).HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{Params: mustJSON(t, params)})
+
+			if len(got) != 1 {
+				t.Fatalf("SetMCPRegistry calls = %d, want one", len(got))
+			}
+			if !reflect.DeepEqual(got[0], tc.want) {
+				t.Errorf("registry = %+v, want %+v", got[0], tc.want)
+			}
+		})
 	}
 }
