@@ -119,6 +119,10 @@ class Elements {
   get runBar(): HTMLUListElement {
     return byId("run-bar");
   }
+  /** The fold row's slot above the run list, outside the list's scroll clip. */
+  get runBarFold(): HTMLElement {
+    return byId("run-bar-fold");
+  }
   get steerStack(): HTMLUListElement {
     return byId("steer-stack");
   }

@@ -287,14 +287,15 @@ describe("the run bar's box", () => {
     const bar = document.createElement("ul");
     bar.className = "run-bar";
     if (fold) {
-      const li = document.createElement("li");
-      li.className = "run-bar-summary";
+      const foldEl = document.createElement("div");
+      foldEl.className = "run-bar-fold";
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "run-bar-open run-bar-toggle";
+      btn.setAttribute("aria-expanded", "true");
       btn.textContent = `${String(runs.length)} workflows running`;
-      li.append(btn);
-      bar.append(li);
+      foldEl.append(btn);
+      barHost.append(foldEl);
     }
     summaries = [];
     for (const r of runs) {
@@ -381,7 +382,7 @@ describe("the run bar's box", () => {
     host.remove();
   });
 
-  it("lays a phone row out as two lines inside the hit floor's height", () => {
+  it("lays a phone row out as two lines, at or above the hit floor", () => {
     document.documentElement.setAttribute("data-pointer", "coarse");
     try {
       const bar = mountRows(RUNS.slice(0, 1), false, 360);
@@ -389,7 +390,9 @@ describe("the run bar's box", () => {
       const title = btn.querySelector<HTMLElement>(".ev-sum-label")!.getBoundingClientRect();
       const state = btn.querySelector<HTMLElement>(".ev-sum-state")!.getBoundingClientRect();
       expect(state.top).toBeGreaterThanOrEqual(title.bottom - 1);
-      expect(btn.getBoundingClientRect().height).toBeLessThanOrEqual(48);
+      const height = btn.getBoundingClientRect().height;
+      expect(height).toBeGreaterThanOrEqual(lengthPx(host, "var(--hit-floor)"));
+      expect(height).toBeLessThanOrEqual(56);
     } finally {
       document.documentElement.removeAttribute("data-pointer");
       host.remove();
@@ -437,7 +440,15 @@ describe("the run bar's box", () => {
       try {
         const bar = mountRows([...SEVEN, ...SEVEN], true, 344);
         expect(bar.scrollHeight).toBeGreaterThan(bar.clientHeight);
-        expect(bar.getBoundingClientRect().height).toBeCloseTo(0.5 * 740, 0);
+        // The cap is the box's content: the fold row, its gap and the list together.
+        const box = bar.parentElement!;
+        const cs = getComputedStyle(box);
+        const chrome =
+          parseFloat(cs.paddingTop) +
+          parseFloat(cs.paddingBottom) +
+          parseFloat(cs.borderTopWidth) +
+          parseFloat(cs.borderBottomWidth);
+        expect(box.getBoundingClientRect().height - chrome).toBeCloseTo(0.5 * 740, 0);
       } finally {
         document.documentElement.removeAttribute("data-pointer");
         host.remove();
@@ -449,7 +460,10 @@ describe("the run bar's box", () => {
     await browser.viewport(1280, 900);
     try {
       const bar = mountRows(SEVEN, true);
-      expect(getComputedStyle(bar).maxBlockSize).toBe("225px");
+      const box = bar.parentElement!;
+      const cs = getComputedStyle(box);
+      const chrome = 2 * parseFloat(cs.paddingTop) + 2 * parseFloat(cs.borderTopWidth);
+      expect(parseFloat(cs.maxBlockSize) - chrome).toBe(225);
     } finally {
       host.remove();
       await browser.viewport(1280, 720);
