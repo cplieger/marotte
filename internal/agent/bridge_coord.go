@@ -696,8 +696,8 @@ func (bc *bridgeCoordinator) loadOnEngine(
 }
 
 // detachSession blanks chatID's session id after a load that failed other than by the engine's end, so the
-// generation opens session/new. The
-// session stays in the chain: blanking the id is what makes the reaper sweep its transcript.
+// generation opens session/new. The session stays in the chain: blanking the id is what makes the reaper sweep its
+// transcript.
 func (bc *bridgeCoordinator) detachSession(ctx context.Context, chatID marotte.ChatID) {
 	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
