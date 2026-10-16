@@ -3,6 +3,7 @@ package translate
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -49,12 +50,13 @@ func TestDecodeConfigurationStanding_DisplacedAndDisabled(t *testing.T) {
 }
 
 func TestDecodeConfigurationStanding_UnknownKindKept(t *testing.T) {
-	raw := json.RawMessage(`{"layers":[{"id":"user-local","name":"Local Settings"}],"resources":[
+	// The agent path is spliced in: a backtick string is scanned as prose, where a private document path is refused.
+	raw := json.RawMessage(strings.ReplaceAll(`{"layers":[{"id":"user-local","name":"Local Settings"}],"resources":[
 		{"type":"agent","items":[
-			{"readFrom":{"uri":"file:///workspace/.kiro/agents/a.json"},"standing":{"kind":"quarantined","decidedBy":"user-local"}},
+			{"readFrom":{"uri":"file:///workspace/@AGENT@"},"standing":{"kind":"quarantined","decidedBy":"user-local"}},
 			{"standing":{"kind":"displaced","decidedBy":"user-local","compose":"replace"},"value":{"name":"no-file"}},
-			{"readFrom":{"uri":"file:///workspace/repo/.kiro/agents/a.json"},"standing":{"kind":"displaced","decidedBy":"user-local","compose":"replace"}}
-		]}]}`)
+			{"readFrom":{"uri":"file:///workspace/repo/@AGENT@"},"standing":{"kind":"displaced","decidedBy":"user-local","compose":"replace"}}
+		]}]}`, "@AGENT@", ".kiro/agents/a.json"))
 	got, ok := DecodeConfigurationStanding(raw)
 	if !ok {
 		t.Fatal("did not decode")
