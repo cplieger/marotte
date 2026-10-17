@@ -48,7 +48,6 @@ func (rt *Runtime) registerCommandHandlers() {
 	})
 
 	rt.dispatcher.Register(marotte.CmdSwitchModel, rt.cmdSwitchModel)
-	rt.runs.loopWake.deliver = rt.dispatcher.DeliverForUser
 }
 
 func tabSetOrNil(st *tabs.Store) command.TabSet {

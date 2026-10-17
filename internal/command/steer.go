@@ -145,24 +145,13 @@ func steerHolder(roles *promptRoles, chatID marotte.ChatID, turn string) SteerHo
 // answers. The caller holds t's steer lock. refuse is the record's refusal class; err is the
 // failed send carrying key.
 func SteerInto(ctx context.Context, t SteerTarget, h SteerHolder, key, text string) (refuse string, err error) {
-	refuse, _, err = steerInto(ctx, t, h, key, text)
-	return refuse, err
-}
-
-// dropped reports that the send carrying key came back queued:false, so the record cleared the row
-// and the agent will never read it.
-func steerInto(ctx context.Context, t SteerTarget, h SteerHolder, key, text string) (refuse string, dropped bool, err error) {
 	sends, refuse := t.Queue.RouteSteer(t.Key, key, text, h)
 	if refuse != "" {
-		return refuse, false, nil
+		return refuse, nil
 	}
-	err = issueSteers(ctx, t, sends, key, func(s SteerSend, queued bool, sendErr error) {
-		t.Queue.SteerSent(t.Key, s, queued, sendErr)
-		if !queued && sendErr == nil && (s.ID == key || slices.Contains(s.Keys, key)) {
-			dropped = true
-		}
+	return "", issueSteers(ctx, t, sends, key, func(s SteerSend, queued bool, err error) {
+		t.Queue.SteerSent(t.Key, s, queued, err)
 	})
-	return "", dropped, err
 }
 
 // SendPlanned sends rows the record already routed (a flush job's plan) into t. The caller holds t's

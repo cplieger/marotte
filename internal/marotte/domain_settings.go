@@ -105,8 +105,6 @@ type EffectiveSettings struct {
 	SpecPlanningAskFirst bool `json:"spec_planning_ask_first"`
 	SteeringReminders    bool `json:"steering_reminders_enabled"`
 	WorkflowsEnabled     bool `json:"workflows_enabled"`
-	// LoopLimitWake: a parented run's iteration-limit pause wakes its launching chat.
-	LoopLimitWake        bool `json:"loop_limit_wake"`
 	SupervisedDefault    bool `json:"supervised_default"`
 	ScheduledAutoApprove bool `json:"scheduled_auto_approve"`
 	DebugLogs            bool `json:"debug_logs"`

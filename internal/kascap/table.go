@@ -388,6 +388,18 @@ var table = []decl{
 		send:     false,
 	},
 	{
+		key:      "agentHostsForegroundShell",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     false,
+	},
+	{
+		key:      "diagrams",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     false,
+	},
+	{
 		key:      "semanticReview",
 		door:     doorConnection,
 		resolver: resolverSetting,

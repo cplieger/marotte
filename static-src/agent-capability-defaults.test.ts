@@ -20,7 +20,6 @@ describe("Agent capabilities switches before settings load", () => {
     ["flag-spec-ask-first", false],
     ["flag-steering-reminders", false],
     ["flag-workflows", true],
-    ["flag-loop-limit-wake", true],
   ] as const)("paints #%s at its default (%s)", (id, on) => {
     expect(shippedSwitch(id).checked).toBe(on);
   });

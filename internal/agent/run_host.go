@@ -914,13 +914,15 @@ func runCallErr(resp *marotte.RPCResponse, err error) error {
 // stalePauseReason is KAS's STALE_RUNNING_PAUSE_REASON for a run whose owner died. A literal: only this reason licenses a cancel.
 const stalePauseReason = "Interrupted by agent restart; the previously running step was paused for resume."
 
-// Pause reasons for a stop nobody chose, licensing a resume only. The network one is matched by prefix
-// since KAS interpolates the error code.
-const (
-	interruptedPauseReason  = "Step interrupted (agent shutdown or connection reset); will resume."
-	modelServicePauseReason = "Transient model service error (service 5xx/throttling); will resume."
-	networkPausePrefix      = "Transient connection error ("
-)
+// resumableReasonPrefixes open the reasons KAS's pauseVerdict gives a stop nobody chose, licensing a resume
+// only. Prefixes, because KAS rewords the tails between releases and interpolates the network code; the
+// interruption arm carries no pauseDetail, so its prefix is its only arm. TestPauseReasonsMatchBundle
+// (internal/kascap) checks them against the pinned agent server.
+var resumableReasonPrefixes = []string{
+	"Step interrupted (agent shutdown or connection reset);",
+	"Model service error (service 5xx or throttling);",
+	"Transient connection error (",
+}
 
 // transientErrorClass is the `pauseDetail.class` KAS stamps for every transient fault; it reaches a
 // parallel branch's pause, whose prose KAS re-renders.
@@ -939,11 +941,10 @@ func resumablePause(reason string, detail *pauseDetail) bool {
 	if detail != nil && detail.Class == transientErrorClass {
 		return true
 	}
-	switch reason {
-	case stalePauseReason, interruptedPauseReason, modelServicePauseReason:
+	if reason == stalePauseReason {
 		return true
 	}
-	return strings.HasPrefix(reason, networkPausePrefix)
+	return slices.ContainsFunc(resumableReasonPrefixes, func(p string) bool { return strings.HasPrefix(reason, p) })
 }
 
 // orphanResumeDelay is when the resume sweep re-reads a run KAS still lists running after an engine end:

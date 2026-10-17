@@ -595,7 +595,7 @@ reader makes is that marotte simply has not adopted it yet. The real gate is a
 SECOND one the capability does not open: the producer is ExecuteBash's
 StreamCoalescer fed by onOutputChunk, subscribed behind
 if (input.onOutputChunk && term.onOutputChunk). marotte declares terminal:true
-with no sandbox, so KAS builds an ACPTerminal, whose entire method set is
+with no sandbox and no agentHostsForegroundShell, so KAS builds an ACPTerminal, whose entire method set is
 runCommand, readOutputLines, ensureCommandRunsInCwd, close and focus — no
 onOutputChunk — and whose runCommand awaits completion, so there is no mid-flight
 output on this path at all. Declaring the flag would emit ZERO frames.
@@ -622,10 +622,13 @@ marotte's own SanitizeOutput, which IS StripANSI composed with SanitizeUnicode �
 agent_terminal.go documents having been burned by exactly that, measuring spans=0
 with it and spans=2 without.
 
-The ONE condition that reverses this: a sandbox. The sandbox && capabilities.terminal
-arm hands back DefaultTerminalManager, whose DefaultTerminal DOES implement
-onOutputChunk — at which point marotte's own terminal handlers go silent and the
-stream moves to this frame. No sandbox can start in this container because bwrap
+Two conditions reverse this, and each moves foreground commands onto KAS's
+in-process terminal (DefaultTerminal DOES implement onOutputChunk), at which point
+marotte's own terminal handlers go silent for them and the stream moves to this
+frame. The first is the capability.agentHostsForegroundShell row (2.32.0), which
+marotte withholds, so the two keys are one decision. The second is a sandbox: the
+sandbox && capabilities.terminal arm hands back DefaultTerminalManager. No sandbox
+can start in this container because bwrap
 is not in the image, so KAS's bubblewrap backend fails isAvailable() and resolves
 to its no-op. Enabling one also needs an explicit session/set_config_option or
 _kiro/sandbox/applyConfig request with configId "sandbox" and value "enabled";
@@ -635,6 +638,26 @@ both reach applySandboxConfigOption, whose absent config defaults to backend
 If the premise ever flips, the order is: a content_chunk handler registered and
 green, THEN a toolCallId→card join (marotte keys on terminal_id today), and only
 THEN this row's send. Never the flag first.`,
+	"capability.agentHostsForegroundShell": `WITHHELD. kiro-cli 2.32.0 reads clientMeta.agentHostsForegroundShell when it
+picks a session's terminal host: true runs every FOREGROUND execute_bash on KAS's
+in-process terminal even though marotte declares terminal:true, while background
+processes stay on marotte's terminal/* handlers (their host ignores the key). Sending
+it would move foreground commands off marotte's terminal panel, terminal-id cards,
+64 KiB tail ring, systembin bash and marotte's own environment, onto the engine's
+screened environment (its heap-capped NODE_OPTIONS included) and KAS's $SHELL, which
+may be /bin/sh while marotte reports bash. What it buys, KAS stopping a cancelled
+turn's foreground command and live content_chunk output, needs the
+streamingShellContent row's handler first, and would narrow KillForTurn to
+background terminals rather than retire it. No shipped client sends it.`,
+	"capability.diagrams": `WITHHELD. kiro-cli 2.32.0 reads _meta.kiro.diagrams === true to register the
+create_diagram tool. Its only output is a schemaVersion 1 diagram JSON written under
+<session>/diagrams/dg_<uuid>.json and named by _meta.kiro.diagram on the tool's
+frames; no method or notification delivers the diagram, and marotte, like every
+shipped client, has no renderer for it. Declaring it would add roughly 12-15 KB of
+tool description and schema to every turn and let the model draw diagrams the user
+never sees, while the tool's result tells the model the user sees the drawing.
+Sending it needs that renderer, a session-confined read of the file and a card keyed
+on _meta.kiro.diagram first.`,
 	"setting.semanticReview": `WITHHELD, and withholding it is what turns it ON. semanticReview is the
 one settings key KAS does not read through isSettingEnabled: its resolver
 is parsed2.data.semanticReview?.enabled ?? persistedDefault ?? true, so an

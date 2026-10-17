@@ -325,6 +325,56 @@ func TestSessionInfoUpdate_CensusRunsOnTheRealFrame(t *testing.T) {
 	}
 }
 
+// TestPlanApproval_CensusIsQuiet pins the declines for a plan approval's members (kiro-cli 2.32.0's
+// shape): the ask's `workflowPlan` and its pending_interaction's flat `_meta` copy of it.
+func TestPlanApproval_CensusIsQuiet(t *testing.T) {
+	plan := map[string]any{
+		"workflowId": "wf_1", "kind": "launch", "workflowRef": "generated://plan",
+		"steps": []map[string]any{{"id": "build", "type": "step"}},
+	}
+	for name, deliver := range map[string]func(t *testing.T, tr *Translator){
+		"the permission ask": func(t *testing.T, tr *Translator) {
+			id := int64(4)
+			tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{
+				"sessionId": "s",
+				"toolCall": map[string]any{
+					"toolCallId": "tc", "status": "pending", "title": "Add 1 workflow steps to wf_1",
+					"content": []map[string]any{{"type": "content", "content": map[string]any{"type": "text", "text": "1. build"}}},
+				},
+				"options": []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
+				"_meta": map[string]any{"kiro": map[string]any{
+					"toolId": "update_workflow", "workflowPlan": plan, "consentRound": 1,
+					"consent": map[string]any{"capability": "workflow", "resource": "replace_remaining"},
+				}},
+			})})
+		},
+		"its pending_interaction update": func(t *testing.T, tr *Translator) {
+			planMeta := map[string]any{"kiro": map[string]any{"workflowPlan": plan}}
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+				"_meta": map[string]any{"kiro": map[string]any{
+					"kind": "pending_interaction", "toolCallId": "tc", "interactionType": "tool_approval",
+					"question": "Add 1 workflow steps to wf_1", "options": []any{}, "_meta": planMeta,
+					"pendingInteraction": map[string]any{
+						"toolCallId": "tc", "interactionType": "tool_approval",
+						"question": "Add 1 workflow steps to wf_1", "options": []any{}, "_meta": planMeta,
+					},
+				}},
+			}), FrameAttribution{})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetCensus(t)
+			var logbuf bytes.Buffer
+			defer captureSlog(&logbuf)()
+			deps, _ := newEventCaptureDeps()
+			deliver(t, New(rolesOf(deps)))
+			if out := logbuf.String(); strings.Contains(out, "UNKNOWN") {
+				t.Errorf("a plan approval reported a member marotte declines: %s", out)
+			}
+		})
+	}
+}
+
 // TestKnownKeys_IsCachedPerType pins by identity that the cache returns the SAME map:
 // agent_message_chunk arrives per token.
 func TestKnownKeys_IsCachedPerType(t *testing.T) {

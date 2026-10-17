@@ -68,7 +68,6 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		SpecPlanningAskFirst:      defaultSpecPlanningAskFirst,
 		SteeringReminders:         defaultSteeringReminders,
 		WorkflowsEnabled:          DefaultWorkflowsEnabled,
-		LoopLimitWake:             DefaultLoopLimitWake,
 		ModelFallback:             defaultModelFallback,
 		WorkValidation:            defaultWorkValidation,
 		CloudFormationSafetyCheck: defaultCloudFormationSafety,
@@ -166,7 +165,6 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeySpecPlanningAskFirst: func(r json.RawMessage) error { return decodeInto(&out.SpecPlanningAskFirst, r) },
 		KeySteeringReminders:    func(r json.RawMessage) error { return decodeInto(&out.SteeringReminders, r) },
 		KeyWorkflowsEnabled:     func(r json.RawMessage) error { return decodeInto(&out.WorkflowsEnabled, r) },
-		KeyLoopLimitWake:        func(r json.RawMessage) error { return decodeInto(&out.LoopLimitWake, r) },
 		KeyModelFallback:        func(r json.RawMessage) error { return decodeInto(&out.ModelFallback, r) },
 		KeyWorkValidation: func(r json.RawMessage) error {
 			return decodeChecked(&out.WorkValidation, r, KeyWorkValidation, ValidFeatureChoice)
