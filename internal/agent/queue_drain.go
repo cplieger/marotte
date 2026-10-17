@@ -19,8 +19,7 @@ var errQueueChatGone = errors.New("agent: the chat has no record to queue on")
 
 // AppendIfLive applies fn to the record while the chat holds a live turn or a KAS hold, in the lifecycle section
 // (lifecycle then store), waiting out a finalizing turn: the close sees the row or the caller sees no turn. A row
-// appended under a hold with no turn live is kept for the hold's drain, which may send one of them once KAS goes idle
-// (after any unread steers); the rest wait for a later close's drain.
+// appended under a hold with no turn live is owed a send despite the stop; kasExec.holdRows owns which drain takes it.
 func (bc *bridgeCoordinator) AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
 	live := false
 	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {

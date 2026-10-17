@@ -103,8 +103,9 @@ func retry(ctx context.Context, maxAttempts int, shouldRetry func(error) bool, f
 }
 
 // callPromptWithRetry sends the prompt to kiro-cli, retrying only the
-// classes a second attempt can actually fix.
-func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string]any, chatID marotte.ChatID) (promptReply, error) {
+// classes a second attempt can actually fix. gate, when non-nil, holds every
+// attempt, a busy retry's included.
+func callPromptWithRetry(ctx context.Context, gate promptSendGate, sb bridgeCaller, params map[string]any, chatID marotte.ChatID) (promptReply, error) {
 	return retry(ctx, 2, func(err error) bool {
 		class := classifyPromptFailure(err)
 		retry := class == classBusy || class == classTransient
@@ -112,6 +113,11 @@ func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string
 			"chat_id", chatID, "class", class.String(), "retry", retry, keyError, err)
 		return retry
 	}, func() (promptReply, error) {
+		if gate != nil {
+			if err := gate.AwaitPromptSend(ctx, chatID); err != nil {
+				return promptReply{}, err
+			}
+		}
 		resp, seq, err := sb.CallAt(ctx, marotte.MethodPrompt, params)
 		return promptReply{resp: resp, seq: seq}, err
 	})
@@ -237,7 +243,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, chatID marott
 		return
 	}
 	deliverParkedSteers(ctx, roles, chatID, retryTurn)
-	reply, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
+	reply, retryErr := callPromptWithRetry(ctx, roles.sendGate, sb2, params, chatID)
 	if retryErr != nil {
 		logPromptFailure("retry prompt failed", chatID, retryErr)
 		stop, reason, kind := promptFailureAccount(ctx, retryErr, promptParamsInlineImage(params))
@@ -331,9 +337,9 @@ func settleComposerOnPrompt(ctx context.Context, chats chatStore, bus broadcaste
 // only so tests can shrink it.
 var AdmissionWait = 20 * time.Second
 
-// reasonStarting is the 409 refusal class whose holder cannot receive a
-// steer: a cold session open or a shell. The client renders the busy face and retries
-// instead of converting the 409 to a steer.
+// reasonStarting is the 409 refusal class for AdmissionStarting: nothing steerable
+// can take the prompt. The client renders the busy face and retries instead of
+// converting the 409 to a steer.
 const reasonStarting = "starting"
 
 // reasonChatGone is the 409 refusal class for a prompt into a chat whose
@@ -427,7 +433,7 @@ func startPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
 }
 
 // reservePromptAdmission takes the chat's admission slot for a prompt: AdmissionBusy answers the plain
-// 409 (which the client steers or queues, per the chat's mode), any other holder 409 with reason "starting".
+// 409 (which the client steers or queues, per the chat's mode), AdmissionStarting 409 with reason "starting".
 func reservePromptAdmission(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) error {
 	switch roles.admission.ReserveTurnForPrompt(ctx, chatID, AdmissionWait) {
 	case AdmissionAcquired:
@@ -509,7 +515,7 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	slog.Info("prompt", "chat_id", chatID, "len", len(p.Text))
 	start := time.Now()
 	promptParams, inlinedImage := buildPromptParams(ctx, roles.workspace, sb, p, historyInlineImages(ctx, roles.chats, chatID))
-	reply, err := callPromptWithRetry(ctx, sb, promptParams, chatID)
+	reply, err := callPromptWithRetry(ctx, roles.sendGate, sb, promptParams, chatID)
 	elapsed := time.Since(start)
 	if err != nil {
 		reportPromptFailure(ctx, roles, chatID, turnID, err, reply.seq, elapsed, inlinedImage)
@@ -539,10 +545,11 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	recoverEmptyTurn(ctx, roles, chatID, turnID, result, p, promptParams)
 }
 
-// deliverParkedSteers runs between StartTurn and session/prompt under the chat's steer lock, so a
-// delete decided before StartTurn finishes first and one deciding after refuses. Pending turn ends
-// resolve into this turn first; a clear owed for KAS's load re-injection goes next, and if skipped
-// or lost those rows stay unsent, never sent beside KAS's copies.
+// deliverParkedSteers runs between StartTurn and session/prompt under the chat's steer lock, which
+// orders delivery against a delete; a later delete's clear reply and read-loop barrier decide
+// whether it removed the steer or lost to KAS's read. Pending turn ends resolve into this turn
+// first; a clear owed for KAS's load re-injection goes next, and if skipped or lost those rows
+// stay unsent, never sent beside KAS's copies.
 func deliverParkedSteers(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string) {
 	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
 	if err != nil {

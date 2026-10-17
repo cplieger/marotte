@@ -392,9 +392,10 @@ const (
 	// (marotte.TurnOpenSource.SteerableHolder). Answered as the plain 409, on
 	// which the client steers or queues, per the chat's mode.
 	AdmissionBusy
-	// AdmissionStarting is every other holder: a cold session open, or a shell on a
-	// bridged or bridgeless chat. Answered as 409 with the additive
-	// `reason: "starting"`.
+	// AdmissionStarting is the fail-closed answer when no steerable holder can take
+	// the prompt: a cold session open, a shell, or a run or close hold kiro-cli
+	// reports with no steerable turn. Answered as 409 with the additive
+	// `reason: "starting"`, which hands the text back.
 	AdmissionStarting
 )
 
@@ -503,6 +504,13 @@ type turnOutcomeAccess interface {
 	// kind, the classified failure the client offers a remedy for (empty for
 	// none). It waits for no read loop position.
 	AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string, kind marotte.FailureKind, seq uint64)
+}
+
+// promptSendGate holds an admitted prompt's session/prompt until the chat's session may take it.
+type promptSendGate interface {
+	// AwaitPromptSend returns nil once the prompt may be sent, else the error that fails it unsent: ctx ended, or
+	// another run took the prompt's turn during the wait.
+	AwaitPromptSend(ctx context.Context, chatID marotte.ChatID) error
 }
 
 // preSendCompactor is the compaction policy's before-a-send trigger. It returns
@@ -773,6 +781,9 @@ type Roles struct {
 	// Compactor runs the compaction policy before a prompt is sent. Nil sends
 	// with no pre-send check.
 	Compactor preSendCompactor
+	// SendGate holds each session/prompt a chat's prompt sends until the session may
+	// take it. Nil sends at once.
+	SendGate promptSendGate
 	// Renamer renames every KAS session in a chat's chain, so a closed chat's
 	// rename reaches History at once.
 	Renamer SessionRenamer
@@ -804,6 +815,7 @@ type promptRoles struct {
 	jobs        SteerJobs
 	followups   QueueAccess
 	compactor   preSendCompactor
+	sendGate    promptSendGate
 	auth        *AuthReadiness
 	workspace   Workspace // last for fieldalignment, as in Roles
 }

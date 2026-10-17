@@ -59,6 +59,19 @@ func TestKASExec_EveryTransition(t *testing.T) {
 		},
 		{name: "held idle release other", before: held(kasHeldIdle), in: kasReleaseOwn, seq: other, want: kasHeldIdle, wantSeq: own, wantDrain: true},
 		{name: "held idle stand down own", before: held(kasHeldIdle), in: kasStandDownOwn, seq: own, want: kasIdle},
+		// Rows a stood-down hold still owes, as after KAS opened a turn of its own.
+		{
+			name: "owed rows idle release other", before: kasExec{holdRows: []string{"m-held"}}, in: kasReleaseOwn, seq: other,
+			want: kasIdle, wantDrain: true, wantRows: []string{"m-held"},
+		},
+		{
+			name: "owed rows running release other", before: kasExec{state: kasRunning, holdRows: []string{"m-held"}},
+			in: kasReleaseOwn, seq: other, want: kasRunning,
+		},
+		{
+			name: "owed rows running grace claim", before: kasExec{state: kasRunning, holdRows: []string{"m-held"}},
+			in: kasGraceClaim, seq: claim, want: kasHeldRunning, wantSeq: claim,
+		},
 		{name: "held idle stand down other", before: held(kasHeldIdle), in: kasStandDownOwn, seq: other, want: kasHeldIdle, wantSeq: own},
 	}
 	for _, tc := range cases {
@@ -70,6 +83,14 @@ func TestKASExec_EveryTransition(t *testing.T) {
 			}
 			if drain != tc.wantDrain || !slices.Equal(rows, tc.wantRows) {
 				t.Errorf("drain = %v rows %v, want %v rows %v", drain, rows, tc.wantDrain, tc.wantRows)
+			}
+			// Owed rows stay owed through every step but the one that hands them to a drain.
+			wantKept := tc.before.holdRows
+			if tc.wantRows != nil {
+				wantKept = nil
+			}
+			if !slices.Equal(k.holdRows, wantKept) {
+				t.Errorf("rows still owed = %v, want %v", k.holdRows, wantKept)
 			}
 		})
 	}
@@ -93,12 +114,12 @@ func TestKASExec_EveryTransition(t *testing.T) {
 	})
 }
 
-// A claim during a hold starts the newer close's hold with none of the older one's rows, and a change of state is
-// reported so its waiters wake; a step that leaves the state as it was wakes no one.
+// A claim during a hold hands the older hold's rows to the newer close and reports a change, so the older closer's
+// waiters wake to find the hold no longer theirs; a step that leaves the state as it was wakes no one.
 func TestKASExec_TheChangeReportWakesOnlyOnAChange(t *testing.T) {
 	k := kasExec{state: kasHeldRunning, holdSeq: 7, holdRows: []string{"m-old"}}
-	if changed, _, _ := k.step(kasGraceClaim, 11); !changed || k.holdRows != nil {
-		t.Errorf("claim over a hold = changed %v rows %v, want a change and no rows", changed, k.holdRows)
+	if changed, _, _ := k.step(kasGraceClaim, 11); !changed || !slices.Equal(k.holdRows, []string{"m-old"}) {
+		t.Errorf("claim over a hold = changed %v rows %v, want a change with m-old still owed", changed, k.holdRows)
 	}
 	if changed, _, _ := k.step(kasReportActive, 0); changed {
 		t.Error("a repeated active report reported a change, want none")

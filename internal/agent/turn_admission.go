@@ -6,6 +6,7 @@ package agent
 import (
 	"cmp"
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -297,6 +298,48 @@ func (r *turnRegistry) awaitKASIdle(ctx context.Context, chatID marotte.ChatID, 
 				"chat_id", chatID, "waited", kasHoldWarnAfter)
 		case <-ctx.Done():
 			return false
+		}
+	}
+}
+
+// errPromptTurnTaken fails a prompt whose turn another run bound or closed while its send waited.
+var errPromptTurnTaken = errors.New("kiro-cli ran a turn of its own before this prompt was sent, so it was not sent; send it again")
+
+// AwaitPromptSend holds an admitted prompt's session/prompt while KAS's state admits none (kasPermits), so a run KAS
+// reports after the reservation, such as a notification re-wake, is waited out rather than sent beside.
+func (bc *bridgeCoordinator) AwaitPromptSend(ctx context.Context, chatID marotte.ChatID) error {
+	return bc.turns.awaitPromptSend(ctx, chatID)
+}
+
+// awaitPromptSend is AwaitPromptSend's wait. A run KAS starts while the send is on the wire is still not seen: KAS
+// offers no execution token to make the handoff atomic. After a wait the prompt's turn must still be pending and
+// unbound: if a KAS run bound it (no agentInitiated frame revised the binding) or closed it, sending now would run the
+// prompt with no turn of its own.
+func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatID) error {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return nil
+	}
+	warn := time.NewTimer(kasHoldWarnAfter)
+	defer warn.Stop()
+	for waited := false; ; waited = true {
+		lc.mu.Lock()
+		sendable, changed := lc.kas.may().admit, lc.changed
+		taken := waited && (lc.pending == nil || lc.pending.finalizing)
+		lc.mu.Unlock()
+		switch {
+		case taken:
+			return errPromptTurnTaken
+		case sendable:
+			return nil
+		}
+		select {
+		case <-changed:
+		case <-warn.C:
+			slog.Warn("kiro-cli still reports the session busy; the chat's admitted prompt waits for it",
+				"chat_id", chatID, "waited", kasHoldWarnAfter)
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }

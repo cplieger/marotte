@@ -627,6 +627,33 @@ func TestSteerRecords_ATargetReadBeforeTheClearIsConsumed(t *testing.T) {
 	}
 }
 
+// The same while the turn is starting, before KAS bound it: a target read before the clear's reply was delivered,
+// so the delete still answers consumed, and the steer the reader kept goes again.
+func TestSteerRecords_ATargetReadBeforeTheClearIsConsumedWhileTheTurnStarts(t *testing.T) {
+	s := newSteerHarness(t)
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
+	s.h.stagePromptTurn(t, s.chat)
+	s.steer("steer-a", "first")
+	s.steer("steer-b", "second")
+	if s.channel() != chanNone {
+		t.Fatalf("Setup: channel = %v, want NONE while the turn starts", s.channel())
+	}
+	op := "op-steer-a"
+	if needsClear, refuse := s.q.BeginRemove(s.chat, "steer-a", op); !needsClear || refuse != "" {
+		t.Fatalf("BeginRemove while the turn starts = %v %q, want a clear", needsClear, refuse)
+	}
+	s.recs.SteerRead(s.chat, s.kasID("steer-a"))
+
+	res := s.q.RemoveCleared(s.chat, op, s.clearKAS(), true)
+
+	if res.Reason != command.SteerRefuseConsumed {
+		t.Errorf("reason = %q, want consumed", res.Reason)
+	}
+	if res.Resend == nil || !slices.Equal(res.Resend.Keys, []string{"steer-b"}) {
+		t.Errorf("resend = %+v, want steer-b", res.Resend)
+	}
+}
+
 // wantGoneUnnoted: a deleted row leaves the dock on its removed frame and writes no transcript entry.
 func wantGoneUnnoted(t *testing.T, s *steerHarness, key string) {
 	t.Helper()

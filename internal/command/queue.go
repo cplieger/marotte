@@ -35,8 +35,9 @@ const reasonSending = "sending"
 // running" and "it is queued" and leave a row no close will send.
 type QueueAccess interface {
 	// AppendIfLive applies fn to the chat's record while the chat holds a live turn,
-	// or waits for kiro-cli to end a run the user stopped (that close's drain may send
-	// one such row, CloseFacts.AfterStop; the rest go as after any close), reporting
+	// or waits for kiro-cli to end a run the user stopped (the next drain once that wait
+	// ends may send one such row despite a stop, CloseFacts.AfterStop; the rest go as
+	// after any close), reporting
 	// live=false (and writing nothing) when neither. fn's error aborts the write and
 	// is returned as is.
 	AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (live bool, err error)

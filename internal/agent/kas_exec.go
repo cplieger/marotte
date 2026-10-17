@@ -43,9 +43,10 @@ type kasCell struct {
 	drain bool
 }
 
-// kasTransitions is the whole state machine; an input absent from a row leaves the state as it is. A release while
-// KAS reports a run answers no drain, and the closer waits again. KAS's turn brackets, prompt replies, cancels,
-// re-wakes and queued reports move nothing here: KAS's activity count already counts each run and hold they imply.
+// kasTransitions is the whole state machine. Every row lists every input: an omitted cell reads as {next: kasIdle}
+// and would lift a hold. A release while KAS reports a run answers no drain, and the closer waits again. KAS's turn
+// brackets, prompt replies, cancels, re-wakes and queued reports move nothing here: KAS's activity count already
+// counts each run and hold they imply.
 var kasTransitions = [nKASStates][nKASInputs]kasCell{
 	kasIdle: {
 		kasReportActive: {next: kasRunning}, kasReportIdle: {next: kasIdle}, kasForwardReset: {next: kasIdle},
@@ -73,7 +74,7 @@ var kasTransitions = [nKASStates][nKASInputs]kasCell{
 
 // kasPermits is what marotte may do in one state.
 type kasPermits struct {
-	// admit: take an admission reservation, which sends a session/prompt or opens a turn.
+	// admit: take an admission reservation, which opens a turn, or send an admitted prompt's session/prompt.
 	admit bool
 	// sessionCall: a closer's model switch or compaction, or a parked model pick's apply.
 	sessionCall bool
@@ -92,8 +93,9 @@ var kasPermitTable = [nKASStates]kasPermits{
 
 // kasExec is guarded by the owning chatLifecycle's mutex.
 type kasExec struct {
-	// holdRows are the queued rows appended during the hold with no turn live: refused as no turn, the client would
-	// have sent them as prompts, so the hold's drain may send one of them despite the cancelled close.
+	// holdRows are the queued rows appended during a hold with no turn live: refused as no turn, the client would
+	// have sent them as prompts, so they stay owed past a newer close's hold or a turn opening, until the first
+	// release that drains with no hold left, which may send one of them despite a cancelled close.
 	holdRows []string
 	// holdSeq is the open sequence of the closed turn whose hold this is, zero for none.
 	holdSeq uint64
@@ -101,7 +103,7 @@ type kasExec struct {
 }
 
 // step applies one input, answering whether the state changed (the caller wakes its waiters), and for a release
-// whether the closer may drain and the rows queued under its hold. Caller holds the lifecycle's mutex.
+// whether the closer may drain and the owed hold rows it takes. Caller holds the lifecycle's mutex.
 func (k *kasExec) step(in kasInput, seq uint64) (changed, drain bool, rows []string) {
 	if seq != k.holdSeq {
 		in = otherHold(in)
@@ -111,12 +113,12 @@ func (k *kasExec) step(in kasInput, seq uint64) (changed, drain bool, rows []str
 	k.state = cell.next
 	switch {
 	case in == kasGraceClaim:
-		k.holdSeq, k.holdRows, changed = seq, nil, true
+		k.holdSeq, changed = seq, true
 	case !k.held():
-		if in == kasReleaseOwn {
-			rows = k.holdRows
+		k.holdSeq = 0
+		if cell.drain {
+			rows, k.holdRows = k.holdRows, nil
 		}
-		k.holdSeq, k.holdRows = 0, nil
 	}
 	return changed, cell.drain, rows
 }

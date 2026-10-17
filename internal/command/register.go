@@ -85,6 +85,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		jobs:        r.SteerJobs,
 		followups:   r.Queue,
 		compactor:   r.Compactor,
+		sendGate:    r.SendGate,
 		auth:        r.AuthReadiness,
 	}
 	d.prompts = prompt
