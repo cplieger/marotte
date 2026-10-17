@@ -161,11 +161,8 @@ func (e *Engine) reportDroppedFrame(dropped int, head []byte) {
 		id := *h.id
 		failed = e.failPending(frameTooLargeResp, func(pid int64, _ *pendingEntry) bool { return pid == id })
 	case droppedRequest:
-		id := *h.id
-		e.goBackground(func() {
-			_ = e.Respond(e.lifecycleCtx, id, nil, &marotte.RPCError{
-				Code: marotte.RPCCodeInternal, Message: "the request was larger than marotte's 16 MiB frame limit",
-			})
+		e.refuseRequest(*h.id, h.method, &marotte.RPCError{
+			Code: marotte.RPCCodeInternal, Message: "the request was larger than marotte's 16 MiB frame limit",
 		})
 	case droppedNotification:
 		if h.sessionID == "" {

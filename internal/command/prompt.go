@@ -239,7 +239,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, chatID marott
 	deliverParkedSteers(ctx, roles, chatID, retryTurn)
 	reply, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
-		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
+		logPromptFailure("retry prompt failed", chatID, retryErr)
 		stop, reason, kind := promptFailureAccount(ctx, retryErr, promptParamsInlineImage(params))
 		roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, retryTurn, stop, reason, kind, reply.seq)
 		if stop != marotte.StopReasonCancelled {
@@ -597,6 +597,20 @@ func historyInlineImages(ctx context.Context, chats chatStore, chatID marotte.Ch
 	return count
 }
 
+// logMsgPromptEngineEnded must not contain "prompt failed": the engine end is logged once as
+// "engine exited", and the alert rule keyed on "prompt failed" must not count each prompt it killed.
+const logMsgPromptEngineEnded = "prompt ended because the agent engine exited"
+
+// logPromptFailure logs a failed prompt at Error under msg, except an engine-exit casualty, which
+// is a Warn under logMsgPromptEngineEnded.
+func logPromptFailure(msg string, chatID marotte.ChatID, err error, attrs ...any) {
+	if class := classifyPromptFailure(err); class == classPipeDeath {
+		slog.Warn(logMsgPromptEngineEnded, append([]any{"chat_id", chatID, "class", class.String(), keyError, err}, attrs...)...)
+		return
+	}
+	slog.Error(msg, append([]any{"chat_id", chatID, keyError, err}, attrs...)...)
+}
+
 // reportPromptFailure finalizes a turn whose prompt Call failed and broadcasts the failure, the
 // only live surface after the ack. It renders the cause once, so RPCErrorText's fallback cannot
 // overwrite promptFailureReason's prose.
@@ -610,7 +624,7 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID marotte
 		roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)
 		return
 	}
-	slog.Error("prompt failed", "chat_id", chatID, keyError, err, "elapsed", elapsed)
+	logPromptFailure("prompt failed", chatID, err, "elapsed", elapsed)
 	// An auth failure is the one prompt failure whose remedy is not "send
 	// again", so it routes through a different code.
 	code := marotte.ErrCodePromptFailed
@@ -644,20 +658,21 @@ func buildPromptParams(ctx context.Context, ws Workspace, sb SessionCaller, p *m
 	if p.MessageID != "" {
 		params["messageId"] = p.MessageID
 	}
-	if meta := kascap.PromptMeta(promptFacts(ctx, ws.ConfigDir, p.DisplayText)); len(meta) > 0 {
+	if meta := kascap.PromptMeta(promptFacts(ctx, ws.ConfigDir, p)); len(meta) > 0 {
 		params["_meta"] = map[string]any{"kiro": meta}
 	}
 	return params, inlineImageBlockCount(blocks) > 0
 }
 
-// promptFacts withholds the output style when it is the default, unset or unknown.
-func promptFacts(ctx context.Context, configDir, label string) *kascap.Prompt {
+// promptFacts withholds the output style when it is the default, unset or unknown, and from a
+// prompt an agent reads (p.ForAgent).
+func promptFacts(ctx context.Context, configDir string, p *marotte.PromptCommand) *kascap.Prompt {
 	var style string
-	read := configDir != "" && settings.FieldInto(ctx, configDir, settings.KeyOutputStyle, &style)
+	read := !p.ForAgent && configDir != "" && settings.FieldInto(ctx, configDir, settings.KeyOutputStyle, &style)
 	if !read || !settings.ValidOutputStyle(style) || style == settings.OutputStyleDefault {
 		style = ""
 	}
-	return &kascap.Prompt{OutputStyle: style, Label: label}
+	return &kascap.Prompt{OutputStyle: style, Label: p.DisplayText}
 }
 
 func promptParamsInlineImage(params map[string]any) bool {
@@ -674,7 +689,7 @@ const (
 	classFatal promptFailureClass = iota
 	// Retrying the same bridge is provably useless (readLoop closed done permanently).
 	classPipeDeath
-	// classBusy is the session still finishing a prior turn: a real wait.
+	// classBusy is KAS's SessionBusyError: a prompt or close still in flight, a real wait.
 	classBusy
 	// classTransient is a write that never reached kiro-cli, which a second
 	// attempt can fix. An answered prompt is never transient: KAS may already
@@ -735,7 +750,7 @@ func classifyPromptFailure(err error) promptFailureClass {
 	if errors.Is(err, marotte.ErrBridgeExited) {
 		return classPipeDeath
 	}
-	if errors.Is(err, marotte.ErrNotIdle) {
+	if errors.Is(err, marotte.ErrSessionBusy) {
 		return classBusy
 	}
 	if te, ok := errors.AsType[*marotte.TransportError](err); ok {
@@ -757,7 +772,7 @@ func classifyRPCFailure(re *marotte.RPCError) promptFailureClass {
 		return classifyMapped(m)
 	}
 	switch re.Code {
-	case marotte.RPCCodeNotIdle:
+	case marotte.RPCCodeSessionBusy:
 		return classBusy
 	case marotte.RPCCodeInternal:
 		// KAS's catch-all, answered after the engine ran the prompt (it closes the

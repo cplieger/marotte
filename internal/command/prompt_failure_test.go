@@ -55,12 +55,16 @@ func TestClassifyPromptFailure(t *testing.T) {
 			want: classFatal,
 		},
 		"session busy by sentinel": {
-			err:  fmt.Errorf("ACP error -32001: %w", marotte.ErrNotIdle),
+			err:  fmt.Errorf("ACP error -32002: %w", marotte.ErrSessionBusy),
 			want: classBusy,
 		},
-		"session busy by code": {
-			err:  rpcErr(t, marotte.RPCCodeNotIdle, "session is not idle", nil),
+		"a prompt already in flight is busy": {
+			err:  rpcErr(t, -32002, "A prompt is already in-flight for session sess_x", nil),
 			want: classBusy,
+		},
+		"a -32001 answer is not busy": {
+			err:  rpcErr(t, -32001, "No pending permission for toolCallId tc_1", nil),
+			want: classFatal,
 		},
 		"an answered internal error is final": {
 			err:  rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{"details": "transient upstream fault"}),
@@ -227,9 +231,9 @@ func TestClassifyPromptFailure(t *testing.T) {
 			}),
 			want: classFatal,
 		},
-		"a session being closed is final": {
+		"a session being closed is busy": {
 			err:  rpcErr(t, -32002, "A close is in progress for session sess_x", nil),
-			want: classFatal,
+			want: classBusy,
 		},
 		"a session owning live runs is final": {
 			err: rpcErr(t, kasServerError, "This session owns live workflows.", map[string]any{
@@ -285,7 +289,7 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 		t.Error("a throttle is reported retryable; kiro-cli already exhausted its own adaptive attempts")
 	}
 
-	if !retriesFor(fmt.Errorf("ACP error -32001: %w", marotte.ErrNotIdle)) {
+	if !retriesFor(fmt.Errorf("ACP error -32002: %w", marotte.ErrSessionBusy)) {
 		t.Error("a busy session must still be retried")
 	}
 	if !retriesFor(&marotte.TransportError{Err: errors.New("write to ACP"), Retryable: true}) {

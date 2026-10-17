@@ -90,11 +90,9 @@ type RPCErrorOut struct {
 	Code    int    `json:"code"`
 }
 
-// ErrNotIdle is the sentinel for "session not idle" errors from
-// kiro-cli. Wraps the raw RPC error when the message contains "not
-// idle" but the code isn't RPCCodeNotIdle, unifying the detection
-// path for callers that need errors.Is classification.
-var ErrNotIdle = errors.New("session not idle")
+// ErrSessionBusy is wrapped, beside the raw RPCError, into a Call error whose reply code is
+// RPCCodeSessionBusy, so callers classify it with errors.Is.
+var ErrSessionBusy = errors.New("session busy")
 
 // ErrBridgeExited is the sentinel for an engine whose read loop has closed for good, and for a
 // session handle from an engine that is gone: a Call pending when it died returns it wrapped in a
