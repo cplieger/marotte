@@ -2138,10 +2138,15 @@ describe("run view step transcripts", () => {
 
   // A live `turn_close` on a `tool_use` stop says KAS's `completed`: only the run read's `step_ends`,
   // graded under KAS's record of the node, can say the step hit the model-call limit, and the held
-  // close is never replaced (a re-read of the same entry is a redelivery).
+  // close is never replaced (a re-read of the same entry is a redelivery). The row grades the
+  // step's NEWEST attempt only: an earlier attempt keeps the close it ended with.
   it("paints a step's newest turn with the run read's grade of the step", async () => {
     const toolUse = { outcome: "completed", stop_reason_raw: "tool_use" };
-    logStep("wf_1", "wf_1:limited", "working", { close: toolUse });
+    logStep("wf_1", "wf_1:limited", "first attempt", {
+      attempt: 1,
+      close: { outcome: "interrupted" },
+    });
+    logStep("wf_1", "wf_1:limited", "working", { attempt: 2, close: toolUse });
     logStep("wf_1", "wf_1:handoff", "plan accepted", { close: toolUse });
     const root = {
       nodeId: "wf_1",
@@ -2165,7 +2170,10 @@ describe("run view step transcripts", () => {
     await painted("wf_1:limited");
     await painted("wf_1:handoff");
 
-    expect(m.paint.get("wf_1:limited")?.closes).toEqual(["failed/model_call_limit"]);
+    expect(m.paint.get("wf_1:limited")?.closes).toEqual([
+      "interrupted/",
+      "failed/model_call_limit",
+    ]);
     // A step KAS completed on a success signal has no row, so its turn keeps its own close.
     expect(m.paint.get("wf_1:handoff")?.closes).toEqual(["completed/"]);
   });

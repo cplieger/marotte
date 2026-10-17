@@ -91,7 +91,6 @@ func TestStepClose_GradedUnderKASsRecord(t *testing.T) {
 	}
 }
 
-// fixtureFile reads one recorded file under testdata/step_end.
 func fixtureFile(t *testing.T, name string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", "step_end", name))
@@ -101,7 +100,6 @@ func fixtureFile(t *testing.T, name string) []byte {
 	return b
 }
 
-// recordedStop is the stop reason of the recorded KAS session tail's turn_end line.
 func recordedStop(t *testing.T, name string) marotte.StopReason {
 	t.Helper()
 	var stop marotte.StopReason
@@ -127,7 +125,6 @@ func recordedStop(t *testing.T, name string) marotte.StopReason {
 	return stop
 }
 
-// stepEndsOf is GET /api/runs/{id}'s `step_ends`.
 func stepEndsOf(t *testing.T, h *Runtime, workflowID string) map[string]marotte.RunStepEnd {
 	t.Helper()
 	_, body := getRun(t, h, workflowID)
@@ -140,7 +137,6 @@ func stepEndsOf(t *testing.T, h *Runtime, workflowID string) map[string]marotte.
 	return reply.StepEnds
 }
 
-// newestCloseOf is the newest turn_close of a step's transcript as GET /api/runs/{id}/steps/{path} serves it.
 func newestCloseOf(t *testing.T, h *Runtime, workflowID, nodePath string) marotte.EntryTurnClose {
 	t.Helper()
 	out, err := h.runs.stepTranscript(t.Context(), workflowID, nodePath)
@@ -255,7 +251,6 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAToolUseStopIsTheModelCallLim
 	})
 }
 
-// armReplayEndingOn answers `session/load` of sessionID with one turn whose turn_end carries the recorded stop.
 func armReplayEndingOn(br *fakeBridge, sessionID string, stop marotte.StopReason) {
 	end, _ := json.Marshal(map[string]any{
 		"sessionUpdate": "session_info_update",

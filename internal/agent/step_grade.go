@@ -10,7 +10,6 @@ import (
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
-// stepClose is the run log's account of how a step's turn ended: its turn_close facts.
 type stepClose struct {
 	refusal *marotte.RefusalInfo
 	outcome marotte.TurnOutcome
@@ -61,7 +60,6 @@ func (c stepClose) graded(kas workflow.StepRecord, known bool) stepClose {
 	return c
 }
 
-// end is the close as a `step_ends` row, false for a close that is not broken.
 func (c stepClose) end() (marotte.RunStepEnd, bool) {
 	if marotte.SeverityOf(c.outcome) != marotte.TurnSeverityBroken {
 		return marotte.RunStepEnd{}, false
@@ -69,7 +67,6 @@ func (c stepClose) end() (marotte.RunStepEnd, bool) {
 	return marotte.RunStepEnd{Outcome: c.outcome, FailureReason: c.reason, FailureKind: c.kind}, true
 }
 
-// kasSteps indexes a decoded inspect's steps by node path, nil when the read did not decode.
 func kasSteps(in workflow.Inspect) map[string]workflow.StepRecord {
 	if !in.OK {
 		return nil
@@ -77,7 +74,6 @@ func kasSteps(in workflow.Inspect) map[string]workflow.StepRecord {
 	return workflow.StepRecords(in.State)
 }
 
-// kasStep reads KAS's record of one step; false when the run cannot be read or names no such step.
 func (rs *Runs) kasStep(ctx context.Context, workflowID, nodePath string) (workflow.StepRecord, bool) {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
