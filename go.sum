@@ -30,8 +30,8 @@ github.com/cplieger/sse v1.3.0-dev.3 h1:7wDBidMonfCJ7E5ClPxbiSxb79oy+6wNiP+ra5L+
 github.com/cplieger/sse v1.3.0-dev.3/go.mod h1:kGL0tFzbTX5nHOdP9dfLOh6OlHEPkF5CX3mWAIit61Y=
 github.com/cplieger/ssrf/v4 v4.4.0 h1:ItIoYNWrg//DzOUCfWeCWhDILFIHwOUIm6vXssL1TbA=
 github.com/cplieger/ssrf/v4 v4.4.0/go.mod h1:XssdRD8XPxVlxQkVOBLIOyi0aMhjG2xxO5uvAaiXZBg=
-github.com/cplieger/toolbelt/v3 v3.11.0-dev.3 h1:RaDZtoUt70oS4y/Bk8xvSAiSGk4jn5M+LarFt8Dkl9c=
-github.com/cplieger/toolbelt/v3 v3.11.0-dev.3/go.mod h1:rOxNDZ4EH6849luoaV/zNM+aq0zlyvcEAr/oP3J5wC8=
+github.com/cplieger/toolbelt/v3 v3.11.0-dev.4 h1:UZT4gYQPiuGI24WmNQCGnFQpyfu8dsxLZDN5a7t4KRg=
+github.com/cplieger/toolbelt/v3 v3.11.0-dev.4/go.mod h1:cAeEsnOhM8HOz5j9MJjLj1QMuRVKjYCDOitbFKOxAhs=
 github.com/cplieger/urlform v1.4.0 h1:80AZ2c5lq3AWAO2FidJrIrpgX1Ef/wt98Yhxg2XRJKE=
 github.com/cplieger/urlform v1.4.0/go.mod h1:KQiEKaj3x5z7IYgtevcKyUwJ4AVtH5+hRnjO4GssGPM=
 github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.6 h1:5WfQ6WNNJatz6NQkD9EhC1CPVvH2233PT06MYyWe00A=
