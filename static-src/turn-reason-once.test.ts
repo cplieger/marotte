@@ -61,9 +61,9 @@ function sealed(turnID: string, seq: number, kind: Entry["kind"], payload: unkno
   } as Entry;
 }
 
-/** A prompt-opened turn: the stamped `turn_open`, TWO text entries, and the `turn_close` with its
- *  outcome and `failure_reason`. Two entries: a one-entry body hides nothing, so `planResidency`
- *  keeps it open whatever the override. */
+/** A prompt-opened turn: the stamped `turn_open`, a reasoning trace, the reply, and the `turn_close`
+ *  with its outcome and `failure_reason`. The trace is what the fold hides: a body that is only its
+ *  last message hides nothing, so `planResidency` keeps it open whatever the override. */
 function turnEntries(
   id: string,
   n: number,
@@ -74,7 +74,7 @@ function turnEntries(
 ): Entry[] {
   return [
     sealed(id, 0, "turn_open", { prompt: { id: `${id}-p`, text: request }, source: "prompt", n }),
-    sealed(id, 1, "text", { text: `Working on it.` }),
+    sealed(id, 1, "thinking", { text: `Working on it.` }),
     sealed(id, 2, "text", { text: reply }),
     sealed(
       id,

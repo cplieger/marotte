@@ -45,12 +45,14 @@ function entry(
   return opts.lane === undefined ? base : Object.assign(base, { lane: opts.lane });
 }
 
+/** A text entry as a `#k` segment of ONE say, so adjacent ones are one message (`sameMessage`). */
 function text(seq: number, opts: { readonly body?: string; readonly lane?: string } = {}): Entry {
+  const id = `say#${String(seq)}`;
   return entry(
     seq,
     "text",
     { text: opts.body ?? `p${String(seq)}` },
-    opts.lane === undefined ? {} : { lane: opts.lane },
+    opts.lane === undefined ? { id } : { id, lane: opts.lane },
   );
 }
 

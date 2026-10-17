@@ -29,7 +29,7 @@ import {
   type RunResults,
   type TurnFolds,
 } from "./block-window.js";
-import { steerAckID, toolResultID } from "./entry-ids.js";
+import { sameMessage, steerAckID, toolResultID } from "./entry-ids.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { effect, el } from "@cplieger/reactive";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
@@ -229,8 +229,8 @@ interface TurnToolCall {
 }
 
 /**
- * A mounted prose run: one lane's consecutive `text` entries as one bubble with one markdown stream, so a seal
- * inside it is invisible. `seqs` is the concatenation order and, by prefix sum, the offset table.
+ * A mounted prose run: one message's consecutive `text` entries in one lane as one bubble with one markdown stream,
+ * so a seal inside it is invisible. `seqs` is the concatenation order and, by prefix sum, the offset table.
  */
 interface ProseRun {
   /** The run's first member `seq` and its `st.proseRuns` key, or `-1` while it holds only an open entry. */
@@ -2165,9 +2165,17 @@ function mountOpenProse(st: TurnRender, open: OpenEntry, live: boolean): void {
     return;
   }
   const run = tailSeq < 0 ? null : proseRunAt(st.turn, tailSeq, st.lane, st.folds);
-  const view =
-    (run === null ? undefined : st.proseRuns.get(run.from)) ??
-    buildProseRun(st, st.bodyEl, -1, open.text, live);
+  const tailEntry = entryAt(st.turn, tailSeq);
+  // Another message starts a run of its own, as `proseRunAt` will place it once sealed.
+  const joined =
+    run === null || tailEntry === undefined || !sameMessage(tailEntry, open)
+      ? undefined
+      : st.proseRuns.get(run.from);
+  if (joined === undefined) {
+    // The previous run's caret ends here: one streaming caret, on the entry being written.
+    sealLiveBubble(st);
+  }
+  const view = joined ?? buildProseRun(st, st.bodyEl, -1, open.text, live);
   view.openID = open.id;
   writeRunEntries(st, view);
   // Captured once: the appender seals a lane's open entry before appending to that lane, so the prefix cannot go

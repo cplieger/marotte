@@ -1,7 +1,7 @@
 // Residency: which ENTRIES a paint may mount, one contiguous window of a turn's `seq` space
 // grown around the reader's position. Pure and DOM-free; which turns is the caller's policy.
 
-import { toolResultID } from "./entry-ids.js";
+import { sameMessage, toolResultID } from "./entry-ids.js";
 import { isInternalToolTitle } from "./tool-schema.js";
 import type { Entry } from "./types.js";
 import { isSubagentFallback, payloadOf, type Turn } from "./turns.js";
@@ -342,46 +342,40 @@ function inProseRun(t: Turn, seq: number, lane: string, folds: TurnFolds): boole
   return e?.kind === "text" && entryRenders(e, lane, folds);
 }
 
-/** The first `seq` of the prose run `seq` sits in, or `seq` when it is not in one. An entry
- *  that renders nothing does not break a run, so the walk steps over it. */
+/** The first `seq` of the prose run `seq` sits in, or `seq` when it is not in one. A run is ONE message's
+ *  segments (`sameMessage`); an entry that renders nothing does not break it, so the walk steps over it. */
 function runStart(t: Turn, seq: number, lane: string, folds: TurnFolds): number {
-  if (!inProseRun(t, seq, lane, folds)) {
-    return seq;
-  }
-  let first = seq;
-  for (let i = seq - 1; i > 0; i--) {
-    const e = entryAt(t, i);
-    if (e === undefined) {
-      break;
-    }
-    if (inProseRun(t, i, lane, folds)) {
-      first = i;
-    } else if (entryRenders(e, lane, folds)) {
-      break;
-    }
-  }
-  return first;
+  return runEdge(t, seq, lane, folds, -1);
 }
 
 /** The last `seq` of the prose run `seq` sits in, or `seq` when it is not in one. */
 function runEnd(t: Turn, seq: number, lane: string, folds: TurnFolds): number {
-  if (!inProseRun(t, seq, lane, folds)) {
+  return runEdge(t, seq, lane, folds, 1);
+}
+
+function runEdge(t: Turn, seq: number, lane: string, folds: TurnFolds, step: 1 | -1): number {
+  let edge = entryAt(t, seq);
+  if (edge === undefined || !inProseRun(t, seq, lane, folds)) {
     return seq;
   }
-  let last = seq;
+  let at = seq;
   const span = turnSpan(t);
-  for (let i = seq + 1; i < span; i++) {
+  for (let i = seq + step; i > 0 && i < span; i += step) {
     const e = entryAt(t, i);
     if (e === undefined) {
       break;
     }
     if (inProseRun(t, i, lane, folds)) {
-      last = i;
+      if (!sameMessage(edge, e)) {
+        break;
+      }
+      edge = e;
+      at = i;
     } else if (entryRenders(e, lane, folds)) {
       break;
     }
   }
-  return last;
+  return at;
 }
 
 /**

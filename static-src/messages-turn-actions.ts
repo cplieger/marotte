@@ -4,8 +4,10 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
 import type { Turn } from "./turns.js";
+import type { Entry } from "./types.js";
 import { payloadOf } from "./turns.js";
 import { entryRenders, turnFolds } from "./block-window.js";
+import { sameMessage } from "./entry-ids.js";
 import { ICON_COPY, ICON_COPY_MD, ICON_LINK } from "./icons.js";
 import { getActiveId } from "./store.js";
 import { copyClipboard } from "./actions/messages.js";
@@ -234,28 +236,32 @@ function turnCopyMarkdown(t: Turn): string {
 
 /**
  * The reply's markdown, one paragraph per prose run. A run's `text` entries concatenate since one parser renders
- * them; `entryRenders` is the boundary test.
+ * them; `entryRenders` and `sameMessage` are the boundary tests, as `proseRunAt`'s.
  */
 export function turnMarkdown(t: Turn): string {
   const parts: string[] = [];
   let run = "";
+  let last: Entry | undefined;
   const folds = turnFolds(t, "");
   const flush = (): void => {
     if (run.trim() !== "") {
       parts.push(run);
     }
     run = "";
+    last = undefined;
   };
   for (const e of t.body) {
     if (!entryRenders(e, "", folds)) {
       continue;
     }
     const text = payloadOf(e, "text");
-    if (text === undefined) {
+    if (text === undefined || (last !== undefined && !sameMessage(last, e))) {
       flush();
-      continue;
     }
-    run += text.text;
+    if (text !== undefined) {
+      run += text.text;
+      last = e;
+    }
   }
   flush();
   return parts.join("\n\n");

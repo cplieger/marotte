@@ -52,6 +52,11 @@ function text(seq: number, s: string): Entry {
   return entry(seq, "text", { text: s });
 }
 
+/** `e` as the `k`-th segment of one say, which is how a seal splits one message into several entries. */
+function segment(e: Entry, k: number): Entry {
+  return { ...e, id: k === 1 ? "say" : `say#${String(k)}` };
+}
+
 interface Fixture {
   card: HTMLElement;
   footer: HTMLElement;
@@ -225,8 +230,8 @@ describe("mountTurnFooterActions", () => {
   });
 
   it("concatenates a prose run's entries, because they are one markdown stream", () => {
-    // A run feeds a single parser, so a construct may straddle two entries.
-    const f = fixture([text(1, "**bo"), text(2, "ld**")]);
+    // A run is one message's segments and feeds a single parser, so a construct may straddle two entries.
+    const f = fixture([segment(text(1, "**bo"), 1), segment(text(2, "ld**"), 2)]);
     mountTurnFooterActions(f.footer, f.card, f.turn);
     buttons(f.footer)[1]?.click();
     expect(dispatch).toHaveBeenCalledWith("**bold**", expect.anything());
@@ -242,10 +247,25 @@ describe("mountTurnFooterActions", () => {
 
   it("folds a tool_result away without breaking the run it sits in", () => {
     // A `tool_result` folds into its call's card, so it does not split a run.
-    const f = fixture([text(1, "first "), entry(2, "tool_result"), text(3, "second")]);
+    const f = fixture([
+      segment(text(1, "first "), 1),
+      entry(2, "tool_result"),
+      segment(text(3, "second"), 2),
+    ]);
     mountTurnFooterActions(f.footer, f.card, f.turn);
     buttons(f.footer)[1]?.click();
     expect(dispatch).toHaveBeenCalledWith("first second", expect.anything());
+  });
+
+  it("spends a blank line between two MESSAGES with nothing drawn between them", () => {
+    // Two says are two of the agent's messages, so they are two paragraphs even back to back.
+    const f = fixture([
+      { ...text(1, "first reply."), id: "a-say" },
+      { ...text(2, "second reply."), id: "b-say" },
+    ]);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    buttons(f.footer)[1]?.click();
+    expect(dispatch).toHaveBeenCalledWith("first reply.\n\nsecond reply.", expect.anything());
   });
 
   it("ends a run on a steer_ack, which contributes no words of its own", () => {

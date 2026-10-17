@@ -144,11 +144,13 @@ function runsTurn(turnID: string, runs: number, per: number): Entry[] {
     }
     for (let i = 0; i < per; i++) {
       // Long enough to WRAP, so a departing run's recorded height is worth something.
-      out.push(
-        sealed(turnID, at++, "text", {
+      // One say per run, each chunk a `#k` segment of it, so a run is one message.
+      out.push({
+        ...sealed(turnID, at++, "text", {
           text: `run ${String(r)} chunk ${String(i)}: ${"the quick brown fox jumps over the lazy dog and keeps going ".repeat(6)}`,
         }),
-      );
+        id: `${turnID}-r${String(r)}-say#${String(i + 1)}`,
+      });
     }
   }
   out.push(turnClose(turnID, at));
