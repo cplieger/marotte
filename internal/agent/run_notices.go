@@ -64,19 +64,25 @@ func (rs *Runs) holdsNotice(chatID marotte.ChatID) bool {
 }
 
 // RunNotice consumes the chat's notice whose label the read notice's text quotes: KAS mints the notice id at random,
-// so the words are the only join, and a notice no label matches names no run. translate.runOriginAccess.
+// so the words are the only join. A text no label matches names no run; one several notices match (two launches of
+// one workflow) names none either, and retires them all, since any pick could stamp another run's provenance.
+// translate.runOriginAccess.
 func (rs *Runs) RunNotice(chatID marotte.ChatID, text string) (workflowID string, producedTs int64, ok bool) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	q := rs.notices[chatID]
-	for i, n := range q {
-		if n.label == "" || !strings.Contains(text, `"`+n.label+`"`) {
-			continue
-		}
-		rs.dropNoticesLocked(chatID, slices.Delete(q, i, i+1))
-		return n.workflowID, n.producedTs, true
+	quoted := func(n runNotice) bool { return n.label != "" && strings.Contains(text, `"`+n.label+`"`) }
+	i := slices.IndexFunc(q, quoted)
+	if i < 0 {
+		return "", 0, false
 	}
-	return "", 0, false
+	n := q[i]
+	left := slices.DeleteFunc(slices.Clone(q), quoted)
+	rs.dropNoticesLocked(chatID, left)
+	if len(q)-len(left) > 1 {
+		return "", 0, false
+	}
+	return n.workflowID, n.producedTs, true
 }
 
 // ForgetRunNotices drops n of the chat's notices, oldest first, for a clear naming that many: it carries no words to

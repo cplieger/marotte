@@ -122,18 +122,26 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	}
 	result, outcome := bc.closeTurn(ctx, t, stop, reason, kind, tc.Closer)
 	cf := closeFacts{
-		outcome: outcome, fence: fenceOf(t), unattended: tc.Closer == closerKASIdle, graceClosed: graceClosed(tc.Closer, stop),
+		outcome: outcome, fence: fenceOf(t), unattended: tc.Closer == closerKASIdle, graceClosed: graceClosed(t, tc.Closer, stop),
 	}
 	if tc.Closer == closerBridgeDeath {
 		cf.exit = bc.turns.forwardExit(t.Chat)
+	}
+	// Before finish frees the slot, so no prompt is admitted between the two.
+	if cf.graceClosed {
+		bc.turns.holdForKAS(t)
 	}
 	bc.turns.finish(t, result)
 	bc.publishClose(ctx, t, cf)
 }
 
-// graceClosed reports a close marotte's cancel grace made: only the grace concludes a prompt failure `cancelled`.
-func graceClosed(closer turnCloser, stop marotte.StopReason) bool {
-	return closer == closerCancelGrace || (closer == closerPromptFailure && stop == marotte.StopReasonCancelled)
+// graceClosed reports a close marotte's cancel grace made. A prompt-class turn's failure concludes `cancelled` only on
+// command.ErrCancelGraceExpired; a shell turn's busy refusal concludes it too, and sent kiro-cli nothing.
+func graceClosed(t *activeTurn, closer turnCloser, stop marotte.StopReason) bool {
+	if closer == closerCancelGrace {
+		return true
+	}
+	return closer == closerPromptFailure && stop == marotte.StopReasonCancelled && t.Source.PromptClass()
 }
 
 func (bc *bridgeCoordinator) publishClose(ctx context.Context, t *activeTurn, cf closeFacts) {

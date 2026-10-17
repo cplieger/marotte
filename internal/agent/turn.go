@@ -128,8 +128,11 @@ type chatLifecycle struct {
 	// kasActive is KAS's newest report of whether it runs an execution or holds one for the chat's session
 	// (focus_update activity.turnActive), whatever turn marotte has open.
 	kasActive bool
-	state     turnState
-	mu        sync.Mutex
+	// kasHold refuses every reservation after marotte's cancel grace closed a turn KAS still runs, until
+	// awaitKASIdle ends: a session/prompt sent then is queued beside KAS's own executions and never streamed.
+	kasHold bool
+	state   turnState
+	mu      sync.Mutex
 	// switchMu is held by every writer of pending_model (the switch's admission, the idle or
 	// turn-close apply, the session open's fold): otherwise two appliers read one pick and apply it twice,
 	// or a landing falls between an admission's read and its park. Held across the bridge call.

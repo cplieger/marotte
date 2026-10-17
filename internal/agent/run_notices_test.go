@@ -67,6 +67,29 @@ func TestRunNotice_AClearForgetsAndUnmatchedWordsNameNoRun(t *testing.T) {
 	}
 }
 
+// Two launches of one workflow quote one label, so the words cannot tell their notices apart: reversed delivery
+// must stamp neither notice with the other run's provenance.
+func TestRunNotice_ASharedLabelNamesNoRun(t *testing.T) {
+	h, _, _ := newTestHub()
+	defer shutdownHub(t, h)
+	h.stagePromptTurn(t, "c1")
+	for _, wf := range []string{"wf_1", "wf_2"} {
+		h.runs.observeComplete(t.Context(), "c1", runNotif(methodWFRunComplete, map[string]any{
+			"workflowId": wf, "status": "completed", "finalState": map[string]any{"workflowName": "nightly"},
+		}))
+	}
+	notice := `A workflow you launched ("nightly") completed.`
+
+	for i := range 2 {
+		if wf, _, ok := h.runs.RunNotice("c1", notice); ok {
+			t.Errorf("RunNotice #%d (shared label) = %q, want no run: the words fit both", i+1, wf)
+		}
+	}
+	if h.runs.holdsNotice("c1") {
+		t.Error("the ambiguous notices are still queued, holding clearStaleNotices open")
+	}
+}
+
 func awaitCall(t *testing.T, br *fakeBridge, method string) bool {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

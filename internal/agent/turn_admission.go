@@ -14,9 +14,9 @@ import (
 )
 
 // Every reservation sends a session/prompt or opens a turn, so none is taken beside a bracketed wire turn
-// (bracketedWireLocked). Caller holds mu.
+// (bracketedWireLocked) or during a KAS hold (kasHold). Caller holds mu.
 func (lc *chatLifecycle) reserveLocked(source marotte.TurnOpenSource) bool {
-	if lc.reserved || lc.bracketedWireLocked() {
+	if lc.reserved || lc.kasHold || lc.bracketedWireLocked() {
 		return false
 	}
 	lc.reserved = true
@@ -98,17 +98,18 @@ func (lc *chatLifecycle) bracketedWireLocked() bool {
 	return t != nil && !t.finalizing && t.bracketed && t.Source == marotte.TurnSourceWireTurnStart
 }
 
-// reserveOrHolder tries the reservation and on refusal returns the holder and the next-change channel in one
-// acquisition, so a release between try and park cannot strand the waiter.
-func (r *turnRegistry) reserveOrHolder(chatID marotte.ChatID, source marotte.TurnOpenSource) (ok bool, holder marotte.TurnOpenSource, changed <-chan struct{}) {
+// reserveOrHolder tries the reservation and on refusal reports whether a steerable holder refused it, with the
+// next-change channel, in one acquisition, so a release between try and park cannot strand the waiter. A KAS hold
+// with no holder is not steerable: no turn is open to steer into.
+func (r *turnRegistry) reserveOrHolder(chatID marotte.ChatID, source marotte.TurnOpenSource) (ok, busy bool, changed <-chan struct{}) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	if lc.reserveLocked(source) {
-		return true, 0, nil
+		return true, false, nil
 	}
-	holder, _ = lc.holderSourceLocked()
-	return false, holder, lc.changed
+	holder, held := lc.holderSourceLocked()
+	return false, held && holder.SteerableHolder(), lc.changed
 }
 
 // admissionHolder reports the holder's source (open turn, else reservation), false when neither.
@@ -154,16 +155,16 @@ func (bc *bridgeCoordinator) AdmissionHolderSource(chatID marotte.ChatID) (marot
 
 // ReserveTurnForPrompt takes the slot for a prompt, waiting up to wait; one waiter acquires per wake. A
 // steerable holder (a prompt-class turn, or a wire turn KAS bracketed) answers Busy at once; a local_shell holder
-// parks the waiter and answers Starting at the budget. A dead ctx answers Starting.
+// or a KAS hold parks the waiter and answers Starting at the budget. A dead ctx answers Starting.
 func (bc *bridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration) command.AdmissionOutcome {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for {
-		ok, holder, changed := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt)
+		ok, busy, changed := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt)
 		if ok {
 			return command.AdmissionAcquired
 		}
-		if holder.SteerableHolder() {
+		if busy {
 			return command.AdmissionBusy
 		}
 		select {
@@ -250,18 +251,34 @@ func (r *turnRegistry) noteKASActivity(chatID marotte.ChatID, active bool) {
 }
 
 // kasIdleDrainWait bounds how long a grace-closed turn's drain waits for KAS to report the session idle, so a lost
-// report delays the chat's next send rather than stranding it. A var only so a test can shrink it.
-var kasIdleDrainWait = 15 * time.Minute
+// report delays the chat's next send rather than stranding it.
+const kasIdleDrainWait = 15 * time.Minute
+
+// holdForKAS starts a KAS hold on t's chat when KAS still reports the session active; awaitKASIdle ends it.
+func (r *turnRegistry) holdForKAS(t *activeTurn) {
+	t.lc.mu.Lock()
+	defer t.lc.mu.Unlock()
+	t.lc.kasHold = t.lc.kasActive
+}
 
 // awaitKASIdle waits, after marotte's cancel grace closed a turn kiro-cli had not ended, until KAS reports no
 // execution for the session, so the next send is not queued beside the cancelled one or KAS's re-wake of the
 // notifications the cancel cleared, where KAS streams only one of them (its adapter owns the last execution). False
-// when a turn opened meanwhile, whose own close drains, or when ctx ended; true at the budget.
+// when a turn opened meanwhile, whose own close drains, or when ctx ended; true at the budget. Every exit ends the
+// chat's KAS hold.
 func (r *turnRegistry) awaitKASIdle(ctx context.Context, chatID marotte.ChatID, budget time.Duration) bool {
 	lc, ok := r.lookup(chatID)
 	if !ok {
 		return true
 	}
+	defer func() {
+		lc.mu.Lock()
+		defer lc.mu.Unlock()
+		if lc.kasHold {
+			lc.kasHold = false
+			lc.wakeLocked()
+		}
+	}()
 	timer := time.NewTimer(budget)
 	defer timer.Stop()
 	for {
@@ -328,11 +345,11 @@ func (r *turnRegistry) idleSince(chatID marotte.ChatID, t *activeTurn, arm uint6
 
 // One last try first.
 func (bc *bridgeCoordinator) expiredAdmission(chatID marotte.ChatID) command.AdmissionOutcome {
-	ok, holder, _ := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt)
+	ok, busy, _ := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt)
 	if ok {
 		return command.AdmissionAcquired
 	}
-	if holder.SteerableHolder() {
+	if busy {
 		return command.AdmissionBusy
 	}
 	return command.AdmissionStarting
