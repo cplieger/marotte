@@ -1,0 +1,28 @@
+{
+  "workflowId": "wf_04b7a7ba1affa505",
+  "state": {
+    "workflowId": "wf_04b7a7ba1affa505",
+    "workflowName": "workflow-from-prompt",
+    "status": "running",
+    "root": {
+      "nodeId": "wf_04b7a7ba1affa505",
+      "type": "sequence",
+      "status": "running",
+      "children": [
+        {
+          "nodeId": "create-workflow",
+          "type": "step",
+          "status": "completed",
+          "agentName": "wf-workflow-creator",
+          "startedAt": "2026-10-17T10:49:54.573Z",
+          "sessionId": "sess_bb88c405-020f-42b1-9185-1aca2328fadb",
+          "completionSignal": "success",
+          "completionSignalSource": "send_message",
+          "capturePinned": true,
+          "capturedOutput": "Plan accepted: example-plan",
+          "endedAt": "2026-10-17T11:11:04.671Z"
+        }
+      ]
+    }
+  }
+}

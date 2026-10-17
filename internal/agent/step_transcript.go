@@ -28,7 +28,8 @@ var errRunStateUndecodable = errors.New("this run's state could not be decoded")
 // stepTranscript reads one step's transcript from the run's log when it holds a turn for the path (`log`, with
 // open tails and stamps), else KAS's replay (`replay`). `ready`, `gone` (session gone or never started) or
 // `unavailable` (worth retrying). nodePath is a workflow.PathKey, looked up among workflowID's own steps only,
-// so another run's step, like a missing key, is errStepUnknown.
+// so another run's step, like a missing key, is errStepUnknown. The newest turn_close reads graded under KAS's
+// record of the step (stepClose.graded), as `step_ends` does.
 func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string) (marotte.RunStepTranscript, error) {
 	out := marotte.RunStepTranscript{
 		Entries:     []marotte.Entry{},
@@ -40,6 +41,9 @@ func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string)
 		Source:      marotte.RunStepTranscriptSourceReplay,
 	}
 	if rs.log != nil && rs.fromRunLog(ctx, &out) {
+		gradeNewestClose(out.Entries, func() (workflow.StepRecord, bool) {
+			return rs.kasStep(ctx, workflowID, nodePath)
+		})
 		return out, nil
 	}
 	raw, err := rs.rawInspect(ctx, workflowID)
@@ -76,6 +80,7 @@ func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string)
 	for i := range turns {
 		out.Entries = append(out.Entries, turns[i].Entries...)
 	}
+	gradeNewestClose(out.Entries, func() (workflow.StepRecord, bool) { return kasStepIn(workflowID, raw, nodePath) })
 	return out, nil
 }
 

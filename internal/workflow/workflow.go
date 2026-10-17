@@ -90,26 +90,13 @@ func StepSessions(s *State) []StepSession {
 // Steps returns EVERY step node in the same order, run or not, so a caller can tell "no
 // such step" from "not started".
 func Steps(s *State) []StepSession {
-	if s == nil || s.Root == nil {
-		return nil
-	}
 	var out []StepSession
-	walk(s.Root, nil, nil, &out)
+	for _, v := range nodes(s) {
+		if v.n.Type == "step" {
+			out = append(out, StepSession{NodeID: v.n.NodeID, SessionID: v.n.SessionID, Status: v.n.Status, Path: v.path})
+		}
+	}
 	return out
-}
-
-// Each level allocates its path at EXACT capacity, or a child's append writes into a sibling's
-// backing array.
-func walk(n, parent *node, trail []string, out *[]StepSession) {
-	path := make([]string, 0, len(trail)+1)
-	path = append(path, trail...)
-	path = append(path, pathSegment(n, parent))
-	if n.Type == "step" {
-		*out = append(*out, StepSession{NodeID: n.NodeID, SessionID: n.SessionID, Status: n.Status, Path: path})
-	}
-	for i := range n.Children {
-		walk(&n.Children[i], n, path, out)
-	}
 }
 
 // pathSegment is what KAS calls this node in a node PATH. A repeat's iteration container

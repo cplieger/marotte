@@ -230,19 +230,20 @@ func TestRunLog_ARecordedRefusalOutranksTheNodeCompleteStatus(t *testing.T) {
 	}
 }
 
-func TestRunLog_AStepStoppedAtTheModelCallLimitNeverReadsCompleted(t *testing.T) {
+// TestRunLog_ACloseKeepsKASsStatusOverAToolUseStop pins that a tool_use stop alone never fails a step at its close:
+// kiro-cli ends a turn on tool_use both at its model-call limit and after a tool that ends the turn, and only KAS's
+// node record, read later, tells the two apart.
+func TestRunLog_ACloseKeepsKASsStatusOverAToolUseStop(t *testing.T) {
 	cases := []struct {
 		desc    string
 		status  string
 		reason  string
 		outcome marotte.TurnOutcome
-		kind    marotte.FailureKind
 		want    string
 	}{
-		// The measured shape: KAS reports `completed` with no reason after a last turn_end of tool_use.
-		{"a step KAS reports as completed", "completed", "", marotte.TurnOutcomeFailed, marotte.FailureKindModelCallLimit, marotte.ModelCallLimitStepReason},
-		{"KAS's own failure keeps its account", "failed", "boom", marotte.TurnOutcomeFailed, "", "boom"},
-		{"a cancel keeps its account", "cancelled", "", marotte.TurnOutcomeCancelled, "", ""},
+		{"a step KAS reports as completed", "completed", "", marotte.TurnOutcomeCompleted, ""},
+		{"KAS's own failure keeps its account", "failed", "boom", marotte.TurnOutcomeFailed, "boom"},
+		{"a cancel keeps its account", "cancelled", "", marotte.TurnOutcomeCancelled, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
@@ -259,9 +260,9 @@ func TestRunLog_AStepStoppedAtTheModelCallLimitNeverReadsCompleted(t *testing.T)
 			}
 			entries := runLogEntries(t, r, "wf1")
 			c := closeEntryOf(t, entries[len(entries)-1])
-			if c.Outcome != tc.outcome || c.FailureKind != tc.kind || c.FailureReason != tc.want || c.StopReasonRaw != "tool_use" {
-				t.Errorf("CloseNode(%q, %q) after turn_end tool_use wrote turn_close {%s %q %q %s}, want {%s %q %q tool_use}",
-					tc.status, tc.reason, c.Outcome, c.FailureKind, c.FailureReason, c.StopReasonRaw, tc.outcome, tc.kind, tc.want)
+			if c.Outcome != tc.outcome || c.FailureKind != "" || c.FailureReason != tc.want || c.StopReasonRaw != "tool_use" {
+				t.Errorf("CloseNode(%q, %q) after turn_end tool_use wrote turn_close {%s %q %q %s}, want {%s \"\" %q tool_use}",
+					tc.status, tc.reason, c.Outcome, c.FailureKind, c.FailureReason, c.StopReasonRaw, tc.outcome, tc.want)
 			}
 		})
 	}
@@ -281,12 +282,20 @@ func closeStep(t *testing.T, r *runLog, path string, raw marotte.StopReason, sta
 	}
 }
 
-func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
+func TestRunLog_StepEndsGradesEachPathsNewestCloseUnderKAS(t *testing.T) {
 	var (
-		capped = workflow.PathKey([]string{"wf1", "capped"})
-		clean  = workflow.PathKey([]string{"wf1", "clean"})
-		rerun  = workflow.PathKey([]string{"wf1", "rerun"})
+		capped  = workflow.PathKey([]string{"wf1", "capped"})
+		handoff = workflow.PathKey([]string{"wf1", "handoff"})
+		clean   = workflow.PathKey([]string{"wf1", "clean"})
+		rerun   = workflow.PathKey([]string{"wf1", "rerun"})
 	)
+	// KAS's record: every step completed, and only the handoff signalled success.
+	kas := map[string]workflow.StepRecord{
+		capped:  {Status: "completed"},
+		handoff: {Status: "completed", CompletionSignal: "success"},
+		clean:   {Status: "completed"},
+		rerun:   {Status: "completed"},
+	}
 	limit := marotte.RunStepEnd{
 		Outcome:       marotte.TurnOutcomeFailed,
 		FailureReason: marotte.ModelCallLimitStepReason,
@@ -296,12 +305,13 @@ func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
 		dir := t.TempDir()
 		w := newRunLog(dir)
 		closeStep(t, w, capped, marotte.StopReasonToolUse, "completed")
+		closeStep(t, w, handoff, marotte.StopReasonToolUse, "completed")
 		closeStep(t, w, clean, marotte.StopReasonEndTurn, "completed")
-		// A rerun of a path that once failed: its newest turn is what the step says now.
+		// A rerun of a path that once stopped early: its newest turn is what the step says now.
 		closeStep(t, w, rerun, marotte.StopReasonToolUse, "completed")
 		closeStep(t, w, rerun, marotte.StopReasonEndTurn, "completed")
 
-		got, err := newRunLog(dir).stepEnds(t.Context(), "wf1")
+		got, err := newRunLog(dir).stepEnds(t.Context(), "wf1", kas)
 		if err != nil {
 			t.Fatalf("StepEnds: %v", err)
 		}
@@ -313,12 +323,12 @@ func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
 	t.Run("a close after the first read keeps the answer current", func(t *testing.T) {
 		r := newRunLog(t.TempDir())
 		closeStep(t, r, clean, marotte.StopReasonEndTurn, "completed")
-		if got, err := r.stepEnds(t.Context(), "wf1"); err != nil || len(got) != 0 {
+		if got, err := r.stepEnds(t.Context(), "wf1", kas); err != nil || len(got) != 0 {
 			t.Fatalf("StepEnds before any broken close = %+v, %v, want none", got, err)
 		}
 		closeStep(t, r, capped, marotte.StopReasonToolUse, "completed")
 
-		got, err := r.stepEnds(t.Context(), "wf1")
+		got, err := r.stepEnds(t.Context(), "wf1", kas)
 		if err != nil {
 			t.Fatalf("StepEnds: %v", err)
 		}
@@ -326,8 +336,15 @@ func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
 			t.Errorf("StepEnds after the capped close = %+v, want %+v", got, want)
 		}
 	})
+	t.Run("with KAS's record unread a tool_use stop names nothing", func(t *testing.T) {
+		r := newRunLog(t.TempDir())
+		closeStep(t, r, capped, marotte.StopReasonToolUse, "completed")
+		if got, err := r.stepEnds(t.Context(), "wf1", nil); err != nil || len(got) != 0 {
+			t.Errorf("StepEnds with no KAS record = %+v, %v, want none", got, err)
+		}
+	})
 	t.Run("a run with no log answers nothing", func(t *testing.T) {
-		got, err := newRunLog(t.TempDir()).stepEnds(t.Context(), "wf1")
+		got, err := newRunLog(t.TempDir()).stepEnds(t.Context(), "wf1", kas)
 		if err != nil || got != nil {
 			t.Errorf("StepEnds with no log = %+v, %v, want nil, nil", got, err)
 		}
@@ -438,7 +455,7 @@ func TestRunLog_StepStartsKeepsAnAttemptAcrossAResume(t *testing.T) {
 			t.Fatal(err)
 		}
 		r := newRunLog(dir)
-		if _, err := r.stepEnds(t.Context(), "wf1"); err != nil {
+		if _, err := r.stepEnds(t.Context(), "wf1", nil); err != nil {
 			t.Fatalf("StepEnds: %v", err)
 		}
 		assertStarts(t, r, step, startOf(first, true))

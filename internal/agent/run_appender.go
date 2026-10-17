@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/turnlog"
 	"github.com/cplieger/marotte/internal/workflow"
@@ -55,7 +56,7 @@ func (rs *Runs) RunNodeComplete(ctx context.Context, runID string, path []string
 		slog.Debug("run log: node_complete for a path with no open turn", "run", runID, "node_path", nodePath)
 	}
 	translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
-	rs.noteStepEnded(ctx, runID, path, sealed)
+	rs.noteStepEnded(runID, path, sealed)
 	if closed {
 		rs.quietEdge()
 	}
@@ -75,29 +76,45 @@ func stepNoteID(workflowID, cause, nodePath string) string {
 
 // A step KAS graded completed that did not finish: declined, or stopped at kiro-cli's model-call limit.
 // It reaches the human reading the chat, not the agent (recordSteer never calls _session/steer).
-// Only CloseNode's close gets here.
-func (rs *Runs) noteStepEnded(ctx context.Context, workflowID string, path []string, sealed []turnlog.Sealed) {
-	c, ok := turnCloseOf(sealed)
+// Only CloseNode's close gets here. The grade needs KAS's record of the node, an engine read, so it runs off the
+// frame's goroutine.
+func (rs *Runs) noteStepEnded(workflowID string, path []string, sealed []turnlog.Sealed) {
+	tc, ok := turnCloseOf(sealed)
 	if !ok {
 		return
 	}
-	var cause string
-	switch {
-	case c.Outcome == marotte.TurnOutcomeRefused:
-		cause = stepNoteRefused
-	case c.FailureKind == marotte.FailureKindModelCallLimit:
-		cause = stepNoteModelCallLimit
-	default:
+	c := stepCloseOf(&tc)
+	if !c.mayNote() || rs.lifecycle == nil {
 		return
 	}
 	l, held := rs.lease(workflowID)
 	if !held || l.ChatID == "" || rs.coord == nil {
 		return
 	}
+	nodePath := workflow.PathKey(path)
+	rs.lifecycle.goUnlessDraining(func() {
+		ctx, cancel := rs.lifecycle.derivedContext()
+		defer cancel()
+		rs.noteGradedStepEnd(ctx, &l, path, c.graded(rs.kasStep(ctx, workflowID, nodePath)))
+	})
+}
+
+// noteGradedStepEnd leaves the note a graded step end calls for, if any.
+func (rs *Runs) noteGradedStepEnd(ctx context.Context, l *runlease.Lease, path []string, c stepClose) {
+	var cause string
+	switch {
+	case c.outcome == marotte.TurnOutcomeRefused:
+		cause = stepNoteRefused
+	case c.kind == marotte.FailureKindModelCallLimit:
+		cause = stepNoteModelCallLimit
+	default:
+		return
+	}
+	workflowID := l.WorkflowID
 	recipe := cmp.Or(l.Recipe, "Workflow run")
 	text := stepModelCallLimitNoteText(recipe, path)
 	if cause == stepNoteRefused {
-		text = stepRefusalNoteText(recipe, path, c.Refusal)
+		text = stepRefusalNoteText(recipe, path, c.refusal)
 	}
 	rs.coord.recordSteer(ctx, marotte.ChatID(l.ChatID), stepNoteID(workflowID, cause, workflow.PathKey(path)), &marotte.EntrySteer{
 		Text:       text,

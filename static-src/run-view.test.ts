@@ -24,6 +24,7 @@ interface RunInspectReply {
     pauseDetail?: { class?: string; code?: string };
   };
   nodePlan?: unknown;
+  step_ends?: Record<string, { outcome: string; failure_kind?: string; failure_reason?: string }>;
 }
 
 /** What a door decided, which is all a door decides now: `owns` (does the × stop the run) and
@@ -67,7 +68,7 @@ const m = vi.hoisted(() => ({
    *  flag (its own `turn_close` absence). Per path rather than a flat list, because the module's
    *  one view effect legitimately paints the PREVIOUS case's plan on its first pass of the next
    *  one, and a cumulative list would carry that. */
-  paint: new Map<string, { turns: number; live: boolean[] }>(),
+  paint: new Map<string, { turns: number; live: boolean[]; closes: (string | undefined)[] }>(),
   /** `<kind>:<ref>` for every open tab, as `hasTab` sees it. */
   tabsOpen: new Set<string>(),
   /** The step read's VERDICT per node path, which is all a read carries now: its entries are
@@ -207,7 +208,7 @@ vi.mock("./run-chat-steps.js", () => ({
     apply: (
       paints: ReadonlyMap<
         string,
-        readonly { turn: { id: string; body: unknown[] }; live: boolean }[]
+        readonly { turn: { id: string; body: Entry[] }; live: boolean }[]
       >,
     ) => {
       for (const [path, list] of paints) {
@@ -215,6 +216,12 @@ vi.mock("./run-chat-steps.js", () => ({
         m.paint.set(path, {
           turns: list.length,
           live: list.map((p) => p.live),
+          // Each painted turn's close as `outcome/failure_kind`, the grade the pane is handed.
+          closes: list.map((p) => {
+            const close = p.turn.body.find((e) => e.kind === "turn_close")?.payload as
+              { outcome: string; failure_kind?: string } | undefined;
+            return close === undefined ? undefined : `${close.outcome}/${close.failure_kind ?? ""}`;
+          }),
         });
         const host = hostFor(path);
         m.hosted.push(host);
@@ -305,6 +312,8 @@ async function paint(
     parentSessionId?: string;
     /** More of the run's state, as `inspect` carries it (a pause reason). */
     state?: { pauseReason?: string; pauseDetail?: { class?: string; code?: string } };
+    /** The run read's `step_ends`, the server's grade of each step under KAS's record. */
+    stepEnds?: RunInspectReply["step_ends"];
   } = {},
 ): Promise<{ labels: string[]; refusals: string[]; tab: OpenedTab; body: HTMLElement }> {
   const id = opts.id ?? "wf_1";
@@ -323,6 +332,7 @@ async function paint(
     // Beside `state`, not inside it: the plan is its own member of KAS's inspect reply and the
     // store keeps the two apart for that reason.
     ...(opts.nodePlan === undefined ? {} : { nodePlan: opts.nodePlan }),
+    ...(opts.stepEnds === undefined ? {} : { step_ends: opts.stepEnds }),
   };
   m.reply.current = reply;
   m.controls.current =
@@ -377,7 +387,7 @@ function logStep(
   workflowID: string,
   nodePath: string,
   text: string,
-  opts: { live?: boolean; attempt?: number } = {},
+  opts: { live?: boolean; attempt?: number; close?: unknown } = {},
 ): void {
   const turn = `t-${workflowID}-${nodePath}-${String(opts.attempt ?? 1)}`;
   const entry = (seq: number, kind: Entry["kind"], payload: unknown): Entry => ({
@@ -395,7 +405,7 @@ function logStep(
   );
   appendRunEntry(workflowID, entry(1, "text", { text }));
   if (opts.live !== true) {
-    appendRunEntry(workflowID, entry(2, "turn_close", { outcome: "completed" }));
+    appendRunEntry(workflowID, entry(2, "turn_close", opts.close ?? { outcome: "completed" }));
   }
 }
 
@@ -2124,6 +2134,48 @@ describe("run view step transcripts", () => {
     await paint(openRunView, "running", { root: steps("closed", "after") });
     await painted("wf_1:closed");
     expect(m.paint.get("wf_1:closed")?.live).toEqual([false]);
+  });
+
+  // A live `turn_close` on a `tool_use` stop says KAS's `completed`: only the run read's `step_ends`,
+  // graded under KAS's record of the node, can say the step hit the model-call limit, and the held
+  // close is never replaced (a re-read of the same entry is a redelivery). The row grades the
+  // step's NEWEST attempt only: an earlier attempt keeps the close it ended with.
+  it("paints a step's newest turn with the run read's grade of the step", async () => {
+    const toolUse = { outcome: "completed", stop_reason_raw: "tool_use" };
+    logStep("wf_1", "wf_1:limited", "first attempt", {
+      attempt: 1,
+      close: { outcome: "interrupted" },
+    });
+    logStep("wf_1", "wf_1:limited", "working", { attempt: 2, close: toolUse });
+    logStep("wf_1", "wf_1:handoff", "plan accepted", { close: toolUse });
+    const root = {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [
+        { nodeId: "limited", type: "step", status: "completed", children: [] },
+        { nodeId: "handoff", type: "step", status: "completed", children: [] },
+      ],
+    };
+    await paint(openRunView, "running", {
+      root,
+      stepEnds: {
+        "wf_1:limited": {
+          outcome: "failed",
+          failure_kind: "model_call_limit",
+          failure_reason: "kiro-cli stopped this step after 300 model calls in one turn.",
+        },
+      },
+    });
+    await painted("wf_1:limited");
+    await painted("wf_1:handoff");
+
+    expect(m.paint.get("wf_1:limited")?.closes).toEqual([
+      "interrupted/",
+      "failed/model_call_limit",
+    ]);
+    // A step KAS completed on a success signal has no row, so its turn keeps its own close.
+    expect(m.paint.get("wf_1:handoff")?.closes).toEqual(["completed/"]);
   });
 
   // A step's prose GROWS after the first paint, and the pane has to follow it or the transcript is

@@ -24,6 +24,7 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/turnlog"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 const runLogDir = "runs"
@@ -72,8 +73,8 @@ type runRecord struct {
 	// staged holds, per path, the user's words a paused step resumes on, until KAS reopens the path's
 	// turn: they become that turn's prompt.
 	staged map[string]*marotte.EntryPrompt
-	// ends is each path whose newest turn closed broken, nil until a read scans the log; every close then keeps it current.
-	ends map[string]marotte.RunStepEnd
+	// closes is each path's newest turn_close, nil until a read scans the log; every close then keeps it current.
+	closes map[string]stepClose
 	// starts is each path's current attempt, nil until a read scans the log; every open and close then keeps it current.
 	starts map[string]stepAttempt
 	host   marotte.ChatID
@@ -538,15 +539,12 @@ func (r *runLog) closeNode(ctx context.Context, workflowID, nodePath, status, re
 	}
 	c := runOutcome(status)
 	c.Reason = reason
-	// KAS grades a refused step, and one its iteration limit stopped, `completed`; the step's last turn_end
-	// outranks that status. A failed or cancelled status keeps KAS's own account.
-	switch stop := marotte.ConcludeStopReason(t.rawStop); {
-	case stop.Outcome == marotte.TurnOutcomeRefused:
+	// KAS grades a refused step `completed`; at close time the step's last turn_end outranks that status. A tool_use
+	// stop does not: only KAS's node record, which node_complete does not carry, says whether it was the model-call
+	// limit. stepClose.graded owns the read-time grade of both.
+	if stop := marotte.ConcludeStopReason(t.rawStop); stop.Outcome == marotte.TurnOutcomeRefused {
 		c = stop
 		c.Reason = reason
-	case stop.FailureKind == marotte.FailureKindModelCallLimit && c.Outcome == marotte.TurnOutcomeCompleted:
-		c = stop
-		c.Reason = marotte.ModelCallLimitStepReason
 	}
 	// An unmapped status is itself the raw stop, keeping it recoverable.
 	if c.Known && t.rawStop != "" {
@@ -654,8 +652,8 @@ func (*runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c ma
 	sealed, err := t.turn.Close(ctx, c)
 	delete(rec.open, t.path)
 	rec.closed[t.path] = t.turn.ID()
-	if rec.ends != nil {
-		noteStepEnd(rec.ends, t.path, c.Outcome, c.Reason, c.FailureKind)
+	if rec.closes != nil {
+		rec.closes[t.path] = stepClose{outcome: c.Outcome, reason: c.Reason, kind: c.FailureKind, rawStop: c.RawStop}
 	}
 	if rec.starts != nil {
 		noteAttemptClose(rec.starts, t.path, c.Outcome)
@@ -663,18 +661,10 @@ func (*runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c ma
 	return sealed, err
 }
 
-// noteStepEnd records a path's newest close: a broken one is kept, any other drops what an earlier turn left.
-func noteStepEnd(ends map[string]marotte.RunStepEnd, path string, o marotte.TurnOutcome, reason string, kind marotte.FailureKind) {
-	if marotte.SeverityOf(o) != marotte.TurnSeverityBroken {
-		delete(ends, path)
-		return
-	}
-	ends[path] = marotte.RunStepEnd{Outcome: o, FailureReason: reason, FailureKind: kind}
-}
-
-// stepEnds answers the run's broken step ends by node path, scanning the log on the first read of the process;
-// nil with no log.
-func (r *runLog) stepEnds(ctx context.Context, workflowID string) (map[string]marotte.RunStepEnd, error) {
+// stepEnds answers the run's broken step ends by node path, each path's newest close graded under kas, KAS's record
+// of the run's steps by PathKey (nil when it was not read). It scans the log on the first read of the process; nil
+// with no log.
+func (r *runLog) stepEnds(ctx context.Context, workflowID string, kas map[string]workflow.StepRecord) (map[string]marotte.RunStepEnd, error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, err
@@ -688,27 +678,34 @@ func (r *runLog) stepEnds(ctx context.Context, workflowID string) (map[string]ma
 	if err := scanStepFactsLocked(rec, l); err != nil {
 		return nil, err
 	}
-	return maps.Clone(rec.ends), nil
+	ends := make(map[string]marotte.RunStepEnd)
+	for path, c := range rec.closes {
+		st, known := kas[path]
+		if end, broken := c.graded(st, known).end(); broken {
+			ends[path] = end
+		}
+	}
+	return ends, nil
 }
 
-// scanStepFactsLocked fills the record's step ends and attempt starts from its log once per process, both in one scan;
-// every open and close keeps them current after. Caller holds runLog.mu.
+// scanStepFactsLocked fills the record's step closes and attempt starts from its log once per process, both in one
+// scan; every open and close keeps them current after. Caller holds runLog.mu.
 func scanStepFactsLocked(rec *runRecord, l *chat.EntryLog) error {
-	if rec.ends != nil {
+	if rec.closes != nil {
 		return nil
 	}
 	all, err := l.All()
 	if err != nil {
 		return err
 	}
-	rec.ends, rec.starts = scanStepFacts(all)
+	rec.closes, rec.starts = scanStepFacts(all)
 	return nil
 }
 
-// scanStepFacts folds a log's turn_open paths and turn_close outcomes in file order into each path's broken end, so a
-// path's newest turn wins, and its current attempt.
-func scanStepFacts(all []marotte.Entry) (ends map[string]marotte.RunStepEnd, starts map[string]stepAttempt) {
-	ends = make(map[string]marotte.RunStepEnd)
+// scanStepFacts folds a log's turn_open paths and turn_close entries in file order into each path's newest close and
+// its current attempt.
+func scanStepFacts(all []marotte.Entry) (closes map[string]stepClose, starts map[string]stepAttempt) {
+	closes = make(map[string]stepClose)
 	starts = make(map[string]stepAttempt)
 	paths := make(map[string]string)
 	for i := range all {
@@ -723,12 +720,12 @@ func scanStepFacts(all []marotte.Entry) (ends map[string]marotte.RunStepEnd, sta
 		case marotte.EntryKindTurnClose:
 			var tc marotte.EntryTurnClose
 			if path, ok := paths[e.Turn]; ok && json.Unmarshal(e.Payload, &tc) == nil {
-				noteStepEnd(ends, path, tc.Outcome, tc.FailureReason, tc.FailureKind)
+				closes[path] = stepCloseOf(&tc)
 				noteAttemptClose(starts, path, tc.Outcome)
 			}
 		}
 	}
-	return ends, starts
+	return closes, starts
 }
 
 // stepAttempt is one path's current attempt: when its first turn opened, whether its newest turn is open, and

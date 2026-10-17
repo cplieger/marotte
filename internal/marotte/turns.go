@@ -153,8 +153,9 @@ func ConcludeStopReason(stop StopReason) TurnConclusion {
 	case StopReasonRefusal, StopReasonContentFiltered:
 		c.Outcome = TurnOutcomeRefused
 	case StopReasonToolUse:
-		// Not truncated-and-completed like the bounds below: the model had asked for more work,
-		// so a completed grade would report unfinished work as done.
+		// The turn-level default, not truncated-and-completed like the bounds below: at the limit
+		// the model had asked for more work. A workflow step's grade is KAS's node record's
+		// (agent's stepClose.graded), since a tool-requested turn end stops here too.
 		c.Outcome = TurnOutcomeFailed
 		c.FailureKind = FailureKindModelCallLimit
 		c.Reason = ModelCallLimitTurnReason

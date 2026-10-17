@@ -164,8 +164,11 @@ onSSE("turn_closed", (_chatID, p) => {
     // A step reads settled from its own `turn_close` rather than from a flag.
     appendRunEntry(runID, p.entry);
     // The tree grades a broken step from the run read's `step_ends`, and the applied
-    // `node_complete` still says KAS's `completed`, so only a refetch turns the row red live.
-    if (isBroken(payloadOf(p.entry, "turn_close")?.outcome)) {
+    // `node_complete` still says KAS's `completed`, so only a refetch turns the row red live. A
+    // `tool_use` stop is broken only under KAS's record of the step, which the server reads
+    // (`stepClose.graded`).
+    const close = payloadOf(p.entry, "turn_close");
+    if (isBroken(close?.outcome) || close?.stop_reason_raw === "tool_use") {
       invalidateRun(runID);
     }
   }

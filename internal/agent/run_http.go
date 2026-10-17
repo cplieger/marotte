@@ -51,7 +51,7 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	var ends map[string]marotte.RunStepEnd
 	var starts map[string]marotte.RunStepStart
 	if rr.runs.log != nil {
-		ends, err = rr.runs.log.stepEnds(r.Context(), id)
+		ends, err = rr.runs.log.stepEnds(r.Context(), id, kasSteps(read.in))
 		if err != nil {
 			slog.Warn("workflow inspect: the run log's step ends could not be read",
 				"workflow_id", logsafe.Field(id), "error", err)

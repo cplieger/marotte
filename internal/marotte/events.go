@@ -80,9 +80,10 @@ const (
 	// is what TurnConclusion.Truncated carries.
 	StopReasonMaxTokens       StopReason = "max_tokens"
 	StopReasonMaxTurnRequests StopReason = "max_turn_requests"
-	// StopReasonToolUse is KAS's raw stop for a turn its agent loop cut at the per-turn
-	// model-call limit while the model was asking for another tool. KAS never sends
-	// max_turn_requests for that stop, and a turn that finishes never ends on tool_use.
+	// StopReasonToolUse is the model's last stop on a turn KAS ended while the model was asking
+	// for a tool: at the per-turn model-call limit (KAS never sends max_turn_requests for it), or,
+	// since kiro-cli 2.32.0, after a tool that ends the turn (update_workflow's handoff). Only
+	// KAS's node record tells a workflow step's two cases apart.
 	StopReasonToolUse StopReason = "tool_use"
 	// StopReasonUnterminated is marotte's OWN value, never KAS's: the store-open closer and the
 	// merge's synthesized closer stamp it on a turn nobody closed. An enum member, not a literal,

@@ -13,12 +13,12 @@ import (
 )
 
 // runLoggingHub is a runtime whose Runs has a run log, set directly rather than through the order-sensitive wiring.
-func runLoggingHub(t *testing.T) (*Runtime, *testChatStore) {
+func runLoggingHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
 	t.Helper()
-	h, cs, _ := newTestHub()
+	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.runs.log = newRunLog(t.TempDir())
-	return h, cs
+	return h, cs, br
 }
 
 func refuseStep(t *testing.T, rs *Runs, runID string, path []string, r *marotte.RefusalInfo) {
@@ -64,7 +64,7 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 		chatID = marotte.ChatID("c1")
 	)
 	path := []string{"wf_1", "loop", "iter-1", "build"}
-	h, cs := runLoggingHub(t)
+	h, cs, _ := runLoggingHub(t)
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
 		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
@@ -74,6 +74,7 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 	})
 
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
+	joinInflight(t, h)
 
 	entries, err := cs.All(t.Context(), chatID)
 	if err != nil {
@@ -112,7 +113,8 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 	}
 }
 
-// KAS grades a step its iteration limit stopped `completed`, so only this note tells the launching chat it did not finish.
+// KAS grades a step its iteration limit stopped `completed` with no signal, so only this note tells the launching chat
+// it did not finish.
 func TestRunNodeComplete_AStepStoppedAtTheModelCallLimitTellsTheLaunchingChat(t *testing.T) {
 	const (
 		id     = "wf_1"
@@ -120,7 +122,8 @@ func TestRunNodeComplete_AStepStoppedAtTheModelCallLimitTellsTheLaunchingChat(t 
 	)
 	path := []string{"wf_1", "build"}
 	nodePath := workflow.PathKey(path)
-	h, cs := runLoggingHub(t)
+	h, cs, br := runLoggingHub(t)
+	br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "completed", ""))
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
 		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
@@ -130,6 +133,7 @@ func TestRunNodeComplete_AStepStoppedAtTheModelCallLimitTellsTheLaunchingChat(t 
 	}
 
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
+	joinInflight(t, h)
 
 	entries, err := cs.All(t.Context(), chatID)
 	if err != nil {
@@ -160,13 +164,14 @@ func TestRunNodeComplete_ARefusalWithNoMetadataStillLeavesANote(t *testing.T) {
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
 	)
-	h, cs := runLoggingHub(t)
+	h, cs, _ := runLoggingHub(t)
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
 		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 	refuseStep(t, h.runs, id, []string{"build"}, nil)
 
 	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
+	joinInflight(t, h)
 
 	steers := chatSteers(t, cs, chatID)
 	if len(steers) != 1 {
@@ -193,7 +198,7 @@ func TestRunNodeComplete_AStepThatRanLeavesNoNote(t *testing.T) {
 		{"a cancelled step", marotte.StopReasonCancelled, "cancelled"},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			h, cs := runLoggingHub(t)
+			h, cs, br := runLoggingHub(t)
 			seedChat(t, cs, chatID)
 			h.runs.grantLease(t.Context(), id, "nightly",
 				launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
@@ -201,11 +206,17 @@ func TestRunNodeComplete_AStepThatRanLeavesNoNote(t *testing.T) {
 			if !h.runs.log.stopReason(id, "build", tc.raw) {
 				t.Fatalf("StopReason(%q) refused on the open turn", tc.raw)
 			}
+			br.forgetCalls()
 
 			h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, tc.status, "")
+			joinInflight(t, h)
 
 			if steers := chatSteers(t, cs, chatID); len(steers) != 0 {
 				t.Errorf("%s left %d notes, want none: %+v", tc.desc, len(steers), steers)
+			}
+			// No grade of this close can call for a note, so the run's state is not read for one.
+			if calls := br.callLog(); slices.Contains(calls, methodKiroWorkflowInspect) {
+				t.Errorf("%s read the run's state for a note it cannot leave: calls %v", tc.desc, calls)
 			}
 		})
 	}
@@ -215,12 +226,13 @@ func TestRunNodeComplete_AStepThatRanLeavesNoNote(t *testing.T) {
 // failure is what proves nothing was attempted. No t.Parallel: captureLogs swaps the slog default.
 func TestRunNodeComplete_AParentlessRunLeavesNoNote(t *testing.T) {
 	const id = "wf_1"
-	h, cs := runLoggingHub(t)
+	h, cs, _ := runLoggingHub(t)
 	leased(t, h.runs, id)
 	refuseStep(t, h.runs, id, []string{"build"}, &marotte.RefusalInfo{Category: "policy"})
 	logs := captureLogs(t)
 
 	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
+	joinInflight(t, h)
 
 	if strings.Contains(logs.String(), "a steer was not recorded") {
 		t.Errorf("a parentless run's refusal tried to write a note: %s", logs.String())
@@ -236,14 +248,16 @@ func TestRunNodeComplete_ARefusalIsNotedOnce(t *testing.T) {
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
 	)
-	h, cs := runLoggingHub(t)
+	h, cs, _ := runLoggingHub(t)
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
 		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 	refuseStep(t, h.runs, id, []string{"build"}, &marotte.RefusalInfo{Category: "policy"})
 
 	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
+	joinInflight(t, h)
 	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
+	joinInflight(t, h)
 
 	if steers := chatSteers(t, cs, chatID); len(steers) != 1 {
 		t.Errorf("got %d notes for one refusal, want one", len(steers))
