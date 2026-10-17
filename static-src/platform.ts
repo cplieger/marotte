@@ -64,8 +64,10 @@ export function fixIOSViewport(input: HTMLElement): (() => void) | undefined {
   };
 }
 
-// initSidebarSwipe — edge-swipe-to-open and swipe-left-to-close gestures for the PWA sidebar. Only
-// active in standalone (PWA) mode; browser Safari's back-gesture conflicts with this otherwise.
+// initSidebarSwipe — edge-swipe-to-open and swipe-left-to-close gestures for the PWA sidebar, in
+// standalone (PWA) mode only: a browser tab's edge swipe navigates the tab's history, out of marotte
+// on a fresh tab. Standalone iOS has the same swipe since 12.2, but it walks only the app's own
+// history (https://medium.com/@firt/whats-new-on-ios-12-2-for-progressive-web-apps-75c348f8e945).
 
 export function initSidebarSwipe(chatArea: HTMLElement, sidebar: HTMLElement): void {
   if (!isStandalone) {
