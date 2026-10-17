@@ -373,7 +373,9 @@ class PromptInputController {
         return;
       }
 
-      if (e.key === "ArrowUp" && this.cursorOnFirstLine(input)) {
+      const bareArrow = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+
+      if (e.key === "ArrowUp" && bareArrow && this.cursorOnFirstLine(input)) {
         const prompts = this.userPrompts();
         if (prompts.length === 0) {
           return;
@@ -392,7 +394,7 @@ class PromptInputController {
         return;
       }
 
-      if (e.key === "ArrowDown" && this.cursorOnLastLine(input) && this.idx !== -1) {
+      if (e.key === "ArrowDown" && bareArrow && this.cursorOnLastLine(input) && this.idx !== -1) {
         e.preventDefault();
         if (this.idx === 0) {
           this.restoreDraft(input);
