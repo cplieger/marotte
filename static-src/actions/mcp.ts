@@ -284,7 +284,7 @@ export const reconnectServer = apiAction<{ server: string }, void>({
 
 // Rescues a sign-in whose redirect landed on the wrong machine: KAS binds its OAuth listener on
 // the CONTAINER's localhost, so a remote browser is sent to its own. The user pastes the dead
-// address and the server replays it inward (`internal/hub/mcp_oauth_relay.go`).
+// address and the server replays it inward (`internal/agent/mcp_oauth_relay.go`).
 
 export const relayOAuthCallback = apiAction<{ server: string; redirect_url: string }>({
   name: "mcp.relay_oauth_callback",

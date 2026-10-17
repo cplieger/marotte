@@ -97,8 +97,9 @@ const (
 
 // RunPlanUpdate is a run's newest queued plan revision, under `plan_update` in GET
 // /api/runs/{id}. Pending counts the top-level steps queued and After names the top-level step
-// they replace the plan after; Reason is KAS's sentence for a rejection. Held in memory, as the
-// IDE holds it: a restart forgets it.
+// they replace the plan after; Reason is KAS's sentence for a rejection. A queued Outcome and its
+// Pending come from KAS's inspect, which keeps a queued revision across a restart; After and a
+// settled outcome are marotte's memory, which a marotte restart forgets.
 type RunPlanUpdate struct {
 	After   string         `json:"after,omitempty"`
 	Reason  string         `json:"reason,omitempty"`

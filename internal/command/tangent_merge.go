@@ -124,7 +124,7 @@ func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerg
 	// Registered before the summary's runner, which can finish first: a drain between the two
 	// would find nothing in flight while the merge is still owed.
 	roles.lifecycle.InflightAdd(1)
-	p := &marotte.PromptCommand{Text: tangentSummaryPrompt, MessageID: ids.NewMessageID(), DisplayText: tangentSummaryLabel}
+	p := &marotte.PromptCommand{Text: tangentSummaryPrompt, MessageID: ids.NewMessageID(), DisplayText: tangentSummaryLabel, ForAgent: true}
 	turnID, err := startPrompt(ctx, roles, key.tangent, p, launch{awaited: true})
 	if err != nil {
 		roles.lifecycle.InflightDone()

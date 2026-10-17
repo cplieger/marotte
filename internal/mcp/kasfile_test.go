@@ -161,6 +161,29 @@ func TestWriteKASConfig_RemoteCarriesClientMetadataAndRedirect(t *testing.T) {
 	}
 }
 
+func TestWriteKASConfig_RemoteCarriesOAuthScopes(t *testing.T) {
+	s, kas := newIsolatedStore(t)
+	for _, srv := range []*Server{
+		{Transport: TransportHTTP, Name: "graph", Enabled: true, URL: "https://mcp.example/mcp", OAuthScopes: []string{"read", "write"}},
+		{Transport: TransportStdio, Name: "local", Enabled: true, Command: "npx"},
+		{Transport: TransportRegistry, Name: "catalog", Enabled: true},
+	} {
+		if _, err := s.Create(t.Context(), srv); err != nil {
+			t.Fatalf("Create %s: %v", srv.Name, err)
+		}
+	}
+	servers := readKASServers(t, kas)
+	scopes, ok := servers["graph"]["oauthScopes"].([]any)
+	if !ok || len(scopes) != 2 || scopes[0] != "read" || scopes[1] != "write" {
+		t.Errorf("graph oauthScopes = %v, want [read write]", servers["graph"]["oauthScopes"])
+	}
+	for _, name := range []string{"local", "catalog"} {
+		if v, present := servers[name]["oauthScopes"]; present {
+			t.Errorf("%s oauthScopes = %v, want the key absent", name, v)
+		}
+	}
+}
+
 // The boot render rebuilds KAS's file from marotte's record, so a field the
 // record does not carry is destroyed on every boot.
 func TestNew_BootRenderKeepsClientMetadataURL(t *testing.T) {

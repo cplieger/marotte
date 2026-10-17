@@ -47,6 +47,7 @@ type kasServer struct {
 	URL           string            `json:"url,omitempty"`
 	Headers       map[string]string `json:"headers,omitempty"`
 	OAuth         *kasOAuth         `json:"oauth,omitempty"`
+	OAuthScopes   []string          `json:"oauthScopes,omitempty"`
 	DisabledTools []string          `json:"disabledTools,omitempty"`
 	// Timeout is milliseconds, and it is both KAS's connect timeout and the
 	// budget a waitForReady server gets inside a prompt. Zero is KAS's default.
@@ -102,6 +103,7 @@ func renderKASServers(servers []*Server, policy kasRenderPolicy) map[string]kasS
 			if oauth != (kasOAuth{}) {
 				entry.OAuth = &oauth
 			}
+			entry.OAuthScopes = s.OAuthScopes
 		case TransportRegistry:
 			entry.Type = string(TransportRegistry)
 		default:

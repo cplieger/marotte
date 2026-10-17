@@ -446,23 +446,17 @@ export interface ConfigTemplateResponse {
   subject?: SubjectStamp;
   default_model?: string;
   /**
- * EffortActive is the `effortLevel` option's currentValue: the tier a fresh
- * session would run at.
- */
-  effort_active?: string;
-  /**
  * Catalog has NO omitempty, so wiregen emits a required TypeScript field the
  * retry policy can rely on.
  */
   catalog: CatalogState;
   catalog_reason?: CatalogReason;
   /**
- * The three lists are non-null on every path, so a generated decoder requiring an
- * array cannot fail on a failure body.
+ * Both lists are non-null on every path, so a generated decoder requiring an array
+ * cannot fail on a failure body.
  */
   modes: SessionMode[];
   models: SessionModel[];
-  effort_levels: SessionEffortLevel[];
 }
 
 /**
@@ -2834,8 +2828,9 @@ export interface RunLaunchedResponse {
 /**
  * RunPlanUpdate is a run's newest queued plan revision, under `plan_update` in GET
  * /api/runs/{id}. Pending counts the top-level steps queued and After names the top-level step
- * they replace the plan after; Reason is KAS's sentence for a rejection. Held in memory, as the
- * IDE holds it: a restart forgets it.
+ * they replace the plan after; Reason is KAS's sentence for a rejection. A queued Outcome and its
+ * Pending come from KAS's inspect, which keeps a queued revision across a restart; After and a
+ * settled outcome are marotte's memory, which a marotte restart forgets.
  */
 export interface RunPlanUpdate {
   after?: string;
@@ -3246,14 +3241,12 @@ export interface SessionModel {
   description?: string;
   /** DefaultEffortLevel is this MODEL's default level, the last rung of a chat's first level on it. */
   default_effort_level?: string;
-  /** EffortTiers are the model's tier ids, lowest first; empty when KAS named none. */
+  /**
+ * EffortTiers are the model's tier ids, lowest first; empty when KAS named none. KAS
+ * silently drops a level sent to a tierless model (`auto`), so the effort row hides.
+ */
   effort_tiers?: string[];
   rate_multiplier?: number;
-  /**
- * HasEffort reports whether this model offers effort tiers. KAS silently drops a
- * level sent to a tierless model (`auto`), so the effort row hides.
- */
-  has_effort?: boolean;
   /**
  * ThinkingToggleable reports whether thinking can be turned off for this model;
  * ThinkingDefaultOff, whether that is the model's default.

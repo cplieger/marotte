@@ -209,6 +209,25 @@ func TestReadLoop_OversizeRequestIsAnsweredOnceByItsID(t *testing.T) {
 	}
 }
 
+func TestReadLoop_OversizePermissionIsAnsweredCancelled(t *testing.T) {
+	_ = capture.Default(t)
+	e, w := liveReadLoop(t)
+	out := &captureWriter{}
+	e.stdin.Store(&stdinPipe{w: out})
+	writeFrames(t, w, oversize(`{"jsonrpc":"2.0","id":43,"method":"session/request_permission","params":{"sessionId":"sess-a","toolCall":{"title":"`))
+	drainEngineLane(t, e, w)
+	got := writtenAnswers(t, out)
+	if len(got) != 1 {
+		t.Fatalf("wrote %d frames, want exactly one answer", len(got))
+	}
+	if got[0].Error != nil {
+		t.Errorf("answered with error %+v: KAS's turn approval treats an error as approval", got[0].Error)
+	}
+	if got[0].ID != 43 || got[0].Result == nil || got[0].Result.Outcome.Outcome != string(marotte.StopReasonCancelled) {
+		t.Errorf("answer = %+v, want outcome cancelled for request 43", got[0])
+	}
+}
+
 // The frame after an oversize one still reaches dispatch: the turn dies, not the session.
 func TestReadLoop_ResumesDispatchAfterAnOversizeFrame(t *testing.T) {
 	_ = capture.Default(t)
@@ -278,5 +297,67 @@ func TestReadLoop_ExhaustedDrainReapsWithItsOwnLogLine(t *testing.T) {
 	}
 	if got := b.Exit().Reason; got != exitDrainExhausted {
 		t.Errorf("exit reason = %q, want %q", got, exitDrainExhausted)
+	}
+}
+
+func TestEngineLane_OverflowAnswersAPermissionCancelled(t *testing.T) {
+	_ = capture.Default(t)
+	shrinkLanes(t, 2, 4)
+	k := newFakeKAS(t)
+	k.request(700, "_test/queued", map[string]any{})
+	waitPumpHolds(t, k.e.engineLane)
+	for i := 1; i <= laneHardCap; i++ {
+		k.request(int64(700+i), "_test/queued", map[string]any{})
+	}
+	k.request(798, marotte.MethodRequestPermission, map[string]any{"sessionId": "sess-gone"})
+	k.request(799, "_test/overflow", map[string]any{})
+	answers := map[int64][]wireFrame{}
+	deadline := time.After(2 * time.Second)
+	for len(answers[798]) == 0 || len(answers[799]) == 0 {
+		select {
+		case f := <-k.frames:
+			if f.ID != nil && f.Method == "" {
+				answers[*f.ID] = append(answers[*f.ID], f)
+			}
+		case <-deadline:
+			t.Fatalf("the requests past the engine lane's cap were not both answered: %v", answers)
+		}
+	}
+	if f, quiet := k.quiet(200 * time.Millisecond); !quiet && f.ID != nil && f.Method == "" {
+		answers[*f.ID] = append(answers[*f.ID], f)
+	}
+	answeredCancelledOnce(t, answers[798])
+	if len(answers[799]) != 1 || answers[799][0].Error == nil || answers[799][0].Error.Code != marotte.RPCCodeInternal {
+		t.Errorf("the non-permission request got %v, want one -32603 answer", answers[799])
+	}
+}
+
+// With no detach handler, the engine itself answers what a detached session's lane held.
+func TestSessionLane_OverflowWithNoDetachHandlerAnswersAPermissionCancelled(t *testing.T) {
+	_ = capture.Default(t)
+	shrinkLanes(t, 8, 32)
+	k := newFakeKAS(t)
+	s := k.openedSession(nil)
+	answers := overflowedRequests(t, k, s, 200*time.Millisecond)
+	answeredCancelledOnce(t, answers[501])
+	if len(answers[502]) != 1 || answers[502][0].Error == nil || answers[502][0].Error.Code != marotte.RPCCodeInternal {
+		t.Errorf("the fs request got %v, want one -32603 answer", answers[502])
+	}
+}
+
+func answeredCancelledOnce(t *testing.T, frames []wireFrame) {
+	t.Helper()
+	if len(frames) != 1 {
+		t.Fatalf("the permission ask was answered %d times, want once", len(frames))
+	}
+	var got answerFrame
+	if err := json.Unmarshal([]byte(frames[0].raw), &got); err != nil {
+		t.Fatalf("decode the answer %q: %v", frames[0].raw, err)
+	}
+	if got.Error != nil {
+		t.Errorf("answered with error %+v: KAS's turn approval treats an error as approval", got.Error)
+	}
+	if got.Result == nil || got.Result.Outcome.Outcome != string(marotte.StopReasonCancelled) {
+		t.Errorf("answer = %s, want outcome cancelled", frames[0].raw)
 	}
 }

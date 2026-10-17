@@ -1321,6 +1321,35 @@ func TestOpenBridge_RecordsAModelTheLoadDropped(t *testing.T) {
 	}
 }
 
+// A loaded session the door moved off a model the catalog does not list moves the record with it, auto included.
+func TestLoadUnservedAutoMovesRecord(t *testing.T) {
+	for _, saved := range []string{marotte.ModelAuto, "m-gone"} {
+		t.Run(saved, func(t *testing.T) {
+			h, cs, rb := newRecordingStartHub(t)
+			rb.catalog = []marotte.SessionModel{{ID: "fake-model"}}
+			ctx := t.Context()
+			_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
+				c.Name, c.Model, c.ServedModelIDs = "A", saved, []string{"fake-model"}
+				c.RecordSession("sess_saved")
+				c.TurnCount = 1
+				return true
+			})
+
+			if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+				t.Fatalf("OpenBridge: %v", err)
+			}
+
+			want := []marotte.EntryModelSwitched{{From: saved, To: "fake-model", Reason: marotte.ModelSwitchReasonUnavailable}}
+			if got := switchesOf(t, logOf(t, cs, "c1")); !slices.Equal(got, want) {
+				t.Errorf("model_switched entries = %+v, want %+v", got, want)
+			}
+			if c, _ := cs.Get(ctx, "c1"); c.Model != "fake-model" {
+				t.Errorf("header Model = %q, want the running model", c.Model)
+			}
+		})
+	}
+}
+
 func TestOpenBridge_ServedOrFailedOpenRecordsNoUnavailableSwitch(t *testing.T) {
 	t.Run("served", func(t *testing.T) {
 		h, cs, _ := newRecordingStartHub(t)

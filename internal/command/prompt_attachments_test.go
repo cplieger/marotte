@@ -11,6 +11,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -442,6 +443,34 @@ func TestBuildPromptBlocks_HistoryImageBudgetDegradesToPathReference(t *testing.
 	text, _ := blocks[1]["text"].(string)
 	if !strings.Contains(text, "replayed image history budget") {
 		t.Errorf("BuildPromptBlocks history-budget note = %q, want the history reason", text)
+	}
+}
+
+// On a fresh chat the allowance is the only per-prompt image count, so this prompt's own images
+// must spend it: the one past the cap goes as a path reference.
+func TestBuildPromptBlocks_ThisPromptsImagesSpendTheAllowance(t *testing.T) {
+	dir := t.TempDir()
+	img := pngBytes(t, 4, 4)
+	atts := make([]marotte.Attachment, maxHistoryInlineImages+1)
+	for i := range atts {
+		abs := filepath.Join(dir, "shot"+strconv.Itoa(i)+".png")
+		if err := os.WriteFile(abs, img, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		atts[i] = marotte.Attachment{Path: abs}
+	}
+
+	blocks := BuildPromptBlocks(t.Context(), "see these", atts, 0, Workspace{Dir: dir}, nil)
+	if len(blocks) != 1+len(atts) {
+		t.Fatalf("BuildPromptBlocks(%d images) = %d blocks, want %d", len(atts), len(blocks), 1+len(atts))
+	}
+	if got := inlineImageBlockCount(blocks); got != maxHistoryInlineImages {
+		t.Errorf("BuildPromptBlocks(%d images, no history) inlined %d images, want %d", len(atts), got, maxHistoryInlineImages)
+	}
+	last := blocks[len(blocks)-1]
+	text, _ := last["text"].(string)
+	if last[keyType] != marotte.ContentTypeText || !strings.Contains(text, "replayed image history budget") {
+		t.Errorf("BuildPromptBlocks image past the allowance = %v %q, want a text block naming the history budget", last[keyType], text)
 	}
 }
 

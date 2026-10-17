@@ -700,6 +700,9 @@ type effortRecorder interface {
 	// ThinkingDefaultOff reports whether the model runs with thinking off when the
 	// chat has not chosen, which decides whether a tier pick must turn it back on.
 	ThinkingDefaultOff(model string) bool
+	// EffortSeedable reports whether level may be remembered as model's new-chat
+	// seed: false only when the catalog lists model's tiers and level is not one.
+	EffortSeedable(model string, level marotte.EffortLevel) bool
 }
 
 // modeRecorder is what set_mode needs to leave a transcript record: one write of the mode_switched

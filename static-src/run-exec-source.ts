@@ -392,7 +392,7 @@ function plannedNode(raw: unknown): RunNode[] {
     return [];
   }
   const out: RunNode = { nodeId: id, type, status: "pending" };
-  for (const key of ["agentName", "modelId"] as const) {
+  for (const key of ["agentName", "modelId", "effortLevel"] as const) {
     const v = o[key];
     if (typeof v === "string" && v !== "") {
       out[key] = v;

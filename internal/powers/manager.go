@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/cplieger/marotte/internal/procgroup"
@@ -233,10 +232,7 @@ func (m *Manager) run(ctx context.Context, verb, name string) error {
 	cmd := exec.CommandContext(cctx, m.cliPath(), "powers", verb, name) //nolint:gosec // G204: binary path from the install manager; name passed ValidName
 	cmd.Env = m.env()
 	// kiro-cli runs a tree (tar among it), so a cancel kills the whole group.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return procgroup.Kill(cmd.Process, syscall.SIGKILL) }
-	// A child still holding the output pipes must not hold Wait past the kill.
-	cmd.WaitDelay = 5 * time.Second
+	procgroup.OwnGroup(cmd, 5*time.Second)
 	var out cappedBuffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {

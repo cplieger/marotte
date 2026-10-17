@@ -6,9 +6,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// initWorkspaceHandlers builds the one table of workspace-global notifications. KAS sends each to every resident
-// session, so a method handled on one lane and dropped on another would be lost or not by which session KAS
-// addressed; none of these methods may sit in chatHandlers or noopMethods.
+// initWorkspaceHandlers builds the one table of workspace-global notifications. Each may reach any resident session's
+// lane (hooks/didChange goes only to sessions whose hook projection changed), so a method handled on one lane and
+// dropped on another would be lost or not by which session KAS addressed; none may sit in chatHandlers or noopMethods.
 func (rt *Runtime) initWorkspaceHandlers() {
 	rt.workspaceHandlers = map[string]chatHandler{
 		methodKiroHooksDidChange: func(context.Context, marotte.ChatID, *marotte.RPCResponse) {

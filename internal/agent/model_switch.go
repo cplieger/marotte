@@ -16,9 +16,10 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
-// resolveSwitchModel is the model a request names: the chat's own for none or auto.
+// resolveSwitchModel is the model a request names: the chat's own for none. `auto` is a catalog
+// model like any other.
 func resolveSwitchModel(chat *marotte.Chat, p marotte.SwitchModelCommand) string {
-	if p.Model == "" || p.Model == marotte.ModelAuto {
+	if p.Model == "" {
 		return chat.Model
 	}
 	return p.Model

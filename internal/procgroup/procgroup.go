@@ -2,9 +2,9 @@
 // just its head.
 //
 // Every consumer must pair Kill with SysProcAttr{Setpgid: true} on the command it
-// spawns. Without that the child inherits marotte's OWN process group, and Kill's
-// leader guard is all that stands between a teardown and marotte signalling
-// itself.
+// spawns (OwnGroup does both for a one-shot). Without that the child inherits
+// marotte's OWN process group, and Kill's leader guard is all that stands between
+// a teardown and marotte signalling itself.
 package procgroup
 
 import (
@@ -12,11 +12,22 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
+
+// OwnGroup makes an unstarted cmd lead its own process group, has its context's
+// cancel SIGKILL that group, and bounds Wait to waitDelay after the cancel. A
+// head-only kill leaves a child holding the output pipes, so Wait would outlive
+// the deadline by as long as that child runs.
+func OwnGroup(cmd *exec.Cmd, waitDelay time.Duration) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return Kill(cmd.Process, syscall.SIGKILL) }
+	cmd.WaitDelay = waitDelay
+}
 
 // Kill signals p's whole process group, falling back to the head alone when p is
 // not its own group leader. A command that setsid()s still escapes the group.

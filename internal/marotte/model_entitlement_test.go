@@ -22,7 +22,8 @@ func TestModelServed(t *testing.T) {
 		{"a served id", "claude-sonnet-4", served, true},
 		{"an unserved id", "claude-opus-9", served, false},
 		{"an empty id means inherit the default", "", served, true},
-		{"the auto sentinel is never validated", ModelAuto, []string{"only-this"}, true},
+		{"auto is judged like any id", ModelAuto, []string{"only-this"}, false},
+		{"auto listed is served", ModelAuto, served, true},
 		{"an empty served set means entitlement is unknowable", "anything", nil, true},
 		{"an empty served set plus an empty id", "", nil, true},
 		{
@@ -53,6 +54,7 @@ func FuzzModelServed(f *testing.F) {
 	f.Add("", "a,b")
 	f.Add("x", "")
 	f.Add("AUTO", "auto")
+	f.Add("auto", "a,b")
 	f.Fuzz(func(t *testing.T, id, csv string) {
 		var served []string
 		if csv != "" {
@@ -66,14 +68,14 @@ func FuzzModelServed(f *testing.F) {
 			set[sv] = struct{}{}
 		}
 		_, member := set[id]
-		want := id == "" || id == ModelAuto || len(served) == 0 || member
+		want := id == "" || len(served) == 0 || member
 		got := ModelServed(id, served)
 		if got != want {
 			t.Fatalf("ModelServed(%q, %v) = %v, want %v", id, served, got, want)
 		}
 		// Exact comparison only: a case-folded or trimmed match would let an id the
 		// backend never advertised through.
-		if got && id != "" && id != ModelAuto && len(served) > 0 && !member {
+		if got && id != "" && len(served) > 0 && !member {
 			t.Fatalf("ModelServed accepted %q which is not exactly in %v", id, served)
 		}
 	})

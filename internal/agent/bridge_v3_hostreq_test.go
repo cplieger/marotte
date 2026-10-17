@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -61,6 +62,36 @@ func TestHandleOpenExternalURL(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Every KAS _kiro/openExternalUrl names no session, so it reaches the engine lane with no chat to show it in.
+func TestEngineLane_OpenExternalURLWithNoChatIsRefused(t *testing.T) {
+	h, _, lane := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	before := h.bus.fanout.Position().Head
+
+	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 11, "https://auth.example.com/authorize?state=s1"))
+
+	deadline := time.Now().Add(5 * time.Second)
+	answer, answered := lane.responseTo(11)
+	for !answered && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		answer, answered = lane.responseTo(11)
+	}
+	if !answered {
+		t.Fatal("the sessionless URL went unanswered; KAS would wait on a request nothing answers")
+	}
+	// The answer runs on inflight and may broadcast after it responds, so the buffer is read only once it returns.
+	joinInflight(t, h)
+	rpcErr, isRPC := errors.AsType[*marotte.RPCError](answer.err)
+	if !isRPC || rpcErr.Code != -32000 {
+		t.Errorf("answer = (result %v, error %v), want RPC error -32000 so KAS ends the attempt at once", answer.result, answer.err)
+	}
+	for _, ty := range extractTypes(t, bufferedSince(h, before)) {
+		if ty == string(marotte.EventOpenExternalURL) {
+			t.Errorf("a URL with no chat to show it in was broadcast as open_external_url")
+		}
+	}
 }
 
 func TestHandleKiroClientRequest_DoesNotClaimGetAccessToken(t *testing.T) {

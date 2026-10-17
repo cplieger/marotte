@@ -8,10 +8,11 @@ package marotte
 import "slices"
 
 // ModelServed reports whether id is one the session can run. It fails open on an EMPTY served set
-// (no catalog advertised) and an EMPTY id (inherit the default). served must be the UNFILTERED set
-// (Chat.ServedModelIDs, written by ApplyServedModels), or a deprecated model the account can still use is refused.
+// (no catalog advertised) and an EMPTY id, the only inherit value: `auto` is an id KAS pins and lists
+// like any other. served must be the UNFILTERED set (Chat.ServedModelIDs, written by ApplyServedModels),
+// or a deprecated model the account can still use is refused.
 func ModelServed(id string, served []string) bool {
-	if id == "" || id == ModelAuto || len(served) == 0 {
+	if id == "" || len(served) == 0 {
 		return true
 	}
 	return slices.Contains(served, id)

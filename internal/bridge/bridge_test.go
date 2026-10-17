@@ -977,20 +977,21 @@ func TestSession_LifecycleContract(t *testing.T) {
 // TestBridgeRPC_ErrorClassification pins how Call maps JSON-RPC error codes to sentinels.
 func TestBridgeRPC_ErrorClassification(t *testing.T) {
 	cases := []struct {
-		name        string
-		message     string
-		wantMsg     string
-		code        int
-		wantNotIdle bool
+		name     string
+		message  string
+		wantMsg  string
+		code     int
+		wantBusy bool
 	}{
-		{name: "not-idle by code", code: -32001, message: "session busy", wantNotIdle: true},
-		{name: "not-idle by message only", code: -32099, message: "not idle", wantNotIdle: false, wantMsg: "not idle"},
-		{name: "parse error", code: -32700, message: "parse error", wantNotIdle: false, wantMsg: "parse error"},
-		{name: "invalid request", code: -32600, message: "invalid request", wantNotIdle: false, wantMsg: "invalid request"},
-		{name: "method not found", code: -32601, message: "method not found", wantNotIdle: false, wantMsg: "method not found"},
-		{name: "internal error", code: -32603, message: "internal error", wantNotIdle: false, wantMsg: "internal error"},
-		{name: "server-defined error", code: -32050, message: "custom server err", wantNotIdle: false, wantMsg: "custom server err"},
-		{name: "positive code", code: 1, message: "unknown positive", wantNotIdle: false, wantMsg: "unknown positive"},
+		{name: "session busy by code", code: -32002, message: "A prompt is already in-flight", wantBusy: true},
+		{name: "a -32001 answer is not busy", code: -32001, message: "No pending permission", wantMsg: "No pending permission"},
+		{name: "busy by message only", code: -32099, message: "A prompt is already in-flight", wantMsg: "A prompt is already in-flight"},
+		{name: "parse error", code: -32700, message: "parse error", wantMsg: "parse error"},
+		{name: "invalid request", code: -32600, message: "invalid request", wantMsg: "invalid request"},
+		{name: "method not found", code: -32601, message: "method not found", wantMsg: "method not found"},
+		{name: "internal error", code: -32603, message: "internal error", wantMsg: "internal error"},
+		{name: "server-defined error", code: -32050, message: "custom server err", wantMsg: "custom server err"},
+		{name: "positive code", code: 1, message: "unknown positive", wantMsg: "unknown positive"},
 	}
 
 	for _, tc := range cases {
@@ -1033,13 +1034,13 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 				if r.err == nil {
 					t.Fatal("expected error, got nil")
 				}
-				if tc.wantNotIdle {
-					if !errors.Is(r.err, marotte.ErrNotIdle) {
-						t.Errorf("err = %v, want marotte.ErrNotIdle", r.err)
+				if tc.wantBusy {
+					if !errors.Is(r.err, marotte.ErrSessionBusy) {
+						t.Errorf("err = %v, want marotte.ErrSessionBusy", r.err)
 					}
 				} else {
-					if errors.Is(r.err, marotte.ErrNotIdle) {
-						t.Errorf("err = %v, should NOT be marotte.ErrNotIdle", r.err)
+					if errors.Is(r.err, marotte.ErrSessionBusy) {
+						t.Errorf("err = %v, should NOT be marotte.ErrSessionBusy", r.err)
 					}
 					if !strings.Contains(r.err.Error(), tc.wantMsg) {
 						t.Errorf("err = %v, want to contain %q", r.err, tc.wantMsg)

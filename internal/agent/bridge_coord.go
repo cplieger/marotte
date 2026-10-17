@@ -1264,6 +1264,13 @@ func (bc *bridgeCoordinator) ThinkingDefaultOff(model string) bool {
 	return bc.catalog.thinkingDefaultOff(model)
 }
 
+// EffortSeedable answers from the catalog's tiers for model; an unknown model keeps any tier,
+// as resolveEffort does.
+func (bc *bridgeCoordinator) EffortSeedable(model string, level marotte.EffortLevel) bool {
+	tiers := bc.catalog.tiersOf(model)
+	return tiers.known != tiersListed || slices.Contains(tiers.levels, string(level))
+}
+
 // PersistEffortChange records a reader-asked tier change as a model_switched entry with
 // From == To (marotte.EntryModelSwitched). Writes no header field. An empty model writes
 // nothing (the renderer reads an empty To as `Context reset`), nor does an unstarted chat.

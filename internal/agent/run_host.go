@@ -469,7 +469,9 @@ func (*Runs) retryDeadlineErr(ctx context.Context, err error) error {
 	return err
 }
 
-// errStepStatusRefused means KAS declined the update (terminal run, or no running or paused step); the REST layer answers 409.
+// errStepStatusRefused means KAS declined the update (a terminal run, a step that is not paused, a caller
+// that is not the owning parent, or a paused step given a status other than completed or failed); the REST
+// layer answers 409.
 var errStepStatusRefused = errors.New("this run's step status was not changed")
 
 // updateStatusAction is `_kiro/workflow/update`'s step-status action, sent explicitly because the tool schema requires it.

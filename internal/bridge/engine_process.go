@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/nodeopts"
 	"github.com/cplieger/marotte/internal/procgroup"
+	"golang.org/x/sys/unix"
 )
 
 const bridgeGroupGrace = 2 * time.Second
@@ -49,18 +50,17 @@ func sidecarExitOf(state *os.ProcessState) string {
 
 // reapProcess reaps the sidecar's group, then the node engine's: on 2.18.0 a head-only kill left kiro-cli-chat and
 // its node child alive at about 250 MB (procgroup.Kill), and the node engine leads its own group (sweepEngineGroups).
-// stdin is already closed.
-func (e *Engine) reapProcess() {
+// stdin is already closed. endedItself is endedOnItsOwn's answer from before that close.
+func (e *Engine) reapProcess(endedItself bool) {
 	// Before the signal empties it (procgroup.GroupOf).
 	pgid, owns := procgroup.GroupOf(e.cmd.Process)
 	e.noteEngineGroups()
 	termErr := procgroup.Kill(e.cmd.Process, syscall.SIGTERM)
-	// Already gone means kiro-cli ended on its own, so the wait status is the only record of why.
-	endedItself := procgroup.AlreadyGone(termErr)
-	if termErr != nil && !endedItself {
+	gone := procgroup.AlreadyGone(termErr)
+	if termErr != nil && !gone {
 		slog.Error("signal kiro-cli", "generation", e.generation, "error", termErr)
 	}
-	if !endedItself && (!owns || !procgroup.WaitGone(pgid, bridgeTeardownGrace)) {
+	if !gone && (!owns || !procgroup.WaitGone(pgid, bridgeTeardownGrace)) {
 		// Without a group there is nothing to wait on; kill the head now.
 		if killErr := procgroup.Kill(e.cmd.Process, syscall.SIGKILL); killErr != nil && !procgroup.AlreadyGone(killErr) {
 			slog.Error("kill kiro-cli", "generation", e.generation, "error", killErr)
@@ -76,6 +76,7 @@ func (e *Engine) reapProcess() {
 	e.sidecarExit = sidecarExitOf(e.cmd.ProcessState)
 	e.mu.Unlock()
 	if endedItself {
+		// The wait status is the only record of why.
 		slog.Warn("kiro-cli ended on its own", "generation", e.generation, "wait", waitStatus(waitErr))
 	} else {
 		slog.Debug("kiro-cli reaped", "generation", e.generation, "wait", waitStatus(waitErr))
@@ -86,6 +87,44 @@ func (e *Engine) reapProcess() {
 			"generation", e.generation, "pgid", pgid, "grace_ms", bridgeGroupGrace.Milliseconds())
 	}
 	e.sweepEngineGroups()
+}
+
+// exitSettle bounds the wait for a sidecar whose stdout reached EOF to become waitable: the kernel closes an exiting
+// process's files before it marks the exit, so a probe right after the EOF can fall in between.
+const exitSettle = 100 * time.Millisecond
+
+// endedOnItsOwn reports whether the sidecar exited before marotte closed its stdin or signalled it. It must run
+// before the stdin close, on which kiro-cli exits. A nil lifecycleCtx means no cmd.Cancel was installed to signal it.
+func (e *Engine) endedOnItsOwn() bool {
+	if e.lifecycleCtx != nil && e.lifecycleCtx.Err() != nil {
+		return false
+	}
+	pid := e.cmd.Process.Pid
+	e.mu.Lock()
+	sawEOF := e.exitReason == ExitEnded
+	e.mu.Unlock()
+	if !sawEOF {
+		return exitedUnreaped(pid)
+	}
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	settled := time.After(exitSettle)
+	for !exitedUnreaped(pid) {
+		select {
+		case <-settled:
+			return false
+		case <-tick.C:
+		}
+	}
+	return true
+}
+
+// exitedUnreaped reports whether pid has exited, without reaping it: cmd.Wait stays the one reap, after the reads end
+// (os/exec StdoutPipe).
+func exitedUnreaped(pid int) bool {
+	var info unix.Siginfo
+	err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOHANG|unix.WNOWAIT, nil)
+	return err == nil && info.Signo == int32(unix.SIGCHLD)
 }
 
 // noteEngineGroups adds the groups below the sidecar to engineGroups. kiro-cli's node engine leads its own group,
@@ -166,11 +205,13 @@ func (e *Engine) fail(reason exitReason) {
 func (e *Engine) teardown() {
 	e.stopOnce.Do(func() {
 		close(e.stopping)
+		started := e.cmd != nil && e.cmd.Process != nil
+		endedItself := started && e.endedOnItsOwn()
 		if p := e.stdin.Load(); p != nil {
 			_ = p.w.Close()
 		}
-		if e.cmd != nil && e.cmd.Process != nil {
-			e.reapProcess()
+		if started {
+			e.reapProcess(endedItself)
 		}
 		if !e.readLoopStarted.Load() {
 			e.exitPath()

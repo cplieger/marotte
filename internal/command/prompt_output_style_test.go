@@ -56,6 +56,39 @@ func TestBuildPromptParams_CarriesAChosenOutputStyleOnly(t *testing.T) {
 	}
 }
 
+// A prompt whose answer an agent reads carries no style, whatever the user chose, and keeps the
+// rest of its meta.
+func TestBuildPromptParams_WithholdsTheStyleFromAPromptAnAgentReads(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, `{"output_style":"concise"}`)
+	p := &marotte.PromptCommand{Text: "summarize", MessageID: "m-1", DisplayText: "Summarizing", ForAgent: true}
+
+	params, _ := buildPromptParams(t.Context(), Workspace{ConfigDir: dir}, fixedSession("s"), p, 0)
+
+	meta, _ := params["_meta"].(map[string]any)
+	kiro, _ := meta["kiro"].(map[string]any)
+	if got, sent := kiro["outputStyle"]; sent {
+		t.Errorf("params[_meta].kiro.outputStyle = %v, want the key absent", got)
+	}
+	if got := kiro["displayText"]; got != "Summarizing" {
+		t.Errorf("params[_meta].kiro.displayText = %v, want the label kept", got)
+	}
+}
+
+func TestValidatePromptPayload_AClientCannotMarkAPromptForAnAgent(t *testing.T) {
+	cmd := &marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1",
+		Payload: []byte(`{"text":"x","message_id":"m-1","ForAgent":true,"for_agent":true}`),
+	}
+	p, _, err := validatePromptPayload(cmd)
+	if err != nil {
+		t.Fatalf("validatePromptPayload = %v, want nil", err)
+	}
+	if p.ForAgent {
+		t.Error("ForAgent = true from a client payload, want it server-only")
+	}
+}
+
 func TestBuildPromptParams_RequestsTheContextBreakdownOnEveryPrompt(t *testing.T) {
 	for _, config := range []string{`{}`, `{"output_style":"concise"}`} {
 		dir := t.TempDir()

@@ -478,6 +478,8 @@ type OpenExternalURLPayload struct {
 
 // RPC error code constants for typed dispatch in retry logic.
 const (
+	// RPCCodeParseError is the JSON-RPC 2.0 "Parse error" code (-32700).
+	RPCCodeParseError = -32700
 	// RPCCodeInternal is the JSON-RPC 2.0 "Internal error" code (-32603).
 	RPCCodeInternal = -32603
 	// RPCCodeMethodNotFound is the JSON-RPC 2.0 "Method not found" code (-32601). KAS
@@ -485,8 +487,9 @@ const (
 	// settles its promise — but -32603 means "I broke", and labelling a deliberate refusal
 	// as an internal fault makes marotte's logs lie about which side has the problem.
 	RPCCodeMethodNotFound = -32601
-	// RPCCodeNotIdle indicates the session is still processing a prior turn.
-	RPCCodeNotIdle = -32001
+	// RPCCodeSessionBusy is KAS's SessionBusyError: a prompt or a close is already in flight
+	// on the session.
+	RPCCodeSessionBusy = -32002
 	// RPCCodeBridgeExited marks the engine-exited reply marotte hands its own pending calls. It
 	// sits outside the JSON-RPC reserved range (-32768 to -32000), so no KAS code can equal it;
 	// classify by errors.Is(err, ErrBridgeExited), since callers never see this reply.

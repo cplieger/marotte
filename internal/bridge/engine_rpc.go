@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/runesafe/v3"
 )
@@ -71,6 +72,7 @@ func (e *Engine) readLoop() {
 				reason = ExitParseBreaker
 				break
 			}
+			e.reportUndecodedFrame(line)
 			continue
 		}
 		tracker.Reset()
@@ -159,6 +161,47 @@ func (e *Engine) failPending(resp *marotte.RPCResponse, match func(id int64, ent
 }
 
 func matchAll(int64, *pendingEntry) bool { return true }
+
+// undecodedResp is what a pending request gets when its response arrived but could not be decoded.
+var undecodedResp = &marotte.RPCResponse{
+	Error: &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "marotte could not decode kiro-cli's answer"},
+}
+
+// reportUndecodedFrame settles what a frame that fits but fails to decode concerned, judged from its head: a request is
+// refused by its id and a response fails its one request. Unlike reportDroppedFrame, a notification or an
+// unattributable frame fails nothing, since a turn carries on without one update.
+func (e *Engine) reportUndecodedFrame(line []byte) {
+	h := classifyDroppedHead(line[:min(len(line), droppedHeadCap)])
+	failed := 0
+	switch h.kind {
+	case droppedRequest:
+		e.refuseRequest(*h.id, h.method, &marotte.RPCError{
+			Code: marotte.RPCCodeParseError, Message: "marotte could not decode this request",
+		})
+	case droppedResponse:
+		id := *h.id
+		failed = e.failPending(undecodedResp, func(pid int64, _ *pendingEntry) bool { return pid == id })
+	default:
+		return
+	}
+	slog.Error("ACP parse: settled the request an undecodable frame concerned",
+		"kind", string(h.kind), "method", logsafe.Field(h.method), "request_id", *h.id, "failed_requests", failed)
+}
+
+// refuseRequest answers, off the read loop, a request marotte cannot deliver, as answerRefused does.
+func (e *Engine) refuseRequest(id int64, method string, rpcErr *marotte.RPCError) {
+	e.goBackground(func() { e.answerRefused(id, method, rpcErr) })
+}
+
+// answerRefused answers a request marotte cannot deliver with rpcErr. A permission ask is answered cancelled, never
+// with an error: KAS's turn approval treats an error answer as approval of every staged write.
+func (e *Engine) answerRefused(id int64, method string, rpcErr *marotte.RPCError) {
+	if method == marotte.MethodRequestPermission {
+		_ = e.Respond(e.lifecycleCtx, id, marotte.PermissionOutcomeCancelled(), nil)
+		return
+	}
+	_ = e.Respond(e.lifecycleCtx, id, nil, rpcErr)
+}
 
 // recordParseError feeds an unmarshal failure to the parse-error tracker and logs it, returning true when the circuit
 // breaker tripped and the read loop should end the engine.
@@ -258,10 +301,8 @@ func (e *Engine) appendEngine(msg *marotte.RPCResponse) bool {
 		id := *msg.ID
 		slog.Error("marotte is overloaded and refused a request from the agent engine",
 			"generation", e.generation, "method", msg.Method, "request_id", id)
-		e.goBackground(func() {
-			_ = e.Respond(e.lifecycleCtx, id, nil, &marotte.RPCError{
-				Code: marotte.RPCCodeInternal, Message: "marotte is overloaded and could not take this request",
-			})
+		e.refuseRequest(id, msg.Method, &marotte.RPCError{
+			Code: marotte.RPCCodeInternal, Message: "marotte is overloaded and could not take this request",
 		})
 	case refusedClosed:
 		// The exit path closed it: nothing is left to read the frame.
@@ -300,7 +341,7 @@ func (e *Engine) detachSession(s *Session, overflow *marotte.RPCResponse) {
 			return
 		}
 		for _, req := range d.Requests {
-			_ = e.Respond(e.lifecycleCtx, *req.ID, nil, &marotte.RPCError{
+			e.answerRefused(*req.ID, req.Method, &marotte.RPCError{
 				Code: marotte.RPCCodeInternal, Message: "marotte dropped this chat's session because it stopped reading; send the message again",
 			})
 		}
@@ -396,9 +437,8 @@ func replyOutcome(reply pendingReply) (*marotte.RPCResponse, uint64, error) {
 		// Not retryable: the same prompt would likely produce the same oversize payload (marotte.ErrFrameTooLarge).
 		return nil, reply.seq, &marotte.TransportError{Err: marotte.ErrFrameTooLarge, Retryable: false}
 	case resp.Error != nil:
-		// Classified here so callers use errors.Is(err, marotte.ErrNotIdle).
-		if resp.Error.Code == marotte.RPCCodeNotIdle {
-			return resp, reply.seq, fmt.Errorf("ACP error %d: %w: %w", resp.Error.Code, marotte.ErrNotIdle, resp.Error)
+		if resp.Error.Code == marotte.RPCCodeSessionBusy {
+			return resp, reply.seq, fmt.Errorf("ACP error %d: %w: %w", resp.Error.Code, marotte.ErrSessionBusy, resp.Error)
 		}
 		return resp, reply.seq, fmt.Errorf("ACP error %d: %w", resp.Error.Code, resp.Error)
 	}

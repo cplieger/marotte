@@ -21,7 +21,7 @@ func runDefaultsHub(t *testing.T) (*Runtime, *fakeBridge, *http.ServeMux) {
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_pick")
 	h.catalog.SetModels([]marotte.SessionModel{
-		{ID: "opus", Name: "Opus", HasEffort: true, EffortTiers: []string{"low", "medium", "high"}},
+		{ID: "opus", Name: "Opus", EffortTiers: []string{"low", "medium", "high"}},
 		{ID: "auto", Name: "Auto"},
 	})
 	st, err := schedule.NewStore(t.TempDir())

@@ -640,6 +640,43 @@ func TestUpdate_RejectsRenameToExistingName(t *testing.T) {
 	}
 }
 
+// KAS folds '-' to '_' in a tool's invocation id (mcp_<server>_<tool>), so names differing only there would
+// collide on every same-named tool.
+func TestCreate_HyphenUnderscoreFoldIsADuplicate(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "foo-bar", Command: "bash"}); err != nil {
+		t.Fatalf("Create foo-bar: %v", err)
+	}
+	for _, name := range []string{"foo_bar", "FOO-BAR", "Foo_Bar"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: name, Command: "zsh"}); !errors.Is(err, errNameConflict) {
+				t.Errorf("Create(%q) beside foo-bar = %v, want errNameConflict", name, err)
+			}
+		})
+	}
+	for _, name := range []string{"foobar", "foo-baz", "foo--bar"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: name, Command: "zsh"}); err != nil {
+				t.Errorf("Create(%q) beside foo-bar = %v, want a distinct server admitted", name, err)
+			}
+		})
+	}
+}
+
+func TestUpdate_RejectsRenameOntoTheFoldOfAnExistingName(t *testing.T) {
+	s := newTestStore(t)
+	a, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "alpha", Command: "bash"})
+	if err != nil {
+		t.Fatalf("Create alpha: %v", err)
+	}
+	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "my-beta", Command: "bash"}); err != nil {
+		t.Fatalf("Create my-beta: %v", err)
+	}
+	if _, err := s.update(t.Context(), a.ID, &Server{Transport: TransportStdio, Name: "my_beta", Command: "bash"}); !errors.Is(err, errNameConflict) {
+		t.Errorf("Update rename alpha -> my_beta = %v, want errNameConflict", err)
+	}
+}
+
 func TestUpdate_RenameToOwnNameAllowed(t *testing.T) {
 	// Boundary: a rename that keeps the same name must succeed (the
 	// hasNameLocked check correctly ignores the target record via

@@ -43,7 +43,7 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	raw := read.raw
-	position, err := read.position(id)
+	position, err := read.position()
 	if err != nil {
 		slog.Warn("workflow inspect: the run's read position could not be computed",
 			"workflow_id", logsafe.Field(id), "error", err)
@@ -62,10 +62,11 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 				"workflow_id", logsafe.Field(id), "error", err)
 		}
 	}
-	var plan *marotte.RunPlanUpdate
-	if u, ok := rr.runs.planUpdate(id); ok {
-		plan = &u
+	pending := -1
+	if read.in.OK {
+		pending = read.in.Pending
 	}
+	plan := rr.runs.servedPlan(id, pending)
 	out, err := withRunExtras(raw, runExtras{
 		asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan, readPosition: position,
 	})
@@ -101,10 +102,13 @@ func writeInspectErr(w http.ResponseWriter, id string, err error) {
 	httpreply.NotFound(w, "workflow run not found")
 }
 
-// runRead is GET /api/runs/{id}'s reads: the run's state, and its asks with whether they were read.
+// runRead is GET /api/runs/{id}'s reads: the run's state as KAS sent it and as decoded (inErr says
+// why it did not decode), and its asks with whether they were read.
 type runRead struct {
+	inErr     error
 	raw       json.RawMessage
 	asks      []marotte.RunAsk
+	in        workflow.Inspect
 	reachable bool
 }
 
@@ -119,15 +123,17 @@ func (rs *Runs) openRun(ctx context.Context, workflowID string) (runRead, error)
 			return runRead{}, err
 		}
 		in, dErr := workflow.DecodeInspect(workflowID, raw)
-		return runRead{raw: raw, reachable: dErr == nil && marotte.RunStatus(in.State.Status).Terminal()}, nil
+		return runRead{
+			raw: raw, in: in, inErr: dErr, reachable: dErr == nil && marotte.RunStatus(in.State.Status).Terminal(),
+		}, nil
 	}
 	r, err := rs.readAsks(ctx, c)
 	switch {
 	case err == nil:
-		return runRead{raw: r.raw, asks: wireAsks(r.asks), reachable: true}, nil
+		return runRead{raw: r.raw, in: r.in, asks: wireAsks(r.asks), reachable: true}, nil
 	case r.raw != nil:
 		// The engine answered something this build cannot read: the state goes out as KAS gave it.
-		return runRead{raw: r.raw, asks: rs.lastAsks(c), reachable: false}, nil
+		return runRead{raw: r.raw, inErr: err, asks: rs.lastAsks(c), reachable: false}, nil
 	}
 	return runRead{}, err
 }
@@ -178,12 +184,11 @@ func (rs *Runs) positionedRead(ctx context.Context, workflowID string) (position
 }
 
 // position is the read's runReadPosition; an unreadable state or turn count is an error.
-func (p *positionedRead) position(workflowID string) (uint64, error) {
-	in, decodeErr := workflow.DecodeInspect(workflowID, p.raw)
-	if err := errors.Join(decodeErr, p.turnsErr); err != nil {
+func (p *positionedRead) position() (uint64, error) {
+	if err := errors.Join(p.inErr, p.turnsErr); err != nil {
 		return 0, err
 	}
-	return runReadPosition(marotte.RunStatus(in.State.Status), p.turns), nil
+	return runReadPosition(marotte.RunStatus(p.in.State.Status), p.turns), nil
 }
 
 // RunReadBound is the run's read position now, read as GET /api/runs/{id} reads it: the clamp for an
@@ -193,14 +198,14 @@ func (rs *Runs) RunReadBound(ctx context.Context, workflowID string) (uint64, er
 	if err != nil {
 		return 0, err
 	}
-	return read.position(workflowID)
+	return read.position()
 }
 
 // withRunExtras splices marotte's top-level keys into KAS's reply, decoding to raw values so future
 // keys survive and nested values stay byte-identical: `open_asks`, `step_ends` and `step_starts`, never
 // null because an agent could not tell "none" from "unsupported", `asks_reachable`, false when
 // `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), and
-// `plan_update` when a revision was seen.
+// `plan_update` when servedPlan answers one.
 func withRunExtras(raw json.RawMessage, x runExtras) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {

@@ -116,8 +116,10 @@ function type(text: string): void {
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-function press(key: string): void {
-  input().dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+function press(key: string, mods: KeyboardEventInit = {}): KeyboardEvent {
+  const e = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...mods });
+  input().dispatchEvent(e);
+  return e;
 }
 
 beforeEach(() => {
@@ -178,6 +180,46 @@ describe("prompt history cycling", () => {
     press("ArrowUp");
     press("ArrowDown");
     expect(input().value).toBe("second draft");
+  });
+});
+
+// A modified arrow is the browser's caret or selection move, so only a bare arrow walks history.
+describe("a modified arrow", () => {
+  const MODS: readonly KeyboardEventInit[] = [
+    { shiftKey: true },
+    { altKey: true },
+    { ctrlKey: true },
+    { metaKey: true },
+  ];
+
+  it("keeps a one-line draft on Shift+ArrowUp", () => {
+    type("half-written thought");
+    const e = press("ArrowUp", { shiftKey: true });
+    expect(e.defaultPrevented).toBe(false);
+    expect(input().value).toBe("half-written thought");
+  });
+
+  it("recalls nothing in an empty composer, and a bare ArrowUp still recalls the newest", () => {
+    for (const mods of MODS) {
+      const e = press("ArrowUp", mods);
+      expect(e.defaultPrevented, JSON.stringify(mods)).toBe(false);
+      expect(input().value, JSON.stringify(mods)).toBe("");
+    }
+    press("ArrowUp");
+    expect(input().value).toBe("newest");
+  });
+
+  it("does not step back toward the draft while cycling", () => {
+    type("half-written thought");
+    press("ArrowUp");
+    press("ArrowUp");
+    for (const mods of MODS) {
+      const e = press("ArrowDown", mods);
+      expect(e.defaultPrevented, JSON.stringify(mods)).toBe(false);
+      expect(input().value, JSON.stringify(mods)).toBe("oldest");
+    }
+    press("ArrowDown");
+    expect(input().value).toBe("newest");
   });
 });
 

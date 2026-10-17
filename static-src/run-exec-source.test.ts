@@ -188,6 +188,36 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
     expect(counters(run.nodes)).toEqual({ total: 3, done: 0, failed: 0, current: 0 });
   });
 
+  it("gives a planned step the model and effort its recipe pins", () => {
+    const pinned = {
+      nodeId: "code",
+      type: "step",
+      agentName: "wf-coder",
+      modelId: "claude-opus-5.5",
+      effortLevel: "high",
+    };
+    const unstarted = { nodeId: "wf_1", type: "sequence", status: "running", children: [] };
+    const pendingFan = {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [{ nodeId: "fan", type: "parallel", status: "pending", children: [] }],
+    };
+    const cases: [string, unknown, unknown[]][] = [
+      ["top level", unstarted, [pinned]],
+      ["parallel branch", pendingFan, [{ nodeId: "fan", type: "parallel", branches: [pinned] }]],
+    ];
+    for (const [name, root, plan] of cases) {
+      const code = flatten(runToExec(stateWith(root), plan, NO_ASKS).nodes).find(
+        (n) => n.label === "code",
+      );
+      expect(code?.state, name).toBe("pending");
+      const facts = new Map((code?.facts ?? []).map((f) => [f.label, f.value]));
+      expect(facts.get("Model"), name).toBe("claude-opus-5.5");
+      expect(facts.get("Effort"), name).toBe("high");
+    }
+  });
+
   it("never counts a childless container as a step, plan or no plan", () => {
     const root = {
       nodeId: "wf_1",

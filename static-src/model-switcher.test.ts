@@ -101,17 +101,24 @@ vi.mock("@cplieger/ui-primitives/roving-focus", () => ({
 
 import { activeSession } from "./store.js";
 import { initModelSwitcher } from "./model-switcher.js";
-import { setCatalogEfforts } from "./effort.js";
 
-function model(id: string, dflt?: string, toggleable?: boolean): ModelInfo {
+function model(
+  id: string,
+  dflt?: string,
+  toggleable?: boolean,
+  tiers?: readonly string[],
+): ModelInfo {
   return {
     model_id: id,
     model_name: id,
     rate_multiplier: 1,
     ...(dflt === undefined ? {} : { default_effort_level: dflt }),
     ...(toggleable === true ? { thinking_toggleable: true } : {}),
+    ...(tiers === undefined ? {} : { effort_tiers: tiers }),
   };
 }
+
+const FIVE = ["low", "medium", "high", "xhigh", "max"] as const;
 
 /** Nothing draws tiers, so the vocabulary is read off the ARIA range and the knob's tier. */
 function openCard(): void {
@@ -188,7 +195,6 @@ describe("the effort section", () => {
     notice = null;
     onExpand.fn = null;
     lastEffortByModel = {};
-    setCatalogEfforts([], "");
     initModelSwitcher();
   });
 
@@ -257,9 +263,8 @@ describe("the effort section", () => {
     expect(markedTier()).toBe("medium");
   });
 
-  it("uses the pre-session catalog and the model default when no session catalog exists", async () => {
-    setCatalogEfforts([{ id: "low" }, { id: "high" }], "low");
-    cachedModels = [model("opus-4.7", "high")];
+  it("uses the current model's own catalog tiers when no session catalog exists", async () => {
+    cachedModels = [model("opus-4.7", "high", false, ["low", "high"])];
     setSession({ id: "c1", model: "opus-4.7", effort: "" });
 
     expect(tierCount()).toBe(2);
@@ -267,8 +272,28 @@ describe("the effort section", () => {
     expect(markedTier()).toBe("high");
   });
 
-  it("falls back to the canonical five when nothing has landed yet", async () => {
-    cachedModels = [model("older")];
+  it("offers a bridgeless chat on a model with fewer tiers that model's tiers", async () => {
+    cachedModels = [
+      model("opus-5", "high", false, FIVE),
+      model("sonnet-5", "medium", false, ["low", "medium", "high"]),
+    ];
+    setSession({ id: "c1", model: "sonnet-5", effort: "" });
+
+    expect(tierCount()).toBe(3);
+    await expect(tierEnds()).resolves.toEqual(["low", "high"]);
+  });
+
+  it("shows no effort row for a listed model with no tiers, even when no model has tiers", () => {
+    cachedModels = [model("auto")];
+    setSession({ id: "c1", model: "auto", effort: "" });
+
+    openCard();
+    expect(document.querySelector(".effort-row")).toBeNull();
+    expect(document.querySelectorAll('[role="slider"]')).toHaveLength(0);
+  });
+
+  it("falls back to the canonical five with an empty catalog", async () => {
+    cachedModels = [];
     setSession({ id: "c1", model: "older", effort: "" });
 
     expect(tierCount()).toBe(5);
@@ -367,8 +392,7 @@ describe("the effort section", () => {
 
   it("opens a new chat on the level the user last picked, under the same model", () => {
     lastEffortByModel = { "opus-5": "max" };
-    setCatalogEfforts(fiveTiers(), "high");
-    cachedModels = [model("opus-5", "high")];
+    cachedModels = [model("opus-5", "high", false, FIVE)];
     setSession({ id: "c1", model: "opus-5", effort: "" });
 
     expect(markedTier()).toBe("max");
@@ -376,7 +400,6 @@ describe("the effort section", () => {
 
   it("a level picked under ANOTHER model yields the current model's default", () => {
     lastEffortByModel = { "opus-5": "max" };
-    setCatalogEfforts(fiveTiers(), "high");
     cachedModels = [model("gpt-luna", "medium")];
     setSession({ id: "c1", model: "gpt-luna", effort: "", effort_levels: fiveTiers() });
 
@@ -452,7 +475,6 @@ describe("the effort slider's thinking Off stop", () => {
     notice = null;
     onExpand.fn = null;
     lastEffortByModel = {};
-    setCatalogEfforts([], "");
     initModelSwitcher();
     effortDispatch.mockClear();
     thinkingDispatch.mockClear();

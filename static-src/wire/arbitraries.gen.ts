@@ -517,14 +517,12 @@ const arbModel = fc.letrec<{
     {
       subject: tie("SubjectStamp"),
       default_model: fc.string(),
-      effort_active: fc.string(),
       catalog: arbCatalogState,
       catalog_reason: arbCatalogReason,
       modes: fc.array(tie("SessionMode"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       models: fc.array(tie("SessionModel"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
-      effort_levels: fc.array(tie("SessionEffortLevel"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
     },
-    { requiredKeys: ["catalog", "modes", "models", "effort_levels"] },
+    { requiredKeys: ["catalog", "modes", "models"] },
   ),
   ConfiguredForge: fc.record(
     {
@@ -2253,7 +2251,6 @@ const arbModel = fc.letrec<{
       default_effort_level: fc.string(),
       effort_tiers: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       rate_multiplier: fc.double({ noNaN: true, noDefaultInfinity: true }),
-      has_effort: fc.boolean(),
       thinking_toggleable: fc.boolean(),
       thinking_default_off: fc.boolean(),
     },

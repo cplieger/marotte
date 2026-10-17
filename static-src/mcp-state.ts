@@ -187,6 +187,9 @@ const decodeServer: Decoder<Server> = (v) => {
   if (Array.isArray(o["disabled_tools"])) {
     out.disabled_tools = (o["disabled_tools"] as unknown[]).map((x) => String(x));
   }
+  if (Array.isArray(o["oauth_scopes"])) {
+    out.oauth_scopes = (o["oauth_scopes"] as unknown[]).map((x) => String(x));
+  }
   return out;
 };
 
@@ -233,6 +236,8 @@ export interface Server {
   oauth_client_metadata_url?: string;
   /** KAS `oauth.redirectUri`: the pinned loopback callback ("localhost:7778"). */
   oauth_redirect_uri?: string;
+  /** KAS `oauthScopes`, from a paste or the raw edit; no form control edits it. */
+  oauth_scopes?: string[];
   created_at: number;
   updated_at: number;
 }

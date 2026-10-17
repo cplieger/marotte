@@ -263,6 +263,67 @@ func TestMergeTangent_SummarizesThenPromptsTheIdleParent(t *testing.T) {
 	}
 }
 
+// promptParamsBridges opens, for each chat, a bridge that records the session/prompt params sent
+// on it.
+type promptParamsBridges struct {
+	bridgeAccess
+	params map[marotte.ChatID]map[string]any
+	mu     sync.Mutex
+}
+
+func (b *promptParamsBridges) OpenBridge(_ context.Context, chatID marotte.ChatID, _ string) (Bridge, error) {
+	return &promptParamsBridge{owner: b, chat: chatID}, nil
+}
+
+func (b *promptParamsBridges) outputStyle(chatID marotte.ChatID) (style any, sent, prompted bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	params, prompted := b.params[chatID]
+	meta, _ := params["_meta"].(map[string]any)
+	kiro, _ := meta["kiro"].(map[string]any)
+	style, sent = kiro["outputStyle"]
+	return style, sent, prompted
+}
+
+type promptParamsBridge struct {
+	recoveryBridge
+	owner *promptParamsBridges
+	chat  marotte.ChatID
+}
+
+func (b *promptParamsBridge) CallAt(_ context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
+	if method == marotte.MethodPrompt {
+		m, _ := params.(map[string]any)
+		b.owner.mu.Lock()
+		b.owner.params[b.chat] = m
+		b.owner.mu.Unlock()
+	}
+	return &marotte.RPCResponse{}, 0, nil
+}
+
+// The summary is read by the parent agent, so the user's output style stays off it; the parent's
+// reply to the findings is the user's to read, so that prompt keeps it.
+func TestMergeTangent_OnlyTheFindingsPromptCarriesTheOutputStyle(t *testing.T) {
+	f := newMergeFixture(t)
+	dir := t.TempDir()
+	writeConfig(t, dir, `{"output_style":"concise"}`)
+	f.roles.workspace.ConfigDir = dir
+	bridges := &promptParamsBridges{bridgeAccess: f.roles.bridges, params: map[marotte.ChatID]map[string]any{}}
+	f.roles.bridges = bridges
+
+	if _, err := f.merge(t, &fakeTangents{parent: "c-parent", reply: "The cache halves the load."}); err != nil {
+		t.Fatalf("CmdMergeTangent = %v, want accepted", err)
+	}
+	f.host.waitInflight(t)
+
+	if style, sent, prompted := bridges.outputStyle("c-tangent"); !prompted || sent {
+		t.Errorf("summary prompt outputStyle = %v (sent %v, prompted %v), want a prompt without the key", style, sent, prompted)
+	}
+	if style, _, prompted := bridges.outputStyle("c-parent"); !prompted || style != "concise" {
+		t.Errorf("findings prompt outputStyle = %v (prompted %v), want \"concise\"", style, prompted)
+	}
+}
+
 func TestMergeTangent_QueuesTheFindingsOnABusyParent(t *testing.T) {
 	f := newMergeFixture(t)
 	f.host.busy["c-parent"] = true

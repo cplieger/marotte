@@ -1,10 +1,13 @@
 package procgroup
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -327,4 +330,66 @@ func TestGroup_StaleOnlyWhenTheLiveLeaderStartedAtAnotherTime(t *testing.T) {
 	if !later.Stale() {
 		t.Errorf("Stale() = false for another start time at a live pid, want true")
 	}
+}
+
+// TestOwnGroup_DeadlineKillsTheGroupAndBoundsWait: the head forks a child that holds the stdout
+// pipe, so a head-only kill leaves Wait open for the child's whole sleep.
+func TestOwnGroup_DeadlineKillsTheGroupAndBoundsWait(t *testing.T) {
+	const waitDelay = 2 * time.Second
+	run := func(t *testing.T, fork string) (elapsed time.Duration, child int) {
+		t.Helper()
+		pidFile := filepath.Join(t.TempDir(), "child.pid")
+		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "sh", "-c", fork+` &
+echo $! > "`+pidFile+`"
+sleep 30`)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		OwnGroup(cmd, waitDelay)
+		start := time.Now()
+		err := cmd.Run()
+		elapsed = time.Since(start)
+		raw, rErr := os.ReadFile(pidFile)
+		if rErr != nil {
+			t.Fatalf("the head never recorded its child: %v", rErr)
+		}
+		child, cErr := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if cErr != nil {
+			t.Fatalf("parse child pid %q: %v", raw, cErr)
+		}
+		t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+		if err == nil {
+			t.Error("Run after its deadline = nil, want the kill's error")
+		}
+		return elapsed, child
+	}
+
+	t.Run("a group member dies with the head", func(t *testing.T) {
+		elapsed, child := run(t, "sleep 30")
+		if elapsed > waitDelay {
+			t.Errorf("Run returned after %s, want under the %s wait delay: the child held the pipe", elapsed, waitDelay)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			st, ok := readStat(child)
+			if !ok || st.state == 'Z' {
+				break
+			}
+			if !time.Now().Before(deadline) {
+				t.Fatalf("child %d outlived the deadline kill", child)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+
+	t.Run("an escaped child cannot hold Wait past the delay", func(t *testing.T) {
+		if _, err := exec.LookPath("setsid"); err != nil {
+			t.Skip("setsid is not on PATH")
+		}
+		elapsed, _ := run(t, "setsid sleep 30")
+		if elapsed > waitDelay+2*time.Second {
+			t.Errorf("Run returned after %s, want within the %s wait delay plus slack", elapsed, waitDelay)
+		}
+	})
 }

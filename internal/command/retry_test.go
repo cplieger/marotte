@@ -166,7 +166,7 @@ func TestCallPromptWithRetry_LadderPerClass(t *testing.T) {
 			wantWait:  0,
 		},
 		"a busy session spends the ladder": {
-			err:       rpcErr(t, marotte.RPCCodeNotIdle, "session is not idle", nil),
+			err:       rpcErr(t, -32002, "A prompt is already in-flight for session sess_x", nil),
 			wantCalls: 3,
 			wantWait:  2 * promptRetryDelay,
 		},

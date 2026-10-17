@@ -28,7 +28,9 @@ func (in *inbound) handleKiroClientRequest(ctx context.Context, chatID marotte.C
 	}
 }
 
-// respondKiroOpenExternalURL acknowledges a safe URL before broadcasting it.
+// respondKiroOpenExternalURL acknowledges a safe URL before broadcasting it to chatID. With no chat (every KAS
+// frame, which names no session) nobody would see it, so it refuses: a success answer makes KAS wait on a callback
+// for up to 300 s, an error ends the attempt at once.
 func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	var p struct {
 		URL string `json:"url"`
@@ -41,6 +43,14 @@ func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, chatID marott
 		in.respondBridge(ctx, chatID, origin, msg, nil, &marotte.RPCError{
 			Code:    -32602,
 			Message: "openExternalUrl: only http/https URLs are allowed",
+		})
+		return
+	}
+	if chatID == "" {
+		slog.Warn("v3 openExternalUrl: refusing a sign-in URL no chat can show")
+		in.respondBridge(ctx, chatID, origin, msg, nil, &marotte.RPCError{
+			Code:    -32000,
+			Message: "no client can open this URL",
 		})
 		return
 	}

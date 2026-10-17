@@ -522,15 +522,15 @@ func (p *EntryProjection) ingestModelFallback(k *replayInfoKiro) {
 	p.appendEntry(marotte.EntryKindModelFallback, p.newID(), "", p.frameTS(""), payload)
 }
 
-// The credit sum matches the live path's: an empty unit or the credit unit counts, anything else is
-// a dimension this does not price.
+// Credits and elapsed sum as turnlog.Turn.Meter does live: an empty unit or the credit unit counts,
+// anything else is a dimension this does not price.
 func (p *EntryProjection) noteTurnMetering(summaries []promptTurnSummary, elapsedMs float64) {
 	for i := range summaries {
 		if summaries[i].Unit == "" || summaries[i].Unit == meteringUnitCredit {
 			p.facts.credits += summaries[i].Usage
 		}
 	}
-	p.facts.elapsedMs = elapsedMs
+	p.facts.elapsedMs += elapsedMs
 }
 
 // A bracket carrying no payload records ConcludeStopReason's answer for an unstated reason, because

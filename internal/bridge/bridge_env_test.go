@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/kascap"
@@ -280,30 +281,99 @@ func TestStart_ScreensCredentialsOutOfTheSpawnAndNamesThem(t *testing.T) {
 	}
 }
 
-// The generation joins a reap line to its engine start. Not parallel: it swaps the slog default.
-func TestStop_ReapLineNamesTheGeneration(t *testing.T) {
-	dir := t.TempDir()
-	scriptPath := envDumpFake(t, dir, filepath.Join(dir, "child.env"))
-
-	logs := captureLogs(t)
-
-	b := NewEngine(scriptPath, dir, WithGeneration(7))
-	if err := b.Start(context.Background(), &marotte.EngineOpts{Lifetime: context.Background()}); err != nil {
-		t.Fatalf("Start: %v", err)
+// exitingFake writes a fake kiro-cli that answers every request and exits with status 3, unasked, on a test/exit
+// notification. Written under ForkLock against ETXTBSY (golang/go#22315).
+func exitingFake(t *testing.T, dir string) string {
+	t.Helper()
+	script := `#!/bin/sh
+while IFS= read -r line; do
+  id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  case "$method" in
+    test/exit) exit 3 ;;
+    initialize)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
+      ;;
+    *)
+      if [ -n "$id" ]; then
+        printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+      fi
+      ;;
+  esac
+done
+`
+	scriptPath := filepath.Join(dir, "exiting-kiro-cli")
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(scriptPath, []byte(script), 0o755)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		t.Fatalf("write fake script: %v", err)
 	}
-	b.Stop()
+	return scriptPath
+}
 
-	var reap string
-	for line := range strings.SplitSeq(logs.String(), "\n") {
-		if strings.Contains(line, `msg="kiro-cli reaped"`) || strings.Contains(line, `msg="kiro-cli ended on its own"`) {
-			reap = line
-		}
+// The reap line says who ended kiro-cli, and its generation joins it to the engine start. Not parallel: it swaps the
+// slog default.
+func TestReap_LineNamesThePathAndTheGeneration(t *testing.T) {
+	const (
+		reaped      = `level=DEBUG msg="kiro-cli reaped" generation=7 `
+		endedItself = `level=WARN msg="kiro-cli ended on its own" generation=7 wait="exit status 3"`
+	)
+	cases := []struct {
+		name string
+		// end ends the started engine and returns once its teardown is done.
+		end  func(t *testing.T, b *Engine, cancelLifetime context.CancelFunc)
+		want string
+	}{
+		{
+			name: "marotte stops it",
+			end:  func(_ *testing.T, b *Engine, _ context.CancelFunc) { b.Stop() },
+			want: reaped,
+		},
+		{
+			name: "it ends itself",
+			end: func(t *testing.T, b *Engine, _ context.CancelFunc) {
+				if err := b.Notify(t.Context(), "test/exit", nil); err != nil {
+					t.Fatalf("Notify(test/exit): %v", err)
+				}
+				<-b.Done()
+			},
+			want: endedItself,
+		},
+		{
+			name: "its lifetime ends",
+			end: func(_ *testing.T, b *Engine, cancelLifetime context.CancelFunc) {
+				cancelLifetime()
+				<-b.Done()
+			},
+			want: reaped,
+		},
 	}
-	if reap == "" {
-		t.Fatalf("Stop logged no reap line:\n%s", logs.String())
-	}
-	if !strings.Contains(reap, "generation=7 ") {
-		t.Errorf("reap line = %q, want generation=7 (the engine's spawn count)", reap)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			logs := captureLogs(t)
+			// Not t.Context(): the lifetime must outlive t.Cleanup(b.Stop) in the cases that do not end it.
+			lifetime, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			b := NewEngine(exitingFake(t, dir), dir, WithGeneration(7))
+			t.Cleanup(b.Stop)
+			if err := b.Start(t.Context(), &marotte.EngineOpts{Lifetime: lifetime}); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+
+			tc.end(t, b, cancel)
+
+			var lines []string
+			for line := range strings.SplitSeq(logs.String(), "\n") {
+				if strings.Contains(line, `msg="kiro-cli reaped"`) || strings.Contains(line, `msg="kiro-cli ended on its own"`) {
+					lines = append(lines, line)
+				}
+			}
+			if len(lines) != 1 || !strings.Contains(lines[0], tc.want) {
+				t.Errorf("reap lines = %q, want exactly one containing %q", lines, tc.want)
+			}
+		})
 	}
 }
 

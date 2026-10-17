@@ -10,12 +10,8 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 )
 
-// UnmarshalJSON validates the transport field at the JSON parse boundary,
-// rejecting unknown transport values early rather than letting them flow
-// through to runtime dispatch. All three transports (stdio, http, sse) are
-// accepted as first-class values and preserved verbatim — "sse" is no
-// longer folded into "http", since KAS accepts a distinct SSE entry over
-// the v3 wire (see the Transport doc in store.go).
+// UnmarshalJSON validates the transport field at the JSON parse boundary, rejecting an unknown value early
+// rather than letting it flow through to runtime dispatch; each of the four transports is kept verbatim.
 func (s *Server) UnmarshalJSON(data []byte) error {
 	type serverAlias Server
 	var raw serverAlias

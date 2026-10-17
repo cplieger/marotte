@@ -156,6 +156,22 @@ func TestWriteMCP_SortsServersAlphabetically(t *testing.T) {
 	}
 }
 
+// TestWriteMCP_SaysTheToolsAreDeferred pins that the agent is told to load an MCP tool by id: telling it the
+// tools are already on its belt makes it report a connected integration as missing.
+func TestWriteMCP_SaysTheToolsAreDeferred(t *testing.T) {
+	var b strings.Builder
+	writeMCP(&b, MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}})
+	out := b.String()
+	for _, want := range []string{"deferred", "tool_load", "tool_call", "includeMcpJson", "kiro_powers"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeMCP() omits %q; output:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "appear in your toolset") {
+		t.Errorf("writeMCP() still says MCP tools are in the toolset; output:\n%s", out)
+	}
+}
+
 func TestWriteMCP_InputSnapshotNotMutated(t *testing.T) {
 	servers := []marotte.MCPSnapshotServer{{Name: "zed"}, {Name: "alpha"}}
 	snap := MCPSnapshot{Servers: servers}

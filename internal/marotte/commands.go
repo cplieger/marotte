@@ -83,6 +83,9 @@ type PromptCommand struct {
 	Model       string       `json:"model,omitempty"`
 	DisplayText string       `json:"display_text,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
+	// ForAgent marks a server-authored prompt whose answer an agent reads, so the user's output
+	// style is withheld from it. Server-only: no client payload can set it.
+	ForAgent bool `json:"-"`
 }
 
 // Attachment is a file staged beside a prompt; its extension decides whether it
@@ -149,7 +152,7 @@ const (
 // switched in place; a chat with no live session records the pick, and its next
 // session opens on it.
 type SwitchModelCommand struct {
-	// Empty or "auto" names the model in force.
+	// Empty names the model in force; "auto" is KAS's Auto model.
 	Model string `json:"model,omitempty"`
 	// Effort is the tier this pick sets: empty keeps a tier parked with Model, else the chat's
 	// level; a level replaces it; SwitchEffortOff drops a parked one, turns no thinking on, and
