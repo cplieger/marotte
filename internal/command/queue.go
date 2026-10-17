@@ -35,9 +35,10 @@ const reasonSending = "sending"
 // running" and "it is queued" and leave a row no close will send.
 type QueueAccess interface {
 	// AppendIfLive applies fn to the chat's record while the chat holds a live turn,
-	// or waits for kiro-cli to end a run the user stopped (its drain then sends the
-	// row, CloseFacts.AfterStop), reporting live=false (and writing nothing) when
-	// neither. fn's error aborts the write and is returned as is.
+	// or waits for kiro-cli to end a run the user stopped (that close's drain may send
+	// one such row, CloseFacts.AfterStop; the rest go as after any close), reporting
+	// live=false (and writing nothing) when neither. fn's error aborts the write and
+	// is returned as is.
 	AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (live bool, err error)
 	// NextUserRow answers the first queued user row that is not held and whose
 	// turn this process has not opened, among only when it is non-nil.
@@ -155,7 +156,8 @@ func cmdUnqueuePrompt(ctx context.Context, roles *promptRoles, cmd *marotte.Clie
 type CloseFacts struct {
 	Outcome marotte.TurnOutcome
 	// AfterStop are rows queued while kiro-cli ended the stopped run, with no turn
-	// live: they go after this close although it was stopped.
+	// live: one of them may go after this close although it was stopped (after any
+	// unread steers, which go first); the rest wait for the next close's drain.
 	AfterStop []string
 	Fence     TurnFence
 	// Unattended is a close no one stopped (marotte closing a turn KAS went idle without

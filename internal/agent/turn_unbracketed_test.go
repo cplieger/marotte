@@ -21,7 +21,7 @@ func endTurnResponse() *marotte.RPCResponse {
 	return &marotte.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}
 }
 
-// The recorded shape of turn n=834: KAS ran the prompt (it launched a workflow) but its session adapter owned another
+// The recorded shape of an unstreamed prompt turn: KAS ran the prompt (it launched a workflow) but its session adapter owned another
 // execution, so no turn_start, chunk or tool call reached marotte before KAS answered the prompt end_turn. The record
 // says KAS sent none of the run, never that the agent answered with nothing.
 func TestPromptTurn_AnUnbracketedSilentEndIsNotGradedEmpty(t *testing.T) {
@@ -74,7 +74,7 @@ func graceClose(t *testing.T, h *Runtime, turnID string) {
 	})
 }
 
-// The recorded shape of turn n=834's start: the cancel's grace closed n=833 while KAS still ran executions for the
+// The recorded shape of the next turn's start: the cancel's grace closed the stopped turn while KAS still ran executions for the
 // session (its re-wake of the cleared notifications held it busy), and marotte sent the carried steer 6 ms later,
 // which KAS queued beside its re-wake and orphaned. The drain waits until KAS reports the session idle.
 func TestAfterTurnClose_AGraceClosedPromptsDrainWaitsForKASToGoIdle(t *testing.T) {
@@ -117,9 +117,9 @@ func TestAfterTurnClose_AGraceClosedPromptDrainsAtOnceWhenKASIsIdle(t *testing.T
 	})
 }
 
-// A shell turn's busy refusal also concludes `cancelled`, but sent kiro-cli nothing, so KAS's activity (another
-// turn's) does not hold its drain.
-func TestAfterTurnClose_AShellBusyRefusalDrainsAtOnceWhileKASIsBusy(t *testing.T) {
+// A shell turn's busy refusal also concludes `cancelled`, but sent kiro-cli nothing, so it starts no hold: a follow-up
+// queued after it is refused as no turn, and its drain waits only for KAS's run, like any close's.
+func TestAfterTurnClose_AShellBusyRefusalStartsNoHold(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		defer shutdownHub(t, h)
@@ -136,8 +136,18 @@ func TestAfterTurnClose_AShellBusyRefusalDrainsAtOnceWhileKASIsBusy(t *testing.T
 
 		h.coord.AbandonInFlightTurn(t.Context(), "c1", turnID, marotte.StopReasonCancelled, "", "", 0)
 		synctest.Wait()
+		rec := postCmd(t, h, marotte.ClientCommand{
+			Type: marotte.CmdQueuePrompt, ChatID: "c1",
+			Payload: json.RawMessage(`{"text":"after the shell","message_id":"m-q1"}`),
+		})
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "no_turn") {
+			t.Errorf("queue_prompt after a shell busy refusal = %d %s, want 409 no_turn", rec.Code, rec.Body.String())
+		}
+
+		h.coord.WireTurnActivity("c1", false)
+		synctest.Wait()
 		if n := drained.Load(); n != 1 {
-			t.Errorf("drained %d times after a shell busy refusal, want one at once", n)
+			t.Errorf("drained %d times once KAS reported idle, want one", n)
 		}
 	})
 }
@@ -197,7 +207,8 @@ func TestAfterTurnClose_TheForwardExitingEndsAGraceClosedPromptsWait(t *testing.
 	})
 }
 
-// A teardown re-fences the chat: its session is going, so the hold ends with no drain, and the next session admits.
+// A teardown re-fences the chat: its session is going, so the hold ends with no drain. KAS's last report still
+// stands until the session's forward exits, and then the next session admits.
 func TestAfterTurnClose_ATeardownEndsAGraceClosedPromptsHoldWithoutADrain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
@@ -213,8 +224,17 @@ func TestAfterTurnClose_ATeardownEndsAGraceClosedPromptsHoldWithoutADrain(t *tes
 		if n := drained.Load(); n != 0 {
 			t.Errorf("drained %d times after a teardown re-fenced the chat, want none", n)
 		}
+		lc := h.coord.turns.lifecycleFor("c1")
+		lc.mu.Lock()
+		state, gen := lc.kas.state, lc.fwdGen
+		lc.mu.Unlock()
+		if state != kasRunning {
+			t.Errorf("KAS state after the teardown = %v, want running with the hold ended", state)
+		}
+
+		h.coord.turns.sealPosition("c1", gen)
 		if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
-			t.Error("TryReserveTurn refused after the teardown, want the hold ended")
+			t.Error("TryReserveTurn refused once the session's forward exited, want admitted")
 		}
 	})
 }
@@ -281,6 +301,8 @@ func TestAfterTurnClose_AGraceClosedPromptsWaitEndsAtTheNextWireTurn(t *testing.
 			t.Fatalf("drained %d times beside KAS's own turn, want none until that turn closes", n)
 		}
 
+		// KAS's own order: the idle report, then the turn_end.
+		h.coord.WireTurnActivity("c1", false)
 		h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonEndTurn)
 		synctest.Wait()
 		if n := drained.Load(); n != 1 {
@@ -289,7 +311,7 @@ func TestAfterTurnClose_AGraceClosedPromptsWaitEndsAtTheNextWireTurn(t *testing.
 	})
 }
 
-// The recorded shape again, with the user's own prompt in the gap: sent right after the grace closed n=833 while KAS
+// The recorded shape again, with the user's own prompt in the gap: sent right after the grace closed the stopped turn while KAS
 // still ran the session, it must reach kiro-cli only once KAS reports the session idle, exactly once, as written.
 func TestCmdPrompt_AfterAGraceCloseWaitsForKASToGoIdle(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -315,7 +337,7 @@ func TestCmdPrompt_AfterAGraceCloseWaitsForKASToGoIdle(t *testing.T) {
 		go func() {
 			done <- postCmd(t, h, marotte.ClientCommand{
 				Type: marotte.CmdPrompt, ChatID: "c1",
-				Payload: json.RawMessage(`{"text":"The turn footer layout is also just messy","message_id":"m-2"}`),
+				Payload: json.RawMessage(`{"text":"Please tidy the settings page","message_id":"m-2"}`),
 			})
 		}()
 		time.Sleep(time.Second)
@@ -339,7 +361,7 @@ func TestCmdPrompt_AfterAGraceCloseWaitsForKASToGoIdle(t *testing.T) {
 		br.mu.Lock()
 		got := slices.Clone(prompted)
 		br.mu.Unlock()
-		if len(got) != 1 || !strings.Contains(got[0], "The turn footer layout is also just messy") {
+		if len(got) != 1 || !strings.Contains(got[0], "Please tidy the settings page") {
 			t.Errorf("session/prompt blocks = %v, want the user's text once", got)
 		}
 		if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-c1", "m-2"}) {
@@ -419,7 +441,7 @@ func TestCmdPrompt_DuringAWireTurnsGraceCloseWaitsForKASToGoIdle(t *testing.T) {
 		go func() {
 			done <- postCmd(t, h, marotte.ClientCommand{
 				Type: marotte.CmdPrompt, ChatID: "c1",
-				Payload: json.RawMessage(`{"text":"The turn footer layout is also just messy","message_id":"m-2"}`),
+				Payload: json.RawMessage(`{"text":"Please tidy the settings page","message_id":"m-2"}`),
 			})
 		}()
 		synctest.Wait()
@@ -438,13 +460,13 @@ func TestCmdPrompt_DuringAWireTurnsGraceCloseWaitsForKASToGoIdle(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("prompt = %d %s, want admitted once KAS went idle", rec.Code, rec.Body.String())
 		}
-		if got := prompted(); len(got) != 1 || !strings.Contains(got[0], "The turn footer layout is also just messy") {
+		if got := prompted(); len(got) != 1 || !strings.Contains(got[0], "Please tidy the settings page") {
 			t.Errorf("session/prompt blocks = %v, want the user's text once", got)
 		}
 	})
 }
 
-// The recorded shape of n=834 sent in Queue mode: a follow-up queued once the user's stop closed the turn, while KAS
+// The recorded shape sent in Queue mode: a follow-up queued once the user's stop closed the turn, while KAS
 // still ran it, is held off the session until KAS reports idle and then sent exactly once. A row queued before the
 // stop waits as after any stop.
 func TestCmdQueuePrompt_DuringAKASHoldIsSentOnceKASGoesIdle(t *testing.T) {
@@ -467,7 +489,7 @@ func TestCmdQueuePrompt_DuringAKASHoldIsSentOnceKASGoesIdle(t *testing.T) {
 
 		rec := postCmd(t, h, marotte.ClientCommand{
 			Type: marotte.CmdQueuePrompt, ChatID: "c1",
-			Payload: json.RawMessage(`{"text":"The turn footer layout is also just messy","message_id":"m-q1"}`),
+			Payload: json.RawMessage(`{"text":"Please tidy the settings page","message_id":"m-q1"}`),
 		})
 		if rec.Code != http.StatusOK {
 			t.Fatalf("queue_prompt during a KAS hold = %d %s, want 200", rec.Code, rec.Body.String())
@@ -479,7 +501,7 @@ func TestCmdQueuePrompt_DuringAKASHoldIsSentOnceKASGoesIdle(t *testing.T) {
 
 		h.coord.WireTurnActivity("c1", false)
 		synctest.Wait()
-		if got := prompted(); len(got) != 1 || !strings.Contains(got[0], "The turn footer layout is also just messy") {
+		if got := prompted(); len(got) != 1 || !strings.Contains(got[0], "Please tidy the settings page") {
 			t.Errorf("session/prompt blocks = %v once KAS went idle, want the held follow-up once", got)
 		}
 		if rows := queuedRows(t, cs, "c1"); len(rows) != 1 || rows[0].ID != "m-q0" {
@@ -575,7 +597,7 @@ func TestCmdPrompt_ARunReportedDuringAGraceCloseHoldsAdmission(t *testing.T) {
 		go func() {
 			done <- postCmd(t, h, marotte.ClientCommand{
 				Type: marotte.CmdPrompt, ChatID: "c1",
-				Payload: json.RawMessage(`{"text":"The turn footer layout is also just messy","message_id":"m-2"}`),
+				Payload: json.RawMessage(`{"text":"Please tidy the settings page","message_id":"m-2"}`),
 			})
 		}()
 		close(release)
@@ -591,7 +613,59 @@ func TestCmdPrompt_ARunReportedDuringAGraceCloseHoldsAdmission(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("prompt = %d %s, want admitted once KAS went idle", rec.Code, rec.Body.String())
 		}
-		if got := prompted(); len(got) != 1 || !strings.Contains(got[0], "The turn footer layout is also just messy") {
+		if got := prompted(); len(got) != 1 || !strings.Contains(got[0], "Please tidy the settings page") {
+			t.Errorf("session/prompt blocks = %v, want the user's text once", got)
+		}
+	})
+}
+
+// KAS can report a run after the close's hold ended and before its drain reserved: a prompt sent then waits for KAS to
+// report idle like one sent during the hold, and the drain sends nothing beside the run.
+func TestCmdPrompt_ARunReportedAfterTheHoldEndsHoldsAdmission(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, _, br := newTestHub()
+		defer shutdownHub(t, h)
+		entered, release := make(chan struct{}), make(chan struct{})
+		var blocked atomic.Bool
+		drain := h.coord.drainAfterClose
+		h.coord.drainAfterClose = func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
+			if blocked.CompareAndSwap(false, true) {
+				close(entered)
+				<-release
+			}
+			drain(ctx, chatID, cl, ends)
+		}
+		turnID, _ := h.stagePromptTurn(t, "c1")
+		graceClose(t, h, turnID)
+		<-entered
+		prompted := promptCalls(br)
+
+		h.coord.WireTurnActivity("c1", true)
+		// Errorf: the drain is parked on release, which a Fatal here would leave blocked.
+		if h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+			h.coord.ReleaseTurnReservation("c1")
+			t.Error("TryReserveTurn acquired after KAS reported a run, want refused")
+		}
+		done := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			done <- postCmd(t, h, marotte.ClientCommand{
+				Type: marotte.CmdPrompt, ChatID: "c1",
+				Payload: json.RawMessage(`{"text":"Please tidy the settings page","message_id":"m-2"}`),
+			})
+		}()
+		close(release)
+		synctest.Wait()
+		if got := prompted(); len(got) != 0 || len(done) != 0 {
+			t.Fatalf("session/prompt blocks = %v, answered = %v while KAS reported a run, want none", got, len(done) != 0)
+		}
+
+		h.coord.WireTurnActivity("c1", false)
+		rec := <-done
+		synctest.Wait()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("prompt = %d %s, want admitted once KAS went idle", rec.Code, rec.Body.String())
+		}
+		if got := prompted(); len(got) != 1 || !strings.Contains(got[0], "Please tidy the settings page") {
 			t.Errorf("session/prompt blocks = %v, want the user's text once", got)
 		}
 	})
@@ -617,7 +691,7 @@ func heldPrompt(t *testing.T, h *Runtime, br *fakeBridge, record func(string)) c
 	go func() {
 		done <- postCmd(t, h, marotte.ClientCommand{
 			Type: marotte.CmdPrompt, ChatID: "c1",
-			Payload: json.RawMessage(`{"text":"The turn footer layout is also just messy","message_id":"m-2"}`),
+			Payload: json.RawMessage(`{"text":"Please tidy the settings page","message_id":"m-2"}`),
 		})
 	}()
 	synctest.Wait()
@@ -677,12 +751,28 @@ func TestAfterTurnClose_AWaitingPromptFollowsTheTurnEndCompaction(t *testing.T) 
 		r.reading(70)
 		r.block = make(chan struct{})
 		r.ac.live = h.coord.turns.live
+		// Read at the compaction's entry, so it does not depend on which goroutine wins once a hold lifts early: no
+		// reservation may exist then, and none may be taken.
+		var admittedAtEntry atomic.Bool
+		compact := r.ac.compact
+		r.ac.compact = func(ctx context.Context, b command.CompactBridge) (bool, error) {
+			_, held := h.coord.AdmissionHolderSource("c1")
+			if !held && h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+				h.coord.ReleaseTurnReservation("c1")
+				held = true
+			}
+			admittedAtEntry.Store(held)
+			return compact(ctx, b)
+		}
 		h.coord.autoCompact = r.ac
 		var prompts atomic.Int32
 		done := heldPrompt(t, h, br, func(string) { prompts.Add(1) })
 
 		h.coord.WireTurnActivity("c1", false)
 		synctest.Wait()
+		if admittedAtEntry.Load() {
+			t.Error("a prompt was admitted when the turn-end compaction began, want the hold still refusing it")
+		}
 		if n, p := r.count(), prompts.Load(); n != 1 || p != 0 {
 			t.Errorf("compactions = %d, session/prompt calls = %d once KAS went idle, want the compaction first, alone", n, p)
 		}

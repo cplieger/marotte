@@ -8,7 +8,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-const blockingSession = "sess_fe657706-3b4c-4a4f-8452-7123574bac1c"
+const blockingSession = "sess-holder"
 
 func queuedFrame(t *testing.T, active string) []byte {
 	t.Helper()
@@ -30,7 +30,7 @@ func eventsOf(events []marotte.ServerEvent, typ marotte.EventType) []marotte.Ser
 	return out
 }
 
-// The recorded shape of turn n=833: KAS queued the prompt behind another chat's turn, which held its one autonomous
+// The recorded shape of a stopped turn: KAS queued the prompt behind another chat's turn, which held its one autonomous
 // slot for 31 minutes. The chat says what it waits for, naming that chat, and turn_start ends the wait.
 func TestSessionInfo_AQueuedPromptNamesTheChatHoldingTheSlot(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")

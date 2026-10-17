@@ -42,10 +42,8 @@ type steerRecord struct {
 	// unless a close end follows a stale one (opEndStale), which it replaces.
 	opEnd *command.SteerTurnEnd
 	// starting is a turn StartTurn began whose bracket has not bound the channel:
-	// its execution may already be reading the buffer, unless KAS reported it
-	// queued for the slot (slotQueued names it then).
-	starting   string
-	slotQueued string
+	// its execution may already be reading the buffer.
+	starting string
 	// absorbing is a prompt's turn that opened and has not reached its start delivery
 	// (NextParked), which takes the unsent rows into it.
 	absorbing string
@@ -587,22 +585,6 @@ func (r *steerRecords) turnStarted(chatID marotte.ChatID, turnID string) {
 	}
 }
 
-// turnQueued records KAS's report that the starting turn's execution waits for the slot. A later turn_start binds the
-// channel (turnBound), which ends the starting state; a report naming another turn changes nothing.
-func (r *steerRecords) turnQueued(chatID marotte.ChatID, turnID string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if rec := r.chats[chatID]; rec != nil && !rec.gone && rec.starting == turnID {
-		rec.slotQueued = turnID
-	}
-}
-
-// readingStarted reports a starting turn whose execution may be reading the buffer: no bracket bound it and KAS did
-// not report it queued.
-func (rec *steerRecord) readingStarted() bool {
-	return rec.channel == chanNone && rec.starting != "" && rec.slotQueued != rec.starting
-}
-
 // turnOpened records a prompt's turn that opened and has yet to take the unsent rows.
 func (r *steerRecords) turnOpened(chatID marotte.ChatID, turnID string) {
 	r.step(chatID, false, func(rec *steerRecord, _ *steerFx) { rec.absorbing = turnID })
@@ -1009,8 +991,4 @@ func (b *bus) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte
 
 func (b *bus) SteerCleared(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
 	return b.steers.SteerCleared(chatID, steerIDs)
-}
-
-func (b *bus) SteerTurnQueued(chatID marotte.ChatID, turnID string) {
-	b.steers.turnQueued(chatID, turnID)
 }

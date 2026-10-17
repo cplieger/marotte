@@ -525,7 +525,6 @@ const (
 	SteerRefuseNotWaiting = "not_waiting"
 	SteerRefuseNotUser    = "not_user"
 	SteerRefuseAgentRows  = "agent_rows_waiting"
-	SteerRefuseStarting   = "starting"
 	SteerRefuseSettling   = "settling"
 	SteerRefuseChatGone   = "chat_gone"
 	// SteerRefuseNoReply is a clear that got no reply: nothing changed.
@@ -616,7 +615,7 @@ type SteerQueue interface {
 	// RemoveCleared re-reads after the delete's clear (landed false: no reply).
 	RemoveCleared(chatID marotte.ChatID, opID string, cleared []string, landed bool) SteerOpResult
 	// BeginDiscard decides a Discard all; needsClear is false when nothing is in KAS.
-	BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool, refuse string)
+	BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool)
 	// DiscardCleared re-reads after the discard's clear, or settles it with none.
 	DiscardCleared(chatID marotte.ChatID, opID string, landed bool) SteerOpResult
 	OpSent(chatID marotte.ChatID, opID string, s SteerSend, queued bool, err error)

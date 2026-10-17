@@ -13,7 +13,7 @@ func allChatEntries(deps *baseDeps, chatID marotte.ChatID) []marotte.Entry {
 	return append(deps.chatEntries(chatID), deps.between[chatID]...)
 }
 
-// The recorded shape of turn n=833's clear: a message left waiting from an earlier day, then the one KAS holds, then
+// The recorded shape of a stopped turn's clear: a message left waiting from an earlier day, then the one KAS holds, then
 // a steering_cleared naming only KAS's id for the second. No id joins either row, so the clear settles neither.
 func TestWorkflowMessage_AClearSettlesNoRowItCannotName(t *testing.T) {
 	deps, tr := messageDeps(t)
@@ -49,7 +49,7 @@ func stopTurn(deps *baseDeps, chatID marotte.ChatID) *turnlog.Turn {
 	return turn
 }
 
-// The recorded shape of turn n=833's cancel at 14:49:04.744: the clear names the notifications KAS holds, and KAS
+// The recorded shape of a stopped turn's cancel: the clear names the notifications KAS holds, and KAS
 // re-wakes the session with every one (cancelLocalTurn), so none was dropped.
 func TestWorkflowMessage_ACancelsClearDropsNothingKASRewakes(t *testing.T) {
 	deps, tr := messageDeps(t)

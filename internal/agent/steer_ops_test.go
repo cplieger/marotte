@@ -498,9 +498,8 @@ func TestPromptDrain_ADeadBuffersRowWaitsForThePostLoadClear(t *testing.T) {
 	}
 }
 
-// A turn StartTurn began during a NONE-state delete cannot read the buffer until the delete ends; from
-// StartTurn on, a new delete is refused, read under the same lock.
-func TestCmdSteerRemove_ATurnStartingUnderADeleteWaitsAndLaterDeletesAreRefused(t *testing.T) {
+// A turn StartTurn began during a NONE-state delete cannot read the buffer until the delete ends.
+func TestCmdSteerRemove_ATurnStartingUnderADeleteWaitsForIt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s, _, br := steerOpsHub(t)
 		for _, key := range []string{"steer-a", "steer-b"} {
@@ -534,12 +533,6 @@ func TestCmdSteerRemove_ATurnStartingUnderADeleteWaitsAndLaterDeletesAreRefused(
 		if slices.Contains(br.callLog(), marotte.MethodPrompt) {
 			t.Fatal("the prompt reached KAS while the delete's clear was in flight")
 		}
-		late, _ := s.q.RouteSteer("c1", "steer-c", "c", promptHolder)
-		s.kas(late)
-		if _, refuse := s.q.BeginRemove("c1", "steer-c", "op-late"); refuse != command.SteerRefuseStarting {
-			t.Errorf("a delete after StartTurn = %q, want starting", refuse)
-		}
-
 		close(gate)
 		wg.Wait()
 		waitForCall(t, br, marotte.MethodPrompt)
@@ -607,32 +600,35 @@ func TestCmdSteerRemove_AFailedResubmitKeepsEveryKeptRowInCustody(t *testing.T) 
 	}
 }
 
-// The recorded c-a820 delete end to end: with the prompt's execution queued behind another session's turn, deleting
-// the user's steer clears it from KAS's buffer and answers deleted instead of "starting to read".
-func TestCmdSteerRemove_AStarterKASQueuedForTheSlotDeletesTheSteer(t *testing.T) {
+// The recorded delete end to end, with KAS's queued report arriving only after it: deleting the user's steer clears it
+// from KAS's buffer and answers deleted instead of "starting to read", and the late report changes nothing.
+func TestCmdSteerRemove_ASteerOfAStarterKASHasNotReportedIsDeleted(t *testing.T) {
 	s, _, br := steerOpsHub(t)
 	s.h.stagePromptTurn(t, "c1")
-	sends, _ := s.q.RouteSteer("c1", "steer-m-mvcsj9b3", "?", promptHolder)
+	sends, _ := s.q.RouteSteer("c1", "steer-late", "?", promptHolder)
 	s.kas(sends)
-	s.h.translateACPEvent("c1", s.h.originOf("c1"), newSessionInfoMsg(map[string]any{
-		"kind": "queued", "activeSessionId": "sess_66362e75-badd-490c-ad48-593859625c29",
-	}))
 	br.mu.Lock()
 	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method != marotte.MethodSessionSteerClear {
 			return nil, nil, false
 		}
-		return clearReply([]string{s.kasID("steer-m-mvcsj9b3")}), nil, true
+		return clearReply([]string{s.kasID("steer-late")}), nil, true
 	}
 	br.mu.Unlock()
 
-	rec := postCmd(t, s.h, removeCmd("steer-m-mvcsj9b3"))
+	rec := postCmd(t, s.h, removeCmd("steer-late"))
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newSessionInfoMsg(map[string]any{
+		"kind": "queued", "activeSessionId": "sess-holder",
+	}))
 
-	if got := removedBody(t, rec.Code, rec.Body.Bytes()); got["deleted"] != "steer-m-mvcsj9b3" {
+	if got := removedBody(t, rec.Code, rec.Body.Bytes()); got["deleted"] != "steer-late" {
 		t.Errorf("steer_remove = %v, want the steer deleted", got)
 	}
 	if !slices.Contains(br.callLog(), marotte.MethodSessionSteerClear) {
 		t.Error("the delete issued no clear, so KAS's buffer still holds the steer")
+	}
+	if rows := s.q.UnsentRows("c1", false); len(rows) != 0 {
+		t.Errorf("UnsentRows = %+v after the delete and the late report, want none", rows)
 	}
 }
 
@@ -641,16 +637,16 @@ func TestCmdSteerRemove_AStarterKASQueuedForTheSlotDeletesTheSteer(t *testing.T)
 func TestQueuedReport_AQueuedStarterShowsItsWaitAndLeavesTheSteerSent(t *testing.T) {
 	s, _, _ := steerOpsHub(t)
 	s.h.stagePromptTurn(t, "c1")
-	sends, _ := s.q.RouteSteer("c1", "steer-m-mvcsj9b3", "?", promptHolder)
+	sends, _ := s.q.RouteSteer("c1", "steer-late", "?", promptHolder)
 	s.kas(sends)
 
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newSessionInfoMsg(map[string]any{
-		"kind": "queued", "activeSessionId": "sess_66362e75-badd-490c-ad48-593859625c29",
+		"kind": "queued", "activeSessionId": "sess-holder",
 	}))
 
 	labels := eventsOfType(s.h, marotte.EventWorkingLabel)
 	if len(labels) == 0 || !strings.Contains(string(labels[len(labels)-1].Payload), "Waiting for another kiro-cli session") {
 		t.Errorf("working_label events = %+v, want the turn shown waiting for the slot", labels)
 	}
-	s.mustState("steer-m-mvcsj9b3", rowQueued)
+	s.mustState("steer-late", rowQueued)
 }

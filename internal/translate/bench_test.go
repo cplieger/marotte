@@ -134,8 +134,6 @@ func (d *baseDeps) SteerCleared(chatID marotte.ChatID, steerIDs []string) []maro
 	})
 }
 
-func (d *baseDeps) SteerTurnQueued(marotte.ChatID, string) {}
-
 func (d *baseDeps) SteerRead(chatID marotte.ChatID, steerID string) []string {
 	if held := d.forget(chatID, []string{steerID}); len(held) > 0 {
 		return held[0].Replaces

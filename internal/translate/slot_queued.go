@@ -60,9 +60,6 @@ func (t *Translator) handleSlotQueued(ctx context.Context, chatID marotte.ChatID
 	} else if turn, ok := t.turns.OwnTurn(chatID); ok {
 		w.turn = turn.ID()
 	}
-	if w.turn != "" {
-		t.steerBuffer.SteerTurnQueued(chatID, w.turn)
-	}
 	if !t.slotWaits.set(chatID, w) {
 		return
 	}

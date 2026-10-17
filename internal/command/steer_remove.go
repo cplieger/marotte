@@ -33,7 +33,6 @@ var (
 	errSteerRemoveAgentRows  = errors.New("a workflow result is waiting beside it, so only discarding them all is possible")
 	errSteerRemoveSettling   = errors.New("the turn ended and that message is being resent. Try again in a moment")
 	errSteerRemoveConsumed   = errors.New("the agent read that message before it could be deleted")
-	errSteerStarting         = errors.New("the agent is starting to read these messages. Try again in a moment")
 	errSteerChatGone         = errors.New("this chat is closing")
 	errSteerNoReply          = errors.New("the agent did not answer the clear, so nothing was changed")
 )
@@ -46,8 +45,6 @@ func steerRefusal(reason string) error {
 		return StatusErrorReason(http.StatusConflict, reason, errSteerRemoveAgentRows)
 	case SteerRefuseSettling:
 		return StatusErrorReason(http.StatusConflict, reason, errSteerRemoveSettling)
-	case SteerRefuseStarting:
-		return StatusErrorReason(http.StatusConflict, reason, errSteerStarting)
 	case SteerRefuseChatGone:
 		return StatusErrorReason(http.StatusConflict, reason, errSteerChatGone)
 	case SteerRefuseConsumed:
