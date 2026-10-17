@@ -1030,7 +1030,7 @@ function renderDiscovery(
   if (disc.prompts.length > 0) {
     details.appendChild(el("div", { className: "mcp-disc-group" }, "Prompts"));
     for (const p of disc.prompts) {
-      details.appendChild(discItem(orFallback(p.name, p.prompt_name), p.description));
+      details.appendChild(discItem(p.name, p.description));
     }
   }
   if (disc.resources.length > 0) {

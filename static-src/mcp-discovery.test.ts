@@ -7,7 +7,7 @@ import { mcpState, discoverySignalFor } from "./mcp-state.js";
 import type { MCPPromptInfo, MCPResourceInfo } from "./mcp-state.js";
 
 const prompts: MCPPromptInfo[] = [
-  { name: "Simple Prompt", prompt_name: "simple-prompt", description: "no args" },
+  { name: "Simple Prompt", description: "no args" },
 ];
 const resources: MCPResourceInfo[] = [{ name: "doc", uri: "demo://doc" }];
 const tools = ["create_issue", "search_repos"];
@@ -25,7 +25,7 @@ describe("discovery signals", () => {
     const d = discoverySignalFor("disc-a").value;
     expect(d.tools).toEqual(tools);
     expect(d.prompts).toHaveLength(1);
-    expect(d.prompts[0]?.prompt_name).toBe("simple-prompt");
+    expect(d.prompts[0]?.name).toBe("Simple Prompt");
     expect(d.resources[0]?.uri).toBe("demo://doc");
   });
 
