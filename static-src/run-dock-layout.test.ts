@@ -9,6 +9,8 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import type { ExecNode, ExecRun } from "./exec-view/model.js";
 import { buildExecSummary } from "./exec-view/summary.js";
+import { buildPermissionCard } from "./permission.js";
+import type { PermissionNeededPayload } from "./types.js";
 import {
   STATE_WORD,
   inFlight,
@@ -453,4 +455,62 @@ describe("the run summary on a phone", () => {
       }
     }
   });
+});
+
+describe("the permission card on a phone", () => {
+  for (const [width, note] of [
+    [360, false],
+    [390, true],
+  ] as const) {
+    it(`keeps the asked command's title and the answer buttons in view at ${String(width)}px${note ? " with the deny note" : ""}, under the dock's fifth-of-the-screen cap`, async () => {
+      await browser.viewport(width, 844);
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      style = mountAppCSS();
+      const { byId } = mountRunView(844);
+      mountPage(byId, verbs(false, ["Pause", "Cancel"])).render({
+        label: "nightly",
+        state: "waiting",
+        nodes: inLoop(sixSteps("running")),
+        live: true,
+      });
+      const ask = byId("run-dock");
+      ask.classList.remove("hidden");
+      const card = buildPermissionCard(
+        "chat-1",
+        {
+          request_id: 1,
+          title: "npm test -- --run",
+          kind: "execute",
+          tool_call_id: "tooluse_k3Jd9sQ2Rr6vXbT1",
+          accepts_rejection_reason: note,
+          consent: { capability: "shell", subject: "npm test -- --run" },
+          options: [
+            { option_id: "a", name: "Allow", kind: "allow_once" },
+            { option_id: "aa", name: "Always allow", kind: "allow_always" },
+            { option_id: "r", name: "Reject", kind: "reject_once" },
+          ],
+        } as PermissionNeededPayload,
+        () => undefined,
+      );
+      ask.append(card);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+      const title = card.querySelector<HTMLElement>(".approval-body > strong")!;
+      const body = card.querySelector<HTMLElement>(".approval-body")!;
+      const t = title.getBoundingClientRect();
+      const b = body.getBoundingClientRect();
+      const c = card.getBoundingClientRect();
+      expect(t.top, "the title's top inside its region").toBeGreaterThanOrEqual(b.top - 0.5);
+      expect(t.bottom, "the title's bottom inside its region").toBeLessThanOrEqual(b.bottom + 0.5);
+      expect(b.top, "the region's top inside the card").toBeGreaterThanOrEqual(c.top - 0.5);
+      for (const btn of card.querySelectorAll<HTMLElement>(".approval-actions button")) {
+        const r = btn.getBoundingClientRect();
+        expect(
+          r.bottom,
+          `the ${String(btn.textContent)} button inside the card`,
+        ).toBeLessThanOrEqual(c.bottom + 0.5);
+        inside(btn, 844, `the ${String(btn.textContent)} button`);
+      }
+    });
+  }
 });
