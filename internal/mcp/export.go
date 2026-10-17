@@ -21,6 +21,7 @@ func copyServer(s *Server, maskSecrets bool) *Server {
 	c := *s
 	c.Args = append([]string(nil), s.Args...)
 	c.DisabledTools = append([]string(nil), s.DisabledTools...)
+	c.OAuthScopes = slices.Clone(s.OAuthScopes)
 	if maskSecrets {
 		c.Env = make([]keyPair, len(s.Env))
 		for i, kv := range s.Env {
@@ -89,7 +90,8 @@ func mergeSecrets(patch, existing []keyPair) []keyPair {
 // re-paste of a configured server is a no-op rather than a conflict. It ignores
 // store-owned fields, secret VALUES (a pasted README carries a placeholder) and
 // the user's own policy (Enabled, Prewarm, DisabledTools). Env and header NAMES
-// compare as sets because they are records on KAS's wire; args stay ordered.
+// compare as sets because they are records on KAS's wire, and OAuth scopes because
+// RFC 6749 section 3.3 makes their order meaningless; args stay ordered.
 func sameSpec(a, b *Server) bool {
 	if a.Transport != b.Transport ||
 		strings.TrimSpace(a.Command) != strings.TrimSpace(b.Command) ||
@@ -99,13 +101,19 @@ func sameSpec(a, b *Server) bool {
 		a.OAuthRedirectURI != b.OAuthRedirectURI {
 		return false
 	}
-	if !slices.Equal(a.Args, b.Args) {
+	if !slices.Equal(a.Args, b.Args) || !slices.Equal(sortedCopy(a.OAuthScopes), sortedCopy(b.OAuthScopes)) {
 		return false
 	}
 	if !slices.Equal(sortedPairNames(a.Env, false), sortedPairNames(b.Env, false)) {
 		return false
 	}
 	return slices.Equal(sortedPairNames(a.Headers, true), sortedPairNames(b.Headers, true))
+}
+
+func sortedCopy(in []string) []string {
+	out := slices.Clone(in)
+	slices.Sort(out)
+	return out
 }
 
 // sortedPairNames returns the pair names in sorted order, lowercased when the
@@ -170,7 +178,7 @@ func originLabel(raw string) string {
 
 // errImportDuplicate names two entries of one paste that would become the same
 // server. A JSON object cannot hold a duplicate key, but two keys differing only
-// in case survive decoding and collide on the store's case-insensitive name rule.
+// in case or in '-' versus '_' survive decoding and collide under nameKey.
 var errImportDuplicate = errors.New("names the same server twice")
 
 // There is no ACP wire builder here any more, and no ACPServers.

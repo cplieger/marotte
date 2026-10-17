@@ -32,7 +32,7 @@ const (
 // the object, where a block carries it as the map key.
 var pasteServerKeys = []string{
 	"args", "command", "disabled", "disabledTools",
-	"env", "headers", "name", "oauth", "prewarm", "timeout", "type", "url",
+	"env", "headers", "name", "oauth", "oauthScopes", "prewarm", "timeout", "type", "url",
 	"waitForReady",
 }
 
@@ -46,11 +46,10 @@ var pasteServerIgnored = map[string]string{
 	"cwd":         "marotte has no working-directory field",
 	"description": "not stored, because the name is the label",
 	"icon":        "not stored",
-	"oauthScopes": "marotte has no OAuth scope field",
 }
 
 // pasteOAuthKeys are the keys of a server's nested `oauth` object: KAS's closed
-// schema. A scope list is the sibling `oauthScopes`, classified above.
+// schema. A scope list is the sibling `oauthScopes`, a consumed server key.
 //
 // The nested object needs its own classification pass: encoding/json drops a
 // key with no matching field, so without one a misspelt `clientIdd` would be
@@ -100,6 +99,7 @@ type pasteServer struct {
 	Timeout       *int        `json:"timeout"`
 	Args          []string    `json:"args"`
 	DisabledTools []string    `json:"disabledTools"`
+	OAuthScopes   []string    `json:"oauthScopes"`
 }
 
 // Two shapes are accepted, because a user pastes whatever the README gave them: a `mcpServers`
@@ -221,6 +221,7 @@ func translateServer(rawName string, obj map[string]json.RawMessage, raw json.Ra
 			return nil, err
 		}
 		sv.Prewarm = prewarmFor(&spec, sv.Command)
+		noteStdioOAuthKeys(where, obj, req)
 	case TransportHTTP, TransportSSE:
 		sv.URL = strings.TrimSpace(*spec.URL)
 		if sv.Headers, err = decodeOrderedPairs(where+"headers", obj["headers"]); err != nil {
@@ -231,8 +232,18 @@ func translateServer(rawName string, obj map[string]json.RawMessage, raw json.Ra
 			sv.OAuthClientMetadataURL = strings.TrimSpace(spec.OAuth.ClientMetadataURL)
 			sv.OAuthRedirectURI = strings.TrimSpace(spec.OAuth.RedirectURI)
 		}
+		sv.OAuthScopes = trimmedScopes(spec.OAuthScopes)
 	}
 	return sv, nil
+}
+
+// noteStdioOAuthKeys reports the OAuth keys a local server's block carries, which translateServer drops.
+func noteStdioOAuthKeys(where string, obj map[string]json.RawMessage, req *importRequest) {
+	for _, key := range []string{"oauth", "oauthScopes"} {
+		if _, ok := obj[key]; ok {
+			req.notes = append(req.notes, fmt.Sprintf("%signoring %q: only a server with a url signs in with OAuth", where, key))
+		}
+	}
 }
 
 // transportFor infers the transport the way KAS does: from which fields are

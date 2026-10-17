@@ -232,6 +232,9 @@ function formCarry(existing: Server | null): Partial<Server> {
   if (existing?.oauth_redirect_uri !== undefined) {
     out.oauth_redirect_uri = existing.oauth_redirect_uri;
   }
+  if (existing?.oauth_scopes !== undefined) {
+    out.oauth_scopes = existing.oauth_scopes;
+  }
   return out;
 }
 

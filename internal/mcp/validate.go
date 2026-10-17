@@ -113,6 +113,8 @@ const (
 	// Real-world client IDs are typically 20–80 chars (UUID-ish or app-id-ish); 256 leaves headroom
 	// and rejects clearly-malformed input.
 	oauthClientIDMax = 256
+	oauthScopeMax    = 256
+	maxOAuthScopes   = 32
 	// oauthRedirectMinPort is the OAuth relay's own floor (agent relayMinPort):
 	// a privileged pin installs, then fails at the relay's paste-back step.
 	oauthRedirectMinPort = 1024
@@ -160,6 +162,7 @@ const (
 
 	fieldOAuthClientMetadataURL = "oauth_client_metadata_url"
 	fieldOAuthRedirectURI       = "oauth_redirect_uri"
+	fieldOAuthScopes            = "oauth_scopes"
 )
 
 // fieldError is one validation failure, attributed to the wire field it
@@ -352,6 +355,9 @@ func validateStdio(s *Server) error {
 	if s.OAuthRedirectURI != "" {
 		errs.addf(fieldOAuthRedirectURI, "stdio transport cannot have oauth_redirect_uri")
 	}
+	if len(s.OAuthScopes) > 0 {
+		errs.addf(fieldOAuthScopes, "stdio transport cannot have oauth_scopes")
+	}
 	errs.merge(validateArgs(s.Args))
 	errs.merge(validateKeyPairs(fieldEnvPairs, s.Env, maxEnvEntries, envValueMax, false))
 	return errs.join()
@@ -408,6 +414,7 @@ func validateRegistry(s *Server) error {
 		{fieldOAuthClientID, s.OAuthClientID != ""},
 		{fieldOAuthClientMetadataURL, s.OAuthClientMetadataURL != ""},
 		{fieldOAuthRedirectURI, s.OAuthRedirectURI != ""},
+		{fieldOAuthScopes, len(s.OAuthScopes) > 0},
 	} {
 		if f.set {
 			errs.addf(f.field, "a registry server cannot have %s: the organization's catalog supplies it", f.field)
@@ -433,6 +440,7 @@ func validateRemote(s *Server) error {
 	errs.merge(validateOAuthField(fieldOAuthClientID, s.OAuthClientID, oauthClientIDMax))
 	errs.merge(validateOAuthMetadataURL(s.OAuthClientMetadataURL))
 	errs.merge(validateOAuthRedirectURI(s.OAuthRedirectURI))
+	errs.merge(validateOAuthScopes(s.OAuthScopes))
 	errs.merge(validateKeyPairs(fieldHeaderPairs, s.Headers, maxHeaderEntries, headerValueMax, true))
 	return errs.join()
 }
@@ -554,6 +562,32 @@ func splitOAuthRedirectURI(v, raw string) (host, port, msg string) {
 		return "", "", shape
 	}
 	return h, p, ""
+}
+
+// validateOAuthScopes holds each entry to an RFC 6749 section 3.3 scope-token (1*( %x21 / %x23-5B / %x5D-7E )),
+// stricter than KAS's any-string list because KAS joins the entries with a space: an inner space would silently
+// become two scopes.
+func validateOAuthScopes(scopes []string) error {
+	var errs fieldErrs
+	if len(scopes) > maxOAuthScopes {
+		errs.addf(fieldOAuthScopes, "oauth_scopes: too many entries (%d, max %d)", len(scopes), maxOAuthScopes)
+	}
+	seen := make(map[string]struct{}, len(scopes))
+	for i, sc := range scopes {
+		switch {
+		case sc == "":
+			errs.addf(fieldOAuthScopes, "oauth_scopes[%d] is empty", i)
+		case len(sc) > oauthScopeMax:
+			errs.addf(fieldOAuthScopes, "oauth_scopes[%d] too long: %d bytes (max %d)", i, len(sc), oauthScopeMax)
+		case strings.IndexFunc(sc, func(r rune) bool { return r < 0x21 || r > 0x7E || r == '"' || r == '\\' }) >= 0:
+			errs.addf(fieldOAuthScopes, "oauth_scopes[%d] %q must be one scope: printable ASCII with no space, quote or backslash", i, sc)
+		}
+		if _, dup := seen[sc]; dup {
+			errs.addf(fieldOAuthScopes, "oauth_scopes[%d]: duplicate scope %q", i, sc)
+		}
+		seen[sc] = struct{}{}
+	}
+	return errs.join()
 }
 
 // validateOAuthField enforces the shared length cap and control-character

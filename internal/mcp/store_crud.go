@@ -83,6 +83,7 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 		OAuthClientID:          strings.TrimSpace(in.OAuthClientID),
 		OAuthClientMetadataURL: strings.TrimSpace(in.OAuthClientMetadataURL),
 		OAuthRedirectURI:       strings.TrimSpace(in.OAuthRedirectURI),
+		OAuthScopes:            trimmedScopes(in.OAuthScopes),
 		Prewarm:                in.Prewarm,
 		Enabled:                in.Enabled,
 		WaitForReady:           in.WaitForReady,
@@ -128,6 +129,18 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 	return maskedCopy(rec), nil
 }
 
+// trimmedScopes copies scopes with each entry trimmed; an empty list is absent.
+func trimmedScopes(scopes []string) []string {
+	if len(scopes) == 0 {
+		return nil
+	}
+	out := make([]string, len(scopes))
+	for i, sc := range scopes {
+		out[i] = strings.TrimSpace(sc)
+	}
+	return out
+}
+
 // importOutcome names what one entry of a pasted block did.
 type importOutcome string
 
@@ -164,7 +177,7 @@ func (s *Store) importServers(ctx context.Context, in []*Server) ([]importResult
 		if err := validate(sv); err != nil {
 			return nil, fmt.Errorf("server %q: %w", sv.Name, err)
 		}
-		key := strings.ToLower(sv.Name)
+		key := nameKey(sv.Name)
 		if _, dup := seen[key]; dup {
 			return nil, fmt.Errorf("%q %w", sv.Name, errImportDuplicate)
 		}
@@ -227,6 +240,7 @@ func (s *Store) importOneLocked(sv *Server, now int64) (importResult, error) {
 	rec.Env = copyPairs(sv.Env)
 	rec.Headers = copyPairs(sv.Headers)
 	rec.DisabledTools = append([]string(nil), sv.DisabledTools...)
+	rec.OAuthScopes = slices.Clone(sv.OAuthScopes)
 	rec.CreatedAt = now
 	rec.UpdatedAt = now
 	s.servers = append(s.servers, &rec)
@@ -271,6 +285,7 @@ func (s *Store) update(ctx context.Context, id serverID, in *Server) (*Server, e
 		OAuthClientID:          strings.TrimSpace(in.OAuthClientID),
 		OAuthClientMetadataURL: strings.TrimSpace(in.OAuthClientMetadataURL),
 		OAuthRedirectURI:       strings.TrimSpace(in.OAuthRedirectURI),
+		OAuthScopes:            trimmedScopes(in.OAuthScopes),
 		Prewarm:                in.Prewarm,
 		Enabled:                in.Enabled,
 		WaitForReady:           in.WaitForReady,

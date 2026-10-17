@@ -24,13 +24,12 @@ import (
 )
 
 // Transport names the MCP transports mcp.json accepts: "stdio", "http" (Streamable HTTP, 2025-03-26
-// spec) and "sse" (legacy HTTP+SSE). "sse" is stored as itself: KAS accepts a distinct {type:"sse",
+// spec), "sse" (legacy HTTP+SSE) and "registry" (a catalog server enabled by name). "sse" is stored as itself: KAS accepts a distinct {type:"sse",
 // url, headers} entry (KAS 2.12). sse and http share the remote wire shape and differ only in the
 // ACP `type`.
 type Transport string
 
-// TransportStdio, TransportHTTP, and TransportSSE define the valid
-// Transport values for MCP server connections.
+// TransportStdio, TransportHTTP, TransportSSE and TransportRegistry are the four valid Transport values.
 const (
 	TransportStdio Transport = "stdio"
 	TransportHTTP  Transport = "http"
@@ -41,10 +40,8 @@ const (
 	TransportRegistry Transport = "registry"
 )
 
-// parseTransport validates a raw string as a known transport. All three
-// transports (stdio, http, sse) are first-class: "sse" is preserved as
-// TransportSSE, not folded into "http" — KAS accepts a distinct SSE
-// mcpServers entry over the v3 wire (see the Transport doc).
+// parseTransport validates a raw string as one of the four known transports. "sse" stays TransportSSE, not
+// folded into "http" (see the Transport doc).
 func parseTransport(s string) (Transport, error) {
 	switch Transport(s) {
 	case TransportStdio, TransportHTTP, TransportSSE, TransportRegistry:
@@ -86,8 +83,11 @@ type Server struct {
 	Env                    []keyPair `json:"env,omitempty"`
 	Headers                []keyPair `json:"headers,omitempty"`
 	DisabledTools          []string  `json:"disabled_tools,omitempty"`
-	CreatedAt              int64     `json:"created_at"`
-	UpdatedAt              int64     `json:"updated_at"`
+	// OAuthScopes is KAS's oauthScopes (remote only), sent space-joined as the registration scope and used for the
+	// authorization request when the server names none itself.
+	OAuthScopes []string `json:"oauth_scopes,omitempty"`
+	CreatedAt   int64    `json:"created_at"`
+	UpdatedAt   int64    `json:"updated_at"`
 	// TimeoutMS is KAS's per-server connect timeout and MCP wait budget, in
 	// milliseconds; 0 leaves KAS's own default (60 s). WaitForReady makes KAS hold
 	// a prompt for this server even with the global wait setting off. Both are
@@ -298,12 +298,18 @@ func (s *Store) indexLocked(id serverID) int {
 	return -1
 }
 
-// findByNameLocked returns the stored record whose name matches, or nil.
-// Uses the same case-insensitive rule as hasNameLocked — the no-op path
-// and the conflict path must agree about which record they mean.
+// nameKey is the identity two server names share when they name the same server: KAS lower-cases a name and
+// folds '-' to '_' in its tools' invocation ids (mcp_<server>_<tool>), so names equal under that fold collide.
+func nameKey(name string) string {
+	return strings.ReplaceAll(strings.ToLower(name), "-", "_")
+}
+
+// findByNameLocked returns the stored record whose name matches under nameKey, or nil; the no-op path and the
+// conflict path must agree about which record they mean.
 func (s *Store) findByNameLocked(name string) *Server {
+	key := nameKey(name)
 	for _, sv := range s.servers {
-		if strings.EqualFold(sv.Name, name) {
+		if nameKey(sv.Name) == key {
 			return sv
 		}
 	}
@@ -311,11 +317,12 @@ func (s *Store) findByNameLocked(name string) *Server {
 }
 
 func (s *Store) hasNameLocked(name string, ignoreID serverID) bool {
+	key := nameKey(name)
 	for _, sv := range s.servers {
 		if sv.ID == ignoreID {
 			continue
 		}
-		if strings.EqualFold(sv.Name, name) {
+		if nameKey(sv.Name) == key {
 			return true
 		}
 	}

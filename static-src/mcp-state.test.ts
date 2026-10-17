@@ -72,6 +72,29 @@ describe("the server list decoder", () => {
     expect(servers.get("srv-o")?.oauth_client_metadata_url).toBe("https://example.com/c.json");
     expect(servers.get("srv-o")?.oauth_redirect_uri).toBe(":7778");
   });
+
+  it("keeps a record's oauth scopes", async () => {
+    // formCarry carries the decoded list across a form save, so a dropped field would be cleared there.
+    wire.body = {
+      servers: [
+        {
+          id: "srv-s",
+          name: "graph",
+          transport: "http",
+          enabled: true,
+          created_at: 1,
+          updated_at: 2,
+          url: "https://mcp.example/mcp",
+          oauth_scopes: ["read", "write"],
+        },
+      ],
+    };
+    mcpState.refetchServers();
+    await vi.waitFor(() => {
+      expect(servers.get("srv-s")).toBeDefined();
+    });
+    expect(servers.get("srv-s")?.oauth_scopes).toEqual(["read", "write"]);
+  });
 });
 
 describe("adaptStatus", () => {
