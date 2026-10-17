@@ -644,7 +644,7 @@ in-process terminal even though marotte declares terminal:true, while background
 processes stay on marotte's terminal/* handlers (their host ignores the key). Sending
 it would move foreground commands off marotte's terminal panel, terminal-id cards,
 64 KiB tail ring, systembin bash and marotte's own environment, onto the engine's
-screened environment (its heap-capped NODE_OPTIONS included) and KAS's $SHELL, which
+screened environment (its NODE_OPTIONS heap cap, when engine_heap_mib is set) and KAS's $SHELL, which
 may be /bin/sh while marotte reports bash. What it buys, KAS stopping a cancelled
 turn's foreground command and live content_chunk output, needs the
 streamingShellContent row's handler first, and would narrow KillForTurn to

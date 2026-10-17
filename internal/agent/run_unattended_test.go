@@ -132,9 +132,9 @@ func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
 	}
 }
 
-// TestPermissionToolName_PrefersTheMachineAuthoredName walks the six backend ask shapes; a gate on toolId
+// TestPermissionAskName_PrefersTheMachineAuthoredName walks the six backend ask shapes; a gate on toolId
 // would blank five of them.
-func TestPermissionToolName_PrefersTheMachineAuthoredName(t *testing.T) {
+func TestPermissionAskName_PrefersTheMachineAuthoredName(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
 		params string
@@ -167,30 +167,106 @@ func TestPermissionToolName_PrefersTheMachineAuthoredName(t *testing.T) {
 			params: `{"toolCall":[]}`,
 			want:   "",
 		},
+		"a Power ask names the Power tool it asks about": {
+			params: `{"toolCall":{"title":"@github/github/create_pr"},"_meta":{"kiro":{"toolId":"kiro_powers",
+				"consent":{"capability":"power","resource":"github/github/create_pr"}}}}`,
+			want: "kiro_powers (github/github/create_pr)",
+		},
+		"a compound ask names the part it is about": {
+			params: `{"_meta":{"kiro":{"toolId":"fs_write",
+				"consent":{"capability":"fs_write","resource":"/workspace","triggeringResource":"/workspace/a.go"}}}}`,
+			want: "fs_write (/workspace/a.go)",
+		},
+		"a shell ask keeps the tool name alone": {
+			params: `{"_meta":{"kiro":{"toolId":"execute_bash",
+				"consent":{"capability":"shell","resource":"curl -H 'Authorization: Bearer s3cret' x"}}}}`,
+			want: "execute_bash",
+		},
+		"a subject equal to the tool is not repeated": {
+			params: `{"_meta":{"kiro":{"toolId":"web_search","consent":{"capability":"web_search","resource":"web_search"}}}}`,
+			want:   "web_search",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := permissionToolName([]byte(tc.params)); got != tc.want {
-				t.Errorf("permissionToolName() = %q, want %q", got, tc.want)
+			if got := permissionAskName([]byte(tc.params)).label(); got != tc.want {
+				t.Errorf("permissionAskName().label() = %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
-// TestPermissionToolName_DefusesTheModelsTitle pins that the model composes the title, so a poisoned file can put a
-// bidi override in the log and in the schedule row an operator reads.
-func TestPermissionToolName_DefusesTheModelsTitle(t *testing.T) {
+// TestPermissionAskName_KeepsCredentialsOffTheRow pins that a URL subject (an MCP server or a fetch target)
+// loses the userinfo, query and fragment that carry its token before it is persisted and logged.
+func TestPermissionAskName_KeepsCredentialsOffTheRow(t *testing.T) {
 	t.Parallel()
+	for name, tc := range map[string]struct {
+		resource string
+		want     string
+	}{
+		"a token in the query is dropped": {
+			resource: "https://mcp.example.com/sse?token=s3cret&x=1",
+			want:     "https://mcp.example.com/sse",
+		},
+		"userinfo and fragment are dropped": {
+			resource: "https://user:s3cret@mcp.example.com/sse#s3cret",
+			want:     "https://mcp.example.com/sse",
+		},
+		"a URL that does not parse is dropped whole": {
+			resource: "https://user:s3cret@mcp.example.com/%zz",
+			want:     "",
+		},
+		"a clean URL is byte-identical": {
+			resource: "HTTPS://mcp.example.com/sse",
+			want:     "HTTPS://mcp.example.com/sse",
+		},
+		"a path is not a URL": {
+			resource: "/workspace/a.go?keep",
+			want:     "/workspace/a.go?keep",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			params := `{"_meta":{"kiro":{"toolId":"web_fetch","consent":{"capability":"web_fetch","resource":` +
+				jsonString(tc.resource) + `}}}}`
+			got := permissionAskName([]byte(params))
+			if got.subject != tc.want {
+				t.Errorf("permissionAskName().subject = %q, want %q", got.subject, tc.want)
+			}
+			if strings.Contains(got.label(), "s3cret") {
+				t.Errorf("label() = %q carries the credential onto the schedule row", got.label())
+			}
+		})
+	}
+}
+
+// TestPermissionAskName_DefusesTheModelsTitle pins that the model composes the title, so a poisoned file can put a
+// bidi override in the log and in the schedule row an operator reads.
+func TestPermissionAskName_DefusesTheModelsTitle(t *testing.T) {
+	t.Parallel()
+
+	// Renders as a harmless find while asking to approve `rm -rf /workspace`.
+	const title = "Run \u202ednuof-emaN- ecapskrow/ fr- mr\u202c"
 
 	t.Run("a bidi override cannot reach the row", func(t *testing.T) {
 		t.Parallel()
-		// Renders as a harmless find while asking to approve `rm -rf /workspace`.
-		const title = "Run \u202ednuof-emaN- ecapskrow/ fr- mr\u202c"
-		got := permissionToolName([]byte(`{"toolCall":{"title":` + jsonString(title) + `}}`))
+		got := permissionAskName([]byte(`{"toolCall":{"title":` + jsonString(title) + `}}`)).label()
 		for _, r := range []rune{'\u202e', '\u202c'} {
 			if strings.ContainsRune(got, r) {
-				t.Errorf("permissionToolName() = %q still carries U+%04X; the row can name a "+
+				t.Errorf("permissionAskName().label() = %q still carries U+%04X; the row can name a "+
 					"different tool than the one that was refused", got, r)
+			}
+		}
+	})
+
+	t.Run("a bidi override in the subject cannot reach the row", func(t *testing.T) {
+		t.Parallel()
+		// A Power subject comes from the model's kiro_powers arguments.
+		got := permissionAskName([]byte(`{"_meta":{"kiro":{"toolId":"kiro_powers",
+			"consent":{"capability":"power","resource":` + jsonString(title) + `}}}}`)).label()
+		for _, r := range []rune{'\u202e', '\u202c'} {
+			if strings.ContainsRune(got, r) {
+				t.Errorf("permissionAskName().label() = %q still carries U+%04X from the subject", got, r)
 			}
 		}
 	})
@@ -199,9 +275,9 @@ func TestPermissionToolName_DefusesTheModelsTitle(t *testing.T) {
 		t.Parallel()
 		// The truncation marker rides outside the cap.
 		const ceiling = maxToolNameBytes + len("...")
-		got := permissionToolName([]byte(`{"toolCall":{"title":"` + strings.Repeat("a", 4096) + `"}}`))
+		got := permissionAskName([]byte(`{"toolCall":{"title":"` + strings.Repeat("a", 4096) + `"}}`)).tool
 		if len(got) > ceiling {
-			t.Errorf("permissionToolName() returned %d bytes, want at most %d: this value is "+
+			t.Errorf("permissionAskName().tool is %d bytes, want at most %d: this value is "+
 				"concatenated into the schedule row and persisted on every fire",
 				len(got), ceiling)
 		}
@@ -215,9 +291,9 @@ func TestPermissionToolName_DefusesTheModelsTitle(t *testing.T) {
 		t.Parallel()
 		// The sanitizer replaces rather than deletes, so ordinary names pass unchanged.
 		for _, want := range []string{"execute_bash", "fs_write", "Modifier le fichier", "ファイルを書く"} {
-			got := permissionToolName([]byte(`{"toolCall":{"title":` + jsonString(want) + `}}`))
+			got := permissionAskName([]byte(`{"toolCall":{"title":` + jsonString(want) + `}}`)).tool
 			if got != want {
-				t.Errorf("permissionToolName(%q) = %q, want it unchanged", want, got)
+				t.Errorf("permissionAskName(%q).tool = %q, want it unchanged", want, got)
 			}
 		}
 	})
@@ -301,7 +377,7 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 				marotte.PermissionNeededPayload{RequestID: id}), br)
 
-			h.runs.answerUnattended(chatID, br, id, "sched-1", "execute_bash",
+			h.runs.answerUnattended(chatID, br, id, "sched-1", askName{tool: "execute_bash"},
 				[]byte(`{"options":`+tc.options+`}`))
 
 			select {
@@ -357,7 +433,7 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 
-	h.runs.answerUnattended(chatID, br, id, "sched-1", "execute_bash", []byte(`{
+	h.runs.answerUnattended(chatID, br, id, "sched-1", askName{tool: "execute_bash"}, []byte(`{
 		"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}],
 		"_meta":{"kiro":{"consent":{"scope":"administration"}}}}`))
 
@@ -403,7 +479,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 	logs := captureLogs(t)
 
-	h.runs.answerUnattended(chatID, br, id, "sched-1", "execute_bash",
+	h.runs.answerUnattended(chatID, br, id, "sched-1", askName{tool: "execute_bash"},
 		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
 
 	rows := st.List()
@@ -419,6 +495,50 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	if got := logs.String(); !strings.Contains(got, `"msg":"`+logMsgUnattendedPermission+`"`) ||
 		!strings.Contains(got, `"outcome":"refused"`) {
 		t.Errorf("answerUnattended(deny) logged %s, want %q with outcome=refused", got, logMsgUnattendedPermission)
+	}
+}
+
+// TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow pins that every Power tool asks through
+// kiro_powers, so a row naming only the tool cannot say which rule to add.
+func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing.T) {
+	h, br := hubForFSTest(t, t.TempDir())
+	chatID := runChatID("wf_deny")
+	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+
+	st, err := schedule.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	entry := schedule.Entry{
+		ID: "sched-1", Source: "bundled://nightly", Enabled: true,
+		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+	}
+	if pErr := st.Put(t.Context(), &entry); pErr != nil {
+		t.Fatalf("Put schedule: %v", pErr)
+	}
+	h.runs.schedules = st
+
+	id := int64(90213)
+	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+		marotte.PermissionNeededPayload{RequestID: id}), br)
+	logs := captureLogs(t)
+
+	params := []byte(`{"options":[{"optionId":"reject","kind":"reject_once"}],"_meta":{"kiro":{"toolId":"kiro_powers",
+		"consent":{"capability":"power","resource":"github/github/create_pr"}}}}`)
+	h.runs.answerUnattended(chatID, br, id, "sched-1", permissionAskName(params), params)
+
+	rows := st.List()
+	if len(rows) != 1 {
+		t.Fatalf("the schedule store holds %d rows, want 1", len(rows))
+	}
+	const wantReason = "needed approval for kiro_powers (github/github/create_pr) with nobody watching. " +
+		"Add a permission rule to allow it"
+	if rows[0].LastReason != wantReason {
+		t.Errorf("answerUnattended(Power deny) row reason = %q, want %q", rows[0].LastReason, wantReason)
+	}
+	if got := logs.String(); !strings.Contains(got, `"tool":"kiro_powers"`) ||
+		!strings.Contains(got, `"subject":"github/github/create_pr"`) {
+		t.Errorf("answerUnattended(Power deny) logged %s, want tool=kiro_powers and subject=github/github/create_pr", got)
 	}
 }
 
@@ -449,7 +569,7 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 	logs := captureLogs(t)
 
-	h.runs.answerUnattended(chatID, br, id, "sched-1", "execute_bash",
+	h.runs.answerUnattended(chatID, br, id, "sched-1", askName{tool: "execute_bash"},
 		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
 
 	rows := st.List()

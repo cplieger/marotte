@@ -1,8 +1,15 @@
 package prewarm
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"pgregory.net/rapid"
@@ -350,5 +357,41 @@ func TestExtractNpxPackage_NoPackageAfterYes_returnsEmpty(t *testing.T) {
 					tc.args, got)
 			}
 		})
+	}
+}
+
+// TestInstallOne_ACancelledInstallDoesNotWaitOnAPipeHoldingChild: npm's node children inherit the
+// output pipe, so a head-only kill would leave installOne waiting out the child.
+func TestInstallOne_ACancelledInstallDoesNotWaitOnAPipeHoldingChild(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	npm := writeFakeNpm(t, `sleep 30 &
+echo $! > `+shellQuote(pidFile)+`
+sleep 30
+`)
+	var states []State
+	p := NewRunner(t.Context(), fakeLister{})
+	p.OnStatus = func(_ string, s State) { states = append(states, s) }
+	p.reserve("@scope/pkg")
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	p.installOne(ctx, npm, "@scope/pkg")
+	elapsed := time.Since(start)
+
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("fake npm never recorded its child: %v", err)
+	}
+	child, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatalf("parse child pid %q: %v", raw, err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+	if elapsed > installWaitDelay {
+		t.Errorf("installOne returned %s after a 200ms cancel, want under the %s wait delay: the child held the pipe", elapsed, installWaitDelay)
+	}
+	if want := []State{installing, failed}; !slices.Equal(states, want) {
+		t.Errorf("states = %v, want %v", states, want)
 	}
 }

@@ -125,8 +125,8 @@ const (
 	// unregistered run itself (0.66.22). Resetting zero nodes succeeds.
 	methodKiroWorkflowRetry = "_kiro/workflow/retry"
 
-	// marotte narrows this to a step-status update; `replace_remaining` is not wired. A `nodeId`
-	// targets only a repeat paused at maxIterations.
+	// marotte narrows this to a step-status update; `replace_remaining` is not wired. marotte sends a
+	// `nodeId` only for a repeat paused at maxIterations, though KAS also ends any paused step by `nodeId`.
 	methodKiroWorkflowUpdate = "_kiro/workflow/update"
 
 	// The recipe catalog changed; GET /api/recipes stays the one reader.
@@ -138,7 +138,7 @@ const (
 const (
 	methodKiroHooksList       = "_kiro/hooks/list"       // C→A request: {workspacePaths?,trigger?,toolId?,includeDisabled?} → {hooks[]}
 	methodKiroHooksSetEnabled = "_kiro/hooks/setEnabled" // C→A request: {hookId, enabled} → {success, code?, error?}
-	methodKiroHooksDidChange  = "_kiro/hooks/didChange"  // A→C notification: {hooks[]}
+	methodKiroHooksDidChange  = "_kiro/hooks/didChange"  // A→C notification: {sessionId, hooks[]}, hooks[] being that session's projection (file plus agent-profile hooks)
 )
 
 // KAS Infrastructure-Safety notifications fire only with the infrastructureSafety capability and

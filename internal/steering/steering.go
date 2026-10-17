@@ -258,8 +258,10 @@ func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 
 	b.WriteString("## Connected integrations\n\n")
 	b.WriteString("External systems the user has connected via MCP. ")
-	b.WriteString("Their tools appear in your toolset with the server name ")
-	b.WriteString("embedded in the tool name.\n\n")
+	b.WriteString("Their tools are deferred: none is in your toolset until you ")
+	b.WriteString("load it by id with tool_load, then call it with tool_call. ")
+	b.WriteString("A workflow step whose agent profile does not set includeMcpJson ")
+	b.WriteString("sees none of them, and reaches a Power's servers only through kiro_powers.\n\n")
 	for _, s := range servers {
 		fmt.Fprintf(b, "- **%s**\n", defuse(s.Name))
 	}
