@@ -121,12 +121,19 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 		reason, kind = engineAccount(t, stop)
 	}
 	result, outcome := bc.closeTurn(ctx, t, stop, reason, kind, tc.Closer)
-	cf := closeFacts{outcome: outcome, fence: fenceOf(t), unattended: tc.Closer == closerKASIdle}
+	cf := closeFacts{
+		outcome: outcome, fence: fenceOf(t), unattended: tc.Closer == closerKASIdle, graceClosed: graceClosed(tc.Closer, stop),
+	}
 	if tc.Closer == closerBridgeDeath {
 		cf.exit = bc.turns.forwardExit(t.Chat)
 	}
 	bc.turns.finish(t, result)
 	bc.publishClose(ctx, t, cf)
+}
+
+// graceClosed reports a close marotte's cancel grace made: only the grace concludes a prompt failure `cancelled`.
+func graceClosed(closer turnCloser, stop marotte.StopReason) bool {
+	return closer == closerCancelGrace || (closer == closerPromptFailure && stop == marotte.StopReasonCancelled)
 }
 
 func (bc *bridgeCoordinator) publishClose(ctx context.Context, t *activeTurn, cf closeFacts) {
@@ -162,12 +169,14 @@ func engineAccount(t *activeTurn, stop marotte.StopReason) (string, marotte.Fail
 }
 
 // closeFacts is what a won close hands its pipeline: the outcome, the fence naming the turn, a death's forwarder
-// exit, and whether no one asked for the stop (command.CloseFacts.Unattended).
+// exit, whether no one asked for the stop (command.CloseFacts.Unattended), and whether marotte's cancel grace closed
+// it rather than kiro-cli.
 type closeFacts struct {
-	exit       <-chan struct{}
-	outcome    marotte.TurnOutcome
-	fence      command.TurnFence
-	unattended bool
+	exit        <-chan struct{}
+	outcome     marotte.TurnOutcome
+	fence       command.TurnFence
+	unattended  bool
+	graceClosed bool
 }
 
 // afterTurnClose runs the between-turns follow-ups in order: steer ends, a model switch (it changes the
@@ -188,6 +197,9 @@ func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, chatID marotte.
 		bc.applyPendingModel(ctx, chatID)
 	}
 	bc.autoCompact.afterTurn(ctx, chatID)
+	if cf.graceClosed && !bc.turns.awaitKASIdle(bc.lifecycle.shutdownCtx, chatID, kasIdleDrainWait) {
+		return
+	}
 	if bc.drainAfterClose == nil || bc.draining() ||
 		!bc.settleAfterClose(bc.lifecycle.shutdownCtx, chatID, command.AdmissionWait) {
 		return
@@ -235,6 +247,9 @@ func (bc *bridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.
 func (bc *bridgeCoordinator) closeTurn(ctx context.Context, t *activeTurn, stop marotte.StopReason, reason string, kind marotte.FailureKind, closer turnCloser) (marotte.TurnResult, marotte.TurnOutcome) {
 	chatID := t.Chat
 	c := bc.concludeStop(chatID, stop, reason, kind)
+	if closer == closerPromptResponse && stop == marotte.StopReasonEndTurn && !t.Log.Emitted() && bc.turns.unbracketedPrompt(t) {
+		c = c.Unobserved()
+	}
 	statusDesc := bc.turns.statusDescription(t)
 	sealed, err := t.Log.Close(ctx, c)
 	translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), chatID, "", sealed)

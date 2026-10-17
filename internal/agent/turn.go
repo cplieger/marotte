@@ -125,8 +125,11 @@ type chatLifecycle struct {
 	forwardGone bool
 	// reserved is whether the admission slot is held.
 	reserved bool
-	state    turnState
-	mu       sync.Mutex
+	// kasActive is KAS's newest report of whether it runs an execution or holds one for the chat's session
+	// (focus_update activity.turnActive), whatever turn marotte has open.
+	kasActive bool
+	state     turnState
+	mu        sync.Mutex
 	// switchMu is held by every writer of pending_model (the switch's admission, the idle or
 	// turn-close apply, the session open's fold): otherwise two appliers read one pick and apply it twice,
 	// or a landing falls between an admission's read and its park. Held across the bridge call.

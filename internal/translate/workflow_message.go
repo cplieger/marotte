@@ -133,15 +133,10 @@ func (t *Translator) workflowMessageRead(ctx context.Context, sc steerScope, kas
 	return true
 }
 
-// workflowMessageCleared settles the oldest waiting workflow message to sc as dropped, for a clear
-// naming an id no row carries.
-func (t *Translator) workflowMessageCleared(ctx context.Context, sc steerScope) bool {
-	m, ok := t.waitingMessage(ctx, sc, func(*marotte.EntrySteer) bool { return true })
-	if !ok {
-		return false
-	}
-	t.settleMessage(ctx, sc, &m, marotte.EntrySteerDelivered{SteerID: m.ID, ReadTs: time.Now().UnixMilli(), Dropped: true})
-	return true
+// holdsWaitingMessage reports whether sc's log holds a received workflow message nothing settled yet.
+func (t *Translator) holdsWaitingMessage(ctx context.Context, sc steerScope) bool {
+	_, ok := t.waitingMessage(ctx, sc, func(*marotte.EntrySteer) bool { return true })
+	return ok
 }
 
 // waitingMessage answers the oldest message sc's log holds as received and not yet settled.

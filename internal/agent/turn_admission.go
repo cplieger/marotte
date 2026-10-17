@@ -220,6 +220,7 @@ const defaultIdleEndGrace = 10 * time.Second
 // comes first. No local silence closes it: KAS's activity counts its executions, so a slow model call, a retry or
 // a compaction keeps the turn open.
 func (bc *bridgeCoordinator) WireTurnActivity(chatID marotte.ChatID, active bool) {
+	bc.turns.noteKASActivity(chatID, active)
 	t, arm, ok := bc.turns.markKASActivity(chatID, active)
 	if !ok {
 		return
@@ -235,6 +236,61 @@ func (bc *bridgeCoordinator) WireTurnActivity(chatID marotte.ChatID, active bool
 			Closer: closerKASIdle, Stop: marotte.StopReasonUnknown, Reason: kasIdleReason, Turn: t.ID,
 		})
 	})
+}
+
+// noteKASActivity records KAS's report for the chat, waking a drain that waits for KAS to go idle.
+func (r *turnRegistry) noteKASActivity(chatID marotte.ChatID, active bool) {
+	lc := r.lifecycleFor(chatID)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.kasActive != active {
+		lc.kasActive = active
+		lc.wakeLocked()
+	}
+}
+
+// kasIdleDrainWait bounds how long a grace-closed turn's drain waits for KAS to report the session idle, so a lost
+// report delays the chat's next send rather than stranding it. A var only so a test can shrink it.
+var kasIdleDrainWait = 15 * time.Minute
+
+// awaitKASIdle waits, after marotte's cancel grace closed a turn kiro-cli had not ended, until KAS reports no
+// execution for the session, so the next send is not queued beside the cancelled one or KAS's re-wake of the
+// notifications the cancel cleared, where KAS streams only one of them (its adapter owns the last execution). False
+// when a turn opened meanwhile, whose own close drains, or when ctx ended; true at the budget.
+func (r *turnRegistry) awaitKASIdle(ctx context.Context, chatID marotte.ChatID, budget time.Duration) bool {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return true
+	}
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+	for {
+		lc.mu.Lock()
+		active, opened, changed := lc.kasActive, lc.own != nil || lc.pending != nil, lc.changed
+		lc.mu.Unlock()
+		switch {
+		case !active:
+			return true
+		case opened:
+			return false
+		}
+		select {
+		case <-changed:
+		case <-timer.C:
+			slog.Warn("kiro-cli still reports the session busy after a cancel; sending the chat's next prompt anyway",
+				"chat_id", chatID, "waited", budget)
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
+
+// unbracketedPrompt reports a prompt turn no wire turn_start bound: kiro-cli never streamed its run.
+func (r *turnRegistry) unbracketedPrompt(t *activeTurn) bool {
+	t.lc.mu.Lock()
+	defer t.lc.mu.Unlock()
+	return t.Source.Acknowledgeable() && !t.acked
 }
 
 // markKASActivity records the report on the open bracketed wire turn, returning the arm an idle close keys on when

@@ -85,6 +85,8 @@ type baseDeps struct {
 	queuedAnswer func(marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool)
 	// stopped is the turn ids StopRequestedAfter answers true for.
 	stopped map[string]bool
+	// sessionChats is the chat each live ACP session id belongs to, for ChatForACPSession.
+	sessionChats map[string]marotte.ChatID
 }
 
 type termRendered struct {
@@ -564,6 +566,12 @@ func (d *baseDeps) RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDi
 	d.lineTracker.RecordFromDiffs(chatID, diffs, turn, kind)
 }
 func (d *baseDeps) ParentACPSession(marotte.ChatID) string { return d.parent }
+
+func (d *baseDeps) ChatForACPSession(sessionID string) (marotte.ChatID, bool) {
+	c, ok := d.sessionChats[sessionID]
+	return c, ok
+}
+
 func (d *baseDeps) IsScheduled(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
 }
@@ -571,16 +579,25 @@ func (d *baseDeps) RunLabel(workflowID string) string { return d.runLabels[workf
 
 type stagedRunNotice struct {
 	workflowID string
+	label      string
 	producedTs int64
 }
 
-func (d *baseDeps) RunNotice(chatID marotte.ChatID) (string, int64, bool) {
+func (d *baseDeps) RunNotice(chatID marotte.ChatID, text string) (string, int64, bool) {
 	q := d.runNotices[chatID]
-	if len(q) == 0 {
-		return "", 0, false
+	for i, n := range q {
+		if n.label != "" && strings.Contains(text, `"`+n.label+`"`) {
+			d.runNotices[chatID] = slices.Delete(q, i, i+1)
+			return n.workflowID, n.producedTs, true
+		}
 	}
-	d.runNotices[chatID] = q[1:]
-	return q[0].workflowID, q[0].producedTs, true
+	return "", 0, false
+}
+
+func (d *baseDeps) ForgetRunNotices(chatID marotte.ChatID, n int) {
+	if q := d.runNotices[chatID]; len(q) > 0 {
+		d.runNotices[chatID] = q[min(n, len(q)):]
+	}
 }
 
 func (d *baseDeps) RunMadeProgress(workflowID string) {

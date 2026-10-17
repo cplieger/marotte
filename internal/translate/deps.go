@@ -229,9 +229,10 @@ type pusher interface {
 }
 
 // sessionResolver answers a chat's parent ACP session id, or "" when no bridge
-// is running.
+// is running, and the chat whose resident session an ACP session id is.
 type sessionResolver interface {
 	ParentACPSession(chatID marotte.ChatID) string
+	ChatForACPSession(sessionID string) (marotte.ChatID, bool)
 }
 
 // hookStatusReader reports whether hook status display is enabled.
@@ -304,9 +305,10 @@ type Translator struct {
 	metering       turnMetering
 	// steps maps a workflow step's ACP session id to its run and node, fed from the
 	// wire (node_start) and from an inspect read.
-	steps   *stepRegistry
-	read    *readSteers
-	workDir string // last for fieldalignment, as in Roles
+	steps     *stepRegistry
+	read      *readSteers
+	slotWaits *slotWaits
+	workDir   string // last for fieldalignment, as in Roles
 }
 
 // New constructs a Translator over the roles the host supplies.
@@ -337,6 +339,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		metering:       r.Metering,
 		steps:          newStepRegistry(),
 		read:           newReadSteers(),
+		slotWaits:      &slotWaits{},
 	}
 	for _, o := range opts {
 		o(t)
@@ -355,11 +358,14 @@ type runOriginAccess interface {
 	IsScheduled(workflowID string) bool
 	// RunLabel is the label marotte gave a run at launch, "" when it gave none.
 	RunLabel(workflowID string) string
-	// RunNotice CONSUMES the oldest finished run whose completion notice KAS queued
-	// into chatID's steering buffer, answering its id and the instant it finished
-	// (Unix ms). False when no such run is recorded, in which case the notice is
-	// written without provenance rather than with a guess.
-	RunNotice(chatID marotte.ChatID) (workflowID string, producedTs int64, ok bool)
+	// RunNotice CONSUMES the finished run whose completion notice KAS queued into
+	// chatID's steering buffer and whose label the notice's text quotes, answering its
+	// id and the instant it finished (Unix ms). False when no recorded run matches, in
+	// which case the notice is written without provenance rather than with a guess.
+	RunNotice(chatID marotte.ChatID, text string) (workflowID string, producedTs int64, ok bool)
+	// ForgetRunNotices drops n of chatID's recorded notices, oldest first, for a clear
+	// that names that many notice ids and no text.
+	ForgetRunNotices(chatID marotte.ChatID, n int)
 }
 
 // runBoundsAccess reports the observable progress that rolls a run's idle window

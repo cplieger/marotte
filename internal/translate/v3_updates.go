@@ -73,6 +73,8 @@ type sessionInfoKiroBlock struct {
 	Content              string   `json:"content"`
 	NotificationSeverity string   `json:"notificationSeverity"`
 	Kind                 string   `json:"kind"`
+	// ActiveSessionID is the session holding KAS's one agent slot, on kind "queued", FLAT beside Kind.
+	ActiveSessionID string `json:"activeSessionId"`
 	// Message is model_routed's notice, FLAT beside Kind; display_error and interaction frames
 	// spread one too, read from their blocks instead.
 	Message string `json:"message"`
@@ -178,6 +180,10 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	// stamped onto the launching chat's newest prompt row.
 	if id := u.Meta.Kiro.UserMessageID; id != "" {
 		t.handleUserMessageID(ctx, chatID, id)
+		return
+	}
+	if u.Meta.Kiro.Kind == infoKindQueued {
+		t.handleSlotQueued(ctx, chatID, u.Meta.Kiro.ActiveSessionID)
 		return
 	}
 	if t.handleTurnEvent(ctx, chatID, &u.Meta.Kiro) {
@@ -289,10 +295,12 @@ func (t *Translator) handleContextUsage(ctx context.Context, chatID marotte.Chat
 func (t *Translator) handleTurnEvent(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) bool {
 	switch {
 	case k.TurnStart != nil:
+		t.endSlotWait(ctx, chatID, true)
 		t.bracket.WireTurnStart(ctx, chatID)
 		return true
-	case t.handleWireTurnEnd(ctx, chatID, k.TurnEnd):
-		return true
+	case k.TurnEnd != nil:
+		t.endSlotWait(ctx, chatID, false)
+		return t.handleWireTurnEnd(ctx, chatID, k.TurnEnd)
 	case k.Kind == infoKindModelRouted:
 		t.handleModelRouted(ctx, chatID, k)
 		return true
@@ -348,9 +356,9 @@ var knownSessionInfoKinds = map[string]struct{}{
 	infoKindTurnCompletion: {},
 	"context_usage":        {}, infoKindSeparator: {}, infoKindSummary: {},
 	"summarization_started": {}, "summarization_failed": {}, "summarization_completed": {},
-	"focus_update": {},
-	"recap":        {},
-	"queued":       {}, "repositories_update": {},
+	"focus_update":        {},
+	"recap":               {},
+	"repositories_update": {},
 }
 
 // logUnconsumedInfoKind reports a session_info_update nothing in the cascade consumed: a

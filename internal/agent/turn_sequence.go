@@ -27,6 +27,7 @@ func (r *turnRegistry) attachForward(chatID marotte.ChatID) forwardAttachment {
 	gen := lc.fwdGen
 	lc.observedSeq = 0
 	lc.forwardGone = false
+	lc.kasActive = false
 	if lc.fwdExits == nil {
 		lc.fwdExits = make(map[uint64]chan struct{})
 	}
@@ -75,6 +76,7 @@ func (r *turnRegistry) sealPosition(chatID marotte.ChatID, gen uint64) {
 		return
 	}
 	lc.forwardGone = true
+	lc.kasActive = false
 	lc.wakeLocked()
 }
 

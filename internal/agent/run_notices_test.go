@@ -26,21 +26,44 @@ func TestObserveComplete_QueuesANoticeForABusyLaunchingChatOnly(t *testing.T) {
 	h.runs.observeComplete(t.Context(), "c2", runComplete("wf_3", "completed"))
 	h.runs.observeComplete(t.Context(), runChatID("wf_4"), runComplete("wf_4", "completed"))
 
-	wf, ts, ok := h.runs.RunNotice("c1")
+	notice := func(label string) string { return `A workflow you launched ("` + label + `") completed.` }
+	if wf, _, ok := h.runs.RunNotice("c1", notice("wf_2")); !ok || wf != "wf_2" {
+		t.Errorf("RunNotice(c1, wf_2's words) = %q ok=%v, want wf_2: the words name the run, not the order", wf, ok)
+	}
+	wf, ts, ok := h.runs.RunNotice("c1", notice("wf_1"))
 	if !ok || wf != "wf_1" || ts < before {
-		t.Errorf("RunNotice(c1) #1 = %q at %d ok=%v, want wf_1 at or after %d", wf, ts, ok, before)
+		t.Errorf("RunNotice(c1, wf_1's words) = %q at %d ok=%v, want wf_1 at or after %d", wf, ts, ok, before)
 	}
-	if wf, _, ok = h.runs.RunNotice("c1"); !ok || wf != "wf_2" {
-		t.Errorf("RunNotice(c1) #2 = %q ok=%v, want wf_2 (finish order)", wf, ok)
+	if wf, _, ok = h.runs.RunNotice("c1", notice("wf_p")); ok {
+		t.Errorf("RunNotice(c1, wf_p's words) = %q, want none: a paused run_complete queues no notice", wf)
 	}
-	if wf, _, ok = h.runs.RunNotice("c1"); ok {
-		t.Errorf("RunNotice(c1) #3 = %q, want none: a paused run_complete queues no notice", wf)
-	}
-	if wf, _, ok = h.runs.RunNotice("c2"); ok {
+	if wf, _, ok = h.runs.RunNotice("c2", notice("wf_3")); ok {
 		t.Errorf("RunNotice(c2) = %q, want none: KAS prompts an idle parent instead of queueing", wf)
 	}
-	if wf, _, ok = h.runs.RunNotice(runChatID("wf_4")); ok {
+	if wf, _, ok = h.runs.RunNotice(runChatID("wf_4"), notice("wf_4")); ok {
 		t.Errorf("RunNotice(run chat) = %q, want none: a parentless run has no chat buffer", wf)
+	}
+}
+
+// A clear carries no words, so it forgets as many notices as it names, and a notice no label matches names no run.
+func TestRunNotice_AClearForgetsAndUnmatchedWordsNameNoRun(t *testing.T) {
+	h, _, _ := newTestHub()
+	defer shutdownHub(t, h)
+	h.stagePromptTurn(t, "c1")
+	for _, wf := range []string{"wf_1", "wf_2", "wf_3"} {
+		h.runs.observeComplete(t.Context(), "c1", runComplete(wf, "completed"))
+	}
+
+	if wf, _, ok := h.runs.RunNotice("c1", `A workflow you launched ("nightly") completed.`); ok {
+		t.Errorf("RunNotice(unmatched words) = %q, want none", wf)
+	}
+	h.runs.ForgetRunNotices("c1", 2)
+	if !h.runs.holdsNotice("c1") {
+		t.Fatal("forgetting two of three notices left none")
+	}
+	h.runs.ForgetRunNotices("c1", 5)
+	if h.runs.holdsNotice("c1") {
+		t.Error("forgetting more notices than recorded left some")
 	}
 }
 

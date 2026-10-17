@@ -108,6 +108,10 @@ const (
 	ModelCallLimitStepReason = "kiro-cli stopped this step after 300 model calls in one turn, so its work may be unfinished. Rerun the step, or split its work into smaller steps."
 )
 
+// UnobservedRunReason is what a prompt turn says when kiro-cli answered it end_turn without bracketing its run or
+// sending any of it: kiro-cli ran the prompt in an execution its session did not stream.
+const UnobservedRunReason = "kiro-cli finished this prompt without sending any of its work, so marotte has no record of what the agent did or said."
+
 // TurnConclusion is one wire stop reason, read. A struct rather than four returns
 // because it travels as a unit into the turn_close entry and the header's
 // last_turn_outcome, where a transposed pair is silent in both directions.
@@ -179,6 +183,13 @@ func (c TurnConclusion) WithContent(emitted bool) TurnConclusion {
 	if c.EmptyIfSilent && !emitted {
 		c.Outcome = TurnOutcomeEmpty
 	}
+	return c
+}
+
+// Unobserved grades an end_turn answer to a prompt kiro-cli never bracketed and sent nothing for: `unknown`, because
+// the run happened where marotte could not see it, which `empty` would deny.
+func (c TurnConclusion) Unobserved() TurnConclusion {
+	c.Outcome, c.Reason, c.EmptyIfSilent = TurnOutcomeUnknown, UnobservedRunReason, false
 	return c
 }
 

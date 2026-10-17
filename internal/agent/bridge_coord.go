@@ -1589,6 +1589,19 @@ func extractStopReason(resp *marotte.RPCResponse) marotte.StopReason {
 	return result.StopReason
 }
 
+// ChatForACPSession answers the chat whose resident session sessionID is.
+func (bc *bridgeCoordinator) ChatForACPSession(sessionID string) (marotte.ChatID, bool) {
+	if sessionID == "" {
+		return "", false
+	}
+	for chatID, sb := range bc.bridge.mgr.all() {
+		if string(sb.bridge.SessionID()) == sessionID {
+			return chatID, true
+		}
+	}
+	return "", false
+}
+
 // ParentACPSession returns the running bridge's ACP session id for chatID, or "".
 func (bc *bridgeCoordinator) ParentACPSession(chatID marotte.ChatID) string {
 	sb := bc.bridge.mgr.get(chatID)

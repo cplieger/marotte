@@ -259,7 +259,9 @@ func TestWorkflowMessage_ATakenUpMessageTheTurnsClearNamesStaysDelivered(t *test
 	}
 }
 
-func TestWorkflowMessage_AClearedMessageIsSettledDroppedWithNoNewRow(t *testing.T) {
+// A clear's ids join no message row (the notify frame carries no KAS id), so the row stays waiting for a later
+// take-up, and only the run notice, which no row holds, is recorded dropped.
+func TestWorkflowMessage_AClearedMessageStaysWaitingWithNoNewRow(t *testing.T) {
 	deps, tr := messageDeps(t)
 	tr.HandleWorkflowMessage(t.Context(), testChat,
 		workflowNotify("step", testStep, testParent, "success", "tests pass"))
@@ -272,25 +274,37 @@ func TestWorkflowMessage_AClearedMessageIsSettledDroppedWithNoNewRow(t *testing.
 	if len(rows) != 2 {
 		t.Fatalf("chat rows = %+v, want the message's row and the run notice's", rows)
 	}
-	if rows[0].Origin != marotte.SteerOriginStep || rows[1].ID != "notify-wf-2" {
-		t.Errorf("chat rows = %+v, want the step's row then the cleared run notice", rows)
+	if rows[0].Origin != marotte.SteerOriginStep || rows[1].ID != "notify-wf-2" || rows[1].State != marotte.SteerStateDropped {
+		t.Errorf("chat rows = %+v, want the step's row then the cleared run notice, dropped", rows)
 	}
-	if d := deliveredOf(t, deps.between[testChat]); len(d) != 1 || d[0].SteerID != rows[0].ID || !d[0].Dropped {
-		t.Errorf("chat stamps = %+v, want the message's row settled dropped", d)
-	}
-	if d := deliveredOf(t, deps.runEntries(testWfRun, workflow.PathKey([]string{testWfRun, "review"}))); len(d) != 1 || !d[0].Dropped {
-		t.Errorf("step stamps = %+v, want the sender's row settled dropped too", d)
+	if d := deliveredOf(t, deps.between[testChat]); len(d) != 0 {
+		t.Errorf("chat stamps = %+v, want none: no id names the message's row", d)
 	}
 
-	tr.HandleWorkflowMessage(t.Context(), testChat,
-		workflowNotify("step", testStep, testParent, "success", "tests pass"))
 	deps.turns.chatTurn(testChat)
 	tr.HandleSessionInfoUpdate(t.Context(), testChat, steerFrame(t, "steering_injected", map[string]any{
 		"messageId": "notify-3", "content": "[notification/success] tests pass", "notificationSeverity": "success",
 	}), FrameAttribution{})
-	again := steerRows(t, deps, testChat)
-	if d := deliveredOf(t, deps.chatEntries(testChat)); len(d) != 1 || len(again) != 3 || d[0].SteerID != again[2].ID {
-		t.Errorf("take-up stamps = %+v over rows %+v, want the second message's row", d, again)
+	if d := deliveredOf(t, deps.chatEntries(testChat)); len(d) != 1 || d[0].SteerID != rows[0].ID || d[0].Dropped {
+		t.Errorf("take-up stamps = %+v, want the waiting row delivered", d)
+	}
+}
+
+// A repeated take-up frame for one KAS id settles one message, never a second with the same words.
+func TestWorkflowMessage_ARepeatedTakeUpSettlesOneRow(t *testing.T) {
+	deps, tr := messageDeps(t)
+	for range 2 {
+		tr.HandleWorkflowMessage(t.Context(), testChat,
+			workflowNotify("step", testStep, testParent, "success", "tests pass"))
+	}
+	deps.turns.chatTurn(testChat)
+	for range 2 {
+		tr.HandleSessionInfoUpdate(t.Context(), testChat, steerFrame(t, "steering_injected", map[string]any{
+			"messageId": "notify-1", "content": "[notification/success] tests pass", "notificationSeverity": "success",
+		}), FrameAttribution{})
+	}
+	if d := deliveredOf(t, deps.chatEntries(testChat)); len(d) != 1 {
+		t.Errorf("chat stamps = %+v, want one: the second frame repeats the first take-up", d)
 	}
 }
 

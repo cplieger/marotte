@@ -181,8 +181,8 @@ func TestSteeringCleared_RecordsEachDroppedAgentNoteAndNoUserRow(t *testing.T) {
 	}
 }
 
-// TestSteeringCleared_ANoteNeverHeldIsDroppedTextless pins a text-less drop stamped with its run;
-// a never-queued user steer writes nothing.
+// TestSteeringCleared_ANoteNeverHeldIsDroppedTextless pins a text-less drop that names no run, since a clear carries
+// no words to find it by, and forgets one recorded notice; a never-queued user steer writes nothing.
 func TestSteeringCleared_ANoteNeverHeldIsDroppedTextless(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	deps.userSteers = map[string]bool{"steer-mine": true}
@@ -196,10 +196,13 @@ func TestSteeringCleared_ANoteNeverHeldIsDroppedTextless(t *testing.T) {
 	want := []steerRow{{
 		ID:     "notify-wf-9",
 		Origin: marotte.SteerOriginAgent, State: marotte.SteerStateDropped,
-		Reason: marotte.SteerReasonBoundary, OriginRun: "wf_9", ProducedTs: 1_700_000_000_000,
+		Reason: marotte.SteerReasonBoundary,
 	}}
 	if len(rows) != 1 || !reflect.DeepEqual(rows[0], want[0]) {
-		t.Errorf("steer entries = %+v, want only the text-less agent drop carrying its run's provenance %+v", rows, want[0])
+		t.Errorf("steer entries = %+v, want only the text-less agent drop %+v", rows, want[0])
+	}
+	if q := deps.runNotices["c1"]; len(q) != 0 {
+		t.Errorf("recorded notices after the clear = %+v, want the cleared one forgotten", q)
 	}
 	if got := appendedSteers(t, *events); len(got) != 1 {
 		t.Errorf("entry_appended{steer} frames = %d, want 1: %v", len(got), eventTypes(*events))
