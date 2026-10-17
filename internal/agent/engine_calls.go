@@ -115,8 +115,7 @@ func (o *engineOwner) observe(
 // logged at WARN and leaves the session open until the engine ends.
 func (o *engineOwner) closePass(ctx context.Context, s engineSession) {
 	err := s.Close(ctx)
-	var refusal *marotte.RPCError
-	if errors.As(err, &refusal) {
+	if _, refused := errors.AsType[*marotte.RPCError](err); refused {
 		dctx, cancel := context.WithTimeout(ctx, sessionDeleteTimeout)
 		_, err = o.rawCall(dctx, "observer pass delete", marotte.MethodSessionDelete,
 			map[string]any{marotte.KeySessionID: s.SessionID()})
