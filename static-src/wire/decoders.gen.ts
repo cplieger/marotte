@@ -328,13 +328,10 @@ export const decodeConfigTemplateResponse: Decoder<ConfigTemplateResponse> = (v)
     catalog: reqOneOf(o, "catalog", CATALOG_STATES, "$.config_template_response"),
     modes: o["modes"] === null ? [] : decodeArray(o["modes"], decodeSessionMode, "$.config_template_response.modes"),
     models: o["models"] === null ? [] : decodeArray(o["models"], decodeSessionModel, "$.config_template_response.models"),
-    effort_levels: o["effort_levels"] === null ? [] : decodeArray(o["effort_levels"], decodeSessionEffortLevel, "$.config_template_response.effort_levels"),
   };
   if (o["subject"] !== undefined && o["subject"] !== null) out.subject = decodeSubjectStamp(o["subject"]);
   const defaultModel = o["default_model"] === null ? undefined : optStr(o, "default_model", "$.config_template_response");
   if (defaultModel !== undefined) out.default_model = defaultModel;
-  const effortActive = o["effort_active"] === null ? undefined : optStr(o, "effort_active", "$.config_template_response");
-  if (effortActive !== undefined) out.effort_active = effortActive;
   if (o["catalog_reason"] !== undefined && o["catalog_reason"] !== null) out.catalog_reason = reqOneOf(o, "catalog_reason", CATALOG_REASONS, "$.config_template_response");
   return out;
 };
@@ -2684,8 +2681,6 @@ export const decodeSessionModel: Decoder<SessionModel> = (v) => {
   if (o["effort_tiers"] !== undefined && o["effort_tiers"] !== null) out.effort_tiers = decodeArray(o["effort_tiers"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.session_model.effort_tiers");
   const rateMultiplier = o["rate_multiplier"] === null ? undefined : optNum(o, "rate_multiplier", "$.session_model");
   if (rateMultiplier !== undefined) out.rate_multiplier = rateMultiplier;
-  const hasEffort = o["has_effort"] === null ? undefined : optBool(o, "has_effort", "$.session_model");
-  if (hasEffort !== undefined) out.has_effort = hasEffort;
   const thinkingToggleable = o["thinking_toggleable"] === null ? undefined : optBool(o, "thinking_toggleable", "$.session_model");
   if (thinkingToggleable !== undefined) out.thinking_toggleable = thinkingToggleable;
   const thinkingDefaultOff = o["thinking_default_off"] === null ? undefined : optBool(o, "thinking_default_off", "$.session_model");

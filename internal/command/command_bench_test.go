@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -25,6 +26,8 @@ type benchDeps struct {
 	effortRecords []effortRecord
 	// thinkingDefaultOff names the models whose own default is thinking off.
 	thinkingDefaultOff map[string]bool
+	// tiers is the catalog's tier list per listed model; an absent model is unknown.
+	tiers map[string][]string
 	// stops is every chat RequestStop recorded, in order.
 	stops []marotte.ChatID
 }
@@ -197,6 +200,11 @@ func (d *benchDeps) PersistEffortChange(_ context.Context, chatID marotte.ChatID
 }
 
 func (d *benchDeps) ThinkingDefaultOff(model string) bool { return d.thinkingDefaultOff[model] }
+
+func (d *benchDeps) EffortSeedable(model string, level marotte.EffortLevel) bool {
+	tiers, listed := d.tiers[model]
+	return !listed || slices.Contains(tiers, string(level))
+}
 
 // The bench host launched no runs, so a rewind's cut never holds one.
 func (*benchDeps) LiveRuns([]string) []LiveRunRef          { return nil }

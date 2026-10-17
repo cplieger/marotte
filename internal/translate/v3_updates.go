@@ -472,22 +472,9 @@ func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pc
 // transcript rewrite: one point, the resolution the context ring renders.
 const contextPctEpsilon = 1.0
 
-// contextPctTiers are thresholds a crossing must always persist through: 95 is the
-// composer's cutoff, and 70 and 90 are the mid-range crossings nothing else pins.
-var contextPctTiers = [...]float64{70, 90, 95}
-
-// materialPctDelta reports whether prev → next is worth persisting: at least
-// contextPctEpsilon, or any move crossing a tier boundary.
+// materialPctDelta reports whether prev → next moves at least contextPctEpsilon.
 func materialPctDelta(prev, next float64) bool {
-	if math.Abs(next-prev) >= contextPctEpsilon {
-		return true
-	}
-	for _, tier := range contextPctTiers {
-		if (prev < tier) != (next < tier) {
-			return true
-		}
-	}
-	return false
+	return math.Abs(next-prev) >= contextPctEpsilon
 }
 
 // configOptionUpdate is the v3 config_option_update payload: the live model/mode/effort

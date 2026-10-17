@@ -7,10 +7,13 @@ import (
 )
 
 // Inspect is one decoded `_kiro/workflow/inspect` reply. OK is false for a reply with no readable
-// state, which a reader must treat as "unknown", never as "nothing is waiting".
+// state, which a reader must treat as "unknown", never as "nothing is waiting". Pending counts the
+// top-level steps of the queued plan revision: 0 when none is queued, -1 when the reply's
+// pendingSteps is not an array.
 type Inspect struct {
-	State *State
-	OK    bool
+	State   *State
+	Pending int
+	OK      bool
 }
 
 // errOtherRun means an inspect reply described a run other than the one asked for.
@@ -38,7 +41,18 @@ func DecodeInspect(workflowID string, raw json.RawMessage) (Inspect, error) {
 	}
 	// Every ask's identity is built from the state's id.
 	res.State.WorkflowID = workflowID
-	return Inspect{State: res.State, OK: true}, nil
+	return Inspect{State: res.State, Pending: pendingCount(res.PendingSteps), OK: true}, nil
+}
+
+func pendingCount(raw json.RawMessage) int {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0
+	}
+	var steps []json.RawMessage
+	if err := json.Unmarshal(raw, &steps); err != nil {
+		return -1
+	}
+	return len(steps)
 }
 
 const (

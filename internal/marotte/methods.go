@@ -138,8 +138,9 @@ const (
 // of truth so a protocol rename is one edit.
 const ContentTypeText = "text"
 
-// ModelAuto is the sentinel model value meaning "keep current / use
-// task-based selection". Used by bridge, agent, and model-switch logic.
+// ModelAuto is KAS's Auto model id, listed and judged like any other. The client also sends it as
+// its no-preference default (a new chat's model, a prompt's ambient model), so the session-open
+// paths treat it as "use the backend default".
 const ModelAuto = "auto"
 
 // AgentEngineV3 is the only agent engine marotte speaks. The relay owns

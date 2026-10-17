@@ -73,7 +73,6 @@ document.body.innerHTML = `
 
 const { effect } = await import("@cplieger/reactive");
 const store = await import("./store.js");
-const { setCatalogEfforts } = await import("./effort.js");
 const { refreshContextUI } = await import("./context-ui.js");
 const { configure, configureTransport } = await import("@cplieger/actions");
 const { initModelSwitcher } = await import("./model-switcher.js");
@@ -95,12 +94,11 @@ function fiveTiers(): SessionEffortLevel[] {
   return [{ id: "low" }, { id: "medium" }, { id: "high" }, { id: "xhigh" }, { id: "max" }];
 }
 
-function model(id: string, dflt?: string, hasEffort = true): ModelInfo {
+function model(id: string, dflt?: string): ModelInfo {
   return {
     model_id: id,
     model_name: id,
     rate_multiplier: 1,
-    has_effort: hasEffort,
     ...(dflt === undefined ? {} : { default_effort_level: dflt }),
   };
 }
@@ -179,7 +177,6 @@ beforeEach(async () => {
   await nextFrame();
   staged.models = [];
   staged.seed = "";
-  setCatalogEfforts([], "");
   store.setSessions([]);
   arm();
 });
@@ -219,9 +216,9 @@ describe("the model pill's reasoning tier", () => {
     expect(await tier()).toEqual({ text: "· high", hidden: false });
   });
 
-  it("says nothing for a model that advertises no reasoning effort", async () => {
-    staged.models = [model("auto", undefined, false)];
-    mount(session("x", { model: "auto", effort: "max" }));
+  it("says nothing for a listed model with no tiers", async () => {
+    staged.models = [model("auto")];
+    mount(session("x", { model: "auto", effort: "max", effort_levels: [] }));
     expect(await tier()).toEqual({ text: "", hidden: true });
   });
 

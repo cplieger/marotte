@@ -7,6 +7,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -43,11 +44,15 @@ type State struct {
 	PauseReason string `json:"pauseReason"`
 }
 
-// InspectResult is `_kiro/workflow/inspect`'s reply, decoded to the one part
+// InspectResult is `_kiro/workflow/inspect`'s reply, decoded to the parts
 // marotte reads. `nodePlan` rides through undecoded — see the package comment.
 type InspectResult struct {
 	State      *State `json:"state"`
 	WorkflowID string `json:"workflowId"`
+	// PendingSteps is the queued replace_remaining plan, which KAS answers from its persisted
+	// pending-step-update.json even for a run it has not loaded. It stays raw so a shape change in
+	// this advisory key never fails the state's decode.
+	PendingSteps json.RawMessage `json:"pendingSteps"`
 }
 
 // StepSession names one step node, its ACP session and its PATH. The path addresses one

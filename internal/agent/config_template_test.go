@@ -26,7 +26,7 @@ func TestTemplateToResponse(t *testing.T) {
 	    {"id": "mode", "currentValue": "vibe", "options": []},
 	    {"id": "model", "currentValue": "m-default", "options": [
 	      {"value": "m-default", "name": "Default Model", "description": "Fast", "_meta": {"kiro": {"rateMultiplier": 1}}},
-	      {"value": "m-big", "name": "Big Model", "_meta": {"kiro": {"rateMultiplier": 2.5, "hasEffort": true}}},
+	      {"value": "m-big", "name": "Big Model", "_meta": {"kiro": {"rateMultiplier": 2.5, "effortLevels": ["low", "high"]}}},
 	      {"value": "m-old", "name": "Old", "description": "[Deprecated] legacy"},
 	      {"name": "Group", "options": [
 	        {"value": "m-grouped", "name": "Grouped Model"}
@@ -55,7 +55,7 @@ func TestTemplateToResponse(t *testing.T) {
 	if len(got.Models) != 3 || ids[0] != "m-default" || ids[1] != "m-big" || ids[2] != "m-grouped" {
 		t.Fatalf("models: %v", ids)
 	}
-	if got.Models[1].RateMultiplier != 2.5 || !got.Models[1].HasEffort {
+	if got.Models[1].RateMultiplier != 2.5 || !slices.Equal(got.Models[1].EffortTiers, []string{"low", "high"}) {
 		t.Errorf("model meta mapping: %+v", got.Models[1])
 	}
 	if got.Catalog != marotte.CatalogReady {
@@ -124,7 +124,7 @@ func TestTemplateToResponseEmpty(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	s := string(b)
-	if s != `{"catalog":"empty","modes":[],"models":[],"effort_levels":[]}` {
+	if s != `{"catalog":"empty","modes":[],"models":[]}` {
 		t.Errorf("empty response JSON: %s", s)
 	}
 }
@@ -302,7 +302,7 @@ func TestHandleConfigTemplate_EveryBodyKeepsItsArraysNonNull(t *testing.T) {
 			h.handleConfigTemplate(rec, req)
 
 			body := rec.Body.String()
-			for _, key := range []string{"modes", "models", "effort_levels"} {
+			for _, key := range []string{"modes", "models"} {
 				if !strings.Contains(body, `"`+key+`":[]`) {
 					t.Errorf("body has no empty %s array: %s", key, body)
 				}

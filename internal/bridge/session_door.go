@@ -209,6 +209,7 @@ func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach 
 	s.mu.Unlock()
 	// Model and level rode _meta.kiro, so these repair only on a mismatch.
 	s.applyInitialModel(dctx, o.Model)
+	s.settleServedModel(dctx)
 	// Thinking first: turning it off caps a high tier, and the caller's effort is already capped.
 	s.applyThinking(dctx, o.Thinking)
 	s.applyInitialEffort(dctx, o.Effort)
@@ -312,6 +313,7 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 	s.mu.Lock()
 	s.loadSeq = seq
 	s.mu.Unlock()
+	s.settleServedModel(dctx)
 	// Re-assert effort on resume: KAS's fork and a model tier mismatch drop it.
 	s.applyThinking(dctx, o.Thinking)
 	s.applyInitialEffort(dctx, o.Effort)
@@ -397,7 +399,8 @@ func sessionKiroMeta(params map[string]any) map[string]any {
 }
 
 // withSessionChoices adds the chat's model, effort level and mode to session/new's _meta.kiro. Not on load: KAS
-// restores them. The model must come with the level, since KAS drops a level sent while on `auto`.
+// restores them, and settleServedModel moves a restored model the catalog does not list. The model must come with
+// the level, since KAS drops a level sent while on `auto`.
 func withSessionChoices(params map[string]any, o *marotte.SessionOpts) map[string]any {
 	choices := make(map[string]any, 3)
 	if o.Model != "" && o.Model != marotte.ModelAuto {
@@ -454,6 +457,32 @@ func (s *Session) applyInitialModel(ctx context.Context, model string) {
 	if err := s.setModel(ctx, model); err != nil {
 		slog.Warn("apply initial session model", "model", model, "error", err)
 	}
+}
+
+// settleServedModel moves the session off a model its own catalog does not list, onto `auto` when listed, else the
+// first listed id: KAS restores a persisted model on session/load without judging it, and the service then refuses
+// every prompt. An unknown catalog judges nothing. Best-effort; a refused move leaves the session as it is.
+func (s *Session) settleServedModel(ctx context.Context) {
+	current := string(s.ModelID())
+	catalog := s.Catalog()
+	served := make([]string, len(catalog))
+	for i := range catalog {
+		served[i] = catalog[i].ID
+	}
+	if marotte.ModelServed(current, served) {
+		return
+	}
+	to := served[0]
+	if slices.Contains(served, marotte.ModelAuto) {
+		to = marotte.ModelAuto
+	}
+	if err := s.setModel(ctx, to); err != nil {
+		slog.Warn("session runs a model its catalog does not list, and the move off it was refused",
+			"session_id", s.id, "model", logsafe.Field(current), "to", logsafe.Field(to), "error", err)
+		return
+	}
+	slog.Warn("moved a session off a model its catalog does not list",
+		"session_id", s.id, "from", logsafe.Field(current), "to", logsafe.Field(to))
 }
 
 // applyInitialEffort applies the chat's effort level (`--effort` is refused with v3 too): a repair on session/new,

@@ -28,15 +28,15 @@ func configModelUpdate(t *testing.T, current string, choices []map[string]any) [
 	})
 }
 
-// The per-model hasEffort lands on SessionModel.HasEffort so the picker can hide the
-// effort row; a choice with no _meta decodes as false.
-func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
+// The per-model effortLevels land on SessionModel.EffortTiers, the one capability the effort
+// row reads; a choice with no _meta decodes as none.
+func TestHandleConfigOptionUpdate_PlumbsEffortTiers(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
 	raw := configModelUpdate(t, "model-a", []map[string]any{
-		{"value": "model-a", "name": "Model A", "_meta": map[string]any{"kiro": map[string]any{"hasEffort": true, "rateMultiplier": 1.0}}},
-		{"value": "model-b", "name": "Model B", "_meta": map[string]any{"kiro": map[string]any{"hasEffort": false, "rateMultiplier": 2.0}}},
+		{"value": "model-a", "name": "Model A", "_meta": map[string]any{"kiro": map[string]any{"effortLevels": []string{"low", "high"}, "rateMultiplier": 1.0}}},
+		{"value": "model-b", "name": "Model B", "_meta": map[string]any{"kiro": map[string]any{"rateMultiplier": 2.0}}},
 		{"value": "model-c", "name": "Model C"}, // no _meta at all
 	})
 
@@ -50,7 +50,7 @@ func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 		t.Errorf("current model = %q, want model-a", c.Model)
 	}
 	// The model LIST is the workspace catalog's, not the chat's.
-	want := map[string]bool{"model-a": true, "model-b": false, "model-c": false}
+	want := map[string][]string{"model-a": {"low", "high"}, "model-b": nil, "model-c": nil}
 	if len(deps.catalogModels) != len(want) {
 		t.Fatalf("catalog models len = %d, want %d: %+v", len(deps.catalogModels), len(want), deps.catalogModels)
 	}
@@ -60,14 +60,13 @@ func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 			t.Errorf("unexpected model %q in catalog", m.ID)
 			continue
 		}
-		if m.HasEffort != exp {
-			t.Errorf("model %q HasEffort = %v, want %v", m.ID, m.HasEffort, exp)
+		if !slices.Equal(m.EffortTiers, exp) {
+			t.Errorf("model %q EffortTiers = %v, want %v", m.ID, m.EffortTiers, exp)
 		}
 	}
 }
 
-// configEffortUpdate carries the `effortLevel` option kiro-cli's TUI builds its picker
-// from; there is no per-model tier list on the wire.
+// configEffortUpdate carries the session's `effortLevel` option.
 func configEffortUpdate(t *testing.T, current string, choices []map[string]any) []byte {
 	t.Helper()
 	return mustJSON(t, map[string]any{
@@ -137,23 +136,21 @@ func TestHandleConfigOptionUpdate_EmptyEffortOptionApplies(t *testing.T) {
 	}
 }
 
-// Absent and malformed meta both decode to the zero value, read as "not plumbed".
+// Absent and malformed meta both decode to the zero value.
 func TestChoiceMeta(t *testing.T) {
 	cases := []struct {
 		name        string
 		meta        string
-		wantHas     bool
+		wantTiers   []string
 		wantDefault string
 		wantRate    float64
 	}{
 		{name: "nil meta"},
 		{name: "empty object", meta: `{}`},
-		{name: "hasEffort only", meta: `{"kiro":{"hasEffort":true}}`, wantHas: true},
-		{name: "hasEffort false", meta: `{"kiro":{"hasEffort":false}}`},
-		{name: "kiro without hasEffort", meta: `{"kiro":{"rateMultiplier":2}}`, wantRate: 2},
+		{name: "tiers only", meta: `{"kiro":{"effortLevels":["low","max"]}}`, wantTiers: []string{"low", "max"}},
+		{name: "kiro without tiers", meta: `{"kiro":{"rateMultiplier":2}}`, wantRate: 2},
 		{
-			// The 2.18.0 shape: a default tier, no capability flag.
-			name:        "default tier, no hasEffort",
+			name:        "default tier, no tiers",
 			meta:        `{"kiro":{"rateMultiplier":1,"effortSchemaPath":"reasoning","defaultEffortLevel":"xhigh"}}`,
 			wantDefault: "xhigh",
 			wantRate:    1,
@@ -172,8 +169,8 @@ func TestChoiceMeta(t *testing.T) {
 				meta = []byte(tc.meta)
 			}
 			got := choiceMeta(meta)
-			if got.Kiro.HasEffort != tc.wantHas {
-				t.Errorf("HasEffort = %v, want %v", got.Kiro.HasEffort, tc.wantHas)
+			if !slices.Equal(got.Kiro.EffortLevels, tc.wantTiers) {
+				t.Errorf("EffortLevels = %v, want %v", got.Kiro.EffortLevels, tc.wantTiers)
 			}
 			if got.Kiro.DefaultEffortLevel != tc.wantDefault {
 				t.Errorf("DefaultEffortLevel = %q, want %q", got.Kiro.DefaultEffortLevel, tc.wantDefault)
@@ -341,7 +338,7 @@ func TestHandleSessionInfoUpdate_ActivityReachesTheTurnLifecycle(t *testing.T) {
 }
 
 // TestMaterialPctDelta pins the gate on a context-percentage rewrite: a sub-point move is
-// dropped (the ring cannot render it), a tier crossing is kept.
+// dropped wherever it lands (the ring cannot render it), a one-point move is kept.
 func TestMaterialPctDelta(t *testing.T) {
 	cases := map[string]struct {
 		old, new float64
@@ -353,19 +350,11 @@ func TestMaterialPctDelta(t *testing.T) {
 		"exactly one point up":           {50, 51, true},
 		"exactly one point down":         {51, 50, true},
 		"large jump":                     {10, 90, true},
-		// marotte's own client thresholds (70, 90 recolour the ring; 95 stops input), not KAS's 80/95.
-		"tiny move crossing 70":              {69.9, 70.0, true},
-		"tiny move crossing 70 downward":     {70.0, 69.9, true},
-		"tiny move crossing 90":              {89.9, 90.0, true},
-		"tiny move crossing 95":              {94.9, 95.0, true},
-		"tiny move crossing 95 downward":     {95.0, 94.9, true},
-		"tiny move inside the warning band":  {75.0, 75.2, false},
-		"tiny move inside the critical band": {91.0, 91.3, false},
-		"tiny move above the cutoff":         {96.0, 96.3, false},
-		// 80 is KAS's boundary and not one of marotte's, so a sub-point move
-		// across it is correctly ignored.
-		"tiny move crossing KAS's 80 is not material": {79.9, 80.0, false},
-		"from zero is material":                       {0, 1, true},
+		"sub-point move across 70":       {69.9, 70.0, false},
+		"sub-point move across 90":       {89.9, 90.0, false},
+		"sub-point move across 95 down":  {95.0, 94.9, false},
+		"one-point move across 95":       {94.5, 95.5, true},
+		"from zero is material":          {0, 1, true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

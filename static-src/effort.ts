@@ -1,11 +1,11 @@
-// Reasoning-effort vocabulary, a leaf so the model card and the model pill agree. The default always arrives per model
-// on the catalog, never from a local table.
+// Reasoning-effort vocabulary, a leaf so the model card and the model pill agree. The tiers and the default arrive
+// per model on the catalog, never from a local table.
 
 import type { ModelInfo, Session, SessionEffortLevel } from "./types.js";
 
 /**
- * The fallback vocabulary and label table, never the authority: that is the `effortLevel` option's own choices, per
- * session or pre-session.
+ * The fallback vocabulary and label table, never the authority: that is the session's `effortLevel` choices, else the
+ * model's catalog tiers.
  */
 const EFFORT_LEVELS = [
   { id: "low", label: "low" },
@@ -15,15 +15,6 @@ const EFFORT_LEVELS = [
   { id: "max", label: "max" },
 ] as const;
 
-/** Written once at boot: a bridgeless chat's only evidence. */
-let catalogEfforts: readonly SessionEffortLevel[] = [];
-let catalogEffortActive = "";
-
-export function setCatalogEfforts(levels: readonly SessionEffortLevel[], active: string): void {
-  catalogEfforts = levels;
-  catalogEffortActive = active;
-}
-
 /** The catalog's name, else the house table (`xhigh` → "x-high"), else the id: hiding an offered tier is worse. */
 export function effortLabel(level: SessionEffortLevel): string {
   if (level.name !== undefined && level.name !== "") {
@@ -32,9 +23,29 @@ export function effortLabel(level: SessionEffortLevel): string {
   return EFFORT_LEVELS.find((l) => l.id === level.id)?.label ?? level.id;
 }
 
-/** The default vocabulary, for a control with no catalog behind it yet. */
+/** The default vocabulary, for a model the catalog does not know. */
 function fallbackEffortLevels(): SessionEffortLevel[] {
   return EFFORT_LEVELS.map((l) => ({ id: l.id, name: l.label }));
+}
+
+/**
+ * The session's own tiers; else the listed model's catalog tiers, empty for a model that has none; else the five for
+ * a model the catalog does not list, since the server keeps a tier no session has refused yet. Twin of the server's
+ * `tiersIn`.
+ */
+function effortLevelsFor(
+  session: Session | undefined,
+  models: readonly ModelInfo[],
+): readonly SessionEffortLevel[] {
+  const fromSession = session?.effort_levels ?? [];
+  if (fromSession.length > 0) {
+    return fromSession;
+  }
+  const listed = models.find((m) => m.model_id === session?.model);
+  if (listed === undefined) {
+    return fallbackEffortLevels();
+  }
+  return (listed.effort_tiers ?? []).map((id) => ({ id, name: effortLabel({ id }) }));
 }
 
 /** The current model's own default tier, or "" when the catalog does not say. */
@@ -43,27 +54,20 @@ function modelDefaultEffort(session: Session | undefined, models: readonly Model
 }
 
 /**
- * Tiers to render and the live tier. Levels: session catalog, else pre-session template, else the canonical five.
- * Live tier, highest first: the chat's choice, the session's reported level, the remembered pick, the model default.
+ * Tiers to render (`effortLevelsFor`) and the live tier. Live tier, highest first: the chat's choice, the session's
+ * reported level, the remembered pick, the model default. Empty levels mean the model has no effort control.
  */
 export function effortVocabulary(
   session: Session | undefined,
   models: readonly ModelInfo[],
   seed: string,
 ): { levels: readonly SessionEffortLevel[]; active: string } {
-  const fromSession = session?.effort_levels ?? [];
-  const levels =
-    fromSession.length > 0
-      ? fromSession
-      : catalogEfforts.length > 0
-        ? catalogEfforts
-        : fallbackEffortLevels();
+  const levels = effortLevelsFor(session, models);
   const candidates: readonly string[] = [
     ifOffered(session?.effort ?? "", levels),
     session?.effort_active ?? "",
     ifOffered(seed, levels),
     modelDefaultEffort(session, models),
-    catalogEffortActive,
   ];
   const active = candidates.find((level) => level !== "") ?? "";
   return { levels, active };
@@ -117,24 +121,6 @@ export function thinkingOffShown(
 }
 
 /**
- * Whether the current model advertises effort (`_meta.kiro.hasEffort`). True when no entry carries the field: hiding
- * a working control on a missing field is worse.
- */
-export function modelHasEffort(models: readonly ModelInfo[], modelID: string): boolean {
-  let plumbed = false;
-  let current = false;
-  for (const m of models) {
-    if (m.has_effort !== undefined) {
-      plumbed = true;
-      if (m.model_id === modelID) {
-        current = m.has_effort;
-      }
-    }
-  }
-  return plumbed ? current : true;
-}
-
-/**
  * The tier to name on the model pill, a readout of the level in force. Empty when the model has no effort or nothing
  * resolved.
  */
@@ -143,13 +129,13 @@ export function effortPillLabel(
   models: readonly ModelInfo[],
   seed: string,
 ): string {
-  if (!modelHasEffort(models, session?.model ?? "")) {
+  const { levels, active } = effortVocabulary(session, models, seed);
+  if (levels.length === 0) {
     return "";
   }
   if (thinkingOffShown(session, models)) {
     return effortLabel(THINKING_OFF);
   }
-  const { levels, active } = effortVocabulary(session, models, seed);
   if (active === "") {
     return "";
   }

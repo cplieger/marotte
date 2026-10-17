@@ -160,6 +160,32 @@ func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 	}
 }
 
+// A seed is read back only while the model offers it, so a tier the listed model lacks
+// would be a remembered value no surface can show.
+func TestCmdSetEffort_ATierTheListedModelLacksRecordsNoSeed(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, `{"last_effort_by_model":{"sonnet":"high"}}`)
+	store := testsupport.NewInMemoryChatStore()
+	seedChatOnModel(t, store, "c1", "sonnet")
+	deps := newBenchDeps()
+	deps.tiers = map[string][]string{"sonnet": {"low", "medium", "high"}}
+	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: deps, store: store}}
+	bus := &recordingBus{}
+
+	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, chatlock.New(),
+		effortReq(t, "c1", "max"))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	if got, want := effortSeeds(t, dir), map[string]string{"sonnet": "high"}; !maps.Equal(got, want) {
+		t.Errorf("last_effort_by_model = %v, want %v kept", got, want)
+	}
+	if n := bus.countOf(marotte.EventSettingsUpdated); n != 0 {
+		t.Errorf("settings_updated broadcasts = %d, want 0", n)
+	}
+}
+
 func storedKey(t *testing.T, dir, key string) string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, settings.Filename))

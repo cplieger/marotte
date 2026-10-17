@@ -38,7 +38,6 @@ import { ICON_MODEL } from "./icons.js";
 import {
   THINKING_OFF,
   effortVocabulary,
-  modelHasEffort,
   modelThinkingToggleable,
   sameLevels,
   thinkingIsOff,
@@ -214,8 +213,8 @@ class ModelSwitchController {
     }
     const current = session.model;
 
-    // Shown when the catalog lacks the capability too (effort.ts modelHasEffort).
-    if (modelHasEffort(getCachedModels(), current)) {
+    // Before sliderVocabulary prepends Off, so a tierless toggleable model shows no row (effort.ts effortVocabulary).
+    if (effortVocabulary(session, getCachedModels(), "").levels.length > 0) {
       this.ensureEffortRow(list);
     } else {
       this.removeEffortRow();

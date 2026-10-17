@@ -52,7 +52,7 @@ type kasConfigChoice struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
 	Options     []kasConfigChoice `json:"options"` // grouped selects nest
-	// Meta is the shared model-choice block; tiers are the `effortLevel` option's options[] (marotte.SessionModel).
+	// Meta is the shared model-choice block, which carries each model's own effort tiers.
 	Meta marotte.ModelChoiceMeta `json:"_meta"`
 }
 
@@ -171,7 +171,6 @@ func unavailableTemplate(reason marotte.CatalogReason) *configTemplateAssembly {
 		CatalogReason: reason,
 		Modes:         []marotte.SessionMode{},
 		Models:        []marotte.SessionModel{},
-		EffortLevels:  []marotte.SessionEffortLevel{},
 	}}
 }
 
@@ -192,37 +191,16 @@ func templateToResponse(tpl *kasConfigTemplate) *configTemplateAssembly {
 		})
 	}
 	out := &configTemplateAssembly{response: marotte.ConfigTemplateResponse{
-		Modes:        modes,
-		Models:       []marotte.SessionModel{},
-		EffortLevels: []marotte.SessionEffortLevel{},
+		Modes:  modes,
+		Models: []marotte.SessionModel{},
 	}}
 	for i := range tpl.ConfigOptions {
 		opt := &tpl.ConfigOptions[i]
-		switch opt.ID {
-		case marotte.ConfigOptionModel:
+		if opt.ID == marotte.ConfigOptionModel {
 			out.modelOptionPresent = true
 			_ = json.Unmarshal(opt.CurrentValue, &out.response.DefaultModel) // string; ignore non-string
 			out.response.Models = flattenTemplateModels(opt.Options)
-		case marotte.ConfigOptionEffort:
-			_ = json.Unmarshal(opt.CurrentValue, &out.response.EffortActive) // string; ignore non-string
-			out.response.EffortLevels = flattenTemplateEfforts(opt.Options)
 		}
-	}
-	return out
-}
-
-func flattenTemplateEfforts(choices []kasConfigChoice) []marotte.SessionEffortLevel {
-	out := make([]marotte.SessionEffortLevel, 0, len(choices))
-	for i := range choices {
-		c := &choices[i]
-		if len(c.Options) > 0 {
-			out = append(out, flattenTemplateEfforts(c.Options)...)
-			continue
-		}
-		if c.Value == "" {
-			continue
-		}
-		out = append(out, marotte.SessionEffortLevel{ID: c.Value, Name: c.Name})
 	}
 	return out
 }

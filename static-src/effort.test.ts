@@ -1,16 +1,16 @@
 // `effortPillLabel` names the tier a chat runs at, withholding only when the model has no effort or nothing resolved.
-import { beforeEach, describe, expect, it } from "vitest";
-import { effortPillLabel, setCatalogEfforts, thinkingIsOff } from "./effort.js";
+import { describe, expect, it } from "vitest";
+import { effortPillLabel, thinkingIsOff } from "./effort.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { ModelInfo, Session } from "./types.js";
 
-function model(id: string, dflt?: string, hasEffort?: boolean): ModelInfo {
+function model(id: string, dflt?: string, tiers?: readonly string[]): ModelInfo {
   return {
     model_id: id,
     model_name: id,
     rate_multiplier: 1,
     ...(dflt === undefined ? {} : { default_effort_level: dflt }),
-    ...(hasEffort === undefined ? {} : { has_effort: hasEffort }),
+    ...(tiers === undefined ? {} : { effort_tiers: tiers }),
   };
 }
 
@@ -29,11 +29,9 @@ function fiveTiers(): { id: string; name?: string }[] {
   return [{ id: "low" }, { id: "medium" }, { id: "high" }, { id: "xhigh" }, { id: "max" }];
 }
 
-describe("the pill's reasoning-tier readout", () => {
-  beforeEach(() => {
-    setCatalogEfforts([], "");
-  });
+const FIVE = ["low", "medium", "high", "xhigh", "max"] as const;
 
+describe("the pill's reasoning-tier readout", () => {
   it("names the tier even when it IS the model's own default", () => {
     const models = [model("opus-5", "high")];
     const s = session({ model: "opus-5", effort: "high", effort_levels: fiveTiers() });
@@ -85,8 +83,7 @@ describe("the pill's reasoning-tier readout", () => {
   });
 
   it("names the remembered pick on a chat with no session yet", () => {
-    setCatalogEfforts(fiveTiers(), "high");
-    const models = [model("opus-5", "high")];
+    const models = [model("opus-5", "high", FIVE)];
     // A new chat: the server resolves the same seed into SessionOpts.Effort.
     const s = session({ model: "opus-5" });
 
@@ -133,34 +130,38 @@ describe("the pill's reasoning-tier readout", () => {
 
   it("says nothing when NO level resolves at all", () => {
     // Every rung is empty, so naming a tier would invent one.
-    const models = [model("opus-5", undefined, true)];
+    const models = [model("opus-5", undefined, FIVE)];
     const s = session({ model: "opus-5", effort_levels: fiveTiers() });
 
     expect(effortPillLabel(s, models, "")).toBe("");
   });
 
-  it("says nothing for a model that advertises no reasoning effort", () => {
-    // `auto` has no tiers (KAS hasEffort:false).
-    const models = [model("auto", "", false), model("opus-5", "high", true)];
+  it("says nothing for a listed model with no tiers", () => {
+    // `auto` lists no effortLevels.
+    const models = [model("auto", ""), model("opus-5", "high", FIVE)];
     const s = session({ model: "auto", effort: "max" });
 
     expect(effortPillLabel(s, models, "max")).toBe("");
   });
 
-  it("says nothing for a model whose capability is plumbed false even with a chosen tier", () => {
-    // Hands the session its own tiers, so the gate is provably what withholds.
-    const models = [model("auto", "", false), model("opus-5", "high", true)];
-    const s = session({ model: "auto", effort: "max", effort_levels: fiveTiers() });
+  it("says nothing for a listed tierless model even when no model in the catalog has tiers", () => {
+    const s = session({ model: "auto", effort: "max" });
 
-    expect(effortPillLabel(s, models, "")).toBe("");
+    expect(effortPillLabel(s, [model("auto", "")], "max")).toBe("");
   });
 
-  it("says nothing for a model the catalog does not know", () => {
-    const models = [model("opus-5", "high", true)];
+  it("names the tier a session reports for a model the catalog does not list", () => {
+    const models = [model("opus-5", "high", FIVE)];
     const s = session({ model: "some-new-model", effort: "max", effort_levels: fiveTiers() });
 
-    // The `hasEffort` gate answers: the catalog says nothing about this model.
-    expect(effortPillLabel(s, models, "")).toBe("");
+    expect(effortPillLabel(s, models, "")).toBe("max");
+  });
+
+  it("offers the five to a model neither the session nor the catalog describes", () => {
+    const models = [model("opus-5", "high", ["low", "high"])];
+    const s = session({ model: "some-new-model", effort: "max" });
+
+    expect(effortPillLabel(s, models, "")).toBe("max");
   });
 
   it("labels the tier by the catalog's own name, else the house table", () => {
@@ -182,17 +183,13 @@ describe("the pill's reasoning-tier readout", () => {
   });
 
   it("says nothing for a chat that has no session at all", () => {
-    expect(effortPillLabel(undefined, [model("opus-5", "high", true)], "")).toBe("");
+    expect(effortPillLabel(undefined, [model("opus-5", "high", FIVE)], "")).toBe("");
   });
 });
 
 describe("the thinking Off readout", () => {
-  beforeEach(() => {
-    setCatalogEfforts([], "");
-  });
-
   function toggleable(id: string): ModelInfo {
-    return { ...model(id, "high", true), thinking_toggleable: true };
+    return { ...model(id, "high", FIVE), thinking_toggleable: true };
   }
 
   it("names Off on the pill for a toggleable model running with thinking off", () => {
@@ -214,7 +211,7 @@ describe("the thinking Off readout", () => {
       thinking_active: "off",
     });
 
-    expect(effortPillLabel(s, [model("opus-5", "high", true)], "")).toBe("high");
+    expect(effortPillLabel(s, [model("opus-5", "high", FIVE)], "")).toBe("high");
   });
 
   it("reads the session's report before the chat's own choice", () => {

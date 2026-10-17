@@ -301,3 +301,32 @@ func TestPathKey_SharedFixture(t *testing.T) {
 		seen[got] = c.Name
 	}
 }
+
+func TestDecodeInspect_CountsThePendingSteps(t *testing.T) {
+	t.Parallel()
+	state := `"workflowId":"wf_1","state":{"workflowId":"wf_1","status":"paused"}`
+	cases := map[string]struct {
+		raw  string
+		want int
+	}{
+		"two queued steps": {raw: `{` + state + `,"pendingSteps":[{"id":"a"},{"id":"b"}]}`, want: 2},
+		"none queued":      {raw: `{` + state + `}`, want: 0},
+		"null":             {raw: `{` + state + `,"pendingSteps":null}`, want: 0},
+		"not an array":     {raw: `{` + state + `,"pendingSteps":{"id":"a"}}`, want: -1},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			in, err := DecodeInspect("wf_1", json.RawMessage(c.raw))
+			if err != nil || !in.OK {
+				t.Fatalf("DecodeInspect = %+v, %v; want OK", in, err)
+			}
+			if in.Pending != c.want {
+				t.Errorf("Pending = %d, want %d", in.Pending, c.want)
+			}
+			if in.State.Status != "paused" {
+				t.Errorf("State.Status = %q, want the rest of the reply decoded", in.State.Status)
+			}
+		})
+	}
+}

@@ -243,7 +243,9 @@ func cmdSetEffort(
 	if changed {
 		recorder.PersistEffortChange(ctx, cmd.ChatID, model, p.Level)
 	}
-	RecordEffortSeed(ctx, bus, ws.ConfigDir, model, p.Level)
+	if recorder.EffortSeedable(model, p.Level) {
+		RecordEffortSeed(ctx, bus, ws.ConfigDir, model, p.Level)
+	}
 	return responseWith(map[string]any{"level": p.Level}), nil
 }
 

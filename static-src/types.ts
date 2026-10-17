@@ -246,14 +246,11 @@ export interface ModelInfo {
    *  absent renders no readout, not `1x`. Every consumer goes through `rateLabel`. */
   rate_multiplier?: number;
   description?: string;
-  /** Whether this model has reasoning-effort levels at all (KAS
-   *  `_meta.kiro.hasEffort`). Absent on every model = the catalog does not carry
-   *  the capability, which the effort control reads as "show it anyway". */
-  has_effort?: boolean;
   /** This model's default tier (`_meta.kiro.defaultEffortLevel`): the pre-session fallback for the
-   *  live-level highlight. The tier LIST is Session.effort_levels. */
+   *  live-level highlight. */
   default_effort_level?: string;
-  /** This model's tier ids, lowest first (`_meta.kiro.effortLevels`); absent when it has none. */
+  /** This model's tier ids, lowest first (`_meta.kiro.effortLevels`); absent when it has none. A session's own
+   *  Session.effort_levels win over them. */
   effort_tiers?: readonly string[];
   /** Whether thinking can be turned off on this model
    *  (`_meta.kiro.thinkingToggleable`); the effort slider then offers an Off stop. */

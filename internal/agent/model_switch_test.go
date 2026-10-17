@@ -490,6 +490,33 @@ func TestSwitchModel_ABusyChatParksThePickUntilTheClose(t *testing.T) {
 	awaitModel(t, cs, "c1", "m-new")
 }
 
+// KAS lists Auto as a model, so picking it from a concrete model is a switch like any other, not "keep the current".
+func TestSwitchModel_ACatalogListedAutoIsAPick(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Name = "A"
+		c.Model = "m-old"
+		c.ServedModelIDs = []string{"m-old", marotte.ModelAuto}
+		return true
+	})
+	id, _ := h.stagePromptTurn(t, "c1")
+
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: "switch_model", ChatID: "c1",
+		Payload: json.RawMessage(`{"model":"auto"}`),
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	c, _ := cs.Get(t.Context(), "c1")
+	if c.Model != "m-old" || c.PendingModel != marotte.ModelAuto {
+		t.Fatalf("model = %q pending_model = %q mid-turn, want m-old with auto parked", c.Model, c.PendingModel)
+	}
+
+	endTurn(t, h, "c1", id)
+	awaitModel(t, cs, "c1", marotte.ModelAuto)
+}
+
 // A pick on a never-run chat is a preference persisted on the record alone, so a later set_effort auto-persist cannot clobber it.
 func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
 	h, cs, br := newTestHub()

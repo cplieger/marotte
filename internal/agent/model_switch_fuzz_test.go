@@ -6,7 +6,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// FuzzResolveSwitchModel asserts a request names its own model, or the chat's for none or auto.
+// FuzzResolveSwitchModel asserts a request names its own model, auto included, or the chat's for none.
 func FuzzResolveSwitchModel(f *testing.F) {
 	f.Add("claude-sonnet", "claude-opus")
 	f.Add("claude-sonnet", "")
@@ -20,7 +20,7 @@ func FuzzResolveSwitchModel(f *testing.F) {
 		model := resolveSwitchModel(chat, p)
 
 		want := requested
-		if requested == "" || requested == "auto" {
+		if requested == "" {
 			want = current
 		}
 		if model != want {

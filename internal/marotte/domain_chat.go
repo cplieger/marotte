@@ -323,12 +323,10 @@ type SessionModel struct {
 	// ThinkingOffEffortCap is the tier KAS runs xhigh and max at on this model while thinking is
 	// off (CapEffortForThinkingOff over its tiers), empty when none is lower. Server-side only.
 	ThinkingOffEffortCap string `json:"-"`
-	// EffortTiers are the model's tier ids, lowest first; empty when KAS named none.
+	// EffortTiers are the model's tier ids, lowest first; empty when KAS named none. KAS
+	// silently drops a level sent to a tierless model (`auto`), so the effort row hides.
 	EffortTiers    []string `json:"effort_tiers,omitempty"`
 	RateMultiplier float64  `json:"rate_multiplier,omitempty"`
-	// HasEffort reports whether this model offers effort tiers. KAS silently drops a
-	// level sent to a tierless model (`auto`), so the effort row hides.
-	HasEffort bool `json:"has_effort,omitempty"`
 	// ThinkingToggleable reports whether thinking can be turned off for this model;
 	// ThinkingDefaultOff, whether that is the model's default.
 	ThinkingToggleable bool `json:"thinking_toggleable,omitempty"`
@@ -349,8 +347,6 @@ type ModelChoiceMeta struct {
 		EffortLevels []string `json:"effortLevels"`
 		// RateMultiplier is the model's credit cost relative to the cheapest one.
 		RateMultiplier float64 `json:"rateMultiplier"`
-		// HasEffort reports whether the model offers reasoning-effort tiers.
-		HasEffort bool `json:"hasEffort"`
 		// ThinkingToggleable reports whether thinking can be turned off.
 		ThinkingToggleable bool `json:"thinkingToggleable"`
 	} `json:"kiro"`
@@ -369,7 +365,6 @@ func (m *ModelChoiceMeta) SessionModel(id, name, description string) SessionMode
 		ThinkingOffEffortCap: m.thinkingOffEffortCap(),
 		EffortTiers:          slices.Clone(m.Kiro.EffortLevels),
 		RateMultiplier:       m.Kiro.RateMultiplier,
-		HasEffort:            m.Kiro.HasEffort,
 		ThinkingToggleable:   m.Kiro.ThinkingToggleable,
 		ThinkingDefaultOff:   m.thinkingDefaultOff(),
 	}
@@ -428,18 +423,14 @@ type ConfigTemplateResponse struct {
 	// catalog's lock beside the two lists it vouches for.
 	Subject      *SubjectStamp `json:"subject,omitempty"`
 	DefaultModel string        `json:"default_model,omitempty"`
-	// EffortActive is the `effortLevel` option's currentValue: the tier a fresh
-	// session would run at.
-	EffortActive string `json:"effort_active,omitempty"`
 	// Catalog has NO omitempty, so wiregen emits a required TypeScript field the
 	// retry policy can rely on.
 	Catalog       CatalogState  `json:"catalog"`
 	CatalogReason CatalogReason `json:"catalog_reason,omitempty"`
-	// The three lists are non-null on every path, so a generated decoder requiring an
-	// array cannot fail on a failure body.
-	Modes        []SessionMode        `json:"modes"`
-	Models       []SessionModel       `json:"models"`
-	EffortLevels []SessionEffortLevel `json:"effort_levels"`
+	// Both lists are non-null on every path, so a generated decoder requiring an array
+	// cannot fail on a failure body.
+	Modes  []SessionMode  `json:"modes"`
+	Models []SessionModel `json:"models"`
 }
 
 // Chat is the persisted chat header, <dir>/<id>/chat.json; the transcript is the
