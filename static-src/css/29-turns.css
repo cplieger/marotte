@@ -601,28 +601,50 @@
   color: var(--c-text-primary);
 }
 
-/* The footer's own `--footer-inset` is already outside this grid area (`1 / -1`), so the inline
- * padding is the rest of `--sp-3`. The open/close slide is the footer's own (`slideBox`). */
+/* One grid for the whole panel; every section, row list and row is a subgrid of it, so G (titles,
+   chevrons), S (labels, paths) and V (values, open lists) hold across sections. The twist track is
+   the closed row's `i` plus its gap, so S is the x where the closed row's fact starts. The label
+   floor fits the widest label ("Output (estimated)") so V sits at one x across a chat: labels are
+   the builder's own words, never data. The footer's `--footer-inset` is already outside this grid
+   area (`1 / -1`). */
 .turn-info-panel {
+  --info-twist: calc(var(--icon-ui) + var(--sp-2));
+  --info-label: minmax(8.5rem, max-content);
+
   display: none;
+  grid-template-columns: [g] var(--info-twist) [s] var(--info-label) [v] minmax(0, 1fr) [end];
+  row-gap: var(--sp-3);
   overflow: clip;
   padding-inline: calc(var(--sp-3) - var(--footer-inset));
   padding-block: var(--sp-3);
-  text-align: left;
+  font-size: var(--fs-sm);
+  text-align: start;
 }
 
 .turn-footer[data-info="open"] .turn-info-panel {
   display: grid;
-  gap: var(--sp-2);
 }
 
-.turn-info-section {
+.turn-info-section,
+.turn-info-rows,
+.turn-info-row,
+.turn-info-drow,
+.turn-info-dbtn {
   display: grid;
-  gap: 2px;
+  grid-column: g / end;
+  grid-template-columns: subgrid;
 }
 
-/* Same shape as every small section heading in the app (`.forge-add-pane-heading`). */
+.turn-info-rows,
+.turn-info-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Same type as every small section heading in the app (`.forge-add-pane-heading`). */
 .turn-info-title {
+  grid-column: g / end;
   margin: 0;
   font-size: var(--fs-xs);
   font-weight: var(--fw-medium);
@@ -631,172 +653,223 @@
   color: var(--c-text-tertiary);
 }
 
-.turn-info-rows,
-.turn-info-panel .turn-ledger-files {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-/* LABEL AND VALUE SIT TOGETHER: `space-between` put them ~1100px apart on a 1440px
-   transcript, and the panel is a list of pairs. SUBGRID rather than a min-width on the
-   label, so each section sizes to its own widest label rather than to a maintained constant. */
-.turn-info-rows {
-  display: grid;
-  grid-template-columns: max-content max-content;
-  column-gap: var(--sp-3);
-}
-
+/* The padding centres one line in the 24 px rhythm, where every control centres its text. */
 .turn-info-row {
-  display: grid;
-  grid-template-columns: subgrid;
-  grid-column: span 2;
   align-items: baseline;
-  font-size: var(--fs-xs);
+  min-block-size: 1.5rem;
+  padding-block: calc((1.5rem - 1lh) / 2);
+}
+
+/* Its button is the row's height, so a closed list adds nothing under it. */
+.turn-info-drow {
+  padding-block: 0;
 }
 
 .turn-info-label {
+  grid-column: s;
+  padding-inline-end: var(--sp-4);
   color: var(--c-text-tertiary);
+  white-space: nowrap;
 }
 
 .turn-info-value {
+  grid-column: v;
+  min-inline-size: 0;
   color: var(--c-text-secondary);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
-/* A value holding several items, one per line: the steering documents, the request ids. */
-.turn-info-list {
-  display: grid;
-  justify-items: start;
-  gap: 2px;
-}
-
-.turn-info-ids > code {
-  font-family: var(--font-mono);
-}
-
-/* A steering document opens in the editor. A TEXT control, so accent ink on hover. */
-.turn-info-link {
+/* The one disclosure shape: the chevron on G, the label on S, the list's count on V. */
+.turn-info-dbtn {
+  align-items: center;
+  min-block-size: max(var(--hit-floor), 1.5rem);
+  margin: 0;
   padding: 0;
-  background: none;
   border: 0;
+  border-radius: var(--r-sm);
+  background: none;
   color: inherit;
   font: inherit;
-  text-align: left;
-  text-decoration: underline dotted;
-  cursor: pointer;
-
-  @media (any-hover: hover) {
-    &:hover {
-      color: var(--c-accent);
-    }
-  }
-}
-
-/* A context-breakdown category: its share is the summary, its items open beneath.
- * `list-style: none` or the native marker paints beside the real chevron. */
-.ctx-breakdown-summary {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-  list-style: none;
-  cursor: pointer;
-
-  &::-webkit-details-marker {
-    display: none;
-  }
-
-  @media (any-hover: hover) {
-    &:hover {
-      color: var(--c-text-primary);
-    }
-  }
-}
-
-.ctx-breakdown-category[open] > .ctx-breakdown-summary > .disclosure-chevron {
-  --chev-turn: 0deg;
-}
-
-.ctx-breakdown-items {
-  display: grid;
-  gap: 2px;
-  margin: 2px 0 0;
-  padding: 0 0 0 calc(1rem + var(--sp-1));
-  list-style: none;
-}
-
-.ctx-breakdown-item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--sp-2);
-}
-
-.ctx-breakdown-badge {
-  padding: 0 var(--sp-1);
-  border-radius: var(--r-sm);
-  background: var(--c-well);
-  color: var(--c-text-tertiary);
-  font-family: var(--font-mono);
-}
-
-.ctx-breakdown-more,
-.ctx-breakdown-parts {
-  color: var(--c-text-tertiary);
-}
-
-.turn-ledger-file {
-  margin: 0;
-}
-
-/* Every row is a click target into that file's diff. Full-width so the hit area is the row
- * rather than the text — WCAG 2.5.8 wants 24px, which the padding below supplies. */
-.turn-file-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  width: 100%;
-  /* The TOKEN, so the row follows the pointer tier. */
-  min-block-size: var(--ctl-h-sm);
-  padding: var(--sp-1) var(--sp-1);
-  background: none;
-  border: 0;
-  border-radius: var(--r-sm);
-  color: var(--c-text-secondary);
-  font-size: var(--fs-xs);
-  font-family: var(--font-mono);
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   transition:
     background var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
 }
 
-/* THE APP'S ONE HOVER WASH (the interaction ladder's), gated
-   on `any-hover`. THE WHOLE ROW LIGHTS AS ONE INK — the row is one door into one diff, so
-   the `+N −M` counts FOLLOW it rather than keeping their status hues: a hovered band is one
-   of the ink ramp's two-level surfaces (01-tokens.css), where `--c-red` reads 3.34:1 dark.
-   Add against delete survives on the SIGN, the non-colour channel WCAG 1.4.1 asks for. */
+/* The `i`'s width, so a chevron centres under the closed row's `i`. */
+.turn-info-twist {
+  display: grid;
+  grid-column: g;
+  place-items: center;
+  inline-size: var(--icon-ui);
+  color: var(--c-text-control);
+}
+
+.turn-info-dbtn[aria-expanded="true"] > .turn-info-twist > .disclosure-chevron {
+  --chev-turn: 0deg;
+}
+
+/* An open list starts on V, or on S on a narrow panel (below). A `hidden="until-found"` list still
+   renders its margin, so the gap under a list exists only while it is open. Block, not grid:
+   WebKit sizes a grid row to a wrapping flex item's one-line height, so a wrapped item overlaps
+   the next (Playwright WebKit 2370). */
+.turn-info-list {
+  display: block;
+  grid-column: v / end;
+  min-inline-size: 0;
+
+  &:not([hidden]) {
+    margin-block-end: var(--sp-1);
+  }
+}
+
+/* Every leaf may break anywhere: an id, a path or a raw steering id can carry no break
+   opportunity, and the panel clips. */
+.turn-info-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--sp-2);
+  min-inline-size: 0;
+  min-block-size: 1.5rem;
+  padding-block: calc((1.5rem - 1lh) / 2);
+  color: var(--c-text-secondary);
+  overflow-wrap: anywhere;
+
+  & > * {
+    min-inline-size: 0;
+  }
+
+  & > code {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+  }
+}
+
+.turn-info-sub {
+  padding-inline-start: var(--sp-4);
+}
+
+.turn-info-item-share,
+.turn-info-more {
+  color: var(--c-text-tertiary);
+}
+
+/* Secondary ink: tertiary on the well reads under 4.5:1 on the light bands. */
+.turn-info-badge {
+  padding: 0 var(--sp-1);
+  border-radius: var(--r-sm);
+  background: var(--c-well);
+  color: var(--c-text-secondary);
+  font-family: var(--font-mono);
+}
+
+/* A document link paints as text, and its target is its whole list row through the expander: a
+   short name alone is narrower than the coarse floor. */
+.turn-info-doc {
+  position: relative;
+  align-items: center;
+  min-block-size: max(var(--hit-floor), 1.5rem);
+  padding-block: 0;
+}
+
+/* A TEXT control, so accent ink on hover. */
+.turn-info-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  text-decoration: underline dotted;
+  cursor: pointer;
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: var(--r-sm);
+  }
+
+  &:focus-visible {
+    outline: none;
+  }
+
+  &:focus-visible::after {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset-inset);
+  }
+}
+
+.turn-ledger-file {
+  grid-column: g / end;
+  margin: 0;
+}
+
+/* The full-row button: a file opens its diff, "Review all changes" the git view. The path starts
+   on S, so the gutter is the hover wash's lead-in. The height reads the tier's token, so the row
+   follows the pointer. */
+.turn-file-row,
+.turn-review-all {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  inline-size: 100%;
+  min-block-size: max(var(--hit-floor), 1.5rem);
+  padding-block: 2px;
+  padding-inline: var(--info-twist) var(--sp-1);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--c-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.turn-review-all {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+}
+
+.turn-review-arrow {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* THE APP'S ONE HOVER WASH. A hovered band hosts primary and secondary ink only (01-tokens.css),
+   so a row's `+N −M`, label and chevron follow the row's ink: `--c-red` reads 3.34:1 dark under
+   the wash. Add against delete survives on the SIGN, the non-colour channel WCAG 1.4.1 asks for. */
 @media (any-hover: hover) {
-  .turn-file-row:hover {
+  :is(.turn-file-row, .turn-review-all, .turn-info-dbtn):hover {
     background: var(--c-hover);
     color: var(--c-text-primary);
   }
 
-  .turn-file-row:hover :is(.turn-file-add, .turn-file-del) {
+  :is(.turn-file-row, .turn-info-dbtn):hover
+    :is(.turn-file-add, .turn-file-del, .turn-info-label, .turn-info-value, .turn-info-twist) {
     color: inherit;
+  }
+
+  .turn-info-link:hover {
+    color: var(--c-accent);
   }
 }
 
-.turn-file-row:focus-visible {
+:is(.turn-file-row, .turn-review-all, .turn-info-dbtn):focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset-inset);
 }
 
 /* DOES NOT GROW, so the delta reads as part of the path rather than as a column at the
-   far edge — `+18 −2` a thousand pixels from the file it counts is the info rows' own
-   defect again. The ROW is still full-width: the hit area is the row, not the text. */
+   far edge — `+18 −2` a thousand pixels from the file it counts. The ROW is still
+   full-width: the hit area is the row, not the text. */
 .turn-file-path {
   flex: 0 1 auto;
   min-width: 0;
@@ -829,6 +902,15 @@
 
 .turn-file-del {
   color: var(--c-red);
+}
+
+/* Under 30rem an open list takes the label track too, so an id, or an item with its badge and
+   share, keeps the width it needs. */
+@container turn-footer (inline-size < 30rem) {
+  .turn-info-list {
+    grid-column: s / end;
+    padding-inline-start: var(--sp-3);
+  }
 }
 
 /* Mounted in #messages-wrap-outer, already below the in-flow toolbar, never in the scroller. It must
@@ -1168,34 +1250,4 @@
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
-}
-
-/* `Review changes`: one per turn under the file rows, rendered only when the turn touched
-   more than one file — on a single-file turn the row above already opens that change. */
-.turn-ledger-review {
-  margin-block-start: var(--sp-1);
-}
-
-/* SHRINKS TO ITS WORDS: the rows above are click targets whose HIT AREA is deliberately the
-   whole row, while this is a button with a visible border, so its edge is a statement about
-   its size and has to match it. `width: 100%` made it a bar that read as a divider. */
-.turn-review-all {
-  inline-size: max-content;
-  max-inline-size: 100%;
-  text-align: start;
-  padding: 0.15rem var(--sp-2);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: transparent;
-  color: var(--c-text-secondary);
-  font-size: var(--fs-xs);
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
-}
-
-.turn-review-all:hover {
-  background: var(--c-hover);
-  color: var(--c-text-primary);
 }

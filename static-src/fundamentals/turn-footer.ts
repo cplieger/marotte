@@ -5,9 +5,8 @@
 
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
-import { copyClipboard } from "../actions/messages.js";
 import { iconEl } from "../icon-el.js";
-import { contextBreakdownRows } from "../context-breakdown.js";
+import { breakdownItems, requestLine } from "../context-breakdown.js";
 import { slideBox, targetOpen } from "../disclosure-row.js";
 import { ASK_LABEL, type AskBucket } from "../interaction.js";
 import { ICON_INFO } from "../icons.js";
@@ -19,10 +18,17 @@ import { severityOf } from "../turn-severity.js";
 import type { FileChange, ToolKind, TurnThroughput } from "../types.js";
 import type { ContextBreakdown } from "../wire/types.gen.js";
 import { COMMAND_KINDS, type TurnOutcome } from "../turns.js";
+import {
+  occurrenceKeys,
+  renderPanel,
+  type PanelItem,
+  type PanelRow,
+  type PanelValue,
+} from "../turn-info-panel.js";
 import { relBeneath, workspaceRoot } from "../workspace.js";
 
 // Mounted on a turn card (`messages.ts`) and a DELEGATE card (`subagent-block.ts`), so every
-// panel field is optional; Cost, Model and Diagnostics always withhold on a delegate.
+// panel field is optional; Model and cost, Context and Diagnostics always withhold on a delegate.
 
 /** The word the ledger line LEADS with, TOTAL over `TurnOutcome`. `completed` (the absence of a
  *  mark is the clean case) and `running` (29-turns.css hides it) carry none; the other six say
@@ -252,89 +258,9 @@ function creditFigure(credits: number): string {
   return credits < 0.005 ? "<0.01" : credits.toFixed(2);
 }
 
-/** One `label · value` row. `<li>` because every section's rows are a list. */
-function infoRow(label: string, value: string | Node): HTMLElement {
-  return el(
-    "li",
-    { className: "turn-info-row" },
-    el("span", { className: "turn-info-label" }, label),
-    el("span", { className: "turn-info-value" }, value),
-  );
-}
-
-/** Withholding is the panel's whole discipline: a delegate can fill three of the six and a
- *  mid-flight turn fewer, so a section that painted itself on absence would grow empty rows on most
- *  cards. */
-function infoSection(title: string, rows: HTMLElement[], extra: Node[] = []): HTMLElement | null {
-  if (rows.length === 0 && extra.length === 0) {
-    return null;
-  }
-  const section = el("section", { className: "turn-info-section" });
-  section.appendChild(el("h4", { className: "turn-info-title" }, title));
-  section.append(...extra);
-  if (rows.length > 0) {
-    section.appendChild(el("ul", { className: "turn-info-rows" }, ...rows));
-  }
-  return section;
-}
-
-/** A wall-clock STAMP as a `<time>`: the machine-readable instant in `datetime`, the
- *  reader's own locale in the text. Same pair, from the same value, as `turn-header.ts`
- *  writes, so the panel's "Started" and the header's timestamp cannot disagree. */
-function stampEl(ms: number): HTMLElement {
-  const when = new Date(ms);
-  const t = el(
-    "time",
-    {},
-    when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
-  );
-  t.setAttribute("datetime", when.toISOString());
-  return t;
-}
-
-/** MODEL TIME is withheld rather than clamped (overlapping tool calls make wall minus tool
- *  negative). */
-function timingRows(d: TurnSummaryData): HTMLElement[] {
-  const rows: HTMLElement[] = [];
-  const wall = d.elapsedMs ?? 0;
-  const tool = d.toolMs ?? 0;
-  if (wall > 0) {
-    rows.push(infoRow("Wall clock", formatElapsed(wall)));
-  }
-  if (tool > 0) {
-    rows.push(infoRow("Tool time", formatElapsed(tool)));
-  }
-  if (tool > 0 && wall > tool) {
-    rows.push(infoRow("Model time", formatElapsed(wall - tool)));
-  }
-  if ((d.startedAt ?? 0) > 0) {
-    rows.push(infoRow("Started", stampEl(d.startedAt ?? 0)));
-  }
-  // WITHHELD while running: a live turn's `endedAt` is its last body message's `ts` and would paint
-  // the START time as "Ended". Keyed on the OUTCOME, like Diagnostics below.
-  if ((d.endedAt ?? 0) > 0 && (d.outcome ?? "completed") !== "running") {
-    rows.push(infoRow("Ended", stampEl(d.endedAt ?? 0)));
-  }
-  return rows;
-}
-
-/** One row per non-zero tool kind, named through the shared noun vocabulary. Sorted by
- *  count then kind, so two repaints cannot reshuffle the rows: `kindCounts` is built in
- *  arrival order, which is not a fact about the turn worth showing. */
-function kindRows(counts: Partial<Record<ToolKind, number>>): HTMLElement[] {
-  return sortedKinds(counts).map(([kind, n]) => infoRow(kindNoun(kind, n), String(n)));
-}
-
-/** The non-zero kinds in the panel's order, read by the panel's rows and by the row's
- *  facts alike so the two surfaces cannot disagree about it. */
-function sortedKinds(counts: Partial<Record<ToolKind, number>>): [ToolKind, number][] {
-  const entries = Object.entries(counts) as [ToolKind, number][];
-  return entries.filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-}
-
-/** The eight sections, in order, each withheld when it has nothing to state. Rebuilt
- *  wholesale but only when the data moved: `updateTurnFooter` runs at chunk cadence on a
- *  live turn, and every file row is a button with a tooltip that opens a diff. */
+/** The six sections in task order. Each withholds when it has no row (`renderPanel`), so a delegate
+ *  fills at most Changed files, Work and Time, and a mid-flight turn fewer. Repainted only when the
+ *  data moved: `updateTurnFooter` runs at chunk cadence on a live turn. */
 function renderInfoPanel(
   panel: HTMLElement,
   d: TurnSummaryData,
@@ -343,110 +269,193 @@ function renderInfoPanel(
   if (!sigChanged(panel, panelSignature(d))) {
     return;
   }
-  const sections: HTMLElement[] = [];
-
-  const timings = infoSection("Timings", timingRows(d));
-  if (timings !== null) {
-    sections.push(timings);
-  }
-
-  // The file rows keep their own `<ul class="turn-ledger-files">`, nested here
-  // inside Work: `renderFileRows`, `fileRow` and `reviewRow` all address it.
-  const kinds = kindRows(d.kindCounts ?? {});
-  const list = el("ul", { className: "turn-ledger-files" });
-  renderFileRows(list, files);
-  const work = infoSection("Work", kinds, files.length > 0 ? [list] : []);
-  if (work !== null) {
-    sections.push(work);
-  }
-
-  const askRows = ASK_ORDER.filter((b) => (d.asks?.[b] ?? 0) > 0).map((b) =>
-    infoRow(ASK_LABEL[b], String(d.asks?.[b] ?? 0)),
+  // The root decides which documents link (`documentName`), so it re-renders every list item.
+  renderPanel(
+    panel,
+    [
+      { title: "Changed files", listClass: "turn-ledger-files", rows: fileRows(files) },
+      { title: "Work", rows: workRows(d) },
+      { title: "Time", rows: timingRows(d) },
+      { title: "Model and cost", rows: modelRows(d) },
+      { title: "Context", rows: contextRows(d) },
+      { title: "Diagnostics", rows: diagnosticRows(d) },
+    ],
+    workspaceRoot(),
   );
-  const approvals = infoSection("Approvals", askRows);
-  if (approvals !== null) {
-    sections.push(approvals);
-  }
+}
 
-  const delegateRows: HTMLElement[] = [];
+/** The non-zero kinds sorted by count then kind, read by the panel's rows and by the row's facts
+ *  alike so the two surfaces cannot disagree. `kindCounts` is built in arrival order, which is not
+ *  a fact about the turn, and a repaint must not reshuffle the rows. */
+function sortedKinds(counts: Partial<Record<ToolKind, number>>): [ToolKind, number][] {
+  const entries = Object.entries(counts) as [ToolKind, number][];
+  return entries.filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+/** Fact rows keyed by label, plus its occurrence for a label that repeats ("Recovered"). */
+function facts(pairs: readonly [string, PanelValue][]): PanelRow[] {
+  const keys = occurrenceKeys(pairs.map(([label]) => label));
+  return pairs.map(([label, value], i) => ({ kind: "fact", key: keys[i] ?? label, label, value }));
+}
+
+/** Sorted by path so a repaint cannot reshuffle rows under the cursor; "Review all changes" only
+ *  when there are two or more, since a single file's row already opens its diff. */
+function fileRows(files: [string, FileChange][]): PanelRow[] {
+  const sorted = [...files].sort((a, b) => a[0].localeCompare(b[0]));
+  const rows: PanelRow[] = sorted.map(([path, fc]) => ({
+    kind: "file",
+    path,
+    added: fc.lines_added,
+    removed: fc.lines_removed,
+    isNew: fc.is_new_file === true,
+    open: () => {
+      openChange(path);
+    },
+  }));
+  if (sorted.length >= 2) {
+    rows.push({ kind: "review", count: sorted.length, open: openChangeSet });
+  }
+  return rows;
+}
+
+/** A label names the kind and the value counts it, so the label is the plural whatever the count.
+ *  `other`'s noun is "calls", which as a label needs its kind. */
+function kindLabel(kind: ToolKind): string {
+  const noun = kind === "other" ? "other calls" : kindNoun(kind, 2);
+  return noun.charAt(0).toUpperCase() + noun.slice(1);
+}
+
+function workRows(d: TurnSummaryData): PanelRow[] {
+  const pairs: [string, string][] = sortedKinds(d.kindCounts ?? {}).map(([kind, n]) => [
+    kindLabel(kind),
+    String(n),
+  ]);
+  const asks = ASK_ORDER.filter((b) => (d.asks?.[b] ?? 0) > 0).map(
+    (b) => `${String(d.asks?.[b] ?? 0)} ${ASK_LABEL[b].toLowerCase()}`,
+  );
+  if (asks.length > 0) {
+    pairs.push(["Approvals", asks.join(" \u00b7 ")]);
+  }
   if ((d.delegateCount ?? 0) > 0) {
-    delegateRows.push(infoRow("Dispatched", String(d.delegateCount ?? 0)));
+    pairs.push(["Delegates", String(d.delegateCount ?? 0)]);
   }
   if ((d.delegateMs ?? 0) > 0) {
-    delegateRows.push(infoRow("Time", formatElapsed(d.delegateMs ?? 0)));
+    pairs.push(["Delegate time", formatElapsed(d.delegateMs ?? 0)]);
   }
-  const delegates = infoSection("Delegates", delegateRows);
-  if (delegates !== null) {
-    sections.push(delegates);
-  }
+  return facts(pairs);
+}
 
-  const steering = d.steering ?? [];
-  const contextRows =
-    steering.length > 0 ? [infoRow("Steering added", steeringList(steering))] : [];
-  if (d.contextBreakdown !== undefined) {
-    contextRows.push(...contextBreakdownRows(d.contextBreakdown, infoRow, documentName));
+/** MODEL TIME is withheld rather than clamped (overlapping tool calls make wall minus tool
+ *  negative). */
+function timingRows(d: TurnSummaryData): PanelRow[] {
+  const pairs: [string, PanelValue][] = [];
+  const wall = d.elapsedMs ?? 0;
+  const tool = d.toolMs ?? 0;
+  if (wall > 0) {
+    pairs.push(["Wall clock", formatElapsed(wall)]);
   }
-  const context = infoSection("Context", contextRows);
-  if (context !== null) {
-    sections.push(context);
+  if (tool > 0) {
+    pairs.push(["Tool time", formatElapsed(tool)]);
   }
+  if (tool > 0 && wall > tool) {
+    pairs.push(["Model time", formatElapsed(wall - tool)]);
+  }
+  if ((d.startedAt ?? 0) > 0) {
+    pairs.push(["Started", { stamp: d.startedAt ?? 0 }]);
+  }
+  // WITHHELD while running: a live turn's `endedAt` is its last body message's `ts` and would paint
+  // the START time as "Ended". Keyed on the OUTCOME, like Diagnostics below.
+  if ((d.endedAt ?? 0) > 0 && (d.outcome ?? "completed") !== "running") {
+    pairs.push(["Ended", { stamp: d.endedAt ?? 0 }]);
+  }
+  return facts(pairs);
+}
 
-  const cost = infoSection(
-    "Cost",
-    (d.credits ?? 0) > 0 ? [infoRow("Credits", creditFigure(d.credits ?? 0))] : [],
-  );
-  if (cost !== null) {
-    sections.push(cost);
-  }
-
-  // Arrow when a mid-turn switch split the turn, which is the one case where the
-  // plural matters: two names in order say the turn changed hands.
+/** "Requests" is not a row: it is the count the Request IDs disclosure already shows. */
+function modelRows(d: TurnSummaryData): PanelRow[] {
+  const pairs: [string, string][] = [];
+  // Arrow when a mid-turn switch split the turn: two names in order say the turn changed hands.
   const models = d.models ?? [];
-  const modelRows: HTMLElement[] = [];
   if (models.length > 0) {
-    modelRows.push(infoRow("Answered by", models.join(" \u2192 ")));
+    pairs.push(["Answered by", models.join(" \u2192 ")]);
   }
-  const requests = d.requestIds ?? [];
-  if (requests.length > 0) {
-    modelRows.push(infoRow("Requests", String(requests.length)));
+  if ((d.credits ?? 0) > 0) {
+    pairs.push(["Credits", creditFigure(d.credits ?? 0)]);
   }
   const output = outputEstimate(d.throughput);
   if (output !== "") {
-    modelRows.push(infoRow("Output, estimated", output));
+    pairs.push(["Output (estimated)", output]);
   }
-  const model = infoSection("Model", modelRows);
-  if (model !== null) {
-    sections.push(model);
-  }
+  return facts(pairs);
+}
 
-  // Only on a turn that did not end clean (`running` has not ended). The raw reason is VERBATIM and
-  // never branched on: the wire declares that enum OPEN.
+function contextRows(d: TurnSummaryData): PanelRow[] {
+  const rows: PanelRow[] = [];
+  const b = d.contextBreakdown;
+  if (b !== undefined) {
+    rows.push(...facts([["Last request", requestLine(b)]]));
+  }
+  const steering = d.steering ?? [];
+  if (steering.length > 0) {
+    rows.push({
+      kind: "list",
+      label: "Added this turn",
+      value: plural(steering.length, "steering document", "steering documents"),
+      items: steeringItems(steering),
+    });
+  }
+  if (b !== undefined && b.categories.length > 0) {
+    rows.push({
+      kind: "list",
+      label: "Breakdown",
+      value: plural(b.categories.length, "category", "categories"),
+      items: breakdownItems(b, documentName),
+    });
+  }
+  return rows;
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${String(n)} ${n === 1 ? one : many}`;
+}
+
+/** Only on a turn that did not end clean (`running` has not ended) for the stop reason and the
+ *  truncation; the raw reason is VERBATIM and never branched on, since the wire declares that enum
+ *  OPEN. Every other row is stated on ANY turn: a clean turn can have needed a recovery, and a
+ *  request id is what a support case asks for whatever the outcome. */
+function diagnosticRows(d: TurnSummaryData): PanelRow[] {
   const outcomeNow = d.outcome ?? "completed";
   const unclean = outcomeNow !== "completed" && outcomeNow !== "running";
-  const diagRows: HTMLElement[] = [];
+  const pairs: [string, string][] = [];
   if (unclean && (d.stopReasonRaw ?? "") !== "") {
-    diagRows.push(infoRow("Stop reason", d.stopReasonRaw ?? ""));
+    pairs.push(["Stop reason", d.stopReasonRaw ?? ""]);
   }
   if (unclean && d.truncated === true) {
-    diagRows.push(infoRow("Truncated", "yes"));
+    pairs.push(["Truncated", "yes"]);
   }
-  // Every row below is stated on ANY turn: a clean turn can have needed a recovery, and
-  // a request id is what a support case asks for whatever the outcome.
   for (const m of d.recoveries ?? []) {
-    diagRows.push(infoRow("Recovered", recoveryPhrase(m)));
+    pairs.push(["Recovered", recoveryPhrase(m)]);
   }
   if ((d.engineErrorClass ?? "") !== "") {
-    diagRows.push(infoRow("Engine error", d.engineErrorClass ?? ""));
+    pairs.push(["Engine error", d.engineErrorClass ?? ""]);
   }
-  if (requests.length > 0) {
-    diagRows.push(infoRow("Request IDs", requestIDList(requests)));
+  const rows = facts(pairs);
+  const ids = d.requestIds ?? [];
+  if (ids.length > 0) {
+    const keys = occurrenceKeys(ids);
+    rows.push({
+      kind: "list",
+      label: "Request IDs",
+      value: String(ids.length),
+      items: ids.map((id, i) => ({
+        key: keys[i] ?? id,
+        sig: id,
+        className: "turn-info-item",
+        build: () => [el("code", {}, id)],
+      })),
+    });
   }
-  const diagnostics = infoSection("Diagnostics", diagRows);
-  if (diagnostics !== null) {
-    sections.push(diagnostics);
-  }
-
-  panel.replaceChildren(...sections);
+  return rows;
 }
 
 /** Everything the panel renders, as signature parts. Total over `TurnSummaryData` by
@@ -480,7 +489,6 @@ function panelSignature(d: TurnSummaryData): string[] {
     // A decoded wire record, so the whole of it is the signature.
     contextBreakdown: d.contextBreakdown === undefined ? "" : JSON.stringify(d.contextBreakdown),
   };
-  // The root decides which steering ids link (`steeringList`).
   return [...Object.values(parts), workspaceRoot()];
 }
 
@@ -498,15 +506,19 @@ function outputEstimate(t: TurnThroughput | undefined): string {
   return `${tokens} \u00b7 \u2248${rate.toLocaleString()} tokens/s`;
 }
 
-/** The steering KAS added: a workspace document links into the editor, which
- *  cannot open a global one (`~/.kiro`), so any other id is plain text. */
-function steeringList(ids: readonly string[]): HTMLElement {
-  const list = el("span", { className: "turn-info-list" });
-  for (const id of ids) {
-    const path = filePathOf(id);
-    list.appendChild(documentName(path?.slice(path.lastIndexOf("/") + 1) ?? id, id));
-  }
-  return list;
+/** The steering KAS added this turn: a workspace document links into the editor, which cannot open
+ *  a global one (`~/.kiro`), so any other id is plain text. */
+function steeringItems(ids: readonly string[]): PanelItem[] {
+  const keys = occurrenceKeys(ids);
+  return ids.map((id, i) => ({
+    key: keys[i] ?? id,
+    sig: id,
+    className: "turn-info-item",
+    build: () => {
+      const path = filePathOf(id);
+      return [documentName(path?.slice(path.lastIndexOf("/") + 1) ?? id, id)];
+    },
+  }));
 }
 
 /** A document's name, a button into the editor when `uri` is a file under the workspace. */
@@ -514,7 +526,7 @@ function documentName(name: string, uri: string): HTMLElement {
   const path = filePathOf(uri);
   const root = workspaceRoot();
   if (path === null || root === "" || relBeneath(root, path) === null) {
-    return el("span", {}, name);
+    return el("span", { className: "turn-info-item-name" }, name);
   }
   const btn = el(
     "button",
@@ -540,26 +552,9 @@ function filePathOf(id: string): string | null {
   }
 }
 
-function requestIDList(ids: readonly string[]): HTMLElement {
-  const list = el("span", { className: "turn-info-list turn-info-ids" });
-  for (const id of ids) {
-    list.appendChild(el("code", {}, id));
-  }
-  const copy = el(
-    "button",
-    { className: "btn-small turn-info-copy", type: "button" },
-    ids.length === 1 ? "Copy" : "Copy all",
-  );
-  copy.addEventListener("click", () => {
-    void copyClipboard.dispatch(ids.join("\n"));
-  });
-  list.appendChild(copy);
-  return list;
-}
-
-/** SORTED by path, matching `renderFileRows`' own sort: a `Record`'s insertion order
- *  is the order the paths happened to arrive in, so an unsorted signature would move
- *  for a set that did not change and repaint the panel for nothing. */
+/** SORTED by path, matching `fileRows`' own sort: a `Record`'s insertion order is the order the
+ *  paths happened to arrive in, so an unsorted signature would move for a set that did not change
+ *  and repaint the panel for nothing. */
 function filesSignature(files: Record<string, FileChange> | undefined): string {
   return join(
     ...Object.entries(files ?? {})
@@ -571,77 +566,6 @@ function filesSignature(files: Record<string, FileChange> | undefined): string {
         fc.is_new_file === true ? "1" : "",
       ]),
   );
-}
-
-/** One row per changed file: `path +N −M`, with a new-file badge. Every row
- *  opens that file's diff — the aggregate answers whether it worked, rows
- *  answer what changed, the click answers let me look. */
-function renderFileRows(list: HTMLElement, files: [string, FileChange][]): void {
-  // Sorted by path so a repaint cannot reshuffle rows under the cursor.
-  const sorted = [...files].sort((a, b) => a[0].localeCompare(b[0]));
-  const rows: HTMLElement[] = sorted.map(([path, fc]) => fileRow(path, fc));
-  const review = reviewRow(sorted.length);
-  if (review !== null) {
-    rows.push(review);
-  }
-  list.replaceChildren(...rows);
-}
-
-function fileRow(path: string, fc: FileChange): HTMLElement {
-  const item = el("li", { className: "turn-ledger-file" });
-  // `data-tooltip`, not `title`: the styled tooltip system is what every other
-  // hover in the app uses, and a UA tooltip beside it reads as foreign chrome.
-  const btn = el("button", {
-    className: "turn-file-row",
-    type: "button",
-    "data-tooltip": `Open the diff for ${path}`,
-  }) as HTMLButtonElement;
-
-  // The path is the row's ink AND what the hover text is about, so it is where the
-  // tooltip points: the button spans the panel's width while its content sits at
-  // the leading edge, which put the tip 264px to the right of the name.
-  btn.appendChild(el("span", { className: "turn-file-path", "data-tooltip-anchor": "" }, path));
-  if (fc.is_new_file === true) {
-    btn.appendChild(el("span", { className: "turn-file-badge" }, "new"));
-  }
-  const delta = el("span", { className: "turn-file-delta" });
-  if (fc.lines_added > 0) {
-    delta.appendChild(el("span", { className: "turn-file-add" }, `+${String(fc.lines_added)}`));
-  }
-  if (fc.lines_removed > 0) {
-    delta.appendChild(
-      el("span", { className: "turn-file-del" }, `\u2212${String(fc.lines_removed)}`),
-    );
-  }
-  btn.appendChild(delta);
-
-  btn.addEventListener("click", () => {
-    openChange(path);
-  });
-  item.appendChild(btn);
-  return item;
-}
-
-/** `Review changes`: the multi-file seam, offered once per turn beneath the
- *  per-file rows. Appears only when the turn touched more than one file — a
- *  single-file turn's row above already opens that diff. */
-function reviewRow(count: number): HTMLElement | null {
-  if (count < 2) {
-    return null;
-  }
-  const btn = el(
-    "button",
-    {
-      className: "turn-review-all",
-      type: "button",
-      "data-tooltip": "Review every changed file in the git view",
-    },
-    `Review changes (${String(count)} files)`,
-  ) as HTMLButtonElement;
-  btn.addEventListener("click", () => {
-    openChangeSet();
-  });
-  return el("li", { className: "turn-ledger-file turn-ledger-review" }, btn);
 }
 
 /** The attribute NAME is a three-surface fact — this writer, three selectors in

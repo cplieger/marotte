@@ -4,7 +4,6 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { page } from "vitest/browser";
 
 import { loadCSS, mountAppCSS } from "../__test-helpers__/css-rules.js";
-import type * as MessageActions from "../actions/messages.js";
 import type { FooterExtras, TurnSummaryData } from "./turn-footer.js";
 import { projectTurns, turnLedger, type Turn } from "../turns.js";
 import type { Entry, TurnState } from "../types.js";
@@ -19,17 +18,6 @@ vi.mock("../editor-openers.js", () => ({
   openFileDiff: undefined,
   openFileGitDiff: (path: string) => {
     openFileGitDiff(path);
-  },
-}));
-
-const copied = vi.fn();
-vi.mock("../actions/messages.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof MessageActions>()),
-  copyClipboard: {
-    dispatch: (text: string) => {
-      copied(text);
-      return Promise.resolve();
-    },
   },
 }));
 
@@ -96,6 +84,28 @@ function rows(el: HTMLElement): HTMLButtonElement[] {
   return [...el.querySelectorAll<HTMLButtonElement>(".turn-file-row")];
 }
 
+/** The disclosure row labelled `label`: its full-row button and the list it controls. */
+function disclosure(el: HTMLElement, label: string): { btn: HTMLButtonElement; list: HTMLElement } {
+  for (const btn of panel(el).querySelectorAll<HTMLButtonElement>("button.turn-info-dbtn")) {
+    if (btn.querySelector(".turn-info-label")?.textContent !== label) {
+      continue;
+    }
+    const id = btn.getAttribute("aria-controls") ?? "";
+    const list =
+      el.ownerDocument.getElementById(id) ?? el.querySelector<HTMLElement>(`[id="${id}"]`);
+    if (list === null) {
+      throw new Error(`${label}: aria-controls names no element`);
+    }
+    return { btn, list };
+  }
+  throw new Error(`no disclosure labelled ${label}`);
+}
+
+/** A disclosure list's lines, one per item. */
+function listLines(list: HTMLElement): string[] {
+  return [...list.children].map((li) => li.textContent);
+}
+
 /** What the trigger's COMPUTED accessible name carries, as substrings (the numbers move).
  *  `40-a11y.css` must be mounted: `.sr-only`'s `position: absolute` is what makes Chromium insert
  *  the separating space. */
@@ -149,7 +159,7 @@ describe("the ledger row", () => {
     expect(line(el)).toBe("Cancelled");
     expect(turnFacts({ outcome: "cancelled", credits: 1, elapsedMs: 3000 })).toContain("3.0s");
     expect(fact(el)).toBe("3.0s");
-    expect(sectionRows(el, "Cost")).toEqual([["Credits", "1.00"]]);
+    expect(sectionRows(el, "Model and cost")).toEqual([["Credits", "1.00"]]);
   });
 });
 
@@ -406,9 +416,10 @@ describe("the info panel", () => {
     expect(sections(el)).toEqual([]);
   });
 
-  it("orders its sections timings, work, delegates, cost, model, diagnostics", () => {
+  it("orders its sections in task order: files, work, time, model and cost, context, diagnostics", () => {
     const el = buildTurnFooter({
       outcome: "failed",
+      steering: ["builtin-guide"],
       elapsedMs: 92000,
       toolMs: 30000,
       changedFiles: TWO_FILES,
@@ -420,12 +431,19 @@ describe("the info panel", () => {
       stopReasonRaw: "max_tokens",
       truncated: true,
     });
-    expect(sections(el)).toEqual(["Timings", "Work", "Delegates", "Cost", "Model", "Diagnostics"]);
+    expect(sections(el)).toEqual([
+      "Changed files",
+      "Work",
+      "Time",
+      "Model and cost",
+      "Context",
+      "Diagnostics",
+    ]);
   });
 
   it("states the wall clock, the tool time, and the model time between them", () => {
     const el = buildTurnFooter({ elapsedMs: 92000, toolMs: 30000 });
-    expect(sectionRows(el, "Timings")).toEqual([
+    expect(sectionRows(el, "Time")).toEqual([
       ["Wall clock", "1m 32s"],
       ["Tool time", "30.0s"],
       ["Model time", "1m 2s"],
@@ -435,11 +453,11 @@ describe("the info panel", () => {
   it("withholds model time when the tool calls overran the wall clock", () => {
     // Tool calls overlap, so Σ `duration_ms` can exceed the wall clock: the panel withholds rather
     // than clamping. Both the greater and the equal boundary.
-    expect(sectionRows(buildTurnFooter({ elapsedMs: 30000, toolMs: 45000 }), "Timings")).toEqual([
+    expect(sectionRows(buildTurnFooter({ elapsedMs: 30000, toolMs: 45000 }), "Time")).toEqual([
       ["Wall clock", "30.0s"],
       ["Tool time", "45.0s"],
     ]);
-    expect(sectionRows(buildTurnFooter({ elapsedMs: 30000, toolMs: 30000 }), "Timings")).toEqual([
+    expect(sectionRows(buildTurnFooter({ elapsedMs: 30000, toolMs: 30000 }), "Time")).toEqual([
       ["Wall clock", "30.0s"],
       ["Tool time", "30.0s"],
     ]);
@@ -448,10 +466,10 @@ describe("the info panel", () => {
   it("withholds model time when nothing measured any tool time", () => {
     // With no tool time there is nothing to subtract, so the row would restate the
     // wall clock verbatim under a second name.
-    expect(sectionRows(buildTurnFooter({ elapsedMs: 30000, toolMs: 0 }), "Timings")).toEqual([
+    expect(sectionRows(buildTurnFooter({ elapsedMs: 30000, toolMs: 0 }), "Time")).toEqual([
       ["Wall clock", "30.0s"],
     ]);
-    expect(sectionRows(buildTurnFooter({ elapsedMs: 30000 }), "Timings")).toEqual([
+    expect(sectionRows(buildTurnFooter({ elapsedMs: 30000 }), "Time")).toEqual([
       ["Wall clock", "30.0s"],
     ]);
   });
@@ -460,7 +478,7 @@ describe("the info panel", () => {
     const started = Date.UTC(2026, 0, 2, 9, 5, 0);
     const ended = started + 92000;
     const el = buildTurnFooter({ startedAt: started, endedAt: ended });
-    expect(sectionRows(el, "Timings").map(([label]) => label)).toEqual(["Started", "Ended"]);
+    expect(sectionRows(el, "Time").map(([label]) => label)).toEqual(["Started", "Ended"]);
     const stamps = [...panel(el).querySelectorAll<HTMLTimeElement>("time")];
     expect(stamps).toHaveLength(2);
     expect(stamps[0]?.dateTime).toBe("2026-01-02T09:05:00.000Z");
@@ -472,9 +490,9 @@ describe("the info panel", () => {
   it("withholds a stamp nobody made", () => {
     // A running delegate has a start and no end, which is the reachable half.
     const el = buildTurnFooter({ startedAt: 1000 });
-    expect(sectionRows(el, "Timings")).toHaveLength(1);
+    expect(sectionRows(el, "Time")).toHaveLength(1);
     expect(
-      sectionRows(buildTurnFooter({ endedAt: 0, startedAt: 0, elapsedMs: 1000 }), "Timings"),
+      sectionRows(buildTurnFooter({ endedAt: 0, startedAt: 0, elapsedMs: 1000 }), "Time"),
     ).toEqual([["Wall clock", "1.0s"]]);
   });
 
@@ -483,82 +501,87 @@ describe("the info panel", () => {
     // at minute precision, so the section states Started alone and the Ended row is ABSENT.
     const started = Date.UTC(2026, 0, 2, 9, 5, 0);
     const el = buildTurnFooter({ outcome: "running", startedAt: started, endedAt: started + 40 });
-    expect(sectionRows(el, "Timings").map(([label]) => label)).toEqual(["Started"]);
+    expect(sectionRows(el, "Time").map(([label]) => label)).toEqual(["Started"]);
     expect(panel(el).querySelectorAll("time")).toHaveLength(1);
     // And it comes back on the settle, in place: the withholding is a property of the
     // OUTCOME rather than of this footer instance.
     updateTurnFooter(el, { outcome: "completed", startedAt: started, endedAt: started + 92000 });
-    expect(sectionRows(el, "Timings").map(([label]) => label)).toEqual(["Started", "Ended"]);
+    expect(sectionRows(el, "Time").map(([label]) => label)).toEqual(["Started", "Ended"]);
   });
 
-  it("puts the file rows and one row per tool kind under Work", () => {
+  it("puts the file rows in their own first section and one row per tool kind under Work", () => {
     // Sorted by count then kind, so repaints cannot reshuffle the arrival-ordered `kindCounts`.
     const el = buildTurnFooter({
       changedFiles: TWO_FILES,
       kindCounts: { read: 12, execute: 3, edit: 3 },
     });
-    expect(sections(el)).toEqual(["Work"]);
+    expect(sections(el)).toEqual(["Changed files", "Work"]);
     expect(sectionRows(el, "Work")).toEqual([
-      ["reads", "12"],
-      ["edits", "3"],
-      ["commands", "3"],
+      ["Reads", "12"],
+      ["Edits", "3"],
+      ["Commands", "3"],
     ]);
-    // The file `<ul>` is nested in this section, so the rows are still built and the
-    // Review-changes row still lands under them.
-    expect(panel(el).querySelector(".turn-info-section .turn-ledger-files")).not.toBeNull();
+    const files = panel(el).querySelector(".turn-info-section .turn-ledger-files");
+    expect(
+      files?.closest(".turn-info-section")?.querySelector(".turn-info-title")?.textContent,
+    ).toBe("Changed files");
     expect(rows(el)).toHaveLength(2);
   });
 
-  it("names a single call in the singular, through the shared kind vocabulary", () => {
-    // `tool-kind-noun.ts` is the one owner of these words, read here and by a tool
-    // group's mixed summary, so the two surfaces cannot call one kind two things.
-    expect(sectionRows(buildTurnFooter({ kindCounts: { read: 1, mcp: 1 } }), "Work")).toEqual([
-      ["integration call", "1"],
-      ["read", "1"],
+  it("labels every kind with its capitalised plural, whatever the count", () => {
+    // A label names the kind and the value counts it, so a count of one keeps the plural label.
+    expect(
+      sectionRows(buildTurnFooter({ kindCounts: { read: 1, mcp: 1, other: 4 } }), "Work"),
+    ).toEqual([
+      ["Other calls", "4"],
+      ["Integration calls", "1"],
+      ["Reads", "1"],
     ]);
   });
 
   it("withholds Work on a turn that touched no file and ran no tool", () => {
-    expect(sections(buildTurnFooter({ elapsedMs: 1000, kindCounts: {} }))).toEqual(["Timings"]);
+    expect(sections(buildTurnFooter({ elapsedMs: 1000, kindCounts: {} }))).toEqual(["Time"]);
   });
 
-  it("counts the delegates the turn dispatched, and their time", () => {
-    expect(
-      sectionRows(buildTurnFooter({ delegateCount: 2, delegateMs: 9000 }), "Delegates"),
-    ).toEqual([
-      ["Dispatched", "2"],
-      ["Time", "9.0s"],
+  it("counts the delegates the turn dispatched, and their time, under Work", () => {
+    expect(sectionRows(buildTurnFooter({ delegateCount: 2, delegateMs: 9000 }), "Work")).toEqual([
+      ["Delegates", "2"],
+      ["Delegate time", "9.0s"],
     ]);
   });
 
   it("withholds Delegates on a turn that dispatched none", () => {
     const el = buildTurnFooter({ elapsedMs: 1000, delegateCount: 0, delegateMs: 0 });
-    expect(sections(el)).toEqual(["Timings"]);
+    expect(sections(el)).toEqual(["Time"]);
   });
 
   it("states the credits to two places", () => {
-    expect(sectionRows(buildTurnFooter({ credits: 1.5 }), "Cost")).toEqual([["Credits", "1.50"]]);
-    expect(sectionRows(buildTurnFooter({ credits: 0.5 }), "Cost")).toEqual([["Credits", "0.50"]]);
+    expect(sectionRows(buildTurnFooter({ credits: 1.5 }), "Model and cost")).toEqual([
+      ["Credits", "1.50"],
+    ]);
+    expect(sectionRows(buildTurnFooter({ credits: 0.5 }), "Model and cost")).toEqual([
+      ["Credits", "0.50"],
+    ]);
   });
 
   it("withholds Cost on a turn nothing metered", () => {
-    expect(sections(buildTurnFooter({ elapsedMs: 1000, credits: 0 }))).toEqual(["Timings"]);
+    expect(sections(buildTurnFooter({ elapsedMs: 1000, credits: 0 }))).toEqual(["Time"]);
   });
 
   it("names the model, and both models with an arrow on a mid-turn switch", () => {
-    expect(sectionRows(buildTurnFooter({ models: ["sonnet-4"] }), "Model")).toEqual([
+    expect(sectionRows(buildTurnFooter({ models: ["sonnet-4"] }), "Model and cost")).toEqual([
       ["Answered by", "sonnet-4"],
     ]);
-    expect(sectionRows(buildTurnFooter({ models: ["sonnet-4", "opus-4"] }), "Model")).toEqual([
-      ["Answered by", "sonnet-4 \u2192 opus-4"],
-    ]);
+    expect(
+      sectionRows(buildTurnFooter({ models: ["sonnet-4", "opus-4"] }), "Model and cost"),
+    ).toEqual([["Answered by", "sonnet-4 \u2192 opus-4"]]);
   });
 
   it("withholds Model rather than inventing one", () => {
     // Absent on every turn persisted before the field existed, so this is the common
     // case rather than an edge.
-    expect(sections(buildTurnFooter({ elapsedMs: 1000 }))).toEqual(["Timings"]);
-    expect(sections(buildTurnFooter({ elapsedMs: 1000, models: [] }))).toEqual(["Timings"]);
+    expect(sections(buildTurnFooter({ elapsedMs: 1000 }))).toEqual(["Time"]);
+    expect(sections(buildTurnFooter({ elapsedMs: 1000, models: [] }))).toEqual(["Time"]);
   });
 
   it("states the raw stop reason and the truncation on a turn that ended badly", () => {
@@ -586,7 +609,7 @@ describe("the info panel", () => {
         stopReasonRaw: "max_tokens",
         truncated: true,
       });
-      expect(sections(el), `${outcome} has no diagnostics`).toEqual(["Timings"]);
+      expect(sections(el), `${outcome} has no diagnostics`).toEqual(["Time"]);
     }
   });
 
@@ -594,7 +617,7 @@ describe("the info panel", () => {
     const el = buildTurnFooter({ credits: 1 });
     updateTurnFooter(el, { credits: 1, elapsedMs: 1000 });
     updateTurnFooter(el, { credits: 1, elapsedMs: 1000 });
-    expect(sections(el)).toEqual(["Timings", "Cost"]);
+    expect(sections(el)).toEqual(["Time", "Model and cost"]);
     expect(panel(el).querySelectorAll(".turn-info-section")).toHaveLength(2);
   });
 });
@@ -639,7 +662,7 @@ describe("the per-file rows", () => {
     const el = buildTurnFooter({ changedFiles: TWO_FILES, elapsedMs: 1000 });
     updateTurnFooter(el, { elapsedMs: 1000 });
     expect(rows(el)).toHaveLength(0);
-    expect(sections(el)).toEqual(["Timings"]);
+    expect(sections(el)).toEqual(["Time"]);
   });
 });
 
@@ -724,8 +747,11 @@ describe("earnsTurnFooter", () => {
 
   it("still shows the model on a footer something else earned", () => {
     expect(earnsTurnFooter({ models: ["sonnet-4"], credits: 0.1 })).toBe(true);
-    expect(sectionRows(buildTurnFooter({ models: ["sonnet-4"], credits: 0.1 }), "Model")).toEqual([
+    expect(
+      sectionRows(buildTurnFooter({ models: ["sonnet-4"], credits: 0.1 }), "Model and cost"),
+    ).toEqual([
       ["Answered by", "sonnet-4"],
+      ["Credits", "0.10"],
     ]);
   });
 
@@ -771,7 +797,9 @@ describe("Review changes", () => {
     summary(footer).click();
     const all = footer.querySelectorAll(".turn-review-all");
     expect(all).toHaveLength(1);
-    expect(all[0]?.textContent).toContain("2 files");
+    expect(all[0]?.textContent).toBe("Review all changes (2 files)");
+    // A file-shaped row under the files, never a bordered pill.
+    expect(all[0]?.closest(".turn-ledger-files")).not.toBeNull();
   });
 });
 
@@ -1009,7 +1037,7 @@ describe("the info panel repaints only when its data moved", () => {
     sameElements(rows(el), before);
   });
 
-  it("repaints when a file's line counts move", () => {
+  it("writes a file's moved line counts into the row it already has", () => {
     const el = buildTurnFooter(data);
     const before = rows(el);
 
@@ -1018,8 +1046,17 @@ describe("the info panel repaints only when its data moved", () => {
       changedFiles: { ...data.changedFiles, "a.go": { lines_added: 9, lines_removed: 0 } },
     });
 
-    expect(rows(el)[0]).not.toBe(before[0]);
-    expect(sectionRows(el, "Timings").length).toBeGreaterThan(0);
+    sameElements(rows(el), before);
+    expect(rows(el)[0]?.querySelector(".turn-file-add")?.textContent).toBe("+9");
+    expect(sectionRows(el, "Time").length).toBeGreaterThan(0);
+  });
+
+  it("keeps every section and row node when only a value moves", () => {
+    const el = buildTurnFooter({ ...data, credits: 1 });
+    const nodes = [...panel(el).querySelectorAll(".turn-info-section, .turn-info-row")];
+    updateTurnFooter(el, { ...data, credits: 2, elapsedMs: 9000 });
+    sameElements([...panel(el).querySelectorAll(".turn-info-section, .turn-info-row")], nodes);
+    expect(sectionRows(el, "Model and cost")).toEqual([["Credits", "2.00"]]);
   });
 
   it("repaints when a file is added to the set", () => {
@@ -1150,40 +1187,71 @@ describe("the panel's context breakdown", () => {
     ],
   };
 
-  it("states the request's size and each category's share under Context, beside the steering added", () => {
+  it("states the request's size, then the steering added this turn and the breakdown as counts", () => {
     const el = buildTurnFooter({
       steering: ["file:///elsewhere/a.md"],
       contextBreakdown: breakdown,
     });
-    // A disclosed category's value is its summary line; the items sit behind it.
-    const rowsShown = [...panel(el).querySelectorAll(".turn-info-row")].map((r) => [
-      r.querySelector(".turn-info-label")?.textContent ?? "",
-      (r.querySelector(".turn-info-value summary") ?? r.querySelector(".turn-info-value"))
-        ?.textContent ?? "",
-    ]);
-    expect(rowsShown).toEqual([
-      ["Steering added", "a.md"],
+    expect(sectionRows(el, "Context")).toEqual([
       ["Last request", "9,000 characters over 2 model calls \u00b7 compacted \u00b7 1 image"],
-      ["Conversation", "56% \u00b7 5,000 characters"],
-      ["Steering", "33% \u00b7 3,000 characters"],
-      ["futureCategory", "11% \u00b7 1,000 characters"],
+      ["Added this turn", "1 steering document"],
+      ["Breakdown", "3 categories"],
     ]);
+    expect(listLines(disclosure(el, "Added this turn").list)).toEqual(["a.md"]);
   });
 
-  it("discloses a category's parts, top items and the rest it left out", () => {
+  it("lists every category with its share, and its parts, items and the rest beneath it", () => {
     const el = buildTurnFooter({ contextBreakdown: breakdown });
-    const details = [
-      ...panel(el).querySelectorAll<HTMLDetailsElement>("details.ctx-breakdown-category"),
-    ];
-    expect(details).toHaveLength(2);
-    expect(details[0]?.open).toBe(false);
-    const lines = (d: HTMLDetailsElement | undefined): string[] =>
-      [...(d?.querySelectorAll(".ctx-breakdown-items > li") ?? [])].map(
-        (li) => li.textContent ?? "",
+    const { list } = disclosure(el, "Breakdown");
+    expect(listLines(list)).toEqual([
+      "Conversation56% \u00b7 5,000 characters",
+      "replies 3,500 \u00b7 your messages 1,000",
+      "Steering33% \u00b7 3,000 characters",
+      "<b>go.md</b>fileMatch22%",
+      "4 more, 120 characters",
+      "futureCategory11% \u00b7 1,000 characters",
+    ]);
+    // A category's own line is not indented; what it carries is.
+    const subs = [...list.children].map((li) => li.classList.contains("turn-info-sub"));
+    expect(subs).toEqual([false, true, false, true, true, false]);
+    expect(list.querySelector("b")).toBeNull();
+  });
+
+  it("links a breakdown item that is a workspace file, with its path as the tooltip", () => {
+    setWorkspaceRoot("/workspace");
+    try {
+      openFile.mockClear();
+      const el = buildTurnFooter({
+        contextBreakdown: {
+          total_chars: 10,
+          model_calls: 1,
+          categories: [
+            {
+              key: "skills",
+              chars: 10,
+              percent: 100,
+              items: [
+                {
+                  name: "ui-qa",
+                  chars: 10,
+                  percent: 100,
+                  uri: "file:///workspace/.kiro/skills/ui-qa/SKILL.md",
+                },
+              ],
+            },
+          ],
+        },
+      });
+      const link = disclosure(el, "Breakdown").list.querySelector<HTMLButtonElement>(
+        ".turn-info-link",
       );
-    expect(lines(details[0])).toEqual(["replies 3,500 \u00b7 your messages 1,000"]);
-    expect(lines(details[1])).toEqual(["<b>go.md</b>fileMatch22%", "4 more, 120 characters"]);
-    expect(details[1]?.querySelector("b")).toBeNull();
+      expect(link?.dataset["tooltip"]).toBe("/workspace/.kiro/skills/ui-qa/SKILL.md");
+      expect(link?.closest("li")?.classList.contains("turn-info-doc")).toBe(true);
+      link?.click();
+      expect(openFile).toHaveBeenCalledWith("/workspace/.kiro/skills/ui-qa/SKILL.md", undefined);
+    } finally {
+      resetWorkspaceRoot();
+    }
   });
 
   it("withholds the rows on a turn KAS measured nothing for", () => {
@@ -1192,30 +1260,37 @@ describe("the panel's context breakdown", () => {
 });
 
 describe("the panel states the turn's KAS facts", () => {
-  it("tallies the turn's asks in a fixed order, and withholds the section without one", () => {
-    const el = buildTurnFooter({ asks: { rejected: 1, allowed: 2, skipped: 1 } });
-    expect(sectionRows(el, "Approvals")).toEqual([
-      ["Allowed", "2"],
-      ["Rejected", "1"],
-      ["Skipped", "1"],
+  it("tallies the turn's asks on one Work row in a fixed order, and withholds it without one", () => {
+    const el = buildTurnFooter({
+      asks: { rejected: 1, allowed: 2, always_allowed: 1, skipped: 1 },
+    });
+    expect(sectionRows(el, "Work")).toEqual([
+      ["Approvals", "2 allowed \u00b7 1 always allowed \u00b7 1 rejected \u00b7 1 skipped"],
     ]);
-    expect(sections(buildTurnFooter({ elapsedMs: 1000 }))).not.toContain("Approvals");
+    expect(sections(el)).toEqual(["Work"]);
+    expect(sectionRows(buildTurnFooter({ kindCounts: { read: 1 } }), "Work")).toEqual([
+      ["Reads", "1"],
+    ]);
   });
 
-  it("states the request count and the output estimate under Model", () => {
+  it("orders Model and cost as model, credits, output, and counts requests only under Diagnostics", () => {
     const el = buildTurnFooter({
+      models: ["sonnet-4"],
+      credits: 0.5,
       requestIds: ["a", "b", "c"],
       throughput: { estimated_tokens: 400, active_streaming_ms: 2000 },
     });
-    expect(sectionRows(el, "Model")).toEqual([
-      ["Requests", "3"],
-      ["Output, estimated", "\u2248400 tokens \u00b7 \u2248200 tokens/s"],
+    expect(sectionRows(el, "Model and cost")).toEqual([
+      ["Answered by", "sonnet-4"],
+      ["Credits", "0.50"],
+      ["Output (estimated)", "\u2248400 tokens \u00b7 \u2248200 tokens/s"],
     ]);
+    expect(sectionRows(el, "Diagnostics")).toEqual([["Request IDs", "3"]]);
   });
 
   it("withholds the rate when no streaming time was measured", () => {
     const el = buildTurnFooter({ throughput: { estimated_tokens: 50, active_streaming_ms: 0 } });
-    expect(sectionRows(el, "Model")).toEqual([["Output, estimated", "\u224850 tokens"]]);
+    expect(sectionRows(el, "Model and cost")).toEqual([["Output (estimated)", "\u224850 tokens"]]);
   });
 
   it("states recoveries, the engine class and the request ids on a CLEAN turn", () => {
@@ -1230,18 +1305,26 @@ describe("the panel states the turn's KAS facts", () => {
       ["Recovered", "constructor"],
       ["Recovered", "newMechanism"],
       ["Engine error", "ModelOverloaded"],
-      ["Request IDs", "req-1req-2Copy all"],
+      ["Request IDs", "2"],
     ]);
+    expect(listLines(disclosure(el, "Request IDs").list)).toEqual(["req-1", "req-2"]);
   });
 
-  it("copies every request id with one control", () => {
-    copied.mockClear();
-    const el = buildTurnFooter({ requestIds: ["req-1", "req-2"] });
-    el.querySelector<HTMLButtonElement>(".turn-info-copy")?.click();
-    expect(copied).toHaveBeenCalledWith("req-1\nreq-2");
+  it("offers no copy control: the ids are selectable text", () => {
+    for (const requestIds of [["req-1"], ["req-1", "req-2"]]) {
+      const el = buildTurnFooter({ outcome: "failed", requestIds, stopReasonRaw: "x" });
+      const buttons = [...panel(el).querySelectorAll("button")];
+      expect(buttons.map((b) => b.textContent)).toEqual([
+        `Request IDs${String(requestIds.length)}`,
+      ]);
+      expect(panel(el).textContent).not.toMatch(/copy/iu);
+      expect(disclosure(el, "Request IDs").list.querySelectorAll("code")).toHaveLength(
+        requestIds.length,
+      );
+    }
   });
 
-  describe("steering added", () => {
+  describe("steering added this turn", () => {
     afterAll(() => {
       resetWorkspaceRoot();
     });
@@ -1252,7 +1335,11 @@ describe("the panel states the turn's KAS facts", () => {
       const el = buildTurnFooter({
         steering: ["file:///workspace/.kiro/steering/my%20doc.md", "builtin-guide"],
       });
-      expect(sectionRows(el, "Context")).toEqual([["Steering added", "my doc.mdbuiltin-guide"]]);
+      expect(sectionRows(el, "Context")).toEqual([["Added this turn", "2 steering documents"]]);
+      expect(listLines(disclosure(el, "Added this turn").list)).toEqual([
+        "my doc.md",
+        "builtin-guide",
+      ]);
       const link = el.querySelector<HTMLButtonElement>(".turn-info-link");
       expect(link?.dataset["tooltip"]).toBe("/workspace/.kiro/steering/my doc.md");
       link?.click();
@@ -1264,7 +1351,8 @@ describe("the panel states the turn's KAS facts", () => {
       const el = buildTurnFooter({
         steering: ["file:///config/home/.kiro/steering/global.md"],
       });
-      expect(sectionRows(el, "Context")).toEqual([["Steering added", "global.md"]]);
+      expect(sectionRows(el, "Context")).toEqual([["Added this turn", "1 steering document"]]);
+      expect(listLines(disclosure(el, "Added this turn").list)).toEqual(["global.md"]);
       expect(el.querySelector(".turn-info-link")).toBeNull();
     });
 
@@ -1273,8 +1361,118 @@ describe("the panel states the turn's KAS facts", () => {
       const el = buildTurnFooter({
         steering: ["file:///workspace/.kiro/steering/a.md"],
       });
-      expect(sectionRows(el, "Context")).toEqual([["Steering added", "a.md"]]);
+      expect(sectionRows(el, "Context")).toEqual([["Added this turn", "1 steering document"]]);
       expect(el.querySelector(".turn-info-link")).toBeNull();
     });
+  });
+});
+
+// The three disclosures (Added this turn, Breakdown, Request IDs): one shape, closed when the panel
+// opens, and a live repaint keeps what the reader opened and focused.
+describe("the panel's disclosures", () => {
+  const LIVE = {
+    outcome: "running" as const,
+    elapsedMs: 1000,
+    steering: ["file:///workspace/.kiro/steering/a.md", "builtin-guide"],
+    requestIds: ["req-1", "req-2"],
+    contextBreakdown: {
+      total_chars: 900,
+      model_calls: 1,
+      categories: [{ key: "history", chars: 900, percent: 100 }],
+    },
+  };
+
+  afterAll(() => {
+    resetWorkspaceRoot();
+  });
+
+  it("are full-row buttons with a leading chevron that control a list hidden until found", () => {
+    const el = buildTurnFooter(LIVE);
+    for (const label of ["Added this turn", "Breakdown", "Request IDs"]) {
+      const { btn, list } = disclosure(el, label);
+      expect(btn.type, label).toBe("button");
+      expect(btn.getAttribute("aria-expanded"), label).toBe("false");
+      expect(btn.firstElementChild?.querySelector(".disclosure-chevron"), label).not.toBeNull();
+      expect(list.getAttribute("hidden"), label).toBe("until-found");
+      expect(list.id, label).not.toBe("");
+    }
+    // Ids are unique across panels, so two footers' buttons never control one list.
+    const other = buildTurnFooter(LIVE);
+    expect(disclosure(other, "Breakdown").list.id).not.toBe(disclosure(el, "Breakdown").list.id);
+  });
+
+  it("open and close their list from the button", () => {
+    const el = buildTurnFooter(LIVE);
+    const { btn, list } = disclosure(el, "Request IDs");
+    btn.click();
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    expect(list.hasAttribute("hidden")).toBe(false);
+    btn.click();
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    expect(list.getAttribute("hidden")).toBe("until-found");
+  });
+
+  it("never fold a bounded value: one row per recovery, both models on one row", () => {
+    const el = buildTurnFooter({
+      models: ["a", "b"],
+      recoveries: ["empty", "strip"],
+      asks: { allowed: 1, rejected: 1 },
+    });
+    expect(panel(el).querySelectorAll("button.turn-info-dbtn")).toHaveLength(0);
+  });
+
+  it("keep a list open, and its nodes, across a live repaint", () => {
+    const el = buildTurnFooter(LIVE);
+    disclosure(el, "Breakdown").btn.click();
+    const { list } = disclosure(el, "Breakdown");
+    updateTurnFooter(el, { ...LIVE, elapsedMs: 2000, requestIds: ["req-1", "req-2", "req-3"] });
+    const after = disclosure(el, "Breakdown");
+    expect(after.list).toBe(list);
+    expect(after.btn.getAttribute("aria-expanded")).toBe("true");
+    expect(after.list.hasAttribute("hidden")).toBe(false);
+    expect(sectionRows(el, "Diagnostics")).toEqual([["Request IDs", "3"]]);
+    expect(disclosure(el, "Request IDs").btn.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keep focus on the same disclosure button and document link across a live repaint", () => {
+    setWorkspaceRoot("/workspace");
+    const el = buildTurnFooter(LIVE);
+    document.body.appendChild(el);
+    try {
+      summary(el).click();
+      const steer = disclosure(el, "Added this turn");
+      steer.btn.click();
+      steer.btn.focus();
+      expect(document.activeElement).toBe(steer.btn);
+      updateTurnFooter(el, { ...LIVE, elapsedMs: 3000, credits: 0.2 });
+      expect(document.activeElement).toBe(steer.btn);
+
+      const link = steer.list.querySelector<HTMLButtonElement>(".turn-info-link");
+      link?.focus();
+      expect(document.activeElement).toBe(link);
+      updateTurnFooter(el, { ...LIVE, elapsedMs: 4000, credits: 0.3 });
+      expect(document.activeElement).toBe(link);
+      expect(disclosure(el, "Added this turn").btn.getAttribute("aria-expanded")).toBe("true");
+    } finally {
+      el.remove();
+    }
+  });
+
+  it("record a find-in-page open, so the next repaint does not close the list", () => {
+    const el = buildTurnFooter(LIVE);
+    const { btn, list } = disclosure(el, "Request IDs");
+    // What the engine does on a match: fire `beforematch` on the list, then drop `hidden`.
+    list.dispatchEvent(new Event("beforematch", { bubbles: true }));
+    list.removeAttribute("hidden");
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    updateTurnFooter(el, { ...LIVE, elapsedMs: 5000 });
+    expect(list.hasAttribute("hidden")).toBe(false);
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("withhold a disclosure whose list is empty", () => {
+    const el = buildTurnFooter({ elapsedMs: 1000, steering: [], requestIds: [] });
+    expect(panel(el).querySelectorAll("button.turn-info-dbtn")).toHaveLength(0);
+    expect(sections(el)).toEqual(["Time"]);
   });
 });

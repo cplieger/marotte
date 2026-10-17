@@ -486,11 +486,11 @@ function turnInfoPanel(): { clipper: HTMLElement; row: HTMLElement } {
   row.append(span("turn-file-path", "static-src/app.ts"), node("span", "turn-file-delta"));
   const item = node("li", "turn-ledger-file");
   item.appendChild(row);
-  const list = node("ul", "turn-ledger-files");
+  const list = node("ul", "turn-info-rows turn-ledger-files");
   list.appendChild(item);
   const section = node("section", "turn-info-section");
   section.append(node("h4", "turn-info-title"), list);
-  section.querySelector("h4")!.textContent = "Work";
+  section.querySelector("h4")!.textContent = "Changed files";
   const panel = node("div", "turn-info-panel");
   panel.style.transition = "none";
   panel.appendChild(section);

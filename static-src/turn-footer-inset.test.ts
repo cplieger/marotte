@@ -107,7 +107,7 @@ function mountFooter(doc: Document, trailing: Trailing): Mounted {
   section.className = "turn-info-section";
   const title = doc.createElement("h4");
   title.className = "turn-info-title";
-  title.textContent = "Timings";
+  title.textContent = "Time";
   const rows = doc.createElement("ul");
   rows.className = "turn-info-rows";
   const lastRow = doc.createElement("li");
