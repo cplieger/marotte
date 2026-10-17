@@ -6,9 +6,7 @@ import { effect } from "@cplieger/reactive";
 import { mcpState, discoverySignalFor } from "./mcp-state.js";
 import type { MCPPromptInfo, MCPResourceInfo } from "./mcp-state.js";
 
-const prompts: MCPPromptInfo[] = [
-  { name: "Simple Prompt", description: "no args" },
-];
+const prompts: MCPPromptInfo[] = [{ name: "Simple Prompt", description: "no args" }];
 const resources: MCPResourceInfo[] = [{ name: "doc", uri: "demo://doc" }];
 const tools = ["create_issue", "search_repos"];
 
