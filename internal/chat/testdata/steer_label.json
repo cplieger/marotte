@@ -50,7 +50,7 @@
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
-        "internal/agent/bridge_coord.go:1523",
+        "internal/agent/bridge_coord.go:1530",
         "internal/agent/entry_merge.go:560",
         "internal/agent/runtime.go:766"
       ]
@@ -63,7 +63,7 @@
       "sites": [
         "internal/agent/run_appender.go:102",
         "internal/agent/run_bounds.go:412",
-        "internal/agent/run_plan.go:95",
+        "internal/agent/run_plan.go:116",
         "internal/translate/steering.go:117",
         "internal/translate/steering.go:213",
         "internal/translate/workflow_message.go:39"
@@ -204,7 +204,7 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1523",
+      "site": "internal/agent/bridge_coord.go:1530",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
@@ -253,7 +253,7 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/run_plan.go:95",
+      "site": "internal/agent/run_plan.go:116",
       "form": "literal",
       "origin": "agent",
       "state": "read",
