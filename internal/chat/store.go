@@ -269,8 +269,8 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 	return version, nil
 }
 
-// saveLocked is mutateLocked without the broadcast: it answers the saved header, nil when the
-// mutator declined, so a caller that announces the header itself sends one frame.
+// saveLocked is mutateLocked without the broadcast: it answers the saved header, nil when nothing
+// was saved, so a caller that announces the header itself sends one frame.
 func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (version string, saved *marotte.Chat, exists bool, err error) {
 	c, err := s.load(ctx, chatID)
 	exists = err == nil

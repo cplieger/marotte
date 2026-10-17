@@ -259,7 +259,7 @@
   padding: var(--sp-3);
   min-width: 0;
 
-  /* The fold's slide length. Its two beats (`slideTurnFold`, disclosure-row.ts) keep the
+  /* The fold's slide length. Its two beats (`foldBeats`, disclosure-row.ts) keep the
    * content transparent while the box slides, since sliding a body of hundreds of rendered
    * tool cards repaints everything below per frame. The clip is on THIS rule: an open
    * slides after `[data-folded]` is gone and would paint over the footer. */

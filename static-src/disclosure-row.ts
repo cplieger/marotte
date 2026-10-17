@@ -109,7 +109,7 @@ const folds = new WeakMap<HTMLElement, Animation[]>();
 /** Set on a folding body while it fades and slides shut: 29-turns.css withholds the folded body's rules under it. */
 const FOLD_CLOSING_ATTR = "data-fold-closing";
 
-/** One turn body's fold: `apply` is the card's state flip, run between the two measurements. */
+/** One turn body's fold: `apply` is the card's state flip. */
 export interface TurnFold {
   readonly body: HTMLElement;
   readonly folded: boolean;
@@ -120,8 +120,9 @@ export interface TurnFold {
  * Fold or unfold each turn `body` on either side of its `apply()`, the card's state flip, in the fold's two beats
  * (29-turns.css `--fold-slide`): a close fades the content out, slides shut once the fade is nearly done, and only then
  * lets the folded rules apply; an open slides first with the content transparent, then fades it in. Script-driven for
- * the same reason as `slideBox`. Reduced motion and an unrendered body flip at once. Every measurement precedes every
- * flip, and every flip the second measurements, so a bulk fold forces two layouts in all rather than two per body.
+ * the same reason as `slideBox`. Reduced motion and an unrendered body flip at once, with no second measurement. Every
+ * body is measured, then every flip runs, then each animated body is measured again, so a bulk fold forces a constant
+ * number of layouts rather than two per body.
  */
 export function slideTurnFolds(items: readonly TurnFold[]): void {
   const froms = items.map(({ body }) => {

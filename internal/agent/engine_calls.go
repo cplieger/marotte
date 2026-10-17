@@ -84,10 +84,11 @@ func (o *engineOwner) exportSessionRaw(ctx context.Context, sessionID string) (j
 // observeBudget bounds one observer pass's door and calls; its close runs under the engine's own budget.
 const observeBudget = 60 * time.Second
 
-// observe runs fn on an observer pass: a session opened on the engine with presets, no mode and no prompt, closed
-// when fn returns (closePass). KAS answers the policy, code-intelligence and governance reads only for a resident session, and a
-// pass that opens with the current presets answers for the profile as it is now. attach consumes the pass's own
-// frames (its workspace notifications and command list) from before the door writes; nil drains them.
+// observe runs fn on an observer pass: a session opened on the engine with presets, no mode and no prompt, which
+// closePass tries to end when fn returns. KAS answers the policy, code-intelligence and governance reads only for a
+// resident session, and a pass that opens with the current presets answers for the profile as it is now. attach
+// consumes the pass's own frames (its workspace notifications and command list) from before the door writes; nil
+// drains them.
 func (o *engineOwner) observe(
 	ctx context.Context, presets []string, attach func(engineSession), fn func(ctx context.Context, s engineSession) error,
 ) error {
@@ -108,9 +109,10 @@ func (o *engineOwner) observe(
 	return fn(ctx, s)
 }
 
-// closePass ends a pass's session. A refused close leaves it live in KAS and on its lane, so the session is deleted
-// on the engine, which KAS refuses only for a session owning a live workflow (a pass never does), and closed again,
-// which KAS answers {} for a session it no longer holds. Anything still failing is a WARN.
+// closePass ends a pass's session, best effort. A refused close leaves it live in KAS and on its lane, so the session
+// is deleted on the engine, which KAS refuses only for a session owning a live workflow (a pass never does), and
+// closed again, which KAS answers {} for a session it no longer holds. A delete or second close that still fails is
+// logged at WARN and leaves the session open until the engine ends.
 func (o *engineOwner) closePass(ctx context.Context, s engineSession) {
 	err := s.Close(ctx)
 	var refusal *marotte.RPCError
