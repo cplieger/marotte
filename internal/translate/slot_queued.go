@@ -2,6 +2,7 @@ package translate
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -11,6 +12,10 @@ import (
 // session holds (AgentExecutionWaitingForActiveSlot, and getActiveSessionBlockingQueued on session/load). The slot
 // is per engine, so any two marotte chats running agent turns take turns.
 const infoKindQueued = "queued"
+
+// modeVibe is the mode whose executions KAS 2.32.0 runs as chat-agent, which never takes the slot: a queued frame on a
+// vibe chat means KAS routes vibe as default-v2 (its vibe_to_default_v2_routing_enabled flag), and is logged.
+const modeVibe = "vibe"
 
 // slotWait is the wait a chat shows: the turn waiting and the session it waits for.
 type slotWait struct {
@@ -55,8 +60,15 @@ func (t *Translator) handleSlotQueued(ctx context.Context, chatID marotte.ChatID
 	} else if turn, ok := t.turns.OwnTurn(chatID); ok {
 		w.turn = turn.ID()
 	}
+	if w.turn != "" {
+		t.steerBuffer.SteerTurnQueued(chatID, w.turn)
+	}
 	if !t.slotWaits.set(chatID, w) {
 		return
+	}
+	if c, ok := t.chats.Get(ctx, chatID); ok && c.CurrentModeID == modeVibe {
+		slog.Warn("chat in mode vibe was queued for the autonomous slot",
+			"chat_id", chatID, "mode", c.CurrentModeID, "active_session_id", active)
 	}
 	holder := "another kiro-cli session"
 	if c, ok := t.sessions.ChatForACPSession(active); ok && c != chatID {

@@ -128,6 +128,9 @@ type steerBuffer interface {
 	// user row gets no entry at a clear: the host writes one at the row's own
 	// terminal transition, so a row resent after the clear is never noted unread.
 	SteerCleared(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload
+	// SteerTurnQueued folds KAS's report that turnID's execution waits for the slot: it has not begun, so it reads
+	// nothing from the buffer until its turn_start.
+	SteerTurnQueued(chatID marotte.ChatID, turnID string)
 }
 
 // chatRecords is the chat store's HEADER as this package uses it. Every write

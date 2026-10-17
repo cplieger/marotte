@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -604,4 +605,52 @@ func TestCmdSteerRemove_AFailedResubmitKeepsEveryKeptRowInCustody(t *testing.T) 
 	if !slices.Equal(listed, []string{"steer-b", "steer-c"}) {
 		t.Errorf("a reconnecting dock lists %v, want steer-b and steer-c", listed)
 	}
+}
+
+// The recorded c-a820 delete end to end: with the prompt's execution queued behind another session's turn, deleting
+// the user's steer clears it from KAS's buffer and answers deleted instead of "starting to read".
+func TestCmdSteerRemove_AStarterKASQueuedForTheSlotDeletesTheSteer(t *testing.T) {
+	s, _, br := steerOpsHub(t)
+	s.h.stagePromptTurn(t, "c1")
+	sends, _ := s.q.RouteSteer("c1", "steer-m-mvcsj9b3", "?", promptHolder)
+	s.kas(sends)
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newSessionInfoMsg(map[string]any{
+		"kind": "queued", "activeSessionId": "sess_66362e75-badd-490c-ad48-593859625c29",
+	}))
+	br.mu.Lock()
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method != marotte.MethodSessionSteerClear {
+			return nil, nil, false
+		}
+		return clearReply([]string{s.kasID("steer-m-mvcsj9b3")}), nil, true
+	}
+	br.mu.Unlock()
+
+	rec := postCmd(t, s.h, removeCmd("steer-m-mvcsj9b3"))
+
+	if got := removedBody(t, rec.Code, rec.Body.Bytes()); got["deleted"] != "steer-m-mvcsj9b3" {
+		t.Errorf("steer_remove = %v, want the steer deleted", got)
+	}
+	if !slices.Contains(br.callLog(), marotte.MethodSessionSteerClear) {
+		t.Error("the delete issued no clear, so KAS's buffer still holds the steer")
+	}
+}
+
+// The same recorded moment as the reader sees it: a turn whose execution KAS queued shows as waiting, never as a
+// silent turn, and its steer as sent, never as read.
+func TestQueuedReport_AQueuedStarterShowsItsWaitAndLeavesTheSteerSent(t *testing.T) {
+	s, _, _ := steerOpsHub(t)
+	s.h.stagePromptTurn(t, "c1")
+	sends, _ := s.q.RouteSteer("c1", "steer-m-mvcsj9b3", "?", promptHolder)
+	s.kas(sends)
+
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newSessionInfoMsg(map[string]any{
+		"kind": "queued", "activeSessionId": "sess_66362e75-badd-490c-ad48-593859625c29",
+	}))
+
+	labels := eventsOfType(s.h, marotte.EventWorkingLabel)
+	if len(labels) == 0 || !strings.Contains(string(labels[len(labels)-1].Payload), "Waiting for another kiro-cli session") {
+		t.Errorf("working_label events = %+v, want the turn shown waiting for the slot", labels)
+	}
+	s.mustState("steer-m-mvcsj9b3", rowQueued)
 }

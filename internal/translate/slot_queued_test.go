@@ -1,6 +1,8 @@
 package translate
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -97,5 +99,42 @@ func TestSessionInfo_AStepsQueuedFrameReachesNoChat(t *testing.T) {
 
 	if got := len(eventsOf(*events, marotte.EventWorkingLabel)) + len(eventsOf(*events, marotte.EventSystemNotice)); got != 0 {
 		t.Errorf("events = %+v, want none for a step's frame", *events)
+	}
+}
+
+// KAS 2.32.0 never queues a vibe chat's execution (it runs as chat-agent), so a queued frame on one is logged as the
+// sign KAS routes vibe as default-v2; a default-v2 chat queuing is the expected case and logs nothing.
+func TestSessionInfo_AQueuedVibeChatIsLogged(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode string
+		warn       bool
+	}{
+		{name: "vibe", mode: "vibe", warn: true},
+		{name: "default-v2", mode: "default-v2", warn: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			t.Cleanup(captureSlog(&buf))
+			deps, _, store := depsWithStore(t, "c1")
+			if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+				c.CurrentModeID = tc.mode
+				return true
+			}); err != nil {
+				t.Fatalf("seed c1: %v", err)
+			}
+			tr := New(rolesOf(deps))
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", queuedFrame(t, blockingSession), FrameAttribution{})
+
+			got := buf.String()
+			logged := strings.Contains(got, "level=WARN") && strings.Contains(got, "chat in mode vibe was queued for the autonomous slot")
+			if logged != tc.warn {
+				t.Errorf("WARN logged = %v, want %v:\n%s", logged, tc.warn, got)
+			}
+			if tc.warn && (!strings.Contains(got, "chat_id=c1") || !strings.Contains(got, "mode=vibe") ||
+				!strings.Contains(got, "active_session_id="+blockingSession)) {
+				t.Errorf("WARN = %s, want the chat id, its mode and the blocking session", got)
+			}
+		})
 	}
 }

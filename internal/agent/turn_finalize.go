@@ -198,18 +198,37 @@ func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, chatID marotte.
 		bc.settleAfterClose(bc.lifecycle.shutdownCtx, chatID, command.AdmissionWait)
 		ends = bc.resolveEnds(ctx, chatID, cf.fence)
 	}
-	if cf.graceClosed && !bc.turns.awaitKASIdle(bc.lifecycle.shutdownCtx, chatID, cf.fence) {
-		return
-	}
-	if bc.applyPendingModel != nil {
-		bc.applyPendingModel(ctx, chatID)
-	}
-	bc.autoCompact.afterTurn(ctx, chatID)
-	if bc.drainAfterClose == nil || bc.draining() ||
+	afterStop, ok := bc.betweenTurns(ctx, chatID, cf)
+	if !ok || bc.drainAfterClose == nil || bc.draining() ||
 		!bc.settleAfterClose(bc.lifecycle.shutdownCtx, chatID, command.AdmissionWait) {
 		return
 	}
-	bc.drainAfterClose(ctx, chatID, command.CloseFacts{Outcome: cf.outcome, Fence: cf.fence, Unattended: cf.unattended}, ends)
+	bc.drainAfterClose(ctx, chatID, command.CloseFacts{
+		Outcome: cf.outcome, Fence: cf.fence, Unattended: cf.unattended, AfterStop: afterStop,
+	}, ends)
+}
+
+// betweenTurns applies a parked model and runs the turn-end compaction. After a grace close it first waits for KAS to
+// go idle and keeps the KAS hold until both are done, so a waiting prompt cannot reach the session before them; a
+// report of a run arriving meanwhile repeats the wait. It answers the rows queued under the hold, false when the
+// wait stood down (a turn opened, a teardown, shutdown), which ends the hold with no drain.
+func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, chatID marotte.ChatID, cf closeFacts) ([]string, bool) {
+	for {
+		if cf.graceClosed && !bc.turns.awaitKASIdle(bc.lifecycle.shutdownCtx, chatID, cf.fence) {
+			bc.turns.endKASHold(chatID, cf.fence.Seq)
+			return nil, false
+		}
+		if bc.applyPendingModel != nil {
+			bc.applyPendingModel(ctx, chatID)
+		}
+		bc.autoCompact.afterTurn(ctx, chatID)
+		if !cf.graceClosed {
+			return nil, true
+		}
+		if rows, ended := bc.turns.endIdleKASHold(chatID, cf.fence.Seq); ended {
+			return rows, true
+		}
+	}
 }
 
 func (bc *bridgeCoordinator) draining() bool {

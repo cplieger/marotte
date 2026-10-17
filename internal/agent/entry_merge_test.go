@@ -1390,3 +1390,50 @@ func TestMergeEntries_AWorkflowMessagePairsOnTheIDItsTakeUpNamed(t *testing.T) {
 		t.Fatalf("entry ids = %v, want %v:\n%s", got, want, dumpMerged(merged))
 	}
 }
+
+// The recorded shape of c-a820's n=746: the restart interrupted the prompt turn n=745 while KAS still queued it, and
+// the next load's replay carried a bracket pair with no timestamp and no content, inserted after n=745. No merged
+// entry may keep ts 0: the inserted turn takes the time of the entry before it.
+func TestMergeEntries_AnInsertedTurnWithNoTimestampTakesItsPredecessors(t *testing.T) {
+	const sid = "sess_fe657706-3b4c-4a4f-8452-7123574bac1c"
+	rec := recTurn(t, "t-asgx",
+		openRow("t-asgx", 745, &marotte.EntryPrompt{ID: "m-mvcsgno8", Text: "build lanes needs your answer"}),
+		bindRow("t-asgx:e1", "a2e2a9c9-cb31-4217-aa59-6e7c6750c7ec", sid),
+		liveClose("t-asgx:e2", marotte.TurnOutcomeInterrupted, marotte.StopReasonInterrupted),
+		steerRow("steer-m-mvcsj9b3", marotte.EntrySteer{
+			Text: "?", Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonRestart,
+		}),
+	)
+	for i, ts := range []int64{1792265263445, 1792265263533, 1792265636215, 1792265636352} {
+		rec.Entries[i].Ts = ts
+	}
+	projected := []translate.ProjectedTurn{
+		projTurn(t, "P745", openRow("P745", 0, &marotte.EntryPrompt{
+			ID: "a2e2a9c9-cb31-4217-aa59-6e7c6750c7ec", Text: "build lanes needs your answer",
+		})),
+		projTurn(t, "01a14b5b-af04-7e9d-8f93-e8554d7ddccd",
+			openRow("01a14b5b-af04-7e9d-8f93-e8554d7ddccd", 0, nil),
+			closeRow("01a14b5b-af04-7ed3-9401-5a829b7879b7", marotte.EntryTurnClose{
+				Outcome: marotte.TurnOutcomeCancelled, StopReasonRaw: "cancelled",
+			}),
+		),
+	}
+	projected[0].Entries[0].Ts = 1792265263529
+
+	merged, changed := mergeEntries([]recordTurn{rec}, projected, sid)
+	if !changed || len(merged) != 2 {
+		t.Fatalf("merged %d turns (changed %v), want n=745 and the inserted one:\n%s", len(merged), changed, dumpMerged(merged))
+	}
+	for _, e := range merged[1].Entries {
+		if e.Ts != 1792265636352 {
+			t.Errorf("inserted %s ts = %d, want 1792265636352, the entry before it", e.Kind, e.Ts)
+		}
+	}
+	for i := range merged {
+		for _, e := range merged[i].Entries {
+			if e.Ts == 0 {
+				t.Errorf("merged %s %s has ts 0", e.Kind, e.ID)
+			}
+		}
+	}
+}

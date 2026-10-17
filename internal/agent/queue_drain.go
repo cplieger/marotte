@@ -17,38 +17,60 @@ import (
 
 var errQueueChatGone = errors.New("agent: the chat has no record to queue on")
 
-// AppendIfLive applies fn to the record while the chat holds a live turn or a KAS hold, whose closed turn's
-// drain sends the row once KAS goes idle, in the lifecycle section (lifecycle then store), waiting out a
-// finalizing turn: the close sees the row or the caller sees no turn.
+// AppendIfLive applies fn to the record while the chat holds a live turn or a KAS hold, in the lifecycle section
+// (lifecycle then store), waiting out a finalizing turn: the close sees the row or the caller sees no turn. A row
+// appended under a hold with no turn live joins kasHoldRows, which the hold's drain sends once KAS goes idle.
 func (bc *bridgeCoordinator) AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
 	live := false
 	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
-		if !lc.liveLockedState() && lc.kasHoldSeq == 0 {
+		turnLive := lc.liveLockedState()
+		if !turnLive && lc.kasHoldSeq == 0 {
 			return nil
 		}
 		live = true
 		var fnErr error
+		var added []string
 		if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 			if !exists {
 				fnErr = errQueueChatGone
 				return false
 			}
-			n := len(c.QueuedPrompts)
-			fnErr = fn(c)
-			return fnErr == nil && len(c.QueuedPrompts) != n
+			added, fnErr = appendedRows(c, fn)
+			return fnErr == nil && len(added) > 0
 		}); err != nil {
 			return err
+		}
+		if fnErr == nil && !turnLive {
+			lc.kasHoldRows = append(lc.kasHoldRows, added...)
 		}
 		return fnErr
 	})
 	return live, err
 }
 
+// appendedRows applies fn to c and answers the ids of the queued rows it added.
+func appendedRows(c *marotte.Chat, fn func(c *marotte.Chat) error) ([]string, error) {
+	before := make(map[string]struct{}, len(c.QueuedPrompts))
+	for i := range c.QueuedPrompts {
+		before[c.QueuedPrompts[i].ID] = struct{}{}
+	}
+	if err := fn(c); err != nil {
+		return nil, err
+	}
+	var added []string
+	for i := range c.QueuedPrompts {
+		if _, old := before[c.QueuedPrompts[i].ID]; !old {
+			added = append(added, c.QueuedPrompts[i].ID)
+		}
+	}
+	return added, nil
+}
+
 var _ command.QueueAccess = (*bridgeCoordinator)(nil)
 
-// NextUserRow answers the first unheld queued user row whose turn this process has not opened, via
-// the mutate path so a pending removal applies first.
-func (bc *bridgeCoordinator) NextUserRow(ctx context.Context, chatID marotte.ChatID) (marotte.QueuedPrompt, bool, error) {
+// NextUserRow answers the first unheld queued user row whose turn this process has not opened, among only when
+// non-nil, via the mutate path so a pending removal applies first.
+func (bc *bridgeCoordinator) NextUserRow(ctx context.Context, chatID marotte.ChatID, only []string) (marotte.QueuedPrompt, bool, error) {
 	var row marotte.QueuedPrompt
 	found := false
 	_, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
@@ -57,7 +79,7 @@ func (bc *bridgeCoordinator) NextUserRow(ctx context.Context, chatID marotte.Cha
 		}
 		for i := range c.QueuedPrompts {
 			q := &c.QueuedPrompts[i]
-			if !q.Held && !q.Carried() && !bc.chatStore.Opened(chatID, q.ID) {
+			if !q.Held && !q.Carried() && !bc.chatStore.Opened(chatID, q.ID) && (only == nil || slices.Contains(only, q.ID)) {
 				row, found = *q, true
 				break
 			}

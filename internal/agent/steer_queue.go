@@ -267,7 +267,7 @@ func (rec *steerRecord) beginRemoveLocked(key, opID string, fx *steerFx) (needsC
 		if len(rec.others) > 0 {
 			return false, command.SteerRefuseAgentRows
 		}
-		if rec.channel == chanNone && rec.starting != "" {
+		if rec.readingStarted() {
 			return false, command.SteerRefuseStarting
 		}
 		rec.mark(opID, key)
@@ -457,7 +457,7 @@ func (q steerQueue) BeginDiscard(chatID marotte.ChatID, opID string) (needsClear
 	q.do(chatID, func(rec *steerRecord, fx *steerFx) {
 		userInKAS := false
 		rec.live(func(w *dockRow) { userInKAS = userInKAS || w.state.inKAS() })
-		if rec.channel == chanNone && rec.starting != "" && userInKAS {
+		if rec.readingStarted() && userInKAS {
 			refuse = command.SteerRefuseStarting
 			return
 		}

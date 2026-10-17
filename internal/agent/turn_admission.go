@@ -250,21 +250,21 @@ func (r *turnRegistry) noteKASActivity(chatID marotte.ChatID, active bool) {
 	}
 }
 
-// kasHoldWarnAfter is when a KAS hold still waiting is logged. Only KAS's state ends a hold, never elapsed time: a
-// send beside a still-running execution is the loss the hold prevents, while a refused prompt hands its text back.
+// kasHoldWarnAfter is when a KAS hold still waiting is logged. Elapsed time never ends a hold (KAS's idle report,
+// the session ending or shutdown do): a send beside a still-running execution is the loss the hold prevents, while a
+// refused prompt hands its text back.
 const kasHoldWarnAfter = 15 * time.Minute
 
 // awaitKASIdle waits, after marotte's cancel grace closed the fenced turn, until KAS reports no execution for the
 // session (its activity report, or the forward attaching or exiting), so the next send is not queued beside the
 // cancelled one or KAS's re-wake of the notifications the cancel cleared, where KAS streams only one of them (its
 // adapter owns the last execution). False when a turn opened meanwhile, whose own close drains, when a teardown
-// re-fenced the chat, or when ctx ended. Every exit ends the KAS hold the fenced turn started.
+// re-fenced the chat, or when ctx ended. It ends no hold: the caller does (endIdleKASHold, endKASHold).
 func (r *turnRegistry) awaitKASIdle(ctx context.Context, chatID marotte.ChatID, fence command.TurnFence) bool {
 	lc, ok := r.lookup(chatID)
 	if !ok {
 		return false
 	}
-	defer lc.endKASHold(fence.Seq)
 	warn := time.NewTimer(kasHoldWarnAfter)
 	defer warn.Stop()
 	for {
@@ -290,11 +290,37 @@ func (r *turnRegistry) awaitKASIdle(ctx context.Context, chatID marotte.ChatID, 
 }
 
 // endKASHold ends the hold the turn at seq started, waking the reservations it refused; a later turn's hold stays.
-func (lc *chatLifecycle) endKASHold(seq uint64) {
+func (r *turnRegistry) endKASHold(chatID marotte.ChatID, seq uint64) {
+	if lc, ok := r.lookup(chatID); ok {
+		lc.mu.Lock()
+		lc.endKASHoldLocked(seq)
+		lc.mu.Unlock()
+	}
+}
+
+// endIdleKASHold ends the hold the turn at seq started only while KAS still reports the session idle, answering the
+// rows queued under it; false when KAS reported a run again, so the caller waits once more.
+func (r *turnRegistry) endIdleKASHold(chatID marotte.ChatID, seq uint64) (rows []string, ended bool) {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return nil, true
+	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
+	if lc.kasActive && lc.kasHoldSeq == seq {
+		return nil, false
+	}
 	if lc.kasHoldSeq == seq {
-		lc.kasHoldSeq = 0
+		rows = lc.kasHoldRows
+	}
+	lc.endKASHoldLocked(seq)
+	return rows, true
+}
+
+// Caller holds mu.
+func (lc *chatLifecycle) endKASHoldLocked(seq uint64) {
+	if lc.kasHoldSeq == seq {
+		lc.kasHoldSeq, lc.kasHoldRows = 0, nil
 		lc.wakeLocked()
 	}
 }

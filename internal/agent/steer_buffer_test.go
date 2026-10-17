@@ -1642,3 +1642,26 @@ func TestSteerRecords_ReinjectedRowsAwaitAPromptUntilThePostLoadClear(t *testing
 		t.Errorf("UnsentRows = %+v, want steer-a for the next close", rows)
 	}
 }
+
+// The recorded shape of c-a820's n=745: KAS queued the prompt's execution behind another session's turn, and the
+// user's steer "?" sent meanwhile was refused deletion as "starting to read". KAS's queued report is wire proof the
+// execution has not begun, so the delete goes ahead; a turn KAS did not report queued is still refused.
+func TestSteerRecords_ADeleteWhileKASQueuesTheStartingTurnGoesAhead(t *testing.T) {
+	s := newSteerHarness(t)
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
+	s.h.stagePromptTurn(t, s.chat)
+	sends, _ := s.q.RouteSteer(s.chat, "steer-m-mvcsj9b3", "?", promptHolder)
+	s.kas(sends)
+	if _, refuse := s.q.BeginRemove(s.chat, "steer-m-mvcsj9b3", "op-1"); refuse != command.SteerRefuseStarting {
+		t.Fatalf("Setup: before KAS's queued report BeginRemove = %q, want starting", refuse)
+	}
+
+	s.h.translateACPEvent(s.chat, s.h.originOf(s.chat), newSessionInfoMsg(map[string]any{
+		"kind": "queued", "activeSessionId": "sess_66362e75-badd-490c-ad48-593859625c29",
+	}))
+
+	needsClear, refuse := s.q.BeginRemove(s.chat, "steer-m-mvcsj9b3", "op-2")
+	if refuse != "" || !needsClear {
+		t.Errorf("BeginRemove while KAS queues the turn = %v %q, want a clear and resubmit", needsClear, refuse)
+	}
+}
