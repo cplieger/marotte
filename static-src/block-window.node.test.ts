@@ -47,8 +47,15 @@ function entry(
   return opts.lane === undefined ? base : Object.assign(base, { lane: opts.lane });
 }
 
+/** A text entry as a `#k` segment of ONE say, so adjacent ones are one message (`MessageRun`). */
 function text(seq: number, lane?: string): Entry {
-  return entry(seq, "text", { text: `p${String(seq)}` }, lane === undefined ? {} : { lane });
+  const id = `say#${String(seq)}`;
+  return entry(
+    seq,
+    "text",
+    { text: `p${String(seq)}` },
+    lane === undefined ? { id } : { id, lane },
+  );
 }
 
 function call(
@@ -496,6 +503,63 @@ describe("proseRunAt", () => {
       text(3),
     ]);
     expect(proseRunAt(bound, 1, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+  });
+
+  it("ends a run where the next text is ANOTHER message, with nothing drawn between", () => {
+    // Two says are two KAS messages: a reply, then the reply a notification woke the agent for.
+    const t = turn("t1", [
+      entry(1, "text", { text: "first reply." }, { id: "a-say" }),
+      entry(2, "text", { text: "second reply." }, { id: "b-say" }),
+    ]);
+    expect(proseRunAt(t, 1, "", NO_FOLDS)).toEqual({ from: 1, to: 2 });
+    expect(proseRunAt(t, 2, "", NO_FOLDS)).toEqual({ from: 2, to: 3 });
+    expect(sliceTurn(t, { from: 2, to: 3 })).toEqual({ from: 2, to: 3 });
+  });
+
+  it("keeps one message's `#k` segments one run across an entry that renders nothing", () => {
+    const t = turn("t1", [
+      entry(1, "text", { text: "one **tw" }, { id: "a-say" }),
+      entry(2, "tool_result", {}, { id: "c0:result" }),
+      entry(3, "text", { text: "o**" }, { id: "a-say#2" }),
+      entry(4, "text", { text: "next" }, { id: "b-say" }),
+    ]);
+    expect(proseRunAt(t, 3, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+    expect(proseRunAt(t, 4, "", NO_FOLDS)).toEqual({ from: 4, to: 5 });
+  });
+
+  it("joins a text under a MINTED say to its neighbour, since a minted id ends no message", () => {
+    // turnlog mints `<turn>:e<k>` for id-less deltas; such an id says nothing about where a message ends.
+    const t = turn("t1", [
+      entry(1, "text", { text: "one " }, { id: "a-say" }),
+      entry(2, "tool_result", {}, { id: "c0:result" }),
+      entry(3, "text", { text: "two" }, { id: "t1:e4" }),
+    ]);
+    expect(proseRunAt(t, 3, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+  });
+
+  it("never lets a MINTED segment bridge two named messages", () => {
+    // A minted segment joins the run before it; the named say after it is still another message.
+    const t = turn("t1", [
+      entry(1, "text", { text: "first reply." }, { id: "a-say" }),
+      entry(2, "tool_result", {}, { id: "c0:result" }),
+      entry(3, "text", { text: " more" }, { id: "t1:e4" }),
+      entry(4, "text", { text: "second reply." }, { id: "b-say" }),
+    ]);
+    expect(proseRunAt(t, 1, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+    expect(proseRunAt(t, 3, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+    expect(proseRunAt(t, 4, "", NO_FOLDS)).toEqual({ from: 4, to: 5 });
+    expect(sliceTurn(t, { from: 3, to: 4 })).toEqual({ from: 1, to: 4 });
+    expect(sliceTurn(t, { from: 4, to: 5 })).toEqual({ from: 4, to: 5 });
+  });
+
+  it("lets a run that opens on a MINTED segment take the first named say after it", () => {
+    const t = turn("t1", [
+      entry(1, "text", { text: "lead " }, { id: "t1:e1" }),
+      entry(2, "text", { text: "first reply." }, { id: "a-say" }),
+      entry(3, "text", { text: "second reply." }, { id: "b-say" }),
+    ]);
+    expect(proseRunAt(t, 1, "", NO_FOLDS)).toEqual({ from: 1, to: 3 });
+    expect(proseRunAt(t, 3, "", NO_FOLDS)).toEqual({ from: 3, to: 4 });
   });
 });
 

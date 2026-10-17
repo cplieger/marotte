@@ -141,7 +141,8 @@ let seq = 0;
 
 function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknown): Entry {
   return {
-    id: `${turnID}-e${String(at)}`,
+    // A text entry is a `#k` segment of the turn's one say, so the paragraphs are one message.
+    id: kind === "text" ? `${turnID}-say#${String(at)}` : `${turnID}-e${String(at)}`,
     turn: turnID,
     lane: "",
     kind,
@@ -152,7 +153,7 @@ function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknow
 }
 
 /** One prompt-opened turn: its `turn_open` header, `BLOCKS` paragraphs of prose, and its close.
- *  Consecutive `text` entries of one lane are ONE prose run, so the paragraphs land in a single
+ *  Consecutive `text` entries of one message are ONE prose run, so the paragraphs land in a single
  *  bubble — the same wrapped-text volume per card the loop is measured over. */
 function turnEntries(t: number): Entry[] {
   const id = `t${String(t)}`;

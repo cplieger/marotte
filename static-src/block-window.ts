@@ -1,7 +1,7 @@
 // Residency: which ENTRIES a paint may mount, one contiguous window of a turn's `seq` space
 // grown around the reader's position. Pure and DOM-free; which turns is the caller's policy.
 
-import { toolResultID } from "./entry-ids.js";
+import { MessageRun, toolResultID } from "./entry-ids.js";
 import { isInternalToolTitle } from "./tool-schema.js";
 import type { Entry } from "./types.js";
 import { isSubagentFallback, payloadOf, type Turn } from "./turns.js";
@@ -317,7 +317,10 @@ export function sliceTurn(
     return { from, to };
   }
   const f = folds ?? turnFolds(t, lane);
-  return { from: runStart(t, from, lane, f), to: runEnd(t, to - 1, lane, f) + 1 };
+  return {
+    from: runBounds(t, from, lane, f)?.from ?? from,
+    to: runBounds(t, to - 1, lane, f)?.to ?? to,
+  };
 }
 
 /**
@@ -330,10 +333,25 @@ export function proseRunAt(
   lane: string,
   folds: TurnFolds,
 ): EntryRange | null {
-  if (!inProseRun(t, seq, lane, folds)) {
-    return null;
+  return runBounds(t, seq, lane, folds);
+}
+
+/** Whether `e`, a text entry following the run `run`, continues its message: where `proseRunAt` places it sealed. */
+export function continuesRun(
+  t: Turn,
+  run: EntryRange,
+  e: { readonly id: string; readonly turn: string },
+  lane: string,
+  folds: TurnFolds,
+): boolean {
+  const msg = new MessageRun();
+  for (let seq = run.from; seq < run.to; seq++) {
+    const m = entryAt(t, seq);
+    if (m !== undefined && inProseRun(t, seq, lane, folds)) {
+      msg.take(m);
+    }
   }
-  return { from: runStart(t, seq, lane, folds), to: runEnd(t, seq, lane, folds) + 1 };
+  return msg.take(e);
 }
 
 /** Whether `seq` is a `text` entry this view draws — a prose run's member. */
@@ -342,46 +360,53 @@ function inProseRun(t: Turn, seq: number, lane: string, folds: TurnFolds): boole
   return e?.kind === "text" && entryRenders(e, lane, folds);
 }
 
-/** The first `seq` of the prose run `seq` sits in, or `seq` when it is not in one. An entry
- *  that renders nothing does not break a run, so the walk steps over it. */
-function runStart(t: Turn, seq: number, lane: string, folds: TurnFolds): number {
+/**
+ * The run `seq` sits in, from its first text member to past its last, or null when `seq` is not prose. Runs
+ * partition a STRETCH (text entries with nothing drawn between them) by `MessageRun`, fed from the stretch's
+ * start, so every caller sees one partition whichever member it asks from.
+ */
+function runBounds(t: Turn, seq: number, lane: string, folds: TurnFolds): EntryRange | null {
   if (!inProseRun(t, seq, lane, folds)) {
-    return seq;
+    return null;
   }
-  let first = seq;
+  let start = seq;
   for (let i = seq - 1; i > 0; i--) {
     const e = entryAt(t, i);
     if (e === undefined) {
       break;
     }
     if (inProseRun(t, i, lane, folds)) {
-      first = i;
+      start = i;
     } else if (entryRenders(e, lane, folds)) {
       break;
     }
   }
-  return first;
-}
-
-/** The last `seq` of the prose run `seq` sits in, or `seq` when it is not in one. */
-function runEnd(t: Turn, seq: number, lane: string, folds: TurnFolds): number {
-  if (!inProseRun(t, seq, lane, folds)) {
-    return seq;
-  }
-  let last = seq;
+  let run = new MessageRun();
+  let from = start;
+  let last = start;
   const span = turnSpan(t);
-  for (let i = seq + 1; i < span; i++) {
+  for (let i = start; i < span; i++) {
     const e = entryAt(t, i);
     if (e === undefined) {
       break;
     }
-    if (inProseRun(t, i, lane, folds)) {
-      last = i;
-    } else if (entryRenders(e, lane, folds)) {
-      break;
+    if (!inProseRun(t, i, lane, folds)) {
+      if (entryRenders(e, lane, folds)) {
+        break;
+      }
+      continue;
     }
+    if (!run.take(e)) {
+      if (i > seq) {
+        break;
+      }
+      run = new MessageRun();
+      run.take(e);
+      from = i;
+    }
+    last = i;
   }
-  return last;
+  return { from, to: last + 1 };
 }
 
 /**

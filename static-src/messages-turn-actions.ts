@@ -6,6 +6,7 @@
 import type { Turn } from "./turns.js";
 import { payloadOf } from "./turns.js";
 import { entryRenders, turnFolds } from "./block-window.js";
+import { MessageRun } from "./entry-ids.js";
 import { ICON_COPY, ICON_COPY_MD, ICON_LINK } from "./icons.js";
 import { getActiveId } from "./store.js";
 import { copyClipboard } from "./actions/messages.js";
@@ -233,18 +234,24 @@ function turnCopyMarkdown(t: Turn): string {
 }
 
 /**
- * The reply's markdown, one paragraph per prose run. A run's `text` entries concatenate since one parser renders
- * them; `entryRenders` is the boundary test.
+ * The reply's markdown, one paragraph per prose run and per `steer_ack`, as the body draws a bubble for each. A run's
+ * `text` entries concatenate since one parser renders them; `entryRenders` and `MessageRun` are the boundary tests,
+ * as `proseRunAt`'s.
  */
 export function turnMarkdown(t: Turn): string {
   const parts: string[] = [];
   let run = "";
+  let msg = new MessageRun();
   const folds = turnFolds(t, "");
-  const flush = (): void => {
-    if (run.trim() !== "") {
-      parts.push(run);
+  const push = (s: string): void => {
+    if (s.trim() !== "") {
+      parts.push(s);
     }
+  };
+  const flush = (): void => {
+    push(run);
     run = "";
+    msg = new MessageRun();
   };
   for (const e of t.body) {
     if (!entryRenders(e, "", folds)) {
@@ -253,7 +260,12 @@ export function turnMarkdown(t: Turn): string {
     const text = payloadOf(e, "text");
     if (text === undefined) {
       flush();
+      push(payloadOf(e, "steer_ack")?.text ?? "");
       continue;
+    }
+    if (!msg.take(e)) {
+      flush();
+      msg.take(e);
     }
     run += text.text;
   }

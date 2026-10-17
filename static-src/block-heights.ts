@@ -247,7 +247,8 @@ function* spacerBoxes(
   const folds = turnFolds(t, lane);
   const per = entryHeights.get(t.id);
   const rows = rowHeights.get(t.id);
-  let inRun = false;
+  // The exclusive end of the run being priced: its later members share its box.
+  let runTo = -1;
   for (let seq = stood.from; seq < stood.to; seq++) {
     const e = entryAt(t, seq);
     if (e === undefined || !entryRenders(e, lane, folds)) {
@@ -255,18 +256,17 @@ function* spacerBoxes(
     }
     let own: number;
     if (e.kind === "text") {
-      if (inRun) {
+      if (seq < runTo) {
         continue;
       }
-      inRun = true;
       const run = sliceTurn(t, { from: seq, to: seq + 1 }, lane, folds);
+      runTo = run.to;
       const measured = rows?.get(seq);
       own =
         measured?.range.from === run.from && measured.range.to === run.to
           ? measured.px
           : estimateOf(e, est, results);
     } else {
-      inRun = false;
       own = per?.get(seq) ?? estimateOf(e, est, results);
     }
     if (own > 0) {

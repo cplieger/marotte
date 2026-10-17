@@ -94,8 +94,10 @@ function sealed(
   };
 }
 
+/** A text entry as a `#k` segment of the turn's ONE say, so adjacent ones are one message (`MessageRun`). */
 function text(turnID: string, seq: number, s: string, lane?: string): Entry {
-  return sealed(turnID, seq, "text", { text: s }, lane === undefined ? {} : { lane });
+  const id = `${turnID}-say#${String(seq)}`;
+  return sealed(turnID, seq, "text", { text: s }, lane === undefined ? { id } : { id, lane });
 }
 
 function thinking(turnID: string, seq: number, s: string, lane?: string): Entry {
@@ -194,8 +196,13 @@ function retarget(entries: Entry[], turnID: string): Entry[] {
   return entries.map((e) => ({
     ...e,
     turn: turnID,
-    id: e.id.startsWith("t-") ? turnID + e.id.slice(1) : e.id,
+    id: placeholderID(e.id, turnID),
   }));
+}
+
+/** `id` with its `t` turn placeholder (`t-…`, or a minted `t:e<k>`) replaced by `turnID`. */
+function placeholderID(id: string, turnID: string): string {
+  return id.startsWith("t-") || id.startsWith("t:") ? turnID + id.slice(1) : id;
 }
 
 /** Build one turn's body from `entries`; a fresh turn id per call, so renders never share a slot. */
@@ -486,10 +493,22 @@ describe("sealing is invisible: the prose run", () => {
     expect(rows[0]?.textContent).toContain("one two three");
   });
 
+  it("never lets a MINTED segment bridge two named messages on a replay", () => {
+    const r = render([
+      sealed("t", 1, "text", { text: "first reply." }, { id: "a-say" }),
+      sealed("t", 2, "text", { text: " more" }, { id: "t:e2" }),
+      sealed("t", 3, "text", { text: "second reply." }, { id: "b-say" }),
+    ]);
+    const rows = [...r.body.querySelectorAll<HTMLElement>(".msg-row")];
+    expect(rows.map((row) => row.dataset["entries"])).toEqual([`a-say ${r.turnID}:e2`, "b-say"]);
+    expect(rows[0]?.textContent).toContain("first reply. more");
+    expect(rows[1]?.textContent).not.toContain("first reply");
+  });
+
   it("names its members on the row, in stream order", () => {
     const r = render([text("t", 1, "a"), text("t", 2, "b")]);
     const row = r.body.querySelector(".msg-row") as HTMLElement;
-    expect(row.dataset["entries"]).toBe(`${r.turnID}-e1 ${r.turnID}-e2`);
+    expect(row.dataset["entries"]).toBe(`${r.turnID}-say#1 ${r.turnID}-say#2`);
   });
 
   it("ends the run at an entry that RENDERS, and opens a new one after it", () => {
@@ -609,7 +628,11 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
   function renderLive(entries: Entry[], open: OpenEntry[]): Render {
     const turnID = nextTurnID();
     const turn = turnOf(turnID, retarget(entries, turnID), {
-      open: open.map((o) => ({ ...o, turn: turnID })),
+      open: open.map((o) => ({
+        ...o,
+        turn: turnID,
+        id: placeholderID(o.id, turnID),
+      })),
     });
     const body = bodyHost();
     buildAssistantBody(body, turn, CHAT_ID, true);
@@ -618,10 +641,48 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
 
   // A live bubble's text arrives over frames, so these cases assert run membership, not painted words.
   it("joins the run its lane's tail sits in", () => {
-    const r = renderLive([text("t", 1, "sealed ")], [openText("t", "open-1", "growing")]);
+    const r = renderLive([text("t", 1, "sealed ")], [openText("t", "t-say#2", "growing")]);
     const rows = r.body.querySelectorAll(".msg-row");
     expect(rows).toHaveLength(1);
-    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-e1 open-1`);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-say#1 ${r.turnID}-say#2`);
+  });
+
+  it("mounts a run of its OWN when the open entry is ANOTHER message, and moves the caret", () => {
+    const r = renderLive([text("t", 1, "first reply.")], [openText("t", "b-say", "second")]);
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(2);
+    expect((rows[1] as HTMLElement).dataset["entries"]).toBe("b-say");
+    const carets = r.body.querySelectorAll(".message.assistant.streaming");
+    expect(carets).toHaveLength(1);
+    expect(carets[0]?.closest(".msg-row")).toBe(rows[1]);
+  });
+
+  it("mounts a run of its OWN for another message after a MINTED segment, and moves the caret", () => {
+    // The minted segment rides the named say before it; it never bridges that say to the open one.
+    const r = renderLive(
+      [
+        sealed("t", 1, "text", { text: "first reply." }, { id: "a-say" }),
+        sealed("t", 2, "text", { text: " more" }, { id: "t:e2" }),
+      ],
+      [openText("t", "b-say", "second")],
+    );
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(2);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`a-say ${r.turnID}:e2`);
+    expect((rows[1] as HTMLElement).dataset["entries"]).toBe("b-say");
+    const carets = r.body.querySelectorAll(".message.assistant.streaming");
+    expect(carets).toHaveLength(1);
+    expect(carets[0]?.closest(".msg-row")).toBe(rows[1]);
+  });
+
+  it("joins a MINTED open entry to the named run before it", () => {
+    const r = renderLive(
+      [sealed("t", 1, "text", { text: "first reply." }, { id: "a-say" })],
+      [openText("t", "t:e2", " more")],
+    );
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`a-say ${r.turnID}:e2`);
   });
 
   it("mounts a run of its OWN when the lane's tail is not prose", () => {
@@ -638,12 +699,12 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
   it("carries the caret on the open run alone", () => {
     const r = renderLive(
       [text("t", 1, "one"), callEntry("t", 2, toolCall("tool-a")), text("t", 3, "two")],
-      [openText("t", "open-1", "three")],
+      [openText("t", "t-say#4", "three")],
     );
     const carets = r.body.querySelectorAll(".message.assistant.streaming");
     expect(carets).toHaveLength(1);
     const row = carets[0]?.closest(".msg-row") as HTMLElement;
-    expect(row.dataset["entries"]).toBe(`${r.turnID}-e3 open-1`);
+    expect(row.dataset["entries"]).toBe(`${r.turnID}-say#3 ${r.turnID}-say#4`);
   });
 
   it("opens no caret on a REPLAY", () => {
@@ -673,7 +734,7 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
     const rows = r.body.querySelectorAll(".msg-row");
     expect(rows).toHaveLength(1);
     // Membership, not painted words: a text assertion would pass whether or not the tail had mounted.
-    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-e1`);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-say#1`);
   });
 });
 
@@ -932,7 +993,7 @@ describe("a body mounts an entry RANGE, and the grouping is derived", () => {
     const r = renderWindow(sixCalls(), { from: 5, to: 7 });
     const rows = r.body.querySelectorAll(".msg-row");
     expect(rows).toHaveLength(1);
-    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-e5 ${r.turnID}-e6`);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-say#5 ${r.turnID}-say#6`);
   });
 
   it("leaves a run's row to its HEAD's own drop", () => {

@@ -380,8 +380,8 @@ describe("an entry arriving mid-stream does not cut the stream", () => {
     expect(streamingRows()).toEqual([]);
   });
 
-  it("splits an open reply off its run's sealed member at a step message, as the reload draws it", async () => {
-    // Two says back to back share one bubble; the card ends that run on reload, so it must live too.
+  it("keeps an open reply apart from the message before it across a step message, as the reload draws it", async () => {
+    // Two says back to back are two messages, so two bubbles; the card lands between them live and on reload.
     const chat = "mto-run-card";
     const first = sealed(1, "text", { text: "Done with the first part. " }, "say-0");
     store.setSessions([session(chat)]);
@@ -391,10 +391,10 @@ describe("an entry arriving mid-stream does not cut the stream", () => {
     store.sealEntry(chat, TURN, "say-0", "", 1, 2, 1);
     store.openEntry(chat, open("say-1", "Next I"));
     await vi.waitFor(() => {
-      expect(bodyRows()).toEqual(["say-0"]);
-      expect(viewRoot().querySelector(".turn-body .message.assistant")?.textContent).toContain(
-        "Next",
-      );
+      expect(bodyRows()).toEqual(["say-0", "open"]);
+      expect(
+        viewRoot().querySelectorAll(".turn-body .message.assistant")[1]?.textContent,
+      ).toContain("Next");
     });
 
     interject(chat, { ...STEP_MESSAGE, seq: 2 }, 2);
