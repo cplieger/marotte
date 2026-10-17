@@ -111,8 +111,8 @@ func (o *engineOwner) observe(
 
 // closePass ends a pass's session, best effort. A refused close leaves it live in KAS and on its lane, so the session
 // is deleted on the engine, which KAS refuses only for a session owning a live workflow (a pass never does), and
-// closed again, which KAS answers {} for a session it no longer holds. A delete or second close that still fails is
-// logged at WARN and leaves the session open until the engine ends.
+// closed again, which KAS answers {} for a session it no longer holds. A failed delete leaves the refused session open
+// until the engine ends; the second close settles as Session.Close does. Either failure is logged at WARN.
 func (o *engineOwner) closePass(ctx context.Context, s engineSession) {
 	err := s.Close(ctx)
 	if _, refused := errors.AsType[*marotte.RPCError](err); refused {

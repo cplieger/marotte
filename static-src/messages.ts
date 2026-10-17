@@ -1046,7 +1046,6 @@ function mountLiveEdge(): void {
   windowPass("live-edge");
 }
 
-/** What asked for a window pass: a settled scroll frame, a body build settling, or a live-edge request. */
 type PassTrigger = "scroll" | "settle" | "live-edge";
 
 /**
@@ -1569,7 +1568,6 @@ function setCardFolded(card: HTMLElement, folded: boolean): void {
   setCardsFolded([{ card, folded }]);
 }
 
-/** Fold or unfold every card, their slides measured together (`slideTurnFolds`). */
 function setCardsFolded(items: readonly { card: HTMLElement; folded: boolean }[]): void {
   const slides: TurnFold[] = [];
   for (const { card, folded } of items) {
