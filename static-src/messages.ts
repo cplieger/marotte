@@ -62,11 +62,10 @@ import {
   turnCloseOf,
   turnLedger,
   turnAnchorID,
-  turnFaceProse,
   turnFailureText,
-  turnFoldHides,
   type Turn,
 } from "./turns.js";
+import { turnFaceProse, turnFoldHides } from "./turn-face.js";
 import { severityOf } from "./turn-severity.js";
 import { ICON_REWIND } from "./icons.js";
 import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
