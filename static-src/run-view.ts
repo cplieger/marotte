@@ -29,7 +29,7 @@ import { get } from "./store.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight, neverRan, settled } from "./exec-view/status.js";
 import { flatten, workNodes, type ExecNode } from "./exec-view/model.js";
-import { runToExec } from "./run-exec-source.js";
+import { runToExec, type StepEnds } from "./run-exec-source.js";
 import { lastPrintedLine } from "./run-step-tail.js";
 import type { RunStepPaint, RunStepStream } from "./run-chat-steps.js";
 import {
@@ -51,8 +51,9 @@ import {
   runTurns,
   type RunState,
 } from "./run-store.js";
-import { projectTurn, turnOpenOf, type TurnSource } from "./turns.js";
+import { payloadOf, projectTurn, turnOpenOf, type TurnSource } from "./turns.js";
 import type { TurnState } from "./types.js";
+import type { EntryTurnClose, RunStepEnd } from "./wire/types.gen.js";
 import { refreshRunDots, trackRun } from "./run-dots.js";
 import { buildPath } from "./route-path.js";
 import { iconEl } from "./icon-el.js";
@@ -436,6 +437,61 @@ function turnsForStep(
   nodePath: string,
 ): [string, TurnState][] {
   return turns.filter(([, t]) => turnOpenOf(t)?.node_path === nodePath);
+}
+
+/** The turns with each step's newest closed turn reading its `step_ends` row, the server's grade
+ *  under KAS's record of the node. A live `turn_close` cannot carry that grade: it is sealed
+ *  before the server reads KAS's record, and a later read of the same entry is a redelivery. */
+function gradedTurns(
+  turns: readonly [string, TurnState][],
+  ends: StepEnds,
+): readonly [string, TurnState][] {
+  if (ends.size === 0) {
+    return turns;
+  }
+  const newest = new Map<string, number>();
+  turns.forEach(([, t], i) => {
+    const path = turnOpenOf(t)?.node_path;
+    if (path !== undefined && t.closeAt !== undefined && ends.has(path)) {
+      newest.set(path, i);
+    }
+  });
+  const out = [...turns];
+  for (const [path, i] of newest) {
+    const pair = out[i];
+    const end = ends.get(path);
+    if (pair !== undefined && end !== undefined) {
+      out[i] = [pair[0], withStepEnd(pair[1], end)];
+    }
+  }
+  return out;
+}
+
+/** One closed turn whose `turn_close` reads `end`; the same state when it already does. */
+function withStepEnd(state: TurnState, end: RunStepEnd): TurnState {
+  const at = state.closeAt;
+  const entry = at === undefined ? undefined : state.entries[at];
+  const close = entry === undefined ? undefined : payloadOf(entry, "turn_close");
+  if (at === undefined || entry === undefined || close === undefined) {
+    return state;
+  }
+  if (
+    close.outcome === end.outcome &&
+    close.failure_kind === end.failure_kind &&
+    close.failure_reason === end.failure_reason
+  ) {
+    return state;
+  }
+  const { failure_kind: _kind, failure_reason: _reason, ...rest } = close;
+  const graded: EntryTurnClose = {
+    ...rest,
+    outcome: end.outcome,
+    ...(end.failure_kind === undefined ? {} : { failure_kind: end.failure_kind }),
+    ...(end.failure_reason === undefined ? {} : { failure_reason: end.failure_reason }),
+  };
+  const entries = [...state.entries];
+  entries[at] = { ...entry, payload: graded };
+  return { ...state, entries };
 }
 
 /** Whether a step turn may still grow: its OWN `turn_close` is absent. Never the run's status,
@@ -853,7 +909,7 @@ function projectStepTranscripts(
   nodes: readonly ExecNode[],
   turns: readonly [string, TurnState][],
 ): void {
-  const paints = leafPaints(nodes, turns);
+  const paints = leafPaints(nodes, turns, runStepEnds(workflowID));
   if (paints.size === 0) {
     return;
   }
@@ -880,7 +936,7 @@ function projectStepTranscripts(
       // RE-PROJECTED rather than replayed: the load is async, so the log may have grown past what
       // was captured and the stale map would leave the tail to the next repaint. Outside the view
       // effect, so `runTurns`' own touch registers nothing.
-      stream.apply(leafPaints(nodes, runTurns(workflowID)));
+      stream.apply(leafPaints(nodes, runTurns(workflowID), runStepEnds(workflowID)));
     })
     .catch(() => {
       // The step transcript is an enhancement over a page already rendering the plan,
@@ -893,8 +949,10 @@ function projectStepTranscripts(
 
 function leafPaints(
   nodes: readonly ExecNode[],
-  turns: readonly [string, TurnState][],
+  logged: readonly [string, TurnState][],
+  ends: StepEnds,
 ): Map<string, RunStepPaint[]> {
+  const turns = gradedTurns(logged, ends);
   const src = runSource(turns);
   const out = new Map<string, RunStepPaint[]>();
   for (const node of workNodes(nodes)) {

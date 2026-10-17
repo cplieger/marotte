@@ -61,7 +61,7 @@
       "reason": "",
       "label": "Workflow result",
       "sites": [
-        "internal/agent/run_appender.go:102",
+        "internal/agent/run_appender.go:119",
         "internal/agent/run_bounds.go:412",
         "internal/agent/run_plan.go:116",
         "internal/translate/steering.go:117",
@@ -184,7 +184,7 @@
       "reason": "",
       "label": "Mid-turn message",
       "sites": [
-        "internal/agent/run_appender.go:219",
+        "internal/agent/run_appender.go:236",
         "internal/agent/run_message.go:491",
         "internal/translate/steering.go:117",
         "internal/translate/steering.go:213",
@@ -225,14 +225,14 @@
       "reason": "restart"
     },
     {
-      "site": "internal/agent/run_appender.go:102",
+      "site": "internal/agent/run_appender.go:119",
       "form": "literal",
       "origin": "agent",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/agent/run_appender.go:219",
+      "site": "internal/agent/run_appender.go:236",
       "form": "literal",
       "origin": "user",
       "state": "read",

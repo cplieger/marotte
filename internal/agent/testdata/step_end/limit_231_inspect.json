@@ -1,0 +1,40 @@
+{
+  "workflowId": "wf_42066808f4c28538",
+  "state": {
+    "workflowId": "wf_42066808f4c28538",
+    "workflowName": "one-engine-build",
+    "status": "running",
+    "root": {
+      "nodeId": "wf_42066808f4c28538",
+      "type": "sequence",
+      "status": "running",
+      "children": [
+        {
+          "nodeId": "p2-loop",
+          "type": "repeat",
+          "status": "completed",
+          "children": [
+            {
+              "nodeId": "p2-loop#0",
+              "type": "sequence",
+              "status": "completed",
+              "iteration": 0,
+              "children": [
+                {
+                  "nodeId": "p2-build",
+                  "type": "step",
+                  "status": "completed",
+                  "agentName": "wf-coder",
+                  "sessionId": "sess_f269cde4-db44-4dd4-aeb2-c2d3cae6cbcb",
+                  "startedAt": "2026-10-15T15:50:44.888Z",
+                  "endedAt": "2026-10-15T17:09:57.647Z",
+                  "iteration": 0
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

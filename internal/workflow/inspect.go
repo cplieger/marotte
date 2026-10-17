@@ -56,10 +56,12 @@ func pendingCount(raw json.RawMessage) int {
 }
 
 const (
-	statusRunning = "running"
-	statusPaused  = "paused"
+	statusRunning   = "running"
+	statusPaused    = "paused"
+	statusCompleted = "completed"
 	// needInput is KAS's completionSignal for a step waiting on a person.
-	needInput = "need_input"
+	needInput     = "need_input"
+	signalSuccess = "success"
 )
 
 // visit is one node of a state tree with its wire path.
@@ -68,7 +70,8 @@ type visit struct {
 	path []string
 }
 
-// nodes walks every node of a run's tree in pre-order, the order Steps uses.
+// nodes walks every node of a run's tree in pre-order. Each path is a fresh slice: appending onto
+// trail would let siblings share its spare capacity and overwrite each other's last segment.
 func nodes(s *State) []visit {
 	if s == nil || s.Root == nil {
 		return nil
@@ -85,6 +88,39 @@ func nodes(s *State) []visit {
 		}
 	}
 	walkAll(s.Root, nil, nil)
+	return out
+}
+
+// StepRecord is KAS's own record of how one step node stands: its status and completion signal, verbatim.
+type StepRecord struct {
+	Status string
+	// CompletionSignal is "" when the step signalled nothing.
+	CompletionSignal string
+}
+
+// Succeeded reports whether KAS completed the step on a success signal: a send_message success, or
+// update_workflow's recorded handoff (writeHandoffCompletion, kiro-cli 2.32.0).
+func (r StepRecord) Succeeded() bool {
+	return r.Status == statusCompleted && r.CompletionSignal == signalSuccess
+}
+
+// Completed reports whether KAS's node status is `completed`, signalled or not.
+func (r StepRecord) Completed() bool {
+	return r.Status == statusCompleted
+}
+
+// StepRecords indexes every step node of a run's tree by its PathKey; nil for a state with no tree.
+func StepRecords(s *State) map[string]StepRecord {
+	all := nodes(s)
+	if all == nil {
+		return nil
+	}
+	out := make(map[string]StepRecord)
+	for _, v := range all {
+		if v.n.Type == "step" {
+			out[PathKey(v.path)] = StepRecord{Status: v.n.Status, CompletionSignal: v.n.CompletionSignal}
+		}
+	}
 	return out
 }
 

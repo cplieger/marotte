@@ -2927,7 +2927,7 @@ export interface RunStartedPayload {
 /**
  * RunStepEnd is how a step's newest turn in the run's own log ended, under `step_ends` in GET /api/runs/{id}
  * keyed by node path, for a step whose turn closed broken. KAS grades a refused step, and one its iteration limit
- * stopped, `completed`, so its node status cannot say this.
+ * stopped, `completed`, so its node status cannot say this; a step KAS completed on a success signal has no row.
  */
 export interface RunStepEnd {
   outcome: TurnOutcome;

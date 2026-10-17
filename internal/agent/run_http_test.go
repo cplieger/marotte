@@ -68,12 +68,12 @@ func getRun(t *testing.T, h *Runtime, id string) (runReply, string) {
 	return out, rec.Body.String()
 }
 
-// TestHandleRun_CarriesTheRunsStepEnds pins `step_ends`: KAS grades a step its iteration limit stopped `completed`,
-// so only the run log's close can tell the reader the step did not finish.
+// TestHandleRun_CarriesTheRunsStepEnds pins `step_ends`: KAS grades a step its iteration limit stopped `completed`
+// with no signal, so only the run log's close can tell the reader the step did not finish.
 func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
 	t.Run("a step kiro-cli stopped is named with its reason", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
-		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+		br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, "wf_1", "build", "completed", ""))
 		h.runs.log = newRunLog(t.TempDir())
 		build := workflow.PathKey([]string{"wf_1", "build"})
 		if _, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf_1", NodePath: build}, "c1"); err != nil {
