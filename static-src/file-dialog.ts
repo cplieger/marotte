@@ -42,10 +42,7 @@ export function openFileDialog(trigger: Element, onPick: (files: FileList) => vo
       toast.error(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   });
-  input.addEventListener("cancel", (e) => {
-    // The platform's `cancel` bubbles (HTML "show the picker, if applicable"), and an enclosing
-    // modal <dialog> reads any `cancel` as Escape and closes.
-    e.stopPropagation();
+  input.addEventListener("cancel", () => {
     settle();
     // Worded for both causes: iOS also reports a failed hand-over (a Photos export error, a pick
     // with no usable file) as `cancel` (WebKit UIProcess/ios/forms/WKFileUploadPanel.mm _cancel).
