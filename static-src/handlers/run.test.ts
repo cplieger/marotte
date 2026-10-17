@@ -608,6 +608,22 @@ describe("a run's own log", () => {
     expect(invalidate).toHaveBeenLastCalledWith(RUN);
   });
 
+  it("refetches the run when a step's turn closes on a tool_use stop the server grades", () => {
+    // A completed close with a `tool_use` stop is the model-call limit only under KAS's record of
+    // the step, which the run read's `step_ends` carries.
+    send(
+      "turn_closed",
+      {
+        workflow_id: RUN,
+        entry: entry("turn_close", { outcome: "completed", stop_reason_raw: "tool_use" }, 2),
+      },
+      "",
+    );
+
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenLastCalledWith(RUN);
+  });
+
   it("leaves a frame carrying no workflow id to the chat's own handler", () => {
     // The other half of the partition, and the half that cannot be asserted from the
     // chat handler's suite: this module has to do NOTHING for a chat's log, or one frame

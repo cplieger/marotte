@@ -98,7 +98,7 @@ func TestRunPlanUpdate_TheReplayedFrameKeepsTheStampedStep(t *testing.T) {
 
 func TestRunPlanUpdate_ARejectionTellsTheLaunchingChat(t *testing.T) {
 	const chatID = marotte.ChatID("c1")
-	h, cs := runLoggingHub(t)
+	h, cs, _ := runLoggingHub(t)
 	seedChat(t, cs, chatID)
 
 	h.runs.RunPlanUpdate(t.Context(), chatID, "wf_1", marotte.RunPlanUpdate{Outcome: marotte.RunPlanQueued, Pending: 1})
