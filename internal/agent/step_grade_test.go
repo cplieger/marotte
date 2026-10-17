@@ -147,12 +147,17 @@ func newestCloseOf(t *testing.T, h *Runtime, workflowID, nodePath string) marott
 	if err != nil {
 		t.Fatalf("step transcript: %v", err)
 	}
-	for _, e := range slices.Backward(out.Entries) {
+	return newestClose(t, out.Entries)
+}
+
+func newestClose(t *testing.T, entries []marotte.Entry) marotte.EntryTurnClose {
+	t.Helper()
+	for _, e := range slices.Backward(entries) {
 		if e.Kind == marotte.EntryKindTurnClose {
 			return closeEntryOf(t, e)
 		}
 	}
-	t.Fatalf("the step transcript holds no turn_close: %+v", out.Entries)
+	t.Fatalf("the step transcript holds no turn_close: %+v", entries)
 	return marotte.EntryTurnClose{}
 }
 
@@ -248,6 +253,73 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAToolUseStopIsTheModelCallLim
 			t.Errorf("note text = %q, want %q", steers[0].Text, want)
 		}
 	})
+}
+
+// armReplayEndingOn answers `session/load` of sessionID with one turn whose turn_end carries the recorded stop.
+func armReplayEndingOn(br *fakeBridge, sessionID string, stop marotte.StopReason) {
+	end, _ := json.Marshal(map[string]any{
+		"sessionUpdate": "session_info_update",
+		"_meta":         map[string]any{"kiro": map[string]any{"kind": "turn_end", "turnEnd": map[string]any{"stopReason": stop}}},
+	})
+	br.mu.Lock()
+	defer br.mu.Unlock()
+	if br.notifsOnCall == nil {
+		br.notifsOnCall = map[string][]*marotte.RPCResponse{}
+	}
+	br.notifsOnCall[marotte.MethodSessionLoad] = []*marotte.RPCResponse{
+		replayFrame(sessionID, `{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_start","turnStart":true}}}`),
+		replayFrame(sessionID, `{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"done"}}`),
+		replayFrame(sessionID, string(end)),
+	}
+}
+
+// TestStepEnd_AReplayedStepTurnReadsUnderKASsRecord reads a step marotte's run log holds no turn for, so its
+// transcript is KAS's replay, whose projection grades a tool_use turn_end the model-call limit on its own.
+func TestStepEnd_AReplayedStepTurnReadsUnderKASsRecord(t *testing.T) {
+	for _, tc := range []struct {
+		desc, id, session, inspect, tail string
+		path                             []string
+		want                             marotte.EntryTurnClose
+	}{
+		{
+			desc: "the 2.32.0 handoff step reads completed", id: "wf_04b7a7ba1affa505",
+			session: "sess_bb88c405-020f-42b1-9185-1aca2328fadb", inspect: "creator_232_inspect.json",
+			tail: "creator_232_session_tail.jsonl", path: []string{"wf_04b7a7ba1affa505", "create-workflow"},
+			want: marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted},
+		},
+		{
+			desc: "the step stopped at 300 model calls reads the limit", id: "wf_42066808f4c28538",
+			session: "sess_f269cde4-db44-4dd4-aeb2-c2d3cae6cbcb", inspect: "limit_231_inspect.json",
+			tail: "limit_231_session_tail.jsonl", path: []string{"wf_42066808f4c28538", "p2-loop", "iter-0", "p2-build"},
+			want: marotte.EntryTurnClose{
+				Outcome: marotte.TurnOutcomeFailed, FailureKind: marotte.FailureKindModelCallLimit,
+				FailureReason: marotte.ModelCallLimitStepReason,
+			},
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			h, _, br := runLoggingHub(t)
+			br.setCallResult(methodKiroWorkflowInspect, fixtureFile(t, tc.inspect))
+			armReplayEndingOn(br, tc.session, recordedStop(t, tc.tail))
+			nodePath := workflow.PathKey(tc.path)
+
+			out, err := h.runs.stepTranscript(t.Context(), tc.id, nodePath)
+			if err != nil {
+				t.Fatalf("step transcript: %v", err)
+			}
+			if out.Source != marotte.RunStepTranscriptSourceReplay {
+				t.Fatalf("source = %q, want the replay", out.Source)
+			}
+			c := newestClose(t, out.Entries)
+			if c.Outcome != tc.want.Outcome || c.FailureKind != tc.want.FailureKind || c.FailureReason != tc.want.FailureReason {
+				t.Errorf("turn_close = {%s %q %q}, want {%s %q %q}", c.Outcome, c.FailureKind, c.FailureReason,
+					tc.want.Outcome, tc.want.FailureKind, tc.want.FailureReason)
+			}
+			if c.StopReasonRaw != string(marotte.StopReasonToolUse) {
+				t.Errorf("stop_reason_raw = %q, want tool_use", c.StopReasonRaw)
+			}
+		})
+	}
 }
 
 // TestStepEnd_AStoredModelCallLimitFailureOfAStepKASCompletedOnSuccessReadsCompleted reads a run log as kiro-cli

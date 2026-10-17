@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workflow"
 )
@@ -80,8 +81,8 @@ func kasSteps(in workflow.Inspect) map[string]workflow.StepRecord {
 func (rs *Runs) kasStep(ctx context.Context, workflowID, nodePath string) (workflow.StepRecord, bool) {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
-		slog.Warn("a step's end could not be checked against the run's state", "workflow_id", workflowID,
-			"node_path", nodePath, "error", err)
+		slog.Warn("a step's end could not be checked against the run's state", "workflow_id", logsafe.Field(workflowID),
+			"node_path", logsafe.Field(nodePath), "error", err)
 		return workflow.StepRecord{}, false
 	}
 	return kasStepIn(workflowID, raw, nodePath)

@@ -539,9 +539,9 @@ func (r *runLog) closeNode(ctx context.Context, workflowID, nodePath, status, re
 	}
 	c := runOutcome(status)
 	c.Reason = reason
-	// KAS grades a refused step `completed`; the step's last turn_end outranks that status. A tool_use stop does not:
-	// only KAS's node record, which node_complete does not carry, says whether it was the model-call limit
-	// (stepClose.graded, applied on read).
+	// KAS grades a refused step `completed`; at close time the step's last turn_end outranks that status. A tool_use
+	// stop does not: only KAS's node record, which node_complete does not carry, says whether it was the model-call
+	// limit. stepClose.graded owns the read-time grade of both.
 	if stop := marotte.ConcludeStopReason(t.rawStop); stop.Outcome == marotte.TurnOutcomeRefused {
 		c = stop
 		c.Reason = reason
