@@ -35,8 +35,9 @@ const reasonSending = "sending"
 // and "it is queued" and leave a row no close will send.
 type QueueAccess interface {
 	// AppendIfLive applies fn to the chat's record while the chat holds a live turn,
-	// reporting live=false (and writing nothing) when it holds none. fn's error
-	// aborts the write and is returned as is.
+	// or kiro-cli still runs one whose close will drain the queue, reporting
+	// live=false (and writing nothing) when neither. fn's error aborts the write and
+	// is returned as is.
 	AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (live bool, err error)
 	// NextUserRow answers the first queued user row that is not held and whose
 	// turn this process has not opened.

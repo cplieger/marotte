@@ -17,12 +17,13 @@ import (
 
 var errQueueChatGone = errors.New("agent: the chat has no record to queue on")
 
-// AppendIfLive applies fn to the record while the chat holds a live turn, in the lifecycle section
-// (lifecycle then store), waiting out a finalizing turn: the close sees the row or the caller sees no turn.
+// AppendIfLive applies fn to the record while the chat holds a live turn or a KAS hold, whose closed turn's
+// drain sends the row once KAS goes idle, in the lifecycle section (lifecycle then store), waiting out a
+// finalizing turn: the close sees the row or the caller sees no turn.
 func (bc *bridgeCoordinator) AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
 	live := false
 	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
-		if !lc.liveLockedState() {
+		if !lc.liveLockedState() && lc.kasHoldSeq == 0 {
 			return nil
 		}
 		live = true

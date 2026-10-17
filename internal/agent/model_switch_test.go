@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -488,6 +489,43 @@ func TestSwitchModel_ABusyChatParksThePickUntilTheClose(t *testing.T) {
 
 	endTurn(t, h, "c1", id)
 	awaitModel(t, cs, "c1", "m-new")
+}
+
+// A pick made while KAS still runs a turn marotte's cancel grace closed is parked like a busy chat's, and applied
+// once KAS reports the session idle.
+func TestSwitchModel_AKASHeldChatParksThePickUntilKASGoesIdle(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, _ := newTestHub()
+		defer shutdownHub(t, h)
+		countDrains(h)
+		_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+			c.Name = "A"
+			c.Model = "m-old"
+			return true
+		})
+		id, _ := h.stagePromptTurn(t, "c1")
+		h.coord.WireTurnActivity("c1", true)
+		graceClose(t, h, id)
+		synctest.Wait()
+
+		rec := postCmd(t, h, marotte.ClientCommand{
+			Type: "switch_model", ChatID: "c1",
+			Payload: json.RawMessage(`{"model":"m-new"}`),
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		synctest.Wait()
+		if c, _ := cs.Get(t.Context(), "c1"); c.Model != "m-old" || c.PendingModel != "m-new" {
+			t.Fatalf("model = %q pending_model = %q during the hold, want m-old with m-new parked", c.Model, c.PendingModel)
+		}
+
+		h.coord.WireTurnActivity("c1", false)
+		synctest.Wait()
+		if c, _ := cs.Get(t.Context(), "c1"); c.Model != "m-new" || c.PendingModel != "" {
+			t.Errorf("model = %q pending_model = %q once KAS went idle, want m-new applied", c.Model, c.PendingModel)
+		}
+	})
 }
 
 // KAS lists Auto as a model, so picking it from a concrete model is a switch like any other, not "keep the current".

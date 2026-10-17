@@ -116,7 +116,7 @@ func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) 
 			t.Error("a long-running tool was treated as a flat timeout")
 		}
 
-		turn, ok := h.coord.turns.claimTurn(t.Context(), "c1", turnID)
+		turn, ok := h.coord.turns.claimTurn(t.Context(), "c1", turnID, nil)
 		if !ok {
 			t.Fatal("normal closer could not claim the tool-running turn")
 		}
@@ -138,7 +138,7 @@ func TestCompactionReap_WithNoOpenTurnArmsNothing(t *testing.T) {
 func TestCompactionReap_StoppedWhenTheTurnClosesNormally(t *testing.T) {
 	h, turnID, _, _ := newCompactionReapFixture(t)
 	h.coord.CompactionFailed("c1", "compaction failed")
-	turn, ok := h.coord.turns.claimTurn(t.Context(), "c1", turnID)
+	turn, ok := h.coord.turns.claimTurn(t.Context(), "c1", turnID, nil)
 	if !ok {
 		t.Fatal("normal closer could not claim the armed turn")
 	}

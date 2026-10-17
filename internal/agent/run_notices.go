@@ -16,6 +16,8 @@ type runNotice struct {
 	workflowID string
 	label      string
 	producedTs int64
+	// ambiguous marks a notice sharing its label with one already read: no read can name its run any more.
+	ambiguous bool
 }
 
 // maxRunNoticesPerChat bounds the queue against notices KAS never delivers.
@@ -64,33 +66,47 @@ func (rs *Runs) holdsNotice(chatID marotte.ChatID) bool {
 }
 
 // RunNotice consumes the chat's notice whose label the read notice's text quotes: KAS mints the notice id at random,
-// so the words are the only join. A text no label matches names no run; one several notices match (two launches of
-// one workflow) names none either, and retires them all, since any pick could stamp another run's provenance.
-// translate.runOriginAccess.
+// so the words are the only join. A text no label matches names no run. One several notices match (two launches of
+// one workflow) names none either, since any pick could stamp another run's provenance: it consumes the first and
+// marks the rest ambiguous, each still owed its own read or clear. translate.runOriginAccess.
 func (rs *Runs) RunNotice(chatID marotte.ChatID, text string) (workflowID string, producedTs int64, ok bool) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	q := rs.notices[chatID]
+	q := slices.Clone(rs.notices[chatID])
 	quoted := func(n runNotice) bool { return n.label != "" && strings.Contains(text, `"`+n.label+`"`) }
 	i := slices.IndexFunc(q, quoted)
 	if i < 0 {
 		return "", 0, false
 	}
 	n := q[i]
-	left := slices.DeleteFunc(slices.Clone(q), quoted)
-	rs.dropNoticesLocked(chatID, left)
-	if len(q)-len(left) > 1 {
+	q = slices.Delete(q, i, i+1)
+	ambiguous := n.ambiguous
+	for j := range q {
+		if quoted(q[j]) {
+			q[j].ambiguous, ambiguous = true, true
+		}
+	}
+	rs.dropNoticesLocked(chatID, q)
+	if ambiguous {
 		return "", 0, false
 	}
 	return n.workflowID, n.producedTs, true
 }
 
-// ForgetRunNotices drops n of the chat's notices, oldest first, for a clear naming that many: it carries no words to
-// join them by, and a kept notice would hold clearStaleNotices open.
+// ForgetRunNotices drops n of the chat's notices for a clear naming that many: it carries no words to join them by,
+// and a kept notice would hold clearStaleNotices open. Ambiguous notices go first, since no read can name their run
+// anyway, then the oldest.
 func (rs *Runs) ForgetRunNotices(chatID marotte.ChatID, n int) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	q := rs.notices[chatID]
+	q := slices.Clone(rs.notices[chatID])
+	q = slices.DeleteFunc(q, func(rn runNotice) bool {
+		if n > 0 && rn.ambiguous {
+			n--
+			return true
+		}
+		return false
+	})
 	rs.dropNoticesLocked(chatID, q[min(n, len(q)):])
 }
 

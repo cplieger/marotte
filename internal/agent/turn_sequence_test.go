@@ -219,7 +219,7 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 	lc.mu.Lock()
 	turn := lc.openLocked(chatID, &marotte.Entry{ID: "t-1"}, marotte.TurnSourcePrompt, "", turnlog.Open("t-1", nil))
 	lc.mu.Unlock()
-	claimed, won := r.claimTurn(ctx, chatID, turn.ID)
+	claimed, won := r.claimTurn(ctx, chatID, turn.ID, nil)
 	if !won {
 		t.Fatal("claimTurn lost the claim on a freshly opened turn")
 	}

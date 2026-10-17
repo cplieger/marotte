@@ -127,10 +127,6 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	if tc.Closer == closerBridgeDeath {
 		cf.exit = bc.turns.forwardExit(t.Chat)
 	}
-	// Before finish frees the slot, so no prompt is admitted between the two.
-	if cf.graceClosed {
-		bc.turns.holdForKAS(t)
-	}
 	bc.turns.finish(t, result)
 	bc.publishClose(ctx, t, cf)
 }
@@ -187,9 +183,10 @@ type closeFacts struct {
 	graceClosed bool
 }
 
-// afterTurnClose runs the between-turns follow-ups in order: steer ends, a model switch (it changes the
-// compaction's window), the compaction (a queued prompt would abort it upstream), then the drain graded by the
-// close's outcome. Nothing once shutdown began.
+// afterTurnClose runs the between-turns follow-ups in order: steer ends, after a grace close the wait for KAS to
+// go idle (every later step is a session call), a model switch (it changes the compaction's window), the
+// compaction (a queued prompt would abort it upstream), then the drain graded by the close's outcome. Nothing once
+// shutdown began.
 func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, chatID marotte.ChatID, cf closeFacts) {
 	var ends command.EndFacts
 	if bc.resolveEnds != nil && !bc.draining() {
@@ -201,13 +198,13 @@ func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, chatID marotte.
 		bc.settleAfterClose(bc.lifecycle.shutdownCtx, chatID, command.AdmissionWait)
 		ends = bc.resolveEnds(ctx, chatID, cf.fence)
 	}
+	if cf.graceClosed && !bc.turns.awaitKASIdle(bc.lifecycle.shutdownCtx, chatID, cf.fence) {
+		return
+	}
 	if bc.applyPendingModel != nil {
 		bc.applyPendingModel(ctx, chatID)
 	}
 	bc.autoCompact.afterTurn(ctx, chatID)
-	if cf.graceClosed && !bc.turns.awaitKASIdle(bc.lifecycle.shutdownCtx, chatID, kasIdleDrainWait) {
-		return
-	}
 	if bc.drainAfterClose == nil || bc.draining() ||
 		!bc.settleAfterClose(bc.lifecycle.shutdownCtx, chatID, command.AdmissionWait) {
 		return
@@ -241,7 +238,7 @@ func (bc *bridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.
 			"chat_id", chatID, "closer", tc.Closer)
 		return nil, false
 	}
-	t, won := bc.turns.claimTurn(ctx, chatID, tc.Turn)
+	t, won := bc.turns.claimTurn(ctx, chatID, tc.Turn, func(t *activeTurn) bool { return graceClosed(t, tc.Closer, tc.Stop) })
 	if !won {
 		// Two closers racing one fault (turn_end and the prompt response): the first won.
 		slog.Debug("a turn closer lost its claim", "chat_id", chatID, "closer", tc.Closer, "turn", tc.Turn)

@@ -14,9 +14,9 @@ import (
 )
 
 // Every reservation sends a session/prompt or opens a turn, so none is taken beside a bracketed wire turn
-// (bracketedWireLocked) or during a KAS hold (kasHold). Caller holds mu.
+// (bracketedWireLocked) or during a KAS hold (kasHoldSeq). Caller holds mu.
 func (lc *chatLifecycle) reserveLocked(source marotte.TurnOpenSource) bool {
-	if lc.reserved || lc.kasHold || lc.bracketedWireLocked() {
+	if lc.reserved || lc.kasHoldSeq != 0 || lc.bracketedWireLocked() {
 		return false
 	}
 	lc.reserved = true
@@ -99,8 +99,8 @@ func (lc *chatLifecycle) bracketedWireLocked() bool {
 }
 
 // reserveOrHolder tries the reservation and on refusal reports whether a steerable holder refused it, with the
-// next-change channel, in one acquisition, so a release between try and park cannot strand the waiter. A KAS hold
-// with no holder is not steerable: no turn is open to steer into.
+// next-change channel, in one acquisition, so a release between try and park cannot strand the waiter. Nothing is
+// steerable under a KAS hold: the turn it follows is closing or closed, so a steer would reach no open turn.
 func (r *turnRegistry) reserveOrHolder(chatID marotte.ChatID, source marotte.TurnOpenSource) (ok, busy bool, changed <-chan struct{}) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -109,7 +109,7 @@ func (r *turnRegistry) reserveOrHolder(chatID marotte.ChatID, source marotte.Tur
 		return true, false, nil
 	}
 	holder, held := lc.holderSourceLocked()
-	return false, held && holder.SteerableHolder(), lc.changed
+	return false, lc.kasHoldSeq == 0 && held && holder.SteerableHolder(), lc.changed
 }
 
 // admissionHolder reports the holder's source (open turn, else reservation), false when neither.
@@ -250,56 +250,52 @@ func (r *turnRegistry) noteKASActivity(chatID marotte.ChatID, active bool) {
 	}
 }
 
-// kasIdleDrainWait bounds how long a grace-closed turn's drain waits for KAS to report the session idle, so a lost
-// report delays the chat's next send rather than stranding it.
-const kasIdleDrainWait = 15 * time.Minute
+// kasHoldWarnAfter is when a KAS hold still waiting is logged. Only KAS's state ends a hold, never elapsed time: a
+// send beside a still-running execution is the loss the hold prevents, while a refused prompt hands its text back.
+const kasHoldWarnAfter = 15 * time.Minute
 
-// holdForKAS starts a KAS hold on t's chat when KAS still reports the session active; awaitKASIdle ends it.
-func (r *turnRegistry) holdForKAS(t *activeTurn) {
-	t.lc.mu.Lock()
-	defer t.lc.mu.Unlock()
-	t.lc.kasHold = t.lc.kasActive
-}
-
-// awaitKASIdle waits, after marotte's cancel grace closed a turn kiro-cli had not ended, until KAS reports no
-// execution for the session, so the next send is not queued beside the cancelled one or KAS's re-wake of the
-// notifications the cancel cleared, where KAS streams only one of them (its adapter owns the last execution). False
-// when a turn opened meanwhile, whose own close drains, or when ctx ended; true at the budget. Every exit ends the
-// chat's KAS hold.
-func (r *turnRegistry) awaitKASIdle(ctx context.Context, chatID marotte.ChatID, budget time.Duration) bool {
+// awaitKASIdle waits, after marotte's cancel grace closed the fenced turn, until KAS reports no execution for the
+// session (its activity report, or the forward attaching or exiting), so the next send is not queued beside the
+// cancelled one or KAS's re-wake of the notifications the cancel cleared, where KAS streams only one of them (its
+// adapter owns the last execution). False when a turn opened meanwhile, whose own close drains, when a teardown
+// re-fenced the chat, or when ctx ended. Every exit ends the KAS hold the fenced turn started.
+func (r *turnRegistry) awaitKASIdle(ctx context.Context, chatID marotte.ChatID, fence command.TurnFence) bool {
 	lc, ok := r.lookup(chatID)
 	if !ok {
-		return true
+		return false
 	}
-	defer func() {
-		lc.mu.Lock()
-		defer lc.mu.Unlock()
-		if lc.kasHold {
-			lc.kasHold = false
-			lc.wakeLocked()
-		}
-	}()
-	timer := time.NewTimer(budget)
-	defer timer.Stop()
+	defer lc.endKASHold(fence.Seq)
+	warn := time.NewTimer(kasHoldWarnAfter)
+	defer warn.Stop()
 	for {
 		lc.mu.Lock()
-		active, opened, changed := lc.kasActive, lc.own != nil || lc.pending != nil, lc.changed
+		active, changed := lc.kasActive, lc.changed
+		superseded := lc.own != nil || lc.pending != nil || !lc.fenceHoldsLocked(fence)
 		lc.mu.Unlock()
 		switch {
+		case superseded:
+			return false
 		case !active:
 			return true
-		case opened:
-			return false
 		}
 		select {
 		case <-changed:
-		case <-timer.C:
-			slog.Warn("kiro-cli still reports the session busy after a cancel; sending the chat's next prompt anyway",
-				"chat_id", chatID, "waited", budget)
-			return true
+		case <-warn.C:
+			slog.Warn("kiro-cli still reports the session busy after a cancel; the chat's prompts wait for it",
+				"chat_id", chatID, "waited", kasHoldWarnAfter)
 		case <-ctx.Done():
 			return false
 		}
+	}
+}
+
+// endKASHold ends the hold the turn at seq started, waking the reservations it refused; a later turn's hold stays.
+func (lc *chatLifecycle) endKASHold(seq uint64) {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.kasHoldSeq == seq {
+		lc.kasHoldSeq = 0
+		lc.wakeLocked()
 	}
 }
 

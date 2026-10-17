@@ -90,6 +90,31 @@ func TestRunNotice_ASharedLabelNamesNoRun(t *testing.T) {
 	}
 }
 
+// After one of two same-label notices is read, KAS clearing the other must not take a third run's notice with it.
+func TestRunNotice_AClearAfterAnAmbiguousReadSparesAnotherRunsNotice(t *testing.T) {
+	h, _, _ := newTestHub()
+	defer shutdownHub(t, h)
+	h.stagePromptTurn(t, "c1")
+	h.runs.observeComplete(t.Context(), "c1", runComplete("wf_3", "completed"))
+	for _, wf := range []string{"wf_1", "wf_2"} {
+		h.runs.observeComplete(t.Context(), "c1", runNotif(methodWFRunComplete, map[string]any{
+			"workflowId": wf, "status": "completed", "finalState": map[string]any{"workflowName": "nightly"},
+		}))
+	}
+
+	if wf, _, ok := h.runs.RunNotice("c1", `A workflow you launched ("nightly") completed.`); ok {
+		t.Fatalf("RunNotice(shared label) = %q, want no run", wf)
+	}
+	h.runs.ForgetRunNotices("c1", 1)
+
+	if wf, _, ok := h.runs.RunNotice("c1", `A workflow you launched ("wf_3") completed.`); !ok || wf != "wf_3" {
+		t.Errorf("RunNotice(wf_3's words) = %q ok=%v, want wf_3: the clear named the other nightly notice", wf, ok)
+	}
+	if h.runs.holdsNotice("c1") {
+		t.Error("a notice is still queued after every one was read or cleared")
+	}
+}
+
 func awaitCall(t *testing.T, br *fakeBridge, method string) bool {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

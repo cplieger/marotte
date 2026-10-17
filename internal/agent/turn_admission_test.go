@@ -925,5 +925,10 @@ func TestPromptTurn_SteerInTheSessionDoorWindowIsAccepted(t *testing.T) {
 		t.Errorf("steer in the door window = %d %s, want an answer the client can act on", rec.Code, rec.Body.String())
 	}
 	close(gate)
-	waitForTurnClosed(t, h, 1)
+	// The fake engine never takes the steer up, so the first turn's end sends it as the next prompt.
+	waitForTurnClosed(t, h, 2)
+	opens := opensOf(t, logOf(t, cs, "c1"))
+	if len(opens) != 2 || opens[1].Prompt == nil || !strings.Contains(opens[1].Prompt.Text, "also this") {
+		t.Errorf("turn_open entries = %+v, want the prompt's turn then one carrying the parked steer", opens)
+	}
 }

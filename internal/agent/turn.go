@@ -128,11 +128,12 @@ type chatLifecycle struct {
 	// kasActive is KAS's newest report of whether it runs an execution or holds one for the chat's session
 	// (focus_update activity.turnActive), whatever turn marotte has open.
 	kasActive bool
-	// kasHold refuses every reservation after marotte's cancel grace closed a turn KAS still runs, until
-	// awaitKASIdle ends: a session/prompt sent then is queued beside KAS's own executions and never streamed.
-	kasHold bool
-	state   turnState
-	mu      sync.Mutex
+	// kasHoldSeq is the open sequence of the turn whose KAS hold refuses every reservation, zero for none: marotte's
+	// cancel grace closed it while KAS still ran it, and a session/prompt sent before KAS reports idle is queued
+	// beside KAS's own executions and never streamed. The closed turn's awaitKASIdle ends it.
+	kasHoldSeq uint64
+	state      turnState
+	mu         sync.Mutex
 	// switchMu is held by every writer of pending_model (the switch's admission, the idle or
 	// turn-close apply, the session open's fold): otherwise two appliers read one pick and apply it twice,
 	// or a landing falls between an admission's read and its park. Held across the bridge call.
@@ -293,8 +294,10 @@ func (r *turnRegistry) claimBound(ctx context.Context, chatID marotte.ChatID) (*
 }
 
 // claimTurn claims one named turn for finalizing, false when not live. Id-scoped: a closer armed for turn N is
-// harmless after N+1 opened, and reaches a pending turn that is no longer own.
-func (r *turnRegistry) claimTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (*activeTurn, bool) {
+// harmless after N+1 opened, and reaches a pending turn that is no longer own. When graceClose reports the claimed
+// turn's close as marotte's cancel grace and KAS still reports the session active, the KAS hold starts in the same
+// section: the claim lifts bracketedWireLocked's refusal, so a hold started later would admit a prompt in between.
+func (r *turnRegistry) claimTurn(ctx context.Context, chatID marotte.ChatID, turnID string, graceClose func(*activeTurn) bool) (*activeTurn, bool) {
 	lc := r.lifecycleFor(chatID)
 	if !lc.awaitNotFinalizing(ctx) {
 		return nil, false
@@ -303,6 +306,9 @@ func (r *turnRegistry) claimTurn(ctx context.Context, chatID marotte.ChatID, tur
 	t := lc.liveLocked(turnID)
 	if t == nil || t.finalizing {
 		return nil, false
+	}
+	if graceClose != nil && graceClose(t) && lc.kasActive {
+		lc.kasHoldSeq = t.Seq
 	}
 	return lc.claimLocked(t), true
 }
@@ -587,6 +593,17 @@ func (r *turnRegistry) live(chatID marotte.ChatID) bool {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	return lc.liveLockedState()
+}
+
+// kasHeld reports a KAS hold on the chat (kasHoldSeq). Through lookup: a command's read path.
+func (r *turnRegistry) kasHeld(chatID marotte.ChatID) bool {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.kasHoldSeq != 0
 }
 
 // liveLockedState is live's predicate, spelled once. Caller holds mu.

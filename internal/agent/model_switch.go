@@ -123,7 +123,7 @@ func (rt *Runtime) applyStopInPlace(ctx context.Context, chatID marotte.ChatID, 
 
 // applyPendingModel applies pending_model, with pending_effort, on an idle chat: through
 // set_config_option on a live bridge (one model_switched entry between turns), or straight onto
-// the record with no bridge. A busy chat keeps both for the closer. Idleness is read under the
+// the record with no bridge. A busy or KAS-held chat keeps both for the closer. Idleness is read under the
 // lifecycle mutex; the bridge call holds only the chat's switch lock, so a second applier reads
 // the pick the first already cleared.
 func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID) {
@@ -131,7 +131,7 @@ func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID)
 	lc := rt.coord.turns.lifecycleFor(chatID)
 	lc.switchMu.Lock()
 	defer lc.switchMu.Unlock()
-	if rt.coord.turns.live(chatID) {
+	if rt.coord.turns.live(chatID) || rt.coord.turns.kasHeld(chatID) {
 		return
 	}
 	chat, ok := rt.chatStore.Get(ctx, chatID)

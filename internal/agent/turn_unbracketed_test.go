@@ -141,8 +141,10 @@ func TestAfterTurnClose_AShellBusyRefusalDrainsAtOnceWhileKASIsBusy(t *testing.T
 	})
 }
 
-// A lost idle report must not strand the chat's next send: the drain fires at the budget.
-func TestAfterTurnClose_AGraceClosedPromptsDrainFiresAtTheBudget(t *testing.T) {
+// Elapsed time is no proof KAS ended its executions: past the stuck-hold warning the drain still waits, and so do
+// the chat's prompts, until KAS reports the session idle.
+func TestAfterTurnClose_AGraceClosedPromptsDrainNeverFiresOnElapsedTime(t *testing.T) {
+	logs := captureLogs(t)
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		defer shutdownHub(t, h)
@@ -151,15 +153,92 @@ func TestAfterTurnClose_AGraceClosedPromptsDrainFiresAtTheBudget(t *testing.T) {
 		h.coord.WireTurnActivity("c1", true)
 
 		graceClose(t, h, turnID)
-		time.Sleep(kasIdleDrainWait - time.Second)
+		time.Sleep(kasHoldWarnAfter + time.Hour)
 		synctest.Wait()
 		if n := drained.Load(); n != 0 {
-			t.Fatalf("drained %d times before the budget, want none", n)
+			t.Fatalf("drained %d times with KAS still reporting the session busy, want none", n)
 		}
-		time.Sleep(2 * time.Second)
+		if h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+			t.Fatal("TryReserveTurn acquired with KAS still reporting the session busy, want refused")
+		}
+		if !strings.Contains(logs.String(), "the chat's prompts wait for it") {
+			t.Errorf("logs = %s, want the stuck hold logged", logs.String())
+		}
+
+		h.coord.WireTurnActivity("c1", false)
 		synctest.Wait()
 		if n := drained.Load(); n != 1 {
-			t.Errorf("drained %d times at the budget with KAS never reporting idle, want one", n)
+			t.Errorf("drained %d times once KAS reported the session idle, want one", n)
+		}
+	})
+}
+
+// The bridge's forward ending means no execution of that session can still stream, so the hold ends and the drain runs.
+func TestAfterTurnClose_TheForwardExitingEndsAGraceClosedPromptsWait(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, _, _ := newTestHub()
+		defer shutdownHub(t, h)
+		drained := countDrains(h)
+		turnID, _ := h.stagePromptTurn(t, "c1")
+		h.coord.WireTurnActivity("c1", true)
+		graceClose(t, h, turnID)
+		synctest.Wait()
+
+		lc := h.coord.turns.lifecycleFor("c1")
+		lc.mu.Lock()
+		gen := lc.fwdGen
+		lc.mu.Unlock()
+		h.coord.turns.sealPosition("c1", gen)
+		synctest.Wait()
+		if n := drained.Load(); n != 1 {
+			t.Errorf("drained %d times after the forward exited, want one", n)
+		}
+	})
+}
+
+// A teardown re-fences the chat: its session is going, so the hold ends with no drain, and the next session admits.
+func TestAfterTurnClose_ATeardownEndsAGraceClosedPromptsHoldWithoutADrain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, _, _ := newTestHub()
+		defer shutdownHub(t, h)
+		drained := countDrains(h)
+		turnID, _ := h.stagePromptTurn(t, "c1")
+		h.coord.WireTurnActivity("c1", true)
+		graceClose(t, h, turnID)
+		synctest.Wait()
+
+		h.coord.turns.refence("c1")
+		synctest.Wait()
+		if n := drained.Load(); n != 0 {
+			t.Errorf("drained %d times after a teardown re-fenced the chat, want none", n)
+		}
+		if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+			t.Error("TryReserveTurn refused after the teardown, want the hold ended")
+		}
+	})
+}
+
+// A model switch and a compaction are session calls too, so they wait for KAS to go idle like the drain does.
+func TestAfterTurnClose_AGraceClosedPromptsModelSwitchWaitsForKASToGoIdle(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, _, _ := newTestHub()
+		defer shutdownHub(t, h)
+		countDrains(h)
+		var applied atomic.Int32
+		h.coord.applyPendingModel = func(context.Context, marotte.ChatID) { applied.Add(1) }
+		turnID, _ := h.stagePromptTurn(t, "c1")
+		h.coord.WireTurnActivity("c1", true)
+
+		graceClose(t, h, turnID)
+		synctest.Wait()
+		if n := applied.Load(); n != 0 {
+			t.Fatalf("applied the pending model %d times while KAS still reported the session busy, want none", n)
+		}
+
+		h.coord.WireTurnActivity("c1", false)
+		synctest.Wait()
+		if n := applied.Load(); n != 1 {
+			t.Errorf("applied the pending model %d times once KAS reported the session idle, want one", n)
 		}
 	})
 }
@@ -285,6 +364,185 @@ func TestReserveTurnForPrompt_AKASHoldAnswersStartingAtTheBudget(t *testing.T) {
 		}
 		if h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
 			t.Error("TryReserveTurn(local shell) during a KAS hold acquired, want refused")
+		}
+	})
+}
+
+// promptCalls records each session/prompt's prompt blocks.
+func promptCalls(br *fakeBridge) func() []string {
+	var prompted []string
+	br.mu.Lock()
+	br.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method == marotte.MethodPrompt {
+			b, _ := json.Marshal(params[marotte.KeyPrompt])
+			prompted = append(prompted, string(b))
+		}
+		return nil, nil, false
+	}
+	br.mu.Unlock()
+	return func() []string {
+		br.mu.Lock()
+		defer br.mu.Unlock()
+		return slices.Clone(prompted)
+	}
+}
+
+// The cancel grace closing a turn KAS started frees bracketedWireLocked at the claim, and closing it takes durable
+// writes and broadcasts: a prompt sent in that window must wait for KAS to go idle like one sent after the close.
+func TestCmdPrompt_DuringAWireTurnsGraceCloseWaitsForKASToGoIdle(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, br := newTestHub()
+		defer shutdownHub(t, h)
+		countDrains(h)
+		seedChat(t, cs, "c1")
+		h.coord.WireTurnStart(t.Context(), "c1")
+		h.coord.WireTurnActivity("c1", true)
+		entered, release := make(chan struct{}), make(chan struct{})
+		var blocked atomic.Bool
+		turnEnded := h.coord.steerTurnEnded
+		h.coord.steerTurnEnded = func(chatID marotte.ChatID, end command.SteerTurnEnd) {
+			if blocked.CompareAndSwap(false, true) {
+				close(entered)
+				<-release
+			}
+			turnEnded(chatID, end)
+		}
+		if !h.coord.ArmWireCancelGrace("c1", command.CancelGrace) {
+			t.Fatal("Setup: ArmWireCancelGrace found no wire turn")
+		}
+		time.Sleep(command.CancelGrace)
+		<-entered
+		prompted := promptCalls(br)
+
+		done := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			done <- postCmd(t, h, marotte.ClientCommand{
+				Type: marotte.CmdPrompt, ChatID: "c1",
+				Payload: json.RawMessage(`{"text":"The turn footer layout is also just messy","message_id":"m-2"}`),
+			})
+		}()
+		synctest.Wait()
+		close(release)
+		synctest.Wait()
+		if got := prompted(); len(got) != 0 {
+			t.Fatalf("session/prompt blocks = %v while KAS still reported the session busy, want none", got)
+		}
+		if len(done) != 0 {
+			t.Fatal("the prompt was answered while KAS still reported the session busy, want it held")
+		}
+
+		h.coord.WireTurnActivity("c1", false)
+		rec := <-done
+		synctest.Wait()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("prompt = %d %s, want admitted once KAS went idle", rec.Code, rec.Body.String())
+		}
+		if got := prompted(); len(got) != 1 || !strings.Contains(got[0], "The turn footer layout is also just messy") {
+			t.Errorf("session/prompt blocks = %v, want the user's text once", got)
+		}
+	})
+}
+
+// A Queue-mode send during a KAS hold is queued, not refused as no turn, and never sent beside KAS's execution.
+// Once KAS goes idle the drain grades the cancelled close, which holds the queue as any stop does.
+func TestCmdQueuePrompt_DuringAKASHoldIsQueuedBehindIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, br := newTestHub()
+		defer shutdownHub(t, h)
+		turnID, _ := h.stagePromptTurn(t, "c1")
+		h.coord.WireTurnActivity("c1", true)
+		graceClose(t, h, turnID)
+		synctest.Wait()
+		prompted := promptCalls(br)
+
+		rec := postCmd(t, h, marotte.ClientCommand{
+			Type: marotte.CmdQueuePrompt, ChatID: "c1",
+			Payload: json.RawMessage(`{"text":"then run the tests","message_id":"m-q1"}`),
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("queue_prompt during a KAS hold = %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		synctest.Wait()
+		if got := prompted(); len(got) != 0 {
+			t.Fatalf("session/prompt blocks = %v while KAS still reported the session busy, want none", got)
+		}
+
+		h.coord.WireTurnActivity("c1", false)
+		synctest.Wait()
+		if got := prompted(); len(got) != 0 {
+			t.Errorf("session/prompt blocks = %v after a cancelled close, want the queue held", got)
+		}
+		if rows := queuedRows(t, cs, "c1"); len(rows) != 1 || rows[0].ID != "m-q1" {
+			t.Errorf("queue = %+v, want m-q1 still queued", rows)
+		}
+	})
+}
+
+// A tangent's findings for a parent under a KAS hold are queued behind the hold, never failed as undeliverable.
+func TestMergeTangent_QueuesTheFindingsBehindAParentsKASHold(t *testing.T) {
+	h, cs, calls := mergeHub(t)
+	turnID, _ := h.stagePromptTurn(t, "c1")
+	h.coord.WireTurnActivity("c1", true)
+	graceClose(t, h, turnID)
+
+	if rec := postCmd(t, h, mergeCmd("c-tangent")); rec.Code != http.StatusOK {
+		t.Fatalf("merge_tangent = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	waitFor(t, func() bool {
+		c, _ := cs.Get(t.Context(), "c-tangent")
+		return len(c.TangentMerges) == 1 && c.TangentMerges[0].State != marotte.TangentMergeRunning
+	})
+
+	if c, _ := cs.Get(t.Context(), "c-tangent"); c.TangentMerges[0].State != marotte.TangentMergeSucceeded {
+		t.Errorf("merge state = %q, want succeeded", c.TangentMerges[0].State)
+	}
+	if rows := queuedRows(t, cs, "c1"); len(rows) != 1 || !strings.Contains(rows[0].Text, "Found it.") {
+		t.Errorf("parent's queue = %+v, want the findings queued", rows)
+	}
+	if n := calls(marotte.MethodPrompt); n != 1 {
+		t.Errorf("session/prompt calls = %d, want the tangent's summary only", n)
+	}
+}
+
+// Each grace close owns its own hold: the first close's wait, ended by KAS's own turn opening, must not lift the hold
+// that turn's grace close started while KAS still runs.
+func TestAfterTurnClose_AnEarlierGraceClosesWaitLeavesALaterHoldInPlace(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, _, _ := newTestHub()
+		defer shutdownHub(t, h)
+		countDrains(h)
+		entered, release := make(chan struct{}), make(chan struct{})
+		var blocked atomic.Bool
+		resolve := h.coord.resolveEnds
+		h.coord.resolveEnds = func(ctx context.Context, chatID marotte.ChatID, f command.TurnFence) command.EndFacts {
+			// Not a sync.Once: a second caller parked on its mutex is not durably blocked, so synctest.Wait would hang.
+			if blocked.CompareAndSwap(false, true) {
+				close(entered)
+				<-release
+			}
+			return resolve(ctx, chatID, f)
+		}
+		turnID, _ := h.stagePromptTurn(t, "c1")
+		h.coord.WireTurnActivity("c1", true)
+		graceClose(t, h, turnID)
+		<-entered
+
+		h.coord.WireTurnStart(t.Context(), "c1")
+		if !h.coord.ArmWireCancelGrace("c1", command.CancelGrace) {
+			t.Fatal("Setup: ArmWireCancelGrace found no wire turn")
+		}
+		time.Sleep(command.CancelGrace)
+		synctest.Wait()
+		close(release)
+		synctest.Wait()
+		if h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+			t.Fatal("TryReserveTurn acquired with KAS still running the wire turn's cancelled execution, want refused")
+		}
+
+		h.coord.WireTurnActivity("c1", false)
+		synctest.Wait()
+		if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+			t.Error("TryReserveTurn refused once KAS reported the session idle, want the hold ended")
 		}
 	})
 }
