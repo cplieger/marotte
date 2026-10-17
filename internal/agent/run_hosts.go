@@ -98,7 +98,8 @@ func (rs *Runs) hostOnChat(ctx context.Context, workflowID string, parent runPar
 func (rs *Runs) loadHost(ctx context.Context, workflowID, session string, presets []string) (*sharedBridge, error) {
 	chatID := runChatID(workflowID)
 	sb, existed := rs.bridges.orInsert(chatID)
-	if existed && sb.settled.pending() {
+	// pending first: a load that settles after the caller's residency read is resident by the second test.
+	if existed && (sb.settled.pending() || rs.residentRunHost(workflowID) == sb) {
 		return awaitHost(ctx, sb)
 	}
 	if existed {
