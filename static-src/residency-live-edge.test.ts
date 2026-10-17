@@ -27,7 +27,7 @@ messagesEl.id = "messages";
 scrollerEl.appendChild(messagesEl);
 
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
-const { mountChatView, activeTranscriptView } = await import("./messages.js");
+const { mountChatView, activeTranscriptView, mountTurnBody } = await import("./messages.js");
 const { scrollToBottom } = await import("./scroll.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
@@ -206,7 +206,9 @@ describe("asking for the live edge after reading far up", () => {
     );
   }
 
-  it("lands on the newest turn's mounted end, never on its spacer", async () => {
+  /** Three heavy turns, the older two open, with the reader climbed to the top so the reading window leaves a
+   *  spacer at the newest turn's end. */
+  async function readFarUp(): Promise<string> {
     const turnEntries: Entry[][] = [];
     for (let i = 1; i <= 3; i++) {
       turnEntries.push(heavyTurn(`t${String(i)}`, i, BIG_PER_RUN));
@@ -233,6 +235,12 @@ describe("asking for the live edge after reading far up", () => {
       newestTail(),
       "the reading window left a spacer at the newest turn's end",
     ).not.toBeNull();
+    return chat;
+  }
+
+  it("lands on the newest turn's mounted end, never on its spacer", async () => {
+    await readFarUp();
+    const el = scroller();
 
     scrollToBottom();
 
@@ -242,5 +250,20 @@ describe("asking for the live edge after reading far up", () => {
     expect(visibleSpacerPx(), "blank in the landing frame").toBe(0);
     await frame();
     expect(visibleSpacerPx(), "blank a frame later").toBe(0);
+  });
+
+  it("lands on the newest turn's mounted end while an older turn's body build is in flight", async () => {
+    const chat = await readFarUp();
+    const el = scroller();
+
+    // A jump's build: in flight until its promise settles, which is after the landing write below.
+    const build = mountTurnBody(chat, "t1", 0);
+    scrollToBottom();
+
+    expect(el.scrollHeight - el.scrollTop - el.clientHeight, "landed at the bottom").toBeLessThan(
+      2,
+    );
+    expect(visibleSpacerPx(), "blank in the landing frame").toBe(0);
+    await build;
   });
 });

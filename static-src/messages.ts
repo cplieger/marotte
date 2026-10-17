@@ -1043,18 +1043,21 @@ function noteReaderMoved(): void {
  */
 function mountLiveEdge(): void {
   demandPin = undefined;
-  windowPass(false);
+  windowPass("live-edge");
 }
+
+/** What asked for a window pass: a settled scroll frame, a body build settling, or a live-edge request. */
+type PassTrigger = "scroll" | "settle" | "live-edge";
 
 /**
  * Re-window on a settled scroll frame the reader caused, over the last full pass's projection; `openable` is
- * recomputed since a fold toggle changes it. `fromScroll` false is a build settling or a live-edge request.
+ * recomputed since a fold toggle changes it.
  */
-function windowPass(fromScroll = true): void {
+function windowPass(trigger: PassTrigger = "scroll"): void {
   if (inWindowPass) {
     return;
   }
-  if (fromScroll) {
+  if (trigger === "scroll") {
     if (!readerMoved) {
       return;
     }
@@ -1065,8 +1068,9 @@ function windowPass(fromScroll = true): void {
   if (session === undefined || session.id !== lastActiveId || turns.length === 0) {
     return;
   }
-  // A filling body reports coordinates for a partial range; the builder's settle runs the skipped pass.
-  if (coldBuilds.size > 0 || turnBodyBuilds.size > 0) {
+  // A filling body reports coordinates for a partial range; the builder's settle runs the skipped pass. A live-edge
+  // request reads none (`residencyAnchor` answers Following first), and the builder re-reads `wantedWindow` per batch.
+  if (trigger !== "live-edge" && (coldBuilds.size > 0 || turnBodyBuilds.size > 0)) {
     return;
   }
   const openable = turns.filter(
@@ -1946,7 +1950,7 @@ function drainColdBuilds(): void {
       .finally(() => {
         coldBuilds.delete(id);
         // `buildOrJoin`'s own pass refused while this entry stood.
-        windowPass(false);
+        windowPass("settle");
       });
   }
 }
@@ -2013,7 +2017,7 @@ function buildOrJoin(chatID: string, turnID: string, want: EntryRange): Promise<
   const done = buildTurnBodyBatches(chatID, turnID).finally(() => {
     turnBodyBuilds.delete(turnID);
     // The only pass a head-ward grant gets: the build inserts nothing above its window and a rail jump scrolls first.
-    windowPass(false);
+    windowPass("settle");
   });
   turnBodyBuilds.set(turnID, { range: want, done });
   return done;
