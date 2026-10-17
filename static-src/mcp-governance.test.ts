@@ -402,6 +402,18 @@ describe("the registry-hidden notice", () => {
     );
   });
 
+  // The panel's lead says "only the servers below can run", so the catalog comes first.
+  it("sits after the catalog the lead points at", () => {
+    const host = document.createElement("div");
+    renderRegistryPanel(host, reg(["my-local"]), [], () => Promise.resolve());
+    const notice = host.querySelector(".mcp-registry-hidden");
+    const catalog = host.querySelector(".mcp-registry-list");
+    if (notice === null || catalog === null) {
+      throw new Error("the panel drew no notice or no catalog");
+    }
+    expect(catalog.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("is absent when the registry hides no configured server", () => {
     const host = document.createElement("div");
     renderRegistryPanel(host, reg([]), [], () => Promise.resolve());

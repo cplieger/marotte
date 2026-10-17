@@ -217,9 +217,6 @@ export function renderRegistryPanel(
       "Your organization limits MCP to its registry: only the servers below can run, and any other server you configure stays off.",
     ),
   ];
-  if (reg.filtered.length > 0) {
-    children.push(renderHiddenNotice(reg.filtered));
-  }
   const list = el("ul", { className: "mcp-registry-list" });
   for (const srv of reg.servers) {
     const added = have.has(srv.name);
@@ -249,6 +246,10 @@ export function renderRegistryPanel(
     children.push(el("p", { className: "section-hint" }, "Its catalog lists no servers."));
   } else {
     children.push(list);
+  }
+  // After the catalog: the lead's "the servers below" names the catalog's rows.
+  if (reg.filtered.length > 0) {
+    children.push(renderHiddenNotice(reg.filtered));
   }
   if (reg.unresolved.length > 0) {
     children.push(
