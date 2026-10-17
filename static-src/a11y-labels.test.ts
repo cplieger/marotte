@@ -360,7 +360,6 @@ describe("a11y: declined tool aria-expanded", () => {
       openFileDiff: noop,
       openFileGitDiff: undefined,
     }));
-    vi.doMock("./tool-group.js", () => ({ maybeCollapseGroup: noop }));
     vi.doMock("./actions/index.js", () => ({
       // `registerCleanup` is CALLED on this path, so it is a noop rather than
       // undefined; Browser Mode's real linking requires the name either way.
@@ -412,7 +411,6 @@ describe("a11y: declined tool aria-expanded", () => {
     document.body.removeChild(card);
     vi.doUnmock("./scroll.js");
     vi.doUnmock("./editor-openers.js");
-    vi.doUnmock("./tool-group.js");
     vi.doUnmock("./subagent.js");
     vi.doUnmock("./actions/index.js");
   });

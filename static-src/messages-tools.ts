@@ -7,7 +7,6 @@ import type { ToolCall, ToolStatus, ToolDiff, TextSpan } from "./types.js";
 import { ensureToolCallSig, toolCallSigs, toolCallSigKey } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 
-import { maybeCollapseGroup } from "./tool-group.js";
 import { isToolDone, commandTitle, toolTitleText, type ToolKind } from "./tool-schema.js";
 import {
   buildToolCard,
@@ -634,7 +633,6 @@ function applyStatusUpdate(card: HTMLDivElement, status: ToolStatus): void {
     // `data-start-ms` means in flight, and `autoCollapseGroup` refuses to fold a group holding one, so every settle
     // drops it.
     delete card.dataset["startMs"];
-    maybeCollapseGroup(card);
     const group = card.closest(".tool-group");
     if (group !== null) {
       _refreshGroupHeader(group as HTMLElement);

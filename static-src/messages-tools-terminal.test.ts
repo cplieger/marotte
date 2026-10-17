@@ -27,9 +27,6 @@ vi.mock("./store-signals.js", () => ({
   clearTurnSigs: undefined,
   clearAllEntrySigs: undefined,
 }));
-vi.mock("./tool-group.js", () => ({
-  maybeCollapseGroup: vi.fn(),
-}));
 // Spread from the original: the module is pure and the title path reads its real functions.
 vi.mock("./tool-schema.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ToolSchema>()),
