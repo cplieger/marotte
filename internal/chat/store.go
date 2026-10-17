@@ -261,10 +261,21 @@ func (s *Store) Mutate(ctx context.Context, chatID marotte.ChatID, mutate func(c
 
 // mutateLocked is Mutate's body, for a caller already holding the chat's lock.
 func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error) {
+	version, c, exists, err := s.saveLocked(ctx, chatID, mutate)
+	if err != nil || c == nil {
+		return version, err
+	}
+	s.broadcastMutation(ctx, chatID, c, exists)
+	return version, nil
+}
+
+// saveLocked is mutateLocked without the broadcast: it answers the saved header, nil when nothing
+// was saved, so a caller that announces the header itself sends one frame.
+func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (version string, saved *marotte.Chat, exists bool, err error) {
 	c, err := s.load(ctx, chatID)
-	exists := err == nil
+	exists = err == nil
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", err
+		return "", nil, exists, err
 	}
 	if !exists {
 		// A late write must not resurrect a deleted chat as a ghost row. The refusal is named
@@ -272,7 +283,7 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 		// persist.
 		if s.isTombstoned(chatID) {
 			slog.Info("chat: refused to resurrect tombstoned id", "chat_id", logsafe.Field(string(chatID)))
-			return "", ErrTombstoned
+			return "", nil, exists, ErrTombstoned
 		}
 		c = &marotte.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}
 	}
@@ -280,12 +291,12 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 	originalCreatedAt := c.CreatedAt
 	if !mutate(c, exists) {
 		if !stripped {
-			return "", nil
+			return "", nil, exists, nil
 		}
 		// The mutator declined and may have touched c, so the pending removal is
 		// written alone from a fresh read.
 		if c, err = s.load(ctx, chatID); err != nil {
-			return "", err
+			return "", nil, exists, err
 		}
 		s.dequeued.strip(chatID, c)
 	}
@@ -293,24 +304,23 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 	if c.ID != string(chatID) {
 		slog.Error("chat mutate: mutator reassigned chat id",
 			"expected", logsafe.Field(string(chatID)), "got", logsafe.Field(c.ID))
-		return "", fmt.Errorf("chat mutate: mutator reassigned id %q → %q", chatID, c.ID)
+		return "", nil, exists, fmt.Errorf("chat mutate: mutator reassigned id %q → %q", chatID, c.ID)
 	}
 	c.CreatedAt = originalCreatedAt
 	if err := validateChatUTF8(c); err != nil {
-		return "", err
+		return "", nil, exists, err
 	}
 	if err := s.save(ctx, chatID, c); err != nil {
-		return "", err
+		return "", nil, exists, err
 	}
 	if stripped {
 		s.dequeued.settle(chatID)
 	}
 	// The cross-chat filter indexes the title, so a header write invalidates it.
 	s.index.drop(chatID)
-	version := s.versions.BumpCounter(subject.KindChat, string(chatID))
-	s.broadcastMutation(ctx, chatID, c, exists)
+	version = s.versions.BumpCounter(subject.KindChat, string(chatID))
 	slog.Debug("chat mutate", "chat_id", logsafe.Field(string(chatID)), "existed", exists)
-	return version, nil
+	return version, c, exists, nil
 }
 
 // validateChatUTF8 returns errInvalidUTF8 when the chat name or the composer draft

@@ -84,10 +84,11 @@ func (o *engineOwner) exportSessionRaw(ctx context.Context, sessionID string) (j
 // observeBudget bounds one observer pass's door and calls; its close runs under the engine's own budget.
 const observeBudget = 60 * time.Second
 
-// observe runs fn on an observer pass: a session opened on the engine with presets, no mode and no prompt, closed
-// when fn returns. KAS answers the policy, code-intelligence and governance reads only for a resident session, and a
-// pass that opens with the current presets answers for the profile as it is now. attach consumes the pass's own
-// frames (its workspace notifications and command list) from before the door writes; nil drains them.
+// observe runs fn on an observer pass: a session opened on the engine with presets, no mode and no prompt, which
+// closePass tries to end when fn returns. KAS answers the policy, code-intelligence and governance reads only for a
+// resident session, and a pass that opens with the current presets answers for the profile as it is now. attach
+// consumes the pass's own frames (its workspace notifications and command list) from before the door writes; nil
+// drains them.
 func (o *engineOwner) observe(
 	ctx context.Context, presets []string, attach func(engineSession), fn func(ctx context.Context, s engineSession) error,
 ) error {
@@ -104,12 +105,28 @@ func (o *engineOwner) observe(
 	if err != nil {
 		return fmt.Errorf("observer pass: %w", err)
 	}
-	defer func() {
-		if cErr := s.Close(durable.Context(ctx)); cErr != nil {
-			slog.Warn("an observer pass did not close its session", "session_id", s.SessionID(), "error", cErr)
-		}
-	}()
+	defer o.closePass(durable.Context(ctx), s)
 	return fn(ctx, s)
+}
+
+// closePass ends a pass's session, best effort. A refused close leaves it live in KAS and on its lane, so the session
+// is deleted on the engine, which KAS refuses only for a session owning a live workflow (a pass never does), and
+// closed again, which KAS answers {} for a session it no longer holds. A failed delete leaves the refused session open
+// until the engine ends; the second close settles as Session.Close does. Either failure is logged at WARN.
+func (o *engineOwner) closePass(ctx context.Context, s engineSession) {
+	err := s.Close(ctx)
+	if _, refused := errors.AsType[*marotte.RPCError](err); refused {
+		dctx, cancel := context.WithTimeout(ctx, sessionDeleteTimeout)
+		_, err = o.rawCall(dctx, "observer pass delete", marotte.MethodSessionDelete,
+			map[string]any{marotte.KeySessionID: s.SessionID()})
+		cancel()
+		if err == nil {
+			err = s.Close(ctx)
+		}
+	}
+	if err != nil {
+		slog.Warn("an observer pass did not close its session", "session_id", s.SessionID(), "error", err)
+	}
 }
 
 // drainSession reads a session's frames to its close, answering none: an observer that consumes nothing.

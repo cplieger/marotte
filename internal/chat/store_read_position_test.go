@@ -119,30 +119,38 @@ func TestLogFor_FirstOpenAnnouncesThePosition(t *testing.T) {
 	}
 }
 
-func TestLogFor_FirstOpenAnnouncesTheSettledQueue(t *testing.T) {
-	dir := seededDir(t, 2)
-	writer, _ := reopenedStore(t, dir)
-	if _, err := writer.Mutate(t.Context(), readPosChat, func(c *marotte.Chat, _ bool) bool {
-		c.QueuedPrompts = []marotte.QueuedPrompt{{ID: "m-wait", Text: "b"}}
-		return true
-	}); err != nil {
-		t.Fatalf("Setup: queue a row: %v", err)
-	}
+func TestLogFor_FirstOpenAnnouncesTheSettledQueueOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		turns int
+	}{
+		{name: "at a read position", turns: 2},
+		{name: "at read position 0", turns: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := seededDir(t, tc.turns)
+			writer, _ := reopenedStore(t, dir)
+			if _, err := writer.Mutate(t.Context(), readPosChat, func(c *marotte.Chat, _ bool) bool {
+				c.QueuedPrompts = []marotte.QueuedPrompt{{ID: "m-wait", Text: "b"}}
+				return true
+			}); err != nil {
+				t.Fatalf("Setup: queue a row: %v", err)
+			}
 
-	s, b := reopenedStore(t, dir)
-	s.TurnSeq(t.Context(), readPosChat, "no-such-turn")
+			s, b := reopenedStore(t, dir)
+			s.TurnSeq(t.Context(), readPosChat, "no-such-turn")
 
-	var announced []marotte.ChatHeader
-	for _, h := range updatedHeaders(b) {
-		if h.ReadPosition != 0 {
-			announced = append(announced, h)
-		}
-	}
-	if len(announced) != 1 {
-		t.Fatalf("first open announced %+v, want one header with read_position 2", announced)
-	}
-	if q := announced[0].QueuedPrompts; len(q) != 1 || !q[0].Held {
-		t.Errorf("announced queue = %+v, want the row held", q)
+			hs := updatedHeaders(b)
+			if len(hs) != 1 {
+				t.Fatalf("first open broadcast %+v, want exactly one chat_updated", hs)
+			}
+			if got := hs[0].ReadPosition; got != uint64(tc.turns) {
+				t.Errorf("announced read_position = %d, want %d", got, tc.turns)
+			}
+			if q := hs[0].QueuedPrompts; len(q) != 1 || !q[0].Held {
+				t.Errorf("announced queue = %+v, want the row held", q)
+			}
+		})
 	}
 }
 

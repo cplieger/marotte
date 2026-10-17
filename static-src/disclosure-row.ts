@@ -109,35 +109,67 @@ const folds = new WeakMap<HTMLElement, Animation[]>();
 /** Set on a folding body while it fades and slides shut: 29-turns.css withholds the folded body's rules under it. */
 const FOLD_CLOSING_ATTR = "data-fold-closing";
 
+export interface TurnFold {
+  readonly body: HTMLElement;
+  readonly folded: boolean;
+  readonly apply: () => void;
+}
+
 /**
- * Fold or unfold a turn `body` on either side of `apply()`, the card's state flip, in the fold's two beats (29-turns.css
- * `--fold-slide`): a close fades the content out, slides shut once the fade is nearly done, and only then lets the
- * folded rules apply; an open slides first with the content transparent, then fades it in. Script-driven for the
- * same reason as `slideBox`. Reduced motion and an unrendered body flip at once.
+ * Fold or unfold each turn `body` on either side of its `apply()`, the card's state flip, in the fold's two beats
+ * (29-turns.css `--fold-slide`): a close fades the content out, slides shut once the fade is nearly done, and only then
+ * lets the folded rules apply; an open slides first with the content transparent, then fades it in. Script-driven for
+ * the same reason as `slideBox`. Every body is measured, then every flip runs; reduced motion returns there. Otherwise
+ * each body's renderedness is read once, an unrendered one is left flipped, and the rest are planned and animated, so a
+ * bulk fold forces a constant number of layouts rather than two per body.
  */
-export function slideTurnFold(body: HTMLElement, folded: boolean, apply: () => void): void {
-  const before = getComputedStyle(body);
-  const from = {
-    h: body.getBoundingClientRect().height,
-    start: before.paddingBlockStart,
-    end: before.paddingBlockEnd,
-    opacity: before.opacity,
-  };
-  for (const a of folds.get(body) ?? []) {
-    a.cancel();
+export function slideTurnFolds(items: readonly TurnFold[]): void {
+  const froms = items.map(({ body }) => {
+    const before = getComputedStyle(body);
+    return {
+      h: body.getBoundingClientRect().height,
+      start: before.paddingBlockStart,
+      end: before.paddingBlockEnd,
+      opacity: before.opacity,
+    };
+  });
+  for (const { body, apply } of items) {
+    for (const a of folds.get(body) ?? []) {
+      a.cancel();
+    }
+    folds.delete(body);
+    body.removeAttribute(FOLD_CLOSING_ATTR);
+    apply();
   }
-  folds.delete(body);
-  body.removeAttribute(FOLD_CLOSING_ATTR);
-  apply();
-  if (
-    body.getClientRects().length === 0 ||
-    matchMedia("(prefers-reduced-motion: reduce)").matches
-  ) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
     return;
   }
-  if (folded) {
-    body.setAttribute(FOLD_CLOSING_ATTR, "");
+  const moving = items.flatMap((item, i) => {
+    const from = froms[i];
+    return from === undefined || item.body.getClientRects().length === 0 ? [] : [{ ...item, from }];
+  });
+  for (const { body, folded } of moving) {
+    if (folded) {
+      body.setAttribute(FOLD_CLOSING_ATTR, "");
+    }
   }
+  const planned = moving.map(({ body, folded, from }) => ({
+    body,
+    beats: foldBeats(body, folded, from),
+  }));
+  for (const { body, beats } of planned) {
+    animateFold(body, beats);
+  }
+}
+
+type FoldBeat = [Keyframe[] | PropertyIndexedKeyframes, KeyframeAnimationOptions];
+
+/** The two beats of one body's fold from `from`, measuring its flipped layout. */
+function foldBeats(
+  body: HTMLElement,
+  folded: boolean,
+  from: { h: number; start: string; end: string; opacity: string },
+): FoldBeat[] {
   const style = getComputedStyle(body);
   const time = (name: string): number => durationMs(style.getPropertyValue(name));
   const ease = (name: string): string => style.getPropertyValue(name).trim() || "ease";
@@ -155,7 +187,7 @@ export function slideTurnFold(body: HTMLElement, folded: boolean, apply: () => v
     paddingBlockEnd: [from.end, to.end],
   };
   const exit = time("--dur-exit");
-  const beats: [Keyframe[] | PropertyIndexedKeyframes, KeyframeAnimationOptions][] = folded
+  return folded
     ? [
         [
           { opacity: [from.opacity, "0"] },
@@ -178,6 +210,9 @@ export function slideTurnFold(body: HTMLElement, folded: boolean, apply: () => v
           },
         ],
       ];
+}
+
+function animateFold(body: HTMLElement, beats: readonly FoldBeat[]): void {
   const anims: Animation[] = [];
   try {
     for (const [frames, timing] of beats) {

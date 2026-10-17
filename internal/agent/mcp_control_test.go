@@ -183,7 +183,7 @@ func TestHandleMCPReconnect_ReachesAServerKASReportsLive(t *testing.T) {
 // TestMCPRegistry_RecordConnectedStoresDiscovery pins connect-time prompts, resources and templates in /api/mcp/status.
 func TestMCPRegistry_RecordConnectedStoresDiscovery(t *testing.T) {
 	h := newHubWithMCPConfig(t, nil)
-	prompts := []marotte.MCPPromptInfo{{Name: "Simple Prompt", PromptName: "simple-prompt", Description: "no args"}}
+	prompts := []marotte.MCPPromptInfo{{Name: "Simple Prompt", Description: "no args"}}
 	resources := []marotte.MCPResourceInfo{{Name: "doc", URI: "demo://doc", MimeType: "text/markdown"}}
 	templates := []marotte.MCPResourceTemplateInfo{{Name: "issue", URITemplate: "gh://issues/{number}"}}
 	h.mcpRegistry.RecordConnected(t.Context(), "everything", marotte.MCPSource{}, nil, prompts, resources, templates)
@@ -192,7 +192,7 @@ func TestMCPRegistry_RecordConnectedStoresDiscovery(t *testing.T) {
 	if len(snap) != 1 {
 		t.Fatalf("snapshot = %+v", snap)
 	}
-	if len(snap[0].Prompts) != 1 || snap[0].Prompts[0].PromptName != "simple-prompt" {
+	if len(snap[0].Prompts) != 1 || snap[0].Prompts[0].Name != "Simple Prompt" {
 		t.Errorf("prompts = %+v", snap[0].Prompts)
 	}
 	if len(snap[0].Resources) != 1 || snap[0].Resources[0].URI != "demo://doc" {

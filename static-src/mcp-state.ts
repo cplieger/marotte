@@ -28,7 +28,6 @@ const decodePromptInfo: Decoder<MCPPromptInfo> = (v) => {
   const o = asObject(v, "$.mcp.prompt");
   const out: MCPPromptInfo = {
     name: reqStr(o, "name", "$.mcp.prompt"),
-    prompt_name: reqStr(o, "prompt_name", "$.mcp.prompt"),
   };
   const d = optStr(o, "description", "$.mcp.prompt");
   if (d !== undefined) {
@@ -238,11 +237,9 @@ export interface Server {
   updated_at: number;
 }
 
-/** A prompt a connected MCP server advertises. `prompt_name` is the machine
- *  id; `name` is the display title. */
+/** A prompt a connected MCP server advertises; `name` is the display title. */
 export interface MCPPromptInfo {
   name: string;
-  prompt_name: string;
   description?: string;
 }
 

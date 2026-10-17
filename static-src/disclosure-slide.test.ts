@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import { slideBox, slideTurnFold } from "./disclosure-row.js";
+import { slideBox, slideTurnFolds } from "./disclosure-row.js";
 import { buildReasoning } from "./fundamentals/reasoning.js";
 import { buildTurnFooter } from "./fundamentals/turn-footer.js";
 import { buildEvent } from "./messages-events.js";
@@ -225,9 +225,7 @@ function turnCard(): { card: HTMLElement; body: HTMLElement; fold: (folded: bool
   card.appendChild(body);
   mount(card);
   const fold = (folded: boolean): void => {
-    slideTurnFold(body, folded, () => {
-      card.toggleAttribute("data-folded", folded);
-    });
+    slideTurnFolds([{ body, folded, apply: () => card.toggleAttribute("data-folded", folded) }]);
   };
   return { card, body, fold };
 }
@@ -330,6 +328,44 @@ describe("a turn's fold runs its two beats in every engine", () => {
     expect(card.hasAttribute("data-folded")).toBe(true);
     expect(body.getAnimations()).toHaveLength(0);
     expect(body.getBoundingClientRect().height).toBe(0);
+  });
+});
+
+describe("a bulk fold", () => {
+  it("measures every body before the first flip and flips them all before measuring again", () => {
+    const cards = [turnCard(), turnCard(), turnCard()];
+    const log: string[] = [];
+    const rect = Element.prototype.getBoundingClientRect;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      log.push("read");
+      return rect.call(this);
+    });
+    try {
+      slideTurnFolds(
+        cards.map(({ card, body }, i) => ({
+          body,
+          folded: true,
+          apply: () => {
+            log.push(`flip ${String(i)}`);
+            card.toggleAttribute("data-folded", true);
+          },
+        })),
+      );
+    } finally {
+      vi.restoreAllMocks();
+    }
+    const firstFlip = log.indexOf("flip 0");
+    expect(log.slice(0, firstFlip), "one read per body before the first flip").toEqual([
+      "read",
+      "read",
+      "read",
+    ]);
+    expect(log.slice(firstFlip, firstFlip + 3)).toEqual(["flip 0", "flip 1", "flip 2"]);
+    for (const { body } of cards) {
+      expect(body.getAnimations(), "every body still slides").toHaveLength(2);
+    }
   });
 });
 

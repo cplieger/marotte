@@ -248,6 +248,15 @@
   overflow: hidden auto;
 }
 
+/* THE ASKED TOOL'S TITLE LINE NEVER GIVES. Being a scroller, the body's automatic minimum is
+   0, while the policy pointer below the buttons is a plain block that keeps every line: under
+   the phone's fifth-of-the-screen cap the body alone shrank, to 6px at 360px, and the card
+   showed how to answer but not what. One line of floor keeps the title, whose line opens the
+   body; what that costs the cap, the card's backstop scroll takes, from the pointer's end. */
+.dock-card > .approval-body {
+  min-block-size: 1lh;
+}
+
 /* A CONTROL ROW MAY NOT BE WHAT GIVES. Reachable rather than hypothetical — a phone
    on its long edge puts the ceiling at ~214px against ~308px of content, which is the
    one shape where these rows are asked to shrink at all.

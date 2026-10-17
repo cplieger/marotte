@@ -8,7 +8,6 @@ import {
   buildToolGroupShell,
   groupBody,
   refreshGroupHeader,
-  maybeCollapseGroup,
   autoCollapseGroup,
   setGroupSuperseded,
   groupIsBare,
@@ -368,23 +367,10 @@ describe("grouping rules for failures", () => {
   });
 
   it("DOES collapse a superseded group holding a refusal", () => {
-    // A refusal is a SETTLE, like a stop: it neither blocks the fold nor auto-opens
-    // the body. Only the failure count does either.
+    // A refusal is a SETTLE, like a stop: it does not block the fold.
     const g = groupWith(card("read", "ok"), card("read", "declined"));
     autoCollapseGroup(g);
     expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
-  });
-
-  it("never auto-collapses a group holding a failure", () => {
-    const g = groupWith(card("execute", "ok"), card("execute", "fail"), card("execute", "ok"));
-    maybeCollapseGroup(groupBody(g).firstElementChild as HTMLElement);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
-  });
-
-  it("does not collapse on a count: the group stays open while it is the newest card", () => {
-    const g = groupWith(card("read", "ok"), card("read", "ok"), card("read", "ok"));
-    maybeCollapseGroup(groupBody(g).firstElementChild as HTMLElement);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
   });
 
   it("collapses a superseded run of two or more, and NEVER a bare one-call run", () => {
@@ -399,15 +385,15 @@ describe("grouping rules for failures", () => {
     expect(pair.classList.contains("tool-group-auto-collapsed")).toBe(true);
   });
 
-  it("does not collapse a superseded group holding a failure", () => {
+  it("collapses a superseded group holding a failure like any other, its header naming the failure", () => {
     const g = groupWith(card("read", "ok"), card("read", "fail"));
     autoCollapseGroup(g);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(g.querySelector(".tool-group-count")?.textContent).toContain("1 failed");
+    expect(g.dataset["outcome"]).toBe("fail");
   });
 
   it("DOES collapse a superseded group holding a stop", () => {
-    // A stopped member is not a failure: it neither blocks the fold nor auto-opens
-    // the body, which is what the delegate card already rules.
     const g = groupWith(card("read", "ok"), card("read", "warn"));
     autoCollapseGroup(g);
     expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
@@ -425,29 +411,6 @@ describe("grouping rules for failures", () => {
     g.classList.add("tool-group-user-toggled");
     autoCollapseGroup(g);
     expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
-  });
-
-  it("re-opens a collapsed group when a member fails afterwards", () => {
-    // The half that was missing: a failure inside a run of twelve was invisible
-    // because the group closed while everything still looked fine.
-    const g = groupWith(card("read", "ok"), card("read", "ok"), card("read", "ok"));
-    autoCollapseGroup(g);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
-
-    const late = groupBody(g).lastElementChild as HTMLElement;
-    late.dataset["outcome"] = "fail";
-    maybeCollapseGroup(late);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
-  });
-
-  it("respects the user latch: a hand-collapsed group stays shut on a failure", () => {
-    const g = groupWith(card("read", "ok"), card("read", "ok"), card("read", "ok"));
-    g.classList.add("tool-group-user-toggled", "tool-group-auto-collapsed");
-    const late = groupBody(g).lastElementChild as HTMLElement;
-    late.dataset["outcome"] = "fail";
-    maybeCollapseGroup(late);
-    // The UI must not fight a reader who has taken control.
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
   });
 });
 
@@ -556,17 +519,5 @@ describe("a one-call run renders bare", () => {
     const g = groupWith(card("read", "fail", "a.ts"));
     expect(g.querySelector(".tool-group-count")?.textContent).toBe("Read 1 file: a.ts · 1 failed");
     expect(g.dataset["outcome"]).toBe("fail");
-  });
-
-  it("makes maybeCollapseGroup a no-op on a bare group holding a failure", () => {
-    // A bare group is never collapsed, so the re-open half has nothing to re-open —
-    // and the lone card carries its own failure mark, which is the actionable
-    // signal a group header would have stood in for.
-    const g = groupWith(card("read", "fail"));
-    g.classList.add("tool-group-auto-collapsed");
-    maybeCollapseGroup(groupBody(g).firstElementChild as HTMLElement);
-    // Untouched: not re-opened, and not collapsed further.
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
-    expect(g.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("true");
   });
 });

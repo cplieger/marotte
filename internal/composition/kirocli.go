@@ -161,9 +161,9 @@ func kiroInstallConfig(cfg *Config) *pinstall.Config {
 		},
 		Root:    cfg.ToolsDir,
 		LinkDir: kiroLinkDir,
-		// Require names the chat sidecar because `kiro-cli acp` re-execs it by a plain PATH search,
-		// while `--version` is answered by the main binary: without this a sidecar-less directory
-		// reported READY and failed every engine start.
+		// Require names the chat sidecar because it is the engine (sidecarBeside) and `kiro-cli
+		// settings` re-execs it by a plain PATH search, while `--version` is answered by the main
+		// binary: without this a sidecar-less directory reports READY and fails every engine start.
 		Require:  []string{kirocli.Name + "-chat"},
 		Optional: []string{kirocli.Name + "-term"},
 		Assert:   kiroSettings(),

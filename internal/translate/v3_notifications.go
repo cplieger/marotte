@@ -127,17 +127,12 @@ func (s *v3MCPServer) failureReason() string {
 	return s.ErrorMessage
 }
 
-// v3MCPPrompt mirrors one prompt entry in a connected server's status. promptName is the
-// machine id (passed to _kiro/mcp/getPrompt); name is the display title.
+// v3MCPPrompt mirrors one prompt entry in a connected server's status. promptName is the MCP
+// prompt's own name; name is the display title.
 type v3MCPPrompt struct {
 	Name        string `json:"name"`
 	PromptName  string `json:"promptName"`
 	Description string `json:"description"`
-	Arguments   []struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Required    bool   `json:"required"`
-	} `json:"arguments"`
 }
 
 type v3MCPResource struct {
@@ -234,8 +229,8 @@ func mcpToolNames(tools []struct {
 	return names
 }
 
-// mcpPrompts maps the wire prompt entries to the marotte discovery type,
-// dropping entries with no machine promptName (unaddressable).
+// mcpPrompts maps the wire prompt entries to the marotte discovery type, dropping entries
+// with no promptName, which no MCP server can serve.
 func mcpPrompts(in []v3MCPPrompt) []marotte.MCPPromptInfo {
 	if len(in) == 0 {
 		return nil
@@ -245,14 +240,7 @@ func mcpPrompts(in []v3MCPPrompt) []marotte.MCPPromptInfo {
 		if p.PromptName == "" {
 			continue
 		}
-		info := marotte.MCPPromptInfo{Name: p.Name, PromptName: p.PromptName, Description: p.Description}
-		for _, a := range p.Arguments {
-			if a.Name == "" {
-				continue
-			}
-			info.Arguments = append(info.Arguments, marotte.MCPPromptArg{Name: a.Name, Description: a.Description, Required: a.Required})
-		}
-		out = append(out, info)
+		out = append(out, marotte.MCPPromptInfo{Name: p.Name, Description: p.Description})
 	}
 	return out
 }

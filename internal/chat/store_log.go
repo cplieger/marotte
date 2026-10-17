@@ -41,7 +41,7 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 	// The log is published only once the queue is settled: a cached log is never
 	// held again, so an unsettled one would leave a previous process's rows
 	// sendable for this process's life.
-	c, err := s.holdQueuedLocked(ctx, chatID, l)
+	c, settled, err := s.holdQueuedLocked(ctx, chatID, l)
 	if err != nil {
 		if cerr := l.Close(); cerr != nil {
 			slog.Warn("chat open: closing the unpublished log", "chat_id", logsafe.Field(string(chatID)), "error", cerr)
@@ -50,8 +50,9 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 	}
 	s.logs.Store(chatID, l)
 	// The first open is when a client can first learn the read position, and any reader may be
-	// first. The `chat` version stays: the transcript did not move.
-	if c != nil && l.readPosition() != 0 {
+	// first; the settle's save announces nothing, so this one frame carries both. The `chat`
+	// version stays: the transcript did not move.
+	if c != nil && (settled || l.readPosition() != 0) {
 		s.broadcastMutation(ctx, chatID, c, true)
 	}
 	return l, nil
@@ -61,21 +62,22 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 // log's first open in this one and after the store-open closer. A row whose id a
 // turn_open already carries was sent and only lost its removal, so it goes; every
 // other row is marked Held, shown and never sent automatically, because nothing in
-// this process saw it queued. It answers the header as settled, nil for a chat with
-// no header, which has nothing to settle. Caller holds the chat's mutex.
-func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *EntryLog) (*marotte.Chat, error) {
+// this process saw it queued. It answers the header, nil for a chat with no header,
+// which has nothing to settle, and whether it saved one, which it does not announce.
+// Caller holds the chat's mutex.
+func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *EntryLog) (*marotte.Chat, bool, error) {
 	c, err := s.load(ctx, chatID)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return nil, nil
+		return nil, false, nil
 	case err != nil:
-		return nil, err
+		return nil, false, err
 	case !slices.ContainsFunc(c.QueuedPrompts, func(q marotte.QueuedPrompt) bool { return !q.Held }):
-		return c, nil
+		return c, false, nil
 	}
 	entries, err := l.All()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	sent := make(map[string]bool)
 	for i := range entries {
@@ -83,8 +85,7 @@ func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *
 			sent[open.Prompt.ID] = true
 		}
 	}
-	var settled *marotte.Chat
-	_, err = s.mutateLocked(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+	_, settled, _, err := s.saveLocked(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -92,13 +93,12 @@ func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *
 		for i := range c.QueuedPrompts {
 			c.QueuedPrompts[i].Held = true
 		}
-		settled = c
 		return true
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return settled, nil
+	return settled, settled != nil, nil
 }
 
 // OpenTurn appends a turn_open to the chat's log and answers the entry, whose ID is

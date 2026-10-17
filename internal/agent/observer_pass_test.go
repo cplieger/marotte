@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -55,6 +56,41 @@ func TestObserverPass_OpensWithTheCurrentPresetsRefusesToolRequestsAndCloses(t *
 	}
 	if !sessionClosed(o) {
 		t.Error("the observer pass left its session open")
+	}
+}
+
+// A pass whose close KAS refuses deletes the session on the engine, so KAS drops it, and then closes it, so marotte's
+// lane for it ends: nothing is left live.
+func TestObserverPass_ARefusedCloseDeletesTheSessionAndClosesIt(t *testing.T) {
+	h, _ := reopenFixture(t)
+	settleBoot(t, h)
+	o := oneObserver(t, h)
+	o.mu.Lock()
+	o.closeErr = fmt.Errorf("ACP error -32603: %w", &marotte.RPCError{Code: marotte.RPCCodeInternal, Message: "a lifecycle operation is in progress"})
+	o.mu.Unlock()
+	src := fakeSourceOf(t, h)
+	var deleted []string
+	src.mu.Lock()
+	src.callGate = func(_ context.Context, method string, resp *marotte.RPCResponse, err error) (*marotte.RPCResponse, error) {
+		if method == marotte.MethodSessionDelete {
+			deleted = append(deleted, string(o.SessionID()))
+			o.mu.Lock()
+			o.closeErr = nil
+			o.mu.Unlock()
+		}
+		return resp, err
+	}
+	src.mu.Unlock()
+
+	if err := h.observe(t.Context(), func(context.Context, engineSession) error { return nil }); err != nil {
+		t.Fatalf("observe: %v", err)
+	}
+
+	if want := []string{string(o.SessionID())}; !slices.Equal(deleted, want) {
+		t.Errorf("engine session/delete sent for %v, want %v", deleted, want)
+	}
+	if !sessionClosed(o) {
+		t.Error("the pass's session stayed open after its refused close")
 	}
 }
 

@@ -86,7 +86,7 @@ import {
   type ResidencyAnchor,
 } from "./block-window.js";
 import { forgetHeights, spacerHeight, spacerOrdinalAt } from "./block-heights.js";
-import { slideTurnFold, wireRowToggle } from "./disclosure-row.js";
+import { slideTurnFolds, wireRowToggle, type TurnFold } from "./disclosure-row.js";
 import { initSearchRevealBuilder, searchHitCount } from "./chat-search.js";
 import {
   mountTurnRail,
@@ -1043,18 +1043,20 @@ function noteReaderMoved(): void {
  */
 function mountLiveEdge(): void {
   demandPin = undefined;
-  windowPass(false);
+  windowPass("live-edge");
 }
+
+type PassTrigger = "scroll" | "settle" | "live-edge";
 
 /**
  * Re-window on a settled scroll frame the reader caused, over the last full pass's projection; `openable` is
- * recomputed since a fold toggle changes it. `fromScroll` false is a build settling or a live-edge request.
+ * recomputed since a fold toggle changes it.
  */
-function windowPass(fromScroll = true): void {
+function windowPass(trigger: PassTrigger = "scroll"): void {
   if (inWindowPass) {
     return;
   }
-  if (fromScroll) {
+  if (trigger === "scroll") {
     if (!readerMoved) {
       return;
     }
@@ -1065,8 +1067,9 @@ function windowPass(fromScroll = true): void {
   if (session === undefined || session.id !== lastActiveId || turns.length === 0) {
     return;
   }
-  // A filling body reports coordinates for a partial range; the builder's settle runs the skipped pass.
-  if (coldBuilds.size > 0 || turnBodyBuilds.size > 0) {
+  // A filling body reports coordinates for a partial range; the builder's settle runs the skipped pass. A live-edge
+  // request reads none (`residencyAnchor` answers Following first), and the builder re-reads `wantedWindow` per batch.
+  if (trigger !== "live-edge" && (coldBuilds.size > 0 || turnBodyBuilds.size > 0)) {
     return;
   }
   const openable = turns.filter(
@@ -1343,6 +1346,7 @@ function applyFoldPass(
     byID.set(t.id, t);
   }
   const changes: (() => void)[] = [];
+  const flips: { card: HTMLElement; folded: boolean; t: Turn | undefined }[] = [];
   // A pass that refused a turn records nothing: recording an unapplied plan drops the delta until the next gesture.
   let refused = false;
   const record = (): void => {
@@ -1400,14 +1404,9 @@ function applyFoldPass(
       }
       continue;
     }
-    changes.push(() => {
-      setCardFolded(card, !open);
-      if (t !== undefined) {
-        syncTurnFace(card, t);
-      }
-    });
+    flips.push({ card, folded: !open, t });
   }
-  if (changes.length === 0) {
+  if (changes.length === 0 && flips.length === 0) {
     record();
     // Born-folded cards queue nothing, so the pagination trigger still needs restoring.
     if (paintMountedCards) {
@@ -1418,6 +1417,12 @@ function applyFoldPass(
   const apply = (): void => {
     for (const change of changes) {
       change();
+    }
+    setCardsFolded(flips);
+    for (const { card, t } of flips) {
+      if (t !== undefined) {
+        syncTurnFace(card, t);
+      }
     }
     // After the batch: a change the plan moved under has skipped itself.
     record();
@@ -1560,20 +1565,28 @@ function setHitCount(card: HTMLElement, n: number): void {
 }
 
 function setCardFolded(card: HTMLElement, folded: boolean): void {
-  const flip = (): void => {
-    card.toggleAttribute("data-folded", folded);
-    const header = card.querySelector<HTMLElement>(":scope > .turn-header");
-    // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
-    header
-      ?.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
-      ?.setAttribute("aria-expanded", folded ? "false" : "true");
-  };
-  const body = card.querySelector<HTMLElement>(":scope > .turn-body");
-  if (body === null || card.hasAttribute("data-folded") === folded) {
-    flip();
-    return;
+  setCardsFolded([{ card, folded }]);
+}
+
+function setCardsFolded(items: readonly { card: HTMLElement; folded: boolean }[]): void {
+  const slides: TurnFold[] = [];
+  for (const { card, folded } of items) {
+    const flip = (): void => {
+      card.toggleAttribute("data-folded", folded);
+      const header = card.querySelector<HTMLElement>(":scope > .turn-header");
+      // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
+      header
+        ?.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
+        ?.setAttribute("aria-expanded", folded ? "false" : "true");
+    };
+    const body = card.querySelector<HTMLElement>(":scope > .turn-body");
+    if (body === null || card.hasAttribute("data-folded") === folded) {
+      flip();
+      continue;
+    }
+    slides.push({ body, folded, apply: flip });
   }
-  slideTurnFold(body, folded, flip);
+  slideTurnFolds(slides);
 }
 
 // A collapsed turn keeps the open layout: header, a face with the final answer prose where the body was, and the
@@ -1946,7 +1959,7 @@ function drainColdBuilds(): void {
       .finally(() => {
         coldBuilds.delete(id);
         // `buildOrJoin`'s own pass refused while this entry stood.
-        windowPass(false);
+        windowPass("settle");
       });
   }
 }
@@ -2013,7 +2026,7 @@ function buildOrJoin(chatID: string, turnID: string, want: EntryRange): Promise<
   const done = buildTurnBodyBatches(chatID, turnID).finally(() => {
     turnBodyBuilds.delete(turnID);
     // The only pass a head-ward grant gets: the build inserts nothing above its window and a rail jump scrolls first.
-    windowPass(false);
+    windowPass("settle");
   });
   turnBodyBuilds.set(turnID, { range: want, done });
   return done;

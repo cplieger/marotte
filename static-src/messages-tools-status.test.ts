@@ -106,13 +106,6 @@ describe("a terminal frame whose output is blank", () => {
 });
 
 describe("a call that failed having produced nothing", () => {
-  it("is not force-opened", () => {
-    const card = liveCard("st-bare-open");
-    applyToolCallUpdate(card, frame("st-bare-open", { status: "failed" }), "c1");
-    expect(card.querySelector(".tool-details")?.getAttribute("aria-hidden")).toBe("true");
-    card.remove();
-  });
-
   it("loses its chevron", () => {
     const card = liveCard("st-bare-chevron");
     applyToolCallUpdate(card, frame("st-bare-chevron", { status: "failed" }), "c1");
@@ -166,6 +159,28 @@ describe("a group whose members ran LIVE and then settled", () => {
 
     expect(group.classList.contains("tool-group-auto-collapsed")).toBe(true);
     expect(group.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("false");
+    group.remove();
+  });
+
+  it("folds with a failed member like any other, the failure staying in its header", () => {
+    const group = buildToolGroupShell();
+    const a = liveCard("st-fold-fail-a");
+    const b = liveCard("st-fold-fail-b");
+    groupBody(group).append(a, b);
+    document.body.appendChild(group);
+    refreshGroupHeader(group);
+
+    applyToolCallUpdate(a, frame("st-fold-fail-a", { status: "completed" }), "c1");
+    applyToolCallUpdate(
+      b,
+      frame("st-fold-fail-b", { status: "failed", output: "exit status 1\n" }),
+      "c1",
+    );
+    autoCollapseGroup(group);
+
+    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(group.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("false");
+    expect(group.querySelector(".tool-group-count")?.textContent).toContain("1 failed");
     group.remove();
   });
 });
