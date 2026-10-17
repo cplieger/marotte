@@ -40,6 +40,12 @@ func (c stepClose) mayBeBroken() bool {
 	return marotte.SeverityOf(c.outcome) == marotte.TurnSeverityBroken || c.stoppedOnToolUse()
 }
 
+// mayNote is whether this close's grade could call for a step note: graded never makes a close refused, and the only
+// kind it adds is the model-call limit on a tool_use stop.
+func (c stepClose) mayNote() bool {
+	return c.outcome == marotte.TurnOutcomeRefused || c.kind == marotte.FailureKindModelCallLimit || c.stoppedOnToolUse()
+}
+
 // graded is the step's end under KAS's record of the node, the authority (known is false when KAS's record was not
 // read). A step KAS completed on a success signal ended completed whatever its turn's stop. The model-call limit is
 // named only for a step KAS completed with no success signal whose turn stopped on tool_use.

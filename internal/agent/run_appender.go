@@ -84,7 +84,7 @@ func (rs *Runs) noteStepEnded(workflowID string, path []string, sealed []turnlog
 		return
 	}
 	c := stepCloseOf(&tc)
-	if !c.mayBeBroken() || rs.lifecycle == nil {
+	if !c.mayNote() || rs.lifecycle == nil {
 		return
 	}
 	l, held := rs.lease(workflowID)

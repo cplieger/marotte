@@ -70,8 +70,8 @@ type visit struct {
 	path []string
 }
 
-// nodes walks every node of a run's tree in pre-order. Each level allocates its path at EXACT
-// capacity, or a child's append writes into a sibling's backing array.
+// nodes walks every node of a run's tree in pre-order. Each path is a fresh slice: appending onto
+// trail would let siblings share its spare capacity and overwrite each other's last segment.
 func nodes(s *State) []visit {
 	if s == nil || s.Root == nil {
 		return nil

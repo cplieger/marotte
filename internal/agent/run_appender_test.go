@@ -198,7 +198,7 @@ func TestRunNodeComplete_AStepThatRanLeavesNoNote(t *testing.T) {
 		{"a cancelled step", marotte.StopReasonCancelled, "cancelled"},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			h, cs, _ := runLoggingHub(t)
+			h, cs, br := runLoggingHub(t)
 			seedChat(t, cs, chatID)
 			h.runs.grantLease(t.Context(), id, "nightly",
 				launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
@@ -206,12 +206,17 @@ func TestRunNodeComplete_AStepThatRanLeavesNoNote(t *testing.T) {
 			if !h.runs.log.stopReason(id, "build", tc.raw) {
 				t.Fatalf("StopReason(%q) refused on the open turn", tc.raw)
 			}
+			br.forgetCalls()
 
 			h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, tc.status, "")
 			joinInflight(t, h)
 
 			if steers := chatSteers(t, cs, chatID); len(steers) != 0 {
 				t.Errorf("%s left %d notes, want none: %+v", tc.desc, len(steers), steers)
+			}
+			// No grade of this close can call for a note, so the run's state is not read for one.
+			if calls := br.callLog(); slices.Contains(calls, methodKiroWorkflowInspect) {
+				t.Errorf("%s read the run's state for a note it cannot leave: calls %v", tc.desc, calls)
 			}
 		})
 	}
