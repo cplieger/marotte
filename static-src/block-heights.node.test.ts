@@ -45,7 +45,7 @@ function entry(
   return opts.lane === undefined ? base : Object.assign(base, { lane: opts.lane });
 }
 
-/** A text entry as a `#k` segment of ONE say, so adjacent ones are one message (`sameMessage`). */
+/** A text entry as a `#k` segment of ONE say, so adjacent ones are one message (`MessageRun`). */
 function text(seq: number, opts: { readonly body?: string; readonly lane?: string } = {}): Entry {
   const id = `say#${String(seq)}`;
   return entry(
@@ -260,6 +260,16 @@ describe("a PROSE RUN is one row, priced once", () => {
     // still one row — the same rule the window's own snap walks over.
     const t = turn("t", [call(1, { id: "c1" }), text(2), result(3, "c1"), text(4)]);
     expect(stood(t)).toBe(38 + GAP_PX + 48 + GAP_PX);
+  });
+
+  it("charges each MESSAGE its own row, a minted segment riding the one before it", () => {
+    // Two says mount two rows; a minted segment between them bridges neither.
+    const t = turn("t", [
+      entry(1, "text", { text: "first reply." }, { id: "a-say" }),
+      entry(2, "text", { text: " more" }, { id: "t:e2" }),
+      entry(3, "text", { text: "second reply." }, { id: "b-say" }),
+    ]);
+    expect(stood(t)).toBe(48 + GAP_PX + 48 + GAP_PX);
   });
 });
 

@@ -73,7 +73,7 @@ function sealed(
   };
 }
 
-/** A text entry as a `#k` segment of the turn's ONE say, so adjacent ones are one message (`sameMessage`). */
+/** A text entry as a `#k` segment of the turn's ONE say, so adjacent ones are one message (`MessageRun`). */
 function text(turnID: string, seq: number, s: string): Entry {
   return sealed(turnID, seq, "text", { text: s }, { id: `${turnID}-say#${String(seq)}` });
 }

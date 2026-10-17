@@ -94,7 +94,7 @@ function sealed(
   };
 }
 
-/** A text entry as a `#k` segment of the turn's ONE say, so adjacent ones are one message (`sameMessage`). */
+/** A text entry as a `#k` segment of the turn's ONE say, so adjacent ones are one message (`MessageRun`). */
 function text(turnID: string, seq: number, s: string, lane?: string): Entry {
   const id = `${turnID}-say#${String(seq)}`;
   return sealed(turnID, seq, "text", { text: s }, lane === undefined ? { id } : { id, lane });
@@ -196,8 +196,13 @@ function retarget(entries: Entry[], turnID: string): Entry[] {
   return entries.map((e) => ({
     ...e,
     turn: turnID,
-    id: e.id.startsWith("t-") ? turnID + e.id.slice(1) : e.id,
+    id: placeholderID(e.id, turnID),
   }));
+}
+
+/** `id` with its `t` turn placeholder (`t-…`, or a minted `t:e<k>`) replaced by `turnID`. */
+function placeholderID(id: string, turnID: string): string {
+  return id.startsWith("t-") || id.startsWith("t:") ? turnID + id.slice(1) : id;
 }
 
 /** Build one turn's body from `entries`; a fresh turn id per call, so renders never share a slot. */
@@ -488,6 +493,18 @@ describe("sealing is invisible: the prose run", () => {
     expect(rows[0]?.textContent).toContain("one two three");
   });
 
+  it("never lets a MINTED segment bridge two named messages on a replay", () => {
+    const r = render([
+      sealed("t", 1, "text", { text: "first reply." }, { id: "a-say" }),
+      sealed("t", 2, "text", { text: " more" }, { id: "t:e2" }),
+      sealed("t", 3, "text", { text: "second reply." }, { id: "b-say" }),
+    ]);
+    const rows = [...r.body.querySelectorAll<HTMLElement>(".msg-row")];
+    expect(rows.map((row) => row.dataset["entries"])).toEqual([`a-say ${r.turnID}:e2`, "b-say"]);
+    expect(rows[0]?.textContent).toContain("first reply. more");
+    expect(rows[1]?.textContent).not.toContain("first reply");
+  });
+
   it("names its members on the row, in stream order", () => {
     const r = render([text("t", 1, "a"), text("t", 2, "b")]);
     const row = r.body.querySelector(".msg-row") as HTMLElement;
@@ -614,7 +631,7 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
       open: open.map((o) => ({
         ...o,
         turn: turnID,
-        id: o.id.startsWith("t-") ? turnID + o.id.slice(1) : o.id,
+        id: placeholderID(o.id, turnID),
       })),
     });
     const body = bodyHost();
@@ -638,6 +655,34 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
     const carets = r.body.querySelectorAll(".message.assistant.streaming");
     expect(carets).toHaveLength(1);
     expect(carets[0]?.closest(".msg-row")).toBe(rows[1]);
+  });
+
+  it("mounts a run of its OWN for another message after a MINTED segment, and moves the caret", () => {
+    // The minted segment rides the named say before it; it never bridges that say to the open one.
+    const r = renderLive(
+      [
+        sealed("t", 1, "text", { text: "first reply." }, { id: "a-say" }),
+        sealed("t", 2, "text", { text: " more" }, { id: "t:e2" }),
+      ],
+      [openText("t", "b-say", "second")],
+    );
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(2);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`a-say ${r.turnID}:e2`);
+    expect((rows[1] as HTMLElement).dataset["entries"]).toBe("b-say");
+    const carets = r.body.querySelectorAll(".message.assistant.streaming");
+    expect(carets).toHaveLength(1);
+    expect(carets[0]?.closest(".msg-row")).toBe(rows[1]);
+  });
+
+  it("joins a MINTED open entry to the named run before it", () => {
+    const r = renderLive(
+      [sealed("t", 1, "text", { text: "first reply." }, { id: "a-say" })],
+      [openText("t", "t:e2", " more")],
+    );
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`a-say ${r.turnID}:e2`);
   });
 
   it("mounts a run of its OWN when the lane's tail is not prose", () => {

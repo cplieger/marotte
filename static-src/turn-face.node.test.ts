@@ -44,6 +44,11 @@ function call(id: string): Entry {
 
 const STEER = sealed("steer", { text: "use tabs", origin: "user", state: "read" }, { id: "s-1" });
 
+/** KAS's acknowledgement of `STEER`, which the body draws as its own prose bubble. */
+function ack(s: string): Entry {
+  return sealed("steer_ack", { steer_id: "s-1", text: s }, { id: "s-1:ack" });
+}
+
 // --- The last message -------------------------------------------------------
 
 describe("turnLastMessage", () => {
@@ -99,6 +104,79 @@ describe("turnLastMessage", () => {
 
   it("answers empty for a turn with no prose at all", () => {
     expect(turnLastMessage(oneTurn([call("c1")]))).toEqual([]);
+  });
+
+  it("reaches back over a steer_ack inside the message, which is its own block", () => {
+    // A real shape: KAS's ack of a steer lands mid-say, so the say's head precedes it and its tail follows it.
+    const t = oneTurn([
+      call("c1"),
+      text("x-say", "LONG ANSWER part one.\n\n["),
+      ack("Folded in as the discovery check."),
+      text("x-say#2", "\n\nSTEERING s2: tail.]"),
+      call("hook-1"),
+    ]);
+    expect(turnLastMessage(t)).toEqual([
+      "LONG ANSWER part one.\n\n[",
+      "Folded in as the discovery check.",
+      "STEERING s2: tail.]",
+    ]);
+  });
+
+  it("ends at a trailing steer_ack, the last words the agent wrote", () => {
+    const t = oneTurn([call("c1"), text("a-say", "the answer"), ack("Noted.")]);
+    expect(turnLastMessage(t)).toEqual(["the answer", "Noted."]);
+  });
+
+  it("reaches back over a steer note inside ONE message", () => {
+    const t = oneTurn([
+      call("c1"),
+      text("y-say", "First half."),
+      STEER,
+      text("y-say#2", "Second half."),
+    ]);
+    expect(turnLastMessage(t)).toEqual(["First half.", "Second half."]);
+  });
+
+  it("reaches back over a tool call inside ONE message", () => {
+    const t = oneTurn([
+      text("a-say", "before"),
+      call("c1"),
+      sealed("tool_result", {}, { id: "c1:result" }),
+      text("a-say#2", "after"),
+    ]);
+    expect(turnLastMessage(t)).toEqual(["before", "after"]);
+  });
+
+  it("reaches back over SEVERAL drawn entries inside one message, to its first segment", () => {
+    const t = oneTurn([
+      text("z-say", "earlier message"),
+      call("c0"),
+      text("a-say", "one"),
+      call("c1"),
+      sealed("tool_result", {}, { id: "c1:result" }),
+      sealed("thinking", { text: "hmm" }, { id: "r-say" }),
+      call("c2"),
+      text("a-say#2", "two"),
+      call("c3"),
+      text("a-say#3", "three"),
+    ]);
+    expect(turnLastMessage(t)).toEqual(["one", "two", "three"]);
+  });
+
+  it("does not reach over a tool call to a text under a MINTED say, which names no message", () => {
+    const t = oneTurn([text("t1:e1", "unknown"), call("c1"), text("a-say", "the answer")]);
+    expect(turnLastMessage(t)).toEqual(["the answer"]);
+  });
+
+  it("reaches over a tool call and a delegate's prose to the same say", () => {
+    // The nearest TOP-LEVEL text decides: a delegate's report between them is not the parent's message.
+    const t = oneTurn([
+      text("a-say", "head"),
+      call("c1"),
+      text("d-say", "report", "sub-A"),
+      text("a-say#2", "tail"),
+    ]);
+    expect(turnLastMessage(t)).toEqual(["head", "tail"]);
   });
 });
 
@@ -160,11 +238,28 @@ describe("turnFoldHides", () => {
     expect(turnFoldHides(t)).toBe(false);
   });
 
-  it.each(["turn_bind", "tool_result", "steer_ack", "turn_close"] as const)(
+  it.each(["turn_bind", "tool_result", "turn_close"] as const)(
     "hides nothing behind a %s, which the face does not draw either",
     (kind) => {
       const t = oneTurn([text("a-say", "the answer"), sealed(kind, {})]);
       expect(turnFoldHides(t)).toBe(false);
     },
   );
+
+  it("hides nothing behind a steer_ack, which the face shows as its own block", () => {
+    const t = oneTurn([text("a-say", "the answer"), ack("Noted."), text("a-say#2", "more")]);
+    expect(turnLastMessage(t)).toEqual(["the answer", "Noted.", "more"]);
+    expect(turnFoldHides(t)).toBe(false);
+  });
+
+  it("hides a steer_ack before the last message, which the face leaves out", () => {
+    const t = oneTurn([ack("Noted."), STEER, text("b-say", "the answer")]);
+    expect(turnFoldHides(t)).toBe(true);
+  });
+
+  it("hides the steer note inside ONE message, which the face reaches over", () => {
+    const t = oneTurn([text("y-say", "First half."), STEER, text("y-say#2", "Second half.")]);
+    expect(turnLastMessage(t)).toEqual(["First half.", "Second half."]);
+    expect(turnFoldHides(t)).toBe(true);
+  });
 });

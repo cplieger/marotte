@@ -1,63 +1,105 @@
 // What a collapsed turn's face shows, and whether folding the turn hides anything. Pure and DOM-free.
 
-import { entryAt, entryRenders, proseRunAt, turnFolds, turnSpan } from "./block-window.js";
+import {
+  entryAt,
+  entryRenders,
+  proseRunAt,
+  turnFolds,
+  turnSpan,
+  type EntryRange,
+} from "./block-window.js";
+import { namedSay } from "./entry-ids.js";
 import { isSubagentFallback, payloadOf, type Turn } from "./turns.js";
+import type { Entry } from "./types.js";
 
 /**
- * The turn's LAST MESSAGE, which a collapsed turn's face renders whole: one trimmed string per message (say), in
- * order. It is the top-level prose that ends at the turn's last non-empty top-level `text` entry and reaches back
- * over the prose runs before it until an entry the body draws that is not prose (a tool call, a reasoning trace, a
- * steer note). An entry that draws nothing (a `tool_result`, a `steer_delivered`) does not end it, so a reply and the
- * reply a notification woke the agent for, back to back, are both in it. Delegate prose is a delegate's report,
- * never the turn's answer. Empty for a turn that wrote no top-level prose.
+ * The turn's LAST MESSAGE, which a collapsed turn's face renders whole: one trimmed string per bubble the body draws
+ * for it, in order. It ends at the turn's last non-empty top-level prose (`text`, or a `steer_ack`, its own bubble) and
+ * reaches back over all the prose before it, other says too (a reply, then the one a notification woke the agent for).
+ * It reaches over an entry the body draws that is not prose (a tool call, a reasoning trace, a steer note) only when
+ * the nearest earlier top-level text is the same named say: one message written around it. An entry that draws
+ * nothing (`tool_result`, `steer_delivered`) never ends it. Delegate prose is never in it.
  */
 export function turnLastMessage(t: Turn): string[] {
-  const runs = lastMessageRuns(t);
-  return runs.map((r) => runText(t, r.from, r.to).trim()).filter((s) => s !== "");
+  return lastMessageItems(t)
+    .map((r) => itemText(t, r).trim())
+    .filter((s) => s !== "");
 }
 
-/** The last message's prose runs as `seq` ranges, in order. */
-function lastMessageRuns(t: Turn): { from: number; to: number }[] {
+/** The last message's bubbles as `seq` ranges, in order: prose runs, and one entry each for a `steer_ack`. */
+function lastMessageItems(t: Turn): EntryRange[] {
   const folds = turnFolds(t, "");
+  const items: EntryRange[] = [];
+  // The earliest named say collected so far: the one a drawn entry must sit inside to be reached over.
+  let say: string | null = null;
   let seq = lastProseSeq(t);
-  const runs: { from: number; to: number }[] = [];
   while (seq > 0) {
-    const run = proseRunAt(t, seq, "", folds);
-    if (run === null) {
+    const e = entryAt(t, seq);
+    if (e === undefined || !entryRenders(e, "", folds)) {
+      seq--;
+      continue;
+    }
+    const item =
+      e.kind === "steer_ack" ? { from: seq, to: seq + 1 } : proseRunAt(t, seq, "", folds);
+    if (item !== null) {
+      items.unshift(item);
+      say = runSay(t, item) ?? say;
+      seq = item.from - 1;
+      continue;
+    }
+    const prev = textBefore(t, seq);
+    if (say === null || prev === undefined || namedSay(prev) !== say) {
       break;
     }
-    runs.unshift(run);
-    seq = run.from - 1;
-    while (seq > 0) {
-      const e = entryAt(t, seq);
-      if (e !== undefined && entryRenders(e, "", folds)) {
-        break;
-      }
-      seq--;
-    }
+    seq--;
   }
-  return runs;
+  return items;
 }
 
-/** The `seq` of the turn's last non-empty top-level `text` entry, or -1. */
+/** The `seq` of the turn's last non-empty top-level prose entry, or -1. */
 function lastProseSeq(t: Turn): number {
   for (let seq = turnSpan(t) - 1; seq > 0; seq--) {
     const e = entryAt(t, seq);
-    if (e === undefined || (e.lane ?? "") !== "") {
-      continue;
-    }
-    if ((payloadOf(e, "text")?.text ?? "").trim() !== "") {
+    if (e !== undefined && (e.lane ?? "") === "" && proseOf(e).trim() !== "") {
       return seq;
     }
   }
   return -1;
 }
 
-function runText(t: Turn, from: number, to: number): string {
-  let out = "";
-  for (let seq = from; seq < to; seq++) {
+/** A top-level entry's prose: a `text`'s or a `steer_ack`'s words, else "". */
+function proseOf(e: Entry): string {
+  return payloadOf(e, "text")?.text ?? payloadOf(e, "steer_ack")?.text ?? "";
+}
+
+/** The first named say among `item`'s text members, or null. */
+function runSay(t: Turn, item: EntryRange): string | null {
+  for (let seq = item.from; seq < item.to; seq++) {
     const e = entryAt(t, seq);
-    out += e === undefined || (e.lane ?? "") !== "" ? "" : (payloadOf(e, "text")?.text ?? "");
+    const say = e?.kind === "text" && (e.lane ?? "") === "" ? namedSay(e) : null;
+    if (say !== null) {
+      return say;
+    }
+  }
+  return null;
+}
+
+/** The nearest top-level `text` entry before `seq`. */
+function textBefore(t: Turn, seq: number): Entry | undefined {
+  for (let i = seq - 1; i > 0; i--) {
+    const e = entryAt(t, i);
+    if (e?.kind === "text" && (e.lane ?? "") === "") {
+      return e;
+    }
+  }
+  return undefined;
+}
+
+function itemText(t: Turn, item: EntryRange): string {
+  let out = "";
+  for (let seq = item.from; seq < item.to; seq++) {
+    const e = entryAt(t, seq);
+    out += e === undefined || (e.lane ?? "") !== "" ? "" : proseOf(e);
   }
   return out;
 }
@@ -90,19 +132,28 @@ export function turnFoldHides(t: Turn): boolean {
         break;
     }
   }
-  return proseBeforeLastMessage(t);
+  return faceLeavesOut(t);
 }
 
-/** Whether a non-empty top-level `text` entry sits before the last message, where the face does not show it. */
-function proseBeforeLastMessage(t: Turn): boolean {
-  const first = lastMessageRuns(t)[0]?.from ?? turnSpan(t);
+/**
+ * Whether the face leaves out prose before the last message, or an entry the body draws inside its span (a steer
+ * note one message was written around).
+ */
+function faceLeavesOut(t: Turn): boolean {
+  const items = lastMessageItems(t);
+  const first = items[0]?.from ?? turnSpan(t);
   for (let seq = 1; seq < first; seq++) {
     const e = entryAt(t, seq);
-    if (
-      e !== undefined &&
-      (e.lane ?? "") === "" &&
-      (payloadOf(e, "text")?.text ?? "").trim() !== ""
-    ) {
+    if (e !== undefined && (e.lane ?? "") === "" && proseOf(e).trim() !== "") {
+      return true;
+    }
+  }
+  const folds = turnFolds(t, "");
+  const end = items.at(-1)?.to ?? first;
+  for (let seq = first; seq < end; seq++) {
+    const e = entryAt(t, seq);
+    const drawn = e !== undefined && entryRenders(e, "", folds);
+    if (drawn && !items.some((r) => seq >= r.from && seq < r.to)) {
       return true;
     }
   }

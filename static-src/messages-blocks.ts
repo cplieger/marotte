@@ -21,6 +21,7 @@ import {
   entryRenders,
   NO_FOLDS,
   turnFolds,
+  continuesRun,
   proseRunAt,
   runResults,
   turnOrdinalOf,
@@ -29,7 +30,7 @@ import {
   type RunResults,
   type TurnFolds,
 } from "./block-window.js";
-import { sameMessage, steerAckID, toolResultID } from "./entry-ids.js";
+import { steerAckID, toolResultID } from "./entry-ids.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { effect, el } from "@cplieger/reactive";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
@@ -2165,10 +2166,8 @@ function mountOpenProse(st: TurnRender, open: OpenEntry, live: boolean): void {
     return;
   }
   const run = tailSeq < 0 ? null : proseRunAt(st.turn, tailSeq, st.lane, st.folds);
-  const tailEntry = entryAt(st.turn, tailSeq);
-  // Another message starts a run of its own, as `proseRunAt` will place it once sealed.
   const joined =
-    run === null || tailEntry === undefined || !sameMessage(tailEntry, open)
+    run === null || !continuesRun(st.turn, run, open, st.lane, st.folds)
       ? undefined
       : st.proseRuns.get(run.from);
   if (joined === undefined) {

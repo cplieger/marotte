@@ -47,7 +47,7 @@ function entry(
   return opts.lane === undefined ? base : Object.assign(base, { lane: opts.lane });
 }
 
-/** A text entry as a `#k` segment of ONE say, so adjacent ones are one message (`sameMessage`). */
+/** A text entry as a `#k` segment of ONE say, so adjacent ones are one message (`MessageRun`). */
 function text(seq: number, lane?: string): Entry {
   const id = `say#${String(seq)}`;
   return entry(
@@ -535,6 +535,31 @@ describe("proseRunAt", () => {
       entry(3, "text", { text: "two" }, { id: "t1:e4" }),
     ]);
     expect(proseRunAt(t, 3, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+  });
+
+  it("never lets a MINTED segment bridge two named messages", () => {
+    // A minted segment joins the run before it; the named say after it is still another message.
+    const t = turn("t1", [
+      entry(1, "text", { text: "first reply." }, { id: "a-say" }),
+      entry(2, "tool_result", {}, { id: "c0:result" }),
+      entry(3, "text", { text: " more" }, { id: "t1:e4" }),
+      entry(4, "text", { text: "second reply." }, { id: "b-say" }),
+    ]);
+    expect(proseRunAt(t, 1, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+    expect(proseRunAt(t, 3, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+    expect(proseRunAt(t, 4, "", NO_FOLDS)).toEqual({ from: 4, to: 5 });
+    expect(sliceTurn(t, { from: 3, to: 4 })).toEqual({ from: 1, to: 4 });
+    expect(sliceTurn(t, { from: 4, to: 5 })).toEqual({ from: 4, to: 5 });
+  });
+
+  it("lets a run that opens on a MINTED segment take the first named say after it", () => {
+    const t = turn("t1", [
+      entry(1, "text", { text: "lead " }, { id: "t1:e1" }),
+      entry(2, "text", { text: "first reply." }, { id: "a-say" }),
+      entry(3, "text", { text: "second reply." }, { id: "b-say" }),
+    ]);
+    expect(proseRunAt(t, 1, "", NO_FOLDS)).toEqual({ from: 1, to: 3 });
+    expect(proseRunAt(t, 3, "", NO_FOLDS)).toEqual({ from: 3, to: 4 });
   });
 });
 

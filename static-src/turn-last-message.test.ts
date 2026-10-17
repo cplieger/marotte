@@ -1,6 +1,7 @@
 // One turn holding two of the agent's messages (a reply, then a second reply a workflow notification woke it for):
-// each message is its own block in the body, live and on reload; the folded face shows the turn's whole last
-// message; both copies keep a blank line between messages. The real renderer runs through the real store.
+// each message is its own block in the body, live and on reload, a minted segment between them bridging neither; the
+// folded face shows the turn's whole last message, a drawn entry inside it included; both copies keep a blank line
+// between blocks. The real renderer runs through the real store.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Session } from "./types.js";
@@ -304,6 +305,152 @@ describe("the folded turn's face", () => {
       expect(blocks(TURN, ".turn-face")).toHaveLength(1);
     });
     expect(blocks(TURN, ".turn-face")[0]?.startsWith("No change:")).toBe(true);
+  });
+});
+
+// --- One message split by a drawn entry ---------------------------------------------------
+
+const ACK_ID = "steer-m-1:ack";
+const HEAD = "Your instinct is mostly right. Should I launch that?\n\n[";
+const ACK = "Folded in as the start-of-work discovery check.";
+const TAIL = "\n\nSTEERING steer-m-2: Compared your design.]";
+
+/** A real shape: one say whose head and tail a steer_ack splits, then a trailing hook call. */
+function ackSplit(): Entry[] {
+  return [
+    turnOpen(TURN, 1),
+    callEntry(TURN, 1),
+    resultEntry(TURN, 2),
+    sealed(TURN, 3, "text", { text: HEAD }, SAY_A),
+    sealed(TURN, 4, "steer_ack", { steer_id: "steer-m-1", text: ACK }, ACK_ID),
+    sealed(TURN, 5, "text", { text: TAIL }, `${SAY_A}#2`),
+    sealed(TURN, 6, "turn_close", { outcome: "completed" }),
+  ];
+}
+
+/** One say split by two tool calls, as a seal at each call leaves it. */
+function toolSplit(): Entry[] {
+  const call = (seq: number, id: string): Entry =>
+    sealed(
+      TURN,
+      seq,
+      "tool_call",
+      { id, title: "Run Command", kind: "execute", status: "completed", ts: 1 },
+      id,
+    );
+  return [
+    turnOpen(TURN, 1),
+    sealed(TURN, 1, "text", { text: "Checking both." }, SAY_A),
+    call(2, "c-1"),
+    sealed(TURN, 3, "tool_result", { status: "completed" }, "c-1:result"),
+    call(4, "c-2"),
+    sealed(TURN, 5, "tool_result", { status: "completed" }, "c-2:result"),
+    sealed(TURN, 6, "text", { text: "Both pass." }, `${SAY_A}#2`),
+    sealed(TURN, 7, "turn_close", { outcome: "completed" }),
+  ];
+}
+
+describe("one message a drawn entry splits", () => {
+  it("shows all of it on the face when a steer_ack splits it", async () => {
+    load("tlm-ack-face", [ackSplit(), nextTurn()]);
+    await vi.waitFor(() => {
+      expect(card(TURN).hasAttribute("data-folded")).toBe(true);
+    });
+    // A bubble's textContent runs its own paragraphs together ("that?[").
+    expect(blocks(TURN, ".turn-face")).toEqual([
+      "Your instinct is mostly right. Should I launch that?[",
+      ACK,
+      "STEERING steer-m-2: Compared your design.]",
+    ]);
+    expect(copy(TURN, "Copy as text")).toBe(
+      `${PROMPT}\n\nYour instinct is mostly right. Should I launch that?[\n\n${ACK}\n\nSTEERING steer-m-2: Compared your design.]`,
+    );
+    expect(copy(TURN, "Copy as markdown")).toBe(`> ${PROMPT}\n\n${HEAD}\n\n${ACK}\n\n${TAIL}`);
+  });
+
+  it("shows all of it on the face when tool calls split it, and copies it open or folded", async () => {
+    load("tlm-tool-face", [toolSplit(), nextTurn()]);
+    await vi.waitFor(() => {
+      expect(card(TURN).hasAttribute("data-folded")).toBe(true);
+    });
+    expect(blocks(TURN, ".turn-face")).toEqual(["Checking both.", "Both pass."]);
+    expect(copy(TURN, "Copy as text")).toBe(`${PROMPT}\n\nChecking both.\n\nBoth pass.`);
+    expect(copy(TURN, "Copy as markdown")).toBe(`> ${PROMPT}\n\nChecking both.\n\nBoth pass.`);
+
+    const open = "tlm-tool-open";
+    setTurnOpen(open, TURN, true);
+    load(open, [toolSplit(), nextTurn()]);
+    await vi.waitFor(() => {
+      expect(blocks(TURN, ".turn-body")).toEqual(["Checking both.", "Both pass."]);
+    });
+    expect(copy(TURN, "Copy as text")).toBe(`${PROMPT}\n\nChecking both.\n\nBoth pass.`);
+    expect(copy(TURN, "Copy as markdown")).toBe(`> ${PROMPT}\n\nChecking both.\n\nBoth pass.`);
+  });
+});
+
+// --- A minted segment between two messages ------------------------------------------------
+
+const MINTED = `${TURN}:e9`;
+
+/** Two named messages with a minted (id-less) segment between them, which rides the first. */
+function mintedBridge(): Entry[] {
+  return [
+    turnOpen(TURN, 1),
+    callEntry(TURN, 1),
+    resultEntry(TURN, 2),
+    sealed(TURN, 3, "text", { text: "First reply." }, SAY_A),
+    sealed(TURN, 4, "text", { text: " Still first." }, MINTED),
+    sealed(TURN, 5, "text", { text: "Second reply." }, SAY_B),
+    sealed(TURN, 6, "turn_close", { outcome: "completed" }),
+  ];
+}
+
+describe("a minted segment between two messages", () => {
+  it("bridges neither on a reload, nor in either copy", async () => {
+    const chat = "tlm-minted";
+    setTurnOpen(chat, TURN, true);
+    load(chat, [mintedBridge(), nextTurn()]);
+    await vi.waitFor(() => {
+      expect(blocks(TURN, ".turn-body")).toEqual(["First reply. Still first.", "Second reply."]);
+    });
+    expect(copy(TURN, "Copy as text")).toBe(
+      `${PROMPT}\n\nFirst reply. Still first.\n\nSecond reply.`,
+    );
+    expect(copy(TURN, "Copy as markdown")).toBe(
+      `> ${PROMPT}\n\nFirst reply. Still first.\n\nSecond reply.`,
+    );
+  });
+
+  it("bridges neither while the second message streams", async () => {
+    const chat = "tlm-minted-live";
+    store.setSessions([makeSession({ id: chat, name: chat, thinking: true })]);
+    store.setActive(chat);
+    store.openTurn(chat, turnOpen(TURN, 1));
+    store.appendEntry(chat, callEntry(TURN, 1));
+    store.appendEntry(chat, resultEntry(TURN, 2));
+    const open = (id: string, text: string): OpenEntry => ({
+      turn: TURN,
+      id,
+      kind: "text",
+      text,
+      n: 1,
+    });
+    store.openEntry(chat, open(SAY_A, "First reply."));
+    store.sealEntry(chat, TURN, SAY_A, "", 3, 4, 1);
+    store.openEntry(chat, open(MINTED, " Still first."));
+    store.sealEntry(chat, TURN, MINTED, "", 4, 5, 1);
+    store.openEntry(chat, open(SAY_B, "Second reply, still streaming"));
+
+    // A live bubble paints its text over frames, so the words are awaited too.
+    await vi.waitFor(() => {
+      expect(blocks(TURN, ".turn-body")).toHaveLength(2);
+      expect(blocks(TURN, ".turn-body")[0]).toBe("First reply. Still first.");
+    });
+    await vi.waitFor(() => {
+      const streaming = card(TURN).querySelectorAll(".message.assistant.streaming");
+      expect(streaming).toHaveLength(1);
+      expect(streaming[0]?.textContent.startsWith("Second reply")).toBe(true);
+    });
   });
 });
 

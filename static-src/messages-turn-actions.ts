@@ -4,10 +4,9 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
 import type { Turn } from "./turns.js";
-import type { Entry } from "./types.js";
 import { payloadOf } from "./turns.js";
 import { entryRenders, turnFolds } from "./block-window.js";
-import { sameMessage } from "./entry-ids.js";
+import { MessageRun } from "./entry-ids.js";
 import { ICON_COPY, ICON_COPY_MD, ICON_LINK } from "./icons.js";
 import { getActiveId } from "./store.js";
 import { copyClipboard } from "./actions/messages.js";
@@ -235,33 +234,40 @@ function turnCopyMarkdown(t: Turn): string {
 }
 
 /**
- * The reply's markdown, one paragraph per prose run. A run's `text` entries concatenate since one parser renders
- * them; `entryRenders` and `sameMessage` are the boundary tests, as `proseRunAt`'s.
+ * The reply's markdown, one paragraph per prose run and per `steer_ack`, as the body draws a bubble for each. A run's
+ * `text` entries concatenate since one parser renders them; `entryRenders` and `MessageRun` are the boundary tests,
+ * as `proseRunAt`'s.
  */
 export function turnMarkdown(t: Turn): string {
   const parts: string[] = [];
   let run = "";
-  let last: Entry | undefined;
+  let msg = new MessageRun();
   const folds = turnFolds(t, "");
-  const flush = (): void => {
-    if (run.trim() !== "") {
-      parts.push(run);
+  const push = (s: string): void => {
+    if (s.trim() !== "") {
+      parts.push(s);
     }
+  };
+  const flush = (): void => {
+    push(run);
     run = "";
-    last = undefined;
+    msg = new MessageRun();
   };
   for (const e of t.body) {
     if (!entryRenders(e, "", folds)) {
       continue;
     }
     const text = payloadOf(e, "text");
-    if (text === undefined || (last !== undefined && !sameMessage(last, e))) {
+    if (text === undefined) {
       flush();
+      push(payloadOf(e, "steer_ack")?.text ?? "");
+      continue;
     }
-    if (text !== undefined) {
-      run += text.text;
-      last = e;
+    if (!msg.take(e)) {
+      flush();
+      msg.take(e);
     }
+    run += text.text;
   }
   flush();
   return parts.join("\n\n");

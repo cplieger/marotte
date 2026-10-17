@@ -268,7 +268,30 @@ describe("mountTurnFooterActions", () => {
     expect(dispatch).toHaveBeenCalledWith("first reply.\n\nsecond reply.", expect.anything());
   });
 
-  it("ends a run on a steer_ack, which contributes no words of its own", () => {
+  it("never lets a MINTED segment bridge two messages into one paragraph", () => {
+    // A minted id names no message: it rides the run before it, and the named say after it is another message.
+    const f = fixture([
+      { ...text(1, "first reply."), id: "a-say" },
+      { ...text(2, " more"), id: "t1:e2" },
+      { ...text(3, "second reply."), id: "b-say" },
+    ]);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    buttons(f.footer)[1]?.click();
+    expect(dispatch).toHaveBeenCalledWith("first reply. more\n\nsecond reply.", expect.anything());
+  });
+
+  it("gives a steer_ack's words a paragraph of their own, as the body gives them a bubble", () => {
+    const f = fixture([
+      { ...text(1, "before"), id: "a-say" },
+      entry(2, "steer_ack", { steer_id: "s-1", text: "Noted." }),
+      { ...text(3, "after"), id: "a-say#2" },
+    ]);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    buttons(f.footer)[1]?.click();
+    expect(dispatch).toHaveBeenCalledWith("before\n\nNoted.\n\nafter", expect.anything());
+  });
+
+  it("ends a run on an EMPTY steer_ack, which contributes no words", () => {
     // It renders, so it is a boundary; it carries no text.
     const f = fixture([text(1, "before"), entry(2, "steer_ack"), text(3, "after")]);
     mountTurnFooterActions(f.footer, f.card, f.turn);

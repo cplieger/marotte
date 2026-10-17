@@ -30,15 +30,29 @@ function isMintedSay(say: string, turnID: string): boolean {
   return say.startsWith(turnID) && /^:e\d+$/u.test(say.slice(turnID.length));
 }
 
+/** The NAMED say a text entry belongs to, or null under a minted say, which names no message (`turnlog.sayRef`). */
+export function namedSay(e: { readonly id: string; readonly turn: string }): string | null {
+  const say = sayIDOf(e.id);
+  return isMintedSay(say, e.turn) ? null : say;
+}
+
 /**
- * Whether two text entries are ONE of the agent's messages: one say, which a seal split into `<say>#k` segments, or
- * either under a minted say, which says nothing about where a message ends (`turnlog.sayRef`).
+ * Groups consecutive text entries into the agent's messages, fed in stream order. A run's say is its first named
+ * segment's (`<say>#k` segments share one); a minted segment rides the run it follows and never bridges two says.
  */
-export function sameMessage(
-  a: { readonly id: string; readonly turn: string },
-  b: { readonly id: string; readonly turn: string },
-): boolean {
-  const sa = sayIDOf(a.id);
-  const sb = sayIDOf(b.id);
-  return sa === sb || isMintedSay(sa, a.turn) || isMintedSay(sb, b.turn);
+export class MessageRun {
+  private say: string | null = null;
+
+  /** Take `e` into the run, or refuse it, leaving the run unchanged, as another message's. */
+  take(e: { readonly id: string; readonly turn: string }): boolean {
+    const say = namedSay(e);
+    if (say === null) {
+      return true;
+    }
+    if (this.say !== null && this.say !== say) {
+      return false;
+    }
+    this.say = say;
+    return true;
+  }
 }
