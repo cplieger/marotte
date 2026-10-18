@@ -102,7 +102,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/sse && \
 # travels with the served copy and the image's licence tree.
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=pele
-ARG PELE_VERSION=1.4.0
+ARG PELE_VERSION=1.5.0
 RUN mkdir -p static-src/node_modules/pele static/vendor/pele && \
     curl -fsSL "https://registry.npmjs.org/pele/-/pele-${PELE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/pele --strip-components=1 && \
