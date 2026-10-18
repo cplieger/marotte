@@ -1,7 +1,8 @@
 // The page adopts only settings at or above the version it holds, whichever of the settings_updated
 // handler (handlers/system.ts), the shared read (persist.loadSettings) or the additional
-// directories panel's own write delivers them, and a failed write rolls back nothing newer settings
-// or a later write own, over the shipped markup with only the network faked.
+// directories panel's own write delivers them, a failed write rolls back nothing newer settings
+// or a later write own, and what the page acts on is the server's while its controls show a click
+// not yet committed, over the shipped markup with only the network faked.
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import indexHtml from "../static/index.html?raw";
 import { settingsPayload } from "./__test-helpers__/settings.js";
@@ -12,6 +13,9 @@ import { applyAgentDirs, initAgentDirsUI } from "./agent-dirs-ui.js";
 import { byId } from "./dom.js";
 import { __testResetTracking, loadSettings, patchSettings } from "./persist.js";
 import { additionalDirectories, _resetForTest as resetWorkspace } from "./workspace.js";
+import { isKindEnabled } from "./notify.js";
+import { isRetentionEnabled } from "./retention.js";
+import { initNotificationToggles } from "./settings-notifications.js";
 
 interface Held {
   answer: (s: EffectiveSettings) => void;
@@ -103,6 +107,7 @@ beforeAll(async () => {
   // After the markup: the handler's module graph reads elements as it loads.
   await import("./handlers/system.js");
   initAgentDirsUI();
+  initNotificationToggles();
 });
 
 beforeEach(() => {
@@ -463,5 +468,140 @@ describe("settings sync ordering", () => {
     expect(patches[0]?.body).toEqual({ debug_logs: true });
     patches[0]?.answer(debugAt(3, true));
     await settled();
+  });
+
+  it("leaves a switch on the settings it holds when an answer older than an announced version settles", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    expect(patches).toHaveLength(1);
+
+    // This write committed revision 2, then another device committed revision 3.
+    settingsEvent(3);
+    await settled();
+    expect(gets).toHaveLength(2);
+    patches[0]?.answer(debugAt(2, true));
+    await settled();
+    expect(debugLogs().checked, "revision 2 is older than the version the page holds").toBe(false);
+
+    gets[1]?.answer(debugAt(3, false));
+    await settled();
+    expect(debugLogs().checked).toBe(false);
+  });
+
+  it("shows a click waiting behind another write over another device's newer settings", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    saveDebugLogs(false);
+    await debounced();
+    expect(patches, "the second write waits behind the first").toHaveLength(1);
+
+    settingsEvent(3);
+    await settled();
+    gets[1]?.answer(debugAt(3, true));
+    await settled();
+    expect(debugLogs().checked, "the waiting write commits after revision 3").toBe(false);
+
+    patches[0]?.answer(debugAt(2, true));
+    await settled();
+    expect(debugLogs().checked).toBe(false);
+    expect(patches[1]?.body).toEqual({ debug_logs: false });
+    patches[1]?.answer(debugAt(4, false));
+    await settled();
+    expect(debugLogs().checked).toBe(false);
+  });
+
+  it("notifies by the server's kind setting while a kind click waits, and after it fails", async () => {
+    const box = byId<HTMLInputElement>("notify-finished-toggle");
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(
+      settingsPayload({ settings_epoch: 1, settings_revision: 1, notify_agent_finished: true }),
+    );
+    await settled();
+    expect(box.checked).toBe(true);
+    box.checked = false;
+    void patchSettings(
+      { notify_agent_finished: false },
+      { el: box, key: "notify_agent_finished", on: true },
+    );
+
+    // Another device's write, inside the click's debounce window.
+    settingsEvent(2);
+    await settled();
+    gets[1]?.answer(
+      settingsPayload({
+        settings_epoch: 1,
+        settings_revision: 2,
+        notify_agent_finished: true,
+        debug_logs: true,
+      }),
+    );
+    await settled();
+    expect(box.checked, "the click, not yet sent").toBe(false);
+    expect(isKindEnabled("agent_finished"), "the kind the server holds").toBe(true);
+
+    await debounced();
+    patches[0]?.fail();
+    await settled();
+    expect(box.checked).toBe(true);
+    expect(isKindEnabled("agent_finished")).toBe(true);
+  });
+
+  it("keeps the retention the server holds while a retention write waits, and after it fails", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(
+      settingsPayload({ settings_epoch: 1, settings_revision: 1, chat_retention_days: 7 }),
+    );
+    await settled();
+    expect(isRetentionEnabled()).toBe(true);
+    void patchSettings({ chat_retention_days: 0 });
+
+    settingsEvent(2);
+    await settled();
+    gets[1]?.answer(
+      settingsPayload({
+        settings_epoch: 1,
+        settings_revision: 2,
+        chat_retention_days: 7,
+        debug_logs: true,
+      }),
+    );
+    await settled();
+    expect(byId<HTMLInputElement>("chat-retention-days").value, "the value not yet sent").toBe("0");
+    expect(isRetentionEnabled(), "the retention the server holds").toBe(true);
+
+    await debounced();
+    patches[0]?.fail();
+    await settled();
+    expect(isRetentionEnabled()).toBe(true);
+  });
+
+  it("shows a switch click that waited behind a directories write over that write's answer", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(dirsAt(1, ["/data"]));
+    await settled();
+    add("/a");
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    expect(patches, "the switch's write waits behind the directories write").toHaveLength(1);
+
+    patches[0]?.answer(dirsAt(2, ["/data", "/a"]));
+    await settled();
+    expect(patches).toHaveLength(2);
+    expect(debugLogs().checked, "the switch's write commits after revision 2").toBe(true);
+    patches[1]?.answer(debugAt(3, true));
+    await settled();
+    expect(debugLogs().checked).toBe(true);
   });
 });

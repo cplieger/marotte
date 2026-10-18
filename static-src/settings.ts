@@ -9,7 +9,7 @@ import { getGitTab } from "./git-tabs.js";
 import { noteDefaultBrowsePath } from "./files.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
-import { adoptSettings, patchSettings, refreshSettings } from "./persist.js";
+import { adoptSettings, patchSettings, refreshSettings, settingsAsShown } from "./persist.js";
 import type { SettingsSwitch } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import type { KiroDefault } from "./wire/types.gen.js";
@@ -38,9 +38,8 @@ import { initSteeringEditor, loadSteeringDoc } from "./settings-steering.js";
 import { DEFAULT_AUTO_COMPACT_PCT, compactionPolicy } from "./context-ring.js";
 import { paintSettingLocks, writeSwitch } from "./governance.js";
 
-// Per-key write generation for the kiro-cli settings endpoint; same rule as persist.ts's `claims`,
-// which explains it. Separate because the key namespaces are (dotted kiro-cli keys against
-// AppSettings keys).
+// The kiro-cli settings endpoint does not go through persist.ts's settings state, so it keeps its own
+// per-key write generation: only a key's newest write reports its outcome.
 let kiroSeq = 0;
 const kiroGen = new Map<string, number>();
 
@@ -97,8 +96,8 @@ function repaintTheme(choice: ThemeChoice): void {
   }
 }
 
-/** Fold a loaded settings payload's theme in, and carry the cache across ONCE when the server
- *  has none. */
+/** Fold a settings payload's theme in, and carry the cache across ONCE when the server has none.
+ *  The theme is a paint, so the settings_updated arm passes the settings as shown. */
 export function adoptThemeFromSettings(s: EffectiveSettings): void {
   const fromServer = asThemeChoice(s.theme);
   const first = !themeLoaded;
@@ -143,7 +142,13 @@ function setTheme(choice: ThemeChoice): void {
   if (adoptingTheme) {
     return;
   }
-  void patchSettings({ theme: choice });
+  void patchSettings({ theme: choice }).then((r) => {
+    // A failed write leaves the theme to what the page shows without it.
+    const shown = r === null ? settingsAsShown() : null;
+    if (shown !== null) {
+      adoptThemeFromSettings(shown);
+    }
+  });
 }
 
 /** The adapter @cplieger/ui-primitives' createTheme persists through. Built here and INJECTED
@@ -200,15 +205,16 @@ export function restoreAll(s: EffectiveSettings): void {
   applyGeneralPanel(s);
 }
 
-/** Seed the General panel's controls from a settings payload. Called at boot AND from the
- *  `settings_updated` arm, so a value chosen on another device reaches this screen's controls
- *  rather than only its behaviour. */
-export function applyGeneralPanel(s: EffectiveSettings): void {
+/** Seed the General panel's controls from the settings the server holds, s, painting them as shown
+ *  (persist.settingsAsShown). Called at boot AND from the `settings_updated` arm, so a value chosen
+ *  on another device reaches this screen's controls rather than only its behaviour. */
+export function applyGeneralPanel(s: EffectiveSettings, shown: EffectiveSettings = s): void {
   serverRetentionDays = s.chat_retention_days;
-  applyChatRetention(s);
-  applyAgentCapabilities(s);
-  applyPanelSwitches(s);
-  applyEngineHeap(s);
+  serverEngineHeap = s.engine_heap_mib;
+  applyChatRetention(shown);
+  applyAgentCapabilities(shown);
+  applyPanelSwitches(shown);
+  applyEngineHeap(shown);
 }
 
 /** Register the General panel's `change` listeners. Once per page, from `initUI`: every one of
@@ -1017,7 +1023,6 @@ function paintEngineHeap(input: HTMLInputElement, mib: number): void {
 }
 
 function applyEngineHeap(s: EffectiveSettings): void {
-  serverEngineHeap = s.engine_heap_mib;
   const input = engineHeapInput();
   // Not while the reader is in the box, for retention's reason, nor over an edit still saving.
   if (input !== null && document.activeElement !== input && heapEdit === null) {

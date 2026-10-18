@@ -1,13 +1,13 @@
-// The settings reducer against a model server: other devices' writes, this page's writes taken in
-// send order, refusals, answers lost after a commit, events (late duplicates too), reads with and
-// without the repaint a settings_updated read does, and a replaced config.json. Each switch is
-// on exactly when its key is true; the page repaints a write's switches when it settles, and every
-// switch on an event's current read, from shownValue (persist.ts).
+// The settings reducer against a model server: other devices' writes, this page's writes taken
+// one at a time in send order, refusals, answers lost after a commit, events (late duplicates too),
+// reads with and without the repaint a settings_updated read does, and a replaced config.json.
+// Each switch is on exactly when its key is true; as in persist.ts, the page repaints a write's
+// switches when it settles and every switch on an event's current read, from shownValue, and the
+// state a consumer acts on takes that read's own payload.
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import {
-  below,
   changes,
   initialSettingsState,
   isCurrent,
@@ -42,6 +42,8 @@ interface World {
   client: SettingsState;
   /** What each switch shows. */
   display: Values;
+  /** What a consumer acting on the settings holds: the payload of each event's current read. */
+  behaviour: { at: Stamp; values: Values };
   /** The newest version the page received, by event or payload. */
   seen: Stamp;
   nextId: number;
@@ -55,7 +57,10 @@ interface World {
 }
 
 const tag = (s: Stamp): string => `${String(s.settings_epoch)}/${String(s.settings_revision)}`;
-const max = (a: Stamp, b: Stamp): Stamp => (below(a, b) ? b : a);
+// The model's own order, apart from the reducer's: epoch first, then revision.
+const order = (s: Stamp): bigint => (BigInt(s.settings_epoch) << 32n) + BigInt(s.settings_revision);
+const older = (a: Stamp, b: Stamp): boolean => order(a) < order(b);
+const max = (a: Stamp, b: Stamp): Stamp => (older(a, b) ? b : a);
 
 function snapshot(w: World): Payload {
   return { ...w.server.at, ...w.server.values };
@@ -89,6 +94,7 @@ function newWorld(): World {
     history: new Map([[tag(at), { ...values }]]),
     client: initialSettingsState,
     display: { ...values },
+    behaviour: { at, values: { ...values } },
     seen: at,
     nextId: 1,
     sent: [],
@@ -101,12 +107,37 @@ function newWorld(): World {
   return w;
 }
 
-/** A payload's verdict, checked against the newest version the page received. */
-function take(w: World, payload: Payload): boolean {
+/** Hand the reducer a payload, checking its verdict against the newest version the page received
+ *  and that a payload it refuses changes nothing adopted. */
+function take(
+  w: World,
+  event:
+    | { type: "adopt"; payload: Payload }
+    | {
+        type: "settle";
+        id: number;
+        answer: Payload;
+      },
+): boolean {
+  const payload = event.type === "adopt" ? event.payload : event.answer;
   const current = isCurrent(w.client, payload);
-  expect(current, `verdict for ${tag(payload)} after ${tag(w.seen)}`).toBe(!below(payload, w.seen));
+  expect(current, `verdict for ${tag(payload)} after ${tag(w.seen)}`).toBe(!older(payload, w.seen));
   w.seen = max(w.seen, payload);
+  const before = w.client.adopted;
+  w.client = reduce(w.client, event);
+  if (!current) {
+    expect(w.client.adopted, `the refused ${tag(payload)} changed what is adopted`).toBe(before);
+  }
   return current;
+}
+
+/** The server's scope takes this page's writes one at a time: the head starts as the one before it
+ *  settles. */
+function startHead(w: World): void {
+  const head = w.sent[0];
+  if (head !== undefined) {
+    w.client = reduce(w.client, { type: "start", id: head.id });
+  }
 }
 
 function apply(w: World, a: Action): void {
@@ -134,6 +165,9 @@ function apply(w: World, a: Action): void {
         const id = w.nextId++;
         w.client = reduce(w.client, { type: "send", id });
         w.sent.push({ id, keys });
+        if (w.sent.length === 1) {
+          startHead(w);
+        }
       }
       return;
     }
@@ -157,13 +191,19 @@ function apply(w: World, a: Action): void {
         return;
       }
       const answer = w.served.answer;
-      if (answer !== null) {
-        take(w, answer);
+      const behaviour = w.behaviour;
+      if (answer === null) {
+        w.client = reduce(w.client, { type: "settle", id: head.id, answer });
+      } else {
+        take(w, { type: "settle", id: head.id, answer });
       }
-      w.client = reduce(w.client, { type: "settle", id: head.id, answer });
       repaint(w, head.keys);
+      if (answer === null) {
+        expect(w.behaviour, "a failed write moved what a consumer acts on").toBe(behaviour);
+      }
       w.sent.shift();
       w.served = null;
+      startHead(w);
       return;
     }
     case "other":
@@ -207,23 +247,34 @@ function apply(w: World, a: Action): void {
       if (r === undefined) {
         return;
       }
-      const current = take(w, r.payload);
-      w.client = reduce(w.client, { type: "adopt", payload: r.payload });
+      const current = take(w, { type: "adopt", payload: r.payload });
       if (r.repaint && current) {
         repaint(w, KEYS);
+        // persist answers such a read with the payload it adopted.
+        const adopted = w.client.adopted;
+        if (adopted !== null) {
+          w.behaviour = {
+            at: adopted.at,
+            values: { a: adopted.value["a"], b: adopted.value["b"] } as Values,
+          };
+        }
       }
       return;
     }
   }
 }
 
-/** Invariants 2 and 3 of settings-state.ts, after every step. */
+/** Invariants 2 and 3 of settings-state.ts, and that a consumer acts only on what the server held,
+ *  after every step. */
 function check(w: World, before: SettingsState): void {
-  expect(below(w.client.held, before.held), "the held version went back").toBe(false);
+  expect(older(w.client.held, before.held), "the held version went back").toBe(false);
   const was = before.adopted?.at;
   const now = w.client.adopted?.at;
-  expect(was !== undefined && (now === undefined || below(now, was)), "adopted went back").toBe(
+  expect(was !== undefined && (now === undefined || older(now, was)), "adopted went back").toBe(
     false,
+  );
+  expect(w.behaviour.values, `behaviour is not the server's at ${tag(w.behaviour.at)}`).toEqual(
+    w.history.get(tag(w.behaviour.at)),
   );
   if (now === undefined) {
     return;
@@ -268,6 +319,7 @@ function quiesce(w: World): void {
   for (const k of KEYS) {
     expect(w.display[k], `the ${k} switch at rest`).toBe(w.server.values[k]);
     expect(shown(w, k), `${k} shown at rest`).toBe(w.server.values[k]);
+    expect(w.behaviour.values[k], `${k} acted on at rest`).toBe(w.server.values[k]);
   }
 }
 
@@ -315,6 +367,10 @@ const answer: Action = { t: "answer" };
 const event: Action = { t: "event" };
 const serveRead: Action = { t: "serveRead" };
 const readAnswer: Action = { t: "readAnswer" };
+
+function at(revision: number, values: Record<string, boolean>): Payload {
+  return { settings_epoch: 1, settings_revision: revision, ...values };
+}
 
 describe("settings state", () => {
   it("holds its invariants and comes to rest at the server's settings, for any interleaving", () => {
@@ -398,24 +454,53 @@ describe("settings state", () => {
         answer,
       ],
     ],
+    [
+      "keeps a write waiting behind another over settings read meanwhile",
+      [
+        clickA,
+        timer,
+        clickA,
+        timer,
+        { t: "other", key: "a", value: true },
+        event,
+        serveRead,
+        readAnswer,
+        commitHead,
+        answer,
+      ],
+    ],
   ])("%s", (_name, actions) => {
     run(actions);
   });
 
-  it("shows a write queued behind another once the earlier one's answer is adopted", () => {
-    let s = reduce(initialSettingsState, {
-      type: "adopt",
-      payload: { settings_epoch: 1, settings_revision: 1, a: false },
-    });
+  it("shows a write waiting behind another over settings read meanwhile, until it starts", () => {
+    let s = reduce(initialSettingsState, { type: "adopt", payload: at(1, { a: false }) });
     s = reduce(s, { type: "click", patch: { a: true } });
     s = reduce(s, { type: "send", id: 1 });
+    s = reduce(s, { type: "start", id: 1 });
     s = reduce(s, { type: "click", patch: { a: false } });
     s = reduce(s, { type: "send", id: 2 });
-    s = reduce(s, {
-      type: "settle",
-      id: 1,
-      answer: { settings_epoch: 1, settings_revision: 2, a: true },
+    s = reduce(s, { type: "announce", at: at(3, {}) });
+    s = reduce(s, { type: "adopt", payload: at(3, { a: true }) });
+    expect(shownValue(s, "a"), "the waiting write commits after revision 3").toEqual({
+      value: false,
     });
+
+    s = reduce(s, { type: "settle", id: 1, answer: at(2, { a: true }) });
+    s = reduce(s, { type: "start", id: 2 });
+    expect(shownValue(s, "a"), "started above revision 3").toEqual({ value: false });
+    s = reduce(s, { type: "adopt", payload: at(4, { a: true }) });
+    expect(shownValue(s, "a"), "revision 4 may follow it").toEqual({ value: true });
+  });
+
+  it("adopts no answer below a version an event announced", () => {
+    let s = reduce(initialSettingsState, { type: "adopt", payload: at(1, { a: false }) });
+    s = reduce(s, { type: "click", patch: { a: true } });
+    s = reduce(s, { type: "send", id: 1 });
+    s = reduce(s, { type: "start", id: 1 });
+    s = reduce(s, { type: "announce", at: at(3, {}) });
+    s = reduce(s, { type: "settle", id: 1, answer: at(2, { a: true }) });
+    expect(s.adopted?.at).toEqual(at(1, {}));
     expect(shownValue(s, "a")).toEqual({ value: false });
   });
 });

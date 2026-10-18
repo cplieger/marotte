@@ -73,6 +73,7 @@ vi.mock("./persist.js", () => ({
   patchSettings: vi.fn(() => Promise.resolve({})),
   adoptSettings: () => H.adopts,
   newestSettings: vi.fn(),
+  settingsAsShown: vi.fn(() => null),
 }));
 // Feature modules settings.ts wires in initUI — inert stubs so the import graph loads without side
 // effects (initUI is never called here).
@@ -434,6 +435,21 @@ describe("the chat-retention row", () => {
     expect(patchSettings).toHaveBeenCalledTimes(1);
   });
 
+  it("paints the settings as shown and falls back to the number the server holds", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ chat_retention_days: 14 }));
+    daysInput().value = "";
+
+    applyGeneralPanel(
+      settingsPayload({ chat_retention_days: 14 }),
+      settingsPayload({ chat_retention_days: -1 }),
+    );
+    expect(foreverInput().checked, "the write not yet committed").toBe(true);
+
+    toggleForever(false);
+    expect(patchSettings).toHaveBeenLastCalledWith({ chat_retention_days: 14 }, expect.anything());
+  });
+
   it("does not rewrite the day box while the reader is in it", () => {
     initRetention(settingsPayload({ chat_retention_days: 14 }));
     daysInput().focus();
@@ -578,6 +594,21 @@ describe("the theme, between config.json and its paint cache", () => {
 
     adoptThemeFromSettings(settingsPayload({ theme: "light" }));
     expect(H.mockApplyTheme).toHaveBeenLastCalledWith("light");
+  });
+
+  it("goes back to the theme the page shows when a chosen theme's write fails", async () => {
+    const { cachedTheme } = await import("./device-view.js");
+    const { patchSettings, settingsAsShown } = await import("./persist.js");
+    adoptThemeFromSettings(settingsPayload({ theme: "dark" }));
+    vi.mocked(patchSettings).mockResolvedValueOnce(null);
+    vi.mocked(settingsAsShown).mockReturnValueOnce(settingsPayload({ theme: "dark" }));
+
+    themeStorage.set("light");
+    await vi.waitFor(() => {
+      expect(H.mockApplyTheme).toHaveBeenLastCalledWith("dark");
+    });
+    expect(cachedTheme()).toBe("dark");
+    expect(patchSettings, "putting it back writes nothing").toHaveBeenCalledTimes(1);
   });
 
   it("ignores a value that is not one of the three choices", async () => {

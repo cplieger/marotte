@@ -6,7 +6,7 @@
 import { onSSE, onBus, BUS_RECONCILE, BUS_PAGE_RESUMED, decodeEnvelope, dispatch } from "../bus.js";
 import { adoptThemeFromSettings, applyGeneralPanel, syncSettings } from "../settings.js";
 import { applyAgentDirs } from "../agent-dirs-ui.js";
-import { noteSettingsEvent } from "../persist.js";
+import { noteSettingsEvent, settingsAsShown } from "../persist.js";
 import { restoreLastModel, restoreLastEffort } from "../session-context.js";
 import { adoptLinkGuard } from "../link-guard.js";
 import { setWorkspaceRoot } from "../workspace.js";
@@ -105,12 +105,15 @@ onSSE("settings_updated", (_chatID, p) => {
     restoreLastModel(s.last_model);
     restoreLastEffort(s.last_effort_by_model);
     adoptLinkGuard(s);
-    // A theme chosen on another device lands here. Safe against a loop:
-    // the read adopted it, so writing it back is no change (settings-state.changes).
-    adoptThemeFromSettings(s);
+    // The paints below take the settings as shown, so a click not yet committed stays painted; the
+    // behaviour above takes the server's, so a write that then fails leaves nothing applied.
+    const shown = settingsAsShown() ?? s;
+    // A theme chosen on another device lands here. Safe against a loop: it is what the page shows,
+    // so writing it back is no change (settings-state.changes).
+    adoptThemeFromSettings(shown);
     // Re-seeds the controls on a second device; `adoptRetention` and the session-door reads carry the
     // effect.
-    applyGeneralPanel(s);
+    applyGeneralPanel(s, shown);
     applyAgentDirs(s);
   });
 });

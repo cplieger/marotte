@@ -1062,7 +1062,7 @@ describe("settings_updated re-seeds the General panel", () => {
 
     fireSSE("settings_updated", "", { settings_epoch: 0, settings_revision: 0 });
     await vi.waitFor(() => {
-      expect(applyGeneralPanel).toHaveBeenCalledWith(payload);
+      expect(applyGeneralPanel).toHaveBeenCalledWith(payload, payload);
     });
     expect(adoptRetention).toHaveBeenCalledWith(payload);
   });

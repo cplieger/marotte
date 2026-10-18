@@ -144,10 +144,19 @@ export const loadSettings = apiAction<void, EffectiveSettings>({
 });
 
 /** Write some settings; answers the settings the write committed. The caller repaints what the
- *  write moved (persist.patchSettings). */
-export const patchAppSettings = apiAction<{ body: Record<string, unknown> }, EffectiveSettings>({
+ *  write moved (persist.patchSettings). onStart runs when the write leaves the "settings" queue,
+ *  just before its request is sent. */
+export const patchAppSettings = apiAction<
+  { body: Record<string, unknown>; onStart?: () => void },
+  EffectiveSettings
+>({
   name: "settings.patch",
   scope: "settings",
+  // The library's one hook that runs after the scope's wait and before the request.
+  optimistic: ({ onStart }) => {
+    onStart?.();
+    return undefined;
+  },
   request: ({ body }) => ({
     method: "PATCH",
     path: "/api/settings",

@@ -13,8 +13,8 @@ import {
   KEYED_PUSH_KINDS,
   KEYED_PUSH_DEFAULTS,
 } from "./notify.js";
-import { newestSettings, patchSettings } from "./persist.js";
-import type { SettingsSwitch } from "./persist.js";
+import { newestSettings, patchSettings, settingsAsShown } from "./persist.js";
+import type { EffectiveSettings, SettingsSwitch } from "./persist.js";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { $, byId } from "./dom.js";
 import { isIOS, isStandalone } from "./platform.js";
@@ -32,7 +32,7 @@ export const KIND_INPUT_IDS: Readonly<Record<string, string>> = {
 /** One rendered sub-toggle: the kind it governs, its settings key, its input. */
 interface KindRow {
   kind: string;
-  settingsKey: string;
+  settingsKey: (typeof KEYED_PUSH_KINDS)[string];
   input: HTMLInputElement;
 }
 
@@ -111,8 +111,10 @@ export function initNotificationToggles(): void {
   };
 
   setNotifyUICallback(() => {
-    notifyToggle.checked = areNotificationsEnabled();
-    syncRowInputs(rows);
+    // As shown, so a click not yet committed stays painted; the state applied is the server's.
+    const shown = settingsAsShown();
+    notifyToggle.checked = shown?.notifications_enabled ?? areNotificationsEnabled();
+    syncRowInputs(rows, shown);
     updateSub();
     notifyHint.classList.add("hidden");
     if (notifyToggle.checked && "Notification" in window && Notification.permission === "denied") {
@@ -162,10 +164,10 @@ async function stillOff(): Promise<boolean> {
   return s !== null && !s.notifications_enabled;
 }
 
-/** Mirror the in-memory per-kind state onto the inputs. */
-function syncRowInputs(rows: readonly KindRow[]): void {
+/** Paint each kind's input from the settings as shown, else from the per-kind state applied. */
+function syncRowInputs(rows: readonly KindRow[], shown: EffectiveSettings | null = null): void {
   for (const row of rows) {
-    row.input.checked = isKindEnabled(row.kind);
+    row.input.checked = shown?.[row.settingsKey] ?? isKindEnabled(row.kind);
   }
 }
 

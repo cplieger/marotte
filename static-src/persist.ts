@@ -58,8 +58,10 @@ function asPayload(s: EffectiveSettings): Payload {
   return s as unknown as Payload;
 }
 
-/** The adopted settings as the page shows them. */
-function shown(): EffectiveSettings | null {
+/** The adopted settings with this page's edit and writes in flight laid over them
+ *  (settings-state.shownSettings), or null before any. For painting controls only: a consumer
+ *  that acts on a setting takes a read's answer, which is what the server holds. */
+export function settingsAsShown(): EffectiveSettings | null {
   return shownSettings(state) as unknown as EffectiveSettings | null;
 }
 
@@ -117,7 +119,12 @@ function executePatch(): void {
   const body = state.pending.find((w) => w.id === id)?.body ?? {};
   let answer: EffectiveSettings | null = null;
   void patchAppSettings.dispatch(
-    { body: { ...body } },
+    {
+      body: { ...body },
+      onStart: () => {
+        step({ type: "start", id });
+      },
+    },
     {
       silent: true,
       onSuccess: (a) => {
@@ -221,7 +228,7 @@ function startRead(): Promise<EffectiveSettings | null> {
       return null;
     }
     if (adoptSettings(s)) {
-      return shown();
+      return s;
     }
     // Older than an event taken since this read was sent: the read sent after that event answers.
     return afterEvents < eventsNoted ? refreshSettings() : null;
@@ -236,8 +243,8 @@ function startRead(): Promise<EffectiveSettings | null> {
   return answer;
 }
 
-/** Load the settings as the page shows them (settings-state.shownSettings), or null when the fetch
- *  failed or answered settings older than ones this page holds. A read in flight is shared; one a
+/** Load the settings the server holds, or null when the fetch failed or answered settings older
+ *  than ones this page holds. A read in flight is shared; one a
  *  newer settings event made stale is answered by a read sent after that event. */
 export function loadSettings(): Promise<EffectiveSettings | null> {
   return reading?.answer ?? rereading ?? startRead();
@@ -260,11 +267,11 @@ export function refreshSettings(): Promise<EffectiveSettings | null> {
   return rereading;
 }
 
-/** The adopted settings as shown when nothing newer was announced since, else refreshSettings. */
+/** The adopted settings when nothing newer was announced since, else refreshSettings. */
 export function newestSettings(): Promise<EffectiveSettings | null> {
   const adopted = state.adopted;
   return adopted !== null && isCurrent(state, adopted.at)
-    ? Promise.resolve(shown())
+    ? Promise.resolve(adopted.value as unknown as EffectiveSettings)
     : refreshSettings();
 }
 

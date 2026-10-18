@@ -1,10 +1,8 @@
 // The page's settings as one pure reducer over what the server answered, the writes in flight and
-// the edit not yet sent. persist.ts runs it against the network and the controls.
-//
-// Invariants, held by `reduce` and the helpers below:
-// 1. Every control shows `shownValue`: the edit, else the newest write in flight known to commit
-//    after the adopted settings, else the adopted settings.
-// 2. `held` and `adopted.at` never go back: a payload below either is not newer than one taken.
+// the edit not yet sent; persist.ts runs it against the network and the controls. Invariants:
+// 1. Every control shows `shownValue`: the edit, else the newest write still waiting to start or
+//    started at or above the adopted version, else the adopted settings.
+// 2. `held` and `adopted.at` never go back, and only a payload at or above `held` is adopted.
 // 3. A shown value is the server's at `adopted.at` unless it is this page's own edit or write in flight.
 // 4. A click is dropped only when it equals the shown value and the newest write in flight of its key.
 
@@ -23,9 +21,9 @@ export type Payload = Stamp & Values;
 interface Write {
   readonly id: number;
   readonly body: Values;
-  /** A version this write commits above: the one held when it was sent, raised by the answer of
-   *  each earlier write, since the server takes this page's writes in send order. */
-  readonly after: Stamp;
+  /** The version held when this write started, which it commits above; null while it waits behind
+   *  an earlier write, when it commits above every version the page has seen. */
+  readonly after: Stamp | null;
 }
 
 export interface SettingsState {
@@ -44,6 +42,7 @@ export type SettingsEvent =
   | { readonly type: "announce"; readonly at: Stamp }
   | { readonly type: "click"; readonly patch: Values }
   | { readonly type: "send"; readonly id: number }
+  | { readonly type: "start"; readonly id: number }
   | { readonly type: "settle"; readonly id: number; readonly answer: Payload | null };
 
 const ZERO: Stamp = { settings_epoch: 0, settings_revision: 0 };
@@ -55,7 +54,7 @@ export const initialSettingsState: SettingsState = {
   edit: {},
 };
 
-export function below(s: Stamp, than: Stamp): boolean {
+function below(s: Stamp, than: Stamp): boolean {
   return (
     s.settings_epoch < than.settings_epoch ||
     (s.settings_epoch === than.settings_epoch && s.settings_revision < than.settings_revision)
@@ -81,12 +80,11 @@ export function isCurrent(state: SettingsState, at: Stamp): boolean {
 }
 
 function adopt(state: SettingsState, payload: Payload): SettingsState {
-  const newer = state.adopted === null || !below(payload, state.adopted.at);
-  return {
-    ...state,
-    held: later(state.held, payload),
-    adopted: newer ? { at: stampOf(payload), value: payload } : state.adopted,
-  };
+  if (below(payload, state.held)) {
+    return state;
+  }
+  const at = stampOf(payload);
+  return { ...state, held: at, adopted: { at, value: payload } };
 }
 
 /** The value the page shows for key, or undefined when nothing adopted, sent or clicked says. */
@@ -100,7 +98,7 @@ export function shownValue(state: SettingsState, key: string): { value: unknown 
     if (
       w !== undefined &&
       Object.hasOwn(w.body, key) &&
-      (adopted === null || !below(w.after, adopted.at))
+      (w.after === null || adopted === null || !below(w.after, adopted.at))
     ) {
       return { value: w.body[key] };
     }
@@ -188,23 +186,22 @@ export function reduce(state: SettingsState, event: SettingsEvent): SettingsStat
       }
       return {
         ...state,
-        pending: [...state.pending, { id: event.id, body: state.edit, after: stampOf(state.held) }],
+        pending: [...state.pending, { id: event.id, body: state.edit, after: null }],
         edit: {},
       };
+    case "start": {
+      const held = stampOf(state.held);
+      return {
+        ...state,
+        pending: state.pending.map((w) => (w.id === event.id ? { ...w, after: held } : w)),
+      };
+    }
     case "settle": {
-      const at = state.pending.findIndex((w) => w.id === event.id);
-      if (at < 0) {
+      if (!state.pending.some((w) => w.id === event.id)) {
         return state;
       }
-      const answer = event.answer;
-      const pending = state.pending.flatMap((w, i) => {
-        if (i === at) {
-          return [];
-        }
-        return i > at && answer !== null ? [{ ...w, after: later(w.after, answer) }] : [w];
-      });
-      const settled = { ...state, pending };
-      return answer === null ? settled : adopt(settled, answer);
+      const settled = { ...state, pending: state.pending.filter((w) => w.id !== event.id) };
+      return event.answer === null ? settled : adopt(settled, event.answer);
     }
   }
 }

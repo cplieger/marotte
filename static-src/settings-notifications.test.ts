@@ -23,6 +23,7 @@ vi.mock("./persist.js", () => ({
   },
   newestSettings: async () =>
     mocks.newestOn === null ? null : settingsPayload({ notifications_enabled: mocks.newestOn }),
+  settingsAsShown: () => null,
 }));
 
 vi.mock("./actions/notify.js", () => ({
