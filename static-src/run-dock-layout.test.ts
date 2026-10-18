@@ -462,7 +462,7 @@ describe("the permission card on a phone", () => {
     [360, false],
     [390, true],
   ] as const) {
-    it(`keeps the asked command's title and the answer buttons in view at ${String(width)}px${note ? " with the deny note" : ""}, under the dock's fifth-of-the-screen cap`, async () => {
+    it(`keeps the asked command's title and the answer buttons in view at ${String(width)}px${note ? " with the deny note" : ""}, under the dock card's ceiling`, async () => {
       await browser.viewport(width, 844);
       document.documentElement.setAttribute("data-pointer", "coarse");
       style = mountAppCSS();

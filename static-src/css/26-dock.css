@@ -250,9 +250,9 @@
 
 /* THE ASKED TOOL'S TITLE LINE NEVER GIVES. Being a scroller, the body's automatic minimum is
    0, while the policy pointer below the buttons is a plain block that keeps every line: under
-   the phone's fifth-of-the-screen cap the body alone shrank, to 6px at 360px, and the card
-   showed how to answer but not what. One line of floor keeps the title, whose line opens the
-   body; what that costs the cap, the card's backstop scroll takes, from the pointer's end. */
+   a short ceiling the body alone shrank, and the card showed how to answer but not what. One
+   line of floor keeps the title, whose line opens the body; what that costs the cap, the
+   card's backstop scroll takes, from the pointer's end. */
 .dock-card > .approval-body {
   min-block-size: 1lh;
 }
@@ -1218,13 +1218,11 @@
 }
 
 /* A phone-shaped screen: an open run list shows every run up to half the visual
-   viewport; the ask card keeps to a fifth. */
+   viewport. `.dock-card` keeps its own ceiling here: a tighter one lands below the
+   card's floor (question, answer box, button row), and its backstop scroll then
+   hides the controls the ceiling exists to keep in view. */
 @media (width <= 48rem), (height <= 30rem) {
   .run-bar-host {
     --run-cap: calc(0.5 * var(--dock-viewport-h, 100dvh));
-  }
-
-  .dock-card {
-    max-block-size: calc(0.2 * var(--dock-viewport-h, 100dvh));
   }
 }
