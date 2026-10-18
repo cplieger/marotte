@@ -258,10 +258,11 @@ async function paint(list: readonly Chat[]): Promise<HTMLElement[]> {
 }
 
 const STAND_IN = "data-closed-row-stand-in";
-/** Reverts every stylesheet rule on a stand-in and its pseudo-elements: `all` leaves out
- *  `direction` and `unicode-bidi` (CSS Cascade 4, the `all` shorthand), and an important
- *  declaration in the first-declared layer outranks every other author declaration a stylesheet
- *  holds (CSS Cascade 5, cascade layers), so this sheet goes ahead of the bundle. */
+/** Reverts every standard property the snapshot reads on a stand-in and its pseudo-elements: `all`
+ *  leaves out custom properties, `direction` and `unicode-bidi` (CSS Cascade 4, the `all`
+ *  shorthand), and an important declaration in the first-declared layer outranks every other
+ *  author declaration a stylesheet holds (CSS Cascade 5, cascade layers), so this sheet goes
+ *  ahead of the bundle. */
 const RESET = `@layer closed-row-stand-in {
   [${STAND_IN}], [${STAND_IN}]::before, [${STAND_IN}]::after, [${STAND_IN}]::marker {
     all: revert !important;
@@ -273,14 +274,16 @@ const RESET = `@layer closed-row-stand-in {
 const frames: HTMLIFrameElement[] = [];
 /** Scenario id to its footer. */
 const footers = new Map<string, HTMLElement>();
-/** A row's footer in the dark theme, which the geometry cases read. */
-const darkFooter = (r: Row, width: number): HTMLElement =>
-  footers.get(`dark ${String(width)} ${rowKey(r)}`) as HTMLElement;
+const footerOf = (theme: string, r: Row, width: number): HTMLElement =>
+  footers.get(`${theme} ${String(width)} ${rowKey(r)}`) as HTMLElement;
 
-// 27 waits (21 chats painted, 6 copies settled), each settling within a few frames: one bound.
+const CHATS = chats();
+/** The hook's `until` waits, one per chat painted and one per copy settled, each its own budget. */
+const WAITS = CHATS.length + THEMES.length * WIDTHS.length;
+
 beforeAll(
   async () => {
-    const list = chats();
+    const list = CHATS;
     const views = await paint(list);
     for (const theme of THEMES) {
       for (const width of WIDTHS) {
@@ -322,7 +325,7 @@ beforeAll(
       }
     }
   },
-  testTimeoutFor(FRAME_BUDGET_MS * 2),
+  testTimeoutFor(WAITS * FRAME_BUDGET_MS),
 );
 
 afterAll(() => {
@@ -406,6 +409,8 @@ const COARSE = {
   glyphs: { actions: 0, size: 20 },
 } as const;
 const PIN = { 1280: FINE, 390: COARSE, 320: COARSE } as const;
+/** The footer's width in each frame, which no glyph decides. */
+const FOOTER_WIDTH = { 1280: 798, 390: 384, 320: 314 } as const;
 
 /** Computed properties the snapshot leaves out, each host-dependent; the boxes cases pin geometry. */
 const HOST_DEPENDENT = new Map([
@@ -686,7 +691,8 @@ describe("the closed footer row", () => {
     ).toEqual([]);
   });
 
-  // Every property of each row element and of its stand-in in 342 footers: about 7 s on an idle host.
+  // Every retained property of each row element and of its stand-in in 342 footers: about 7 s on an
+  // idle host.
   it(
     "keeps every element's decided style in both themes at 320, 390 and 1280 px",
     { timeout: 60_000 },
@@ -713,124 +719,130 @@ describe("the closed footer row", () => {
     },
   );
 
-  for (const row of ROWS) {
-    for (const width of [320, 390, 1280] as const) {
-      it(`keeps the ${rowKey(row)} row's items, their order and their boxes at ${String(width)} px`, () => {
-        const footer = darkFooter(row, width);
-        const pin = PIN[width];
-        const { word, fact } = OUTCOMES[row.outcome];
-        const actions = row.actions === "actions";
-        const rewinds = row.rewind !== "absent";
-        expect(footer.dataset["outcome"], "the outcome").toBe(row.outcome);
-        expect(footer.dataset["info"], "closed").not.toBe("open");
-        expect(
-          [...footer.children].map((c) => c.className),
-          "the row's items in order",
-        ).toEqual([
-          "turn-ledger-summary",
-          "turn-info-panel",
-          ...(actions ? ["turn-actions-buttons"] : []),
-          ...(rewinds ? ["turn-rewind"] : []),
-        ]);
-        const rewind = footer.querySelector<HTMLButtonElement>(":scope > .turn-rewind");
-        expect(rewind?.disabled, "Rewind's state").toBe(
-          rewinds ? row.rewind === "disabled" : undefined,
-        );
-        expect(
-          footer.querySelector(":scope > .turn-info-panel")?.checkVisibility(),
-          "the info panel, shut",
-        ).toBe(false);
-        const ledger = footer.querySelector(":scope > .turn-ledger-summary") as HTMLElement;
-        expect(
-          [...ledger.children].map((c) => c.className),
-          "the ledger's parts in order",
-        ).toEqual([
-          "sr-only",
-          "turn-ledger-info",
-          "turn-ledger-glyph",
-          "turn-ledger-text",
-          "turn-fact",
-        ]);
-        const part = (name: string): HTMLElement =>
-          ledger.querySelector(`:scope > .${name}`) as HTMLElement;
-        expect(part("turn-ledger-text").textContent, "the outcome word").toBe(word);
-        expect(part("turn-fact").textContent, "the lead fact").toBe(fact);
-        const shownParts = [
-          "turn-ledger-info",
-          ...(word === "" ? [] : ["turn-ledger-glyph", "turn-ledger-text"]),
-          "turn-fact",
-        ];
-        expect(
-          [...ledger.children].filter((c) => c.checkVisibility()).map((c) => c.className),
-          "the ledger's shown parts",
-        ).toEqual(["sr-only", ...shownParts]);
-        expect(footer.getBoundingClientRect().height, "band").toBeCloseTo(pin.band, 1);
-        expect(box(ledger, footer, pin.ledger), "ledger").toEqual(pin.ledger);
-        expect(box(part("turn-ledger-info"), footer, pin.info), "`i`").toEqual(pin.info);
-        const mark = part("turn-ledger-glyph");
-        expect(
-          mark.checkVisibility() ? box(mark, footer, pin.mark) : null,
-          "the outcome mark",
-        ).toEqual(word === "" ? null : pin.mark);
-        const shown = shownParts.map(part);
-        gaps(shown).forEach((g, i) => {
-          expect(g, `the space after ledger part ${String(i)}`).toBeCloseTo(pin.ledgerGap, 1);
-        });
-        const ledgerBox = ledger.getBoundingClientRect();
-        for (const p of shown) {
-          const b = p.getBoundingClientRect();
+  for (const theme of THEMES) {
+    for (const row of ROWS) {
+      for (const width of [320, 390, 1280] as const) {
+        it(`keeps the ${theme} ${rowKey(row)} row's items, their order and their boxes at ${String(width)} px`, () => {
+          const footer = footerOf(theme, row, width);
+          const pin = PIN[width];
+          const { word, fact } = OUTCOMES[row.outcome];
+          const actions = row.actions === "actions";
+          const rewinds = row.rewind !== "absent";
+          expect(footer.dataset["outcome"], "the outcome").toBe(row.outcome);
+          expect(footer.dataset["info"], "closed").not.toBe("open");
           expect(
-            Math.abs(b.top + b.height / 2 - (ledgerBox.top + ledgerBox.height / 2)),
-            `${p.className} centred on the ledger`,
-          ).toBeLessThanOrEqual(0.5);
-        }
-
-        const controls = [
-          ...footer.querySelectorAll<HTMLElement>(
-            ":scope > .turn-actions-buttons :is(button, summary), :scope > .turn-rewind",
-          ),
-        ].filter((c) => c.checkVisibility());
-        const want = [...(actions ? pin.actions : []), ...(rewinds ? [pin.rewind] : [])];
-        expect(
-          controls.map((c) => c.getAttribute("aria-label")),
-          "the trailing controls",
-        ).toEqual(want.map(([label]) => label));
-        controls.forEach((c, i) => {
-          const b = want[i]?.[1] as Box;
-          expect(box(c, footer, b), c.getAttribute("aria-label") ?? "").toEqual(b);
-        });
-        const last = controls.at(-1)?.getBoundingClientRect().right;
-        const end = footer.getBoundingClientRect().right;
-        expect(
-          last === undefined ? null : Math.round((end - last) * 100) / 100,
-          "the last control's distance from the footer's end",
-        ).toBe(want.length === 0 ? null : pin.end);
-        // Within a layout unit: a box after a word starts on a 1/64 px grid, not a whole pixel.
-        const pinned = [
-          ...(actions ? pin.actionGaps : []),
-          ...(actions && rewinds ? [pin.rewindGap] : []),
-        ];
-        const between = gaps(controls);
-        expect(between, "the space between the trailing controls").toHaveLength(pinned.length);
-        between.forEach((g, i) => {
-          expect(g, `the space after control ${String(i)}`).toBeCloseTo(pinned[i] as number, 1);
-        });
-        expect(
-          rewind === null ? null : Math.round(rewindChrome(rewind) * 10) / 10,
-          "Rewind less its word",
-        ).toBe(rewinds ? pin.rewindChrome : null);
-        const glyphs = [...footer.querySelectorAll("svg")].filter((g) => g.checkVisibility());
-        expect(glyphs.length, "the row's shown glyphs: the `i`, the actions', Rewind's").toBe(
-          1 + (actions ? pin.glyphs.actions : 0) + (rewinds ? 1 : 0),
-        );
-        glyphs.forEach((g, i) => {
-          const b = g.getBoundingClientRect();
-          expect([b.width, b.height], `glyph ${String(i)}`).toEqual([
-            pin.glyphs.size,
-            pin.glyphs.size,
+            [...footer.children].map((c) => c.className),
+            "the row's items in order",
+          ).toEqual([
+            "turn-ledger-summary",
+            "turn-info-panel",
+            ...(actions ? ["turn-actions-buttons"] : []),
+            ...(rewinds ? ["turn-rewind"] : []),
           ]);
+          const rewind = footer.querySelector<HTMLButtonElement>(":scope > .turn-rewind");
+          expect(rewind?.disabled, "Rewind's state").toBe(
+            rewinds ? row.rewind === "disabled" : undefined,
+          );
+          expect(
+            footer.querySelector(":scope > .turn-info-panel")?.checkVisibility(),
+            "the info panel, shut",
+          ).toBe(false);
+          const ledger = footer.querySelector(":scope > .turn-ledger-summary") as HTMLElement;
+          expect(
+            [...ledger.children].map((c) => c.className),
+            "the ledger's parts in order",
+          ).toEqual([
+            "sr-only",
+            "turn-ledger-info",
+            "turn-ledger-glyph",
+            "turn-ledger-text",
+            "turn-fact",
+          ]);
+          const part = (name: string): HTMLElement =>
+            ledger.querySelector(`:scope > .${name}`) as HTMLElement;
+          expect(part("turn-ledger-text").textContent, "the outcome word").toBe(word);
+          expect(part("turn-fact").textContent, "the lead fact").toBe(fact);
+          const shownParts = [
+            "turn-ledger-info",
+            ...(word === "" ? [] : ["turn-ledger-glyph", "turn-ledger-text"]),
+            "turn-fact",
+          ];
+          expect(
+            [...ledger.children].filter((c) => c.checkVisibility()).map((c) => c.className),
+            "the ledger's shown parts",
+          ).toEqual(["sr-only", ...shownParts]);
+          expect(footer.getBoundingClientRect().height, "band").toBeCloseTo(pin.band, 1);
+          expect(footer.getBoundingClientRect().width, "the footer's width").toBeCloseTo(
+            FOOTER_WIDTH[width],
+            1,
+          );
+          expect(box(ledger, footer, pin.ledger), "ledger").toEqual(pin.ledger);
+          expect(box(part("turn-ledger-info"), footer, pin.info), "`i`").toEqual(pin.info);
+          const mark = part("turn-ledger-glyph");
+          expect(
+            mark.checkVisibility() ? box(mark, footer, pin.mark) : null,
+            "the outcome mark",
+          ).toEqual(word === "" ? null : pin.mark);
+          const shown = shownParts.map(part);
+          gaps(shown).forEach((g, i) => {
+            expect(g, `the space after ledger part ${String(i)}`).toBeCloseTo(pin.ledgerGap, 1);
+          });
+          const ledgerBox = ledger.getBoundingClientRect();
+          for (const p of shown) {
+            const b = p.getBoundingClientRect();
+            expect(
+              Math.abs(b.top + b.height / 2 - (ledgerBox.top + ledgerBox.height / 2)),
+              `${p.className} centred on the ledger`,
+            ).toBeLessThanOrEqual(0.5);
+          }
+
+          const controls = [
+            ...footer.querySelectorAll<HTMLElement>(
+              ":scope > .turn-actions-buttons :is(button, summary), :scope > .turn-rewind",
+            ),
+          ].filter((c) => c.checkVisibility());
+          const want = [...(actions ? pin.actions : []), ...(rewinds ? [pin.rewind] : [])];
+          expect(
+            controls.map((c) => c.getAttribute("aria-label")),
+            "the trailing controls",
+          ).toEqual(want.map(([label]) => label));
+          controls.forEach((c, i) => {
+            const b = want[i]?.[1] as Box;
+            expect(box(c, footer, b), c.getAttribute("aria-label") ?? "").toEqual(b);
+          });
+          const last = controls.at(-1)?.getBoundingClientRect().right;
+          const end = footer.getBoundingClientRect().right;
+          expect(
+            last === undefined ? null : Math.round((end - last) * 100) / 100,
+            "the last control's distance from the footer's end",
+          ).toBe(want.length === 0 ? null : pin.end);
+          // Within a layout unit: a box after a word starts on a 1/64 px grid, not a whole pixel.
+          const pinned = [
+            ...(actions ? pin.actionGaps : []),
+            ...(actions && rewinds ? [pin.rewindGap] : []),
+          ];
+          const between = gaps(controls);
+          expect(between, "the space between the trailing controls").toHaveLength(pinned.length);
+          between.forEach((g, i) => {
+            expect(g, `the space after control ${String(i)}`).toBeCloseTo(pinned[i] as number, 1);
+          });
+          expect(
+            rewind === null ? null : Math.round(rewindChrome(rewind) * 10) / 10,
+            "Rewind less its word",
+          ).toBe(rewinds ? pin.rewindChrome : null);
+          const glyphs = [...footer.querySelectorAll("svg")].filter((g) => g.checkVisibility());
+          expect(glyphs.length, "the row's shown glyphs: the `i`, the actions', Rewind's").toBe(
+            1 + (actions ? pin.glyphs.actions : 0) + (rewinds ? 1 : 0),
+          );
+          glyphs.forEach((g, i) => {
+            const b = g.getBoundingClientRect();
+            expect([b.width, b.height], `glyph ${String(i)}`).toEqual([
+              pin.glyphs.size,
+              pin.glyphs.size,
+            ]);
+          });
         });
-      });
+      }
     }
   }
 });
