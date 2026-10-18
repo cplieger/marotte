@@ -386,7 +386,8 @@
     --sidebar-w-min: 16.25rem;
 
     /* `- 1px`: a fractional `100vw` snaps the chat area a fraction under
-       --main-min-w, which hides the rail at the width chosen to keep it. */
+       --main-min-w, which moves the rail off its gutter at the width chosen to
+       keep it there. */
     --sidebar-w-max: min(32rem, 100vw - var(--main-min-w) - 1px);
     --sidebar-w: clamp(
       var(--sidebar-w-min),

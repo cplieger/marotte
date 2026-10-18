@@ -52,8 +52,8 @@ function runTab(): { scroller: HTMLElement; btn: HTMLButtonElement } {
   return { scroller, btn };
 }
 
-/** The chat's nesting the control is positioned in, narrower than the turn map's threshold, whose
- *  foot form `scroll-bottom-parity.test.ts` owns. */
+/** The chat's nesting the control is positioned in, narrower than the turn map's gutter threshold;
+ *  `scroll-bottom-parity.test.ts` owns the docked form's own look. */
 function chat(): HTMLButtonElement {
   host = document.createElement("div");
   host.id = "chat-area";
@@ -102,11 +102,14 @@ describe("the chat's resume control", () => {
     expect(getComputedStyle(btn.querySelector("span")!).display).toBe("none");
   });
 
-  it("is the centred labelled pill on a wider window", () => {
+  it("docks at the turn map's foot on a wider window, where the map draws", () => {
+    // Under 57.5rem of chat area the map sits `--sp-2` inside the chat area's end (no classic
+    // scrollbar here), so the control's column is the 2.75rem rail ending 8px from the edge.
     const btn = chat();
     const outer = btn.parentElement!.getBoundingClientRect();
     const b = btn.getBoundingClientRect();
-    expect(Math.abs(b.left + b.width / 2 - (outer.left + outer.width / 2))).toBeLessThanOrEqual(1);
-    expect(getComputedStyle(btn.querySelector("span")!).display).not.toBe("none");
+    expect(Math.abs(outer.right - 8 - 44 - b.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(b.width - 44)).toBeLessThanOrEqual(1);
+    expect(getComputedStyle(btn.querySelector("span")!).display).toBe("none");
   });
 });

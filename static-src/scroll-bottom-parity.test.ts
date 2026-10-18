@@ -208,14 +208,16 @@ describe("the docked control reads as one of the map's step buttons", () => {
     expect(getComputedStyle(resume).backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
   });
 
-  it("is the hit floor tall on a coarse pointer", () => {
+  it("is the step button's 48px touch target tall in touch mode", () => {
     document.documentElement.dataset["pointer"] = "coarse";
-    const { resume } = build(LABEL_PX);
+    const { step, resume } = build(LABEL_PX);
     const host = resume.parentElement;
     if (host === null) {
       throw new Error("no wrap-outer");
     }
-    near(resume.getBoundingClientRect().height, tokenPx(host, "--hit-floor"), "height");
+    near(tokenPx(host, "--rail-hit"), 48, "the touch target token");
+    near(resume.getBoundingClientRect().height, 48, "height");
+    near(step.getBoundingClientRect().height, 48, "the step button's height");
   });
 });
 
@@ -297,15 +299,17 @@ describe("revealing the label moves nothing else", () => {
   });
 });
 
-/** The docked control's selector: the map's own fine-pointer gate, at zero specificity. */
-const DOCKED = ':where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]';
+/** The docked control's selector, and the same control behind the mouse-mode gate its hover
+ *  reveal sits behind, at zero specificity. */
+const DOCKED = '[id="scroll-bottom"]';
+const HOVER_DOCKED = ':where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]';
 
 describe("the reveal, read as source", () => {
   it("is gated on any-hover, never on hover", () => {
     // Those queries report only the PRIMARY input, and iPadOS answers `hover: none` with a trackpad
     // attached, so a `hover: hover` gate drops the rule on every touch-primary device. Only source
     // can answer which query a rule sits in.
-    const rest = ruleContaining(messagesCSS, `${DOCKED} > span`, REVEAL_QUERY);
+    const rest = ruleContaining(messagesCSS, `${HOVER_DOCKED} > span`, REVEAL_QUERY);
     expect(rest.body).toMatch(/display:\s*none/u);
     expect(messagesCSS).not.toContain("@media (hover: hover)");
   });
@@ -322,8 +326,8 @@ describe("the reveal, read as source", () => {
   });
 
   it("reveals on focus-visible as well as hover", () => {
-    const shown = ruleContaining(messagesCSS, `${DOCKED}:hover > span`, REVEAL_QUERY);
-    expect(shown.selector).toContain(`${DOCKED}:focus-visible > span`);
+    const shown = ruleContaining(messagesCSS, `${HOVER_DOCKED}:hover > span`, REVEAL_QUERY);
+    expect(shown.selector).toContain(`${HOVER_DOCKED}:focus-visible > span`);
     expect(shown.body).toMatch(/display:\s*block/u);
   });
 });

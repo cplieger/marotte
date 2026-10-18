@@ -15,14 +15,33 @@
    * instead of back over the cards. 2.75rem is kept because narrowing it moves
    * both insets, the resume control's dock and both measured container thresholds. */
   --rail-w: 2.75rem;
+
+  /* The step buttons' and the docked resume control's target height. */
+  --rail-hit: var(--hit-floor);
   --rail-inset-end: calc(50% - var(--content-max-w) / 2 - var(--rail-w) - var(--sp-2));
   --rail-inset-start: calc(100% - var(--rail-inset-end) - var(--rail-w));
 
   /* The map's reserved FOOT, which the docked resume control sits in. Reserved
    * UNCONDITIONALLY, because the control appears only once the reader has scrolled up
    * and the map may not move then. It clears the control's target: `--ctl-h-sm`
-   * painted, lifted to the hit floor where the floor is taller. */
-  --rail-foot: calc(var(--sp-3) + max(var(--ctl-h-sm), var(--hit-floor)) + var(--sp-2));
+   * painted, lifted to `--rail-hit` where that is taller. */
+  --rail-foot: calc(var(--sp-3) + max(var(--ctl-h-sm), var(--rail-hit)) + var(--sp-2));
+}
+
+/* A FINGER'S RAIL, on a touch device or in touch mode: a 48px column (Material's touch target;
+ * WCAG 2.5.5 asks 44) is the press-and-drag band and the step buttons' width, and 48px is their
+ * and the resume control's height. Still inside the 3.75rem gutter at 57.5rem. Two rules, one
+ * value: a selector cannot OR an attribute with a media query. */
+:root[data-pointer="coarse"] [id="messages-wrap-outer"] {
+  --rail-w: 3rem;
+  --rail-hit: 3rem;
+}
+
+@media (any-pointer: coarse) {
+  [id="messages-wrap-outer"] {
+    --rail-w: 3rem;
+    --rail-hit: 3rem;
+  }
 }
 
 /* Native scroll anchoring (`overflow-anchor` left at `auto`,
@@ -62,6 +81,21 @@
    * with behavior:"instant", which overrides this: small per-chunk deltas compose
    * into continuous motion that "smooth" would stutter through. */
   scroll-behavior: smooth;
+}
+
+/* UNDER 57.5rem THE COLUMN LEAVES NO GUTTER, so the map sits `--sp-2` inside the chat area's end,
+ * clear of a classic scrollbar, and the scroller below reserves the map's column so it covers no
+ * transcript text. The phone layout draws no map and keeps its inset. */
+@container chat-area (width < 57.5rem) {
+  [id="messages-wrap-outer"] {
+    --rail-inset-end: calc(var(--scrollbar-w, 0px) + var(--sp-2));
+  }
+
+  @media (width > 48rem) {
+    [id="messages-wrap"] {
+      padding-inline-end: max(calc(var(--rail-w) + 2 * var(--sp-2)), env(safe-area-inset-right, 0));
+    }
+  }
 }
 
 /* NO HALF-VIEWPORT RESERVE WHILE STREAMING — third attempt at one, so do not add
@@ -1388,41 +1422,31 @@
   bottom: var(--sp-4);
 }
 
-/* Past a phone the chat's control is the labelled pill centred over the transcript
-   ("N new blocks"), unless the turn map's foot takes it below. */
+/* THE TARGET IS `--rail-hit`, the map's own column height, rather than the shared
+ * `--hit-floor`, so a finger gets the column's 48px (`.scroll-resume::after` above). */
+[id="scroll-bottom"]::after {
+  inset-block: min(0px, calc((100% - var(--rail-hit)) / 2));
+  inset-inline: min(0px, calc((100% - var(--rail-hit)) / 2));
+}
+
+/* DOCKED AT THE FOOT OF THE TURN MAP, wherever the map draws (past the phone layout,
+ * 29-turns.css): a floating form sits over the last lines of the content the reader is
+ * behind on, while the map's column is empty space below the stack. Pinned by its
+ * inline-START edge, so the label grows RIGHT into the gutter rather than back over the
+ * cards, and `--sp-3` short of the wrapper's end because #chat-area clips. */
 @media (width > 48rem) {
   [id="scroll-bottom"] {
     right: auto;
-    left: 50%;
     bottom: var(--sp-3);
-    transform: translateX(-50%);
-    min-height: var(--btn-h);
-    padding: 0 var(--sp-3);
-  }
-
-  [id="scroll-bottom"] > span {
-    display: inline;
-  }
-}
-
-/* DOCKED AT THE FOOT OF THE TURN MAP, wherever the map draws: a floating form sits
- * over the last lines of the content the reader is behind on, while the map's column
- * is empty space below the stack. The width and pointer gates are the map's own
- * (29-turns.css). Pinned by its inline-START edge, so the label grows RIGHT into the
- * gutter rather than back over the cards, and `--sp-3` short of the wrapper's end
- * because #chat-area clips. Both thresholds track `--rail-w`. */
-@container chat-area (width >= 57.5rem) {
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] {
     left: var(--rail-inset-start);
-    transform: none;
     min-inline-size: var(--rail-w);
     max-inline-size: max(var(--rail-w), calc(var(--rail-inset-end) + var(--rail-w) - var(--sp-3)));
 
     /* THE MAP'S STEP-BUTTON VOCABULARY (`.turn-map-step`, 29-turns.css), because it is
      * the foot of the map's own column: `--ctl-h-sm` tall, no surface at rest, the
-     * hover pair on demand. Spelled with the floor, which this rule would otherwise
+     * hover pair on demand. Spelled with the target, which this rule would otherwise
      * override at class specificity. */
-    min-block-size: max(var(--ctl-h-sm), var(--hit-floor));
+    min-block-size: max(var(--ctl-h-sm), var(--rail-hit));
     background: transparent;
     border-color: transparent;
     color: var(--c-text-tertiary);
@@ -1433,22 +1457,24 @@
     border-radius: var(--r-sm);
   }
 
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:hover {
-    background: var(--c-hover);
-    color: var(--c-text-primary);
+  @media (any-hover: hover) {
+    [id="scroll-bottom"]:hover {
+      background: var(--c-hover);
+      color: var(--c-text-primary);
+    }
   }
 
   /* The glyph takes the map's own column, so it sits under the stack whether or not
    * the label is showing. `- 2px` is this button's two borders, which the column
    * width does not include. */
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > svg {
+  [id="scroll-bottom"] > svg {
     flex: 0 0 calc(var(--rail-w) - 2px);
   }
 
   /* HIDDEN, not truncated, at a width the gutter cannot hold: `setResumeLabel`
    * also writes the label to the tooltip, which is published as this button's
    * accessible description, so the count is never the only copy. */
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
+  [id="scroll-bottom"] > span {
     display: none;
   }
 }
@@ -1468,7 +1494,7 @@
  * gutter, no other element's box moves, and `#messages`' scrollHeight is out of
  * reach. */
 @container chat-area (width >= 70rem) {
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
+  [id="scroll-bottom"] > span {
     display: block;
     min-width: 0;
     padding-inline-end: var(--sp-2);
@@ -1486,8 +1512,9 @@
    * the rule above stands unchanged and the label is simply always visible, which is
    * the right default for a device that has no hover to reveal it with rather than a
    * fallback — and `:focus-visible` is paired with `:hover` so a keyboard user is
-   * not the one reader who can never see it. */
-  @media (any-hover: hover) {
+   * not the one reader who can never see it. A touch device or touch mode is such a
+   * device. */
+  @media (any-hover: hover) and (not (any-pointer: coarse)) {
     :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
       display: none;
     }
