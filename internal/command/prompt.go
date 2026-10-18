@@ -365,9 +365,6 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	if vErr != nil {
 		return nil, StatusError(code, vErr)
 	}
-	if strings.HasPrefix(p.Text, "!") {
-		return handleShellInterception(ctx, roles, cmd, &p)
-	}
 
 	// Admission FIRST: a refused admission writes nothing, so the log never holds a turn no process
 	// owns. It also dedupes a re-send of a running prompt, which meets Busy and becomes a steer.
@@ -459,7 +456,7 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 		roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{Code: marotte.ErrCodeBridgeStartFailed, Message: reason, TurnScoped: true}))
 		return
 	}
-	// The reservation already excludes every prompt and shell, so a held
+	// The reservation already excludes every other prompt, so a held
 	// bridge slot here is a programming error.
 	if !sb.TryAcquireForPrompt() {
 		roles.admission.ReleaseTurnReservation(chatID)

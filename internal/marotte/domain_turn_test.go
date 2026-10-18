@@ -47,7 +47,7 @@ func TestTurnSourcePredicates(t *testing.T) {
 		promptClass, userAnswered, acknowledgeable, steerable bool
 	}{
 		{"prompt", TurnSourcePrompt, true, true, true, true},
-		{"localShell", TurnSourceLocalShell, false, false, false, false},
+		{"revert", TurnSourceRevert, false, false, false, false},
 		{"wireTurnStart", TurnSourceWireTurnStart, false, false, false, true},
 		{"emptyRetry", TurnSourceEmptyRetry, true, true, true, true},
 		{"workflowStep", turnSourceWorkflowStep, false, false, false, false},

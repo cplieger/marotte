@@ -172,11 +172,6 @@ func (rt *Runtime) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpe
 	return rt.coord.AdmissionHolderSource(chatID)
 }
 
-// FinalizeLocalShellTurn closes a `!cmd` turn, appending its one text entry first.
-func (rt *Runtime) FinalizeLocalShellTurn(ctx context.Context, chatID marotte.ChatID, turnID, output string) {
-	rt.coord.FinalizeLocalShellTurn(ctx, chatID, turnID, output)
-}
-
 // PreSendCompact runs the compaction policy's before-a-send trigger.
 func (rt *Runtime) PreSendCompact(ctx context.Context, chatID marotte.ChatID) {
 	rt.coord.autoCompact.preSend(ctx, chatID)

@@ -28,9 +28,19 @@
       "body": [{ "kind": "turn_close", "lane": "" }]
     },
     {
-      "name": "a local_shell turn draws on its header alone",
+      "name": "a turn under an unknown source draws on its body alone",
       "owner": "both",
       "drawn": true,
+      "open": { "source": "local_shell", "prompt": { "id": "m-2", "text": "!ls" } },
+      "body": [
+        { "kind": "text", "lane": "" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "a turn under an unknown source draws nothing on its header alone",
+      "owner": "both",
+      "drawn": false,
       "open": { "source": "local_shell", "prompt": { "id": "m-2", "text": "!ls" } },
       "body": [{ "kind": "turn_close", "lane": "" }]
     },

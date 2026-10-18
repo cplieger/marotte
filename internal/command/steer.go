@@ -95,7 +95,7 @@ func decodeSteerReply(resp *marotte.RPCResponse) steerReply {
 }
 
 // cmdSteer delivers a message into the running turn. It requires a holder whose turn drains the
-// buffer: a steer to an idle chat or a `!cmd` turn would sit unread. Every steer command takes the
+// buffer: a steer to an idle chat or a rewind would sit unread. Every steer command takes the
 // chat's steer lock, so a delete's clear and resubmit never interleave with a new steer.
 func cmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
@@ -133,7 +133,7 @@ func steerOne(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, ke
 func steerHolder(roles *promptRoles, chatID marotte.ChatID, turn string) SteerHolder {
 	source, held := roles.admission.AdmissionHolderSource(chatID)
 	return SteerHolder{
-		Held:        held && source != marotte.TurnSourceLocalShell,
+		Held:        held && source != marotte.TurnSourceRevert,
 		PromptClass: source.PromptClass(),
 		Live:        roles.bridges.BridgeLive(chatID),
 		Turn:        turn,

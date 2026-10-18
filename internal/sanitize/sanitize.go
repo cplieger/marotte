@@ -2,7 +2,7 @@
 // client, or written to a log: ANSI escape sequences and the invisible Unicode codepoints
 // (TAG characters, zero-width joiners, bidi overrides) that carry prompt injections.
 //
-// Output is for MULTI-LINE transcript content (tool output, a shell capture, an export):
+// Output is for MULTI-LINE transcript content (tool output, a command's captured output, an export):
 // hidden runes are deleted. A single-line surface takes runesafe's
 // SanitizeSingleLineBounded instead, which replaces them with a visible space.
 // internal/ansitext parses the same sequences to KEEP them as style spans.

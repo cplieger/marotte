@@ -307,15 +307,15 @@ func TestCmdSteer_RefusesAnIdleChatBeforeTheWire(t *testing.T) {
 	}
 }
 
-// A `!cmd` shell turn holds the slot with no session/prompt behind it, so a
-// steer delivered during one has no turn to drain it — same limbo as the idle
-// chat, same refusal class.
-func TestCmdSteer_RefusesAShellHolder(t *testing.T) {
+// A rewind holds the slot with no session/prompt behind it, so a steer
+// delivered during one has no turn to drain it — same limbo as the idle chat,
+// same refusal class.
+func TestCmdSteer_RefusesARewindHolder(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
 	deps := &bridgeDeps{
 		storeDeps: &storeDeps{
-			benchDeps: &benchDeps{holder: marotte.TurnSourceLocalShell, holderOpen: true},
+			benchDeps: &benchDeps{holder: marotte.TurnSourceRevert, holderOpen: true},
 			store:     store,
 		},
 		bridge: b,
@@ -328,7 +328,7 @@ func TestCmdSteer_RefusesAShellHolder(t *testing.T) {
 		t.Errorf("status = %d reason = %q, want 409 %q", statusOf(err), reasonOf(err), reasonNoTurn)
 	}
 	if b.callCount != 0 {
-		t.Error("the steer reached the wire during a shell turn")
+		t.Error("the steer reached the wire during a rewind")
 	}
 }
 

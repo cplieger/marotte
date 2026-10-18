@@ -39,7 +39,7 @@ func seedChat(t *testing.T, cs *testChatStore, id marotte.ChatID) {
 	}
 }
 
-// The refusal keys on the holder's source alone: a shell holder answers "starting" with or without a bridge; a
+// The refusal keys on the holder's source alone: a revert holder answers "starting" with or without a bridge; a
 // prompt holder answers busy whatever its bridge.
 func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 	cases := []struct {
@@ -48,8 +48,8 @@ func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 		bridged bool
 		want    command.AdmissionOutcome
 	}{
-		{name: "shell holder on a bridgeless chat answers starting", holder: marotte.TurnSourceLocalShell, want: command.AdmissionStarting},
-		{name: "shell holder on a bridged chat answers starting", holder: marotte.TurnSourceLocalShell, bridged: true, want: command.AdmissionStarting},
+		{name: "revert holder on a bridgeless chat answers starting", holder: marotte.TurnSourceRevert, want: command.AdmissionStarting},
+		{name: "revert holder on a bridged chat answers starting", holder: marotte.TurnSourceRevert, bridged: true, want: command.AdmissionStarting},
 		{name: "prompt holder with no bridge answers busy", holder: marotte.TurnSourcePrompt, want: command.AdmissionBusy},
 		{name: "prompt holder with a live bridge answers busy", holder: marotte.TurnSourcePrompt, bridged: true, want: command.AdmissionBusy},
 	}
@@ -76,7 +76,7 @@ func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 	}
 }
 
-// A free slot admits at once; a shell-held one parks the waiter until the release admits it.
+// A free slot admits at once; a revert-held one parks the waiter until the release admits it.
 func TestReserveTurnForPrompt_AcquiresAFreeOrFreedSlot(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
@@ -84,7 +84,7 @@ func TestReserveTurnForPrompt_AcquiresAFreeOrFreedSlot(t *testing.T) {
 		t.Fatalf("free slot = %v, want acquired", got)
 	}
 	h.coord.ReleaseTurnReservation("c1")
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
 		t.Fatal("setup: the admission slot was already held")
 	}
 	answered := make(chan command.AdmissionOutcome, 1)
@@ -142,12 +142,12 @@ func TestReserveTurnForPrompt_AnOpeningPromptHolderAnswersBusyAtOnce(t *testing.
 	}
 }
 
-// A prompt against a shell-held chat answers 409 with `reason":"starting"` at the budget and writes nothing.
+// A prompt against a revert-held chat answers 409 with `reason":"starting"` at the budget and writes nothing.
 func TestPrompt_FullPath409StartingCarriesTheReason(t *testing.T) {
 	shrinkAdmissionWait(t, 60*time.Millisecond)
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
 		t.Fatal("setup: the admission slot was already held")
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
@@ -188,38 +188,6 @@ func gateSessionOpen(h *Runtime) (entered, gate chan struct{}) {
 		}
 	})
 	return entered, gate
-}
-
-// `!echo hi` during a prompt's blocked session door is refused at once: the shell door tries, never waits.
-func TestShellDuringABlockedSessionOpenIsRefusedImmediately(t *testing.T) {
-	h, cs, _ := newTestHub()
-	seedChat(t, cs, "c1")
-	entered, gate := gateSessionOpen(h)
-	defer close(gate)
-
-	if rec := postCmd(t, h, marotte.ClientCommand{
-		Type: "prompt", ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
-	}); rec.Code != http.StatusOK {
-		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
-	}
-	<-entered // the prompt goroutine is parked inside its session open, holding the reservation
-
-	start := time.Now()
-	rec := postCmd(t, h, marotte.ClientCommand{
-		Type: "prompt", ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"!echo hi","message_id":"m-2"}`),
-	})
-	elapsed := time.Since(start)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("shell during session open = %d, want 409 (body %s)", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "busy") {
-		t.Errorf("body = %q, want busy", rec.Body.String())
-	}
-	if elapsed > time.Second {
-		t.Errorf("the shell refusal took %v, want an immediate try — never a wait", elapsed)
-	}
 }
 
 // waitForTurnClosed polls until exactly want turn_closed frames exist and returns their turn_close entries; a surplus is a defect.
@@ -699,7 +667,7 @@ func TestTryReserve_BesideAWireTurn(t *testing.T) {
 				t.Fatal("setup: no wire turn is open")
 			}
 
-			if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceLocalShell) {
+			if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceRevert) {
 				t.Error("TryReserveIdleTurn reserved beside an open wire turn, want refused")
 				h.coord.ReleaseTurnReservation("c1")
 			}
@@ -724,11 +692,11 @@ func TestTryReserve_BesideAWireTurn(t *testing.T) {
 func TestTryReserveIdleTurn_TakesAnIdleSlotAndRefusesAHeldOne(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	if !h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceLocalShell) {
+	if !h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceRevert) {
 		t.Fatal("TryReserveIdleTurn(c1) refused an idle chat")
 	}
-	if src, held := h.coord.AdmissionHolderSource("c1"); !held || src != marotte.TurnSourceLocalShell {
-		t.Errorf("after TryReserveIdleTurn the holder is %v (held %t), want local_shell", src, held)
+	if src, held := h.coord.AdmissionHolderSource("c1"); !held || src != marotte.TurnSourceRevert {
+		t.Errorf("after TryReserveIdleTurn the holder is %v (held %t), want revert", src, held)
 	}
 	if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt) {
 		t.Error("a second TryReserveIdleTurn(c1) took a held slot")
@@ -824,24 +792,6 @@ func TestCmdPrompt_BesideAWireTurnAnswersThePlainBusyAndSendsNothing(t *testing.
 	}
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
 		t.Errorf("bridge calls = %v, want no session/prompt beside the running turn", br.callLog())
-	}
-}
-
-// A `!cmd` beside an agent-initiated turn is refused as busy: its turn cannot open beside an open one.
-func TestShell_BesideAWireTurnIsRefusedAsBusy(t *testing.T) {
-	h, cs, _ := wakeTurnHub(t)
-	opens := len(opensOf(t, logOf(t, cs, "c1")))
-
-	rec := postCmd(t, h, marotte.ClientCommand{
-		Type: marotte.CmdPrompt, ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"!echo hi","message_id":"m-1"}`),
-	})
-
-	if rec.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409 (body %s)", rec.Code, rec.Body.String())
-	}
-	if got := len(opensOf(t, logOf(t, cs, "c1"))); got != opens {
-		t.Errorf("turn_open entries = %d, want %d", got, opens)
 	}
 }
 

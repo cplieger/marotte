@@ -789,7 +789,7 @@ func newTurnState(e *marotte.Entry, start, end int64) (*turnState, error) {
 // anything. Its negation is the rail's agent_initiated.
 func drawnSource(s marotte.TurnOpenSourceName) bool {
 	switch s {
-	case marotte.TurnOpenNamePrompt, marotte.TurnOpenNameLocalShell, marotte.TurnOpenNameEmptyRetry:
+	case marotte.TurnOpenNamePrompt, marotte.TurnOpenNameEmptyRetry:
 		return true
 	}
 	return false

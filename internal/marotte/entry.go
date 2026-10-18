@@ -69,15 +69,14 @@ type OpenEntry struct {
 }
 
 // TurnOpenSourceName is the wire spelling of what opened a turn; TurnOpenSource maps onto
-// it through Name. `event` (a turn an event row opens) and `revert` (the carrier a revert
-// opens when no turn survives it) have no TurnOpenSource member.
+// it through Name. `event` (a turn an event row opens) has no TurnOpenSource member, and
+// `revert` (the carrier a revert opens when no turn survives it) is TurnSourceRevert's.
 type TurnOpenSourceName string
 
 // TurnOpenNamePrompt and the following constants are the valid TurnOpenSourceName
 // values.
 const (
 	TurnOpenNamePrompt        TurnOpenSourceName = "prompt"
-	TurnOpenNameLocalShell    TurnOpenSourceName = "local_shell"
 	TurnOpenNameWireTurnStart TurnOpenSourceName = "wire_turn_start"
 	TurnOpenNameEmptyRetry    TurnOpenSourceName = "empty_retry"
 	TurnOpenNameEvent         TurnOpenSourceName = "event"
@@ -91,8 +90,8 @@ func (s TurnOpenSource) Name() TurnOpenSourceName {
 	switch s {
 	case TurnSourcePrompt:
 		return TurnOpenNamePrompt
-	case TurnSourceLocalShell:
-		return TurnOpenNameLocalShell
+	case TurnSourceRevert:
+		return TurnOpenNameRevert
 	case TurnSourceWireTurnStart:
 		return TurnOpenNameWireTurnStart
 	case TurnSourceEmptyRetry:
@@ -115,9 +114,9 @@ type EntryPrompt struct {
 	Resends     []string     `json:"resends,omitempty"`
 }
 
-// EntryTurnOpen is the turn_open payload. Prompt is present for a prompt,
-// local_shell or empty_retry turn and absent otherwise. Run, NodePath and
-// SessionID are set on a run log's turns only.
+// EntryTurnOpen is the turn_open payload. Prompt is present for a prompt or
+// empty_retry turn and absent otherwise. Run, NodePath and SessionID are set on
+// a run log's turns only.
 type EntryTurnOpen struct {
 	Prompt    *EntryPrompt       `json:"prompt,omitempty"`
 	Source    TurnOpenSourceName `json:"source"`

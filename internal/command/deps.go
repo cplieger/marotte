@@ -428,7 +428,7 @@ const (
 	// which the client steers or queues, per the chat's mode.
 	AdmissionBusy
 	// AdmissionStarting is the fail-closed answer when no steerable holder can take
-	// the prompt: a cold session open, a shell, or a run or close hold kiro-cli
+	// the prompt: a cold session open, a rewind, or a run or close hold kiro-cli
 	// reports with no steerable turn. Answered as 409 with the additive
 	// `reason: "starting"`, which hands the text back.
 	AdmissionStarting
@@ -502,8 +502,8 @@ type turnOutcomeAccess interface {
 	// OpenTurn appends the turn_open at admission and creates the turn's registry
 	// record in one operation: prompt is the turn's prompt (nil for a source with
 	// none) and init is the header fallback for an id no record exists for, nil for
-	// every source but prompt and local_shell. Refuses on a dead ctx before it
-	// appends, and with ErrTurnSuperseded when the open's fence no longer holds.
+	// every source but prompt. Refuses on a dead ctx before it appends, and with
+	// ErrTurnSuperseded when the open's fence no longer holds.
 	// The id it returns is what StartTurn and every closer are handed.
 	OpenTurn(ctx context.Context, chatID marotte.ChatID, open TurnOpen) (string, error)
 	// StartTurn stamps the model and the credit baseline onto the named turn, with
@@ -537,9 +537,6 @@ type turnOutcomeAccess interface {
 	// StopRequestedAfter reports whether the reader asked to stop after turnID
 	// opened — the empty-turn retry's consent clause.
 	StopRequestedAfter(chatID marotte.ChatID, turnID string) bool
-	// FinalizeLocalShellTurn closes a `!cmd` turn marotte ran itself, appending
-	// its one text entry first.
-	FinalizeLocalShellTurn(ctx context.Context, chatID marotte.ChatID, turnID, output string)
 	// AbandonInFlightTurn finalizes a turn the prompt call could not finish, and
 	// the prompt's exits before any call. stop is what the failure CONCLUDES —
 	// `interrupted` for a fault, `cancelled` for a user cancel KAS never acked — and
@@ -844,8 +841,8 @@ type Roles struct {
 	Workspace Workspace
 }
 
-// promptRoles holds the prompt path's collaborators and is shared with shell
-// interception. It is built once at registration.
+// promptRoles holds the prompt path's collaborators. It is built once at
+// registration.
 type promptRoles struct {
 	bridges bridgeAccess
 	chats   chatStore

@@ -575,7 +575,7 @@ func TestResolveEnds_AStrayIsClearedOnlyWithNoHolder(t *testing.T) {
 		{name: "a clear's reply", wantLog: "strays-all", wantClear: true},
 		{name: "an agent row waiting", agentRows: true, wantLog: "release-in-kas"},
 		{name: "a prompt holding the chat", held: true, holder: marotte.TurnSourcePrompt, wantLog: "release-in-kas"},
-		{name: "a bare reservation", held: true, holder: marotte.TurnSourceLocalShell, wantLog: "release-in-kas"},
+		{name: "a bare reservation", held: true, holder: marotte.TurnSourceRevert, wantLog: "release-in-kas"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

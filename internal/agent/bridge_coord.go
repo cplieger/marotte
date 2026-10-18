@@ -1374,18 +1374,6 @@ func (bc *bridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID mar
 	bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerPromptFailure, Stop: stop, Reason: reason, Kind: kind, Turn: turnID, Seq: seq})
 }
 
-// FinalizeLocalShellTurn appends a `!cmd` turn's output as its one text entry and closes it.
-func (bc *bridgeCoordinator) FinalizeLocalShellTurn(ctx context.Context, chatID marotte.ChatID, turnID, output string) {
-	if t, ok := bc.turns.turnByID(chatID, turnID); ok {
-		sealed, err := t.Log.TextDelta(ctx, "", "", output)
-		translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), chatID, "", sealed)
-		if err != nil {
-			slog.Warn("a shell turn's output was not recorded", "chat_id", chatID, "turn", turnID, "error", err)
-		}
-	}
-	bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerLocalShell, Turn: turnID})
-}
-
 // WireTurnStart handles the engine's turn_start bracket: it binds a pending prompt turn already sent, closes the
 // own turn the bracket supersedes (bindPending), or opens a wire_turn_start turn.
 // The bind is provisional; the first agentInitiated frame revises it (ReviseTurnBinding).
@@ -1452,7 +1440,7 @@ func (bc *bridgeCoordinator) ReviseTurnBinding(ctx context.Context, chatID marot
 		if err != nil {
 			return err
 		}
-		model := bc.turnOpenModel(ctx, chatID, marotte.TurnSourceWireTurnStart)
+		model := bc.turnOpenModel(ctx, chatID)
 		log := turnlog.Open(opened.ID, bc.chatStore.Sink(chatID))
 		if model != "" {
 			log.SetModel(model)

@@ -98,16 +98,16 @@ func TestTurnLive_TrueForAnAdmittedPromptWithNoTurnMinted(t *testing.T) {
 	}
 }
 
-// A shell turn emits no deltas, so the client's one-chunk recovery cannot reach it.
-func TestTurnLive_TrueForAnAdmittedShellCommand(t *testing.T) {
+// A rewind's reservation emits no deltas, so the client's one-chunk recovery cannot reach it.
+func TestTurnLive_TrueForARewindHoldingTheSlot(t *testing.T) {
 	h, _, _ := newTestHub()
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
-		t.Fatal("a fresh chat refused a shell reservation")
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
+		t.Fatal("a fresh chat refused a revert reservation")
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
 
 	if !h.TurnLive("c1") {
-		t.Error("a chat holding a shell reservation reports no live turn")
+		t.Error("a chat holding a revert reservation reports no live turn")
 	}
 }
 
@@ -150,9 +150,9 @@ func TestTurnLive_AgreesWithTheConnectBusySet(t *testing.T) {
 			}
 			t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
 		}},
-		{"admitted shell command", func(t *testing.T, h *Runtime) {
-			if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
-				t.Fatal("a fresh chat refused a shell reservation")
+		{"admitted rewind", func(t *testing.T, h *Runtime) {
+			if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
+				t.Fatal("a fresh chat refused a revert reservation")
 			}
 			t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
 		}},

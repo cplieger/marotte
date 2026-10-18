@@ -117,44 +117,6 @@ func TestAfterTurnClose_AGraceClosedPromptDrainsAtOnceWhenKASIsIdle(t *testing.T
 	})
 }
 
-// A shell turn's busy refusal also concludes `cancelled`, but sent kiro-cli nothing, so it starts no hold: a follow-up
-// queued after it is refused as no turn, and its drain waits only for KAS's run, like any close's.
-func TestAfterTurnClose_AShellBusyRefusalStartsNoHold(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h, _, _ := newTestHub()
-		defer shutdownHub(t, h)
-		drained := countDrains(h)
-		turnID, err := h.coord.OpenTurn(t.Context(), "c1", command.TurnOpen{
-			Source: marotte.TurnSourceLocalShell,
-			Prompt: &marotte.EntryPrompt{ID: "m-shell", Text: "!ls"},
-			Init:   func(c *marotte.Chat) { c.Name = "test chat" },
-		})
-		if err != nil {
-			t.Fatalf("Setup: OpenTurn(local shell): %v", err)
-		}
-		h.coord.WireTurnActivity("c1", true)
-
-		h.coord.AbandonInFlightTurn(t.Context(), "c1", turnID, marotte.StopReasonCancelled, "", "", 0)
-		synctest.Wait()
-		rec := postCmd(t, h, marotte.ClientCommand{
-			Type: marotte.CmdQueuePrompt, ChatID: "c1",
-			Payload: json.RawMessage(`{"text":"after the shell","message_id":"m-q1"}`),
-		})
-		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "no_turn") {
-			t.Errorf("queue_prompt after a shell busy refusal = %d %s, want 409 no_turn", rec.Code, rec.Body.String())
-		}
-		if n := drained.Load(); n != 0 {
-			t.Errorf("drained %d times while KAS still reported a run, want none", n)
-		}
-
-		h.coord.WireTurnActivity("c1", false)
-		synctest.Wait()
-		if n := drained.Load(); n != 1 {
-			t.Errorf("drained %d times once KAS reported idle, want one", n)
-		}
-	})
-}
-
 // Elapsed time is no proof KAS ended its executions: past the stuck-hold warning the drain still waits, and so do
 // the chat's prompts, until KAS reports the session idle.
 func TestAfterTurnClose_AGraceClosedPromptsDrainNeverFiresOnElapsedTime(t *testing.T) {
@@ -388,8 +350,8 @@ func TestReserveTurnForPrompt_AKASHoldAnswersStartingAtTheBudget(t *testing.T) {
 		if got := h.coord.ReserveTurnForPrompt(t.Context(), "c1", command.AdmissionWait); got != command.AdmissionStarting {
 			t.Errorf("ReserveTurnForPrompt during a KAS hold = %v, want AdmissionStarting", got)
 		}
-		if h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
-			t.Error("TryReserveTurn(local shell) during a KAS hold acquired, want refused")
+		if h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
+			t.Error("TryReserveTurn(revert) during a KAS hold acquired, want refused")
 		}
 	})
 }

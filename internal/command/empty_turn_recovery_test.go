@@ -97,8 +97,6 @@ func (o *recoveryOutcome) ReleaseTurnReservation(marotte.ChatID) {
 	o.reserved = false
 }
 
-func (*recoveryOutcome) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
-
 func (*recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string, marotte.FailureKind, uint64) {
 }
 

@@ -35,7 +35,7 @@ func (bc *bridgeCoordinator) OpenTurn(ctx context.Context, chatID marotte.ChatID
 		if err != nil {
 			return err
 		}
-		model := bc.turnOpenModel(ctx, chatID, source)
+		model := bc.turnOpenModel(ctx, chatID)
 		log := turnlog.Open(opened.ID, bc.chatStore.Sink(chatID))
 		if model != "" {
 			log.SetModel(model)
@@ -96,7 +96,7 @@ func (bc *bridgeCoordinator) openWireTurn(ctx context.Context, chatID marotte.Ch
 		if err != nil {
 			return err
 		}
-		model := bc.turnOpenModel(ctx, chatID, marotte.TurnSourceWireTurnStart)
+		model := bc.turnOpenModel(ctx, chatID)
 		log := turnlog.Open(opened.ID, bc.chatStore.Sink(chatID))
 		if model != "" {
 			log.SetModel(model)
@@ -154,7 +154,7 @@ func (bc *bridgeCoordinator) StartTurn(ctx context.Context, turn command.TurnRef
 		return false
 	}
 	t.cancel = cancel
-	model := bc.turnOpenModel(ctx, chatID, t.Source)
+	model := bc.turnOpenModel(ctx, chatID)
 	t.Model = model
 	if model != "" {
 		t.Log.SetModel(model)
@@ -195,11 +195,11 @@ func (bc *bridgeCoordinator) StopRequestedAfter(chatID marotte.ChatID, turnID st
 	return bc.turns.stoppedAfter(chatID, turnID)
 }
 
-// turnOpenModel reads the model a turn records at open, empty for a local shell. From the chat record: a resumed
-// session's accessors answer the zero value for fields session/load omitted, often the model.
-func (bc *bridgeCoordinator) turnOpenModel(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) string {
+// turnOpenModel reads the model a turn records at open. From the chat record: a resumed session's accessors answer
+// the zero value for fields session/load omitted, often the model.
+func (bc *bridgeCoordinator) turnOpenModel(ctx context.Context, chatID marotte.ChatID) string {
 	ch, ok := bc.chatStore.Get(ctx, chatID)
-	if !ok || source == marotte.TurnSourceLocalShell {
+	if !ok {
 		return ""
 	}
 	return ch.Model

@@ -470,9 +470,9 @@ func TestRequestStop_AnAdmissionIsItsTargetOnlyWhenNothingElseRuns(t *testing.T)
 		want  bool
 	}{
 		{name: "a prompt with nothing else running", want: true, admit: reservePrompt},
-		{name: "a shell's admission", admit: func(t *testing.T, h *Runtime) {
-			if !h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceLocalShell) {
-				t.Fatal("Setup: the shell's admission was refused")
+		{name: "a rewind's admission", admit: func(t *testing.T, h *Runtime) {
+			if !h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceRevert) {
+				t.Fatal("Setup: the rewind's admission was refused")
 			}
 		}},
 		{name: "while KAS reports a run", admit: func(t *testing.T, h *Runtime) {

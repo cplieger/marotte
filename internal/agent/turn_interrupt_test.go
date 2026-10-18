@@ -290,6 +290,19 @@ func TestInterruptTurn_ARewakeTurnLeavesThePromptWaitingBehindIt(t *testing.T) {
 	})
 }
 
+// turnByID reports the live turn the id names, or false when the chat holds none
+// under it or it is finalizing.
+func (r *turnRegistry) turnByID(chatID marotte.ChatID, turnID string) (*activeTurn, bool) {
+	lc := r.lifecycleFor(chatID)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	t := lc.liveLocked(turnID)
+	if t == nil || t.finalizing {
+		return nil, false
+	}
+	return t, true
+}
+
 func mustTurn(t *testing.T, h *Runtime, turn string) *activeTurn {
 	t.Helper()
 	live, ok := h.coord.turns.turnByID("c1", turn)
@@ -322,8 +335,11 @@ func TestInterruptTurn_TripsOnlyTheNamedTurnsOwnCall(t *testing.T) {
 	t.Run("a turn with no prompt call", func(t *testing.T) {
 		h, cs, _ := newTestHub()
 		seedChat(t, cs, "c1")
-		id := shellTurn(t, h, "c1")
-		t.Cleanup(func() { h.ReleaseTurn("c1", id) })
+		wire := h.coord.openWireTurn(t.Context(), "c1", true)
+		if wire == nil {
+			t.Fatal("Setup: the agent's turn did not open")
+		}
+		id := wire.ID
 
 		h.coord.InterruptTurn("c1", id, "first")
 		if got := h.coord.turns.interruptCause(mustTurn(t, h, id)); got != "first" {
