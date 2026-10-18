@@ -126,7 +126,10 @@ describe("a workflow update's header", () => {
     const { label, times, text } = mountNote(frameOf(278));
     const bodyEdge = text.getBoundingClientRect().left;
 
-    expect(lineStarts(label, times).size).toBeLessThanOrEqual(2);
+    expect(
+      lineStarts(label, times).size,
+      "the 278px frame must force the wrap this case checks",
+    ).toBe(2);
     for (const left of lineStarts(label, times).values()) {
       expect(left).toBeCloseTo(bodyEdge, 0);
     }
@@ -155,9 +158,35 @@ describe("a workflow update's header", () => {
   });
 
   it("keeps the step and the times on one line when there is no run's name and they fit", () => {
-    const { label, times } = mountNote(frameOf(600), false);
+    const { head, label, times } = mountNote(frameOf(600), false);
+    const contentEnd =
+      head.getBoundingClientRect().right - parseFloat(getComputedStyle(head).paddingInlineEnd);
 
     expect(lineStarts(label, times).size).toBe(1);
+    expect(times.getBoundingClientRect().right).toBeCloseTo(contentEnd, 0);
+  });
+
+  it("keeps the step beside the glyph under the run's name when there are no times on a phone", () => {
+    const doc = frameOf(390);
+    const note = buildSteerNote({
+      text: "Step finished.",
+      origin: "agent",
+      dropped: false,
+      run: "wf_run1",
+      runLabel: "actions-reactive-owner-loading",
+      onOpenRun: () => undefined,
+    });
+    doc.body.appendChild(doc.adoptNode(note));
+    const run = note.querySelector<HTMLElement>(".steer-note-run");
+    const label = note.querySelector<HTMLElement>(".steer-note-label");
+    if (run === null || label === null) {
+      throw new Error("no run label or step label");
+    }
+
+    expect(label.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      run.getBoundingClientRect().bottom,
+    );
+    expect(label.getBoundingClientRect().left).toBeCloseTo(run.getBoundingClientRect().left, 0);
   });
 
   it("puts the times under the glyph, on the body's edge, when there is no run's name on a phone", () => {

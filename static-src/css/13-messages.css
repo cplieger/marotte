@@ -1691,7 +1691,6 @@ button.steer-note-run:focus-visible {
   color: var(--c-text-secondary);
 }
 
-/* On a wide row the step and the times are the head's own flex items. */
 .steer-note-meta {
   display: contents;
 }
@@ -1735,27 +1734,31 @@ button.steer-note-run:focus-visible {
 
   .steer-note-head:has(> .steer-note-run) > .steer-note-meta {
     display: block;
-    grid-area: 2 / 1 / auto / -1;
+    grid-area: 2 / 2;
     font-size: var(--fs-xs);
+  }
+
+  .steer-note-head:has(> .steer-note-run):has(.steer-note-times) > .steer-note-meta {
+    grid-area: 2 / 1 / auto / -1;
   }
 
   .steer-note-head:has(> .steer-note-run) .steer-note-label {
     margin-inline-end: var(--sp-1);
   }
 
-  .steer-note-head:has(> .steer-note-run) .steer-note-times {
+  .steer-note-times {
     margin-inline-start: 0;
   }
 
-  /* With no run's name, the times follow the step on its row and, when they do not fit, wrap under
-   * it as one item on the gutter, the body's edge. */
+  /* With no run's name, the times keep the row's end when they fit and, when they do not, wrap
+   * under the step as one item on the gutter, the body's edge. */
   .steer-note-head:not(:has(> .steer-note-run)):has(.steer-note-times) {
     flex-wrap: wrap;
     row-gap: 0;
   }
 
-  .steer-note-head:not(:has(> .steer-note-run)) .steer-note-times {
-    margin-inline-start: 0;
+  .steer-note-head:not(:has(> .steer-note-run)):has(.steer-note-times) .steer-note-label {
+    margin-inline-end: auto;
   }
 }
 
