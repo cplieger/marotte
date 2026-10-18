@@ -34,7 +34,7 @@ export type PanelRow =
   | { kind: "file"; path: string; added: number; removed: number; isNew: boolean; open: () => void }
   | { kind: "review"; count: number; open: () => void };
 
-export interface PanelSection {
+interface PanelSection {
   title: string;
   rows: PanelRow[];
 }
