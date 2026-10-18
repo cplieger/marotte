@@ -204,11 +204,9 @@ func (bc *bridgeCoordinator) ArmWireCancelGrace(chatID marotte.ChatID, d time.Du
 	}
 	// Refused once Shutdown began: it closes its own turns, with its own account.
 	bc.lifecycle.afterUnlessDraining(d, func() {
-		if _, open := bc.turns.turnByID(chatID, t.ID); !open {
-			return
+		if bc.finalizeTurn(context.Background(), chatID, &turnClose{Closer: closerCancelGrace, Stop: marotte.StopReasonCancelled, Turn: t.ID}) {
+			slog.Warn("cancel unacked within grace; closed the agent's turn", "chat_id", chatID, "turn", t.ID, "grace", d)
 		}
-		slog.Warn("cancel unacked within grace; closing the agent's turn", "chat_id", chatID, "turn", t.ID, "grace", d)
-		bc.finalizeTurn(context.Background(), chatID, &turnClose{Closer: closerCancelGrace, Stop: marotte.StopReasonCancelled, Turn: t.ID})
 	})
 	return true
 }
@@ -229,13 +227,13 @@ func (bc *bridgeCoordinator) WireTurnActivity(chatID marotte.ChatID, active bool
 	grace := cmp.Or(bc.idleEndGrace, defaultIdleEndGrace)
 	// Refused once Shutdown began, as ArmWireCancelGrace's.
 	bc.lifecycle.afterUnlessDraining(grace, func() {
-		if !bc.turns.idleSince(chatID, t, arm) {
-			return
-		}
-		slog.Warn("the agent went idle without ending its turn; closing it", "chat_id", chatID, "turn", t.ID, "grace", grace)
-		bc.finalizeTurn(context.Background(), chatID, &turnClose{
+		closed := bc.finalizeTurn(context.Background(), chatID, &turnClose{
 			Closer: closerKASIdle, Stop: marotte.StopReasonUnknown, Reason: kasIdleReason, Turn: t.ID,
+			Valid: func(lc *chatLifecycle, c *activeTurn) bool { return lc.idleSinceLocked(c, arm) },
 		})
+		if closed {
+			slog.Warn("the agent went idle without ending its turn; closed it", "chat_id", chatID, "turn", t.ID, "grace", grace)
+		}
 	})
 }
 
@@ -306,49 +304,55 @@ func (r *turnRegistry) awaitKASIdle(ctx context.Context, chatID marotte.ChatID, 
 var errPromptTurnClosed = errors.New("this prompt's turn closed before it was sent, so it was not sent; send it again")
 
 // AwaitPromptSend holds turnID's session/prompt until the prompt owns the chat while KAS admits it (markSentLocked),
-// then lets it go: no frame before the send is the prompt's (awaitsSend), so a notification re-wake in any order is
-// waited out, or closed when KAS bracketed none of it, in a turn of its own. It fails the prompt unsent only when its
-// turn closed meanwhile or ctx ended.
+// then lets it go. No frame before the send is the prompt's (awaitsSend), so a notification re-wake keeps a turn of
+// its own: a bracketed one is waited out to its close, and a fold-opened one is claimed by the same section that
+// read KAS's state and closed here, unless its late turn_start claimed it first (bindPending), which leaves a
+// bracketed turn to wait out. It fails the prompt unsent only when its turn closed meanwhile or ctx ended.
 func (bc *bridgeCoordinator) AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) error {
 	for {
 		fold, err := bc.turns.awaitPromptSend(ctx, chatID, turnID)
-		if err != nil || fold == "" {
+		if err != nil || fold == nil {
 			return err
 		}
-		slog.Info("closing the agent's unbracketed turn so an admitted prompt can be sent", "chat_id", chatID, "turn", fold)
+		slog.Info("closing the agent's unbracketed turn so an admitted prompt can be sent", "chat_id", chatID, "turn", fold.ID)
 		bc.finalizeTurn(ctx, chatID, &turnClose{
-			Closer: closerKASIdle, Stop: marotte.StopReasonUnknown, Reason: kasIdleReason, Turn: fold,
+			Closer: closerPromptHandoff, Stop: marotte.StopReasonUnknown, Reason: promptHandoffReason, Turn: fold.ID, Claimed: fold,
 		})
 	}
 }
 
-// awaitPromptSend is AwaitPromptSend's wait, answering the fold-opened turn the caller must close before the prompt
-// can own the chat, "" once it is sent. A run KAS starts while the send is on the wire is still not seen: KAS offers
-// no execution token to make the handoff atomic, so its turn_start binds provisionally (ReviseTurnBinding).
-func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (string, error) {
+// awaitPromptSend is AwaitPromptSend's wait, answering the fold-opened turn it claimed for the caller to close
+// before the prompt can own the chat, nil once it is sent. A run KAS starts while the send is on the wire is still
+// not seen: KAS offers no execution token to make the handoff atomic, so its turn_start binds provisionally
+// (ReviseTurnBinding).
+func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (*activeTurn, error) {
 	lc, ok := r.lookup(chatID)
 	if !ok {
-		return "", nil
+		return nil, nil
 	}
 	warn := time.NewTimer(kasHoldWarnAfter)
 	defer warn.Stop()
 	for {
 		if err := ctx.Err(); err != nil {
-			return "", err
+			return nil, err
+		}
+		if r.claimHook != nil {
+			r.claimHook()
 		}
 		lc.mu.Lock()
 		t := lc.liveLocked(turnID)
 		if t == nil || t.finalizing {
 			lc.mu.Unlock()
-			return "", errPromptTurnClosed
+			return nil, errPromptTurnClosed
 		}
-		step, own, changed := lc.markSentLocked(t), lc.own, lc.changed
+		step, fold := lc.markSentLocked(t)
+		changed := lc.changed
 		lc.mu.Unlock()
 		switch step {
 		case sendNow:
-			return "", nil
+			return nil, nil
 		case sendCloseFold:
-			return own.ID, nil
+			return fold, nil
 		case sendWait:
 		}
 		select {
@@ -357,7 +361,7 @@ func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatI
 			slog.Warn("the chat's admitted prompt still waits for kiro-cli's run or the open turn to end",
 				"chat_id", chatID, "waited", kasHoldWarnAfter)
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
 }
@@ -381,14 +385,9 @@ func (r *turnRegistry) unbracketedPrompt(t *activeTurn) bool {
 	return t.Source.Acknowledgeable() && !t.acked
 }
 
-// idleSince reports whether t is still the open bracketed wire turn and KAS has reported no running turn since arm.
-func (r *turnRegistry) idleSince(chatID marotte.ChatID, t *activeTurn, arm uint64) bool {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return false
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
+// idleSinceLocked reports whether t is still the open bracketed wire turn and KAS has reported no running turn since
+// arm. Caller holds mu.
+func (lc *chatLifecycle) idleSinceLocked(t *activeTurn, arm uint64) bool {
 	return lc.own == t && lc.bracketedWireLocked() && t.kasIdle && t.idleArms == arm
 }
 

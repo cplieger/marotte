@@ -999,6 +999,7 @@ func (bc *bridgeCoordinator) recordPool(msg *marotte.RPCResponse) {
 // consumeFrame translates one frame, then advances the observed position (deferred, per
 // frame): many paths consume a frame without touching a turn.
 func (bc *bridgeCoordinator) consumeFrame(chatID marotte.ChatID, origin acpResponder, gen uint64, n marotte.Notification) {
+	bc.turns.beginFrame(chatID, gen)
 	defer bc.turns.observe(chatID, gen, n.Seq)
 	bc.translateEvent(chatID, origin, n.Msg)
 }
@@ -1385,18 +1386,18 @@ func (bc *bridgeCoordinator) FinalizeLocalShellTurn(ctx context.Context, chatID 
 	bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerLocalShell, Turn: turnID})
 }
 
-// WireTurnStart handles the engine's turn_start bracket: it binds a pending prompt turn already sent,
-// closes a bracketed own turn whose turn_end was lost, or opens a wire_turn_start turn.
+// WireTurnStart handles the engine's turn_start bracket: it binds a pending prompt turn already sent, closes the
+// own turn the bracket supersedes (bindPending), or opens a wire_turn_start turn.
 // The bind is provisional; the first agentInitiated frame revises it (ReviseTurnBinding).
 func (bc *bridgeCoordinator) WireTurnStart(ctx context.Context, chatID marotte.ChatID) {
 	bound, lost := bc.turns.bindPending(ctx, chatID)
-	if !bound && lost != "" {
-		bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerBracketLost, Turn: lost})
-		bound, _ = bc.turns.bindPending(ctx, chatID)
+	for lost != nil {
+		bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerBracketLost, Turn: lost.ID, Claimed: lost})
+		bound, lost = bc.turns.bindPending(ctx, chatID)
 	}
-	if bound {
-		if t, ok := bc.turns.ownTurn(chatID); ok && bc.steerTurnBound != nil {
-			bc.steerTurnBound(chatID, t.ID)
+	if bound != "" {
+		if bc.steerTurnBound != nil {
+			bc.steerTurnBound(chatID, bound)
 		}
 		return
 	}

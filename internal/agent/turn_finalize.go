@@ -32,17 +32,24 @@ const (
 	closerBridgeDeath
 	// closerWireEnd is the engine's own turn_end bracket, the ONLY closer setting WireEnded.
 	closerWireEnd
-	// closerBracketLost is a turn_start arriving while a bracketed own turn is open: its turn_end was lost.
+	// closerBracketLost is a turn_start arriving while an acked own turn is open (a bound prompt, or a wire turn,
+	// fold-opened included): its turn_end was lost or never sent (bindPending).
 	closerBracketLost
 	// closerCancelGrace and closerKASIdle are marotte ceasing to wait for a wire turn's turn_end: after a cancel
 	// (ArmWireCancelGrace), or after KAS reported no turn running (WireTurnActivity). A turn_end arriving first wins
 	// the claim.
 	closerCancelGrace
 	closerKASIdle
+	// closerPromptHandoff is the send gate closing a fold-opened wire turn so an admitted prompt can own the chat
+	// (AwaitPromptSend). KAS may have reported nothing, so it claims no idle.
+	closerPromptHandoff
 )
 
 // kasIdleReason is what a turn closed by closerKASIdle says.
 const kasIdleReason = "The agent went idle without ending this turn, so marotte closed it."
+
+// promptHandoffReason is what a turn closed by closerPromptHandoff says.
+const promptHandoffReason = "The agent's turn had no start marker, so marotte closed it to send your next prompt."
 
 // deathInterruptCause is a turn's public sentence when the bridge's stream ended mid-turn. It claims only what was
 // observed: nothing reads the exit status, so a closed pipe is not an exit.
@@ -71,6 +78,10 @@ func reasonFor(o marotte.TurnOutcome, supplied string) string {
 type turnClose struct {
 	// Resp is the session/prompt response, on closerPromptResponse only.
 	Resp *marotte.RPCResponse
+	// Valid, on an id-scoped close, must still hold for the turn in the claim's own section (claimIfLocked).
+	Valid func(lc *chatLifecycle, t *activeTurn) bool
+	// Claimed is a turn its caller already claimed under mu (claimIfLocked); the close then neither waits nor claims.
+	Claimed *activeTurn
 	// Reason is the user-facing account; empty leaves the outcome's default sentence.
 	Reason string
 	// Kind is the classified failure, on closerPromptFailure only.
@@ -89,16 +100,19 @@ type turnClose struct {
 }
 
 // finalizeTurn claims one turn and runs the turn end rule: claim, effects, publish, with mu held for none of the
-// effects, so racing closers produce one set (the second loses the claim).
-func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.ChatID, tc *turnClose) {
-	// The wait precedes the claim: the claim makes folds wait, so the settle would block on itself. A failure's wait
-	// only orders the close after a queued turn_end; a dead ctx or gone forward still closes.
-	if tc.Seq > 0 && !bc.turns.awaitPosition(ctx, chatID, tc.Turn, tc.Seq) && tc.Closer != closerPromptFailure {
-		return
-	}
-	t, won := bc.claimForCloser(ctx, chatID, tc)
-	if !won {
-		return
+// effects, so racing closers produce one set (the second loses the claim). It reports whether it closed the turn.
+func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.ChatID, tc *turnClose) bool {
+	t := tc.Claimed
+	if t == nil {
+		// The wait precedes the claim: the claim makes folds wait, so the settle would block on itself. A failure's
+		// wait only orders the close after a queued turn_end; a dead ctx or gone forward still closes.
+		if tc.Seq > 0 && !bc.turns.awaitPosition(ctx, chatID, tc.Turn, tc.Seq) && tc.Closer != closerPromptFailure {
+			return false
+		}
+		var won bool
+		if t, won = bc.claimForCloser(ctx, chatID, tc); !won {
+			return false
+		}
 	}
 	// Detached here, below awaitPosition, whose only timed escape is ctx.Done(); both doors hand a shutdown-cancelled context.
 	ctx = durable.Context(ctx)
@@ -115,18 +129,24 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 		if cause := bc.turns.interruptCause(t); cause != "" {
 			reason, kind = string(cause), ""
 		}
-	case closerWireEnd, closerCancelGrace, closerKASIdle:
+	case closerWireEnd, closerCancelGrace, closerKASIdle, closerPromptHandoff:
 	}
 	if reason == "" && kind == "" {
 		reason, kind = engineAccount(t, stop)
 	}
 	result, outcome := bc.closeTurn(ctx, t, stop, reason, kind, tc.Closer)
-	cf := closeFacts{outcome: outcome, fence: fenceOf(t), unattended: tc.Closer == closerKASIdle}
-	if tc.Closer == closerBridgeDeath {
-		cf.exit = bc.turns.forwardExit(t.Chat)
-	}
+	cf := bc.closeFactsOf(t, tc.Closer, outcome)
 	bc.turns.finish(t, result)
 	bc.publishClose(ctx, t, cf)
+	return true
+}
+
+func (bc *bridgeCoordinator) closeFactsOf(t *activeTurn, closer turnCloser, outcome marotte.TurnOutcome) closeFacts {
+	cf := closeFacts{outcome: outcome, fence: fenceOf(t), unattended: closer == closerKASIdle || closer == closerPromptHandoff}
+	if closer == closerBridgeDeath {
+		cf.exit = bc.turns.forwardExit(t.Chat)
+	}
+	return cf
 }
 
 // graceClosed reports a close marotte's cancel grace made. A prompt-class turn's failure concludes `cancelled` only on
@@ -249,7 +269,10 @@ func (bc *bridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.
 			"chat_id", chatID, "closer", tc.Closer)
 		return nil, false
 	}
-	t, won := bc.turns.claimTurn(ctx, chatID, tc.Turn, func(t *activeTurn) bool { return graceClosed(t, tc.Closer, tc.Stop) })
+	t, won := bc.turns.claimTurn(ctx, chatID, tc.Turn, &claimRule{
+		valid:      tc.Valid,
+		graceClose: func(t *activeTurn) bool { return graceClosed(t, tc.Closer, tc.Stop) },
+	})
 	if !won {
 		// Two closers racing one fault (turn_end and the prompt response): the first won.
 		slog.Debug("a turn closer lost its claim", "chat_id", chatID, "closer", tc.Closer, "turn", tc.Turn)

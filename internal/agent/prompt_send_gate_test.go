@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 
@@ -254,8 +257,9 @@ func TestCmdPrompt_TheSendGateHandsThePromptTheChatFromEveryOwnState(t *testing.
 		failed  []string
 		// earlyIn is the source of the turn the run's early frames land in.
 		earlyIn marotte.TurnOpenSourceName
-		// reason is the prompt turn's turn_close failure_reason.
-		reason string
+		// reason is the prompt turn's turn_close failure_reason, rewakeReason the re-wake turn's.
+		reason       string
+		rewakeReason string
 	}{
 		{
 			name:    "own is the prompt's turn",
@@ -275,11 +279,16 @@ func TestCmdPrompt_TheSendGateHandsThePromptTheChatFromEveryOwnState(t *testing.
 		{
 			name:    "own is a fold-opened re-wake KAS reported idle",
 			steps:   []sendGateStep{kasActive, gateRelease, kasReply, kasIdleReport},
-			prompts: 1, earlyIn: marotte.TurnOpenNamePrompt,
+			prompts: 1, earlyIn: marotte.TurnOpenNamePrompt, rewakeReason: promptHandoffReason,
 		},
 		{
 			name:    "own is a fold-opened re-wake with no activity report",
 			steps:   []sendGateStep{kasReply, gateRelease},
+			prompts: 1, earlyIn: marotte.TurnOpenNamePrompt, rewakeReason: promptHandoffReason,
+		},
+		{
+			name:    "own is the bracketed turn a fold-opened re-wake's late turn_start opened",
+			steps:   []sendGateStep{kasReply, kasTurnStart, gateRelease, kasReply, kasTurnEnd},
 			prompts: 1, earlyIn: marotte.TurnOpenNamePrompt,
 		},
 		{
@@ -323,6 +332,11 @@ func TestCmdPrompt_TheSendGateHandsThePromptTheChatFromEveryOwnState(t *testing.
 				if open := openTurnsBut(logOf(t, cs, "c1"), prompt.ID()); len(open) != 0 {
 					t.Errorf("turns %q still open beside the prompt once the gate decided, want none", open)
 				}
+				if folded != "" {
+					if c, closed := closeOfTurn(t, logOf(t, cs, "c1"), folded); !closed || c.FailureReason != tc.rewakeReason {
+						t.Errorf("the re-wake's turn_close = %+v (closed %v), want failure_reason %q", c, closed, tc.rewakeReason)
+					}
+				}
 
 				textTurn, toolTurn := earlyRunFrames(t, h, cs)
 				kasTurnStart.apply(t, h, release, &folded)
@@ -344,4 +358,134 @@ func TestCmdPrompt_TheSendGateHandsThePromptTheChatFromEveryOwnState(t *testing.
 			})
 		})
 	}
+}
+
+// gateRewakeHub is c1 with a prompt admitted behind the steer lock, its send released while KAS reports a run, and
+// that run's text folded into a fold-opened re-wake turn. hook, when set, is the registry's claimHook. KAS answers
+// the prompt only when the test ends.
+func gateRewakeHub(t *testing.T, hook func(h *Runtime)) (h *Runtime, cs *testChatStore, br *fakeBridge, rewake string) {
+	t.Helper()
+	h, cs, br = newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	countDrains(h)
+	if hook != nil {
+		h.coord.turns.claimHook = func() { hook(h) }
+	}
+	answer := make(chan struct{})
+	t.Cleanup(func() { close(answer) })
+	br.mu.Lock()
+	br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: answer}
+	br.mu.Unlock()
+	release := admitPromptBehindSteerLock(t, h, cs, "Please tidy the settings page")
+	for _, s := range []sendGateStep{kasActive, gateRelease, kasReply} {
+		s.apply(t, h, release, &rewake)
+		synctest.Wait()
+	}
+	return h, cs, br, rewake
+}
+
+// KAS reporting a run between the send gate's wake and its decision keeps the fold-opened re-wake open, its next
+// text in that turn, and the prompt unsent until KAS goes idle again.
+func TestCmdPrompt_ARunReportedAsTheSendGateWakesKeepsTheRewakeOpen(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var armed atomic.Bool
+		h, cs, br, rewake := gateRewakeHub(t, func(h *Runtime) {
+			if armed.CompareAndSwap(true, false) {
+				h.coord.WireTurnActivity("c1", true)
+			}
+		})
+		prompted := promptCalls(br)
+		armed.Store(true)
+		kasIdleReport.apply(t, h, nil, nil)
+		synctest.Wait()
+
+		if armed.Load() {
+			t.Fatal("Setup: the send gate never woke on KAS's idle report")
+		}
+		if got := prompted(); len(got) != 0 {
+			t.Errorf("session/prompt blocks = %v while KAS reports a run, want none", got)
+		}
+		if _, closed := closeOfTurn(t, logOf(t, cs, "c1"), rewake); closed {
+			t.Error("the re-wake turn closed while KAS reported its run, want it open")
+		}
+		folded := ""
+		kasReply.apply(t, h, nil, &folded)
+		if folded != rewake {
+			t.Errorf("the re-wake's next text folded into %q, want its turn %q", folded, rewake)
+		}
+
+		kasIdleReport.apply(t, h, nil, nil)
+		synctest.Wait()
+		if got := prompted(); len(got) != 1 || !strings.Contains(got[0], "Please tidy the settings page") {
+			t.Errorf("session/prompt blocks = %v once KAS went idle, want the user's text once", got)
+		}
+		if c, closed := closeOfTurn(t, logOf(t, cs, "c1"), rewake); !closed || c.FailureReason != promptHandoffReason {
+			t.Errorf("the re-wake's turn_close = %+v (closed %v), want failure_reason %q", c, closed, promptHandoffReason)
+		}
+	})
+}
+
+// gateCloseBlock holds the send gate on its fold-close log line, which follows its claim of the re-wake turn.
+type gateCloseBlock struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (*gateCloseBlock) Enabled(context.Context, slog.Level) bool { return true }
+
+func (b *gateCloseBlock) Handle(_ context.Context, r slog.Record) error {
+	if r.Message == "closing the agent's unbracketed turn so an admitted prompt can be sent" {
+		close(b.entered)
+		<-b.release
+	}
+	return nil
+}
+
+func (b *gateCloseBlock) WithAttrs([]slog.Attr) slog.Handler { return b }
+func (b *gateCloseBlock) WithGroup(string) slog.Handler      { return b }
+
+// A re-wake's turn_start reaching marotte after the send gate claimed the fold-opened turn for the prompt is still
+// a frame before the send: it opens a bracketed turn the prompt waits out, and the re-wake's later text and tool
+// call are recorded there, never in the prompt's turn.
+func TestCmdPrompt_ARewakeTurnStartAfterTheGateClaimedIsWaitedOut(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		block := &gateCloseBlock{entered: make(chan struct{}), release: make(chan struct{})}
+		swapDefaultLogger(t, block)
+		h, cs, br, rewake := gateRewakeHub(t, nil)
+		prompted := promptCalls(br)
+		prompt, ok := h.coord.PromptTurn("c1")
+		if !ok {
+			t.Fatal("Setup: the admitted prompt has no turn")
+		}
+
+		kasIdleReport.apply(t, h, nil, nil)
+		<-block.entered
+		br.deliver(newTurnStartMsg())
+		synctest.Wait()
+		close(block.release)
+		synctest.Wait()
+
+		if got := prompted(); len(got) != 0 {
+			t.Errorf("session/prompt blocks = %v before the re-wake's turn_end, want none", got)
+		}
+		if c, closed := closeOfTurn(t, logOf(t, cs, "c1"), rewake); !closed || c.FailureReason != promptHandoffReason {
+			t.Errorf("the fold-opened turn's close = %+v (closed %v), want failure_reason %q", c, closed, promptHandoffReason)
+		}
+		textTurn, toolTurn := earlyRunFrames(t, h, cs)
+		entries := logOf(t, cs, "c1")
+		for what, turn := range map[string]string{"text": textTurn, "tool call": toolTurn} {
+			if turn == prompt.ID() || turn == rewake || turnSource(t, entries, turn) != marotte.TurnOpenNameWireTurnStart {
+				t.Errorf("the re-wake's later %s is in turn %q, want the bracketed turn its turn_start opened", what, turn)
+			}
+		}
+
+		br.deliver(newTurnEndMsg("end_turn"))
+		synctest.Wait()
+		if got := prompted(); len(got) != 1 || !strings.Contains(got[0], "Please tidy the settings page") {
+			t.Errorf("session/prompt blocks = %v after the re-wake's turn_end, want the user's text once", got)
+		}
+		if failed := promptFailures(h); len(failed) != 0 {
+			t.Errorf("prompt_failed = %q, want none", failed)
+		}
+	})
 }
