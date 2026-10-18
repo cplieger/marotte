@@ -2463,6 +2463,8 @@ describe("the self-scroll epoch", () => {
   it("closes on attach", async () => {
     const wrap = await openEpochAt400();
     scroll.attach({ el: messagesEl, scrollTop: 400, readingState: "reading" });
+    // Inside the epoch's backstop, past the restore's hold, which undoes a move no input made.
+    await land();
     expect(await gesturePublishes(wrap)).toBe(true);
   });
 
@@ -3152,6 +3154,283 @@ describe("laying out what is near the scrollport", () => {
     await land();
 
     expect({ before, after: box.hasAttribute("data-near") }).toEqual({ before: true, after: true });
+  });
+});
+
+// A row the engine has never laid out sits at its 3rem placeholder until the near lead reaches it, then takes its real
+// size above the reader. The scroller anchors nothing here, as WebKit failed to in the transcript's geometry, so the
+// controller alone keeps the text in place.
+describe("a cold row laid out above the reader", () => {
+  const sheet = document.createElement("style");
+  // `.cold` stands in for an engine with no lead of its own (WebKit): only `[data-near]` lays the row out, as the
+  // shipped `[id="messages-wrap"] [data-near]` rule does (css/13-messages.css).
+  sheet.textContent =
+    ".msg-row.cold{content-visibility:hidden;contain-intrinsic-size:auto 3rem;}" +
+    '[id="messagesWrap"] [data-near]{content-visibility:visible;contain:layout style paint;}';
+
+  beforeEach(async () => {
+    document.head.appendChild(sheet);
+    await realLayoutReset();
+    scroll.getScrollEl().style.overflowAnchor = "none";
+  });
+  afterEach(() => {
+    sheet.remove();
+    scroll.getScrollEl().style.overflowAnchor = "";
+    scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+  });
+
+  const frame = (): Promise<void> =>
+    new Promise((r) => {
+      requestAnimationFrame(() => {
+        r();
+      });
+    });
+
+  /** A transcript view: twenty 100px blocks, a cold row whose content is 380px, then thirty more blocks. */
+  function coldView(): { view: HTMLElement; cold: HTMLElement } {
+    const view = document.createElement("div");
+    const add = (n: number): void => {
+      for (let i = 0; i < n; i++) {
+        const b = document.createElement("div");
+        b.style.cssText = "height:100px;";
+        view.appendChild(b);
+      }
+    };
+    add(20);
+    const cold = document.createElement("div");
+    cold.className = "msg-row cold";
+    const body = document.createElement("div");
+    body.style.cssText = "height:380px;";
+    cold.appendChild(body);
+    view.appendChild(cold);
+    add(30);
+    messagesEl.appendChild(view);
+    return { view, cold };
+  }
+
+  /** The element on the reading line, which is the text the reader is looking at. */
+  function onLine(wrap: HTMLElement): Element {
+    const box = wrap.getBoundingClientRect();
+    return document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
+  }
+
+  /** Every scroll step's residual: how far the reader's text moved on screen, frame to frame, beyond what the step
+   *  itself moved it. One step per frame, as momentum delivers them, so every frame carries a scroll event. */
+  async function flingResiduals(wrap: HTMLElement): Promise<number[]> {
+    const residuals: number[] = [];
+    let ref = onLine(wrap);
+    const step = async (dy: number): Promise<void> => {
+      if (
+        !wrap.contains(ref) ||
+        ref.getBoundingClientRect().bottom < wrap.getBoundingClientRect().top
+      ) {
+        ref = onLine(wrap);
+      }
+      const top0 = ref.getBoundingClientRect().top;
+      // Between frames, where a real scroll lands: ahead of its frame's scroll event, never inside the frame.
+      await new Promise((r) => setTimeout(r, 0));
+      const st0 = wrap.scrollTop;
+      if (dy !== 0) {
+        wrap.scrollTo({ top: st0 + dy, behavior: "instant" });
+      }
+      const moved = wrap.scrollTop - st0;
+      await frame();
+      residuals.push(Math.round(ref.getBoundingClientRect().top - (top0 - moved)));
+    };
+    const touch = (type: "touchstart" | "touchmove" | "touchend", y?: number): void => {
+      wrap.dispatchEvent(touchEvent(type, wrap, y));
+    };
+    // The finger drags the content toward older text, then lets go into momentum, which carries no input event.
+    let y = 100;
+    touch("touchstart", y);
+    for (let i = 0; i < 10; i++) {
+      y += 40;
+      touch("touchmove", y);
+      await step(-40);
+    }
+    touch("touchend");
+    for (let v = -40 * 0.85; Math.abs(v) > 1; v *= 0.85) {
+      await step(v);
+    }
+    for (let i = 0; i < 10; i++) {
+      await step(0);
+    }
+    return residuals;
+  }
+
+  it("keeps the reader's text in place when a row above it takes its real size after a chat switch", async () => {
+    const wrap = scroll.getScrollEl();
+    const { view: a, cold } = coldView();
+    const b = document.createElement("div");
+    b.style.cssText = "height:2000px;";
+    scroll.attach({ el: a, scrollTop: 0, readingState: "following" });
+    await land();
+    // The reader parks with the cold row 850px above the scrollport, past the 600px lead.
+    readerScrollTo(wrap, 2900);
+    await land();
+    // Away to another chat and back, the way the multiplexer parks a view.
+    const parked = scroll.detach();
+    a.hidden = true;
+    messagesEl.appendChild(b);
+    scroll.attach({ el: b, scrollTop: 0, readingState: "following" });
+    await land();
+    scroll.detach();
+    b.remove();
+    a.hidden = false;
+    scroll.attach({ el: a, ...parked });
+    await land();
+    const premise = {
+      state: scroll.readingState(),
+      top: wrap.scrollTop,
+      cold: cold.getBoundingClientRect().height,
+    };
+
+    const residuals = await flingResiduals(wrap);
+
+    expect({
+      premise,
+      grown: cold.getBoundingClientRect().height,
+      jumps: residuals.filter((r) => r !== 0),
+    }).toEqual({
+      premise: { state: "reading", top: 2900, cold: 48 },
+      grown: 380,
+      jumps: [],
+    });
+  });
+
+  it("still follows the live edge through streamed appends with a cold row above", async () => {
+    const wrap = scroll.getScrollEl();
+    const { view } = coldView();
+    scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    scroll.scrollToBottom();
+    await land();
+    const gaps: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      const chunk = document.createElement("div");
+      chunk.style.cssText = "height:60px;";
+      view.appendChild(chunk);
+      await frame();
+      await frame();
+      gaps.push(Math.round(wrap.scrollHeight - wrap.clientHeight - wrap.scrollTop));
+    }
+
+    expect({ state: scroll.readingState(), gaps }).toEqual({
+      state: "following",
+      gaps: [0, 0, 0, 0, 0, 0, 0, 0],
+    });
+  });
+});
+
+// WebKit can reset the scroller to 0 in a layout later in the activation task that restored a parked view (a chat
+// switch from the side menu), with the view already at its full height. The scenes reproduce that reset by collapsing
+// the view for one forced layout right after the restore.
+describe("a parked view's restore under a platform reset", () => {
+  beforeEach(realLayoutReset);
+  afterEach(() => {
+    scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+  });
+
+  /** A view of forty 100px rows inside the transcript root. */
+  function rowsView(): HTMLElement {
+    const view = document.createElement("div");
+    for (let i = 0; i < 40; i++) {
+      const b = document.createElement("div");
+      b.style.cssText = "height:100px;";
+      view.appendChild(b);
+    }
+    messagesEl.appendChild(view);
+    return view;
+  }
+
+  /** Park `view` with the reader at `top` in `state`, switch to another view and back, and let the platform reset the
+   *  scroller in the restoring task. Returns every scrollTop an animation frame saw from then on. */
+  async function switchBackUnderReset(
+    view: HTMLElement,
+    state: "reading" | "following",
+  ): Promise<number[]> {
+    const wrap = scroll.getScrollEl();
+    scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    await land();
+    if (state === "reading") {
+      readerScrollTo(wrap, 1200);
+    } else {
+      scroll.scrollToBottom();
+    }
+    await land(900);
+    const parked = scroll.detach();
+    view.hidden = true;
+    const other = document.createElement("div");
+    other.style.cssText = "height:2000px;";
+    messagesEl.appendChild(other);
+    scroll.attach({ el: other, scrollTop: 0, readingState: "following" });
+    await land();
+    scroll.detach();
+    other.remove();
+    view.hidden = false;
+    scroll.attach({ el: view, ...parked });
+    view.style.display = "none";
+    expect(wrap.scrollTop).toBe(0);
+    view.style.display = "";
+    const seen: number[] = [];
+    await new Promise<void>((resolve) => {
+      let n = 0;
+      const tick = (): void => {
+        seen.push(wrap.scrollTop);
+        if (++n < 12) {
+          requestAnimationFrame(tick);
+        } else {
+          resolve();
+        }
+      };
+      requestAnimationFrame(tick);
+    });
+    await land();
+    return seen;
+  }
+
+  it("puts a reader back where they were reading", async () => {
+    const view = rowsView();
+    await switchBackUnderReset(view, "reading");
+    const wrap = scroll.getScrollEl();
+
+    expect({
+      top: wrap.scrollTop,
+      state: scroll.readingState(),
+      resume: !scrollBtn.classList.contains("hidden"),
+    }).toEqual({ top: 1200, state: "reading", resume: true });
+  });
+
+  it("keeps a reader who was following on the live edge in every frame", async () => {
+    const view = rowsView();
+    const seen = await switchBackUnderReset(view, "following");
+    const wrap = scroll.getScrollEl();
+    const edge = wrap.scrollHeight - wrap.clientHeight;
+
+    expect({
+      off: seen.filter((top) => Math.abs(top - edge) >= 1),
+      state: scroll.readingState(),
+    }).toEqual({
+      off: [],
+      state: "following",
+    });
+  });
+
+  it("hands the scroller to a reader who scrolls before the restore settles", async () => {
+    const wrap = scroll.getScrollEl();
+    const view = rowsView();
+    scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    await land();
+    readerScrollTo(wrap, 1200);
+    await land();
+    const parked = scroll.detach();
+    scroll.attach({ el: view, ...parked });
+    readerScrollTo(wrap, 600);
+    await land();
+
+    expect({ top: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      top: 600,
+      state: "reading",
+    });
   });
 });
 

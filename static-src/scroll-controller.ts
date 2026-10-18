@@ -46,6 +46,12 @@ const SKIPPABLE = ".msg-row, .tool-call, .subagent-block, .plan-message, .run-ca
  *  a rootMargin percentage against the root's WIDTH (https://w3c.github.io/IntersectionObserver/#intersectionobserver-root-intersection-rectangle),
  *  which Chromium and WebKit do not follow. */
 const NEAR_LEAD = 1.5;
+/** Consecutive frames the scroller must keep a restored position before `attach`'s restore lets go. WebKit can reset
+ *  the scroller to 0 in a layout later in the restoring task, after the write and with the view at its full height; a
+ *  frame that finds the position kept, and the one after it, show that reset is behind. */
+const RESTORE_HOLD_FRAMES = 2;
+/** The frames a restore may spend re-asserting before it gives up on a position the platform keeps refusing. */
+const RESTORE_MAX_FRAMES = 60;
 
 function forEachSkippable(root: Element, fn: (box: Element) => void): void {
   if (root.matches(SKIPPABLE)) {
@@ -117,6 +123,11 @@ export class ScrollController {
 
   private rafPending = false;
 
+  /** The offset `attach` restored and still holds (null = none); while Following the live edge counts as held too.
+   *  `held` counts consecutive frames that kept it, `frames` every frame spent. */
+  private restore: { top: number; held: number; frames: number } | null = null;
+  private restoreFrame = 0;
+
   /** The bottom pin's deadline, and the frame it has queued (0 = none). */
   private pinUntil = 0;
   private pinFrame = 0;
@@ -125,9 +136,9 @@ export class ScrollController {
   private viewTop: { el: Element; top: number } | null = null;
 
   /** The element on the reading line after the last scroll event or controller write, and where it stood (null =
-   *  nothing to hold). Native anchoring holds the TOP edge, so a row there growing late — a
-   *  `content-visibility` placeholder taking its real size — pushes this one away; `holdReadingLine`
-   *  puts it back. Dropped by a press in the transcript: what a click opens is the reader's own. */
+   *  nothing to hold). A row above it growing late — a `content-visibility` placeholder taking its real size —
+   *  pushes it away wherever native anchoring does not hold it; `holdAcross` and `holdReadingLine` put it back.
+   *  Dropped by a press in the transcript: what a click opens is the reader's own. */
   private readLine: { el: Element; top: number } | null = null;
 
   /** Whether the last write was `holdReadingLine`'s: layout can move the line again between that write and its
@@ -253,6 +264,7 @@ export class ScrollController {
       // Input is what ends an epoch, and it ends it BEFORE the scroll event it produces arrives, so
       // the reader's own gesture publishes normally.
       this.endSelfScroll();
+      this.endRestore();
       this.userScrollingUntil = Date.now() + READER_CONTROL_MS;
       if (dir !== 0) {
         this.upwardIntent = dir < 0;
@@ -352,6 +364,10 @@ export class ScrollController {
     this.scrollEl.addEventListener(
       "scroll",
       () => {
+        // A platform reset of a restore states nothing, so it moves no state, gesture or baseline.
+        if (this.holdRestore()) {
+          return;
+        }
         // Read before anything below can dirty the layout.
         const top = this.scrollEl.scrollTop;
         const edge = this.edgeDistance();
@@ -582,9 +598,11 @@ export class ScrollController {
     this.nearObserver?.disconnect();
     const observer = new IntersectionObserver(
       (entries) => {
-        for (const entry of entries) {
-          entry.target.toggleAttribute("data-near", entry.isIntersecting);
-        }
+        this.holdAcross(() => {
+          for (const entry of entries) {
+            entry.target.toggleAttribute("data-near", entry.isIntersecting);
+          }
+        });
       },
       { root: this.scrollEl, rootMargin: `${String(margin)}px 0px` },
     );
@@ -651,7 +669,7 @@ export class ScrollController {
   }
 
   /** Lay every skippable box in `root` out while it is near the scrollport, so its first real size lands off screen,
-   *  where native anchoring holds the reader. Observing a box twice is a no-op. */
+   *  inside `holdAcross`. Observing a box twice is a no-op. */
   private observeNear(root: Element): void {
     const observer = this.nearObserver;
     if (observer === null) {
@@ -815,6 +833,7 @@ export class ScrollController {
   scrollToOffset(px: number, behavior: ScrollBehavior): void {
     const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
     const landing = Math.max(0, Math.min(px, max));
+    this.endRestore();
     this.setState(this.landsAtOffsetLiveEdge(landing) ? "following" : "reading");
     this.armEpochBackstop();
     this.scrollSelfTo(landing, behavior);
@@ -954,6 +973,7 @@ export class ScrollController {
     // ownership rule `attach`, `detach` and `resetScrollState` follow.
     this.cancelPinPass();
     this.endSelfScroll();
+    this.endRestore();
     // A jump is the READER moving, so it opens the quiet period a wheel does: nothing re-pins or
     // releases Reading under its landing.
     this.userScrollingUntil = Date.now() + READER_CONTROL_MS;
@@ -984,6 +1004,7 @@ export class ScrollController {
   /** Move the scroller by `px` as this controller's own write that sets no reading state: a layout
    *  compensation, never the reader stating a position. */
   shiftBy(px: number): void {
+    this.endRestore();
     this.scrollSelfTo(this.scrollEl.scrollTop + px, "instant");
     this.rebaseReadLine();
   }
@@ -1037,6 +1058,7 @@ export class ScrollController {
    *  `followTarget`, the same number `autoScrollIfAnchored` writes: ONE target for both writers,
    *  or the hand-off at the deadline has to move the reader. */
   private pinToLiveEdge(): void {
+    this.endRestore();
     this.setState("following");
     // The reader is ASKING to follow, and the pass's own frames test their licence: a `barDragging`
     // latch left standing — a drag whose pointerup never arrived — would kill the pin on its first
@@ -1110,15 +1132,78 @@ export class ScrollController {
     // to write the incoming one's own scrollTop.
     this.cancelPinPass();
     this.endSelfScroll();
+    this.endRestore();
     this.observeView(handle.el);
     this.forgetReaderGesture();
     this.setState(handle.readingState);
+    this.restore = { top: handle.scrollTop, held: 0, frames: 0 };
     this.scrollSelfTo(handle.scrollTop, "instant");
+    this.queueRestoreFrame();
     this.lastScrollTop = this.scrollEl.scrollTop;
     this.lastEdgeDistance = this.edgeDistance();
     // Last, so a listener re-measuring this view reads the restored position.
     for (const cb of [...this.attachListeners]) {
       cb();
+    }
+  }
+
+  /** `top` clamped to a reachable scroll position. */
+  private restoreLanding(top: number): number {
+    const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
+    return Math.max(0, Math.min(top, max));
+  }
+
+  /** Put the held restore back if the scroller has left it; true when it wrote. */
+  private holdRestore(): boolean {
+    const r = this.restore;
+    if (r === null) {
+      return false;
+    }
+    const top = this.scrollEl.scrollTop;
+    const saved = this.restoreLanding(r.top);
+    if (Math.abs(top - saved) < 1) {
+      return false;
+    }
+    // While Following the live edge is the position, wherever growth has carried it since the save.
+    let landing = saved;
+    if (this.state === "following") {
+      landing = this.restoreLanding(this.followTarget());
+      if (Math.abs(top - landing) < 1) {
+        return false;
+      }
+    }
+    this.scrollSelfTo(landing, "instant");
+    this.rebaseReadLine();
+    return true;
+  }
+
+  /** Re-assert the restore once per frame, before the paint, until `RESTORE_HOLD_FRAMES` frames in a row kept it. */
+  private queueRestoreFrame(): void {
+    if (this.restoreFrame !== 0) {
+      return;
+    }
+    this.restoreFrame = requestAnimationFrame(() => {
+      this.restoreFrame = 0;
+      const r = this.restore;
+      if (r === null) {
+        return;
+      }
+      r.held = this.holdRestore() ? 0 : r.held + 1;
+      r.frames++;
+      if (r.held >= RESTORE_HOLD_FRAMES || r.frames >= RESTORE_MAX_FRAMES) {
+        this.endRestore();
+        return;
+      }
+      this.queueRestoreFrame();
+    });
+  }
+
+  /** Stop holding the restore: the reader moved, another writer took the scroller, or the position held. */
+  private endRestore(): void {
+    this.restore = null;
+    if (this.restoreFrame !== 0) {
+      cancelAnimationFrame(this.restoreFrame);
+      this.restoreFrame = 0;
     }
   }
 
@@ -1136,6 +1221,7 @@ export class ScrollController {
     this.abandonLoadPass();
     this.cancelPinPass();
     this.endSelfScroll();
+    this.endRestore();
     this.cancelScrollbarWidth();
     // A queued re-derivation belongs to the OUTGOING view: a frame later it would read the incoming
     // transcript's geometry and release a state that is not its own.
@@ -1180,6 +1266,7 @@ export class ScrollController {
     this.abandonLoadPass();
     this.cancelPinPass();
     this.endSelfScroll();
+    this.endRestore();
     this.cancelScrollbarWidth();
     this.cancelRevalidate();
     this.forgetReaderGesture();
@@ -1304,10 +1391,35 @@ export class ScrollController {
     return { el, top: el.getBoundingClientRect().top };
   }
 
+  /** Run `layout`, a change that sizes boxes near the scrollport, and put the reading line back where it stood. Both
+   *  reads sit in this task, where no scroll can land between them, so the drift is the layout's alone, net of any
+   *  anchoring the engine applied. Left to the next frame, that frame's scroll event forces the layout first and
+   *  `noteViewTop` takes the moved line as the reader's own, so `holdReadingLine` finds no drift: native anchoring did
+   *  not hold the transcript in WebKit or in Chromium. */
+  private holdAcross(layout: () => void): void {
+    const line = this.readLine;
+    if (!this.mayHoldLine() || line === null || line.el.getClientRects().length === 0) {
+      layout();
+      return;
+    }
+    const before = line.el.getBoundingClientRect().top;
+    layout();
+    const drift = line.el.getBoundingClientRect().top - before;
+    if (Math.abs(drift) >= 1) {
+      this.scrollSelfTo(this.scrollEl.scrollTop + drift, "instant");
+    }
+  }
+
+  /** Whether a size change is the layout's to undo rather than the reader's: while Following the pin owns the edge,
+   *  inside an epoch the flight owns the scroller, and a held restore owns it until it lets go. */
+  private mayHoldLine(): boolean {
+    return this.state === "reading" && !this.epochOpen && this.restore === null;
+  }
+
   /** Put the reading line's element back where the reader left it, if a size change moved it. */
   private holdReadingLine(): void {
     const line = this.readLine;
-    if (line === null || this.state !== "reading" || this.epochOpen) {
+    if (line === null || !this.mayHoldLine()) {
       return;
     }
     // A box-less element reads a rect of zeros, which would pass for a drift of its whole offset.

@@ -272,7 +272,7 @@
   contain-intrinsic-size: auto 3rem;
 }
 
-/* A skippable transcript box near the scrollport (`scroll.ts` `NEAR_LEAD`): laid out
+/* A skippable transcript box near the scrollport (`scroll-controller.ts` `NEAR_LEAD`): laid out
  * ahead, with the containment `auto` applies, so `[id="messages-wrap"]` outranks each
  * box's own `content-visibility`. */
 [id="messages-wrap"] [data-near] {
