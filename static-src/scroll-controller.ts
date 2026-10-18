@@ -1271,9 +1271,15 @@ export class ScrollController {
       const inner = chain[chain.length - 1]?.children;
       const i = inner === undefined ? -1 : onLine(inner, line, limit, isSpacer);
       const next = inner?.[i];
-      // Inline content is not descended: a streamed paragraph's chunk spans number by delta timing, so a rebuilt
-      // paragraph's child indices name other text.
-      if (next === undefined || getComputedStyle(next).display.startsWith("inline")) {
+      // Inline content is not descended, nor a block among inline siblings (a display equation inside a streamed
+      // paragraph): a streamed paragraph's chunk spans number by delta timing, so a rebuilt paragraph's child
+      // indices name other text.
+      const prev = next?.previousElementSibling;
+      if (
+        next === undefined ||
+        getComputedStyle(next).display.startsWith("inline") ||
+        (prev != null && getComputedStyle(prev).display.startsWith("inline"))
+      ) {
         break;
       }
       chain.push(next);

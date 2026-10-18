@@ -3816,18 +3816,23 @@ describe("a parked view's restore under a platform reset", () => {
   );
 
   /** `sayRow(false)` with each 100px paragraph's text streamed in `pieces` inline pieces stacked down it, as the
-   *  renderer's chunk spans split a paragraph by delta timing. */
-  function chunkedSayRow(pieces: number): HTMLElement {
+   *  renderer's chunk spans split a paragraph by delta timing, then a `blockPx` block (a display equation). */
+  function chunkedSayRow(pieces: number, blockPx = 0): HTMLElement {
     const row = sayRow(false);
     for (const p of row.querySelectorAll("p")) {
       p.style.fontSize = "0";
       p.append(
         ...Array.from({ length: pieces }, () => {
           const span = document.createElement("span");
-          span.style.cssText = `display:inline-block;vertical-align:top;width:100%;height:${String(100 / pieces)}px;`;
+          span.style.cssText = `display:inline-block;vertical-align:top;width:100%;height:${String((100 - blockPx) / pieces)}px;`;
           return span;
         }),
       );
+      if (blockPx > 0) {
+        const block = document.createElement("div");
+        block.style.height = `${String(blockPx)}px`;
+        p.appendChild(block);
+      }
     }
     return row;
   }
@@ -3855,6 +3860,37 @@ describe("a parked view's restore under a platform reset", () => {
           arrival.dataset["entrySeq"] = "5";
           arrival.style.height = "200px";
           row().replaceWith(arrival, chunkedSayRow(10));
+        },
+        { ref: () => row().firstElementChild!.children[6]! },
+      );
+
+      expect(out).toEqual({ moves: [], state: "reading" });
+    },
+  );
+
+  it.each(["none", "auto"])(
+    "keeps the reader's text still when the block they read inside a streamed paragraph follows a different number of pieces as the view returns (overflow-anchor: %s)",
+    async (anchor) => {
+      scroll.getScrollEl().style.overflowAnchor = anchor;
+      const view = document.createElement("div");
+      const c0 = document.createElement("div");
+      c0.append(...entries("t0"));
+      const body = document.createElement("div");
+      body.append(...entries("t1").slice(0, 5), chunkedSayRow(5, 60));
+      const c1 = document.createElement("div");
+      c1.appendChild(body);
+      view.append(c0, c1);
+      messagesEl.appendChild(view);
+      const row = (): Element => body.lastElementChild!;
+      const out = await movesAfterReturn(
+        view,
+        1850,
+        () => {
+          const arrival = document.createElement("div");
+          arrival.dataset["entryTurn"] = "t1";
+          arrival.dataset["entrySeq"] = "5";
+          arrival.style.height = "200px";
+          row().replaceWith(arrival, chunkedSayRow(10, 60));
         },
         { ref: () => row().firstElementChild!.children[6]! },
       );
