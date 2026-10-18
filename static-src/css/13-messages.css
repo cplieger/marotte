@@ -22,25 +22,28 @@
   --rail-inset-start: calc(100% - var(--rail-inset-end) - var(--rail-w));
 
   /* The map's reserved FOOT, which the docked resume control sits in. Reserved
-   * UNCONDITIONALLY, because the control appears only once the reader has scrolled up
-   * and the map may not move then. It clears the control's target: `--ctl-h-sm`
-   * painted, lifted to `--rail-hit` where that is taller. */
-  --rail-foot: calc(var(--sp-3) + max(var(--ctl-h-sm), var(--rail-hit)) + var(--sp-2));
+   * UNCONDITIONALLY where it docks, because the control appears only once the reader has
+   * scrolled up and the map may not move then; every form that does not dock leaves `--sp-3`.
+   * It clears the control's target: `--ctl-h-sm` painted, lifted to the hit floor where the
+   * floor is taller. */
+  --rail-foot: calc(var(--sp-3) + max(var(--ctl-h-sm), var(--hit-floor)) + var(--sp-2));
 }
 
-/* A FINGER'S RAIL, on a touch device or in touch mode: a 48px column (Material's touch target;
- * WCAG 2.5.5 asks 44) is the press-and-drag band and the step buttons' width, and 48px is their
- * height and the resume control's target. Still inside the 3.75rem gutter at 57.5rem. Two rules,
- * one value: a selector cannot OR an attribute with a media query. */
+/* A FINGER'S RAIL, on a touch device or in touch mode: a 48px column is the press-and-drag band
+ * and the step buttons' width, and 48px is their height and the resume control's target. Still
+ * inside the 3.75rem gutter at 57.5rem. The resume control does not dock here, so the foot is
+ * bare. Two rules, one value: a selector cannot OR an attribute with a media query. */
 :root[data-pointer="coarse"] [id="messages-wrap-outer"] {
   --rail-w: 3rem;
   --rail-hit: 3rem;
+  --rail-foot: var(--sp-3);
 }
 
 @media (any-pointer: coarse) {
   [id="messages-wrap-outer"] {
     --rail-w: 3rem;
     --rail-hit: 3rem;
+    --rail-foot: var(--sp-3);
   }
 }
 
@@ -85,10 +88,12 @@
 
 /* UNDER 57.5rem THE COLUMN LEAVES NO GUTTER, so the map sits `--sp-2` inside the chat area's end,
  * clear of a classic scrollbar, and the scroller below reserves the map's column so it covers no
- * transcript text. A phone-shaped screen draws no map (29-turns.css) and keeps its inset. */
+ * transcript text. The resume control does not dock here, so the foot is bare. A phone-shaped
+ * screen draws no map (29-turns.css) and keeps its inset. */
 @container chat-area (width < 57.5rem) {
   [id="messages-wrap-outer"] {
     --rail-inset-end: calc(var(--scrollbar-w, 0px) + var(--sp-2));
+    --rail-foot: var(--sp-3);
   }
 
   @media (width > 48rem) and (height > 30rem) {

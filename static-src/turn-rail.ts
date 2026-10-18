@@ -568,7 +568,11 @@ function paintMap(
   m.nav.toggleAttribute("data-shown", visible);
   setAttr(m.nav, "aria-busy", pending.size > 0 ? "true" : null);
   m.stack.style.setProperty("--turn-map-slots", String(Math.max(1, layout.slots)));
+  dropScrubbedRow(m, rows);
   reconcile(m.stack, rows, { key: (r) => r.bin.key, mount: mountPill, update: paintPill });
+  if (scrubPointer !== undefined) {
+    scrubTo(m, scrubY);
+  }
   m.prev.disabled = current <= 0;
   m.next.disabled = current >= rows.length - 1;
 }
@@ -676,8 +680,11 @@ function bindMapInput(m: MapNodes): void {
 }
 
 /** The finger or pen held on the track. The row under it wears `data-scrub`, the fisheye's touch
- *  twin (29-turns.css), re-applied on the next move if a repaint replaced the row. */
+ *  twin (29-turns.css), re-applied by every repaint while the pointer is held. */
 let scrubPointer: number | undefined;
+
+/** The held pointer's last `clientY`, which a repaint re-scrubs at. */
+let scrubY = 0;
 
 /** Where the scrub last (re)started the hover delay: the info waits for the pointer to stop. */
 let scrubArmedY = 0;
@@ -707,8 +714,9 @@ function bindScrub(m: MapNodes): void {
       endScrub(m);
     }
   };
+  // On the document: a pointer whose capture was released lifts wherever it is, past the track.
   for (const type of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
-    track.addEventListener(type, end);
+    document.addEventListener(type, end);
   }
   // A native context menu or link drag would cancel an active scrub.
   for (const type of ["contextmenu", "dragstart"]) {
@@ -721,6 +729,7 @@ function bindScrub(m: MapNodes): void {
 }
 
 function scrubTo(m: MapNodes, clientY: number): void {
+  scrubY = clientY;
   const bin = binNearest(m, clientY - m.stack.getBoundingClientRect().top);
   const row = bin === undefined ? null : rowFor(m, bin.key);
   const was = scrubbedRow(m);
@@ -756,6 +765,18 @@ function endScrub(m: MapNodes): void {
     hoverRow(row, "pointerout");
   }
   scrubPointer = undefined;
+}
+
+/** Unhover the scrubbed row before a repaint removes it: the tooltip controller keeps a detached
+ *  anchor's tooltip up, and the lift could no longer find the row to unhover. */
+function dropScrubbedRow(m: MapNodes, rows: readonly PillView[]): void {
+  const row = scrubbedRow(m);
+  const key = row?.getAttribute(KEY_ATTR);
+  if (row === null || rows.some((r) => r.bin.key === key)) {
+    return;
+  }
+  row.removeAttribute("data-scrub");
+  hoverRow(row, "pointerout");
 }
 
 function rowFor(m: MapNodes, key: string): Element | null {

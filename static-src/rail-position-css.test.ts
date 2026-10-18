@@ -13,7 +13,7 @@ const NARROW_PX = 800;
 const VIEWPORT = { width: 1280, height: 720 };
 /** The sidebar's width beside a chat area wider than the phone layout (`--sidebar-w-min`). */
 const SIDEBAR_PX = 260;
-/** The touch target this rail gives a finger (Material's 48dp; WCAG 2.5.5 asks 44). */
+/** The touch target this rail gives a finger. */
 const TOUCH_TARGET_PX = 48;
 /** Sub-pixel slack. Every number here is a used value the engine rounds. */
 const EPS = 0.5;
@@ -300,6 +300,22 @@ describe("the map's foot clears the docked resume control", () => {
     near(gap, lengthOf(m.outer, "--sp-2"), "clearance");
   });
 
+  it.each([
+    ["coarse", WIDE_PX],
+    ["fine", NARROW_PX],
+  ])(
+    "leaves the foot bare on a %s pointer in a %ipx chat area, where the control does not dock",
+    (tier, width) => {
+      document.documentElement.dataset["pointer"] = tier;
+      const m = buildMap({ turns: 5, width });
+      near(
+        m.outer.getBoundingClientRect().bottom - m.nav.getBoundingClientRect().bottom,
+        lengthOf(m.outer, "--sp-3"),
+        "map foot to the wrapper's end",
+      );
+    },
+  );
+
   it("sizes the docked control to the hit floor", () => {
     const m = buildMap({ turns: 5 });
     near(
@@ -321,7 +337,7 @@ async function device(width: number, height: number): Promise<number> {
   return width <= 768 ? width : width - SIDEBAR_PX;
 }
 
-describe("the map's visibility follows the screen width, never the pointer tier", () => {
+describe("the map's visibility follows the phone-shaped screen query, never the pointer tier", () => {
   afterEach(async () => {
     await page.viewport(VIEWPORT.width, VIEWPORT.height);
   });
@@ -420,7 +436,8 @@ function targetCovers(el: HTMLElement, size: number): boolean {
 }
 
 describe("the step buttons meet the hit floor", () => {
-  // They are the equivalent control that lets the rows sit under the floor (WCAG 2.5.8).
+  // They are the equivalent control that lets the rows sit under the floor
+  // (https://www.w3.org/TR/WCAG22/#target-size-minimum).
   it("on a fine pointer", () => {
     const m = buildMap({ turns: 5 });
     const floor = lengthOf(m.outer, "--hit-floor");

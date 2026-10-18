@@ -205,6 +205,89 @@ describe("a finger held on the rail scrubs it", () => {
   });
 });
 
+describe("a re-bin under a held finger", () => {
+  function track(): HTMLElement {
+    const t = document.querySelector<HTMLElement>(".turn-map-track");
+    if (t === null) {
+      throw new Error("no track");
+    }
+    return t;
+  }
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    track().style.removeProperty("flex");
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll(".turn-map-stack > .turn-pill")).toHaveLength(20);
+    });
+  });
+
+  const endings = {
+    lift: () => touch("touchEnd"),
+    cancel: () => touch("touchCancel"),
+    "lift once the track lost the capture": async (pointerId: number, at: Point) => {
+      track().releasePointerCapture(pointerId);
+      await touch("touchMove", { x: at.x, y: at.y + 2 });
+      await touch("touchEnd");
+    },
+  };
+
+  it.each(Object.entries(endings))(
+    "leaves no scrub mark and no turn info after a %s",
+    async (_, end) => {
+      let pointerId = -1;
+      track().addEventListener(
+        "pointerdown",
+        (e) => {
+          pointerId = e.pointerId;
+        },
+        { once: true },
+      );
+      const at = pointOn(12);
+      await touch("touchStart", at);
+      await vi.waitFor(
+        () => {
+          expect(tooltipText()).toContain("#12");
+        },
+        { timeout: 2000 },
+      );
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      // A 30px track holds 15 rows, so the 20 turns re-bin two to a row under new keys.
+      track().style.flex = "0 0 30px";
+      await frames();
+      await frames();
+      expect(
+        document.querySelectorAll(".turn-map-stack > .turn-pill").length,
+        "premise: the rows re-binned",
+      ).toBe(10);
+      expect(tooltipText(), "the replaced row's info goes with it").toBeNull();
+      expect(scrubbedTurn(), "the row now under the finger is scrubbed").not.toBeNull();
+      await end(pointerId, at);
+      vi.advanceTimersByTime(1000);
+      expect(scrubbedTurn()).toBeNull();
+      expect(tooltipText()).toBeNull();
+    },
+  );
+
+  it("takes the turn info down when the track collapses under the finger", async () => {
+    await touch("touchStart", pointOn(12));
+    await vi.waitFor(
+      () => {
+        expect(tooltipText()).toContain("#12");
+      },
+      { timeout: 2000 },
+    );
+    track().style.flex = "0 0 0px";
+    await frames();
+    await frames();
+    expect(
+      document.querySelectorAll(".turn-map-stack > .turn-pill"),
+      "premise: no rows",
+    ).toHaveLength(0);
+    expect(tooltipText()).toBeNull();
+  });
+});
+
 describe("the press band", () => {
   it("takes the finger on the rail only, so the page scrolls everywhere else", () => {
     const track = document.querySelector<HTMLElement>(".turn-map-track");
