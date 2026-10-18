@@ -70,7 +70,8 @@ function bodyRows(): string[] {
   expect(body).not.toBeNull();
   return [...body!.children]
     .filter(
-      (row): row is HTMLElement => row instanceof HTMLElement && !row.classList.contains("spacer"),
+      (row): row is HTMLElement =>
+        row instanceof HTMLElement && !row.classList.contains("turn-space"),
     )
     .map((row) => row.dataset["entryId"] ?? "open");
 }
@@ -307,6 +308,43 @@ describe("an entry appended mid-turn renders at its own seq", () => {
     expect(viewRoot().querySelectorAll(".turn").length).toBe(1);
     expect(streamingRows()).toEqual([]);
   });
+});
+
+describe("an open entry's surface carries the entry's identity", () => {
+  it.each(["text", "thinking"] as const)(
+    "stamps the %s surface with its turn and entry while it streams, and with its seq once it seals there",
+    async (kind) => {
+      const chat = `mto-open-stamp-${kind}`;
+      await streamingAs(chat, kind, "the reply so far");
+      const surface = viewRoot().querySelector<HTMLElement>(
+        ".turn > .turn-body > :not(.turn-space)",
+      );
+      const streaming = { ...surface?.dataset };
+
+      store.sealEntry(chat, TURN, "say-1", "", 1, 2, 1);
+      await vi.waitFor(() => {
+        expect(bodyRows()).toEqual(["say-1"]);
+      });
+      const now = viewRoot().querySelector<HTMLElement>(".turn > .turn-body > :not(.turn-space)");
+
+      expect({
+        streaming: {
+          turn: streaming["openTurn"],
+          id: streaming["openId"],
+          seq: streaming["entrySeq"],
+        },
+        sealed: {
+          same: now === surface,
+          open: now?.dataset["openId"],
+          turn: now?.dataset["entryTurn"],
+          seq: now?.dataset["entrySeq"],
+        },
+      }).toEqual({
+        streaming: { turn: TURN, id: "say-1", seq: undefined },
+        sealed: { same: true, open: undefined, turn: TURN, seq: "1" },
+      });
+    },
+  );
 });
 
 describe("an entry arriving mid-stream does not cut the stream", () => {

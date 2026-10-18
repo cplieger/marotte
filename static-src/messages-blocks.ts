@@ -1977,7 +1977,18 @@ function stampEntry(st: TurnRender, el: HTMLElement, seq: number): void {
   if (e !== undefined) {
     el.dataset["entryId"] = e.id;
   }
+  delete el.dataset["openTurn"];
+  delete el.dataset["openId"];
   st.entryEls.set(seq, el);
+}
+
+/**
+ * Stamp the surface an open entry mounted for itself, which has no `seq` until it seals, with its turn and entry id:
+ * the scroll controller finds a rebuilt surface for the same entry by them. `stampEntry` replaces them at the seal.
+ */
+function stampOpen(st: TurnRender, el: HTMLElement, id: string): void {
+  el.dataset["openTurn"] = st.turnID;
+  el.dataset["openId"] = id;
 }
 
 function entryTextAt(st: TurnRender, seq: number): string {
@@ -2175,6 +2186,9 @@ function mountOpenProse(st: TurnRender, open: OpenEntry, live: boolean): void {
     sealLiveBubble(st);
   }
   const view = joined ?? buildProseRun(st, st.bodyEl, -1, open.text, live);
+  if (joined === undefined) {
+    stampOpen(st, view.row, open.id);
+  }
   view.openID = open.id;
   writeRunEntries(st, view);
   // Captured once: the appender seals a lane's open entry before appending to that lane, so the prefix cannot go
@@ -2195,6 +2209,7 @@ function mountOpenProse(st: TurnRender, open: OpenEntry, live: boolean): void {
 /** The open thinking entry as its own live trace, expanded: nothing follows an unsealed entry. */
 function mountOpenThinking(st: TurnRender, open: OpenEntry): void {
   const view = buildReasoning(open.text, true, true);
+  stampOpen(st, view.root, open.id);
   st.reasonings.push(view);
   appendEntry(st, st.bodyEl, view.root);
   st.openReasoning.set(st.bodyEl, view);

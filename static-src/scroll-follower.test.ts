@@ -64,7 +64,8 @@ describe("createFollowScroller", () => {
     // A reading view holds its place while it grows.
     view.appendChild(block(400));
     await frames();
-    expect(f.detach()).toEqual({ scrollTop: 100, readingState: "reading" });
+    const { scrollTop, readingState } = f.detach();
+    expect({ scrollTop, readingState }).toEqual({ scrollTop: 100, readingState: "reading" });
   });
 
   it("restores a parked reading position on attach", async () => {
@@ -86,7 +87,8 @@ describe("createFollowScroller", () => {
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
     box.style.removeProperty("display");
     await frames();
-    expect(f.detach()).toEqual({ scrollTop: 300, readingState: "reading" });
+    const { scrollTop, readingState } = f.detach();
+    expect({ scrollTop, readingState }).toEqual({ scrollTop: 300, readingState: "reading" });
   });
 
   it("never writes the transcript's --scrollbar-w", async () => {

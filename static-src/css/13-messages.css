@@ -25,11 +25,10 @@
   --rail-foot: calc(var(--sp-3) + max(var(--ctl-h-sm), var(--hit-floor)) + var(--sp-2));
 }
 
-/* NATIVE SCROLL ANCHORING HOLDS THE READER (`overflow-anchor` left at `auto`,
- * https://drafts.csswg.org/css-scroll-anchoring/). It is the one mechanism that sees
- * a height change landing after the mutation that caused it — a `content-visibility`
- * row taking its real size, an animated collapse. It keeps the anchor node's top in
- * place, so `scroll.ts` holds the reading line when the row on that edge grows. */
+/* Native scroll anchoring (`overflow-anchor` left at `auto`,
+ * https://drafts.csswg.org/css-scroll-anchoring/) may absorb some layout changes
+ * above the reader; `ScrollController` (scroll-controller.ts) holds a Reading
+ * position across near-row layout and later child resizes. */
 [id="messages-wrap"] {
   position: absolute;
   inset: 0;
@@ -272,7 +271,7 @@
   contain-intrinsic-size: auto 3rem;
 }
 
-/* A skippable transcript box near the scrollport (`scroll.ts` `NEAR_LEAD`): laid out
+/* A skippable transcript box near the scrollport (`scroll-controller.ts` `NEAR_LEAD`): laid out
  * ahead, with the containment `auto` applies, so `[id="messages-wrap"]` outranks each
  * box's own `content-visibility`. */
 [id="messages-wrap"] [data-near] {

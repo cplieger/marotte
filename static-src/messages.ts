@@ -42,7 +42,7 @@ import {
   attach as attachScroll,
   detach as detachScroll,
 } from "./scroll.js";
-import type { ReadingState } from "./scroll-controller.js";
+import type { ViewScrollState } from "./scroll-controller.js";
 import {
   buildTurnHeader,
   updateTurnHeader,
@@ -165,8 +165,7 @@ interface ChatView {
   chatID: string;
   el: HTMLElement;
   parked: boolean;
-  scrollTop: number;
-  readingState: ReadingState;
+  scroll: ViewScrollState;
   followBaseline: number;
   reachableEntries: number;
   lastNewestTurnID: string | undefined;
@@ -235,9 +234,7 @@ function parkView(view: ChatView): void {
   if (focused !== null && view.el.contains(focused)) {
     $.promptInput.focus();
   }
-  const scroll = detachScroll();
-  view.scrollTop = scroll.scrollTop;
-  view.readingState = scroll.readingState;
+  view.scroll = detachScroll();
   view.followBaseline = followBaseline;
   view.reachableEntries = reachableEntries;
   view.lastNewestTurnID = lastNewestTurnID;
@@ -273,8 +270,7 @@ function activateView(chatID: string): boolean {
       chatID,
       el: el("div", { className: "transcript-view" }),
       parked: false,
-      scrollTop: 0,
-      readingState: "following",
+      scroll: { scrollTop: 0, readingState: "following" },
       followBaseline: 0,
       reachableEntries: 0,
       lastNewestTurnID: undefined,
@@ -291,7 +287,7 @@ function activateView(chatID: string): boolean {
   view.el.inert = false;
   view.el.classList.add("is-active");
   activeView = view;
-  attachScroll({ el: view.el, scrollTop: view.scrollTop, readingState: view.readingState });
+  attachScroll({ el: view.el, ...view.scroll });
   if (created) {
     // After the attach, and only for a view this call created: `resetScrollState` ends in `setLoadMore(null, false)`,
     // scoped to the attached view, so earlier it strips the outgoing view's pagination, and on an existing view it
