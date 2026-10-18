@@ -124,7 +124,7 @@ export type ReadingState = "following" | "reading";
  *  the reading line. An element gone from the view is found again as the `path` of child indices below whatever
  *  element now matches `sel` (null: the node itself is the identity). Nodes are held weakly, so a parked anchor keeps
  *  no discarded DOM alive. Opaque to the views that carry it. */
-export interface ReadingAnchor {
+interface ReadingAnchor {
   readonly marks: readonly {
     readonly node: WeakRef<Element>;
     readonly sel: string | null;
