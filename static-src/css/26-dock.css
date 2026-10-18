@@ -257,11 +257,31 @@
   }
 }
 
-/* ON A TIGHT BAND THE RUN COMPOSER STEPS ASIDE THE SAME WAY (`[data-tight-band]`, `dock-ask.ts`),
-   unless it holds the typing: a tap on it raises the keyboard into the band, and a question that
-   arrives while the reader types there is not what that composer sends to (it messages the
-   selected step), so the cursor stays and the question scrolls in its region. The chat's bar
-   keeps its composer: its card holds an ordinary question whole on that band. */
+/* WITH A QUESTION UP, THE CHAT'S BAR FITS THE KEYBOARD BAND DOWN TO ITS MESSAGE BOX'S TEXT. iOS
+   pans the visual viewport only far enough to show the focused field, so with the reader typing
+   there the band ends at the text, and a taller bar puts the question's top above it. The cap is
+   the band plus what sits under the text (the pill row and two borders) less the bar's top border
+   and padding; `content-box` keeps the bottom padding, which follows the home-indicator inset, out
+   of it. Inert while the bar fits; the tray and the card's regions give the rest. */
+[id="prompt-form"]:has(> .decision-dock > .dock-user-input) {
+  box-sizing: content-box;
+  max-block-size: calc(
+    var(--dock-viewport-h, 100dvh) + var(--composer-ctl-h) + 2 * var(--composer-pill-pad) + 1px -
+      var(--sp-2)
+  );
+}
+
+/* ON A TIGHT BAND THE RUN STRIP AND THE RUN COMPOSER STEP ASIDE (`[data-tight-band]`,
+   `dock-ask.ts`): beside the chat's message box the strip leaves the question under two lines.
+   The run composer stays while it holds the typing: a question that arrives while the reader
+   types there is not what that composer sends to (it messages the selected step), so the cursor
+   stays and the question scrolls in its region, as it does beside the chat's message box. */
+[id="prompt-form"]:where(:has(> .decision-dock > .dock-user-input)) > .run-bar-host {
+  :where(:root[data-tight-band]) & {
+    display: none;
+  }
+}
+
 .run-bottom-bar:where(:has(> .decision-dock > .dock-user-input)) > [id="run-composer"] {
   &:not(:focus-within) {
     :where(:root[data-tight-band]) & {
@@ -512,14 +532,14 @@
      `border-box`. Absent, three rows, which is the free-form caller's own opening. */
   field-sizing: content;
 
-  /* On a keyboard band under ~19rem (a 320px phone) the opening rows give way, down to one
-     row: 14rem is about the rest of the card and the run tab's composer at their floors,
-     and without the give a free-form card there scrolls Send out of itself. */
+  /* On a keyboard band under ~23rem (a 375px phone) the opening rows give way, down to one
+     row: 18rem is about the rest of the chat's bar beside them with a four-line question up,
+     so the rows give before the question's lines do, and on a 320px phone Send stays in the card. */
   min-block-size: max(
     calc(1lh + 2 * var(--sp-2) + 2px),
     min(
       calc(var(--ask-rows, 3) * 1lh + 2 * var(--sp-2) + 2px),
-      calc(var(--dock-viewport-h, 100dvh) - 14rem)
+      calc(var(--dock-viewport-h, 100dvh) - 18rem)
     )
   );
 
