@@ -3360,9 +3360,9 @@ describe("a parked view's restore under a platform reset", () => {
     return view;
   }
 
-  /** Park `view` with the reader at `top` in `state`, switch to another view and back (running `beforeReturn` just
-   *  before the restore), and let the platform reset the scroller in the restoring task. Returns every scrollTop an
-   *  animation frame saw from then on. */
+  /** Park `view` with the reader at 1200 (Reading) or on the live edge (Following), switch to another view and back
+   *  (running `beforeReturn` just before the restore), and let the platform reset the scroller in the restoring task.
+   *  Returns every scrollTop an animation frame saw from then on. */
   async function switchBackUnderReset(
     view: HTMLElement,
     state: "reading" | "following",
@@ -3701,6 +3701,140 @@ describe("a parked view's restore under a platform reset", () => {
       );
 
       expect(out).toEqual({ moves: [], state: "reading" });
+    },
+  );
+
+  /** `n` 100px paragraphs. */
+  function paras(n: number): HTMLElement[] {
+    return Array.from({ length: n }, () => {
+      const p = document.createElement("p");
+      p.style.cssText = "height:100px;margin:0;";
+      return p;
+    });
+  }
+
+  /** A view of three cards: ten stamped entries, then one stamped entry 1500px tall (a 100px box, then fourteen
+   *  paragraphs) holding the reading line, then ten more. */
+  function tallEntryView(): { view: HTMLElement; inner: HTMLElement; above: HTMLElement } {
+    const view = document.createElement("div");
+    const c0 = document.createElement("div");
+    c0.append(...entries("t0"));
+    const e = document.createElement("div");
+    e.dataset["entryTurn"] = "t1";
+    e.dataset["entrySeq"] = "0";
+    const inner = document.createElement("div");
+    inner.style.height = "100px";
+    e.append(inner, ...paras(14));
+    const c1 = document.createElement("div");
+    c1.appendChild(e);
+    const c2 = document.createElement("div");
+    c2.append(...entries("t2"));
+    view.append(c0, c1, c2);
+    messagesEl.appendChild(view);
+    return { view, inner, above: c0.children[9] as HTMLElement };
+  }
+
+  it.each([
+    ["inside the reader's entry", "none"],
+    ["inside the reader's entry", "auto"],
+    ["in an entry above", "none"],
+    ["in an entry above", "auto"],
+  ])(
+    "keeps the reader's text still when a box %s grows above the line in the first frame after return (overflow-anchor: %s)",
+    async (where, anchor) => {
+      scroll.getScrollEl().style.overflowAnchor = anchor;
+      const { view, inner, above } = tallEntryView();
+      const grow = where === "in an entry above" ? above : inner;
+      const out = await movesAfterReturn(view, 1800, () => {
+        requestAnimationFrame(() => {
+          grow.style.height = "300px";
+        });
+      });
+
+      expect({ grown: grow.getBoundingClientRect().height, ...out }).toEqual({
+        grown: 300,
+        moves: [],
+        state: "reading",
+      });
+    },
+  );
+
+  /** The row the renderer mounts for turn t1's entry `say-9`: stamped open while it streams (no `seq` yet), or sealed
+   *  at seq 6 once it has; twelve 100px paragraphs inside its bubble either way. */
+  function sayRow(sealed: boolean): HTMLElement {
+    const row = document.createElement("div");
+    if (sealed) {
+      row.dataset["entryTurn"] = "t1";
+      row.dataset["entrySeq"] = "6";
+      row.dataset["entryId"] = "say-9";
+    } else {
+      row.dataset["openTurn"] = "t1";
+      row.dataset["openId"] = "say-9";
+    }
+    const bubble = document.createElement("div");
+    bubble.append(...paras(12));
+    row.appendChild(bubble);
+    return row;
+  }
+
+  it.each([
+    ["still open", "none"],
+    ["still open", "auto"],
+    ["sealed", "none"],
+    ["sealed", "auto"],
+  ])(
+    "keeps the reader's text still when the open entry they read is rebuilt %s below an arrival as the view returns (overflow-anchor: %s)",
+    async (rebuilt, anchor) => {
+      scroll.getScrollEl().style.overflowAnchor = anchor;
+      const view = document.createElement("div");
+      const c0 = document.createElement("div");
+      c0.append(...entries("t0"));
+      const body = document.createElement("div");
+      body.append(...entries("t1").slice(0, 5), sayRow(false));
+      const c1 = document.createElement("div");
+      c1.appendChild(body);
+      view.append(c0, c1);
+      messagesEl.appendChild(view);
+      const row = (): Element => body.lastElementChild!;
+      const out = await movesAfterReturn(
+        view,
+        1800,
+        () => {
+          // An open turn is rebuilt on return with what arrived meanwhile: an interjection above the open row, and a
+          // new element for the row itself.
+          const arrival = document.createElement("div");
+          arrival.dataset["entryTurn"] = "t1";
+          arrival.dataset["entrySeq"] = "5";
+          arrival.style.height = "200px";
+          row().replaceWith(arrival, sayRow(rebuilt === "sealed"));
+        },
+        { ref: () => row().firstElementChild!.children[5]! },
+      );
+
+      expect(out).toEqual({ moves: [], state: "reading" });
+    },
+  );
+
+  it.each(["none", "auto"])(
+    "keeps the reader's text still when a box above the line grows inside the entry they read while they read it (overflow-anchor: %s)",
+    async (anchor) => {
+      const wrap = scroll.getScrollEl();
+      wrap.style.overflowAnchor = anchor;
+      const { view, inner } = tallEntryView();
+      scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+      await land();
+      readerScrollTo(wrap, 1800);
+      await land(400);
+      const box = wrap.getBoundingClientRect();
+      const ref = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
+      const before = ref.getBoundingClientRect().top;
+      inner.style.height = "300px";
+      await land();
+
+      expect({
+        moved: Math.round(ref.getBoundingClientRect().top - before),
+        state: scroll.readingState(),
+      }).toEqual({ moved: 0, state: "reading" });
     },
   );
 

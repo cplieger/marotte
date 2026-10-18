@@ -50,9 +50,63 @@ const NEAR_LEAD = 1.5;
 const RESTORE_HOLD_FRAMES = 2;
 /** The frames a restore may spend re-asserting before it gives up on a position the platform keeps refusing. */
 const RESTORE_MAX_FRAMES = 60;
-/** A transcript entry's element, stamped by the renderer (messages-blocks.ts `stampEntry`) with its turn and seq,
- *  which a rebuilt element for the same entry carries again. */
-const ENTRY_STAMP = "[data-entry-seq]";
+/** A transcript entry's element, stamped by the renderer (messages-blocks.ts `stampEntry`, `stampOpen`) with its
+ *  identity, which a rebuilt element for the same entry carries again. */
+const ENTRY_STAMP = "[data-entry-seq], [data-open-id]";
+/** View children either side of the reading line a live anchor carries as fallbacks: it is re-taken at every scroll
+ *  event, so it only has to outlive one layout change. */
+const LIVE_REACH = 2;
+
+/** The selector for every element that renders `stamped`'s entry: a sealed one by turn and seq, an open one by turn
+ *  and id, which its element keeps once the entry seals. */
+function entryKey(stamped: Element): string {
+  const q = (name: string): string => CSS.escape(stamped.getAttribute(name) ?? "");
+  if (stamped.hasAttribute("data-entry-seq")) {
+    return `[data-entry-turn="${q("data-entry-turn")}"][data-entry-seq="${q("data-entry-seq")}"]`;
+  }
+  const turn = q("data-open-turn");
+  const id = q("data-open-id");
+  return `[data-open-turn="${turn}"][data-open-id="${id}"], [data-entry-turn="${turn}"][data-entry-id="${id}"]`;
+}
+
+/** The index of the element of `els` on `line`: the first, in document order, whose box ends below it, provided that
+ *  box starts above `limit`; -1 when none. Bisected, because block flow stacks siblings down the page; `skip`s and
+ *  box-less elements are passed over. */
+function onLine(
+  els: HTMLCollection,
+  line: number,
+  limit: number,
+  skip: (el: Element) => boolean,
+): number {
+  const counts = (el: Element | undefined): el is Element =>
+    el !== undefined && !skip(el) && el.getClientRects().length > 0;
+  let lo = 0;
+  let hi = els.length;
+  let found = -1;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    let j = mid;
+    while (j < hi && !counts(els[j])) {
+      j++;
+    }
+    const el = els[j];
+    if (j === hi || el === undefined) {
+      hi = mid;
+    } else if (el.getBoundingClientRect().bottom > line) {
+      found = j;
+      hi = mid;
+    } else {
+      lo = j + 1;
+    }
+  }
+  return found >= 0 && (els[found]?.getBoundingClientRect().top ?? limit) < limit ? found : -1;
+}
+
+/** A turn's spacer, standing in for rows the window has not mounted: it holds no text, and its size changes as they
+ *  mount. */
+function isSpacer(el: Element): boolean {
+  return el.classList.contains("turn-space");
+}
 
 function forEachSkippable(root: Element, fn: (box: Element) => void): void {
   if (root.matches(SKIPPABLE)) {
@@ -66,20 +120,21 @@ function forEachSkippable(root: Element, fn: (box: Element) => void): void {
 /** The reader's position. */
 export type ReadingState = "following" | "reading";
 
-/** Where a reader's text stood, by identity: candidate elements best first, each with its top less the reading line.
- *  `sel` finds whatever element renders the same entry after a rebuild (null: the node itself is the identity). Nodes
- *  are held weakly, so a parked anchor keeps no discarded DOM alive. Opaque to the views that carry it. */
+/** Where a reader's text stands, by identity: elements best first, finest first, each with its signed top offset from
+ *  the reading line. An element gone from the view is found again as the `path` of child indices below whatever
+ *  element now matches `sel` (null: the node itself is the identity). Nodes are held weakly, so a parked anchor keeps
+ *  no discarded DOM alive. Opaque to the views that carry it. */
 export interface ReadingAnchor {
   readonly marks: readonly {
     readonly node: WeakRef<Element>;
     readonly sel: string | null;
+    readonly path: readonly number[];
     readonly offset: number;
   }[];
 }
 
-/** A parked view's scroll-owned state: where the scroller stood, which reading state the
- *  reader was in and, while Reading, the text they were reading. `messages.ts` carries it inside its ViewHandle
- *  across a park/unpark cycle. */
+/** A parked view's scroll-owned state: where the scroller stood, which reading state the reader was in and, while
+ *  Reading, the text they were reading. */
 export interface ViewScrollState {
   scrollTop: number;
   readingState: ReadingState;
@@ -155,11 +210,12 @@ export class ScrollController {
   /** The element at the scrollport's top edge after the last scroll event, and where it stood. */
   private viewTop: { el: Element; top: number } | null = null;
 
-  /** The element on the reading line after the last scroll event or controller write, and where it stood (null =
-   *  nothing to hold). A row above it growing late — a `content-visibility` placeholder taking its real size —
-   *  pushes it away wherever native anchoring does not hold it; `holdAcross` and `holdReadingLine` put it back.
-   *  Dropped by a press in the transcript: what a click opens is the reader's own. */
-  private readLine: { el: Element; top: number } | null = null;
+  /** The text on the reading line after the last scroll event or controller write (null = nothing to hold), and while
+   *  a restore holds, the restore's own anchor, so the two cannot hold different text. A row above it growing late (a
+   *  `content-visibility` placeholder taking its real size) pushes it away wherever native anchoring does not hold it;
+   *  `holdAcross` and `holdReadingLine` put it back. Dropped by a press in the transcript: what a click opens is the
+   *  reader's own. */
+  private readLine: ReadingAnchor | null = null;
 
   /** Whether the last write was `holdReadingLine`'s: layout can move the line again between that write and its
    *  scroll event, so the event holds once more before it re-reads the line. */
@@ -1033,7 +1089,7 @@ export class ScrollController {
    *  frame callback has its event deferred past the frame's ResizeObserver delivery, where a line read before the write
    *  takes it for drift and `holdReadingLine` puts the reader back. */
   private rebaseReadLine(): void {
-    this.readLine = this.pickReadLine();
+    this.readLine = this.restore?.anchor ?? this.readingAnchor(LIVE_REACH);
   }
 
   private jumpLanding(target: HTMLElement, block: ScrollLogicalPosition): number | null {
@@ -1157,17 +1213,17 @@ export class ScrollController {
     this.forgetReaderGesture();
     this.setState(handle.readingState);
     this.scrollSelfTo(handle.scrollTop, "instant");
-    this.rebaseReadLine();
     // A handle whose anchor names nothing in this view (none saved, or a page re-rendered since) is held by the text
     // the write put on the reading line.
     const saved = handle.anchor;
     const anchor =
       handle.readingState !== "reading"
         ? null
-        : saved !== undefined && this.anchorLanding(saved) !== null
+        : saved !== undefined && this.resolveAnchor(saved) !== null
           ? saved
           : this.readingAnchor();
     this.restore = { top: handle.scrollTop, anchor, held: 0, frames: 0 };
+    this.rebaseReadLine();
     this.holdRestore();
     this.queueRestoreFrame();
     this.lastScrollTop = this.scrollEl.scrollTop;
@@ -1185,77 +1241,110 @@ export class ScrollController {
   }
 
   /** Where the reader's text stands, found from the view's own boxes rather than a hit-test, which an overlay (the
-   *  phone's side menu) blinds; null for a view with nothing laid out. Marks, best first: the stamped entry on the
-   *  reading line, the view child holding it, then every other child nearest first by order, the one above first. */
-  private readingAnchor(): ReadingAnchor | null {
-    const line = this.scrollEl.getBoundingClientRect().top + this.readingLineOffset();
-    const kids = [...this.viewEl.children].filter(
-      (c) =>
-        c !== this.topSentinel &&
-        c !== this.edgeSentinel &&
-        c.id !== "load-more-skeleton" &&
-        c.getClientRects().length > 0,
-    );
-    if (kids.length === 0) {
+   *  phone's side menu) blinds; null for a view with nothing laid out. Marks, finest first: the deepest element on the
+   *  reading line (the first starting below it where the line falls in a gap), each stamped entry holding it, the view
+   *  child holding it, then up to `reach` other children either side, nearest first, the one above first. */
+  private readingAnchor(reach = Number.POSITIVE_INFINITY): ReadingAnchor | null {
+    const box = this.scrollEl.getBoundingClientRect();
+    const line = box.top + this.readingLineOffset();
+    const limit = box.top + this.scrollEl.clientHeight;
+    const furniture = (c: Element): boolean =>
+      c === this.topSentinel || c === this.edgeSentinel || c.id === "load-more-skeleton";
+    const kids = this.viewEl.children;
+    let at = onLine(kids, line, limit, (c) => furniture(c) || isSpacer(c));
+    // Nothing reaches the line: the last child that starts above it, else the first.
+    for (let i = kids.length - 1; at < 0 && i >= 0; i--) {
+      const c = kids[i];
+      if (c !== undefined && !furniture(c) && c.getClientRects().length > 0) {
+        at = i;
+        if (c.getBoundingClientRect().top <= line) {
+          break;
+        }
+      }
+    }
+    const card = kids[at];
+    if (card === undefined) {
       return null;
     }
-    const tops = kids.map((c) => c.getBoundingClientRect().top);
-    let at = 0;
-    tops.forEach((t, i) => {
-      if (t <= line) {
-        at = i;
+    const chain = [card];
+    for (;;) {
+      const inner = chain[chain.length - 1]?.children;
+      const i = inner === undefined ? -1 : onLine(inner, line, limit, isSpacer);
+      const next = inner?.[i];
+      if (next === undefined) {
+        break;
       }
-    });
+      chain.push(next);
+    }
     const marks: ReadingAnchor["marks"][number][] = [];
-    const card = kids[at];
-    let entry: Element | null = null;
-    // Document order is screen order, so the last stamp starting at or above the line is the one on it.
-    for (const e of card?.querySelectorAll(ENTRY_STAMP) ?? []) {
-      if (e.getClientRects().length > 0 && e.getBoundingClientRect().top <= line) {
-        entry = e;
-      }
-    }
-    if (entry !== null) {
-      const turn = entry.getAttribute("data-entry-turn") ?? "";
-      const seq = entry.getAttribute("data-entry-seq") ?? "";
+    const mark = (el: Element, sel: string | null, path: readonly number[]): void => {
       marks.push({
-        node: new WeakRef(entry),
-        sel: `[data-entry-turn="${CSS.escape(turn)}"][data-entry-seq="${CSS.escape(seq)}"]`,
-        offset: entry.getBoundingClientRect().top - line,
+        node: new WeakRef(el),
+        sel,
+        path,
+        offset: el.getBoundingClientRect().top - line,
       });
+    };
+    // Finest first: the block, then the stamps around it, the block found again below the nearest one by its path.
+    const stamped = chain.filter((el) => el.matches(ENTRY_STAMP)).reverse();
+    const block = chain[chain.length - 1] ?? card;
+    const base = stamped[0];
+    if (block !== base) {
+      const path = base === undefined ? [] : chain.slice(chain.indexOf(base) + 1);
+      mark(
+        block,
+        base === undefined ? null : entryKey(base),
+        path.map((el) => Array.prototype.indexOf.call(el.parentElement?.children ?? [], el)),
+      );
     }
-    for (let d = 0; d < kids.length; d++) {
-      for (const i of d === 0 ? [at] : [at - d, at + d]) {
-        const kid = kids[i];
-        const top = tops[i];
-        // By node alone: a keyed reconcile keeps a child's element for as long as its key stays.
-        if (kid !== undefined && top !== undefined) {
-          marks.push({ node: new WeakRef(kid), sel: null, offset: top - line });
+    for (const el of stamped) {
+      mark(el, entryKey(el), []);
+    }
+    if (block !== card && !stamped.includes(card)) {
+      // By node alone: a keyed reconcile keeps a child's element for as long as its key stays.
+      mark(card, null, []);
+    }
+    for (let d = 1; d <= reach && (at - d >= 0 || at + d < kids.length); d++) {
+      for (const kid of [kids[at - d], kids[at + d]]) {
+        if (kid !== undefined && !furniture(kid) && kid.getClientRects().length > 0) {
+          mark(kid, null, []);
         }
       }
     }
     return { marks };
   }
 
-  /** The scrollTop that puts `anchor`'s first surviving mark back at its place on the reading line, or null when no
-   *  mark has a box in the view. */
-  private anchorLanding(anchor: ReadingAnchor): number | null {
+  /** `anchor`'s first mark that has a box in the view, found by node or by key, with that mark. */
+  private resolveAnchor(anchor: ReadingAnchor): { el: Element; offset: number } | null {
     for (const m of anchor.marks) {
       const node = m.node.deref();
-      const el =
+      let el: Element | null | undefined =
         node?.isConnected === true && this.viewEl.contains(node)
           ? node
           : m.sel === null
             ? null
             : this.viewEl.querySelector(m.sel);
-      if (el !== null && el.getClientRects().length > 0) {
-        const line = this.scrollEl.getBoundingClientRect().top + this.readingLineOffset();
-        return this.restoreLanding(
-          this.scrollEl.scrollTop + el.getBoundingClientRect().top - line - m.offset,
-        );
+      if (el !== node) {
+        for (const i of m.path) {
+          el = el?.children[i];
+        }
+      }
+      if (el !== null && el !== undefined && el.getClientRects().length > 0) {
+        return { el, offset: m.offset };
       }
     }
     return null;
+  }
+
+  /** How far `anchor`'s text has moved down the screen from where it was taken (negative: up), or null when no mark
+   *  has a box in the view. */
+  private anchorDrift(anchor: ReadingAnchor): number | null {
+    const r = this.resolveAnchor(anchor);
+    if (r === null) {
+      return null;
+    }
+    const line = this.scrollEl.getBoundingClientRect().top + this.readingLineOffset();
+    return r.el.getBoundingClientRect().top - line - r.offset;
   }
 
   /** Put the held restore back if the scroller has left it; true when it wrote. Reading holds the anchor's text at
@@ -1275,11 +1364,11 @@ export class ScrollController {
       // The live edge is the position, wherever growth has carried it since the save.
       landing = this.restoreLanding(this.followTarget());
     } else {
-      const at = r.anchor === null ? null : this.anchorLanding(r.anchor);
-      if (at === null) {
+      const drift = r.anchor === null ? null : this.anchorDrift(r.anchor);
+      if (drift === null) {
         return false;
       }
-      landing = at;
+      landing = this.restoreLanding(top + drift);
     }
     if (Math.abs(top - landing) < 1) {
       return false;
@@ -1329,9 +1418,9 @@ export class ScrollController {
     // saw it, and the offset is where that text stands once the skeleton is gone.
     const anchor = this.state === "reading" ? this.readingAnchor() : null;
     this.abandonLoadPass();
-    const top = anchor === null ? null : this.anchorLanding(anchor);
+    const drift = anchor === null ? null : this.anchorDrift(anchor);
     const snapshot: ViewScrollState = {
-      scrollTop: top ?? this.scrollEl.scrollTop,
+      scrollTop: this.restoreLanding(this.scrollEl.scrollTop + (drift ?? 0)),
       readingState: this.state,
       ...(anchor === null ? {} : { anchor }),
     };
@@ -1479,24 +1568,7 @@ export class ScrollController {
   private noteViewTop(): void {
     const box = this.scrollEl.getBoundingClientRect();
     this.viewTop = this.contentAt(box.left + box.width / 2, box.top + 1);
-    this.readLine = this.pickReadLine();
-  }
-
-  private pickReadLine(): { el: Element; top: number } | null {
-    const box = this.scrollEl.getBoundingClientRect();
-    const x = box.left + box.width / 2;
-    // Preferably the first element that starts in view at or below the line: a box reaching above
-    // the scrollport (a body around a gap) does not move when the rows inside it do. A paragraph
-    // taller than the scrollport starts in view nowhere, so the line's own element stands.
-    const bottom = box.top + this.scrollEl.clientHeight;
-    const line = box.top + this.scrollEl.clientHeight * READING_LINE_FRACTION;
-    for (let y = line; y < bottom; y += 24) {
-      const hit = this.contentAt(x, y);
-      if (hit !== null && hit.top >= box.top) {
-        return hit;
-      }
-    }
-    return this.contentAt(x, line);
+    this.rebaseReadLine();
   }
 
   /** The transcript element at a client point and its top, or null over a gap or a spacer. */
@@ -1514,14 +1586,16 @@ export class ScrollController {
    *  `noteViewTop` takes the moved line as the reader's own, so `holdReadingLine` finds no drift: native anchoring did
    *  not hold the transcript in WebKit or in Chromium. */
   private holdAcross(layout: () => void): void {
-    const line = this.readLine;
-    if (!this.mayHoldLine() || line === null || line.el.getClientRects().length === 0) {
+    const held =
+      this.readLine === null || !this.mayHoldLine() ? null : this.resolveAnchor(this.readLine);
+    if (held === null) {
       layout();
       return;
     }
-    const before = line.el.getBoundingClientRect().top;
+    const before = held.el.getBoundingClientRect().top;
     layout();
-    const drift = line.el.getBoundingClientRect().top - before;
+    const drift =
+      held.el.getClientRects().length === 0 ? 0 : held.el.getBoundingClientRect().top - before;
     if (Math.abs(drift) >= 1) {
       this.scrollSelfTo(this.scrollEl.scrollTop + drift, "instant");
     }
@@ -1533,27 +1607,25 @@ export class ScrollController {
     return this.state === "reading" && !this.epochOpen;
   }
 
-  /** Put the reading line's element back where the reader left it, if a size change moved it. */
+  /** Put the reading line's text back where the reader left it, if a size change moved it. */
   private holdReadingLine(): void {
     const line = this.readLine;
     if (line === null || !this.mayHoldLine()) {
       return;
     }
-    // A box-less element reads a rect of zeros, which would pass for a drift of its whole offset.
-    if (!line.el.isConnected || line.el.getClientRects().length === 0) {
-      this.readLine = this.pickReadLine();
+    const drift = this.anchorDrift(line);
+    if (drift === null) {
+      this.rebaseReadLine();
       return;
     }
-    const top = line.el.getBoundingClientRect().top;
-    const drift = top - line.top;
     if (Math.abs(drift) < 1) {
       return;
     }
     const from = this.scrollEl.scrollTop;
     this.scrollSelfTo(from + drift, "instant");
     if (Math.abs(this.scrollEl.scrollTop - from) < 1) {
-      // Clamped where it stood: no scroll event follows to re-read the line, and the reader now sees it here.
-      this.readLine = { el: line.el, top };
+      // Clamped where it stood: no scroll event follows to re-read the line, so it is re-read here.
+      this.rebaseReadLine();
       return;
     }
     this.holding = true;
