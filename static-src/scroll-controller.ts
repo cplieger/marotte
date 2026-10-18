@@ -1241,7 +1241,7 @@ export class ScrollController {
   }
 
   /** Where the reader's text stands, found from the view's own boxes rather than a hit-test, which an overlay (the
-   *  phone's side menu) blinds; null for a view with nothing laid out. Marks, finest first: the deepest element on the
+   *  phone's side menu) blinds; null for a view with nothing laid out. Marks, finest first: the deepest block on the
    *  reading line (the first starting below it where the line falls in a gap), each stamped entry holding it, the view
    *  child holding it, then up to `reach` other children either side, nearest first, the one above first. */
   private readingAnchor(reach = Number.POSITIVE_INFINITY): ReadingAnchor | null {
@@ -1271,7 +1271,9 @@ export class ScrollController {
       const inner = chain[chain.length - 1]?.children;
       const i = inner === undefined ? -1 : onLine(inner, line, limit, isSpacer);
       const next = inner?.[i];
-      if (next === undefined) {
+      // Inline content is not descended: a streamed paragraph's chunk spans number by delta timing, so a rebuilt
+      // paragraph's child indices name other text.
+      if (next === undefined || getComputedStyle(next).display.startsWith("inline")) {
         break;
       }
       chain.push(next);

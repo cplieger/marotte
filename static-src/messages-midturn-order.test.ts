@@ -70,7 +70,8 @@ function bodyRows(): string[] {
   expect(body).not.toBeNull();
   return [...body!.children]
     .filter(
-      (row): row is HTMLElement => row instanceof HTMLElement && !row.classList.contains("spacer"),
+      (row): row is HTMLElement =>
+        row instanceof HTMLElement && !row.classList.contains("turn-space"),
     )
     .map((row) => row.dataset["entryId"] ?? "open");
 }
@@ -315,14 +316,16 @@ describe("an open entry's surface carries the entry's identity", () => {
     async (kind) => {
       const chat = `mto-open-stamp-${kind}`;
       await streamingAs(chat, kind, "the reply so far");
-      const surface = viewRoot().querySelector<HTMLElement>(".turn > .turn-body > :not(.spacer)");
+      const surface = viewRoot().querySelector<HTMLElement>(
+        ".turn > .turn-body > :not(.turn-space)",
+      );
       const streaming = { ...surface?.dataset };
 
       store.sealEntry(chat, TURN, "say-1", "", 1, 2, 1);
       await vi.waitFor(() => {
         expect(bodyRows()).toEqual(["say-1"]);
       });
-      const now = viewRoot().querySelector<HTMLElement>(".turn > .turn-body > :not(.spacer)");
+      const now = viewRoot().querySelector<HTMLElement>(".turn > .turn-body > :not(.turn-space)");
 
       expect({
         streaming: {
