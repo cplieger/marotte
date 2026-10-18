@@ -303,16 +303,16 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 	})
 }
 
-// A shell reservation reaches this set through the same predicate.
-func TestBusyChatIDs_NamesAnAdmittedShellCommand(t *testing.T) {
+// A rewind's reservation reaches this set through the same predicate.
+func TestBusyChatIDs_NamesARewindHoldingTheSlot(t *testing.T) {
 	h, _, _ := newTestHub()
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
-		t.Fatal("a fresh chat refused a shell reservation")
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
+		t.Fatal("a fresh chat refused a revert reservation")
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
 
 	if !slices.Contains(h.coord.turns.busyChatIDs(), "c1") {
-		t.Error("a chat holding a shell reservation is absent from busy_chats")
+		t.Error("a chat holding a revert reservation is absent from busy_chats")
 	}
 }
 

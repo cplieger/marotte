@@ -169,8 +169,7 @@ type CloseFacts struct {
 // drainAfterClose sends at most one prompt for a close, under the chat's steer lock from the pick
 // to launchPrompt's return: unread steers first (after a close leaving a live bridge or a drained
 // death), else one queued user row (after a clean or unattended close, or one of AfterStop, bridge
-// live). A pending
-// end, a held slot, a newer turn or a shutdown sends nothing; no shell interception.
+// live). A pending end, a held slot, a newer turn or a shutdown sends nothing.
 func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, cl CloseFacts, ends EndFacts) {
 	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
 	if err != nil {

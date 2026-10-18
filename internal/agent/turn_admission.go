@@ -41,7 +41,7 @@ func (lc *chatLifecycle) holderSourceLocked() (marotte.TurnOpenSource, bool) {
 	return 0, false
 }
 
-// tryReserve takes the slot iff free and the fence holds, never waiting (shell door, recovery retry, drain).
+// tryReserve takes the slot iff free and the fence holds, never waiting (rewind, recovery retry, drain).
 func (r *turnRegistry) tryReserve(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) bool {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -155,8 +155,8 @@ func (bc *bridgeCoordinator) AdmissionHolderSource(chatID marotte.ChatID) (marot
 }
 
 // ReserveTurnForPrompt takes the slot for a prompt, waiting up to wait; one waiter acquires per wake. A
-// steerable holder (a prompt-class turn, or a wire turn KAS bracketed) answers Busy at once; a local_shell holder,
-// a KAS hold or a run KAS reports with no steerable holder parks the waiter and answers Starting at the budget. A
+// steerable holder (a prompt-class turn, or a wire turn KAS bracketed) answers Busy at once; a revert holder, a
+// KAS hold or a run KAS reports with no steerable holder parks the waiter and answers Starting at the budget. A
 // dead ctx answers Starting.
 func (bc *bridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration) command.AdmissionOutcome {
 	timer := time.NewTimer(wait)

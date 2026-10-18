@@ -237,7 +237,7 @@ describe("turnIsDrawn", () => {
     expect(turnIsDrawn(state([textEntry("t1", 1)]))).toBe(false);
   });
 
-  it.each(["prompt", "local_shell", "empty_retry"])(
+  it.each(["prompt", "empty_retry"])(
     "draws a %s turn on its header alone, with no body at all",
     (source) => {
       expect(turnIsDrawn(state([turnOpen("t1", 1, { source })]))).toBe(true);
@@ -339,6 +339,22 @@ describe("projectTurns", () => {
     const t = oneTurn([textEntry("t1", 1), closeEntry("t1", 2)]);
     expect(t.trigger?.id).toBe("m-1");
     expect(t.body.map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it("projects a turn under a source no writer opens any more as a plain prompted turn", () => {
+    const t = projectTurns(
+      src([
+        "t1",
+        state([
+          turnOpen("t1", 1, { source: "local_shell", prompt: "m-1" }),
+          textEntry("t1", 1, "file.go"),
+          closeEntry("t1", 2),
+        ]),
+      ]),
+    )[0];
+    expect(t?.trigger?.id).toBe("m-1");
+    expect(t?.body.map((e) => e.kind)).toEqual(["text", "turn_close"]);
+    expect(t?.outcome).toBe("completed");
   });
 
   it("leaves the trigger absent on a turn nobody prompted", () => {

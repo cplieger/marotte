@@ -380,7 +380,7 @@ func chatStatusFrames(t *testing.T, events []sse.ReplayEvent) []marotte.ChatStat
 	return out
 }
 
-// TestOpenTurn_DischargesTheWaitingRetention pins that a prompt's turn_open answers the claim; a `!cmd` reaches no agent.
+// TestOpenTurn_DischargesTheWaitingRetention pins that a prompt's turn_open answers the claim.
 func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 	waiting := marotte.ChatStatusPayload{
 		Status:      marotte.ChatStatusWaitingOnUser,
@@ -404,23 +404,6 @@ func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 		// A second device converges on the frame.
 		if got := chatStatusFrames(t, bufferedSince(rt, head)); len(got) != 1 {
 			t.Errorf("the prompt published %d chat_status frames, want 1: %+v", len(got), got)
-		}
-	})
-
-	t.Run("a local shell does not", func(t *testing.T) {
-		rt, cs, _ := newTestHub()
-		seedChat(t, cs, "c1")
-		rt.bus.chatStatus.Merge("c1", waiting)
-
-		if _, err := rt.OpenTurn(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourceLocalShell, Prompt: prompt, Init: name}); err != nil {
-			t.Fatalf("the fixture could not open a shell turn: %v", err)
-		}
-		got := rt.bus.chatStatus.Get("c1")
-		if got.Status != marotte.ChatStatusWaitingOnUser {
-			t.Errorf("status is %q, want %q: a `!cmd` reaches no agent, so it answers nothing", got.Status, marotte.ChatStatusWaitingOnUser)
-		}
-		if got.Description != waiting.Description {
-			t.Errorf("description is %q, want %q", got.Description, waiting.Description)
 		}
 	})
 }

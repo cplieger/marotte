@@ -38,8 +38,8 @@ type Handler func(ctx context.Context, cmd *marotte.ClientCommand) (any, error)
 // optional machine-readable reason the error envelope emits as its additive
 // `reason` field. The status rides the error per call site rather than a
 // sentinel-to-status table, because the same sentinel can mean different
-// statuses in different places (e.g. ErrChatNotFound is 409 from a shell
-// command but 404 from set_mode).
+// statuses in different places (e.g. ErrChatNotFound is 409 from a prompt
+// but 404 from set_mode).
 type statusError struct {
 	err    error
 	reason string

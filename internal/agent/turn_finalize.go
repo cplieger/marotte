@@ -27,7 +27,6 @@ const (
 	closerPromptResponse turnCloser = iota
 	// closerPromptFailure is the prompt call failing before the turn could end.
 	closerPromptFailure
-	closerLocalShell
 	// closerBridgeDeath is the bridge's stream ending, or a deliberate stop, with a turn open.
 	closerBridgeDeath
 	// closerWireEnd is the engine's own turn_end bracket, the ONLY closer setting WireEnded.
@@ -120,8 +119,6 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	switch tc.Closer {
 	case closerPromptResponse:
 		stop = extractStopReason(tc.Resp)
-	case closerLocalShell:
-		stop = marotte.StopReasonEndTurn
 	case closerBracketLost:
 		stop = marotte.StopReasonUnknown
 	case closerPromptFailure, closerBridgeDeath:
@@ -149,13 +146,10 @@ func (bc *bridgeCoordinator) closeFactsOf(t *activeTurn, closer turnCloser, outc
 	return cf
 }
 
-// graceClosed reports a close marotte's cancel grace made. A prompt-class turn's failure concludes `cancelled` only on
-// command.ErrCancelGraceExpired; a shell turn's busy refusal concludes it too, and sent kiro-cli nothing.
-func graceClosed(t *activeTurn, closer turnCloser, stop marotte.StopReason) bool {
-	if closer == closerCancelGrace {
-		return true
-	}
-	return closer == closerPromptFailure && stop == marotte.StopReasonCancelled && t.Source.PromptClass()
+// graceClosed reports a close marotte's cancel grace made. A prompt's failure concludes `cancelled` only on
+// command.ErrCancelGraceExpired.
+func graceClosed(closer turnCloser, stop marotte.StopReason) bool {
+	return closer == closerCancelGrace || closer == closerPromptFailure && stop == marotte.StopReasonCancelled
 }
 
 func (bc *bridgeCoordinator) publishClose(ctx context.Context, t *activeTurn, cf closeFacts) {
@@ -271,7 +265,7 @@ func (bc *bridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.
 	}
 	t, won := bc.turns.claimTurn(ctx, chatID, tc.Turn, &claimRule{
 		valid:      tc.Valid,
-		graceClose: func(t *activeTurn) bool { return graceClosed(t, tc.Closer, tc.Stop) },
+		graceClose: graceClosed(tc.Closer, tc.Stop),
 	})
 	if !won {
 		// Two closers racing one fault (turn_end and the prompt response): the first won.

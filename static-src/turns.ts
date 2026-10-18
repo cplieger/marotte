@@ -130,7 +130,7 @@ export function turnIsDrawn(t: TurnState): boolean {
   if (open === undefined) {
     return false;
   }
-  if (open.source === "prompt" || open.source === "local_shell" || open.source === "empty_retry") {
+  if (open.source === "prompt" || open.source === "empty_retry") {
     return true;
   }
   if (t.openEntries.has("")) {

@@ -24,7 +24,7 @@ import { chatNotice } from "./notice-subject.js";
 
 type SubmitResult = "sent" | "steered" | "queued" | "held" | "failed";
 
-/** The send-error face for 409 "starting": holder-neutral (a shell holder is not "starting"). The
+/** The send-error face for 409 "starting": holder-neutral (a rewind holder is not "starting"). The
  *  next Send retries and clears it. */
 const STARTING_FACE = "The chat is busy right now. Send again to retry";
 

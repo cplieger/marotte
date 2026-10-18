@@ -365,9 +365,6 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	if vErr != nil {
 		return nil, StatusError(code, vErr)
 	}
-	if strings.HasPrefix(p.Text, "!") {
-		return handleShellInterception(ctx, roles, cmd, &p)
-	}
 
 	// Admission FIRST: a refused admission writes nothing, so the log never holds a turn no process
 	// owns. It also dedupes a re-send of a running prompt, which meets Busy and becomes a steer.

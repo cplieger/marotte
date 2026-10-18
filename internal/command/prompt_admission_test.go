@@ -220,8 +220,6 @@ func (a *scriptedAdmission) TurnOpenedAfter(marotte.ChatID, string) bool {
 
 func (*scriptedAdmission) StopRequestedAfter(marotte.ChatID, string) bool { return false }
 
-func (*scriptedAdmission) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
-
 func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string, marotte.FailureKind, uint64) {
 	a.rec.add("abandon")
 }

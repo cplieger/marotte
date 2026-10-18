@@ -55,7 +55,7 @@ func cmdRewindChat(
 	// Held until the record lands: a prompt admitted meanwhile opens a turn, which ends the restore
 	// window before KAS writes the files back. A non-prompt holder parks that prompt rather than
 	// turning it into a steer.
-	if !admission.TryReserveIdleTurn(cmd.ChatID, marotte.TurnSourceLocalShell) {
+	if !admission.TryReserveIdleTurn(cmd.ChatID, marotte.TurnSourceRevert) {
 		return nil, StatusError(http.StatusConflict, errRewindTurnOpen)
 	}
 	defer admission.ReleaseTurnReservation(cmd.ChatID)

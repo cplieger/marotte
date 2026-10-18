@@ -46,9 +46,9 @@ type TurnOpenSource int
 const (
 	// TurnSourcePrompt is a user prompt marotte is about to send.
 	TurnSourcePrompt TurnOpenSource = iota
-	// TurnSourceLocalShell is a `!cmd` turn marotte runs itself, with no
-	// session/prompt behind it. No model, and it REFUSES while a turn is open.
-	TurnSourceLocalShell
+	// TurnSourceRevert holds a chat's slot while a rewind's revert lands: no
+	// session/prompt is behind it, so a prompt waits rather than steering into it.
+	TurnSourceRevert
 	// TurnSourceWireTurnStart is a turn marotte did not open: a turn_start with
 	// nothing pending to bind, or a fold with no open turn, is the first it hears.
 	TurnSourceWireTurnStart
@@ -87,7 +87,7 @@ func (s TurnOpenSource) SteerableHolder() bool {
 
 // UserAnswered reports whether opening a turn from this source IS the user
 // answering a question the agent left standing, which is what discharges the
-// retained waiting_on_user status. A `!cmd` is not one: it reaches no agent.
+// retained waiting_on_user status.
 // Separate from PromptClass because that predicate answers for steering and
 // admission, and widening one for those reasons must not move a cache lifecycle.
 func (s TurnOpenSource) UserAnswered() bool {
@@ -100,8 +100,8 @@ func (s TurnOpenSource) UserAnswered() bool {
 }
 
 // Acknowledgeable reports whether a wire turn_start may bind to this source. Only
-// a source that sent a session/prompt qualifies: a localShell turn has no bracket
-// coming and a wireTurnStart turn was created BY one. A binding is revisable, so
+// a source that sent a session/prompt qualifies: a wireTurnStart turn was created
+// BY one. A binding is revisable, so
 // nothing irreversible may rest on it.
 func (s TurnOpenSource) Acknowledgeable() bool {
 	switch s {

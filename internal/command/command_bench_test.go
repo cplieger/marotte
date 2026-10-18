@@ -16,7 +16,7 @@ import (
 type benchDeps struct {
 	// holder is what AdmissionHolderSource answers, gated by holderOpen — so a
 	// test picks the admission window a steer meets: a prime for that refusal,
-	// a shell, or nothing for an idle chat. newBenchDeps defaults to a held
+	// a rewind, or nothing for an idle chat. newBenchDeps defaults to a held
 	// PROMPT turn, the situation a steer exists for.
 	holder     marotte.TurnOpenSource
 	holderOpen bool
@@ -144,8 +144,8 @@ func (*benchDeps) OpenTurn(context.Context, marotte.ChatID, TurnOpen) (string, e
 }
 
 // StartTurn answers true: false is the REFUSAL (a dead ctx, or an id the registry
-// dropped), and a stub answering it makes every prompt and `!cmd` test close its
-// turn before the call.
+// dropped), and a stub answering it makes every prompt test close its turn before
+// the call.
 func (*benchDeps) StartTurn(context.Context, TurnRef, context.CancelCauseFunc) bool {
 	return true
 }
@@ -204,8 +204,6 @@ func (d *benchDeps) ArmStopGrace(*TurnStop, time.Duration) bool {
 func (d *benchDeps) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return d.holder, d.holderOpen
 }
-
-func (*benchDeps) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
 
 func (*benchDeps) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string, marotte.FailureKind, uint64) {
 }
@@ -285,7 +283,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 		}
 		d.ReleaseTurn("x", benchTurnID)
 		d.SettleTurnOnResponse(t.Context(), "x", benchTurnID, 0, nil)
-		d.FinalizeLocalShellTurn(t.Context(), "x", benchTurnID, "")
 		if d.TurnOpenedAfter("x", benchTurnID) {
 			t.Error("TurnOpenedAfter on the stub should report false")
 		}

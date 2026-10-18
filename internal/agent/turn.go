@@ -26,7 +26,7 @@ const (
 )
 
 // errTurnSlotHeld is OpenTurn's refusal when the slot the source needs is held: a
-// local_shell over an open turn, or a prompt while one is still owed its bracket.
+// prompt while one is still owed its bracket, or any other source over an open turn.
 var errTurnSlotHeld = errors.New("the chat's turn slot is held")
 
 // activeTurn is everything true of one turn, whoever opened it. ID, Seq, Chat, Opened, Source, Log and done are
@@ -43,8 +43,7 @@ type activeTurn struct {
 	reapTimer *time.Timer
 	// graceTimer is a stop's budget on this turn's call (armCallGraceLocked).
 	graceTimer *time.Timer
-	// cancel trips this turn's own prompt call, from StartTurn until EndPromptCall; nil for a turn with none (KAS's,
-	// a local shell).
+	// cancel trips this turn's own prompt call, from StartTurn until EndPromptCall; nil for a turn with none (KAS's).
 	cancel context.CancelCauseFunc
 	// Opened is when the turn began, and the only source of its elapsed time.
 	Opened time.Time
@@ -345,17 +344,13 @@ func (lc *chatLifecycle) markSentLocked(t *activeTurn) (sendStep, *activeTurn) {
 	}
 }
 
-// slotFreeLocked reports whether source may open now: local_shell needs own free, prompt-class a pending turn
-// not owed its bracket. Caller holds mu.
+// slotFreeLocked reports whether source may open now: an acknowledgeable source needs no pending turn owed its
+// bracket, any other needs own free. Caller holds mu.
 func (lc *chatLifecycle) slotFreeLocked(source marotte.TurnOpenSource) bool {
-	switch {
-	case source == marotte.TurnSourceLocalShell:
-		return lc.own == nil
-	case source.Acknowledgeable():
+	if source.Acknowledgeable() {
 		return lc.pending == nil
-	default:
-		return lc.own == nil
 	}
+	return lc.own == nil
 }
 
 // claimBound claims, for a turn_end, the chat's own open turn unless it is a prompt its turn_start has not bound
@@ -379,13 +374,13 @@ func (r *turnRegistry) claimBound(ctx context.Context, chatID marotte.ChatID) (*
 type claimRule struct {
 	// valid is the closer's own predicate, evaluated in the claim's section (claimIfLocked); nil for none.
 	valid func(lc *chatLifecycle, t *activeTurn) bool
-	// graceClose reports the claimed turn's close as marotte's cancel grace (claimTurn).
-	graceClose func(t *activeTurn) bool
+	// graceClose marks the claimed turn's close as marotte's cancel grace (claimTurn).
+	graceClose bool
 }
 
 // claimTurn claims one named turn for finalizing, false when not live or when rule's predicate no longer holds.
 // Id-scoped: a closer armed for turn N is harmless after N+1 opened, and reaches a pending turn that is no longer
-// own. When rule's graceClose reports the claimed turn's close as marotte's cancel grace, the KAS hold starts in the
+// own. When rule's graceClose marks the claimed turn's close as marotte's cancel grace, the KAS hold starts in the
 // same section, whatever KAS last reported: the claim lifts bracketedWireLocked's refusal, and KAS's report of the
 // cancelled run may still be in flight. kasTransitions owns what the hold then permits.
 func (r *turnRegistry) claimTurn(ctx context.Context, chatID marotte.ChatID, turnID string, rule *claimRule) (*activeTurn, bool) {
@@ -405,7 +400,7 @@ func (r *turnRegistry) claimTurn(ctx context.Context, chatID marotte.ChatID, tur
 	if t == nil || !lc.claimIfLocked(t, rule.valid) {
 		return nil, false
 	}
-	if rule.graceClose != nil && rule.graceClose(t) {
+	if rule.graceClose {
 		lc.kasStepLocked(kasGraceClaim, t.Seq)
 	}
 	return t, true
