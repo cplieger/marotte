@@ -128,10 +128,14 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
       el("span", { className: "steer-note-run-sep", "aria-hidden": "true" }, "\u00b7"),
     );
   }
-  head.appendChild(el("span", { className: "steer-note-label" }, label));
+  // One box for the step and the times, so a phone wraps them as one line of text. The space is
+  // that line's break between the two; a flex or grid head drops it.
+  const meta = el("span", { className: "steer-note-meta" });
+  meta.appendChild(el("span", { className: "steer-note-label" }, label));
+  head.appendChild(meta);
   root.appendChild(head);
   if (d.sentAt !== undefined && d.sentAt > 0) {
-    head.appendChild(el("span", { className: "steer-note-times" }, ...timesFor(d, d.sentAt)));
+    meta.append(" ", el("span", { className: "steer-note-times" }, ...timesFor(d, d.sentAt)));
     if (d.tracked === true || d.dropped) {
       root.dataset["delivered"] = String(delivered(d));
     }
@@ -185,15 +189,19 @@ export function setSteerNoteRunLabel(note: HTMLElement, runLabel: string): void 
 }
 
 /** A workflow message's two times: when it was sent, and when the receiver took it up or that it
- *  has not yet. A dropped message's label already says it was not delivered. */
+ *  has not yet. A dropped message's label already says it was not delivered. Each clause is a
+ *  `.steer-note-clause` the stylesheet keeps unbroken, so a wrap falls only after the dot. */
 function timesFor(d: SteerNoteData, sentAt: number): (string | HTMLElement)[] {
-  const sent = ["Sent ", stamp(sentAt)];
+  const clause = (...parts: (string | HTMLElement)[]): HTMLElement =>
+    el("span", { className: "steer-note-clause" }, ...parts);
   if (d.dropped || d.tracked !== true) {
-    return sent;
+    return [clause("Sent ", stamp(sentAt))];
   }
-  return delivered(d)
-    ? [...sent, " \u00b7 delivered ", stamp(d.deliveredAt ?? 0)]
-    : [...sent, " \u00b7 not delivered yet"];
+  return [
+    clause("Sent ", stamp(sentAt), " \u00b7"),
+    " ",
+    delivered(d) ? clause("delivered ", stamp(d.deliveredAt ?? 0)) : clause("not delivered yet"),
+  ];
 }
 
 function delivered(d: SteerNoteData): boolean {
