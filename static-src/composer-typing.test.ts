@@ -1,23 +1,19 @@
-// The composer under an iPhone keyboard. iOS applies a smart quote or an autocorrection as a
-// replacement of text behind the caret, then keeps typing at the caret it holds, so a page-side
-// write to the box's value or selection inside the keyboard's edit lands the rest of the word in
-// the wrong place ("what' ups" for "what's up"). Nothing but the keyboard may write while it types.
+// iOS can apply a smart quote or an autocorrection as an `insertReplacementText` behind the caret
+// (WebKit `applyAutocorrection`, Source/WebKit/UIProcess/ios/WKContentViewInteraction.mm). A page
+// write to the box's value or selection during that edit moves the rest of the word ("what' ups"
+// for "what's up"). These cases simulate those edit sequences in Chromium with synthetic events
+// and pin that no listener writes during a substitution or composition.
 
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
-import type * as Platform from "./platform.js";
 import type * as ApiClient from "./api-client.js";
 import type * as Actions from "./actions/index.js";
 
-vi.mock("./platform.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof Platform>()),
-  isIOS: true,
-}));
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
   apiGetTyped: () => Promise.resolve(null),
 }));
-// Every keystroke's draft save goes out at once, so a save runs inside each typed edit.
+// No transport in this test; the draft save (`setDraft`) writes nothing back to the box.
 vi.mock("./actions/index.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Actions>()),
   debouncedDispatch: () =>
@@ -36,9 +32,10 @@ import {
   seedComposerState,
   adoptRemoteComposerState,
 } from "./composer-state.js";
-import { initSlashMenu } from "./slash-menu.js";
+import { initSlashMenu, _setCatalogForTest } from "./slash-menu.js";
 import { setSessions, setActive } from "./store.js";
 import type { Session } from "./types.js";
+import type { SlashCommand } from "./wire/types.gen.js";
 
 const CHAT = "c1";
 
@@ -66,7 +63,6 @@ function note(what: string): void {
   }
 }
 
-/** Route the box's text and selection writers, and `execCommand`, through `note`. */
 function watch(el: HTMLTextAreaElement): void {
   const proto = HTMLTextAreaElement.prototype;
   for (const prop of ["value", "selectionStart", "selectionEnd", "selectionDirection"]) {
@@ -166,7 +162,6 @@ type Condition = (typeof CONDITIONS)[number];
 
 let tick = 0;
 
-/** The condition's reactive updates, delivered between two keyboard edits. */
 async function between(c: Condition): Promise<void> {
   tick++;
   if (c.startsWith("turn running")) {
@@ -187,7 +182,15 @@ async function between(c: Condition): Promise<void> {
   await new Promise((r) => requestAnimationFrame(r));
 }
 
+/** Commands matching every query the slash cases type, so the menu stays open through each edit. */
+const MENU: SlashCommand[] = ["whats", "what's", "what\u2019s"].map((name): SlashCommand => ({
+  name,
+  description: "",
+  kind: "prompt",
+}));
+
 async function begin(c: Condition, prefix: string): Promise<HTMLTextAreaElement> {
+  _setCatalogForTest(c === "slash menu open" ? MENU : []);
   setSessions([session(c.endsWith("Queue") ? { interrupt_mode: "queue" } : {})]);
   setActive(CHAT);
   const el = box();
@@ -197,10 +200,13 @@ async function begin(c: Condition, prefix: string): Promise<HTMLTextAreaElement>
     el.focus();
     el.value = "";
   });
+  writes.length = 0;
   if (prefix !== "") {
     await userEvent.keyboard(prefix);
   }
-  writes.length = 0;
+  if (c === "slash menu open") {
+    expect(document.getElementById("slash-menu")?.hidden).toBe(false);
+  }
   return el;
 }
 
@@ -218,8 +224,8 @@ async function insertText(c: Condition, text: string): Promise<void> {
   await between(c);
 }
 
-/** A keyboard replacement of `[start, end)`, the way WebKit applies one: select the range, fire
- *  `beforeinput`, replace, leave the caret at the end of the replacement, fire `input`. */
+/** A keyboard replacement of `[start, end)` as synthetic (untrusted) events with the range,
+ *  inputType and final caret WebKit gives one. */
 async function replace(c: Condition, start: number, end: number, text: string): Promise<void> {
   const el = box();
   const init = { inputType: "insertReplacementText", data: text, bubbles: true };
