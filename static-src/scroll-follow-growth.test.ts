@@ -132,17 +132,16 @@ async function until(pred: () => boolean, what: string): Promise<void> {
 
 const maxTop = (): number => wrap.scrollHeight - wrap.clientHeight;
 
-/** The reader's own wheel to `top`, so the controller sees a reader stating a position. Instant: the shipped
- *  `scroll-behavior: smooth` would animate a bare `scrollTop` write past the wait on a loaded runner. */
+/** The reader's own wheel to `top`, so the controller sees a reader stating a position. */
 async function wheelTo(top: number): Promise<void> {
   wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: top < wrap.scrollTop ? -100 : 100 }));
-  wrap.scrollTo({ top, behavior: "instant" });
+  wrap.scrollTop = top;
   await new Promise((r) => setTimeout(r, 400));
 }
 
 type Press = "click" | "tap" | "wobble" | "space";
 
-/** A tap the way a phone delivers one: the pointer and touch events bubble through the scroller, then the click.
+/** A tap the way a phone delivers one: the touch events bubble through the scroller, then the click.
  *  `drift` is how far the finger moves inside the tap, which WebKit reports as `touchmove`s. */
 function tap(target: HTMLElement, drift = 0): void {
   const touch = (type: string, touches: { clientX: number; clientY: number }[]): Event =>
@@ -150,7 +149,6 @@ function tap(target: HTMLElement, drift = 0): void {
   const r = target.getBoundingClientRect();
   const x = r.left + 4;
   const y = r.top + 4;
-  target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: x, clientY: y }));
   target.dispatchEvent(touch("touchstart", [{ clientX: x, clientY: y }]));
   if (drift > 0) {
     target.dispatchEvent(touch("touchmove", [{ clientX: x + drift / 2, clientY: y + drift / 2 }]));
@@ -164,8 +162,6 @@ function tap(target: HTMLElement, drift = 0): void {
 async function openDetails(footer: HTMLElement, how: Press): Promise<void> {
   const btn = footer.querySelector<HTMLButtonElement>(".turn-ledger-summary")!;
   if (how === "click") {
-    // A mouse press: the pointerdown that tells the transcript the change is the reader's own, then the click.
-    btn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
     btn.click();
   } else if (how === "tap") {
     tap(btn);

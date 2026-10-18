@@ -46,9 +46,7 @@ const SKIPPABLE = ".msg-row, .tool-call, .subagent-block, .plan-message, .run-ca
  *  a rootMargin percentage against the root's WIDTH (https://w3c.github.io/IntersectionObserver/#intersectionobserver-root-intersection-rectangle),
  *  which Chromium and WebKit do not follow. */
 const NEAR_LEAD = 1.5;
-/** Consecutive frames the scroller must keep a restored position before `attach`'s restore lets go. WebKit can reset
- *  the scroller to 0 in a layout later in the restoring task, after the write and with the view at its full height; a
- *  frame that finds the position kept, and the one after it, show that reset is behind. */
+/** Consecutive frames the scroller must keep a restored position before `attach`'s restore lets go. */
 const RESTORE_HOLD_FRAMES = 2;
 /** The frames a restore may spend re-asserting before it gives up on a position the platform keeps refusing. */
 const RESTORE_MAX_FRAMES = 60;
@@ -123,9 +121,15 @@ export class ScrollController {
 
   private rafPending = false;
 
-  /** The offset `attach` restored and still holds (null = none); while Following the live edge counts as held too.
-   *  `held` counts consecutive frames that kept it, `frames` every frame spent. */
-  private restore: { top: number; held: number; frames: number } | null = null;
+  /** What `attach` restored and still holds (null = none): the offset, and the reading line it put on screen, which
+   *  is what a Reading restore holds still (the offset only when there was no line). While Following the live edge
+   *  counts as held too. `held` counts consecutive frames that kept it, `frames` every frame spent. */
+  private restore: {
+    top: number;
+    line: { el: Element; top: number } | null;
+    held: number;
+    frames: number;
+  } | null = null;
   private restoreFrame = 0;
 
   /** The bottom pin's deadline, and the frame it has queued (0 = none). */
@@ -364,7 +368,7 @@ export class ScrollController {
     this.scrollEl.addEventListener(
       "scroll",
       () => {
-        // A platform reset of a restore states nothing, so it moves no state, gesture or baseline.
+        // A move that carried the restored text away with no reader input is undone, and states nothing.
         if (this.holdRestore()) {
           return;
         }
@@ -1136,8 +1140,9 @@ export class ScrollController {
     this.observeView(handle.el);
     this.forgetReaderGesture();
     this.setState(handle.readingState);
-    this.restore = { top: handle.scrollTop, held: 0, frames: 0 };
     this.scrollSelfTo(handle.scrollTop, "instant");
+    this.rebaseReadLine();
+    this.restore = { top: handle.scrollTop, line: this.readLine, held: 0, frames: 0 };
     this.queueRestoreFrame();
     this.lastScrollTop = this.scrollEl.scrollTop;
     this.lastEdgeDistance = this.edgeDistance();
@@ -1153,24 +1158,29 @@ export class ScrollController {
     return Math.max(0, Math.min(top, max));
   }
 
-  /** Put the held restore back if the scroller has left it; true when it wrote. */
+  /** Put the held restore back if the scroller has left it; true when it wrote. Reading holds the restored line's
+   *  text by its drift on screen, so a writer that kept the text still (anchoring, a pagination pass's compensation)
+   *  is left alone and a reset that carried it away is undone. */
   private holdRestore(): boolean {
     const r = this.restore;
     if (r === null) {
       return false;
     }
     const top = this.scrollEl.scrollTop;
-    const saved = this.restoreLanding(r.top);
-    if (Math.abs(top - saved) < 1) {
-      return false;
-    }
-    // While Following the live edge is the position, wherever growth has carried it since the save.
-    let landing = saved;
+    let landing: number;
     if (this.state === "following") {
-      landing = this.restoreLanding(this.followTarget());
-      if (Math.abs(top - landing) < 1) {
+      if (Math.abs(top - this.restoreLanding(r.top)) < 1) {
         return false;
       }
+      // The live edge is the position, wherever growth has carried it since the save.
+      landing = this.restoreLanding(this.followTarget());
+    } else if (r.line !== null && r.line.el.isConnected && r.line.el.getClientRects().length > 0) {
+      landing = this.restoreLanding(top + r.line.el.getBoundingClientRect().top - r.line.top);
+    } else {
+      landing = this.restoreLanding(r.top);
+    }
+    if (Math.abs(top - landing) < 1) {
+      return false;
     }
     this.scrollSelfTo(landing, "instant");
     this.rebaseReadLine();
@@ -1213,12 +1223,19 @@ export class ScrollController {
    *  unpark catch-up paint re-derives every fold the queue was holding), and disconnect the
    *  observers so the parked view can never produce a callback. */
   detach(): ViewScrollState {
+    // The abandoned pass takes its skeleton out from above the reader, so the snapshot is read after it, net of how
+    // far that moved the reading line, or the restore puts the text one skeleton higher than the reader left it.
+    const line = this.pickReadLine();
+    this.abandonLoadPass();
+    const drift =
+      line !== null && line.el.isConnected && line.el.getClientRects().length > 0
+        ? line.el.getBoundingClientRect().top - line.top
+        : 0;
     const snapshot: ViewScrollState = {
-      scrollTop: this.scrollEl.scrollTop,
+      scrollTop: Math.max(0, this.scrollEl.scrollTop + drift),
       readingState: this.state,
     };
     this.deferred = [];
-    this.abandonLoadPass();
     this.cancelPinPass();
     this.endSelfScroll();
     this.endRestore();
@@ -1411,9 +1428,9 @@ export class ScrollController {
   }
 
   /** Whether a size change is the layout's to undo rather than the reader's: while Following the pin owns the edge,
-   *  inside an epoch the flight owns the scroller, and a held restore owns it until it lets go. */
+   *  and inside an epoch the flight owns the scroller. */
   private mayHoldLine(): boolean {
-    return this.state === "reading" && !this.epochOpen && this.restore === null;
+    return this.state === "reading" && !this.epochOpen;
   }
 
   /** Put the reading line's element back where the reader left it, if a size change moved it. */

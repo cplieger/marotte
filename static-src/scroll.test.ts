@@ -28,7 +28,15 @@ vi.mock("./dom.js", () => ({
     },
   ),
 }));
-vi.mock("./skeleton.js", () => ({ loadMoreSkeleton: () => document.createElement("div") }));
+// Zero height unless a scene sets one: the shipped skeleton's own height is what most pagination scenes do not measure.
+const skeleton = vi.hoisted(() => ({ px: 0 }));
+vi.mock("./skeleton.js", () => ({
+  loadMoreSkeleton: () => {
+    const d = document.createElement("div");
+    d.style.height = `${String(skeleton.px)}px`;
+    return d;
+  },
+}));
 
 const scroll = await import("./scroll.js");
 const { setPinSettleMs } = await import("./scroll-controller.js");
@@ -3186,8 +3194,8 @@ describe("a cold row laid out above the reader", () => {
       });
     });
 
-  /** A transcript view: twenty 100px blocks, a cold row whose content is 380px, then thirty more blocks. */
-  function coldView(): { view: HTMLElement; cold: HTMLElement } {
+  /** A transcript view: twenty 100px blocks, a cold row whose content is 380px, then `after` more blocks. */
+  function coldView(after = 30): { view: HTMLElement; cold: HTMLElement } {
     const view = document.createElement("div");
     const add = (n: number): void => {
       for (let i = 0; i < n; i++) {
@@ -3203,7 +3211,7 @@ describe("a cold row laid out above the reader", () => {
     body.style.cssText = "height:380px;";
     cold.appendChild(body);
     view.appendChild(cold);
-    add(30);
+    add(after);
     messagesEl.appendChild(view);
     return { view, cold };
   }
@@ -3300,10 +3308,12 @@ describe("a cold row laid out above the reader", () => {
 
   it("still follows the live edge through streamed appends with a cold row above", async () => {
     const wrap = scroll.getScrollEl();
-    const { view } = coldView();
+    // Five blocks below the cold row: at the live edge it sits 100px above the scrollport, inside the 600px lead.
+    const { view, cold } = coldView(5);
     scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
     scroll.scrollToBottom();
     await land();
+    const grown = cold.getBoundingClientRect().height;
     const gaps: number[] = [];
     for (let i = 0; i < 8; i++) {
       const chunk = document.createElement("div");
@@ -3314,7 +3324,8 @@ describe("a cold row laid out above the reader", () => {
       gaps.push(Math.round(wrap.scrollHeight - wrap.clientHeight - wrap.scrollTop));
     }
 
-    expect({ state: scroll.readingState(), gaps }).toEqual({
+    expect({ grown, state: scroll.readingState(), gaps }).toEqual({
+      grown: 380,
       state: "following",
       gaps: [0, 0, 0, 0, 0, 0, 0, 0],
     });
@@ -3325,8 +3336,14 @@ describe("a cold row laid out above the reader", () => {
 // switch from the side menu), with the view already at its full height. The scenes reproduce that reset by collapsing
 // the view for one forced layout right after the restore.
 describe("a parked view's restore under a platform reset", () => {
-  beforeEach(realLayoutReset);
+  // Anchoring off, so the controller alone holds the reader, as in an engine whose anchoring misses this geometry.
+  beforeEach(async () => {
+    await realLayoutReset();
+    scroll.getScrollEl().style.overflowAnchor = "none";
+  });
   afterEach(() => {
+    skeleton.px = 0;
+    scroll.getScrollEl().style.overflowAnchor = "";
     scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
   });
 
@@ -3432,6 +3449,131 @@ describe("a parked view's restore under a platform reset", () => {
       state: "reading",
     });
   });
+
+  /** Park `view` with the reader at `top`, switch away and back, run `after` in the restoring task, and return how far
+   *  the text on the reading line had moved on screen at each of the next thirteen frames (zeros dropped). */
+  async function movesAfterReturn(
+    view: HTMLElement,
+    top: number,
+    after: () => void,
+  ): Promise<{ moves: number[]; state: string }> {
+    const wrap = scroll.getScrollEl();
+    scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    await land();
+    readerScrollTo(wrap, top);
+    await land(400);
+    const parked = scroll.detach();
+    view.hidden = true;
+    const other = document.createElement("div");
+    other.style.cssText = "height:2000px;";
+    messagesEl.appendChild(other);
+    scroll.attach({ el: other, scrollTop: 0, readingState: "following" });
+    await land();
+    scroll.detach();
+    other.remove();
+    view.hidden = false;
+    scroll.attach({ el: view, ...parked });
+    const box = wrap.getBoundingClientRect();
+    const ref = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
+    const base = ref.getBoundingClientRect().top;
+    const moves: number[] = [];
+    // Queued before `after`, so each frame's sample runs ahead of that frame's changes and reads what the previous
+    // frame painted, never a layout its ResizeObserver delivery has yet to answer.
+    const sampled = new Promise<void>((resolve) => {
+      let n = 0;
+      const tick = (): void => {
+        moves.push(Math.round(ref.getBoundingClientRect().top - base));
+        if (++n < 13) {
+          requestAnimationFrame(tick);
+        } else {
+          resolve();
+        }
+      };
+      requestAnimationFrame(tick);
+    });
+    after();
+    await sampled;
+    return { moves: moves.filter((m) => m !== 0), state: scroll.readingState() };
+  }
+
+  it.each(["none", "auto"])(
+    "puts the reader's text back where they left it when they leave with an older page still loading (overflow-anchor: %s)",
+    async (anchor) => {
+      const wrap = scroll.getScrollEl();
+      wrap.style.overflowAnchor = anchor;
+      const view = rowsView();
+      scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+      await land();
+      readerScrollTo(wrap, 500);
+      await land();
+      skeleton.px = 200;
+      scroll.setLoadMore(() => undefined, true);
+      scroll.noteHistoryEdge(true);
+      await land();
+      const box = wrap.getBoundingClientRect();
+      const ref = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
+      const left = ref.getBoundingClientRect().top;
+      const loading = document.getElementById("load-more-skeleton") !== null;
+      const parked = scroll.detach();
+      view.hidden = true;
+      const other = document.createElement("div");
+      other.style.cssText = "height:2000px;";
+      messagesEl.appendChild(other);
+      scroll.attach({ el: other, scrollTop: 0, readingState: "following" });
+      await land();
+      scroll.detach();
+      other.remove();
+      view.hidden = false;
+      scroll.attach({ el: view, ...parked });
+      await land();
+
+      expect({
+        loading,
+        moved: Math.round(ref.getBoundingClientRect().top - left),
+        state: scroll.readingState(),
+      }).toEqual({ loading: true, moved: 0, state: "reading" });
+    },
+  );
+
+  // Anchoring on as well: a held restore must leave alone what native anchoring already kept still.
+  it.each(["none", "auto"])(
+    "keeps the reader's text still when an older page's skeleton lands above them on return (overflow-anchor: %s)",
+    async (anchor) => {
+      scroll.getScrollEl().style.overflowAnchor = anchor;
+      const view = rowsView();
+      skeleton.px = 200;
+      // The activation rewires pagination; with the reader inside the history lead the first delivery asks for a page,
+      // whose skeleton lands above them while the fetch is pending, and the pass compensates its height.
+      const out = await movesAfterReturn(view, 500, () => {
+        scroll.setLoadMore(() => undefined, true);
+      });
+
+      expect({
+        skeleton: document.getElementById("load-more-skeleton")?.getBoundingClientRect().height,
+        ...out,
+      }).toEqual({ skeleton: 200, moves: [], state: "reading" });
+    },
+  );
+
+  it.each(["none", "auto"])(
+    "keeps the reader's text still when a row above them grows in the first frame after return (overflow-anchor: %s)",
+    async (anchor) => {
+      scroll.getScrollEl().style.overflowAnchor = anchor;
+      const view = rowsView();
+      const row = view.children[2] as HTMLElement;
+      const out = await movesAfterReturn(view, 1500, () => {
+        requestAnimationFrame(() => {
+          row.style.height = "300px";
+        });
+      });
+
+      expect({ grown: row.getBoundingClientRect().height, ...out }).toEqual({
+        grown: 300,
+        moves: [],
+        state: "reading",
+      });
+    },
+  );
 });
 
 describe("onContentResize", () => {
