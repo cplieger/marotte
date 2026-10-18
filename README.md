@@ -114,6 +114,7 @@ Docker checks `/api/health` every 30 seconds. The container shows healthy once m
 - The logs say a folder under `/config` "can be modified by" another account. This happens on shared or network volumes. See `TRUSTED_INSTALL_UIDS` in [Configuration](docs/configuration.md#trusted-install-accounts-trusted_install_uids).
 - Health shows `sign-in required`. A chat's last turn failed because marotte is not signed in to Kiro, or Kiro refused the sign-in. Sign in from the account menu. The next turn that succeeds clears it.
 - The page answers `403`. The address you typed is not in `ALLOWED_HOSTS`.
+- The container restarts in a loop with `another marotte instance holds this folder`. Two marotte containers share a volume, a `KIRO_HOME` or a tools folder. The log line names the folder. Give each container its own, or stop the other one.
 
 ## Documentation
 

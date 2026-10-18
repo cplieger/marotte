@@ -84,6 +84,8 @@ Rewind and supervised review cover the agent's file-editing tool. Changes made t
 
 Add, edit and remove servers, local ones or remote ones over HTTP or SSE. Each server can block individual tools, reconnects live, and lets you browse its prompts and resources. For a server that needs OAuth, marotte registers itself automatically or takes a client ID you already have, then shows a sign-in link. The sign-in is kept for workflow steps too, so a step does not ask again on every run. A server that kiro-cli loaded but another layer replaced or switched off shows the same badge as a steering doc, and a server that failed to start shows its error on its card.
 
+marotte writes this list into kiro-cli's `~/.kiro/settings/mcp.json`. If anything else changes the servers there, marotte puts them back within 30 seconds, or when a chat opens, and logs a warning naming them. Edit servers here, not in that file and not with `kiro-cli mcp add`. Switching a server on that is already on puts it back in that file if it was missing or changed.
+
 ## Tools
 
 The **Tools** tab in **Settings** installs runtimes, language servers and command-line tools from a catalog of about 900, built from the mise and aqua registries by [tool-catalog](https://github.com/cplieger/tool-catalog). Installs run in the background. A tool can be pinned to a version. For a tool outside the catalog, install it from the terminal. Debian packages are covered in [OS packages](os-packages.md).

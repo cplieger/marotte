@@ -221,11 +221,19 @@ func TestSetEnabled_TogglesAndPersists(t *testing.T) {
 	if len(s.enabledRaw(t.Context())) != 0 {
 		t.Error("disabled server leaked into EnabledRaw")
 	}
-	// Second set to same value is a true no-op: the idempotent branch
-	// returns early before persist or timestamp updates.
-	_, err = s.setEnabled(t.Context(), orig.ID, false)
+	record, err := os.ReadFile(s.path)
 	if err != nil {
-		t.Errorf("idempotent set: %v", err)
+		t.Fatal(err)
+	}
+	again, err := s.setEnabled(t.Context(), orig.ID, false)
+	if err != nil {
+		t.Fatalf("idempotent set: %v", err)
+	}
+	if again.UpdatedAt != got.UpdatedAt {
+		t.Errorf("idempotent set moved UpdatedAt from %d to %d", got.UpdatedAt, again.UpdatedAt)
+	}
+	if after, _ := os.ReadFile(s.path); string(after) != string(record) {
+		t.Errorf("idempotent set rewrote the record:\n%s\nto\n%s", record, after)
 	}
 }
 
@@ -1260,5 +1268,47 @@ func TestLoad_VerticalTabOnlyRecordStaysCorrupt(t *testing.T) {
 				t.Errorf("corrupt siblings = %v, want the %q-only record moved aside", got, tc.content)
 			}
 		})
+	}
+}
+
+func TestCreate_IdenticalSpecReRendersADriftedFile(t *testing.T) {
+	s := newTestStore(t)
+	spec := &Server{Transport: TransportStdio, Name: "agent-mail", Command: "bash", Enabled: true}
+	if _, err := s.Create(t.Context(), spec); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := os.WriteFile(s.kasPath, []byte(`{"mcpServers": {}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Create(t.Context(), spec); err != nil {
+		t.Fatalf("reinstall: %v", err)
+	}
+	if _, ok := readKASServers(t, s.kasPath)["agent-mail"]; !ok {
+		t.Error("reinstalling the identical spec left agent-mail missing from KAS's file")
+	}
+}
+
+func TestImport_UnchangedBlockReRendersADriftedFile(t *testing.T) {
+	s := newTestStore(t)
+	entry := func() []*Server {
+		return []*Server{{Transport: TransportStdio, Name: "agent-mail", Command: "bash", Enabled: true}}
+	}
+	if _, err := s.importServers(t.Context(), entry()); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if err := os.WriteFile(s.kasPath, []byte(`{"mcpServers": {}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := s.importServers(t.Context(), entry())
+	if err != nil {
+		t.Fatalf("re-import: %v", err)
+	}
+	if len(results) != 1 || results[0].Outcome != importUnchanged {
+		t.Errorf("re-import results = %+v, want one unchanged", results)
+	}
+	if _, ok := readKASServers(t, s.kasPath)["agent-mail"]; !ok {
+		t.Error("re-importing the unchanged block left agent-mail missing from KAS's file")
 	}
 }

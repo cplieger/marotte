@@ -16,9 +16,9 @@ Variables go in the `environment:` block of `compose.yaml` and are read at start
 | `MAROTTE_ALLOW_BRIDGE_ENV` | Variable names that look like credentials but should still reach kiro-cli, comma-separated. | _(unset)_ |
 | `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for the agent engine. | _(unset)_ |
 | `KIRO_WORK_DIR` | Folder chats and the terminal start in. It must exist, or startup fails. | `/workspace` |
-| `KIRO_CONFIG_DIR` | Folder for chats, the Kiro sign-in, the kiro-cli home, installed tools and settings. It must exist and be writable. | `/config` |
-| `KIRO_HOME` | Where marotte and kiro-cli keep kiro-cli's own state: steering, settings, permissions and session files. A relative path, `/`, or a path that is `HOME` or holds `HOME` inside it is ignored with a warning at startup, as kiro-cli ignores it. kiro-cli's test for "inside" does not count a `HOME` whose path relative to `KIRO_HOME` starts with `..`, such as a `..home` folder directly below it, and marotte follows it. | `$HOME/.kiro` |
-| `MAROTTE_TOOLS_DIR` | Where the tools engine installs tools, on the persistent volume. | `<KIRO_CONFIG_DIR>/tools` |
+| `KIRO_CONFIG_DIR` | Folder for chats, the Kiro sign-in, the kiro-cli home, installed tools and settings. It must exist and be writable. Each marotte needs its own: a second one started on the same folder refuses to start. | `/config` |
+| `KIRO_HOME` | Where marotte and kiro-cli keep kiro-cli's own state: steering, settings, permissions and session files. A relative path, `/`, or a path that is `HOME` or holds `HOME` inside it is ignored with a warning at startup, as kiro-cli ignores it. kiro-cli's test for "inside" does not count a `HOME` whose path relative to `KIRO_HOME` starts with `..`, such as a `..home` folder directly below it, and marotte follows it. Each marotte needs its own: a second one started on the same folder refuses to start. | `$HOME/.kiro` |
+| `MAROTTE_TOOLS_DIR` | Where the tools engine installs tools, on the persistent volume. Each marotte needs its own: a second one started on the same folder refuses to start. | `<KIRO_CONFIG_DIR>/tools` |
 | `MAROTTE_TOOL_CATALOG` | Tool catalog built into the image, used at first start and offline. | `/opt/marotte/tool-catalog.json` |
 | `MAROTTE_TOOL_CATALOG_URL` | Where catalog updates come from. Point it at a fork or a mirror. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest release |
 | `MAROTTE_BUNDLED_TOOLS` | File inside the image naming the tools marotte bundles. A wrong path leaves the suggested language servers unable to install. | `/opt/marotte/bundled-tools.json` |
@@ -124,6 +124,7 @@ Files you attach to a message, by drag and drop, paste or the composer's **Chat 
 | `/config/home/.kiro/` | kiro-cli's sessions, settings, steering, agents and logs |
 | `/config/tools/` | Installed tools. `bin/` and `go/bin/` are on `PATH`, so link any other binary into `bin/` |
 | `/config/*.json` | marotte's settings, the tools list and its state, and the MCP server list |
+| `marotte.lock` in `/config`, `/config/home/.kiro` and `/config/tools` | Holds the process ID of the marotte using the folder. marotte locks the folder itself as well as this file, so deleting the file does not let a second marotte start on the same host, but deleting or replacing the whole folder does. A marotte that crashed leaves no lock behind. Between two hosts sharing a network folder only the lock on this file counts, so leave it in place, and the share must support file locks |
 
 ## OS packages
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sync"
 	"time"
 
@@ -63,21 +64,19 @@ type App struct {
 	stopPRPoller func()
 	// stopForgeKeeper stops the forge credential keeper and waits for its goroutine.
 	stopForgeKeeper func()
+	// stopKASHeal stops the KAS MCP file heal loop and waits for its goroutine.
+	stopKASHeal func()
 	// stopApp ends the app's LIFETIME: what every process-bound component is parented on.
 	stopApp func()
 	// waitSignIn waits for the sign-in vault's goroutines, which end with the app's lifetime.
 	waitSignIn func()
+	// roots is never closed: the claims last until the process exits (heldRoots).
+	roots *heldRoots
 }
 
 // Build constructs all services and wires them together. staticFS is the embedded
 // web UI; cfg must be treated as read-only from here on.
 func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
-	// flock, so the lock auto-releases on SIGKILL: two processes on one configDir
-	// corrupt chat files.
-	if err := acquireInstanceLock(cfg.ConfigDir); err != nil {
-		return nil, fmt.Errorf("another marotte instance is running on %s: %w", cfg.ConfigDir, err)
-	}
-
 	if err := validateConfig(ctx, cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed:\n  %w", err)
 	}
@@ -96,6 +95,13 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	slog.Info("boot paths resolved",
 		"config_dir", cfg.ConfigDir, "work_dir", cfg.WorkDir, "kiro_home", workspace.KiroHome())
 	logBridgeEnvPosture(cfg)
+
+	// Before the first write into any root: every writer below would otherwise run in a second
+	// instance too, rendering its own state over the live one's.
+	roots, claimErr := claimRoots(ownedRoots(cfg))
+	if claimErr != nil {
+		return nil, fmt.Errorf("refusing to start: %w", claimErr)
+	}
 
 	// Backgrounded: the listener binds first, so a first-boot download is an unready verdict rather
 	// than a missing server. Below Install because its early returns log synchronously.
@@ -202,7 +208,12 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return steering.MCPSnapshot{Servers: h.MCPSnapshot()}
 	})
 	h.SetMCPOnChange(func() { steer.Generate(appCtx) })
-	h.SetPreSessionOpen(func(ctx context.Context) { steer.Generate(ctx) })
+	healer := &kasHealer{heal: mcpStore.HealKASConfig, afterHeal: h.SyncPowers, every: kasHealInterval}
+	h.SetPreSessionOpen(func(ctx context.Context) {
+		steer.Generate(ctx)
+		healer.healOnce(ctx, "session_open")
+	})
+	stopKASHeal := runBackground(appCtx, "kas mcp config heal", healer.run)
 	h.SetChatSteering(steer.ChatDocs)
 
 	// The manager notifies nothing before the routes serve, the keeper runs or a forge snapshot
@@ -327,8 +338,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopKiroSeed:    stopKiroSeed,
 		stopPRPoller:    stopPRPoller,
 		stopForgeKeeper: stopForgeKeeper,
+		stopKASHeal:     stopKASHeal,
 		stopApp:         stopApp,
 		waitSignIn:      vault.Wait,
+		roots:           roots,
 	}, nil
 }
 
@@ -351,6 +364,7 @@ func (a *App) Run() error {
 func (a *App) Shutdown() {
 	callIfSet(a.stopPRPoller)
 	callIfSet(a.stopForgeKeeper)
+	callIfSet(a.stopKASHeal)
 	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the agent engine the
 	// runtime teardown is about to stop, so the reverse order leaves one mid-inspect.
 	callIfSet(a.stopOrphanSweep)
@@ -371,6 +385,7 @@ func (a *App) Shutdown() {
 	a.shutdownHub()
 	// After the runtime's teardown, which may still call the vault: a renewal's save lands before exit.
 	callIfSet(a.waitSignIn)
+	runtime.KeepAlive(a.roots)
 }
 
 // hubStopGrace bounds the runtime teardown App.Shutdown owns: the signal context is already

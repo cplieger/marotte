@@ -451,7 +451,7 @@ func (rt *Runtime) SyncPowers(ctx context.Context) {
 		return
 	}
 	if err := rt.powers.backend.Sync(ctx, rt.powers.serversMode); err != nil {
-		slog.Warn("powers: legacy block not rendered at boot", "error", err)
+		slog.Warn("powers: legacy block not rendered", "error", err)
 	}
 	rt.powers.refreshAdmin()
 }

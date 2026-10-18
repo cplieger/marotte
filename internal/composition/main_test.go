@@ -11,6 +11,9 @@ import (
 // forge manager that loads a connected record registers this test binary as the credential
 // helper, and a leaked entry outlives the binary and breaks every later git fetch.
 func TestMain(m *testing.M) {
+	if dir := os.Getenv(holdRootEnv); dir != "" {
+		os.Exit(holdRootForParent(dir))
+	}
 	os.Exit(runIsolatedFromGitConfig(m))
 }
 
