@@ -102,25 +102,77 @@ func TestHealKASConfig_RestoresWhatAnotherWriterChanged(t *testing.T) {
 	}
 }
 
-func TestHealKASConfig_RestoresADeletedFileOnAnEmptyStore(t *testing.T) {
-	s, kas := newIsolatedStore(t)
-	logs := captureSlog(t)
-	if err := os.Remove(kas); err != nil {
-		t.Fatal(err)
+// An empty store renders `{}`, so every other member value is drift, an empty-looking one too.
+func TestHealKASConfig_AnEmptyStoreHealsEveryMemberItWouldNotWrite(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string // "" deletes the file
+		member string
+	}{
+		{"file deleted", "", "absent"},
+		{"member absent", `{"other": 1}`, "absent"},
+		{"member null", `{"mcpServers": null}`, "null"},
+		{"member array", `{"mcpServers": []}`, "array"},
+		{"member string", `{"mcpServers": "bad"}`, "string"},
+		{"member number", `{"mcpServers": 7}`, "number"},
+		{"member boolean", `{"mcpServers": false}`, "boolean"},
+		{"server added", `{"mcpServers": {"x": {"command": "sh"}}}`, "object"},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, kas := newIsolatedStore(t)
+			if tc.body == "" {
+				if err := os.Remove(kas); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeKASFile(t, kas, tc.body)
+			}
+			logs := captureSlog(t)
 
-	healed, err := s.HealKASConfig(t.Context(), "poll")
-	if err != nil || !healed {
-		t.Fatalf("HealKASConfig = %v, %v; want true, nil", healed, err)
+			healed, err := s.HealKASConfig(t.Context(), "poll")
+			if err != nil || !healed {
+				t.Fatalf("HealKASConfig = %v, %v; want true, nil", healed, err)
+			}
+			var member any
+			if err := json.Unmarshal(readKAS(t, kas)[kasServerKey], &member); err != nil {
+				t.Fatalf("parse mcpServers: %v", err)
+			}
+			if m, ok := member.(map[string]any); !ok || len(m) != 0 {
+				t.Errorf("mcpServers after heal = %#v, want an empty object", member)
+			}
+			line := logs.String()
+			for _, want := range []string{driftWarn, "level=WARN", "member=" + tc.member} {
+				if !strings.Contains(line, want) {
+					t.Errorf("heal log lacks %q:\n%s", want, line)
+				}
+			}
+
+			logs.Reset()
+			if healed, err := s.HealKASConfig(t.Context(), "poll"); err != nil || healed {
+				t.Errorf("second HealKASConfig = %v, %v; want false, nil", healed, err)
+			}
+			if strings.Contains(logs.String(), driftWarn) {
+				t.Errorf("the second heal warned:\n%s", logs)
+			}
+		})
 	}
-	if got := readKASServers(t, kas); len(got) != 0 {
-		t.Errorf("mcpServers after heal = %v, want an empty member", got)
-	}
-	if !strings.Contains(logs.String(), driftWarn) {
-		t.Errorf("no drift WARN for the deleted file:\n%s", logs)
-	}
+}
+
+func TestHealKASConfig_AnEmptyStoreLeavesItsOwnRenderAlone(t *testing.T) {
+	s, kas := newIsolatedStore(t)
+	body := `{"mcpServers": {}, "other": 1}`
+	writeKASFile(t, kas, body)
+	logs := captureSlog(t)
+
 	if healed, err := s.HealKASConfig(t.Context(), "poll"); err != nil || healed {
-		t.Errorf("second HealKASConfig = %v, %v; want false, nil", healed, err)
+		t.Errorf("HealKASConfig = %v, %v; want false, nil", healed, err)
+	}
+	if got, _ := os.ReadFile(kas); string(got) != body {
+		t.Errorf("file = %s, want it left as %s", got, body)
+	}
+	if strings.Contains(logs.String(), driftWarn) {
+		t.Errorf("a file already as rendered warned:\n%s", logs)
 	}
 }
 

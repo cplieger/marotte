@@ -16,11 +16,11 @@ import (
 // with shell access can write.
 const kasDriftNamesCap = 20
 
-// HealKASConfig re-renders KAS's config file when its `mcpServers` member is missing or says
-// something other than the store renders, and reports whether it wrote. Only that member is compared, by value,
-// so a reindented file is not drift; every other key is kept. An unreadable file is left alone
-// and returns ErrKASUnreadable. trigger names the caller in the drift WARN. It waits for the
-// write turn only while ctx lasts.
+// HealKASConfig re-renders KAS's config file when its `mcpServers` member does not decode to the
+// value a save would write (a missing, null or non-object member included), and reports whether
+// it wrote. Only that member is compared, by value, so a reindented file is not drift; every
+// other key is kept. An unreadable file is left alone and returns ErrKASUnreadable. trigger
+// names the caller in the drift WARN. It waits for the write turn only while ctx lasts.
 func (s *Store) HealKASConfig(ctx context.Context, trigger string) (bool, error) {
 	if err := s.acquireWrite(ctx); err != nil {
 		return false, err
@@ -44,17 +44,15 @@ func (s *Store) healKASLocked(ctx context.Context, trigger string) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	// Every write renders the member, so a file without it was deleted or stripped by another
-	// writer, even when the store has no servers.
 	fileServers, hasMember := doc[kasServerKey]
+	if sameJSONValue(fileServers, wanted) {
+		return false, nil
+	}
+	pending := s.isPendingWaitRender(fileServers, policy)
 	drift, err := diffKASServers(objectOrEmpty(fileServers), objectOrEmpty(wanted))
 	if err != nil {
 		return false, err
 	}
-	if drift.empty() && hasMember {
-		return false, nil
-	}
-	pending := hasMember && s.isPendingWaitRender(objectOrEmpty(fileServers), policy)
 	delete(doc, kasServerKey)
 	if err := s.writeKASConfigWith(ctx, doc, s.servers, policy); err != nil {
 		return false, err
@@ -64,7 +62,7 @@ func (s *Store) healKASLocked(ctx context.Context, trigger string) (bool, error)
 		return true, nil
 	}
 	slog.Warn("mcp: kas config file had drifted from the store; re-rendered it",
-		"path", s.kasPath, "trigger", trigger,
+		"path", s.kasPath, "trigger", trigger, "member", jsonKind(fileServers, hasMember),
 		"missing", driftNames(drift.missing), "unexpected", driftNames(drift.unexpected),
 		"changed", driftNames(drift.changed))
 	return true, nil
@@ -73,17 +71,49 @@ func (s *Store) healKASLocked(ctx context.Context, trigger string) (bool, error)
 // isPendingWaitRender reports whether file is exactly marotte's last render under a wait setting
 // that has changed since: the setting reaches the file lazily, so that difference is marotte's
 // own pending write, not another writer's drift.
-func (s *Store) isPendingWaitRender(file map[string]json.RawMessage, policy kasRenderPolicy) bool {
+func (s *Store) isPendingWaitRender(file json.RawMessage, policy kasRenderPolicy) bool {
 	last := s.renderedState()
 	if !last.known || last.waitForReady == policy.waitAll {
 		return false
 	}
 	prev, err := renderServersKey(s.servers, kasRenderPolicy{waitAll: last.waitForReady})
-	if err != nil {
+	return err == nil && sameJSONValue(file, prev)
+}
+
+// sameJSONValue reports whether two JSON texts decode to the same value, so key order and
+// whitespace do not count and a null, an array or an extra field does. A missing (nil) text
+// matches nothing.
+func sameJSONValue(a, b json.RawMessage) bool {
+	var av, bv any
+	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {
 		return false
 	}
-	d, err := diffKASServers(file, objectOrEmpty(prev))
-	return err == nil && d.empty()
+	return reflect.DeepEqual(av, bv)
+}
+
+// jsonKind names the JSON type of a member for the drift WARN, "absent" when the file lacks it.
+func jsonKind(raw json.RawMessage, present bool) string {
+	if !present {
+		return "absent"
+	}
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return "invalid"
+	}
+	switch v.(type) {
+	case nil:
+		return "null"
+	case map[string]any:
+		return "object"
+	case []any:
+		return "array"
+	case string:
+		return "string"
+	case bool:
+		return "boolean"
+	default:
+		return "number"
+	}
 }
 
 // kasDrift names the servers whose declaration in the file differs from the render. Names only:
@@ -92,12 +122,7 @@ type kasDrift struct {
 	missing, unexpected, changed []string
 }
 
-func (d kasDrift) empty() bool {
-	return len(d.missing) == 0 && len(d.unexpected) == 0 && len(d.changed) == 0
-}
-
-// diffKASServers compares the file's servers with the wanted ones by decoded value, so key order
-// and whitespace are not drift and a field marotte never renders is.
+// diffKASServers names the servers the drift WARN reports, comparing each by decoded value.
 func diffKASServers(file, wanted map[string]json.RawMessage) (kasDrift, error) {
 	var d kasDrift
 	for name, w := range wanted {

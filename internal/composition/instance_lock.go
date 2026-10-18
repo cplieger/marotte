@@ -54,7 +54,8 @@ func (h *heldRoots) release() {
 // rootHeldError is claimRoots' refusal: another process holds the root's lock.
 type rootHeldError struct {
 	Role, Dir, LockFile string
-	// HolderPID is the pid written in the lock file, 0 when the holder had not written it yet.
+	// HolderPID is the pid written in the lock file, 0 when the holder has not written it or the
+	// file is gone.
 	HolderPID int
 }
 
@@ -65,8 +66,8 @@ func (e *rootHeldError) Error() string {
 	return fmt.Sprintf("another marotte instance (pid %d) holds %s %s", e.HolderPID, e.Role, e.Dir)
 }
 
-// claimRoots takes a non-blocking exclusive flock on <dir>/marotte.lock in every root and writes
-// this pid there. A root another process holds logs an ERROR, releases every claim taken so far and
+// claimRoots claims every root through lockRoot (its folder and marotte.lock) and writes this pid
+// there. A root another process holds logs an ERROR, releases every claim taken so far and
 // returns *rootHeldError. Any other failure (mkdir, open, a share without locks) warns and boots on
 // without that claim. The kernel drops a flock when its holder exits, SIGKILL included.
 func claimRoots(roots []ownedRoot) (*heldRoots, error) {

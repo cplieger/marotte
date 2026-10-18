@@ -96,13 +96,18 @@ logfmt_value() {
 
 # Returns 1, with marotte's own refusal line, when a running marotte holds one of the
 # folders: this script's deletions below would otherwise run against its live tree
-# before marotte's claim (internal/composition/instance_lock.go) refuses. The probe
-# keeps no lock, and any failure other than contention leaves the refusal to marotte.
+# before marotte's claim (internal/composition/instance_lock.go) refuses. It probes
+# both locks that claim takes, the folder and its marotte.lock. The probe keeps no
+# lock, and any failure other than contention leaves the refusal to marotte.
 refuse_held_roots() {
   local root rc pid
   for root in "$@"; do
     rc=0
     flock -n -E 75 "$root" true 2>/dev/null || rc=$?
+    if [ "$rc" -ne 75 ] && [ -f "$root/marotte.lock" ]; then
+      rc=0
+      flock -n -E 75 "$root/marotte.lock" true 2>/dev/null || rc=$?
+    fi
     [ "$rc" -eq 75 ] || continue
     pid=$(head -c 32 "$root/marotte.lock" 2>/dev/null | tr -dc '0-9')
     printf 'level=error msg="another marotte instance holds this folder, so this one is refusing to start" path="%s" holder_pid=%s component=entrypoint\n' \
