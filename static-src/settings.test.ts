@@ -69,7 +69,7 @@ vi.mock("./save-indicator.js", () => ({
 vi.mock("./persist.js", () => ({
   loadSettings: vi.fn(),
   refreshSettings: vi.fn(),
-  patchSettings: vi.fn(),
+  patchSettings: vi.fn(() => Promise.resolve({})),
   adoptSettings: () => H.adopts,
   newestSettings: vi.fn(),
 }));
@@ -180,6 +180,13 @@ beforeEach(() => {
   seedDom();
 });
 
+/** persist.patchSettings for a write the server refuses: it puts each switch back, then answers null. */
+function failAndRollBack(_patch: unknown, ...boxes: HTMLInputElement[]): Promise<null> {
+  for (const box of boxes) {
+    box.checked = !box.checked;
+  }
+  return Promise.resolve(null);
+}
 describe("extractDiagnosticVersion", () => {
   it("reads q-details.version (the Amazon-Q-derived schema)", () => {
     expect(extractDiagnosticVersion('{"q-details":{"version":"2.12.0"}}')).toBe("2.12.0");
@@ -448,6 +455,19 @@ describe("the chat-retention row", () => {
     expect(daysRow().classList.contains("hidden")).toBe(false);
     expect(daysInput().value).toBe("30");
     expect(patchSettings).toHaveBeenLastCalledWith({ chat_retention_days: 30 }, expect.anything());
+  });
+
+  it("shows the Days-kept row again when the write that hid it fails", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ chat_retention_days: 30 }));
+    vi.mocked(patchSettings).mockImplementationOnce(failAndRollBack);
+
+    toggleForever(true);
+
+    await vi.waitFor(() => {
+      expect(daysRow().classList.contains("hidden")).toBe(false);
+    });
+    expect(foreverInput().checked).toBe(false);
   });
 });
 
@@ -880,6 +900,21 @@ describe("the automatic-compaction switch and slider", () => {
       toggle(),
     );
     expect(row().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the slider and the policy again when the write that turned the switch off fails", async () => {
+    const { patchSettings } = await import("./persist.js");
+    const { compactionPolicy } = await import("./context-ring.js");
+    initRetention(settingsPayload({ auto_compaction_enabled: true, auto_compact_pct: 80 }));
+    vi.mocked(patchSettings).mockImplementationOnce(failAndRollBack);
+    toggle().checked = false;
+    toggle().dispatchEvent(new Event("change"));
+
+    await vi.waitFor(() => {
+      expect(row().classList.contains("hidden")).toBe(false);
+    });
+    expect(toggle().checked).toBe(true);
+    expect(compactionPolicy.value).toEqual({ enabled: true, pct: 80 });
   });
 });
 

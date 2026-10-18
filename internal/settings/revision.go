@@ -49,20 +49,37 @@ func stampOf(doc map[string]json.RawMessage) stamp {
 	return s
 }
 
-// next is the stamp a write over a document stamped stored commits at now. It continues the count
-// only over the stamp this process last wrote (c.committed). Otherwise, as on a process's first
-// write or over a file replaced since, it starts an epoch above both, in milliseconds: a count
-// read back from a restored copy could repeat one a page holds. Neither field passes maxStamp; an
-// epoch saturated there by a hand-edited stamp continues that stamp's count instead.
-func (c *cache) next(stored stamp, now time.Time) stamp {
+// next is the stamp a write over a document stamped stored commits at now, or false when no later
+// stamp fits under maxStamp. It continues the count only over the stamp this process last wrote
+// (c.committed). Otherwise, as on a process's first write or over a file replaced since, it starts
+// an epoch above both, in milliseconds: a count read back from a restored copy could repeat one a
+// page holds. With the epoch saturated by a hand-edited stamp, the count continues above both.
+func (c *cache) next(stored stamp, now time.Time) (stamp, bool) {
 	if stored.epoch != 0 && stored.revision != 0 && stored == c.committed {
-		return stamp{epoch: stored.epoch, revision: min(stored.revision+1, maxStamp)}
+		return stored.successor()
 	}
-	epoch := min(max(uint64(max(now.UnixMilli(), 0)), stored.epoch+1, c.committed.epoch+1), maxStamp)
-	if epoch == stored.epoch {
-		return stamp{epoch: epoch, revision: min(stored.revision+1, maxStamp)}
+	if epoch := max(uint64(max(now.UnixMilli(), 0)), stored.epoch+1, c.committed.epoch+1); epoch <= maxStamp {
+		return stamp{epoch: epoch, revision: 1}, true
 	}
-	return stamp{epoch: epoch, revision: 1}
+	if stored.below(c.committed) {
+		return c.committed.successor()
+	}
+	return stored.successor()
+}
+
+// successor is the next stamp after s within maxStamp: the next revision, else the next epoch's first.
+func (s stamp) successor() (stamp, bool) {
+	switch {
+	case s.revision < maxStamp:
+		return stamp{epoch: s.epoch, revision: s.revision + 1}, true
+	case s.epoch < maxStamp:
+		return stamp{epoch: s.epoch + 1, revision: 1}, true
+	}
+	return stamp{}, false
+}
+
+func (s stamp) below(than stamp) bool {
+	return s.epoch < than.epoch || (s.epoch == than.epoch && s.revision < than.revision)
 }
 
 func (s stamp) write(doc map[string]json.RawMessage) {

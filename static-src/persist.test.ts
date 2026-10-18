@@ -33,6 +33,20 @@ import {
 } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import { decodeEffectiveSettings } from "./wire/decoders.gen.js";
+import { isPending } from "./actions/index.js";
+
+// A write settling after the next case's reset would record its answer in that case's tracker.
+afterEach(async () => {
+  await vi.waitFor(() => {
+    expect(isPending("settings.patch"), "every write settled").toBe(false);
+  });
+});
+
+/** The server's answer to a settings PATCH: the default settings with the write's body committed. */
+function committed(_url: unknown, init?: RequestInit): Promise<Response> {
+  const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+  return Promise.resolve(Response.json(settingsPayload(body as Partial<EffectiveSettings>)));
+}
 
 describe("patchSettings debounce coalescing", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
@@ -40,7 +54,7 @@ describe("patchSettings debounce coalescing", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy = vi.fn(committed);
     vi.stubGlobal("fetch", fetchSpy);
     // Reset the dedup tracker so tests don't bleed state between each other. Without this,
     // patchSettings({last_model: "claude"}) in test N+1 would be filtered out as a duplicate of
@@ -140,7 +154,7 @@ describe("patchSettings no-op dedup", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy = vi.fn(committed);
     vi.stubGlobal("fetch", fetchSpy);
     __testResetTracking();
   });
@@ -239,7 +253,7 @@ describe("patchSettings unload flush", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy = vi.fn(committed);
     vi.stubGlobal("fetch", fetchSpy);
     __testResetTracking();
   });
@@ -292,7 +306,7 @@ describe("patchSettings failure handling", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy = vi.fn(committed);
     vi.stubGlobal("fetch", fetchSpy);
     __testResetTracking();
   });
@@ -325,7 +339,7 @@ describe("patchSettings failure handling", () => {
     // change, not a repeat. Without the rollback the retry is dropped on the floor and the setting
     // never reaches the server.
     fetchSpy.mockClear();
-    fetchSpy.mockImplementation(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy.mockImplementation(committed);
     patchSettings({ last_model: "opus" });
     await vi.advanceTimersByTimeAsync(350);
 
@@ -345,7 +359,7 @@ describe("patchSettings failure handling", () => {
     await vi.advanceTimersByTimeAsync(350);
 
     fetchSpy.mockClear();
-    fetchSpy.mockImplementation(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy.mockImplementation(committed);
     patchSettings({ last_model: "claude" });
     await vi.advanceTimersByTimeAsync(350);
 
@@ -386,7 +400,7 @@ describe("patchSettings saving indicator", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy = vi.fn(committed);
     vi.stubGlobal("fetch", fetchSpy);
     __testResetTracking();
   });
@@ -661,12 +675,12 @@ describe("adoptSettings", () => {
 });
 
 describe("patchSettings answer", () => {
-  let answer: Record<string, unknown>;
+  let answer: EffectiveSettings;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    answer = {};
+    answer = settingsPayload();
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(Response.json(answer))),
@@ -686,18 +700,28 @@ describe("patchSettings answer", () => {
   }
 
   it("resolves with the committed settings, and holds their version", async () => {
-    answer = v(4);
-    await expect(patched()).resolves.toEqual(v(4));
+    answer = settingsPayload({ ...v(4), theme: "dark" });
+    await expect(patched()).resolves.toEqual(answer);
     expect(adoptSettings(v(3))).toBe(false);
   });
 
   it("resolves superseded, still reporting Saved, when the page holds newer settings", async () => {
     const { showSaved } = await import("./save-indicator.js");
     noteSettingsEvent(v(5));
-    answer = v(4);
+    answer = settingsPayload({ ...v(4), theme: "dark" });
     await expect(patched()).resolves.toBe("superseded");
     expect(showSaved).toHaveBeenCalledWith(["theme"]);
     expect(adoptSettings(v(5)), "the held version is unchanged").toBe(true);
+  });
+
+  it("fails a write whose answer is not the committed settings", async () => {
+    const { showError } = await import("./save-indicator.js");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(Response.json({ theme: "dark" }))),
+    );
+    await expect(patched()).resolves.toBeNull();
+    expect(showError).toHaveBeenCalledWith(["theme"]);
   });
 });
 
@@ -726,7 +750,7 @@ describe("patchSettings generation guard", () => {
     // that would stall the next test in this file. A queued dispatch reaches the network as its
     // predecessor answers, so this walks the list as it grows.
     for (const resolve of pending) {
-      resolve(new Response("{}", { status: 200 }));
+      resolve(Response.json(settingsPayload()));
       await vi.advanceTimersByTimeAsync(0);
     }
     vi.useRealTimers();
@@ -750,14 +774,14 @@ describe("patchSettings generation guard", () => {
     // The queued write reaches the network only as its predecessor answers, and a real browser
     // settles a response body over a stream rather than in a microtask, so both halves wait for the
     // observable event instead of a fixed tick count.
-    pending[0]?.(new Response("{}", { status: 200 }));
+    pending[0]?.(Response.json(settingsPayload()));
     await vi.waitFor(() => {
       expect(pending).toHaveLength(2);
     });
     expect(showSaved).not.toHaveBeenCalled();
 
     // The newest write owns the indicator, and it still gets to say so.
-    pending[1]?.(new Response("{}", { status: 200 }));
+    pending[1]?.(Response.json(settingsPayload()));
     await vi.waitFor(() => {
       expect(showSaved).toHaveBeenCalledTimes(1);
     });
@@ -792,7 +816,7 @@ describe("patchSettings generation guard", () => {
     patchSettings({ debug_logs: true }, box);
     await vi.advanceTimersByTimeAsync(350);
 
-    pending[0]?.(new Response("{}", { status: 200 }));
+    pending[0]?.(Response.json(settingsPayload({ debug_logs: true })));
     await vi.waitFor(() => {
       expect(pending).toHaveLength(2);
     });
@@ -836,7 +860,7 @@ describe("patchSettings generation guard", () => {
     patchSettings({ last_model: "second" });
     await vi.advanceTimersByTimeAsync(350);
 
-    pending[0]?.(new Response("{}", { status: 200 }));
+    pending[0]?.(Response.json(settingsPayload()));
     await vi.waitFor(() => {
       expect(showSaved).toHaveBeenCalled();
     });

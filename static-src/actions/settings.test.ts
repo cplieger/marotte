@@ -18,6 +18,7 @@ vi.mock("../api-client.js", () => ({
 }));
 import * as toast from "../toast.js";
 import { signedIn } from "../__test-helpers__/identity.js";
+import { settingsPayload } from "../__test-helpers__/settings.js";
 
 const mockFetch = vi.fn();
 
@@ -305,7 +306,8 @@ describe("a lockable switch crossing a lock", () => {
       frame(key);
       frame();
       expect(input.checked).toBe(false);
-      mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      // Both endpoints answer 200; the settings PATCH's body is the committed settings.
+      mockFetch.mockResolvedValueOnce(Response.json(settingsPayload()));
       input.checked = true;
       await saveSwitch(actions, key, input);
       expect(input.checked).toBe(true);

@@ -282,6 +282,64 @@ func TestStamp_StaysWhereAJavaScriptNumberOrdersIt(t *testing.T) {
 	})
 }
 
+func TestUpdate_ARevisionAtTheBoundStartsTheNextEpoch(t *testing.T) {
+	dir := t.TempDir()
+	saturated := stamp{epoch: 5, revision: maxStamp}
+	writeConfig(t, dir, fmt.Sprintf(`{"settings_epoch":5,"settings_revision":%d}`, uint64(maxStamp)))
+	getCache(dir).committed = saturated
+	if _, err := Update(t.Context(), dir, setKey(KeyTheme, "dark"), nil); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := storedStamp(t, dir); got != (stamp{epoch: 6, revision: 1}) {
+		t.Errorf("stamp = %+v after %+v, want epoch 6 revision 1", got, saturated)
+	}
+}
+
+func TestUpdate_RefusesWhenNoLaterStampIsLeft(t *testing.T) {
+	full := fmt.Sprintf(`{"settings_epoch":%d,"settings_revision":%d}`, uint64(maxStamp), uint64(maxStamp))
+	tests := []struct {
+		name      string
+		stored    string
+		committed stamp
+	}{
+		{name: "the stored stamp is at the bound in both fields", stored: full},
+		{
+			name:      "this process last wrote the bound in both fields, and the stamp was removed by hand",
+			stored:    `{}`,
+			committed: stamp{epoch: maxStamp, revision: maxStamp},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConfig(t, dir, tc.stored)
+			getCache(dir).committed = tc.committed
+			var ev events
+			merged := false
+			_, err := Update(t.Context(), dir, func(map[string]json.RawMessage) error {
+				merged = true
+				return nil
+			}, ev.publish)
+			if !errors.Is(err, errNoLaterStamp) {
+				t.Fatalf("Update = %v, want errNoLaterStamp", err)
+			}
+			if merged {
+				t.Error("the merge ran for a write that has no version")
+			}
+			data, err := os.ReadFile(filepath.Join(dir, Filename))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != tc.stored {
+				t.Errorf("config.json = %q after a refused write, want %q", data, tc.stored)
+			}
+			if len(ev.got)+len(ev.other) != 0 {
+				t.Errorf("events = %v %v after a refused write, want none", ev.got, ev.other)
+			}
+		})
+	}
+}
+
 func TestUpdate_TheStampIsNeverTheMergesToSet(t *testing.T) {
 	tests := []struct {
 		merge func(map[string]json.RawMessage) error

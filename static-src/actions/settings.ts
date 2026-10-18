@@ -149,7 +149,8 @@ interface PatchAppArgs {
   restore?: () => readonly { el: HTMLInputElement; checked: boolean }[];
 }
 
-export const patchAppSettings = apiAction<PatchAppArgs>({
+/** Write some settings; answers the settings the write committed. */
+export const patchAppSettings = apiAction<PatchAppArgs, EffectiveSettings>({
   name: "settings.patch",
   scope: "settings",
   request: ({ body }) => ({
@@ -157,6 +158,7 @@ export const patchAppSettings = apiAction<PatchAppArgs>({
     path: "/api/settings",
     body,
   }),
+  decode: (data) => decodeEffectiveSettings(data),
   rollback: ({ restore }) => {
     for (const { el, checked } of restore?.() ?? []) {
       writeSwitch(el, checked);

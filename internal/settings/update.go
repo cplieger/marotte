@@ -21,13 +21,18 @@ import (
 // could not be read or parsed, so the remedy is the file itself.
 var ErrUnreadable = errors.New("settings: stored document unreadable")
 
+// errNoLaterStamp refuses a write when the stored version and this process's last one are both
+// at maxStamp, so no version a page orders after them is left.
+var errNoLaterStamp = fmt.Errorf("settings: no version above settings_epoch and settings_revision %d is left; "+
+	"remove both keys from config.json and restart marotte", uint64(maxStamp))
+
 // Update applies fn to the stored document and writes it back atomically under ONE per-
 // configDir lock across read, merge and write, so concurrent writers drop no key. An
 // unreadable document refuses (ErrUnreadable): merging over an empty map would destroy every
 // key fn does not name. An absent file is ordinary. Each write stamps the document with the next
-// version (cache.next), whatever fn put there; a refusal writes nothing. publish, when not nil,
-// gets the write's settings_updated event before the lock is released, so events leave in version
-// order. The merged document is returned.
+// version (cache.next), whatever fn put there, and refuses when none is left; a refusal writes
+// nothing. publish, when not nil, gets the write's settings_updated event before the lock is
+// released, so events leave in version order. The merged document is returned.
 func Update(ctx context.Context, configDir string, fn func(doc map[string]json.RawMessage) error, publish func(context.Context, marotte.ServerEvent)) (map[string]json.RawMessage, error) {
 	if configDir == "" {
 		return nil, errors.New("settings: no config dir")
@@ -44,7 +49,10 @@ func Update(ctx context.Context, configDir string, fn func(doc map[string]json.R
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
 	}
-	next := c.next(stampOf(doc), time.Now())
+	next, ok := c.next(stampOf(doc), time.Now())
+	if !ok {
+		return nil, errNoLaterStamp
+	}
 	if mErr := fn(doc); mErr != nil {
 		return nil, mErr
 	}

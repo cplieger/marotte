@@ -267,7 +267,12 @@ function initChatRetentionControls(): void {
   }
   const { daysInput, daysRow, foreverInput } = els;
   const persist = (value: number, ...boxes: HTMLInputElement[]): void => {
-    void patchSettings({ chat_retention_days: value }, ...boxes);
+    void patchSettings({ chat_retention_days: value }, ...boxes).then((r) => {
+      // A failed write may have put the forever box back.
+      if (r === null) {
+        daysRow?.classList.toggle("hidden", foreverInput.checked);
+      }
+    });
   };
 
   daysInput.addEventListener("change", () => {
@@ -935,7 +940,12 @@ function initAutoCompactionControls(): void {
   const { toggle, range } = els;
   toggle.addEventListener("change", () => {
     paintAutoCompaction(toggle.checked, Number(range.value));
-    void patchSettings({ auto_compaction_enabled: toggle.checked }, toggle);
+    void patchSettings({ auto_compaction_enabled: toggle.checked }, toggle).then((r) => {
+      // A failed write may have put the switch back.
+      if (r === null) {
+        paintAutoCompaction(toggle.checked, Number(range.value));
+      }
+    });
   });
   // `input` repaints the readout while dragging; only `change`, the released gesture, writes.
   range.addEventListener("input", () => {

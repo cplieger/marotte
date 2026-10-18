@@ -75,7 +75,6 @@ function dirsAt(revision: number, dirs: string[], epoch = 1): EffectiveSettings 
   });
 }
 
-/** Past patchSettings' debounce. */
 async function debounced(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 350));
   await settled();
@@ -85,10 +84,13 @@ function debugLogs(): HTMLInputElement {
   return byId<HTMLInputElement>("flag-debug-logs");
 }
 
-/** Click the debug-logs switch to on, as its change listener saves it. */
-function tick(on: boolean): void {
+function saveDebugLogs(on: boolean): void {
   debugLogs().checked = on;
   void patchSettings({ debug_logs: on }, debugLogs());
+}
+
+function debugAt(revision: number, on: boolean): EffectiveSettings {
+  return settingsPayload({ settings_epoch: 1, settings_revision: revision, debug_logs: on });
 }
 
 function add(dir: string): void {
@@ -301,7 +303,7 @@ describe("settings sync ordering", () => {
       settingsPayload({ settings_epoch: 1, settings_revision: 1, debug_logs: false }),
     );
     await settled();
-    tick(true);
+    saveDebugLogs(true);
     await debounced();
     expect(patches).toHaveLength(1);
 
@@ -314,7 +316,7 @@ describe("settings sync ordering", () => {
     await settled();
     expect(debugLogs().checked, "the server's value, not the one before this write").toBe(true);
 
-    tick(false);
+    saveDebugLogs(false);
     await debounced();
     expect(patches[1]?.body).toEqual({ debug_logs: false });
     patches[1]?.answer(settingsPayload({ settings_epoch: 1, settings_revision: 3 }));
@@ -328,10 +330,10 @@ describe("settings sync ordering", () => {
       settingsPayload({ settings_epoch: 1, settings_revision: 1, debug_logs: false }),
     );
     await settled();
-    tick(true);
+    saveDebugLogs(true);
     await debounced();
-    tick(false);
-    tick(true);
+    saveDebugLogs(false);
+    saveDebugLogs(true);
     await debounced();
     expect(patches, "the second write waits behind the first").toHaveLength(1);
 
@@ -346,8 +348,79 @@ describe("settings sync ordering", () => {
     await settled();
     expect(debugLogs().checked).toBe(true);
 
-    tick(true);
+    saveDebugLogs(true);
     await debounced();
     expect(patches, "true is what the server holds, so nothing is sent").toHaveLength(2);
+  });
+
+  it("sends a click that puts back what newer settings changed while an older write was out", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    expect(patches).toHaveLength(1);
+
+    // Another device turned the switch off after this write committed revision 2.
+    settingsEvent(3);
+    await settled();
+    gets[1]?.answer(debugAt(3, false));
+    await settled();
+    expect(debugLogs().checked).toBe(false);
+
+    saveDebugLogs(true);
+    await debounced();
+    patches[0]?.answer(debugAt(2, true));
+    await settled();
+    expect(patches, "the click reaches the server").toHaveLength(2);
+    expect(patches[1]?.body).toEqual({ debug_logs: true });
+    patches[1]?.answer(debugAt(4, true));
+    await settled();
+    expect(debugLogs().checked).toBe(true);
+  });
+
+  it("puts a switch back to newer settings, not to an overtaken write, when the write after it fails", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    settingsEvent(3);
+    await settled();
+    gets[1]?.answer(debugAt(3, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+
+    patches[0]?.answer(debugAt(2, true));
+    await settled();
+    expect(patches).toHaveLength(2);
+    patches[1]?.fail();
+    await settled();
+    expect(debugLogs().checked, "revision 3's value").toBe(false);
+  });
+
+  it("puts a switch back to newer settings, not to the value before both writes, when both fail", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, true));
+    await settled();
+    saveDebugLogs(false);
+    await debounced();
+    settingsEvent(3);
+    await settled();
+    gets[1]?.answer(debugAt(3, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+
+    patches[0]?.fail();
+    await settled();
+    expect(patches).toHaveLength(2);
+    patches[1]?.fail();
+    await settled();
+    expect(debugLogs().checked, "revision 3's value").toBe(false);
   });
 });
