@@ -1,5 +1,6 @@
 // The turn footer's open panel: titled sections of rows on one grid (`29-turns.css`), reconciled by
-// key so a live repaint keeps every node, the lists the reader opened and focus.
+// key down to each list item's parts, so a live repaint replaces only what changed and keeps the
+// lists the reader opened and focus.
 
 import { el, reconcile } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
@@ -7,13 +8,21 @@ import { chevronEl } from "./chevron.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_ARROW_RIGHT } from "./icons.js";
 
-/** One entry of a disclosure's list. `sig` covers everything `build` renders: an entry keeps its
- *  node while its key and sig hold, and is rebuilt in place when the sig moves. */
+/** One entry of a disclosure's list. It keeps its node while its key holds; its parts are
+ *  reconciled inside it. */
 export interface PanelItem {
   key: string;
-  sig: string;
   className: string;
-  build: () => (Node | string)[];
+  parts: ItemPart[];
+}
+
+/** One element of a list item. `sig` covers everything `build` renders: a part keeps its node while
+ *  its key and sig hold, and only a part whose sig moved is rebuilt, so a focused link survives its
+ *  row's share changing. */
+export interface ItemPart {
+  key: string;
+  sig: string;
+  build: () => HTMLElement;
 }
 
 /** A plain value, or a wall-clock instant rendered as a `<time>`. */
@@ -27,8 +36,6 @@ export type PanelRow =
 
 export interface PanelSection {
   title: string;
-  /** Extra class on the section's row list. */
-  listClass?: string;
   rows: PanelRow[];
 }
 
@@ -38,19 +45,13 @@ const openLists = new WeakMap<HTMLElement, Set<string>>();
 const sigs = new WeakMap<Element, string>();
 let listSeq = 0;
 
-/** Paint `sections` into `panel`, withholding a section with no row. `itemEpoch` is folded into
- *  every item's sig, for a fact outside the item data that changes how items render. */
-export function renderPanel(
-  panel: HTMLElement,
-  sections: readonly PanelSection[],
-  itemEpoch: string,
-): void {
+/** Paint `sections` into `panel`, withholding a section with no row. */
+export function renderPanel(panel: HTMLElement, sections: readonly PanelSection[]): void {
   let open = openLists.get(panel);
   if (open === undefined) {
     open = new Set();
     openLists.set(panel, open);
   }
-  const ctx: Ctx = { open, itemEpoch };
   reconcile(
     panel,
     sections.filter((s) => s.rows.length > 0),
@@ -61,24 +62,19 @@ export function renderPanel(
           "section",
           { className: "turn-info-section" },
           el("h4", { className: "turn-info-title" }, s.title),
-          el("ul", { className: `turn-info-rows ${s.listClass ?? ""}`.trim() }),
+          el("ul", { className: "turn-info-rows" }),
         );
-        fillRows(section, s, ctx);
+        fillRows(section, s, open);
         return section;
       },
       update: (section, s) => {
-        fillRows(section, s, ctx);
+        fillRows(section, s, open);
       },
     },
   );
 }
 
-interface Ctx {
-  open: Set<string>;
-  itemEpoch: string;
-}
-
-function fillRows(section: HTMLElement, s: PanelSection, ctx: Ctx): void {
+function fillRows(section: HTMLElement, s: PanelSection, open: Set<string>): void {
   const list = section.querySelector(":scope > .turn-info-rows");
   if (list === null) {
     return;
@@ -86,12 +82,12 @@ function fillRows(section: HTMLElement, s: PanelSection, ctx: Ctx): void {
   reconcile(list, s.rows, {
     key: rowKey,
     mount: (r) => {
-      const li = mountRow(r, ctx);
-      updateRow(li, r, ctx);
+      const li = mountRow(r, open);
+      updateRow(li, r, open);
       return li;
     },
     update: (li, r) => {
-      updateRow(li, r, ctx);
+      updateRow(li, r, open);
     },
   });
 }
@@ -109,7 +105,7 @@ function rowKey(r: PanelRow): string {
   }
 }
 
-function mountRow(r: PanelRow, ctx: Ctx): HTMLElement {
+function mountRow(r: PanelRow, open: Set<string>): HTMLElement {
   switch (r.kind) {
     case "fact":
       return el(
@@ -119,7 +115,7 @@ function mountRow(r: PanelRow, ctx: Ctx): HTMLElement {
         el("span", { className: "turn-info-value" }),
       );
     case "list":
-      return mountDisclosure(r.label, ctx);
+      return mountDisclosure(r.label, open);
     case "file":
       return mountFile(r);
     case "review":
@@ -127,14 +123,14 @@ function mountRow(r: PanelRow, ctx: Ctx): HTMLElement {
   }
 }
 
-function updateRow(li: HTMLElement, r: PanelRow, ctx: Ctx): void {
+function updateRow(li: HTMLElement, r: PanelRow, open: Set<string>): void {
   switch (r.kind) {
     case "fact":
       setText(li.querySelector(":scope > .turn-info-label"), r.label);
       writeValue(li.querySelector(":scope > .turn-info-value"), r.value);
       return;
     case "list":
-      updateDisclosure(li, r, ctx);
+      updateDisclosure(li, r, open);
       return;
     case "file":
       updateFile(li, r);
@@ -179,7 +175,7 @@ function writeValue(span: Element | null, v: PanelValue): void {
 /** A full-row button that opens the list beneath it. The list is `hidden="until-found"` so
  *  find-in-page can open it: Chrome and Firefox scroll to the match, Safari opens the list without
  *  scrolling to it (WebKit bug 304174), and every engine opens it from the button. */
-function mountDisclosure(label: string, ctx: Ctx): HTMLElement {
+function mountDisclosure(label: string, open: Set<string>): HTMLElement {
   listSeq += 1;
   const id = `turn-info-list-${String(listSeq)}`;
   const btn = el(
@@ -192,20 +188,24 @@ function mountDisclosure(label: string, ctx: Ctx): HTMLElement {
   const list = el("ul", { className: "turn-info-list", id });
   const li = el("li", { className: "turn-info-row turn-info-drow" }, btn, list);
   btn.addEventListener("click", () => {
-    if (!ctx.open.delete(label)) {
-      ctx.open.add(label);
+    if (!open.delete(label)) {
+      open.add(label);
     }
-    syncDisclosure(li, ctx.open.has(label));
+    syncDisclosure(li, open.has(label));
   });
   // Find-in-page drops `hidden` itself; recording it keeps the next repaint from re-closing it.
   list.addEventListener("beforematch", () => {
-    ctx.open.add(label);
+    open.add(label);
     syncDisclosure(li, true);
   });
   return li;
 }
 
-function updateDisclosure(li: HTMLElement, r: Extract<PanelRow, { kind: "list" }>, ctx: Ctx): void {
+function updateDisclosure(
+  li: HTMLElement,
+  r: Extract<PanelRow, { kind: "list" }>,
+  open: Set<string>,
+): void {
   setText(li.querySelector(".turn-info-dbtn > .turn-info-label"), r.label);
   setText(li.querySelector(".turn-info-dbtn > .turn-info-value"), r.value);
   const list = li.querySelector(":scope > .turn-info-list");
@@ -214,27 +214,26 @@ function updateDisclosure(li: HTMLElement, r: Extract<PanelRow, { kind: "list" }
       key: (it) => it.key,
       mount: (it) => {
         const item = el("li", {});
-        paintItem(item, it, ctx.itemEpoch);
+        paintItem(item, it);
         return item;
       },
       update: (item, it) => {
-        paintItem(item, it, ctx.itemEpoch);
+        paintItem(item, it);
       },
     });
   }
-  syncDisclosure(li, ctx.open.has(r.label));
+  syncDisclosure(li, open.has(r.label));
 }
 
-function paintItem(item: HTMLElement, it: PanelItem, epoch: string): void {
-  const sig = join(it.sig, it.className, epoch);
-  if (sigs.get(item) === sig) {
-    return;
-  }
-  sigs.set(item, sig);
-  item.replaceChildren(...it.build());
-  item.className = it.className;
+function paintItem(item: HTMLElement, it: PanelItem): void {
+  // The sig is in the key, so a moved part is a departure and a fresh mount.
+  reconcile(item, it.parts, { key: (p) => join(p.key, p.sig), mount: (p) => p.build() });
   // A document link's target is its whole row (the expander in `29-turns.css`).
-  item.classList.toggle("turn-info-doc", item.querySelector(".turn-info-link") !== null);
+  const cls =
+    item.querySelector(".turn-info-link") === null ? it.className : `${it.className} turn-info-doc`;
+  if (item.className !== cls) {
+    item.className = cls;
+  }
 }
 
 function syncDisclosure(li: HTMLElement, open: boolean): void {
@@ -248,8 +247,7 @@ function syncDisclosure(li: HTMLElement, open: boolean): void {
   }
 }
 
-/** One changed file: `path`, a `new` badge, `+N −M`. The path is the row's ink and what the hover
- *  text is about, so the tooltip anchors to it rather than to the row's middle. */
+/** One changed file: `path`, a `new` badge, `+N −M`. */
 function mountFile(r: Extract<PanelRow, { kind: "file" }>): HTMLElement {
   // `data-tooltip`, not `title`: the app's styled tooltip, never the UA's.
   const btn = el("button", {
@@ -269,6 +267,7 @@ function updateFile(li: HTMLElement, r: Extract<PanelRow, { kind: "file" }>): vo
   }
   sigs.set(btn, sig);
   const parts: Node[] = [
+    // The row's ink and what the hover text is about, so the tooltip anchors here, not mid-row.
     el("span", { className: "turn-file-path", "data-tooltip-anchor": "" }, r.path),
   ];
   if (r.isNew) {
@@ -298,7 +297,7 @@ function mountReview(r: Extract<PanelRow, { kind: "review" }>): HTMLElement {
     el("span", { className: "turn-review-arrow", "aria-hidden": "true" }, iconEl(ICON_ARROW_RIGHT)),
   );
   btn.addEventListener("click", r.open);
-  return el("li", { className: "turn-ledger-file turn-ledger-review" }, btn);
+  return el("li", { className: "turn-ledger-file" }, btn);
 }
 
 /** Keys for a list whose values may repeat: the value, plus its occurrence when it repeats. */

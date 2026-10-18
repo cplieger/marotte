@@ -486,7 +486,7 @@ function turnInfoPanel(): { clipper: HTMLElement; row: HTMLElement } {
   row.append(span("turn-file-path", "static-src/app.ts"), node("span", "turn-file-delta"));
   const item = node("li", "turn-ledger-file");
   item.appendChild(row);
-  const list = node("ul", "turn-info-rows turn-ledger-files");
+  const list = node("ul", "turn-info-rows");
   list.appendChild(item);
   const section = node("section", "turn-info-section");
   section.append(node("h4", "turn-info-title"), list);

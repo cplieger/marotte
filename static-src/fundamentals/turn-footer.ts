@@ -21,6 +21,7 @@ import { COMMAND_KINDS, type TurnOutcome } from "../turns.js";
 import {
   occurrenceKeys,
   renderPanel,
+  type ItemPart,
   type PanelItem,
   type PanelRow,
   type PanelValue,
@@ -269,19 +270,14 @@ function renderInfoPanel(
   if (!sigChanged(panel, panelSignature(d))) {
     return;
   }
-  // The root decides which documents link (`documentName`), so it re-renders every list item.
-  renderPanel(
-    panel,
-    [
-      { title: "Changed files", listClass: "turn-ledger-files", rows: fileRows(files) },
-      { title: "Work", rows: workRows(d) },
-      { title: "Time", rows: timingRows(d) },
-      { title: "Model and cost", rows: modelRows(d) },
-      { title: "Context", rows: contextRows(d) },
-      { title: "Diagnostics", rows: diagnosticRows(d) },
-    ],
-    workspaceRoot(),
-  );
+  renderPanel(panel, [
+    { title: "Changed files", rows: fileRows(files) },
+    { title: "Work", rows: workRows(d) },
+    { title: "Time", rows: timingRows(d) },
+    { title: "Model and cost", rows: modelRows(d) },
+    { title: "Context", rows: contextRows(d) },
+    { title: "Diagnostics", rows: diagnosticRows(d) },
+  ]);
 }
 
 /** The non-zero kinds sorted by count then kind, read by the panel's rows and by the row's facts
@@ -409,7 +405,7 @@ function contextRows(d: TurnSummaryData): PanelRow[] {
       kind: "list",
       label: "Breakdown",
       value: plural(b.categories.length, "category", "categories"),
-      items: breakdownItems(b, documentName),
+      items: breakdownItems(b, documentPart),
     });
   }
   return rows;
@@ -449,9 +445,8 @@ function diagnosticRows(d: TurnSummaryData): PanelRow[] {
       value: String(ids.length),
       items: ids.map((id, i) => ({
         key: keys[i] ?? id,
-        sig: id,
         className: "turn-info-item",
-        build: () => [el("code", {}, id)],
+        parts: [{ key: "id", sig: id, build: () => el("code", {}, id) }],
       })),
     });
   }
@@ -510,24 +505,30 @@ function outputEstimate(t: TurnThroughput | undefined): string {
  *  a global one (`~/.kiro`), so any other id is plain text. */
 function steeringItems(ids: readonly string[]): PanelItem[] {
   const keys = occurrenceKeys(ids);
-  return ids.map((id, i) => ({
-    key: keys[i] ?? id,
-    sig: id,
-    className: "turn-info-item",
-    build: () => {
-      const path = filePathOf(id);
-      return [documentName(path?.slice(path.lastIndexOf("/") + 1) ?? id, id)];
-    },
-  }));
+  return ids.map((id, i) => {
+    const path = filePathOf(id);
+    return {
+      key: keys[i] ?? id,
+      className: "turn-info-item",
+      parts: [documentPart(path?.slice(path.lastIndexOf("/") + 1) ?? id, id)],
+    };
+  });
 }
 
-/** A document's name, a button into the editor when `uri` is a file under the workspace. */
-function documentName(name: string, uri: string): HTMLElement {
+/** A document's name, a button into the editor when `uri` is a file under the workspace. The sig
+ *  is the name and the path it opens, so a root change that keeps the link keeps its node. */
+function documentPart(name: string, uri: string): ItemPart {
   const path = filePathOf(uri);
   const root = workspaceRoot();
-  if (path === null || root === "" || relBeneath(root, path) === null) {
-    return el("span", { className: "turn-info-item-name" }, name);
-  }
+  const target = path !== null && root !== "" && relBeneath(root, path) !== null ? path : null;
+  return {
+    key: "name",
+    sig: join(name, target ?? ""),
+    build: () => (target === null ? el("span", {}, name) : documentLink(name, target)),
+  };
+}
+
+function documentLink(name: string, path: string): HTMLElement {
   const btn = el(
     "button",
     { className: "turn-info-link", type: "button", "data-tooltip": path },

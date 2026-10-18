@@ -521,9 +521,8 @@ describe("the info panel", () => {
       ["Edits", "3"],
       ["Commands", "3"],
     ]);
-    const files = panel(el).querySelector(".turn-info-section .turn-ledger-files");
     expect(
-      files?.closest(".turn-info-section")?.querySelector(".turn-info-title")?.textContent,
+      rows(el)[0]?.closest(".turn-info-section")?.querySelector(".turn-info-title")?.textContent,
     ).toBe("Changed files");
     expect(rows(el)).toHaveLength(2);
   });
@@ -799,7 +798,9 @@ describe("Review changes", () => {
     expect(all).toHaveLength(1);
     expect(all[0]?.textContent).toBe("Review all changes (2 files)");
     // A file-shaped row under the files, never a bordered pill.
-    expect(all[0]?.closest(".turn-ledger-files")).not.toBeNull();
+    const files = rows(footer)[0]?.closest(".turn-info-rows");
+    expect(all[0]?.closest(".turn-info-rows")).toBe(files);
+    expect(files?.lastElementChild?.contains(all[0] ?? null)).toBe(true);
   });
 });
 
@@ -1456,6 +1457,100 @@ describe("the panel's disclosures", () => {
     } finally {
       el.remove();
     }
+  });
+
+  describe("a breakdown document link", () => {
+    const uri = "file:///workspace/.kiro/skills/ui-qa/SKILL.md";
+    const withItem = (percent: number, inclusion?: string): TurnSummaryData => ({
+      ...LIVE,
+      contextBreakdown: {
+        total_chars: 900,
+        model_calls: 1,
+        categories: [
+          {
+            key: "skills",
+            chars: 900,
+            percent: 100,
+            items: [
+              {
+                name: "ui-qa",
+                chars: 900,
+                percent,
+                uri,
+                ...(inclusion === undefined ? {} : { inclusion }),
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    function mountFocused(): { el: HTMLElement; link: HTMLButtonElement } {
+      const el = buildTurnFooter(withItem(1));
+      document.body.appendChild(el);
+      summary(el).click();
+      const { btn, list } = disclosure(el, "Breakdown");
+      btn.click();
+      const link = list.querySelector<HTMLButtonElement>(".turn-info-link");
+      if (link === null) {
+        throw new Error("no breakdown link");
+      }
+      link.focus();
+      return { el, link };
+    }
+
+    it("keeps its node and focus while the item's share and inclusion move", () => {
+      setWorkspaceRoot("/workspace");
+      const { el, link } = mountFocused();
+      try {
+        updateTurnFooter(el, withItem(2, "fileMatch"));
+        expect(listLines(disclosure(el, "Breakdown").list)).toEqual([
+          "Skills100% \u00b7 900 characters",
+          "ui-qafileMatch2%",
+        ]);
+        expect(document.activeElement).toBe(link);
+      } finally {
+        el.remove();
+      }
+    });
+
+    it("keeps its node and focus when the root moves and still holds the document", () => {
+      setWorkspaceRoot("/workspace");
+      const { el, link } = mountFocused();
+      try {
+        setWorkspaceRoot("/");
+        updateTurnFooter(el, { ...withItem(1), elapsedMs: 2000 });
+        expect(document.activeElement).toBe(link);
+        expect(link.isConnected).toBe(true);
+        // A root that no longer holds it names the document as text.
+        setWorkspaceRoot("/elsewhere");
+        updateTurnFooter(el, { ...withItem(1), elapsedMs: 3000 });
+        expect(disclosure(el, "Breakdown").list.querySelector(".turn-info-link")).toBeNull();
+        expect(listLines(disclosure(el, "Breakdown").list)).toContain("ui-qa1%");
+      } finally {
+        el.remove();
+      }
+    });
+  });
+
+  it("repaint two categories sent under one key as two lines, leaving no stale one", () => {
+    const twin = (a: number, b: number): TurnSummaryData => ({
+      ...LIVE,
+      contextBreakdown: {
+        total_chars: 900,
+        model_calls: 1,
+        categories: [
+          { key: "futureCategory", chars: 600, percent: a },
+          { key: "futureCategory", chars: 300, percent: b },
+        ],
+      },
+    });
+    const el = buildTurnFooter(twin(60, 30));
+    updateTurnFooter(el, twin(70, 20));
+    expect(listLines(disclosure(el, "Breakdown").list)).toEqual([
+      "futureCategory70% \u00b7 600 characters",
+      "futureCategory20% \u00b7 300 characters",
+    ]);
   });
 
   it("record a find-in-page open, so the next repaint does not close the list", () => {

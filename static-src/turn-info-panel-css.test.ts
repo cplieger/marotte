@@ -1,8 +1,10 @@
 // THE OPEN PANEL'S GEOMETRY, through the real builder and the shipped stylesheet: one grid whose
 // gutter (G), label (S) and value (V) lines hold across every section, controls at the tier's
-// floor, text that wraps inside the panel at 320 px, and a CLOSED row that this panel never moves.
+// floor, and text that wraps inside the panel at 320 px. The closed row's pin is
+// `turn-footer-closed-row-css.test.ts`.
 // Phone cases run in iframes (coarse tier), desktop in the 1280x720 page (fine tier).
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { userEvent } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type * as OpenersModule from "./editor-openers.js";
@@ -153,32 +155,6 @@ const FULL: TurnSummaryData = {
   requestIds: ["0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", "req_0123456789abcdef0123456789abcdef0123"],
 };
 
-describe("the closed row is the panel's to leave alone", () => {
-  // Baseline measured on the live layout before the redesign (B/verification.md): footer height,
-  // the ledger button's x, y and height, and the `i`'s box, relative to the footer.
-  const PIN = {
-    1280: { band: 32, ledger: { x: 8, y: 4, h: 24 }, info: { x: 12, y: 8, w: 16, h: 16 } },
-    390: { band: 44, ledger: { x: 8, y: 4, h: 36 }, info: { x: 12, y: 12, w: 20, h: 20 } },
-    320: { band: 44, ledger: { x: 8, y: 4, h: 36 }, info: { x: 12, y: 12, w: 20, h: 20 } },
-  } as const;
-
-  for (const width of [320, 390, 1280] as const) {
-    it(`keeps the band, the ledger and the \`i\` where they were at ${String(width)} px`, () => {
-      const doc = docs.get(width) ?? document;
-      const footer = mount(doc, FULL);
-      const ledger = footer.querySelector(":scope > .turn-ledger-summary");
-      const info = footer.querySelector(".turn-ledger-info");
-      expect(ledger).not.toBeNull();
-      expect(info).not.toBeNull();
-      const pin = PIN[width];
-      expect(box(footer, footer).h, "band").toBeCloseTo(pin.band, 1);
-      const l = box(ledger as Element, footer);
-      expect([l.x, l.y, l.h], "ledger").toEqual([pin.ledger.x, pin.ledger.y, pin.ledger.h]);
-      expect(box(info as Element, footer), "`i`").toEqual(pin.info);
-    });
-  }
-});
-
 describe("the open panel's lines", () => {
   for (const width of [320, 390, 1280] as const) {
     it(`puts every title on G, every label on S and every value on V at ${String(width)} px`, () => {
@@ -195,7 +171,9 @@ describe("the open panel's lines", () => {
       ];
       expect(xs(".turn-info-title"), "G").toEqual([Math.round(box(info, footer).x)]);
       expect(xs(".turn-info-label"), "S").toEqual([Math.round(factX)]);
-      expect(xs(".turn-file-path"), "file paths on S").toEqual([Math.round(factX)]);
+      expect(xs(".turn-file-path, .turn-review-label"), "file rows on S").toEqual([
+        Math.round(factX),
+      ]);
       const v = xs(".turn-info-value");
       expect(v, "V").toHaveLength(1);
       const rem = parseFloat(getComputedStyle(doc.documentElement).fontSize) || 16;
@@ -301,6 +279,21 @@ describe("the panel's control rows", () => {
         row.textContent,
       ).toBeLessThanOrEqual(1);
     }
+  });
+
+  it("puts a hovered disclosure's label, value and chevron on the row's ink", async () => {
+    const footer = mount(document, FULL);
+    open(footer);
+    const btn = footer.querySelector<HTMLButtonElement>("button.turn-info-dbtn") as HTMLElement;
+    await userEvent.hover(btn);
+    for (const a of footer.getAnimations({ subtree: true })) {
+      a.finish();
+    }
+    const ink = getComputedStyle(btn).color;
+    for (const sel of [".turn-info-label", ".turn-info-value", ".turn-info-twist"]) {
+      expect(getComputedStyle(btn.querySelector(sel) as Element).color, sel).toBe(ink);
+    }
+    await userEvent.unhover(btn);
   });
 
   it("adds no height under a closed disclosure", () => {
