@@ -1,7 +1,8 @@
 // THE CLOSED FOOTER ROW, assembled by `messages.ts` as a chat paints it (ledger, turn actions,
-// Rewind), pinned at 320, 390 and 1280 px against the live layout measured before the open panel's
-// redesign (each box relative to the footer or to its neighbour). The phone widths take a copy of
-// the card into a coarse-pointer iframe: geometry needs only the markup and the stylesheet.
+// Rewind), pinned at 320, 390 and 1280 px to the row before the open panel's redesign: each part's
+// computed style, read from a base ref by `scripts/capture-closed-row.ts`, and each box relative to
+// the footer or to its neighbour. The phone widths take a copy of the card into a coarse-pointer
+// iframe: style and geometry need only the markup and the stylesheet.
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -227,7 +228,88 @@ const COARSE = {
 } as const;
 const PIN = { 1280: FINE, 390: COARSE, 320: COARSE } as const;
 
+/** What a part looks like. Computed values are the stylesheet's, so no cell reads a host font. */
+const LOOK = [
+  "display",
+  "align-items",
+  "gap",
+  "padding",
+  "margin",
+  "font-family",
+  "font-size",
+  "font-weight",
+  "line-height",
+  "letter-spacing",
+  "color",
+] as const;
+
+type Find = (footer: HTMLElement) => Element | null;
+const select =
+  (selector: string): Find =>
+  (footer) =>
+    footer.querySelector(selector);
+
+/** Each part the style table holds; the `i` and its glyph add their size. */
+const PARTS: readonly (readonly [string, Find, readonly string[]])[] = [
+  ["row", (footer) => footer, LOOK],
+  ["ledger", select(":scope > .turn-ledger-summary"), LOOK],
+  ["i", select(".turn-ledger-info"), [...LOOK, "width", "height"]],
+  ["i glyph", select(".turn-ledger-info > svg"), [...LOOK, "width", "height"]],
+  ["outcome", select(".turn-ledger-text"), LOOK],
+  ["fact", select(".turn-fact"), LOOK],
+  ["actions", select(":scope > .turn-actions-buttons"), LOOK],
+  [
+    "first shown action",
+    (footer) =>
+      [...footer.querySelectorAll(":scope > .turn-actions-buttons :is(button, summary)")].find(
+        (c) => c.checkVisibility(),
+      ) ?? null,
+    LOOK,
+  ],
+  ["rewind", select(":scope > .turn-rewind"), LOOK],
+  ["rewind word", select(".turn-rewind-label"), LOOK],
+];
+
+function part(footer: HTMLElement, width: number, name: string, find: Find): Element {
+  const e = find(footer);
+  if (e === null) {
+    throw new Error(`${String(width)} px: no ${name}`);
+  }
+  return e;
+}
+
+/** One cell per width, part and property, keyed so a failing diff line names all three. */
+function styleTable(): Record<string, string> {
+  const cells: Record<string, string> = {};
+  for (const width of [1280, 390, 320] as const) {
+    const footer = footers.get(width) as HTMLElement;
+    const view = footer.ownerDocument.defaultView as Window;
+    for (const [name, find, props] of PARTS) {
+      const style = view.getComputedStyle(part(footer, width, name, find));
+      for (const p of props) {
+        cells[`${String(width)} ${name} ${p}`] = style.getPropertyValue(p);
+      }
+    }
+  }
+  return cells;
+}
+
 describe("the closed footer row", () => {
+  it("keeps each part's computed style at 320, 390 and 1280 px", async () => {
+    await expect(
+      `${JSON.stringify(styleTable(), null, 2)}\n`,
+      "the closed row's style differs from its capture; an intended change recaptures with `npm run capture:closed-row`",
+    ).toMatchFileSnapshot("./testdata/turn-footer-closed-row-styles.json");
+    for (const [width, footer] of footers) {
+      const view = footer.ownerDocument.defaultView as Window;
+      const card = view.getComputedStyle(footer.closest(".turn") as Element).fontFamily;
+      for (const [name, find] of PARTS) {
+        const family = view.getComputedStyle(part(footer, width, name, find)).fontFamily;
+        expect(family, `${String(width)} px ${name}: the card's font`).toBe(card);
+      }
+    }
+  });
+
   for (const width of [320, 390, 1280] as const) {
     it(`keeps its items, their order and their boxes at ${String(width)} px`, () => {
       const footer = footers.get(width) as HTMLElement;

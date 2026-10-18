@@ -16,7 +16,8 @@
     "lint:eslint": "eslint .",
     "lint:prettier": "prettier --check .",
     "lint:fix": "eslint . --fix && prettier --write .",
-    "lint:knip": "knip"
+    "lint:knip": "knip",
+    "capture:closed-row": "node scripts/capture-closed-row.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
