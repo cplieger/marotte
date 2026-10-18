@@ -1,8 +1,9 @@
 // THE CLOSED FOOTER ROW, assembled by `messages.ts` as a chat paints it (ledger, turn actions,
-// Rewind), pinned at 320, 390 and 1280 px to the row before the open panel's redesign: each part's
-// computed style, read from a base ref by `scripts/capture-closed-row.ts`, and each box relative to
-// the footer or to its neighbour. The phone widths take a copy of the card into a coarse-pointer
-// iframe: style and geometry need only the markup and the stylesheet.
+// Rewind), pinned at 320, 390 and 1280 px to the row before the open panel's redesign: every
+// element's computed style but the host-dependent few, captured from a ref by
+// `scripts/capture-closed-row.ts`, and each box relative to the footer or to its neighbour. The
+// phone widths take a copy of the card into a coarse-pointer iframe: style and geometry need only
+// the markup and the stylesheet.
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -213,6 +214,7 @@ const FINE = {
   ],
   gaps: [2, 2, 8],
   rewindChrome: 36,
+  glyphs: { count: 5, size: 16 },
 } as const;
 const COARSE = {
   band: 44,
@@ -225,87 +227,183 @@ const COARSE = {
   ],
   gaps: [8],
   rewindChrome: 36,
+  glyphs: { count: 2, size: 20 },
 } as const;
 const PIN = { 1280: FINE, 390: COARSE, 320: COARSE } as const;
 
-/** What a part looks like. Computed values are the stylesheet's, so no cell reads a host font. */
-const LOOK = [
-  "display",
-  "align-items",
-  "gap",
-  "padding",
-  "margin",
-  "font-family",
-  "font-size",
-  "font-weight",
-  "line-height",
-  "letter-spacing",
-  "color",
-] as const;
+/** Computed properties the snapshot leaves out, each host-dependent; the boxes cases pin geometry. */
+const HOST_DEPENDENT = new Map([
+  ["width", "a used size: a part holding text is as wide as the host font sets it"],
+  ["height", "a used size: a text box is as tall as the host font's line"],
+  ["inline-size", "the logical twin of width"],
+  ["block-size", "the logical twin of height"],
+  ["transform-origin", "resolves to the centre of the used box"],
+  ["perspective-origin", "resolves to the centre of the used box"],
+  ["grid-template-columns", "the row's resolved tracks are its items' used widths"],
+  ["right", "an `auto` offset on a positioned box resolves from its container's used width"],
+  ["inset-inline-end", "the logical twin of right"],
+]);
 
-type Find = (footer: HTMLElement) => Element | null;
-const select =
-  (selector: string): Find =>
-  (footer) =>
-    footer.querySelector(selector);
+/** Width, then element path in document order, then property in name order. */
+type Snapshot = Record<string, Record<string, Record<string, string>>>;
 
-/** Each part the style table holds; the `i` and its glyph add their size. */
-const PARTS: readonly (readonly [string, Find, readonly string[]])[] = [
-  ["row", (footer) => footer, LOOK],
-  ["ledger", select(":scope > .turn-ledger-summary"), LOOK],
-  ["i", select(".turn-ledger-info"), [...LOOK, "width", "height"]],
-  ["i glyph", select(".turn-ledger-info > svg"), [...LOOK, "width", "height"]],
-  ["outcome", select(".turn-ledger-text"), LOOK],
-  ["fact", select(".turn-fact"), LOOK],
-  ["actions", select(":scope > .turn-actions-buttons"), LOOK],
-  [
-    "first shown action",
-    (footer) =>
-      [...footer.querySelectorAll(":scope > .turn-actions-buttons :is(button, summary)")].find(
-        (c) => c.checkVisibility(),
-      ) ?? null,
-    LOOK,
-  ],
-  ["rewind", select(":scope > .turn-rewind"), LOOK],
-  ["rewind word", select(".turn-rewind-label"), LOOK],
-];
-
-function part(footer: HTMLElement, width: number, name: string, find: Find): Element {
-  const e = find(footer);
-  if (e === null) {
-    throw new Error(`${String(width)} px: no ${name}`);
-  }
-  return e;
+/** The footer and every element under it but the open panel's subtree, which the redesign owns;
+ *  a path names each element by tag, classes and label, so a diff line says which part moved. */
+function rowElements(footer: Element): [string, Element][] {
+  const out: [string, Element][] = [];
+  const walk = (e: Element, path: string): void => {
+    out.push([path, e]);
+    const seen = new Map<string, number>();
+    for (const c of e.children) {
+      if (c.classList.contains("turn-info-panel")) {
+        continue;
+      }
+      const classes = [...c.classList].map((k) => `.${k}`).join("");
+      const label = c.getAttribute("aria-label");
+      const name = `${c.tagName.toLowerCase()}${classes}${label === null ? "" : `[${label}]`}`;
+      const n = (seen.get(name) ?? 0) + 1;
+      seen.set(name, n);
+      walk(c, `${path} > ${name}${n === 1 ? "" : `:${String(n)}`}`);
+    }
+  };
+  walk(footer, "footer");
+  return out;
 }
 
-/** One cell per width, part and property, keyed so a failing diff line names all three. */
-function styleTable(): Record<string, string> {
-  const cells: Record<string, string> = {};
+/** Every enumerated property but custom ones (tokens paint only through the properties that read
+ *  them) and the host-dependent few. */
+function look(style: CSSStyleDeclaration): Record<string, string> {
+  const props = [...style].filter((p) => !p.startsWith("--") && !HOST_DEPENDENT.has(p)).sort();
+  return Object.fromEntries(props.map((p) => [p, style.getPropertyValue(p)]));
+}
+
+function snapshot(): Snapshot {
+  const out: Snapshot = {};
   for (const width of [1280, 390, 320] as const) {
     const footer = footers.get(width) as HTMLElement;
     const view = footer.ownerDocument.defaultView as Window;
-    for (const [name, find, props] of PARTS) {
-      const style = view.getComputedStyle(part(footer, width, name, find));
-      for (const p of props) {
-        cells[`${String(width)} ${name} ${p}`] = style.getPropertyValue(p);
+    const parts: Record<string, Record<string, string>> = {};
+    for (const [path, e] of rowElements(footer)) {
+      const style = view.getComputedStyle(e);
+      parts[path] = look(style);
+      for (const pseudo of ["::before", "::after", "::marker"]) {
+        const p = view.getComputedStyle(e, pseudo);
+        const used = pseudo === "::marker" ? style.display === "list-item" : p.content !== "none";
+        if (used) {
+          parts[`${path}${pseudo}`] = look(p);
+        }
+      }
+    }
+    out[String(width)] = parts;
+  }
+  return out;
+}
+
+/** The snapshot as committed: each property's most common value across every element and width
+ *  is written once under `shared`, and an element lists only where it differs from it, so a
+ *  recapture's diff shows the change and not every element it repeats on. */
+interface Fixture {
+  shared: Record<string, string>;
+  widths: Snapshot;
+}
+
+function encode(live: Snapshot): Fixture {
+  const counts = new Map<string, Map<string, number>>();
+  for (const parts of Object.values(live)) {
+    for (const style of Object.values(parts)) {
+      for (const [p, v] of Object.entries(style)) {
+        const byValue = counts.get(p) ?? new Map<string, number>();
+        byValue.set(v, (byValue.get(v) ?? 0) + 1);
+        counts.set(p, byValue);
       }
     }
   }
-  return cells;
+  const byName = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+  const shared = Object.fromEntries(
+    [...counts.keys()].sort(byName).map((p) => {
+      const ranked = [...(counts.get(p) as Map<string, number>)].sort(
+        ([va, na], [vb, nb]) => nb - na || byName(va, vb),
+      );
+      return [p, (ranked[0] as [string, number])[0]];
+    }),
+  );
+  const widths: Snapshot = {};
+  for (const [width, parts] of Object.entries(live)) {
+    widths[width] = Object.fromEntries(
+      Object.entries(parts).map(([path, style]) => [
+        path,
+        Object.fromEntries(Object.entries(style).filter(([p, v]) => shared[p] !== v)),
+      ]),
+    );
+  }
+  return { shared, widths };
 }
 
+function decode(fixture: Fixture): Snapshot {
+  const out: Snapshot = {};
+  for (const [width, parts] of Object.entries(fixture.widths)) {
+    out[width] = Object.fromEntries(
+      Object.entries(parts).map(([path, own]) => [path, { ...fixture.shared, ...own }]),
+    );
+  }
+  return out;
+}
+
+/** One line per property whose value differs, so a red run names the part and the property. */
+function differences(want: Snapshot, got: Snapshot): string[] {
+  const lines: string[] = [];
+  const keys = (a: object, b: object): string[] =>
+    [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
+  for (const width of keys(want, got)) {
+    const w = want[width] ?? {};
+    const g = got[width] ?? {};
+    for (const path of keys(w, g)) {
+      const wp = w[path];
+      const gp = g[path];
+      if (wp === undefined || gp === undefined) {
+        lines.push(`${width} ${path}: ${wp === undefined ? "added" : "removed"}`);
+        continue;
+      }
+      for (const prop of keys(wp, gp)) {
+        if (wp[prop] !== gp[prop]) {
+          lines.push(
+            `${width} ${path} ${prop}: ${wp[prop] ?? "(none)"} -> ${gp[prop] ?? "(none)"}`,
+          );
+        }
+      }
+    }
+  }
+  return lines;
+}
+
+// Absent on a base ref that predates the fixture, which `capture:closed-row` then writes.
+const captured = Object.values(
+  import.meta.glob<string>("./testdata/turn-footer-closed-row-styles.json", {
+    eager: true,
+    query: "?raw",
+    import: "default",
+  }),
+)[0];
+
 describe("the closed footer row", () => {
-  it("keeps each part's computed style at 320, 390 and 1280 px", async () => {
+  it("keeps every element's computed style at 320, 390 and 1280 px", async () => {
+    const live = snapshot();
+    const diff =
+      captured === undefined ? [] : differences(decode(JSON.parse(captured) as Fixture), live);
     await expect(
-      `${JSON.stringify(styleTable(), null, 2)}\n`,
-      "the closed row's style differs from its capture; an intended change recaptures with `npm run capture:closed-row`",
+      `${JSON.stringify(encode(live), null, 2)}\n`,
+      [
+        "the closed row's style differs from its capture; an intended change recaptures with",
+        "`npm run capture:closed-row -- HEAD` once committed (`-- origin/dev` re-takes the base):",
+        ...diff,
+      ].join("\n"),
     ).toMatchFileSnapshot("./testdata/turn-footer-closed-row-styles.json");
     for (const [width, footer] of footers) {
       const view = footer.ownerDocument.defaultView as Window;
       const card = view.getComputedStyle(footer.closest(".turn") as Element).fontFamily;
-      for (const [name, find] of PARTS) {
-        const family = view.getComputedStyle(part(footer, width, name, find)).fontFamily;
-        expect(family, `${String(width)} px ${name}: the card's font`).toBe(card);
+      for (const [path, e] of rowElements(footer)) {
+        const family = view.getComputedStyle(e).fontFamily;
+        expect(family, `${String(width)} px ${path}: the card's font`).toBe(card);
       }
     }
   });
@@ -319,6 +417,10 @@ describe("the closed footer row", () => {
         [...footer.children].map((c) => c.className),
         "the row's items in order",
       ).toEqual(["turn-ledger-summary", "turn-info-panel", "turn-actions-buttons", "turn-rewind"]);
+      expect(
+        footer.querySelector(":scope > .turn-info-panel")?.checkVisibility(),
+        "the info panel, shut",
+      ).toBe(false);
       const ledger = footer.querySelector(":scope > .turn-ledger-summary") as HTMLElement;
       expect(
         [...ledger.children].map((c) => c.className),
@@ -368,6 +470,15 @@ describe("the closed footer row", () => {
       });
       const rewind = footer.querySelector(":scope > .turn-rewind") as Element;
       expect(rewindChrome(rewind), "Rewind less its word").toBeCloseTo(pin.rewindChrome, 1);
+      const glyphs = [...footer.querySelectorAll("svg")].filter((g) => g.checkVisibility());
+      expect(glyphs.length, "the row's shown glyphs").toBe(pin.glyphs.count);
+      glyphs.forEach((g, i) => {
+        const b = g.getBoundingClientRect();
+        expect([b.width, b.height], `glyph ${String(i)}`).toEqual([
+          pin.glyphs.size,
+          pin.glyphs.size,
+        ]);
+      });
     });
   }
 });

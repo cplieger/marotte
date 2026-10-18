@@ -1,7 +1,8 @@
-// Writes the closed footer row's style table (`turn-footer-closed-row-css.test.ts`) from a base
-// ref, so the pin holds what that ref paints and never what the tree under edit paints. Runs this
-// tree's test file with `vitest -u` against `git archive <ref>`, borrowing this tree's
-// node_modules. Usage: `npm run capture:closed-row [-- <ref>]`, default origin/dev.
+// Writes the closed footer row's style snapshot (`turn-footer-closed-row-css.test.ts`) from a
+// committed ref, never an uncommitted edit: runs this tree's test with `vitest -u` against
+// `git archive <ref>`, borrowing this tree's node_modules. Usage:
+// `npm run capture:closed-row -- HEAD` once an intended change is committed; `-- origin/dev` (the
+// default) re-takes the base.
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
