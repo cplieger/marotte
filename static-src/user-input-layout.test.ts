@@ -6,8 +6,10 @@ import { makeSession } from "./__test-helpers__/model.js";
 import {
   _resetForTest as resetDocks,
   collapseSettledDecision,
+  dropRunRequests,
   dropTurnDecisions,
   mountDecisionDock,
+  mountRunDecisionDock,
   pushDecision,
   type AnswerOutcome,
 } from "./decision-dock.js";
@@ -62,6 +64,9 @@ const VIEWPORTS: readonly (readonly [number, number, number])[] = [
 /** `height <= 30rem`: a phone on its side, where a waiting question takes the whole bar. */
 const SIDEWAYS_MAX_H = 480;
 
+/** A visual viewport under 20rem, where the run composer steps aside unless it holds the focus. */
+const TIGHT_MAX_VV = 319;
+
 type Host = "chat" | "run";
 
 let style: HTMLStyleElement | null = null;
@@ -77,7 +82,7 @@ afterEach(async () => {
   frame = null;
   style?.remove();
   style = null;
-  for (const attr of ["data-pointer", "data-theme", "data-short-band"]) {
+  for (const attr of ["data-pointer", "data-theme", "data-short-band", "data-tight-band"]) {
     document.documentElement.removeAttribute(attr);
   }
   document.documentElement.style.removeProperty("--dock-viewport-h");
@@ -212,6 +217,8 @@ describe("the agent-question card", () => {
               expect(composer.checkVisibility(), "the composer aside").toBe(false);
               const strip = bar.querySelector(".run-bar-host");
               expect(strip?.checkVisibility() ?? false, "the run strip aside").toBe(false);
+            } else if (host === "run" && vv <= TIGHT_MAX_VV) {
+              expect(composer.checkVisibility(), "the run composer aside").toBe(false);
             } else {
               within(composer, f.top, f.bottom, "the composer inside the view");
               if (host === "run") {
@@ -244,13 +251,13 @@ describe("the agent-question card", () => {
               within(options, c.top, c.bottom, "the options");
             }
 
-            // A 320px band beside the run composer, and a long question on a phone on its side,
-            // leave the card its floors and no more: there the question region shows at least its
-            // first two lines and scrolls. Everywhere else the region stays unscrolled, and a clamped
-            // question keeps Show more inside it.
+            // A long question on a phone on its side, or in the run tab on a 261px band, leaves the
+            // card its floors and no more: there the question region shows at least its first two
+            // lines and scrolls. Everywhere else the region stays unscrolled, and a clamped question
+            // keeps Show more inside it.
             const body = card.querySelector<HTMLElement>(".dock-ask-body")!;
             within(body, bandTop, bandBottom, "the question inside the visible band");
-            if ((host === "run" && vv === 261) || (sideways && fixture.long)) {
+            if (fixture.long && (sideways || (host === "run" && vv <= TIGHT_MAX_VV))) {
               // `min-block-size: 2lh`, resolved by the engine.
               const twoLines = Number.parseFloat(getComputedStyle(body).minBlockSize);
               expect(twoLines, "the question's two-line floor").toBeGreaterThan(20);
@@ -297,30 +304,40 @@ describe("the agent-question card", () => {
   });
 });
 
-describe("a waiting question on a phone on its side", () => {
+describe("a waiting question and the composer", () => {
   const QUESTION = { request_id: 1, question: LOOP_QUESTION, options: [...LOOP_OPTIONS] };
+  const DRAFT = "half a thought";
 
-  /** The chat bar with the real dock mounted, a draft in the composer and the composer focused. */
-  async function mountDockedChat(width: number, height: number): Promise<HTMLTextAreaElement> {
+  /** The host's bar with the real dock mounted and a draft in its composer. */
+  async function mountDocked(
+    host: Host,
+    width: number,
+    height: number,
+  ): Promise<HTMLTextAreaElement> {
     await browser.viewport(width, height);
     document.documentElement.setAttribute("data-pointer", "coarse");
     style = mountAppCSS();
     setSessions([makeSession({ id: "c1" })]);
     setActive("c1");
-    const { dock } = mountChat(height);
-    mountDecisionDock(dock);
-    const draft = frame!.querySelector<HTMLTextAreaElement>("#prompt-input")!;
-    draft.value = "half a thought";
-    draft.focus();
+    if (host === "chat") {
+      mountDecisionDock(mountChat(height).dock);
+    } else {
+      mountRunDecisionDock(mountRun(height).dock, () => "r1");
+    }
+    const draft = frame!.querySelector<HTMLTextAreaElement>(
+      host === "chat" ? "#prompt-input" : "#run-composer-input",
+    )!;
+    draft.value = DRAFT;
     await settle();
     return draft;
   }
 
-  /** The server's side of a delivered answer: `decision_settled` retires the card. */
-  function pushQuestion(): void {
+  /** The server's side of a delivered answer: `decision_settled` retires the card. A run's question carries its run. */
+  async function pushQuestion(host: Host): Promise<HTMLElement> {
     pushDecision({
       kind: "user_input",
       chatID: "c1",
+      ...(host === "run" ? { runID: "r1" } : {}),
       requestID: 1,
       payload: QUESTION,
       submit: (): Promise<AnswerOutcome> => {
@@ -328,44 +345,117 @@ describe("a waiting question on a phone on its side", () => {
         return Promise.resolve("answered");
       },
     });
+    await settle();
+    return frame!.querySelector<HTMLElement>(".decision-dock > .dock-user-input")!;
   }
 
-  const closings: Record<string, (card: HTMLElement) => void> = {
-    "an answer": (card) => {
+  const closings: Record<string, (host: Host, card: HTMLElement) => void> = {
+    "an answer": (_host, card) => {
       card.querySelector<HTMLTextAreaElement>(".dock-ask-text")!.value = "Stop and report";
       [...card.querySelectorAll("button")].find((b) => b.textContent === "Send")!.click();
     },
-    "a skip": (card) => {
+    "a skip": (_host, card) => {
       [...card.querySelectorAll("button")].find((b) => b.textContent === "Skip")!.click();
     },
-    "the turn ending": () => {
-      dropTurnDecisions("c1");
+    "its turn or run ending": (host) => {
+      if (host === "chat") {
+        dropTurnDecisions("c1");
+      } else {
+        dropRunRequests("r1");
+      }
     },
   };
 
-  for (const [closing, close] of Object.entries(closings)) {
-    it(`puts the composer aside, then back with its draft after ${closing}`, async () => {
-      const draft = await mountDockedChat(568, 320);
-      pushQuestion();
+  for (const host of ["chat", "run"] as const satisfies readonly Host[]) {
+    for (const [closing, close] of Object.entries(closings)) {
+      it(`${host}: on a phone on its side, puts the composer aside, then back with its draft after ${closing}`, async () => {
+        const draft = await mountDocked(host, 568, 320);
+        draft.focus();
+        const card = await pushQuestion(host);
+        expect(draft.checkVisibility(), "the composer aside").toBe(false);
+        expect(document.activeElement, "the typing in the card's answer box").toBe(
+          card.querySelector(".dock-ask-text"),
+        );
+
+        close(host, card);
+        await settle();
+        expect(draft.checkVisibility(), "the composer back").toBe(true);
+        expect(draft.value, "the draft untouched").toBe(DRAFT);
+      });
+    }
+
+    it(`${host}: leaves an upright phone's composer and focus where they were`, async () => {
+      const draft = await mountDocked(host, 390, 844);
+      draft.focus();
+      await pushQuestion(host);
+      expect(draft.checkVisibility(), "the composer").toBe(true);
+      expect(document.activeElement, "focus").toBe(draft);
+    });
+
+    it(`${host}: follows the composer aside when the phone turns on its side under a question`, async () => {
+      const draft = await mountDocked(host, 390, 844);
+      draft.focus();
+      const card = await pushQuestion(host);
+      expect(document.activeElement, "focus before the turn").toBe(draft);
+
+      const resized = new Promise((r) => {
+        window.addEventListener("resize", r, { once: true });
+      });
+      await browser.viewport(568, 320);
+      await resized;
       await settle();
-      const card = frame!.querySelector<HTMLElement>("#decision-dock > .dock-user-input")!;
       expect(draft.checkVisibility(), "the composer aside").toBe(false);
       expect(document.activeElement, "the typing in the card's answer box").toBe(
         card.querySelector(".dock-ask-text"),
       );
-
-      close(card);
-      await settle();
-      expect(draft.checkVisibility(), "the composer back").toBe(true);
-      expect(draft.value, "the draft untouched").toBe("half a thought");
+      expect(draft.value, "the draft untouched").toBe(DRAFT);
     });
   }
 
-  it("leaves an upright phone's composer and focus where they were", async () => {
-    const draft = await mountDockedChat(390, 844);
-    pushQuestion();
+  it("chat: on a phone on its side, keeps the gap above a queued steer", async () => {
+    await mountDocked("chat", 568, 320);
+    const stack = frame!.querySelector<HTMLElement>("#steer-stack")!;
+    const row = document.createElement("li");
+    row.className = "steer-row";
+    row.textContent = "and check the logs";
+    stack.append(row);
+    stack.classList.remove("hidden");
+    await pushQuestion("chat");
+    const tray = frame!.querySelector<HTMLElement>("#decision-dock")!;
+    expect(
+      stack.getBoundingClientRect().top - tray.getBoundingClientRect().bottom,
+      "the gap between the card and the steer below it",
+    ).toBeGreaterThan(1);
+  });
+
+  it("run: on a tight band, puts an idle composer aside and hands the card the typing", async () => {
+    const draft = await mountDocked("run", 320, 568);
+    paintViewportHeight(261);
+    const card = await pushQuestion("run");
+    expect(draft.checkVisibility(), "the composer aside").toBe(false);
+    expect(document.activeElement, "the typing in the card's answer box").toBe(
+      card.querySelector(".dock-ask-text"),
+    );
+
+    dropRunRequests("r1");
     await settle();
+    expect(draft.checkVisibility(), "the composer back").toBe(true);
+    expect(draft.value, "the draft untouched").toBe(DRAFT);
+  });
+
+  it("run: on a tight band, keeps a composer that holds the typing", async () => {
+    const draft = await mountDocked("run", 320, 568);
+    draft.focus();
+    paintViewportHeight(261);
+    const card = await pushQuestion("run");
     expect(draft.checkVisibility(), "the composer").toBe(true);
     expect(document.activeElement, "focus").toBe(draft);
+
+    card.querySelector<HTMLElement>(".dock-ask-text")!.focus();
+    await settle();
+    expect(draft.checkVisibility(), "the composer aside once the card holds the typing").toBe(
+      false,
+    );
+    expect(draft.value, "the draft untouched").toBe(DRAFT);
   });
 });

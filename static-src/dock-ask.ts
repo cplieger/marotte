@@ -20,6 +20,10 @@ const DOCK_VIEWPORT_PROP = "--dock-viewport-h";
  *  `css/18-pages.css`): from here down, the dock, a card's floors and the composer outgrow the bar. */
 const SHORT_BAND_REM = 40;
 
+/** Under this one the run composer steps aside for a question card too (`[data-tight-band]`, `css/26-dock.css`): a
+ *  four-line question at 320px wide needs about 306px of band beside the composer. */
+const TIGHT_BAND_REM = 20;
+
 interface AskHead {
   /** The region to append anything else the card says about its ask to. */
   readonly body: HTMLElement;
@@ -86,12 +90,14 @@ export function publishViewportHeight(): void {
   paint();
 }
 
-/** Write what the bar reads for a visual viewport `height` px tall: `--dock-viewport-h` and `data-short-band`. */
+/** Write what the bar reads for a visual viewport `height` px tall: `--dock-viewport-h`, `data-short-band` and
+ *  `data-tight-band`. */
 export function paintViewportHeight(height: number): void {
   const root = document.documentElement;
   root.style.setProperty(DOCK_VIEWPORT_PROP, `${String(Math.round(height))}px`);
   const rem = Number.parseFloat(getComputedStyle(root).fontSize);
   root.toggleAttribute("data-short-band", height < SHORT_BAND_REM * rem);
+  root.toggleAttribute("data-tight-band", height < TIGHT_BAND_REM * rem);
 }
 
 /** The card's ONE right-aligned button row, holding every button it has. */

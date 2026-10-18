@@ -232,12 +232,11 @@
 }
 
 /* A PHONE ON ITS SIDE GIVES A WAITING QUESTION THE WHOLE BAR. Under the app's chrome a 320-390px
-   view holds 232-302px, and the card's floors (the whole question, a one-row answer box, the
-   button row) plus the composer and the run strip do not fit. While the card is up the strip and
-   the composer step aside; the card's own box takes the typing (`decision-dock.ts`
-   `focusAnswerIfAside`) and the composer's draft waits in its hidden box. The tray, now
-   the bar's last member, drops the gap it kept above them, and the answer box opens at
-   one row. */
+   view holds 232-302px: beside the composer and the run strip an ordinary question does not fit
+   above the card's floors (a one-row answer box, the button row); with them aside it does. While
+   the card is up they step aside; the card's own box takes the typing (`decision-dock.ts`
+   `focusAnswerIfAside`) and the composer's draft waits in its hidden box. The tray drops the gap
+   it kept above them, a queued steer below it takes that gap, and the answer box opens at one row. */
 @media (height <= 30rem) {
   [id="prompt-form"]:has(> .decision-dock > .dock-user-input)
     > :is(.run-bar-host, [id="prompt-box"]),
@@ -247,10 +246,26 @@
 
   :is([id="prompt-form"], .run-bottom-bar) > .decision-dock:has(> .dock-user-input) {
     margin-block-end: 0;
+
+    & ~ .steer-stack {
+      margin-block-start: var(--stack-gap);
+    }
   }
 
   .dock-user-input .dock-ask-text {
     min-block-size: calc(1lh + 2 * var(--sp-2) + 2px);
+  }
+}
+
+/* ON A TIGHT BAND THE RUN COMPOSER STEPS ASIDE THE SAME WAY (`[data-tight-band]`, `dock-ask.ts`),
+   unless it holds the typing: tapping it raises the keyboard into the band, so hiding it when
+   focused would take away the field the reader just chose. The chat's bar keeps its composer:
+   its card holds an ordinary question whole on that band. */
+.run-bottom-bar:where(:has(> .decision-dock > .dock-user-input)) > [id="run-composer"] {
+  &:not(:focus-within) {
+    :where(:root[data-tight-band]) & {
+      display: none;
+    }
   }
 }
 

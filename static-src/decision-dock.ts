@@ -116,6 +116,8 @@ interface DockHost {
   renderedKey: string;
   /** The card `renderedKey` names, which an answer in flight makes inert. */
   card: HTMLElement | null;
+  /** Whether the bar's composer rendered at the last `focusAnswerIfAside`. */
+  composerShown: boolean;
   /** The answered card, kept on screen (neutralised) for the phase's duration.
    *  At most one per host, ever. */
   outgoing: HTMLElement | null;
@@ -132,6 +134,7 @@ interface DockHost {
 }
 
 const hosts: DockHost[] = [];
+let composersFollowed = false;
 
 /** Wire the composer's dock into the chat bottom bar. Idempotent per host. */
 export function mountDecisionDock(hostEl: HTMLElement): void {
@@ -185,11 +188,16 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
   if (hosts.some((existing) => existing.el === hostEl)) {
     return;
   }
+  if (!composersFollowed) {
+    composersFollowed = true;
+    window.addEventListener("resize", followComposers);
+  }
   const h: DockHost = {
     el: hostEl,
     match,
     renderedKey: "",
     card: null,
+    composerShown: true,
     outgoing: null,
     timer: null,
     gen: 0,
@@ -631,19 +639,36 @@ function show(h: DockHost, head: Decision, rest: readonly Decision[]): void {
   h.renderedKey = decisionKey(head.chatID, head.kind, decisionIdentity(head));
   paintRest(h, rest);
   announce(announcementFor(head));
-  focusAnswerIfAside(h, card);
+  h.composerShown = true;
+  focusAnswerIfAside(h);
 }
 
 /**
- * A short landscape screen hides the bar's composer while a question card is up (`css/26-dock.css`), so the typing
- * moves to the card's own answer box. Keyed on the composer's rendering, so the stylesheet alone owns the condition.
+ * A short screen hides the bar's composer while a question card is up (`css/26-dock.css`), so typing in the composer,
+ * or none at all, moves to the card's own answer box. Only on the composer's going from rendered to hidden, so a later
+ * call never pulls focus back; keyed on its rendering, so the stylesheet alone owns the condition.
  */
-function focusAnswerIfAside(h: DockHost, card: HTMLElement): void {
-  const composer = h.el.parentElement?.querySelector(":scope > :is(.prompt-box, .run-composer)");
-  if (composer == null || composer.checkVisibility()) {
+function focusAnswerIfAside(h: DockHost): void {
+  const composer = h.el.parentElement?.querySelector(
+    ':scope > :is([id="prompt-box"], [id="run-composer"])',
+  );
+  if (h.card === null || composer == null) {
     return;
   }
-  card.querySelector<HTMLElement>(".dock-ask-text")?.focus({ preventScroll: true });
+  const shown = composer.checkVisibility();
+  const hidden = h.composerShown && !shown;
+  h.composerShown = shown;
+  const typing = document.activeElement;
+  if (hidden && (typing === null || typing === document.body || composer.contains(typing))) {
+    h.card.querySelector<HTMLElement>(".dock-ask-text")?.focus({ preventScroll: true });
+  }
+}
+
+/** A rotation can hide the composer under a card already up; `focusAnswerIfAside` follows it. */
+function followComposers(): void {
+  for (const h of hosts) {
+    focusAnswerIfAside(h);
+  }
 }
 
 /** A collapsed host is `display: none`, so its margin is 0 whatever `getComputedStyle` reports. */
