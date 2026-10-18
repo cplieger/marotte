@@ -1,7 +1,8 @@
 package agent
 
-// Run work written through Call, CallAt or Notify on an engine or an engine-opened session passes guardRunWork,
-// which refuses it unless an admission is bound to its context. The behaviour test pins the guard on all six; the
+// Run work written through Call, CallAt or Notify on an engine or an engine-opened session, or a session's PromptAt,
+// passes guardRunWork, which refuses it unless an admission is bound to its context. The behaviour test pins the
+// guard on all seven, and another test fails on an engine or session method neither guarded nor classified; the
 // census pins what the guard leans on and the source can prove: only admitRunWork mints an admission (a literal
 // with fields, or a conversion), only runAdmission.bind and the guard read the context key, only engineOwner.spawn
 // builds an engine, and every workflow verb is classified. Owners are matched by receiver and name.
@@ -14,6 +15,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -50,6 +52,7 @@ func TestRunWork_AnUnadmittedSendIsRefusedAtTheEngine(t *testing.T) {
 	callAtSession := func(ctx context.Context, m string, p any) error { _, _, err := sess.CallAt(ctx, m, p); return err }
 	notifyEngine := func(ctx context.Context, m string, p any) error { return eng.Notify(ctx, m, p) }
 	notifySession := func(ctx context.Context, m string, p any) error { return sess.Notify(ctx, m, p) }
+	promptAtSession := func(ctx context.Context, _ string, p any) error { _, _, err := sess.PromptAt(ctx, p, nil); return err }
 	wf := map[string]any{keyWorkflowID: "wf_1"}
 	step := map[string]any{marotte.KeySessionID: "sess_step"}
 	runWork := []struct {
@@ -65,6 +68,7 @@ func TestRunWork_AnUnadmittedSendIsRefusedAtTheEngine(t *testing.T) {
 		{name: "a resume notification on the engine lane", send: notifyEngine, method: methodKiroWorkflowResume, params: wf},
 		{name: "a resume notification on a session", send: notifySession, method: methodKiroWorkflowResume, params: wf},
 		{name: "a prompt to a step's session", send: callSession, method: marotte.MethodPrompt, params: step},
+		{name: "a prompt to a step's session, through PromptAt", send: promptAtSession, method: marotte.MethodPrompt, params: step},
 		{
 			name: "a steer to a step's session, in a struct", send: callAtEngine, method: marotte.MethodSessionSteer,
 			params: stepSteerParams{SessionID: "sess_step", Message: "x"},
@@ -118,6 +122,62 @@ func TestRunWork_AnUnadmittedSendIsRefusedAtTheEngine(t *testing.T) {
 				t.Errorf("send = %v, want it written unadmitted", err)
 			}
 		})
+	}
+	t.Run("a chat's prompt to its own session, through PromptAt", func(t *testing.T) {
+		br.forgetCalls()
+		_, _, err := sess.PromptAt(t.Context(), map[string]any{marotte.KeySessionID: own}, nil)
+		if errors.Is(err, errRunWorkUnadmitted) {
+			t.Errorf("PromptAt = %v, want it written unadmitted", err)
+		}
+		if calls := br.callLog(); !slices.Contains(calls, marotte.MethodPrompt) {
+			t.Errorf("the engine saw %v, want the chat's prompt", calls)
+		}
+	})
+}
+
+// knownUnguarded are the engineHandle and engineSession methods that send no run work, so guardedEngine and
+// guardedSession pass them through; every other method of either interface must be declared on its guard.
+var knownUnguarded = map[string][]string{
+	"guardedEngine": {
+		"Done", "EngineNotifCh", "Exit", "KASLogDir", "RefreshContentCollection", "Respond", "Start", "StartLive", "Stop",
+	},
+	"guardedSession": {
+		"AutoCompactionDisabled", "Catalog", "Close", "CurrentMode", "EnsureEffort", "EnsureThinking", "ModelID", "Models",
+		"Modes", "NotifCh", "ObserveEffort", "ObserveThinking", "Open", "Respond", "SessionID", "SessionLoadSeq",
+		"SessionTitle", "SessionTitleSetByUser", "SetModel", "SummarizationThreshold", "SupervisedApplied",
+	},
+}
+
+// A method added to engineHandle or engineSession reaches the engine past guardRunWork through the guard's embedded
+// value, so it must be declared on the guard or classified as sending no run work.
+func TestRunWork_EveryEngineMethodIsGuardedOrClassified(t *testing.T) {
+	fset := token.NewFileSet()
+	declared := map[string]map[string]bool{"guardedEngine": {}, "guardedSession": {}}
+	for _, f := range parseAgentSources(t, fset) {
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil {
+				continue
+			}
+			recv, method, _ := strings.Cut(qualifiedName(fn), ".")
+			if m, ok := declared[recv]; ok {
+				m[method] = true
+			}
+		}
+	}
+	for guard, iface := range map[string]reflect.Type{
+		"guardedEngine": reflect.TypeFor[engineHandle](), "guardedSession": reflect.TypeFor[engineSession](),
+	} {
+		for i := range iface.NumMethod() {
+			name := iface.Method(i).Name
+			if !declared[guard][name] && !slices.Contains(knownUnguarded[guard], name) {
+				t.Errorf("%s.%s is neither declared on %s nor listed in knownUnguarded: guard it, or list it if it "+
+					"sends no run work", iface.Name(), name, guard)
+			}
+		}
+	}
+	if !declared["guardedSession"]["CallAt"] || !declared["guardedEngine"]["CallAt"] {
+		t.Errorf("declared = %v, want both guards' CallAt: the census is reading the wrong receivers", declared)
 	}
 }
 

@@ -78,9 +78,10 @@ func guardRunWork(ctx context.Context, lane marotte.SessionID, method string, pa
 	return errRunWorkUnadmitted
 }
 
-// guardedEngine is every engine as the owner holds it (engineOwner.spawn). Only the arbitrary-method writers, Call,
-// CallAt and Notify, on it and on each session it opens, pass guardRunWork first; every other method reaches the
-// embedded value unguarded, so a new sending method on engineHandle or engineSession bypasses the guard.
+// guardedEngine is every engine as the owner holds it (engineOwner.spawn). Only the writers that can carry run work,
+// Call, CallAt and Notify on it and on each session it opens and a session's PromptAt, pass guardRunWork first; every
+// other method reaches the embedded value unguarded, so TestRunWork_EveryEngineMethodIsGuardedOrClassified fails on
+// a new method until it is guarded or listed as one that sends no run work.
 type guardedEngine struct{ engineHandle }
 
 func (g guardedEngine) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
@@ -143,6 +144,13 @@ func (g guardedSession) CallAt(ctx context.Context, method string, params any) (
 		return nil, 0, err
 	}
 	return g.engineSession.CallAt(ctx, method, params)
+}
+
+func (g guardedSession) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	if err := guardRunWork(ctx, g.SessionID(), marotte.MethodPrompt, params); err != nil {
+		return nil, 0, err
+	}
+	return g.engineSession.PromptAt(ctx, params, commit)
 }
 
 func (g guardedSession) Notify(ctx context.Context, method string, params any) error {
