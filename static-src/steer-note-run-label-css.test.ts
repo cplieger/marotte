@@ -27,6 +27,7 @@ function frameOf(width: number): Document {
 
 interface Header {
   run: HTMLElement | null;
+  head: HTMLElement;
   icon: HTMLElement;
   label: HTMLElement;
   times: HTMLElement;
@@ -59,6 +60,7 @@ function mountNote(doc: Document, withRun = true): Header {
   };
   return {
     run: note.querySelector<HTMLElement>(".steer-note-run"),
+    head: pick(".steer-note-head"),
     icon: pick(".steer-note-head > .tool-icon"),
     label: pick(".steer-note-label"),
     times: pick(".steer-note-times"),
@@ -137,15 +139,24 @@ describe("a workflow update's header", () => {
   });
 
   it("keeps the run's name, the step and the times on one row when it is wide", () => {
-    const { run, label, times } = mountNote(frameOf(900));
+    const { run, head, label, times } = mountNote(frameOf(900));
     if (run === null) {
       throw new Error("no run label");
     }
     const r = run.getBoundingClientRect();
     const l = label.getBoundingClientRect();
+    const contentEnd =
+      head.getBoundingClientRect().right - parseFloat(getComputedStyle(head).paddingInlineEnd);
 
     expect(Math.abs(r.top - l.top)).toBeLessThan(r.height);
     expect(r.right).toBeLessThanOrEqual(l.left);
+    expect(lineStarts(label, times).size).toBe(1);
+    expect(times.getBoundingClientRect().right).toBeCloseTo(contentEnd, 0);
+  });
+
+  it("keeps the step and the times on one line when there is no run's name and they fit", () => {
+    const { label, times } = mountNote(frameOf(600), false);
+
     expect(lineStarts(label, times).size).toBe(1);
   });
 

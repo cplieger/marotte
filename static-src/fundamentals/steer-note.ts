@@ -128,8 +128,8 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
       el("span", { className: "steer-note-run-sep", "aria-hidden": "true" }, "\u00b7"),
     );
   }
-  // One box for the step and the times, so a phone wraps them as one line of text. The space is
-  // that line's break between the two; a flex or grid head drops it.
+  // The step and the times share one box the phone layout flows as text; the space is its break
+  // point, and a flex or grid head renders none.
   const meta = el("span", { className: "steer-note-meta" });
   meta.appendChild(el("span", { className: "steer-note-label" }, label));
   head.appendChild(meta);

@@ -1709,8 +1709,9 @@ button.steer-note-run:focus-visible {
 }
 
 /* Phone-shaped: the run's name takes a line of its own beside the glyph and is ellipsized there on its
- * own. The step and the times share one line of text under it, starting at the glyph's edge, which is
- * the body's: a tool card's subtitle and a delegate's tail also sit under the glyph, not the title. */
+ * own. The step and the times share one run of text under it, starting at the glyph's edge, which is
+ * the body's; it wraps only between the clauses. A tool card's subtitle and a delegate's tail also
+ * sit under the glyph, not the title. */
 @media (width <= 48rem) {
   .steer-note-head:has(> .steer-note-run) {
     display: grid;
@@ -1746,16 +1747,14 @@ button.steer-note-run:focus-visible {
     margin-inline-start: 0;
   }
 
-  /* With no run's name, the step is the line beside the glyph and the times go under it, on the
-   * same edge. */
+  /* With no run's name, the times follow the step on its row and, when they do not fit, wrap under
+   * it as one item on the gutter, the body's edge. */
   .steer-note-head:not(:has(> .steer-note-run)):has(.steer-note-times) {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 0 var(--sp-2);
+    flex-wrap: wrap;
+    row-gap: 0;
   }
 
   .steer-note-head:not(:has(> .steer-note-run)) .steer-note-times {
-    grid-area: 2 / 1 / auto / -1;
     margin-inline-start: 0;
   }
 }
