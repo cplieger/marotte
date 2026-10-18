@@ -180,13 +180,11 @@
 
   /* THE ANSWER CONTROLS MAY NEVER LEAVE THE VIEWPORT, whatever the agent asked.
      An unbounded card does not make the page scroll: the bar grows to expose the
-     dock, `.bottom-bar` is `flex-shrink: 0` (19-files.css) and `#chat-area` is
-     `overflow: hidden` (12-chat.css), so the transcript's flex row collapses to
-     zero first and the bar then overflows the bottom of the view and is CLIPPED
-     there, with no scrollbar anywhere in the chain. Measured on a 390x844 phone
-     against a 2,003-character question: the message box, the card's own Send and
-     its Skip were all past the fold, so the reader could neither answer nor
-     dismiss.
+     dock and `#chat-area` is `overflow: hidden` (12-chat.css), so the transcript's
+     flex row collapses to zero first. With no ceiling and no bar shrink (below),
+     measured on a 390x844 phone against a 2,003-character question, the message box,
+     the card's own Send and its Skip were all past the fold. The ceiling keeps the
+     transcript in view; the bar's shrink is the last guard.
 
      The ceiling sits on the CARD rather than on `.decision-dock` because the
      tray's `overflow: clip` is load-bearing for the height animation above —
@@ -214,6 +212,23 @@
      `visualViewport` at all still gets. */
   max-block-size: min(calc(0.55 * var(--dock-viewport-h, 100dvh)), 30rem);
   overflow: hidden auto;
+}
+
+/* THE BAR SHRINKS ITS CARD BEFORE IT CLIPS ITS COMPOSER. A card's ceiling is a share of
+   the visual viewport, blind to the rest of the bar, so on a short view (a phone on its
+   side) a card at its ceiling plus the composer outgrows the view, and `#chat-area` would
+   clip the composer. Shrinkable, the bar hands that excess to the tray and the tray to its card,
+   whose regions give in their own order. Inert while the bar fits: the transcript's basis
+   is 0. The tray is `overflow: clip`, not a scroller, so it needs the zero floor written. */
+.bottom-bar:is([id="prompt-form"], .run-bottom-bar) {
+  flex-shrink: 1;
+  min-block-size: 0;
+}
+
+[id="prompt-form"] > .decision-dock,
+.run-bottom-bar > .decision-dock {
+  flex-shrink: 1;
+  min-block-size: 0;
 }
 
 /* THE ASK'S PROSE GIVES UP HEIGHT; ITS CONTROLS NEVER DO. That split is what
@@ -291,17 +306,17 @@
   color: var(--c-yellow);
 }
 
-/* THE QUESTION CARD'S CEILING NEVER LANDS BELOW ITS ORDINARY CONTENT. A raised keyboard
-   leaves a phone a 261-388px band, whose 0.55 (143-213px) is under a short question, two
-   options, the one-row answer box and the button row (275px at 390px); the regions then
-   shrink until the question loses lines and Send leaves the card. On a band that short the
-   card may take up to 18rem, leaving the transcript 3rem; elsewhere the fraction rules. */
+/* ON A SHORT BAND THE QUESTION CARD OUTGROWS THE SHARED FRACTION. A raised keyboard
+   leaves a phone a 261-429px band, whose 0.55 (143-236px) is under a short question, the
+   answer box and the button row, so the question would lose its lines to the card's floors.
+   There the card may take up to 18rem and all but 1rem of the band; the options give first
+   (below), and the bar it sits in may shrink it further (`.bottom-bar:is(…)` above). */
 .dock-card.dock-user-input {
   max-block-size: min(
     30rem,
     max(
       calc(0.55 * var(--dock-viewport-h, 100dvh)),
-      min(18rem, calc(var(--dock-viewport-h, 100dvh) - 3rem))
+      min(18rem, calc(var(--dock-viewport-h, 100dvh) - 1rem))
     )
   );
 }
@@ -412,6 +427,10 @@
 .dock-ask-question {
   flex: none;
   overflow-wrap: anywhere;
+
+  /* The agent writes its paragraphs with blank lines (kiro-cli's loop prompt ends on its own
+     "What would you like me to do?" paragraph); collapsing them runs the ask into the preamble. */
+  white-space: pre-line;
 }
 
 /* THE ANSWER BOX GETS ITS ROW TO ITSELF, and no button shares it. The user-input
@@ -453,7 +472,17 @@
      box plus the padding and border this box carries, because `box-sizing` is
      `border-box`. Absent, three rows, which is the free-form caller's own opening. */
   field-sizing: content;
-  min-block-size: calc(var(--ask-rows, 3) * 1lh + 2 * var(--sp-2) + 2px);
+
+  /* On a keyboard band under ~19rem (a 320px phone) the opening rows give way, down to one
+     row: 14rem is about the rest of the card and the run tab's composer at their floors,
+     and without the give a free-form card there scrolls Send out of itself. */
+  min-block-size: max(
+    calc(1lh + 2 * var(--sp-2) + 2px),
+    min(
+      calc(var(--ask-rows, 3) * 1lh + 2 * var(--sp-2) + 2px),
+      calc(var(--dock-viewport-h, 100dvh) - 14rem)
+    )
+  );
 
   /* A DRAGGED HEIGHT WOULD DEFEAT THE RESERVATION ABOVE: an explicit height beats
      content sizing, so a reader who pulled the grabber down could push Send out of
