@@ -138,6 +138,10 @@ func (*recoveryBridge) Call(context.Context, string, any) (*marotte.RPCResponse,
 	return &marotte.RPCResponse{}, nil
 }
 
+func (b *recoveryBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *recoveryBridge) CallAt(context.Context, string, any) (*marotte.RPCResponse, uint64, error) {
 	b.calls++
 	return &marotte.RPCResponse{}, 0, nil
@@ -276,6 +280,10 @@ func (b *orderedRetryBridges) OpenBridge(context.Context, marotte.ChatID, string
 type orderedRetryBridge struct {
 	recoveryBridge
 	add func(string)
+}
+
+func (b *orderedRetryBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
 }
 
 func (b *orderedRetryBridge) CallAt(_ context.Context, method string, _ any) (*marotte.RPCResponse, uint64, error) {

@@ -291,6 +291,10 @@ type promptParamsBridge struct {
 	chat  marotte.ChatID
 }
 
+func (b *promptParamsBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *promptParamsBridge) CallAt(_ context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	if method == marotte.MethodPrompt {
 		m, _ := params.(map[string]any)

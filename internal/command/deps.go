@@ -60,11 +60,19 @@ type promptSlot interface {
 	ReleaseAfterPrompt()
 }
 
+// promptWriter writes a turn's session/prompt, which CallAt refuses; sendTurnPrompt is its one caller.
+type promptWriter interface {
+	// PromptAt is CallAt for session/prompt with commit run under the engine's write lock just before the frame: its
+	// error refuses the write and is the answer, with nothing written. nil commits nothing.
+	PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error)
+}
+
 // Bridge is the per-chat ACP bridge as a whole. Only a handler that owns a chat for
 // the length of a turn needs it; helpers take a narrower parameter. Exported because
 // bridgeAccess returns it and the runtime's wiring names it.
 type Bridge interface {
 	bridgeRPC
+	promptWriter
 	promptSlot
 }
 
@@ -543,9 +551,9 @@ type turnOutcomeAccess interface {
 
 // promptSendGate holds an admitted prompt's session/prompt until the chat's session may take it.
 type promptSendGate interface {
-	// AwaitPromptSend returns once turnID's prompt may be sent, with the commit its session/prompt call carries
-	// (marotte.WithWriteCommit; nil for none), else the error that fails it unsent: ctx ended, the turn closed during
-	// the wait, or the reader stopped it (ErrPromptStopped), which the commit also answers for a stop that followed.
+	// AwaitPromptSend returns once this attempt of turnID's prompt may be sent, with the commit its PromptAt runs
+	// (nil for none), else the error that fails it unsent: ctx ended, the turn closed during the wait, or the reader
+	// stopped it (ErrPromptStopped), which the commit also answers for a stop that followed.
 	AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (commit func() error, err error)
 }
 

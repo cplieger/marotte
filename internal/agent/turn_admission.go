@@ -318,7 +318,7 @@ func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatI
 		step, fold := lc.markSentLocked(t)
 		var commit func() error
 		if step == sendNow {
-			commit = lc.sendCommitLocked()
+			commit = lc.sendCommitLocked(t)
 		}
 		changed := lc.changed
 		lc.mu.Unlock()
@@ -342,13 +342,13 @@ func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatI
 	}
 }
 
-// sendCommitLocked is the write commit of a send markSentLocked just let go: a stop requested since refuses the
-// frame with command.ErrPromptStopped, and a stop requested once it passed writes its session/cancel behind the
-// frame, since both take the engine's write lock. Caller holds mu, which orders the read against requestStop.
-func (lc *chatLifecycle) sendCommitLocked() func() error {
-	gate := lc.stopCount.Load()
+// sendCommitLocked is the write commit of an attempt markSentLocked just let t's send go for: a stop requested since
+// t's first attempt was let through (sendStops) refuses the frame with command.ErrPromptStopped, and a stop requested
+// once it passed writes its session/cancel behind the frame, since both take the engine's write lock. Caller holds mu.
+func (lc *chatLifecycle) sendCommitLocked(t *activeTurn) func() error {
+	base := t.sendStops
 	return func() error {
-		if lc.stopCount.Load() != gate {
+		if lc.stopCount.Load() != base {
 			return command.ErrPromptStopped
 		}
 		return nil

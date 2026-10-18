@@ -175,35 +175,35 @@ func TestWriteFrame_WritesThroughAWriterWithNoDeadline(t *testing.T) {
 	}
 }
 
-// A request's write commit runs under the write lock, so no other frame can go out between its verdict and the
-// request's own frame, and a refusal is the call's answer with nothing written and nothing left pending.
-func TestCallAt_ACommitRefusalWritesNothing(t *testing.T) {
+// A prompt's write commit runs under the write lock, so no other frame can go out between its verdict and the
+// prompt's own frame, and a refusal is the call's answer with nothing written and nothing left pending.
+func TestPromptAt_ACommitRefusalWritesNothing(t *testing.T) {
 	e, s := engineWithSession()
 	w := &captureWriter{}
 	e.stdin.Store(&stdinPipe{w: w})
 	refusal := errors.New("stopped before the write")
 	underLock := false
 	// Bounded, so a refused request that was written anyway stops waiting for its answer.
-	bounded, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	ctx := marotte.WithWriteCommit(bounded, func() error {
+	commit := func() error {
 		if e.writeMu.TryLock() {
 			e.writeMu.Unlock()
 		} else {
 			underLock = true
 		}
 		return refusal
-	})
+	}
 
-	_, _, err := s.CallAt(ctx, marotte.MethodPrompt, map[string]any{})
+	_, _, err := s.PromptAt(ctx, map[string]any{}, commit)
 	if !errors.Is(err, refusal) {
-		t.Errorf("CallAt = %v, want the commit's refusal", err)
+		t.Errorf("PromptAt = %v, want the commit's refusal", err)
 	}
 	if !underLock {
 		t.Error("the commit ran outside the write lock, so another frame could go out between its verdict and the write")
 	}
 	if w.wrote() {
-		t.Error("a refused request was written")
+		t.Error("a refused prompt was written")
 	}
 	e.pendingMu.Lock()
 	pending := len(e.pending)
@@ -213,24 +213,43 @@ func TestCallAt_ACommitRefusalWritesNothing(t *testing.T) {
 	}
 }
 
-// A commit that passes lets the request's frame out.
-func TestCallAt_APassingCommitWritesTheRequest(t *testing.T) {
+// A commit that passes lets the prompt's frame out.
+func TestPromptAt_APassingCommitWritesThePrompt(t *testing.T) {
 	e, s := engineWithSession()
 	w := &captureWriter{}
 	e.stdin.Store(&stdinPipe{w: w})
-	ctx, cancel := context.WithCancel(marotte.WithWriteCommit(t.Context(), func() error { return nil }))
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _, _ = s.CallAt(ctx, marotte.MethodPrompt, map[string]any{})
+		_, _, _ = s.PromptAt(ctx, map[string]any{}, func() error { return nil })
 	}()
 	deadline := time.Now().Add(2 * time.Second)
 	for !w.wrote() {
 		if time.Now().After(deadline) {
-			t.Fatal("a request whose commit passed was never written")
+			t.Fatal("a prompt whose commit passed was never written")
 		}
 		time.Sleep(time.Millisecond)
 	}
 	cancel()
 	<-done
+}
+
+// A plain call cannot write a session/prompt, so no prompt reaches the wire without PromptAt's commit.
+func TestCallAt_RefusesASessionPrompt(t *testing.T) {
+	e, s := engineWithSession()
+	w := &captureWriter{}
+	e.stdin.Store(&stdinPipe{w: w})
+	// Bounded, so a prompt written anyway stops waiting for its answer.
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	if _, _, err := s.CallAt(ctx, marotte.MethodPrompt, map[string]any{}); !errors.Is(err, errPromptNotACall) {
+		t.Errorf("Session.CallAt(session/prompt) = %v, want %v", err, errPromptNotACall)
+	}
+	if _, _, err := e.CallAt(ctx, marotte.MethodPrompt, map[string]any{}); !errors.Is(err, errPromptNotACall) {
+		t.Errorf("Engine.CallAt(session/prompt) = %v, want %v", err, errPromptNotACall)
+	}
+	if w.wrote() {
+		t.Error("a session/prompt asked of a plain call was written")
+	}
 }

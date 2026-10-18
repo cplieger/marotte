@@ -288,13 +288,27 @@ func (b *fakeBridge) forgetCalls() {
 	b.calls, b.lastParams, b.callDeadline = nil, nil, nil
 }
 
+// errFakePromptNotACall is the fake's copy of the engine refusing a session/prompt asked of a plain call.
+var errFakePromptNotACall = errors.New("fake: session/prompt is written only by PromptAt")
+
 func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
-	return b.callScript(ctx, method, params, b.deliver)
+	if method == marotte.MethodPrompt {
+		return nil, errFakePromptNotACall
+	}
+	return b.callScript(ctx, method, params, b.deliver, nil)
+}
+
+// PromptAt answers the session/prompt from the script, its commit run as the engine runs it (writeRequest).
+func (b *fakeBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	resp, err := b.callScript(ctx, marotte.MethodPrompt, params, b.deliver, commit)
+	return resp, b.seqNow(), err
 }
 
 // callScript answers one call from the script, pushing the frames it carries through deliver before returning.
-func (b *fakeBridge) callScript(ctx context.Context, method string, params any, deliver func(*marotte.RPCResponse)) (*marotte.RPCResponse, error) {
-	if err := b.writeRequest(ctx, method); err != nil {
+func (b *fakeBridge) callScript(
+	ctx context.Context, method string, params any, deliver func(*marotte.RPCResponse), commit func() error,
+) (*marotte.RPCResponse, error) {
+	if err := b.writeRequest(ctx, method, commit); err != nil {
 		return nil, err
 	}
 	b.mu.Lock()
@@ -380,10 +394,14 @@ func (b *fakeBridge) deliver(msg *marotte.RPCResponse) {
 // CallAt is Call plus the read loop position at which the response arrived.
 func (b *fakeBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	resp, err := b.Call(ctx, method, params)
+	return resp, b.seqNow(), err
+}
+
+// seqNow is the read loop position the fake has delivered up to.
+func (b *fakeBridge) seqNow() uint64 {
 	b.mu.Lock()
-	seq := b.deliveredSeq
-	b.mu.Unlock()
-	return resp, seq, err
+	defer b.mu.Unlock()
+	return b.deliveredSeq
 }
 
 // paramsFor returns the params captured for the most recent Call to method.
@@ -423,8 +441,8 @@ func (b *fakeBridge) Notify(ctx context.Context, method string, params any) erro
 }
 
 // writeRequest is a request's frame going out as the engine writes one: parked on blockWriteOn before the write,
-// then its commit (marotte.WriteCommit) and its place on the wire under writeMu, which every Notify also takes.
-func (b *fakeBridge) writeRequest(ctx context.Context, method string) error {
+// then its commit and its place on the wire under writeMu, which every Notify also takes.
+func (b *fakeBridge) writeRequest(ctx context.Context, method string, commit func() error) error {
 	b.mu.Lock()
 	gate := b.blockWriteOn[method]
 	b.mu.Unlock()
@@ -437,7 +455,7 @@ func (b *fakeBridge) writeRequest(ctx context.Context, method string) error {
 	}
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
-	if commit := marotte.WriteCommit(ctx); commit != nil {
+	if commit != nil {
 		if err := commit(); err != nil {
 			return err
 		}
@@ -531,6 +549,13 @@ func (b *fakeBridge) setCallErr(method string, err error) {
 		b.callErrs = map[string]error{}
 	}
 	b.callErrs[method] = err
+}
+
+// clearCallErr lifts setCallErr's failure.
+func (b *fakeBridge) clearCallErr(method string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.callErrs, method)
 }
 
 func (b *fakeBridge) setNotifyErr(method string, err error) {

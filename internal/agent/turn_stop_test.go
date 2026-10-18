@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"sync"
@@ -250,6 +251,13 @@ func assertStoppedUnsent(t *testing.T, h *Runtime, br *fakeBridge) {
 	if wire := br.wireLog(); slices.Contains(wire, marotte.MethodPrompt) {
 		t.Errorf("wire = %v, want no session/prompt for the prompt the reader stopped", wire)
 	}
+	assertOnlyTurnCancelledQuietly(t, h)
+}
+
+// assertOnlyTurnCancelledQuietly checks the chat's only turn closed cancelled with no failure_reason and no
+// prompt_failed.
+func assertOnlyTurnCancelledQuietly(t *testing.T, h *Runtime) {
+	t.Helper()
 	if closed := closedBroadcasts(t, h); len(closed) != 1 || closed[0].Outcome != marotte.TurnOutcomeCancelled || closed[0].FailureReason != "" {
 		t.Errorf("turn_closed = %+v, want the prompt's one turn cancelled with no failure_reason", closed)
 	}
@@ -258,21 +266,40 @@ func assertStoppedUnsent(t *testing.T, h *Runtime, br *fakeBridge) {
 	}
 }
 
-// assertNextPromptSent checks the chat then takes the user's next prompt and writes it once.
-func assertNextPromptSent(t *testing.T, h *Runtime, br *fakeBridge) {
+// assertNoPromptAfterTheCancel checks no session/prompt frame follows the stop's session/cancel on br's wire.
+func assertNoPromptAfterTheCancel(t *testing.T, br *fakeBridge) {
 	t.Helper()
-	if code := postPrompt(t, h, "again"); code != http.StatusOK {
-		t.Fatalf("the next prompt = %d, want admitted", code)
+	wire := br.wireLog()
+	at := slices.Index(wire, marotte.MethodCancel)
+	if at < 0 {
+		t.Fatalf("wire = %v, want the stop's session/cancel", wire)
 	}
-	synctest.Wait()
+	if slices.Contains(wire[at+1:], marotte.MethodPrompt) {
+		t.Errorf("wire = %v, want no session/prompt after the stop's session/cancel", wire)
+	}
+}
+
+// promptFrames counts the session/prompt frames on br's wire.
+func promptFrames(br *fakeBridge) int {
 	sent := 0
 	for _, m := range br.wireLog() {
 		if m == marotte.MethodPrompt {
 			sent++
 		}
 	}
-	if sent != 1 {
-		t.Errorf("session/prompt frames after the next prompt = %d, want 1", sent)
+	return sent
+}
+
+// assertNextPromptSent checks the chat then takes the user's next prompt and writes it once.
+func assertNextPromptSent(t *testing.T, h *Runtime, br *fakeBridge) {
+	t.Helper()
+	before := promptFrames(br)
+	if code := postPrompt(t, h, "again"); code != http.StatusOK {
+		t.Fatalf("the next prompt = %d, want admitted", code)
+	}
+	synctest.Wait()
+	if sent := promptFrames(br) - before; sent != 1 {
+		t.Errorf("session/prompt frames for the next prompt = %d, want 1", sent)
 	}
 }
 
@@ -470,6 +497,224 @@ func TestRequestStop_AnAdmissionIsItsTargetOnlyWhenNothingElseRuns(t *testing.T)
 			if got := stop.Admitted != 0; got != tc.want {
 				t.Errorf("the stop targets the admission = %v (Admitted %d), want %v", got, stop.Admitted, tc.want)
 			}
+		})
+	}
+}
+
+// busyReply is KAS's SessionBusyError answer to a session/prompt as the engine returns it (bridge's replyOutcome).
+func busyReply() error {
+	re := &marotte.RPCError{Code: marotte.RPCCodeSessionBusy, Message: "A prompt is already in-flight for session sess_x"}
+	return fmt.Errorf("ACP error %d: %w: %w", re.Code, marotte.ErrSessionBusy, re)
+}
+
+// pastRetryDelay is longer than the prompt path's busy retry delay and shorter than command.CancelGrace.
+const pastRetryDelay = 3 * time.Second
+
+// busyFirstAttempt is c1 with a prompt whose first session/prompt KAS answered busy, its retry waiting out the delay.
+func busyFirstAttempt(t *testing.T, br *fakeBridge, h *Runtime) {
+	t.Helper()
+	br.setCallErr(marotte.MethodPrompt, busyReply())
+	if code := postPrompt(t, h, "hi"); code != http.StatusOK {
+		t.Fatalf("prompt = %d, want its ack", code)
+	}
+	synctest.Wait()
+	if n := promptFrames(br); n != 1 {
+		t.Fatalf("Setup: session/prompt frames = %d, want the busy first attempt", n)
+	}
+	br.clearCallErr(marotte.MethodPrompt)
+}
+
+// A stop while a busy prompt's retry waits out its delay stops that prompt: the retry is never written after the
+// stop's session/cancel, the turn closes cancelled, quietly, and the chat takes the next prompt.
+func TestCmdCancel_DuringABusyRetrysDelayKeepsTheRetryUnwritten(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		seedChat(t, cs, "c1")
+		busyFirstAttempt(t, br, h)
+
+		if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
+			t.Fatalf("cancel = %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		time.Sleep(pastRetryDelay)
+		synctest.Wait()
+
+		assertNoPromptAfterTheCancel(t, br)
+		assertOnlyTurnCancelledQuietly(t, h)
+		assertNextPromptSent(t, h, br)
+	})
+}
+
+// With no stop, the busy prompt's retry is written once the delay passes.
+func TestPromptTurn_ABusyAnswerIsRetriedAfterTheDelay(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		seedChat(t, cs, "c1")
+		busyFirstAttempt(t, br, h)
+
+		time.Sleep(pastRetryDelay)
+		synctest.Wait()
+
+		if n := promptFrames(br); n != 2 {
+			t.Errorf("session/prompt frames = %d, want the first attempt and its retry", n)
+		}
+		if closed := closedBroadcasts(t, h); len(closed) != 1 || closed[0].Outcome == marotte.TurnOutcomeCancelled {
+			t.Errorf("turn_closed = %+v, want the retried prompt's turn closed by its answer, not cancelled", closed)
+		}
+	})
+}
+
+// emptyRetryHub runs c1's first prompt to an empty end_turn, so the chat re-prompts on a fresh session, and answers
+// that session's fake, which arm set up before the retry used it.
+func emptyRetryHub(t *testing.T, arm func(*fakeBridge)) (h *Runtime, cs *testChatStore, retry *fakeBridge) {
+	t.Helper()
+	answerFirst := make(chan struct{})
+	var (
+		mu     sync.Mutex
+		minted []*fakeBridge
+	)
+	factory := func() engineSession {
+		mu.Lock()
+		defer mu.Unlock()
+		br := newFakeBridge()
+		if len(minted) == 0 {
+			br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: answerFirst}
+		} else {
+			arm(br)
+		}
+		minted = append(minted, br)
+		return br
+	}
+	cs = newTestChatStore()
+	h = newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(factory, nil), cs)
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	settleBoot(t, h)
+	seedChat(t, cs, "c1")
+	if code := postPrompt(t, h, "tidy"); code != http.StatusOK {
+		t.Fatalf("Setup: prompt = %d", code)
+	}
+	synctest.Wait()
+	mu.Lock()
+	if len(minted) != 1 {
+		mu.Unlock()
+		t.Fatalf("Setup: sessions = %d, want the first prompt's", len(minted))
+	}
+	first := minted[0]
+	mu.Unlock()
+	first.deliver(newTurnStartMsg())
+	first.deliver(newTurnEndMsg("end_turn"))
+	close(answerFirst)
+	synctest.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(minted) != 2 {
+		t.Fatalf("Setup: sessions = %d, want the empty turn's retry on a fresh one", len(minted))
+	}
+	return h, cs, minted[1]
+}
+
+// assertRetryCancelledQuietly checks the empty turn's retry closed cancelled with no failure_reason and no
+// prompt_failed.
+func assertRetryCancelledQuietly(t *testing.T, h *Runtime, cs *testChatStore, retry string) {
+	t.Helper()
+	if c, closed := closeOfTurn(t, logOf(t, cs, "c1"), retry); !closed || c.Outcome != marotte.TurnOutcomeCancelled || c.FailureReason != "" {
+		t.Errorf("the retry's turn_close = %+v (closed %v), want cancelled with no failure_reason", c, closed)
+	}
+	if failed := promptFailures(h); len(failed) != 0 {
+		t.Errorf("prompt_failed = %q, want none for the reader's own stop", failed)
+	}
+}
+
+// A stop after the send gate let the empty turn's retry through, before its frame reached the write lock, keeps the
+// retry unwritten and closes it cancelled, quietly.
+func TestCmdCancel_BetweenTheEmptyRetrysGateAndItsWriteKeepsItUnwritten(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		write := make(chan struct{})
+		h, cs, br := emptyRetryHub(t, func(br *fakeBridge) {
+			br.blockWriteOn = map[string]chan struct{}{marotte.MethodPrompt: write}
+		})
+		retry, ok := h.coord.PromptTurn("c1")
+		lc, _ := h.coord.turns.lookup("c1")
+		lc.mu.Lock()
+		letThrough := ok && lc.call != nil && lc.call.ID == retry.ID()
+		lc.mu.Unlock()
+		if !letThrough {
+			t.Fatal("Setup: the send gate has not let the retry through")
+		}
+
+		if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
+			t.Fatalf("cancel = %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		br.mu.Lock()
+		br.blockWriteOn = nil
+		br.mu.Unlock()
+		close(write)
+		synctest.Wait()
+
+		if n := promptFrames(br); n != 0 {
+			t.Errorf("the retry's session/prompt frames = %d, want none after the stop (wire %v)", n, br.wireLog())
+		}
+		assertRetryCancelledQuietly(t, h, cs, retry.ID())
+	})
+}
+
+// A stop while the empty turn's retry waits out a busy answer's delay keeps its next attempt unwritten and closes
+// it cancelled, quietly.
+func TestCmdCancel_DuringTheEmptyRetrysBusyDelayKeepsItUnwritten(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, br := emptyRetryHub(t, func(br *fakeBridge) {
+			br.callErrs = map[string]error{marotte.MethodPrompt: busyReply()}
+		})
+		retry, ok := h.coord.PromptTurn("c1")
+		if n := promptFrames(br); !ok || n != 1 {
+			t.Fatalf("Setup: the retry's session/prompt frames = %d (turn %v), want its busy first attempt", n, ok)
+		}
+		br.clearCallErr(marotte.MethodPrompt)
+
+		if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
+			t.Fatalf("cancel = %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		time.Sleep(pastRetryDelay)
+		synctest.Wait()
+
+		assertNoPromptAfterTheCancel(t, br)
+		assertRetryCancelledQuietly(t, h, cs, retry.ID())
+	})
+}
+
+// The send gate judges every attempt of a turn against the stops since its first attempt was let through: a stop
+// after it refuses a later attempt, and with none the later attempt goes.
+func TestAwaitPromptSend_ALaterAttemptAnswersTheStopsSinceTheFirst(t *testing.T) {
+	cases := []struct {
+		want error
+		name string
+		stop bool
+	}{
+		{name: "a stop came between the attempts", stop: true, want: command.ErrPromptStopped},
+		{name: "no stop came"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				h, cs, _ := newTestHub()
+				defer shutdownHub(t, h)
+				seedChat(t, cs, "c1")
+				reservePrompt(t, h)
+				id := startAdmitted(t, h)
+				if err := sendGate(t, h, id); err != nil {
+					t.Fatalf("Setup: the first attempt's gate = %v", err)
+				}
+				if tc.stop {
+					stop := h.coord.RequestStop("c1")
+					h.coord.ArmStopGrace(stop, stopGrace)
+					h.coord.ReleaseStop(stop)
+				}
+				if err := sendGate(t, h, id); !errors.Is(err, tc.want) {
+					t.Errorf("the later attempt's gate = %v, want %v", err, tc.want)
+				}
+			})
 		})
 	}
 }

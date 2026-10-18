@@ -65,6 +65,10 @@ func (b *steerBridge) Call(ctx context.Context, method string, params any) (*mar
 	return &marotte.RPCResponse{Result: raw}, nil
 }
 
+func (b *steerBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *steerBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	resp, err := b.Call(ctx, method, params)
 	return resp, 0, err

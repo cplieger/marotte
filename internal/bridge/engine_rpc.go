@@ -390,11 +390,25 @@ func (e *Engine) CallAt(ctx context.Context, method string, params any) (*marott
 	return e.callAt(ctx, e.engineLane, "", method, params, nil)
 }
 
-// callAt writes one request positioned on l and waits for its outcome. Once written, every engine-side outcome (the
-// response, an oversize failure, the exit path) arrives through the entry and carries l's position. A commit ctx
-// carries that refuses the write is answered as is, with nothing written.
+// errPromptNotACall refuses a session/prompt asked of a plain call: Session.PromptAt is its only writer.
+var errPromptNotACall = errors.New("session/prompt is written only by Session.PromptAt")
+
+// callAt writes one request positioned on l and waits for its outcome (request), refusing session/prompt.
 func (e *Engine) callAt(
 	ctx context.Context, l *lane, sessionID marotte.SessionID, method string, params any, late func(*marotte.RPCResponse),
+) (*marotte.RPCResponse, uint64, error) {
+	if method == marotte.MethodPrompt {
+		return nil, 0, errPromptNotACall
+	}
+	return e.request(ctx, l, sessionID, method, params, late, nil)
+}
+
+// request writes one request positioned on l and waits for its outcome. Once written, every engine-side outcome (the
+// response, an oversize failure, the exit path) arrives through the entry and carries l's position. A commit that
+// refuses the write is answered as is, with nothing written.
+func (e *Engine) request(
+	ctx context.Context, l *lane, sessionID marotte.SessionID, method string, params any, late func(*marotte.RPCResponse),
+	commit func() error,
 ) (*marotte.RPCResponse, uint64, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
@@ -405,7 +419,7 @@ func (e *Engine) callAt(
 		return nil, 0, err
 	}
 	entry := e.register(id, l, sessionID, late)
-	refused, writeErr := e.writeFrameIf(append(data, '\n'), marotte.WriteCommit(ctx))
+	refused, writeErr := e.writeFrameIf(append(data, '\n'), commit)
 	if refused != nil {
 		e.deregisterPending(id)
 		return nil, 0, refused
@@ -513,7 +527,7 @@ func (e *Engine) writeFrame(data []byte) error {
 	return err
 }
 
-// writeFrameIf is writeFrame with commit (marotte.WithWriteCommit) run under writeMu just before the first byte: its
+// writeFrameIf is writeFrame with commit (Session.PromptAt's) run under writeMu just before the first byte: its
 // error is answered as refused and nothing is written.
 func (e *Engine) writeFrameIf(data []byte, commit func() error) (refused, err error) {
 	e.writeMu.Lock()

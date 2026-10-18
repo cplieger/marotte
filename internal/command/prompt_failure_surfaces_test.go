@@ -113,6 +113,10 @@ func (b *surfaceBridge) Call(context.Context, string, any) (*marotte.RPCResponse
 	return &marotte.RPCResponse{}, b.deps.callErr
 }
 
+func (b *surfaceBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *surfaceBridge) CallAt(context.Context, string, any) (*marotte.RPCResponse, uint64, error) {
 	return &marotte.RPCResponse{}, 0, b.deps.callErr
 }

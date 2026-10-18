@@ -102,28 +102,25 @@ func retry(ctx context.Context, maxAttempts int, shouldRetry func(error) bool, f
 	return result, err
 }
 
-// callPromptWithRetry sends turnID's prompt to kiro-cli, retrying only the
-// classes a second attempt can actually fix. gate, when non-nil, holds every
-// attempt, a busy retry's included, and each attempt's write carries its commit.
-func callPromptWithRetry(ctx context.Context, gate promptSendGate, sb bridgeCaller, params map[string]any, chatID marotte.ChatID, turnID string) (promptReply, error) {
+// sendTurnPrompt writes turn's session/prompt, retrying only the classes a second attempt can actually fix. It is
+// the only writer of a turn's prompt: gate, when non-nil, holds every attempt, a busy retry's included, and each
+// attempt's write runs the commit it answers.
+func sendTurnPrompt(ctx context.Context, gate promptSendGate, sb promptWriter, params map[string]any, turn TurnRef) (promptReply, error) {
 	return retry(ctx, 2, func(err error) bool {
 		class := classifyPromptFailure(err)
 		retry := class == classBusy || class == classTransient
 		slog.Warn("prompt failure",
-			"chat_id", chatID, "class", class.String(), "retry", retry, keyError, err)
+			"chat_id", turn.Chat, "class", class.String(), "retry", retry, keyError, err)
 		return retry
 	}, func() (promptReply, error) {
-		callCtx := ctx
+		var commit func() error
 		if gate != nil {
-			commit, err := gate.AwaitPromptSend(ctx, chatID, turnID)
-			if err != nil {
+			var err error
+			if commit, err = gate.AwaitPromptSend(ctx, turn.Chat, turn.Turn); err != nil {
 				return promptReply{}, err
 			}
-			if commit != nil {
-				callCtx = marotte.WithWriteCommit(ctx, commit)
-			}
 		}
-		resp, seq, err := sb.CallAt(callCtx, marotte.MethodPrompt, params)
+		resp, seq, err := sb.PromptAt(ctx, params, commit)
 		return promptReply{resp: resp, seq: seq}, err
 	})
 }
@@ -245,7 +242,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, chatID marott
 		return
 	}
 	deliverParkedSteers(callCtx, roles, chatID, retryTurn)
-	reply, retryErr := callPromptWithRetry(callCtx, roles.sendGate, sb2, params, chatID, retryTurn)
+	reply, retryErr := sendTurnPrompt(callCtx, roles.sendGate, sb2, params, turn)
 	roles.turnOutcome.EndPromptCall(turn)
 	if retryErr != nil {
 		logPromptFailure("retry prompt failed", chatID, retryErr)
@@ -519,7 +516,7 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	slog.Info("prompt", "chat_id", chatID, "len", len(p.Text))
 	start := time.Now()
 	promptParams, inlinedImage := buildPromptParams(callCtx, roles.workspace, sb, p, historyInlineImages(callCtx, roles.chats, chatID))
-	reply, err := callPromptWithRetry(callCtx, roles.sendGate, sb, promptParams, chatID, turnID)
+	reply, err := sendTurnPrompt(callCtx, roles.sendGate, sb, promptParams, turn)
 	roles.turnOutcome.EndPromptCall(turn)
 	elapsed := time.Since(start)
 	if err != nil {

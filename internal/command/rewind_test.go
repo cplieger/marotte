@@ -54,6 +54,10 @@ func (b *recordingBridge) Call(_ context.Context, method string, params any) (*m
 
 // CallAt reports position zero, which is what "no ordering to wait for" means: this
 // double is not on a prompt path.
+func (b *recordingBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *recordingBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	resp, err := b.Call(ctx, method, params)
 	return resp, 0, err

@@ -76,6 +76,9 @@ type activeTurn struct {
 	reapArmID uint64
 	// admission is the reservation a prompt-class turn opened under (openLocked), zero for none.
 	admission uint64
+	// sendStops is the chat's stopCount when the gate let this turn's prompt through; the gate refuses a later attempt
+	// once it moved, so it stays the first attempt's, and each attempt's write commit refuses once it moves.
+	sendStops uint64
 	// idleArms counts KAS's idle reports that armed this turn's idle close (WireTurnActivity); an expiry carrying an
 	// older count, or arriving after kasIdle cleared, must not act.
 	idleArms uint64
@@ -90,8 +93,8 @@ type activeTurn struct {
 	bracketed bool
 	// kasIdle is whether KAS's newest activity report since this turn opened said no turn runs.
 	kasIdle bool
-	// sent is whether the send gate let this prompt-class turn's session/prompt go (markSentLocked); its write commit
-	// may still refuse the frame (sendCommitLocked).
+	// sent is whether the send gate let this prompt-class turn's session/prompt go at least once (markSentLocked); a
+	// write commit may still refuse each frame (sendCommitLocked).
 	sent bool
 	// stopped is whether the reader's stop keeps this unsent prompt from being sent (ArmStopGrace).
 	stopped bool
@@ -307,7 +310,7 @@ const (
 	sendWait      sendStep = iota // KAS reports a run, a frame is mid-fold, a stop holds sends, or another turn holds own
 	sendNow                       // t owns the chat and is marked sent
 	sendCloseFold                 // own was a fold-opened wire turn, now claimed; the caller closes it, then asks again
-	sendStopped                   // the reader's stop keeps t unsent
+	sendStopped                   // the reader's stop keeps t unsent, or keeps a later attempt of it unwritten
 )
 
 // markSentLocked lets t's send through only once t owns the chat (caller holds mu, t live and unclaimed), since t's
@@ -321,11 +324,12 @@ const (
 func (lc *chatLifecycle) markSentLocked(t *activeTurn) (sendStep, *activeTurn) {
 	o := lc.own
 	switch {
-	case t.stopped:
+	case t.stopped, t.sent && lc.stopCount.Load() != t.sendStops:
 		return sendStopped, nil
 	case !lc.kas.may().admit, lc.inFrame, len(lc.stops) > 0:
 		return sendWait, nil
 	case o == nil || o == t:
+		t.sendStops = lc.stopCount.Load()
 		t.sent = true
 		lc.call = t
 		if o == nil {

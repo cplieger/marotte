@@ -124,28 +124,21 @@ func TestRetry_CancellationAbandonsTheWaitAndKeepsTheUpstreamError(t *testing.T)
 	})
 }
 
-// countingCaller is a bridgeCaller that answers every Call with one fixed error
-// and records how many times it was asked. The narrowest fake that reaches
-// callPromptWithRetry: that function's whole contract is how many times it
-// invokes this method.
+// countingCaller is a promptWriter that answers every prompt with one fixed error and records how many times it was
+// asked: sendTurnPrompt's whole retry contract is how many times it writes.
 type countingCaller struct {
 	err   error
 	calls int
 }
 
-func (c *countingCaller) Call(context.Context, string, any) (*marotte.RPCResponse, error) {
-	c.calls++
-	return nil, c.err
-}
-
-func (c *countingCaller) CallAt(context.Context, string, any) (*marotte.RPCResponse, uint64, error) {
+func (c *countingCaller) PromptAt(context.Context, any, func() error) (*marotte.RPCResponse, uint64, error) {
 	c.calls++
 	return nil, 0, c.err
 }
 
-// TestCallPromptWithRetry_LadderPerClass asserts the retry ladder through the REAL function rather
+// TestSendTurnPrompt_LadderPerClass asserts the retry ladder through the REAL function rather
 // than a mirror of its predicate.
-func TestCallPromptWithRetry_LadderPerClass(t *testing.T) {
+func TestSendTurnPrompt_LadderPerClass(t *testing.T) {
 	cases := map[string]struct {
 		err       error
 		wantCalls int
@@ -182,17 +175,17 @@ func TestCallPromptWithRetry_LadderPerClass(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				caller := &countingCaller{err: tc.err}
 				start := time.Now()
-				_, err := callPromptWithRetry(t.Context(), nil, caller, map[string]any{}, "chat-1", "turn-1")
+				_, err := sendTurnPrompt(t.Context(), nil, caller, map[string]any{}, TurnRef{Chat: "chat-1", Turn: "turn-1"})
 
 				if err == nil {
-					t.Fatal("callPromptWithRetry() returned no error, want the caller's")
+					t.Fatal("sendTurnPrompt() returned no error, want the caller's")
 				}
 				if caller.calls != tc.wantCalls {
-					t.Errorf("callPromptWithRetry() sent the prompt %d times, want %d",
+					t.Errorf("sendTurnPrompt() sent the prompt %d times, want %d",
 						caller.calls, tc.wantCalls)
 				}
 				if got := time.Since(start); got != tc.wantWait {
-					t.Errorf("callPromptWithRetry() waited %v, want exactly %v", got, tc.wantWait)
+					t.Errorf("sendTurnPrompt() waited %v, want exactly %v", got, tc.wantWait)
 				}
 			})
 		})

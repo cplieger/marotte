@@ -30,6 +30,10 @@ func (b *configLog) Call(ctx context.Context, method string, params any) (*marot
 	return b.recordingBridge.Call(ctx, method, params)
 }
 
+func (b *configLog) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *configLog) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	resp, err := b.Call(ctx, method, params)
 	return resp, 0, err
@@ -155,6 +159,10 @@ func (b *refusingEffort) Call(ctx context.Context, method string, params any) (*
 	return resp, err
 }
 
+func (b *refusingEffort) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *refusingEffort) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	resp, err := b.Call(ctx, method, params)
 	return resp, 0, err
@@ -203,6 +211,10 @@ func (b *gatedEffort) Call(_ context.Context, _ string, params any) (*marotte.RP
 		return nil, errors.New("no such config option")
 	}
 	return &marotte.RPCResponse{Result: json.RawMessage(`{}`)}, nil
+}
+
+func (b *gatedEffort) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
 }
 
 func (b *gatedEffort) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {

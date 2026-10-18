@@ -15,10 +15,10 @@ import (
 func refOf(t *activeTurn) command.TurnRef { return command.TurnRef{Chat: t.Chat, Turn: t.ID} }
 
 // requestStop records the stop on the open sequence and on stopCount, which refuses the write of a send the gate
-// already let go (sendCommitLocked), holds the chat's sends until releaseStop, and captures its targets. An unsent
-// prompt, or an admitted one whose turn has not opened, is the target only when nothing else runs: own is none,
-// closing or the prompt itself, and KAS reports no run, so the send gate would send it next. Behind a running turn
-// it waits, and goes once that turn ends. No lifecycle, no stop.
+// already let go and any later attempt of it (sendStops), holds the chat's sends until releaseStop, and captures its
+// targets. An unsent prompt, or an admitted one whose turn has not opened, is the target only when nothing else runs:
+// own is none, closing or the prompt itself, and KAS reports no run, so the send gate would send it next. Behind a
+// running turn it waits, and goes once that turn ends. No lifecycle, no stop.
 func (r *turnRegistry) requestStop(chatID marotte.ChatID) *command.TurnStop {
 	stop := &command.TurnStop{Chat: chatID}
 	lc, ok := r.lookup(chatID)

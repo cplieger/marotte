@@ -152,7 +152,7 @@ func TestRoute_ResponseSeqIsTheLanesPosition(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		_, seq, err := mine.CallAt(t.Context(), marotte.MethodPrompt, map[string]any{"sessionId": mine.SessionID()})
+		_, seq, err := mine.PromptAt(t.Context(), map[string]any{"sessionId": mine.SessionID()}, nil)
 		done <- result{seq, err}
 	}()
 	prompt := k.nextMethod(marotte.MethodPrompt)

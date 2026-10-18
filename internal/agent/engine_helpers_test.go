@@ -239,7 +239,10 @@ func (e *fakeEngine) Exit() bridge.ExitInfo {
 func (e *fakeEngine) EngineNotifCh() <-chan marotte.Notification { return e.notifCh }
 
 func (e *fakeEngine) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
-	resp, err := e.src.lane.callScript(ctx, method, params, e.deliver)
+	if method == marotte.MethodPrompt {
+		return nil, errFakePromptNotACall
+	}
+	resp, err := e.src.lane.callScript(ctx, method, params, e.deliver, nil)
 	e.src.mu.Lock()
 	gate := e.src.callGate
 	e.src.mu.Unlock()

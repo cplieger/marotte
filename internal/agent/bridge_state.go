@@ -110,6 +110,14 @@ func (sb *sharedBridge) CallAt(ctx context.Context, method string, params any) (
 	return s.CallAt(ctx, method, params)
 }
 
+func (sb *sharedBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	s := sb.current()
+	if s == nil {
+		return nil, 0, marotte.ErrSessionClosed
+	}
+	return s.PromptAt(ctx, params, commit)
+}
+
 // beforeCall announces a checkpoint revert before it is sent, since KAS writes the files back
 // before it answers.
 func (sb *sharedBridge) beforeCall(method string, s engineSession) {

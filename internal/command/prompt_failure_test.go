@@ -263,10 +263,8 @@ func TestClassifyPromptFailure(t *testing.T) {
 	}
 }
 
-// retriesFor mirrors callPromptWithRetry's decision so the policy is asserted
-// through the same expression the retry loop evaluates. A helper rather than a
-// production predicate: the previous pass kept an IsRetryablePromptError wrapper
-// for readability, and punused correctly called it out as used in tests only.
+// retriesFor mirrors sendTurnPrompt's decision so the policy is asserted
+// through the same expression the retry loop evaluates.
 func retriesFor(err error) bool {
 	class := classifyPromptFailure(err)
 	return class == classBusy || class == classTransient

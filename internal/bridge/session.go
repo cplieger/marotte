@@ -106,12 +106,23 @@ func (s *Session) Call(ctx context.Context, method string, params any) (*marotte
 }
 
 // CallAt is Call plus the lane position the response arrived at, for callers ordering a decision against frames still
-// in flight (the prompt paths). A cancelled ctx abandons the request and returns position zero.
+// in flight. A cancelled ctx abandons the request and returns position zero. session/prompt is refused: PromptAt
+// writes it.
 func (s *Session) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	if err := s.callable(); err != nil {
 		return nil, 0, err
 	}
 	return s.engine.callAt(ctx, s.lane, s.id, method, params, nil)
+}
+
+// PromptAt writes the session's session/prompt and waits for its outcome, as CallAt. commit, when non-nil, runs under
+// the engine's write lock immediately before the frame: its error refuses the write and is the answer, with nothing
+// written, and a nil lets the frame out ahead of every frame written after commit returned.
+func (s *Session) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	if err := s.callable(); err != nil {
+		return nil, 0, err
+	}
+	return s.engine.request(ctx, s.lane, s.id, marotte.MethodPrompt, params, nil, commit)
 }
 
 // doorSetConfig is a session/set_config_option the door itself makes while the session is opening.
