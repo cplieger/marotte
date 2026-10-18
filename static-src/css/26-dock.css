@@ -231,6 +231,29 @@
   min-block-size: 0;
 }
 
+/* A PHONE ON ITS SIDE GIVES A WAITING QUESTION THE WHOLE BAR. Under the app's chrome a 320-390px
+   view holds 232-302px, and the card's floors (the whole question, a one-row answer box, the
+   button row) plus the composer and the run strip do not fit. While the card is up the strip and
+   the composer step aside; the card's own box takes the typing (`decision-dock.ts`
+   `focusAnswerIfAside`) and the composer's draft waits in its hidden box. The tray, now
+   the bar's last member, drops the gap it kept above them, and the answer box opens at
+   one row. */
+@media (height <= 30rem) {
+  [id="prompt-form"]:has(> .decision-dock > .dock-user-input)
+    > :is(.run-bar-host, [id="prompt-box"]),
+  .run-bottom-bar:has(> .decision-dock > .dock-user-input) > [id="run-composer"] {
+    display: none;
+  }
+
+  :is([id="prompt-form"], .run-bottom-bar) > .decision-dock:has(> .dock-user-input) {
+    margin-block-end: 0;
+  }
+
+  .dock-user-input .dock-ask-text {
+    min-block-size: calc(1lh + 2 * var(--sp-2) + 2px);
+  }
+}
+
 /* THE ASK'S PROSE GIVES UP HEIGHT; ITS CONTROLS NEVER DO. That split is what
    makes the ceiling above safe rather than merely tidy: the reader can always
    reach Send, and reaching the rest of a long question is a scroll instead of a

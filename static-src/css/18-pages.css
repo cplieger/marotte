@@ -1089,9 +1089,10 @@
 /* ONE CEILING FOR THE WHOLE BAR, against the visual viewport (`--dock-viewport-h`,
    `dock-ask.ts`), so the run dock's open panel, an ask card and the composer together
    never push the composer off a phone with its keyboard up. The composer never shrinks;
-   the run dock gives first (31-exec-view.css), then the ask card, whose own regions
-   decide what inside it gives (26-dock.css). The bar's flex, shrinkable in a short
-   view, is the dock's (26-dock.css `.bottom-bar:is(…)`). */
+   with no card up the run dock gives (31-exec-view.css); with one it is never cut through
+   its head (below) and the card gives, its own regions deciding what inside it gives
+   (26-dock.css). The bar's flex, shrinkable in a short view, is the dock's
+   (26-dock.css `.bottom-bar:is(…)`). */
 .run-bottom-bar {
   display: flex;
   flex-direction: column;
@@ -1101,16 +1102,23 @@
     flex: none;
   }
 
-  /* The stack's one gap is each member's own block-end margin, as in the chat's bar. The
-     weight empties the run dock before the ask card gives a pixel: shrink is shared in
-     proportion to weight times size. */
+  /* The stack's one gap is each member's own block-end margin, as in the chat's bar. */
   & > .ev-dock-host {
-    flex: 0 1000 auto;
+    flex: 0 1 auto;
     margin-block-end: var(--stack-gap);
+  }
 
-    /* Emptied, the host is 0px while the dock's own padding and border are not: without the
-       clip they would paint a 10px sliver above the ask card. */
-    overflow: clip;
+  /* WITH A CARD UP THE RUN DOCK IS NEVER A SLICE CUT THROUGH ITS HEAD: closed, it keeps its
+     height and the card gives; open, its panel gives (31-exec-view.css). On a short band
+     (`[data-short-band]`, `dock-ask.ts`) the card and the composer need the bar, so it goes. */
+  &:where(:has(> .decision-dock > .dock-card)) > .ev-dock-host {
+    &:not(:has(> .ev-dock[data-open])) {
+      flex: none;
+    }
+
+    :where(:root[data-short-band]) & {
+      display: none;
+    }
   }
 
   /* WITH A QUESTION UP, A SHORT BAND IS THE BAR'S. Beside the composer, three quarters of a

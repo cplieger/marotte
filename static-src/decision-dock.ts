@@ -631,6 +631,19 @@ function show(h: DockHost, head: Decision, rest: readonly Decision[]): void {
   h.renderedKey = decisionKey(head.chatID, head.kind, decisionIdentity(head));
   paintRest(h, rest);
   announce(announcementFor(head));
+  focusAnswerIfAside(h, card);
+}
+
+/**
+ * A short landscape screen hides the bar's composer while a question card is up (`css/26-dock.css`), so the typing
+ * moves to the card's own answer box. Keyed on the composer's rendering, so the stylesheet alone owns the condition.
+ */
+function focusAnswerIfAside(h: DockHost, card: HTMLElement): void {
+  const composer = h.el.parentElement?.querySelector(":scope > :is(.prompt-box, .run-composer)");
+  if (composer == null || composer.checkVisibility()) {
+    return;
+  }
+  card.querySelector<HTMLElement>(".dock-ask-text")?.focus({ preventScroll: true });
 }
 
 /** A collapsed host is `display: none`, so its margin is 0 whatever `getComputedStyle` reports. */

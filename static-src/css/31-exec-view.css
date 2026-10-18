@@ -985,7 +985,8 @@
 /* A container, so the dock and the chat's run-bar rows answer the width they get
    rather than the viewport's (the sidebar takes its share). A column whose open
    panel is the one member that gives, when the bottom bar's ceiling (18-pages.css)
-   is reached: the head, the question, notes and rows keep their height.
+   is reached: the head, the question, notes and rows keep their height. With an ask
+   card up the bar keeps a closed dock whole, and on a short band hides it (18-pages.css).
 
    One of the bottom stack's cards (01-tokens.css `--stack-r`): every surface inside
    sits `--stack-in` from its edge at `--stack-in-r`, and consecutive regions are

@@ -2,7 +2,18 @@ import { describe, it, expect, afterEach } from "vitest";
 import { page as browser } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { makeSession } from "./__test-helpers__/model.js";
+import {
+  _resetForTest as resetDocks,
+  collapseSettledDecision,
+  dropTurnDecisions,
+  mountDecisionDock,
+  pushDecision,
+  type AnswerOutcome,
+} from "./decision-dock.js";
+import { paintViewportHeight } from "./dock-ask.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
+import { setActive, setSessions } from "./store.js";
 import { buildUserInputCard } from "./user-input.js";
 import type { UserInputOption } from "./types.js";
 
@@ -10,20 +21,25 @@ const LOOP_QUESTION =
   "I've been trying to use \"execute_bash\" but it's failed 7 times in a row. I'm clearly stuck in a loop.\n\nWhat would you like me to do?";
 const LOOP_OPTIONS: UserInputOption[] = [{ title: "Cancel" }, { title: "Keep Iterating" }];
 
-const FIXTURES: Record<string, { readonly question: string; readonly options: UserInputOption[] }> =
-  {
-    "the loop prompt": { question: LOOP_QUESTION, options: LOOP_OPTIONS },
-    "the loop prompt, free-form": { question: LOOP_QUESTION, options: [] },
-    "a 600-character free-form question": {
-      question:
-        "I finished the first pass over the dock styles and found two places where the question card's height is decided: the shared card ceiling, which follows the visual viewport, and the run tab's bottom bar, which caps the dock, the ask and the composer together at three quarters of the screen. Changing either one moves every card kind that shares it, so before I go further I need to know which of these you want: should I keep the change to the question card only, or apply the same ceiling to the permission, approval and elicitation cards as well?",
-      options: [],
-    },
-    "a long question with options": {
-      question: `${Array.from({ length: 12 }, (_, i) => `Attempt ${String(i + 1)} failed on the same build step with the same error.`).join(" ")}\n\nWhat would you like me to do?`,
-      options: LOOP_OPTIONS,
-    },
-  };
+/** `long`: clamped to four lines behind Show more. */
+const FIXTURES: Record<
+  string,
+  { readonly question: string; readonly options: UserInputOption[]; readonly long: boolean }
+> = {
+  "the loop prompt": { question: LOOP_QUESTION, options: LOOP_OPTIONS, long: false },
+  "the loop prompt, free-form": { question: LOOP_QUESTION, options: [], long: false },
+  "a 600-character free-form question": {
+    question:
+      "I finished the first pass over the dock styles and found two places where the question card's height is decided: the shared card ceiling, which follows the visual viewport, and the run tab's bottom bar, which caps the dock, the ask and the composer together at three quarters of the screen. Changing either one moves every card kind that shares it, so before I go further I need to know which of these you want: should I keep the change to the question card only, or apply the same ceiling to the permission, approval and elicitation cards as well?",
+    options: [],
+    long: true,
+  },
+  "a long question with options": {
+    question: `${Array.from({ length: 12 }, (_, i) => `Attempt ${String(i + 1)} failed on the same build step with the same error.`).join(" ")}\n\nWhat would you like me to do?`,
+    options: LOOP_OPTIONS,
+    long: true,
+  },
+};
 
 /** The app's chrome above a tab's view on a phone: the toolbar and the tab strip. */
 const CHROME_PX = 88;
@@ -37,8 +53,14 @@ const VIEWPORTS: readonly (readonly [number, number, number])[] = [
   [430, 932, 932],
   [430, 932, 429],
   [768, 1024, 1024],
+  [768, 1024, 600],
   [1280, 800, 800],
+  [844, 390, 390],
+  [568, 320, 320],
 ];
+
+/** `height <= 30rem`: a phone on its side, where a waiting question takes the whole bar. */
+const SIDEWAYS_MAX_H = 480;
 
 type Host = "chat" | "run";
 
@@ -47,13 +69,15 @@ let frame: HTMLElement | null = null;
 let view: ExecPageView | null = null;
 
 afterEach(async () => {
+  resetDocks();
+  setSessions([]);
   view?.dispose();
   view = null;
   frame?.remove();
   frame = null;
   style?.remove();
   style = null;
-  for (const attr of ["data-pointer", "data-theme"]) {
+  for (const attr of ["data-pointer", "data-theme", "data-short-band"]) {
     document.documentElement.removeAttribute(attr);
   }
   document.documentElement.style.removeProperty("--dock-viewport-h");
@@ -174,7 +198,7 @@ describe("the agent-question card", () => {
             // After the frames that publish the unshrunk height: what `dock-ask.ts` writes once a
             // raised keyboard shrinks the visual viewport and leaves the layout viewport alone.
             await settle();
-            document.documentElement.style.setProperty("--dock-viewport-h", `${String(vv)}px`);
+            paintViewportHeight(vv);
             await settle();
 
             // The band is a model of focus panning: vv tall, ending at the frame's bottom, or from
@@ -183,9 +207,26 @@ describe("the agent-question card", () => {
             const bandTop = Math.min(bar.getBoundingClientRect().top, f.bottom - vv);
             const bandBottom = bandTop + vv;
 
-            within(composer, f.top, f.bottom, "the composer inside the view");
+            const sideways = height <= SIDEWAYS_MAX_H;
+            if (sideways) {
+              expect(composer.checkVisibility(), "the composer aside").toBe(false);
+              const strip = bar.querySelector(".run-bar-host");
+              expect(strip?.checkVisibility() ?? false, "the run strip aside").toBe(false);
+            } else {
+              within(composer, f.top, f.bottom, "the composer inside the view");
+              if (host === "run") {
+                within(composer, bandTop, bandBottom, "the run composer inside the visible band");
+              }
+            }
             if (host === "run") {
-              within(composer, bandTop, bandBottom, "the run composer inside the visible band");
+              const execHost = bar.querySelector<HTMLElement>("#run-exec-dock")!;
+              const shown = execHost.getBoundingClientRect().height;
+              if (shown > 0) {
+                const runDock = execHost.querySelector<HTMLElement>(".ev-dock")!;
+                expect(shown, "the run dock whole or gone").toBeGreaterThanOrEqual(
+                  runDock.scrollHeight - 0.5,
+                );
+              }
             }
             unscrolled(card, "the card");
             const c = card.getBoundingClientRect();
@@ -203,11 +244,13 @@ describe("the agent-question card", () => {
               within(options, c.top, c.bottom, "the options");
             }
 
-            // A 320px band beside the run composer holds the card's floors and no more: there the
-            // question shows its first two lines and scrolls; everywhere else it shows whole.
+            // A 320px band beside the run composer, and a long question on a phone on its side,
+            // leave the card its floors and no more: there the question region shows at least its
+            // first two lines and scrolls. Everywhere else the region stays unscrolled, and a clamped
+            // question keeps Show more inside it.
             const body = card.querySelector<HTMLElement>(".dock-ask-body")!;
             within(body, bandTop, bandBottom, "the question inside the visible band");
-            if (host === "run" && vv === 261) {
+            if ((host === "run" && vv === 261) || (sideways && fixture.long)) {
               // `min-block-size: 2lh`, resolved by the engine.
               const twoLines = Number.parseFloat(getComputedStyle(body).minBlockSize);
               expect(twoLines, "the question's two-line floor").toBeGreaterThan(20);
@@ -224,30 +267,6 @@ describe("the agent-question card", () => {
           });
         }
       }
-    }
-  }
-
-  // A phone on its side: the view may be too short for the card's floors beside the composer, so the
-  // card may give and scroll; the composer may not leave the view.
-  for (const host of ["chat", "run"] as const satisfies readonly Host[]) {
-    for (const [width, height] of [
-      [844, 390],
-      [568, 320],
-    ] as const) {
-      it(`${host}: keeps the composer in a ${String(width)}x${String(height)} view`, async () => {
-        await browser.viewport(width, height);
-        document.documentElement.setAttribute("data-pointer", "coarse");
-        style = mountAppCSS();
-        const { dock, composer } = host === "chat" ? mountChat(height) : mountRun(height);
-        dock.classList.remove("hidden");
-        const { question, options } = FIXTURES["the loop prompt"]!;
-        dock.append(
-          buildUserInputCard({ request_id: 1, question, options: [...options] }, () => undefined),
-        );
-        await settle();
-        const f = frame!.getBoundingClientRect();
-        within(composer, f.top, f.bottom, "the composer inside the view");
-      });
     }
   }
 
@@ -275,5 +294,78 @@ describe("the agent-question card", () => {
     expect(ask.top, "the ask a blank line below the preamble").toBeGreaterThanOrEqual(
       first.bottom + first.height / 2,
     );
+  });
+});
+
+describe("a waiting question on a phone on its side", () => {
+  const QUESTION = { request_id: 1, question: LOOP_QUESTION, options: [...LOOP_OPTIONS] };
+
+  /** The chat bar with the real dock mounted, a draft in the composer and the composer focused. */
+  async function mountDockedChat(width: number, height: number): Promise<HTMLTextAreaElement> {
+    await browser.viewport(width, height);
+    document.documentElement.setAttribute("data-pointer", "coarse");
+    style = mountAppCSS();
+    setSessions([makeSession({ id: "c1" })]);
+    setActive("c1");
+    const { dock } = mountChat(height);
+    mountDecisionDock(dock);
+    const draft = frame!.querySelector<HTMLTextAreaElement>("#prompt-input")!;
+    draft.value = "half a thought";
+    draft.focus();
+    await settle();
+    return draft;
+  }
+
+  /** The server's side of a delivered answer: `decision_settled` retires the card. */
+  function pushQuestion(): void {
+    pushDecision({
+      kind: "user_input",
+      chatID: "c1",
+      requestID: 1,
+      payload: QUESTION,
+      submit: (): Promise<AnswerOutcome> => {
+        collapseSettledDecision("c1", "user_input", 1, "user");
+        return Promise.resolve("answered");
+      },
+    });
+  }
+
+  const closings: Record<string, (card: HTMLElement) => void> = {
+    "an answer": (card) => {
+      card.querySelector<HTMLTextAreaElement>(".dock-ask-text")!.value = "Stop and report";
+      [...card.querySelectorAll("button")].find((b) => b.textContent === "Send")!.click();
+    },
+    "a skip": (card) => {
+      [...card.querySelectorAll("button")].find((b) => b.textContent === "Skip")!.click();
+    },
+    "the turn ending": () => {
+      dropTurnDecisions("c1");
+    },
+  };
+
+  for (const [closing, close] of Object.entries(closings)) {
+    it(`puts the composer aside, then back with its draft after ${closing}`, async () => {
+      const draft = await mountDockedChat(568, 320);
+      pushQuestion();
+      await settle();
+      const card = frame!.querySelector<HTMLElement>("#decision-dock > .dock-user-input")!;
+      expect(draft.checkVisibility(), "the composer aside").toBe(false);
+      expect(document.activeElement, "the typing in the card's answer box").toBe(
+        card.querySelector(".dock-ask-text"),
+      );
+
+      close(card);
+      await settle();
+      expect(draft.checkVisibility(), "the composer back").toBe(true);
+      expect(draft.value, "the draft untouched").toBe("half a thought");
+    });
+  }
+
+  it("leaves an upright phone's composer and focus where they were", async () => {
+    const draft = await mountDockedChat(390, 844);
+    pushQuestion();
+    await settle();
+    expect(draft.checkVisibility(), "the composer").toBe(true);
+    expect(document.activeElement, "focus").toBe(draft);
   });
 });

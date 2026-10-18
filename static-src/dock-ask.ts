@@ -16,6 +16,10 @@ const ASK_ROWS_PROP = "--ask-rows";
  *  ceiling in `css/26-dock.css`. */
 const DOCK_VIEWPORT_PROP = "--dock-viewport-h";
 
+/** Under this visual-viewport height the run dock steps aside for an ask card (`[data-short-band]`,
+ *  `css/18-pages.css`): from here down, the dock, a card's floors and the composer outgrow the bar. */
+const SHORT_BAND_REM = 40;
+
 interface AskHead {
   /** The region to append anything else the card says about its ask to. */
   readonly body: HTMLElement;
@@ -68,11 +72,10 @@ export function publishViewportHeight(): void {
     return;
   }
   viewportWired = true;
-  const root = document.documentElement;
   let frame = 0;
   const paint = (): void => {
     frame = 0;
-    root.style.setProperty(DOCK_VIEWPORT_PROP, `${String(Math.round(vv.height))}px`);
+    paintViewportHeight(vv.height);
   };
   const schedule = (): void => {
     if (frame === 0) {
@@ -81,6 +84,14 @@ export function publishViewportHeight(): void {
   };
   vv.addEventListener("resize", schedule);
   paint();
+}
+
+/** Write what the bar reads for a visual viewport `height` px tall: `--dock-viewport-h` and `data-short-band`. */
+export function paintViewportHeight(height: number): void {
+  const root = document.documentElement;
+  root.style.setProperty(DOCK_VIEWPORT_PROP, `${String(Math.round(height))}px`);
+  const rem = Number.parseFloat(getComputedStyle(root).fontSize);
+  root.toggleAttribute("data-short-band", height < SHORT_BAND_REM * rem);
 }
 
 /** The card's ONE right-aligned button row, holding every button it has. */
