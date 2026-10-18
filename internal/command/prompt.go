@@ -102,10 +102,10 @@ func retry(ctx context.Context, maxAttempts int, shouldRetry func(error) bool, f
 	return result, err
 }
 
-// callPromptWithRetry sends the prompt to kiro-cli, retrying only the
+// callPromptWithRetry sends turnID's prompt to kiro-cli, retrying only the
 // classes a second attempt can actually fix. gate, when non-nil, holds every
 // attempt, a busy retry's included.
-func callPromptWithRetry(ctx context.Context, gate promptSendGate, sb bridgeCaller, params map[string]any, chatID marotte.ChatID) (promptReply, error) {
+func callPromptWithRetry(ctx context.Context, gate promptSendGate, sb bridgeCaller, params map[string]any, chatID marotte.ChatID, turnID string) (promptReply, error) {
 	return retry(ctx, 2, func(err error) bool {
 		class := classifyPromptFailure(err)
 		retry := class == classBusy || class == classTransient
@@ -114,7 +114,7 @@ func callPromptWithRetry(ctx context.Context, gate promptSendGate, sb bridgeCall
 		return retry
 	}, func() (promptReply, error) {
 		if gate != nil {
-			if err := gate.AwaitPromptSend(ctx, chatID); err != nil {
+			if err := gate.AwaitPromptSend(ctx, chatID, turnID); err != nil {
 				return promptReply{}, err
 			}
 		}
@@ -243,7 +243,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, chatID marott
 		return
 	}
 	deliverParkedSteers(ctx, roles, chatID, retryTurn)
-	reply, retryErr := callPromptWithRetry(ctx, roles.sendGate, sb2, params, chatID)
+	reply, retryErr := callPromptWithRetry(ctx, roles.sendGate, sb2, params, chatID, retryTurn)
 	if retryErr != nil {
 		logPromptFailure("retry prompt failed", chatID, retryErr)
 		stop, reason, kind := promptFailureAccount(ctx, retryErr, promptParamsInlineImage(params))
@@ -515,7 +515,7 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	slog.Info("prompt", "chat_id", chatID, "len", len(p.Text))
 	start := time.Now()
 	promptParams, inlinedImage := buildPromptParams(ctx, roles.workspace, sb, p, historyInlineImages(ctx, roles.chats, chatID))
-	reply, err := callPromptWithRetry(ctx, roles.sendGate, sb, promptParams, chatID)
+	reply, err := callPromptWithRetry(ctx, roles.sendGate, sb, promptParams, chatID, turnID)
 	elapsed := time.Since(start)
 	if err != nil {
 		reportPromptFailure(ctx, roles, chatID, turnID, err, reply.seq, elapsed, inlinedImage)

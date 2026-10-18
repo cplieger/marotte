@@ -83,6 +83,8 @@ type activeTurn struct {
 	bracketed bool
 	// kasIdle is whether KAS's newest activity report since this turn opened said no turn runs.
 	kasIdle bool
+	// sent is whether the send gate let this prompt-class turn's session/prompt go (markSentLocked).
+	sent bool
 	// finalizing is whether a closer holds this turn's claim: a second claim and a
 	// fold both treat a finalizing turn as absent.
 	finalizing bool
@@ -257,6 +259,20 @@ func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, opened *marotte.Entry
 	}
 	lc.setStateLocked(turnOpen)
 	return t
+}
+
+// awaitsSend reports a prompt-class turn whose session/prompt has not gone out: KAS cannot be running it, so no
+// wire frame binds, folds into or ends it, and KAS's frames open a wire turn of their own.
+func (t *activeTurn) awaitsSend() bool { return t.Source.Acknowledgeable() && !t.sent }
+
+// markSentLocked records that t's session/prompt goes out now and makes it own again if a KAS turn displaced it
+// meanwhile, as StartTurn had. Caller holds mu.
+func (lc *chatLifecycle) markSentLocked(t *activeTurn) {
+	t.sent = true
+	if lc.own == nil {
+		lc.own = t
+		lc.setStateLocked(turnOpen)
+	}
 }
 
 // slotFreeLocked reports whether source may open now: local_shell needs own free, prompt-class a pending turn

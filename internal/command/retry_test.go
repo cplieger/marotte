@@ -182,7 +182,7 @@ func TestCallPromptWithRetry_LadderPerClass(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				caller := &countingCaller{err: tc.err}
 				start := time.Now()
-				_, err := callPromptWithRetry(t.Context(), nil, caller, map[string]any{}, "chat-1")
+				_, err := callPromptWithRetry(t.Context(), nil, caller, map[string]any{}, "chat-1", "turn-1")
 
 				if err == nil {
 					t.Fatal("callPromptWithRetry() returned no error, want the caller's")

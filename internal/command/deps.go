@@ -508,9 +508,9 @@ type turnOutcomeAccess interface {
 
 // promptSendGate holds an admitted prompt's session/prompt until the chat's session may take it.
 type promptSendGate interface {
-	// AwaitPromptSend returns nil once the prompt may be sent, else the error that fails it unsent: ctx ended, or
-	// another run took the prompt's turn during the wait.
-	AwaitPromptSend(ctx context.Context, chatID marotte.ChatID) error
+	// AwaitPromptSend returns nil once turnID's prompt may be sent, else the error that fails it unsent: ctx ended,
+	// or the turn closed during the wait.
+	AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) error
 }
 
 // preSendCompactor is the compaction policy's before-a-send trigger. It returns

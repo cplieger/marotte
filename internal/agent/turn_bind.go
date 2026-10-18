@@ -22,12 +22,13 @@ func (r *turnRegistry) withLifecycle(ctx context.Context, chatID marotte.ChatID,
 	return fn(lc)
 }
 
-// If not, it returns the id of a bracketed own turn whose turn_end was lost, for the caller to
-// close. Neither means open a turn. It waits out finalizing; false on both when ctx died.
+// bindPending binds a turn_start to the pending prompt turn when its session/prompt went out (awaitsSend). If not,
+// it returns the id of a bracketed own turn whose turn_end was lost, for the caller to close. Neither means open a
+// turn. It waits out finalizing; false on both when ctx died.
 func (r *turnRegistry) bindPending(ctx context.Context, chatID marotte.ChatID) (bound bool, lost string) {
 	err := r.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
 		p := lc.pending
-		if p == nil || p.acked || p.finalizing {
+		if p == nil || p.acked || p.finalizing || p.awaitsSend() {
 			if lc.own != nil && lc.own.acked {
 				lost = lc.own.ID
 			}
@@ -55,7 +56,7 @@ func (r *turnRegistry) foldTarget(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	if lc.own == nil || lc.own.finalizing {
+	if lc.own == nil || lc.own.finalizing || lc.own.awaitsSend() {
 		return nil, false
 	}
 	return lc.own.Log, true

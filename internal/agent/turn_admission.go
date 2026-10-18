@@ -302,35 +302,41 @@ func (r *turnRegistry) awaitKASIdle(ctx context.Context, chatID marotte.ChatID, 
 	}
 }
 
-// errPromptTurnTaken fails a prompt whose turn another run bound or closed while its send waited.
-var errPromptTurnTaken = errors.New("kiro-cli ran a turn of its own before this prompt was sent, so it was not sent; send it again")
+// errPromptTurnClosed fails a prompt whose turn a closer took while its send waited.
+var errPromptTurnClosed = errors.New("this prompt's turn closed before it was sent, so it was not sent; send it again")
 
-// AwaitPromptSend holds an admitted prompt's session/prompt while KAS's state admits none (kasPermits), so a run KAS
-// reports after the reservation, such as a notification re-wake, is waited out rather than sent beside.
-func (bc *bridgeCoordinator) AwaitPromptSend(ctx context.Context, chatID marotte.ChatID) error {
-	return bc.turns.awaitPromptSend(ctx, chatID)
+// AwaitPromptSend holds turnID's session/prompt while KAS reports a run (kasPermits) or a turn KAS bracketed has not
+// finished, then lets it go: no frame before the send is the prompt's (awaitsSend), so a notification re-wake in any
+// order is waited out in a turn of its own. It fails the prompt unsent only when its turn closed meanwhile or ctx ended.
+func (bc *bridgeCoordinator) AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) error {
+	return bc.turns.awaitPromptSend(ctx, chatID, turnID)
 }
 
 // awaitPromptSend is AwaitPromptSend's wait. A run KAS starts while the send is on the wire is still not seen: KAS
-// offers no execution token to make the handoff atomic. After a wait the prompt's turn must still be pending and
-// unbound: if a KAS run bound it (no agentInitiated frame revised the binding) or closed it, sending now would run the
-// prompt with no turn of its own.
-func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatID) error {
+// offers no execution token to make the handoff atomic, so its turn_start binds provisionally (ReviseTurnBinding).
+func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) error {
 	lc, ok := r.lookup(chatID)
 	if !ok {
 		return nil
 	}
 	warn := time.NewTimer(kasHoldWarnAfter)
 	defer warn.Stop()
-	for waited := false; ; waited = true {
+	for {
 		lc.mu.Lock()
-		sendable, changed := lc.kas.may().admit, lc.changed
-		taken := waited && (lc.pending == nil || lc.pending.finalizing)
+		t := lc.liveLocked(turnID)
+		if t == nil || t.finalizing {
+			lc.mu.Unlock()
+			return errPromptTurnClosed
+		}
+		// A closing KAS turn still holds own, so the send waits for its finish and then takes own (markSentLocked).
+		kasTurn := lc.own != nil && lc.own != t && lc.own.bracketed
+		sendable := lc.kas.may().admit && !kasTurn
+		if sendable {
+			lc.markSentLocked(t)
+		}
+		changed := lc.changed
 		lc.mu.Unlock()
-		switch {
-		case taken:
-			return errPromptTurnTaken
-		case sendable:
+		if sendable {
 			return nil
 		}
 		select {

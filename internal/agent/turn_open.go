@@ -68,13 +68,15 @@ func (bc *bridgeCoordinator) openWireTurn(ctx context.Context, chatID marotte.Ch
 	var t *activeTurn
 	created := false
 	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
-		if lc.own != nil && !lc.own.finalizing {
+		// A prompt awaiting its send stays pending and the wire turn takes own from it.
+		held := lc.own != nil && !lc.own.awaitsSend()
+		if held && !lc.own.finalizing {
 			// Lost the open race: fold into the turn already announced.
 			t = lc.own
 			t.bracketed = t.bracketed || bracketed
 			return nil
 		}
-		if lc.own != nil {
+		if held {
 			return errTurnSlotHeld
 		}
 		opened, err := bc.chatStore.OpenTurn(ctx, chatID, &chat.TurnSpec{Source: marotte.TurnOpenNameWireTurnStart}, nil)

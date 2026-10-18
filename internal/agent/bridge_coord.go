@@ -1385,7 +1385,7 @@ func (bc *bridgeCoordinator) FinalizeLocalShellTurn(ctx context.Context, chatID 
 	bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerLocalShell, Turn: turnID})
 }
 
-// WireTurnStart handles the engine's turn_start bracket: it binds a pending prompt turn,
+// WireTurnStart handles the engine's turn_start bracket: it binds a pending prompt turn already sent,
 // closes a bracketed own turn whose turn_end was lost, or opens a wire_turn_start turn.
 // The bind is provisional; the first agentInitiated frame revises it (ReviseTurnBinding).
 func (bc *bridgeCoordinator) WireTurnStart(ctx context.Context, chatID marotte.ChatID) {
