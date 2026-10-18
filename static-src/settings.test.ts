@@ -18,6 +18,8 @@ const H = vi.hoisted(() => ({
   mockInitGitPanel: vi.fn(),
   mockOpenConfigFile: vi.fn(() => Promise.resolve()),
   mockHeapDispatch: vi.fn<(args: { mib: number }) => Promise<unknown>>(),
+  /** Whether persist.adoptSettings takes a write's answer: false for one older than the page holds. */
+  adopts: true,
 }));
 
 vi.mock("./actions/tools.js", () => ({
@@ -68,9 +70,7 @@ vi.mock("./persist.js", () => ({
   loadSettings: vi.fn(),
   refreshSettings: vi.fn(),
   patchSettings: vi.fn(),
-  initSettingsTracking: vi.fn(),
-  // Present-but-inert for linking agent-dirs-ui.ts; no case saves a directory.
-  adoptSettings: vi.fn(),
+  adoptSettings: () => H.adopts,
   newestSettings: vi.fn(),
 }));
 // Feature modules settings.ts wires in initUI — inert stubs so the import graph loads without side
@@ -866,7 +866,7 @@ describe("the automatic-compaction switch and slider", () => {
     expect(patchSettings).not.toHaveBeenCalled();
     expect(compactionPolicy.value).toEqual({ enabled: true, pct: 65 });
     range().dispatchEvent(new Event("change"));
-    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ auto_compact_pct: 65 }, range());
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ auto_compact_pct: 65 });
   });
 
   it("writes the switch and hides the slider when the reader turns it off", async () => {
@@ -1011,13 +1011,10 @@ describe("the agent-capability selects and the shell timeout", () => {
     vi.mocked(patchSettings).mockClear();
     timeout().value = "45";
     timeout().dispatchEvent(new Event("change"));
-    expect(patchSettings).toHaveBeenLastCalledWith(
-      { terminal_command_timeout_ms: 45_000 },
-      timeout(),
-    );
+    expect(patchSettings).toHaveBeenLastCalledWith({ terminal_command_timeout_ms: 45_000 });
     timeout().value = "";
     timeout().dispatchEvent(new Event("change"));
-    expect(patchSettings).toHaveBeenLastCalledWith({ terminal_command_timeout_ms: 0 }, timeout());
+    expect(patchSettings).toHaveBeenLastCalledWith({ terminal_command_timeout_ms: 0 });
   });
 
   it.each([
@@ -1045,6 +1042,7 @@ describe("the agent engine memory limit", () => {
 
   beforeEach(() => {
     H.mockHeapDispatch.mockReset();
+    H.adopts = true;
     document.body.innerHTML = `<input type="number" id="engine-heap-mib">`;
   });
 
@@ -1068,7 +1066,7 @@ describe("the agent engine memory limit", () => {
 
   it("writes the typed limit through its own action", async () => {
     const { showSaved } = await import("./save-indicator.js");
-    H.mockHeapDispatch.mockResolvedValueOnce({});
+    H.mockHeapDispatch.mockResolvedValueOnce(settingsPayload({ engine_heap_mib: 2048 }));
     initRetention(settingsPayload());
     enter("2048");
     expect(H.mockHeapDispatch).toHaveBeenCalledWith({ mib: 2048 });
@@ -1112,7 +1110,7 @@ describe("the agent engine memory limit", () => {
     const { showError, showSaved } = await import("./save-indicator.js");
     vi.mocked(showError).mockClear();
     vi.mocked(showSaved).mockClear();
-    await twoEdits(null, {});
+    await twoEdits(null, settingsPayload({ engine_heap_mib: 4096 }));
     expect(heap().value, "the refused older edit repaints nothing").toBe("4096");
     expect(showError).not.toHaveBeenCalledWith("engine_heap_mib");
     expect(showSaved).toHaveBeenCalledWith("engine_heap_mib");
@@ -1121,9 +1119,25 @@ describe("the agent engine memory limit", () => {
   it("goes back to the older saved edit when the newer one is refused", async () => {
     const { showError } = await import("./save-indicator.js");
     vi.mocked(showError).mockClear();
-    await twoEdits({}, null);
+    await twoEdits(settingsPayload({ engine_heap_mib: 2048 }), null);
     expect(heap().value, "the server holds the older edit").toBe("2048");
     expect(showError).toHaveBeenCalledWith("engine_heap_mib");
+  });
+
+  it("shows newer settings' limit over a write's answer older than them", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    let answer!: (v: unknown) => void;
+    H.mockHeapDispatch.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    initRetention(settingsPayload({ engine_heap_mib: 3072 }));
+    enter("2048");
+    applyGeneralPanel(settingsPayload({ engine_heap_mib: 4096 }));
+    expect(heap().value, "the edit still saving owns the box").toBe("2048");
+    H.adopts = false;
+    answer(settingsPayload({ engine_heap_mib: 2048 }));
+    await vi.waitFor(() => {
+      expect(showSaved).toHaveBeenCalledWith("engine_heap_mib");
+    });
+    expect(heap().value).toBe("4096");
   });
 
   it("sends nothing for text that is no whole number", async () => {

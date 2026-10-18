@@ -25,8 +25,9 @@ var ErrUnreadable = errors.New("settings: stored document unreadable")
 // configDir lock across read, merge and write, so concurrent writers drop no key. An
 // unreadable document refuses (ErrUnreadable): merging over an empty map would destroy every
 // key fn does not name. An absent file is ordinary. Each write stamps the document with the next
-// version (cache.next), whatever fn put there; a refusal writes nothing. publish, when not nil, gets the write's settings_updated event before the lock is
-// released, so events leave in revision order. The merged document is returned.
+// version (cache.next), whatever fn put there; a refusal writes nothing. publish, when not nil,
+// gets the write's settings_updated event before the lock is released, so events leave in version
+// order. The merged document is returned.
 func Update(ctx context.Context, configDir string, fn func(doc map[string]json.RawMessage) error, publish func(context.Context, marotte.ServerEvent)) (map[string]json.RawMessage, error) {
 	if configDir == "" {
 		return nil, errors.New("settings: no config dir")

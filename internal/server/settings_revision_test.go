@@ -21,8 +21,6 @@ func patchSettingsRaw(t *testing.T, s *Server, body string) *httptest.ResponseRe
 	return rec
 }
 
-// GET, the PATCH answer and the settings_updated event each state the revision of the document
-// they describe, so a client can tell which of two payloads is newer.
 func TestSettingsRevision_IsOnEveryPayloadAClientAdopts(t *testing.T) {
 	eng := &fakeEngine{}
 	dir := t.TempDir()
@@ -88,7 +86,6 @@ func TestSettingsWrite_RefusesAClientRevision(t *testing.T) {
 	}
 }
 
-// A profile switch writes config.json, so it announces the version it wrote, as a PATCH does.
 func TestPolicyProfile_SelectionAnnouncesTheWrittenVersion(t *testing.T) {
 	s, _, _, _ := profileFixture(t, nil)
 	eng, ok := s.agent.(*fakeEngine)

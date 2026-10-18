@@ -9,7 +9,7 @@ import { getGitTab } from "./git-tabs.js";
 import { noteDefaultBrowsePath } from "./files.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
-import { initSettingsTracking, patchSettings, refreshSettings } from "./persist.js";
+import { adoptSettings, patchSettings, refreshSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import type { KiroDefault } from "./wire/types.gen.js";
 import { cacheTheme, cachedTheme } from "./device-view.js";
@@ -37,7 +37,7 @@ import { initSteeringEditor, loadSteeringDoc } from "./settings-steering.js";
 import { DEFAULT_AUTO_COMPACT_PCT, compactionPolicy } from "./context-ring.js";
 import { paintSettingLocks, writeSwitch } from "./governance.js";
 
-// Per-key write generation for the kiro-cli settings endpoint; same rule as persist.ts's `keyGen`,
+// Per-key write generation for the kiro-cli settings endpoint; same rule as persist.ts's `claims`,
 // which explains it. Separate because the key namespaces are (dotted kiro-cli keys against
 // AppSettings keys).
 let kiroSeq = 0;
@@ -171,14 +171,11 @@ export function _resetThemeForTest(): void {
  *  (persist.refreshSettings). */
 export async function syncSettings(): Promise<EffectiveSettings | null> {
   const s = await refreshSettings();
-  // Seeding the dedup tracker from nothing would clear it and re-arm the very write-back it exists
-  // to suppress, and applying notification state from nothing would silence or unsilence push on a
-  // network blip; from older settings, both would roll back a newer write.
+  // Applying notification state from nothing would silence or unsilence push on a network blip,
+  // and from older settings it would roll back a newer write.
   if (s === null) {
     return null;
   }
-  // Seed the dedup tracker BEFORE any code path can fire patchSettings().
-  initSettingsTracking(s);
   restoreNotifications(s);
   return s;
 }
@@ -269,8 +266,8 @@ function initChatRetentionControls(): void {
     return;
   }
   const { daysInput, daysRow, foreverInput } = els;
-  const persist = (value: number, input: HTMLInputElement): void => {
-    void patchSettings({ chat_retention_days: value }, input);
+  const persist = (value: number, ...boxes: HTMLInputElement[]): void => {
+    void patchSettings({ chat_retention_days: value }, ...boxes);
   };
 
   daysInput.addEventListener("change", () => {
@@ -278,7 +275,7 @@ function initChatRetentionControls(): void {
       return; // forever wins; the Days-kept row is hidden
     }
     const n = parseInt(daysInput.value, 10);
-    persist(!isNaN(n) && n >= 0 ? n : 0, daysInput);
+    persist(!isNaN(n) && n >= 0 ? n : 0);
   });
   foreverInput.addEventListener("change", () => {
     daysRow?.classList.toggle("hidden", foreverInput.checked);
@@ -878,7 +875,7 @@ function initAgentCapabilityControls(): void {
   timeout?.addEventListener("change", () => {
     const ms = shellTimeoutMs(timeout.value);
     timeout.value = ms > 0 ? String(ms / 1000) : "";
-    void patchSettings({ terminal_command_timeout_ms: ms }, timeout);
+    void patchSettings({ terminal_command_timeout_ms: ms });
   });
   initAutoCompactionControls();
 }
@@ -945,7 +942,7 @@ function initAutoCompactionControls(): void {
     paintAutoCompaction(toggle.checked, Number(range.value));
   });
   range.addEventListener("change", () => {
-    void patchSettings({ auto_compact_pct: Number(range.value) }, range);
+    void patchSettings({ auto_compact_pct: Number(range.value) });
   });
 }
 
@@ -1027,8 +1024,10 @@ function initEngineHeapControl(): void {
     heapEdit = edit;
     showSaving("engine_heap_mib");
     void setEngineHeap.dispatch({ mib }).then((r) => {
-      if (r !== null) {
-        serverEngineHeap = mib;
+      // An answer older than settings this page holds leaves serverEngineHeap to those.
+      const current = r !== null && adoptSettings(r);
+      if (current) {
+        serverEngineHeap = r.engine_heap_mib;
       }
       if (heapEdit?.gen !== edit.gen) {
         return;
@@ -1038,6 +1037,9 @@ function initEngineHeapControl(): void {
         showError("engine_heap_mib");
         paintEngineHeap(input, serverEngineHeap);
         return;
+      }
+      if (!current) {
+        paintEngineHeap(input, serverEngineHeap);
       }
       showSaved("engine_heap_mib");
     });

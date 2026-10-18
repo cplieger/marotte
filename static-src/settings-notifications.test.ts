@@ -1,21 +1,28 @@
-// The master switch going ON: it enables the DEFAULT-ON kinds, not all of them.
+// The master switch going ON: it enables the DEFAULT-ON kinds, not all of them. And a write that
+// newer settings superseded still does this click's own part when those settings agree with it.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { settingsPayload } from "./__test-helpers__/settings.js";
+import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
 
 const mocks = vi.hoisted(() => ({
   patches: [] as Record<string, unknown>[],
   /** What the settings write answers: a record on success, null on refusal. */
-  patchResult: { ok: true } as Record<string, unknown> | null,
+  patchResult: { ok: true } as Record<string, unknown> | null | "superseded",
+  /** Whether the newest settings have notifications on; null when they cannot be read. */
+  newestOn: null as boolean | null,
   unregisters: 0,
 }));
 
 vi.mock("./persist.js", () => ({
   patchSettings: async (
     patch: Record<string, unknown>,
-  ): Promise<Record<string, unknown> | null> => {
+  ): Promise<Record<string, unknown> | null | "superseded"> => {
     mocks.patches.push(patch);
     return mocks.patchResult;
   },
+  newestSettings: async () =>
+    mocks.newestOn === null ? null : settingsPayload({ notifications_enabled: mocks.newestOn }),
 }));
 
 vi.mock("./actions/notify.js", () => ({
@@ -67,7 +74,16 @@ async function turnMasterOn(): Promise<void> {
   const master = input("notify-toggle");
   master.checked = true;
   master.dispatchEvent(new Event("change"));
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 12; i++) {
+    await Promise.resolve();
+  }
+}
+
+async function flipped(id: string, on: boolean): Promise<void> {
+  const box = input(id);
+  box.checked = on;
+  box.dispatchEvent(new Event("change"));
+  for (let i = 0; i < 12; i++) {
     await Promise.resolve();
   }
 }
@@ -75,7 +91,9 @@ async function turnMasterOn(): Promise<void> {
 beforeEach(() => {
   mocks.patches = [];
   mocks.patchResult = { ok: true };
+  mocks.newestOn = null;
   mocks.unregisters = 0;
+  localStorage.removeItem(LS_NOTIFY_ASK_KEY);
   // Granted, so requestPermission neither prompts nor returns a hint — the prompt is
   // notify-permission.test.ts's subject, not this file's.
   vi.stubGlobal("Notification", { permission: "granted" });
@@ -123,6 +141,62 @@ describe("a refused write tears the feature down", () => {
     for (const kind of Object.keys(KIND_IDS)) {
       expect(notify.isKindEnabled(kind), `${kind} survived the teardown`).toBe(false);
     }
+    expect(mocks.unregisters).toBe(1);
+  });
+});
+
+describe("a write newer settings superseded", () => {
+  function promptable(): ReturnType<typeof vi.fn> {
+    const requestPermission = vi.fn(() => Promise.resolve("default"));
+    vi.stubGlobal("Notification", { permission: "default", requestPermission });
+    return requestPermission;
+  }
+
+  beforeEach(() => {
+    mocks.patchResult = "superseded";
+  });
+
+  it("still asks for browser permission when the newest settings have notifications on", async () => {
+    const requestPermission = promptable();
+    mocks.newestOn = true;
+    await turnMasterOn();
+    expect(requestPermission).toHaveBeenCalledOnce();
+    expect(input("notify-hint").textContent).toContain("Browser permission is pending");
+  });
+
+  it("asks nothing when the newest settings turned notifications off", async () => {
+    const requestPermission = promptable();
+    mocks.newestOn = false;
+    await turnMasterOn();
+    expect(requestPermission).not.toHaveBeenCalled();
+  });
+
+  it("spends this device's ask when the master switch went off and the newest settings agree", async () => {
+    notify.setNotificationsEnabled(true);
+    mocks.newestOn = false;
+    await flipped("notify-toggle", false);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBe("1");
+    expect(mocks.unregisters).toBe(1);
+  });
+
+  it("keeps the ask when the newest settings turned notifications back on", async () => {
+    notify.setNotificationsEnabled(true);
+    mocks.newestOn = true;
+    await flipped("notify-toggle", false);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBeNull();
+    expect(mocks.unregisters).toBe(0);
+  });
+
+  it("spends the ask when every kind went off and the newest settings agree", async () => {
+    notify.setNotificationsEnabled(true);
+    notify.setKindEnabled("agent_finished", true);
+    input(KIND_IDS.agent_finished).checked = true;
+    input(KIND_IDS.pr_status).checked = false;
+    input(KIND_IDS.run_outcome).checked = false;
+    mocks.newestOn = false;
+    await flipped(KIND_IDS.agent_finished, false);
+    expect(mocks.patches[0]).toMatchObject({ notifications_enabled: false });
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBe("1");
     expect(mocks.unregisters).toBe(1);
   });
 });

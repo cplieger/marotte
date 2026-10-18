@@ -31,6 +31,8 @@ import {
   adoptSettings,
   __testResetTracking,
 } from "./persist.js";
+import type { EffectiveSettings } from "./persist.js";
+import { decodeEffectiveSettings } from "./wire/decoders.gen.js";
 
 describe("patchSettings debounce coalescing", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
@@ -361,8 +363,8 @@ describe("patchSettings failure handling", () => {
     patchSettings({ notifications_enabled: true }, box);
     await vi.advanceTimersByTimeAsync(350);
 
-    // The optimistic record is taken at dispatch time (the user just clicked, so the previous state
-    // is the opposite), and the rollback restores it.
+    // The state before is taken when the write is queued (the user just clicked, so it is the
+    // opposite), and the rollback restores it.
     expect(box.checked).toBe(false);
   });
 
@@ -639,6 +641,23 @@ describe("adoptSettings", () => {
     noteSettingsEvent(v(2));
     expect(adoptSettings(v(3))).toBe(true);
   });
+
+  it("orders the server's largest epoch, decoded from the wire, above the one before it", () => {
+    // internal/settings maxStamp: the server never stores or serves a larger field.
+    const max = 9007199254740991;
+    const wire = (epoch: number): EffectiveSettings =>
+      decodeEffectiveSettings(
+        JSON.parse(
+          JSON.stringify(settingsPayload()).replace(
+            '"settings_epoch":0',
+            `"settings_epoch":${String(epoch)}`,
+          ),
+        ),
+      );
+    expect(adoptSettings({ ...wire(max - 1), settings_revision: 9 })).toBe(true);
+    expect(adoptSettings({ ...wire(max), settings_revision: 1 })).toBe(true);
+    expect(adoptSettings({ ...wire(max - 1), settings_revision: 9 })).toBe(false);
+  });
 });
 
 describe("patchSettings answer", () => {
@@ -758,6 +777,53 @@ describe("patchSettings generation guard", () => {
     pending[1]?.(new Response("nope", { status: 500 }));
     await vi.waitFor(() => {
       expect(showError).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("puts a switch toggled twice behind a write that landed back to what that write set", async () => {
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true;
+    patchSettings({ debug_logs: true }, box);
+    await vi.advanceTimersByTimeAsync(350);
+    box.checked = false;
+    patchSettings({ debug_logs: false }, box);
+    box.checked = true;
+    patchSettings({ debug_logs: true }, box);
+    await vi.advanceTimersByTimeAsync(350);
+
+    pending[0]?.(new Response("{}", { status: 200 }));
+    await vi.waitFor(() => {
+      expect(pending).toHaveLength(2);
+    });
+    const { showError } = await import("./save-indicator.js");
+    pending[1]?.(new Response("nope", { status: 500 }));
+    await vi.waitFor(() => {
+      expect(showError).toHaveBeenCalled();
+    });
+    expect(box.checked, "the first write's value is what the server holds").toBe(true);
+  });
+
+  it("puts a switch back to the server's value when it and an older write both fail", async () => {
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true;
+    patchSettings({ debug_logs: true }, box);
+    await vi.advanceTimersByTimeAsync(350);
+    box.checked = false;
+    patchSettings({ debug_logs: false }, box);
+    box.checked = true;
+    patchSettings({ debug_logs: true }, box);
+    await vi.advanceTimersByTimeAsync(350);
+
+    pending[0]?.(new Response("nope", { status: 500 }));
+    await vi.waitFor(() => {
+      expect(pending).toHaveLength(2);
+    });
+    expect(box.checked, "the later write still owns the switch").toBe(true);
+    pending[1]?.(new Response("nope", { status: 500 }));
+    await vi.waitFor(() => {
+      expect(box.checked).toBe(false);
     });
   });
 

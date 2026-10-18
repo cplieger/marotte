@@ -188,14 +188,17 @@ describe("setKiroSetting", () => {
 });
 
 describe("patchAppSettings", () => {
-  it("PATCHes to /api/settings and rolls back inputs on failure", async () => {
+  it("PATCHes to /api/settings and puts back the switches it is told to on failure", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
     const input = document.createElement("input");
     input.type = "checkbox";
-    input.checked = true; // user just toggled ON
+    input.checked = true;
 
     const { patchAppSettings } = await import("./settings.js");
-    await patchAppSettings.dispatch({ body: { debug_logs: true }, inputs: [input] });
+    await patchAppSettings.dispatch({
+      body: { debug_logs: true },
+      restore: () => [{ el: input, checked: false }],
+    });
 
     expect(input.checked).toBe(false);
   });
@@ -208,8 +211,13 @@ describe("a lockable switch crossing a lock", () => {
   const save = {
     kiro: (a: Actions, key: string, input: HTMLInputElement) =>
       a.setKiroSetting.dispatch({ key, value: String(input.checked), input }),
-    marotte: (a: Actions, key: string, input: HTMLInputElement) =>
-      a.patchAppSettings.dispatch({ body: { [key]: input.checked }, inputs: [input] }),
+    marotte: (a: Actions, key: string, input: HTMLInputElement) => {
+      const before = !input.checked;
+      return a.patchAppSettings.dispatch({
+        body: { [key]: input.checked },
+        restore: () => [{ el: input, checked: before }],
+      });
+    },
   };
   const lockable = [
     ["flag-telemetry", "telemetry.enabled", save.kiro],

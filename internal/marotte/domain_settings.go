@@ -81,8 +81,9 @@ type EffectiveSettings struct {
 	// EngineHeapMiB is the agent engine's JavaScript heap limit in MiB; 0 is kiro-cli's default.
 	EngineHeapMiB int `json:"engine_heap_mib"`
 	// SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
-	// KeySettingsRevision), both 0 before the first write. Compared epoch first, a payload below
-	// one already adopted is older than it.
+	// KeySettingsRevision), both 0 before the first write and compared epoch first. A deleted or
+	// restored config.json serves a lower version, which a page holding a higher one refuses until
+	// the next write starts a later epoch.
 	SettingsEpoch    uint64 `json:"settings_epoch"`
 	SettingsRevision uint64 `json:"settings_revision"`
 	// AutoCompactionEnabled defaults TRUE: off means nothing compacts a chat

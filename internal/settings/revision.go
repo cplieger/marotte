@@ -19,27 +19,49 @@ type stamp struct {
 	revision uint64
 }
 
-// stampOf reads doc's KeySettingsEpoch and KeySettingsRevision; an absent or malformed value is 0.
+// maxStamp bounds both fields to JavaScript's Number.MAX_SAFE_INTEGER: pages compare them as
+// numbers, and a larger value rounds onto its neighbour.
+const maxStamp = 1<<53 - 1
+
+// decodeStampField decodes one stamp field, refusing a value above maxStamp.
+func decodeStampField(dst *uint64, raw json.RawMessage) error {
+	var v uint64
+	if err := decodeInto(&v, raw); err != nil {
+		return err
+	}
+	if v > maxStamp {
+		return fmt.Errorf("settings: version field %d is above %d", v, uint64(maxStamp))
+	}
+	*dst = v
+	return nil
+}
+
+// stampOf reads doc's KeySettingsEpoch and KeySettingsRevision; an absent or malformed value,
+// one above maxStamp included, is 0.
 func stampOf(doc map[string]json.RawMessage) stamp {
 	var s stamp
 	if raw, ok := doc[KeySettingsEpoch]; ok {
-		_ = decodeInto(&s.epoch, raw)
+		_ = decodeStampField(&s.epoch, raw)
 	}
 	if raw, ok := doc[KeySettingsRevision]; ok {
-		_ = decodeInto(&s.revision, raw)
+		_ = decodeStampField(&s.revision, raw)
 	}
 	return s
 }
 
 // next is the stamp a write over a document stamped stored commits at now. It continues the count
 // only over the stamp this process last wrote (c.committed). Otherwise, as on a process's first
-// write or over a file replaced since, it starts an epoch above both, in milliseconds so a
-// JavaScript number holds it: a count read back from a restored copy could repeat one a page holds.
+// write or over a file replaced since, it starts an epoch above both, in milliseconds: a count
+// read back from a restored copy could repeat one a page holds. Neither field passes maxStamp; an
+// epoch saturated there by a hand-edited stamp continues that stamp's count instead.
 func (c *cache) next(stored stamp, now time.Time) stamp {
 	if stored.epoch != 0 && stored.revision != 0 && stored == c.committed {
-		return stamp{epoch: stored.epoch, revision: stored.revision + 1}
+		return stamp{epoch: stored.epoch, revision: min(stored.revision+1, maxStamp)}
 	}
-	epoch := max(uint64(max(now.UnixMilli(), 0)), stored.epoch+1, c.committed.epoch+1)
+	epoch := min(max(uint64(max(now.UnixMilli(), 0)), stored.epoch+1, c.committed.epoch+1), maxStamp)
+	if epoch == stored.epoch {
+		return stamp{epoch: epoch, revision: min(stored.revision+1, maxStamp)}
+	}
 	return stamp{epoch: epoch, revision: 1}
 }
 

@@ -69,8 +69,8 @@ export const restartEngine = apiAction<void, true>({
 });
 
 /** Write the engine heap limit on its own, so the server's refusal, which names the bounds this container allows,
- *  reaches the reader. */
-export const setEngineHeap = apiAction<{ mib: number }>({
+ *  reaches the reader; answers the settings the write committed. */
+export const setEngineHeap = apiAction<{ mib: number }, EffectiveSettings>({
   name: "settings.set_engine_heap",
   scope: "settings",
   request: ({ mib }) => ({
@@ -78,6 +78,7 @@ export const setEngineHeap = apiAction<{ mib: number }>({
     path: "/api/settings",
     body: { engine_heap_mib: mib },
   }),
+  decode: (data) => decodeEffectiveSettings(data),
   error: (_args, err) => serverSentence(err) ?? "Could not save the memory limit",
   success: false,
 });
@@ -144,15 +145,11 @@ export const loadSettings = apiAction<void, EffectiveSettings>({
 
 interface PatchAppArgs {
   body: Record<string, unknown>;
-  /** Input(s) whose checked state flips back on failure. */
-  inputs?: readonly HTMLInputElement[];
+  /** The switches to put back when the write fails or is cancelled, read at that moment. */
+  restore?: () => readonly { el: HTMLInputElement; checked: boolean }[];
 }
 
-interface PatchAppOp {
-  inputs: { el: HTMLInputElement; prevChecked: boolean; prevValue: string }[];
-}
-
-export const patchAppSettings = apiAction<PatchAppArgs, unknown, PatchAppOp>({
+export const patchAppSettings = apiAction<PatchAppArgs>({
   name: "settings.patch",
   scope: "settings",
   request: ({ body }) => ({
@@ -160,26 +157,9 @@ export const patchAppSettings = apiAction<PatchAppArgs, unknown, PatchAppOp>({
     path: "/api/settings",
     body,
   }),
-  optimistic: ({ inputs }) => {
-    const list = inputs ?? [];
-    return {
-      inputs: list.map((el) => ({
-        el,
-        prevChecked: !el.checked, // user just changed, so prev is opposite of current
-        prevValue: el.value,
-      })),
-    };
-  },
-  rollback: (_args, op) => {
-    if (op === undefined) {
-      return;
-    }
-    for (const { el, prevChecked, prevValue } of op.inputs) {
-      if (el.type === "checkbox") {
-        writeSwitch(el, prevChecked);
-      } else {
-        el.value = prevValue;
-      }
+  rollback: ({ restore }) => {
+    for (const { el, checked } of restore?.() ?? []) {
+      writeSwitch(el, checked);
     }
     paintSettingLocks();
   },

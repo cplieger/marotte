@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -73,7 +74,6 @@ func TestUpdate_BumpsTheRevisionOncePerWrite(t *testing.T) {
 	}
 }
 
-// Each write publishes under the lock, so the events leave in the order the writes committed.
 func TestUpdate_ConcurrentWritesPublishInRevisionOrder(t *testing.T) {
 	dir := t.TempDir()
 	const writers = 16
@@ -101,8 +101,6 @@ func TestUpdate_ConcurrentWritesPublishInRevisionOrder(t *testing.T) {
 	}
 }
 
-// A write that starts while another's event is being published commits only after it, so no
-// later version's event can overtake an earlier one.
 func TestUpdate_NoWriteCommitsWhileAnEventIsPublished(t *testing.T) {
 	dir := t.TempDir()
 	var ev events
@@ -167,8 +165,6 @@ func TestUpdate_ARefusedWriteKeepsTheStampAndPublishesNothing(t *testing.T) {
 	})
 }
 
-// The stamp lives in config.json: a restarted process serves it, and its first write orders
-// after it.
 func TestStamp_PersistsInConfigJSONAcrossAReload(t *testing.T) {
 	dir := t.TempDir()
 	for range 2 {
@@ -192,8 +188,6 @@ func TestStamp_PersistsInConfigJSONAcrossAReload(t *testing.T) {
 	}
 }
 
-// A file whose count went back starts a later epoch, so every page orders the next write after
-// what it holds.
 func TestUpdate_StartsALaterEpochOverAReplacedFile(t *testing.T) {
 	tests := []struct {
 		replace func(t *testing.T, dir string)
@@ -237,17 +231,55 @@ func TestUpdate_StartsALaterEpochOverAReplacedFile(t *testing.T) {
 	}
 }
 
-// A stored epoch ahead of the clock still gets a later one.
 func TestUpdate_ALaterEpochIsAboveTheStoredOne(t *testing.T) {
 	dir := t.TempDir()
-	const future = 1 << 60
-	writeConfig(t, dir, `{"settings_epoch":1152921504606846976,"settings_revision":3}`)
+	future := uint64(time.Now().Add(24 * time.Hour).UnixMilli())
+	writeConfig(t, dir, fmt.Sprintf(`{"settings_epoch":%d,"settings_revision":3}`, future))
 	if _, err := Update(t.Context(), dir, setKey(KeyTheme, "dark"), nil); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if got := storedStamp(t, dir); got != (stamp{epoch: future + 1, revision: 1}) {
-		t.Errorf("stamp = %+v, want epoch %d revision 1", got, uint64(future+1))
+		t.Errorf("stamp = %+v, want epoch %d revision 1", got, future+1)
 	}
+}
+
+// float64 is the IEEE 754 binary64 a JavaScript number is, so these comparisons are the page's.
+func TestStamp_StaysWhereAJavaScriptNumberOrdersIt(t *testing.T) {
+	t.Run("an epoch above the bound reads as malformed and the next write starts afresh", func(t *testing.T) {
+		dir := t.TempDir()
+		writeConfig(t, dir, `{"settings_epoch":1152921504606846976,"settings_revision":3}`)
+		effective, rejected := EffectiveFrom(readConfig(t, dir))
+		if effective.SettingsEpoch != 0 || !slices.Contains(rejected, KeySettingsEpoch) {
+			t.Errorf("EffectiveFrom = epoch %d (rejected %v), want 0 with %s rejected", effective.SettingsEpoch, rejected, KeySettingsEpoch)
+		}
+		if _, err := Update(t.Context(), dir, setKey(KeyTheme, "dark"), nil); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if got := storedStamp(t, dir); got.epoch == 0 || got.epoch > maxStamp || got.revision != 1 {
+			t.Errorf("stamp = %+v, want a fresh epoch within %d at revision 1", got, uint64(maxStamp))
+		}
+	})
+	t.Run("the epoch below the bound is followed by the bound, which a JavaScript number orders after it", func(t *testing.T) {
+		dir := t.TempDir()
+		writeConfig(t, dir, fmt.Sprintf(`{"settings_epoch":%d,"settings_revision":3}`, uint64(maxStamp-1)))
+		if _, err := Update(t.Context(), dir, setKey(KeyTheme, "dark"), nil); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		got := storedStamp(t, dir)
+		if got != (stamp{epoch: maxStamp, revision: 1}) || float64(got.epoch) <= float64(maxStamp-1) {
+			t.Errorf("stamp = %+v, want epoch %d revision 1, above %d as a float64", got, uint64(maxStamp), uint64(maxStamp-1))
+		}
+	})
+	t.Run("an epoch at the bound continues its count", func(t *testing.T) {
+		dir := t.TempDir()
+		writeConfig(t, dir, fmt.Sprintf(`{"settings_epoch":%d,"settings_revision":3}`, uint64(maxStamp)))
+		if _, err := Update(t.Context(), dir, setKey(KeyTheme, "dark"), nil); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if got := storedStamp(t, dir); got != (stamp{epoch: maxStamp, revision: 4}) {
+			t.Errorf("stamp = %+v, want epoch %d revision 4", got, uint64(maxStamp))
+		}
+	})
 }
 
 func TestUpdate_TheStampIsNeverTheMergesToSet(t *testing.T) {
@@ -313,7 +345,6 @@ func TestAnnounce_CarriesNoVersionForAnUnreadableDocument(t *testing.T) {
 	}
 }
 
-// Events leave in the order the versions were stored, an announcement among writes included.
 func TestAnnounce_PublishesInOrderWithConcurrentWrites(t *testing.T) {
 	dir := t.TempDir()
 	var ev events

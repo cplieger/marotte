@@ -13,7 +13,6 @@ export type { EffectiveSettings } from "./wire/types.gen.js";
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;
 let patchQueue: Partial<EffectiveSettings> = {};
-let patchSnapshot: Partial<EffectiveSettings> = {};
 let patchInputs: HTMLInputElement[] = [];
 let patchResolvers: ((r: PatchAnswer) => void)[] = [];
 
@@ -21,30 +20,49 @@ let patchResolvers: ((r: PatchAnswer) => void)[] = [];
  *  but the page already holds newer settings, which the caller must not overwrite with its own. */
 export type PatchAnswer = Record<string, unknown> | null | "superseded";
 
-// The indicator belongs to the NEWEST write of each key.
-let writeSeq = 0;
-const keyGen = new Map<string, number>();
+function newTracking(): {
+  /** The newest value the server is known to hold for each key, and the version it was known at. */
+  confirmed: Map<string, { value: unknown; at: Stamp }>;
+  /** Each key's newest local write not yet settled. It owns the key's indicator, and patchSettings
+   *  compares against its value instead of the confirmed one. */
+  claims: Map<string, { claim: number; value: unknown }>;
+  /** Each checkbox's newest unsettled write: `before` is what a failure puts back, carried over
+   *  from an older write still unsettled, since the server holds neither until one lands. */
+  boxes: Map<HTMLInputElement, { claim: number; before: boolean; after: boolean }>;
+} {
+  return { confirmed: new Map(), claims: new Map(), boxes: new Map() };
+}
 
-/** Last-known value per settings key. Seeded by initSettingsTracking() on app boot from
- *  /api/settings; updated by patchSettings() as we send writes. */
-let lastSentPatch: Partial<EffectiveSettings> = {};
+/** Replaced whole by __testResetTracking, so a write still settling from before changes nothing. */
+let tracking = newTracking();
+let claimSeq = 0;
 
-/** Seed the dedup tracker from the loaded settings. Called once at app boot before any
- *  patchSettings() can fire. Without this, the first patch for any key after page load is
- *  treated as a change even when the value matches the server. */
+function confirm(t: typeof tracking, key: string, value: unknown, at: Stamp): void {
+  const known = t.confirmed.get(key);
+  if (known === undefined || !below(at, known.at)) {
+    t.confirmed.set(key, { value, at });
+  }
+}
+
+function sentValue(key: string): unknown {
+  const pending = tracking.claims.get(key);
+  return pending === undefined ? tracking.confirmed.get(key)?.value : pending.value;
+}
+
+/** Record every key of settings the page adopted as the server's value at their version. */
 export function initSettingsTracking(s: EffectiveSettings): void {
-  lastSentPatch = { ...s };
+  for (const [key, value] of Object.entries(s)) {
+    confirm(tracking, key, value, s);
+  }
 }
 
 /** @internal Reset module state for tests. */
-// deadset:ignore DS1004 -- test seam: resets the patch dedup tracker, queue, resolvers, key generations, debounce timer, settings reads and held revision
+// deadset:ignore DS1004 -- test seam: resets the patch dedup tracker, queue, resolvers, claims, debounce timer, settings reads and held revision
 export function __testResetTracking(): void {
-  lastSentPatch = {};
   patchQueue = {};
-  patchSnapshot = {};
   patchInputs = [];
   patchResolvers = [];
-  keyGen.clear();
+  tracking = newTracking();
   reading = null;
   rereading = null;
   held = { settings_epoch: 0, settings_revision: 0 };
@@ -61,47 +79,73 @@ export function __testResetTracking(): void {
  *  cleanup below. */
 function executePatch(): void {
   const body = patchQueue;
-  const allInputs = patchInputs;
   const resolvers = patchResolvers;
-  const rollback = patchSnapshot;
+  const t = tracking;
+  const keys = Object.keys(body);
+  const sent = new Map(keys.map((k) => [k, t.claims.get(k)?.claim]));
+  const boxes = patchInputs.flatMap((el) => {
+    const c = t.boxes.get(el);
+    return c === undefined ? [] : [{ el, claim: c.claim, after: c.after }];
+  });
+  const sentAt = held;
   patchQueue = {};
-  patchSnapshot = {};
   patchInputs = [];
   patchResolvers = [];
-  const keys = Object.keys(body);
-  const gen = ++writeSeq;
-  for (const k of keys) {
-    keyGen.set(k, gen);
-  }
   /** The keys of this write that no later write has claimed since. */
-  const stillOurs = (): string[] => keys.filter((k) => keyGen.get(k) === gen);
+  const stillOurs = (): string[] =>
+    t === tracking ? keys.filter((k) => t.claims.get(k)?.claim === sent.get(k)) : [];
   let result: PatchAnswer = null;
+  let landed = false;
   void patchAppSettings.dispatch(
     {
       body: body,
-      ...(allInputs.length > 0 ? { inputs: allInputs } : {}),
+      // A read newer than this write repainted the controls from the server's settings.
+      restore: () =>
+        t !== tracking || (latest !== null && below(sentAt, latest))
+          ? []
+          : boxes.flatMap(({ el, claim }) => {
+              const c = t.boxes.get(el);
+              return c?.claim === claim ? [{ el, checked: c.before }] : [];
+            }),
     },
     {
       silent: true,
       onSuccess: (r) => {
-        const version = stampOf(r);
-        result =
-          version === null || adoptSettings(version)
-            ? (r as Record<string, unknown>)
-            : "superseded";
+        landed = true;
+        const answer = typeof r === "object" && r !== null ? (r as Record<string, unknown>) : {};
+        const version = stampOf(answer);
+        result = version === null || adoptSettings(version) ? answer : "superseded";
+        for (const k of keys) {
+          confirm(
+            t,
+            k,
+            Object.hasOwn(answer, k) ? answer[k] : body[k as keyof typeof body],
+            version ?? held,
+          );
+        }
         const mine = stillOurs();
         if (mine.length > 0) {
           showSaved(mine);
         }
       },
       onError: () => {
-        Object.assign(lastSentPatch, rollback);
         const mine = stillOurs();
         if (mine.length > 0) {
           showError(mine);
         }
       },
       onSettled: () => {
+        for (const k of stillOurs()) {
+          t.claims.delete(k);
+        }
+        for (const { el, claim, after } of boxes) {
+          const c = t.boxes.get(el);
+          if (c?.claim === claim) {
+            t.boxes.delete(el);
+          } else if (landed && c !== undefined) {
+            c.before = after;
+          }
+        }
         for (const resolve of resolvers) {
           resolve(result);
         }
@@ -121,25 +165,33 @@ registerCleanup(() => {
   }
 });
 
+/** Queue the keys of patch whose value differs from the newest one sent or confirmed. A checkbox
+ *  among inputs flips back if the write fails, unless a later write owns it or newer settings were
+ *  read since it was sent. */
 export function patchSettings(
   patch: Partial<EffectiveSettings>,
   ...inputs: HTMLInputElement[]
 ): Promise<PatchAnswer> {
-  // Filter out keys whose value matches the last-sent value.
   const changed: Partial<EffectiveSettings> = {};
   for (const k of Object.keys(patch) as (keyof EffectiveSettings)[]) {
-    if (JSON.stringify(patch[k]) !== JSON.stringify(lastSentPatch[k])) {
-      if (!(k in patchSnapshot)) {
-        Object.assign(patchSnapshot, { [k]: lastSentPatch[k] });
-      }
+    if (JSON.stringify(patch[k]) !== JSON.stringify(sentValue(k))) {
       Object.assign(changed, { [k]: patch[k] });
-      Object.assign(lastSentPatch, { [k]: patch[k] });
     }
   }
   if (Object.keys(changed).length === 0) {
     // No-op: nothing to send. Resolve immediately with null so callers that await the promise don't
     // hang.
     return Promise.resolve(null);
+  }
+  const claim = ++claimSeq;
+  for (const [k, value] of Object.entries(changed)) {
+    tracking.claims.set(k, { claim, value });
+  }
+  for (const input of inputs) {
+    if (input.type === "checkbox") {
+      const before = tracking.boxes.get(input)?.before ?? !input.checked;
+      tracking.boxes.set(input, { claim, before, after: input.checked });
+    }
   }
   Object.assign(patchQueue, changed);
   for (const input of inputs) {
@@ -181,11 +233,8 @@ function below(s: Stamp, than: Stamp): boolean {
   );
 }
 
-function stampOf(r: unknown): Stamp | null {
-  if (typeof r !== "object" || r === null) {
-    return null;
-  }
-  const { settings_epoch: epoch, settings_revision: revision } = r as Record<string, unknown>;
+function stampOf(r: Record<string, unknown>): Stamp | null {
+  const { settings_epoch: epoch, settings_revision: revision } = r;
   return typeof epoch === "number" && typeof revision === "number"
     ? { settings_epoch: epoch, settings_revision: revision }
     : null;
@@ -193,7 +242,8 @@ function stampOf(r: unknown): Stamp | null {
 
 /** The one ordering rule for every settings payload and event: true when s is not older than the
  *  version this page holds, which it then holds; false when it is. The held version never goes
- *  back, since the server sends events in version order and a reset starts a later epoch. */
+ *  back: a deleted or restored config.json serves a lower version, refused here until the write
+ *  after it starts a later epoch. */
 export function adoptSettings(s: Stamp): boolean {
   if (below(s, held)) {
     return false;
@@ -220,6 +270,7 @@ function startRead(): Promise<EffectiveSettings | null> {
     }
     if (adoptSettings(s)) {
       latest = s;
+      initSettingsTracking(s);
       return s;
     }
     // Older than an event taken since this read was sent: the read sent after that event answers.

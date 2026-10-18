@@ -13,7 +13,7 @@ import {
   KEYED_PUSH_KINDS,
   KEYED_PUSH_DEFAULTS,
 } from "./notify.js";
-import { patchSettings } from "./persist.js";
+import { newestSettings, patchSettings } from "./persist.js";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { $, byId } from "./dom.js";
 import { isIOS, isStandalone } from "./platform.js";
@@ -122,10 +122,9 @@ export function initNotificationToggles(): void {
       void enableEverything(rows, notifyToggle, notifyHint, updateSub);
       return;
     }
-    void patchSettings({ notifications_enabled: false }, notifyToggle).then((r) => {
-      // On null the action framework rolls back the toggle input; superseded settings are already
-      // applied (restoreNotifications).
-      if (r === null || r === "superseded") {
+    void patchSettings({ notifications_enabled: false }, notifyToggle).then(async (r) => {
+      // On null the action framework rolls back the toggle input.
+      if (r === null || (r === "superseded" && !(await stillOff()))) {
         return;
       }
       setNotificationsEnabled(false);
@@ -143,6 +142,13 @@ export function initNotificationToggles(): void {
       void applyKindChange(rows, row, notifyToggle, updateSub);
     });
   }
+}
+
+/** Whether the newest settings, which a superseded write gives way to, still have notifications
+ *  off. Their read applies the state (restoreNotifications), not this click's refusal of the ask. */
+async function stillOff(): Promise<boolean> {
+  const s = await newestSettings();
+  return s !== null && !s.notifications_enabled;
 }
 
 /** Mirror the in-memory per-kind state onto the inputs. */
@@ -175,10 +181,13 @@ async function enableEverything(
   updateSub(); // show the sub-options optimistically
   const r = await patchSettings(patch, ...mutated);
   if (r === "superseded") {
+    // The newer settings decide whether notifications are on; the prompt is this click's alone.
+    const s = await newestSettings();
     updateSub();
-    return;
-  }
-  if (r === null) {
+    if (!s?.notifications_enabled) {
+      return;
+    }
+  } else if (r === null) {
     // Action framework handles input rollback; tear down any push subscription requestPermission
     // may have started.
     setNotificationsEnabled(false);
@@ -188,12 +197,13 @@ async function enableEverything(
     unregisterPush();
     updateSub();
     return;
+  } else {
+    setNotificationsEnabled(true);
+    for (const row of rows) {
+      setKindEnabled(row.kind, KEYED_PUSH_DEFAULTS[row.kind] ?? true);
+    }
+    updateSub();
   }
-  setNotificationsEnabled(true);
-  for (const row of rows) {
-    setKindEnabled(row.kind, KEYED_PUSH_DEFAULTS[row.kind] ?? true);
-  }
-  updateSub();
   // Only prompt for browser permission after the server confirms the enable.
   const hint = requestPermission();
   if (hint !== null) {
@@ -226,8 +236,15 @@ async function applyKindChange(
     patch["notifications_enabled"] = false;
   }
   const r = await patchSettings(patch, ...mutated);
-  if (r === null || r === "superseded") {
-    return; // the action framework rolls the toggle inputs back, or newer settings are applied
+  if (r === "superseded") {
+    if (allOff && (await stillOff())) {
+      spendNotifyAsk();
+      unregisterPush();
+    }
+    return;
+  }
+  if (r === null) {
+    return; // the action framework rolls the toggle inputs back
   }
   setKindEnabled(changed.kind, changed.input.checked);
   if (allOff) {

@@ -1,6 +1,7 @@
 // The page adopts only settings at or above the version it holds, whichever of the settings_updated
 // handler (handlers/system.ts), the shared read (persist.loadSettings) or the additional
-// directories panel's own write delivers them, over the shipped markup with only the network faked.
+// directories panel's own write delivers them, and a failed write rolls back nothing newer settings
+// or a later write own, over the shipped markup with only the network faked.
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import indexHtml from "../static/index.html?raw";
 import { settingsPayload } from "./__test-helpers__/settings.js";
@@ -9,11 +10,12 @@ import { dispatch } from "./bus.js";
 import type { ServerEvent } from "./types.js";
 import { applyAgentDirs, initAgentDirsUI } from "./agent-dirs-ui.js";
 import { byId } from "./dom.js";
-import { __testResetTracking } from "./persist.js";
+import { __testResetTracking, patchSettings } from "./persist.js";
 import { additionalDirectories, _resetForTest as resetWorkspace } from "./workspace.js";
 
 interface Held {
   answer: (s: EffectiveSettings) => void;
+  fail: () => void;
   body: unknown;
 }
 
@@ -31,6 +33,9 @@ function held(queue: Held[], body: unknown): Promise<Response> {
             headers: { "content-type": "application/json" },
           }),
         );
+      },
+      fail: () => {
+        resolve(new Response(JSON.stringify({ error: "unavailable" }), { status: 500 }));
       },
     });
   });
@@ -68,6 +73,22 @@ function dirsAt(revision: number, dirs: string[], epoch = 1): EffectiveSettings 
     settings_revision: revision,
     additional_directories: dirs,
   });
+}
+
+/** Past patchSettings' debounce. */
+async function debounced(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  await settled();
+}
+
+function debugLogs(): HTMLInputElement {
+  return byId<HTMLInputElement>("flag-debug-logs");
+}
+
+/** Click the debug-logs switch to on, as its change listener saves it. */
+function tick(on: boolean): void {
+  debugLogs().checked = on;
+  void patchSettings({ debug_logs: on }, debugLogs());
 }
 
 function add(dir: string): void {
@@ -238,5 +259,95 @@ describe("settings sync ordering", () => {
     gets[2]?.answer(dirsAt(6, ["/data", "/old"]));
     await settled();
     expect(chipLabels()).toEqual(["/data", "/reset"]);
+  });
+
+  it("keeps the panel locked when the newest settings cannot be read after an older answer", async () => {
+    add("/a");
+    await settled();
+    settingsEvent(2);
+    await settled();
+    gets[0]?.fail();
+    await settled();
+    patches[0]?.answer(dirsAt(1, ["/data", "/a"]));
+    await settled();
+    expect(gets, "the panel asks for the newest settings once more").toHaveLength(2);
+    gets[1]?.fail();
+    await settled();
+
+    expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(true);
+    expect(byId("agent-dirs-error").textContent).toContain("the newest list could not be loaded");
+    add("/c");
+    for (const remove of byId("agent-dirs-chips").querySelectorAll<HTMLButtonElement>(
+      ".chip-remove",
+    )) {
+      remove.click();
+    }
+    await settled();
+    expect(patches, "no whole-list write is built from the older list").toHaveLength(1);
+
+    byId("agent-dirs-error").querySelector<HTMLButtonElement>("button")?.click();
+    await settled();
+    gets[2]?.answer(dirsAt(2, ["/data", "/b"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/b"]);
+    expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(false);
+    expect(byId("agent-dirs-error").classList.contains("hidden")).toBe(true);
+  });
+
+  it("leaves a switch and the next write to newer settings read before its write failed", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(
+      settingsPayload({ settings_epoch: 1, settings_revision: 1, debug_logs: false }),
+    );
+    await settled();
+    tick(true);
+    await debounced();
+    expect(patches).toHaveLength(1);
+
+    // Another device turned the switch on, so the server holds what this page is still sending.
+    settingsEvent(2);
+    await settled();
+    gets[1]?.answer(settingsPayload({ settings_epoch: 1, settings_revision: 2, debug_logs: true }));
+    await settled();
+    patches[0]?.fail();
+    await settled();
+    expect(debugLogs().checked, "the server's value, not the one before this write").toBe(true);
+
+    tick(false);
+    await debounced();
+    expect(patches[1]?.body).toEqual({ debug_logs: false });
+    patches[1]?.answer(settingsPayload({ settings_epoch: 1, settings_revision: 3 }));
+    await settled();
+  });
+
+  it("lets a failed write roll back neither the switch nor the value a later write sends", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(
+      settingsPayload({ settings_epoch: 1, settings_revision: 1, debug_logs: false }),
+    );
+    await settled();
+    tick(true);
+    await debounced();
+    tick(false);
+    tick(true);
+    await debounced();
+    expect(patches, "the second write waits behind the first").toHaveLength(1);
+
+    patches[0]?.fail();
+    await settled();
+    expect(debugLogs().checked, "the later write still owns the switch").toBe(true);
+    expect(patches).toHaveLength(2);
+    expect(patches[1]?.body).toEqual({ debug_logs: true });
+    patches[1]?.answer(
+      settingsPayload({ settings_epoch: 1, settings_revision: 2, debug_logs: true }),
+    );
+    await settled();
+    expect(debugLogs().checked).toBe(true);
+
+    tick(true);
+    await debounced();
+    expect(patches, "true is what the server holds, so nothing is sent").toHaveLength(2);
   });
 });

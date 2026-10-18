@@ -19,9 +19,10 @@ const SAVE_KEY = "additional_directories";
 let dirs: readonly string[] = [];
 /** The server's reason for each stored entry it does not grant, keyed by the entry. */
 let refused: Readonly<Record<string, string>> = {};
-/** One write at a time, until its answer is adopted: each one sends the whole list, so a second
- *  built from the list before that answer would drop the first one's change. */
-let saving = false;
+/** Each write sends the whole list, so the panel is locked while one is in flight ("saving") and
+ *  after one landed under newer settings it could not read ("behind"): a write built from an older
+ *  list would drop the change it missed. Only an adopted payload unlocks a "behind" panel. */
+let lock: "none" | "saving" | "behind" = "none";
 
 function els(): { input: HTMLInputElement; add: HTMLButtonElement; error: HTMLElement } | null {
   const input = maybeEl<HTMLInputElement>("agent-dirs-input");
@@ -48,36 +49,52 @@ function paintError(message: string | null): void {
 }
 
 function paintLock(): void {
+  const locked = lock !== "none";
   const e = els();
   if (e !== null) {
-    e.input.disabled = saving;
-    e.add.disabled = saving;
+    e.input.disabled = locked;
+    e.add.disabled = locked;
   }
   const chips = maybeEl("agent-dirs-chips");
   for (const b of chips?.querySelectorAll<HTMLButtonElement>(".chip-remove") ?? []) {
-    b.disabled = saving;
+    b.disabled = locked;
   }
+}
+
+/** Read the newest settings for a panel left "behind", offering a retry while they cannot be read. */
+async function catchUp(): Promise<void> {
+  lock = "behind";
+  paintLock();
+  const s = await newestSettings();
+  if (s !== null) {
+    applyAgentDirs(s);
+    return;
+  }
+  const e = els();
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- a settings event's applyAgentDirs can release the lock during the await
+  if (lock !== "behind" || e === null) {
+    return;
+  }
+  const retry = el("button", { type: "button", className: "btn-small" }, "Retry");
+  retry.addEventListener("click", () => {
+    void catchUp();
+  });
+  e.error.replaceChildren("Saved, but the newest list could not be loaded. ", retry);
+  e.error.classList.remove("hidden");
 }
 
 /** Sends next as the whole list; a refusal keeps the list and shows the server's reason beside the
  *  field. On success the panel adopts the settings the write committed rather than painting next:
  *  the server decides which kept entries it grants, and removing one entry can change another's verdict.
- *  An answer older than settings the page holds gives way to the newest, and the panel stays locked
- *  until those are read, so the next save is built from them. */
+ *  An answer older than settings the page holds gives way to the newest (catchUp). */
 async function save(next: readonly string[]): Promise<boolean> {
-  saving = true;
+  lock = "saving";
   paintLock();
   showSaving(SAVE_KEY);
   const o = await setAdditionalDirectories.dispatch({ dirs: next }).outcome;
-  if (o.status === "success") {
-    const s = adoptSettings(o.value) ? o.value : await newestSettings();
-    if (s !== null) {
-      applyAgentDirs(s);
-    }
-  }
-  saving = false;
-  paintLock();
   if (o.status !== "success") {
+    lock = "none";
+    paintLock();
     showError(SAVE_KEY);
     paintError(
       o.status === "error"
@@ -88,6 +105,12 @@ async function save(next: readonly string[]): Promise<boolean> {
   }
   showSaved(SAVE_KEY);
   paintError(null);
+  if (adoptSettings(o.value)) {
+    lock = "none";
+    applyAgentDirs(o.value);
+  } else {
+    await catchUp();
+  }
   return true;
 }
 
@@ -113,7 +136,7 @@ function renderChips(): void {
         ...(reasonFor(dir) === undefined ? {} : { note: "not granted" }),
         removeTitle: `Remove ${dir}`,
         onRemove: () => {
-          if (!saving) {
+          if (lock === "none") {
             void save(dirs.filter((d) => d !== dir));
           }
         },
@@ -136,6 +159,10 @@ function renderRefusals(): void {
  *  links and file routes follow the entries the server grants, and the panel shows every stored
  *  entry, marking each refused one with the server's reason. */
 export function applyAgentDirs(s: EffectiveSettings): void {
+  if (lock === "behind") {
+    lock = "none";
+    paintError(null);
+  }
   setLinkableDirectories(
     s.additional_directories.filter((d) => !Object.hasOwn(s.additional_directories_refused, d)),
   );
@@ -153,7 +180,7 @@ export function initAgentDirsUI(): void {
   const { input, add } = e;
   const submit = (): void => {
     const val = input.value;
-    if (val === "" || saving) {
+    if (val === "" || lock !== "none") {
       return;
     }
     if (dirs.includes(val)) {
