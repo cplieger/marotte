@@ -46,7 +46,7 @@ Reported as [kirodotdev/Kiro#11449](https://github.com/kirodotdev/Kiro/issues/11
 
 The agent can hand work to subagents in a chat with **Workflows** switched off in Settings, in Plan, Autonomous and the spec modes whatever that switch says, and inside a workflow step. A message you send while it works then reaches every subagent that runs later in that reply. A subagent can stop its own task to answer it.
 
-Reported as [kirodotdev/Kiro#11240](https://github.com/kirodotdev/Kiro/issues/11240), open. marotte has no workaround. In Default mode with **Workflows** on, the default, the agent hands work to workflows instead of subagents, and this does not happen. Elsewhere, wait for the reply to finish before you send guidance meant only for the main agent.
+Reported as [kirodotdev/Kiro#11240](https://github.com/kirodotdev/Kiro/issues/11240), open. marotte has no workaround. With **Workflows** on, the default, a chat in any other mode hands work to workflows instead of subagents, and this does not happen. In the cases above, wait for the reply to finish before you send guidance meant only for the main agent.
 
 ### A failed hook shows as completed
 
@@ -60,7 +60,7 @@ Reported as [kirodotdev/Kiro#11369](https://github.com/kirodotdev/Kiro/issues/11
 
 kiro-cli drops a skill whose description is over 1,024 characters, or whose name has an underscore. The skill is missing from chats, and the agent cannot use it by name. Nothing says why.
 
-Reported as [kirodotdev/Kiro#11101](https://github.com/kirodotdev/Kiro/issues/11101), open, and [kirodotdev/Kiro#10678](https://github.com/kirodotdev/Kiro/issues/10678), open. A skill created with **+** on the `/docs` page follows both rules. For a skill you edit by hand, keep the description at 1,024 characters or less and the name to lowercase letters, numbers and single hyphens.
+Reported as [kirodotdev/Kiro#11101](https://github.com/kirodotdev/Kiro/issues/11101), open, and [kirodotdev/Kiro#10678](https://github.com/kirodotdev/Kiro/issues/10678), open. A skill created with **+** on the `/docs` page follows both rules. For a skill you edit by hand, keep the description at 1,024 characters or less and the name to 64 characters or less of lowercase letters, numbers and single hyphens.
 
 ## Workflows
 
