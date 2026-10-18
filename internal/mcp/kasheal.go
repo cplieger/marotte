@@ -16,8 +16,8 @@ import (
 // with shell access can write.
 const kasDriftNamesCap = 20
 
-// HealKASConfig re-renders KAS's config file when its `mcpServers` member says something other
-// than the store renders, and reports whether it wrote. Only that member is compared, by value,
+// HealKASConfig re-renders KAS's config file when its `mcpServers` member is missing or says
+// something other than the store renders, and reports whether it wrote. Only that member is compared, by value,
 // so a reindented file is not drift; every other key is kept. An unreadable file is left alone
 // and returns ErrKASUnreadable. trigger names the caller in the drift WARN. It waits for the
 // write turn only while ctx lasts.
@@ -29,8 +29,8 @@ func (s *Store) HealKASConfig(ctx context.Context, trigger string) (bool, error)
 	return s.healKASLocked(ctx, trigger)
 }
 
-// healKASLocked is HealKASConfig on a write turn the caller already holds; s.mu must not be held,
-// since renderPolicy's resolver runs here.
+// healKASLocked is HealKASConfig on a write turn the caller already holds; s.servers is read
+// without s.mu because every mutation holds the write turn.
 func (s *Store) healKASLocked(ctx context.Context, trigger string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -44,22 +44,46 @@ func (s *Store) healKASLocked(ctx context.Context, trigger string) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	drift, err := diffKASServers(objectOrEmpty(doc[kasServerKey]), objectOrEmpty(wanted))
+	// Every write renders the member, so a file without it was deleted or stripped by another
+	// writer, even when the store has no servers.
+	fileServers, hasMember := doc[kasServerKey]
+	drift, err := diffKASServers(objectOrEmpty(fileServers), objectOrEmpty(wanted))
 	if err != nil {
 		return false, err
 	}
-	if drift.empty() {
+	if drift.empty() && hasMember {
 		return false, nil
 	}
+	pending := hasMember && s.isPendingWaitRender(objectOrEmpty(fileServers), policy)
 	delete(doc, kasServerKey)
 	if err := s.writeKASConfigWith(ctx, doc, s.servers, policy); err != nil {
 		return false, err
+	}
+	if pending {
+		slog.Info("mcp: kas config file carried the new wait setting", "path", s.kasPath, "trigger", trigger)
+		return true, nil
 	}
 	slog.Warn("mcp: kas config file had drifted from the store; re-rendered it",
 		"path", s.kasPath, "trigger", trigger,
 		"missing", driftNames(drift.missing), "unexpected", driftNames(drift.unexpected),
 		"changed", driftNames(drift.changed))
 	return true, nil
+}
+
+// isPendingWaitRender reports whether file is exactly marotte's last render under a wait setting
+// that has changed since: the setting reaches the file lazily, so that difference is marotte's
+// own pending write, not another writer's drift.
+func (s *Store) isPendingWaitRender(file map[string]json.RawMessage, policy kasRenderPolicy) bool {
+	last := s.renderedState()
+	if !last.known || last.waitForReady == policy.waitAll {
+		return false
+	}
+	prev, err := renderServersKey(s.servers, kasRenderPolicy{waitAll: last.waitForReady})
+	if err != nil {
+		return false
+	}
+	d, err := diffKASServers(file, objectOrEmpty(prev))
+	return err == nil && d.empty()
 }
 
 // kasDrift names the servers whose declaration in the file differs from the render. Names only:

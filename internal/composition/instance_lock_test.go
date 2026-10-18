@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -65,6 +66,64 @@ func TestClaimRoots_SecondInstanceOnAHeldKiroHomeIsRefused(t *testing.T) {
 		}
 	}
 	mustClaim(t, ownedRoot{roleConfigDir, configB})
+}
+
+func TestClaimRoots_DeletingTheLockFileDoesNotFreeTheFolder(t *testing.T) {
+	captureClaimLogs(t)
+	dir := t.TempDir()
+	mustClaim(t, ownedRoot{roleKiroHome, dir})
+	if err := os.Remove(filepath.Join(dir, lockFileName)); err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := claimRoots([]ownedRoot{{roleKiroHome, dir}})
+	if held != nil {
+		held.release()
+	}
+	if refused, ok := errors.AsType[*rootHeldError](err); !ok || refused.Dir != dir {
+		t.Fatalf("claim after the lock file was deleted = %v, want a refusal naming %s", err, dir)
+	}
+}
+
+func TestClaimRoots_AHolderOfOnlyTheLockFileIsRefused(t *testing.T) {
+	captureClaimLogs(t)
+	dir := t.TempDir()
+	f, err := os.OpenFile(filepath.Join(dir, lockFileName), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := claimRoots([]ownedRoot{{roleConfigDir, dir}})
+	if held != nil {
+		held.release()
+	}
+	if _, ok := errors.AsType[*rootHeldError](err); !ok {
+		t.Fatalf("claim beside a lock-file holder = %v, want *rootHeldError", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	mustClaim(t, ownedRoot{roleConfigDir, dir}) // the refusal released the folder's flock
+}
+
+func TestClaimRoots_AnUnusableLockFileKeepsTheFolderClaim(t *testing.T) {
+	logs := captureClaimLogs(t)
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, lockFileName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustClaim(t, ownedRoot{roleConfigDir, dir})
+
+	if line := logs.String(); !strings.Contains(line, "level=WARN") || !strings.Contains(line, "not its lock file") {
+		t.Errorf("no warning about the unusable lock file:\n%s", line)
+	}
+	if _, err := claimRoots([]ownedRoot{{roleConfigDir, dir}}); err == nil {
+		t.Error("a second claim succeeded, want the folder still held")
+	}
 }
 
 func TestClaimRoots_HoldsTheLockAcrossGarbageCollection(t *testing.T) {

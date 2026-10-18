@@ -2,11 +2,14 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -94,6 +97,72 @@ func TestHealKASConfig_RestoresWhatAnotherWriterChanged(t *testing.T) {
 			}
 			if strings.Contains(logs.String(), driftWarn) {
 				t.Errorf("a heal with no drift warned:\n%s", logs)
+			}
+		})
+	}
+}
+
+func TestHealKASConfig_RestoresADeletedFileOnAnEmptyStore(t *testing.T) {
+	s, kas := newIsolatedStore(t)
+	logs := captureSlog(t)
+	if err := os.Remove(kas); err != nil {
+		t.Fatal(err)
+	}
+
+	healed, err := s.HealKASConfig(t.Context(), "poll")
+	if err != nil || !healed {
+		t.Fatalf("HealKASConfig = %v, %v; want true, nil", healed, err)
+	}
+	if got := readKASServers(t, kas); len(got) != 0 {
+		t.Errorf("mcpServers after heal = %v, want an empty member", got)
+	}
+	if !strings.Contains(logs.String(), driftWarn) {
+		t.Errorf("no drift WARN for the deleted file:\n%s", logs)
+	}
+	if healed, err := s.HealKASConfig(t.Context(), "poll"); err != nil || healed {
+		t.Errorf("second HealKASConfig = %v, %v; want false, nil", healed, err)
+	}
+}
+
+// The wait setting reaches the file lazily, so a heal can be the write that carries it.
+func TestHealKASConfig_APendingWaitSettingIsNotBlamedOnAnotherWriter(t *testing.T) {
+	cases := []struct {
+		name     string
+		handEdit bool
+		wantLine string
+		notLine  string
+	}{
+		{"only the setting changed", false, `msg="mcp: kas config file carried the new wait setting"`, driftWarn},
+		{"the file was also edited", true, driftWarn, "carried the new wait setting"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			kas := filepath.Join(dir, "kas", "mcp.json")
+			var wait atomic.Bool
+			s, err := New(t.Context(), dir, nil, withKASConfigPath(kas),
+				WithWaitForReady(func(context.Context) (bool, bool) { return wait.Load(), true }))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if _, err := s.Create(t.Context(), waitServers()[0]); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			if tc.handEdit {
+				writeKASFile(t, kas, `{"mcpServers": {"local": {"command": "npx", "cwd": "/tmp"}}}`)
+			}
+			logs := captureSlog(t)
+			wait.Store(true)
+
+			if healed, err := s.HealKASConfig(t.Context(), "poll"); err != nil || !healed {
+				t.Fatalf("HealKASConfig = %v, %v; want true, nil", healed, err)
+			}
+			if got := readKASServers(t, kas)["local"]["waitForReady"]; got != true {
+				t.Errorf("local waitForReady after heal = %v, want true", got)
+			}
+			line := logs.String()
+			if !strings.Contains(line, tc.wantLine) || strings.Contains(line, tc.notLine) {
+				t.Errorf("heal log = %s, want %s and not %s", line, tc.wantLine, tc.notLine)
 			}
 		})
 	}

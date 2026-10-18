@@ -39,7 +39,7 @@ func ownedRoots(cfg *Config) []ownedRoot {
 	return append(roots, ownedRoot{roleToolsDir, cfg.ToolsDir})
 }
 
-// heldRoots keeps the claimed lock files open. It must stay reachable for the process lifetime:
+// heldRoots keeps the claimed folders and lock files open. It must stay reachable for the process lifetime:
 // an unreachable *os.File is closed by its finalizer, and closing the fd drops the flock.
 type heldRoots struct{ files []*os.File }
 
@@ -87,7 +87,7 @@ func claimRoots(roots []ownedRoot) (*heldRoots, error) {
 			continue
 		}
 		seen[key] = struct{}{}
-		f, err := lockRoot(r)
+		files, err := lockRoot(r)
 		if refused, ok := errors.AsType[*rootHeldError](err); ok {
 			slog.Error("another marotte instance holds this folder, so this one is refusing to start",
 				"root", refused.Role, "path", refused.Dir, "holder_pid", refused.HolderPID,
@@ -100,7 +100,7 @@ func claimRoots(roots []ownedRoot) (*heldRoots, error) {
 			warnUnclaimed(r, err)
 			continue
 		}
-		held.files = append(held.files, f)
+		held.files = append(held.files, files...)
 	}
 	return held, nil
 }
@@ -113,27 +113,52 @@ func resolveRoot(dir string) (string, error) {
 	return filepath.EvalSymlinks(dir)
 }
 
-func lockRoot(r ownedRoot) (*os.File, error) {
+// lockRoot flocks the folder itself, which deleting marotte.lock cannot release, then marotte.lock,
+// which a build that locks only the file checks, as does a marotte on another host of a network
+// share (a folder's flock is local to one kernel there). A folder held but a marotte.lock that
+// cannot be opened or locked for another cause keeps the folder's claim and warns.
+func lockRoot(r ownedRoot) ([]*os.File, error) {
 	path := filepath.Join(r.dir, lockFileName)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	dir, err := os.Open(r.dir)
 	if err != nil {
 		return nil, err
 	}
-	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err = flockNB(dir); err != nil {
+		_ = dir.Close()
+		return nil, lockFailure(r, path, err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err == nil {
+		if err = flockNB(f); err != nil {
+			_ = f.Close()
+		}
+	}
 	if errors.Is(err, syscall.EWOULDBLOCK) {
-		pid := readHolderPID(f)
-		_ = f.Close()
-		return nil, &rootHeldError{Role: r.role, Dir: r.dir, LockFile: path, HolderPID: pid}
+		_ = dir.Close()
+		return nil, lockFailure(r, path, err)
 	}
 	if err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("flock %s: %w", path, err)
+		slog.Warn("locked this folder but not its lock file, so a marotte on another host would not be refused",
+			"root", r.role, "path", r.dir, "lock_file", path, "error", err)
+		return []*os.File{dir}, nil
 	}
 	if err := writeHolderPID(f); err != nil {
 		slog.Warn("locked this folder but could not record this pid in its lock file",
 			"root", r.role, "path", r.dir, "lock_file", path, "error", err)
 	}
-	return f, nil
+	return []*os.File{dir, f}, nil
+}
+
+func flockNB(f *os.File) error {
+	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+}
+
+// lockFailure is a *rootHeldError for contention, naming the pid the holder wrote into path.
+func lockFailure(r ownedRoot, path string, err error) error {
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return &rootHeldError{Role: r.role, Dir: r.dir, LockFile: path, HolderPID: readHolderPID(path)}
+	}
+	return fmt.Errorf("flock %s: %w", r.dir, err)
 }
 
 func writeHolderPID(f *os.File) error {
@@ -144,8 +169,13 @@ func writeHolderPID(f *os.File) error {
 	return err
 }
 
-// readHolderPID answers 0 for an empty or unparsable file: the holder locks before it writes.
-func readHolderPID(f *os.File) int {
+// readHolderPID answers 0 for a missing, empty or unparsable file: the holder locks before it writes.
+func readHolderPID(path string) int {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = f.Close() }()
 	b, err := io.ReadAll(io.LimitReader(f, 32))
 	if err != nil {
 		return 0

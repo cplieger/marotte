@@ -80,6 +80,40 @@ mkdir -p "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
     exit 1
   }
 
+# Make an untrusted value (a name off the /config volume, dpkg output) safe inside
+# a quoted logfmt field, so a crafted name cannot close the field and append keys.
+# Truncate the raw value first, or the doubling could split a `\\` pair; then
+# double backslashes, replace non-printables, and neutralize the quote. $2 is the
+# input bound (default 200).
+logfmt_value() {
+  local raw=$1 safe
+  safe=${raw:0:${2:-200}}
+  safe=${safe//\\/\\\\}
+  safe=${safe//[![:print:]]/?}
+  safe=${safe//\"/\'}
+  printf '%s' "$safe"
+}
+
+# Returns 1, with marotte's own refusal line, when a running marotte holds one of the
+# folders: this script's deletions below would otherwise run against its live tree
+# before marotte's claim (internal/composition/instance_lock.go) refuses. The probe
+# keeps no lock, and any failure other than contention leaves the refusal to marotte.
+refuse_held_roots() {
+  local root rc pid
+  for root in "$@"; do
+    rc=0
+    flock -n -E 75 "$root" true 2>/dev/null || rc=$?
+    [ "$rc" -eq 75 ] || continue
+    pid=$(head -c 32 "$root/marotte.lock" 2>/dev/null | tr -dc '0-9')
+    printf 'level=error msg="another marotte instance holds this folder, so this one is refusing to start" path="%s" holder_pid=%s component=entrypoint\n' \
+      "$(logfmt_value "$root")" "${pid:-0}" >&2
+    return 1
+  done
+  return 0
+}
+
+refuse_held_roots "$CONFIG_DIR" "$KIRO_HOME" "$TOOLS" || exit 1
+
 # Normalize modes on every boot: an inheritable ACL or umask on the host volume
 # can stamp any mode, the tools engine refuses a group- or other-writable root, and
 # ssh refuses a lax ~/.ssh.
@@ -213,20 +247,6 @@ prune_superseded_kas_runtimes
 if ! rm -rf "$HOME/.local/bin"/kiro-cli*; then
   printf "WARNING: failed to remove legacy kiro-cli residue from %s/.local/bin; an unpinned copy may stay resolvable by bare name\n" "$HOME" >&2
 fi
-
-# Make an untrusted value (a name off the /config volume, dpkg output) safe inside
-# a quoted logfmt field, so a crafted name cannot close the field and append keys.
-# Truncate the raw value first, or the doubling could split a `\\` pair; then
-# double backslashes, replace non-printables, and neutralize the quote. $2 is the
-# input bound (default 200).
-logfmt_value() {
-  local raw=$1 safe
-  safe=${raw:0:${2:-200}}
-  safe=${safe//\\/\\\\}
-  safe=${safe//[![:print:]]/?}
-  safe=${safe//\"/\'}
-  printf '%s' "$safe"
-}
 
 # Repair an interrupted dpkg transaction before the listener binds: apt installs
 # are the tools engine's, and it cannot repair a database it does not own. Gate on

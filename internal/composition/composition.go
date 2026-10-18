@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sync"
 	"time"
 
@@ -69,7 +70,7 @@ type App struct {
 	stopApp func()
 	// waitSignIn waits for the sign-in vault's goroutines, which end with the app's lifetime.
 	waitSignIn func()
-	// roots is never closed by Shutdown: the claims last until the process exits (heldRoots).
+	// roots is never closed: the claims last until the process exits (heldRoots).
 	roots *heldRoots
 }
 
@@ -384,6 +385,7 @@ func (a *App) Shutdown() {
 	a.shutdownHub()
 	// After the runtime's teardown, which may still call the vault: a renewal's save lands before exit.
 	callIfSet(a.waitSignIn)
+	runtime.KeepAlive(a.roots)
 }
 
 // hubStopGrace bounds the runtime teardown App.Shutdown owns: the signal context is already

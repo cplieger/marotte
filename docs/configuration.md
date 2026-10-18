@@ -124,7 +124,7 @@ Files you attach to a message, by drag and drop, paste or the composer's **Chat 
 | `/config/home/.kiro/` | kiro-cli's sessions, settings, steering, agents and logs |
 | `/config/tools/` | Installed tools. `bin/` and `go/bin/` are on `PATH`, so link any other binary into `bin/` |
 | `/config/*.json` | marotte's settings, the tools list and its state, and the MCP server list |
-| `marotte.lock` in `/config`, `/config/home/.kiro` and `/config/tools` | Marks the folder as in use by the running marotte. A marotte that crashed leaves no lock behind, and deleting the file does not unlock a running one. On a network share it only works if the share supports file locks |
+| `marotte.lock` in `/config`, `/config/home/.kiro` and `/config/tools` | Holds the process ID of the marotte using the folder. marotte locks the folder itself as well as this file, so deleting the file does not let a second marotte start on the same host, but deleting or replacing the whole folder does. A marotte that crashed leaves no lock behind. Between two hosts sharing a network folder only the lock on this file counts, so leave it in place, and the share must support file locks |
 
 ## OS packages
 
