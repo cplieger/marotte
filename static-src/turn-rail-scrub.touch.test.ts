@@ -225,10 +225,18 @@ describe("a re-bin under a held finger", () => {
   const endings = {
     lift: () => touch("touchEnd"),
     cancel: () => touch("touchCancel"),
-    "lift once the track lost the capture": async (pointerId: number, at: Point) => {
+    "lift reaching only the document once the track released the capture": async (
+      pointerId: number,
+      at: Point,
+    ) => {
       track().releasePointerCapture(pointerId);
       await touch("touchMove", { x: at.x, y: at.y + 2 });
       await touch("touchEnd");
+    },
+    // Dispatched directly: the other endings clear the scrub through pointerup or pointercancel.
+    "lostpointercapture with the finger still down": (pointerId: number) => {
+      track().dispatchEvent(new PointerEvent("lostpointercapture", { pointerId, bubbles: true }));
+      return Promise.resolve();
     },
   };
 

@@ -13,7 +13,6 @@ const NARROW_PX = 800;
 const VIEWPORT = { width: 1280, height: 720 };
 /** The sidebar's width beside a chat area wider than the phone layout (`--sidebar-w-min`). */
 const SIDEBAR_PX = 260;
-/** The touch target this rail gives a finger. */
 const TOUCH_TARGET_PX = 48;
 /** Sub-pixel slack. Every number here is a used value the engine rounds. */
 const EPS = 0.5;

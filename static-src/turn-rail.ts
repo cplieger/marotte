@@ -714,9 +714,10 @@ function bindScrub(m: MapNodes): void {
       endScrub(m);
     }
   };
-  // On the document: a pointer whose capture was released lifts wherever it is, past the track.
+  // On the document, capture phase: a pointer whose capture was released lifts wherever it is,
+  // past the track, and over a control that stops the event's propagation.
   for (const type of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
-    document.addEventListener(type, end);
+    document.addEventListener(type, end, true);
   }
   // A native context menu or link drag would cancel an active scrub.
   for (const type of ["contextmenu", "dragstart"]) {
