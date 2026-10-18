@@ -290,6 +290,19 @@ func TestInterruptTurn_ARewakeTurnLeavesThePromptWaitingBehindIt(t *testing.T) {
 	})
 }
 
+// turnByID reports the live turn the id names, or false when the chat holds none
+// under it or it is finalizing.
+func (r *turnRegistry) turnByID(chatID marotte.ChatID, turnID string) (*activeTurn, bool) {
+	lc := r.lifecycleFor(chatID)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	t := lc.liveLocked(turnID)
+	if t == nil || t.finalizing {
+		return nil, false
+	}
+	return t, true
+}
+
 func mustTurn(t *testing.T, h *Runtime, turn string) *activeTurn {
 	t.Helper()
 	live, ok := h.coord.turns.turnByID("c1", turn)

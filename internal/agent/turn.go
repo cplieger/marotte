@@ -623,19 +623,6 @@ func (lc *chatLifecycle) stoppedAfterLocked(turnID string) bool {
 	return t != nil && t.Seq <= lc.stopSeq
 }
 
-// turnByID reports the live turn the id names, or false when the chat holds none
-// under it or it is finalizing.
-func (r *turnRegistry) turnByID(chatID marotte.ChatID, turnID string) (*activeTurn, bool) {
-	lc := r.lifecycleFor(chatID)
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	t := lc.liveLocked(turnID)
-	if t == nil || t.finalizing {
-		return nil, false
-	}
-	return t, true
-}
-
 // holdsTurn answers the chat whose own or pending slot holds the turn id, for the digest's live_turn lookup (the ref names no chat).
 func (r *turnRegistry) holdsTurn(turnID string) (marotte.ChatID, bool) {
 	r.mu.Lock()
