@@ -68,8 +68,9 @@ func (e *rootHeldError) Error() string {
 
 // claimRoots claims every root through lockRoot (its folder and marotte.lock) and writes this pid
 // there. A root another process holds logs an ERROR, releases every claim taken so far and
-// returns *rootHeldError. Any other failure (mkdir, open, a share without locks) warns and boots on
-// without that claim. The kernel drops a flock when its holder exits, SIGKILL included.
+// returns *rootHeldError. A failure before the folder lock warns and boots on without that root's
+// claim; a later lock-file failure warns and keeps the folder claim. The kernel drops a flock when
+// its holder exits, SIGKILL included.
 func claimRoots(roots []ownedRoot) (*heldRoots, error) {
 	held := &heldRoots{}
 	// A second flock on another fd of the same file conflicts inside one process, so a folder

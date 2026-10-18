@@ -44,7 +44,7 @@ func (s *Store) healKASLocked(ctx context.Context, trigger string) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	fileServers, hasMember := doc[kasServerKey]
+	fileServers := doc[kasServerKey]
 	if sameJSONValue(fileServers, wanted) {
 		return false, nil
 	}
@@ -62,7 +62,7 @@ func (s *Store) healKASLocked(ctx context.Context, trigger string) (bool, error)
 		return true, nil
 	}
 	slog.Warn("mcp: kas config file had drifted from the store; re-rendered it",
-		"path", s.kasPath, "trigger", trigger, "member", jsonKind(fileServers, hasMember),
+		"path", s.kasPath, "trigger", trigger, "member", jsonKind(fileServers),
 		"missing", driftNames(drift.missing), "unexpected", driftNames(drift.unexpected),
 		"changed", driftNames(drift.changed))
 	return true, nil
@@ -91,29 +91,28 @@ func sameJSONValue(a, b json.RawMessage) bool {
 	return reflect.DeepEqual(av, bv)
 }
 
-// jsonKind names the JSON type of a member for the drift WARN, "absent" when the file lacks it.
-func jsonKind(raw json.RawMessage, present bool) string {
-	if !present {
-		return "absent"
+// jsonKind names the JSON type of a member for the drift WARN from its first byte, which is
+// enough because readKASDoc already parsed it; a member the file lacks (nil) is "absent".
+func jsonKind(raw json.RawMessage) string {
+	for _, b := range raw {
+		switch b {
+		case ' ', '\t', '\r', '\n':
+			continue
+		case '{':
+			return "object"
+		case '[':
+			return "array"
+		case '"':
+			return "string"
+		case 't', 'f':
+			return "boolean"
+		case 'n':
+			return "null"
+		default:
+			return "number"
+		}
 	}
-	var v any
-	if json.Unmarshal(raw, &v) != nil {
-		return "invalid"
-	}
-	switch v.(type) {
-	case nil:
-		return "null"
-	case map[string]any:
-		return "object"
-	case []any:
-		return "array"
-	case string:
-		return "string"
-	case bool:
-		return "boolean"
-	default:
-		return "number"
-	}
+	return "absent"
 }
 
 // kasDrift names the servers whose declaration in the file differs from the render. Names only:

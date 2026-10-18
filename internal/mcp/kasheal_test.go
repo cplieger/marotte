@@ -220,6 +220,35 @@ func TestHealKASConfig_APendingWaitSettingIsNotBlamedOnAnotherWriter(t *testing.
 	}
 }
 
+// An empty store renders `{}` under either wait setting, so only a raw-value comparison tells a
+// foreign null from marotte's own pending render.
+func TestHealKASConfig_AnEmptyStoreBlamesANullWrittenDuringAWaitChange(t *testing.T) {
+	dir := t.TempDir()
+	kas := filepath.Join(dir, "kas", "mcp.json")
+	var wait atomic.Bool
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas),
+		WithWaitForReady(func(context.Context) (bool, bool) { return wait.Load(), true }))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	writeKASFile(t, kas, `{"mcpServers": null}`)
+	logs := captureSlog(t)
+	wait.Store(true)
+
+	if healed, err := s.HealKASConfig(t.Context(), "poll"); err != nil || !healed {
+		t.Fatalf("HealKASConfig = %v, %v; want true, nil", healed, err)
+	}
+	line := logs.String()
+	for _, want := range []string{driftWarn, "level=WARN", "member=null"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("heal log lacks %q:\n%s", want, line)
+		}
+	}
+	if strings.Contains(line, "carried the new wait setting") {
+		t.Errorf("a foreign null was reported as the pending wait render:\n%s", line)
+	}
+}
+
 func TestHealKASConfig_ReformattedFileIsNotDrift(t *testing.T) {
 	s, kas := newHealStore(t)
 	compact := `{"mcpServers":{"gh":{"args":["-y"],"command":"bash"}}}`
