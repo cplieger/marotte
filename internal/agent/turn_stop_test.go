@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -229,4 +232,244 @@ func TestCmdCancel_DuringTheHandoffCloseKeepsTheWaitingPromptUnsent(t *testing.T
 			t.Errorf("the re-wake's turn_close = %+v (closed %v), want failure_reason %q", c, closed, promptHandoffReason)
 		}
 	})
+}
+
+// postPrompt posts the user's prompt m-1 and answers its HTTP status.
+func postPrompt(t *testing.T, h *Runtime, text string) int {
+	t.Helper()
+	return postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"` + text + `","message_id":"m-` + text + `"}`),
+	}).Code
+}
+
+// assertStoppedUnsent checks the chat's only turn closed cancelled with no failure_reason and no prompt_failed, and
+// that no session/prompt went out.
+func assertStoppedUnsent(t *testing.T, h *Runtime, br *fakeBridge) {
+	t.Helper()
+	if wire := br.wireLog(); slices.Contains(wire, marotte.MethodPrompt) {
+		t.Errorf("wire = %v, want no session/prompt for the prompt the reader stopped", wire)
+	}
+	if closed := closedBroadcasts(t, h); len(closed) != 1 || closed[0].Outcome != marotte.TurnOutcomeCancelled || closed[0].FailureReason != "" {
+		t.Errorf("turn_closed = %+v, want the prompt's one turn cancelled with no failure_reason", closed)
+	}
+	if failed := promptFailures(h); len(failed) != 0 {
+		t.Errorf("prompt_failed = %q, want none for the reader's own stop", failed)
+	}
+}
+
+// assertNextPromptSent checks the chat then takes the user's next prompt and writes it once.
+func assertNextPromptSent(t *testing.T, h *Runtime, br *fakeBridge) {
+	t.Helper()
+	if code := postPrompt(t, h, "again"); code != http.StatusOK {
+		t.Fatalf("the next prompt = %d, want admitted", code)
+	}
+	synctest.Wait()
+	sent := 0
+	for _, m := range br.wireLog() {
+		if m == marotte.MethodPrompt {
+			sent++
+		}
+	}
+	if sent != 1 {
+		t.Errorf("session/prompt frames after the next prompt = %d, want 1", sent)
+	}
+}
+
+// A stop between a prompt's admission and its turn's open finds nothing else running, so the admitted prompt is
+// what it stops: the turn opens, is never sent and closes cancelled, quietly, and the chat takes the next prompt.
+func TestCmdCancel_BetweenAdmissionAndTheOpenKeepsThePromptUnsent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		seedChat(t, cs, "c1")
+		entered, resume := make(chan struct{}), make(chan struct{})
+		var once sync.Once
+		h.coord.turns.openHook = func() { once.Do(func() { close(entered); <-resume }) }
+		acked := make(chan int)
+		go func() { acked <- postPrompt(t, h, "hi") }()
+		<-entered
+
+		if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
+			t.Fatalf("cancel = %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		close(resume)
+		if code := <-acked; code != http.StatusOK {
+			t.Fatalf("prompt = %d, want its ack", code)
+		}
+		synctest.Wait()
+
+		assertStoppedUnsent(t, h, br)
+		assertNextPromptSent(t, h, br)
+	})
+}
+
+// A stop after the send gate let a prompt through but before its frame reached the engine's write lock finds that
+// prompt as its call: the prompt is never written, so the stop's session/cancel cannot precede it on the wire, and
+// it closes cancelled, quietly.
+func TestCmdCancel_BetweenTheSendGateAndTheWriteKeepsThePromptUnsent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		seedChat(t, cs, "c1")
+		write := make(chan struct{})
+		br.mu.Lock()
+		br.blockWriteOn = map[string]chan struct{}{marotte.MethodPrompt: write}
+		br.mu.Unlock()
+		if code := postPrompt(t, h, "hi"); code != http.StatusOK {
+			t.Fatalf("prompt = %d, want its ack", code)
+		}
+		synctest.Wait()
+		lc, _ := h.coord.turns.lookup("c1")
+		lc.mu.Lock()
+		letThrough := lc.call != nil
+		lc.mu.Unlock()
+		if !letThrough {
+			t.Fatal("Setup: the send gate has not let the prompt through")
+		}
+
+		if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
+			t.Fatalf("cancel = %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		br.mu.Lock()
+		br.blockWriteOn = nil
+		br.mu.Unlock()
+		close(write)
+		synctest.Wait()
+
+		assertStoppedUnsent(t, h, br)
+		assertNextPromptSent(t, h, br)
+	})
+}
+
+// openAdmitted opens and starts the admitted prompt's turn and answers what its send gate says.
+func openAdmitted(t *testing.T, h *Runtime) error {
+	t.Helper()
+	return sendGate(t, h, startAdmitted(t, h))
+}
+
+// sendGate answers what c1's send gate says to the turn's prompt.
+func sendGate(t *testing.T, h *Runtime, id string) error {
+	t.Helper()
+	_, err := h.coord.AwaitPromptSend(t.Context(), "c1", id)
+	return err
+}
+
+// startAdmitted opens and starts the admitted prompt's turn.
+func startAdmitted(t *testing.T, h *Runtime) string {
+	t.Helper()
+	id, err := h.coord.OpenTurn(t.Context(), "c1", command.TurnOpen{
+		Source: marotte.TurnSourcePrompt, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "prompt"},
+	})
+	if err != nil {
+		t.Fatalf("OpenTurn: %v", err)
+	}
+	t.Cleanup(func() { h.ReleaseTurn("c1", id) })
+	if !h.coord.StartTurn(t.Context(), command.TurnRef{Chat: "c1", Turn: id}, nil) {
+		t.Fatal("StartTurn refused the admitted prompt's turn")
+	}
+	return id
+}
+
+// reservePrompt takes c1's admission for a prompt.
+func reservePrompt(t *testing.T, h *Runtime) {
+	t.Helper()
+	if got := h.coord.ReserveTurnForPrompt(t.Context(), "c1", time.Second); got != command.AdmissionAcquired {
+		t.Fatalf("ReserveTurnForPrompt = %v, want acquired", got)
+	}
+}
+
+// A stop that finds a prompt admitted but not yet opened keeps the turn that admission opens unsent, whether the
+// open lands before or after the stop's cancel went out, and reaches no other admission.
+func TestArmStopGrace_KeepsAnAdmittedPromptUnsentWhereverItsOpenLands(t *testing.T) {
+	cases := []struct {
+		act  func(t *testing.T, h *Runtime) error
+		want error
+		name string
+	}{
+		{name: "opened after the cancel went out", want: command.ErrPromptStopped, act: func(t *testing.T, h *Runtime) error {
+			reservePrompt(t, h)
+			stop := h.coord.RequestStop("c1")
+			if !h.coord.ArmStopGrace(stop, stopGrace) {
+				t.Error("ArmStopGrace = false with an admitted prompt")
+			}
+			h.coord.ReleaseStop(stop)
+			return openAdmitted(t, h)
+		}},
+		{name: "opened while the cancel was going out", want: command.ErrPromptStopped, act: func(t *testing.T, h *Runtime) error {
+			reservePrompt(t, h)
+			stop := h.coord.RequestStop("c1")
+			id := startAdmitted(t, h)
+			if !h.coord.ArmStopGrace(stop, stopGrace) {
+				t.Error("ArmStopGrace = false with the admitted prompt's turn open")
+			}
+			h.coord.ReleaseStop(stop)
+			return sendGate(t, h, id)
+		}},
+		{name: "a later admission is not the stop's", act: func(t *testing.T, h *Runtime) error {
+			reservePrompt(t, h)
+			stop := h.coord.RequestStop("c1")
+			h.coord.ReleaseTurnReservation("c1")
+			reservePrompt(t, h)
+			if h.coord.ArmStopGrace(stop, stopGrace) {
+				t.Error("ArmStopGrace = true for an admission taken after the stop")
+			}
+			h.coord.ReleaseStop(stop)
+			return openAdmitted(t, h)
+		}},
+		{name: "a cancel that never went out", act: func(t *testing.T, h *Runtime) error {
+			reservePrompt(t, h)
+			h.coord.ReleaseStop(h.coord.RequestStop("c1"))
+			return openAdmitted(t, h)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			defer shutdownHub(t, h)
+			seedChat(t, cs, "c1")
+			if err := tc.act(t, h); !errors.Is(err, tc.want) {
+				t.Errorf("the admitted prompt's send gate = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+// A stop names an admission as its target only when nothing else runs and the admission is a prompt's.
+func TestRequestStop_AnAdmissionIsItsTargetOnlyWhenNothingElseRuns(t *testing.T) {
+	cases := []struct {
+		admit func(t *testing.T, h *Runtime)
+		name  string
+		want  bool
+	}{
+		{name: "a prompt with nothing else running", want: true, admit: reservePrompt},
+		{name: "a shell's admission", admit: func(t *testing.T, h *Runtime) {
+			if !h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceLocalShell) {
+				t.Fatal("Setup: the shell's admission was refused")
+			}
+		}},
+		{name: "while KAS reports a run", admit: func(t *testing.T, h *Runtime) {
+			reservePrompt(t, h)
+			h.coord.WireTurnActivity("c1", true)
+		}},
+		{name: "beside an open turn KAS started", admit: func(t *testing.T, h *Runtime) {
+			reservePrompt(t, h)
+			if h.coord.openWireTurn(t.Context(), "c1", false) == nil {
+				t.Fatal("Setup: the agent's turn did not open")
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			defer shutdownHub(t, h)
+			seedChat(t, cs, "c1")
+			tc.admit(t, h)
+			stop := h.coord.RequestStop("c1")
+			defer h.coord.ReleaseStop(stop)
+			if got := stop.Admitted != 0; got != tc.want {
+				t.Errorf("the stop targets the admission = %v (Admitted %d), want %v", got, stop.Admitted, tc.want)
+			}
+		})
+	}
 }

@@ -18,6 +18,9 @@ import (
 // the turn it replaces command.ErrTurnStopped. The turn_count rewrite runs after both locks are released, so racing
 // opens both write the higher value. The caller holds one completion handle until ReleaseTurn.
 func (bc *bridgeCoordinator) OpenTurn(ctx context.Context, chatID marotte.ChatID, open command.TurnOpen) (string, error) {
+	if bc.turns.openHook != nil {
+		bc.turns.openHook()
+	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

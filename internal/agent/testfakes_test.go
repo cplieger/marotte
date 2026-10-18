@@ -36,6 +36,9 @@ type fakeBridge struct {
 	// blockOn parks Call, after recording it, until the method's channel is closed; blockNotifyOn parks Notify.
 	blockOn       map[string]chan struct{}
 	blockNotifyOn map[string]chan struct{}
+	// blockWriteOn parks Call before its frame is written (writeRequest), the window between the send gate and the
+	// engine's write lock.
+	blockWriteOn map[string]chan struct{}
 	// onCall answers a Call instead of the scripted result, delivering its frames before returning, as KAS does.
 	onCall func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)
 	// refuseAfterCall is KAS refusing in band after onCall ran, so frames can fold before the refusal.
@@ -59,6 +62,8 @@ type fakeBridge struct {
 	sessionTitleSetByUser bool
 	calls                 []string
 	notifies              []string
+	// wire is every request and notification in write order (writeRequest, Notify).
+	wire []string
 	// notifyParams holds each Notify's params as JSON, index-aligned with notifies.
 	notifyParams            []string
 	contentCollectionWrites []string
@@ -86,6 +91,8 @@ type fakeBridge struct {
 	withholdReplay int
 	withheld       []*marotte.RPCResponse
 	mu             sync.Mutex
+	// writeMu is the engine's write lock: one frame at a time, a request's commit inside it.
+	writeMu sync.Mutex
 	// sendMu orders a send against the close: a real bridge reads no frame once stopped.
 	sendMu   sync.RWMutex
 	responds int
@@ -287,6 +294,9 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*maro
 
 // callScript answers one call from the script, pushing the frames it carries through deliver before returning.
 func (b *fakeBridge) callScript(ctx context.Context, method string, params any, deliver func(*marotte.RPCResponse)) (*marotte.RPCResponse, error) {
+	if err := b.writeRequest(ctx, method); err != nil {
+		return nil, err
+	}
 	b.mu.Lock()
 	b.calls = append(b.calls, method)
 	if p, ok := params.(map[string]any); ok {
@@ -398,6 +408,8 @@ func (b *fakeBridge) Notify(ctx context.Context, method string, params any) erro
 			return ctx.Err()
 		}
 	}
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
 	b.mu.Lock()
 	if err := b.notifyErrs[method]; err != nil {
 		b.mu.Unlock()
@@ -405,8 +417,42 @@ func (b *fakeBridge) Notify(ctx context.Context, method string, params any) erro
 	}
 	b.notifies = append(b.notifies, method)
 	b.notifyParams = append(b.notifyParams, string(raw))
+	b.wire = append(b.wire, method)
 	b.mu.Unlock()
 	return nil
+}
+
+// writeRequest is a request's frame going out as the engine writes one: parked on blockWriteOn before the write,
+// then its commit (marotte.WriteCommit) and its place on the wire under writeMu, which every Notify also takes.
+func (b *fakeBridge) writeRequest(ctx context.Context, method string) error {
+	b.mu.Lock()
+	gate := b.blockWriteOn[method]
+	b.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
+	if commit := marotte.WriteCommit(ctx); commit != nil {
+		if err := commit(); err != nil {
+			return err
+		}
+	}
+	b.mu.Lock()
+	b.wire = append(b.wire, method)
+	b.mu.Unlock()
+	return nil
+}
+
+// wireLog is every request and notification method in the order its frame went out.
+func (b *fakeBridge) wireLog() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.wire)
 }
 
 func (b *fakeBridge) notified(method string) []string {

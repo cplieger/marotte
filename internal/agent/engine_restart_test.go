@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -323,6 +324,61 @@ func TestEngineRestart_ChatParentedRunGetsExactlyOneResume(t *testing.T) {
 	h.runs.resumeInterruptedRuns(t.Context(), parkChat)
 
 	awaitResumes(t, resumes, 1)
+}
+
+// Two resumers that both read the run as paused before either resume landed write one resume: the second re-reads
+// the pause under the run's verb lock and stands down.
+func TestResumeIfInterrupted_TwoResumersThatBothReadThePauseResumeOnce(t *testing.T) {
+	const id = "wf_1"
+	h, br := agentRunOnChat(t, id)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	h.runs.grantLease(t.Context(), id, "publish", agentLaunch(), hostSec())
+	h.runs.recordParentSession(t.Context(), id, parkSession)
+	paused, running := inspectPaused(t, id, stalePauseReason), inspectReply(t, id, marotte.RunStatusRunning, "")
+	var (
+		mu       sync.Mutex
+		inspects int
+		resumes  int
+	)
+	bothRead := make(chan struct{})
+	br.mu.Lock()
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch method {
+		case methodKiroWorkflowResume:
+			resumes++
+			return json.RawMessage(`{}`), nil, true
+		case methodKiroWorkflowInspect:
+			inspects++
+			switch inspects {
+			case 1:
+				// The first resumer's read waits for the second's, so both see the pause.
+				mu.Unlock()
+				<-bothRead
+				mu.Lock()
+				return paused, nil, true
+			case 2:
+				close(bothRead)
+			}
+			if resumes > 0 {
+				return running, nil, true
+			}
+			return paused, nil, true
+		}
+		return nil, nil, false
+	}
+	br.mu.Unlock()
+
+	var wg sync.WaitGroup
+	wg.Go(func() { h.runs.resumeIfInterrupted(t.Context(), parkChat, id) })
+	wg.Go(func() { h.runs.resumeIfInterrupted(t.Context(), parkChat, id) })
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if resumes != 1 {
+		t.Errorf("_kiro/workflow/resume written %d times, want 1", resumes)
+	}
 }
 
 // mutationWindow holds a driving verb's write unsettled, as a held invoke or answer reply does.

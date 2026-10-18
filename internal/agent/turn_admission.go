@@ -22,6 +22,7 @@ func (lc *chatLifecycle) reserveLocked(source marotte.TurnOpenSource) bool {
 	}
 	lc.reserved = true
 	lc.reservedSource = source
+	lc.admission++
 	return true
 }
 
@@ -275,12 +276,13 @@ var errPromptTurnClosed = errors.New("this prompt's turn closed before it was se
 // its own: a bracketed one is waited out to its close, and a fold-opened one is claimed by the same section that
 // read KAS's state and closed here, unless its late turn_start claimed it first (bindPending), which leaves a
 // bracketed turn to wait out. It fails the prompt unsent only when its turn closed meanwhile, ctx ended, or the
-// reader's stop kept it unsent (command.ErrPromptStopped).
-func (bc *bridgeCoordinator) AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) error {
+// reader's stop kept it unsent (command.ErrPromptStopped). Once it lets the send go it answers the write's commit
+// (sendCommitLocked).
+func (bc *bridgeCoordinator) AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (func() error, error) {
 	for {
-		fold, err := bc.turns.awaitPromptSend(ctx, chatID, turnID)
+		fold, commit, err := bc.turns.awaitPromptSend(ctx, chatID, turnID)
 		if err != nil || fold == nil {
-			return err
+			return commit, err
 		}
 		slog.Info("closing the agent's unbracketed turn so an admitted prompt can be sent", "chat_id", chatID, "turn", fold.ID)
 		bc.finalizeTurn(ctx, chatID, &turnClose{
@@ -289,20 +291,20 @@ func (bc *bridgeCoordinator) AwaitPromptSend(ctx context.Context, chatID marotte
 	}
 }
 
-// awaitPromptSend is AwaitPromptSend's wait, answering the fold-opened turn it claimed for the caller to close
-// before the prompt can own the chat, nil once it is sent. A run KAS starts while the send is on the wire is still
-// not seen: KAS offers no execution token to make the handoff atomic, so its turn_start binds provisionally
-// (ReviseTurnBinding).
-func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (*activeTurn, error) {
+// awaitPromptSend is AwaitPromptSend's wait, answering the fold-opened turn it claimed for the caller to close before
+// the prompt can own the chat, or the write's commit once the send may go. A run KAS starts while the send is on the
+// wire is still not seen: KAS offers no execution token to make the handoff atomic, so its turn_start binds
+// provisionally (ReviseTurnBinding).
+func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (*activeTurn, func() error, error) {
 	lc, ok := r.lookup(chatID)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	warn := time.NewTimer(kasHoldWarnAfter)
 	defer warn.Stop()
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if r.claimHook != nil {
 			r.claimHook()
@@ -311,18 +313,22 @@ func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatI
 		t := lc.liveLocked(turnID)
 		if t == nil || t.finalizing {
 			lc.mu.Unlock()
-			return nil, errPromptTurnClosed
+			return nil, nil, errPromptTurnClosed
 		}
 		step, fold := lc.markSentLocked(t)
+		var commit func() error
+		if step == sendNow {
+			commit = lc.sendCommitLocked()
+		}
 		changed := lc.changed
 		lc.mu.Unlock()
 		switch step {
 		case sendNow:
-			return nil, nil
+			return nil, commit, nil
 		case sendCloseFold:
-			return fold, nil
+			return fold, nil, nil
 		case sendStopped:
-			return nil, command.ErrPromptStopped
+			return nil, nil, command.ErrPromptStopped
 		case sendWait:
 		}
 		select {
@@ -331,8 +337,21 @@ func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatI
 			slog.Warn("the chat's admitted prompt still waits for kiro-cli's run or the open turn to end",
 				"chat_id", chatID, "waited", kasHoldWarnAfter)
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		}
+	}
+}
+
+// sendCommitLocked is the write commit of a send markSentLocked just let go: a stop requested since refuses the
+// frame with command.ErrPromptStopped, and a stop requested once it passed writes its session/cancel behind the
+// frame, since both take the engine's write lock. Caller holds mu, which orders the read against requestStop.
+func (lc *chatLifecycle) sendCommitLocked() func() error {
+	gate := lc.stopCount.Load()
+	return func() error {
+		if lc.stopCount.Load() != gate {
+			return command.ErrPromptStopped
+		}
+		return nil
 	}
 }
 

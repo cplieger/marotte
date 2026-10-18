@@ -74,6 +74,8 @@ type activeTurn struct {
 	// reapArmID names the newest reap arm; an expiry carrying an older id is a stale
 	// timer whose Stop lost the race and must not act.
 	reapArmID uint64
+	// admission is the reservation a prompt-class turn opened under (openLocked), zero for none.
+	admission uint64
 	// idleArms counts KAS's idle reports that armed this turn's idle close (WireTurnActivity); an expiry carrying an
 	// older count, or arriving after kasIdle cleared, must not act.
 	idleArms uint64
@@ -88,7 +90,8 @@ type activeTurn struct {
 	bracketed bool
 	// kasIdle is whether KAS's newest activity report since this turn opened said no turn runs.
 	kasIdle bool
-	// sent is whether the send gate let this prompt-class turn's session/prompt go (markSentLocked).
+	// sent is whether the send gate let this prompt-class turn's session/prompt go (markSentLocked); its write commit
+	// may still refuse the frame (sendCommitLocked).
 	sent bool
 	// stopped is whether the reader's stop keeps this unsent prompt from being sent (ArmStopGrace).
 	stopped bool
@@ -128,6 +131,10 @@ type chatLifecycle struct {
 	epoch uint64
 	// stopSeq is nextSeq when a stop was last requested: every turn at or below it was open then. Zero is no stop.
 	stopSeq uint64
+	// admission names the held reservation, re-minted by each reserveLocked; stoppedAdmission is one a stop kept
+	// unsent before its turn opened (ArmStopGrace), which openLocked passes to the turn opened under it.
+	admission        uint64
+	stoppedAdmission uint64
 	// observedSeq is the read loop position the FOLDER has reached. Advanced for
 	// every frame consumed, not only the ones that touch a turn — see observe.
 	observedSeq uint64
@@ -144,7 +151,10 @@ type chatLifecycle struct {
 	// reserved is whether the admission slot is held.
 	reserved bool
 	state    turnState
-	mu       sync.Mutex
+	// stopCount counts requestStop calls; atomic so a send's write commit reads it under the engine's write lock
+	// without mu (sendCommitLocked).
+	stopCount atomic.Uint64
+	mu        sync.Mutex
 	// switchMu is held by every writer of pending_model (the switch's admission, the idle or
 	// turn-close apply, the session open's fold): otherwise two appliers read one pick and apply it twice,
 	// or a landing falls between an admission's read and its park. Held across the bridge call.
@@ -161,7 +171,9 @@ type turnRegistry struct {
 	// claimHook runs just before a named claim's section and each send-gate section; nil in production. A test sets
 	// it before driving the frames, closers or prompt that read it.
 	claimHook func()
-	epochs    atomic.Uint64
+	// openHook runs at the top of OpenTurn, before its section; nil in production, set as claimHook is.
+	openHook func()
+	epochs   atomic.Uint64
 	// stopTokens mints each stop's send-hold token.
 	stopTokens atomic.Uint64
 	mu         sync.Mutex
@@ -269,6 +281,10 @@ func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, opened *marotte.Entry
 		lc:     lc,
 	}
 	if source.Acknowledgeable() {
+		if lc.reserved {
+			t.admission = lc.admission
+			t.stopped = lc.stoppedAdmission == lc.admission
+		}
 		lc.pending = t
 		if lc.own == nil {
 			lc.own = t
@@ -294,11 +310,11 @@ const (
 	sendStopped                   // the reader's stop keeps t unsent
 )
 
-// markSentLocked marks t sent only once t owns the chat (caller holds mu, t live and unclaimed), since t's run may
-// stream before its turn_start and those frames fold into own. By own's state, while KAS admits a session/prompt, no
-// frame is being consumed (inFrame: it may be folding into own, or parked behind a close and due before the send)
-// and no stop's session/cancel is still to go out (stops):
-//   - nil or t: t takes own and is sent.
+// markSentLocked lets t's send through only once t owns the chat (caller holds mu, t live and unclaimed), since t's
+// run may stream before its turn_start and those frames fold into own. By own's state, while KAS admits a
+// session/prompt, no frame is being consumed (inFrame: it may be folding into own, or parked behind a close and due
+// before the send) and no stop's session/cancel is still to go out (stops), a later stop being the write commit's:
+//   - nil or t: t takes own and is let through.
 //   - a fold-opened wire turn: no turn_end is owed for it, so it is claimed here, in the section that read the
 //     verdict's state, and returned for the caller to close (sendCloseFold).
 //   - anything else, or a turn another closer claimed: wait for its close.

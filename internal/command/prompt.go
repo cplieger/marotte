@@ -104,7 +104,7 @@ func retry(ctx context.Context, maxAttempts int, shouldRetry func(error) bool, f
 
 // callPromptWithRetry sends turnID's prompt to kiro-cli, retrying only the
 // classes a second attempt can actually fix. gate, when non-nil, holds every
-// attempt, a busy retry's included.
+// attempt, a busy retry's included, and each attempt's write carries its commit.
 func callPromptWithRetry(ctx context.Context, gate promptSendGate, sb bridgeCaller, params map[string]any, chatID marotte.ChatID, turnID string) (promptReply, error) {
 	return retry(ctx, 2, func(err error) bool {
 		class := classifyPromptFailure(err)
@@ -113,12 +113,17 @@ func callPromptWithRetry(ctx context.Context, gate promptSendGate, sb bridgeCall
 			"chat_id", chatID, "class", class.String(), "retry", retry, keyError, err)
 		return retry
 	}, func() (promptReply, error) {
+		callCtx := ctx
 		if gate != nil {
-			if err := gate.AwaitPromptSend(ctx, chatID, turnID); err != nil {
+			commit, err := gate.AwaitPromptSend(ctx, chatID, turnID)
+			if err != nil {
 				return promptReply{}, err
 			}
+			if commit != nil {
+				callCtx = marotte.WithWriteCommit(ctx, commit)
+			}
 		}
-		resp, seq, err := sb.CallAt(ctx, marotte.MethodPrompt, params)
+		resp, seq, err := sb.CallAt(callCtx, marotte.MethodPrompt, params)
 		return promptReply{resp: resp, seq: seq}, err
 	})
 }

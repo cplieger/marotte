@@ -267,8 +267,9 @@ type terminalAccess interface {
 type turnStopper interface {
 	// RequestStop records a stop on the chat's turn sequence and captures, in one section, the turns it targets.
 	// It is called BEFORE any signal, so a turn opened to replace one the reader stopped (the empty-turn retry)
-	// sees it whichever bridge the signal reached. Until ReleaseStop, no prompt of the chat is sent: session/cancel
-	// names no turn, so a prompt sent before it would be the one KAS cancels.
+	// sees it whichever bridge the signal reached. session/cancel names no turn, so a prompt written before it would
+	// be the one KAS cancels: until ReleaseStop the send gate lets no prompt go, and one it let go before the stop is
+	// written ahead of the stop's session/cancel or not at all (AwaitPromptSend's commit).
 	RequestStop(chatID marotte.ChatID) *TurnStop
 	// ReleaseStop lifts the stop's send hold; called once per RequestStop.
 	ReleaseStop(stop *TurnStop)
@@ -300,6 +301,9 @@ type TurnStop struct {
 	Chat marotte.ChatID
 	// Token names the stop's send hold.
 	Token uint64
+	// Admitted names the reservation of a prompt admitted as Next would be but whose turn has not opened; zero for
+	// none. The turn that reservation opens is kept unsent.
+	Admitted uint64
 	// Wire reports Own as an open turn KAS started.
 	Wire bool
 }
@@ -539,9 +543,10 @@ type turnOutcomeAccess interface {
 
 // promptSendGate holds an admitted prompt's session/prompt until the chat's session may take it.
 type promptSendGate interface {
-	// AwaitPromptSend returns nil once turnID's prompt may be sent, else the error that fails it unsent: ctx ended,
-	// or the turn closed during the wait.
-	AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) error
+	// AwaitPromptSend returns once turnID's prompt may be sent, with the commit its session/prompt call carries
+	// (marotte.WithWriteCommit; nil for none), else the error that fails it unsent: ctx ended, the turn closed during
+	// the wait, or the reader stopped it (ErrPromptStopped), which the commit also answers for a stop that followed.
+	AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (commit func() error, err error)
 }
 
 // preSendCompactor is the compaction policy's before-a-send trigger. It returns
