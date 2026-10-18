@@ -1,7 +1,7 @@
 // THE CLOSED FOOTER ROW, assembled by `messages.ts` as a chat paints it (ledger, turn actions,
 // Rewind), pinned at 320, 390 and 1280 px against the live layout measured before the open panel's
-// redesign (fact, controls and Rewind relative to the footer). The phone widths take a copy of the
-// card into a coarse-pointer iframe: geometry needs only the markup and the stylesheet.
+// redesign (each box relative to the footer or to its neighbour). The phone widths take a copy of
+// the card into a coarse-pointer iframe: geometry needs only the markup and the stylesheet.
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -179,29 +179,51 @@ function box(e: Element, footer: Element, want: Box): Box {
   return got;
 }
 
+/** Rewind's width less its word: padding, glyph and gap, or the whole glyph-only square. */
+function rewindChrome(rewind: Element): number {
+  const range = rewind.ownerDocument.createRange();
+  range.selectNodeContents(rewind.querySelector(".turn-rewind-label") as Element);
+  const label = range.getBoundingClientRect().width;
+  return Math.round((rewind.getBoundingClientRect().width - label) * 100) / 100;
+}
+
+/** The space between each shown control and the next. */
+function gaps(controls: readonly Element[]): number[] {
+  return controls.slice(1).map((c, i) => {
+    const prev = (controls[i] as Element).getBoundingClientRect();
+    return Math.round((c.getBoundingClientRect().left - prev.right) * 100) / 100;
+  });
+}
+
 // Measured on the live app before the redesign: the inline actions and the worded Rewind on a
-// mouse, the `…` overflow and the glyph-only Rewind on a phone.
+// mouse, the `…` overflow and the glyph-only Rewind on a phone. `system-ui` resolves through the
+// host's fonts, so nothing here depends on a glyph's metrics: the fact is held by its start and
+// its centre, the worded Rewind by its width less the word, the copy actions by their spacing.
 const FINE = {
   band: 32,
   ledger: { x: 8, y: 4, h: 24 },
   info: { x: 12, y: 8, w: 16, h: 16 },
-  fact: { x: 36, y: 9, h: 14 },
+  factX: 36,
   controls: [
-    ["Copy as text", { end: 147.56, y: 4, w: 24, h: 24 }],
-    ["Copy as markdown", { end: 121.56, y: 4, w: 24, h: 24 }],
-    ["Copy link to this turn", { end: 95.56, y: 4, w: 24, h: 24 }],
-    ["Rewind to this point", { end: 8, y: 4, w: 79.56, h: 24 }],
+    ["Copy as text", { y: 4, w: 24, h: 24 }],
+    ["Copy as markdown", { y: 4, w: 24, h: 24 }],
+    ["Copy link to this turn", { y: 4, w: 24, h: 24 }],
+    ["Rewind to this point", { end: 8, y: 4, h: 24 }],
   ],
+  gaps: [2, 2, 8],
+  rewindChrome: 36,
 } as const;
 const COARSE = {
   band: 44,
   ledger: { x: 8, y: 4, h: 36 },
   info: { x: 12, y: 12, w: 20, h: 20 },
-  fact: { x: 40, y: 15, h: 14 },
+  factX: 40,
   controls: [
     ["More turn actions", { end: 52, y: 4, w: 36, h: 36 }],
     ["Rewind to this point", { end: 8, y: 4, w: 36, h: 36 }],
   ],
+  gaps: [8],
+  rewindChrome: 36,
 } as const;
 const PIN = { 1280: FINE, 390: COARSE, 320: COARSE } as const;
 
@@ -232,7 +254,16 @@ describe("the closed footer row", () => {
       expect(box(info, footer, pin.info), "`i`").toEqual(pin.info);
       const fact = ledger.querySelector(":scope > .turn-fact") as Element;
       expect(fact.textContent, "the lead fact").not.toBe("");
-      expect(box(fact, footer, pin.fact), "fact").toEqual(pin.fact);
+      const factBox = fact.getBoundingClientRect();
+      const ledgerBox = ledger.getBoundingClientRect();
+      expect(factBox.left - footer.getBoundingClientRect().left, "fact start").toBeCloseTo(
+        pin.factX,
+        2,
+      );
+      expect(
+        Math.abs(factBox.top + factBox.height / 2 - (ledgerBox.top + ledgerBox.height / 2)),
+        "fact centred on the ledger",
+      ).toBeLessThanOrEqual(0.5);
 
       const shown = [
         ...footer.querySelectorAll<HTMLElement>(
@@ -247,6 +278,14 @@ describe("the closed footer row", () => {
         const want = pin.controls[i]?.[1] as Box;
         expect(box(c, footer, want), c.getAttribute("aria-label") ?? "").toEqual(want);
       });
+      // Within a layout unit: a box after a word starts on a 1/64 px grid, not a whole pixel.
+      const between = gaps(shown);
+      expect(between, "the space between the trailing controls").toHaveLength(pin.gaps.length);
+      between.forEach((g, i) => {
+        expect(g, `the space after control ${String(i)}`).toBeCloseTo(pin.gaps[i] as number, 1);
+      });
+      const rewind = footer.querySelector(":scope > .turn-rewind") as Element;
+      expect(rewindChrome(rewind), "Rewind less its word").toBeCloseTo(pin.rewindChrome, 1);
     });
   }
 });
