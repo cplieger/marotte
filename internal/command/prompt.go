@@ -456,7 +456,7 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 		roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{Code: marotte.ErrCodeBridgeStartFailed, Message: reason, TurnScoped: true}))
 		return
 	}
-	// The reservation already excludes every prompt and shell, so a held
+	// The reservation already excludes every other prompt, so a held
 	// bridge slot here is a programming error.
 	if !sb.TryAcquireForPrompt() {
 		roles.admission.ReleaseTurnReservation(chatID)
