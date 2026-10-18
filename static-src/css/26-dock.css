@@ -229,13 +229,10 @@
    one was written here and measured inert. Both axes are spelled for the reason
    `.dock-card` states above.
 
-   Shrink is proportional to content, so a card carrying a long question AND a long
-   option list squeezes the question's region hardest; nothing is lost by that,
-   because the region is a scroller and the question inside it is pinned (see
-   `.dock-ask-question` below). Measured with 10 options at 390px: the question's
-   region 26px scrolling over its four pinned lines, the options 212, the answer box
-   and Skip untouched. The always chooser's patterns scroll the same way, or an open
-   chooser would squeeze the ask it answers to nothing. */
+   Which region gives first is the card's own call: the question card's options give
+   before its question (`.dock-user-input > .user-input-options` below).
+   The always chooser's patterns scroll the same way, or an open chooser would
+   squeeze the ask it answers to nothing. */
 .dock-card
   > :where(
     .approval-body,
@@ -292,6 +289,30 @@
 
 .dock-user-input .dock-ask-body strong {
   color: var(--c-yellow);
+}
+
+/* THE QUESTION CARD'S CEILING NEVER LANDS BELOW ITS ORDINARY CONTENT. A raised keyboard
+   leaves a phone a 261-388px band, whose 0.55 (143-213px) is under a short question, two
+   options, the one-row answer box and the button row (275px at 390px); the regions then
+   shrink until the question loses lines and Send leaves the card. On a band that short the
+   card may take up to 18rem, leaving the transcript 3rem; elsewhere the fraction rules. */
+.dock-card.dock-user-input {
+  max-block-size: min(
+    30rem,
+    max(
+      calc(0.55 * var(--dock-viewport-h, 100dvh)),
+      min(18rem, calc(var(--dock-viewport-h, 100dvh) - 3rem))
+    )
+  );
+}
+
+/* THE OPTIONS GIVE BEFORE THE QUESTION DOES. Flex shrink is shared in proportion to
+   shrink factor times size, so at 1 each a squeezed card cuts its question to the 2lh floor
+   while the options keep most of theirs, and a three-line question loses its last line. At
+   this weight the options take all but a fraction of a pixel of the overflow, down to
+   their automatic minimum of 0; only then does the question region shrink and scroll. */
+.dock-user-input > .user-input-options {
+  flex-shrink: 1000;
 }
 
 .dock-depth {
@@ -1218,9 +1239,7 @@
 }
 
 /* A phone-shaped screen: an open run list shows every run up to half the visual
-   viewport. `.dock-card` keeps its own ceiling here: a tighter one lands below the
-   card's floor (question, answer box, button row), and its backstop scroll then
-   hides the controls the ceiling exists to keep in view. */
+   viewport. */
 @media (width <= 48rem), (height <= 30rem) {
   .run-bar-host {
     --run-cap: calc(0.5 * var(--dock-viewport-h, 100dvh));
