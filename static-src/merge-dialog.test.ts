@@ -1,16 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ForgesListResponse } from "./actions/forge-list.js";
+import type * as Persist from "./persist.js";
+import type * as SettingsActions from "./actions/settings.js";
 
 const mocks = vi.hoisted(() => ({
   loadSettings: vi.fn(),
+  realLoadSettings: (): Promise<unknown> => Promise.resolve(null),
   patchDispatch: vi.fn(),
   readAffordances: vi.fn(),
   ensureForges: vi.fn(),
   setHeld: (_v: unknown): void => undefined,
 }));
 
-vi.mock("./persist.js", () => ({ loadSettings: mocks.loadSettings }));
-vi.mock("./actions/settings.js", () => ({
+vi.mock("./persist.js", async (importOriginal) => {
+  const real = await importOriginal<typeof Persist>();
+  mocks.realLoadSettings = real.loadSettings;
+  return { ...real, loadSettings: mocks.loadSettings };
+});
+vi.mock("./actions/settings.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof SettingsActions>()),
   patchAppSettings: { dispatch: mocks.patchDispatch },
 }));
 vi.mock("./actions/git-prs.js", () => ({
@@ -28,6 +36,12 @@ vi.mock("./forge-store.js", async () => {
 });
 
 import { openMergeMethodDialog } from "./merge-dialog.js";
+import {
+  __testResetTracking,
+  noteSettingsEvent,
+  refreshSettings,
+  settingsAdopter,
+} from "./persist.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { WALKERS } from "./audit/walkers.js";
@@ -611,6 +625,75 @@ describe("merge method dialog on a phone", () => {
       ...document.querySelectorAll<HTMLInputElement>('input[name="pr-merge-method"]'),
     ].map((r) => Math.round(r.getBoundingClientRect().width));
     expect(widths).toEqual([16, 16, 16]);
+    cancel();
+    await p;
+  });
+});
+
+// The real shared read, the network held: a read older than settings the page already holds must not preselect.
+describe("merge method dialog over the shared settings read", () => {
+  let gets: ((revision: number, method: string) => void)[] = [];
+
+  beforeEach(() => {
+    mocks.loadSettings.mockReset();
+    mocks.readAffordances.mockReset();
+    mocks.loadSettings.mockImplementation(() => mocks.realLoadSettings());
+    mocks.readAffordances.mockImplementation(() => lists(["merge", "squash", "rebase"]));
+    __testResetTracking();
+    gets = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            gets.push((revision, method) => {
+              resolve(
+                Response.json(
+                  settingsPayload({ settings_revision: revision, last_merge_method: method }),
+                ),
+              );
+            });
+          }),
+      ),
+    );
+    showRows([forgeRow()]);
+    mountDialog();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("preselects from the read sent after a newer settings event, not the older one it joined", async () => {
+    void mocks.realLoadSettings();
+    noteSettingsEvent(2);
+    void refreshSettings();
+    const p = openMergeMethodDialog(OPTS);
+    await vi.waitFor(() => {
+      expect(gets).toHaveLength(1);
+    });
+    gets[0]?.(1, "rebase");
+    await vi.waitFor(() => {
+      expect(gets).toHaveLength(2);
+    });
+    gets[1]?.(2, "squash");
+    await vi.waitFor(() => {
+      expect(checkedValue()).toBe("squash");
+    });
+    cancel();
+    await p;
+  });
+
+  it("preselects the first listed method when the read answers below the held revision", async () => {
+    expect(settingsAdopter()(settingsPayload({ settings_revision: 2 }))).toBe(true);
+    const p = openMergeMethodDialog(OPTS);
+    await vi.waitFor(() => {
+      expect(gets).toHaveLength(1);
+    });
+    gets[0]?.(1, "rebase");
+    await vi.waitFor(() => {
+      expect(checkedValue()).toBe("merge");
+    });
     cancel();
     await p;
   });

@@ -9,12 +9,7 @@ import { getGitTab } from "./git-tabs.js";
 import { noteDefaultBrowsePath } from "./files.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
-import {
-  adoptableSettings,
-  initSettingsTracking,
-  patchSettings,
-  refreshSettings,
-} from "./persist.js";
+import { initSettingsTracking, patchSettings, refreshSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import type { KiroDefault } from "./wire/types.gen.js";
 import { cacheTheme, cachedTheme } from "./device-view.js";
@@ -170,16 +165,16 @@ export function _resetThemeForTest(): void {
   adoptingTheme = false;
 }
 
-/** Fetch settings from server and apply notification state only. Used for lightweight re-sync
- *  (e.g. after login) without touching per-device UI state. Compare with restoreAll(), which
- *  also seeds the file browser path and the settings panels. Null means there is nothing to adopt:
- *  the fetch failed, or it answered settings older than ones this page already adopted. */
+/** Read the settings again after a settings_updated event and apply notification state only,
+ *  without touching per-device UI state. Compare with restoreAll(), which also seeds the file
+ *  browser path and the settings panels. Null means there is nothing to adopt
+ *  (persist.refreshSettings). */
 export async function syncSettings(): Promise<EffectiveSettings | null> {
   const s = await refreshSettings();
   // Seeding the dedup tracker from nothing would clear it and re-arm the very write-back it exists
   // to suppress, and applying notification state from nothing would silence or unsilence push on a
   // network blip; from older settings, both would roll back a newer write.
-  if (s === null || !adoptableSettings(s)) {
+  if (s === null) {
     return null;
   }
   // Seed the dedup tracker BEFORE any code path can fire patchSettings().

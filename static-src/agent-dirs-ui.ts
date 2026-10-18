@@ -11,7 +11,7 @@ import { serverSentence } from "./actions/server-sentence.js";
 import { setAdditionalDirectories } from "./actions/settings.js";
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { setAdditionalDirectories as setLinkableDirectories } from "./workspace.js";
-import { adoptableSettings } from "./persist.js";
+import { settingsAdopter } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 
 const SAVE_KEY = "additional_directories";
@@ -67,8 +67,9 @@ async function save(next: readonly string[]): Promise<boolean> {
   saving = true;
   paintLock();
   showSaving(SAVE_KEY);
+  const adoptable = settingsAdopter();
   const o = await setAdditionalDirectories.dispatch({ dirs: next }).outcome;
-  if (o.status === "success" && adoptableSettings(o.value)) {
+  if (o.status === "success" && adoptable(o.value)) {
     applyAgentDirs(o.value);
   }
   saving = false;

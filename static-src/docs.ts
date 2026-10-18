@@ -35,7 +35,7 @@ import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { agentRunButton } from "./agent-run.js";
 import { mountNewDocButton } from "./docs-new.js";
 import { renderMemoriesPanel, setMemoryCountsListener } from "./memories.js";
-import { adoptableSettings, loadSettings, refreshSettings } from "./persist.js";
+import { loadSettings, refreshSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import { renderPowersPanel, setPowerCountsListener } from "./powers.js";
 import { setDocsTab as setTabRoute } from "./tabs.js";
@@ -275,9 +275,7 @@ export function forceDocsTab(tab: DocsTab): DocsTab {
 function refreshMemoryAvailability(read: () => Promise<EffectiveSettings | null>): void {
   void read().then((s) => {
     if (s !== null) {
-      if (adoptableSettings(s)) {
-        memoryOff.value = s.memory_mode === "off";
-      }
+      memoryOff.value = s.memory_mode === "off";
     } else if (memoryOff.peek() === null) {
       // Never answered: offer the tab rather than leave a segment whose panel never renders.
       memoryOff.value = false;

@@ -1,8 +1,9 @@
 // The typed-command table. Small on purpose, and what matters is the BOUNDARY:
 // everything the table does not claim must fall through untouched, or marotte
 // starts silently swallowing text KAS itself parses.
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as Persist from "./persist.js";
+import { settingsPayload } from "./__test-helpers__/settings.js";
 
 const dispatch = vi.fn();
 vi.mock("./actions/chat.js", () => ({
@@ -23,18 +24,25 @@ vi.mock("./notice-subject.js", () => ({
   },
 }));
 
-const memoryMode = vi.hoisted(() => ({ value: "off" as string | null }));
-vi.mock("./persist.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof Persist>()),
-  loadSettings: vi.fn(() =>
-    Promise.resolve(memoryMode.value === null ? null : { memory_mode: memoryMode.value }),
-  ),
-}));
+// `shared` routes loadSettings to the real shared read.
+const memoryMode = vi.hoisted(() => ({ value: "off" as string | null, shared: false }));
+vi.mock("./persist.js", async (importOriginal) => {
+  const real = await importOriginal<typeof Persist>();
+  return {
+    ...real,
+    loadSettings: vi.fn(() =>
+      memoryMode.shared
+        ? real.loadSettings()
+        : Promise.resolve(memoryMode.value === null ? null : { memory_mode: memoryMode.value }),
+    ),
+  };
+});
 const applyRoute = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock("./route-apply.js", () => ({ applyRoute }));
 
 const { handleTypedCommand } = await import("./typed-commands.js");
 const store = await import("./store.js");
+const persist = await import("./persist.js");
 
 beforeEach(() => {
   dispatch.mockReset();
@@ -118,6 +126,70 @@ describe("handleTypedCommand /memories", () => {
   ])("opens Docs on Memories when %s", async (_desc, mode) => {
     memoryMode.value = mode;
     expect(handleTypedCommand("c1", "/memories")).toBe(true);
+    await vi.waitFor(() => {
+      expect(applyRoute).toHaveBeenCalledWith({ kind: "docs", tab: "memories" });
+    });
+    expect(toasts).toEqual([]);
+  });
+});
+
+// The real shared read, the network held: a read older than settings the page already holds must not decide.
+describe("handleTypedCommand /memories over the shared settings read", () => {
+  let gets: ((revision: number, mode: string) => void)[] = [];
+
+  beforeEach(() => {
+    applyRoute.mockClear();
+    gets = [];
+    persist.__testResetTracking();
+    memoryMode.shared = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            gets.push((revision, mode) => {
+              resolve(
+                Response.json(settingsPayload({ settings_revision: revision, memory_mode: mode })),
+              );
+            });
+          }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    memoryMode.shared = false;
+  });
+
+  it("decides from the read sent after a newer settings event, not the older one it joined", async () => {
+    void persist.loadSettings();
+    persist.noteSettingsEvent(2);
+    void persist.refreshSettings();
+    expect(handleTypedCommand("c1", "/memories")).toBe(true);
+    await vi.waitFor(() => {
+      expect(gets).toHaveLength(1);
+    });
+    gets[0]?.(1, "learn");
+    await vi.waitFor(() => {
+      expect(gets).toHaveLength(2);
+    });
+    gets[1]?.(2, "off");
+    await vi.waitFor(() => {
+      expect(toasts).toEqual([
+        "Memory is off. Turn it on in Settings > General to review memories.",
+      ]);
+    });
+    expect(applyRoute).not.toHaveBeenCalled();
+  });
+
+  it("opens Memories as for an unread setting when the read answers below the held revision", async () => {
+    expect(persist.settingsAdopter()(settingsPayload({ settings_revision: 2 }))).toBe(true);
+    expect(handleTypedCommand("c1", "/memories")).toBe(true);
+    await vi.waitFor(() => {
+      expect(gets).toHaveLength(1);
+    });
+    gets[0]?.(1, "off");
     await vi.waitFor(() => {
       expect(applyRoute).toHaveBeenCalledWith({ kind: "docs", tab: "memories" });
     });

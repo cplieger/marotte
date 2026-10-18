@@ -154,7 +154,7 @@ vi.mock("./store-load.js", () => ({
   requestTurnRange: m.requestTurnRange,
   abortReadsForRevert: m.abortReadsForRevert,
 }));
-vi.mock("./persist.js", () => ({ adoptableSettings: () => true }));
+vi.mock("./persist.js", () => ({}));
 vi.mock("./store.js", () => ({
   getActive: m.getActive,
   getActiveId: m.getActiveId,

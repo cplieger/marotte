@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -151,5 +152,17 @@ func TestUpdatedEvent_CarriesTheStoredRevision(t *testing.T) {
 	}
 	if p, ok := evt.Payload.(marotte.SettingsUpdatedPayload); !ok || p.SettingsRevision != 12 {
 		t.Errorf("payload = %#v, want SettingsUpdatedPayload{SettingsRevision: 12}", evt.Payload)
+	}
+}
+
+// A request whose client went away after the write committed still announces the stored revision.
+func TestUpdatedEvent_CarriesTheStoredRevisionOnceTheContextIsDone(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, `{"settings_revision":3}`)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	evt := UpdatedEvent(ctx, dir)
+	if p, ok := evt.Payload.(marotte.SettingsUpdatedPayload); !ok || p.SettingsRevision != 3 {
+		t.Errorf("payload = %#v, want SettingsUpdatedPayload{SettingsRevision: 3}", evt.Payload)
 	}
 }

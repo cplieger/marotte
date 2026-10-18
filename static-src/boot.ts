@@ -35,7 +35,6 @@ import {
   renderIdentity,
   restoreAll,
 } from "./settings.js";
-import { adoptableSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import { restoreLastEffort, restoreLastModel } from "./session-context.js";
 import { adoptLinkGuard } from "./link-guard.js";
@@ -139,12 +138,12 @@ export async function startBoot(d: BootDeps): Promise<void> {
 }
 
 /**
- * The settings answer: theme, model and effort seeds, workspace prefs. Null means the
- * fetch FAILED, so nothing is restored: an invented value would persist on the next write.
- * Nor is an answer older than settings a write or an event already brought.
+ * The settings answer: theme, model and effort seeds, workspace prefs. Null means there is
+ * nothing to adopt (persist.loadSettings), so nothing is restored: an invented value would
+ * persist on the next write.
  */
 function adoptSettings(settings: EffectiveSettings | null): void {
-  if (settings === null || !adoptableSettings(settings)) {
+  if (settings === null) {
     return;
   }
   adoptRetention(settings);

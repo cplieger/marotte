@@ -199,32 +199,4 @@ describe("the Memories tab follows the Memory setting", () => {
     });
     expect(segment("memories").classList.contains("hidden")).toBe(true);
   });
-
-  it("keeps the newest settings answer when an older read resolves after it", async () => {
-    await openDocs("off");
-    const { refreshSettings } = await import("./persist.js");
-    let answerOlder: (mode: string) => void = () => undefined;
-    vi.mocked(refreshSettings)
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            answerOlder = (mode) => {
-              resolve({ memory_mode: mode, settings_revision: 1 } as never);
-            };
-          }),
-      )
-      .mockImplementationOnce(() =>
-        Promise.resolve({ memory_mode: "learn", settings_revision: 2 } as never),
-      );
-
-    H.sse.get("settings_updated")?.();
-    H.sse.get("settings_updated")?.();
-    await vi.waitFor(() => {
-      expect(segment("memories").classList.contains("hidden")).toBe(false);
-    });
-    answerOlder("off");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(segment("memories").classList.contains("hidden")).toBe(false);
-  });
 });

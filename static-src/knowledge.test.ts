@@ -1,4 +1,4 @@
-// api-client, the knowledge actions, confirm, toast and bus are mocked to control payloads and assert the DOM.
+// api-client, persist, the knowledge actions, confirm, toast and bus are mocked to control payloads and assert the DOM.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
@@ -36,6 +36,8 @@ vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(),
 }));
 vi.mock("./dom.js", () => ({ byId: (id: string) => document.getElementById(id) }));
+const settingsAnswer = vi.hoisted(() => ({ value: null as unknown }));
+vi.mock("./persist.js", () => ({ loadSettings: () => Promise.resolve(settingsAnswer.value) }));
 
 import { apiGetTyped } from "./api-client.js";
 import { onSSE } from "./bus.js";
@@ -78,11 +80,10 @@ const list = (): HTMLElement => document.getElementById("knowledge-list") as HTM
 
 const hint = (): HTMLElement => document.getElementById("knowledge-hint") as HTMLElement;
 
-/** Two GETs through one apiGetTyped, routed by path; `settings` null models a network or decode failure. */
+/** The list GET and the shared settings read; `settings` null models a failed or superseded read. */
 function routeGets(listAnswer: unknown, settings: unknown): void {
-  mockGet.mockImplementation((path: string) =>
-    Promise.resolve(path === "/api/settings" ? settings : listAnswer),
-  );
+  mockGet.mockResolvedValue(listAnswer);
+  settingsAnswer.value = settings;
 }
 
 beforeEach(() => {
@@ -208,7 +209,7 @@ describe("loadKnowledge render", () => {
   });
 
   // A null answer is a failure, not "knowledge is off", so the hint keeps its state.
-  it("leaves a visible hint visible when /api/settings answers null", async () => {
+  it("leaves a visible hint visible when the settings read answers null", async () => {
     routeGets({ contexts: [] }, null);
     hint().hidden = false;
     loadKnowledge();
@@ -216,7 +217,7 @@ describe("loadKnowledge render", () => {
     expect(hint().hidden).toBe(false);
   });
 
-  it("leaves a hidden hint hidden when /api/settings answers null", async () => {
+  it("leaves a hidden hint hidden when the settings read answers null", async () => {
     routeGets({ contexts: [] }, null);
     hint().hidden = true;
     loadKnowledge();
@@ -588,9 +589,7 @@ describe("stop indexing", () => {
   it("keeps the same focused Stop button across a progress tick", async () => {
     let display = "5%";
     let items = 1;
-    mockGet.mockImplementation((path: string) =>
-      Promise.resolve(path === "/api/settings" ? settingsPayload() : indexingAt(display, items)),
-    );
+    mockGet.mockImplementation(() => Promise.resolve(indexingAt(display, items)));
     loadKnowledge();
     await flush();
     const first = stop();

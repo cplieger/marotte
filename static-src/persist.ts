@@ -44,6 +44,8 @@ export function __testResetTracking(): void {
   reading = null;
   rereading = null;
   heldRevision = 0;
+  eventsNoted = 0;
+  eventRevision = 0;
   if (patchTimer !== undefined) {
     clearTimeout(patchTimer);
     patchTimer = undefined;
@@ -153,60 +155,90 @@ export function patchSettings(
   return p;
 }
 
-/** The settings GET in flight, and the one every refresh asked for meanwhile shares, sent once it settles. */
-let reading: Promise<EffectiveSettings | null> | null = null;
+/** The newest settings revision this page adopted or an event stated. */
+let heldRevision = 0;
+/** The settings events this page took, and the newest one's revision. */
+let eventsNoted = 0;
+let eventRevision = 0;
+
+/** The settings GET in flight: its raw answer, that answer once checked, and eventsNoted when it was sent. */
+let reading: {
+  sent: Promise<EffectiveSettings | null>;
+  answer: Promise<EffectiveSettings | null>;
+  afterEvents: number;
+} | null = null;
+/** The GET every refresh made while `reading` predates the newest event shares, sent once it settles. */
 let rereading: Promise<EffectiveSettings | null> | null = null;
 
 function startRead(): Promise<EffectiveSettings | null> {
-  const read = loadSettingsAction.dispatch(undefined);
+  const afterEvents = eventsNoted;
+  const sent = loadSettingsAction.dispatch(undefined);
+  const answer = sent.then((s) => {
+    if (s === null || adopt(s, afterEvents)) {
+      return s;
+    }
+    // Refused with an event newer than this read: the read sent after that event answers instead.
+    return afterEvents < eventsNoted ? refreshSettings() : null;
+  });
+  const read = { sent, answer, afterEvents };
   reading = read;
-  // Registered before any rereading continuation, so that one finds no read in flight and sends its own.
-  void read.then(() => {
+  void sent.then(() => {
     if (reading === read) {
       reading = null;
     }
   });
-  return read;
+  return answer;
 }
 
-/** Load the effective settings, or null when the fetch itself failed. A read already in flight is
- *  shared; a caller reacting to a change uses refreshSettings, since that read may predate it. */
+/** Load the effective settings, or null when the fetch failed or answered settings older than ones
+ *  this page adopted. A read in flight is shared; one a newer settings event made stale is answered
+ *  by a read sent after that event. */
 export function loadSettings(): Promise<EffectiveSettings | null> {
-  return reading ?? startRead();
+  return reading?.answer ?? rereading ?? startRead();
 }
 
-/** Load the effective settings from a GET sent after this call, or null when it failed. Calls made
- *  while a read is in flight share one more, sent once it settles, so answers arrive in send order. */
+/** loadSettings from a GET sent after the newest event noteSettingsEvent took. Calls made while an
+ *  older read is in flight share one more, sent once it settles, so answers arrive in send order. */
 export function refreshSettings(): Promise<EffectiveSettings | null> {
   if (reading === null) {
-    return startRead();
+    return rereading ?? startRead();
   }
-  rereading ??= reading.then(() => {
+  if (reading.afterEvents === eventsNoted) {
+    return reading.answer;
+  }
+  // On the raw answer: the checked one can wait for this very read.
+  rereading ??= reading.sent.then(() => {
     rereading = null;
     return startRead();
   });
   return rereading;
 }
 
-/** The newest settings revision this page adopted. */
-let heldRevision = 0;
-
-/** Reports whether s is at or above the newest settings revision this page adopted, and holds s's
- *  revision if so. Every path adopting a settings payload asks first, so a late answer never paints
- *  over a newer one. */
-export function adoptableSettings(s: EffectiveSettings): boolean {
-  if (s.settings_revision < heldRevision) {
+/** Reports whether s, requested once afterEvents events were taken, may be adopted, and holds its
+ *  revision if so. Refused: below the held revision, or above the count of an event taken since the
+ *  request, as that event's count is the newer one (a reset config.json counts lower). */
+function adopt(s: EffectiveSettings, afterEvents: number): boolean {
+  const r = s.settings_revision;
+  if (r < heldRevision || (afterEvents < eventsNoted && r > eventRevision)) {
     return false;
   }
-  heldRevision = s.settings_revision;
+  heldRevision = r;
   return true;
 }
 
-/** Take a settings_updated event's revision. Events carry the server's current count, so one below
- *  the held revision means config.json was replaced or reset, and the held revision follows it
- *  down: otherwise no payload would be adopted again until a reload. */
+/** The check for a settings payload requested now and not read through loadSettings or
+ *  refreshSettings, which check their own: true holds the payload's revision, false means a newer
+ *  payload or event superseded it. */
+export function settingsAdopter(): (s: EffectiveSettings) => boolean {
+  const afterEvents = eventsNoted;
+  return (s) => adopt(s, afterEvents);
+}
+
+/** Take a settings_updated event's revision, the server's count when it was sent, as the held one:
+ *  a payload read before it is older. A lower count means config.json was replaced, reset or edited
+ *  by hand, and the held revision follows it down so a later payload is adopted again. */
 export function noteSettingsEvent(revision: number): void {
-  if (revision < heldRevision) {
-    heldRevision = revision;
-  }
+  eventsNoted++;
+  eventRevision = revision;
+  heldRevision = revision;
 }

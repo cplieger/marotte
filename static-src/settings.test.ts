@@ -65,11 +65,12 @@ vi.mock("./save-indicator.js", () => ({
   STEERING_SAVE_KEY: "steering",
 }));
 vi.mock("./persist.js", () => ({
-  adoptableSettings: vi.fn(() => true),
   loadSettings: vi.fn(),
   refreshSettings: vi.fn(),
   patchSettings: vi.fn(),
   initSettingsTracking: vi.fn(),
+  // Present-but-inert for linking agent-dirs-ui.ts; no case saves a directory.
+  settingsAdopter: vi.fn(),
 }));
 // Feature modules settings.ts wires in initUI — inert stubs so the import graph loads without side
 // effects (initUI is never called here).

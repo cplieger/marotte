@@ -22,7 +22,7 @@ export function onRetentionChange(fn: () => void): () => void {
   return subscribe(retentionDays, fn);
 }
 
-/** Take the retention a settings payload states; pass only a payload persist.adoptableSettings accepted. */
+/** Take the retention a settings payload states; pass only a payload persist adopted. */
 export function adoptRetention(s: EffectiveSettings): void {
   retentionDays.value = s.chat_retention_days;
 }

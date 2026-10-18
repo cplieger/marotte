@@ -22,12 +22,12 @@ vi.mock("./toast.js", () => ({
 }));
 
 import {
-  adoptableSettings,
   patchSettings,
   initSettingsTracking,
   loadSettings,
   noteSettingsEvent,
   refreshSettings,
+  settingsAdopter,
   __testResetTracking,
 } from "./persist.js";
 
@@ -490,56 +490,133 @@ describe("settings reads in flight", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
+  const at = (revision: number): ReturnType<typeof settingsPayload> =>
+    settingsPayload({ settings_revision: revision });
+
   it("shares a read in flight with a plain load", async () => {
     const first = loadSettings();
     const second = loadSettings();
     await settle();
     expect(answers).toHaveLength(1);
-    answers[0]?.(settingsPayload({ settings_revision: 3 }));
+    answers[0]?.(at(3));
     expect((await first)?.settings_revision).toBe(3);
     expect((await second)?.settings_revision).toBe(3);
   });
 
-  it("answers a refresh from a read sent after it, one for every refresh made meanwhile", async () => {
+  it("answers a refresh from a read sent after the newest event, one for every refresh made meanwhile", async () => {
     const first = loadSettings();
+    noteSettingsEvent(3);
     const refreshes = [refreshSettings(), refreshSettings()];
     await settle();
     expect(answers, "no read starts while one is in flight").toHaveLength(1);
 
-    answers[0]?.(settingsPayload({ settings_revision: 3 }));
+    answers[0]?.(at(3));
     await vi.waitFor(() => {
       expect(answers, "one more read once the first settled").toHaveLength(2);
     });
     await settle();
     expect(answers, "the refreshes share that one read").toHaveLength(2);
-    answers[1]?.(settingsPayload({ settings_revision: 4 }));
+    answers[1]?.(at(4));
     expect((await first)?.settings_revision).toBe(3);
     for (const r of refreshes) {
       expect((await r)?.settings_revision).toBe(4);
     }
   });
+
+  it("shares one read among the refreshes after one event", async () => {
+    noteSettingsEvent(1);
+    const refreshes = [refreshSettings(), refreshSettings()];
+    await settle();
+    expect(answers).toHaveLength(1);
+    answers[0]?.(at(1));
+    expect((await refreshes[0])?.settings_revision).toBe(1);
+    await settle();
+    expect(answers, "no second read for the same event").toHaveLength(1);
+    expect((await refreshes[1])?.settings_revision).toBe(1);
+  });
+
+  it("answers a load a newer event made stale from the read sent after that event", async () => {
+    const load = loadSettings();
+    noteSettingsEvent(2);
+    const refresh = refreshSettings();
+    await settle();
+    answers[0]?.(at(1));
+    await vi.waitFor(() => {
+      expect(answers).toHaveLength(2);
+    });
+    answers[1]?.(at(2));
+    expect((await load)?.settings_revision).toBe(2);
+    expect((await refresh)?.settings_revision).toBe(2);
+  });
+
+  it("answers null for a read below the held revision when no event came since it was sent", async () => {
+    expect(settingsAdopter()(at(5))).toBe(true);
+    const load = loadSettings();
+    await settle();
+    answers[0]?.(at(4));
+    await expect(load).resolves.toBeNull();
+    await settle();
+    expect(answers, "no read follows a refusal no event explains").toHaveLength(1);
+  });
+
+  it("follows config.json down when a read sent before the reset answers the old count", async () => {
+    noteSettingsEvent(5);
+    const before = refreshSettings();
+    await settle();
+    answers[0]?.(at(5));
+    expect((await before)?.settings_revision).toBe(5);
+
+    const load = loadSettings();
+    // config.json was replaced, so the next write counted from 1.
+    noteSettingsEvent(1);
+    const refresh = refreshSettings();
+    await settle();
+    answers[1]?.(at(5));
+    await vi.waitFor(() => {
+      expect(answers).toHaveLength(3);
+    });
+    answers[2]?.(at(1));
+    expect((await load)?.settings_revision).toBe(1);
+    expect((await refresh)?.settings_revision).toBe(1);
+    expect(settingsAdopter()(at(1))).toBe(true);
+  });
 });
 
-describe("adoptableSettings", () => {
+describe("settingsAdopter", () => {
   beforeEach(() => {
     __testResetTracking();
   });
 
+  const at = (revision: number): ReturnType<typeof settingsPayload> =>
+    settingsPayload({ settings_revision: revision });
+
   it("accepts a revision at or above the one held, and refuses one below it", () => {
-    expect(adoptableSettings(settingsPayload({ settings_revision: 2 }))).toBe(true);
-    expect(adoptableSettings(settingsPayload({ settings_revision: 2 }))).toBe(true);
-    expect(adoptableSettings(settingsPayload({ settings_revision: 1 }))).toBe(false);
-    expect(adoptableSettings(settingsPayload({ settings_revision: 3 }))).toBe(true);
-    expect(adoptableSettings(settingsPayload({ settings_revision: 2 }))).toBe(false);
+    expect(settingsAdopter()(at(2))).toBe(true);
+    expect(settingsAdopter()(at(2))).toBe(true);
+    expect(settingsAdopter()(at(1))).toBe(false);
+    expect(settingsAdopter()(at(3))).toBe(true);
+    expect(settingsAdopter()(at(2))).toBe(false);
   });
 
-  it("follows an event's revision down, and never up", () => {
-    expect(adoptableSettings(settingsPayload({ settings_revision: 5 }))).toBe(true);
+  it("takes an event's revision as the held one, above or below it", () => {
+    expect(settingsAdopter()(at(5))).toBe(true);
     noteSettingsEvent(7);
-    expect(adoptableSettings(settingsPayload({ settings_revision: 5 }))).toBe(true);
+    expect(settingsAdopter()(at(6))).toBe(false);
+    expect(settingsAdopter()(at(7))).toBe(true);
     noteSettingsEvent(1);
-    expect(adoptableSettings(settingsPayload({ settings_revision: 1 }))).toBe(true);
-    expect(adoptableSettings(settingsPayload({ settings_revision: 0 }))).toBe(false);
+    expect(settingsAdopter()(at(1))).toBe(true);
+    expect(settingsAdopter()(at(0))).toBe(false);
+  });
+
+  it("refuses an answer to a request sent before an event, above or below that event's count", () => {
+    const below = settingsAdopter();
+    const above = settingsAdopter();
+    const equal = settingsAdopter();
+    noteSettingsEvent(2);
+    expect(below(at(1))).toBe(false);
+    expect(above(at(3))).toBe(false);
+    expect(equal(at(2))).toBe(true);
+    expect(settingsAdopter()(at(3)), "a request sent after the event").toBe(true);
   });
 });
 

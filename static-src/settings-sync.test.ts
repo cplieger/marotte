@@ -102,6 +102,25 @@ describe("settings sync ordering", () => {
     expect(additionalDirectories()).toEqual(["/data", "/b"]);
   });
 
+  it("ignores a write's answer that arrives after a newer settings event and before its read answers", async () => {
+    byId<HTMLInputElement>("agent-dirs-input").value = "/a";
+    byId<HTMLButtonElement>("agent-dirs-add").click();
+    await settled();
+    expect(patches).toHaveLength(1);
+
+    settingsEvent(2);
+    await settled();
+    expect(gets).toHaveLength(1);
+    patches[0]?.answer(dirsAt(1, ["/data", "/a"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data"]);
+    expect(additionalDirectories()).toEqual(["/data"]);
+
+    gets[0]?.answer(dirsAt(2, ["/data", "/b"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/b"]);
+  });
+
   it("sends one more read for an event that arrives while a read is in flight", async () => {
     settingsEvent(1);
     await settled();

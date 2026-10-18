@@ -49,7 +49,6 @@ vi.mock("./picker.js", () => ({ getCachedModels: () => catalog.models }));
 // through the actions transport (which the api-client mock does not cover), fire-and-forget, so the
 // request was still open when the window tore down and printed an unhandled AbortError.
 vi.mock("./persist.js", () => ({
-  adoptableSettings: vi.fn(() => true),
   loadSettings: vi.fn(async () => ({})),
   refreshSettings: vi.fn(async () => ({})),
 }));

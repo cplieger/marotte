@@ -17,7 +17,7 @@ import { getCachedModels } from "./picker.js";
 import type { ScheduleSpec, ScheduleView } from "./schedule-types.js";
 import { createPopup } from "@cplieger/ui-primitives/popup";
 import { openRunView } from "./run-view.js";
-import { adoptableSettings, loadSettings, refreshSettings } from "./persist.js";
+import { loadSettings, refreshSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import { openSettingsView } from "./tabs.js";
 import { forceReflow } from "./dom.js";
@@ -167,7 +167,7 @@ async function refreshAutoApprove(read: () => Promise<EffectiveSettings | null>)
   // A failed read leaves the last known value rather than resetting to false: false is the SERVER's
   // default for an absent key, which the payload now states outright, so re-deriving it here on a
   // network failure would be this module guessing at a value it can just be told.
-  if (s !== null && adoptableSettings(s)) {
+  if (s !== null) {
     autoApprove = s.scheduled_auto_approve;
   }
 }

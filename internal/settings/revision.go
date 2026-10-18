@@ -18,14 +18,15 @@ func revisionOf(doc map[string]json.RawMessage) uint64 {
 }
 
 // Revision is the stored KeySettingsRevision, 0 when config.json is absent, unreadable or has
-// none.
+// none, or ctx is done.
 func Revision(ctx context.Context, configDir string) uint64 {
 	n, _ := Field[uint64](ctx, configDir, KeySettingsRevision)
 	return n
 }
 
-// UpdatedEvent is the settings_updated event, carrying the revision stored when it is built.
+// UpdatedEvent is the settings_updated event, carrying the revision stored when it is built, even
+// once ctx is done: the write it announces has landed, and a 0 would lower every page's held revision.
 func UpdatedEvent(ctx context.Context, configDir string) marotte.ServerEvent {
 	return marotte.NewEvent(marotte.EventSettingsUpdated, "",
-		marotte.SettingsUpdatedPayload{SettingsRevision: Revision(ctx, configDir)})
+		marotte.SettingsUpdatedPayload{SettingsRevision: Revision(context.WithoutCancel(ctx), configDir)})
 }
