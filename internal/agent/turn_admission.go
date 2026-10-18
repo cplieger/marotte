@@ -368,7 +368,7 @@ func (r *turnRegistry) kasStep(chatID marotte.ChatID, in kasInput, seq uint64) (
 }
 
 // unbracketedPrompt reports a prompt turn no wire turn_start bound: kiro-cli never streamed its run.
-func (r *turnRegistry) unbracketedPrompt(t *activeTurn) bool {
+func (t *activeTurn) unbracketedPrompt() bool {
 	t.lc.mu.Lock()
 	defer t.lc.mu.Unlock()
 	return t.Source.Acknowledgeable() && !t.acked

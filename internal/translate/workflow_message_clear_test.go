@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/turnlog"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -42,11 +41,10 @@ func TestWorkflowMessage_AClearSettlesNoRowItCannotName(t *testing.T) {
 }
 
 // stopTurn stages the chat's prompt turn the reader stopped, which the cancel's clear ends.
-func stopTurn(deps *baseDeps, chatID marotte.ChatID) *turnlog.Turn {
+func stopTurn(deps *baseDeps, chatID marotte.ChatID) {
 	turn := deps.turns.chatTurn(chatID)
 	deps.prompts[chatID] = turn
 	deps.stopped = map[string]bool{turn.ID(): true}
-	return turn
 }
 
 // The recorded shape of a stopped turn's cancel: the clear names the notifications KAS holds, and KAS

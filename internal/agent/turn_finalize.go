@@ -286,7 +286,7 @@ func (bc *bridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.
 func (bc *bridgeCoordinator) closeTurn(ctx context.Context, t *activeTurn, stop marotte.StopReason, reason string, kind marotte.FailureKind, closer turnCloser) (marotte.TurnResult, marotte.TurnOutcome) {
 	chatID := t.Chat
 	c := bc.concludeStop(chatID, stop, reason, kind)
-	if closer == closerPromptResponse && stop == marotte.StopReasonEndTurn && !t.Log.Emitted() && bc.turns.unbracketedPrompt(t) {
+	if closer == closerPromptResponse && stop == marotte.StopReasonEndTurn && !t.Log.Emitted() && t.unbracketedPrompt() {
 		c = c.Unobserved()
 	}
 	statusDesc := bc.turns.statusDescription(t)
