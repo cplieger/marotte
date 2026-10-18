@@ -1,20 +1,20 @@
 # Known upstream issues
 
-This page lists the kiro-cli bugs you can notice in marotte and is updated when one is reported, fixed or worked around. Each entry says what you see, links the upstream report with its state, and says what marotte does about it.
+This page lists the upstream issues that affect marotte and is updated when one is reported, fixed or worked around. Each entry says what you see, links the upstream report with its state, and says what marotte does about it.
 
 ## Agent engine
 
 ### Chats in modes other than Default wait for each other
 
-Only chats in Default mode run their replies side by side. A reply in Plan, Autonomous, a spec mode or an agent waits while any other reply outside Default mode runs, in any chat. The chat shows it is working, and the wait can last minutes. A workflow step woken by a message joins the same wait.
+Only chats in Default mode run their replies side by side. A reply in Default v2, Plan, Autonomous, a spec mode or an agent waits while any other reply outside Default mode runs, in any chat. The chat shows it is working, and the wait can last minutes. A workflow step woken by a message joins the same wait. If Kiro routes your Default chats to Default v2 for your account, they wait too, and marotte cannot tell.
 
-Reported as [kirodotdev/Kiro#11995](https://github.com/kirodotdev/Kiro/issues/11995), open. marotte has no workaround. Use Default mode for chats you want to run at the same time.
+Reported as [kirodotdev/Kiro#11995](https://github.com/kirodotdev/Kiro/issues/11995), open. marotte has no workaround. Try Default mode for chats you want to run side by side.
 
 ### Every reply stops at once while the engine is busy
 
 When the agent engine takes more than 2 seconds to read one large message from marotte, kiro-cli stops the engine. Every running reply stops and is marked interrupted, and a banner says the agent engine is restarting.
 
-Reported as [kirodotdev/Kiro#11956](https://github.com/kirodotdev/Kiro/issues/11956), open. marotte starts the engine again and resumes the running workflows, as [How marotte works](how-it-works.md#the-agent-engine) describes for any engine stop. It happens mostly while the engine runs the slow file search in the next entry. Linux also makes it more likely once an account has used up its pipe budget, because new pipes then get 8 KiB. Running `sysctl -w fs.pipe-user-pages-soft=0` on the host lifts that budget for every account on the host.
+Reported as [kirodotdev/Kiro#11956](https://github.com/kirodotdev/Kiro/issues/11956), open. marotte starts the engine again and resumes the running workflows, as [How marotte works](how-it-works.md#the-agent-engine) describes for any engine stop. The slow file search in the next entry can make it more likely. Linux also makes it more likely once an account has used up its pipe budget, because new pipes then get 8 KiB. Running `sysctl -w fs.pipe-user-pages-soft=0` on the host lifts that budget for every account on the host.
 
 ### The agent stalls during a file search
 
@@ -26,7 +26,7 @@ Reported as [kirodotdev/Kiro#11957](https://github.com/kirodotdev/Kiro/issues/11
 
 When an automatic compaction fails, the reply can stay open with nothing more arriving.
 
-Reported in the Kiro Crew tracker as [kirodotdev/KiroCrew#3583](https://github.com/kirodotdev/KiroCrew/issues/3583), closed as not planned. After a failed compaction, marotte ends a reply that shows no new activity for 60 seconds and marks it interrupted.
+Reported in the Kiro Crew tracker as [kirodotdev/KiroCrew#3583](https://github.com/kirodotdev/KiroCrew/issues/3583), closed after Kiro Crew added a time limit in its own client. kiro-cli itself still leaves the reply open. After a failed compaction, marotte ends a reply that shows no new activity for 60 seconds and marks it interrupted.
 
 ## Chats
 
@@ -40,19 +40,27 @@ Reported as [kirodotdev/Kiro#11343](https://github.com/kirodotdev/Kiro/issues/11
 
 While a reply runs, deleting a message the agent has not read yet can leave the messages you send next unread until the reply ends.
 
-Reported as [kirodotdev/Kiro#11449](https://github.com/kirodotdev/Kiro/issues/11449), open. When you delete one waiting message, marotte clears them all. It then sends the ones you kept again as one message, so they still reach the reply.
+Reported as [kirodotdev/Kiro#11449](https://github.com/kirodotdev/Kiro/issues/11449), open. When you delete one waiting message, marotte clears them all and sends the ones you kept again as one message. It reaches the running reply when the agent has read none of your messages in that reply yet. Otherwise it waits, and marotte sends it as your next message once the reply ends.
 
 ### A message sent during a reply reaches its subagents
 
-With **Workflows** switched off in Settings, the agent hands work to subagents. A message you send while it works then reaches every subagent that runs later in that reply. A subagent can stop its own task to answer it.
+The agent can hand work to subagents in a chat with **Workflows** switched off in Settings, in Plan, Autonomous and the spec modes whatever that switch says, and inside a workflow step. A message you send while it works then reaches every subagent that runs later in that reply. A subagent can stop its own task to answer it.
 
-Reported as [kirodotdev/Kiro#11240](https://github.com/kirodotdev/Kiro/issues/11240), open. marotte has no workaround. With **Workflows** on, the default, the agent uses workflows instead of subagents, and this does not happen.
+Reported as [kirodotdev/Kiro#11240](https://github.com/kirodotdev/Kiro/issues/11240), open. marotte has no workaround. In Default mode with **Workflows** on, the default, the agent hands work to workflows instead of subagents, and this does not happen. Elsewhere, wait for the reply to finish before you send guidance meant only for the main agent.
 
 ### A failed hook shows as completed
 
 A hook whose command fails, or whose command does not exist, shows as completed on its card.
 
-Reported as [kirodotdev/Kiro#11369](https://github.com/kirodotdev/Kiro/issues/11369), open. kiro-cli reports every hook command as completed, and marotte shows what it reports, so a failure turns the card red once kiro-cli sends it. To check a hook, run its command in the terminal.
+Reported as [kirodotdev/Kiro#11369](https://github.com/kirodotdev/Kiro/issues/11369), open. kiro-cli reports every hook command as completed, and marotte shows what it reports, so it cannot tell a failure today. It will turn the card red if a future kiro-cli release sends a failed status. To check a hook, run its command in the terminal.
+
+## Skills
+
+### A skill with a long description or an underscore in its name never loads
+
+kiro-cli drops a skill whose description is over 1,024 characters, or whose name has an underscore. The skill is missing from chats, and the agent cannot use it by name. Nothing says why.
+
+Reported as [kirodotdev/Kiro#11101](https://github.com/kirodotdev/Kiro/issues/11101), open, and [kirodotdev/Kiro#10678](https://github.com/kirodotdev/Kiro/issues/10678), open. A skill created with **+** on the `/docs` page follows both rules. For a skill you edit by hand, keep the description at 1,024 characters or less and the name to lowercase letters, numbers and single hyphens.
 
 ## Workflows
 
@@ -70,9 +78,9 @@ Reported as [kirodotdev/Kiro#11863](https://github.com/kirodotdev/Kiro/issues/11
 
 ### A workflow result can be lost when a reply ends
 
-When a step reports or a run finishes while the chat that launched it is replying, the result waits for the agent to read it. When the reply ends first, the agent never gets the result and keeps waiting for it.
+When a step reports or a run finishes while the chat that launched it is replying, the result waits for the agent to read it. When the reply ends with an error, or kiro-cli stops carrying unread messages into it, before the agent reads the result, the agent never gets it and keeps waiting for it.
 
-Reported as [kirodotdev/Kiro#11857](https://github.com/kirodotdev/Kiro/issues/11857), open. marotte labels the lost result "Workflow result not delivered" in the chat. While a workflow result waits beside your unread messages, marotte deletes them only all together, because clearing one would also drop the result. Ask the agent to check the run when it keeps waiting.
+Reported as [kirodotdev/Kiro#11857](https://github.com/kirodotdev/Kiro/issues/11857), open. marotte labels the lost result "Workflow result not delivered" in the chat. While a workflow result waits beside your unread messages, marotte deletes them only all together, and that drops the result too. Ask the agent to check the run when it keeps waiting.
 
 ### A workflow step fails while marotte is signed out
 
@@ -86,7 +94,7 @@ While the host is busy, a step that polls a command can fail even though the com
 
 Reported as [kirodotdev/Kiro#11985](https://github.com/kirodotdev/Kiro/issues/11985), open. marotte has no workaround. **Retry failed steps** on the run's tab starts the watch again.
 
-## Agent commands
+## Agent terminals
 
 ### Stopping a reply does not stop its command
 
