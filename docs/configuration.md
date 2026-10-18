@@ -68,7 +68,7 @@ The agent's file tools read and write `/workspace` only, and read `/uploads`. To
 
 Each entry is the absolute path of an existing folder, written without a symbolic link. The filesystem root, `/config`, the workspace, and any folder inside or holding either of them are refused, with the reason beside the field. A listed folder that later stops qualifying, because it was deleted or `config.json` was edited by hand, is marked **not granted** with its reason and gives the agent nothing until it qualifies again.
 
-A change reaches the agent's file tools, the folder a shell command may start in, and the file browser at once. The file tools refuse a removed folder from their next operation in every chat and run. Shell commands themselves are not confined to these folders, so one can still `cd` into a removed folder or write to it. kiro-cli takes the list when a chat's session opens: a new chat with its first message, and a resumed or open chat at its next message. A workflow run keeps the list it started with for every step, even after an engine restart.
+A change reaches the agent's file tools, the folder a shell command may start in, and the file browser at once. The file tools refuse a removed folder from their next operation in every chat and run. Shell commands themselves are not confined to these folders, so one can still `cd` into a removed folder or write to it. kiro-cli takes the current list whenever marotte opens or reloads a chat's session: a new chat with its first message, an open or resumed chat at its next message, and a chat you fork or rewind as you do it. A workflow run keeps the list it started with for every step, even after an engine restart.
 
 ## Agent-started workflow runs
 

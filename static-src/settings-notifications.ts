@@ -14,6 +14,7 @@ import {
   KEYED_PUSH_DEFAULTS,
 } from "./notify.js";
 import { newestSettings, patchSettings } from "./persist.js";
+import type { SettingsSwitch } from "./persist.js";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { $, byId } from "./dom.js";
 import { isIOS, isStandalone } from "./platform.js";
@@ -33,6 +34,14 @@ interface KindRow {
   kind: string;
   settingsKey: string;
   input: HTMLInputElement;
+}
+
+function masterSwitch(el: HTMLInputElement): SettingsSwitch {
+  return { el, key: "notifications_enabled", on: true };
+}
+
+function kindSwitch(row: KindRow): SettingsSwitch {
+  return { el: row.input, key: row.settingsKey, on: true };
 }
 
 /** A kind with no markup yet is skipped rather than throwing: the server's registry is the source of
@@ -122,19 +131,21 @@ export function initNotificationToggles(): void {
       void enableEverything(rows, notifyToggle, notifyHint, updateSub);
       return;
     }
-    void patchSettings({ notifications_enabled: false }, notifyToggle).then(async (r) => {
-      // On null the action framework rolls back the toggle input.
-      if (r === null || (r === "superseded" && !(await stillOff()))) {
-        return;
-      }
-      setNotificationsEnabled(false);
-      // A refusal, and the only place the client can tell one from "never opted in": both reach it
-      // as `notifications_enabled: false`. Spending the ask is what stops a later automatic grant
-      // reversing this switch — see `notify-ask.ts`.
-      spendNotifyAsk();
-      unregisterPush();
-      updateSub();
-    });
+    void patchSettings({ notifications_enabled: false }, masterSwitch(notifyToggle)).then(
+      async (r) => {
+        // On null persist has repainted the toggle from the settings state.
+        if (r === null || (r === "superseded" && !(await stillOff()))) {
+          return;
+        }
+        setNotificationsEnabled(false);
+        // A refusal, and the only place the client can tell one from "never opted in": both reach it
+        // as `notifications_enabled: false`. Spending the ask is what stops a later automatic grant
+        // reversing this switch — see `notify-ask.ts`.
+        spendNotifyAsk();
+        unregisterPush();
+        updateSub();
+      },
+    );
   });
 
   for (const row of rows) {
@@ -165,17 +176,14 @@ async function enableEverything(
   notifyHint: HTMLElement,
   updateSub: () => void,
 ): Promise<void> {
-  // Capture which inputs actually changed so only mutated ones are registered for rollback.
-  const mutated: HTMLInputElement[] = [notifyToggle];
+  const mutated: SettingsSwitch[] = [masterSwitch(notifyToggle)];
   const patch: Record<string, boolean> = { notifications_enabled: true };
   for (const row of rows) {
     const want = KEYED_PUSH_DEFAULTS[row.kind] ?? true;
     patch[row.settingsKey] = want;
-    // `!==` rather than `!`: the rollback set must hold exactly the inputs this call MOVED, in
-    // either direction, or the action framework restores a value the reader never saw.
     if (row.input.checked !== want) {
       row.input.checked = want;
-      mutated.push(row.input);
+      mutated.push(kindSwitch(row));
     }
   }
   updateSub(); // show the sub-options optimistically
@@ -188,7 +196,7 @@ async function enableEverything(
       return;
     }
   } else if (r === null) {
-    // Action framework handles input rollback; tear down any push subscription requestPermission
+    // persist repaints the inputs; tear down any push subscription requestPermission
     // may have started.
     setNotificationsEnabled(false);
     for (const row of rows) {
@@ -228,11 +236,11 @@ async function applyKindChange(
     return; // nothing actually changed — skip the server round trip
   }
   const allOff = rows.every((row) => !row.input.checked);
-  const mutated: HTMLInputElement[] = [changed.input];
+  const mutated: SettingsSwitch[] = [kindSwitch(changed)];
   const patch: Record<string, boolean> = { [changed.settingsKey]: changed.input.checked };
   if (allOff) {
     notifyToggle.checked = false;
-    mutated.push(notifyToggle);
+    mutated.push(masterSwitch(notifyToggle));
     patch["notifications_enabled"] = false;
   }
   const r = await patchSettings(patch, ...mutated);
@@ -244,7 +252,7 @@ async function applyKindChange(
     return;
   }
   if (r === null) {
-    return; // the action framework rolls the toggle inputs back
+    return; // persist repaints the toggle inputs
   }
   setKindEnabled(changed.kind, changed.input.checked);
   if (allOff) {

@@ -101,31 +101,21 @@ func TestUpdate_ConcurrentWritesPublishInRevisionOrder(t *testing.T) {
 	}
 }
 
-func TestUpdate_NoWriteCommitsWhileAnEventIsPublished(t *testing.T) {
+func TestUpdate_PublishesItsEventUnderTheWriteLock(t *testing.T) {
 	dir := t.TempDir()
 	var ev events
-	second := make(chan error, 1)
-	first := func(ctx context.Context, evt marotte.ServerEvent) {
-		go func() {
-			_, err := Update(t.Context(), dir, setKey(KeyTheme, "light"), ev.publish)
-			second <- err
-		}()
-		select {
-		case err := <-second:
-			t.Errorf("a write committed (err %v) while the previous write's event was being published", err)
-			second <- err
-		case <-time.After(100 * time.Millisecond):
+	published := func(ctx context.Context, evt marotte.ServerEvent) {
+		if mu := &getCache(dir).writeMu; mu.TryLock() {
+			mu.Unlock()
+			t.Error("the event was published after the write lock was released")
 		}
 		ev.publish(ctx, evt)
 	}
-	if _, err := Update(t.Context(), dir, setKey(KeyTheme, "dark"), first); err != nil {
+	if _, err := Update(t.Context(), dir, setKey(KeyTheme, "dark"), published); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if err := <-second; err != nil {
-		t.Fatalf("second Update: %v", err)
-	}
-	if len(ev.got) != 2 || ev.got[0].SettingsRevision != 1 || ev.got[1].SettingsRevision != 2 {
-		t.Errorf("events = %v, want revisions 1 then 2", ev.got)
+	if len(ev.got) != 1 || ev.got[0].SettingsRevision != 1 {
+		t.Errorf("events = %v, want revision 1", ev.got)
 	}
 }
 

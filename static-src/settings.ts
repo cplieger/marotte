@@ -10,6 +10,7 @@ import { noteDefaultBrowsePath } from "./files.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
 import { adoptSettings, patchSettings, refreshSettings } from "./persist.js";
+import type { SettingsSwitch } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import type { KiroDefault } from "./wire/types.gen.js";
 import { cacheTheme, cachedTheme } from "./device-view.js";
@@ -266,12 +267,11 @@ function initChatRetentionControls(): void {
     return;
   }
   const { daysInput, daysRow, foreverInput } = els;
-  const persist = (value: number, ...boxes: HTMLInputElement[]): void => {
-    void patchSettings({ chat_retention_days: value }, ...boxes).then((r) => {
-      // A failed write may have put the forever box back.
-      if (r === null) {
-        daysRow?.classList.toggle("hidden", foreverInput.checked);
-      }
+  const forever = { el: foreverInput, key: "chat_retention_days", on: -1 };
+  const persist = (value: number, ...boxes: SettingsSwitch[]): void => {
+    void patchSettings({ chat_retention_days: value }, ...boxes).then(() => {
+      // The settled write may have repainted the forever box.
+      daysRow?.classList.toggle("hidden", foreverInput.checked);
     });
   };
 
@@ -285,11 +285,11 @@ function initChatRetentionControls(): void {
   foreverInput.addEventListener("change", () => {
     daysRow?.classList.toggle("hidden", foreverInput.checked);
     if (foreverInput.checked) {
-      persist(-1, foreverInput);
+      persist(-1, forever);
       return;
     }
     const n = parseInt(daysInput.value, 10);
-    persist(!isNaN(n) && n >= 0 ? n : serverRetentionDays, foreverInput);
+    persist(!isNaN(n) && n >= 0 ? n : serverRetentionDays, forever);
   });
 }
 
@@ -848,13 +848,16 @@ function initAgentCapabilityControls(): void {
       continue;
     }
     input.addEventListener("change", () => {
-      void patchSettings({ [cap.key]: input.checked }, input);
+      void patchSettings({ [cap.key]: input.checked }, { el: input, key: cap.key, on: true });
     });
   }
   for (const sw of agentFeatureSwitches) {
     const input = document.getElementById(sw.inputID) as HTMLInputElement | null;
     input?.addEventListener("change", () => {
-      void patchSettings({ [sw.key]: input.checked ? "on" : "off" }, input);
+      void patchSettings(
+        { [sw.key]: input.checked ? "on" : "off" },
+        { el: input, key: sw.key, on: "on" },
+      );
     });
   }
   for (const choice of agentFeatureChoices) {
@@ -940,11 +943,12 @@ function initAutoCompactionControls(): void {
   const { toggle, range } = els;
   toggle.addEventListener("change", () => {
     paintAutoCompaction(toggle.checked, Number(range.value));
-    void patchSettings({ auto_compaction_enabled: toggle.checked }, toggle).then((r) => {
-      // A failed write may have put the switch back.
-      if (r === null) {
-        paintAutoCompaction(toggle.checked, Number(range.value));
-      }
+    void patchSettings(
+      { auto_compaction_enabled: toggle.checked },
+      { el: toggle, key: "auto_compaction_enabled", on: true },
+    ).then(() => {
+      // The settled write may have repainted the switch.
+      paintAutoCompaction(toggle.checked, Number(range.value));
     });
   });
   // `input` repaints the readout while dragging; only `change`, the released gesture, writes.
@@ -983,7 +987,7 @@ function initPanelSwitchControls(): void {
       continue;
     }
     input.addEventListener("change", () => {
-      void patchSettings({ [sw.key]: input.checked }, input);
+      void patchSettings({ [sw.key]: input.checked }, { el: input, key: sw.key, on: true });
     });
   }
 }

@@ -106,7 +106,7 @@ onSSE("settings_updated", (_chatID, p) => {
     restoreLastEffort(s.last_effort_by_model);
     adoptLinkGuard(s);
     // A theme chosen on another device lands here. Safe against a loop:
-    // the read that answered it seeded the write tracker (persist.initSettingsTracking).
+    // the read adopted it, so writing it back is no change (settings-state.changes).
     adoptThemeFromSettings(s);
     // Re-seeds the controls on a second device; `adoptRetention` and the session-door reads carry the
     // effect.

@@ -10,7 +10,7 @@ import { dispatch } from "./bus.js";
 import type { ServerEvent } from "./types.js";
 import { applyAgentDirs, initAgentDirsUI } from "./agent-dirs-ui.js";
 import { byId } from "./dom.js";
-import { __testResetTracking, patchSettings } from "./persist.js";
+import { __testResetTracking, loadSettings, patchSettings } from "./persist.js";
 import { additionalDirectories, _resetForTest as resetWorkspace } from "./workspace.js";
 
 interface Held {
@@ -86,7 +86,7 @@ function debugLogs(): HTMLInputElement {
 
 function saveDebugLogs(on: boolean): void {
   debugLogs().checked = on;
-  void patchSettings({ debug_logs: on }, debugLogs());
+  void patchSettings({ debug_logs: on }, { el: debugLogs(), key: "debug_logs", on: true });
 }
 
 function debugAt(revision: number, on: boolean): EffectiveSettings {
@@ -422,5 +422,46 @@ describe("settings sync ordering", () => {
     patches[1]?.fail();
     await settled();
     expect(debugLogs().checked, "revision 3's value").toBe(false);
+  });
+
+  it("puts a switch clicked twice around a plain read back to the server's value when both writes fail", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    void loadSettings();
+    await settled();
+    gets[1]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(false);
+    await debounced();
+
+    patches[0]?.fail();
+    await settled();
+    expect(patches).toHaveLength(2);
+    patches[1]?.fail();
+    await settled();
+    expect(debugLogs().checked, "revision 1's value").toBe(false);
+  });
+
+  it("keeps a click still waiting to be sent across another device's settings event", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(true);
+
+    settingsEvent(2);
+    await settled();
+    gets[1]?.answer(debugAt(2, false));
+    await settled();
+    expect(debugLogs().checked, "the click, not revision 2's value").toBe(true);
+
+    await debounced();
+    expect(patches[0]?.body).toEqual({ debug_logs: true });
+    patches[0]?.answer(debugAt(3, true));
+    await settled();
   });
 });

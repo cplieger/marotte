@@ -23,7 +23,6 @@ vi.mock("./toast.js", () => ({
 
 import {
   patchSettings,
-  initSettingsTracking,
   loadSettings,
   noteSettingsEvent,
   newestSettings,
@@ -56,7 +55,7 @@ describe("patchSettings debounce coalescing", () => {
     vi.clearAllMocks();
     fetchSpy = vi.fn(committed);
     vi.stubGlobal("fetch", fetchSpy);
-    // Reset the dedup tracker so tests don't bleed state between each other. Without this,
+    // Reset the settings state so tests don't bleed state between each other. Without this,
     // patchSettings({last_model: "claude"}) in test N+1 would be filtered out as a duplicate of
     // test N's value.
     __testResetTracking();
@@ -106,7 +105,7 @@ describe("patchSettings debounce coalescing", () => {
     const iterations = 50;
     for (let iter = 0; iter < iterations; iter++) {
       fetchSpy.mockClear();
-      // Each iteration is an independent batch; reset the dedup tracker so values from prior
+      // Each iteration is an independent batch; reset the settings state so values from prior
       // iterations don't filter out patches in this one.
       __testResetTracking();
       const keys = ["notifications_enabled", "debug_logs", "last_model"] as const;
@@ -165,7 +164,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("skips PATCH when the value matches the seeded server state (page-reload bootstrap case)", async () => {
-    initSettingsTracking(settingsPayload({ supervised_default: false, last_model: "claude" }));
+    adoptSettings(settingsPayload({ supervised_default: false, last_model: "claude" }));
     // Simulate the bootstrap fire from onSelectionChange: same supervised_default value the server
     // already has.
     patchSettings({ supervised_default: false });
@@ -174,7 +173,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("PATCHes only the changed key when bootstrap and a real change overlap", async () => {
-    initSettingsTracking(settingsPayload({ supervised_default: false, last_model: "claude" }));
+    adoptSettings(settingsPayload({ supervised_default: false, last_model: "claude" }));
     // supervised_default unchanged, last_model changed.
     patchSettings({ supervised_default: false });
     patchSettings({ last_model: "gemini" });
@@ -196,7 +195,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("PATCHes again when the value changes back after a different value", async () => {
-    initSettingsTracking(settingsPayload({ last_model: "claude" }));
+    adoptSettings(settingsPayload({ last_model: "claude" }));
     patchSettings({ last_model: "gemini" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -210,7 +209,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("array-valued settings dedup correctly", async () => {
-    initSettingsTracking(settingsPayload({ agent_ignore_files: ["a", "b", "c"] }));
+    adoptSettings(settingsPayload({ agent_ignore_files: ["a", "b", "c"] }));
     patchSettings({ agent_ignore_files: ["a", "b", "c"] });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -223,7 +222,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("does not fire showSaving when every key in the patch is filtered", async () => {
-    initSettingsTracking(settingsPayload({ supervised_default: true }));
+    adoptSettings(settingsPayload({ supervised_default: true }));
     const { showSaving } = await import("./save-indicator.js");
     patchSettings({ supervised_default: true });
     await vi.advanceTimersByTimeAsync(350);
@@ -329,14 +328,14 @@ describe("patchSettings failure handling", () => {
   });
 
   it("re-sends a value the server rejected instead of filtering it as sent", async () => {
-    initSettingsTracking(settingsPayload({ last_model: "claude" }));
+    adoptSettings(settingsPayload({ last_model: "claude" }));
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
     patchSettings({ last_model: "opus" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
-    // The failed value was rolled back out of the dedup tracker, so asking for it again is a
-    // change, not a repeat. Without the rollback the retry is dropped on the floor and the setting
+    // The failed write left the settings state at what the server holds, so asking for it again is
+    // a change, not a repeat. Otherwise the retry is dropped on the floor and the setting
     // never reaches the server.
     fetchSpy.mockClear();
     fetchSpy.mockImplementation(committed);
@@ -350,10 +349,10 @@ describe("patchSettings failure handling", () => {
   });
 
   it("keeps the first pre-patch value when a key is written twice before flushing", async () => {
-    initSettingsTracking(settingsPayload({ last_model: "claude" }));
+    adoptSettings(settingsPayload({ last_model: "claude" }));
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
-    // Two writes coalesce into one PATCH; the rollback has to restore the value the server still
-    // holds ("claude"), not the intermediate one.
+    // Two writes coalesce into one PATCH; after its failure the state shows the value the server
+    // still holds ("claude"), not the intermediate one.
     patchSettings({ last_model: "opus" });
     patchSettings({ last_model: "sonnet" });
     await vi.advanceTimersByTimeAsync(350);
@@ -363,8 +362,8 @@ describe("patchSettings failure handling", () => {
     patchSettings({ last_model: "claude" });
     await vi.advanceTimersByTimeAsync(350);
 
-    // "claude" is what the server has, so after a correct rollback this is a no-op. If the rollback
-    // stored "opus" instead, this would PATCH.
+    // "claude" is what the server has, so this is a no-op. Had the failure left "opus" shown, this
+    // would PATCH.
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -374,12 +373,31 @@ describe("patchSettings failure handling", () => {
     box.checked = true;
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
 
-    patchSettings({ notifications_enabled: true }, box);
+    patchSettings(
+      { notifications_enabled: true },
+      { el: box, key: "notifications_enabled", on: true },
+    );
     await vi.advanceTimersByTimeAsync(350);
 
-    // The state before is taken when the write is queued (the user just clicked, so it is the
-    // opposite), and the rollback restores it.
+    // Nothing was adopted, so the switch goes back to what it showed before the click.
     expect(box.checked).toBe(false);
+  });
+
+  it("puts a switch back to whether its key holds its on value", async () => {
+    adoptSettings(settingsPayload({ chat_retention_days: 60 }));
+    const forever = document.createElement("input");
+    forever.type = "checkbox";
+    forever.checked = false;
+    fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
+
+    patchSettings({ chat_retention_days: 30 }, { el: forever, key: "chat_retention_days", on: -1 });
+    forever.checked = true;
+    patchSettings({ chat_retention_days: -1 }, { el: forever, key: "chat_retention_days", on: -1 });
+    await vi.advanceTimersByTimeAsync(350);
+
+    await vi.waitFor(() => {
+      expect(forever.checked, "60 days kept is not forever").toBe(false);
+    });
   });
 
   it("leaves the checkbox alone when the write succeeds", async () => {
@@ -387,7 +405,10 @@ describe("patchSettings failure handling", () => {
     box.type = "checkbox";
     box.checked = true;
 
-    patchSettings({ notifications_enabled: true }, box);
+    patchSettings(
+      { notifications_enabled: true },
+      { el: box, key: "notifications_enabled", on: true },
+    );
     await vi.advanceTimersByTimeAsync(350);
 
     expect(box.checked).toBe(true);
@@ -423,7 +444,7 @@ describe("patchSettings saving indicator", () => {
   });
 
   it("announces only the keys that survived the no-op filter", async () => {
-    initSettingsTracking(settingsPayload({ debug_logs: true }));
+    adoptSettings(settingsPayload({ debug_logs: true }));
     const { showSaving } = await import("./save-indicator.js");
     patchSettings({ debug_logs: true, last_model: "opus" });
     await vi.advanceTimersByTimeAsync(350);
@@ -480,6 +501,9 @@ const v = (revision: number, epoch = 1): { settings_epoch: number; settings_revi
   settings_epoch: epoch,
   settings_revision: revision,
 });
+
+/** A complete settings payload at a version. */
+const vs = (revision: number, epoch = 1): EffectiveSettings => settingsPayload(v(revision, epoch));
 
 describe("settings reads in flight", () => {
   let answers: ((s: ReturnType<typeof settingsPayload>) => void)[];
@@ -573,7 +597,7 @@ describe("settings reads in flight", () => {
   });
 
   it("answers null for a read below the held version when no event came since it was sent", async () => {
-    expect(adoptSettings(v(5))).toBe(true);
+    expect(adoptSettings(vs(5))).toBe(true);
     const load = loadSettings();
     await settle();
     answers[0]?.(at(4));
@@ -601,7 +625,7 @@ describe("settings reads in flight", () => {
     answers[2]?.(at(1, 2));
     expect(await load).toEqual(at(1, 2));
     expect(await refresh).toEqual(at(1, 2));
-    expect(adoptSettings(v(9)), "the old epoch, at any count").toBe(false);
+    expect(adoptSettings(vs(9)), "the old epoch, at any count").toBe(false);
   });
 
   it("answers newestSettings from the newest read until an event announces a later version", async () => {
@@ -628,32 +652,32 @@ describe("adoptSettings", () => {
   });
 
   it("accepts a version at or above the one held, and refuses one below it", () => {
-    expect(adoptSettings(v(2))).toBe(true);
-    expect(adoptSettings(v(2))).toBe(true);
-    expect(adoptSettings(v(1))).toBe(false);
-    expect(adoptSettings(v(3))).toBe(true);
-    expect(adoptSettings(v(2))).toBe(false);
+    expect(adoptSettings(vs(2))).toBe(true);
+    expect(adoptSettings(vs(2))).toBe(true);
+    expect(adoptSettings(vs(1))).toBe(false);
+    expect(adoptSettings(vs(3))).toBe(true);
+    expect(adoptSettings(vs(2))).toBe(false);
   });
 
   it("raises the held version on an event and never lowers it on an older one", () => {
-    expect(adoptSettings(v(5))).toBe(true);
+    expect(adoptSettings(vs(5))).toBe(true);
     noteSettingsEvent(v(7));
-    expect(adoptSettings(v(6))).toBe(false);
-    expect(adoptSettings(v(7))).toBe(true);
+    expect(adoptSettings(vs(6))).toBe(false);
+    expect(adoptSettings(vs(7))).toBe(true);
     noteSettingsEvent(v(1));
-    expect(adoptSettings(v(1)), "after an older event").toBe(false);
-    expect(adoptSettings(v(7))).toBe(true);
+    expect(adoptSettings(vs(1)), "after an older event").toBe(false);
+    expect(adoptSettings(vs(7))).toBe(true);
   });
 
   it("orders every count of a later epoch above every count of an earlier one", () => {
-    expect(adoptSettings(v(9, 1))).toBe(true);
-    expect(adoptSettings(v(1, 2))).toBe(true);
-    expect(adoptSettings(v(10, 1))).toBe(false);
+    expect(adoptSettings(vs(9, 1))).toBe(true);
+    expect(adoptSettings(vs(1, 2))).toBe(true);
+    expect(adoptSettings(vs(10, 1))).toBe(false);
   });
 
   it("accepts a payload above the newest event, whenever it was requested", () => {
     noteSettingsEvent(v(2));
-    expect(adoptSettings(v(3))).toBe(true);
+    expect(adoptSettings(vs(3))).toBe(true);
   });
 
   it("orders the server's largest epoch, decoded from the wire, above the one before it", () => {
@@ -702,7 +726,7 @@ describe("patchSettings answer", () => {
   it("resolves with the committed settings, and holds their version", async () => {
     answer = settingsPayload({ ...v(4), theme: "dark" });
     await expect(patched()).resolves.toEqual(answer);
-    expect(adoptSettings(v(3))).toBe(false);
+    expect(adoptSettings(vs(3))).toBe(false);
   });
 
   it("resolves superseded, still reporting Saved, when the page holds newer settings", async () => {
@@ -711,7 +735,7 @@ describe("patchSettings answer", () => {
     answer = settingsPayload({ ...v(4), theme: "dark" });
     await expect(patched()).resolves.toBe("superseded");
     expect(showSaved).toHaveBeenCalledWith(["theme"]);
-    expect(adoptSettings(v(5)), "the held version is unchanged").toBe(true);
+    expect(adoptSettings(vs(5)), "the held version is unchanged").toBe(true);
   });
 
   it("fails a write whose answer is not the committed settings", async () => {
@@ -808,12 +832,12 @@ describe("patchSettings generation guard", () => {
     const box = document.createElement("input");
     box.type = "checkbox";
     box.checked = true;
-    patchSettings({ debug_logs: true }, box);
+    patchSettings({ debug_logs: true }, { el: box, key: "debug_logs", on: true });
     await vi.advanceTimersByTimeAsync(350);
     box.checked = false;
-    patchSettings({ debug_logs: false }, box);
+    patchSettings({ debug_logs: false }, { el: box, key: "debug_logs", on: true });
     box.checked = true;
-    patchSettings({ debug_logs: true }, box);
+    patchSettings({ debug_logs: true }, { el: box, key: "debug_logs", on: true });
     await vi.advanceTimersByTimeAsync(350);
 
     pending[0]?.(Response.json(settingsPayload({ debug_logs: true })));
@@ -832,12 +856,12 @@ describe("patchSettings generation guard", () => {
     const box = document.createElement("input");
     box.type = "checkbox";
     box.checked = true;
-    patchSettings({ debug_logs: true }, box);
+    patchSettings({ debug_logs: true }, { el: box, key: "debug_logs", on: true });
     await vi.advanceTimersByTimeAsync(350);
     box.checked = false;
-    patchSettings({ debug_logs: false }, box);
+    patchSettings({ debug_logs: false }, { el: box, key: "debug_logs", on: true });
     box.checked = true;
-    patchSettings({ debug_logs: true }, box);
+    patchSettings({ debug_logs: true }, { el: box, key: "debug_logs", on: true });
     await vi.advanceTimersByTimeAsync(350);
 
     pending[0]?.(new Response("nope", { status: 500 }));

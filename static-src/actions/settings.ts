@@ -143,14 +143,9 @@ export const loadSettings = apiAction<void, EffectiveSettings>({
   success: false,
 });
 
-interface PatchAppArgs {
-  body: Record<string, unknown>;
-  /** The switches to put back when the write fails or is cancelled, read at that moment. */
-  restore?: () => readonly { el: HTMLInputElement; checked: boolean }[];
-}
-
-/** Write some settings; answers the settings the write committed. */
-export const patchAppSettings = apiAction<PatchAppArgs, EffectiveSettings>({
+/** Write some settings; answers the settings the write committed. The caller repaints what the
+ *  write moved (persist.patchSettings). */
+export const patchAppSettings = apiAction<{ body: Record<string, unknown> }, EffectiveSettings>({
   name: "settings.patch",
   scope: "settings",
   request: ({ body }) => ({
@@ -159,11 +154,5 @@ export const patchAppSettings = apiAction<PatchAppArgs, EffectiveSettings>({
     body,
   }),
   decode: (data) => decodeEffectiveSettings(data),
-  rollback: ({ restore }) => {
-    for (const { el, checked } of restore?.() ?? []) {
-      writeSwitch(el, checked);
-    }
-    paintSettingLocks();
-  },
   error: "Could not save setting",
 });

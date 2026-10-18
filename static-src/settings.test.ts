@@ -7,6 +7,7 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { settingsPayload } from "./__test-helpers__/settings.js";
+import type { SettingsSwitch } from "./persist.js";
 
 const H = vi.hoisted(() => ({
   mockRun: vi.fn(),
@@ -181,9 +182,9 @@ beforeEach(() => {
 });
 
 /** persist.patchSettings for a write the server refuses: it puts each switch back, then answers null. */
-function failAndRollBack(_patch: unknown, ...boxes: HTMLInputElement[]): Promise<null> {
-  for (const box of boxes) {
-    box.checked = !box.checked;
+function failAndRollBack(_patch: unknown, ...switches: SettingsSwitch[]): Promise<null> {
+  for (const { el } of switches) {
+    el.checked = !el.checked;
   }
   return Promise.resolve(null);
 }
@@ -483,7 +484,10 @@ describe("the Model fallback switch", () => {
     box.checked = false;
     box.dispatchEvent(new Event("change"));
 
-    expect(patchSettings).toHaveBeenLastCalledWith({ model_fallback_enabled: false }, box);
+    expect(patchSettings).toHaveBeenLastCalledWith(
+      { model_fallback_enabled: false },
+      { el: box, key: "model_fallback_enabled", on: true },
+    );
   });
 });
 
@@ -813,7 +817,10 @@ describe("the payload-link guard switch", () => {
     initRetention(settingsPayload({ guard_payload_links: true }));
     box().checked = false;
     box().dispatchEvent(new Event("change"));
-    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ guard_payload_links: false }, box());
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith(
+      { guard_payload_links: false },
+      { el: box(), key: "guard_payload_links", on: true },
+    );
   });
 });
 
@@ -836,7 +843,10 @@ describe("the wait-for-MCP-servers switch", () => {
     initRetention(settingsPayload({ mcp_wait_for_ready: false }));
     box().checked = true;
     box().dispatchEvent(new Event("change"));
-    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ mcp_wait_for_ready: true }, box());
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith(
+      { mcp_wait_for_ready: true },
+      { el: box(), key: "mcp_wait_for_ready", on: true },
+    );
   });
 });
 
@@ -897,7 +907,7 @@ describe("the automatic-compaction switch and slider", () => {
     toggle().dispatchEvent(new Event("change"));
     expect(patchSettings).toHaveBeenCalledExactlyOnceWith(
       { auto_compaction_enabled: false },
-      toggle(),
+      { el: toggle(), key: "auto_compaction_enabled", on: true },
     );
     expect(row().classList.contains("hidden")).toBe(true);
   });
@@ -1036,7 +1046,7 @@ describe("the agent-capability selects and the shell timeout", () => {
     box("flag-cloudformation-safety").dispatchEvent(new Event("change"));
     expect(patchSettings).toHaveBeenLastCalledWith(
       { cloudformation_safety_check: "off" },
-      box("flag-cloudformation-safety"),
+      { el: box("flag-cloudformation-safety"), key: "cloudformation_safety_check", on: "on" },
     );
   });
 
