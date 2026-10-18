@@ -37,7 +37,7 @@ func TestTurnLive_TrueWhileFinalizing(t *testing.T) {
 	id, _ := h.stagePromptTurn(t, "c1")
 
 	// Claiming without finishing is the window between a closer's claim and its effects.
-	turn, won := h.coord.turns.claimTurn(t.Context(), "c1", id)
+	turn, won := h.coord.turns.claimTurn(t.Context(), "c1", id, nil)
 	if !won {
 		t.Fatal("claimTurn lost the claim on a freshly opened turn")
 	}

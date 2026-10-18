@@ -164,7 +164,17 @@ func (rs *Runs) drive(
 ) (*marotte.RPCResponse, error) {
 	_, gen := rs.engine.current()
 	m := rs.mutations.enter(workflowID, kind, gen)
-	resp, seq, err := sb.CallAt(ctx, method, params)
+	var (
+		resp *marotte.RPCResponse
+		seq  uint64
+		err  error
+	)
+	if method == marotte.MethodPrompt {
+		// A step's words: no chat turn's stop orders them, so the write commits nothing.
+		resp, seq, err = sb.PromptAt(ctx, params, nil)
+	} else {
+		resp, seq, err = sb.CallAt(ctx, method, params)
+	}
 	if errors.Is(err, marotte.ErrSessionClosed) || errors.Is(err, marotte.ErrSessionClosing) {
 		// Refused before the write: the session was not open.
 		m.unwritten()

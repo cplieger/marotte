@@ -58,14 +58,14 @@ func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 	reg := newTurnRegistry()
 	open := openTestTurn(t, reg, "c1")
 
-	turn, won := reg.claimTurn(t.Context(), "c1", open.ID)
+	turn, won := reg.claimTurn(t.Context(), "c1", open.ID, nil)
 	if !won {
 		t.Fatal("claiming an open turn must be taken")
 	}
 
 	second := make(chan bool, 1)
 	go func() {
-		_, ok := reg.claimTurn(context.WithoutCancel(t.Context()), "c1", open.ID)
+		_, ok := reg.claimTurn(context.WithoutCancel(t.Context()), "c1", open.ID, nil)
 		second <- ok
 	}()
 	select {
@@ -90,7 +90,7 @@ func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 	reg := newTurnRegistry()
 	first := openTestTurn(t, reg, "c1")
-	if _, won := reg.claimTurn(t.Context(), "c1", first.ID); !won {
+	if _, won := reg.claimTurn(t.Context(), "c1", first.ID, nil); !won {
 		t.Fatal("claiming the open turn must be taken")
 	}
 
@@ -132,7 +132,7 @@ func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 func TestTurnRegistry_OpenIsCancellable(t *testing.T) {
 	reg := newTurnRegistry()
 	open := openTestTurn(t, reg, "c1")
-	if _, won := reg.claimTurn(t.Context(), "c1", open.ID); !won {
+	if _, won := reg.claimTurn(t.Context(), "c1", open.ID, nil); !won {
 		t.Fatal("claiming the open turn must be taken")
 	}
 
@@ -221,7 +221,7 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 
 	lc := r.lifecycleFor(chatID)
 	open := openTestTurn(t, r, chatID)
-	claimed, won := r.claimTurn(ctx, chatID, open.ID)
+	claimed, won := r.claimTurn(ctx, chatID, open.ID, nil)
 	if !won {
 		t.Fatal("claimTurn lost the claim on a freshly opened turn")
 	}
@@ -292,7 +292,7 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 	t.Run("a settled chat is not busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		id, _ := h.stagePromptTurn(t, "c1")
-		turn, won := h.coord.turns.claimTurn(t.Context(), "c1", id)
+		turn, won := h.coord.turns.claimTurn(t.Context(), "c1", id, nil)
 		if !won {
 			t.Fatal("claimTurn lost the claim on a freshly opened turn")
 		}
@@ -322,7 +322,7 @@ func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
 	h, _, _ := newTestHub()
 	a, _ := h.stagePromptTurn(t, "c1")
 
-	h.coord.RequestStop("c1")
+	h.coord.ReleaseStop(h.coord.RequestStop("c1"))
 	endTurn(t, h, "c1", a)
 
 	if !h.coord.StopRequestedAfter("c1", a) {
@@ -336,7 +336,7 @@ func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
 		t.Error("StopRequestedAfter(a) = false once a later turn opened, want true")
 	}
 
-	h.coord.RequestStop("c-never-opened")
+	h.coord.ReleaseStop(h.coord.RequestStop("c-never-opened"))
 	if _, ok := h.coord.turns.lookup("c-never-opened"); ok {
 		t.Error("a stop on a chat with no turns minted a lifecycle for it")
 	}

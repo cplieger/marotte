@@ -1127,6 +1127,10 @@ func decodeNodeFrame(msg *marotte.RPCResponse) nodeFrame {
 	return f
 }
 
+// errResumeNotNeeded is resumeIfInterrupted's own stand-down: the run was no longer involuntarily paused once its
+// verb lock was held.
+var errResumeNotNeeded = errors.New("the run is no longer involuntarily paused")
+
 func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID marotte.ChatID, workflowID string) {
 	// The wider involuntary set, because this resumes; the orphan sweep's narrower `restartPaused` cancels.
 	if !rs.involuntarilyPaused(ctx, workflowID) {
@@ -1139,9 +1143,17 @@ func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID marotte.ChatID, 
 		return
 	}
 	cErr := rs.controlSerialized(ctx, workflowID, func(cctx context.Context) error {
+		// Read again under the run's verb lock: a rehydrate sweep and a pause heal both reach here, and the one
+		// that read the pause before the other's resume landed must not resume a running run.
+		if !rs.involuntarilyPaused(cctx, workflowID) {
+			return errResumeNotNeeded
+		}
 		_, err := host.call(cctx, rs, workflowID, methodKiroWorkflowResume, map[string]any{keyWorkflowID: workflowID})
 		return err
 	})
+	if errors.Is(cErr, errResumeNotNeeded) {
+		return
+	}
 	if cErr != nil {
 		if _, _, refused := command.StatusOf(cErr); refused {
 			slog.Info("rehydrate: marotte has a send to this run in flight, so the resume waits for the next sweep",

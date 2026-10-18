@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1474,6 +1475,41 @@ func TestPersistNewSessionMetadata_RenamesASuccessorOfAUserNamedChat(t *testing.
 		}
 		if c, _ := cs.Get(t.Context(), "c1"); c.Name != "Mine" {
 			t.Errorf("user-named=%v: chat name = %q, want Mine", userNamed, c.Name)
+		}
+	}
+}
+
+// KAS names the session holding its agent slot by ACP session id; the lookup answers the chat resident on it.
+func TestChatForACPSession_NamesTheResidentChat(t *testing.T) {
+	h, cs, _ := newTestHub()
+	defer shutdownHub(t, h)
+	var n atomic.Int32
+	fakeSourceOf(t, h).setFactory(func() engineSession {
+		b := newFakeBridge()
+		b.sessionID = fmt.Sprintf("sess-%d", n.Add(1))
+		return b
+	})
+	sessions := map[marotte.ChatID]string{}
+	for _, chatID := range []marotte.ChatID{"c1", "c2"} {
+		cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = string(chatID) })
+		sb, err := h.coord.openBridge(t.Context(), chatID, "")
+		if err != nil {
+			t.Fatalf("Setup: openBridge(%s): %v", chatID, err)
+		}
+		sessions[chatID] = string(sb.bridge.SessionID())
+	}
+	if sessions["c1"] == sessions["c2"] {
+		t.Fatalf("Setup: both chats share session %q", sessions["c1"])
+	}
+
+	for chatID, sess := range sessions {
+		if got, ok := h.coord.ChatForACPSession(sess); !ok || got != chatID {
+			t.Errorf("ChatForACPSession(%q) = %q ok=%v, want %q", sess, got, ok, chatID)
+		}
+	}
+	for _, sess := range []string{"", "sess-unknown"} {
+		if got, ok := h.coord.ChatForACPSession(sess); ok {
+			t.Errorf("ChatForACPSession(%q) = %q, want no chat", sess, got)
 		}
 	}
 }

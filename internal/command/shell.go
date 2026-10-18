@@ -69,7 +69,7 @@ func handleShellInterception(ctx context.Context, roles *promptRoles, cmd *marot
 	}
 	defer roles.turnOutcome.ReleaseTurn(cmd.ChatID, turnID)
 	nameDefaultChat(ctx, roles.chats, cmd.ChatID, p.Text)
-	if !roles.turnOutcome.StartTurn(ctx, cmd.ChatID, turnID) {
+	if !roles.turnOutcome.StartTurn(ctx, TurnRef{Chat: cmd.ChatID, Turn: turnID}, nil) {
 		roles.turnOutcome.AbandonInFlightTurn(ctx, cmd.ChatID, turnID, marotte.StopReasonCancelled, "", "", 0)
 		return nil, StatusError(http.StatusConflict, errBusy)
 	}

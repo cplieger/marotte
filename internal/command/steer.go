@@ -243,10 +243,7 @@ func cmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientC
 // holds; it runs only when a clear was issued.
 func ClearSteersIn(ctx context.Context, t SteerTarget, endOp func(opID string)) ([]string, error) {
 	opID := ids.NewMessageID()
-	needsClear, refuse := t.Queue.BeginDiscard(t.Key, opID)
-	if refuse != "" {
-		return nil, steerRefusal(refuse)
-	}
+	needsClear := t.Queue.BeginDiscard(t.Key, opID)
 	cleared := []string{}
 	if needsClear {
 		rpcCtx, cancel := context.WithTimeout(durable.Context(ctx), steerRemoveBudget)

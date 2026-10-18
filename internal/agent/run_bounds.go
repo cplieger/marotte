@@ -756,7 +756,7 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" && f.Status.Terminal() {
 		// Before HandleRunComplete: the client repaints on its `run_finished` invalidation.
 		rs.closeRun(ctx, f.WorkflowID, string(f.Status))
-		rs.recordRunNotice(chatID, f.WorkflowID)
+		rs.recordRunNotice(chatID, f.WorkflowID, cmp.Or(f.FinalState.RunLabel, f.FinalState.WorkflowName, f.WorkflowID))
 		// Before forgetBounds, which releases the lease the label and the parent come from.
 		rs.notifyRunOutcome(ctx, chatID, &f)
 		rs.forgetBounds(ctx, f.WorkflowID)

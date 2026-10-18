@@ -390,10 +390,25 @@ func (e *Engine) CallAt(ctx context.Context, method string, params any) (*marott
 	return e.callAt(ctx, e.engineLane, "", method, params, nil)
 }
 
-// callAt writes one request positioned on l and waits for its outcome. Once written, every engine-side outcome (the
-// response, an oversize failure, the exit path) arrives through the entry and carries l's position.
+// errPromptNotACall refuses a session/prompt asked of a plain call: Session.PromptAt is its only writer.
+var errPromptNotACall = errors.New("session/prompt is written only by Session.PromptAt")
+
+// callAt writes one request positioned on l and waits for its outcome (request), refusing session/prompt.
 func (e *Engine) callAt(
 	ctx context.Context, l *lane, sessionID marotte.SessionID, method string, params any, late func(*marotte.RPCResponse),
+) (*marotte.RPCResponse, uint64, error) {
+	if method == marotte.MethodPrompt {
+		return nil, 0, errPromptNotACall
+	}
+	return e.request(ctx, l, sessionID, method, params, late, nil)
+}
+
+// request writes one request positioned on l and waits for its outcome. Once written, every engine-side outcome (the
+// response, an oversize failure, the exit path) arrives through the entry and carries l's position. A commit that
+// refuses the write is answered as is, with nothing written.
+func (e *Engine) request(
+	ctx context.Context, l *lane, sessionID marotte.SessionID, method string, params any, late func(*marotte.RPCResponse),
+	commit func() error,
 ) (*marotte.RPCResponse, uint64, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
@@ -404,7 +419,12 @@ func (e *Engine) callAt(
 		return nil, 0, err
 	}
 	entry := e.register(id, l, sessionID, late)
-	if writeErr := e.writeFrame(append(data, '\n')); writeErr != nil {
+	refused, writeErr := e.writeFrameIf(append(data, '\n'), commit)
+	if refused != nil {
+		e.deregisterPending(id)
+		return nil, 0, refused
+	}
+	if writeErr != nil {
 		e.deregisterPending(id)
 		return nil, 0, &marotte.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
 	}
@@ -503,15 +523,27 @@ var writeStall = 30 * time.Second
 // closePending's wait orders it), and writes in chunks, each bounded by writeStall. Any write failure ends the engine:
 // a truncated frame desyncs kiro-cli's stdin scanner for good, and an error means it can read nothing after.
 func (e *Engine) writeFrame(data []byte) error {
+	_, err := e.writeFrameIf(data, nil)
+	return err
+}
+
+// writeFrameIf is writeFrame with commit (Session.PromptAt's) run under writeMu just before the first byte: its
+// error is answered as refused and nothing is written.
+func (e *Engine) writeFrameIf(data []byte, commit func() error) (refused, err error) {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
 	if e.readerExited.Load() {
-		return errWriteFenced
+		return nil, errWriteFenced
 	}
 	// Before anything touches the handle: a write before Start once panicked on a nil interface.
 	pipe := e.stdin.Load()
 	if pipe == nil {
-		return errBridgeNotStarted
+		return nil, errBridgeNotStarted
+	}
+	if commit != nil {
+		if r := commit(); r != nil {
+			return r, nil
+		}
 	}
 	dw, hasDeadline := pipe.w.(deadlineWriter)
 	if hasDeadline {
@@ -542,9 +574,9 @@ func (e *Engine) writeFrame(data []byte) error {
 			slog.Error("ACP write failed; reaping the agent engine", "wrote_bytes", off, "frame_bytes", len(data), "error", err)
 		}
 		e.fail(reason)
-		return fmt.Errorf("%w: %w", errBridgeExited, err)
+		return nil, fmt.Errorf("%w: %w", errBridgeExited, err)
 	}
-	return nil
+	return nil, nil
 }
 
 // deadlineWriter is the part of a stdin handle a write deadline needs: cmd.StdinPipe's *os.File has it, the test

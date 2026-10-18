@@ -725,7 +725,7 @@ func TestRealEngine_Contract(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewSession: %v", err)
 		}
-		resp, err := s.Call(t.Context(), "session/prompt", nil)
+		resp, _, err := s.PromptAt(t.Context(), nil, nil)
 		if err != nil || resp == nil {
 			t.Fatalf("Call = %v, %v; want a response", resp, err)
 		}
@@ -967,7 +967,7 @@ func TestSession_LifecycleContract(t *testing.T) {
 	if got := s.ModelID(); got != "model-1" {
 		t.Errorf("post-stop ModelID = %q, want model-1 (must not reset)", got)
 	}
-	if _, err := s.Call(t.Context(), "session/prompt", nil); !errors.Is(err, marotte.ErrBridgeExited) {
+	if _, _, err := s.PromptAt(t.Context(), nil, nil); !errors.Is(err, marotte.ErrBridgeExited) {
 		t.Errorf("a call on a session of a stopped engine = %v, want ErrBridgeExited", err)
 	}
 	// Double Stop: no panic.

@@ -107,6 +107,10 @@ func (b *orderedBridge) ReleaseAfterPrompt() {
 	b.rec.add("bridge.release")
 }
 
+func (b *orderedBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *orderedBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	b.rec.add("call")
 	return b.recordingBridge.CallAt(ctx, method, params)
@@ -187,7 +191,9 @@ func (a *scriptedAdmission) OpenTurn(context.Context, marotte.ChatID, TurnOpen) 
 	return admissionTurnID, nil
 }
 
-func (a *scriptedAdmission) StartTurn(context.Context, marotte.ChatID, string) bool {
+func (*scriptedAdmission) EndPromptCall(TurnRef) {}
+
+func (a *scriptedAdmission) StartTurn(context.Context, TurnRef, context.CancelCauseFunc) bool {
 	a.rec.add("startTurn")
 	return !a.startRefused
 }

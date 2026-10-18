@@ -30,6 +30,9 @@ type benchDeps struct {
 	tiers map[string][]string
 	// stops is every chat RequestStop recorded, in order.
 	stops []marotte.ChatID
+	// stopTargets is what RequestStop captures; stopSteps records each stop step and kill in order.
+	stopTargets TurnStop
+	stopSteps   []string
 }
 
 type effortRecord struct {
@@ -129,7 +132,9 @@ func (*benchDeps) DeleteChatStateByChain(context.Context, marotte.ChatID, []stri
 }
 func (*benchDeps) CloseChatState(context.Context, marotte.ChatID) {}
 func (*benchDeps) BeginChatTeardown(marotte.ChatID, bool)         {}
-func (*benchDeps) KillForTurn(marotte.ChatID)                     {}
+func (d *benchDeps) KillForTurn(turn TurnRef) {
+	d.stopSteps = append(d.stopSteps, "kill "+turn.Turn)
+}
 
 // Every id-keyed method accepts it.
 const benchTurnID = "t-bench"
@@ -141,7 +146,11 @@ func (*benchDeps) OpenTurn(context.Context, marotte.ChatID, TurnOpen) (string, e
 // StartTurn answers true: false is the REFUSAL (a dead ctx, or an id the registry
 // dropped), and a stub answering it makes every prompt and `!cmd` test close its
 // turn before the call.
-func (*benchDeps) StartTurn(context.Context, marotte.ChatID, string) bool { return true }
+func (*benchDeps) StartTurn(context.Context, TurnRef, context.CancelCauseFunc) bool {
+	return true
+}
+
+func (*benchDeps) EndPromptCall(TurnRef) {}
 
 // ReserveTurnForPrompt admits every prompt: contention is a per-test double's
 // business, not the bench stub's.
@@ -177,9 +186,20 @@ func (*benchDeps) TurnOpenedAfter(marotte.ChatID, string) bool { return false }
 
 func (*benchDeps) StopRequestedAfter(marotte.ChatID, string) bool { return false }
 
-func (d *benchDeps) RequestStop(chatID marotte.ChatID) { d.stops = append(d.stops, chatID) }
+func (d *benchDeps) RequestStop(chatID marotte.ChatID) *TurnStop {
+	d.stops = append(d.stops, chatID)
+	d.stopSteps = append(d.stopSteps, "request")
+	stop := d.stopTargets
+	stop.Chat = chatID
+	return &stop
+}
 
-func (*benchDeps) ArmWireCancelGrace(marotte.ChatID, time.Duration) bool { return false }
+func (d *benchDeps) ReleaseStop(*TurnStop) { d.stopSteps = append(d.stopSteps, "release") }
+
+func (d *benchDeps) ArmStopGrace(*TurnStop, time.Duration) bool {
+	d.stopSteps = append(d.stopSteps, "arm")
+	return false
+}
 
 func (d *benchDeps) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return d.holder, d.holderOpen
@@ -228,7 +248,7 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	d.InflightAdd(1)
 	d.InflightDone()
 	d.DeleteChatStateByChain(t.Context(), "x", nil, RunStopChatDeleted)
-	d.StartTurn(t.Context(), "x", benchTurnID)
+	d.StartTurn(t.Context(), TurnRef{Chat: "x", Turn: benchTurnID}, nil)
 	d.ReleaseTurn("x", benchTurnID)
 }
 

@@ -83,9 +83,8 @@ func (b *stopOrderBridge) Notify(ctx context.Context, method string, params any)
 	return b.cancelBridge.Notify(ctx, method, params)
 }
 
-// TestCmdCancel_RecordsTheStopBeforeSignalling: the empty-turn retry reads the stop
-// after it registers its prompt call, which is only sound if the cancel records it
-// before it signals.
+// TestCmdCancel_RecordsTheStopBeforeSignalling: the empty-turn retry's open reads the
+// stop, which is only sound if the cancel records it before it signals.
 func TestCmdCancel_RecordsTheStopBeforeSignalling(t *testing.T) {
 	t.Run("with a bridge", func(t *testing.T) {
 		deps := &closeDeps{benchDeps: newBenchDeps()}

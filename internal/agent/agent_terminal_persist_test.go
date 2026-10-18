@@ -114,11 +114,11 @@ func TestPersistedToolCall_KASsFailedAfterTheReadersStopRecordsAborted(t *testin
 			h.translateACPEvent("c1", h.originOf("c1"), sessionUpdate(t,
 				`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"bash","kind":"execute","status":"pending"}`))
 			if tt.stopFirst {
-				h.coord.RequestStop("c1")
+				h.coord.ReleaseStop(h.coord.RequestStop("c1"))
 			}
 			h.translateACPEvent("c1", h.originOf("c1"), sessionUpdate(t, failed))
 			if !tt.stopFirst {
-				h.coord.RequestStop("c1")
+				h.coord.ReleaseStop(h.coord.RequestStop("c1"))
 			}
 			h.SettleTurnOnResponse(t.Context(), "c1", turnID, 0, &marotte.RPCResponse{})
 

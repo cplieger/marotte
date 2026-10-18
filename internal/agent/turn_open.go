@@ -14,10 +14,13 @@ import (
 )
 
 // OpenTurn appends the turn_open, creates its registry record and returns the turn id. A dead ctx refuses before the
-// append; a held slot answers errTurnSlotHeld; a broken fence answers command.ErrTurnSuperseded. The turn_count
-// rewrite runs after both locks are released, so racing opens both write the higher value. The caller holds one
-// completion handle until ReleaseTurn.
+// append; a held slot answers errTurnSlotHeld; a broken fence answers command.ErrTurnSuperseded, and a stop after
+// the turn it replaces command.ErrTurnStopped. The turn_count rewrite runs after both locks are released, so racing
+// opens both write the higher value. The caller holds one completion handle until ReleaseTurn.
 func (bc *bridgeCoordinator) OpenTurn(ctx context.Context, chatID marotte.ChatID, open command.TurnOpen) (string, error) {
+	if bc.turns.openHook != nil {
+		bc.turns.openHook()
+	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -25,11 +28,8 @@ func (bc *bridgeCoordinator) OpenTurn(ctx context.Context, chatID marotte.ChatID
 	spec := &chat.TurnSpec{Prompt: open.Prompt, Source: source.Name()}
 	var t *activeTurn
 	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
-		if !lc.fenceHoldsLocked(open.Fence) {
-			return command.ErrTurnSuperseded
-		}
-		if !lc.slotFreeLocked(source) {
-			return errTurnSlotHeld
+		if err := lc.openRefusalLocked(&open); err != nil {
+			return err
 		}
 		opened, err := bc.chatStore.OpenTurn(ctx, chatID, spec, open.Init)
 		if err != nil {
@@ -62,19 +62,34 @@ func (bc *bridgeCoordinator) OpenTurn(ctx context.Context, chatID marotte.ChatID
 	return t.ID, nil
 }
 
+// openRefusalLocked is why open may not append now, nil when it may. Caller holds mu.
+func (lc *chatLifecycle) openRefusalLocked(open *command.TurnOpen) error {
+	switch {
+	case !lc.fenceHoldsLocked(open.Fence):
+		return command.ErrTurnSuperseded
+	case open.Replaces != "" && lc.stoppedAfterLocked(open.Replaces):
+		return command.ErrTurnStopped
+	case !lc.slotFreeLocked(open.Source):
+		return errTurnSlotHeld
+	}
+	return nil
+}
+
 // Nil when refused, and the caller drops the frame. bracketed is whether a turn_start opens it. It takes no
 // completion handle: nobody would release it.
 func (bc *bridgeCoordinator) openWireTurn(ctx context.Context, chatID marotte.ChatID, bracketed bool) *activeTurn {
 	var t *activeTurn
 	created := false
 	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
-		if lc.own != nil && !lc.own.finalizing {
+		// A prompt awaiting its send stays pending and the wire turn takes own from it.
+		held := lc.own != nil && !lc.own.awaitsSend()
+		if held && !lc.own.finalizing {
 			// Lost the open race: fold into the turn already announced.
 			t = lc.own
 			t.bracketed = t.bracketed || bracketed
 			return nil
 		}
-		if lc.own != nil {
+		if held {
 			return errTurnSlotHeld
 		}
 		opened, err := bc.chatStore.OpenTurn(ctx, chatID, &chat.TurnSpec{Source: marotte.TurnOpenNameWireTurnStart}, nil)
@@ -123,19 +138,22 @@ func (bc *bridgeCoordinator) announceTurnOpened(ctx context.Context, chatID maro
 }
 
 // StartTurn stamps the model and the credit baseline onto the named turn just before the call that drives it, and
-// makes it own when own is nil. False for a dead ctx or an id the registry no longer holds; the caller then runs
-// the turn end rule itself.
-func (bc *bridgeCoordinator) StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string) bool {
+// makes it own when own is nil. cancel is that call's, which InterruptTurn and a stop's grace trip until
+// EndPromptCall. False for a dead ctx or a turn the registry no longer holds; the caller then runs the turn end rule
+// itself.
+func (bc *bridgeCoordinator) StartTurn(ctx context.Context, turn command.TurnRef, cancel context.CancelCauseFunc) bool {
 	if ctx.Err() != nil {
 		return false
 	}
+	chatID := turn.Chat
 	lc := bc.turns.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	t := lc.liveLocked(turnID)
+	t := lc.liveLocked(turn.Turn)
 	if t == nil || t.finalizing {
 		return false
 	}
+	t.cancel = cancel
 	model := bc.turnOpenModel(ctx, chatID, t.Source)
 	t.Model = model
 	if model != "" {
@@ -170,12 +188,6 @@ func (bc *bridgeCoordinator) ReleaseTurn(chatID marotte.ChatID, turnID string) {
 // TurnOpenedAfter reports whether any own turn opened after the named one (the empty-turn gate's structural half).
 func (bc *bridgeCoordinator) TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool {
 	return bc.turns.openedAfter(chatID, turnID)
-}
-
-// RequestStop records the reader's stop on the chat's turn sequence, so a replacing turn (the empty-turn retry)
-// can see it.
-func (bc *bridgeCoordinator) RequestStop(chatID marotte.ChatID) {
-	bc.turns.requestStop(chatID)
 }
 
 // StopRequestedAfter reports whether a stop was requested after the named turn opened.

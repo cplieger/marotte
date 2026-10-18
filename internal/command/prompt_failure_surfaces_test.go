@@ -83,7 +83,11 @@ func (d *surfaceDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridg
 	return &surfaceBridge{deps: d}, nil
 }
 
-func (d *surfaceDeps) StartTurn(context.Context, marotte.ChatID, string) bool { return !d.startRefused }
+func (*surfaceDeps) EndPromptCall(TurnRef) {}
+
+func (d *surfaceDeps) StartTurn(context.Context, TurnRef, context.CancelCauseFunc) bool {
+	return !d.startRefused
+}
 
 func (*surfaceDeps) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
 	return AdmissionAcquired
@@ -109,6 +113,10 @@ func (b *surfaceBridge) Call(context.Context, string, any) (*marotte.RPCResponse
 	return &marotte.RPCResponse{}, b.deps.callErr
 }
 
+func (b *surfaceBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *surfaceBridge) CallAt(context.Context, string, any) (*marotte.RPCResponse, uint64, error) {
 	return &marotte.RPCResponse{}, 0, b.deps.callErr
 }
@@ -118,10 +126,6 @@ func (*surfaceBridge) Respond(context.Context, int64, any, error) error { return
 func (*surfaceBridge) SessionID() marotte.SessionID                     { return "s1" }
 func (b *surfaceBridge) TryAcquireForPrompt() bool                      { return !b.deps.slotHeld }
 func (*surfaceBridge) ReleaseAfterPrompt()                              {}
-func (*surfaceBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { return 1 }
-func (*surfaceBridge) EndPromptCall()                                   {}
-func (*surfaceBridge) ArmCancelGrace(uint64, time.Duration) bool        { return true }
-func (*surfaceBridge) PromptGeneration() uint64                         { return 1 }
 
 // A turn WAS finalized, so the reason is on its card and the toast may stand down.
 func TestReportPromptFailure_MarksTheFrameTurnScoped(t *testing.T) {

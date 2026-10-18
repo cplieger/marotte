@@ -129,8 +129,10 @@ type acpSessionCaller interface {
 	acpCaller
 	acpSession
 
-	// CallAt is Call plus the lane position the response arrived at.
+	// CallAt is Call plus the lane position the response arrived at. It refuses session/prompt.
 	CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error)
+	// PromptAt writes the session/prompt, running commit under the engine's write lock first (bridge.Session.PromptAt).
+	PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error)
 }
 
 // No mutators.

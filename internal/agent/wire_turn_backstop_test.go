@@ -246,6 +246,29 @@ func TestKASIdle_ARunningReportInsideTheGraceKeepsTheTurn(t *testing.T) {
 	}
 }
 
+// KAS reporting a run after the grace expired but before the idle close claims the turn still stands the close
+// down: the close decides on the state it claims.
+func TestKASIdle_ARunningReportAsTheGraceExpiresKeepsTheTurn(t *testing.T) {
+	h, cs, _ := idleWakeHub(t, 20*time.Millisecond)
+	var reported atomic.Bool
+	h.coord.turns.claimHook = func() {
+		if reported.CompareAndSwap(false, true) {
+			h.coord.WireTurnActivity("c1", true)
+		}
+	}
+	send(t, h, newActivityMsg(false))
+
+	waitFor(t, reported.Load)
+	joinInflight(t, h)
+
+	if _, open := ownID(h, "c1"); !open {
+		t.Error("the turn closed after KAS reported it running, want it left open")
+	}
+	if closes := closesOf(t, logOf(t, cs, "c1")); len(closes) != 0 {
+		t.Errorf("turn_close = %+v, want none", closes)
+	}
+}
+
 // The ordinary end: KAS reports idle, then sends the turn_end; the grace then leaves the next turn KAS starts open.
 func TestKASIdle_ATurnEndInsideTheGraceLeavesTheNextTurnOpen(t *testing.T) {
 	h, cs, _ := idleWakeHub(t, 20*time.Millisecond)
@@ -419,9 +442,7 @@ var wireBackstops = []struct {
 }{
 	{"kas idle", func(t *testing.T, h *Runtime) { send(t, h, newActivityMsg(false)) }},
 	{"cancel grace", func(t *testing.T, h *Runtime) {
-		if !h.coord.ArmWireCancelGrace("c1", 20*time.Millisecond) {
-			t.Fatal("setup: no wire turn for the cancel grace to arm on")
-		}
+		armWireStopGrace(t, h, 20*time.Millisecond)
 	}},
 }
 

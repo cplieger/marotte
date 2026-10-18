@@ -112,12 +112,12 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/entry_merge.go:979",
+      "site": "internal/agent/entry_merge.go:1025",
       "form": "compare",
       "status": "aborted"
     },
     {
-      "site": "internal/agent/entry_merge.go:979",
+      "site": "internal/agent/entry_merge.go:1025",
       "form": "compare",
       "status": "completed"
     },

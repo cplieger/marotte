@@ -65,6 +65,10 @@ func (b *steerBridge) Call(ctx context.Context, method string, params any) (*mar
 	return &marotte.RPCResponse{Result: raw}, nil
 }
 
+func (b *steerBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *steerBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	resp, err := b.Call(ctx, method, params)
 	return resp, 0, err
@@ -122,7 +126,6 @@ func TestCmdSteerRemove_EachRefusalReachesTheReaderAsItsClass(t *testing.T) {
 		{refuse: SteerRefuseNotUser, wantStatus: http.StatusConflict, wantReason: SteerRefuseNotUser},
 		{refuse: SteerRefuseAgentRows, wantStatus: http.StatusConflict, wantReason: SteerRefuseAgentRows},
 		{refuse: SteerRefuseSettling, wantStatus: http.StatusConflict, wantReason: SteerRefuseSettling},
-		{refuse: SteerRefuseStarting, wantStatus: http.StatusConflict, wantReason: SteerRefuseStarting},
 		{refuse: SteerRefuseChatGone, wantStatus: http.StatusConflict, wantReason: SteerRefuseChatGone},
 		{refuse: SteerRefuseConsumed, wantStatus: http.StatusConflict, wantReason: SteerRefuseNotWaiting},
 		{refuse: SteerRefuseNoReply, wantStatus: http.StatusBadGateway},
@@ -345,21 +348,6 @@ func TestCmdSteerRemove_ADisconnectMidOpStillResubmits(t *testing.T) {
 	steers := b.callsOf(marotte.MethodSessionSteer)
 	if len(steers) != 1 || !steers[0].live {
 		t.Errorf("resend calls = %+v, want one on a live context after the reader left", steers)
-	}
-}
-
-func TestCmdSteerClear_ARefusalReachesTheReaderAsItsClass(t *testing.T) {
-	b := newSteerBridge()
-	q := clearingQueue()
-	q.discardRef = SteerRefuseChatGone
-
-	_, err := cmdSteerClear(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), clearReq("c1"))
-
-	if statusOf(err) != http.StatusConflict || reasonOf(err) != SteerRefuseChatGone {
-		t.Errorf("status = %d %q, want 409 %q", statusOf(err), reasonOf(err), SteerRefuseChatGone)
-	}
-	if got := b.methods(); len(got) != 0 {
-		t.Errorf("a refused discard reached the wire: %v", got)
 	}
 }
 

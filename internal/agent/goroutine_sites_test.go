@@ -17,13 +17,15 @@ var unheldSites = map[string]struct {
 	why   string
 	count int
 }{
-	"runtime.go (lifetime).afterUnlessDraining":     {"the gate itself, and the bare arm of a fixture with no lifetime", 2},
-	"runtime.go awaitBounded":                       {"it only waits", 1},
-	"run_asks.go (Runs).armTimersLocked":            {"kickCell marks memory and starts its work through goUnlessDraining", 1},
-	"run_asks.go (Runs).armRequeryLocked":           {"kickCell, as armTimersLocked", 1},
-	"bridge_state.go (sharedBridge).ArmCancelGrace": {"it cancels a prompt context; the held prompt goroutine closes", 1},
+	"runtime.go (lifetime).afterUnlessDraining": {"the gate itself, and the bare arm of a fixture with no lifetime", 2},
+	"runtime.go awaitBounded":                   {"it only waits", 1},
+	"run_asks.go (Runs).armTimersLocked":        {"kickCell marks memory and starts its work through goUnlessDraining", 1},
+	"run_asks.go (Runs).armRequeryLocked":       {"kickCell, as armTimersLocked", 1},
+	"turn_stop.go (chatLifecycle).armCallGraceLocked": {
+		"it cancels a prompt context; the held prompt goroutine closes", 1,
+	},
 	"turn_reap.go (bridgeCoordinator).armCompactionReapLocked": {
-		"InterruptTurn claims a cause and cancels a context; the held prompt goroutine closes", 1,
+		"it claims the turn's cause and cancels that turn's prompt context; the held prompt goroutine closes", 1,
 	},
 	"agent_terminal.go (agentTerminals).awaitExit":      {"a process-group observation its caller joins", 1},
 	"turn_finalize.go (bridgeCoordinator).publishClose": {"a fixture with no lifetime", 1},

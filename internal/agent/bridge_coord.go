@@ -999,6 +999,7 @@ func (bc *bridgeCoordinator) recordPool(msg *marotte.RPCResponse) {
 // consumeFrame translates one frame, then advances the observed position (deferred, per
 // frame): many paths consume a frame without touching a turn.
 func (bc *bridgeCoordinator) consumeFrame(chatID marotte.ChatID, origin acpResponder, gen uint64, n marotte.Notification) {
+	bc.turns.beginFrame(chatID, gen)
 	defer bc.turns.observe(chatID, gen, n.Seq)
 	bc.translateEvent(chatID, origin, n.Msg)
 }
@@ -1385,18 +1386,18 @@ func (bc *bridgeCoordinator) FinalizeLocalShellTurn(ctx context.Context, chatID 
 	bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerLocalShell, Turn: turnID})
 }
 
-// WireTurnStart handles the engine's turn_start bracket: it binds a pending prompt turn,
-// closes a bracketed own turn whose turn_end was lost, or opens a wire_turn_start turn.
+// WireTurnStart handles the engine's turn_start bracket: it binds a pending prompt turn already sent, closes the
+// own turn the bracket supersedes (bindPending), or opens a wire_turn_start turn.
 // The bind is provisional; the first agentInitiated frame revises it (ReviseTurnBinding).
 func (bc *bridgeCoordinator) WireTurnStart(ctx context.Context, chatID marotte.ChatID) {
 	bound, lost := bc.turns.bindPending(ctx, chatID)
-	if !bound && lost != "" {
-		bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerBracketLost, Turn: lost})
-		bound, _ = bc.turns.bindPending(ctx, chatID)
+	for lost != nil {
+		bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerBracketLost, Turn: lost.ID, Claimed: lost})
+		bound, lost = bc.turns.bindPending(ctx, chatID)
 	}
-	if bound {
-		if t, ok := bc.turns.ownTurn(chatID); ok && bc.steerTurnBound != nil {
-			bc.steerTurnBound(chatID, t.ID)
+	if bound != "" {
+		if bc.steerTurnBound != nil {
+			bc.steerTurnBound(chatID, bound)
 		}
 		return
 	}
@@ -1550,29 +1551,27 @@ func (bc *bridgeCoordinator) recordSteer(ctx context.Context, chatID marotte.Cha
 	}
 }
 
-// InterruptTurn records why kiro-cli abandoned a turn and trips its prompt call so the
-// failure path finalizes it; the cause is first-wins on that turn. The bridge stays alive.
-// No turn, no bridge or a claimed cause is not a failure.
-func (bc *bridgeCoordinator) InterruptTurn(chatID marotte.ChatID, reason string) {
-	t, open := bc.turns.ownTurn(chatID)
-	if !open {
-		slog.Debug("interrupt turn: no turn open", "chat_id", chatID, "reason", reason)
+// InterruptTurn records why kiro-cli abandoned the named turn and trips that turn's own prompt call so the failure
+// path finalizes it; the cause is first-wins on that turn. The bridge stays alive. A turn that closed, or one with
+// no prompt call, is not a failure: no other turn is ever reached.
+func (bc *bridgeCoordinator) InterruptTurn(chatID marotte.ChatID, turnID, reason string) {
+	cancel, ok := bc.turns.interruptTurn(chatID, turnID, marotte.InterruptCause(reason))
+	if !ok {
+		slog.Debug("interrupt turn: the turn closed or another cause claimed it",
+			"chat_id", chatID, "turn", turnID, "reason", reason)
 		return
 	}
-	if !bc.turns.interrupt(chatID, t.ID, marotte.InterruptCause(reason)) {
-		slog.Debug("interrupt turn: another cause already claimed this turn",
-			"chat_id", chatID, "turn", t.ID, "reason", reason)
+	tripPromptCall(chatID, turnID, cancel)
+}
+
+// tripPromptCall cancels an interrupted turn's own prompt call; nil is a turn with none, which only records its cause.
+func tripPromptCall(chatID marotte.ChatID, turnID string, cancel context.CancelCauseFunc) {
+	if cancel == nil {
+		slog.Debug("interrupt turn: the turn has no prompt call", "chat_id", chatID, "turn", turnID)
 		return
 	}
-	sb := bc.bridge.mgr.get(chatID)
-	if sb == nil {
-		slog.Debug("interrupt turn: no bridge", "chat_id", chatID)
-		return
-	}
-	if !sb.cancelPromptCall() {
-		slog.Debug("interrupt turn: no prompt call in flight",
-			"chat_id", chatID, "reason", reason)
-	}
+	// No cause, so the turn concludes `interrupted`.
+	cancel(nil)
 }
 
 func extractStopReason(resp *marotte.RPCResponse) marotte.StopReason {
@@ -1587,6 +1586,19 @@ func extractStopReason(resp *marotte.RPCResponse) marotte.StopReason {
 		return ""
 	}
 	return result.StopReason
+}
+
+// ChatForACPSession answers the chat whose resident session sessionID is.
+func (bc *bridgeCoordinator) ChatForACPSession(sessionID string) (marotte.ChatID, bool) {
+	if sessionID == "" {
+		return "", false
+	}
+	for chatID, sb := range bc.bridge.mgr.all() {
+		if string(sb.bridge.SessionID()) == sessionID {
+			return chatID, true
+		}
+	}
+	return "", false
 }
 
 // ParentACPSession returns the running bridge's ACP session id for chatID, or "".

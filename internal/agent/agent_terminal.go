@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/marotte/internal/ansitext"
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/sanitize"
@@ -295,15 +296,14 @@ func (at *agentTerminals) turnOf(chatID marotte.ChatID) string {
 	return turn
 }
 
-// KillForTurn kills only the running terminals the chat's current turn created; an idle chat
-// kills nothing. It leaves them registered: KAS still tracks each id and reads its output and
-// exit after the cancel, so only its release, the bridge's end, a chat delete or the drain
-// unregisters one.
-func (at *agentTerminals) KillForTurn(chatID marotte.ChatID) {
-	cur := at.turnOf(chatID)
-	if cur == "" {
+// KillForTurn kills only the running terminals the named turn created; a zero ref kills nothing.
+// It leaves them registered: KAS still tracks each id and reads its output and exit after the
+// cancel, so only its release, the bridge's end, a chat delete or the drain unregisters one.
+func (at *agentTerminals) KillForTurn(turn command.TurnRef) {
+	if !turn.Named() {
 		return
 	}
+	chatID, cur := turn.Chat, turn.Turn
 	at.mu.Lock()
 	var doomed []doomedTerminal
 	for _, id := range at.byChatID[chatID] {
@@ -504,11 +504,11 @@ var agentShell = sync.OnceValue(func() string {
 // KAS leaves `args` UNSET and puts the whole line in `command` (kiro-cli 2.18.0), so an absent
 // `args` runs through a shell and a present one, empty included, is an argv. Presence, not length,
 // decides.
-func agentCommand(ctx context.Context, command string, args *[]string) *exec.Cmd {
+func agentCommand(ctx context.Context, line string, args *[]string) *exec.Cmd {
 	if args != nil {
-		return exec.CommandContext(ctx, command, *args...) // #nosec G204 -- agent-controlled
+		return exec.CommandContext(ctx, line, *args...) // #nosec G204 -- agent-controlled
 	}
-	return exec.CommandContext(ctx, agentShell(), "-c", command) // #nosec G204 -- agent-controlled
+	return exec.CommandContext(ctx, agentShell(), "-c", line) // #nosec G204 -- agent-controlled
 }
 
 func derefArgs(args *[]string) []string {
@@ -520,9 +520,9 @@ func derefArgs(args *[]string) []string {
 
 // failCreate answers and logs a terminal/create that could not start; without it a failed exec leaves no server-side trace.
 func (at *agentTerminals) failCreate(
-	ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse, command, reason string,
+	ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse, line, reason string,
 ) {
-	slog.Warn("agent terminal create failed", "chat_id", chatID, "cmd", command, "reason", reason)
+	slog.Warn("agent terminal create failed", "chat_id", chatID, "cmd", line, "reason", reason)
 	at.fail(ctx, chatID, origin, msg, reason)
 }
 

@@ -27,6 +27,8 @@ func (r *turnRegistry) attachForward(chatID marotte.ChatID) forwardAttachment {
 	gen := lc.fwdGen
 	lc.observedSeq = 0
 	lc.forwardGone = false
+	lc.inFrame = false
+	lc.kasStepLocked(kasForwardReset, 0)
 	if lc.fwdExits == nil {
 		lc.fwdExits = make(map[uint64]chan struct{})
 	}
@@ -52,16 +54,27 @@ func (r *turnRegistry) forwardExit(chatID marotte.ChatID) <-chan struct{} {
 	return lc.fwdExits[lc.fwdGen]
 }
 
+// beginFrame marks the frame Forward is consuming until its observe, so the send gate decides only between frames.
+func (r *turnRegistry) beginFrame(chatID marotte.ChatID, gen uint64) {
+	lc := r.lifecycleFor(chatID)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if gen == lc.fwdGen {
+		lc.inFrame = true
+	}
+}
+
 // Called for every frame Forward consumes, not every fold: many frames touch no turn, and a
 // fold-bounded position could park a settle forever.
 func (r *turnRegistry) observe(chatID marotte.ChatID, gen, seq uint64) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	if gen != lc.fwdGen || seq <= lc.observedSeq {
+	if gen != lc.fwdGen || (seq <= lc.observedSeq && !lc.inFrame) {
 		return
 	}
-	lc.observedSeq = seq
+	lc.inFrame = false
+	lc.observedSeq = max(lc.observedSeq, seq)
 	lc.wakeLocked()
 }
 
@@ -75,6 +88,8 @@ func (r *turnRegistry) sealPosition(chatID marotte.ChatID, gen uint64) {
 		return
 	}
 	lc.forwardGone = true
+	lc.inFrame = false
+	lc.kasStepLocked(kasForwardReset, 0)
 	lc.wakeLocked()
 }
 

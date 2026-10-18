@@ -2,11 +2,8 @@ package agent
 
 import (
 	"context"
-	"log/slog"
 	"sync"
-	"time"
 
-	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -23,18 +20,12 @@ type sharedBridge struct {
 	bridge engineSession
 	// revertStarting runs before a checkpoint revert with the session it reverts; nil on a run host.
 	revertStarting func(session string)
-	// promptCancel trips the in-flight prompt: session/cancel is an unacked notification, so a
-	// silent KAS would block the Call forever. turnGen keeps an expired grace off a later turn;
-	// the cause tells an expired grace from other cancellations.
-	promptCancel context.CancelCauseFunc
-	cancelTimer  *time.Timer
 	// settled is the generation's readiness from the session open's first instant: openBridge hands sb to
 	// no caller before it settles.
 	settled *sessionSettle
 	// closeClaim is non-nil while a reload or a release owns the session's close, so its forward's end is not the
 	// session ending on its own; finishReload closes it, and an open meanwhile waits on it (claimReload).
 	closeClaim chan struct{}
-	turnGen    uint64
 	state      bridgeState
 	mu         sync.Mutex
 	// effortHealed latches the one reactive effort repair (bridgeCoordinator.healEffort).
@@ -72,14 +63,12 @@ func (sb *sharedBridge) tryAcquireForPrompt() bool {
 		return false
 	}
 	sb.state = bridgePrompting
-	sb.turnGen++
 	return true
 }
 
 func (sb *sharedBridge) releaseAfterPrompt() {
 	sb.mu.Lock()
 	sb.state = bridgeIdle
-	sb.stopCancelTimerLocked()
 	sb.mu.Unlock()
 }
 
@@ -95,14 +84,6 @@ func (sb *sharedBridge) setIdle() {
 	sb.mu.Lock()
 	sb.state = bridgeIdle
 	sb.mu.Unlock()
-}
-
-// Caller holds mu.
-func (sb *sharedBridge) stopCancelTimerLocked() {
-	if sb.cancelTimer != nil {
-		sb.cancelTimer.Stop()
-		sb.cancelTimer = nil
-	}
 }
 
 // Explicit forwards rather than an embedded engineSession, so a command.Bridge holder can never
@@ -127,6 +108,14 @@ func (sb *sharedBridge) CallAt(ctx context.Context, method string, params any) (
 	}
 	sb.beforeCall(method, s)
 	return s.CallAt(ctx, method, params)
+}
+
+func (sb *sharedBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	s := sb.current()
+	if s == nil {
+		return nil, 0, marotte.ErrSessionClosed
+	}
+	return s.PromptAt(ctx, params, commit)
 }
 
 // beforeCall announces a checkpoint revert before it is sent, since KAS writes the files back
@@ -167,78 +156,6 @@ func (sb *sharedBridge) TryAcquireForPrompt() bool {
 
 func (sb *sharedBridge) ReleaseAfterPrompt() {
 	sb.releaseAfterPrompt()
-}
-
-// BeginPromptCall records the in-flight prompt's cancel func and returns the
-// generation of the turn it belongs to.
-func (sb *sharedBridge) BeginPromptCall(cancel context.CancelCauseFunc) uint64 {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	sb.promptCancel = cancel
-	return sb.turnGen
-}
-
-// EndPromptCall forgets the in-flight prompt's cancel func and disarms any
-// pending cancel-grace timer.
-func (sb *sharedBridge) EndPromptCall() {
-	sb.mu.Lock()
-	sb.promptCancel = nil
-	sb.stopCancelTimerLocked()
-	sb.mu.Unlock()
-}
-
-// PromptGeneration returns the current turn generation.
-func (sb *sharedBridge) PromptGeneration() uint64 {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	return sb.turnGen
-}
-
-// ArmCancelGrace starts the unresponsive-cancel budget for turn gen; an acked cancel costs one stopped timer.
-func (sb *sharedBridge) ArmCancelGrace(gen uint64, d time.Duration) bool {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	if sb.state != bridgePrompting || sb.turnGen != gen || sb.promptCancel == nil {
-		return false
-	}
-	sb.stopCancelTimerLocked()
-	sb.cancelTimer = time.AfterFunc(d, func() {
-		// Timer.Stop does not halt a running func, so decide again under the lock.
-		cancel, ok := sb.shouldTripCancelGrace(gen)
-		if !ok {
-			return
-		}
-		slog.Warn("cancel unacked within grace; unblocking the turn",
-			"grace", d, "turn_gen", gen)
-		cancel(command.ErrCancelGraceExpired)
-	})
-	return true
-}
-
-// It refuses when the chat is no longer prompting, the generation moved on, or no prompt context is
-// registered.
-func (sb *sharedBridge) shouldTripCancelGrace(gen uint64) (context.CancelCauseFunc, bool) {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	if sb.state != bridgePrompting || sb.turnGen != gen || sb.promptCancel == nil {
-		return nil, false
-	}
-	return sb.promptCancel, true
-}
-
-// cancelPromptCall trips the in-flight prompt so the failure path finalizes the turn, and
-// reports whether there was one. It records no cause; that lives on the turn record.
-func (sb *sharedBridge) cancelPromptCall() bool {
-	sb.mu.Lock()
-	if sb.state != bridgePrompting || sb.promptCancel == nil {
-		sb.mu.Unlock()
-		return false
-	}
-	cancel := sb.promptCancel
-	sb.mu.Unlock()
-	// Outside the lock: cancel runs arbitrary callbacks. No cause, so the turn concludes `interrupted`.
-	cancel(nil)
-	return true
 }
 
 // claimEffortHeal reports whether the caller won the one reactive effort repair, latching it.

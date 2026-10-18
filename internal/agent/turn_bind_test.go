@@ -10,11 +10,13 @@ import (
 // ownID is the id of the chat's own open turn, read the way the lifecycle holds
 // it rather than by claiming it.
 func ownID(h *Runtime, chatID marotte.ChatID) (string, bool) {
-	t, ok := h.coord.turns.ownTurn(chatID)
-	if !ok {
+	lc := h.coord.turns.lifecycleFor(chatID)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.own == nil || lc.own.finalizing {
 		return "", false
 	}
-	return t.ID, true
+	return lc.own.ID, true
 }
 
 // pendingID reads the unacknowledged prompt turn's id from the lifecycle: bindPending retires what it binds.

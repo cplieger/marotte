@@ -47,7 +47,7 @@ func callAtAsync(t *testing.T, b *Engine) <-chan callAtResult {
 	t.Helper()
 	done := make(chan callAtResult, 1)
 	go func() {
-		_, seq, err := b.CallAt(t.Context(), marotte.MethodPrompt, map[string]any{})
+		_, seq, err := b.request(t.Context(), b.engineLane, "", marotte.MethodPrompt, map[string]any{}, nil, nil)
 		done <- callAtResult{err: err, seq: seq}
 	}()
 	return done
@@ -294,7 +294,7 @@ func TestCallAt_DuringTheExitDrainsWaitOnAResponseIsRefusedWithoutWriting(t *tes
 	awaitParkedOnMutex(t, "(*Engine).closePending")
 
 	called := callAtAsync(t, b)
-	awaitParkedOnMutex(t, "(*Engine).callAt")
+	awaitParkedOnMutex(t, "(*Engine).request")
 	var wrote bytes.Buffer
 	copied := make(chan error, 1)
 	go func() { _, cErr := io.Copy(&wrote, inR); copied <- cErr }()

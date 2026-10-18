@@ -43,8 +43,8 @@ func TestSessionState_ClosingRefusesCallsButStillResponds(t *testing.T) {
 	go func() { _ = s.Close(context.Background()) }()
 	closeFrame := k.nextMethod(methodSessionClose)
 
-	if _, err := s.Call(t.Context(), marotte.MethodPrompt, nil); !errors.Is(err, marotte.ErrSessionClosing) {
-		t.Errorf("Call on a closing session = %v, want ErrSessionClosing", err)
+	if _, _, err := s.PromptAt(t.Context(), nil, nil); !errors.Is(err, marotte.ErrSessionClosing) {
+		t.Errorf("PromptAt on a closing session = %v, want ErrSessionClosing", err)
 	}
 	if err := s.Notify(t.Context(), marotte.MethodCancel, nil); !errors.Is(err, marotte.ErrSessionClosing) {
 		t.Errorf("Notify on a closing session = %v, want ErrSessionClosing", err)
@@ -178,8 +178,8 @@ func TestSessionClose_NoReplyStaysClosingUntilEngineExit(t *testing.T) {
 		t.Fatal("an unconfirmed close ended the session; it stays closing until a reply or the engine's end")
 	case <-time.After(150 * time.Millisecond):
 	}
-	if _, err := s.Call(t.Context(), marotte.MethodPrompt, nil); !errors.Is(err, marotte.ErrSessionClosing) {
-		t.Errorf("Call on an unconfirmed close = %v, want ErrSessionClosing", err)
+	if _, _, err := s.PromptAt(t.Context(), nil, nil); !errors.Is(err, marotte.ErrSessionClosing) {
+		t.Errorf("PromptAt on an unconfirmed close = %v, want ErrSessionClosing", err)
 	}
 	k.e.Stop()
 	select {

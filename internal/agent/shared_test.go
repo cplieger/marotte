@@ -299,6 +299,12 @@ func (rt *Runtime) stageWireTurn(tb testing.TB, chatID marotte.ChatID) *turnlog.
 // stagePromptTurn opens a prompt turn and returns its id with its accumulator: an id-scoped closer given another id closes nothing.
 func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID marotte.ChatID) (string, *turnlog.Turn) {
 	tb.Helper()
+	return rt.stagePromptTurnCalling(tb, chatID, nil)
+}
+
+// stagePromptTurnCalling is stagePromptTurn for a turn whose prompt call cancel trips.
+func (rt *Runtime) stagePromptTurnCalling(tb testing.TB, chatID marotte.ChatID, cancel context.CancelCauseFunc) (string, *turnlog.Turn) {
+	tb.Helper()
 	id, err := rt.coord.OpenTurn(tb.Context(), chatID, command.TurnOpen{
 		Source: marotte.TurnSourcePrompt,
 		Prompt: &marotte.EntryPrompt{ID: "m-" + string(chatID), Text: "prompt"},
@@ -307,8 +313,12 @@ func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID marotte.ChatID) (string
 	if err != nil {
 		tb.Fatalf("OpenTurn(%q) failed: %v", chatID, err)
 	}
-	if !rt.coord.StartTurn(tb.Context(), chatID, id) {
+	if !rt.coord.StartTurn(tb.Context(), command.TurnRef{Chat: chatID, Turn: id}, cancel) {
 		tb.Fatalf("StartTurn(%q, %q) refused, so there is no turn to stage", chatID, id)
+	}
+	// The staged prompt counts as sent, so the turn_start a test delivers next is its own.
+	if _, err := rt.coord.AwaitPromptSend(tb.Context(), chatID, id); err != nil {
+		tb.Fatalf("AwaitPromptSend(%q, %q): %v", chatID, id, err)
 	}
 	log, ok := rt.coord.OwnTurn(chatID)
 	if !ok {

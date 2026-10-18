@@ -203,11 +203,15 @@ func TestSteeringInjected_WritesUnderTheSteerIDEveryTime(t *testing.T) {
 }
 
 // TestSteeringInjected_ARunNoticeCarriesItsRunsProvenance pins WHICH run and WHEN on a
-// finished run's notice; others carry neither, and an unrecorded run is written without a guess.
+// finished run's notice, found by the label its words quote; others carry neither, and an unrecorded run is written
+// without a guess.
 func TestSteeringInjected_ARunNoticeCarriesItsRunsProvenance(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	deps.userSteers = map[string]bool{"steer-1": true}
-	deps.runNotices = map[marotte.ChatID][]stagedRunNotice{"c1": {{workflowID: "wf_1", producedTs: 1_700_000_000_000}}}
+	deps.runNotices = map[marotte.ChatID][]stagedRunNotice{"c1": {
+		{workflowID: "wf_0", label: "hourly", producedTs: 1_600_000_000_000},
+		{workflowID: "wf_1", label: "nightly", producedTs: 1_700_000_000_000},
+	}}
 	tr := New(rolesOf(deps))
 
 	for _, f := range []struct {

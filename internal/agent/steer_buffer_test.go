@@ -627,6 +627,33 @@ func TestSteerRecords_ATargetReadBeforeTheClearIsConsumed(t *testing.T) {
 	}
 }
 
+// The same while the turn is starting, before KAS bound it: a target read before the clear's reply was delivered,
+// so the delete still answers consumed, and the steer the reader kept goes again.
+func TestSteerRecords_ATargetReadBeforeTheClearIsConsumedWhileTheTurnStarts(t *testing.T) {
+	s := newSteerHarness(t)
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
+	s.h.stagePromptTurn(t, s.chat)
+	s.steer("steer-a", "first")
+	s.steer("steer-b", "second")
+	if s.channel() != chanNone {
+		t.Fatalf("Setup: channel = %v, want NONE while the turn starts", s.channel())
+	}
+	op := "op-steer-a"
+	if needsClear, refuse := s.q.BeginRemove(s.chat, "steer-a", op); !needsClear || refuse != "" {
+		t.Fatalf("BeginRemove while the turn starts = %v %q, want a clear", needsClear, refuse)
+	}
+	s.recs.SteerRead(s.chat, s.kasID("steer-a"))
+
+	res := s.q.RemoveCleared(s.chat, op, s.clearKAS(), true)
+
+	if res.Reason != command.SteerRefuseConsumed {
+		t.Errorf("reason = %q, want consumed", res.Reason)
+	}
+	if res.Resend == nil || !slices.Equal(res.Resend.Keys, []string{"steer-b"}) {
+		t.Errorf("resend = %+v, want steer-b", res.Resend)
+	}
+}
+
 // wantGoneUnnoted: a deleted row leaves the dock on its removed frame and writes no transcript entry.
 func wantGoneUnnoted(t *testing.T, s *steerHarness, key string) {
 	t.Helper()
@@ -682,7 +709,7 @@ func TestSteerRecords_ADeletedRowLeavesNoEntry(t *testing.T) {
 		s.bind()
 		s.steer("steer-a", "first")
 		s.steer("steer-b", "second")
-		if needs, _ := s.q.BeginDiscard(s.chat, "op-d"); !needs {
+		if needs := s.q.BeginDiscard(s.chat, "op-d"); !needs {
 			t.Fatal("discard of rows KAS holds needs no clear")
 		}
 		s.clearKAS()
@@ -693,8 +720,8 @@ func TestSteerRecords_ADeletedRowLeavesNoEntry(t *testing.T) {
 	t.Run("by Discard all with nothing in KAS", func(t *testing.T) {
 		s := newSteerHarness(t)
 		s.q.RouteSteer(s.chat, "steer-a", "first", command.SteerHolder{Held: true, PromptClass: true})
-		if needs, refuse := s.q.BeginDiscard(s.chat, "op-d"); needs || refuse != "" {
-			t.Fatalf("BeginDiscard = %v %q, want an immediate discard", needs, refuse)
+		if needs := s.q.BeginDiscard(s.chat, "op-d"); needs {
+			t.Fatal("BeginDiscard = true, want an immediate discard")
 		}
 		wantGoneUnnoted(t, s, "steer-a")
 	})
@@ -714,23 +741,16 @@ func TestSteerRecords_ARowKASDoesNotHoldIsDeletedWithoutAClear(t *testing.T) {
 	wantGoneUnnoted(t, s, "steer-a")
 }
 
-// A delete before the turn that will read the rows has bound would clear what that
-// turn's cursor is about to read, so it waits; with no started turn it goes ahead.
-func TestSteerRecords_ADeleteInNoneIsRefusedOnlyWhileATurnIsStarting(t *testing.T) {
+// With no started turn, a queued row's delete goes to the clear.
+func TestSteerRecords_ADeleteInNoneWithNoStartedTurnGoesAhead(t *testing.T) {
 	s := newSteerHarness(t)
 	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
 	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", promptHolder)
 	s.kas(sends)
 	s.mustState("steer-a", rowQueued)
 
-	if _, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-1"); refuse != "" {
-		t.Fatalf("with no started turn BeginRemove refused %q", refuse)
-	}
-	s.q.EndOp(s.chat, "op-1")
-
-	s.h.stagePromptTurn(t, s.chat)
-	if _, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-2"); refuse != command.SteerRefuseStarting {
-		t.Errorf("with a started, unbound turn BeginRemove = %q, want starting", refuse)
+	if needsClear, refuse := s.q.BeginRemove(s.chat, "steer-a", "op-1"); refuse != "" || !needsClear {
+		t.Errorf("with no started turn BeginRemove = %v %q, want a clear", needsClear, refuse)
 	}
 }
 
@@ -861,8 +881,8 @@ func TestSteerRecords_ATurnEndingUnderADiscardLeavesALaterRowToItsEnd(t *testing
 	s := newSteerHarness(t)
 	s.steer("steer-a", "a")
 	const op = "op-discard"
-	if needs, refuse := s.q.BeginDiscard(s.chat, op); !needs || refuse != "" {
-		t.Fatalf("BeginDiscard = %v %q, want a clear", needs, refuse)
+	if needs := s.q.BeginDiscard(s.chat, op); !needs {
+		t.Fatal("BeginDiscard = false, want a clear")
 	}
 	if _, refuse := s.q.RouteSteer(s.chat, "steer-b", "b",
 		command.SteerHolder{Held: true, PromptClass: true}); refuse != "" {
@@ -1058,8 +1078,7 @@ func TestSteerRecords_DiscardLeavesARowReadBeforeTheClearRead(t *testing.T) {
 	s.bind()
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")
-	needsClear, _ := s.q.BeginDiscard(s.chat, "op-d")
-	if !needsClear {
+	if !s.q.BeginDiscard(s.chat, "op-d") {
 		t.Fatal("discard of rows KAS holds needs no clear")
 	}
 	s.recs.SteerRead(s.chat, s.kasID("steer-a"))
@@ -1640,5 +1659,20 @@ func TestSteerRecords_ReinjectedRowsAwaitAPromptUntilThePostLoadClear(t *testing
 	}
 	if rows := s.q.UnsentRows(s.chat, false); len(rows) != 1 {
 		t.Errorf("UnsentRows = %+v, want steer-a for the next close", rows)
+	}
+}
+
+// The recorded shape with KAS's queued report still in flight: a steer sent to a prompt whose execution has not
+// reported anything is not proven read, so its delete goes to KAS's clear, whose reply decides what was taken.
+func TestSteerRecords_ADeleteBeforeTheStartingTurnReportsGoesToTheClear(t *testing.T) {
+	s := newSteerHarness(t)
+	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
+	s.h.stagePromptTurn(t, s.chat)
+	sends, _ := s.q.RouteSteer(s.chat, "steer-late", "?", promptHolder)
+	s.kas(sends)
+
+	needsClear, refuse := s.q.BeginRemove(s.chat, "steer-late", "op-1")
+	if refuse != "" || !needsClear {
+		t.Errorf("BeginRemove before any report = %v %q, want a clear and resubmit", needsClear, refuse)
 	}
 }

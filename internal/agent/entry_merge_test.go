@@ -1390,3 +1390,50 @@ func TestMergeEntries_AWorkflowMessagePairsOnTheIDItsTakeUpNamed(t *testing.T) {
 		t.Fatalf("entry ids = %v, want %v:\n%s", got, want, dumpMerged(merged))
 	}
 }
+
+// The recorded shape of a restart that interrupted a prompt turn while KAS still queued it: the next load's replay
+// carried a bracket pair with no timestamp and no content, inserted after that turn. No merged
+// entry may keep ts 0: the inserted turn takes the time of the entry before it.
+func TestMergeEntries_AnInsertedTurnWithNoTimestampTakesItsPredecessors(t *testing.T) {
+	const sid = "sess-blocked"
+	rec := recTurn(t, "t-stopped",
+		openRow("t-stopped", 5, &marotte.EntryPrompt{ID: "m-asked", Text: "check the build lanes"}),
+		bindRow("t-stopped:e1", "kas-msg-1", sid),
+		liveClose("t-stopped:e2", marotte.TurnOutcomeInterrupted, marotte.StopReasonInterrupted),
+		steerRow("steer-late", marotte.EntrySteer{
+			Text: "?", Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonRestart,
+		}),
+	)
+	for i, ts := range []int64{1000, 1100, 5000, 5100} {
+		rec.Entries[i].Ts = ts
+	}
+	projected := []translate.ProjectedTurn{
+		projTurn(t, "P-stopped", openRow("P-stopped", 0, &marotte.EntryPrompt{
+			ID: "kas-msg-1", Text: "check the build lanes",
+		})),
+		projTurn(t, "proj-inserted",
+			openRow("proj-inserted", 0, nil),
+			closeRow("proj-inserted-close", marotte.EntryTurnClose{
+				Outcome: marotte.TurnOutcomeCancelled, StopReasonRaw: "cancelled",
+			}),
+		),
+	}
+	projected[0].Entries[0].Ts = 1090
+
+	merged, changed := mergeEntries([]recordTurn{rec}, projected, sid)
+	if !changed || len(merged) != 2 {
+		t.Fatalf("merged %d turns (changed %v), want the stopped turn and the inserted one:\n%s", len(merged), changed, dumpMerged(merged))
+	}
+	for _, e := range merged[1].Entries {
+		if e.Ts != 5100 {
+			t.Errorf("inserted %s ts = %d, want 5100, the entry before it", e.Kind, e.Ts)
+		}
+	}
+	for i := range merged {
+		for _, e := range merged[i].Entries {
+			if e.Ts == 0 {
+				t.Errorf("merged %s %s has ts 0", e.Kind, e.ID)
+			}
+		}
+	}
+}

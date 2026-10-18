@@ -122,7 +122,53 @@ func mergeEntries(record []recordTurn, projected []translate.ProjectedTurn, sid 
 			insert(j)
 		}
 	}
-	return out, renumber(out) || changed
+	moved := renumber(out)
+	filled := fillTimestamps(out)
+	return out, moved || filled || changed
+}
+
+// fillTimestamps gives each turn row with no timestamp one from its place in the merged log: a turn_open its own
+// turn's first, else every such row its predecessor's, else (at the head) the first after it. KAS replays turn
+// brackets and settled calls with no timestamp, so a turn inserted from the replay has no other time fact. A
+// reconciled record is the merge's own bookkeeping, not a turn row, and is left as written.
+func fillTimestamps(turns []mergedTurn) bool {
+	var f tsFill
+	for i := range turns {
+		entries := turns[i].Entries
+		for j := range entries {
+			if e := &entries[j]; e.Kind != marotte.EntryKindReconciled {
+				f.entry(e, entries)
+			}
+		}
+	}
+	return f.changed
+}
+
+// tsFill is fillTimestamps' walk: the newest timestamp seen, and the head rows waiting for the first one.
+type tsFill struct {
+	head    []*marotte.Entry
+	last    int64
+	changed bool
+}
+
+func (f *tsFill) entry(e *marotte.Entry, turn []marotte.Entry) {
+	if e.Ts == 0 && e.Kind == marotte.EntryKindTurnOpen {
+		if k := slices.IndexFunc(turn, func(x marotte.Entry) bool { return x.Ts != 0 }); k >= 0 {
+			e.Ts, f.changed = turn[k].Ts, true
+		}
+	}
+	switch {
+	case e.Ts != 0:
+		f.last = e.Ts
+		for _, h := range f.head {
+			h.Ts, f.changed = f.last, true
+		}
+		f.head = f.head[:0]
+	case f.last != 0:
+		e.Ts, f.changed = f.last, true
+	default:
+		f.head = append(f.head, e)
+	}
 }
 
 // carriedSteerKeys is every steer row key a record prompt or steer names in Resends, in any turn:

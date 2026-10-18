@@ -23,7 +23,7 @@ func TestSessionStartTimeout_KeepsEngineAndCoTenants(t *testing.T) {
 
 	prompted := make(chan error, 1)
 	go func() {
-		_, err := tenant.Call(context.Background(), marotte.MethodPrompt, map[string]any{"sessionId": tenant.SessionID()})
+		_, _, err := tenant.PromptAt(context.Background(), map[string]any{"sessionId": tenant.SessionID()}, nil)
 		prompted <- err
 	}()
 	prompt := k.nextMethod(marotte.MethodPrompt)
@@ -231,7 +231,7 @@ func TestEngineExit_ClosesEveryLaneAndFailsEveryPending(t *testing.T) {
 	failed := make(chan error, 2)
 	for _, s := range []*Session{a, b} {
 		go func() {
-			_, err := s.Call(context.Background(), marotte.MethodPrompt, map[string]any{"sessionId": s.SessionID()})
+			_, _, err := s.PromptAt(context.Background(), map[string]any{"sessionId": s.SessionID()}, nil)
 			failed <- err
 		}()
 		k.nextMethod(marotte.MethodPrompt)
@@ -273,7 +273,7 @@ func TestEngineExit_OnExitRunsBeforeAnyPendingFailsOrLaneCloses(t *testing.T) {
 		hooked <- info
 	}))
 	s = k.openedSession(nil)
-	go func() { _, _ = s.Call(context.Background(), marotte.MethodPrompt, nil) }()
+	go func() { _, _, _ = s.PromptAt(context.Background(), nil, nil) }()
 	k.nextMethod(marotte.MethodPrompt)
 	_ = k.outW.Close()
 	info := <-hooked
