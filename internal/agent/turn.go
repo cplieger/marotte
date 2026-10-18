@@ -265,13 +265,38 @@ func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, opened *marotte.Entry
 // wire frame binds, folds into or ends it, and KAS's frames open a wire turn of their own.
 func (t *activeTurn) awaitsSend() bool { return t.Source.Acknowledgeable() && !t.sent }
 
-// markSentLocked records that t's session/prompt goes out now and makes it own again if a KAS turn displaced it
-// meanwhile, as StartTurn had. Caller holds mu.
-func (lc *chatLifecycle) markSentLocked(t *activeTurn) {
-	t.sent = true
-	if lc.own == nil {
-		lc.own = t
-		lc.setStateLocked(turnOpen)
+// sendStep is the send gate's verdict on an admitted prompt's turn (markSentLocked).
+type sendStep int
+
+const (
+	sendWait      sendStep = iota // KAS reports a run, or another turn holds own until its close empties it
+	sendNow                       // t owns the chat and is marked sent
+	sendCloseFold                 // own is a fold-opened wire turn; the caller closes it, then asks again
+)
+
+// markSentLocked marks t sent only once t owns the chat, since t's run may stream before its turn_start and those
+// frames fold into own. By own's state, while KAS admits a session/prompt:
+//   - nil or t: t takes own and is sent.
+//   - an open fold-opened wire turn: no turn_end is owed for it, so the caller closes it (sendCloseFold).
+//   - any other turn, or a finalizing one: wait for its close.
+//
+// Caller holds mu, t live and unclaimed.
+func (lc *chatLifecycle) markSentLocked(t *activeTurn) sendStep {
+	o := lc.own
+	switch {
+	case !lc.kas.may().admit:
+		return sendWait
+	case o == nil || o == t:
+		t.sent = true
+		if o == nil {
+			lc.own = t
+			lc.setStateLocked(turnOpen)
+		}
+		return sendNow
+	case o.finalizing || o.bracketed || o.Source != marotte.TurnSourceWireTurnStart:
+		return sendWait
+	default:
+		return sendCloseFold
 	}
 }
 

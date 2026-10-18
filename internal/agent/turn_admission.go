@@ -305,47 +305,59 @@ func (r *turnRegistry) awaitKASIdle(ctx context.Context, chatID marotte.ChatID, 
 // errPromptTurnClosed fails a prompt whose turn a closer took while its send waited.
 var errPromptTurnClosed = errors.New("this prompt's turn closed before it was sent, so it was not sent; send it again")
 
-// AwaitPromptSend holds turnID's session/prompt while KAS reports a run (kasPermits) or a turn KAS bracketed has not
-// finished, then lets it go: no frame before the send is the prompt's (awaitsSend), so a notification re-wake in any
-// order is waited out in a turn of its own. It fails the prompt unsent only when its turn closed meanwhile or ctx ended.
+// AwaitPromptSend holds turnID's session/prompt until the prompt owns the chat while KAS admits it (markSentLocked),
+// then lets it go: no frame before the send is the prompt's (awaitsSend), so a notification re-wake in any order is
+// waited out, or closed when KAS bracketed none of it, in a turn of its own. It fails the prompt unsent only when its
+// turn closed meanwhile or ctx ended.
 func (bc *bridgeCoordinator) AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) error {
-	return bc.turns.awaitPromptSend(ctx, chatID, turnID)
+	for {
+		fold, err := bc.turns.awaitPromptSend(ctx, chatID, turnID)
+		if err != nil || fold == "" {
+			return err
+		}
+		slog.Info("closing the agent's unbracketed turn so an admitted prompt can be sent", "chat_id", chatID, "turn", fold)
+		bc.finalizeTurn(ctx, chatID, &turnClose{
+			Closer: closerKASIdle, Stop: marotte.StopReasonUnknown, Reason: kasIdleReason, Turn: fold,
+		})
+	}
 }
 
-// awaitPromptSend is AwaitPromptSend's wait. A run KAS starts while the send is on the wire is still not seen: KAS
-// offers no execution token to make the handoff atomic, so its turn_start binds provisionally (ReviseTurnBinding).
-func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) error {
+// awaitPromptSend is AwaitPromptSend's wait, answering the fold-opened turn the caller must close before the prompt
+// can own the chat, "" once it is sent. A run KAS starts while the send is on the wire is still not seen: KAS offers
+// no execution token to make the handoff atomic, so its turn_start binds provisionally (ReviseTurnBinding).
+func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (string, error) {
 	lc, ok := r.lookup(chatID)
 	if !ok {
-		return nil
+		return "", nil
 	}
 	warn := time.NewTimer(kasHoldWarnAfter)
 	defer warn.Stop()
 	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		lc.mu.Lock()
 		t := lc.liveLocked(turnID)
 		if t == nil || t.finalizing {
 			lc.mu.Unlock()
-			return errPromptTurnClosed
+			return "", errPromptTurnClosed
 		}
-		// A closing KAS turn still holds own, so the send waits for its finish and then takes own (markSentLocked).
-		kasTurn := lc.own != nil && lc.own != t && lc.own.bracketed
-		sendable := lc.kas.may().admit && !kasTurn
-		if sendable {
-			lc.markSentLocked(t)
-		}
-		changed := lc.changed
+		step, own, changed := lc.markSentLocked(t), lc.own, lc.changed
 		lc.mu.Unlock()
-		if sendable {
-			return nil
+		switch step {
+		case sendNow:
+			return "", nil
+		case sendCloseFold:
+			return own.ID, nil
+		case sendWait:
 		}
 		select {
 		case <-changed:
 		case <-warn.C:
-			slog.Warn("kiro-cli still reports the session busy; the chat's admitted prompt waits for it",
+			slog.Warn("the chat's admitted prompt still waits for kiro-cli's run or the open turn to end",
 				"chat_id", chatID, "waited", kasHoldWarnAfter)
 		case <-ctx.Done():
-			return ctx.Err()
+			return "", ctx.Err()
 		}
 	}
 }
