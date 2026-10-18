@@ -112,6 +112,17 @@ func (lt *lifetime) goClaimed(claim func() (work func())) bool {
 	return true
 }
 
+// goLoopUnlessDraining runs fn on loops unless Shutdown has begun: for a goroutine started after New that lives
+// until done, which Shutdown signals before it waits on loops.
+func (lt *lifetime) goLoopUnlessDraining(fn func()) {
+	lt.drainGate.RLock()
+	defer lt.drainGate.RUnlock()
+	if lt.draining.Load() {
+		return
+	}
+	lt.loops.Go(fn)
+}
+
 // goLaneUnlessDraining runs fn on lanes unless Shutdown has begun: for an engine-lane consumer, which lives as long as
 // its engine.
 func (lt *lifetime) goLaneUnlessDraining(fn func()) {
@@ -584,6 +595,8 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		}
 	}
 	h.signin.onChange(h.onSignInChange)
+	runs.gate.wire(h.signin.answerability())
+	h.signin.onAnswerability(runs.gateMoved)
 	requireCollaborators(h)
 	h.sessionSeen.chat, _ = h.sessionFingerprint(lc.shutdownCtx)
 	lc.loops.Go(h.sweepSessionsLoop)

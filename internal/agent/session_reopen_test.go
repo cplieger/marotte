@@ -48,10 +48,18 @@ func reopenFixtureIn(t *testing.T, configDir string, seed func(*fakeBridge), opt
 }
 
 // fakeOf is the fake session sb holds, read through the entry, never by door order.
+// unguarded is s past the run-work guard every engine-opened session carries (guardedSession).
+func unguarded(s engineSession) engineSession {
+	if g, ok := s.(guardedSession); ok {
+		return g.engineSession
+	}
+	return s
+}
+
 func fakeOf(sb *sharedBridge) *fakeBridge {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
-	br, _ := sb.bridge.(*fakeBridge)
+	br, _ := unguarded(sb.bridge).(*fakeBridge)
 	return br
 }
 

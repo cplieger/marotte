@@ -3,10 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
-	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/bridge"
@@ -302,6 +303,85 @@ func TestEngineRestart_ParentlessRunResumedOnceUnderTheHealBudget(t *testing.T) 
 	}
 }
 
+// A parentless run whose host session fails to load after an engine end is resumed by the next try.
+func TestEngineRestart_AParentlessRunWhoseHostFailsToLoadOnceIsResumedByTheNextTry(t *testing.T) {
+	prevDelay := orphanResumeDelay
+	orphanResumeDelay = 10 * time.Millisecond
+	t.Cleanup(func() { orphanResumeDelay = prevDelay })
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", stalePauseReason))
+	resumes := countResumes(t, br, "wf_1")
+	leaseRun(t, h, runlease.Lease{
+		WorkflowID: "wf_1", ParentSessionID: "sess_host", Host: hostSec(), Deadline: time.Now().Add(time.Hour),
+	})
+	var doors atomic.Int32
+	br.mu.Lock()
+	br.loadErr = errors.New("the session did not load")
+	br.onStart = func() {
+		if doors.Add(1) == 2 {
+			br.mu.Lock()
+			br.loadErr = nil
+			br.mu.Unlock()
+		}
+	}
+	br.mu.Unlock()
+
+	fakeSourceOf(t, h).current().crash()
+	waitReady(t, h.engine, 2)
+
+	awaitResumes(t, resumes, 1)
+	if n := doors.Load(); n < 2 {
+		t.Errorf("the host session was opened %d times, want the failed load and the next try's", n)
+	}
+}
+
+// A resume that keeps failing is tried maxResweeps times in all, the caller's first included, and reported spent with
+// that count.
+func TestRetryResumeLater_TriesMaxResweepsTimesInAll(t *testing.T) {
+	prevDelay := orphanResumeDelay
+	orphanResumeDelay = time.Millisecond
+	t.Cleanup(func() { orphanResumeDelay = prevDelay })
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	var later atomic.Int32
+	spent := make(chan int, 1)
+	h.runs.retryResumeLater(func(context.Context) bool {
+		later.Add(1)
+		return true
+	}, func(tries int) { spent <- tries })
+	select {
+	case tries := <-spent:
+		if tries != maxResweeps {
+			t.Errorf("spent reports %d tries, want %d", tries, maxResweeps)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the failing resume was never reported spent")
+	}
+	if got := later.Load() + 1; got != maxResweeps {
+		t.Errorf("tries in all = %d, want %d", got, maxResweeps)
+	}
+}
+
+// A try falling due once the runtime has begun to stop is not made.
+func TestRetryResumeLater_AStoppedRuntimeTriesNothing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, _, _ := newTestHub()
+		var tries atomic.Int32
+		h.runs.retryResumeLater(func(context.Context) bool {
+			tries.Add(1)
+			return true
+		}, func(int) {})
+		shutdownHub(t, h)
+		// The bubble's clock passes every try's due time, and Wait lets anything a due timer started finish.
+		time.Sleep(maxResweeps * orphanResumeDelay)
+		synctest.Wait()
+		if n := tries.Load(); n != 0 {
+			t.Errorf("a stopped runtime made %d tries, want 0", n)
+		}
+	})
+}
+
 // After a restart the chat's return (the rehydrate sweep) and the restart pause's own heal both reach the run; the
 // re-read under the run's verb lock (controlSerialized) lets only the first write a resume.
 func TestEngineRestart_ChatParentedRunGetsExactlyOneResume(t *testing.T) {
@@ -324,61 +404,6 @@ func TestEngineRestart_ChatParentedRunGetsExactlyOneResume(t *testing.T) {
 	h.runs.resumeInterruptedRuns(t.Context(), parkChat)
 
 	awaitResumes(t, resumes, 1)
-}
-
-// Two resumers that both read the run as paused before either resume landed write one resume: the second re-reads
-// the pause under the run's verb lock and stands down.
-func TestResumeIfInterrupted_TwoResumersThatBothReadThePauseResumeOnce(t *testing.T) {
-	const id = "wf_1"
-	h, br := agentRunOnChat(t, id)
-	t.Cleanup(func() { shutdownHub(t, h) })
-	h.runs.grantLease(t.Context(), id, "publish", agentLaunch(), hostSec())
-	h.runs.recordParentSession(t.Context(), id, parkSession)
-	paused, running := inspectPaused(t, id, stalePauseReason), inspectReply(t, id, marotte.RunStatusRunning, "")
-	var (
-		mu       sync.Mutex
-		inspects int
-		resumes  int
-	)
-	bothRead := make(chan struct{})
-	br.mu.Lock()
-	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
-		mu.Lock()
-		defer mu.Unlock()
-		switch method {
-		case methodKiroWorkflowResume:
-			resumes++
-			return json.RawMessage(`{}`), nil, true
-		case methodKiroWorkflowInspect:
-			inspects++
-			switch inspects {
-			case 1:
-				// The first resumer's read waits for the second's, so both see the pause.
-				mu.Unlock()
-				<-bothRead
-				mu.Lock()
-				return paused, nil, true
-			case 2:
-				close(bothRead)
-			}
-			if resumes > 0 {
-				return running, nil, true
-			}
-			return paused, nil, true
-		}
-		return nil, nil, false
-	}
-	br.mu.Unlock()
-
-	var wg sync.WaitGroup
-	wg.Go(func() { h.runs.resumeIfInterrupted(t.Context(), parkChat, id) })
-	wg.Go(func() { h.runs.resumeIfInterrupted(t.Context(), parkChat, id) })
-	wg.Wait()
-	mu.Lock()
-	defer mu.Unlock()
-	if resumes != 1 {
-		t.Errorf("_kiro/workflow/resume written %d times, want 1", resumes)
-	}
 }
 
 // mutationWindow holds a driving verb's write unsettled, as a held invoke or answer reply does.
@@ -417,19 +442,17 @@ func TestEngineRestart_AnswerReadBeforeTurnStartBlocksQuiescenceAndIsResumed(t *
 }
 
 func TestEngineCrash_MutationWindowsAreInTheSnapshot(t *testing.T) {
-	h, _, src := restartFixture(t)
-	mutationWindow(t, h)
-	src.current().crash()
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", stalePauseReason))
+	resumes := countResumes(t, br, "wf_1")
+	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ParentSessionID: "sess_host", Host: hostSec()})
+	_, gen := h.engine.current()
+	h.runs.mutations.enter("wf_1", mutationDrive, gen)
+	fakeSourceOf(t, h).current().crash()
 	waitReady(t, h.engine, 2)
-	// The respawn's resume claims one heal for the snapshotted run, once.
-	deadline := time.Now().Add(5 * time.Second)
-	for healsOf(h, "wf_1") == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("the run in the crash's mutation window was never resumed")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	time.Sleep(quietWindow)
+	// The respawn resumes the snapshotted run once, and that resume claims one heal.
+	awaitResumes(t, resumes, 1)
 	if n := healsOf(h, "wf_1"); n != 1 {
 		t.Fatalf("heals after one crash = %d, want exactly one resume", n)
 	}

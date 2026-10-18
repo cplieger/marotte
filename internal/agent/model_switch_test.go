@@ -254,7 +254,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openBridge: %v", err)
 	}
-	fb := sb.bridge.(*fakeBridge)
+	fb := unguarded(sb.bridge).(*fakeBridge)
 	origSessionID := fb.SessionID()
 
 	rec := postCmd(t, h, marotte.ClientCommand{
@@ -270,7 +270,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	if sb2 == nil {
 		t.Fatal("bridge gone after fast-path switch")
 	}
-	fb2 := sb2.bridge.(*fakeBridge)
+	fb2 := unguarded(sb2.bridge).(*fakeBridge)
 	if fb2.SessionID() != origSessionID {
 		t.Errorf("session id changed: %q → %q (bridge was restarted, fast path failed)",
 			origSessionID, fb2.SessionID())

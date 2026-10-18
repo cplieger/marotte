@@ -52,7 +52,7 @@
       "sites": [
         "internal/agent/bridge_coord.go:1519",
         "internal/agent/entry_merge.go:606",
-        "internal/agent/runtime.go:766"
+        "internal/agent/runtime.go:779"
       ]
     },
     {
@@ -175,7 +175,7 @@
       "label": "Not read · the session restarted",
       "sites": [
         "internal/agent/entry_merge.go:606",
-        "internal/agent/runtime.go:761"
+        "internal/agent/runtime.go:774"
       ]
     },
     {
@@ -185,7 +185,7 @@
       "label": "Mid-turn message",
       "sites": [
         "internal/agent/run_appender.go:236",
-        "internal/agent/run_message.go:491",
+        "internal/agent/run_message.go:498",
         "internal/translate/steering.go:120",
         "internal/translate/steering.go:237",
         "internal/translate/workflow_message.go:39"
@@ -246,7 +246,7 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/run_message.go:491",
+      "site": "internal/agent/run_message.go:498",
       "form": "literal",
       "origin": "user",
       "state": "read",
@@ -260,14 +260,14 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:761",
+      "site": "internal/agent/runtime.go:774",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/runtime.go:766",
+      "site": "internal/agent/runtime.go:779",
       "form": "mutation",
       "origin": "agent",
       "state": "dropped",

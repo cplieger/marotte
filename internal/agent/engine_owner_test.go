@@ -409,7 +409,7 @@ func declRuntime(t *testing.T, b *declBackend) (*Runtime, *fakeEngineSource) {
 	t.Helper()
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 	cs := newTestChatStore()
-	vault := signin.Open(t.Context(), t.TempDir(), b)
+	vault := openVault(t, t.TempDir(), b)
 	h := newRuntimeOn(context.Background(), "/tmp/work", src, cs, WithSignIn(vault, "test"))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })

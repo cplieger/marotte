@@ -518,6 +518,11 @@ type harness struct {
 	backends    []Backend
 	retryBase   time.Duration
 	verdictWait time.Duration
+	// answerWindow, renewGap and probeEvery are the vault's; newTimedHarness shortens the first two and parks
+	// the reprobe, which a test opts into.
+	answerWindow time.Duration
+	renewGap     time.Duration
+	probeEvery   time.Duration
 }
 
 func newHarness(t *testing.T, backends ...Backend) *harness {
@@ -533,7 +538,10 @@ func newRetryingHarness(t *testing.T, backends ...Backend) *harness {
 
 func newTimedHarness(t *testing.T, retryBase, wait time.Duration, backends ...Backend) *harness {
 	t.Helper()
-	h := &harness{t: t, clk: newClock(), disk: newFaultDisk(), dir: t.TempDir(), backends: backends, retryBase: retryBase, verdictWait: wait}
+	h := &harness{
+		t: t, clk: newClock(), disk: newFaultDisk(), dir: t.TempDir(), backends: backends, retryBase: retryBase, verdictWait: wait,
+		answerWindow: 200 * time.Millisecond, renewGap: 10 * time.Millisecond, probeEvery: time.Hour,
+	}
 	for _, b := range backends {
 		if fb, ok := b.(*fakeBackend); ok {
 			fb.clk = h.clk
@@ -547,7 +555,14 @@ func newTimedHarness(t *testing.T, retryBase, wait time.Duration, backends ...Ba
 func (h *harness) open() {
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel = cancel
-	h.v = open(ctx, h.dir, config{disk: h.disk, now: h.clk.now, retryBase: h.retryBase, renewBudget: 5 * time.Second, verdictWait: h.verdictWait}, h.backends...)
+	h.v = open(ctx, h.dir, h.config(h.disk), h.backends...)
+}
+
+func (h *harness) config(disk filemode.Disk) config {
+	return config{
+		disk: disk, now: h.clk.now, retryBase: h.retryBase, renewBudget: 5 * time.Second, verdictWait: h.verdictWait,
+		answerWindow: h.answerWindow, renewGap: h.renewGap, probeEvery: h.probeEvery,
+	}
 }
 
 func (h *harness) close() {
@@ -566,7 +581,7 @@ func (h *harness) reopen() {
 func (h *harness) crashed() *Vault {
 	h.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	v := open(ctx, h.dir, config{disk: filemode.OS(), now: h.clk.now, retryBase: h.retryBase, renewBudget: 5 * time.Second, verdictWait: h.verdictWait}, h.backends...)
+	v := open(ctx, h.dir, h.config(filemode.OS()), h.backends...)
 	h.t.Cleanup(func() {
 		cancel()
 		v.Wait()

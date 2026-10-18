@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -251,6 +252,100 @@ func TestSweep_AdvancesPastAFailedLaunch(t *testing.T) {
 	if got := l.launched(); got != 1 {
 		t.Errorf("a failed launch must not be retried on the next tick, got %d attempts", got)
 	}
+}
+
+// A launch refused with ErrNoRunCanStart is held, not recorded: the slot fires on a later tick inside its grace,
+// a hold that outlasts the grace is logged as that, not as an offline miss, and any other launch error is recorded.
+func TestSweep_HoldsASlotWhileNoRunCanStart(t *testing.T) {
+	due := at(2026, time.August, 4, 2, 0)
+	anchor := at(2026, time.August, 3, 12, 0)
+	refused := fmt.Errorf("%w: %w", ErrNoRunCanStart, errors.New("sign in to Kiro first"))
+
+	t.Run("held then fired", func(t *testing.T) {
+		st, l, r := newFixture(t, due.Add(30*time.Second))
+		l.failWith(refused)
+		logs := captureLogs(t)
+		r.sweep(t.Context())
+		if got := logs.String(); !strings.Contains(got, "schedule slot held until a run can start") ||
+			!strings.Contains(got, "sign in to Kiro first") || strings.Contains(got, "scheduled run did not start") {
+			t.Errorf("logs = %q, want the hold and its reason, not a launch failure", got)
+		}
+		if got := st.List()[0]; !got.Anchor.Equal(anchor) || got.LastStatus != "" {
+			t.Errorf("entry = %+v, want the anchor and outcome untouched", got)
+		}
+		l.failWith(nil)
+		r.now = func() time.Time { return due.Add(90 * time.Second) }
+		r.sweep(t.Context())
+		if got := st.List()[0]; !got.Anchor.Equal(due) || got.LastStatus != statusStarted {
+			t.Errorf("entry = %+v, want the held slot fired on the next tick", got)
+		}
+	})
+
+	t.Run("a held slot whose next launch fails is recorded", func(t *testing.T) {
+		st, l, r := newFixture(t, due.Add(30*time.Second))
+		l.failWith(refused)
+		r.sweep(t.Context())
+		l.failWith(errors.New("this recipe already has a live run"))
+		r.now = func() time.Time { return due.Add(90 * time.Second) }
+		r.sweep(t.Context())
+		if got := st.List()[0]; !got.Anchor.Equal(due) || got.LastStatus != StatusFailed {
+			t.Errorf("entry = %+v, want the failure recorded and the anchor advanced", got)
+		}
+		if n := l.launched(); n != 2 {
+			t.Errorf("launches = %d, want the held slot tried once more and no more", n)
+		}
+	})
+
+	t.Run("held past the grace", func(t *testing.T) {
+		_, l, r := newFixture(t, due.Add(30*time.Second))
+		l.failWith(refused)
+		r.sweep(t.Context())
+		logs := captureLogs(t)
+		r.now = func() time.Time { return due.Add(missGrace + time.Minute) }
+		r.sweep(t.Context())
+		if n := l.launched(); n != 1 {
+			t.Errorf("launches = %d, want none for a slot past its grace", n)
+		}
+		if got := logs.String(); !strings.Contains(got, "schedule slot missed while no run could start") {
+			t.Errorf("logs = %q, want the miss named for the hold", got)
+		}
+	})
+
+	// The slot was missed while the schedule was off, not while no run could start.
+	t.Run("a hold ends when its schedule is disabled", func(t *testing.T) {
+		st, l, r := newFixture(t, due.Add(30*time.Second))
+		l.failWith(refused)
+		r.sweep(t.Context())
+		e := st.List()[0]
+		e.Enabled = false
+		if err := st.Put(t.Context(), &e); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		r.sweep(t.Context())
+		e.Enabled = true
+		if err := st.Put(t.Context(), &e); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		logs := captureLogs(t)
+		r.now = func() time.Time { return due.Add(missGrace + time.Minute) }
+		r.sweep(t.Context())
+		if got := logs.String(); !strings.Contains(got, "schedule slot missed while offline") {
+			t.Errorf("logs = %q, want the miss of a slot no hold covers", got)
+		}
+	})
+
+	t.Run("a deleted schedule keeps no hold", func(t *testing.T) {
+		st, l, r := newFixture(t, due.Add(30*time.Second))
+		l.failWith(refused)
+		r.sweep(t.Context())
+		if err := st.Delete(t.Context(), "s1"); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		r.sweep(t.Context())
+		if len(r.held) != 0 {
+			t.Errorf("held = %v, want none for a deleted schedule", r.held)
+		}
+	})
 }
 
 // TestSweep_FiresASlotExactlyAtTheGraceEdge pins that a slot exactly missGrace late still

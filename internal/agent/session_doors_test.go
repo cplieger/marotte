@@ -33,6 +33,7 @@ func TestEnsureResident_DrivingVerbsLoadTheHostSessionFirst(t *testing.T) {
 			h, _, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
 			leaseParentless(t, h, "wf_1", "preset-at-launch")
+			br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", ""))
 			if err := tc.verb(t, h); err != nil {
 				t.Fatalf("%s: %v", tc.name, err)
 			}
@@ -195,7 +196,7 @@ func (*flowBackend) Poll(context.Context, signin.DeviceStart) (signin.Credential
 }
 
 func TestSignIn_AnotherBackendsSignInLeavesTheEngineSessionsAlone(t *testing.T) {
-	vault := signin.Open(t.Context(), t.TempDir(), &flowBackend{id: "test"}, &flowBackend{id: "other"})
+	vault := openVault(t, t.TempDir(), &flowBackend{id: "test"}, &flowBackend{id: "other"})
 	h, _ := reopenFixture(t, WithSignIn(vault, "test"))
 	settleBoot(t, h)
 	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {

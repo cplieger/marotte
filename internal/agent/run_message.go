@@ -328,14 +328,21 @@ func (rs *Runs) replayedVerb(workflowID, steerID string) (marotte.RunStepMessage
 	return verb, ok, nil
 }
 
+// steerStep admits the steer before its row is routed: a send that fails leaves the row where KAS may hold it, so a
+// refusal after routing could not roll it back.
 func (rs *Runs) steerStep(ctx context.Context, lease runLease, at stepAddr, steerID, text string) error {
+	a, err := rs.admitRunWork(refuseClosed, at.workflowID, "")
+	if err != nil {
+		return err
+	}
+	defer a.settle(at.workflowID)
 	key := marotte.StepSteerKey(at.session)
 	unlock, err := rs.steers.queue.LockSteerOps(ctx, key)
 	if err != nil {
 		return command.StatusError(http.StatusServiceUnavailable, err)
 	}
 	defer unlock()
-	t := rs.steers.steerTarget(lease, at.session)
+	t := rs.steers.steerTarget(lease, a, at.session)
 	refuse, sendErr := command.SteerInto(ctx, t, command.SteerHolder{Held: true, Live: true}, steerID, text)
 	switch {
 	case refuse == command.SteerRefuseFull:
@@ -508,27 +515,35 @@ func (rs *Runs) removeStepSteer(ctx context.Context, workflowID, nodePath, steer
 	if steerID == "" {
 		return command.StatusError(http.StatusBadRequest, command.ErrInvalidPayload)
 	}
-	return rs.withStepSteers(ctx, workflowID, nodePath, func(t command.SteerTarget) error {
+	// A removal of a row KAS may hold resubmits the rows it keeps as one steer.
+	resends := func(key marotte.ChatID) bool { return rs.steers.queue.removeResends(key, steerID) }
+	return rs.withStepSteers(ctx, workflowID, nodePath, resends, func(t command.SteerTarget) error {
 		return command.RemoveSteerFrom(ctx, t, steerID, rs.endStepSteerOp(t.Key))
 	})
 }
 
 // clearStepSteers discards every unread row of a step's dock, as the chat's steer_clear does.
 func (rs *Runs) clearStepSteers(ctx context.Context, workflowID, nodePath string) error {
-	return rs.withStepSteers(ctx, workflowID, nodePath, func(t command.SteerTarget) error {
+	return rs.withStepSteers(ctx, workflowID, nodePath, nil, func(t command.SteerTarget) error {
 		_, err := command.ClearSteersIn(ctx, t, rs.endStepSteerOp(t.Key))
 		return err
 	})
 }
 
-// withStepSteers runs op, clear and resubmit alike, under one lease. It never opens a host session: a
-// step with rows is running, and a dead host's rows were already retired.
-func (rs *Runs) withStepSteers(ctx context.Context, workflowID, nodePath string, op func(command.SteerTarget) error) error {
+// withStepSteers runs op, clear and resubmit alike, under one lease. Where sends (nil: never) reports that op may send
+// a steer, it is admitted first; sends reads under the steer op lock (LockSteerOps), so no other send moves a row
+// into KAS before op runs. It never opens a host session: a step with rows is running, and a dead host's rows were already
+// retired.
+func (rs *Runs) withStepSteers(
+	ctx context.Context, workflowID, nodePath string, sends func(marotte.ChatID) bool, op func(command.SteerTarget) error,
+) error {
 	sessions := rs.steers.sessionsAt(workflowID, nodePath)
 	if nodePath == "" || len(sessions) == 0 {
 		return command.StatusErrorReason(http.StatusNotFound, command.SteerRefuseNotWaiting,
 			errors.New("that message is no longer waiting"))
 	}
+	var a runAdmission
+	defer func() { a.settle(workflowID) }()
 	lease, err := rs.life.admit(workflowID)
 	if err != nil {
 		return command.StatusErrorReason(http.StatusConflict, string(marotte.RunStepBusy),
@@ -541,7 +556,12 @@ func (rs *Runs) withStepSteers(ctx context.Context, workflowID, nodePath string,
 		return command.StatusError(http.StatusServiceUnavailable, err)
 	}
 	defer unlock()
-	return op(rs.steers.steerTarget(lease, sessions[0]))
+	if sends != nil && sends(key) {
+		if a, err = rs.admitRunWork(refuseClosed, workflowID, ""); err != nil {
+			return err
+		}
+	}
+	return op(rs.steers.steerTarget(lease, a, sessions[0]))
 }
 
 // A step's rows are never rerouted: its turn end already retired them.
@@ -558,6 +578,11 @@ func (rt *Runtime) runStepSteerJob(job command.SteerJob) {
 		if !ok {
 			return
 		}
+		a, ok := rt.runs.admitStepFlush(ctx, job.Chat, t.workflowID)
+		if !ok {
+			return
+		}
+		defer a.settle(t.workflowID)
 		// A flush scheduled during a Delete waits for its outcome rather than dropping the rows.
 		lease, err := rt.runs.life.admitWhenSettled(ctx, t.workflowID)
 		if err != nil {
@@ -574,6 +599,33 @@ func (rt *Runtime) runStepSteerJob(job command.SteerJob) {
 		if !ok {
 			return
 		}
-		command.SendPlanned(ctx, steers.steerTarget(lease, session), steers.queue.PlanFlush(job.Chat))
+		command.SendPlanned(ctx, steers.steerTarget(lease, a, session), steers.queue.PlanFlush(job.Chat))
 	})
+}
+
+// admitStepFlush admits a step's flush, waiting while the gate refuses it rather than dropping the job: the plan moves
+// the rows it sends to where KAS may hold them, so it is made only once admitted. False at ctx's end or once the
+// step's steering target is gone: a retirement wakes the wait, as a gate move does.
+func (rs *Runs) admitStepFlush(ctx context.Context, key marotte.ChatID, workflowID string) (runAdmission, bool) {
+	for logged := false; ; logged = true {
+		// Both taken before the reads they wake, so a move or retirement between a read and the wait is not lost.
+		moved, retired := rs.gate.moves(), rs.steers.retired()
+		if _, ok := rs.steers.target(key); !ok {
+			return runAdmission{}, false
+		}
+		a, err := rs.admitRunWork(refuseClosed, workflowID, "")
+		if err == nil {
+			return a, true
+		}
+		if !logged {
+			slog.Info("a step's waiting messages wait until the agent's sign-in can be answered",
+				"workflow_id", workflowID, "chat", key, "error", err)
+		}
+		select {
+		case <-moved:
+		case <-retired:
+		case <-ctx.Done():
+			return runAdmission{}, false
+		}
+	}
 }

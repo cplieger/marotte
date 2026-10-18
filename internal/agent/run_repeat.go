@@ -9,7 +9,8 @@ import (
 // maxExtendIterations caps one extend request; KAS caps a repeat's total at 1000 and refuses beyond.
 const maxExtendIterations = 1000
 
-// extendRepeat gives a repeat paused at its cap n more iterations and re-drives the run; KAS validates nodeID.
+// extendRepeat gives a repeat paused at its cap n more iterations and re-drives the run, a person's resume
+// runTransitions decides; KAS validates nodeID.
 func (rs *Runs) extendRepeat(ctx context.Context, workflowID, nodeID string, n int) (err error) {
 	if nodeID == "" {
 		return errors.New("missing node id")
@@ -17,45 +18,18 @@ func (rs *Runs) extendRepeat(ctx context.Context, workflowID, nodeID string, n i
 	if n < 1 || n > maxExtendIterations {
 		return fmt.Errorf("iterations must be between 1 and %d", maxExtendIterations)
 	}
-	host, err := rs.ensureResident(ctx, workflowID)
-	if err != nil {
-		return err
-	}
-	if _, err = host.call(ctx, rs, workflowID, methodKiroWorkflowResume, map[string]any{
-		keyWorkflowID: workflowID,
-		"extendRepeat": map[string]any{
-			"nodeId":               nodeID,
-			"additionalIterations": n,
-		},
-	}); err != nil {
-		return err
-	}
-	rs.armDeadline(ctx, workflowID)
-	return nil
+	_, err = rs.transition(ctx, workflowID, &runRequest{want: personResume, verb: verbExtend, resume: map[string]any{
+		"extendRepeat": map[string]any{"nodeId": nodeID, "additionalIterations": n},
+	}})
+	return err
 }
 
-// finishRepeat ends a repeat paused at its cap and lets the run continue.
-func (rs *Runs) finishRepeat(ctx context.Context, workflowID, nodeID string) (err error) {
+// finishRepeat ends a repeat paused at its cap and lets the run continue, a person's finish runTransitions decides;
+// KAS validates nodeID.
+func (rs *Runs) finishRepeat(ctx context.Context, workflowID, nodeID string) error {
 	if nodeID == "" {
 		return errors.New("missing node id")
 	}
-	host, err := rs.ensureResident(ctx, workflowID)
-	if err != nil {
-		return err
-	}
-	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowUpdate, map[string]any{
-		keyWorkflowID: workflowID,
-		"action":      updateStatusAction,
-		"status":      runStepCompleted,
-		"nodeId":      nodeID,
-	})
-	if err != nil {
-		return err
-	}
-	if refusal := stepStatusRefusal(resp); refusal != "" {
-		err = fmt.Errorf("%w: %s", errStepStatusRefused, refusal)
-		return err
-	}
-	rs.armDeadline(ctx, workflowID)
-	return nil
+	_, err := rs.transition(ctx, workflowID, &runRequest{want: personFinish, verb: verbFinishLoop, node: nodeID})
+	return err
 }

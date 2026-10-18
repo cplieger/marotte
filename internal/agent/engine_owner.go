@@ -274,6 +274,7 @@ func (o *engineOwner) spawn(ctx context.Context) (engineHandle, uint64, error) {
 		h = bridgeEngine{bridge.NewEngine(path, o.lt.workDir,
 			append(opts, bridge.WithEnv(o.source.Env()), bridge.WithEnvAllow(o.source.EnvAllow()))...)}
 	}
+	h = guardedEngine{h}
 	if o.hooks.attach != nil {
 		o.hooks.attach(h, gen)
 	}
@@ -499,6 +500,30 @@ func (o *engineOwner) tryDoor() (h engineHandle, release func(), ok bool) {
 		return nil, nil, false
 	}
 	return h, o.releaseDoor, true
+}
+
+// engineDrain is a live engine draining for a restart, whose runs still run: ready closes if the restart is
+// cancelled, retired once the engine ends.
+type engineDrain struct {
+	ready   <-chan struct{}
+	retired <-chan struct{}
+}
+
+// tryDoorOrDrain is tryDoor that, on a live engine draining for a restart, reports the drain instead, in one
+// reading; neither means no engine is live, and one starting or ended runs no run.
+func (o *engineOwner) tryDoorOrDrain() (release func(), drain *engineDrain) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	switch {
+	case o.unavailable || o.engine == nil:
+		return nil, nil
+	case o.state == marotte.EngineReady:
+		o.doors++
+		return o.releaseDoor, nil
+	case o.state == marotte.EngineRestarting:
+		return nil, &engineDrain{ready: o.ready, retired: o.retired}
+	}
+	return nil, nil
 }
 
 func (o *engineOwner) releaseDoor() {

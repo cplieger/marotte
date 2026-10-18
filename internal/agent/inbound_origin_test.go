@@ -124,8 +124,12 @@ func onlyTermOf(t *testing.T, h *Runtime, origin acpResponder) (string, *agentTe
 	t.Helper()
 	h.agentTerms.mu.Lock()
 	defer h.agentTerms.mu.Unlock()
+	guarded := origin
+	if s, ok := origin.(engineSession); ok {
+		guarded = guardSession(s)
+	}
 	for id, term := range h.agentTerms.terms {
-		if term.origin == origin {
+		if term.origin == origin || term.origin == guarded {
 			return id, term
 		}
 	}

@@ -379,7 +379,12 @@ func waitKiroReason(t *testing.T, kiro *kiroRuntime, want pinstall.Reason) {
 // Open panics on a duplicate backend id or host callback, so building the compiled-in set is the check that none
 // ships; the engine's backend must be among them, or the engine spawns with no sign-in.
 func TestCompiledBackends_AreUnique(t *testing.T) {
-	vault := signin.Open(t.Context(), t.TempDir(), signinBackends()...)
+	ctx, cancel := context.WithCancel(context.Background())
+	vault := signin.Open(ctx, t.TempDir(), signinBackends()...)
+	t.Cleanup(func() {
+		cancel()
+		vault.Wait()
+	})
 	d, ok := vault.Declaration(engineBackend)
 	if !ok {
 		t.Fatalf("Declaration(%q) not found among the compiled-in backends", engineBackend)

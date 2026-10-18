@@ -142,9 +142,10 @@ func TestEnsureResident_AResidentRunIsHandedBackWithNoLoad(t *testing.T) {
 // session/load sends `_kiro/terminal/shell_type` first, so the host lane must be registered and forwarded before
 // the load (KAS 2.27.0 otherwise stalls ~2s).
 func TestEnsureResident_AHostRequestDuringTheLoadIsAnswered(t *testing.T) {
-	h, _, _ := newTestHub()
+	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	leaseParentless(t, h, "wf_1")
+	br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", ""))
 	host := &hostRequestingBridge{fakeBridge: newFakeBridge(), answered: make(chan struct{})}
 	fakeSourceOf(t, h).setFactory(func() engineSession { return host })
 
@@ -410,6 +411,7 @@ func TestEnsureResident_LoadsAParentlessRunsLaunchingSession(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	leaseParentless(t, h, "wf_1", "preset-at-launch")
+	br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", ""))
 
 	if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Resume on a non-resident parentless run = %v, want nil", err)
@@ -438,6 +440,7 @@ func TestEnsureResident_AChatParentedRunIsMadeResidentThroughItsChat(t *testing.
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
 			"workflowId": "wf_1", "status": "paused", "parentSessionId": "sess_owned",
 		}),
+		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", ""),
 	}
 	br.setCallRPCErr(methodKiroWorkflowResume, &marotte.RPCError{Code: -32603, Message: "Workflow wf_1 is not registered."})
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -585,7 +588,10 @@ func TestEnsureResident_AFailedLoadIsAFaultOnThisServer(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
-			br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
+			br.callResults = map[string]json.RawMessage{
+				methodKiroWorkflowList:    parentlessRunList("wf_1"),
+				methodKiroWorkflowInspect: inspectPaused(t, "wf_1", ""),
+			}
 			br.loadErr = tc.loadErr
 			if tc.listErr != nil {
 				br.setCallErr(methodKiroWorkflowList, tc.listErr)
@@ -698,7 +704,10 @@ func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
 func TestEnsureResident_AnIncompleteChatScanRefusesToLoadAsAHost(t *testing.T) {
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
-	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList:    parentlessRunList("wf_1"),
+		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", ""),
+	}
 	unreadable := filepath.Join(cs.Dir(), "c9")
 	if err := os.MkdirAll(unreadable, 0o700); err != nil {
 		t.Fatalf("Setup: %s", err)

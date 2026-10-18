@@ -41,6 +41,8 @@ type fakeBridge struct {
 	blockWriteOn map[string]chan struct{}
 	// onCall answers a Call instead of the scripted result, delivering its frames before returning, as KAS does.
 	onCall func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)
+	// onCallFails is onCall that may also fail the Call: the transport losing the write or its reply.
+	onCallFails func(method string, params map[string]any) (res json.RawMessage, frames []*marotte.RPCResponse, ok bool, err error)
 	// refuseAfterCall is KAS refusing in band after onCall ran, so frames can fold before the refusal.
 	refuseAfterCall map[string]*marotte.RPCError
 	// failAfterCall is the transport failing after onCall ran: the words were written, then the reply was lost.
@@ -341,12 +343,22 @@ func (b *fakeBridge) callScript(
 	blocker := b.blockOn[method]
 	sessionID := b.sessionID
 	hook := b.onCall
+	failingHook := b.onCallFails
 	refusal := b.refuseAfterCall[method]
 	failure := b.failAfterCall[method]
 	b.mu.Unlock()
+	p, _ := params.(map[string]any)
 	if hook != nil {
-		p, _ := params.(map[string]any)
 		if r, hooked, ok := hook(method, p); ok {
+			res, frames = r, hooked
+		}
+	}
+	if failingHook != nil {
+		r, hooked, ok, err := failingHook(method, p)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			res, frames = r, hooked
 		}
 	}

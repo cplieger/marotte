@@ -244,29 +244,51 @@ func (q steerQueue) BeginRemove(chatID marotte.ChatID, key, opID string) (needsC
 	return needsClear, refuse
 }
 
-func (rec *steerRecord) beginRemoveLocked(key, opID string, fx *steerFx) (needsClear bool, refuse string) {
+// removeResends reports, changing nothing, whether deleting key resubmits the rows kept with it: exactly where
+// BeginRemove marks the op's rows for a clear.
+func (q steerQueue) removeResends(chatID marotte.ChatID, key string) (resends bool) {
+	q.do(chatID, func(rec *steerRecord, _ *steerFx) {
+		_, rule, refuse := rec.removePlanLocked(key)
+		resends = refuse == "" && rule == rResubmit
+	})
+	return resends
+}
+
+// removePlanLocked is deleting key's decision, changing nothing: the row, its delete rule, or the refusal.
+func (rec *steerRecord) removePlanLocked(key string) (w *dockRow, rule rowRule, refuse string) {
 	if slices.ContainsFunc(rec.others, func(o marotte.SteerQueuedPayload) bool { return o.SteerID == key }) {
-		return false, command.SteerRefuseNotUser
+		return nil, rUnhandled, command.SteerRefuseNotUser
 	}
-	w := rec.row(key)
+	w = rec.row(key)
 	switch {
 	case w == nil:
-		return false, command.SteerRefuseNotWaiting
+		return nil, rUnhandled, command.SteerRefuseNotWaiting
 	case w.owner != "" && w.state.inKAS():
-		return false, command.SteerRefuseSettling
+		return nil, rUnhandled, command.SteerRefuseSettling
+	}
+	rule = rowRuleFor(w.state, deleteEvent(w.state))
+	if rule == rResubmit {
+		if len(rec.others) > 0 {
+			return nil, rUnhandled, command.SteerRefuseAgentRows
+		}
+	}
+	return w, rule, ""
+}
+
+func (rec *steerRecord) beginRemoveLocked(key, opID string, fx *steerFx) (needsClear bool, refuse string) {
+	w, rule, refuse := rec.removePlanLocked(key)
+	if refuse != "" {
+		return false, refuse
 	}
 	w.owner = ""
 	ev := deleteEvent(w.state)
-	switch rowRuleFor(w.state, ev) {
+	switch rule {
 	case rDeleted:
 		retire(w, nil, fx)
 		if channelRule(rec.channel, ev) == cOwed && rec.probe == "" && len(rec.unownedWaiting()) == 0 {
 			rec.channel = chanUnconfirmed
 		}
 	case rResubmit:
-		if len(rec.others) > 0 {
-			return false, command.SteerRefuseAgentRows
-		}
 		rec.mark(opID, key)
 		return true, ""
 	case rUnhandled, rImpossible, rKeep, rRead, rCleared, rDiscarded, rCollect, rJoinProbe, rRoute, rDrop, rPark:

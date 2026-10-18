@@ -5,17 +5,12 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
 )
-
-// hostCallbackBudget bounds one host-callback answer: KAS has no cancel for a host request, so the engine lane
-// guarantees it an answer within this.
-const hostCallbackBudget = 30 * time.Second
 
 // attachEngineLane starts generation gen's engine-lane consumer before Start writes initialize: KAS asks for the
 // sign-in around initialize, and an unanswered ask holds the next session door. It lives as long as the engine, which
@@ -65,18 +60,7 @@ func (rt *Runtime) engineRequest(h engineHandle, msg *marotte.RPCResponse) {
 func (rt *Runtime) answerConnectionRequest(origin acpResponder, msg *marotte.RPCResponse) bool {
 	if answer, ok := rt.signin.hostCallback(msg.Method); ok {
 		id := *msg.ID
-		rt.answerUnlessDraining(origin, msg, func() {
-			ctx, cancel := context.WithTimeout(rt.lifecycle.shutdownCtx, hostCallbackBudget)
-			defer cancel()
-			result, rpcErr := answer(ctx)
-			var err error
-			if rpcErr != nil {
-				err = rpcErr
-			}
-			if wErr := origin.Respond(ctx, id, result, err); wErr != nil {
-				slog.Warn("engine: the sign-in answer could not be written", "error", wErr)
-			}
-		})
+		rt.answerUnlessDraining(origin, msg, func() { rt.answerHostCallback(origin, id, answer) })
 		return true
 	}
 	switch msg.Method {
@@ -102,6 +86,28 @@ func (rt *Runtime) answerConnectionRequest(origin acpResponder, msg *marotte.RPC
 func (rt *Runtime) answerUnlessDraining(origin acpResponder, msg *marotte.RPCResponse, answer func()) {
 	if !rt.lifecycle.goUnlessDraining(answer) {
 		rt.answerUnknownSession(origin, msg)
+	}
+}
+
+// answerHostCallback answers one host callback; the vault bounds its own answer (signin.Vault.Answer). A refusal
+// waits in Runs.pauseBeforeRefusal and, when the gate is open, is asked once more: a refusal while the gate stays
+// open has no run pause to wait for.
+func (rt *Runtime) answerHostCallback(
+	origin acpResponder, id int64, answer func(context.Context) (json.RawMessage, *marotte.RPCError),
+) {
+	ctx := rt.lifecycle.shutdownCtx
+	result, rpcErr := answer(ctx)
+	for rpcErr != nil && rt.runs.pauseBeforeRefusal(ctx) {
+		if result, rpcErr = answer(ctx); rpcErr != nil && rt.runs.gateOpen() {
+			break
+		}
+	}
+	var err error
+	if rpcErr != nil {
+		err = rpcErr
+	}
+	if wErr := origin.Respond(ctx, id, result, err); wErr != nil {
+		slog.Warn("engine: the sign-in answer could not be written", "error", wErr)
 	}
 }
 

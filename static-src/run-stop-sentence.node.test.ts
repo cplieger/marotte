@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import {
   noteRunResumed,
@@ -42,6 +43,26 @@ describe("stopSentence", () => {
     { name: "a stop nobody asked for", s: { status: "aborted" }, want: undefined },
   ] as const)("words $name", ({ s, want }) => {
     expect(stopSentence(state(s))).toBe(want);
+  });
+});
+
+const marotteReasons = (
+  JSON.parse(
+    readFileSync(new URL("../internal/agent/testdata/pause_reasons.json", import.meta.url), "utf8"),
+  ) as { reasons: string[] }
+).reasons;
+
+describe("stopSentence on marotte's own pause, shared with Go", () => {
+  it.each(marotteReasons)("names no initiator for %s", (reason) => {
+    expect(
+      stopSentence(state({ status: "paused", stopInitiator: "user", stopReason: reason })),
+    ).toBe(`Paused: ${reason}`);
+  });
+
+  it.each(marotteReasons)("keeps the user's attribution on a run no longer paused: %s", (reason) => {
+    expect(
+      stopSentence(state({ status: "aborted", stopInitiator: "user", stopReason: reason })),
+    ).toBe(`Stopped by user: ${reason}`);
   });
 });
 

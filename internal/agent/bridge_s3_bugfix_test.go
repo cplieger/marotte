@@ -32,7 +32,7 @@ func hubWithBridge(t *testing.T, workDir string, br engineSession) *Runtime {
 	if err != nil {
 		t.Fatalf("Setup: OpenBridge(c1): %v", err)
 	}
-	sb.bridge = br
+	sb.bridge = guardSession(br)
 	h.bridge.mgr.mu.Lock()
 	h.bridge.mgr.bridges["c1"] = sb
 	h.bridge.mgr.mu.Unlock()
