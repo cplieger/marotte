@@ -42,6 +42,12 @@ While a reply runs, deleting a message the agent has not read yet can leave the 
 
 Reported as [kirodotdev/Kiro#11449](https://github.com/kirodotdev/Kiro/issues/11449), open. When you delete one waiting message, marotte clears them all and sends the ones you kept again as one message. It reaches the running reply when the agent has read none of your messages in that reply yet. Otherwise it waits, and marotte sends it as your next message once the reply ends.
 
+### A message sent just after a stop can run out of view
+
+When you stop a reply while workflow messages wait for the agent, kiro-cli starts a reply of its own to pass them on. A message that reaches kiro-cli while that reply is still starting can run with none of its output in the chat. What it does still happens, such as a message to a workflow step or a new workflow, and the agent forgets it afterwards.
+
+Reported as [kirodotdev/Kiro#12011](https://github.com/kirodotdev/Kiro/issues/12011), open. marotte sends a message to kiro-cli only while kiro-cli reports the chat idle, and kiro-cli reports it busy from the stop until its own reply ends. A message you send after a stop is therefore not sent beside that reply.
+
 ### A message sent during a reply reaches its subagents
 
 The agent can hand work to subagents in a chat with **Workflows** switched off in Settings, in Plan, Autonomous and the spec modes whatever that switch says, and inside a workflow step. A message you send while it works then reaches every subagent that runs later in that reply. A subagent can stop its own task to answer it.
@@ -81,6 +87,12 @@ Reported as [kirodotdev/Kiro#11863](https://github.com/kirodotdev/Kiro/issues/11
 When a step reports or a run finishes while the chat that launched it is replying, the result waits for the agent to read it. When the reply ends with an error, or kiro-cli stops carrying unread messages into it, before the agent reads the result, the agent never gets it and keeps waiting for it.
 
 Reported as [kirodotdev/Kiro#11857](https://github.com/kirodotdev/Kiro/issues/11857), open. marotte labels the lost result "Workflow result not delivered" in the chat. While a workflow result waits beside your unread messages, marotte deletes them only all together, and that drops the result too. Ask the agent to check the run when it keeps waiting.
+
+### A message from a workflow step can keep showing as not delivered yet
+
+kiro-cli can drop messages a workflow step sent to the chat before the agent reads them, for example when a reply ends. It names the dropped messages by an id it never gave marotte, so marotte cannot tell which of the messages it shows were dropped.
+
+Reported as [kirodotdev/Kiro#12012](https://github.com/kirodotdev/Kiro/issues/12012), open. marotte does not guess. While a step's message in the chat still says "not delivered yet", marotte marks none of them as dropped, so a dropped one keeps that label. When no step's message waits, each dropped one shows as "Workflow result not delivered". After you stop a reply, marotte marks none, because kiro-cli sends them to the agent again.
 
 ### A workflow step fails while marotte is signed out
 
