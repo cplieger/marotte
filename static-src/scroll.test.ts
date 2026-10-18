@@ -3333,8 +3333,9 @@ describe("a cold row laid out above the reader", () => {
 });
 
 // WebKit can reset the scroller to 0 in a layout later in the activation task that restored a parked view (a chat
-// switch from the side menu), with the view already at its full height. The scenes reproduce that reset by collapsing
-// the view for one forced layout right after the restore.
+// switch from the side menu), with the view already at its full height. The scenes on `switchBackUnderReset` reproduce
+// that reset by collapsing the view for one forced layout right after the restore; the rest return to a parked view
+// under the reader's own scroll, or a change that moves their text or replaces the element showing it.
 describe("a parked view's restore under a platform reset", () => {
   // Anchoring off, so the controller alone holds the reader, as in an engine whose anchoring misses this geometry.
   beforeEach(async () => {
@@ -3359,11 +3360,13 @@ describe("a parked view's restore under a platform reset", () => {
     return view;
   }
 
-  /** Park `view` with the reader at `top` in `state`, switch to another view and back, and let the platform reset the
-   *  scroller in the restoring task. Returns every scrollTop an animation frame saw from then on. */
+  /** Park `view` with the reader at `top` in `state`, switch to another view and back (running `beforeReturn` just
+   *  before the restore), and let the platform reset the scroller in the restoring task. Returns every scrollTop an
+   *  animation frame saw from then on. */
   async function switchBackUnderReset(
     view: HTMLElement,
     state: "reading" | "following",
+    beforeReturn: () => void = () => undefined,
   ): Promise<number[]> {
     const wrap = scroll.getScrollEl();
     scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
@@ -3384,6 +3387,7 @@ describe("a parked view's restore under a platform reset", () => {
     scroll.detach();
     other.remove();
     view.hidden = false;
+    beforeReturn();
     scroll.attach({ el: view, ...parked });
     view.style.display = "none";
     expect(wrap.scrollTop).toBe(0);
@@ -3415,6 +3419,19 @@ describe("a parked view's restore under a platform reset", () => {
       state: scroll.readingState(),
       resume: !scrollBtn.classList.contains("hidden"),
     }).toEqual({ top: 1200, state: "reading", resume: true });
+  });
+
+  it("puts a reader back where they were reading in a view re-rendered while it was parked", async () => {
+    const view = rowsView();
+    // One page re-pointed at another run and back renders every row anew, so no element the park saw survives.
+    await switchBackUnderReset(view, "reading", () => {
+      view.replaceChildren(...[...view.children].map((row) => row.cloneNode(true)));
+    });
+
+    expect({ top: scroll.getScrollEl().scrollTop, state: scroll.readingState() }).toEqual({
+      top: 1200,
+      state: "reading",
+    });
   });
 
   it("keeps a reader who was following on the live edge in every frame", async () => {
@@ -3451,11 +3468,13 @@ describe("a parked view's restore under a platform reset", () => {
   });
 
   /** Park `view` with the reader at `top`, switch away and back, run `after` in the restoring task, and return how far
-   *  the text on the reading line had moved on screen at each of the next thirteen frames (zeros dropped). */
+   *  the text on the reading line (or `opts.ref`'s, re-read every frame) had moved on screen at each of the next
+   *  thirteen frames (zeros dropped). `opts.beforeReturn` runs just before the restore. */
   async function movesAfterReturn(
     view: HTMLElement,
     top: number,
     after: () => void,
+    opts: { ref?: () => Element; beforeReturn?: () => void } = {},
   ): Promise<{ moves: number[]; state: string }> {
     const wrap = scroll.getScrollEl();
     scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
@@ -3472,17 +3491,19 @@ describe("a parked view's restore under a platform reset", () => {
     scroll.detach();
     other.remove();
     view.hidden = false;
+    opts.beforeReturn?.();
     scroll.attach({ el: view, ...parked });
     const box = wrap.getBoundingClientRect();
-    const ref = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
-    const base = ref.getBoundingClientRect().top;
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
+    const ref = opts.ref ?? ((): Element => hit);
+    const base = ref().getBoundingClientRect().top;
     const moves: number[] = [];
     // Queued before `after`, so each frame's sample runs ahead of that frame's changes and reads what the previous
     // frame painted, never a layout its ResizeObserver delivery has yet to answer.
     const sampled = new Promise<void>((resolve) => {
       let n = 0;
       const tick = (): void => {
-        moves.push(Math.round(ref.getBoundingClientRect().top - base));
+        moves.push(Math.round(ref().getBoundingClientRect().top - base));
         if (++n < 13) {
           requestAnimationFrame(tick);
         } else {
@@ -3572,6 +3593,184 @@ describe("a parked view's restore under a platform reset", () => {
         moves: [],
         state: "reading",
       });
+    },
+  );
+
+  /** A full-window layer over the transcript, as the phone's side menu stands while it slides shut. */
+  function coverScroller(): HTMLElement {
+    const cover = document.createElement("div");
+    cover.dataset["testCover"] = "";
+    cover.style.cssText = "position:fixed;inset:0;z-index:100;";
+    document.body.appendChild(cover);
+    return cover;
+  }
+  afterEach(() => {
+    for (const cover of document.querySelectorAll("[data-test-cover]")) {
+      cover.remove();
+    }
+  });
+
+  /** Stamped 100px entries of `turn` (the first `first` px tall), as the renderer marks a turn body's rows. */
+  function entries(turn: string, first = 100): HTMLElement[] {
+    return Array.from({ length: 10 }, (_, seq) => {
+      const e = document.createElement("div");
+      e.dataset["entryTurn"] = turn;
+      e.dataset["entrySeq"] = String(seq);
+      e.style.height = `${String(seq === 0 ? first : 100)}px`;
+      return e;
+    });
+  }
+
+  /** A view of four turn cards, each a body of ten stamped entries. */
+  function cardsView(): HTMLElement {
+    const view = document.createElement("div");
+    for (let t = 0; t < 4; t++) {
+      const card = document.createElement("div");
+      const body = document.createElement("div");
+      body.append(...entries(`t${String(t)}`));
+      card.appendChild(body);
+      view.appendChild(card);
+    }
+    messagesEl.appendChild(view);
+    return view;
+  }
+
+  it.each(["none", "auto"])(
+    "keeps the reader's entry still when the turn holding it is rebuilt taller above it as the view returns (overflow-anchor: %s)",
+    async (anchor) => {
+      scroll.getScrollEl().style.overflowAnchor = anchor;
+      const view = cardsView();
+      const body = view.children[1]!.firstElementChild!;
+      const entry = (): Element =>
+        view.querySelector('[data-entry-turn="t1"][data-entry-seq="6"]')!;
+      const out = await movesAfterReturn(
+        view,
+        1500,
+        () => {
+          // A turn still open at park is rebuilt with what landed meanwhile: new elements for the same entries.
+          body.replaceChildren(...entries("t1", 300));
+        },
+        { ref: entry },
+      );
+
+      expect(out).toEqual({ moves: [], state: "reading" });
+    },
+  );
+
+  it.each(["none", "auto"])(
+    "keeps the reader's text still when the row on the reading line is replaced as the view returns and a page's skeleton lands above (overflow-anchor: %s)",
+    async (anchor) => {
+      scroll.getScrollEl().style.overflowAnchor = anchor;
+      const view = rowsView();
+      const rows = [...view.children];
+      skeleton.px = 200;
+      const out = await movesAfterReturn(
+        view,
+        500,
+        () => {
+          rows[6]!.replaceWith(rows[6]!.cloneNode(true));
+          scroll.setLoadMore(() => undefined, true);
+        },
+        { ref: () => rows[11]! },
+      );
+
+      expect({ replaced: !rows[6]!.isConnected, ...out }).toEqual({
+        replaced: true,
+        moves: [],
+        state: "reading",
+      });
+    },
+  );
+
+  it.each(["none", "auto"])(
+    "keeps the reader's text still when the row on the reading line is deleted as the view returns and a page's skeleton lands above (overflow-anchor: %s)",
+    async (anchor) => {
+      scroll.getScrollEl().style.overflowAnchor = anchor;
+      const view = rowsView();
+      const rows = [...view.children];
+      skeleton.px = 200;
+      // The text above the deleted row stays put; what followed it closes the gap.
+      const out = await movesAfterReturn(
+        view,
+        500,
+        () => {
+          rows[6]!.remove();
+          scroll.setLoadMore(() => undefined, true);
+        },
+        { ref: () => rows[5]! },
+      );
+
+      expect(out).toEqual({ moves: [], state: "reading" });
+    },
+  );
+
+  it.each(["none", "auto"])(
+    "keeps the reader's text still when the side menu still covers the transcript as the view returns and a page's skeleton lands above (overflow-anchor: %s)",
+    async (anchor) => {
+      scroll.getScrollEl().style.overflowAnchor = anchor;
+      const view = rowsView();
+      const rows = [...view.children];
+      skeleton.px = 200;
+      let cover: HTMLElement | null = null;
+      const out = await movesAfterReturn(
+        view,
+        500,
+        () => {
+          requestAnimationFrame(() => {
+            cover?.remove();
+          });
+          scroll.setLoadMore(() => undefined, true);
+        },
+        {
+          ref: () => rows[11]!,
+          beforeReturn: () => {
+            cover = coverScroller();
+          },
+        },
+      );
+
+      expect(out).toEqual({ moves: [], state: "reading" });
+    },
+  );
+
+  it.each(["none", "auto"])(
+    "puts the reader's text back where they left it when they leave under the side menu with an older page still loading (overflow-anchor: %s)",
+    async (anchor) => {
+      const wrap = scroll.getScrollEl();
+      wrap.style.overflowAnchor = anchor;
+      const view = rowsView();
+      scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+      await land();
+      readerScrollTo(wrap, 500);
+      await land();
+      skeleton.px = 200;
+      scroll.setLoadMore(() => undefined, true);
+      scroll.noteHistoryEdge(true);
+      await land();
+      const box = wrap.getBoundingClientRect();
+      const ref = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
+      const left = ref.getBoundingClientRect().top;
+      const loading = document.getElementById("load-more-skeleton") !== null;
+      const cover = coverScroller();
+      const parked = scroll.detach();
+      cover.remove();
+      view.hidden = true;
+      const other = document.createElement("div");
+      other.style.cssText = "height:2000px;";
+      messagesEl.appendChild(other);
+      scroll.attach({ el: other, scrollTop: 0, readingState: "following" });
+      await land();
+      scroll.detach();
+      other.remove();
+      view.hidden = false;
+      scroll.attach({ el: view, ...parked });
+      await land();
+
+      expect({
+        loading,
+        moved: Math.round(ref.getBoundingClientRect().top - left),
+        state: scroll.readingState(),
+      }).toEqual({ loading: true, moved: 0, state: "reading" });
     },
   );
 });
