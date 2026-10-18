@@ -40,6 +40,7 @@ const { setSessions, setActive, bumpMessages, appendEntry, getActive, applyToolP
 const { mountChatView, teardownAll } = await import("./messages.js");
 const { scrollToBottom, readingState } = await import("./scroll.js");
 const { setPinSettleMs } = await import("./scroll-controller.js");
+const { pinAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
 const { resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 const { forgetHeights } = await import("./block-heights.js");
@@ -273,14 +274,13 @@ async function loadAtLiveEdge(chat: string, live: boolean, matchAbove = false): 
   await vi.waitFor(() => {
     expect(messagesEl.querySelectorAll("[data-entry-seq]").length).toBeGreaterThan(ENTRIES / 4);
   });
-  const real = setPinSettleMs(20);
-  try {
-    scrollToBottom();
-  } finally {
-    setPinSettleMs(real);
-  }
-  await new Promise((resolve) => {
-    setTimeout(resolve, 150);
+  await pinAtLiveEdge(scrollerEl, 20, () => {
+    const real = setPinSettleMs(20);
+    try {
+      scrollToBottom();
+    } finally {
+      setPinSettleMs(real);
+    }
   });
   stageServerHits(matchAbove ? [aboveHit(), hit()] : [hit()]);
 }

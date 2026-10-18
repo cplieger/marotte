@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { signal } from "@cplieger/reactive";
 import type { PageFind } from "./find-registry.js";
 import type * as ModHistory from "./history.js";
@@ -6,6 +6,8 @@ import { ICON_TAB_RUN, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { absoluteTime } from "./relative-time.js";
 import { forgetRun, noteRunChat } from "./run-store.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 
 /**
  * Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map). The `.ts`
@@ -980,6 +982,8 @@ async function search(
   result: unknown,
   query = "redis",
 ): Promise<{ table: HTMLElement; note: HTMLElement; find: PageFind }> {
+  // The box's debounce and the popup's close fallback run on the faked clock, stepped past rather than slept out.
+  useSteppableClock();
   mountView();
   dispatch.mockResolvedValue({ sessions: [], runs: [] });
   searchDispatch.mockResolvedValue(result as never);
@@ -991,11 +995,11 @@ async function search(
   const input = document.getElementById("hist-search-input") as HTMLInputElement;
   input.value = query;
   input.dispatchEvent(new Event("input"));
-  await vi.waitFor(() => {
+  await waitForOnClock(() => {
     if (searchDispatch.mock.calls.length === 0) {
       throw new Error("not searched");
     }
-  });
+  }, FRAME_BUDGET_MS);
   await vi.waitFor(() => {
     if ((document.getElementById("hist-search-note")?.textContent ?? "") === "") {
       throw new Error("no note yet");
@@ -1010,6 +1014,9 @@ async function search(
 
 describe("history: cross-chat search", () => {
   beforeEach(resetAll);
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("renders matching CHATS in the row shape, with the hit count in the time slot", async () => {
     const { table } = await search({
@@ -1188,15 +1195,15 @@ describe("history: cross-chat search", () => {
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
     // The popup hides on transitionend (or its 400ms fallback), and focus leaves the field only then.
-    await vi.waitFor(() => {
+    await waitForOnClock(() => {
       expect(find.focused()).toBe(false);
-    });
+    }, FRAME_BUDGET_MS);
     expect(input.value).toBe("");
-    await vi.waitFor(() => {
+    await waitForOnClock(() => {
       if (table.querySelectorAll('[data-key^="s:"]').length === 0) {
         throw new Error("list not restored");
       }
-    });
+    }, FRAME_BUDGET_MS);
     expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
 
@@ -1219,11 +1226,11 @@ describe("history: cross-chat search", () => {
     const input = document.getElementById("hist-search-input") as HTMLInputElement;
     input.value = "   ";
     input.dispatchEvent(new Event("input"));
-    await vi.waitFor(() => {
+    await waitForOnClock(() => {
       if (table.querySelectorAll('[data-key^="s:"]').length === 0) {
         throw new Error("list not restored");
       }
-    });
+    }, FRAME_BUDGET_MS);
     expect(searchDispatch).not.toHaveBeenCalled();
     expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
@@ -1240,11 +1247,11 @@ describe("history: cross-chat search", () => {
     const input = document.getElementById("hist-search-input") as HTMLInputElement;
     input.value = "";
     input.dispatchEvent(new Event("input"));
-    await vi.waitFor(() => {
+    await waitForOnClock(() => {
       if (table.querySelectorAll('[data-key^="s:"]').length === 0) {
         throw new Error("list not restored");
       }
-    });
+    }, FRAME_BUDGET_MS);
     expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
 

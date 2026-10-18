@@ -1,10 +1,11 @@
 // The follow model: reading state, the live-edge pins and the reader's own gestures.
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
 
 // Read for the premise test below: the regression cases only reproduce production while `.msg-row`
 // really is a containment box, so the declaration is asserted out of the shipped stylesheet rather
 // than copied into a fixture.
 import messagesCss from "./css/13-messages.css?raw";
+import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 
 // The module builds its singleton against $.messages / $.messagesWrap at import, and reads
 // $.scrollBottom in init.
@@ -71,6 +72,16 @@ function fakeScroller(init: { scrollHeight: number; clientHeight: number; scroll
   }) as typeof el.scrollTo;
   return state;
 }
+
+// The controller's windows (READER_CONTROL_MS, PIN_SETTLE_MS) read `Date.now()`, so a faked Date
+// lets `land` step past one without sleeping it out. Only Date: the scenes' frames, observers,
+// timers and smooth flights stay real.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   scroll.resetScrollState();
@@ -379,10 +390,82 @@ function touchEvent(
   return ev;
 }
 
-/** Every pin writes synchronously now, so this covers the observer-driven state revalidation and the
- *  bottom pin's re-assert frames, not a deferred scroll write. */
+/** Every pin writes synchronously, so two frames cover the observer-driven state revalidation and
+ *  the bottom pin's re-assert frame. */
 async function settle(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 25));
+  await frames(2);
+}
+
+/** One 60Hz frame, for converting a scene's duration to the frames it spans. */
+const FRAME_MS = 1000 / 60;
+
+/** Captured at load: a case spies on `requestAnimationFrame` to count the controller's own frames,
+ *  and the waits below must not show up in that count. */
+const nextFrame = window.requestAnimationFrame.bind(window);
+
+/** Each frame resumes on a fresh task rather than inside the frame callback: code resumed there
+ *  runs before that frame's ResizeObserver delivery, where no reader input ever lands, and the
+ *  controller reads a scroll it has no event for yet as drift. A message task, because a faked
+ *  `setTimeout` never fires on its own. */
+async function frames(n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await new Promise((r) => nextFrame(r));
+    await new Promise<void>((r) => {
+      const hop = new MessageChannel();
+      hop.port1.onmessage = (): void => {
+        hop.port1.close();
+        r();
+      };
+      hop.port2.postMessage(null);
+    });
+  }
+}
+
+/** Every DOM change anywhere in the page, so a wait can tell an observer's late delivery (a
+ *  `data-near` mark, a `--scrollbar-w` write) from a scene at rest. */
+let domChanges = 0;
+const domWatch = new MutationObserver((records) => {
+  domChanges += records.length;
+});
+domWatch.observe(document.documentElement, {
+  subtree: true,
+  childList: true,
+  attributes: true,
+  characterData: true,
+});
+
+/** Consecutive frames with nothing moving before a scene counts as settled: an observer's
+ *  delivery lands one frame after the layout it answers, so one still frame can sit between a
+ *  write and its consequence. */
+const STILL_FRAMES = 2;
+
+function sceneNow(): string {
+  domChanges += domWatch.takeRecords().length;
+  const wrap = scroll.getScrollEl();
+  return [
+    wrap.scrollTop,
+    wrap.scrollHeight,
+    wrap.clientHeight,
+    scroll.readingState(),
+    scrollBtn.classList.contains("hidden"),
+    domChanges,
+  ].join("|");
+}
+
+/** Frames until the scroller, the reading state and the DOM have held still for STILL_FRAMES. */
+async function stillness(): Promise<void> {
+  const start = performance.now();
+  let seen = sceneNow();
+  let still = 0;
+  while (still < STILL_FRAMES) {
+    if (performance.now() - start > FRAME_BUDGET_MS) {
+      throw new Error(`the scene was still moving after ${String(FRAME_BUDGET_MS)}ms: ${seen}`);
+    }
+    await frames(1);
+    const now = sceneNow();
+    still = now === seen ? still + 1 : 0;
+    seen = now;
+  }
 }
 
 /** The singleton outlives every test and only some of its state is in resetScrollState's remit:
@@ -1092,11 +1175,41 @@ function zeroWrites(writes: readonly number[]): number {
   return writes.filter((top) => top === 0).length;
 }
 
-/** Longer than `settle()`: a real scroll event is delivered on its own turn, after the frame the
- *  write happened in. The argument is for a wait that has to outlast a named piece of
- *  choreography (a transition, a settle window). */
+/** Let `ms` of the controller's clock pass, and every frame the scene needs with it: whatever is
+ *  queued settles at the current time (a scroll event judged inside the reader's window stays
+ *  inside it), the clock jumps, and whatever reads the new time settles too. Under 120ms it is a
+ *  fixed frame count instead, for a scene that acts mid-flight. */
 async function land(ms = 120): Promise<void> {
-  await new Promise((r) => setTimeout(r, ms));
+  if (ms < 120) {
+    await frames(Math.ceil(ms / FRAME_MS));
+    vi.advanceTimersByTime(ms);
+    return;
+  }
+  await stillness();
+  vi.advanceTimersByTime(ms);
+  await stillness();
+}
+
+/** Resolve on the scroller's `scrollend`: a smooth flight runs on the engine's own clock, which
+ *  the controller's faked one does not move. */
+async function flightEnds(wrap: HTMLElement): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const bound = setTimeout(() => {
+      reject(
+        new Error(
+          `no scrollend within ${String(FRAME_BUDGET_MS)}ms (scrollTop ${String(wrap.scrollTop)})`,
+        ),
+      );
+    }, FRAME_BUDGET_MS);
+    wrap.addEventListener(
+      "scrollend",
+      () => {
+        clearTimeout(bound);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }
 
 /** Move the scroller AS THE READER: the input event that says whose scroll it is, then the
@@ -1886,7 +1999,9 @@ describe("the bottom pin's settle window", () => {
     scrollBtn.click();
     await land(60);
 
+    const landed = flightEnds(wrap);
     scroll.jumpTo(target, { block: "start" });
+    await landed;
     await land(500);
 
     expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
@@ -2002,8 +2117,11 @@ describe("a smooth jump's own flight", () => {
       tail.style.height = `${String(tail.offsetHeight + 10)}px`;
     }, 20);
     try {
+      const landed = flightEnds(wrap);
       scroll.jumpTo(target, { block: "start" });
-      await land(1500);
+      await landed;
+      // Growth keeps arriving after the landing, where a follow write would no longer be a flight's.
+      await frames(10);
     } finally {
       clearInterval(grow);
     }
@@ -2406,8 +2524,10 @@ describe("the self-scroll epoch", () => {
     const seen = vi.fn();
     const off = scroll.onReaderGesture(seen);
 
+    const landed = flightEnds(wrap);
     scroll.beginSelfScroll();
     scroll.scrollToOffset(400, "smooth");
+    await landed;
     await land(1000);
     off();
 
@@ -2511,12 +2631,14 @@ describe("the self-scroll epoch", () => {
     await land();
     expect(scroll.readingState()).toBe("following");
 
+    const landed = flightEnds(wrap);
     scroll.beginSelfScroll();
     scroll.scrollToOffset(500, "smooth");
     expect(scroll.readingState()).toBe("reading");
 
     // Past `scrollend` AND past SELF_SCROLL_MAX_MS, so the chunk below is delivered with the epoch
     // provably closed and the park is the only thing still holding the reader.
+    await landed;
     await land(1700);
     streaming.appendChild(document.createTextNode("a streamed chunk"));
     await land();
@@ -2623,12 +2745,14 @@ describe("the self-scroll epoch", () => {
     block(3000);
     await land();
 
+    const landed = flightEnds(wrap);
     scroll.beginSelfScroll();
     scroll.scrollToOffset(500, "smooth");
     await land(60);
     expect(wrap.scrollTop).toBeGreaterThan(900);
     const writes = recordWrites(wrap);
     foldIn(200);
+    await landed;
     await land(1000);
 
     expect(writes).toEqual([]);
@@ -2654,8 +2778,10 @@ describe("the self-scroll epoch", () => {
     const wrap = realScroller();
     block(3000);
     await land();
+    const landed = flightEnds(wrap);
     scroll.beginSelfScroll();
     scroll.scrollToOffset(500, "smooth");
+    await landed;
     await land(1000);
     expect(wrap.scrollTop).toBe(500);
 
@@ -4145,6 +4271,13 @@ describe("pagination furniture belongs to its own view", () => {
 // THREE SEAMS WHERE NOTHING ELSE CAN ANSWER.
 describe("the epoch's timed backstop", () => {
   beforeEach(realLayoutReset);
+  // The backstop is a `setTimeout`, so this block fakes it too and `land` steps the clock past it.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
 
   it("closes an epoch nothing scrolled, so the reader's next gesture is theirs", async () => {
     const wrap = realScroller();

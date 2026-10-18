@@ -45,6 +45,17 @@ function mountDialog(): void {
       <button type="button" data-pr-merge-close>Cancel</button>
       <button type="button" id="pr-merge-confirm-btn">Merge</button>
     </dialog>`;
+  endFadeAtOnce(document.getElementById("pr-merge-dialog") as HTMLDialogElement);
+}
+
+/** Most cases mount no stylesheet, so nothing animates the close and it would wait out the
+ *  library's settle ceiling: end the fade as it starts, as the shipped transition's end would. */
+function endFadeAtOnce(dlg: HTMLDialogElement): void {
+  new MutationObserver(() => {
+    if (dlg.classList.contains("is-leaving")) {
+      dlg.dispatchEvent(new TransitionEvent("transitionend"));
+    }
+  }).observe(dlg, { attributeFilter: ["class"] });
 }
 
 function handle(outcome: Record<string, unknown>): unknown {

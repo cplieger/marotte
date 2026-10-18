@@ -64,6 +64,11 @@ import { forgeRow } from "./__test-helpers__/forge-rows.js";
 import { decodeInventoryList } from "./wire/decoders.gen.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { heldFetch, json, expectBusy, expectIdle } from "./__test-helpers__/press-feedback.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   H.confirm.mockImplementation(async () => true);
@@ -166,6 +171,7 @@ describe("the New PR dialog", () => {
   }
 
   it("Open pull request is busy from the press and says a refusal in the server's words, usable again", async () => {
+    useSteppableClock();
     await open();
     const calls = heldFetch();
 
@@ -183,7 +189,7 @@ describe("the New PR dialog", () => {
         "Could not open the pull request. a pull request already exists for alice:feat/x",
       ),
     );
-    await vi.waitFor(() => expectIdle(submit()), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(submit()), 3000);
     expect(H.dialogClose).not.toHaveBeenCalled();
   });
 

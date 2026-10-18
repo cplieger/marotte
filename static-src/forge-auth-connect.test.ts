@@ -49,6 +49,11 @@ import { renderForgesPanel } from "./forge-auth.js";
 import { abortPoll } from "./forge-auth-oauth.js";
 import { apiGetTyped } from "./api-client.js";
 import { _resetForTest as resetForgeStore } from "./forge-store.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 
@@ -196,6 +201,7 @@ describe("forge-auth: the connect dialog", () => {
   });
 
   it("shows Sign in busy from the press and lands a refused start's reason in place", async () => {
+    useSteppableClock();
     const slot = await openPane("github", { github: true });
     const { answer } = deferredFetch();
     const start = slot.querySelector<HTMLButtonElement>("[data-forge-device-start]")!;
@@ -208,12 +214,9 @@ describe("forge-auth: the connect dialog", () => {
     await vi.waitFor(() => {
       expect(start.dataset["asyncStatus"]).toBe("error");
     });
-    await vi.waitFor(
-      () => {
-        expect(start.disabled).toBe(false);
-      },
-      { timeout: 3000 },
-    );
+    await waitForOnClock(() => {
+      expect(start.disabled).toBe(false);
+    }, 3000);
     expect(start.hasAttribute("aria-busy")).toBe(false);
     expect(slot.querySelector(".forge-device-start .forge-card-status")?.textContent).toBe(
       "the store cannot be written",
@@ -329,6 +332,7 @@ describe("forge-auth: the connect dialog", () => {
   });
 
   it("sends a sign-in that ran out of time once, and says so", async () => {
+    useSteppableClock();
     const slot = await openPane("gitlab");
     const sentence = "the sign-in ran out of time before it was saved; nothing changed. Try again";
     const spy = vi.fn<typeof fetch>(() =>
@@ -340,11 +344,12 @@ describe("forge-auth: the connect dialog", () => {
     connectButton(slot).click();
 
     await vi.waitFor(() => expect(statusLine(slot)).toBe(sentence));
-    await new Promise((r) => setTimeout(r, 1000));
+    await vi.advanceTimersByTimeAsync(1000);
     expect(spy).toHaveBeenCalledOnce();
   });
 
   it("sends a sign-in that met an outage three times before saying so", async () => {
+    useSteppableClock();
     const slot = await openPane("gitlab");
     const spy = vi.fn<typeof fetch>(() =>
       Promise.resolve(json({ error: "the forge did not answer", kind: "transient" }, 503)),
@@ -354,13 +359,12 @@ describe("forge-auth: the connect dialog", () => {
 
     connectButton(slot).click();
 
-    await vi.waitFor(() => expect(statusLine(slot)).toBe("the forge did not answer"), {
-      timeout: 3000,
-    });
+    await waitForOnClock(() => expect(statusLine(slot)).toBe("the forge did not answer"), 3000);
     expect(spy).toHaveBeenCalledTimes(3);
   });
 
   it("shows Connect busy from the press and re-enables it with the refusal's sentence", async () => {
+    useSteppableClock();
     const slot = await openPane("gitlab");
     const { answer } = deferredFetch();
     typeToken(slot, "glpat-bad");
@@ -374,12 +378,9 @@ describe("forge-auth: the connect dialog", () => {
     await vi.waitFor(() => {
       expect(connect.dataset["asyncStatus"]).toBe("error");
     });
-    await vi.waitFor(
-      () => {
-        expect(connect.disabled).toBe(false);
-      },
-      { timeout: 3000 },
-    );
+    await waitForOnClock(() => {
+      expect(connect.disabled).toBe(false);
+    }, 3000);
     expect(connect.hasAttribute("aria-busy")).toBe(false);
     expect(slot.querySelector("form.forge-pat-form .forge-card-status")?.textContent).toBe(
       "the token was refused",
@@ -621,6 +622,7 @@ describe("forge-auth: the connect dialog", () => {
     });
 
     it("says no supported forge answered on a family_undetected 422, sends no token connect and keeps the form filled", async () => {
+      useSteppableClock();
       const slot = await openPane("other");
       setHost(slot, "git.example.com");
       typeToken(slot, "tok-1");
@@ -644,7 +646,7 @@ describe("forge-auth: the connect dialog", () => {
         expect(statusText(slot)).toContain("git.example.com did not answer as a supported forge"),
       );
       expect(connect.dataset["asyncStatus"]).toBe("error");
-      await vi.waitFor(() => expect(connect.disabled).toBe(false), { timeout: 3000 });
+      await waitForOnClock(() => expect(connect.disabled).toBe(false), 3000);
       expect(spy).toHaveBeenCalledOnce();
       expect(slot.querySelector<HTMLInputElement>("[data-forge-host]")!.value).toBe(
         "git.example.com",
@@ -668,6 +670,7 @@ describe("forge-auth: the connect dialog", () => {
     });
 
     it("keeps Connect busy from the press until the token connect lands, across both calls", async () => {
+      useSteppableClock();
       const slot = await openPane("other");
       setHost(slot, "git.example.com");
       typeToken(slot, "tok-1");
@@ -686,7 +689,7 @@ describe("forge-auth: the connect dialog", () => {
 
       answer(1, json({ error: "the token was refused", kind: "unauthorized" }, 401));
       await vi.waitFor(() => expect(connect.dataset["asyncStatus"]).toBe("error"));
-      await vi.waitFor(() => expect(connect.disabled).toBe(false), { timeout: 3000 });
+      await waitForOnClock(() => expect(connect.disabled).toBe(false), 3000);
       expect(connect.hasAttribute("aria-busy")).toBe(false);
       expect(statusText(slot)).toBe("the token was refused");
     });
