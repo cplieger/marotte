@@ -65,7 +65,9 @@ vi.mock("./save-indicator.js", () => ({
   STEERING_SAVE_KEY: "steering",
 }));
 vi.mock("./persist.js", () => ({
+  adoptableSettings: vi.fn(() => true),
   loadSettings: vi.fn(),
+  refreshSettings: vi.fn(),
   patchSettings: vi.fn(),
   initSettingsTracking: vi.fn(),
 }));

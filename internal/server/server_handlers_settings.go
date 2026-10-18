@@ -328,6 +328,10 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		patchKeys = append(patchKeys, k)
 	}
 	_ = settings.WarnUnknownKeys(patchKeys, r.Method+" "+r.URL.Path)
+	if _, ok := patch[settings.KeySettingsRevision]; ok {
+		httpreply.BadRequest(w, settings.KeySettingsRevision+" is counted by the server and cannot be written")
+		return
+	}
 	// Refuse an ignore-file entry kiro-cli would refuse, before the write, or config.json would
 	// disagree with what is enforced.
 	if msg, ok := agentIgnorePatchRefusal(patch); !ok {
@@ -361,7 +365,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webhttp.WriteJSON(w, effectiveOf(committed, filepath.Join(s.configDir, settings.Filename), dirs, s.kiroDefaults))
-	s.agent.Broadcast(r.Context(), marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
+	s.agent.Broadcast(r.Context(), settings.UpdatedEvent(r.Context(), s.configDir))
 	// Durable: the write landed, so a closed tab must not leave bridges on the old values.
 	s.agent.ReconcileSessionSettings(durable.Context(r.Context()))
 }

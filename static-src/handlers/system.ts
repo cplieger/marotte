@@ -6,6 +6,7 @@
 import { onSSE, onBus, BUS_RECONCILE, BUS_PAGE_RESUMED, decodeEnvelope, dispatch } from "../bus.js";
 import { adoptThemeFromSettings, applyGeneralPanel, syncSettings } from "../settings.js";
 import { applyAgentDirs } from "../agent-dirs-ui.js";
+import { noteSettingsEvent } from "../persist.js";
 import { restoreLastModel, restoreLastEffort } from "../session-context.js";
 import { adoptLinkGuard } from "../link-guard.js";
 import { setWorkspaceRoot } from "../workspace.js";
@@ -23,7 +24,7 @@ import { askTarget, chatTarget, pushTargetTag, runAskTarget } from "../push-subj
 import { dropAllRunAsks, runAskPosition } from "../run-asks.js";
 import { loadList, scheduleListRetry } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
-import { refreshRetention } from "../retention.js";
+import { adoptRetention } from "../retention.js";
 import { adoptConnectRuns, invalidateCachedRuns, rebuildLiveRuns } from "../run-store.js";
 import { forgetAllStepSteers } from "../run-step-steers.js";
 import { fetchCatalog } from "../session-catalog.js";
@@ -90,27 +91,28 @@ function reconcileThinking(p: ConnectedPayload): void {
   }
 }
 
-onSSE("settings_updated", () => {
+onSSE("settings_updated", (_chatID, p) => {
+  noteSettingsEvent(p.settings_revision);
   // Use restoreLastModel (cache-only), not setLastModel — that calls
   // patchSettings, which re-broadcasts settings_updated, looping forever.
   void syncSettings().then((s) => {
-    // Null means the refetch failed; the local cache is a better answer
-    // than inventing one, and the next frame or reload re-syncs.
+    // Null means the refetch failed or answered older settings; the local cache is a better
+    // answer than inventing one, and the next frame or reload re-syncs.
     if (s === null) {
       return;
     }
+    adoptRetention(s);
     restoreLastModel(s.last_model);
     restoreLastEffort(s.last_effort_by_model);
     adoptLinkGuard(s);
     // A theme chosen on another device lands here. Safe against a loop:
     // syncSettings already seeded the write tracker from this payload.
     adoptThemeFromSettings(s);
-    // Re-seeds the controls on a second device; `refreshRetention` and the session-door reads carry the
+    // Re-seeds the controls on a second device; `adoptRetention` and the session-door reads carry the
     // effect.
     applyGeneralPanel(s);
     applyAgentDirs(s);
   });
-  void refreshRetention();
 });
 
 onSSE("engine_status", (_chatID, p) => {

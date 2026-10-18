@@ -1,5 +1,6 @@
 // Settings persistence. Debounces PATCHes to coalesce rapid writes (e.g. theme toggle +
-// notification toggle changes into one round-trip).
+// notification toggle changes into one round-trip), and owns the settings reads and the
+// revision every payload is adopted against.
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { patchAppSettings, loadSettings as loadSettingsAction } from "./actions/settings.js";
@@ -32,7 +33,7 @@ export function initSettingsTracking(s: EffectiveSettings): void {
 }
 
 /** @internal Reset module state for tests. */
-// deadset:ignore DS1004 -- test seam: resets the patch dedup tracker, queue, resolvers, key generations and debounce timer
+// deadset:ignore DS1004 -- test seam: resets the patch dedup tracker, queue, resolvers, key generations, debounce timer, settings reads and held revision
 export function __testResetTracking(): void {
   lastSentPatch = {};
   patchQueue = {};
@@ -40,6 +41,9 @@ export function __testResetTracking(): void {
   patchInputs = [];
   patchResolvers = [];
   keyGen.clear();
+  reading = null;
+  rereading = null;
+  heldRevision = 0;
   if (patchTimer !== undefined) {
     clearTimeout(patchTimer);
     patchTimer = undefined;
@@ -149,10 +153,60 @@ export function patchSettings(
   return p;
 }
 
-/** Load the effective settings, or null when the fetch itself failed. That fallback handed every
- *  caller an empty object indistinguishable from a real payload, so a network failure rendered
- *  as a full set of client-invented defaults — and it needed an eslint suppression to write,
- *  because the declared type promised what the wire did not. */
-export async function loadSettings(): Promise<EffectiveSettings | null> {
-  return await loadSettingsAction.dispatch(undefined);
+/** The settings GET in flight, and the one every refresh asked for meanwhile shares, sent once it settles. */
+let reading: Promise<EffectiveSettings | null> | null = null;
+let rereading: Promise<EffectiveSettings | null> | null = null;
+
+function startRead(): Promise<EffectiveSettings | null> {
+  const read = loadSettingsAction.dispatch(undefined);
+  reading = read;
+  // Registered before any rereading continuation, so that one finds no read in flight and sends its own.
+  void read.then(() => {
+    if (reading === read) {
+      reading = null;
+    }
+  });
+  return read;
+}
+
+/** Load the effective settings, or null when the fetch itself failed. A read already in flight is
+ *  shared; a caller reacting to a change uses refreshSettings, since that read may predate it. */
+export function loadSettings(): Promise<EffectiveSettings | null> {
+  return reading ?? startRead();
+}
+
+/** Load the effective settings from a GET sent after this call, or null when it failed. Calls made
+ *  while a read is in flight share one more, sent once it settles, so answers arrive in send order. */
+export function refreshSettings(): Promise<EffectiveSettings | null> {
+  if (reading === null) {
+    return startRead();
+  }
+  rereading ??= reading.then(() => {
+    rereading = null;
+    return startRead();
+  });
+  return rereading;
+}
+
+/** The newest settings revision this page adopted. */
+let heldRevision = 0;
+
+/** Reports whether s is at or above the newest settings revision this page adopted, and holds s's
+ *  revision if so. Every path adopting a settings payload asks first, so a late answer never paints
+ *  over a newer one. */
+export function adoptableSettings(s: EffectiveSettings): boolean {
+  if (s.settings_revision < heldRevision) {
+    return false;
+  }
+  heldRevision = s.settings_revision;
+  return true;
+}
+
+/** Take a settings_updated event's revision. Events carry the server's current count, so one below
+ *  the held revision means config.json was replaced or reset, and the held revision follows it
+ *  down: otherwise no payload would be adopted again until a reload. */
+export function noteSettingsEvent(revision: number): void {
+  if (revision < heldRevision) {
+    heldRevision = revision;
+  }
 }

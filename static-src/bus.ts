@@ -3,7 +3,12 @@
 
 import { createBus } from "@cplieger/reactive";
 
-import type { EngineStatus, NotificationPayload, RunAsksPayload } from "./wire/types.gen.js";
+import type {
+  EngineStatus,
+  NotificationPayload,
+  RunAsksPayload,
+  SettingsUpdatedPayload,
+} from "./wire/types.gen.js";
 import type {
   ServerEvent,
   ChatHeader,
@@ -106,7 +111,7 @@ export interface SSEPayloads {
   readonly decision_settled: DecisionSettledPayload;
   readonly draft_changed: DraftChangedPayload;
   readonly error: ErrorPayload;
-  readonly settings_updated: undefined;
+  readonly settings_updated: SettingsUpdatedPayload;
   readonly mcp_config_changed: undefined;
   readonly mcp_pool_changed: undefined;
   readonly mcp_connected: MCPConnectedPayload;

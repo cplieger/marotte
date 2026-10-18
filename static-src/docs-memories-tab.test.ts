@@ -38,7 +38,10 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 }));
 vi.mock("./persist.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Persist>()),
-  loadSettings: vi.fn(() => Promise.resolve({ memory_mode: H.memoryMode })),
+  loadSettings: vi.fn(() => Promise.resolve({ memory_mode: H.memoryMode, settings_revision: 0 })),
+  refreshSettings: vi.fn(() =>
+    Promise.resolve({ memory_mode: H.memoryMode, settings_revision: 0 }),
+  ),
 }));
 vi.mock("./router.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Router>()),
@@ -120,8 +123,9 @@ async function openDocs(mode: string): Promise<typeof Docs> {
   return docs;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   resetActionFramework();
+  (await import("./persist.js")).__testResetTracking();
   H.sse.clear();
   document.body.innerHTML = `
     <div id="docs-view">
@@ -198,18 +202,20 @@ describe("the Memories tab follows the Memory setting", () => {
 
   it("keeps the newest settings answer when an older read resolves after it", async () => {
     await openDocs("off");
-    const { loadSettings } = await import("./persist.js");
+    const { refreshSettings } = await import("./persist.js");
     let answerOlder: (mode: string) => void = () => undefined;
-    vi.mocked(loadSettings)
+    vi.mocked(refreshSettings)
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             answerOlder = (mode) => {
-              resolve({ memory_mode: mode } as never);
+              resolve({ memory_mode: mode, settings_revision: 1 } as never);
             };
           }),
       )
-      .mockImplementationOnce(() => Promise.resolve({ memory_mode: "learn" } as never));
+      .mockImplementationOnce(() =>
+        Promise.resolve({ memory_mode: "learn", settings_revision: 2 } as never),
+      );
 
     H.sse.get("settings_updated")?.();
     H.sse.get("settings_updated")?.();

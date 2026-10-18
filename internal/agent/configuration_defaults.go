@@ -39,7 +39,7 @@ func (st *Settings) cacheConfigurationState(raw json.RawMessage) {
 	st.kiroDefaults.stated, st.kiroDefaults.known = stated, true
 	st.kiroDefaults.mu.Unlock()
 	if !maps.Equal(before, st.KiroDefaults()) && st.broadcast != nil && st.lifecycle != nil {
-		st.broadcast(st.lifecycle.shutdownCtx, marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
+		st.broadcast(st.lifecycle.shutdownCtx, settings.UpdatedEvent(st.lifecycle.shutdownCtx, st.lifecycle.configDir))
 	}
 }
 

@@ -34,7 +34,6 @@ var emptySignalPayloads = []string{
 	"MCPPoolChangedPayload",
 	"PowersChangedPayload",
 	"RecipesChangedPayload",
-	"SettingsUpdatedPayload",
 	"SlashCommandsChangedPayload",
 	"SteeringIssuesChangedPayload",
 	"SubjectChangedPayload",

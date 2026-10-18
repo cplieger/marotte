@@ -103,6 +103,9 @@ const (
 	// overwrites. KeyFBPath is the file browser's last directory, per workspace.
 	KeyTheme  = "theme"
 	KeyFBPath = "fb_path"
+
+	// KeySettingsRevision counts the document's writes: Update owns it, and a PATCH may not set it.
+	KeySettingsRevision = "settings_revision"
 )
 
 // There is no notify_permission key: a permission ask blocks the turn, so its notice cannot
@@ -163,6 +166,7 @@ var KnownKeys = map[string]struct{}{
 	KeySupervisedDefault:        {},
 	KeyScheduledAutoApprove:     {},
 	KeySecurityProfile:          {},
+	KeySettingsRevision:         {},
 	KeyTheme:                    {},
 }
 

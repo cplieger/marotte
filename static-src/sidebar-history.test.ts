@@ -15,10 +15,6 @@ import type * as Toast from "./toast.js";
 import type * as Transport from "./transport.js";
 import type * as ApiClient from "./api-client.js";
 
-const m = vi.hoisted(() => ({
-  settings: vi.fn<() => Promise<unknown>>(),
-}));
-
 vi.mock("./router.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Router>()),
   pushRoute: vi.fn(),
@@ -83,13 +79,13 @@ vi.mock("./api-client.js", async (importOriginal) => {
   const tabs = (await import("./__test-helpers__/tabs-server.js")).tabListRead();
   return {
     ...(await importOriginal<typeof ApiClient>()),
-    apiGetTyped: vi.fn((path: string) => (path === "/api/settings" ? m.settings() : tabs(path))),
+    apiGetTyped: vi.fn((path: string) => tabs(path)),
     apiGet: vi.fn(() => Promise.resolve(null)),
   };
 });
 
 import { initSidebarHistory } from "./sidebar-history.js";
-import { refreshRetention } from "./retention.js";
+import { adoptRetention } from "./retention.js";
 import {
   openTab,
   tabIdFor,
@@ -237,11 +233,9 @@ describe("the sidebar's History button", () => {
   );
 
   it("hides with retention off and returns with it on", async () => {
-    m.settings.mockResolvedValue(settingsPayload({ chat_retention_days: 0 }));
-    await refreshRetention();
+    adoptRetention(settingsPayload({ chat_retention_days: 0 }));
     expect(el("history-btn").classList.contains("hidden")).toBe(true);
-    m.settings.mockResolvedValue(settingsPayload({ chat_retention_days: 7 }));
-    await refreshRetention();
+    adoptRetention(settingsPayload({ chat_retention_days: 7 }));
     expect(el("history-btn").classList.contains("hidden")).toBe(false);
   });
 });

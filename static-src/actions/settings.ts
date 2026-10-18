@@ -130,11 +130,11 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
 });
 
 // The generated decoder gives EffectiveSettings' required fields runtime force; a decode failure
-// (including an empty-body 2xx) resolves null and each caller leaves its UI as it was.
+// (including an empty-body 2xx) resolves null and each caller leaves its UI as it was. No `dedupe`:
+// persist.ts decides when a read in flight is shared, and a refresh must not join one sent before its change.
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
 export const loadSettings = apiAction<void, EffectiveSettings>({
   name: "settings.load",
-  dedupe: true,
   retryable: retryNetwork,
   request: () => ({ method: "GET", path: "/api/settings" }),
   decode: (data) => decodeEffectiveSettings(data),

@@ -344,8 +344,8 @@ func TestSettingsGet_ThenPatchPersistsOnlyTheStoredKeys(t *testing.T) {
 	if err := json.Unmarshal(raw, &onDisk); err != nil {
 		t.Fatalf("parse %s: %v", raw, err)
 	}
-	if len(onDisk) != 2 {
-		t.Errorf("config.json holds %d keys (%s), want exactly 2 — the stored theme and the patched fb_path", len(onDisk), raw)
+	if len(onDisk) != 3 {
+		t.Errorf("config.json holds %d keys (%s), want exactly 3 — the stored theme, the patched fb_path and the write's revision", len(onDisk), raw)
 	}
 	for _, unwanted := range []string{settings.KeyKnowledgeEnabled, settings.KeyChatRetentionDays, settings.KeyNotifyAgentFinished} {
 		if _, ok := onDisk[unwanted]; ok {

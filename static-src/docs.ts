@@ -35,7 +35,8 @@ import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { agentRunButton } from "./agent-run.js";
 import { mountNewDocButton } from "./docs-new.js";
 import { renderMemoriesPanel, setMemoryCountsListener } from "./memories.js";
-import { loadSettings } from "./persist.js";
+import { adoptableSettings, loadSettings, refreshSettings } from "./persist.js";
+import type { EffectiveSettings } from "./persist.js";
 import { renderPowersPanel, setPowerCountsListener } from "./powers.js";
 import { setDocsTab as setTabRoute } from "./tabs.js";
 import { initSegmentedBar, setSegmentHidden } from "./segmented-bar.js";
@@ -271,17 +272,12 @@ export function forceDocsTab(tab: DocsTab): DocsTab {
   return applied;
 }
 
-/** Numbers each settings read so only the newest answer lands: reads overlap and resolve in any order. */
-let memoryRead = 0;
-
-function refreshMemoryAvailability(): void {
-  const read = ++memoryRead;
-  void loadSettings().then((s) => {
-    if (read !== memoryRead) {
-      return;
-    }
+function refreshMemoryAvailability(read: () => Promise<EffectiveSettings | null>): void {
+  void read().then((s) => {
     if (s !== null) {
-      memoryOff.value = s.memory_mode === "off";
+      if (adoptableSettings(s)) {
+        memoryOff.value = s.memory_mode === "off";
+      }
     } else if (memoryOff.peek() === null) {
       // Never answered: offer the tab rather than leave a segment whose panel never renders.
       memoryOff.value = false;
@@ -415,7 +411,7 @@ function initDocsView(): void {
       renderActive();
     }
   });
-  refreshMemoryAvailability();
+  refreshMemoryAvailability(loadSettings);
 
   subscribe(configStanding, () => {
     renderActive();
@@ -428,7 +424,7 @@ function initDocsView(): void {
   );
   registerCleanup(
     onSSE("settings_updated", () => {
-      refreshMemoryAvailability();
+      refreshMemoryAvailability(refreshSettings);
       if ($.docsView.offsetParent !== null) {
         loadDocs();
       }

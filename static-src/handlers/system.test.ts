@@ -96,7 +96,7 @@ vi.mock("../status.js", () => ({
   // Present-but-undefined, for the reason above.
   updateContextBar: undefined,
 }));
-vi.mock("../retention.js", () => ({ refreshRetention: vi.fn() }));
+vi.mock("../retention.js", () => ({ adoptRetention: vi.fn() }));
 
 // A call count is the assertion: the catalog rides no frame, so a gap is the only signal that it
 // may have changed during the outage.
@@ -1051,18 +1051,20 @@ describe("the reconcile runs the shared turn teardown", () => {
   });
 });
 
-// `refreshRetention` and the session-door capability reads carry the EFFECT; this re-seeds the
+// `adoptRetention` and the session-door capability reads carry the EFFECT; this re-seeds the
 // controls on a second device (as `syncSettings` does for notifications).
 describe("settings_updated re-seeds the General panel", () => {
-  it("hands the refetched payload to applyGeneralPanel", async () => {
+  it("hands the refetched payload to applyGeneralPanel and the retention state", async () => {
     const { syncSettings, applyGeneralPanel } = await import("../settings.js");
+    const { adoptRetention } = await import("../retention.js");
     const payload = settingsPayload({ chat_retention_days: -1 });
     vi.mocked(syncSettings).mockResolvedValueOnce(payload);
 
-    fireSSE("settings_updated", "", {});
+    fireSSE("settings_updated", "", { settings_revision: 0 });
     await vi.waitFor(() => {
       expect(applyGeneralPanel).toHaveBeenCalledWith(payload);
     });
+    expect(adoptRetention).toHaveBeenCalledWith(payload);
   });
 
   it("adopts the refetched additional directories as linkable roots", async () => {
@@ -1071,7 +1073,7 @@ describe("settings_updated re-seeds the General panel", () => {
       settingsPayload({ additional_directories: ["/data"] }),
     );
 
-    fireSSE("settings_updated", "", {});
+    fireSSE("settings_updated", "", { settings_revision: 0 });
     await vi.waitFor(() => {
       expect(additionalDirectories()).toEqual(["/data"]);
     });
@@ -1088,13 +1090,14 @@ describe("settings_updated re-seeds the General panel", () => {
     };
     window.addEventListener("unhandledrejection", onReject);
     try {
-      fireSSE("settings_updated", "", {});
+      fireSSE("settings_updated", "", { settings_revision: 0 });
       // Two task boundaries: the rejection is raised inside the refetch's own `.then`, so
       // the event is delivered a task after the microtask that produced it.
       await new Promise((r) => setTimeout(r, 0));
       await new Promise((r) => setTimeout(r, 0));
 
       expect(applyGeneralPanel).not.toHaveBeenCalled();
+      expect(vi.mocked((await import("../retention.js")).adoptRetention)).not.toHaveBeenCalled();
       expect(rejected, "the refusal is a return, not a throw").toEqual([]);
     } finally {
       window.removeEventListener("unhandledrejection", onReject);

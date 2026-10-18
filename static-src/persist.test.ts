@@ -22,9 +22,12 @@ vi.mock("./toast.js", () => ({
 }));
 
 import {
+  adoptableSettings,
   patchSettings,
   initSettingsTracking,
   loadSettings,
+  noteSettingsEvent,
+  refreshSettings,
   __testResetTracking,
 } from "./persist.js";
 
@@ -452,6 +455,91 @@ describe("loadSettings", () => {
     await expect(loadSettings()).resolves.toEqual(
       settingsPayload({ last_model: "sonnet", chat_retention_days: 30 }),
     );
+  });
+});
+
+describe("settings reads in flight", () => {
+  let answers: ((s: ReturnType<typeof settingsPayload>) => void)[];
+
+  beforeEach(() => {
+    answers = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            answers.push((s) => {
+              resolve(
+                new Response(JSON.stringify(s), {
+                  status: 200,
+                  headers: { "content-type": "application/json" },
+                }),
+              );
+            });
+          }),
+      ),
+    );
+    __testResetTracking();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function settle(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it("shares a read in flight with a plain load", async () => {
+    const first = loadSettings();
+    const second = loadSettings();
+    await settle();
+    expect(answers).toHaveLength(1);
+    answers[0]?.(settingsPayload({ settings_revision: 3 }));
+    expect((await first)?.settings_revision).toBe(3);
+    expect((await second)?.settings_revision).toBe(3);
+  });
+
+  it("answers a refresh from a read sent after it, one for every refresh made meanwhile", async () => {
+    const first = loadSettings();
+    const refreshes = [refreshSettings(), refreshSettings()];
+    await settle();
+    expect(answers, "no read starts while one is in flight").toHaveLength(1);
+
+    answers[0]?.(settingsPayload({ settings_revision: 3 }));
+    await vi.waitFor(() => {
+      expect(answers, "one more read once the first settled").toHaveLength(2);
+    });
+    await settle();
+    expect(answers, "the refreshes share that one read").toHaveLength(2);
+    answers[1]?.(settingsPayload({ settings_revision: 4 }));
+    expect((await first)?.settings_revision).toBe(3);
+    for (const r of refreshes) {
+      expect((await r)?.settings_revision).toBe(4);
+    }
+  });
+});
+
+describe("adoptableSettings", () => {
+  beforeEach(() => {
+    __testResetTracking();
+  });
+
+  it("accepts a revision at or above the one held, and refuses one below it", () => {
+    expect(adoptableSettings(settingsPayload({ settings_revision: 2 }))).toBe(true);
+    expect(adoptableSettings(settingsPayload({ settings_revision: 2 }))).toBe(true);
+    expect(adoptableSettings(settingsPayload({ settings_revision: 1 }))).toBe(false);
+    expect(adoptableSettings(settingsPayload({ settings_revision: 3 }))).toBe(true);
+    expect(adoptableSettings(settingsPayload({ settings_revision: 2 }))).toBe(false);
+  });
+
+  it("follows an event's revision down, and never up", () => {
+    expect(adoptableSettings(settingsPayload({ settings_revision: 5 }))).toBe(true);
+    noteSettingsEvent(7);
+    expect(adoptableSettings(settingsPayload({ settings_revision: 5 }))).toBe(true);
+    noteSettingsEvent(1);
+    expect(adoptableSettings(settingsPayload({ settings_revision: 1 }))).toBe(true);
+    expect(adoptableSettings(settingsPayload({ settings_revision: 0 }))).toBe(false);
   });
 });
 

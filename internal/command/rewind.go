@@ -333,5 +333,5 @@ func RecordEffortSeed(ctx context.Context, bus broadcaster, configDir, model str
 		slog.Warn("effort seed not recorded", "model", model, "level", level, keyError, err)
 		return
 	}
-	bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
+	bus.Broadcast(ctx, settings.UpdatedEvent(ctx, configDir))
 }

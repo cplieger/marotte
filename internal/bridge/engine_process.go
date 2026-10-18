@@ -315,7 +315,6 @@ func (e *Engine) startProcess() error {
 		_ = stdoutPipe.Close()
 		return fmt.Errorf("stderr pipe: %w", err)
 	}
-	e.stdin.Store(&stdinPipe{w: stdin})
 	// A frameReader, because an oversize frame must be survivable (bridge_frame.go).
 	e.stdout = newFrameReader(bufio.NewReaderSize(stdoutPipe, stdoutBufSize))
 	if startErr := e.cmd.Start(); startErr != nil {
@@ -324,6 +323,8 @@ func (e *Engine) startProcess() error {
 		_ = stderrPipe.Close()
 		return fmt.Errorf("start kiro-cli acp: %w", startErr)
 	}
+	// Published only once Start returned: a failed write starts a teardown that reads cmd.Process, which Start writes.
+	e.stdin.Store(&stdinPipe{w: stdin})
 	e.mu.Lock()
 	e.startedAt = time.Now()
 	e.mu.Unlock()

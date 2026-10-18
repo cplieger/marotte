@@ -632,8 +632,11 @@ type ToolJobOutputPayload struct {
 	Lines []string `json:"lines"`
 }
 
-// SettingsUpdatedPayload is the payload for type="settings_updated".
-type SettingsUpdatedPayload struct{}
+// SettingsUpdatedPayload is the payload for type="settings_updated": SettingsRevision is
+// config.json's revision when the event was sent, so a settings read below it predates the change.
+type SettingsUpdatedPayload struct {
+	SettingsRevision uint64 `json:"settings_revision"`
+}
 
 // TangentMergedPayload is the payload for type="tangent_merged": the summary reached
 // ParentChatID as a prompt or a queued follow-up. OpID echoes the merge_tangent command's.

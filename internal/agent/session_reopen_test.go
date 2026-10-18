@@ -244,6 +244,8 @@ var configWrites = []struct {
 	{key: settings.KeyTheme, value: "light", reach: reachNoChat},
 	{key: settings.KeyFBPath, value: "/workspace", reach: reachNoChat},
 	{key: settings.KeyLastMergeMethod, value: "squash", reach: reachNoChat},
+	// Update writes it on every write, so a session door reading it would reopen every chat on any change.
+	{key: settings.KeySettingsRevision, value: 42, reach: reachNoChat},
 	{key: settings.KeyEngineHeapMiB, value: 1024, reach: reachEngine},
 	{key: settings.KeyAdditionalDirectories, value: grantableDirList, reach: reachReopen},
 }

@@ -1,6 +1,7 @@
-// The boot: five reads in the FIRST FRAME, each adopted in its own region as it lands;
+// The boot: four reads in the FIRST FRAME, each adopted in its own region as it lands;
 // nothing waits on the identity verdict. Two orderings are real: the tab set follows the
-// chat fold (a chat tab is named from the chat store), and retention precedes it.
+// chat fold (a chat tab is named from the chat store), and the settings answer, which holds
+// retention, precedes it.
 // `applyRoute` is injected so boot.test.ts can observe it without route-apply's graph.
 
 import { subscribeByName } from "./actions/index.js";
@@ -34,6 +35,7 @@ import {
   renderIdentity,
   restoreAll,
 } from "./settings.js";
+import { adoptableSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import { restoreLastEffort, restoreLastModel } from "./session-context.js";
 import { adoptLinkGuard } from "./link-guard.js";
@@ -61,7 +63,7 @@ import { initEngineStatus } from "./engine-status.js";
 import { initStatusVersions, setStatus } from "./status.js";
 import type { ConnectionStatus } from "./types.js";
 import { loadVersions } from "./versions.js";
-import { refreshRetention } from "./retention.js";
+import { adoptRetention } from "./retention.js";
 import {
   registerRunLogObserver,
   registerRunStateDemand,
@@ -109,22 +111,21 @@ export async function startBoot(d: BootDeps): Promise<void> {
 
     // `identity` needs no rejection handler: every failure IS its `unavailable` arm
     // (identity.ts). Nor does `snapshotRead`, which resolves null for every failure.
-    const settingsRead = loadSettings();
+    const settingsAdopted = loadSettings().then(adoptSettings);
     const identity = resolveIdentity();
     const chatsRead = loadList();
-    const retentionRead = refreshRetention();
     const snapshotRead = readBootSnapshot();
 
     // The workspace region owns every view the boot swaps, so it is what the animation
     // flag waits on: a slow whoami must not hold the first tab switch's transition back.
-    const workspace = restoreWorkspace(chatsRead, retentionRead, snapshotRead).finally(() => {
+    const workspace = restoreWorkspace(chatsRead, settingsAdopted, snapshotRead).finally(() => {
       // The route has been applied (or the region failed), so ordinary pushes resume.
       // This covers a throw inside the region; the catch below covers one before it.
       releaseLocation();
       markBootDone();
     });
     await Promise.allSettled([
-      settingsRead.then(adoptSettings),
+      settingsAdopted,
       identity.then((v) => adoptIdentity(v, workspace)),
       identity.then(adoptShell),
       workspace,
@@ -140,11 +141,13 @@ export async function startBoot(d: BootDeps): Promise<void> {
 /**
  * The settings answer: theme, model and effort seeds, workspace prefs. Null means the
  * fetch FAILED, so nothing is restored: an invented value would persist on the next write.
+ * Nor is an answer older than settings a write or an event already brought.
  */
 function adoptSettings(settings: EffectiveSettings | null): void {
-  if (settings === null) {
+  if (settings === null || !adoptableSettings(settings)) {
     return;
   }
+  adoptRetention(settings);
   restoreLastModel(settings.last_model);
   restoreLastEffort(settings.last_effort_by_model);
   adoptLinkGuard(settings);
@@ -222,7 +225,7 @@ async function adoptIdentity(v: IdentityVerdict, workspace: Promise<boolean>): P
  */
 async function restoreWorkspace(
   chatsRead: Promise<boolean>,
-  retentionRead: Promise<void>,
+  settingsAdopted: Promise<void>,
   snapshotRead: Promise<BootSnapshot | null>,
 ): Promise<boolean> {
   // RACED against the chat list: the paint REPLACES the chat store, so it may only precede
@@ -257,7 +260,7 @@ async function restoreWorkspace(
     // Both awaits sit OUTSIDE the suppression window below: a window spanning an await
     // silences every shell push.
     try {
-      await retentionRead;
+      await settingsAdopted;
     } catch {
       /* the close path reads the default */
     }

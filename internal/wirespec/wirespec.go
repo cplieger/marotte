@@ -104,6 +104,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.TurnClosedPayload](),
 	wiregen.TypeRef[marotte.SteerQueuedPayload](),
 	wiregen.TypeRef[marotte.TangentMergedPayload](),
+	wiregen.TypeRef[marotte.SettingsUpdatedPayload](),
 	wiregen.TypeRef[marotte.AgentNoticePayload](),
 	wiregen.TypeRef[marotte.SystemNoticePayload](),
 	// Before the two types that reference it.
@@ -452,6 +453,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "tool_job_output", TypeName: "ToolJobOutputPayload"},
 	{EventType: "steer_queued", TypeName: "SteerQueuedPayload"},
 	{EventType: "tangent_merged", TypeName: "TangentMergedPayload"},
+	{EventType: "settings_updated", TypeName: "SettingsUpdatedPayload"},
 	{EventType: "agent_notice", TypeName: "AgentNoticePayload"},
 	{EventType: "system_notice", TypeName: "SystemNoticePayload"},
 	// The agent-terminal trio.

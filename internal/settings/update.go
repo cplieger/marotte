@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/memlimit"
@@ -22,7 +23,9 @@ var ErrUnreadable = errors.New("settings: stored document unreadable")
 // Update applies fn to the stored document and writes it back atomically under ONE per-
 // configDir lock across read, merge and write, so concurrent writers drop no key. An
 // unreadable document refuses (ErrUnreadable): merging over an empty map would destroy every
-// key fn does not name. An absent file is ordinary. The merged document is returned.
+// key fn does not name. An absent file is ordinary. Each write sets KeySettingsRevision to one
+// above the stored value, whatever fn put there; a refusal writes nothing. The merged document
+// is returned.
 func Update(ctx context.Context, configDir string, fn func(doc map[string]json.RawMessage) error) (map[string]json.RawMessage, error) {
 	if configDir == "" {
 		return nil, errors.New("settings: no config dir")
@@ -39,9 +42,11 @@ func Update(ctx context.Context, configDir string, fn func(doc map[string]json.R
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
 	}
+	next := revisionOf(doc) + 1
 	if mErr := fn(doc); mErr != nil {
 		return nil, mErr
 	}
+	doc[KeySettingsRevision] = json.RawMessage(strconv.FormatUint(next, 10))
 	pretty, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return nil, err
