@@ -8,8 +8,8 @@ let bootSeq = 0;
 vi.mock("./platform.js", () => ({ fixIOSViewport: vi.fn(), isIOS: false }));
 vi.mock("./pill-expand.js", () => ({ collapseAll: vi.fn() }));
 // The session carries ONE prior user prompt, which the ArrowUp case at the bottom of this file
-// needs: against an empty session there is nothing to navigate to, so a handler that bailed at the
-// top and one that ran correctly both leave the box empty and the assertion cannot fail.
+// needs: against an empty session there is nothing to navigate to, so a handler that recalled
+// history mid-composition would leave the box unchanged too and the assertion could not fail.
 const { PRIOR_PROMPT } = vi.hoisted(() => ({ PRIOR_PROMPT: "the prompt before this one" }));
 vi.mock("./store.js", () => ({
   // No active chat: the busy placeholder reads Steer, which no case here observes.
@@ -206,17 +206,18 @@ describe("what the guard must NOT change", () => {
     expect(submits).toBe(0);
     expect(e.defaultPrevented).toBe(false);
   });
+});
 
-  it("keeps ArrowUp history navigation working during a composition", () => {
-    // The guard sits INSIDE the Enter branch for this reason: an early return at the top of the
-    // handler would break history navigation mid-candidate.
+describe("keys during a composition", () => {
+  it("leaves ArrowUp to the IME instead of recalling history", () => {
     const input = document.getElementById("prompt-input") as HTMLTextAreaElement;
+    input.setSelectionRange(2, 2);
     compose("compositionstart");
     const e = new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true });
     input.dispatchEvent(e);
-    expect(input.value).toBe(PRIOR_PROMPT);
-    // Consumed: the key moved through history rather than reaching the browser's own caret
-    // handling.
-    expect(e.defaultPrevented).toBe(true);
+    expect(input.value).toBe("hello");
+    expect([input.selectionStart, input.selectionEnd]).toEqual([2, 2]);
+    // Not prevented: the IME moves through its candidates with the arrow.
+    expect(e.defaultPrevented).toBe(false);
   });
 });
