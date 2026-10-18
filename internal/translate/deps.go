@@ -381,7 +381,8 @@ type runBoundsAccess interface {
 // turnInterruptAccess carries terminal signals that arrive without a response frame: detected
 // here, terminated on the host. Advisory; a compaction failure does not prove the turn ended.
 type turnInterruptAccess interface {
-	CompactionFailed(chatID marotte.ChatID, detail string)
+	// CompactionFailed bounds the silence of the turn the failure was recorded in.
+	CompactionFailed(chatID marotte.ChatID, turnID, detail string)
 	// InterruptTurn acts on the named turn only, so a turn that replaced it is never reached.
 	InterruptTurn(chatID marotte.ChatID, turnID, reason string)
 }

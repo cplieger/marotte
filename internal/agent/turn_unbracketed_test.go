@@ -433,9 +433,7 @@ func TestCmdPrompt_DuringAWireTurnsGraceCloseWaitsForKASToGoIdle(t *testing.T) {
 			}
 			turnEnded(chatID, end)
 		}
-		if !h.coord.ArmWireCancelGrace("c1", command.CancelGrace) {
-			t.Fatal("Setup: ArmWireCancelGrace found no wire turn")
-		}
+		armWireStopGrace(t, h, command.CancelGrace)
 		time.Sleep(command.CancelGrace)
 		<-entered
 		prompted := promptCalls(br)
@@ -583,9 +581,7 @@ func TestCmdPrompt_ARunReportedDuringAGraceCloseHoldsAdmission(t *testing.T) {
 			}
 			turnEnded(chatID, end)
 		}
-		if !h.coord.ArmWireCancelGrace("c1", command.CancelGrace) {
-			t.Fatal("Setup: ArmWireCancelGrace found no wire turn")
-		}
+		armWireStopGrace(t, h, command.CancelGrace)
 		time.Sleep(command.CancelGrace)
 		<-entered
 		prompted := promptCalls(br)
@@ -814,9 +810,7 @@ func TestAfterTurnClose_AnEarlierGraceClosesWaitLeavesALaterHoldInPlace(t *testi
 		<-entered
 
 		h.coord.WireTurnStart(t.Context(), "c1")
-		if !h.coord.ArmWireCancelGrace("c1", command.CancelGrace) {
-			t.Fatal("Setup: ArmWireCancelGrace found no wire turn")
-		}
+		armWireStopGrace(t, h, command.CancelGrace)
 		time.Sleep(command.CancelGrace)
 		synctest.Wait()
 		close(release)
@@ -899,9 +893,7 @@ func queueHeldRow(t *testing.T, h *Runtime) {
 func graceCloseWireTurn(t *testing.T, h *Runtime) {
 	t.Helper()
 	h.coord.WireTurnStart(t.Context(), "c1")
-	if !h.coord.ArmWireCancelGrace("c1", command.CancelGrace) {
-		t.Fatal("Setup: ArmWireCancelGrace found no wire turn")
-	}
+	armWireStopGrace(t, h, command.CancelGrace)
 	time.Sleep(command.CancelGrace)
 	synctest.Wait()
 }
@@ -964,4 +956,20 @@ func TestCmdQueuePrompt_AHeldRowSurvivesKASsTurnOpeningBeforeItsGraceClose(t *te
 		graceCloseWireTurn(t, h)
 		wantHeldRowSentOnce(t, h, cs, prompted)
 	})
+}
+
+// armWireStopGrace arms the grace a stop arms on c1's open wire turn, recording no stop.
+func armWireStopGrace(t *testing.T, h *Runtime, d time.Duration) {
+	t.Helper()
+	lc, ok := h.coord.turns.lookup("c1")
+	if !ok {
+		t.Fatal("Setup: c1 has no lifecycle")
+	}
+	lc.mu.Lock()
+	own := lc.own
+	lc.mu.Unlock()
+	if own == nil || own.Source != marotte.TurnSourceWireTurnStart || own.finalizing {
+		t.Fatalf("Setup: own = %+v, want an open wire turn for the stop's grace", own)
+	}
+	h.coord.armWireGrace("c1", own.ID, d)
 }

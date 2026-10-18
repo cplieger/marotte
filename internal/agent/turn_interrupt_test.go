@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -129,9 +131,9 @@ func TestCompactionReap_AnExpiryOutlivingItsTurnLeavesTheNextPromptAlone(t *test
 	synctest.Test(t, func(t *testing.T) {
 		block := newLogLineBlock(t, "the turn stayed silent after a failed compaction; interrupting it")
 		swapDefaultLogger(t, block)
-		h, cs, br, _, answerFirst, prompted := interruptHub(t)
+		h, cs, br, first, answerFirst, prompted := interruptHub(t)
 
-		h.coord.CompactionFailed("c1", "compaction failed")
+		h.coord.CompactionFailed("c1", first, "compaction failed")
 		time.Sleep(compactionFailedTurnBudget)
 		<-block.entered
 		endFirstRun(br, answerFirst)
@@ -141,6 +143,89 @@ func TestCompactionReap_AnExpiryOutlivingItsTurnLeavesTheNextPromptAlone(t *test
 
 		assertPromptLive(t, h, cs, second, prompted(), 1)
 		assertClosesClean(t, br, cs, second, answerSecond)
+	})
+}
+
+// A failed-compaction reap whose turn then ended empty, and was retried on a fresh session, cancels only that
+// turn's own call when it resumes: the retry re-sending the user's words stays live and is sent once.
+func TestCompactionReap_AnExpiryOutlivingAnEmptyTurnLeavesItsRetryAlone(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		block := newLogLineBlock(t, "the turn stayed silent after a failed compaction; interrupting it")
+		swapDefaultLogger(t, block)
+		answerFirst, answerRetry := make(chan struct{}), make(chan struct{})
+		t.Cleanup(func() { close(answerRetry) })
+		var (
+			mu           sync.Mutex
+			minted       []*fakeBridge
+			retryPrompts atomic.Int32
+		)
+		factory := func() engineSession {
+			mu.Lock()
+			defer mu.Unlock()
+			br := newFakeBridge()
+			gate := answerFirst
+			if len(minted) > 0 {
+				gate = answerRetry
+				br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+					if method == marotte.MethodPrompt {
+						retryPrompts.Add(1)
+					}
+					return nil, nil, false
+				}
+			}
+			br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: gate}
+			minted = append(minted, br)
+			return br
+		}
+		firstBridge := func() *fakeBridge {
+			mu.Lock()
+			defer mu.Unlock()
+			if len(minted) == 0 {
+				return nil
+			}
+			return minted[0]
+		}
+		cs := newTestChatStore()
+		h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(factory, nil), cs)
+		cs.wire(h)
+		t.Cleanup(func() { shutdownHub(t, h) })
+		settleBoot(t, h)
+		seedChat(t, cs, "c1")
+		if rec := postCmd(t, h, marotte.ClientCommand{
+			Type: marotte.CmdPrompt, ChatID: "c1", Payload: json.RawMessage(`{"text":"` + firstPrompt + `","message_id":"m-1"}`),
+		}); rec.Code != http.StatusOK {
+			t.Fatalf("Setup: prompt = %d %s", rec.Code, rec.Body.String())
+		}
+		synctest.Wait()
+		first, ok := h.coord.PromptTurn("c1")
+		br := firstBridge()
+		if !ok || br == nil {
+			t.Fatal("Setup: the first prompt is not in flight")
+		}
+
+		h.coord.CompactionFailed("c1", first.ID(), "compaction failed")
+		time.Sleep(compactionFailedTurnBudget)
+		<-block.entered
+		br.deliver(newTurnStartMsg())
+		br.deliver(newTurnEndMsg("end_turn"))
+		close(answerFirst)
+		synctest.Wait()
+		retry, ok := h.coord.PromptTurn("c1")
+		if !ok || retry.ID() == first.ID() || retryPrompts.Load() != 1 {
+			t.Fatalf("Setup: the empty turn's retry is not in flight (turn %v, its session/prompt %d)", ok, retryPrompts.Load())
+		}
+
+		block.resume()
+		synctest.Wait()
+		if c, closed := closeOfTurn(t, logOf(t, cs, "c1"), retry.ID()); closed {
+			t.Errorf("the retry's turn closed (%+v) when the reap resumed, want it live", c)
+		}
+		if _, live := h.coord.turns.turnByID("c1", retry.ID()); !live {
+			t.Error("the retry's turn left the registry, want it live")
+		}
+		if n := retryPrompts.Load(); n != 1 {
+			t.Errorf("the retry's session/prompt went out %d times, want once", n)
+		}
 	})
 }
 

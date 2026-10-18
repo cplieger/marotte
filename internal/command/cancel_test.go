@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -35,7 +36,10 @@ func (d *cancelDeps) ClearPendingInputAsks(_ marotte.ChatID, scope CancelScope) 
 	d.inputClears = append(d.inputClears, scope)
 }
 
-func (d *cancelDeps) KillForTurn(marotte.ChatID) { d.killed++ }
+func (d *cancelDeps) KillForTurn(turn TurnRef) {
+	d.killed++
+	d.benchDeps.KillForTurn(turn)
+}
 
 // ctxBridge records whether each Notify's context was live.
 type ctxBridge struct {
@@ -192,4 +196,45 @@ func TestDeleteTeardown_AnswersChatAndStepAsksBeforeSessionCancel(t *testing.T) 
 	deleteChatTeardown(t.Context(), d, d, d, d, "c1", []string{"sess-1"})
 
 	assertAnswersBeforeCancel(t, d, b, notifiedAtAnswers)
+}
+
+// A stop acts on the turns it captured at its admission, never re-read: the own turn's terminals, a superseded
+// prompt's terminals too, then the grace on those targets, and its send hold lifts last. An undelivered cancel
+// arms nothing and still lifts the hold.
+func TestCancel_ActsOnTheTurnsCapturedAtItsAdmission(t *testing.T) {
+	targets := TurnStop{Own: TurnRef{Chat: "c1", Turn: "t-wire"}, Call: TurnRef{Chat: "c1", Turn: "t-prompt"}, Wire: true}
+	t.Run("delivered", func(t *testing.T) {
+		d := newCancelDeps(&cancelBridge{})
+		d.stopTargets = targets
+		if err := runCancel(t, t.Context(), d); err != nil {
+			t.Fatalf("cmdCancel: %v", err)
+		}
+		want := []string{"request", "kill t-wire", "kill t-prompt", "arm", "release"}
+		if !slices.Equal(d.stopSteps, want) {
+			t.Errorf("stop steps = %q, want %q", d.stopSteps, want)
+		}
+	})
+	t.Run("the call is the own turn", func(t *testing.T) {
+		d := newCancelDeps(&cancelBridge{})
+		d.stopTargets = TurnStop{Own: targets.Call, Call: targets.Call}
+		if err := runCancel(t, t.Context(), d); err != nil {
+			t.Fatalf("cmdCancel: %v", err)
+		}
+		want := []string{"request", "kill t-prompt", "arm", "release"}
+		if !slices.Equal(d.stopSteps, want) {
+			t.Errorf("stop steps = %q, want %q", d.stopSteps, want)
+		}
+	})
+	t.Run("undelivered", func(t *testing.T) {
+		d := newCancelDeps(&cancelBridge{})
+		d.stopTargets = targets
+		d.err = fmt.Errorf("%w: write refused", ErrCancelNotDelivered)
+		if got := statusOf(runCancel(t, t.Context(), d)); got != http.StatusBadGateway {
+			t.Fatalf("status = %d, want 502", got)
+		}
+		want := []string{"request", "release"}
+		if !slices.Equal(d.stopSteps, want) {
+			t.Errorf("stop steps = %q, want %q", d.stopSteps, want)
+		}
+	})
 }

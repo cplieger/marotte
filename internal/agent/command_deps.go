@@ -82,8 +82,13 @@ func (rt *Runtime) OpenTurn(ctx context.Context, chatID marotte.ChatID, open com
 }
 
 // StartTurn stamps the model and credit baseline onto the turn, with the bridge live, just before the call.
-func (rt *Runtime) StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string, cancel context.CancelCauseFunc) bool {
-	return rt.coord.StartTurn(ctx, chatID, turnID, cancel)
+func (rt *Runtime) StartTurn(ctx context.Context, turn command.TurnRef, cancel context.CancelCauseFunc) bool {
+	return rt.coord.StartTurn(ctx, turn, cancel)
+}
+
+// EndPromptCall forgets the turn's call once it returned.
+func (rt *Runtime) EndPromptCall(turn command.TurnRef) {
+	rt.coord.EndPromptCall(turn)
 }
 
 // ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting up to wait; a refusal keys on the holder's source.
@@ -147,14 +152,19 @@ func (rt *Runtime) StopRequestedAfter(chatID marotte.ChatID, turnID string) bool
 	return rt.coord.StopRequestedAfter(chatID, turnID)
 }
 
-// ArmWireCancelGrace closes the agent-started turn a cancel targets unless its turn_end arrives within d.
-func (rt *Runtime) ArmWireCancelGrace(chatID marotte.ChatID, d time.Duration) bool {
-	return rt.coord.ArmWireCancelGrace(chatID, d)
+// RequestStop records the reader's stop and captures the turns it targets.
+func (rt *Runtime) RequestStop(chatID marotte.ChatID) *command.TurnStop {
+	return rt.coord.RequestStop(chatID)
 }
 
-// RequestStop records the reader's stop on the chat's turn sequence.
-func (rt *Runtime) RequestStop(chatID marotte.ChatID) {
-	rt.coord.RequestStop(chatID)
+// ReleaseStop lifts the stop's hold on the chat's sends.
+func (rt *Runtime) ReleaseStop(stop *command.TurnStop) {
+	rt.coord.ReleaseStop(stop)
+}
+
+// ArmStopGrace backstops the stop's captured targets with the grace budget d.
+func (rt *Runtime) ArmStopGrace(stop *command.TurnStop, d time.Duration) bool {
+	return rt.coord.ArmStopGrace(stop, d)
 }
 
 // AdmissionHolderSource reports who holds the admission slot: the open turn, else the reservation.

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
@@ -65,10 +64,6 @@ func (*recordingBridge) Respond(context.Context, int64, any, error) error { retu
 func (b *recordingBridge) SessionID() marotte.SessionID                   { return b.sessionID }
 func (*recordingBridge) TryAcquireForPrompt() bool                        { return true }
 func (*recordingBridge) ReleaseAfterPrompt()                              {}
-func (*recordingBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { return 0 }
-func (*recordingBridge) EndPromptCall()                                   {}
-func (*recordingBridge) PromptGeneration() uint64                         { return 0 }
-func (*recordingBridge) ArmCancelGrace(uint64, time.Duration) bool        { return false }
 
 // bridgeDeps adds a bridge to storeDeps so the outgoing call can be observed.
 type bridgeDeps struct {

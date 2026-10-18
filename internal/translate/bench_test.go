@@ -606,11 +606,12 @@ func (d *baseDeps) RunMadeProgress(workflowID string) {
 
 type compactionFailure struct {
 	chatID marotte.ChatID
+	turnID string
 	detail string
 }
 
-func (d *baseDeps) CompactionFailed(chatID marotte.ChatID, detail string) {
-	d.compactionFailures = append(d.compactionFailures, compactionFailure{chatID: chatID, detail: detail})
+func (d *baseDeps) CompactionFailed(chatID marotte.ChatID, turnID, detail string) {
+	d.compactionFailures = append(d.compactionFailures, compactionFailure{chatID: chatID, turnID: turnID, detail: detail})
 }
 
 type turnInterrupt struct {

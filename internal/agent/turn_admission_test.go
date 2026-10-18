@@ -407,9 +407,10 @@ func TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn(t *testing.T) {
 	}
 }
 
-// A cancel between the ack and BeginPromptCall answers 200 with nothing to arm; the turn closes and the chat accepts the next prompt.
-func TestPromptTurn_CancelBetweenAckAndBeginPromptCall(t *testing.T) {
-	h, cs, _ := newTestHub()
+// A cancel while the admitted prompt's session opens answers 200 and keeps the prompt unsent: its turn closes
+// cancelled with no session/prompt, and the chat accepts the next prompt.
+func TestPromptTurn_CancelInTheSessionOpenKeepsThePromptUnsent(t *testing.T) {
+	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
 	entered, gate := gateSessionOpen(h)
 
@@ -419,13 +420,18 @@ func TestPromptTurn_CancelBetweenAckAndBeginPromptCall(t *testing.T) {
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
 	}
-	<-entered // parked in the session open: no BeginPromptCall yet
+	<-entered // parked in the session open: nothing sent yet
 
 	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
 		t.Fatalf("cancel in the session-open window = %d, want 200", rec.Code)
 	}
 	close(gate)
-	waitForTurnClosed(t, h, 1)
+	if closed := waitForTurnClosed(t, h, 1); closed[0].Outcome != marotte.TurnOutcomeCancelled || closed[0].FailureReason != "" {
+		t.Errorf("turn_closed = %+v, want cancelled with no failure_reason", closed[0])
+	}
+	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
+		t.Errorf("calls = %v, want no session/prompt for a prompt stopped before its send", br.callLog())
+	}
 
 	// The slots released, so a fresh prompt is admitted.
 	deadline := time.Now().Add(5 * time.Second)
@@ -507,13 +513,13 @@ func TestPromptTurn_ShutdownDuringTheGraceStaysInterrupted(t *testing.T) {
 	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
 		t.Fatalf("cancel = %d, want 200", rec.Code)
 	}
-	sb := h.bridge.mgr.get("c1")
-	if sb == nil {
-		t.Fatal("the prompt opened no bridge")
+	lc, ok := h.coord.turns.lookup("c1")
+	if !ok {
+		t.Fatal("the prompt opened no lifecycle")
 	}
-	sb.mu.Lock()
-	armed := sb.cancelTimer != nil
-	sb.mu.Unlock()
+	lc.mu.Lock()
+	armed := lc.call != nil && lc.call.graceTimer != nil
+	lc.mu.Unlock()
 	if !armed {
 		t.Fatal("the cancel armed no grace, so the two cancellers were never contended")
 	}
@@ -645,11 +651,11 @@ func TestShutdown_TheCutTurnNamesTheRestartAsItsCause(t *testing.T) {
 func TestShutdown_AUserCancelCauseOutranksTheShutdownCause(t *testing.T) {
 	const earlier marotte.InterruptCause = "an earlier cause"
 	cs := shutdownMidPrompt(t, func(h *Runtime) {
-		own, ok := h.coord.turns.ownTurn("c1")
+		own, ok := ownID(h, "c1")
 		if !ok {
 			t.Fatal("no own turn to claim a cause on")
 		}
-		if !h.coord.turns.interrupt("c1", own.ID, earlier) {
+		if !h.coord.turns.interrupt("c1", own, earlier) {
 			t.Fatal("the earlier cause was not claimed")
 		}
 	})

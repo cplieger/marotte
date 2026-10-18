@@ -178,44 +178,6 @@ func (bc *bridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID ma
 	}
 }
 
-// wireTurn names the chat's own wire turn, bracketed or fold-opened, and whether a closer holds it; false when own
-// is none or another source.
-func (r *turnRegistry) wireTurn(chatID marotte.ChatID) (t *activeTurn, closing, ok bool) {
-	lc, found := r.lookup(chatID)
-	if !found {
-		return nil, false, false
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	t = lc.own
-	if t == nil || t.Source != marotte.TurnSourceWireTurnStart {
-		return nil, false, false
-	}
-	return t, t.finalizing, true
-}
-
-// ArmWireCancelGrace backstops a cancel of a turn KAS started: unless a turn_end closes it within d, it closes as
-// cancelled, so a lost bracket, or a fold-opened turn no turn_end is owed for, cannot hold the chat's sends behind
-// it until the bridge dies. The close names the turn, so it never reaches a later one. True whenever own is such a
-// turn, closing included (nothing to arm): a prompt holding the bridge then waits behind it, unsent, and is not the
-// cancel's target. False when own is none or another source.
-func (bc *bridgeCoordinator) ArmWireCancelGrace(chatID marotte.ChatID, d time.Duration) bool {
-	t, closing, ok := bc.turns.wireTurn(chatID)
-	if !ok {
-		return false
-	}
-	if closing {
-		return true
-	}
-	// Refused once Shutdown began: it closes its own turns, with its own account.
-	bc.lifecycle.afterUnlessDraining(d, func() {
-		if bc.finalizeTurn(context.Background(), chatID, &turnClose{Closer: closerCancelGrace, Stop: marotte.StopReasonCancelled, Turn: t.ID}) {
-			slog.Warn("cancel unacked within grace; closed the agent's turn", "chat_id", chatID, "turn", t.ID, "grace", d)
-		}
-	})
-	return true
-}
-
 // defaultIdleEndGrace is how long a wire turn waits for its turn_end once KAS reports no turn running. KAS 2.31
 // sends that report just before the turn's turn_completion and turn_end, so only a lost end outlasts it.
 const defaultIdleEndGrace = 10 * time.Second
@@ -230,7 +192,7 @@ func (bc *bridgeCoordinator) WireTurnActivity(chatID marotte.ChatID, active bool
 		return
 	}
 	grace := cmp.Or(bc.idleEndGrace, defaultIdleEndGrace)
-	// Refused once Shutdown began, as ArmWireCancelGrace's.
+	// Refused once Shutdown began, as armWireGrace's.
 	bc.lifecycle.afterUnlessDraining(grace, func() {
 		closed := bc.finalizeTurn(context.Background(), chatID, &turnClose{
 			Closer: closerKASIdle, Stop: marotte.StopReasonUnknown, Reason: kasIdleReason, Turn: t.ID,
@@ -312,7 +274,8 @@ var errPromptTurnClosed = errors.New("this prompt's turn closed before it was se
 // then lets it go. No frame before the send is the prompt's (awaitsSend), so a notification re-wake keeps a turn of
 // its own: a bracketed one is waited out to its close, and a fold-opened one is claimed by the same section that
 // read KAS's state and closed here, unless its late turn_start claimed it first (bindPending), which leaves a
-// bracketed turn to wait out. It fails the prompt unsent only when its turn closed meanwhile or ctx ended.
+// bracketed turn to wait out. It fails the prompt unsent only when its turn closed meanwhile, ctx ended, or the
+// reader's stop kept it unsent (command.ErrPromptStopped).
 func (bc *bridgeCoordinator) AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) error {
 	for {
 		fold, err := bc.turns.awaitPromptSend(ctx, chatID, turnID)
@@ -358,6 +321,8 @@ func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatI
 			return nil, nil
 		case sendCloseFold:
 			return fold, nil
+		case sendStopped:
+			return nil, command.ErrPromptStopped
 		case sendWait:
 		}
 		select {

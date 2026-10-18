@@ -111,9 +111,9 @@ func cmdCancel(
 	if len(cmd.Payload) > 0 && json.Unmarshal(cmd.Payload, &p) != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	// First, before any signal: a retry reading the stop after it registered its
-	// prompt call is then guaranteed a grace budget this cancel can arm.
-	stops.RequestStop(cmd.ChatID)
+	// First, before any signal; every later step acts on the turns captured here.
+	stop := stops.RequestStop(cmd.ChatID)
+	defer stops.ReleaseStop(stop)
 
 	// The lead is steer-queue state: a stop in the session-door window (no bridge
 	// yet) still ends an admitted turn, whose hand-on sends the lead first.
@@ -128,11 +128,10 @@ func cmdCancel(
 		return nil, StatusError(http.StatusBadGateway, errCancelNotDelivered)
 	}
 	perms.ClearPendingInputAsks(cmd.ChatID, ScopeChatSession)
-	// Stopping the model does not stop the processes its turn already
-	// spawned. Scoped to the turn's own terminals only.
-	terms.KillForTurn(cmd.ChatID)
-	if sb == nil {
-		return responseOK, nil
+	// Stopping the model does not stop the processes its turn already spawned.
+	terms.KillForTurn(stop.Own)
+	if stop.Call != stop.Own {
+		terms.KillForTurn(stop.Call)
 	}
 	if err != nil {
 		// The session ended, so its turn closes on the death fan-out.
@@ -140,13 +139,10 @@ func cmdCancel(
 		slog.Error("cancel failed", "chat_id", cmd.ChatID, keyError, err)
 		return responseOK, nil
 	}
-	// session/cancel is a notification nothing acks: the turn ends only when KAS answers
-	// session/prompt. If it never does, the grace budget cancels the prompt's context so the
-	// ordinary prompt-failure path finalizes the turn. A turn KAS started itself has no prompt
-	// call, so its grace closes the turn directly. That turn is asked first: a prompt holding
-	// the bridge beside it waits unsent behind it, and the prompt grace would cancel it once sent.
-	if !stops.ArmWireCancelGrace(cmd.ChatID, CancelGrace) && !sb.ArmCancelGrace(sb.PromptGeneration(), CancelGrace) {
-		slog.Debug("cancel: no in-flight prompt to arm a grace budget against", "chat_id", cmd.ChatID)
+	// session/cancel is a notification nothing acks: a turn ends only when KAS answers or ends it, so the grace
+	// budget backstops each captured target (ArmStopGrace).
+	if !stops.ArmStopGrace(stop, CancelGrace) {
+		slog.Debug("cancel: no live turn to arm a grace budget against", "chat_id", cmd.ChatID)
 	}
 	return responseOK, nil
 }
@@ -158,7 +154,7 @@ func cmdCancel(
 // end to retire as ended: a clear here would drop the cards without saying why.
 func closeChatTeardown(ctx context.Context, bridges bridgeAccess, perms permissionCanceller, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID) {
 	slog.Info("chat tab closed; tearing down its session", "chat_id", chatID)
-	stops.RequestStop(chatID)
+	defer stops.ReleaseStop(stops.RequestStop(chatID))
 	teardown.BeginChatTeardown(chatID, true)
 	teardownCancel(ctx, bridges, perms, chatID)
 	teardown.CloseChatState(ctx, chatID)
@@ -170,7 +166,7 @@ func closeChatTeardown(ctx context.Context, bridges bridgeAccess, perms permissi
 // record's delete answered (a record-reading teardown would no-op on a
 // deleted chat). Mirrors closeChatTeardown so the two grades cannot drift.
 func deleteChatTeardown(ctx context.Context, bridges bridgeAccess, perms permissionCanceller, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID, sessionChain []string) {
-	stops.RequestStop(chatID)
+	defer stops.ReleaseStop(stops.RequestStop(chatID))
 	teardown.BeginChatTeardown(chatID, false)
 	teardownCancel(ctx, bridges, perms, chatID)
 	teardown.DeleteChatStateByChain(ctx, chatID, sessionChain, RunStopTabClosed)

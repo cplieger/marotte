@@ -35,7 +35,7 @@ func startTool(t *testing.T, log *turnlog.Turn, id string) {
 func TestCompactionReap_TripsTheSilentTurn(t *testing.T) {
 	h, turnID, _, pctx := newCompactionReapFixture(t)
 	synctest.Test(t, func(t *testing.T) {
-		h.coord.CompactionFailed("c1", "compaction failed")
+		h.coord.CompactionFailed("c1", turnID, "compaction failed")
 		time.Sleep(compactionFailedTurnBudget)
 		synctest.Wait()
 	})
@@ -56,10 +56,10 @@ func TestCompactionReap_TripsTheSilentTurn(t *testing.T) {
 }
 
 func TestCompactionReap_ReArmsWhenTheBackendSpoke(t *testing.T) {
-	h, _, _, pctx := newCompactionReapFixture(t)
+	h, turnID, _, pctx := newCompactionReapFixture(t)
 	gen := h.coord.turns.attachForward("c1").gen
 	synctest.Test(t, func(t *testing.T) {
-		h.coord.CompactionFailed("c1", "compaction failed")
+		h.coord.CompactionFailed("c1", turnID, "compaction failed")
 		h.coord.turns.observe("c1", gen, 1)
 		time.Sleep(compactionFailedTurnBudget)
 		synctest.Wait()
@@ -75,14 +75,14 @@ func TestCompactionReap_ReArmsWhenTheBackendSpoke(t *testing.T) {
 }
 
 func TestCompactionReap_DoesNotRearmForAToolThatPredatesTheBudget(t *testing.T) {
-	h, _, log, pctx := newCompactionReapFixture(t)
+	h, turnID, log, pctx := newCompactionReapFixture(t)
 
 	synctest.Test(t, func(t *testing.T) {
 		// Inside the bubble and before the arm: synctest's clock starts at 2000-01-01, so an outside stamp reads as newer.
 		startTool(t, log, "tool")
 		time.Sleep(time.Millisecond)
 
-		h.coord.CompactionFailed("c1", "compaction failed")
+		h.coord.CompactionFailed("c1", turnID, "compaction failed")
 		time.Sleep(compactionFailedTurnBudget)
 		synctest.Wait()
 	})
@@ -95,7 +95,7 @@ func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) 
 	h, turnID, log, pctx := newCompactionReapFixture(t)
 
 	synctest.Test(t, func(t *testing.T) {
-		h.coord.CompactionFailed("c1", "compaction failed")
+		h.coord.CompactionFailed("c1", turnID, "compaction failed")
 		time.Sleep(time.Millisecond)
 		startTool(t, log, "tool")
 
@@ -120,18 +120,28 @@ func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) 
 
 func TestCompactionReap_WithNoOpenTurnArmsNothing(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.coord.CompactionFailed("c1", "compaction failed")
-	lc := h.coord.turns.lifecycleFor("c1")
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	if lc.own != nil {
+	h.coord.CompactionFailed("c1", "t-gone", "compaction failed")
+	if _, ok := h.coord.turns.lookup("c1"); ok {
 		t.Error("CompactionFailed with no open turn created turn state")
+	}
+}
+
+// A failure recorded in a turn that is no longer the chat's own arms nothing on the turn that is.
+func TestCompactionReap_ATurnNoLongerOwnArmsNothing(t *testing.T) {
+	h, turnID, _, _ := newCompactionReapFixture(t)
+	h.coord.CompactionFailed("c1", "t-closed-earlier", "compaction failed")
+	lc, _ := h.coord.turns.lookup("c1")
+	lc.mu.Lock()
+	armed := lc.own != nil && lc.own.ID == turnID && lc.own.reapTimer != nil
+	lc.mu.Unlock()
+	if armed {
+		t.Error("a failure named for another turn armed the reap on the open turn")
 	}
 }
 
 func TestCompactionReap_StoppedWhenTheTurnClosesNormally(t *testing.T) {
 	h, turnID, _, _ := newCompactionReapFixture(t)
-	h.coord.CompactionFailed("c1", "compaction failed")
+	h.coord.CompactionFailed("c1", turnID, "compaction failed")
 	turn, ok := h.coord.turns.claimTurn(t.Context(), "c1", turnID, nil)
 	if !ok {
 		t.Fatal("normal closer could not claim the armed turn")

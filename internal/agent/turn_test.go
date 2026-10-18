@@ -322,7 +322,7 @@ func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
 	h, _, _ := newTestHub()
 	a, _ := h.stagePromptTurn(t, "c1")
 
-	h.coord.RequestStop("c1")
+	h.coord.ReleaseStop(h.coord.RequestStop("c1"))
 	endTurn(t, h, "c1", a)
 
 	if !h.coord.StopRequestedAfter("c1", a) {
@@ -336,7 +336,7 @@ func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
 		t.Error("StopRequestedAfter(a) = false once a later turn opened, want true")
 	}
 
-	h.coord.RequestStop("c-never-opened")
+	h.coord.ReleaseStop(h.coord.RequestStop("c-never-opened"))
 	if _, ok := h.coord.turns.lookup("c-never-opened"); ok {
 		t.Error("a stop on a chat with no turns minted a lifecycle for it")
 	}

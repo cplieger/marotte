@@ -41,7 +41,10 @@ type activeTurn struct {
 	// done is closed once, at finalize.
 	done      chan struct{}
 	reapTimer *time.Timer
-	// cancel trips this turn's own prompt call, set at StartTurn; nil for a turn with none (KAS's, a local shell).
+	// graceTimer is a stop's budget on this turn's call (armCallGraceLocked).
+	graceTimer *time.Timer
+	// cancel trips this turn's own prompt call, from StartTurn until EndPromptCall; nil for a turn with none (KAS's,
+	// a local shell).
 	cancel context.CancelCauseFunc
 	// Opened is when the turn began, and the only source of its elapsed time.
 	Opened time.Time
@@ -87,6 +90,8 @@ type activeTurn struct {
 	kasIdle bool
 	// sent is whether the send gate let this prompt-class turn's session/prompt go (markSentLocked).
 	sent bool
+	// stopped is whether the reader's stop keeps this unsent prompt from being sent (ArmStopGrace).
+	stopped bool
 	// finalizing is whether a closer holds this turn's claim: a second claim and a
 	// fold both treat a finalizing turn as absent.
 	finalizing bool
@@ -98,6 +103,11 @@ type chatLifecycle struct {
 	// pending is the prompt-class turn awaiting its wire bracket, usually own
 	// itself. One rather than a queue: admission serializes prompt-class sources.
 	pending *activeTurn
+	// call is the sent prompt whose session/prompt is unanswered, from its send to EndPromptCall; it outlives the
+	// turn when a later turn_start closed it. One: the bridge slot serializes calls.
+	call *activeTurn
+	// stops holds the send hold of each stop in progress, by token (requestStop).
+	stops map[uint64]struct{}
 	// retained holds finalized turns whose handles are not all released, so a waiter can read a result after the chat moved on.
 	retained map[string]*activeTurn
 	// fwdExits holds, per forward generation still running, the channel its
@@ -152,7 +162,9 @@ type turnRegistry struct {
 	// it before driving the frames, closers or prompt that read it.
 	claimHook func()
 	epochs    atomic.Uint64
-	mu        sync.Mutex
+	// stopTokens mints each stop's send-hold token.
+	stopTokens atomic.Uint64
+	mu         sync.Mutex
 }
 
 func newTurnRegistry() *turnRegistry {
@@ -276,14 +288,16 @@ func (t *activeTurn) awaitsSend() bool { return t.Source.Acknowledgeable() && !t
 type sendStep int
 
 const (
-	sendWait      sendStep = iota // KAS reports a run, a frame is being consumed, or another turn holds own
+	sendWait      sendStep = iota // KAS reports a run, a frame is mid-fold, a stop holds sends, or another turn holds own
 	sendNow                       // t owns the chat and is marked sent
 	sendCloseFold                 // own was a fold-opened wire turn, now claimed; the caller closes it, then asks again
+	sendStopped                   // the reader's stop keeps t unsent
 )
 
 // markSentLocked marks t sent only once t owns the chat (caller holds mu, t live and unclaimed), since t's run may
-// stream before its turn_start and those frames fold into own. By own's state, while KAS admits a session/prompt and
-// no frame is being consumed (inFrame: it may be folding into own, or parked behind a close and due before the send):
+// stream before its turn_start and those frames fold into own. By own's state, while KAS admits a session/prompt, no
+// frame is being consumed (inFrame: it may be folding into own, or parked behind a close and due before the send)
+// and no stop's session/cancel is still to go out (stops):
 //   - nil or t: t takes own and is sent.
 //   - a fold-opened wire turn: no turn_end is owed for it, so it is claimed here, in the section that read the
 //     verdict's state, and returned for the caller to close (sendCloseFold).
@@ -291,10 +305,13 @@ const (
 func (lc *chatLifecycle) markSentLocked(t *activeTurn) (sendStep, *activeTurn) {
 	o := lc.own
 	switch {
-	case !lc.kas.may().admit, lc.inFrame:
+	case t.stopped:
+		return sendStopped, nil
+	case !lc.kas.may().admit, lc.inFrame, len(lc.stops) > 0:
 		return sendWait, nil
 	case o == nil || o == t:
 		t.sent = true
+		lc.call = t
 		if o == nil {
 			lc.own = t
 			lc.setStateLocked(turnOpen)
@@ -533,18 +550,6 @@ func (r *turnRegistry) openedAfter(chatID marotte.ChatID, turnID string) bool {
 	return lc.nextSeq > t.Seq
 }
 
-// requestStop records that the reader asked the turn to stop, keyed on the open sequence: the empty-turn retry
-// discards the bridge a cancel would arm. No lifecycle, no stop.
-func (r *turnRegistry) requestStop(chatID marotte.ChatID) {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return
-	}
-	lc.mu.Lock()
-	lc.stopSeq = lc.nextSeq
-	lc.mu.Unlock()
-}
-
 // expectRestores marks session's writes on chatID as KAS putting files back until the chat's next
 // turn opens. KAS raises a turn approval once the turn's own writes are done, and refuses a rewind
 // mid-turn, so until then the session's writes are KAS applying that review or that revert. A run
@@ -594,6 +599,11 @@ func (r *turnRegistry) stoppedAfter(chatID marotte.ChatID, turnID string) bool {
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
+	return lc.stoppedAfterLocked(turnID)
+}
+
+// stoppedAfterLocked is stoppedAfter's predicate. Caller holds mu.
+func (lc *chatLifecycle) stoppedAfterLocked(turnID string) bool {
 	t := lc.turnLocked(turnID)
 	return t != nil && t.Seq <= lc.stopSeq
 }
@@ -624,17 +634,6 @@ func (r *turnRegistry) holdsTurn(turnID string) (marotte.ChatID, bool) {
 		}
 	}
 	return "", false
-}
-
-// ownTurn reports the own open turn, false when none or finalizing: the caller is about to act on it.
-func (r *turnRegistry) ownTurn(chatID marotte.ChatID) (*activeTurn, bool) {
-	lc := r.lifecycleFor(chatID)
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	if lc.own == nil || lc.own.finalizing {
-		return nil, false
-	}
-	return lc.own, true
 }
 
 // currentTurn reports which turn the chat's activity belongs to (own, open or finalizing): a finalizing turn

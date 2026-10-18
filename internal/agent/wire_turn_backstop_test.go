@@ -442,9 +442,7 @@ var wireBackstops = []struct {
 }{
 	{"kas idle", func(t *testing.T, h *Runtime) { send(t, h, newActivityMsg(false)) }},
 	{"cancel grace", func(t *testing.T, h *Runtime) {
-		if !h.coord.ArmWireCancelGrace("c1", 20*time.Millisecond) {
-			t.Fatal("setup: no wire turn for the cancel grace to arm on")
-		}
+		armWireStopGrace(t, h, 20*time.Millisecond)
 	}},
 }
 

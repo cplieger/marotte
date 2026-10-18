@@ -22,16 +22,22 @@ type recoveryOutcome struct {
 	mu          sync.Mutex
 }
 
+// OpenTurn refuses an open replacing a stopped turn, as the registry does in its open section.
 func (o *recoveryOutcome) OpenTurn(_ context.Context, _ marotte.ChatID, open TurnOpen) (string, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if open.Replaces != "" && o.stopped {
+		return "", ErrTurnStopped
+	}
 	o.openedTurns = append(o.openedTurns, open.Source)
 	return "t-" + strconv.Itoa(len(o.openedTurns)), nil
 }
 
-func (*recoveryOutcome) StartTurn(context.Context, marotte.ChatID, string, context.CancelCauseFunc) bool {
+func (*recoveryOutcome) StartTurn(context.Context, TurnRef, context.CancelCauseFunc) bool {
 	return true
 }
+
+func (*recoveryOutcome) EndPromptCall(TurnRef) {}
 
 func (*recoveryOutcome) AwaitTurn(context.Context, marotte.ChatID, string) (marotte.TurnResult, error) {
 	return marotte.TurnResult{}, marotte.ErrNoSuchTurn
@@ -142,10 +148,6 @@ func (*recoveryBridge) Respond(context.Context, int64, any, error) error { retur
 func (*recoveryBridge) SessionID() marotte.SessionID                     { return "s1" }
 func (*recoveryBridge) TryAcquireForPrompt() bool                        { return true }
 func (*recoveryBridge) ReleaseAfterPrompt()                              {}
-func (*recoveryBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { return 1 }
-func (*recoveryBridge) EndPromptCall()                                   {}
-func (*recoveryBridge) ArmCancelGrace(uint64, time.Duration) bool        { return true }
-func (*recoveryBridge) PromptGeneration() uint64                         { return 1 }
 
 // The four clauses, each one moved on its own from a firing baseline. Every row
 // but the first must NOT re-prompt.

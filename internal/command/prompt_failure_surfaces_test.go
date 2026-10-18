@@ -83,7 +83,9 @@ func (d *surfaceDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridg
 	return &surfaceBridge{deps: d}, nil
 }
 
-func (d *surfaceDeps) StartTurn(context.Context, marotte.ChatID, string, context.CancelCauseFunc) bool {
+func (*surfaceDeps) EndPromptCall(TurnRef) {}
+
+func (d *surfaceDeps) StartTurn(context.Context, TurnRef, context.CancelCauseFunc) bool {
 	return !d.startRefused
 }
 
@@ -120,10 +122,6 @@ func (*surfaceBridge) Respond(context.Context, int64, any, error) error { return
 func (*surfaceBridge) SessionID() marotte.SessionID                     { return "s1" }
 func (b *surfaceBridge) TryAcquireForPrompt() bool                      { return !b.deps.slotHeld }
 func (*surfaceBridge) ReleaseAfterPrompt()                              {}
-func (*surfaceBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { return 1 }
-func (*surfaceBridge) EndPromptCall()                                   {}
-func (*surfaceBridge) ArmCancelGrace(uint64, time.Duration) bool        { return true }
-func (*surfaceBridge) PromptGeneration() uint64                         { return 1 }
 
 // A turn WAS finalized, so the reason is on its card and the toast may stand down.
 func TestReportPromptFailure_MarksTheFrameTurnScoped(t *testing.T) {

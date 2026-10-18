@@ -302,7 +302,7 @@ func TestEngineRestart_ParentlessRunResumedOnceUnderTheHealBudget(t *testing.T) 
 }
 
 // After a restart the chat's return (the rehydrate sweep) and the restart pause's own heal both reach the run; the
-// re-read under the run's position lock lets only the first write a resume.
+// re-read under the run's verb lock (controlSerialized) lets only the first write a resume.
 func TestEngineRestart_ChatParentedRunGetsExactlyOneResume(t *testing.T) {
 	prev := healBaseDelay
 	healBaseDelay = time.Millisecond
