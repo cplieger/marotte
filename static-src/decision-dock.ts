@@ -10,6 +10,7 @@ import { forceReflow } from "./dom.js";
 import { buildPermissionCard, type PermissionAnswer } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
 import { buildUserInputCard } from "./user-input.js";
+import { followBand } from "./dock-ask.js";
 import { info } from "./toast.js";
 import { named, noticeSubject } from "./notice-subject.js";
 import { join } from "@cplieger/keyenc";
@@ -134,7 +135,10 @@ interface DockHost {
 }
 
 const hosts: DockHost[] = [];
-let composersFollowed = false;
+let viewportFollowed = false;
+
+/** The tray's floor under a question card, which `css/26-dock.css` gives the tray as its `min-block-size`. */
+const FLOOR_PROP = "--dock-floor";
 
 /** Wire the composer's dock into the chat bottom bar. Idempotent per host. */
 export function mountDecisionDock(hostEl: HTMLElement): void {
@@ -188,9 +192,10 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
   if (hosts.some((existing) => existing.el === hostEl)) {
     return;
   }
-  if (!composersFollowed) {
-    composersFollowed = true;
-    window.addEventListener("resize", followComposers);
+  if (!viewportFollowed) {
+    viewportFollowed = true;
+    window.addEventListener("resize", followViewport);
+    followBand(followViewport);
   }
   const h: DockHost = {
     el: hostEl,
@@ -204,10 +209,19 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
     stop: () => undefined,
   };
   hosts.push(h);
-  h.stop = effect(() => {
+  // The floor follows the tray's content: a new card, a stage switch inside it, the depth row.
+  const content = new MutationObserver(() => {
+    paintFloor(h);
+  });
+  content.observe(hostEl, { childList: true, subtree: true, attributeFilter: ["class"] });
+  const stopRender = effect(() => {
     touch(activeSession, queueVersion);
     renderHost(h);
   });
+  h.stop = () => {
+    stopRender();
+    content.disconnect();
+  };
 }
 
 function activeChatID(): string {
@@ -664,11 +678,65 @@ function focusAnswerIfAside(h: DockHost): void {
   }
 }
 
-/** A rotation can hide the composer under a card already up; `focusAnswerIfAside` follows it. */
-function followComposers(): void {
+/** A rotation can hide the composer under a card already up, and a new width or band moves the card's floor. */
+function followViewport(): void {
   for (const h of hosts) {
     focusAnswerIfAside(h);
+    paintFloor(h);
   }
+}
+
+/**
+ * Publish the tray's floor while it holds a question card: the height of its card with each scroller in it at its own
+ * `min-block-size` and every other region whole, plus the tray's other rows. Measured because the bar's flex column
+ * sees only the tray's content size: a scroller's floor nested in it is invisible to the bar.
+ */
+function paintFloor(h: DockHost): void {
+  const card = h.card;
+  if (card === null || !card.classList.contains("dock-user-input") || !card.isConnected) {
+    h.el.style.removeProperty(FLOOR_PROP);
+    return;
+  }
+  const rows = flexItems(h.el).filter((row) => row !== h.outgoing);
+  const px = rows.reduce(
+    (sum, row) => sum + (row === card ? floorOf(card) : row.getBoundingClientRect().height),
+    gapsAndChrome(h.el, rows.length),
+  );
+  h.el.style.setProperty(FLOOR_PROP, `${String(Math.ceil(px))}px`);
+}
+
+function floorOf(box: Element): number {
+  const items = flexItems(box);
+  return items.reduce(
+    (sum, item) => {
+      const s = getComputedStyle(item);
+      const scrolls = item instanceof HTMLTextAreaElement || s.overflowY !== "visible";
+      return (
+        sum +
+        (scrolls ? Number.parseFloat(s.minBlockSize) || 0 : item.getBoundingClientRect().height)
+      );
+    },
+    gapsAndChrome(box, items.length),
+  );
+}
+
+/** A column's rendered flex items: a `display: contents` child's children stand in for it. */
+function flexItems(box: Element): Element[] {
+  return [...box.children]
+    .flatMap((c) => (getComputedStyle(c).display === "contents" ? [...c.children] : [c]))
+    .filter((c) => c.checkVisibility());
+}
+
+function gapsAndChrome(box: Element, items: number): number {
+  const s = getComputedStyle(box);
+  const px = (v: string): number => Number.parseFloat(v) || 0;
+  return (
+    px(s.paddingBlockStart) +
+    px(s.paddingBlockEnd) +
+    px(s.borderBlockStartWidth) +
+    px(s.borderBlockEndWidth) +
+    Math.max(0, items - 1) * px(s.rowGap)
+  );
 }
 
 /** A collapsed host is `display: none`, so its margin is 0 whatever `getComputedStyle` reports. */

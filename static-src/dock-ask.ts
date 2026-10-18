@@ -100,6 +100,16 @@ export function paintViewportHeight(height: number, scale: number): void {
   const band = height * scale;
   root.toggleAttribute("data-short-band", band < SHORT_BAND_REM * rem);
   root.toggleAttribute("data-tight-band", band < TIGHT_BAND_REM * rem);
+  for (const follow of bandFollowers) {
+    follow();
+  }
+}
+
+const bandFollowers: (() => void)[] = [];
+
+/** Call `follow` after each band `paintViewportHeight` writes, once the stylesheet can read it. */
+export function followBand(follow: () => void): void {
+  bandFollowers.push(follow);
 }
 
 /** The card's ONE right-aligned button row, holding every button it has. */

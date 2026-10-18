@@ -1088,9 +1088,9 @@
    parent collapses, so the two cannot be separated. */
 /* ONE CEILING FOR THE WHOLE BAR, against the visual viewport (`--dock-viewport-h`,
    `dock-ask.ts`), so the run dock's open panel, an ask card and the composer together
-   never push the composer off a phone with its keyboard up. The composer never shrinks;
-   with no card up the run dock gives (31-exec-view.css); with one it is never cut through
-   its head (below) and the card gives, its own regions deciding what inside it gives
+   never push the composer off a phone with its keyboard up. With no card up the run dock
+   gives (31-exec-view.css); with one it is never cut through its head (below), and with a
+   question up the dock's one allocation decides between the card and the composer
    (26-dock.css). The bar's flex, shrinkable in a short view, is the dock's
    (26-dock.css `.bottom-bar:is(…)`). */
 .run-bottom-bar {
@@ -1121,15 +1121,12 @@
     }
   }
 
-  /* WITH A QUESTION UP, A SHORT BAND IS THE BAR'S. Beside the composer, three quarters of a
-     keyboard band (196-322px) squeezes a short question out of its lines, and at 261px puts
-     the card under its own floors, Send scrolled away. Up to 24rem (the card's short-band
-     18rem plus the composer row) the bar may take the whole band; the tray gives within it. */
+  /* WITH A QUESTION UP, A SHORT BAND IS THE BAR'S, its allocation the dock's (26-dock.css). Three
+     quarters of a keyboard band (196-322px) would put the card under its own floors. */
   &:has(> .decision-dock > .dock-user-input) {
-    max-block-size: max(
-      calc(0.75 * var(--dock-viewport-h, 100dvh)),
-      min(24rem, var(--dock-viewport-h, 100dvh))
-    );
+    :where(:root[data-short-band]) & {
+      max-block-size: var(--dock-viewport-h, 100dvh);
+    }
   }
 }
 

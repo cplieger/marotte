@@ -257,18 +257,46 @@
   }
 }
 
-/* WITH A QUESTION UP, THE CHAT'S BAR FITS THE KEYBOARD BAND DOWN TO ITS MESSAGE BOX'S TEXT. iOS
-   pans the visual viewport only far enough to show the focused field, so with the reader typing
-   there the band ends at the text, and a taller bar puts the question's top above it. The cap is
-   the band plus what sits under the text (the pill row and two borders) less the bar's top border
-   and padding; `content-box` keeps the bottom padding, which follows the home-indicator inset, out
-   of it. Inert while the bar fits; the tray and the card's regions give the rest. */
+/* WITH A QUESTION UP, THE CHAT BAR'S CONTENT IS THE KEYBOARD BAND PLUS WHAT SITS UNDER THE MESSAGE
+   BOX'S TEXT. The band is modelled as ending at the focused text (iOS pans the visual viewport to the
+   focused field; how far is a device check), and the content box ends at the message box's bottom
+   border, so the band plus the pill row and its two borders puts the content's top at the band's top.
+   `content-box` keeps the padding, the bottom one following the home-indicator inset, out of it. */
 [id="prompt-form"]:has(> .decision-dock > .dock-user-input) {
   box-sizing: content-box;
   max-block-size: calc(
-    var(--dock-viewport-h, 100dvh) + var(--composer-ctl-h) + 2 * var(--composer-pill-pad) + 1px -
-      var(--sp-2)
+    var(--dock-viewport-h, 100dvh) + var(--composer-ctl-h) + 2 * var(--composer-pill-pad) + 2px
   );
+}
+
+/* ONE ALLOCATION OF THE BAR WHILE A QUESTION WAITS, in this order: the card's controls and its
+   question's two-line floor, then the composer at one line or more, its draft scrolling inside it,
+   then the rest of the question. The tray gives first, down to `--dock-floor` (`decision-dock.ts`
+   `paintFloor`: a flex column cannot see a floor nested in a scroller); the composer gives after it.
+   Not while the tray animates: the floor would hold its height off the pinned one. */
+:is([id="prompt-form"], .run-bottom-bar)
+  > .decision-dock:has(> .dock-user-input):not([data-dock-phase]) {
+  flex-shrink: 1000;
+  min-block-size: var(--dock-floor, 0);
+}
+
+[id="prompt-form"]:where(:has(> .decision-dock > .dock-user-input)) > [id="prompt-box"] {
+  min-block-size: 0;
+}
+
+.run-bottom-bar:where(:has(> .decision-dock > .dock-user-input)) > [id="run-composer"] {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-block-size: 0;
+
+  & > .run-composer-box {
+    min-block-size: 0;
+  }
+
+  & [id="run-composer-input"] {
+    align-self: stretch;
+  }
 }
 
 /* ON A TIGHT BAND THE RUN STRIP AND THE RUN COMPOSER STEP ASIDE (`[data-tight-band]`,
@@ -365,19 +393,16 @@
   color: var(--c-yellow);
 }
 
-/* ON A SHORT BAND THE QUESTION CARD OUTGROWS THE SHARED FRACTION. A raised keyboard
-   leaves a phone a 261-429px band, whose 0.55 (143-236px) is under a short question, the
-   answer box and the button row, so the question would lose its lines to the card's floors.
-   There the card may take up to 18rem and all but 1rem of the band; the options give first
-   (below), and the bar it sits in may shrink it further (`.bottom-bar:is(…)` above). */
-.dock-card.dock-user-input {
-  max-block-size: min(
-    30rem,
-    max(
-      calc(0.55 * var(--dock-viewport-h, 100dvh)),
-      min(18rem, calc(var(--dock-viewport-h, 100dvh) - 1rem))
-    )
-  );
+/* ON A SHORT BAND THE BAR'S ALLOCATION SIZES THE QUESTION CARD (above). A raised keyboard leaves a
+   phone a 261-429px band, whose 0.55 (143-236px) is under a short question, the answer box and the
+   button row; the shared fraction keeps a transcript in view, which such a band no longer holds. */
+:where(:root[data-short-band]) .dock-card.dock-user-input {
+  max-block-size: none;
+}
+
+/* The two-line floor (`.dock-ask-body` below) is two of the question's own lines. */
+.dock-user-input > .dock-ask-body {
+  font-size: var(--fs-md);
 }
 
 /* THE OPTIONS GIVE BEFORE THE QUESTION DOES. Flex shrink is shared in proportion to
@@ -534,7 +559,7 @@
 
   /* On a keyboard band under ~23rem (a 375px phone) the opening rows give way, down to one
      row: 18rem is about the rest of the chat's bar beside them with a four-line question up,
-     so the rows give before the question's lines do, and on a 320px phone Send stays in the card. */
+     so the rows give before the question's lines do. */
   min-block-size: max(
     calc(1lh + 2 * var(--sp-2) + 2px),
     min(
