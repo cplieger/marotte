@@ -38,9 +38,11 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 }));
 vi.mock("./persist.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Persist>()),
-  loadSettings: vi.fn(() => Promise.resolve({ memory_mode: H.memoryMode, settings_revision: 0 })),
+  loadSettings: vi.fn(() =>
+    Promise.resolve({ memory_mode: H.memoryMode, settings_epoch: 0, settings_revision: 0 }),
+  ),
   refreshSettings: vi.fn(() =>
-    Promise.resolve({ memory_mode: H.memoryMode, settings_revision: 0 }),
+    Promise.resolve({ memory_mode: H.memoryMode, settings_epoch: 0, settings_revision: 0 }),
   ),
 }));
 vi.mock("./router.js", async (importOriginal) => ({

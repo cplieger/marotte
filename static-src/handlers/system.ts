@@ -92,7 +92,7 @@ function reconcileThinking(p: ConnectedPayload): void {
 }
 
 onSSE("settings_updated", (_chatID, p) => {
-  noteSettingsEvent(p.settings_revision);
+  noteSettingsEvent(p);
   // Use restoreLastModel (cache-only), not setLastModel — that calls
   // patchSettings, which re-broadcasts settings_updated, looping forever.
   void syncSettings().then((s) => {

@@ -1,6 +1,6 @@
 // Settings persistence. Debounces PATCHes to coalesce rapid writes (e.g. theme toggle +
 // notification toggle changes into one round-trip), and owns the settings reads and the
-// revision every payload is adopted against.
+// version every payload is adopted against.
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { patchAppSettings, loadSettings as loadSettingsAction } from "./actions/settings.js";
@@ -15,7 +15,11 @@ let patchTimer: ReturnType<typeof setTimeout> | undefined;
 let patchQueue: Partial<EffectiveSettings> = {};
 let patchSnapshot: Partial<EffectiveSettings> = {};
 let patchInputs: HTMLInputElement[] = [];
-let patchResolvers: ((r: Record<string, unknown> | null) => void)[] = [];
+let patchResolvers: ((r: PatchAnswer) => void)[] = [];
+
+/** A write's answer: the committed settings, null when it failed, or "superseded" when it landed
+ *  but the page already holds newer settings, which the caller must not overwrite with its own. */
+export type PatchAnswer = Record<string, unknown> | null | "superseded";
 
 // The indicator belongs to the NEWEST write of each key.
 let writeSeq = 0;
@@ -43,9 +47,9 @@ export function __testResetTracking(): void {
   keyGen.clear();
   reading = null;
   rereading = null;
-  heldRevision = 0;
+  held = { settings_epoch: 0, settings_revision: 0 };
+  latest = null;
   eventsNoted = 0;
-  eventRevision = 0;
   if (patchTimer !== undefined) {
     clearTimeout(patchTimer);
     patchTimer = undefined;
@@ -71,7 +75,7 @@ function executePatch(): void {
   }
   /** The keys of this write that no later write has claimed since. */
   const stillOurs = (): string[] => keys.filter((k) => keyGen.get(k) === gen);
-  let result: Record<string, unknown> | null = null;
+  let result: PatchAnswer = null;
   void patchAppSettings.dispatch(
     {
       body: body,
@@ -80,7 +84,11 @@ function executePatch(): void {
     {
       silent: true,
       onSuccess: (r) => {
-        result = r as Record<string, unknown>;
+        const version = stampOf(r);
+        result =
+          version === null || adoptSettings(version)
+            ? (r as Record<string, unknown>)
+            : "superseded";
         const mine = stillOurs();
         if (mine.length > 0) {
           showSaved(mine);
@@ -116,7 +124,7 @@ registerCleanup(() => {
 export function patchSettings(
   patch: Partial<EffectiveSettings>,
   ...inputs: HTMLInputElement[]
-): Promise<Record<string, unknown> | null> {
+): Promise<PatchAnswer> {
   // Filter out keys whose value matches the last-sent value.
   const changed: Partial<EffectiveSettings> = {};
   for (const k of Object.keys(patch) as (keyof EffectiveSettings)[]) {
@@ -139,7 +147,7 @@ export function patchSettings(
       patchInputs.push(input);
     }
   }
-  const p = new Promise<Record<string, unknown> | null>((resolve) => {
+  const p = new Promise<PatchAnswer>((resolve) => {
     patchResolvers.push(resolve);
   });
   // Announced per call rather than per batch: each changed key has its own slot, so a setting
@@ -155,11 +163,44 @@ export function patchSettings(
   return p;
 }
 
-/** The newest settings revision this page adopted or an event stated. */
-let heldRevision = 0;
-/** The settings events this page took, and the newest one's revision. */
+/** A settings payload's version, ordered epoch first: config.json counts its writes within an
+ *  epoch, and only a later epoch counts again from 1. */
+type Stamp = Pick<EffectiveSettings, "settings_epoch" | "settings_revision">;
+
+/** The newest version this page adopted or a settings event announced. */
+let held: Stamp = { settings_epoch: 0, settings_revision: 0 };
+/** The newest settings a read answered, for newestSettings. */
+let latest: EffectiveSettings | null = null;
+/** The settings events this page took. */
 let eventsNoted = 0;
-let eventRevision = 0;
+
+function below(s: Stamp, than: Stamp): boolean {
+  return (
+    s.settings_epoch < than.settings_epoch ||
+    (s.settings_epoch === than.settings_epoch && s.settings_revision < than.settings_revision)
+  );
+}
+
+function stampOf(r: unknown): Stamp | null {
+  if (typeof r !== "object" || r === null) {
+    return null;
+  }
+  const { settings_epoch: epoch, settings_revision: revision } = r as Record<string, unknown>;
+  return typeof epoch === "number" && typeof revision === "number"
+    ? { settings_epoch: epoch, settings_revision: revision }
+    : null;
+}
+
+/** The one ordering rule for every settings payload and event: true when s is not older than the
+ *  version this page holds, which it then holds; false when it is. The held version never goes
+ *  back, since the server sends events in version order and a reset starts a later epoch. */
+export function adoptSettings(s: Stamp): boolean {
+  if (below(s, held)) {
+    return false;
+  }
+  held = { settings_epoch: s.settings_epoch, settings_revision: s.settings_revision };
+  return true;
+}
 
 /** The settings GET in flight: its raw answer, that answer once checked, and eventsNoted when it was sent. */
 let reading: {
@@ -174,10 +215,14 @@ function startRead(): Promise<EffectiveSettings | null> {
   const afterEvents = eventsNoted;
   const sent = loadSettingsAction.dispatch(undefined);
   const answer = sent.then((s) => {
-    if (s === null || adopt(s, afterEvents)) {
+    if (s === null) {
+      return null;
+    }
+    if (adoptSettings(s)) {
+      latest = s;
       return s;
     }
-    // Refused with an event newer than this read: the read sent after that event answers instead.
+    // Older than an event taken since this read was sent: the read sent after that event answers.
     return afterEvents < eventsNoted ? refreshSettings() : null;
   });
   const read = { sent, answer, afterEvents };
@@ -191,7 +236,7 @@ function startRead(): Promise<EffectiveSettings | null> {
 }
 
 /** Load the effective settings, or null when the fetch failed or answered settings older than ones
- *  this page adopted. A read in flight is shared; one a newer settings event made stale is answered
+ *  this page holds. A read in flight is shared; one a newer settings event made stale is answered
  *  by a read sent after that event. */
 export function loadSettings(): Promise<EffectiveSettings | null> {
   return reading?.answer ?? rereading ?? startRead();
@@ -214,31 +259,14 @@ export function refreshSettings(): Promise<EffectiveSettings | null> {
   return rereading;
 }
 
-/** Reports whether s, requested once afterEvents events were taken, may be adopted, and holds its
- *  revision if so. Refused: below the held revision, or above the count of an event taken since the
- *  request, as that event's count is the newer one (a reset config.json counts lower). */
-function adopt(s: EffectiveSettings, afterEvents: number): boolean {
-  const r = s.settings_revision;
-  if (r < heldRevision || (afterEvents < eventsNoted && r > eventRevision)) {
-    return false;
-  }
-  heldRevision = r;
-  return true;
+/** The newest settings a read answered when nothing newer was announced since, else refreshSettings. */
+export function newestSettings(): Promise<EffectiveSettings | null> {
+  return latest !== null && !below(latest, held) ? Promise.resolve(latest) : refreshSettings();
 }
 
-/** The check for a settings payload requested now and not read through loadSettings or
- *  refreshSettings, which check their own: true holds the payload's revision, false means a newer
- *  payload or event superseded it. */
-export function settingsAdopter(): (s: EffectiveSettings) => boolean {
-  const afterEvents = eventsNoted;
-  return (s) => adopt(s, afterEvents);
-}
-
-/** Take a settings_updated event's revision, the server's count when it was sent, as the held one:
- *  a payload read before it is older. A lower count means config.json was replaced, reset or edited
- *  by hand, and the held revision follows it down so a later payload is adopted again. */
-export function noteSettingsEvent(revision: number): void {
+/** Take a settings_updated event's version through adoptSettings. An older one changes nothing
+ *  held, but still counts as an event, so a read sent before it is followed by one sent after. */
+export function noteSettingsEvent(version: Stamp): void {
   eventsNoted++;
-  eventRevision = revision;
-  heldRevision = revision;
+  adoptSettings(version);
 }

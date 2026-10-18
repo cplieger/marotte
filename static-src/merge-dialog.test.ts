@@ -40,7 +40,7 @@ import {
   __testResetTracking,
   noteSettingsEvent,
   refreshSettings,
-  settingsAdopter,
+  adoptSettings,
 } from "./persist.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -666,7 +666,7 @@ describe("merge method dialog over the shared settings read", () => {
 
   it("preselects from the read sent after a newer settings event, not the older one it joined", async () => {
     void mocks.realLoadSettings();
-    noteSettingsEvent(2);
+    noteSettingsEvent({ settings_epoch: 0, settings_revision: 2 });
     void refreshSettings();
     const p = openMergeMethodDialog(OPTS);
     await vi.waitFor(() => {
@@ -685,7 +685,7 @@ describe("merge method dialog over the shared settings read", () => {
   });
 
   it("preselects the first listed method when the read answers below the held revision", async () => {
-    expect(settingsAdopter()(settingsPayload({ settings_revision: 2 }))).toBe(true);
+    expect(adoptSettings(settingsPayload({ settings_revision: 2 }))).toBe(true);
     const p = openMergeMethodDialog(OPTS);
     await vi.waitFor(() => {
       expect(gets).toHaveLength(1);

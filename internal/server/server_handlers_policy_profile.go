@@ -81,6 +81,9 @@ func (s *Server) writeCustomizeError(ctx context.Context, w http.ResponseWriter,
 
 func (s *Server) profiles() *securityprofile.Store {
 	store := &securityprofile.Store{ConfigDir: s.configDir, WorkDir: s.workDir}
+	if s.agent != nil {
+		store.Publish = s.agent.Broadcast
+	}
 	if s.policy != nil {
 		store.List = s.policy.PolicyList
 	}

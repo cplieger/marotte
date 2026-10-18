@@ -1,7 +1,8 @@
 // Package securityprofile selects the security profile every session opens with and runs
 // Customize, the one profile change that writes a policy file. The profile id lives in
 // config.json; Customize copies the presets in force into the USER permissions file, then
-// persists custom. Callers own what follows a change: recycling sessions and telling clients.
+// persists custom. A write's settings event goes out through Store.Publish; callers own the rest
+// of what follows a change: recycling sessions and the permissions event.
 package securityprofile
 
 import (
@@ -42,9 +43,11 @@ var (
 const presetRuleSource = "preset:"
 
 // Store resolves and changes the profile for one workspace. List reads the live policy of a
-// session opened with the active profile; nil means no live policy.
+// session opened with the active profile; nil means no live policy. Publish gets the
+// settings_updated event of each profile write (settings.Update's publish); nil sends none.
 type Store struct {
 	List      func(ctx context.Context, scope string) ([]marotte.PolicyRule, error)
+	Publish   func(context.Context, marotte.ServerEvent)
 	ConfigDir string
 	WorkDir   string
 }
@@ -71,7 +74,7 @@ func (s *Store) Select(ctx context.Context, id string) error {
 	_, err = settings.Update(ctx, s.ConfigDir, func(doc map[string]json.RawMessage) error {
 		doc[settings.KeySecurityProfile] = raw
 		return nil
-	})
+	}, s.Publish)
 	return err
 }
 

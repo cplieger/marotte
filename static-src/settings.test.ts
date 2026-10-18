@@ -70,7 +70,8 @@ vi.mock("./persist.js", () => ({
   patchSettings: vi.fn(),
   initSettingsTracking: vi.fn(),
   // Present-but-inert for linking agent-dirs-ui.ts; no case saves a directory.
-  settingsAdopter: vi.fn(),
+  adoptSettings: vi.fn(),
+  newestSettings: vi.fn(),
 }));
 // Feature modules settings.ts wires in initUI — inert stubs so the import graph loads without side
 // effects (initUI is never called here).

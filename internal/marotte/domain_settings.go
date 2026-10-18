@@ -80,8 +80,10 @@ type EffectiveSettings struct {
 	TerminalCommandTimeoutMs int `json:"terminal_command_timeout_ms"`
 	// EngineHeapMiB is the agent engine's JavaScript heap limit in MiB; 0 is kiro-cli's default.
 	EngineHeapMiB int `json:"engine_heap_mib"`
-	// SettingsRevision is config.json's write count (settings.KeySettingsRevision), 0 before the
-	// first write: a payload below one already adopted is older than it.
+	// SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
+	// KeySettingsRevision), both 0 before the first write. Compared epoch first, a payload below
+	// one already adopted is older than it.
+	SettingsEpoch    uint64 `json:"settings_epoch"`
 	SettingsRevision uint64 `json:"settings_revision"`
 	// AutoCompactionEnabled defaults TRUE: off means nothing compacts a chat
 	// until the reader presses Compact.

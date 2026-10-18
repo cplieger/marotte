@@ -328,9 +328,11 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		patchKeys = append(patchKeys, k)
 	}
 	_ = settings.WarnUnknownKeys(patchKeys, r.Method+" "+r.URL.Path)
-	if _, ok := patch[settings.KeySettingsRevision]; ok {
-		httpreply.BadRequest(w, settings.KeySettingsRevision+" is counted by the server and cannot be written")
-		return
+	for _, key := range []string{settings.KeySettingsEpoch, settings.KeySettingsRevision} {
+		if _, ok := patch[key]; ok {
+			httpreply.BadRequest(w, key+" is counted by the server and cannot be written")
+			return
+		}
 	}
 	// Refuse an ignore-file entry kiro-cli would refuse, before the write, or config.json would
 	// disagree with what is enforced.
@@ -350,7 +352,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dirs := settings.AgentDirs{Workspace: s.workDir, Config: s.configDir}
-	committed, err := settings.Update(r.Context(), s.configDir, mergeSettingsPatch(dirs, patch))
+	committed, err := settings.Update(r.Context(), s.configDir, mergeSettingsPatch(dirs, patch), s.agent.Broadcast)
 	if err != nil {
 		if rp := (patchRefusedError{}); errors.As(err, &rp) {
 			httpreply.BadRequest(w, rp.Error())
@@ -365,7 +367,6 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webhttp.WriteJSON(w, effectiveOf(committed, filepath.Join(s.configDir, settings.Filename), dirs, s.kiroDefaults))
-	s.agent.Broadcast(r.Context(), settings.UpdatedEvent(r.Context(), s.configDir))
 	// Durable: the write landed, so a closed tab must not leave bridges on the old values.
 	s.agent.ReconcileSessionSettings(durable.Context(r.Context()))
 }

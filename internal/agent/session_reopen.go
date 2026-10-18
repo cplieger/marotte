@@ -9,7 +9,6 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/securityprofile"
-	"github.com/cplieger/marotte/internal/settings"
 )
 
 // markSessionsForReload is the one way a setting a session reads only at its door reaches resident chat sessions:
@@ -25,7 +24,6 @@ func (rt *Runtime) markSessionsForReload(reason string) {
 // setter, so resident sessions reload. A parentless run keeps the presets its lease recorded at launch.
 func (rt *Runtime) SecurityProfileChanged(ctx context.Context) {
 	rt.reconcileSettingsWrite(ctx, "security profile")
-	rt.Broadcast(ctx, settings.UpdatedEvent(ctx, rt.lifecycle.configDir))
 	rt.Broadcast(ctx, marotte.NewEvent(marotte.EventPermissionsChanged, "",
 		marotte.PermissionsChangedPayload{Status: "success"}))
 }
@@ -36,6 +34,7 @@ func (rt *Runtime) SecurityProfileChanged(ctx context.Context) {
 func (rt *Runtime) EnsureCustomProfile(ctx context.Context) error {
 	store := &securityprofile.Store{
 		List:      rt.config.PolicyList,
+		Publish:   rt.Broadcast,
 		ConfigDir: rt.lifecycle.configDir,
 		WorkDir:   rt.lifecycle.workDir,
 	}

@@ -632,9 +632,11 @@ type ToolJobOutputPayload struct {
 	Lines []string `json:"lines"`
 }
 
-// SettingsUpdatedPayload is the payload for type="settings_updated": SettingsRevision is
-// config.json's revision when the event was sent, so a settings read below it predates the change.
+// SettingsUpdatedPayload is the payload for type="settings_updated": config.json's version
+// (EffectiveSettings.SettingsEpoch and SettingsRevision) once the change it announces is stored.
+// The events leave in version order.
 type SettingsUpdatedPayload struct {
+	SettingsEpoch    uint64 `json:"settings_epoch"`
 	SettingsRevision uint64 `json:"settings_revision"`
 }
 

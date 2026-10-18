@@ -64,7 +64,7 @@ func writeSetting(t *testing.T, configDir, key string, value any) {
 	if _, err := settings.Update(t.Context(), configDir, func(doc map[string]json.RawMessage) error {
 		doc[key] = raw
 		return nil
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("Setup: write %s: %v", key, err)
 	}
 }
@@ -244,7 +244,8 @@ var configWrites = []struct {
 	{key: settings.KeyTheme, value: "light", reach: reachNoChat},
 	{key: settings.KeyFBPath, value: "/workspace", reach: reachNoChat},
 	{key: settings.KeyLastMergeMethod, value: "squash", reach: reachNoChat},
-	// Update writes it on every write, so a session door reading it would reopen every chat on any change.
+	// Update writes both on every write, so a session door reading them would reopen every chat on any change.
+	{key: settings.KeySettingsEpoch, value: "e", reach: reachNoChat},
 	{key: settings.KeySettingsRevision, value: 42, reach: reachNoChat},
 	{key: settings.KeyEngineHeapMiB, value: 1024, reach: reachEngine},
 	{key: settings.KeyAdditionalDirectories, value: grantableDirList, reach: reachReopen},

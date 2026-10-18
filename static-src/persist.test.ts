@@ -26,8 +26,9 @@ import {
   initSettingsTracking,
   loadSettings,
   noteSettingsEvent,
+  newestSettings,
   refreshSettings,
-  settingsAdopter,
+  adoptSettings,
   __testResetTracking,
 } from "./persist.js";
 
@@ -458,6 +459,12 @@ describe("loadSettings", () => {
   });
 });
 
+/** A settings version, epoch first. */
+const v = (revision: number, epoch = 1): { settings_epoch: number; settings_revision: number } => ({
+  settings_epoch: epoch,
+  settings_revision: revision,
+});
+
 describe("settings reads in flight", () => {
   let answers: ((s: ReturnType<typeof settingsPayload>) => void)[];
 
@@ -490,8 +497,8 @@ describe("settings reads in flight", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
-  const at = (revision: number): ReturnType<typeof settingsPayload> =>
-    settingsPayload({ settings_revision: revision });
+  const at = (revision: number, epoch = 1): ReturnType<typeof settingsPayload> =>
+    settingsPayload(v(revision, epoch));
 
   it("shares a read in flight with a plain load", async () => {
     const first = loadSettings();
@@ -505,7 +512,7 @@ describe("settings reads in flight", () => {
 
   it("answers a refresh from a read sent after the newest event, one for every refresh made meanwhile", async () => {
     const first = loadSettings();
-    noteSettingsEvent(3);
+    noteSettingsEvent(v(3));
     const refreshes = [refreshSettings(), refreshSettings()];
     await settle();
     expect(answers, "no read starts while one is in flight").toHaveLength(1);
@@ -524,7 +531,7 @@ describe("settings reads in flight", () => {
   });
 
   it("shares one read among the refreshes after one event", async () => {
-    noteSettingsEvent(1);
+    noteSettingsEvent(v(1));
     const refreshes = [refreshSettings(), refreshSettings()];
     await settle();
     expect(answers).toHaveLength(1);
@@ -537,7 +544,7 @@ describe("settings reads in flight", () => {
 
   it("answers a load a newer event made stale from the read sent after that event", async () => {
     const load = loadSettings();
-    noteSettingsEvent(2);
+    noteSettingsEvent(v(2));
     const refresh = refreshSettings();
     await settle();
     answers[0]?.(at(1));
@@ -549,8 +556,8 @@ describe("settings reads in flight", () => {
     expect((await refresh)?.settings_revision).toBe(2);
   });
 
-  it("answers null for a read below the held revision when no event came since it was sent", async () => {
-    expect(settingsAdopter()(at(5))).toBe(true);
+  it("answers null for a read below the held version when no event came since it was sent", async () => {
+    expect(adoptSettings(v(5))).toBe(true);
     const load = loadSettings();
     await settle();
     answers[0]?.(at(4));
@@ -559,64 +566,119 @@ describe("settings reads in flight", () => {
     expect(answers, "no read follows a refusal no event explains").toHaveLength(1);
   });
 
-  it("follows config.json down when a read sent before the reset answers the old count", async () => {
-    noteSettingsEvent(5);
+  it("takes a reset config.json's later epoch, and then refuses the old epoch's settings", async () => {
+    noteSettingsEvent(v(5));
     const before = refreshSettings();
     await settle();
     answers[0]?.(at(5));
     expect((await before)?.settings_revision).toBe(5);
 
     const load = loadSettings();
-    // config.json was replaced, so the next write counted from 1.
-    noteSettingsEvent(1);
+    // config.json was replaced, so its next write started a later epoch at 1.
+    noteSettingsEvent(v(1, 2));
     const refresh = refreshSettings();
     await settle();
     answers[1]?.(at(5));
     await vi.waitFor(() => {
       expect(answers).toHaveLength(3);
     });
-    answers[2]?.(at(1));
-    expect((await load)?.settings_revision).toBe(1);
-    expect((await refresh)?.settings_revision).toBe(1);
-    expect(settingsAdopter()(at(1))).toBe(true);
+    answers[2]?.(at(1, 2));
+    expect(await load).toEqual(at(1, 2));
+    expect(await refresh).toEqual(at(1, 2));
+    expect(adoptSettings(v(9)), "the old epoch, at any count").toBe(false);
+  });
+
+  it("answers newestSettings from the newest read until an event announces a later version", async () => {
+    noteSettingsEvent(v(2));
+    const read = refreshSettings();
+    await settle();
+    answers[0]?.(at(2));
+    await read;
+    await expect(newestSettings()).resolves.toEqual(at(2));
+    expect(answers, "no read for settings already held").toHaveLength(1);
+
+    noteSettingsEvent(v(3));
+    const newest = newestSettings();
+    await settle();
+    expect(answers).toHaveLength(2);
+    answers[1]?.(at(3));
+    await expect(newest).resolves.toEqual(at(3));
   });
 });
 
-describe("settingsAdopter", () => {
+describe("adoptSettings", () => {
   beforeEach(() => {
     __testResetTracking();
   });
 
-  const at = (revision: number): ReturnType<typeof settingsPayload> =>
-    settingsPayload({ settings_revision: revision });
-
-  it("accepts a revision at or above the one held, and refuses one below it", () => {
-    expect(settingsAdopter()(at(2))).toBe(true);
-    expect(settingsAdopter()(at(2))).toBe(true);
-    expect(settingsAdopter()(at(1))).toBe(false);
-    expect(settingsAdopter()(at(3))).toBe(true);
-    expect(settingsAdopter()(at(2))).toBe(false);
+  it("accepts a version at or above the one held, and refuses one below it", () => {
+    expect(adoptSettings(v(2))).toBe(true);
+    expect(adoptSettings(v(2))).toBe(true);
+    expect(adoptSettings(v(1))).toBe(false);
+    expect(adoptSettings(v(3))).toBe(true);
+    expect(adoptSettings(v(2))).toBe(false);
   });
 
-  it("takes an event's revision as the held one, above or below it", () => {
-    expect(settingsAdopter()(at(5))).toBe(true);
-    noteSettingsEvent(7);
-    expect(settingsAdopter()(at(6))).toBe(false);
-    expect(settingsAdopter()(at(7))).toBe(true);
-    noteSettingsEvent(1);
-    expect(settingsAdopter()(at(1))).toBe(true);
-    expect(settingsAdopter()(at(0))).toBe(false);
+  it("raises the held version on an event and never lowers it on an older one", () => {
+    expect(adoptSettings(v(5))).toBe(true);
+    noteSettingsEvent(v(7));
+    expect(adoptSettings(v(6))).toBe(false);
+    expect(adoptSettings(v(7))).toBe(true);
+    noteSettingsEvent(v(1));
+    expect(adoptSettings(v(1)), "after an older event").toBe(false);
+    expect(adoptSettings(v(7))).toBe(true);
   });
 
-  it("refuses an answer to a request sent before an event, above or below that event's count", () => {
-    const below = settingsAdopter();
-    const above = settingsAdopter();
-    const equal = settingsAdopter();
-    noteSettingsEvent(2);
-    expect(below(at(1))).toBe(false);
-    expect(above(at(3))).toBe(false);
-    expect(equal(at(2))).toBe(true);
-    expect(settingsAdopter()(at(3)), "a request sent after the event").toBe(true);
+  it("orders every count of a later epoch above every count of an earlier one", () => {
+    expect(adoptSettings(v(9, 1))).toBe(true);
+    expect(adoptSettings(v(1, 2))).toBe(true);
+    expect(adoptSettings(v(10, 1))).toBe(false);
+  });
+
+  it("accepts a payload above the newest event, whenever it was requested", () => {
+    noteSettingsEvent(v(2));
+    expect(adoptSettings(v(3))).toBe(true);
+  });
+});
+
+describe("patchSettings answer", () => {
+  let answer: Record<string, unknown>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    answer = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(Response.json(answer))),
+    );
+    __testResetTracking();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function patched(): Promise<unknown> {
+    const p = patchSettings({ theme: "dark" });
+    await vi.advanceTimersByTimeAsync(350);
+    return p;
+  }
+
+  it("resolves with the committed settings, and holds their version", async () => {
+    answer = v(4);
+    await expect(patched()).resolves.toEqual(v(4));
+    expect(adoptSettings(v(3))).toBe(false);
+  });
+
+  it("resolves superseded, still reporting Saved, when the page holds newer settings", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    noteSettingsEvent(v(5));
+    answer = v(4);
+    await expect(patched()).resolves.toBe("superseded");
+    expect(showSaved).toHaveBeenCalledWith(["theme"]);
+    expect(adoptSettings(v(5)), "the held version is unchanged").toBe(true);
   });
 });
 

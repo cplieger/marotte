@@ -11,7 +11,7 @@ import { serverSentence } from "./actions/server-sentence.js";
 import { setAdditionalDirectories } from "./actions/settings.js";
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { setAdditionalDirectories as setLinkableDirectories } from "./workspace.js";
-import { settingsAdopter } from "./persist.js";
+import { adoptSettings, newestSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 
 const SAVE_KEY = "additional_directories";
@@ -62,15 +62,18 @@ function paintLock(): void {
 /** Sends next as the whole list; a refusal keeps the list and shows the server's reason beside the
  *  field. On success the panel adopts the settings the write committed rather than painting next:
  *  the server decides which kept entries it grants, and removing one entry can change another's verdict.
- *  An answer older than settings the page already adopted is dropped. */
+ *  An answer older than settings the page holds gives way to the newest, and the panel stays locked
+ *  until those are read, so the next save is built from them. */
 async function save(next: readonly string[]): Promise<boolean> {
   saving = true;
   paintLock();
   showSaving(SAVE_KEY);
-  const adoptable = settingsAdopter();
   const o = await setAdditionalDirectories.dispatch({ dirs: next }).outcome;
-  if (o.status === "success" && adoptable(o.value)) {
-    applyAgentDirs(o.value);
+  if (o.status === "success") {
+    const s = adoptSettings(o.value) ? o.value : await newestSettings();
+    if (s !== null) {
+      applyAgentDirs(s);
+    }
   }
   saving = false;
   paintLock();

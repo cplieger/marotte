@@ -1060,7 +1060,7 @@ describe("settings_updated re-seeds the General panel", () => {
     const payload = settingsPayload({ chat_retention_days: -1 });
     vi.mocked(syncSettings).mockResolvedValueOnce(payload);
 
-    fireSSE("settings_updated", "", { settings_revision: 0 });
+    fireSSE("settings_updated", "", { settings_epoch: 0, settings_revision: 0 });
     await vi.waitFor(() => {
       expect(applyGeneralPanel).toHaveBeenCalledWith(payload);
     });
@@ -1073,7 +1073,7 @@ describe("settings_updated re-seeds the General panel", () => {
       settingsPayload({ additional_directories: ["/data"] }),
     );
 
-    fireSSE("settings_updated", "", { settings_revision: 0 });
+    fireSSE("settings_updated", "", { settings_epoch: 0, settings_revision: 0 });
     await vi.waitFor(() => {
       expect(additionalDirectories()).toEqual(["/data"]);
     });
@@ -1090,7 +1090,7 @@ describe("settings_updated re-seeds the General panel", () => {
     };
     window.addEventListener("unhandledrejection", onReject);
     try {
-      fireSSE("settings_updated", "", { settings_revision: 0 });
+      fireSSE("settings_updated", "", { settings_epoch: 0, settings_revision: 0 });
       // Two task boundaries: the rejection is raised inside the refetch's own `.then`, so
       // the event is delivered a task after the microtask that produced it.
       await new Promise((r) => setTimeout(r, 0));

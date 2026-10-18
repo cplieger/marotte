@@ -502,6 +502,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     auto_compact_pct: reqNum(o, "auto_compact_pct", "$.effective_settings"),
     terminal_command_timeout_ms: reqNum(o, "terminal_command_timeout_ms", "$.effective_settings"),
     engine_heap_mib: reqNum(o, "engine_heap_mib", "$.effective_settings"),
+    settings_epoch: reqNum(o, "settings_epoch", "$.effective_settings"),
     settings_revision: reqNum(o, "settings_revision", "$.effective_settings"),
     auto_compaction_enabled: reqBool(o, "auto_compaction_enabled", "$.effective_settings"),
     knowledge_enabled: reqBool(o, "knowledge_enabled", "$.effective_settings"),
@@ -2694,6 +2695,7 @@ export const decodeSessionModel: Decoder<SessionModel> = (v) => {
 export const decodeSettingsUpdatedPayload: Decoder<SettingsUpdatedPayload> = (v) => {
   const o = asObject(v, "$.settings_updated_payload");
   const out: SettingsUpdatedPayload = {
+    settings_epoch: reqNum(o, "settings_epoch", "$.settings_updated_payload"),
     settings_revision: reqNum(o, "settings_revision", "$.settings_updated_payload"),
   };
   return out;

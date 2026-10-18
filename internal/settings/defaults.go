@@ -104,7 +104,9 @@ const (
 	KeyTheme  = "theme"
 	KeyFBPath = "fb_path"
 
-	// KeySettingsRevision counts the document's writes: Update owns it, and a PATCH may not set it.
+	// KeySettingsEpoch and KeySettingsRevision stamp the document's version: Update owns both, and
+	// a PATCH may set neither.
+	KeySettingsEpoch    = "settings_epoch"
 	KeySettingsRevision = "settings_revision"
 )
 
@@ -166,6 +168,7 @@ var KnownKeys = map[string]struct{}{
 	KeySupervisedDefault:        {},
 	KeyScheduledAutoApprove:     {},
 	KeySecurityProfile:          {},
+	KeySettingsEpoch:            {},
 	KeySettingsRevision:         {},
 	KeyTheme:                    {},
 }

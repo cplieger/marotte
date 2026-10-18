@@ -9,9 +9,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
+	"time"
 
 	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/memlimit"
 	"github.com/cplieger/marotte/internal/nodeopts"
 )
@@ -23,10 +24,10 @@ var ErrUnreadable = errors.New("settings: stored document unreadable")
 // Update applies fn to the stored document and writes it back atomically under ONE per-
 // configDir lock across read, merge and write, so concurrent writers drop no key. An
 // unreadable document refuses (ErrUnreadable): merging over an empty map would destroy every
-// key fn does not name. An absent file is ordinary. Each write sets KeySettingsRevision to one
-// above the stored value, whatever fn put there; a refusal writes nothing. The merged document
-// is returned.
-func Update(ctx context.Context, configDir string, fn func(doc map[string]json.RawMessage) error) (map[string]json.RawMessage, error) {
+// key fn does not name. An absent file is ordinary. Each write stamps the document with the next
+// version (cache.next), whatever fn put there; a refusal writes nothing. publish, when not nil, gets the write's settings_updated event before the lock is
+// released, so events leave in revision order. The merged document is returned.
+func Update(ctx context.Context, configDir string, fn func(doc map[string]json.RawMessage) error, publish func(context.Context, marotte.ServerEvent)) (map[string]json.RawMessage, error) {
 	if configDir == "" {
 		return nil, errors.New("settings: no config dir")
 	}
@@ -42,11 +43,11 @@ func Update(ctx context.Context, configDir string, fn func(doc map[string]json.R
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
 	}
-	next := revisionOf(doc) + 1
+	next := c.next(stampOf(doc), time.Now())
 	if mErr := fn(doc); mErr != nil {
 		return nil, mErr
 	}
-	doc[KeySettingsRevision] = json.RawMessage(strconv.FormatUint(next, 10))
+	next.write(doc)
 	pretty, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return nil, err
@@ -60,7 +61,11 @@ func Update(ctx context.Context, configDir string, fn func(doc map[string]json.R
 		slog.Warn("settings: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
 			"path", path)
 	}
+	c.committed = next
 	c.forget()
+	if publish != nil {
+		publish(ctx, next.event())
+	}
 	return doc, nil
 }
 

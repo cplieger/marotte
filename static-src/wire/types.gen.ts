@@ -739,9 +739,11 @@ export interface EffectiveSettings {
   /** EngineHeapMiB is the agent engine's JavaScript heap limit in MiB; 0 is kiro-cli's default. */
   engine_heap_mib: number;
   /**
- * SettingsRevision is config.json's write count (settings.KeySettingsRevision), 0 before the
- * first write: a payload below one already adopted is older than it.
+ * SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
+ * KeySettingsRevision), both 0 before the first write. Compared epoch first, a payload below
+ * one already adopted is older than it.
  */
+  settings_epoch: number;
   settings_revision: number;
   /**
  * AutoCompactionEnabled defaults TRUE: off means nothing compacts a chat
@@ -3274,10 +3276,12 @@ export interface SessionModel {
 }
 
 /**
- * SettingsUpdatedPayload is the payload for type="settings_updated": SettingsRevision is
- * config.json's revision when the event was sent, so a settings read below it predates the change.
+ * SettingsUpdatedPayload is the payload for type="settings_updated": config.json's version
+ * (EffectiveSettings.SettingsEpoch and SettingsRevision) once the change it announces is stored.
+ * The events leave in version order.
  */
 export interface SettingsUpdatedPayload {
+  settings_epoch: number;
   settings_revision: number;
 }
 

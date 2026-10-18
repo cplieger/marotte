@@ -123,8 +123,9 @@ export function initNotificationToggles(): void {
       return;
     }
     void patchSettings({ notifications_enabled: false }, notifyToggle).then((r) => {
-      if (r === null) {
-        // Action framework rolls back the toggle input; no extra work needed.
+      // On null the action framework rolls back the toggle input; superseded settings are already
+      // applied (restoreNotifications).
+      if (r === null || r === "superseded") {
         return;
       }
       setNotificationsEnabled(false);
@@ -173,6 +174,10 @@ async function enableEverything(
   }
   updateSub(); // show the sub-options optimistically
   const r = await patchSettings(patch, ...mutated);
+  if (r === "superseded") {
+    updateSub();
+    return;
+  }
   if (r === null) {
     // Action framework handles input rollback; tear down any push subscription requestPermission
     // may have started.
@@ -221,8 +226,8 @@ async function applyKindChange(
     patch["notifications_enabled"] = false;
   }
   const r = await patchSettings(patch, ...mutated);
-  if (r === null) {
-    return; // the action framework rolls the toggle inputs back
+  if (r === null || r === "superseded") {
+    return; // the action framework rolls the toggle inputs back, or newer settings are applied
   }
   setKindEnabled(changed.kind, changed.input.checked);
   if (allOff) {

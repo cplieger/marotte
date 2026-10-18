@@ -329,9 +329,7 @@ func RecordEffortSeed(ctx context.Context, bus broadcaster, configDir, model str
 		}
 		doc[settings.KeyLastEffortByModel] = raw
 		return nil
-	}); err != nil {
+	}, bus.Broadcast); err != nil {
 		slog.Warn("effort seed not recorded", "model", model, "level", level, keyError, err)
-		return
 	}
-	bus.Broadcast(ctx, settings.UpdatedEvent(ctx, configDir))
 }

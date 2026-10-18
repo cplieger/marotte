@@ -164,7 +164,7 @@ describe("handleTypedCommand /memories over the shared settings read", () => {
 
   it("decides from the read sent after a newer settings event, not the older one it joined", async () => {
     void persist.loadSettings();
-    persist.noteSettingsEvent(2);
+    persist.noteSettingsEvent({ settings_epoch: 0, settings_revision: 2 });
     void persist.refreshSettings();
     expect(handleTypedCommand("c1", "/memories")).toBe(true);
     await vi.waitFor(() => {
@@ -184,7 +184,7 @@ describe("handleTypedCommand /memories over the shared settings read", () => {
   });
 
   it("opens Memories as for an unread setting when the read answers below the held revision", async () => {
-    expect(persist.settingsAdopter()(settingsPayload({ settings_revision: 2 }))).toBe(true);
+    expect(persist.adoptSettings(settingsPayload({ settings_revision: 2 }))).toBe(true);
     expect(handleTypedCommand("c1", "/memories")).toBe(true);
     await vi.waitFor(() => {
       expect(gets).toHaveLength(1);

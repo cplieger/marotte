@@ -1,6 +1,6 @@
-// Settings payloads reach the page in the order the server wrote them: the settings_updated
-// handler (handlers/system.ts), the shared read (persist.loadSettings) and the additional
-// directories panel's own write, over the shipped markup with only the network faked.
+// The page adopts only settings at or above the version it holds, whichever of the settings_updated
+// handler (handlers/system.ts), the shared read (persist.loadSettings) or the additional
+// directories panel's own write delivers them, over the shipped markup with only the network faked.
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import indexHtml from "../static/index.html?raw";
 import { settingsPayload } from "./__test-helpers__/settings.js";
@@ -14,14 +14,16 @@ import { additionalDirectories, _resetForTest as resetWorkspace } from "./worksp
 
 interface Held {
   answer: (s: EffectiveSettings) => void;
+  body: unknown;
 }
 
 let gets: Held[] = [];
 let patches: Held[] = [];
 
-function held(queue: Held[]): Promise<Response> {
+function held(queue: Held[], body: unknown): Promise<Response> {
   return new Promise((resolve) => {
     queue.push({
+      body,
       answer: (s) => {
         resolve(
           new Response(JSON.stringify(s), {
@@ -38,13 +40,17 @@ function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const method = init?.method ?? (input instanceof Request ? input.method : "GET");
   if (url.endsWith("/api/settings")) {
-    return held(method === "PATCH" ? patches : gets);
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined;
+    return held(method === "PATCH" ? patches : gets, body);
   }
   return Promise.resolve(new Response("{}", { status: 404 }));
 }
 
-function settingsEvent(revision: number): void {
-  dispatch({ type: "settings_updated", payload: { settings_revision: revision } } as ServerEvent);
+function settingsEvent(revision: number, epoch = 1): void {
+  dispatch({
+    type: "settings_updated",
+    payload: { settings_epoch: epoch, settings_revision: revision },
+  } as ServerEvent);
 }
 
 function chipLabels(): string[] {
@@ -56,8 +62,17 @@ async function settled(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function dirsAt(revision: number, dirs: string[]): EffectiveSettings {
-  return settingsPayload({ settings_revision: revision, additional_directories: dirs });
+function dirsAt(revision: number, dirs: string[], epoch = 1): EffectiveSettings {
+  return settingsPayload({
+    settings_epoch: epoch,
+    settings_revision: revision,
+    additional_directories: dirs,
+  });
+}
+
+function add(dir: string): void {
+  byId<HTMLInputElement>("agent-dirs-input").value = dir;
+  byId<HTMLButtonElement>("agent-dirs-add").click();
 }
 
 beforeAll(async () => {
@@ -140,17 +155,87 @@ describe("settings sync ordering", () => {
     expect(additionalDirectories()).toEqual(["/data", "/new"]);
   });
 
-  it("adopts settings again after config.json's revision went back", async () => {
+  it("adopts this write's own answer when another device's event arrived first", async () => {
+    add("/a");
+    await settled();
+    expect(patches).toHaveLength(1);
+
+    // Another device committed revision 1 first; this write committed revision 2 over it.
+    settingsEvent(1);
+    await settled();
+    expect(gets).toHaveLength(1);
+    patches[0]?.answer(dirsAt(2, ["/data", "/a"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/a"]);
+
+    gets[0]?.answer(dirsAt(1, ["/data", "/b"]));
+    await settled();
+    expect(chipLabels(), "the read served before this write is older").toEqual(["/data", "/a"]);
+
+    add("/c");
+    await settled();
+    expect(patches).toHaveLength(2);
+    expect(patches[1]?.body).toEqual({ additional_directories: ["/data", "/a", "/c"] });
+    patches[1]?.answer(dirsAt(3, ["/data", "/a", "/c"]));
+    await settled();
+  });
+
+  it("never repaints older settings after an older event", async () => {
+    add("/a");
+    await settled();
+    settingsEvent(2);
+    await settled();
+    gets[0]?.answer(dirsAt(2, ["/data", "/b"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/b"]);
+
+    settingsEvent(1);
+    await settled();
+    patches[0]?.answer(dirsAt(1, ["/data", "/a"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/b"]);
+    expect(additionalDirectories()).toEqual(["/data", "/b"]);
+    gets[1]?.answer(dirsAt(2, ["/data", "/b"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/b"]);
+  });
+
+  it("keeps the panel locked on an older answer until the newest settings are read", async () => {
+    add("/a");
+    await settled();
+    settingsEvent(2);
+    await settled();
+    patches[0]?.answer(dirsAt(1, ["/data", "/a"]));
+    await settled();
+    expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(true);
+
+    gets[0]?.answer(dirsAt(2, ["/data", "/a", "/b"]));
+    await settled();
+    expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(false);
+    add("/c");
+    await settled();
+    expect(patches[1]?.body).toEqual({ additional_directories: ["/data", "/a", "/b", "/c"] });
+    patches[1]?.answer(dirsAt(3, ["/data", "/a", "/b", "/c"]));
+    await settled();
+  });
+
+  it("adopts a reset config.json's later epoch, and refuses the old epoch's settings after it", async () => {
     settingsEvent(5);
     await settled();
     gets[0]?.answer(dirsAt(5, ["/data", "/five"]));
     await settled();
     expect(chipLabels()).toEqual(["/data", "/five"]);
 
-    // config.json was replaced, so the next write counts from 1.
-    settingsEvent(1);
+    // config.json was replaced, so its next write started a later epoch at 1.
+    settingsEvent(1, 2);
     await settled();
-    gets[1]?.answer(dirsAt(1, ["/data", "/reset"]));
+    gets[1]?.answer(dirsAt(1, ["/data", "/reset"], 2));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/reset"]);
+
+    settingsEvent(6);
+    await settled();
+    gets[2]?.answer(dirsAt(6, ["/data", "/old"]));
     await settled();
     expect(chipLabels()).toEqual(["/data", "/reset"]);
   });
