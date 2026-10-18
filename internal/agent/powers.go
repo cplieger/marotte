@@ -445,13 +445,14 @@ func (ps *powersSurface) syncLoop(ctx context.Context, done <-chan struct{}) {
 }
 
 // SyncPowers renders the legacy block under the locks known now (servers suppressed at boot) and
-// requests the administrator rules, re-rendering on their resolution and every lock change.
+// requests the administrator rules, re-rendering on their resolution and every lock change. Called
+// at boot and after a heal of KAS's MCP file.
 func (rt *Runtime) SyncPowers(ctx context.Context) {
 	if rt.powers.backend == nil {
 		return
 	}
 	if err := rt.powers.backend.Sync(ctx, rt.powers.serversMode); err != nil {
-		slog.Warn("powers: legacy block not rendered at boot", "error", err)
+		slog.Warn("powers: legacy block not rendered", "error", err)
 	}
 	rt.powers.refreshAdmin()
 }

@@ -37,7 +37,7 @@ const kasFileMaxBytes = 4 << 20
 // emitted: every one is `omitempty`, because an explicit null or zero is
 // a different declaration than an absent field.
 //
-// Deliberately absent: `cwd` (no field for it; reachable by hand-editing the file).
+// Deliberately absent: `cwd` (no field for it, and HealKASConfig reverts a hand-added one).
 type kasServer struct {
 	// Type is emitted for a registry entry only, where it is the declaration.
 	Type          string            `json:"type,omitempty"`

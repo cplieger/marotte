@@ -28,3 +28,5 @@ The `e2e-sse` test project runs against a real server binary and skips unless `S
 go build -tags marotte_test -o /tmp/marotte-test .
 cd static-src && SSE_FIXTURE=/tmp/marotte-test npx vitest --run --project e2e-sse
 ```
+
+A second marotte you start by hand needs its own `KIRO_CONFIG_DIR`, `HOME` and `KIRO_HOME`, or it finds the running one's lock and refuses to start.
