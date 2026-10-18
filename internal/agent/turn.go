@@ -41,6 +41,8 @@ type activeTurn struct {
 	// done is closed once, at finalize.
 	done      chan struct{}
 	reapTimer *time.Timer
+	// cancel trips this turn's own prompt call, set at StartTurn; nil for a turn with none (KAS's, a local shell).
+	cancel context.CancelCauseFunc
 	// Opened is when the turn began, and the only source of its elapsed time.
 	Opened time.Time
 	// reapChainAt is when this turn's compaction-reap chain began; only a tool started at or after it extends the budget.
@@ -279,16 +281,13 @@ const (
 	sendCloseFold                 // own was a fold-opened wire turn, now claimed; the caller closes it, then asks again
 )
 
-// markSentLocked marks t sent only once t owns the chat, since t's run may stream before its turn_start and those
-// frames fold into own. By own's state, while KAS admits a session/prompt:
+// markSentLocked marks t sent only once t owns the chat (caller holds mu, t live and unclaimed), since t's run may
+// stream before its turn_start and those frames fold into own. By own's state, while KAS admits a session/prompt and
+// no frame is being consumed (inFrame: it may be folding into own, or parked behind a close and due before the send):
 //   - nil or t: t takes own and is sent.
 //   - a fold-opened wire turn: no turn_end is owed for it, so it is claimed here, in the section that read the
-//     verdict's state, and returned for the caller to close (sendCloseFold). The source check is defensive: t's
-//     reservation keeps every other source from opening.
+//     verdict's state, and returned for the caller to close (sendCloseFold).
 //   - anything else, or a turn another closer claimed: wait for its close.
-//
-// It waits out a frame being consumed (inFrame): that frame may be folding into own, or parked behind a close and
-// due before the send. Caller holds mu, t live and unclaimed.
 func (lc *chatLifecycle) markSentLocked(t *activeTurn) (sendStep, *activeTurn) {
 	o := lc.own
 	switch {
@@ -301,6 +300,7 @@ func (lc *chatLifecycle) markSentLocked(t *activeTurn) (sendStep, *activeTurn) {
 			lc.setStateLocked(turnOpen)
 		}
 		return sendNow, nil
+	// The source check is defensive: t's reservation keeps every other source from opening.
 	case o.Source == marotte.TurnSourceWireTurnStart && !o.bracketed && lc.claimIfLocked(o, nil):
 		return sendCloseFold, o
 	default:
@@ -355,8 +355,9 @@ func (r *turnRegistry) claimTurn(ctx context.Context, chatID marotte.ChatID, tur
 	if r.claimHook != nil {
 		r.claimHook()
 	}
-	lc := r.lifecycleFor(chatID)
-	if !lc.awaitNotFinalizing(ctx) {
+	// lookup: a timer closer outliving forget must not mint an empty lifecycle for the chat.
+	lc, ok := r.lookup(chatID)
+	if !ok || !lc.awaitNotFinalizing(ctx) {
 		return nil, false
 	}
 	defer lc.mu.Unlock()
@@ -745,6 +746,32 @@ func (r *turnRegistry) interrupt(chatID marotte.ChatID, turnID string, cause mar
 	}
 	t.Interrupt = cause
 	return true
+}
+
+// interruptTurn claims cause on the named live, unclaimed turn and returns the turn's own prompt cancel (nil when
+// it has none), false when the turn is gone, finalizing or already interrupted.
+func (r *turnRegistry) interruptTurn(chatID marotte.ChatID, turnID string, cause marotte.InterruptCause) (context.CancelCauseFunc, bool) {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return nil, false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	t := lc.liveLocked(turnID)
+	if t == nil {
+		return nil, false
+	}
+	return lc.interruptLocked(t, cause)
+}
+
+// interruptLocked is interruptTurn's claim on a turn the caller already validated, in the caller's section: the
+// cancel it returns is t's own, so calling it after t closed cannot reach the turn that replaced it. Caller holds mu.
+func (*chatLifecycle) interruptLocked(t *activeTurn, cause marotte.InterruptCause) (context.CancelCauseFunc, bool) {
+	if t.finalizing || t.Interrupt != "" {
+		return nil, false
+	}
+	t.Interrupt = cause
+	return t.cancel, true
 }
 
 // interruptCause reads a claimed turn's cause under the turn's own lifecycle, the writer's mutex.

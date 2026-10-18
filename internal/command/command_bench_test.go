@@ -141,7 +141,9 @@ func (*benchDeps) OpenTurn(context.Context, marotte.ChatID, TurnOpen) (string, e
 // StartTurn answers true: false is the REFUSAL (a dead ctx, or an id the registry
 // dropped), and a stub answering it makes every prompt and `!cmd` test close its
 // turn before the call.
-func (*benchDeps) StartTurn(context.Context, marotte.ChatID, string) bool { return true }
+func (*benchDeps) StartTurn(context.Context, marotte.ChatID, string, context.CancelCauseFunc) bool {
+	return true
+}
 
 // ReserveTurnForPrompt admits every prompt: contention is a per-test double's
 // business, not the bench stub's.
@@ -228,7 +230,7 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	d.InflightAdd(1)
 	d.InflightDone()
 	d.DeleteChatStateByChain(t.Context(), "x", nil, RunStopChatDeleted)
-	d.StartTurn(t.Context(), "x", benchTurnID)
+	d.StartTurn(t.Context(), "x", benchTurnID, nil)
 	d.ReleaseTurn("x", benchTurnID)
 }
 

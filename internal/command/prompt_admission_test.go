@@ -187,7 +187,7 @@ func (a *scriptedAdmission) OpenTurn(context.Context, marotte.ChatID, TurnOpen) 
 	return admissionTurnID, nil
 }
 
-func (a *scriptedAdmission) StartTurn(context.Context, marotte.ChatID, string) bool {
+func (a *scriptedAdmission) StartTurn(context.Context, marotte.ChatID, string, context.CancelCauseFunc) bool {
 	a.rec.add("startTurn")
 	return !a.startRefused
 }

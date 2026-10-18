@@ -52,7 +52,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID marotte.Ch
 	}
 
 	// Last: the notice must be in the log and on the wire before the turn ends.
-	t.interruptIfFiltered(chatID, interrupted)
+	t.interruptIfFiltered(chatID, turn.ID(), interrupted)
 }
 
 // foldText folds a text delta with its steer ack markers stripped, filing each span of prose and
@@ -133,19 +133,19 @@ func (t *Translator) markRefusal(
 	}
 	// First-wins: a second tagged chunk cannot relabel the turn.
 	turn.SetRefusal(refusal)
-	t.interruptIfFiltered(chatID, interrupted)
+	t.interruptIfFiltered(chatID, turn.ID(), interrupted)
 	return true
 }
 
 // interruptIfFiltered ends the turn when the chunk was kiro-cli's tool-use filter notice; one
 // owner for both the fold and the refusal branch.
-func (t *Translator) interruptIfFiltered(chatID marotte.ChatID, interrupted bool) {
+func (t *Translator) interruptIfFiltered(chatID marotte.ChatID, turnID string, interrupted bool) {
 	if !interrupted {
 		return
 	}
 	slog.Warn("kiro-cli interrupted its own tool use; ending the turn",
-		"chat_id", chatID, "reason", interruptReason)
-	t.turnInterrupt.InterruptTurn(chatID, interruptReason)
+		"chat_id", chatID, "turn", turnID, "reason", interruptReason)
+	t.turnInterrupt.InterruptTurn(chatID, turnID, interruptReason)
 }
 
 // appendSteerAck records a steer whose ack marker just closed: the read, then the agent's

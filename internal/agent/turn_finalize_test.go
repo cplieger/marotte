@@ -92,7 +92,7 @@ func shellTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) string {
 	if err != nil {
 		t.Fatalf("OpenTurn(local_shell): %v", err)
 	}
-	if !h.coord.StartTurn(t.Context(), chatID, id) {
+	if !h.coord.StartTurn(t.Context(), chatID, id, nil) {
 		t.Fatalf("StartTurn(%q) refused", id)
 	}
 	return id

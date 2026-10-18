@@ -382,7 +382,8 @@ type runBoundsAccess interface {
 // here, terminated on the host. Advisory; a compaction failure does not prove the turn ended.
 type turnInterruptAccess interface {
 	CompactionFailed(chatID marotte.ChatID, detail string)
-	InterruptTurn(chatID marotte.ChatID, reason string)
+	// InterruptTurn acts on the named turn only, so a turn that replaced it is never reached.
+	InterruptTurn(chatID marotte.ChatID, turnID, reason string)
 }
 
 // turnMetering is the per-turn accounting a turn_completion frame writes, split

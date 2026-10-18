@@ -82,8 +82,8 @@ func (rt *Runtime) OpenTurn(ctx context.Context, chatID marotte.ChatID, open com
 }
 
 // StartTurn stamps the model and credit baseline onto the turn, with the bridge live, just before the call.
-func (rt *Runtime) StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string) bool {
-	return rt.coord.StartTurn(ctx, chatID, turnID)
+func (rt *Runtime) StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string, cancel context.CancelCauseFunc) bool {
+	return rt.coord.StartTurn(ctx, chatID, turnID, cancel)
 }
 
 // ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting up to wait; a refusal keys on the holder's source.

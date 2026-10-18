@@ -68,9 +68,17 @@ func (bc *bridgeCoordinator) expireCompactionReap(chatID marotte.ChatID, turnID 
 		return
 	}
 	turn.reapTimer = nil
+	// Claimed in the section that validated the turn, so a close and a new prompt after the unlock meet only
+	// this turn's own cancel.
+	cancel, claimed := lc.interruptLocked(turn, marotte.InterruptCause(detail))
 	lc.mu.Unlock()
-
-	bc.InterruptTurn(chatID, detail)
+	if !claimed {
+		slog.Debug("compaction reap: another cause already claimed the turn", "chat_id", chatID, "turn", turnID)
+		return
+	}
+	slog.Warn("the turn stayed silent after a failed compaction; interrupting it",
+		"chat_id", chatID, "turn", turnID, "budget", compactionFailedTurnBudget)
+	tripPromptCall(chatID, turnID, cancel)
 }
 
 func (*chatLifecycle) stopReapLocked(turn *activeTurn) {

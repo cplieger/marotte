@@ -178,29 +178,34 @@ func (bc *bridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID ma
 	}
 }
 
-// wireTurn names the chat's open wire turn, bracketed or fold-opened, false when none.
-func (r *turnRegistry) wireTurn(chatID marotte.ChatID) (*activeTurn, bool) {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return nil, false
+// wireTurn names the chat's own wire turn, bracketed or fold-opened, and whether a closer holds it; false when own
+// is none or another source.
+func (r *turnRegistry) wireTurn(chatID marotte.ChatID) (t *activeTurn, closing, ok bool) {
+	lc, found := r.lookup(chatID)
+	if !found {
+		return nil, false, false
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	t := lc.own
-	if t == nil || t.finalizing || t.Source != marotte.TurnSourceWireTurnStart {
-		return nil, false
+	t = lc.own
+	if t == nil || t.Source != marotte.TurnSourceWireTurnStart {
+		return nil, false, false
 	}
-	return t, true
+	return t, t.finalizing, true
 }
 
 // ArmWireCancelGrace backstops a cancel of a turn KAS started: unless a turn_end closes it within d, it closes as
 // cancelled, so a lost bracket, or a fold-opened turn no turn_end is owed for, cannot hold the chat's sends behind
-// it until the bridge dies. The close names the turn, so it never reaches a later one. False when no such turn is
-// open.
+// it until the bridge dies. The close names the turn, so it never reaches a later one. True whenever own is such a
+// turn, closing included (nothing to arm): a prompt holding the bridge then waits behind it, unsent, and is not the
+// cancel's target. False when own is none or another source.
 func (bc *bridgeCoordinator) ArmWireCancelGrace(chatID marotte.ChatID, d time.Duration) bool {
-	t, open := bc.turns.wireTurn(chatID)
-	if !open {
+	t, closing, ok := bc.turns.wireTurn(chatID)
+	if !ok {
 		return false
+	}
+	if closing {
+		return true
 	}
 	// Refused once Shutdown began: it closes its own turns, with its own account.
 	bc.lifecycle.afterUnlessDraining(d, func() {

@@ -14,16 +14,10 @@ func newCompactionReapFixture(t *testing.T) (*Runtime, string, *turnlog.Turn, co
 	t.Helper()
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	turnID, log := h.stagePromptTurn(t, "c1")
-	t.Cleanup(func() { h.ReleaseTurn("c1", turnID) })
-
 	pctx, cancel := context.WithCancelCause(t.Context())
 	t.Cleanup(func() { cancel(nil) })
-	sb, _ := h.bridge.mgr.orInsert("c1")
-	sb.mu.Lock()
-	sb.state = bridgePrompting
-	sb.promptCancel = cancel
-	sb.mu.Unlock()
+	turnID, log := h.stagePromptTurnCalling(t, "c1", cancel)
+	t.Cleanup(func() { h.ReleaseTurn("c1", turnID) })
 	return h, turnID, log, pctx
 }
 

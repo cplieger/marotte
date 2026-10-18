@@ -105,19 +105,6 @@ func TestArmCancelGrace_ExpiryCarriesTheGraceCause(t *testing.T) {
 	})
 }
 
-// TestCancelPromptCall_CarriesNoCause pins that a wire interrupt keeps context.Canceled, so the turn concludes `interrupted`.
-func TestCancelPromptCall_CarriesNoCause(t *testing.T) {
-	sb, ctx, _ := newPromptingBridge(t)
-	if !sb.cancelPromptCall() {
-		t.Fatalf("cancelling an in-flight prompt must report true")
-	}
-	<-ctx.Done()
-	if got := context.Cause(ctx); got != context.Canceled {
-		t.Errorf("context.Cause = %v, want context.Canceled: an interrupt must carry no "+
-			"sentinel, or it would conclude cancelled", got)
-	}
-}
-
 // TestShouldTripCancelGrace_RefusesAFinishedTurn covers the ordinary ack.
 func TestShouldTripCancelGrace_RefusesAFinishedTurn(t *testing.T) {
 	sb, _, gen := newPromptingBridge(t)
@@ -154,51 +141,6 @@ func TestEndPromptCall_DisarmsTheTimer(t *testing.T) {
 		synctest.Sleep(4 * testGrace)
 		if ctx.Err() != nil {
 			t.Errorf("context cancelled after EndPromptCall disarmed the budget: %v", ctx.Err())
-		}
-	})
-}
-
-// TestCancelPromptCall_TripsTheInFlightCall is the bridge half of an interruption; the cause is
-// the turn record's (TestTurnRegistry_InterruptIsFirstWinsPerEpoch).
-func TestCancelPromptCall_TripsTheInFlightCall(t *testing.T) {
-	sb, ctx, _ := newPromptingBridge(t)
-
-	if !sb.cancelPromptCall() {
-		t.Fatal("cancelling an in-flight prompt call must be taken")
-	}
-
-	select {
-	case <-ctx.Done():
-	default:
-		t.Error("the prompt context is still live; the blocked Call never returns and the slot stays held")
-	}
-}
-
-// TestCancelPromptCall_RefusesWithNoCallInFlight pins that a late sentinel must not cancel a turn the user just started.
-func TestCancelPromptCall_RefusesWithNoCallInFlight(t *testing.T) {
-	t.Run("idle bridge", func(t *testing.T) {
-		sb := &sharedBridge{}
-		if sb.cancelPromptCall() {
-			t.Error("an idle bridge accepted a cancel")
-		}
-	})
-
-	t.Run("prompting but no prompt call registered", func(t *testing.T) {
-		sb := &sharedBridge{}
-		if !sb.tryAcquireForPrompt() {
-			t.Fatal("fresh bridge must be acquirable")
-		}
-		// Between TryAcquireForPrompt and BeginPromptCall: a turn, nothing to cancel yet.
-		if sb.cancelPromptCall() {
-			t.Error("a cancel was taken with no prompt context to trip")
-		}
-	})
-
-	t.Run("after the turn ended", func(t *testing.T) {
-		sb, _, _ := newPromptingBridge(t)
-		sb.EndPromptCall()
-		if sb.cancelPromptCall() {
-			t.Error("a cancel was taken after the prompt call ended")
 		}
 	})
 }

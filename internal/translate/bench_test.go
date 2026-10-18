@@ -615,11 +615,12 @@ func (d *baseDeps) CompactionFailed(chatID marotte.ChatID, detail string) {
 
 type turnInterrupt struct {
 	chatID marotte.ChatID
+	turnID string
 	reason string
 }
 
-func (d *baseDeps) InterruptTurn(chatID marotte.ChatID, reason string) {
-	d.turnInterrupts = append(d.turnInterrupts, turnInterrupt{chatID, reason})
+func (d *baseDeps) InterruptTurn(chatID marotte.ChatID, turnID, reason string) {
+	d.turnInterrupts = append(d.turnInterrupts, turnInterrupt{chatID, turnID, reason})
 }
 
 // AccumulateSpend and StageConversationTurnSummary stand in for the host's per-turn

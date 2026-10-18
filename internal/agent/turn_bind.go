@@ -29,16 +29,14 @@ func (r *turnRegistry) withLifecycle(ctx context.Context, chatID marotte.ChatID,
 func (r *turnRegistry) bindPending(ctx context.Context, chatID marotte.ChatID) (bound string, lost *activeTurn) {
 	err := r.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
 		p, o := lc.pending, lc.own
-		if p == nil || p.acked || p.finalizing || p.awaitsSend() {
-			if o != nil && o.acked && lc.claimIfLocked(o, nil) {
-				lost = o
-			}
+		unbindable := p == nil || p.acked || p.finalizing || p.awaitsSend()
+		if (unbindable && o != nil && o.acked) || (!unbindable && o != nil && o != p) {
+			// withLifecycle waited out a finalizing own, so o is unclaimed and the claim holds.
+			lc.claimIfLocked(o, nil)
+			lost = o
 			return nil
 		}
-		if o != nil && o != p {
-			if lc.claimIfLocked(o, nil) {
-				lost = o
-			}
+		if unbindable {
 			return nil
 		}
 		p.acked = true

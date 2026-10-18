@@ -236,7 +236,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, chatID marott
 		return
 	}
 	defer roles.turnOutcome.ReleaseTurn(chatID, retryTurn)
-	if !roles.turnOutcome.StartTurn(ctx, chatID, retryTurn) {
+	if !roles.turnOutcome.StartTurn(ctx, chatID, retryTurn, cancelRetry) {
 		slog.Warn("empty turn: the retry turn could not start", "chat_id", chatID)
 		stop, reason := turnStopBeforeStart(ctx, "The retry was cancelled before the agent answered.")
 		roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, retryTurn, stop, reason, "", 0)
@@ -495,7 +495,7 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	}
 	// At bridge-ready, so the model and credit baseline are captured with the bridge live and the
 	// session open is not timed.
-	if !roles.turnOutcome.StartTurn(ctx, chatID, turnID) {
+	if !roles.turnOutcome.StartTurn(ctx, chatID, turnID, cancelPrompt) {
 		// Dead ctx, or the death closer took the turn: the turn end rule runs here, and a closed
 		// turn writes nothing.
 		sb.ReleaseAfterPrompt()

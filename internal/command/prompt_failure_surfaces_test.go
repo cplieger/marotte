@@ -83,7 +83,9 @@ func (d *surfaceDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridg
 	return &surfaceBridge{deps: d}, nil
 }
 
-func (d *surfaceDeps) StartTurn(context.Context, marotte.ChatID, string) bool { return !d.startRefused }
+func (d *surfaceDeps) StartTurn(context.Context, marotte.ChatID, string, context.CancelCauseFunc) bool {
+	return !d.startRefused
+}
 
 func (*surfaceDeps) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
 	return AdmissionAcquired

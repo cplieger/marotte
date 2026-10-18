@@ -283,7 +283,7 @@ type terminalAccess interface {
 type turnStopper interface {
 	RequestStop(chatID marotte.ChatID)
 	// ArmWireCancelGrace closes the agent-started turn a cancel targets unless its own end arrives
-	// within d; false when no such turn is open.
+	// within d; true while such a turn holds the chat, closing included, false otherwise.
 	ArmWireCancelGrace(chatID marotte.ChatID, d time.Duration) bool
 }
 
@@ -470,9 +470,10 @@ type turnOutcomeAccess interface {
 	OpenTurn(ctx context.Context, chatID marotte.ChatID, open TurnOpen) (string, error)
 	// StartTurn stamps the model and the credit baseline onto the turn the id
 	// names, with the bridge live, immediately before the call that drives it.
-	// False for a dead ctx and for an id the registry no longer holds, and a caller
-	// answering false runs the turn end rule on that turn itself.
-	StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string) bool
+	// cancel trips that call when kiro-cli abandons the turn, nil for a turn with
+	// no prompt call. False for a dead ctx and for an id the registry no longer
+	// holds, and a caller answering false runs the turn end rule on that turn itself.
+	StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string, cancel context.CancelCauseFunc) bool
 	// AwaitTurn blocks until the named turn has finalized and reports what
 	// it did. A caller holding that turn's handle never receives
 	// marotte.ErrNoSuchTurn.

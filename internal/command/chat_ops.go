@@ -23,7 +23,7 @@ import (
 var CancelGrace = 10 * time.Second
 
 // ErrCancelGraceExpired is the cause the grace timer attaches to the prompt context it cancels, so
-// the failure site concludes `cancelled` rather than `interrupted`. Shutdown and cancelPromptCall
+// the failure site concludes `cancelled` rather than `interrupted`. Shutdown and an interrupt
 // leave the cause at context.Canceled, and the first cancellation sets the cause, so whichever of
 // shutdown and the grace fires first decides the outcome.
 var ErrCancelGraceExpired = errors.New("cancel grace expired")
@@ -143,8 +143,9 @@ func cmdCancel(
 	// session/cancel is a notification nothing acks: the turn ends only when KAS answers
 	// session/prompt. If it never does, the grace budget cancels the prompt's context so the
 	// ordinary prompt-failure path finalizes the turn. A turn KAS started itself has no prompt
-	// call, so its grace closes the turn directly.
-	if !sb.ArmCancelGrace(sb.PromptGeneration(), CancelGrace) && !stops.ArmWireCancelGrace(cmd.ChatID, CancelGrace) {
+	// call, so its grace closes the turn directly. That turn is asked first: a prompt holding
+	// the bridge beside it waits unsent behind it, and the prompt grace would cancel it once sent.
+	if !stops.ArmWireCancelGrace(cmd.ChatID, CancelGrace) && !sb.ArmCancelGrace(sb.PromptGeneration(), CancelGrace) {
 		slog.Debug("cancel: no in-flight prompt to arm a grace budget against", "chat_id", cmd.ChatID)
 	}
 	return responseOK, nil

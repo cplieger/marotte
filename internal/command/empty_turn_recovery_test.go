@@ -29,7 +29,9 @@ func (o *recoveryOutcome) OpenTurn(_ context.Context, _ marotte.ChatID, open Tur
 	return "t-" + strconv.Itoa(len(o.openedTurns)), nil
 }
 
-func (*recoveryOutcome) StartTurn(context.Context, marotte.ChatID, string) bool { return true }
+func (*recoveryOutcome) StartTurn(context.Context, marotte.ChatID, string, context.CancelCauseFunc) bool {
+	return true
+}
 
 func (*recoveryOutcome) AwaitTurn(context.Context, marotte.ChatID, string) (marotte.TurnResult, error) {
 	return marotte.TurnResult{}, marotte.ErrNoSuchTurn

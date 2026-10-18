@@ -58,10 +58,10 @@ func TestStartTurn_RefusesADeadContextAfterTheOpen(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if h.coord.StartTurn(ctx, "c1", id) {
+	if h.coord.StartTurn(ctx, "c1", id, nil) {
 		t.Errorf("StartTurn(cancelled ctx, %q) = true, want false", id)
 	}
-	if h.coord.StartTurn(t.Context(), "c1", "t-never-opened") {
+	if h.coord.StartTurn(t.Context(), "c1", "t-never-opened", nil) {
 		t.Error("StartTurn(live ctx, unknown id) = true, want false: the registry holds no such turn")
 	}
 	if got := h.coord.turns.openTurnIDs("c1"); len(got) != 1 || got[0].ID != id {

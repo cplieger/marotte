@@ -226,21 +226,6 @@ func (sb *sharedBridge) shouldTripCancelGrace(gen uint64) (context.CancelCauseFu
 	return sb.promptCancel, true
 }
 
-// cancelPromptCall trips the in-flight prompt so the failure path finalizes the turn, and
-// reports whether there was one. It records no cause; that lives on the turn record.
-func (sb *sharedBridge) cancelPromptCall() bool {
-	sb.mu.Lock()
-	if sb.state != bridgePrompting || sb.promptCancel == nil {
-		sb.mu.Unlock()
-		return false
-	}
-	cancel := sb.promptCancel
-	sb.mu.Unlock()
-	// Outside the lock: cancel runs arbitrary callbacks. No cause, so the turn concludes `interrupted`.
-	cancel(nil)
-	return true
-}
-
 // claimEffortHeal reports whether the caller won the one reactive effort repair, latching it.
 func (sb *sharedBridge) claimEffortHeal() bool {
 	sb.mu.Lock()

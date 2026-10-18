@@ -125,9 +125,9 @@ func (bc *bridgeCoordinator) announceTurnOpened(ctx context.Context, chatID maro
 }
 
 // StartTurn stamps the model and the credit baseline onto the named turn just before the call that drives it, and
-// makes it own when own is nil. False for a dead ctx or an id the registry no longer holds; the caller then runs
-// the turn end rule itself.
-func (bc *bridgeCoordinator) StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string) bool {
+// makes it own when own is nil. cancel is that call's, which InterruptTurn trips. False for a dead ctx or an id the
+// registry no longer holds; the caller then runs the turn end rule itself.
+func (bc *bridgeCoordinator) StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string, cancel context.CancelCauseFunc) bool {
 	if ctx.Err() != nil {
 		return false
 	}
@@ -138,6 +138,7 @@ func (bc *bridgeCoordinator) StartTurn(ctx context.Context, chatID marotte.ChatI
 	if t == nil || t.finalizing {
 		return false
 	}
+	t.cancel = cancel
 	model := bc.turnOpenModel(ctx, chatID, t.Source)
 	t.Model = model
 	if model != "" {

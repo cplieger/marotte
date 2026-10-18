@@ -425,31 +425,47 @@ func TestCmdPrompt_ARunReportedAsTheSendGateWakesKeepsTheRewakeOpen(t *testing.T
 	})
 }
 
-// gateCloseBlock holds the send gate on its fold-close log line, which follows its claim of the re-wake turn.
-type gateCloseBlock struct {
+// logLineBlock holds the goroutine that logs msg, once, until resume: a pause at a point the code marks with a log
+// line.
+type logLineBlock struct {
 	entered chan struct{}
 	release chan struct{}
+	resume  func()
+	msg     string
+	once    sync.Once
 }
 
-func (*gateCloseBlock) Enabled(context.Context, slog.Level) bool { return true }
+// newLogLineBlock also resumes at cleanup, so a failed test does not leave its bubble blocked.
+func newLogLineBlock(t *testing.T, msg string) *logLineBlock {
+	b := &logLineBlock{entered: make(chan struct{}), release: make(chan struct{}), msg: msg}
+	b.resume = sync.OnceFunc(func() { close(b.release) })
+	t.Cleanup(b.resume)
+	return b
+}
 
-func (b *gateCloseBlock) Handle(_ context.Context, r slog.Record) error {
-	if r.Message == "closing the agent's unbracketed turn so an admitted prompt can be sent" {
+func (*logLineBlock) Enabled(context.Context, slog.Level) bool { return true }
+
+func (b *logLineBlock) Handle(_ context.Context, r slog.Record) error {
+	if r.Message != b.msg {
+		return nil
+	}
+	b.once.Do(func() {
 		close(b.entered)
 		<-b.release
-	}
+	})
 	return nil
 }
 
-func (b *gateCloseBlock) WithAttrs([]slog.Attr) slog.Handler { return b }
-func (b *gateCloseBlock) WithGroup(string) slog.Handler      { return b }
+func (b *logLineBlock) WithAttrs([]slog.Attr) slog.Handler { return b }
+func (b *logLineBlock) WithGroup(string) slog.Handler      { return b }
 
 // A re-wake's turn_start reaching marotte after the send gate claimed the fold-opened turn for the prompt is still
 // a frame before the send: it opens a bracketed turn the prompt waits out, and the re-wake's later text and tool
 // call are recorded there, never in the prompt's turn.
 func TestCmdPrompt_ARewakeTurnStartAfterTheGateClaimedIsWaitedOut(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		block := &gateCloseBlock{entered: make(chan struct{}), release: make(chan struct{})}
+		// The gate logs this line after its claim of the re-wake turn.
+		block := newLogLineBlock(t, "closing the agent's unbracketed turn so an admitted prompt can be sent")
 		swapDefaultLogger(t, block)
 		h, cs, br, rewake := gateRewakeHub(t, nil)
 		prompted := promptCalls(br)
@@ -462,7 +478,7 @@ func TestCmdPrompt_ARewakeTurnStartAfterTheGateClaimedIsWaitedOut(t *testing.T) 
 		<-block.entered
 		br.deliver(newTurnStartMsg())
 		synctest.Wait()
-		close(block.release)
+		block.resume()
 		synctest.Wait()
 
 		if got := prompted(); len(got) != 0 {
