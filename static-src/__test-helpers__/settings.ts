@@ -6,6 +6,8 @@ import type { EffectiveSettings } from "../wire/types.gen.js";
 export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): EffectiveSettings {
   return {
     agent_ignore_files: [".gitignore", ".kiroignore"],
+    additional_directories: [],
+    additional_directories_refused: {},
     chat_retention_days: 7,
     theme: "",
     fb_path: "",

@@ -19,6 +19,7 @@ import type { ThemeStorage } from "@cplieger/ui-primitives/theme";
 import { initSettingsTabs } from "./settings-tabs.js";
 import type { IdentityVerdict } from "./identity.js";
 import { initPermissionsUI, initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
+import { applyAgentDirs, initAgentDirsUI } from "./agent-dirs-ui.js";
 import { initMCP } from "./mcp-ui.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
 import { apiGet } from "./api-client.js";
@@ -194,6 +195,8 @@ export function restoreAll(s: EffectiveSettings): void {
   // Theme is applied by initThemeToggle() (initUI), which constructs the createTheme controller —
   // it reads through the storage adapter above and applies the resolved theme on construction.
   initPermissionsUI(s);
+  initAgentDirsUI();
+  applyAgentDirs(s);
   initNativePolicyUI();
   applyGeneralPanel(s);
 }

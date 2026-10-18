@@ -56,12 +56,13 @@ func stageAncestorSwap(t *testing.T) escapeStage {
 	if err != nil {
 		t.Fatalf("resolveInsideWorkDir(%q) = %v, want nil", target, err)
 	}
-	root, rel, err := rt.lifecycle.confineInWorkDir(target)
+	confined, err := rt.lifecycle.confine(t.Context(), target, fsWrite)
 	if err != nil {
-		t.Fatalf("confineInWorkDir(%q) = %v, want nil", target, err)
+		t.Fatalf("confine(%q) = %v, want nil", target, err)
 	}
+	root, rel := confined.root, confined.rel
 	if rel != filepath.Join("sub", "f.txt") {
-		t.Fatalf("confineInWorkDir(%q) rel = %q, want %q", target, rel, filepath.Join("sub", "f.txt"))
+		t.Fatalf("confine(%q) rel = %q, want %q", target, rel, filepath.Join("sub", "f.txt"))
 	}
 
 	// The swap.
@@ -208,10 +209,11 @@ func TestConfinedRead_RefusesFIFO(t *testing.T) {
 	}
 	rt, _ := hubForFSTest(t, work)
 
-	root, rel, err := rt.lifecycle.confineInWorkDir(fifo)
+	target, err := rt.lifecycle.confine(t.Context(), fifo, fsRead)
 	if err != nil {
-		t.Fatalf("confineInWorkDir(%q) = %v, want nil", fifo, err)
+		t.Fatalf("confine(%q) = %v, want nil", fifo, err)
 	}
+	root, rel := target.root, target.rel
 	_, err = atomicfile.ReadBoundedInRoot(t.Context(), root, rel, fsReadCap)
 	if !errors.Is(err, atomicfile.ErrNotRegular) {
 		t.Errorf("ReadBoundedInRoot(fifo) err = %v, want ErrNotRegular", err)
@@ -227,10 +229,11 @@ func TestConfinedWrite_RefusesFIFO(t *testing.T) {
 	}
 	rt, _ := hubForFSTest(t, work)
 
-	root, rel, err := rt.lifecycle.confineInWorkDir(fifo)
+	target, err := rt.lifecycle.confine(t.Context(), fifo, fsWrite)
 	if err != nil {
-		t.Fatalf("confineInWorkDir(%q) = %v, want nil", fifo, err)
+		t.Fatalf("confine(%q) = %v, want nil", fifo, err)
 	}
+	root, rel := target.root, target.rel
 	_, err = atomicfile.WriteFileInRoot(t.Context(), root, rel, []byte("x"),
 		atomicfile.WithMkdirMode(0o755))
 	if !errors.Is(err, atomicfile.ErrNotRegular) {
@@ -259,10 +262,11 @@ func TestConfinedWrite_SymlinkPlantedAfterConfineDoesNotReachVictim(t *testing.T
 	}
 	rt, _ := hubForFSTest(t, work)
 
-	root, rel, err := rt.lifecycle.confineInWorkDir(target)
+	confined, err := rt.lifecycle.confine(t.Context(), target, fsWrite)
 	if err != nil {
-		t.Fatalf("confineInWorkDir(%q) = %v, want nil", target, err)
+		t.Fatalf("confine(%q) = %v, want nil", target, err)
 	}
+	root, rel := confined.root, confined.rel
 
 	// The race: swap the confined target for a symlink at the victim.
 	if err := os.Remove(target); err != nil {
@@ -296,9 +300,9 @@ func TestConfinedWrite_SymlinkPlantedAfterConfineDoesNotReachVictim(t *testing.T
 }
 
 // With no workspace root the handlers refuse rather than fall back to ambient os calls.
-func TestConfineInWorkDir_RefusesWithoutRoot(t *testing.T) {
+func TestConfine_RefusesWithoutRoot(t *testing.T) {
 	lt := &lifetime{workDir: t.TempDir()}
-	if _, _, err := lt.confineInWorkDir("f.txt"); !errors.Is(err, errNoWorkRoot) {
-		t.Errorf("confineInWorkDir with nil workRoot err = %v, want errNoWorkRoot", err)
+	if _, err := lt.confine(t.Context(), "f.txt", fsWrite); !errors.Is(err, errNoWorkRoot) {
+		t.Errorf("confine with nil workRoot err = %v, want errNoWorkRoot", err)
 	}
 }

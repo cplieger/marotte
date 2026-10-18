@@ -9,6 +9,10 @@ import "log/slog"
 const (
 	KeyAgentIgnoreFiles = "agent_ignore_files"
 
+	// KeyAdditionalDirectories lists the directories beyond the workspace that agents may read
+	// and write (AgentDirs owns which entries are granted). Default empty.
+	KeyAdditionalDirectories = "additional_directories"
+
 	// KeyChatRetentionDays is three states: -1 keeps every chat, 0 deletes at close, N keeps N
 	// days. A dropped key falls back to the 7-day default, hence PATCH merges, never replaces.
 	KeyChatRetentionDays = "chat_retention_days"
@@ -115,11 +119,18 @@ func DefaultAgentIgnoreFiles() []string {
 	return []string{}
 }
 
+// DefaultAdditionalDirectories is the default for additional_directories: EMPTY, so agents
+// reach only the workspace until the user grants more. Non-nil, so it marshals [].
+func DefaultAdditionalDirectories() []string {
+	return []string{}
+}
+
 // KnownKeys is the set of marotte-managed config.json keys; PATCH warns about others but
 // does not reject them. kiro-cli's own settings (cli.json) are not in it. There is no
 // model_effort key: effort is per chat (Chat.Effort), seeded by KeyLastEffortByModel.
 var KnownKeys = map[string]struct{}{
 	KeyAgentIgnoreFiles:         {},
+	KeyAdditionalDirectories:    {},
 	KeyAutoCompactionEnabled:    {},
 	KeyAutoCompactPct:           {},
 	KeyAutoDelegation:           {},

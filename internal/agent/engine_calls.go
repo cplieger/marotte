@@ -84,17 +84,21 @@ func (o *engineOwner) exportSessionRaw(ctx context.Context, sessionID string) (j
 // observeBudget bounds one observer pass's door and calls; its close runs under the engine's own budget.
 const observeBudget = 60 * time.Second
 
-// observe runs fn on an observer pass: a session opened on the engine with presets, no mode and no prompt, which
-// closePass tries to end when fn returns. KAS answers the policy, code-intelligence and governance reads only for a
-// resident session, and a pass that opens with the current presets answers for the profile as it is now. attach
-// consumes the pass's own frames (its workspace notifications and command list) from before the door writes; nil
-// drains them.
+// observe runs fn on an observer pass: a session opened on the engine with door's presets and additional directories
+// (nil sends neither), no mode and no prompt, which closePass tries to end when fn returns. KAS answers the policy,
+// code-intelligence and governance reads only for a resident session, and a pass that opens with the current presets
+// answers for the profile as it is now. attach consumes the pass's own frames (its workspace notifications and
+// command list) from before the door writes; nil drains them.
 func (o *engineOwner) observe(
-	ctx context.Context, presets []string, attach func(engineSession), fn func(ctx context.Context, s engineSession) error,
+	ctx context.Context, door *marotte.SessionOpts, attach func(engineSession), fn func(ctx context.Context, s engineSession) error,
 ) error {
 	ctx, cancel := context.WithTimeout(ctx, observeBudget)
 	defer cancel()
-	s, err := o.openSession(ctx, &marotte.SessionOpts{Role: marotte.SessionRoleObserver, Presets: presets},
+	opts := &marotte.SessionOpts{Role: marotte.SessionRoleObserver}
+	if door != nil {
+		opts.Presets, opts.AdditionalDirectories = door.Presets, door.AdditionalDirectories
+	}
+	s, err := o.openSession(ctx, opts,
 		func(s engineSession) {
 			if attach != nil {
 				attach(s)

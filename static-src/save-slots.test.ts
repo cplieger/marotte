@@ -50,6 +50,7 @@ const EXPECTED_KEYS = [
   "supervised_default",
   "scheduled_auto_approve",
   "agent_ignore_files",
+  "additional_directories",
   // Custom instructions
   "steering",
 ] as const;

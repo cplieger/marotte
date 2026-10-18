@@ -17,7 +17,13 @@ import {
   transcriptStale,
 } from "../store.js";
 import { observeStamp, _resetForTest as resetVersions } from "../subject-versions.js";
-import { workspaceRoot, _resetForTest as resetWorkspace, setWorkspaceRoot } from "../workspace.js";
+import {
+  additionalDirectories,
+  workspaceRoot,
+  _resetForTest as resetWorkspace,
+  setWorkspaceRoot,
+} from "../workspace.js";
+import { settingsPayload } from "../__test-helpers__/settings.js";
 import { liveRunsForChat, registerLiveRunObserver, runChatID } from "../run-store.js";
 import type { Session } from "../types.js";
 import type { Entry, RunAsk, RunAsksPayload } from "../wire/types.gen.js";
@@ -1050,12 +1056,24 @@ describe("the reconcile runs the shared turn teardown", () => {
 describe("settings_updated re-seeds the General panel", () => {
   it("hands the refetched payload to applyGeneralPanel", async () => {
     const { syncSettings, applyGeneralPanel } = await import("../settings.js");
-    const payload = { chat_retention_days: -1 };
-    vi.mocked(syncSettings).mockResolvedValueOnce(payload as never);
+    const payload = settingsPayload({ chat_retention_days: -1 });
+    vi.mocked(syncSettings).mockResolvedValueOnce(payload);
 
     fireSSE("settings_updated", "", {});
     await vi.waitFor(() => {
       expect(applyGeneralPanel).toHaveBeenCalledWith(payload);
+    });
+  });
+
+  it("adopts the refetched additional directories as linkable roots", async () => {
+    const { syncSettings } = await import("../settings.js");
+    vi.mocked(syncSettings).mockResolvedValueOnce(
+      settingsPayload({ additional_directories: ["/data"] }),
+    );
+
+    fireSSE("settings_updated", "", {});
+    await vi.waitFor(() => {
+      expect(additionalDirectories()).toEqual(["/data"]);
     });
   });
 

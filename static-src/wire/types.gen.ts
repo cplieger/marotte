@@ -661,6 +661,12 @@ export interface EffectiveSettings {
  */
   kiro_defaults: Record<string, KiroDefault>;
   /**
+ * AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
+ * settings.AgentDirs.Check refuses at this GET to its reason; it is never stored, and an
+ * entry absent from it is granted.
+ */
+  additional_directories_refused: Record<string, string>;
+  /**
  * Theme is "", "dark", "light" or "system". The empty string is a REAL value
  * meaning nothing has been chosen, which the client resolves to the OS
  * preference; it is deliberately not normalised to "system" here, because the
@@ -707,6 +713,13 @@ export interface EffectiveSettings {
  * falling back to an empty list persists that emptiness on the next edit.
  */
   agent_ignore_files: string[];
+  /**
+ * AdditionalDirectories is the stored list of directories beyond the workspace that agents
+ * may read and write, default EMPTY (settings.DefaultAdditionalDirectories). An entry that
+ * no longer passes settings.AgentDirs.Check stays listed, grants nothing, and is a key of
+ * AdditionalDirectoriesRefused.
+ */
+  additional_directories: string[];
   /**
  * ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
  * Zero is the most destructive value in the document, so absent must never

@@ -5,6 +5,7 @@
 
 import { onSSE, onBus, BUS_RECONCILE, BUS_PAGE_RESUMED, decodeEnvelope, dispatch } from "../bus.js";
 import { adoptThemeFromSettings, applyGeneralPanel, syncSettings } from "../settings.js";
+import { applyAgentDirs } from "../agent-dirs-ui.js";
 import { restoreLastModel, restoreLastEffort } from "../session-context.js";
 import { adoptLinkGuard } from "../link-guard.js";
 import { setWorkspaceRoot } from "../workspace.js";
@@ -107,6 +108,7 @@ onSSE("settings_updated", () => {
     // Re-seeds the controls on a second device; `refreshRetention` and the session-door reads carry the
     // effect.
     applyGeneralPanel(s);
+    applyAgentDirs(s);
   });
   void refreshRetention();
 });

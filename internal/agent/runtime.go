@@ -60,12 +60,12 @@ type lifetime struct {
 	shutdownCtx    context.Context
 	done           chan struct{}
 	shutdownCancel context.CancelFunc
-	// workRoot is the kernel-confined handle on workDir (confineInWorkDir), never closed. nil when workDir could
+	// workRoot is the kernel-confined handle on workDir (lifetime.confine), never closed. nil when workDir could
 	// not be opened; the fs handlers then refuse.
 	workRoot      *os.Root
 	kiroTelemetry *cachedBoolField
 	workDir       string
-	// uploadsDir is the second root the READ verbs accept (confineReadable); "" grants nothing.
+	// uploadsDir is a root only the read verbs accept (lifetime.confine); "" grants nothing.
 	uploadsDir string
 	configDir  string
 	inflight   sync.WaitGroup

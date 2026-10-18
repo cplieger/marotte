@@ -55,6 +55,7 @@ const (
 func EffectiveDefaults() marotte.EffectiveSettings {
 	return marotte.EffectiveSettings{
 		AgentIgnoreFiles:      DefaultAgentIgnoreFiles(),
+		AdditionalDirectories: DefaultAdditionalDirectories(),
 		AutoCompactionEnabled: DefaultAutoCompactionEnabled,
 		AutoCompactPct:        DefaultAutoCompactPct,
 		ChatRetentionDays:     DefaultChatRetentionDays,
@@ -78,6 +79,8 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		// Empty objects, not nil: nil marshals as null and no field here is optional.
 		LastEffortByModel: map[string]string{},
 		KiroDefaults:      map[string]marotte.KiroDefault{},
+		// Resolved per GET against the filesystem (AgentDirs.Assess); nothing stored is refused.
+		AdditionalDirectoriesRefused: map[string]string{},
 		// The per-kind push defaults are not uniform; no polarity is safe for a client to guess.
 		NotifyAgentFinished: DefaultNotifyAgentFinished,
 		NotifyPRStatus:      DefaultNotifyPRStatus,
@@ -137,6 +140,7 @@ func EffectiveFrom(stored map[string]json.RawMessage) (effective marotte.Effecti
 func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMessage) error {
 	return map[string]func(json.RawMessage) error{
 		KeyAgentIgnoreFiles:      func(r json.RawMessage) error { return decodeInto(&out.AgentIgnoreFiles, r) },
+		KeyAdditionalDirectories: func(r json.RawMessage) error { return decodeInto(&out.AdditionalDirectories, r) },
 		KeyAutoCompactionEnabled: func(r json.RawMessage) error { return decodeInto(&out.AutoCompactionEnabled, r) },
 		KeyAutoCompactPct:        func(r json.RawMessage) error { return decodeAutoCompactPct(&out.AutoCompactPct, r) },
 		KeyChatRetentionDays:     func(r json.RawMessage) error { return decodeInto(&out.ChatRetentionDays, r) },

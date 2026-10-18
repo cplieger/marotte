@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { exfilShaped, rewriteServedImageSrc } from "./utils-url.js";
+import { afterEach, describe, it, expect } from "vitest";
+import { exfilShaped, rewriteServedImageSrc, servedFileRoute } from "./utils-url.js";
+import { setAdditionalDirectories, _resetForTest as resetWorkspace } from "./workspace.js";
 describe("rewriteServedImageSrc", () => {
   // An agent writes ![shot](/workspace/out/shot.png); asked of the SPA, that path
   // falls back to index.html, a broken image.
@@ -54,6 +55,33 @@ describe("rewriteServedImageSrc", () => {
     ]) {
       expect(rewriteServedImageSrc(p)).toBe(p);
     }
+  });
+});
+
+// An additional directory is a file-browser mount, so a markdown link into it opens the file.
+describe("servedFileRoute: additional directories", () => {
+  afterEach(() => {
+    resetWorkspace();
+  });
+
+  it("routes a link under an additional directory to the editor", () => {
+    setAdditionalDirectories(["/data"]);
+    expect(servedFileRoute("/data/notes/plan.md#L3")).toEqual({
+      kind: "file",
+      path: "/data/notes/plan.md",
+      line: 3,
+    });
+    expect(rewriteServedImageSrc("/data/shot.png")).toBe(
+      "/api/file/download?path=%2Fdata%2Fshot.png",
+    );
+  });
+
+  it("routes nothing under a removed directory, a lookalike sibling or a dot segment", () => {
+    setAdditionalDirectories(["/data"]);
+    expect(servedFileRoute("/database/plan.md")).toBeNull();
+    expect(servedFileRoute("/data/../config/x.md")).toBeNull();
+    setAdditionalDirectories([]);
+    expect(servedFileRoute("/data/plan.md")).toBeNull();
   });
 });
 

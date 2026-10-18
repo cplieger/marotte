@@ -82,6 +82,20 @@ export const setEngineHeap = apiAction<{ mib: number }>({
   success: false,
 });
 
+/** Write the additional-directory list on its own; answers the settings the write committed, or the server's refusal naming the entry and the reason. */
+export const setAdditionalDirectories = apiAction<{ dirs: readonly string[] }, EffectiveSettings>({
+  name: "settings.set_additional_directories",
+  scope: "settings",
+  request: ({ dirs }) => ({
+    method: "PATCH",
+    path: "/api/settings",
+    body: { additional_directories: dirs },
+  }),
+  decode: (data) => decodeEffectiveSettings(data),
+  error: false,
+  success: false,
+});
+
 interface KiroSettingArgs {
   key: string;
   value: string;

@@ -40,6 +40,7 @@ vi.mock("./actions/settings.js", () => ({
   logout: {},
   setKiroSetting: { dispatch: (...a: unknown[]) => H.mockKiroDispatch(...a) },
   setEngineHeap: { dispatch: (args: { mib: number }) => H.mockHeapDispatch(args) },
+  setAdditionalDirectories: { dispatch: vi.fn() },
 }));
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve(undefined)),

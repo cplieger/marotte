@@ -198,10 +198,9 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
-	path := filepath.Join(s.configDir, settings.Filename)
 	switch r.Method {
 	case http.MethodGet:
-		handleSettingsGet(w, path, s.kiroDefaults)
+		handleSettingsGet(w, settings.AgentDirs{Workspace: s.workDir, Config: s.configDir}, s.kiroDefaults)
 	case http.MethodPatch:
 		s.handleSettingsWrite(w, r)
 	default:
@@ -212,8 +211,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 // handleSettingsGet answers the EFFECTIVE settings: every rendered preference with defaults
 // resolved underneath the stored file. It FAILS OPEN (an unreadable file warns and serves
 // defaults); the write path refuses the same file, so the data stays protected. Unknown stored
-// keys are not sent, and PATCH merges against the file, so they survive.
-func handleSettingsGet(w http.ResponseWriter, path string, defaults kiroDefaultsReader) {
+// keys are not sent, and PATCH merges against the file, so they survive. Each stored additional
+// directory is checked against dirs at this GET.
+func handleSettingsGet(w http.ResponseWriter, dirs settings.AgentDirs, defaults kiroDefaultsReader) {
+	path := filepath.Join(dirs.Config, settings.Filename)
 	stored, err := readStoredSettings(path)
 	if err != nil {
 		slog.Warn("settings: serving defaults, stored config unreadable", "path", path, "error", logsafe.Field(err.Error()))
@@ -222,6 +223,12 @@ func handleSettingsGet(w http.ResponseWriter, path string, defaults kiroDefaults
 		webhttp.WriteJSON(w, effective)
 		return
 	}
+	webhttp.WriteJSON(w, effectiveOf(stored, path, dirs, defaults))
+}
+
+// GET and the PATCH answer share this resolution, so a save never paints settings a later GET
+// would resolve differently.
+func effectiveOf(stored map[string]json.RawMessage, path string, dirs settings.AgentDirs, defaults kiroDefaultsReader) marotte.EffectiveSettings {
 	effective, rejected := settings.EffectiveFrom(stored)
 	if len(rejected) > 0 {
 		// The key, never the value: a settings value may be a pasted token, and this line is logged.
@@ -229,7 +236,8 @@ func handleSettingsGet(w http.ResponseWriter, path string, defaults kiroDefaults
 			"path", path, "keys", rejected)
 	}
 	fillKiroDefaults(&effective, defaults)
-	webhttp.WriteJSON(w, effective)
+	_, effective.AdditionalDirectoriesRefused = dirs.Assess(effective.AdditionalDirectories)
+	return effective
 }
 
 // fillKiroDefaults reports kiro-cli's resolution for the three-state settings left unset; a
@@ -288,14 +296,25 @@ func readStoredSettings(path string) (map[string]json.RawMessage, error) {
 	return existing, nil
 }
 
-// There is no replacing arm (only GET and PATCH are served).
-func mergeSettingsPatch(patch map[string]json.RawMessage) func(map[string]json.RawMessage) error {
+// patchRefusedError is a refusal found while merging, under settings.Update's lock; it answers 400.
+type patchRefusedError struct{ error }
+
+func (r patchRefusedError) Unwrap() error { return r.error }
+
+// There is no replacing arm (only GET and PATCH are served). The additional directories are
+// judged against the document they replace, read under the same lock as the write.
+func mergeSettingsPatch(dirs settings.AgentDirs, patch map[string]json.RawMessage) func(map[string]json.RawMessage) error {
 	return func(doc map[string]json.RawMessage) error {
+		if err := dirs.ValidatePatch(doc, patch); err != nil {
+			return patchRefusedError{err}
+		}
 		maps.Copy(doc, patch)
 		return nil
 	}
 }
 
+// handleSettingsWrite merges the patch into config.json and answers the effective settings of
+// the document it committed, resolved as a GET resolves it.
 func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	var patch map[string]json.RawMessage
@@ -326,8 +345,13 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 	if r.Context().Err() != nil {
 		return
 	}
-	_, err := settings.Update(r.Context(), s.configDir, mergeSettingsPatch(patch))
+	dirs := settings.AgentDirs{Workspace: s.workDir, Config: s.configDir}
+	committed, err := settings.Update(r.Context(), s.configDir, mergeSettingsPatch(dirs, patch))
 	if err != nil {
+		if rp := (patchRefusedError{}); errors.As(err, &rp) {
+			httpreply.BadRequest(w, rp.Error())
+			return
+		}
 		// Two 500 bodies: an unreadable document is the user's file, a failed write is ours.
 		if errors.Is(err, settings.ErrUnreadable) {
 			httpreply.ServerError(w, msgSettingsUnreadable, err)
@@ -336,7 +360,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		httpreply.ServerError(w, "config.json could not be saved", err)
 		return
 	}
-	webhttp.Ok(w)
+	webhttp.WriteJSON(w, effectiveOf(committed, filepath.Join(s.configDir, settings.Filename), dirs, s.kiroDefaults))
 	s.agent.Broadcast(r.Context(), marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
 	// Durable: the write landed, so a closed tab must not leave bridges on the old values.
 	s.agent.ReconcileSessionSettings(durable.Context(r.Context()))

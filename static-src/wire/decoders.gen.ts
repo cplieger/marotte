@@ -484,6 +484,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
   const out: EffectiveSettings = {
     last_effort_by_model: o["last_effort_by_model"] === null ? {} : decodeRecord(o["last_effort_by_model"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.effective_settings.last_effort_by_model"),
     kiro_defaults: o["kiro_defaults"] === null ? {} : decodeRecord(o["kiro_defaults"], decodeKiroDefault, "$.effective_settings.kiro_defaults"),
+    additional_directories_refused: o["additional_directories_refused"] === null ? {} : decodeRecord(o["additional_directories_refused"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.effective_settings.additional_directories_refused"),
     theme: reqStr(o, "theme", "$.effective_settings"),
     fb_path: reqStr(o, "fb_path", "$.effective_settings"),
     last_model: reqStr(o, "last_model", "$.effective_settings"),
@@ -496,6 +497,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     auto_delegation: reqStr(o, "auto_delegation", "$.effective_settings"),
     output_style: reqStr(o, "output_style", "$.effective_settings"),
     agent_ignore_files: o["agent_ignore_files"] === null ? [] : decodeArray(o["agent_ignore_files"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.effective_settings.agent_ignore_files"),
+    additional_directories: o["additional_directories"] === null ? [] : decodeArray(o["additional_directories"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.effective_settings.additional_directories"),
     chat_retention_days: reqNum(o, "chat_retention_days", "$.effective_settings"),
     auto_compact_pct: reqNum(o, "auto_compact_pct", "$.effective_settings"),
     terminal_command_timeout_ms: reqNum(o, "terminal_command_timeout_ms", "$.effective_settings"),

@@ -24,6 +24,10 @@ type EffectiveSettings struct {
 	// marotte setting key; a key is absent while that is unknown, and never present for a key the
 	// user has set.
 	KiroDefaults map[string]KiroDefault `json:"kiro_defaults"`
+	// AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
+	// settings.AgentDirs.Check refuses at this GET to its reason; it is never stored, and an
+	// entry absent from it is granted.
+	AdditionalDirectoriesRefused map[string]string `json:"additional_directories_refused"`
 	// Theme is "", "dark", "light" or "system". The empty string is a REAL value
 	// meaning nothing has been chosen, which the client resolves to the OS
 	// preference; it is deliberately not normalised to "system" here, because the
@@ -59,6 +63,11 @@ type EffectiveSettings struct {
 	// read as the zero value: the panel row is authoritative on write, so a client
 	// falling back to an empty list persists that emptiness on the next edit.
 	AgentIgnoreFiles []string `json:"agent_ignore_files"`
+	// AdditionalDirectories is the stored list of directories beyond the workspace that agents
+	// may read and write, default EMPTY (settings.DefaultAdditionalDirectories). An entry that
+	// no longer passes settings.AgentDirs.Check stays listed, grants nothing, and is a key of
+	// AdditionalDirectoriesRefused.
+	AdditionalDirectories []string `json:"additional_directories"`
 	// ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
 	// Zero is the most destructive value in the document, so absent must never
 	// resolve to it.

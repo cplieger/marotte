@@ -1,8 +1,8 @@
 // Package filebrowse serves the browser's file surface: browsing, reading, editing, uploading and
 // downloading. The browsable surface is an ALLOW-LIST of granted roots (/workspace, /config,
-// uploads, plus MAROTTE_BROWSE_ROOTS grants), each kernel-confined through its own os.Root; a
-// sensitive-path list additionally blocks the credential and state files inside /config. URLs are
-// container-absolute paths, and "/" lists the mounts.
+// uploads, plus MAROTTE_BROWSE_ROOTS grants and the WithLiveRoots list), each kernel-confined
+// through its own os.Root; a sensitive-path list additionally blocks the credential and state
+// files inside /config. URLs are container-absolute paths, and "/" lists the mounts.
 // Every route that takes a path runs it through resolveOrForbid (paths.go documents the layers).
 // Directory operations also consult protectedDir, and a secondary path (rename's name, copy/move's
 // dest) re-runs the full guard. The recursive routes (zip download, search) resolve their root once
@@ -10,6 +10,7 @@
 package filebrowse
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -40,7 +41,8 @@ const (
 type Handler struct {
 	saveHooks   []savePathHook // registration order, so the first match is deterministic
 	toolOutputs string         // AllowToolOutputs; "" grants nothing
-	mounts      []mount        // sorted longest-dir-first (see openMounts)
+	mounts      []mount        // sorted longest-dir-first (see sortMounts)
+	liveRoots   func(ctx context.Context) []string
 	sensitive   Sensitive
 }
 
@@ -110,14 +112,14 @@ func New(sensitive Sensitive, rootDirs []string, opts ...Option) (*Handler, erro
 
 // RegisterRoutes wires all /api/file* and /api/files* routes onto mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/file", h.handleFile)
-	mux.HandleFunc("/api/file/stat", h.handleStat)
-	mux.HandleFunc("/api/file/download", h.handleDownload)
-	mux.HandleFunc("/api/file/upload", h.handleUpload)
-	mux.HandleFunc("/api/files", h.handleFiles)
-	mux.HandleFunc("/api/files/action", h.handleFilesAction)
-	mux.HandleFunc("/api/files/download", h.handleDownloadZip)
-	mux.HandleFunc("/api/files/search", h.handleFilesSearch)
+	mux.HandleFunc("/api/file", h.scoped((*Handler).handleFile))
+	mux.HandleFunc("/api/file/stat", h.scoped((*Handler).handleStat))
+	mux.HandleFunc("/api/file/download", h.scoped((*Handler).handleDownload))
+	mux.HandleFunc("/api/file/upload", h.scoped((*Handler).handleUpload))
+	mux.HandleFunc("/api/files", h.scoped((*Handler).handleFiles))
+	mux.HandleFunc("/api/files/action", h.scoped((*Handler).handleFilesAction))
+	mux.HandleFunc("/api/files/download", h.scoped((*Handler).handleDownloadZip))
+	mux.HandleFunc("/api/files/search", h.scoped((*Handler).handleFilesSearch))
 }
 
 // errHandled signals that an action function has already written its

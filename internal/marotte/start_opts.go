@@ -114,6 +114,9 @@ type SessionOpts struct {
 	// Steering is the chat's client steering, sent on both doors; nil sends no key. Chat sessions
 	// only: it carries chat-user guidance a workflow host and an observer have no use for.
 	Steering []ClientSteeringDoc
+	// AdditionalDirectories are the directories beyond the workspace the session may reach, sent
+	// on BOTH doors: KAS adopts the list per call, so a door without it drops them.
+	AdditionalDirectories []string
 	// Memory is the session's memory preference, sent on BOTH doors as
 	// `_meta.kiro.settings.memory`. The zero value means mode "disabled". KAS freezes the mode per
 	// session; the door re-asserts the reflection half after a load.

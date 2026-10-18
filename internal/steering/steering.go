@@ -19,6 +19,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
@@ -148,6 +149,8 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 		writeForges(&b, forges)
 	}
 	writeWorkspace(ctx, &b, g.workDir)
+	granted, _, _ := settings.AgentDirs{Workspace: g.workDir, Config: g.configDir}.Granted(ctx)
+	writeAdditionalDirs(&b, granted)
 	writeMemory(ctx, &b, g.workDir, g.configDir)
 	writeLimitations(&b)
 	writeCapabilities(&b, g.configDir)

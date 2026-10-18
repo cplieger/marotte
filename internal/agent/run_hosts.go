@@ -128,6 +128,7 @@ func (rs *Runs) openHost(workflowID, session string, presets []string, sb *share
 	defer cancel()
 	err := rs.engine.loadSession(lctx, &marotte.SessionOpts{
 		SessionID: session, Role: marotte.SessionRoleHost, Presets: presets,
+		AdditionalDirectories: rs.lifecycle.sessionDirs(lctx),
 	}, func(s engineSession) {
 		sb.attach(s)
 		rs.coord.goForward(chatID, s)

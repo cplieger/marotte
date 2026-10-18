@@ -53,7 +53,7 @@ Each number you list says that account already has at least the power of this se
 
 ## Extra file-browser folders (`MAROTTE_BROWSE_ROOTS`)
 
-The file browser shows `/workspace`, `/config` and `/uploads` and nothing else in the container. To show another mount, list its absolute path. Separate several with colons.
+The file browser shows `/workspace`, `/config`, `/uploads` and the [folders the agent can use](#folders-the-agent-can-use-beyond-workspace), and nothing else in the container. To show another mount, list its absolute path. Separate several with colons.
 
 ```yaml
 environment:
@@ -61,6 +61,14 @@ environment:
 ```
 
 Mount each folder with `volumes:` first. Credential and internal files under `/config` stay hidden whatever you add. That covers SSH keys, cloud tokens, forge credentials, the chat store and the MCP configuration.
+
+## Folders the agent can use beyond `/workspace`
+
+The agent's file tools read and write `/workspace` only, and read `/uploads`. To give the agent another folder, add it under **Additional directories** on the **Permissions** tab in **Settings**. The agent can then read, write and delete files there and start shell commands in it, and the file browser shows it. Mount the folder with `volumes:` first.
+
+Each entry is the absolute path of an existing folder, written without a symbolic link. The filesystem root, `/config`, the workspace, and any folder inside or holding either of them are refused, with the reason beside the field. A listed folder that later stops qualifying, because it was deleted or `config.json` was edited by hand, is marked **not granted** with its reason and gives the agent nothing until it qualifies again.
+
+A change reaches the agent's file tools, the folder a shell command may start in, and the file browser at once. The file tools refuse a removed folder from their next operation in every chat and run. Shell commands themselves are not confined to these folders, so one can still `cd` into a removed folder or write to it. kiro-cli itself is given the list when a chat opens or a workflow run starts, and a run already going keeps the list it started with for its later steps.
 
 ## Agent-started workflow runs
 
