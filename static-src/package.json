@@ -50,7 +50,7 @@
     "@cplieger/ui-primitives": "3.3.0-dev.3",
     "@cplieger/web-terminal-engine": "6.4.0-dev.8",
     "@cplieger/web-terminal-ui": "8.6.0-dev.9",
-    "pele": "1.4.0"
+    "pele": "1.5.0"
   },
   "overrides": {
     "qs": "^6.15.2"
