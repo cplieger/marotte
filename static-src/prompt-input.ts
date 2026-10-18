@@ -334,10 +334,15 @@ class PromptInputController {
         this.exitCycling();
       }
 
+      // Read before Escape's reset: a key the IME owns writes nothing, so no history, list or Send.
+      const composing = this.isComposing(e);
       // Ahead of the cycling branch, which is guarded on `idx !== -1`. No stopPropagation: a plain
       // Escape still has to reach the global handler that collapses pills and closes the dock.
       if (e.key === "Escape") {
         this.resetIME();
+      }
+      if (composing) {
+        return;
       }
 
       if (
@@ -346,7 +351,6 @@ class PromptInputController {
         !e.ctrlKey &&
         !e.metaKey &&
         !e.altKey &&
-        !this.isComposing(e) &&
         !menuOpen(input) &&
         input.selectionStart === input.selectionEnd
       ) {
@@ -359,11 +363,6 @@ class PromptInputController {
       }
 
       if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey) {
-        // Inside this branch rather than an early return at the top, which would also break history
-        // navigation during composition.
-        if (this.isComposing(e)) {
-          return;
-        }
         // Under a finger Return is a new line; Cmd+Enter still sends through keys.ts.
         if (!e.metaKey && touchComposer()) {
           return;
