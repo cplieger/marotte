@@ -376,9 +376,9 @@ describe("the delegate footer's info panel", () => {
     return sa.root;
   }
 
-  it("renders the three sections a delegate can fill", () => {
+  it("renders the sections a delegate can fill", () => {
     const root = settled();
-    expect(panelSections(root)).toEqual(["Timings", "Work", "Delegates"]);
+    expect(panelSections(root)).toEqual(["Changed files", "Work", "Time"]);
   });
 
   it("carries the delegate's own timings, its work and the delegates it dispatched", () => {
@@ -388,30 +388,29 @@ describe("the delegate footer's info panel", () => {
       r.querySelector(".turn-info-value")?.textContent ?? "",
     ]);
     expect(rows).toEqual([
+      ["Reads", "3"],
+      ["Commands", "2"],
+      ["Edits", "1"],
+      ["Delegates", "1"],
+      ["Delegate time", "9.0s"],
       ["Wall clock", "1m 32s"],
       ["Tool time", "30.0s"],
       ["Model time", "1m 2s"],
       // The stamp text is the reader's own locale, so the LABELS are what is pinned
       // here; `fundamentals/turn-footer.test.ts` owns the `datetime` pair.
-      ["Started", rows[3]?.[1] ?? ""],
-      ["Ended", rows[4]?.[1] ?? ""],
-      ["reads", "3"],
-      ["commands", "2"],
-      // Singular at one, from the shared noun table rather than an `s` appended here.
-      ["edit", "1"],
-      ["Dispatched", "1"],
-      ["Time", "9.0s"],
+      ["Started", rows[8]?.[1] ?? ""],
+      ["Ended", rows[9]?.[1] ?? ""],
     ]);
-    // The delegate's changed file still gets its row, inside Work.
+    // The delegate's changed file still gets its row, under Changed files.
     expect(root.querySelectorAll(".subagent-footer .turn-file-row")).toHaveLength(1);
   });
 
-  it("withholds Cost, Model and Diagnostics, which the wire cannot carry per delegate", () => {
+  it("withholds Model and cost, Context and Diagnostics, which the wire cannot carry per delegate", () => {
     // On an UNCLEAN delegate `aborted` opens the Diagnostics gate and the section is STILL absent, so
     // the withholding rests on the absent fields, not the outcome.
     const sa = buildSubagentCard("context-gatherer", "aborted");
     sa.setSummary({ ...DELEGATE, outcome: "cancelled" });
-    expect(panelSections(sa.root)).toEqual(["Timings", "Work", "Delegates"]);
+    expect(panelSections(sa.root)).toEqual(["Changed files", "Work", "Time"]);
     expect(sa.root.querySelector(".subagent-footer .turn-info-panel")).not.toBeNull();
   });
 

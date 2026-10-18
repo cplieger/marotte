@@ -148,6 +148,8 @@ export const ICON_ALERT = svg(
 );
 // Lucide `arrow-up`, a direction primitive: the dock's send-now control.
 export const ICON_ARROW_UP = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
+// Lucide `arrow-right`: the turn panel's "Review all changes", which leaves the panel for the git view.
+export const ICON_ARROW_RIGHT = svg("ui", '<path d="M5 12h14M13 6l6 6-6 6"/>');
 // Go to line (Lucide "hash").
 export const ICON_GOTO_LINE = svg("ui", '<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>');
 export const ICON_GIT_DOWN_ARROW = svg("ui", '<path d="M12 5v14M5 12l7 7 7-7"/>');
