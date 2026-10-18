@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
 
-import { loadCSS, mountAppCSS, ruleBody, ruleContaining } from "./__test-helpers__/css-rules.js";
+import {
+  atRuleBody,
+  loadCSS,
+  mountAppCSS,
+  ruleBody,
+  ruleContaining,
+} from "./__test-helpers__/css-rules.js";
 
 const messagesCSS = loadCSS("13-messages.css");
 const REVEAL_QUERY = "any-hover: hover";
@@ -315,7 +321,8 @@ describe("the reveal, read as source", () => {
     // with, so always-on is the right default rather than a fallback. Read as source because a test
     // page cannot answer `(any-hover: none)`.
     const container = ruleBody(messagesCSS, "@container chat-area (width >= 70rem)");
-    const beforeHoverGate = container.split("@media")[0] ?? "";
+    const docked = atRuleBody(container, "not (any-pointer: coarse)");
+    const beforeHoverGate = docked.split("@media")[0] ?? "";
     expect(beforeHoverGate).not.toBe("");
     const shown = ruleContaining(beforeHoverGate, `${DOCKED} > span`, "top");
     expect(shown.body).toMatch(/display:\s*block/u);

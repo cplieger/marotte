@@ -1621,7 +1621,7 @@ describe("a long session bins rather than drops", () => {
     await frames();
     expect(rowLinks(rail)).toHaveLength(40);
 
-    // What a narrowing chat or a coarse pointer does to the track: no box, so its entry reads 0.
+    // What the phone layout does to the track: no box, so its entry reads 0.
     trackOf(rail).style.display = "none";
     await frames();
     await frames();

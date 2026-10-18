@@ -15,14 +15,36 @@
    * instead of back over the cards. 2.75rem is kept because narrowing it moves
    * both insets, the resume control's dock and both measured container thresholds. */
   --rail-w: 2.75rem;
+
+  /* The step buttons' height and the resume control's target. */
+  --rail-hit: var(--hit-floor);
   --rail-inset-end: calc(50% - var(--content-max-w) / 2 - var(--rail-w) - var(--sp-2));
   --rail-inset-start: calc(100% - var(--rail-inset-end) - var(--rail-w));
 
   /* The map's reserved FOOT, which the docked resume control sits in. Reserved
-   * UNCONDITIONALLY, because the control appears only once the reader has scrolled up
-   * and the map may not move then. It clears the control's target: `--ctl-h-sm`
-   * painted, lifted to the hit floor where the floor is taller. */
+   * UNCONDITIONALLY where it docks, because the control appears only once the reader has
+   * scrolled up and the map may not move then; every form that does not dock leaves `--sp-3`.
+   * It clears the control's target: `--ctl-h-sm` painted, lifted to the hit floor where the
+   * floor is taller. */
   --rail-foot: calc(var(--sp-3) + max(var(--ctl-h-sm), var(--hit-floor)) + var(--sp-2));
+}
+
+/* A FINGER'S RAIL, on a touch device or in touch mode: a 48px column is the press-and-drag band
+ * and the step buttons' width, and 48px is their height and the resume control's target. Still
+ * inside the 3.75rem gutter at 57.5rem. The resume control does not dock here, so the foot is
+ * bare. Two rules, one value: a selector cannot OR an attribute with a media query. */
+:root[data-pointer="coarse"] [id="messages-wrap-outer"] {
+  --rail-w: 3rem;
+  --rail-hit: 3rem;
+  --rail-foot: var(--sp-3);
+}
+
+@media (any-pointer: coarse) {
+  [id="messages-wrap-outer"] {
+    --rail-w: 3rem;
+    --rail-hit: 3rem;
+    --rail-foot: var(--sp-3);
+  }
 }
 
 /* Native scroll anchoring (`overflow-anchor` left at `auto`,
@@ -62,6 +84,23 @@
    * with behavior:"instant", which overrides this: small per-chunk deltas compose
    * into continuous motion that "smooth" would stutter through. */
   scroll-behavior: smooth;
+}
+
+/* UNDER 57.5rem THE COLUMN LEAVES NO GUTTER, so the map sits `--sp-2` inside the chat area's end,
+ * clear of a classic scrollbar, and the scroller below reserves the map's column so it covers no
+ * transcript text. The resume control does not dock here, so the foot is bare. A phone-shaped
+ * screen draws no map (29-turns.css) and keeps its inset. */
+@container chat-area (width < 57.5rem) {
+  [id="messages-wrap-outer"] {
+    --rail-inset-end: calc(var(--scrollbar-w, 0px) + var(--sp-2));
+    --rail-foot: var(--sp-3);
+  }
+
+  @media (width > 48rem) and (height > 30rem) {
+    [id="messages-wrap"] {
+      padding-inline-end: max(calc(var(--rail-w) + 2 * var(--sp-2)), env(safe-area-inset-right, 0));
+    }
+  }
 }
 
 /* NO HALF-VIEWPORT RESERVE WHILE STREAMING — third attempt at one, so do not add
@@ -1388,6 +1427,13 @@
   bottom: var(--sp-4);
 }
 
+/* THE TARGET IS `--rail-hit`, the turn map's navigator target, rather than the shared
+ * `--hit-floor`, so a finger gets 48px in every form (`.scroll-resume::after` above). */
+[id="scroll-bottom"]::after {
+  inset-block: min(0px, calc((100% - var(--rail-hit)) / 2));
+  inset-inline: min(0px, calc((100% - var(--rail-hit)) / 2));
+}
+
 /* Past a phone the chat's control is the labelled pill centred over the transcript
    ("N new blocks"), unless the turn map's foot takes it below. */
 @media (width > 48rem) {
@@ -1405,51 +1451,57 @@
   }
 }
 
-/* DOCKED AT THE FOOT OF THE TURN MAP, wherever the map draws: a floating form sits
- * over the last lines of the content the reader is behind on, while the map's column
- * is empty space below the stack. The width and pointer gates are the map's own
- * (29-turns.css). Pinned by its inline-START edge, so the label grows RIGHT into the
- * gutter rather than back over the cards, and `--sp-3` short of the wrapper's end
- * because #chat-area clips. Both thresholds track `--rail-w`. */
+/* DOCKED AT THE FOOT OF THE TURN MAP, wherever the map draws to a mouse: a floating form
+ * sits over the last lines of the content the reader is behind on, while the map's column
+ * is empty space below the stack. The height gate is the map's own (29-turns.css). Mouse
+ * only, device and tier: the dock hides the label under 70rem and a hover reveals it, so
+ * a touch device or touch mode keeps the labelled pill. Pinned by its inline-START edge,
+ * so the label grows RIGHT into the gutter rather than back over the cards, and `--sp-3`
+ * short of the wrapper's end because #chat-area clips. Both thresholds track `--rail-w`. */
 @container chat-area (width >= 57.5rem) {
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] {
-    left: var(--rail-inset-start);
-    transform: none;
-    min-inline-size: var(--rail-w);
-    max-inline-size: max(var(--rail-w), calc(var(--rail-inset-end) + var(--rail-w) - var(--sp-3)));
+  @media (height > 30rem) and (not (any-pointer: coarse)) {
+    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] {
+      left: var(--rail-inset-start);
+      transform: none;
+      min-inline-size: var(--rail-w);
+      max-inline-size: max(
+        var(--rail-w),
+        calc(var(--rail-inset-end) + var(--rail-w) - var(--sp-3))
+      );
 
-    /* THE MAP'S STEP-BUTTON VOCABULARY (`.turn-map-step`, 29-turns.css), because it is
-     * the foot of the map's own column: `--ctl-h-sm` tall, no surface at rest, the
-     * hover pair on demand. Spelled with the floor, which this rule would otherwise
-     * override at class specificity. */
-    min-block-size: max(var(--ctl-h-sm), var(--hit-floor));
-    background: transparent;
-    border-color: transparent;
-    color: var(--c-text-tertiary);
-    font-size: var(--fs-xs);
-    justify-content: flex-start;
-    gap: 0;
-    padding: 0;
-    border-radius: var(--r-sm);
-  }
+      /* THE MAP'S STEP-BUTTON VOCABULARY (`.turn-map-step`, 29-turns.css), because it is
+       * the foot of the map's own column: `--ctl-h-sm` tall, no surface at rest, the
+       * hover pair on demand. Spelled with the floor, which this rule would otherwise
+       * override at class specificity. */
+      min-block-size: max(var(--ctl-h-sm), var(--hit-floor));
+      background: transparent;
+      border-color: transparent;
+      color: var(--c-text-tertiary);
+      font-size: var(--fs-xs);
+      justify-content: flex-start;
+      gap: 0;
+      padding: 0;
+      border-radius: var(--r-sm);
+    }
 
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:hover {
-    background: var(--c-hover);
-    color: var(--c-text-primary);
-  }
+    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:hover {
+      background: var(--c-hover);
+      color: var(--c-text-primary);
+    }
 
-  /* The glyph takes the map's own column, so it sits under the stack whether or not
-   * the label is showing. `- 2px` is this button's two borders, which the column
-   * width does not include. */
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > svg {
-    flex: 0 0 calc(var(--rail-w) - 2px);
-  }
+    /* The glyph takes the map's own column, so it sits under the stack whether or not
+     * the label is showing. `- 2px` is this button's two borders, which the column
+     * width does not include. */
+    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > svg {
+      flex: 0 0 calc(var(--rail-w) - 2px);
+    }
 
-  /* HIDDEN, not truncated, at a width the gutter cannot hold: `setResumeLabel`
-   * also writes the label to the tooltip, which is published as this button's
-   * accessible description, so the count is never the only copy. */
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
-    display: none;
+    /* HIDDEN, not truncated, at a width the gutter cannot hold: `setResumeLabel`
+     * also writes the label to the tooltip, which is published as this button's
+     * accessible description, so the count is never the only copy. */
+    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
+      display: none;
+    }
   }
 }
 
@@ -1468,33 +1520,35 @@
  * gutter, no other element's box moves, and `#messages`' scrollHeight is out of
  * reach. */
 @container chat-area (width >= 70rem) {
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
-    display: block;
-    min-width: 0;
-    padding-inline-end: var(--sp-2);
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* ICON-ONLY AT REST, and the reveal is HOVER rather than width. A width query
-   * decides for every reader at once; the control is a navigator sitting over the
-   * last lines of the transcript, so at rest it earns the rail's own footprint and
-   * the words arrive when a pointer or the keyboard asks for them.
-   *
-   * `any-hover: hover`, never `hover: hover`: those report only the PRIMARY input
-   * and iPadOS answers `hover: none` with a trackpad attached. OUTSIDE this query
-   * the rule above stands unchanged and the label is simply always visible, which is
-   * the right default for a device that has no hover to reveal it with rather than a
-   * fallback — and `:focus-visible` is paired with `:hover` so a keyboard user is
-   * not the one reader who can never see it. */
-  @media (any-hover: hover) {
+  @media (height > 30rem) and (not (any-pointer: coarse)) {
     :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
-      display: none;
+      display: block;
+      min-width: 0;
+      padding-inline-end: var(--sp-2);
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
-    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:hover > span,
-    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:focus-visible > span {
-      display: block;
+    /* ICON-ONLY AT REST, and the reveal is HOVER rather than width. A width query
+     * decides for every reader at once; the control is a navigator sitting over the
+     * last lines of the transcript, so at rest it earns the rail's own footprint and
+     * the words arrive when a pointer or the keyboard asks for them.
+     *
+     * `any-hover: hover`, never `hover: hover`: those report only the PRIMARY input
+     * and iPadOS answers `hover: none` with a trackpad attached. OUTSIDE this query
+     * the rule above stands unchanged and the label is simply always visible, which is
+     * the right default for a device that has no hover to reveal it with rather than a
+     * fallback — and `:focus-visible` is paired with `:hover` so a keyboard user is
+     * not the one reader who can never see it. */
+    @media (any-hover: hover) {
+      :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
+        display: none;
+      }
+
+      :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:hover > span,
+      :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:focus-visible > span {
+        display: block;
+      }
     }
   }
 }

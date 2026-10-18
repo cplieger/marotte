@@ -51,6 +51,10 @@ const MAX_CORRECTIONS = 6;
 /** How far the target's top may sit from the reading line and still count as landed. */
 const LANDING_TOLERANCE_PX = 8;
 
+/** A held finger's travel under one CSS pixel is contact noise, not a move: it keeps the turn info's
+ *  hover delay running, so a still finger still gets its info. */
+const SCRUB_STILL_PX = 1;
+
 /** Ceiling on the click's own intent, which suppresses offset-driven activation
  *  while the animation runs. DERIVED so it cannot fall inside the two budgets it
  *  brackets: a paged jump spends both in sequence. */
@@ -142,7 +146,7 @@ let navigable = false;
 let renderedSig = "";
 
 /** The track's height, from its ResizeObserver entry: `render()` reads no layout. 0 wherever CSS
- *  does not draw the map (narrow, coarse), so `binTurns` lays no rows there; an unshown map stays
+ *  does not draw the map (the phone layout), so `binTurns` lays no rows there; an unshown map stays
  *  laid out (29-turns.css), so a chat switch bins against a live height. */
 let trackPx = 0;
 let inView: ReadonlySet<string> = new Set();
@@ -564,7 +568,11 @@ function paintMap(
   m.nav.toggleAttribute("data-shown", visible);
   setAttr(m.nav, "aria-busy", pending.size > 0 ? "true" : null);
   m.stack.style.setProperty("--turn-map-slots", String(Math.max(1, layout.slots)));
+  dropScrubbedRow(m, rows);
   reconcile(m.stack, rows, { key: (r) => r.bin.key, mount: mountPill, update: paintPill });
+  if (scrubPointer !== undefined) {
+    scrubTo(m, scrubY);
+  }
   m.prev.disabled = current <= 0;
   m.next.disabled = current >= rows.length - 1;
 }
@@ -668,6 +676,128 @@ function bindMapInput(m: MapNodes): void {
   m.next.addEventListener("click", () => {
     step(1);
   });
+  bindScrub(m);
+}
+
+/** The finger or pen held on the track. The row under it wears `data-scrub`, the fisheye's touch
+ *  twin (29-turns.css), re-applied by every repaint while the pointer is held. */
+let scrubPointer: number | undefined;
+
+/** The held pointer's last `clientY`, which a repaint re-scrubs at. */
+let scrubY = 0;
+
+/** Where the scrub last (re)started the hover delay: the info waits for the pointer to stop. */
+let scrubArmedY = 0;
+
+/** Press-and-drag for touch and pen: the fisheye follows the pointer and a pause shows the row's
+ *  turn info. The lift lands nothing itself: a tap's own click lands the row through the stack's
+ *  click listener, as a mouse click does, and a drag dispatches no click, as a mouse drag on the
+ *  rail is the link's native drag and lands nothing. A mouse keeps native hover and click. The
+ *  track's `touch-action: none` keeps the gesture from scrolling the page. */
+function bindScrub(m: MapNodes): void {
+  const { track } = m;
+  track.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" || !e.isPrimary || e.button !== 0) {
+      return;
+    }
+    track.setPointerCapture(e.pointerId);
+    scrubPointer = e.pointerId;
+    scrubTo(m, e.clientY);
+  });
+  track.addEventListener("pointermove", (e) => {
+    if (scrubPointer === e.pointerId) {
+      scrubTo(m, e.clientY);
+    }
+  });
+  const end = (e: PointerEvent): void => {
+    if (scrubPointer === e.pointerId) {
+      endScrub(m);
+    }
+  };
+  // On the document, capture phase: a pointer whose capture was released lifts wherever it is,
+  // past the track, and over a control that stops the event's propagation.
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
+    document.addEventListener(type, end, true);
+  }
+  // A native context menu or link drag would cancel an active scrub.
+  for (const type of ["contextmenu", "dragstart"]) {
+    track.addEventListener(type, (e) => {
+      if (scrubPointer !== undefined) {
+        e.preventDefault();
+      }
+    });
+  }
+}
+
+function scrubTo(m: MapNodes, clientY: number): void {
+  scrubY = clientY;
+  const bin = binNearest(m, clientY - m.stack.getBoundingClientRect().top);
+  const row = bin === undefined ? null : rowFor(m, bin.key);
+  const was = scrubbedRow(m);
+  if (row === was) {
+    if (row === null) {
+      return;
+    }
+    // Leaving first restarts the controller's delay, which a repeated `pointerover` on its anchor
+    // does not. A bare re-hover is a no-op while the controller holds the row, so it only answers
+    // the capture's own boundary events taking the tooltip off it.
+    if (Math.abs(clientY - scrubArmedY) >= SCRUB_STILL_PX) {
+      hoverRow(row, "pointerout");
+      scrubArmedY = clientY;
+    }
+    hoverRow(row, "pointerover");
+    return;
+  }
+  scrubArmedY = clientY;
+  if (was !== null) {
+    was.removeAttribute("data-scrub");
+    hoverRow(was, "pointerout");
+  }
+  if (row !== null) {
+    row.setAttribute("data-scrub", "");
+    hoverRow(row, "pointerover");
+  }
+}
+
+function endScrub(m: MapNodes): void {
+  const row = scrubbedRow(m);
+  if (row !== null) {
+    row.removeAttribute("data-scrub");
+    hoverRow(row, "pointerout");
+  }
+  scrubPointer = undefined;
+}
+
+/** Unhover the scrubbed row before a repaint removes it: the tooltip controller keeps a detached
+ *  anchor's tooltip up, and the lift could no longer find the row to unhover. */
+function dropScrubbedRow(m: MapNodes, rows: readonly PillView[]): void {
+  const row = scrubbedRow(m);
+  const key = row?.getAttribute(KEY_ATTR);
+  if (row === null || rows.some((r) => r.bin.key === key)) {
+    return;
+  }
+  row.removeAttribute("data-scrub");
+  hoverRow(row, "pointerout");
+}
+
+function rowFor(m: MapNodes, key: string): Element | null {
+  for (const li of m.stack.children) {
+    if (li.getAttribute(KEY_ATTR) === key) {
+      return li;
+    }
+  }
+  return null;
+}
+
+function scrubbedRow(m: MapNodes): Element | null {
+  return m.stack.querySelector(":scope > [data-scrub]");
+}
+
+/** Hover the row's link for the tooltip controller (tooltip.ts), whose hover delay is the pause
+ *  that shows the turn info. Synthetic because the captured pointer's own boundary events stay on
+ *  the track, and the controller is delegated on `pointerover`/`pointerout` with no show API. */
+function hoverRow(row: Element, type: "pointerover" | "pointerout"): void {
+  row.firstElementChild?.dispatchEvent(new PointerEvent(type, { bubbles: true }));
 }
 
 function binAt(m: MapNodes, e: MouseEvent): TurnBin | undefined {
@@ -676,11 +806,20 @@ function binAt(m: MapNodes, e: MouseEvent): TurnBin | undefined {
     const key = row.getAttribute(KEY_ATTR);
     return shown.find((b) => b.key === key);
   }
-  if (e.target !== m.stack || shown.length === 0) {
+  if (e.target !== m.stack) {
+    return undefined;
+  }
+  return binNearest(m, e.offsetY);
+}
+
+/** The row nearest `y`, in px from the stack's top: a point in a gap left by an undrawn turn, or
+ *  past either end, resolves to the closest row. */
+function binNearest(m: MapNodes, y: number): TurnBin | undefined {
+  if (shown.length === 0) {
     return undefined;
   }
   const pitch = m.stack.clientHeight / Math.max(1, shownSlots);
-  const slot = pitch > 0 ? e.offsetY / pitch - 0.5 : 0;
+  const slot = pitch > 0 ? y / pitch - 0.5 : 0;
   let best = shown[0];
   for (const b of shown) {
     const d = Math.abs(b.at * (shownSlots - 1) - slot);

@@ -922,23 +922,23 @@
    * control's target and already carries the leading `--sp-3`. */
   inset-block: var(--sp-3) var(--rail-foot);
 
-  /* Stuck to the cards' edge, not the window's (`--rail-inset-end`, 13-messages.css). Unclamped:
-   * the container query below is what guarantees the gutter. */
+  /* Beside the cards where the gutter holds it, else at the chat area's end over a reserved strip
+   * (`--rail-inset-end`, 13-messages.css). */
   inset-inline-end: var(--rail-inset-end);
   z-index: 4;
   inline-size: var(--rail-w);
-  display: none;
+  display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--sp-1);
 }
 
-/* Drawn only where the chat area holds the map BESIDE the column: at 57.5rem the column has
- * stopped growing and the gutter is 3.75rem, clearing the map's 2.75rem plus its 0.5rem gap.
- * Narrower, or under a finger, there is no turn navigation. */
-@container chat-area (width >= 57.5rem) {
-  :root:not([data-pointer="coarse"]) .turn-map {
-    display: flex;
+/* Hidden only on a phone-shaped screen, narrow or short (15-input.css's query), never by pointer
+ * tier: every other chat area places it (`--rail-inset-end`, 13-messages.css). The resume dock
+ * and the reserved strip (13-messages.css) take the same gate. */
+@media (width <= 48rem), (height <= 30rem) {
+  .turn-map {
+    display: none;
   }
 }
 
@@ -959,6 +959,14 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
+
+  /* The press-and-drag band (`bindScrub`, turn-rail.ts): a finger on it scrubs rather than
+   * scrolls, and a long press neither selects nor opens the link callout. The track only, so the
+   * page and the step buttons keep their own touch behaviour. */
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Pitch `min(track / slots, 8px)`, unrounded, so a long chat fills its whole track (`binTurns`
@@ -985,6 +993,7 @@
   --pill-rest: calc(10 / 24);
   --pill-hover: 0;
   --pill-focus: 0;
+  --pill-scrub: 0;
   --pill-current: 0;
   --pill-slot: round(var(--rail-at) * (var(--turn-map-slots) - 1), 1);
   --pill-pitch: round(down, min(100cqh, var(--turn-map-slots) * 8px) / var(--turn-map-slots), 1px);
@@ -1031,7 +1040,13 @@
   background: var(--pill-ink);
   transform-origin: left;
   transform: scaleX(
-    max(var(--pill-rest), var(--pill-hover), var(--pill-focus), var(--pill-current))
+    max(
+      var(--pill-rest),
+      var(--pill-hover),
+      var(--pill-scrub),
+      var(--pill-focus),
+      var(--pill-current)
+    )
   );
   transition: transform var(--dur-standard) var(--ease-standard);
 }
@@ -1098,6 +1113,22 @@
   }
 }
 
+/* The same ladder under a held finger or pen, on the row `turn-rail.ts` marks while the pointer is
+ * captured: a captured pointer moves no `:hover`. */
+.turn-pill[data-scrub] {
+  --pill-scrub: 1;
+}
+
+.turn-pill[data-scrub] + .turn-pill,
+.turn-pill:has(+ .turn-pill[data-scrub]) {
+  --pill-scrub: calc(16 / 24);
+}
+
+.turn-pill[data-scrub] + .turn-pill + .turn-pill,
+.turn-pill:has(+ .turn-pill + .turn-pill[data-scrub]) {
+  --pill-scrub: calc(12 / 24);
+}
+
 /* `:focus-visible`, so a click's focus leaves no ladder behind once the pointer moves on. */
 .turn-pill:has(> .turn-pill-link:focus-visible) {
   --pill-focus: 1;
@@ -1134,6 +1165,9 @@
   place-items: center;
   inline-size: var(--rail-w);
   block-size: var(--ctl-h-sm);
+
+  /* Physical, to beat the universal floor's `min-height` (61-mcp-tools.css). */
+  min-height: var(--rail-hit);
   padding: 0;
   border: 0;
   border-radius: var(--r-sm);
@@ -1146,9 +1180,11 @@
     color var(--dur-micro) var(--ease-standard);
 }
 
-.turn-map-step:enabled:hover {
-  background: var(--c-hover);
-  color: var(--c-text-primary);
+@media (any-hover: hover) {
+  .turn-map-step:enabled:hover {
+    background: var(--c-hover);
+    color: var(--c-text-primary);
+  }
 }
 
 .turn-map-step:focus-visible {
@@ -1156,17 +1192,18 @@
   outline-offset: var(--focus-offset);
 }
 
-/* The step buttons rest invisible where a pointer can hover, with their boxes reserved so the
- * stack never moves; a keyboard reader's focus reveals them too. The GLYPH fades, so the button's
- * own opacity stays the shared disabled face (40-a11y.css). */
-@media (any-hover: hover) {
-  .turn-map-step > svg {
+/* The step buttons rest invisible where a mouse can hover, with their boxes reserved so the stack
+ * never moves; a keyboard reader's focus reveals them too. A touch device or touch mode always
+ * shows them: a finger has no hover to reveal them with. The GLYPH fades, so the button's own
+ * opacity stays the shared disabled face (40-a11y.css). */
+@media (any-hover: hover) and (not (any-pointer: coarse)) {
+  :where(html:not([data-pointer="coarse"])) .turn-map-step > svg {
     opacity: 0;
     transition: opacity var(--dur-micro) var(--ease-standard);
   }
 
-  .turn-map:hover .turn-map-step > svg,
-  .turn-map:focus-within .turn-map-step > svg {
+  :where(html:not([data-pointer="coarse"])) .turn-map:hover .turn-map-step > svg,
+  :where(html:not([data-pointer="coarse"])) .turn-map:focus-within .turn-map-step > svg {
     opacity: 1;
   }
 }
