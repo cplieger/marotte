@@ -1691,6 +1691,10 @@ button.steer-note-run:focus-visible {
   color: var(--c-text-secondary);
 }
 
+.steer-note-meta {
+  display: contents;
+}
+
 /* A workflow message's two times, after the label. */
 .steer-note-times {
   margin-inline-start: auto;
@@ -1699,8 +1703,14 @@ button.steer-note-run:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+.steer-note-clause {
+  white-space: nowrap;
+}
+
 /* Phone-shaped: the run's name takes a line of its own beside the glyph and is ellipsized there on its
- * own, apart from the step and the times, which each keep a line under it. */
+ * own. The step and the times share one run of text under it, starting at the glyph's edge, which is
+ * the body's; it wraps only between the clauses. A tool card's subtitle and a delegate's tail also
+ * sit under the glyph, not the title. */
 @media (width <= 48rem) {
   .steer-note-head:has(> .steer-note-run) {
     display: grid;
@@ -1722,13 +1732,33 @@ button.steer-note-run:focus-visible {
     display: none;
   }
 
-  .steer-note-head:has(> .steer-note-run) > .steer-note-label {
+  .steer-note-head:has(> .steer-note-run) > .steer-note-meta {
+    display: block;
     grid-area: 2 / 2;
+    font-size: var(--fs-xs);
   }
 
-  .steer-note-head:has(> .steer-note-run) > .steer-note-times {
-    grid-area: 3 / 2;
+  .steer-note-head:has(> .steer-note-run):has(.steer-note-times) > .steer-note-meta {
+    grid-area: 2 / 1 / auto / -1;
+  }
+
+  .steer-note-head:has(> .steer-note-run) .steer-note-label {
+    margin-inline-end: var(--sp-1);
+  }
+
+  .steer-note-times {
     margin-inline-start: 0;
+  }
+
+  /* With no run's name, the times keep the row's end when they fit and, when they do not, wrap
+   * under the step as one item on the gutter, the body's edge. */
+  .steer-note-head:not(:has(> .steer-note-run)):has(.steer-note-times) {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .steer-note-head:not(:has(> .steer-note-run)):has(.steer-note-times) .steer-note-label {
+    margin-inline-end: auto;
   }
 }
 
