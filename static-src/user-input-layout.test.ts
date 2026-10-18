@@ -176,6 +176,13 @@ function within(el: Element, top: number, bottom: number, what: string): void {
   expect(r.bottom, `${what} bottom`).toBeLessThanOrEqual(bottom + 0.5);
 }
 
+/** A model of focus panning: `vv` tall, ending at the frame's bottom, or from the bar's top when
+ *  the bar is taller. Physical iOS panning is a device check. */
+function visibleBand(bar: HTMLElement, vv: number): { top: number; bottom: number } {
+  const top = Math.min(bar.getBoundingClientRect().top, frame!.getBoundingClientRect().bottom - vv);
+  return { top, bottom: top + vv };
+}
+
 function unscrolled(box: HTMLElement, what: string): void {
   expect(box.scrollHeight, `${what} holds its content without scrolling`).toBeLessThanOrEqual(
     box.clientHeight + 1,
@@ -206,11 +213,8 @@ describe("the agent-question card", () => {
             paintViewportHeight(vv);
             await settle();
 
-            // The band is a model of focus panning: vv tall, ending at the frame's bottom, or from
-            // the bar's top when the bar is taller. Physical iOS panning is a device check.
             const f = frame!.getBoundingClientRect();
-            const bandTop = Math.min(bar.getBoundingClientRect().top, f.bottom - vv);
-            const bandBottom = bandTop + vv;
+            const { top: bandTop, bottom: bandBottom } = visibleBand(bar, vv);
 
             const sideways = height <= SIDEWAYS_MAX_H;
             if (sideways) {
@@ -313,9 +317,11 @@ describe("a waiting question and the composer", () => {
     host: Host,
     width: number,
     height: number,
+    theme = "light",
   ): Promise<HTMLTextAreaElement> {
     await browser.viewport(width, height);
     document.documentElement.setAttribute("data-pointer", "coarse");
+    document.documentElement.setAttribute("data-theme", theme);
     style = mountAppCSS();
     setSessions([makeSession({ id: "c1" })]);
     setActive("c1");
@@ -333,13 +339,13 @@ describe("a waiting question and the composer", () => {
   }
 
   /** The server's side of a delivered answer: `decision_settled` retires the card. A run's question carries its run. */
-  async function pushQuestion(host: Host): Promise<HTMLElement> {
+  async function pushQuestion(host: Host, payload = QUESTION): Promise<HTMLElement> {
     pushDecision({
       kind: "user_input",
       chatID: "c1",
       ...(host === "run" ? { runID: "r1" } : {}),
       requestID: 1,
-      payload: QUESTION,
+      payload,
       submit: (): Promise<AnswerOutcome> => {
         collapseSettledDecision("c1", "user_input", 1, "user");
         return Promise.resolve("answered");
@@ -428,6 +434,43 @@ describe("a waiting question and the composer", () => {
     ).toBeGreaterThan(1);
   });
 
+  it("chat: on a phone on its side, leaves focus held outside the composer where it is", async () => {
+    await mountDocked("chat", 568, 320);
+    const other = document.createElement("input");
+    document.body.append(other);
+    try {
+      other.focus();
+      await pushQuestion("chat");
+      expect(document.activeElement, "focus").toBe(other);
+    } finally {
+      other.remove();
+    }
+  });
+
+  it("chat: on a phone on its side, a later resize never pulls focus back to the card", async () => {
+    const draft = await mountDocked("chat", 568, 320);
+    draft.focus();
+    const card = await pushQuestion("chat");
+    const box = card.querySelector<HTMLElement>(".dock-ask-text")!;
+    expect(document.activeElement, "the typing in the card's answer box").toBe(box);
+
+    box.blur();
+    window.dispatchEvent(new Event("resize"));
+    await settle();
+    expect(document.activeElement, "focus after the resize").toBe(document.body);
+  });
+
+  it("a pinch zoom leaves the band flags to the unzoomed band", () => {
+    style = mountAppCSS();
+    paintViewportHeight(844 / 2.7, 2.7);
+    expect(document.documentElement.hasAttribute("data-tight-band"), "tight band").toBe(false);
+    expect(document.documentElement.hasAttribute("data-short-band"), "short band").toBe(false);
+    paintViewportHeight(261, 1);
+    expect(document.documentElement.hasAttribute("data-tight-band"), "a keyboard's band").toBe(
+      true,
+    );
+  });
+
   it("run: on a tight band, puts an idle composer aside and hands the card the typing", async () => {
     const draft = await mountDocked("run", 320, 568);
     paintViewportHeight(261);
@@ -442,6 +485,79 @@ describe("a waiting question and the composer", () => {
     expect(draft.checkVisibility(), "the composer back").toBe(true);
     expect(draft.value, "the draft untouched").toBe(DRAFT);
   });
+
+  // The run composer sends to the selected step (`run-composer.ts`), the card to its own request, so
+  // a question arriving mid-typing leaves the cursor in the composer and the question scrolls in its
+  // region instead. The run bar fits the band; the chat's is taller, so there the whole bar is held
+  // to the view, its ordinary question whole (the page pans to whatever is focused: a device check).
+  for (const host of ["chat", "run"] as const satisfies readonly Host[]) {
+    for (const [name, fixture] of Object.entries(FIXTURES)) {
+      for (const theme of ["light", "dark"]) {
+        it(`${host}: ${name} arriving while the composer holds the typing at 320x568 keyboard up (261px), ${theme}`, async () => {
+          const draft = await mountDocked(host, 320, 568, theme);
+          draft.focus();
+          paintViewportHeight(261);
+          await settle();
+          const card = await pushQuestion(host, {
+            request_id: 1,
+            question: fixture.question,
+            options: [...fixture.options],
+          });
+          const bar = frame!.querySelector<HTMLElement>(
+            host === "chat" ? "#prompt-form" : ".run-bottom-bar",
+          )!;
+          // The tray's entering phase pins its height until it settles.
+          const tray = card.parentElement!;
+          await expect
+            .poll(() => tray.dataset["dockPhase"], { message: "the tray settled" })
+            .toBeUndefined();
+          await settle();
+          const f = frame!.getBoundingClientRect();
+          const band = host === "run" ? visibleBand(bar, 261) : { top: f.top, bottom: f.bottom };
+
+          expect(document.activeElement, "the cursor still in the composer").toBe(draft);
+          expect(draft.value, "the draft untouched").toBe(DRAFT);
+          within(draft, band.top, band.bottom, "the composer in view");
+          unscrolled(card, "the card");
+          const c = card.getBoundingClientRect();
+          const controls = [
+            card.querySelector<HTMLElement>(".dock-ask-text")!,
+            ...card.querySelectorAll<HTMLElement>(".dock-ask-actions button"),
+          ];
+          expect(controls.length, "the answer box, Send and Skip").toBe(3);
+          for (const el of controls) {
+            const label = el.tagName === "TEXTAREA" ? "the answer box" : String(el.textContent);
+            within(el, c.top, c.bottom, `${label} inside the card`);
+            within(el, band.top, band.bottom, `${label} in view`);
+          }
+
+          const body = card.querySelector<HTMLElement>(".dock-ask-body")!;
+          within(body, band.top, band.bottom, "the question in view");
+          if (host === "chat" && !fixture.long) {
+            unscrolled(body, "the question");
+            return;
+          }
+          const twoLines = Number.parseFloat(getComputedStyle(body).minBlockSize);
+          expect(body.clientHeight, "two lines of the question").toBeGreaterThanOrEqual(
+            twoLines - 1,
+          );
+          // The end of the question, or the clamp's Show more, one scroll down inside the region; a
+          // script can scroll an `overflow: hidden` box, a finger cannot.
+          expect(getComputedStyle(body).overflowY, "a region a finger scrolls").toMatch(
+            /^(auto|scroll)$/,
+          );
+          body.scrollTop = body.scrollHeight;
+          const more = card.querySelector<HTMLElement>(".dock-ask-more:not([hidden])");
+          const end = more ?? card.querySelector<HTMLElement>(".dock-ask-question")!;
+          const b = body.getBoundingClientRect();
+          expect(
+            end.getBoundingClientRect().bottom,
+            "the question's end in reach",
+          ).toBeLessThanOrEqual(b.bottom + 0.5);
+        });
+      }
+    }
+  }
 
   it("run: on a tight band, keeps a composer that holds the typing", async () => {
     const draft = await mountDocked("run", 320, 568);

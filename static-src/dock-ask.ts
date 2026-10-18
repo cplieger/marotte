@@ -79,7 +79,7 @@ export function publishViewportHeight(): void {
   let frame = 0;
   const paint = (): void => {
     frame = 0;
-    paintViewportHeight(vv.height);
+    paintViewportHeight(vv.height, vv.scale);
   };
   const schedule = (): void => {
     if (frame === 0) {
@@ -90,14 +90,16 @@ export function publishViewportHeight(): void {
   paint();
 }
 
-/** Write what the bar reads for a visual viewport `height` px tall: `--dock-viewport-h`, `data-short-band` and
- *  `data-tight-band`. */
-export function paintViewportHeight(height: number): void {
+/** Write what the bar reads for a visual viewport `height` px tall at pinch-zoom `scale`: `--dock-viewport-h`, and
+ *  `data-short-band` and `data-tight-band` from the unzoomed band, `height * scale` (CSSOM View divides the visual
+ *  viewport by its scale), so zooming in to read never hides the composer or the run dock. */
+export function paintViewportHeight(height: number, scale = 1): void {
   const root = document.documentElement;
   root.style.setProperty(DOCK_VIEWPORT_PROP, `${String(Math.round(height))}px`);
   const rem = Number.parseFloat(getComputedStyle(root).fontSize);
-  root.toggleAttribute("data-short-band", height < SHORT_BAND_REM * rem);
-  root.toggleAttribute("data-tight-band", height < TIGHT_BAND_REM * rem);
+  const band = height * scale;
+  root.toggleAttribute("data-short-band", band < SHORT_BAND_REM * rem);
+  root.toggleAttribute("data-tight-band", band < TIGHT_BAND_REM * rem);
 }
 
 /** The card's ONE right-aligned button row, holding every button it has. */

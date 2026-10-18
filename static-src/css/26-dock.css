@@ -258,9 +258,10 @@
 }
 
 /* ON A TIGHT BAND THE RUN COMPOSER STEPS ASIDE THE SAME WAY (`[data-tight-band]`, `dock-ask.ts`),
-   unless it holds the typing: tapping it raises the keyboard into the band, so hiding it when
-   focused would take away the field the reader just chose. The chat's bar keeps its composer:
-   its card holds an ordinary question whole on that band. */
+   unless it holds the typing: a tap on it raises the keyboard into the band, and a question that
+   arrives while the reader types there is not what that composer sends to (it messages the
+   selected step), so the cursor stays and the question scrolls in its region. The chat's bar
+   keeps its composer: its card holds an ordinary question whole on that band. */
 .run-bottom-bar:where(:has(> .decision-dock > .dock-user-input)) > [id="run-composer"] {
   &:not(:focus-within) {
     :where(:root[data-tight-band]) & {

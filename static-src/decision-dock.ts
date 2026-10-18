@@ -644,9 +644,9 @@ function show(h: DockHost, head: Decision, rest: readonly Decision[]): void {
 }
 
 /**
- * A short screen hides the bar's composer while a question card is up (`css/26-dock.css`), so typing in the composer,
- * or none at all, moves to the card's own answer box. Only on the composer's going from rendered to hidden, so a later
- * call never pulls focus back; keyed on its rendering, so the stylesheet alone owns the condition.
+ * When the stylesheet has hidden the bar's composer under a question card (`css/26-dock.css`), focus left in it or on
+ * body moves to the card's own answer box. Only on the composer's going from rendered to hidden, so a later call never
+ * pulls focus back; keyed on its rendering, so the stylesheet alone owns the condition.
  */
 function focusAnswerIfAside(h: DockHost): void {
   const composer = h.el.parentElement?.querySelector(
@@ -659,7 +659,7 @@ function focusAnswerIfAside(h: DockHost): void {
   const hidden = h.composerShown && !shown;
   h.composerShown = shown;
   const typing = document.activeElement;
-  if (hidden && (typing === null || typing === document.body || composer.contains(typing))) {
+  if (hidden && (typing === document.body || composer.contains(typing))) {
     h.card.querySelector<HTMLElement>(".dock-ask-text")?.focus({ preventScroll: true });
   }
 }
