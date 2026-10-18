@@ -1,13 +1,14 @@
 // THE CLOSED FOOTER ROW, assembled by `messages.ts` as a chat paints it (ledger, turn actions,
-// Rewind), pinned at 320, 390 and 1280 px to the row before the open panel's redesign: every
-// element's computed style but the host-dependent few, captured from a ref by
-// `scripts/capture-closed-row.ts`, and each box relative to the footer or to its neighbour. The
-// phone widths take a copy of the card into a coarse-pointer iframe: style and geometry need only
-// the markup and the stylesheet.
+// Rewind) in every state it can close in, pinned at 320, 390 and 1280 px to the row before the open
+// panel's redesign: every element's style the markup and stylesheet decide but the host-dependent
+// few, captured from a ref by `scripts/capture-closed-row.ts`, and each box relative to the footer
+// or to its neighbour. The phone widths take a copy of the cards into a coarse-pointer iframe:
+// style and geometry need only the markup and the stylesheet.
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type * as StoreLoadModule from "./store-load.js";
+import type { TurnOutcome } from "./turns.js";
 import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 
@@ -59,15 +60,35 @@ afterAll(() => {
   bundle.remove();
 });
 
-function turn(n: number, text: string, elapsedMs: number): Entry[] {
+/** Every closed row the footer paints, one per outcome the wire can send; keyed by the union, so a
+ *  new outcome does not compile until it is pinned. Each says what the row shows: the outcome word
+ *  (none on a clean or running turn, which carry no mark either), the lead fact, and whether settled
+ *  prose earns the copy actions. */
+const ROWS: Record<TurnOutcome, { word: string; fact: string; actions: boolean }> = {
+  completed: { word: "", fact: "1m 32s", actions: true },
+  running: { word: "", fact: "", actions: false },
+  cancelled: { word: "Cancelled", fact: "1m 32s", actions: true },
+  interrupted: { word: "Interrupted", fact: "1m 32s", actions: true },
+  failed: { word: "Failed", fact: "1m 32s", actions: true },
+  refused: { word: "Refused", fact: "1m 32s", actions: true },
+  unknown: { word: "Outcome unknown", fact: "1m 32s", actions: true },
+  empty: { word: "Empty", fact: "1m 32s", actions: true },
+};
+const STATES = Object.keys(ROWS) as TurnOutcome[];
+const WIDTHS = [1280, 390, 320] as const;
+
+/** A turn with prose, closed with `outcome` after `elapsedMs`; a running turn has no close. */
+function turn(n: number, outcome: TurnOutcome, elapsedMs: number): Entry[] {
   const id = `t${String(n)}`;
   const at = (seq: number, kind: Entry["kind"], payload: unknown): Entry =>
     ({ id: `${id}-e${String(seq)}`, turn: id, kind, seq, ts: 1000, payload }) as Entry;
-  return [
+  const entries = [
     at(0, "turn_open", { prompt: { id: `${id}-p`, text: `prompt ${id}` }, source: "prompt", n }),
-    at(1, "text", { text }),
-    at(2, "turn_close", { outcome: "completed", elapsed_ms: elapsedMs }),
+    at(1, "text", { text: "reply" }),
   ];
+  return outcome === "running"
+    ? entries
+    : [...entries, at(2, "turn_close", { outcome, elapsed_ms: elapsedMs })];
 }
 
 async function until(pred: () => boolean, what: string): Promise<void> {
@@ -85,14 +106,22 @@ function cards(): HTMLElement[] {
   return root === null ? [] : [...root.querySelectorAll<HTMLElement>(":scope > .turn")];
 }
 
-/** The first of two settled turns: prose and a fact earn it the copy actions, and the turn after
- *  gives it a Rewind target. */
-async function paint(): Promise<HTMLElement> {
+/** One turn per state, in `STATES` order, then a settled turn that gives the last a Rewind target. */
+async function paint(): Promise<HTMLElement[]> {
   const id = "closed";
+  const all = [
+    ...STATES.map((s, i) => turn(i + 1, s, 92_000)),
+    turn(STATES.length + 1, "completed", 1000),
+  ];
   const turns = new Map<string, TurnState>();
-  for (const entries of [turn(1, "reply", 92_000), turn(2, "reply", 1000)]) {
+  for (const entries of all) {
     const first = entries[0] as Entry;
-    turns.set(first.turn, { entries: [...entries], openEntries: new Map(), closeAt: 2 });
+    const closeAt = entries.findIndex((e) => e.kind === "turn_close");
+    turns.set(first.turn, {
+      entries: [...entries],
+      openEntries: new Map(),
+      ...(closeAt === -1 ? {} : { closeAt }),
+    });
   }
   observeStamp({ kind: "chat", ref: id, version: "1" });
   store.setSessions([
@@ -103,8 +132,8 @@ async function paint(): Promise<HTMLElement> {
       acp_session_id: "",
       current_mode_id: "",
       turns,
-      turn_order: ["t1", "t2"],
-      turn_count: 2,
+      turn_order: [...turns.keys()],
+      turn_count: turns.size,
       has_more: false,
       residency: "loaded",
       thinking: false,
@@ -113,7 +142,7 @@ async function paint(): Promise<HTMLElement> {
     },
   ]);
   store.setActive(id);
-  await until(() => cards().length === 2, "2 cards");
+  await until(() => cards().length === all.length, `${String(all.length)} cards`);
   await until(
     () =>
       [...document.querySelectorAll(".turn-footer")].every(
@@ -121,15 +150,20 @@ async function paint(): Promise<HTMLElement> {
       ),
     "footers settle",
   );
-  return cards()[0] as HTMLElement;
+  return cards();
 }
 
 const frames: HTMLIFrameElement[] = [];
-const footers = new Map<number, HTMLElement>();
+/** State, then width. */
+const footers = new Map<TurnOutcome, Map<number, HTMLElement>>();
+
+function footerOf(card: Element | undefined): HTMLElement {
+  return card?.querySelector(":scope > .turn-footer") as HTMLElement;
+}
 
 beforeAll(async () => {
-  const card = await paint();
-  footers.set(1280, card.querySelector(":scope > .turn-footer") as HTMLElement);
+  const list = await paint();
+  STATES.forEach((s, i) => footers.set(s, new Map([[1280, footerOf(list[i])]])));
   for (const width of [390, 320]) {
     const frame = document.createElement("iframe");
     frame.width = String(width);
@@ -143,9 +177,19 @@ beforeAll(async () => {
     inner.head.appendChild(sheet);
     const host = inner.createElement("div");
     host.id = "messages";
-    host.appendChild(inner.importNode(card, true));
+    for (const card of list) {
+      host.appendChild(inner.importNode(card, true));
+    }
     inner.body.appendChild(host);
-    footers.set(width, host.querySelector(".turn-footer") as HTMLElement);
+    STATES.forEach((s, i) => footers.get(s)?.set(width, footerOf(host.children[i])));
+    // A copy fades in from `@starting-style` like a painted card; a snapshot mid-fade reads the clock.
+    await until(
+      () =>
+        [...host.querySelectorAll(".turn-footer")].every(
+          (f) => inner.defaultView?.getComputedStyle(f).opacity === "1",
+        ),
+      `${String(width)} px footers settle`,
+    );
   }
 });
 
@@ -189,45 +233,46 @@ function rewindChrome(rewind: Element): number {
   return Math.round((rewind.getBoundingClientRect().width - label) * 100) / 100;
 }
 
-/** The space between each shown control and the next. */
-function gaps(controls: readonly Element[]): number[] {
-  return controls.slice(1).map((c, i) => {
-    const prev = (controls[i] as Element).getBoundingClientRect();
+/** The space between each shown box and the next. */
+function gaps(boxes: readonly Element[]): number[] {
+  return boxes.slice(1).map((c, i) => {
+    const prev = (boxes[i] as Element).getBoundingClientRect();
     return Math.round((c.getBoundingClientRect().left - prev.right) * 100) / 100;
   });
 }
 
-// Measured on the live app before the redesign: the inline actions and the worded Rewind on a
+// Measured on the row before the redesign: the inline actions and the worded Rewind on a
 // mouse, the `…` overflow and the glyph-only Rewind on a phone. `system-ui` resolves through the
-// host's fonts, so nothing here depends on a glyph's metrics: the fact is held by its start and
-// its centre, the worded Rewind by its width less the word, the copy actions by their spacing.
+// host's fonts, so nothing here depends on a glyph's metrics: the ledger's parts are held by the
+// `i` and the outcome mark, their spacing and their centres, the worded Rewind by its width less
+// the word, the copy actions by their spacing.
 const FINE = {
   band: 32,
   ledger: { x: 8, y: 4, h: 24 },
   info: { x: 12, y: 8, w: 16, h: 16 },
-  factX: 36,
-  controls: [
+  mark: { x: 36, y: 12, w: 8, h: 8 },
+  ledgerGap: 8,
+  actions: [
     ["Copy as text", { y: 4, w: 24, h: 24 }],
     ["Copy as markdown", { y: 4, w: 24, h: 24 }],
     ["Copy link to this turn", { y: 4, w: 24, h: 24 }],
-    ["Rewind to this point", { end: 8, y: 4, h: 24 }],
   ],
+  rewind: ["Rewind to this point", { end: 8, y: 4, h: 24 }],
   gaps: [2, 2, 8],
   rewindChrome: 36,
-  glyphs: { count: 5, size: 16 },
+  glyphs: { actions: 3, size: 16 },
 } as const;
 const COARSE = {
   band: 44,
   ledger: { x: 8, y: 4, h: 36 },
   info: { x: 12, y: 12, w: 20, h: 20 },
-  factX: 40,
-  controls: [
-    ["More turn actions", { end: 52, y: 4, w: 36, h: 36 }],
-    ["Rewind to this point", { end: 8, y: 4, w: 36, h: 36 }],
-  ],
+  mark: { x: 40, y: 18, w: 8, h: 8 },
+  ledgerGap: 8,
+  actions: [["More turn actions", { end: 52, y: 4, w: 36, h: 36 }]],
+  rewind: ["Rewind to this point", { end: 8, y: 4, w: 36, h: 36 }],
   gaps: [8],
   rewindChrome: 36,
-  glyphs: { count: 2, size: 20 },
+  glyphs: { actions: 0, size: 20 },
 } as const;
 const PIN = { 1280: FINE, 390: COARSE, 320: COARSE } as const;
 
@@ -244,8 +289,8 @@ const HOST_DEPENDENT = new Map([
   ["inset-inline-end", "the logical twin of right"],
 ]);
 
-/** Width, then element path in document order, then property in name order. */
-type Snapshot = Record<string, Record<string, Record<string, string>>>;
+/** State, then width, then element path in document order, then property in name order. */
+type Snapshot = Record<string, Record<string, Record<string, Record<string, string>>>>;
 
 /** The footer and every element under it but the open panel's subtree, which the redesign owns;
  *  a path names each element by tag, classes and label, so a diff line says which part moved. */
@@ -271,104 +316,152 @@ function rowElements(footer: Element): [string, Element][] {
 }
 
 /** Every enumerated property but custom ones (tokens paint only through the properties that read
- *  them) and the host-dependent few. */
-function look(style: CSSStyleDeclaration): Record<string, string> {
-  const props = [...style].filter((p) => !p.startsWith("--") && !HOST_DEPENDENT.has(p)).sort();
-  return Object.fromEntries(props.map((p) => [p, style.getPropertyValue(p)]));
+ *  them) and the host-dependent few, copied: a computed style is live. */
+function read(style: CSSStyleDeclaration): Map<string, string> {
+  return new Map(
+    [...style]
+      .filter((p) => !p.startsWith("--") && !HOST_DEPENDENT.has(p))
+      .map((p) => [p, style.getPropertyValue(p)]),
+  );
+}
+
+/** `e`'s style and each used pseudo-element's, every property in it that differs from a stand-in:
+ *  the same tag in the same parent with every author rule reverted, so the stand-in inherits what
+ *  `e` inherits and holds what the user agent alone gives the tag. What remains is what the markup
+ *  and the stylesheet decide, and a property a browser adds or drops reads alike on both. */
+function decided(e: Element): [string, Record<string, string>][] {
+  const view = e.ownerDocument.defaultView as Window;
+  const own = view.getComputedStyle(e);
+  const pseudos = [
+    "",
+    ...["::before", "::after", "::marker"].filter((p) =>
+      p === "::marker"
+        ? own.display === "list-item"
+        : view.getComputedStyle(e, p).content !== "none",
+    ),
+  ];
+  // Read before the stand-in joins the parent, where it would move `e`'s structural matches.
+  const mine = pseudos.map((p) => read(view.getComputedStyle(e, p)));
+  const stand = e.ownerDocument.createElementNS(e.namespaceURI, e.localName);
+  stand.setAttribute("style", "all: revert");
+  e.after(stand);
+  const base = pseudos.map((p) => read(view.getComputedStyle(stand, p)));
+  stand.remove();
+  return pseudos.map((p, i) => [
+    p,
+    Object.fromEntries(
+      [...(mine[i] as Map<string, string>)]
+        .filter(([prop, v]) => base[i]?.get(prop) !== v)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    ),
+  ]);
 }
 
 function snapshot(): Snapshot {
   const out: Snapshot = {};
-  for (const width of [1280, 390, 320] as const) {
-    const footer = footers.get(width) as HTMLElement;
-    const view = footer.ownerDocument.defaultView as Window;
-    const parts: Record<string, Record<string, string>> = {};
-    for (const [path, e] of rowElements(footer)) {
-      const style = view.getComputedStyle(e);
-      parts[path] = look(style);
-      for (const pseudo of ["::before", "::after", "::marker"]) {
-        const p = view.getComputedStyle(e, pseudo);
-        const used = pseudo === "::marker" ? style.display === "list-item" : p.content !== "none";
-        if (used) {
-          parts[`${path}${pseudo}`] = look(p);
+  for (const state of STATES) {
+    const byWidth: Snapshot[string] = {};
+    for (const width of WIDTHS) {
+      const parts: Record<string, Record<string, string>> = {};
+      for (const [path, e] of rowElements(footers.get(state)?.get(width) as HTMLElement)) {
+        for (const [pseudo, style] of decided(e)) {
+          parts[`${path}${pseudo}`] = style;
         }
       }
+      byWidth[String(width)] = parts;
     }
-    out[String(width)] = parts;
+    out[state] = byWidth;
   }
   return out;
 }
 
-/** The snapshot as committed: each property's most common value across every element and width
- *  is written once under `shared`, and an element lists only where it differs from it, so a
- *  recapture's diff shows the change and not every element it repeats on. */
-interface Fixture {
-  shared: Record<string, string>;
-  widths: Snapshot;
-}
+/** The snapshot as committed, by width then path: `states` names the states that render the path
+ *  when not all do (one string, which Prettier leaves as `JSON.stringify` wrote it), and a property
+ *  is written once where all of those agree on it, per state otherwise (a state left out of it has
+ *  the stand-in's value), so a recapture's diff shows a change once and not on every state it
+ *  repeats on. */
+type Fixture = Record<
+  string,
+  Record<string, { states?: string; style: Record<string, string | Record<string, string>> }>
+>;
 
 function encode(live: Snapshot): Fixture {
-  const counts = new Map<string, Map<string, number>>();
-  for (const parts of Object.values(live)) {
-    for (const style of Object.values(parts)) {
-      for (const [p, v] of Object.entries(style)) {
-        const byValue = counts.get(p) ?? new Map<string, number>();
-        byValue.set(v, (byValue.get(v) ?? 0) + 1);
-        counts.set(p, byValue);
-      }
-    }
-  }
-  const byName = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-  const shared = Object.fromEntries(
-    [...counts.keys()].sort(byName).map((p) => {
-      const ranked = [...(counts.get(p) as Map<string, number>)].sort(
-        ([va, na], [vb, nb]) => nb - na || byName(va, vb),
-      );
-      return [p, (ranked[0] as [string, number])[0]];
-    }),
-  );
-  const widths: Snapshot = {};
-  for (const [width, parts] of Object.entries(live)) {
-    widths[width] = Object.fromEntries(
-      Object.entries(parts).map(([path, style]) => [
-        path,
-        Object.fromEntries(Object.entries(style).filter(([p, v]) => shared[p] !== v)),
-      ]),
+  const out: Fixture = {};
+  for (const width of WIDTHS.map(String)) {
+    const paths = [...new Set(STATES.flatMap((s) => Object.keys(live[s]?.[width] ?? {})))];
+    out[width] = Object.fromEntries(
+      paths.map((path) => {
+        const rendered = STATES.filter((s) => live[s]?.[width]?.[path] !== undefined);
+        const of = (s: string): Record<string, string> => live[s]?.[width]?.[path] ?? {};
+        const props = [...new Set(rendered.flatMap((s) => Object.keys(of(s))))].sort();
+        const style = Object.fromEntries(
+          props.map((p) => {
+            const values = rendered.flatMap((s) => {
+              const v = of(s)[p];
+              return v === undefined ? [] : [[s, v] as const];
+            });
+            const one = values[0]?.[1];
+            const agreed = values.length === rendered.length && values.every(([, v]) => v === one);
+            return [p, agreed ? (one as string) : Object.fromEntries(values)];
+          }),
+        );
+        return [
+          path,
+          rendered.length === STATES.length ? { style } : { states: rendered.join(" "), style },
+        ];
+      }),
     );
   }
-  return { shared, widths };
+  return out;
 }
 
 function decode(fixture: Fixture): Snapshot {
   const out: Snapshot = {};
-  for (const [width, parts] of Object.entries(fixture.widths)) {
-    out[width] = Object.fromEntries(
-      Object.entries(parts).map(([path, own]) => [path, { ...fixture.shared, ...own }]),
-    );
+  for (const [width, paths] of Object.entries(fixture)) {
+    for (const [path, { states, style }] of Object.entries(paths)) {
+      for (const s of states?.split(" ") ?? STATES) {
+        const byWidth = (out[s] ??= {});
+        const parts = (byWidth[width] ??= {});
+        const own: Record<string, string> = {};
+        for (const [p, v] of Object.entries(style)) {
+          const value = typeof v === "string" ? v : v[s];
+          if (value !== undefined) {
+            own[p] = value;
+          }
+        }
+        parts[path] = own;
+      }
+    }
   }
   return out;
 }
 
-/** One line per property whose value differs, so a red run names the part and the property. */
+/** One line per property whose value differs, so a red run names the state, the part and the
+ *  property. */
 function differences(want: Snapshot, got: Snapshot): string[] {
   const lines: string[] = [];
   const keys = (a: object, b: object): string[] =>
     [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
-  for (const width of keys(want, got)) {
-    const w = want[width] ?? {};
-    const g = got[width] ?? {};
-    for (const path of keys(w, g)) {
-      const wp = w[path];
-      const gp = g[path];
-      if (wp === undefined || gp === undefined) {
-        lines.push(`${width} ${path}: ${wp === undefined ? "added" : "removed"}`);
-        continue;
-      }
-      for (const prop of keys(wp, gp)) {
-        if (wp[prop] !== gp[prop]) {
-          lines.push(
-            `${width} ${path} ${prop}: ${wp[prop] ?? "(none)"} -> ${gp[prop] ?? "(none)"}`,
-          );
+  for (const state of keys(want, got)) {
+    const ws = want[state] ?? {};
+    const gs = got[state] ?? {};
+    for (const width of keys(ws, gs)) {
+      const w = ws[width] ?? {};
+      const g = gs[width] ?? {};
+      for (const path of keys(w, g)) {
+        const wp = w[path];
+        const gp = g[path];
+        const at = `${state} ${width} ${path}`;
+        if (wp === undefined || gp === undefined) {
+          lines.push(`${at}: ${wp === undefined ? "added" : "removed"}`);
+          continue;
+        }
+        for (const prop of keys(wp, gp)) {
+          if (wp[prop] !== gp[prop]) {
+            lines.push(
+              `${at} ${prop}: ${wp[prop] ?? "(as the tag)"} -> ${gp[prop] ?? "(as the tag)"}`,
+            );
+          }
         }
       }
     }
@@ -386,7 +479,7 @@ const captured = Object.values(
 )[0];
 
 describe("the closed footer row", () => {
-  it("keeps every element's computed style at 320, 390 and 1280 px", async () => {
+  it("keeps every element's decided style in every state at 320, 390 and 1280 px", async () => {
     const live = snapshot();
     const diff =
       captured === undefined ? [] : differences(decode(JSON.parse(captured) as Fixture), live);
@@ -398,87 +491,119 @@ describe("the closed footer row", () => {
         ...diff,
       ].join("\n"),
     ).toMatchFileSnapshot("./testdata/turn-footer-closed-row-styles.json");
-    for (const [width, footer] of footers) {
-      const view = footer.ownerDocument.defaultView as Window;
-      const card = view.getComputedStyle(footer.closest(".turn") as Element).fontFamily;
-      for (const [path, e] of rowElements(footer)) {
-        const family = view.getComputedStyle(e).fontFamily;
-        expect(family, `${String(width)} px ${path}: the card's font`).toBe(card);
+    for (const [state, byWidth] of footers) {
+      for (const [width, footer] of byWidth) {
+        const view = footer.ownerDocument.defaultView as Window;
+        const card = view.getComputedStyle(footer.closest(".turn") as Element).fontFamily;
+        for (const [path, e] of rowElements(footer)) {
+          const family = view.getComputedStyle(e).fontFamily;
+          expect(family, `${state} ${String(width)} px ${path}: the card's font`).toBe(card);
+        }
       }
     }
   });
 
-  for (const width of [320, 390, 1280] as const) {
-    it(`keeps its items, their order and their boxes at ${String(width)} px`, () => {
-      const footer = footers.get(width) as HTMLElement;
-      const pin = PIN[width];
-      expect(footer.dataset["info"], "closed").not.toBe("open");
-      expect(
-        [...footer.children].map((c) => c.className),
-        "the row's items in order",
-      ).toEqual(["turn-ledger-summary", "turn-info-panel", "turn-actions-buttons", "turn-rewind"]);
-      expect(
-        footer.querySelector(":scope > .turn-info-panel")?.checkVisibility(),
-        "the info panel, shut",
-      ).toBe(false);
-      const ledger = footer.querySelector(":scope > .turn-ledger-summary") as HTMLElement;
-      expect(
-        [...ledger.children].map((c) => c.className),
-        "the ledger's parts in order",
-      ).toEqual([
-        "sr-only",
-        "turn-ledger-info",
-        "turn-ledger-glyph",
-        "turn-ledger-text",
-        "turn-fact",
-      ]);
-      expect(footer.getBoundingClientRect().height, "band").toBeCloseTo(pin.band, 1);
-      expect(box(ledger, footer, pin.ledger), "ledger").toEqual(pin.ledger);
-      const info = ledger.querySelector(":scope > .turn-ledger-info") as Element;
-      expect(box(info, footer, pin.info), "`i`").toEqual(pin.info);
-      const fact = ledger.querySelector(":scope > .turn-fact") as Element;
-      expect(fact.textContent, "the lead fact").not.toBe("");
-      const factBox = fact.getBoundingClientRect();
-      const ledgerBox = ledger.getBoundingClientRect();
-      expect(factBox.left - footer.getBoundingClientRect().left, "fact start").toBeCloseTo(
-        pin.factX,
-        2,
-      );
-      expect(
-        Math.abs(factBox.top + factBox.height / 2 - (ledgerBox.top + ledgerBox.height / 2)),
-        "fact centred on the ledger",
-      ).toBeLessThanOrEqual(0.5);
-
-      const shown = [
-        ...footer.querySelectorAll<HTMLElement>(
-          ":scope > .turn-actions-buttons :is(button, summary), :scope > .turn-rewind",
-        ),
-      ].filter((c) => c.checkVisibility());
-      expect(
-        shown.map((c) => c.getAttribute("aria-label")),
-        "the trailing controls",
-      ).toEqual(pin.controls.map(([label]) => label));
-      shown.forEach((c, i) => {
-        const want = pin.controls[i]?.[1] as Box;
-        expect(box(c, footer, want), c.getAttribute("aria-label") ?? "").toEqual(want);
-      });
-      // Within a layout unit: a box after a word starts on a 1/64 px grid, not a whole pixel.
-      const between = gaps(shown);
-      expect(between, "the space between the trailing controls").toHaveLength(pin.gaps.length);
-      between.forEach((g, i) => {
-        expect(g, `the space after control ${String(i)}`).toBeCloseTo(pin.gaps[i] as number, 1);
-      });
-      const rewind = footer.querySelector(":scope > .turn-rewind") as Element;
-      expect(rewindChrome(rewind), "Rewind less its word").toBeCloseTo(pin.rewindChrome, 1);
-      const glyphs = [...footer.querySelectorAll("svg")].filter((g) => g.checkVisibility());
-      expect(glyphs.length, "the row's shown glyphs").toBe(pin.glyphs.count);
-      glyphs.forEach((g, i) => {
-        const b = g.getBoundingClientRect();
-        expect([b.width, b.height], `glyph ${String(i)}`).toEqual([
-          pin.glyphs.size,
-          pin.glyphs.size,
+  for (const state of STATES) {
+    for (const width of [320, 390, 1280] as const) {
+      it(`keeps the ${state} row's items, their order and their boxes at ${String(width)} px`, () => {
+        const footer = footers.get(state)?.get(width) as HTMLElement;
+        const pin = PIN[width];
+        const row = ROWS[state];
+        expect(footer.dataset["info"], "closed").not.toBe("open");
+        expect(
+          [...footer.children].map((c) => c.className),
+          "the row's items in order",
+        ).toEqual([
+          "turn-ledger-summary",
+          "turn-info-panel",
+          ...(row.actions ? ["turn-actions-buttons"] : []),
+          "turn-rewind",
         ]);
+        expect(
+          footer.querySelector(":scope > .turn-info-panel")?.checkVisibility(),
+          "the info panel, shut",
+        ).toBe(false);
+        const ledger = footer.querySelector(":scope > .turn-ledger-summary") as HTMLElement;
+        expect(
+          [...ledger.children].map((c) => c.className),
+          "the ledger's parts in order",
+        ).toEqual([
+          "sr-only",
+          "turn-ledger-info",
+          "turn-ledger-glyph",
+          "turn-ledger-text",
+          "turn-fact",
+        ]);
+        const part = (name: string): HTMLElement =>
+          ledger.querySelector(`:scope > .${name}`) as HTMLElement;
+        expect(part("turn-ledger-text").textContent, "the outcome word").toBe(row.word);
+        expect(part("turn-fact").textContent, "the lead fact").toBe(row.fact);
+        const shownParts = [
+          "turn-ledger-info",
+          ...(row.word === "" ? [] : ["turn-ledger-glyph", "turn-ledger-text"]),
+          ...(row.fact === "" ? [] : ["turn-fact"]),
+        ];
+        expect(
+          [...ledger.children].filter((c) => c.checkVisibility()).map((c) => c.className),
+          "the ledger's shown parts",
+        ).toEqual(["sr-only", ...shownParts]);
+        expect(footer.getBoundingClientRect().height, "band").toBeCloseTo(pin.band, 1);
+        expect(box(ledger, footer, pin.ledger), "ledger").toEqual(pin.ledger);
+        expect(box(part("turn-ledger-info"), footer, pin.info), "`i`").toEqual(pin.info);
+        const mark = part("turn-ledger-glyph");
+        expect(
+          mark.checkVisibility() ? box(mark, footer, pin.mark) : null,
+          "the outcome mark",
+        ).toEqual(row.word === "" ? null : pin.mark);
+        const shown = shownParts.map(part);
+        const spacing = gaps(shown);
+        spacing.forEach((g, i) => {
+          expect(g, `the space after ledger part ${String(i)}`).toBeCloseTo(pin.ledgerGap, 1);
+        });
+        const ledgerBox = ledger.getBoundingClientRect();
+        for (const p of shown) {
+          const b = p.getBoundingClientRect();
+          expect(
+            Math.abs(b.top + b.height / 2 - (ledgerBox.top + ledgerBox.height / 2)),
+            `${p.className} centred on the ledger`,
+          ).toBeLessThanOrEqual(0.5);
+        }
+
+        const controls = [
+          ...footer.querySelectorAll<HTMLElement>(
+            ":scope > .turn-actions-buttons :is(button, summary), :scope > .turn-rewind",
+          ),
+        ].filter((c) => c.checkVisibility());
+        const want = [...(row.actions ? pin.actions : []), pin.rewind];
+        expect(
+          controls.map((c) => c.getAttribute("aria-label")),
+          "the trailing controls",
+        ).toEqual(want.map(([label]) => label));
+        controls.forEach((c, i) => {
+          const b = want[i]?.[1] as Box;
+          expect(box(c, footer, b), c.getAttribute("aria-label") ?? "").toEqual(b);
+        });
+        // Within a layout unit: a box after a word starts on a 1/64 px grid, not a whole pixel.
+        const between = gaps(controls);
+        const pinned = row.actions ? pin.gaps : [];
+        expect(between, "the space between the trailing controls").toHaveLength(pinned.length);
+        between.forEach((g, i) => {
+          expect(g, `the space after control ${String(i)}`).toBeCloseTo(pinned[i] as number, 1);
+        });
+        const rewind = footer.querySelector(":scope > .turn-rewind") as Element;
+        expect(rewindChrome(rewind), "Rewind less its word").toBeCloseTo(pin.rewindChrome, 1);
+        const glyphs = [...footer.querySelectorAll("svg")].filter((g) => g.checkVisibility());
+        expect(glyphs.length, "the row's shown glyphs: the `i`, the actions', Rewind's").toBe(
+          2 + (row.actions ? pin.glyphs.actions : 0),
+        );
+        glyphs.forEach((g, i) => {
+          const b = g.getBoundingClientRect();
+          expect([b.width, b.height], `glyph ${String(i)}`).toEqual([
+            pin.glyphs.size,
+            pin.glyphs.size,
+          ]);
+        });
       });
-    });
+    }
   }
 });
