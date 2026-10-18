@@ -1,6 +1,6 @@
 // Package procout captures a spawned process's stdout or stderr under a byte cap, so a runaway
-// child cannot exhaust memory through a pipe marotte drains. Used by internal/server and
-// internal/command; internal/procgroup bounds the process tree, this bounds the output.
+// child cannot exhaust memory through a pipe marotte drains. internal/procgroup bounds the
+// process tree, this bounds the output.
 // Write always reports a full write: os/exec drains a non-*os.File writer with io.Copy, which turns
 // a short write into io.ErrShortWrite returned by Cmd.Wait for a child that exited 0, or closes the
 // pipe so a still-writing child dies of SIGPIPE. Dropped bytes are reported through Truncated

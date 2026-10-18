@@ -502,8 +502,8 @@ type turnOutcomeAccess interface {
 	// OpenTurn appends the turn_open at admission and creates the turn's registry
 	// record in one operation: prompt is the turn's prompt (nil for a source with
 	// none) and init is the header fallback for an id no record exists for, nil for
-	// every source but prompt. Refuses on a dead ctx before it
-	// appends, and with ErrTurnSuperseded when the open's fence no longer holds.
+	// every source but prompt. Refuses on a dead ctx before it appends, and with
+	// ErrTurnSuperseded when the open's fence no longer holds.
 	// The id it returns is what StartTurn and every closer are handed.
 	OpenTurn(ctx context.Context, chatID marotte.ChatID, open TurnOpen) (string, error)
 	// StartTurn stamps the model and the credit baseline onto the named turn, with

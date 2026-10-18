@@ -336,8 +336,6 @@ func newCmdRec() *httptest.ResponseRecorder {
 	return httptest.NewRecorder()
 }
 
-// A prompt starting with "!" is words for the agent like any other: it goes out as the
-// session/prompt text block and opens an ordinary prompt turn.
 func TestPrompt_BangPrefixedTextReachesTheAgent(t *testing.T) {
 	h, cs, br := newTestHubIn(t.TempDir())
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}

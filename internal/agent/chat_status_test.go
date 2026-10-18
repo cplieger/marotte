@@ -380,7 +380,6 @@ func chatStatusFrames(t *testing.T, events []sse.ReplayEvent) []marotte.ChatStat
 	return out
 }
 
-// TestOpenTurn_DischargesTheWaitingRetention pins that a prompt's turn_open answers the claim.
 func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 	waiting := marotte.ChatStatusPayload{
 		Status:      marotte.ChatStatusWaitingOnUser,

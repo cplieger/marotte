@@ -1240,8 +1240,8 @@ export interface EntryTurnClose {
 
 /**
  * EntryTurnOpen is the turn_open payload. Prompt is present for a prompt or
- * empty_retry turn and absent otherwise. Run, NodePath and
- * SessionID are set on a run log's turns only.
+ * empty_retry turn and absent otherwise. Run, NodePath and SessionID are set on
+ * a run log's turns only.
  */
 export interface EntryTurnOpen {
   prompt?: EntryPrompt;

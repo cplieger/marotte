@@ -341,7 +341,7 @@ describe("projectTurns", () => {
     expect(t.body.map((e) => e.seq)).toEqual([1, 2]);
   });
 
-  it("projects a turn under a source no writer opens any more as a plain prompted turn", () => {
+  it("projects a turn under an unknown source as a plain prompted turn", () => {
     const t = projectTurns(
       src([
         "t1",

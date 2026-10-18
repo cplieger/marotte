@@ -48,6 +48,7 @@ const (
 	TurnSourcePrompt TurnOpenSource = iota
 	// TurnSourceRevert holds a chat's slot while a rewind's revert lands: no
 	// session/prompt is behind it, so a prompt waits rather than steering into it.
+	// It only reserves: a turn opened under it would read as a revert carrier and be hidden.
 	TurnSourceRevert
 	// TurnSourceWireTurnStart is a turn marotte did not open: a turn_start with
 	// nothing pending to bind, or a fold with no open turn, is the first it hears.
@@ -101,8 +102,7 @@ func (s TurnOpenSource) UserAnswered() bool {
 
 // Acknowledgeable reports whether a wire turn_start may bind to this source. Only
 // a source that sent a session/prompt qualifies: a wireTurnStart turn was created
-// BY one. A binding is revisable, so
-// nothing irreversible may rest on it.
+// BY one. A binding is revisable, so nothing irreversible may rest on it.
 func (s TurnOpenSource) Acknowledgeable() bool {
 	switch s {
 	case TurnSourcePrompt, TurnSourceEmptyRetry:
