@@ -46,7 +46,7 @@ Reported as [kirodotdev/Kiro#11449](https://github.com/kirodotdev/Kiro/issues/11
 
 When you stop a reply while workflow messages wait for the agent, kiro-cli starts a reply of its own to pass them on. A message that reaches kiro-cli while that reply is still starting can run with none of its output in the chat. What it does still happens, such as a message to a workflow step or a new workflow, and the agent forgets it afterwards.
 
-Reported as [kirodotdev/Kiro#12011](https://github.com/kirodotdev/Kiro/issues/12011), open. marotte sends a message to kiro-cli only while kiro-cli reports the chat idle, and kiro-cli reports it busy from the stop until its own reply ends. A message you send after a stop is therefore not sent beside that reply.
+Reported as [kirodotdev/Kiro#12011](https://github.com/kirodotdev/Kiro/issues/12011), open. marotte waits to send your next message while kiro-cli reports the chat busy, including while kiro-cli is passing the waiting workflow messages on. A message you send after a stop therefore waits if that busy report has arrived, but marotte cannot close the narrow gap before it arrives.
 
 ### A message sent during a reply reaches its subagents
 
