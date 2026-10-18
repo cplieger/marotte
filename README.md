@@ -122,6 +122,7 @@ Docker checks `/api/health` every 30 seconds. The container shows healthy once m
 - [Security](docs/hardening.md) covers tool installs, the image and the kiro-cli install.
 - [How marotte works](docs/how-it-works.md) explains syncing across devices, the agent engine, and how kiro-cli is installed and repaired.
 - [Launch flags](docs/launch-flags.md) and [OS packages](docs/os-packages.md) cover two less common setups.
+- [Known upstream issues](docs/known-upstream-issues.md) lists the kiro-cli bugs you can notice in marotte, with links to their reports and what marotte does about each.
 
 ## Credits
 
