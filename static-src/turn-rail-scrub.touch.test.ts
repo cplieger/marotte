@@ -115,6 +115,44 @@ describe("a finger held on the rail scrubs it", () => {
     );
   });
 
+  it("holds the info back while the finger moves inside one row, and shows it once it stops", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const at = pointOn(10);
+      await touch("touchStart", at);
+      await frames();
+      for (let i = 1; i <= 6; i++) {
+        await touch("touchMove", { x: at.x, y: at.y + (i % 2) });
+        await frames();
+        expect(scrubbedTurn(), "premise: still on the same row").toBe("10");
+        vi.advanceTimersByTime(300);
+        expect(tooltipText(), `no info ${String(i * 300)}ms into the move`).toBeNull();
+      }
+      vi.advanceTimersByTime(500);
+      expect(tooltipText()).toContain("#10");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a still finger's info coming through sub-pixel contact noise", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const at = pointOn(10);
+      await touch("touchStart", at);
+      await frames();
+      for (let i = 1; i <= 3; i++) {
+        await touch("touchMove", { x: at.x, y: at.y + (i % 2) * 0.4 });
+        await frames();
+        vi.advanceTimersByTime(150);
+      }
+      vi.advanceTimersByTime(100);
+      expect(tooltipText(), "500ms after the press").toContain("#10");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("lands nothing when a scrub lifts, as a mouse drag's release lands nothing", async () => {
     await touch("touchStart", pointOn(2));
     await touch("touchEnd");
@@ -188,6 +226,32 @@ describe("a touch device in mouse mode", () => {
       expect(r.height).toBeGreaterThanOrEqual(48 - 0.5);
       const glyph = b.querySelector("svg");
       expect(glyph === null ? "" : getComputedStyle(glyph).opacity).toBe("1");
+    }
+  });
+
+  it("keeps the resume control's centred labelled pill, with no hover to reveal a docked label", () => {
+    document.documentElement.dataset["pointer"] = "fine";
+    const btn = document.getElementById("scroll-bottom");
+    const outer = document.getElementById("messages-wrap-outer");
+    if (btn === null || outer === null) {
+      throw new Error("no resume control or wrap-outer");
+    }
+    const home = btn.parentElement;
+    const label = document.createElement("span");
+    label.textContent = "Latest";
+    btn.className = "scroll-resume";
+    btn.append(label);
+    btn.hidden = false;
+    outer.append(btn);
+    try {
+      expect(getComputedStyle(label).display).not.toBe("none");
+      const o = outer.getBoundingClientRect();
+      const b = btn.getBoundingClientRect();
+      expect(Math.abs(b.left + b.width / 2 - (o.left + o.width / 2))).toBeLessThanOrEqual(1);
+    } finally {
+      label.remove();
+      btn.hidden = true;
+      home?.append(btn);
     }
   });
 });

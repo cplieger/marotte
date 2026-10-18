@@ -51,6 +51,10 @@ const MAX_CORRECTIONS = 6;
 /** How far the target's top may sit from the reading line and still count as landed. */
 const LANDING_TOLERANCE_PX = 8;
 
+/** A held finger's travel under one CSS pixel is contact noise, not a move: it keeps the turn info's
+ *  hover delay running, so a still finger still gets its info. */
+const SCRUB_STILL_PX = 1;
+
 /** Ceiling on the click's own intent, which suppresses offset-driven activation
  *  while the animation runs. DERIVED so it cannot fall inside the two budgets it
  *  brackets: a paged jump spends both in sequence. */
@@ -675,6 +679,9 @@ function bindMapInput(m: MapNodes): void {
  *  twin (29-turns.css), re-applied on the next move if a repaint replaced the row. */
 let scrubPointer: number | undefined;
 
+/** Where the scrub last (re)started the hover delay: the info waits for the pointer to stop. */
+let scrubArmedY = 0;
+
 /** Press-and-drag for touch and pen: the fisheye follows the pointer and a pause shows the row's
  *  turn info. The lift lands nothing itself: a tap's own click lands the row through the stack's
  *  click listener, as a mouse click does, and a drag dispatches no click, as a mouse drag on the
@@ -703,8 +710,7 @@ function bindScrub(m: MapNodes): void {
   for (const type of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
     track.addEventListener(type, end);
   }
-  // A long press opens the context menu on Android and on touch laptops, and starts the link's
-  // drag on iPadOS and Android; either would cancel the gesture.
+  // A native context menu or link drag would cancel an active scrub.
   for (const type of ["contextmenu", "dragstart"]) {
     track.addEventListener(type, (e) => {
       if (scrubPointer !== undefined) {
@@ -719,13 +725,20 @@ function scrubTo(m: MapNodes, clientY: number): void {
   const row = bin === undefined ? null : rowFor(m, bin.key);
   const was = scrubbedRow(m);
   if (row === was) {
-    // The capture's own boundary events can take the tooltip off this row; re-hovering it is a
-    // no-op while the controller already holds it, so the pause still counts from the row change.
-    if (row !== null) {
-      hoverRow(row, "pointerover");
+    if (row === null) {
+      return;
     }
+    // Leaving first restarts the controller's delay, which a repeated `pointerover` on its anchor
+    // does not. A bare re-hover is a no-op while the controller holds the row, so it only answers
+    // the capture's own boundary events taking the tooltip off it.
+    if (Math.abs(clientY - scrubArmedY) >= SCRUB_STILL_PX) {
+      hoverRow(row, "pointerout");
+      scrubArmedY = clientY;
+    }
+    hoverRow(row, "pointerover");
     return;
   }
+  scrubArmedY = clientY;
   if (was !== null) {
     was.removeAttribute("data-scrub");
     hoverRow(was, "pointerout");

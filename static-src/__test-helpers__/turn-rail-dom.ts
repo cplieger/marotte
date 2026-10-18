@@ -1,5 +1,3 @@
-// The turn map mounted in the real chat-area nesting with the shipped stylesheet, plus readers for
-// what its rows show, for suites that drive it with real input over CDP.
 import { expect, vi } from "vitest";
 import { cdp } from "vitest/browser";
 

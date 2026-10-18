@@ -308,21 +308,6 @@ describe("the map's foot clears the docked resume control", () => {
       "control height",
     );
   });
-
-  it("docks the control at the map's foot in touch mode too", () => {
-    document.documentElement.dataset["pointer"] = "coarse";
-    const m = buildMap({ turns: 5 });
-    near(
-      m.resume.getBoundingClientRect().left,
-      m.nav.getBoundingClientRect().left,
-      "control start",
-    );
-    near(
-      m.resume.getBoundingClientRect().width,
-      m.nav.getBoundingClientRect().width,
-      "control width",
-    );
-  });
 });
 
 /** Lay the page out at a device's size, with the chat area the shell would give it: the whole
@@ -369,12 +354,21 @@ describe("the map's visibility follows the screen width, never the pointer tier"
     }
   });
 
-  it("hides the map in the phone layout, in touch mode and in mouse mode", async () => {
-    const width = await device(390, 844);
+  it.each([
+    ["a phone in portrait", 390, 844],
+    ["a phone in landscape", 844, 390],
+    ["a large phone in landscape", 932, 430],
+  ])("hides the map on %s, in touch mode and in mouse mode", async (_, w, h) => {
+    const width = await device(w, h);
     for (const tier of ["coarse", "fine"]) {
       document.documentElement.dataset["pointer"] = tier;
-      const m = buildMap({ turns: 5, width, height: 700 });
+      const m = buildMap({ turns: 5, width, height: h - 100 });
       expect(getComputedStyle(m.nav).display, tier).toBe("none");
+      const scroller = m.card.closest("#messages-wrap");
+      expect(
+        parseFloat(scroller === null ? "" : getComputedStyle(scroller).paddingInlineEnd),
+        `${tier}: no strip reserved for a map that is not drawn`,
+      ).toBeLessThan(lengthOf(m.outer, "--rail-w"));
       area?.remove();
     }
   });
@@ -443,14 +437,16 @@ describe("a finger's targets in touch mode", () => {
   });
 
   it.each([WIDE_PX, NARROW_PX])(
-    "gives the step buttons and the docked resume control 48 by 48 in a %ipx chat area",
+    "gives the step buttons 48 by 48 and the resume control a 48px target in a %ipx chat area",
     (width) => {
       document.documentElement.dataset["pointer"] = "coarse";
       const m = buildMap({ turns: 5, width });
-      for (const b of [...m.buttons, m.resume]) {
+      for (const b of m.buttons) {
         const r = b.getBoundingClientRect();
         expect(r.width, "width").toBeGreaterThanOrEqual(TOUCH_TARGET_PX - EPS);
         expect(r.height, "height").toBeGreaterThanOrEqual(TOUCH_TARGET_PX - EPS);
+      }
+      for (const b of [...m.buttons, m.resume]) {
         expect(targetCovers(b, TOUCH_TARGET_PX), "the whole 48px square presses it").toBe(true);
       }
     },

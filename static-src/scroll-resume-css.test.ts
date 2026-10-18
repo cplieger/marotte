@@ -18,6 +18,7 @@ afterAll(() => {
 afterEach(async () => {
   host?.remove();
   host = undefined;
+  delete document.documentElement.dataset["pointer"];
   await page.viewport(1280, 720);
 });
 
@@ -52,13 +53,12 @@ function runTab(): { scroller: HTMLElement; btn: HTMLButtonElement } {
   return { scroller, btn };
 }
 
-/** The chat's nesting the control is positioned in, narrower than the turn map's gutter threshold;
- *  `scroll-bottom-parity.test.ts` owns the docked form's own look. */
-function chat(): HTMLButtonElement {
+/** The chat's nesting the control is positioned in, narrower than the turn map's threshold, whose
+ *  foot form `scroll-bottom-parity.test.ts` owns. */
+function chat(width = 800): HTMLButtonElement {
   host = document.createElement("div");
   host.id = "chat-area";
-  host.style.cssText =
-    "position:fixed;top:0;left:0;inline-size:min(100vw, 800px);block-size:100vh;";
+  host.style.cssText = `position:fixed;top:0;left:0;inline-size:min(100vw, ${String(width)}px);block-size:100vh;`;
   const outer = document.createElement("div");
   outer.id = "messages-wrap-outer";
   outer.style.cssText = "position:relative;block-size:600px;";
@@ -102,14 +102,43 @@ describe("the chat's resume control", () => {
     expect(getComputedStyle(btn.querySelector("span")!).display).toBe("none");
   });
 
-  it("docks at the turn map's foot on a wider window, where the map draws", () => {
-    // Under 57.5rem of chat area the map sits `--sp-2` inside the chat area's end (no classic
-    // scrollbar here), so the control's column is the 2.75rem rail ending 8px from the edge.
+  it("is the centred labelled pill on a wider window", () => {
     const btn = chat();
     const outer = btn.parentElement!.getBoundingClientRect();
     const b = btn.getBoundingClientRect();
-    expect(Math.abs(outer.right - 8 - 44 - b.left)).toBeLessThanOrEqual(1);
-    expect(Math.abs(b.width - 44)).toBeLessThanOrEqual(1);
-    expect(getComputedStyle(btn.querySelector("span")!).display).toBe("none");
+    expect(Math.abs(b.left + b.width / 2 - (outer.left + outer.width / 2))).toBeLessThanOrEqual(1);
+    expect(getComputedStyle(btn.querySelector("span")!).display).not.toBe("none");
+  });
+
+  // 560 and 920 are an iPad's chat area in portrait and landscape; 1120 is past the label's 70rem.
+  it.each([560, 920, 1120])(
+    "stays the centred labelled pill in touch mode in a %ipx chat area, with a 48px target",
+    (width) => {
+      document.documentElement.dataset["pointer"] = "coarse";
+      const btn = chat(width);
+      const outer = btn.parentElement!.getBoundingClientRect();
+      const b = btn.getBoundingClientRect();
+      expect(Math.abs(b.left + b.width / 2 - (outer.left + outer.width / 2))).toBeLessThanOrEqual(
+        1,
+      );
+      expect(getComputedStyle(btn.querySelector("span")!).display).not.toBe("none");
+      const cx = b.left + b.width / 2;
+      const cy = b.top + b.height / 2;
+      for (const y of [cy - 23.5, cy + 23.5]) {
+        const at = document.elementFromPoint(cx, y);
+        expect(at !== null && btn.contains(at), `a press ${String(y - cy)}px off centre`).toBe(
+          true,
+        );
+      }
+    },
+  );
+
+  it("stays the centred labelled pill on a window too short for the turn map", async () => {
+    await page.viewport(1280, 400);
+    const btn = chat(1120);
+    const outer = btn.parentElement!.getBoundingClientRect();
+    const b = btn.getBoundingClientRect();
+    expect(Math.abs(b.left + b.width / 2 - (outer.left + outer.width / 2))).toBeLessThanOrEqual(1);
+    expect(getComputedStyle(btn.querySelector("span")!).display).not.toBe("none");
   });
 });

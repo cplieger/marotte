@@ -922,8 +922,8 @@
    * control's target and already carries the leading `--sp-3`. */
   inset-block: var(--sp-3) var(--rail-foot);
 
-  /* Stuck to the cards' edge, not the window's (`--rail-inset-end`, 13-messages.css). Unclamped:
-   * the container query below is what guarantees the gutter. */
+  /* Beside the cards where the gutter holds it, else at the chat area's end over a reserved strip
+   * (`--rail-inset-end`, 13-messages.css). */
   inset-inline-end: var(--rail-inset-end);
   z-index: 4;
   inline-size: var(--rail-w);
@@ -933,9 +933,10 @@
   gap: var(--sp-1);
 }
 
-/* Hidden only in the phone layout (50-mobile.css's breakpoint), never by pointer tier: every wider
- * chat area has a gutter for it (`--rail-inset-end`, 13-messages.css). */
-@media (width <= 48rem) {
+/* Hidden only on a phone-shaped screen, narrow or short (15-input.css's query), never by pointer
+ * tier: every other chat area places it (`--rail-inset-end`, 13-messages.css). The resume dock
+ * and the reserved strip (13-messages.css) take the same gate. */
+@media (width <= 48rem), (height <= 30rem) {
   .turn-map {
     display: none;
   }
