@@ -16,11 +16,19 @@ const ref = process.argv[2] ?? "origin/dev";
 const pkg = resolve(import.meta.dirname, "..");
 const tree = mkdtempSync(join(tmpdir(), "closed-row-"));
 try {
-  // The ref and the directory are positional parameters, never spliced into the script text.
-  execFileSync("sh", ["-c", 'git archive --format=tar "$1" | tar -x -C "$2"', "sh", ref, tree], {
-    cwd: resolve(pkg, ".."),
+  const repo = resolve(pkg, "..");
+  // `--end-of-options` keeps a ref that starts with `-` from reading as an option.
+  const commit = execFileSync(
+    "git",
+    ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`],
+    { cwd: repo, encoding: "utf8" },
+  ).trim();
+  const archive = join(tree, "tree.tar");
+  execFileSync("git", ["archive", "--format=tar", `--output=${archive}`, commit], {
+    cwd: repo,
     stdio: "inherit",
   });
+  execFileSync("tar", ["-x", "-f", archive, "-C", tree], { stdio: "inherit" });
   const base = join(tree, "static-src");
   symlinkSync(join(pkg, "node_modules"), join(base, "node_modules"));
   copyFileSync(join(pkg, TEST), join(base, TEST));
