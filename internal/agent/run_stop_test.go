@@ -87,7 +87,10 @@ func TestRetryTermination_KeepsTheUsersAttribution(t *testing.T) {
 
 func TestPause_TellsKASTheUserAskedForIt(t *testing.T) {
 	h, _, br := newTestHub()
-	br.callResults = map[string]json.RawMessage{methodKiroWorkflowPause: json.RawMessage(`{}`)}
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowPause:   json.RawMessage(`{}`),
+		methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusRunning, ""),
+	}
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
 	if err := h.runs.pause(t.Context(), "wf_1"); err != nil {
@@ -99,7 +102,10 @@ func TestPause_TellsKASTheUserAskedForIt(t *testing.T) {
 
 func TestResume_IsNotAttributed(t *testing.T) {
 	h, _, br := newTestHub()
-	br.callResults = map[string]json.RawMessage{methodKiroWorkflowResume: json.RawMessage(`{}`)}
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowResume:  json.RawMessage(`{}`),
+		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", ""),
+	}
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
 	if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
@@ -204,8 +210,8 @@ func TestPausePredicates_SpareAUserPark(t *testing.T) {
 			if h.runs.restartPaused(t.Context(), "wf_1") {
 				t.Error("restartPaused accepted a run the user parked, so the orphan sweep would cancel it")
 			}
-			if h.runs.involuntarilyPaused(t.Context(), "wf_1") {
-				t.Error("involuntarilyPaused accepted a run the user parked, so marotte would resume it unasked")
+			if resume, _ := autoResumable(t, h.runs, "wf_1"); resume {
+				t.Error("an automatic resume accepted a run the user parked, so marotte would resume it unasked")
 			}
 		})
 	}

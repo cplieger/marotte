@@ -65,6 +65,27 @@ func (l signinLink) hostCallback(method string) (answer func(context.Context) (j
 	return func(ctx context.Context) (json.RawMessage, *marotte.RPCError) { return l.vault.Answer(ctx, id) }, true
 }
 
+// answerability reads whether the engine's credential ask can be answered, nil when the vault answers no ask: none is
+// wired, or the API key authenticates the engine.
+func (l signinLink) answerability() func() signin.Answerability {
+	if l.vault == nil || l.apiKey {
+		return nil
+	}
+	return func() signin.Answerability { return l.vault.Answerability(l.backend) }
+}
+
+// onAnswerability registers fn for every move of the engine backend's Answerability; none when answerability is nil.
+func (l signinLink) onAnswerability(fn func()) {
+	if l.vault == nil || l.apiKey {
+		return
+	}
+	l.vault.OnAnswerability(func(id signin.BackendID, _ signin.Answerability) {
+		if id == l.backend {
+			fn()
+		}
+	})
+}
+
 // onChange registers fn for every committed sign-in edge of the engine's backend; none reaches an engine the API key
 // authenticates.
 func (l signinLink) onChange(fn func(signin.Change)) {

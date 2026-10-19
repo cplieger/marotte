@@ -22,9 +22,9 @@ const (
 
 // agentRunOnChat is an agent-launched run hosted by parkChat's session, one step open, its chat recorded
 // with the launching session.
-func agentRunOnChat(t *testing.T, id string) (*Runtime, *fakeBridge) {
+func agentRunOnChat(t *testing.T, id string, opts ...Option) (*Runtime, *fakeBridge) {
 	t.Helper()
-	h, cs, br := newTestHub()
+	h, cs, br := newTestHub(opts...)
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	br.sessionID = parkSession
 	h.bridge.mgr.insert(parkChat, &sharedBridge{bridge: br, state: bridgeIdle})

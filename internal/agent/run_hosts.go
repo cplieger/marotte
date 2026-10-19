@@ -159,9 +159,25 @@ func (h *drivenHost) call(ctx context.Context, rs *Runs, workflowID, method stri
 
 // drive writes method for workflowID on sb's session, the lane the run's frames reach, entered in the run-mutation
 // registry immediately before the write: a restart or an engine end before its effect is observed keeps the run in
-// the interrupted set.
+// the interrupted set. A driving write is run work (admitRunWork); a stop verb is not.
 func (rs *Runs) drive(
 	ctx context.Context, sb *sharedBridge, workflowID, method string, params map[string]any, kind mutationKind,
+) (*marotte.RPCResponse, error) {
+	if kind != mutationDrive {
+		return rs.write(ctx, runAdmission{}, sb, workflowID, method, params, kind)
+	}
+	a, err := rs.admitRunWork(refuseClosed, workflowID, "")
+	if err != nil {
+		return nil, err
+	}
+	defer a.settle(workflowID)
+	return rs.write(ctx, a, sb, workflowID, method, params, kind)
+}
+
+// write is drive past the sign-in gate, for a stop verb (a zero a) or a write its caller admitted under a.
+func (rs *Runs) write(
+	ctx context.Context, a runAdmission, sb *sharedBridge, workflowID, method string, params map[string]any,
+	kind mutationKind,
 ) (*marotte.RPCResponse, error) {
 	_, gen := rs.engine.current()
 	m := rs.mutations.enter(workflowID, kind, gen)
@@ -172,12 +188,13 @@ func (rs *Runs) drive(
 	)
 	if method == marotte.MethodPrompt {
 		// A step's words: no chat turn's stop orders them, so the write commits nothing.
-		resp, seq, err = sb.PromptAt(ctx, params, nil)
+		resp, seq, err = sb.PromptAt(a.bind(ctx), params, nil)
 	} else {
-		resp, seq, err = sb.CallAt(ctx, method, params)
+		resp, seq, err = sb.CallAt(a.bind(ctx), method, params)
 	}
-	if errors.Is(err, marotte.ErrSessionClosed) || errors.Is(err, marotte.ErrSessionClosing) {
-		// Refused before the write: the session was not open.
+	if errors.Is(err, marotte.ErrSessionClosed) || errors.Is(err, marotte.ErrSessionClosing) ||
+		errors.Is(err, errRunWorkUnadmitted) {
+		// Refused before the write.
 		m.unwritten()
 		return nil, err
 	}

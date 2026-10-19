@@ -109,7 +109,7 @@ func TestRunAsks_AWedgedRunBlocksNoOtherRun(t *testing.T) {
 	h.bridge.mgr.insert(runChatID("wf_2"), &sharedBridge{bridge: other, state: bridgeIdle})
 	askID := readNow(t, h, "wf_1").asks[0].ID
 	stuck := make(chan struct{})
-	wf2 := inspectAsk(t, "wf_2", marotte.RunStatusPaused, parkedStep("review", "sess_two"))
+	wf2 := inspectAsk(t, "wf_2", marotte.RunStatusRunning, parkedStep("review", "sess_two"))
 	wedged.mu.Lock()
 	wedged.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method != methodKiroWorkflowInspect {

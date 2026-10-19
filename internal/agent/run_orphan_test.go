@@ -817,14 +817,15 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 		t.Helper()
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowInspect: reply}
-		return h.runs.restartPaused(t.Context(), "wf_1"), h.runs.involuntarilyPaused(t.Context(), "wf_1")
+		resume, _ = autoResumable(t, h.runs, "wf_1")
+		return h.runs.restartPaused(t.Context(), "wf_1"), resume
 	}
 
 	t.Run("everything the cancel side accepts, the resume side accepts too", func(t *testing.T) {
 		// Otherwise a restart-paused run would be cancellable but never resumable.
 		cancel, resume := both(t, inspectPaused(t, "wf_1", stalePauseReason))
 		if !cancel || !resume {
-			t.Errorf("restartPaused = %v, involuntarilyPaused = %v for KAS's restart literal; want both true",
+			t.Errorf("restartPaused = %v, an automatic resume = %v for KAS's restart literal; want both true",
 				cancel, resume)
 		}
 	})
@@ -841,7 +842,7 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 					"a resume would have saved (see clearOrphaned)", reason)
 			}
 			if !resume {
-				t.Errorf("involuntarilyPaused = false for %q; this is the class that stranded "+
+				t.Errorf("an automatic resume = false for %q; this is the class that stranded "+
 					"six live runs", reason)
 			}
 		})
@@ -856,7 +857,7 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 				"cancels work a resume would have saved")
 		}
 		if !resume {
-			t.Error("involuntarilyPaused = false for a transient fault inside a parallel branch; " +
+			t.Error("an automatic resume = false for a transient fault inside a parallel branch; " +
 				"this is the run the whole detail arm exists for")
 		}
 	})
@@ -865,16 +866,16 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 	t.Run("the branch wrapper with no detail is neither resumable nor cancellable", func(t *testing.T) {
 		cancel, resume := both(t, inspectPaused(t, "wf_1", branchWaitReason))
 		if cancel || resume {
-			t.Errorf("restartPaused = %v, involuntarilyPaused = %v for a detail-less parallel "+
+			t.Errorf("restartPaused = %v, an automatic resume = %v for a detail-less parallel "+
 				"wrapper; want both false, because that one sentence covers a need-input park, "+
 				"an interruption and a permanent failure alike", cancel, resume)
 		}
 	})
 }
 
-// TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions pins that only the reason predicate is wider; status is
+// TestAutomaticResume_KeepsItsSiblingsThreeConditions pins that only the reason predicate is wider; status is
 // re-read since a reason outlives its pause.
-func TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions(t *testing.T) {
+func TestAutomaticResume_KeepsItsSiblingsThreeConditions(t *testing.T) {
 	transient := "Transient connection error (EAI_AGAIN); the run is paused and can be resumed."
 
 	t.Run("an involuntary pause on this paused run is resumable", func(t *testing.T) {
@@ -882,22 +883,21 @@ func TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions(t *testing.T) {
 		br.callResults = map[string]json.RawMessage{
 			methodKiroWorkflowInspect: inspectPaused(t, "wf_1", transient),
 		}
-		if !h.runs.involuntarilyPaused(t.Context(), "wf_1") {
-			t.Error("involuntarilyPaused = false for a transient-network pause on this very run")
+		if resume, _ := autoResumable(t, h.runs, "wf_1"); !resume {
+			t.Error("an automatic resume = false for a transient-network pause on this very run")
 		}
 	})
 
 	for name, reply := range map[string]json.RawMessage{
-		"a reply naming a DIFFERENT run": inspectPaused(t, "wf_other", transient),
-		"a run KAS says is running":      inspectReply(t, "wf_1", "running", transient),
-		"a run KAS says completed":       inspectReply(t, "wf_1", "completed", transient),
-		"a reply carrying no status":     inspectReply(t, "wf_1", "", transient),
+		"a run KAS says is running":  inspectReply(t, "wf_1", "running", transient),
+		"a run KAS says completed":   inspectReply(t, "wf_1", "completed", transient),
+		"a reply carrying no status": inspectReply(t, "wf_1", "", transient),
 	} {
 		t.Run(name+" is not resumable", func(t *testing.T) {
 			h, _, br := newTestHub()
 			br.callResults = map[string]json.RawMessage{methodKiroWorkflowInspect: reply}
-			if h.runs.involuntarilyPaused(t.Context(), "wf_1") {
-				t.Errorf("involuntarilyPaused = true for %s", name)
+			if resume, read := autoResumable(t, h.runs, "wf_1"); resume || !read {
+				t.Errorf("an automatic resume = %v, read %v for %s, want false on a read reply", resume, read, name)
 			}
 		})
 	}
@@ -905,15 +905,23 @@ func TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions(t *testing.T) {
 	t.Run("a failed inspect leaves the run paused", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
-		if h.runs.involuntarilyPaused(t.Context(), "wf_1") {
-			t.Error("an unreadable pause reason was treated as resumable")
+		if resume, read := autoResumable(t, h.runs, "wf_1"); resume || read {
+			t.Errorf("an automatic resume = %v, read %v for a failed inspect, want neither", resume, read)
+		}
+	})
+
+	t.Run("a reply naming a different run leaves the run paused, unread", func(t *testing.T) {
+		h, _, br := newTestHub()
+		br.callResults = map[string]json.RawMessage{methodKiroWorkflowInspect: inspectPaused(t, "wf_other", transient)}
+		if resume, read := autoResumable(t, h.runs, "wf_1"); resume || read {
+			t.Errorf("an automatic resume = %v, read %v for another run's reply, want neither", resume, read)
 		}
 	})
 
 	t.Run("an empty workflow id is not resumable", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		if h.runs.involuntarilyPaused(t.Context(), "") {
-			t.Error("involuntarilyPaused(\"\") = true")
+		if resume, _ := autoResumable(t, h.runs, ""); resume {
+			t.Error("an automatic resume(\"\") = true")
 		}
 	})
 }
@@ -1036,4 +1044,11 @@ func TestSweepOrphaned_ReportsWhetherItReachedKAS(t *testing.T) {
 				"parks a goroutine waiting for an install it has no use for")
 		}
 	})
+}
+
+// autoResumable reports whether an automatic resume takes the run, and whether the run was read.
+func autoResumable(t *testing.T, rs *Runs, workflowID string) (resume, read bool) {
+	t.Helper()
+	r := rs.readPauseState(t.Context(), workflowID)
+	return runTransitions[healResume][r.seen] == actHeal, r.seen != seenUnreadable
 }

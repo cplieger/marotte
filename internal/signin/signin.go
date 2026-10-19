@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -133,6 +134,24 @@ type Change struct {
 	AccountPending bool
 }
 
+// Answerability is the last state the vault observed for answering the running engine's host callback, read off
+// the record the engine is answered from, which a pending account switch keeps apart from Status's. It contacts no
+// provider: a record whose lease went stale reads Answerable until a renewal fails.
+type Answerability int
+
+// The arms of Answerability.
+const (
+	// Answerable: the record is signed in, and no renewal since its last usable one failed as ProviderUnreachable
+	// describes.
+	Answerable Answerability = iota + 1
+	// NeedsSignIn: no record, or a lapsed one; only a sign-in changes it.
+	NeedsSignIn
+	// ProviderUnreachable: the record needs a renewal and the identity provider gave no usable one, either none
+	// within an asker's window or only a lease too short to use. The vault keeps renewing it and reports
+	// Answerable once a renewal returns a usable lease.
+	ProviderUnreachable
+)
+
 // Credential is a backend's record, stored and handed back by the vault without being read.
 type Credential struct {
 	Data json.RawMessage
@@ -150,6 +169,19 @@ const (
 	// RefusedUnreachable: the renewal failed transiently and the record can no longer be served.
 	RefusedUnreachable
 )
+
+func (a Answerability) String() string {
+	switch a {
+	case Answerable:
+		return "answerable"
+	case NeedsSignIn:
+		return "needs_sign_in"
+	case ProviderUnreachable:
+		return "provider_unreachable"
+	default:
+		return fmt.Sprintf("answerability(%d)", int(a))
+	}
+}
 
 // Backend is one agent backend's sign-in. The vault calls it with no lock held.
 type Backend interface {

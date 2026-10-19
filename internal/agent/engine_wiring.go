@@ -103,19 +103,14 @@ func (rt *Runtime) claimInterrupt(set interruptSet, cause string) {
 	}
 }
 
-// resumeInterrupted drives each run an engine end interrupted once the next engine is ready, under the run's heal
-// budget, through the one resume primitive: a chat-parented run by making its chat resident (the rehydrate path
-// resumes every run of the chat's chain), a parentless one by loading its host session.
+// resumeInterrupted drives each run an engine end interrupted once the next engine is ready, through the one resume
+// primitive (Runs.resumeIfInterrupted, which claims the heal budget): a chat-parented run by making its chat
+// resident (the rehydrate path resumes every run of the chat's chain), a parentless one by loading its host session.
 func (rt *Runtime) resumeInterrupted(ctx context.Context, set interruptSet) {
 	chats := map[marotte.ChatID]bool{}
 	for _, wf := range set.runs {
 		l, leased := rt.runs.lease(wf)
 		if !leased {
-			continue
-		}
-		if attempt, ok := rt.runs.claimHeal(wf); !ok {
-			slog.Warn("a run keeps pausing for a cause nobody chose; leaving it paused",
-				"workflow_id", wf, "attempts", attempt)
 			continue
 		}
 		if l.Origin == runlease.OriginAgent && l.ChatID != "" {
@@ -133,22 +128,21 @@ func (rt *Runtime) resumeInterrupted(ctx context.Context, set interruptSet) {
 	}
 }
 
-// resumeParentless makes a parentless run's host resident and resumes it, re-reading once after orphanResumeDelay
-// while KAS still lists it running.
+// resumeParentless resumes a parentless run, whose heal loads its host session, trying again as a chat's rehydrate
+// does: once while KAS may still list it running, an unreadable run included, and while its resume fails.
 func (rt *Runtime) resumeParentless(ctx context.Context, workflowID string) {
-	if _, err := rt.runs.ensureResident(ctx, workflowID); err != nil {
-		slog.Warn("an interrupted run's launching session could not be loaded, so it stays paused",
-			"workflow_id", workflowID, "error", err)
-		return
+	resume := func(ctx context.Context) (failed bool) {
+		return rt.runs.resumeIfInterrupted(ctx, runChatID(workflowID), workflowID) == resumeFailed
 	}
-	rt.runs.resumeIfInterrupted(ctx, runChatID(workflowID), workflowID)
-	if st, ok := rt.runs.inspect(ctx, workflowID); ok && st.State.Status == marotte.RunStatusRunning {
-		rt.lifecycle.afterUnlessDraining(orphanResumeDelay, func() {
-			hctx, cancel := rt.lifecycle.derivedContext()
-			defer cancel()
-			rt.runs.resumeIfInterrupted(hctx, runChatID(workflowID), workflowID)
-		})
+	if !resume(ctx) {
+		if st, ok := rt.runs.inspect(ctx, workflowID); ok && st.State.Status != marotte.RunStatusRunning {
+			return
+		}
 	}
+	rt.runs.retryResumeLater(resume, func(tries int) {
+		slog.Error("an interrupted run could not be resumed by any try; it stays paused until it is resumed",
+			"workflow_id", workflowID, "tries", tries)
+	})
 }
 
 // engineBusy is what a restart now would interrupt: the chats with an open turn and the runs the snapshot would
@@ -205,6 +199,8 @@ func (rt *Runtime) onEngineReady(uint64) {
 		})
 	})
 	rt.standing.refetchSoon()
+	// A spawn moves the vault's Answerability silently (signin.Vault.EngineSpawned).
+	rt.runs.gateMoved()
 	// Off the supervisor: it must be back on the engine's end while the init's observer pass runs.
 	rt.lifecycle.goUnlessDraining(func() { rt.EnsureCodeIntelligence(rt.lifecycle.shutdownCtx) })
 }

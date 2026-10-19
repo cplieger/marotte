@@ -54,9 +54,15 @@ type Runs struct {
 	unconfirmed unconfirmedSends
 	// life admits every step-session mutation against a Delete (run_lifecycle.go).
 	life runLifecycle
+	// sweep pauses the running runs while the gate is closed (run_gate.go).
+	sweep gateSweep
 	// hosts serializes, per run, making its launching session resident (ensureResident).
-	hosts  runLocks
-	bounds runBoundsState
+	hosts runLocks
+	// resumes serializes, per run, every resume marotte writes, so an automatic one reads the run after any other.
+	resumes runLocks
+	bounds  runBoundsState
+	// gate holds run work while the engine's sign-in cannot be answered (run_gate.go).
+	gate runGate
 	// cancelRetryBase is the refused-cancel ladder's first wait (retryTermination), a field because untracked
 	// timers can outlive whoever set a package var. Zero means defaultCancelRetryBase.
 	cancelRetryBase time.Duration

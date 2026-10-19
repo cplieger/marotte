@@ -51,7 +51,7 @@ func TestCloseBridge_RemovesAndClosesTheSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fb := sb.bridge.(*fakeBridge)
+	fb := unguarded(sb.bridge).(*fakeBridge)
 
 	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeCancelled)
 	// The close runs off the caller's path; the session's forward ends with it.

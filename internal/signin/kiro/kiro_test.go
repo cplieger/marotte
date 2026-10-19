@@ -2,6 +2,7 @@ package kiro
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -165,7 +166,10 @@ func TestAnswer_ErrorShapes(t *testing.T) {
 				f.refresh = scripted{status: tc.status}
 			})
 			h.signIn("alice", builderID(), profilesOf("alice"))
-			res, rerr := h.v.Answer(t.Context(), ID)
+			// A transient failure is retried until the asker's deadline, so this one keeps the case short.
+			ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+			defer cancel()
+			res, rerr := h.v.Answer(ctx, ID)
 			switch {
 			case tc.details == "" && (rerr != nil || !bytes.Contains(res, []byte(`"alice-access"`))):
 				t.Errorf("answer = %s, %v; want the old token", res, rerr)

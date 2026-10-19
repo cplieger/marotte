@@ -68,8 +68,9 @@ export interface RunNode {
 }
 
 /** A run's whole state. `runLabel` is the name a launcher gave this execution and `workflowName`
- *  the recipe's; `stopInitiator`/`stopReason` are set only when a person stopped it, which is
- *  what separates "the user cancelled this" from "it failed" in the card's alert. */
+ *  the recipe's; `stopInitiator`/`stopReason` are KAS's attribution of a requested stop or pause
+ *  (a person's, an orchestrator's or marotte's sign-in pause) and are unset when the run failed,
+ *  which is what separates a requested stop from "it failed" in the card's alert. */
 export interface RunState {
   workflowId: string;
   workflowName?: string;
@@ -95,13 +96,26 @@ export interface RunState {
   readPosition?: number;
 }
 
+/** The reasons marotte pauses a run with (internal/agent/run_gate.go, pinned by
+ *  internal/agent/testdata/pause_reasons.json): the sign-in gate's two, and the one a run marotte no
+ *  longer resumes on its own is stamped with. KAS attributes every reasoned pause to the user, so
+ *  these are the pauses no person asked for. */
+const MAROTTE_PAUSE_REASONS: ReadonlySet<string> = new Set([
+  "sign in to Kiro to continue; marotte resumes the run when you do",
+  "the Kiro sign-in service is unreachable; marotte resumes the run when it answers",
+  "resume it to continue",
+]);
+
 /** The alert an attributed stop or pause reads, or undefined when KAS names no initiator. KAS's
- *  initiator and reason are shown as given: an orchestrator's pause reaches here as `user` with
- *  KAS's own sentence saying so. */
+ *  initiator and reason are shown as given, except marotte's own pause, which names no
+ *  initiator: an orchestrator's pause reaches here as `user` with KAS's own sentence saying so. */
 export function stopSentence(state: RunState): string | undefined {
   const who = state.stopInitiator ?? "";
   if (who === "") {
     return undefined;
+  }
+  if (state.status === "paused" && MAROTTE_PAUSE_REASONS.has(state.stopReason ?? "")) {
+    return `Paused: ${state.stopReason ?? ""}`;
   }
   const lead =
     state.status === "completed"

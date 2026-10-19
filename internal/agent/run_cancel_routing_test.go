@@ -348,7 +348,7 @@ func TestRetryTermination_ARunNoLongerBoundedIsLeftAlone(t *testing.T) {
 func TestResumeIfInterrupted_ArmsTheDeadline(t *testing.T) {
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		// stalePauseReason is a restart-reconciled run's reason; involuntarilyPaused reads the run's own state.
+		// stalePauseReason is a restart-reconciled run's reason; the resume reads the run's own state.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", stalePauseReason),
 		methodKiroWorkflowResume:  json.RawMessage(`{}`),
 	}

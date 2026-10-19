@@ -443,6 +443,9 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	}
 	id, name, err := rr.runs.launch(r.Context(), req.Source, req.Inputs, defaults)
 	if err != nil {
+		if writeStatusErr(w, err) {
+			return
+		}
 		if errors.Is(err, errRecipeBusy) {
 			httpreply.Conflict(w, errRecipeBusy.Error())
 			return
@@ -752,6 +755,11 @@ var (
 	}
 )
 
+// verbUnavailableText refuses verb for a run in status.
+func verbUnavailableText(verb, status string) string {
+	return verb + " is not available for a " + status + " run"
+}
+
 // verbDelete is the History row's delete, kept out of run_affordance.go's table since it is never drawn as a control.
 const verbDelete = "delete"
 
@@ -780,7 +788,7 @@ func (rr *runRoutes) permits(
 		httpreply.Conflict(w, sentence)
 		return aff, false
 	}
-	httpreply.Conflict(w, verb+" is not available for a "+status+" run")
+	httpreply.Conflict(w, verbUnavailableText(verb, status))
 	return aff, false
 }
 
@@ -868,7 +876,7 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 			return
 		}
 		if !slices.Contains(verb.from, marotte.RunStatus(status)) {
-			httpreply.Conflict(w, verb.name+" is not available for a "+status+" run")
+			httpreply.Conflict(w, verbUnavailableText(verb.name, status))
 			return
 		}
 	}

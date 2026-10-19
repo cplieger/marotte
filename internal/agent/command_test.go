@@ -166,7 +166,7 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fb := sb.bridge.(*fakeBridge)
+	fb := unguarded(sb.bridge).(*fakeBridge)
 	fb.sessionID = "sess"
 
 	rec := postCmd(t, h, marotte.ClientCommand{Type: "cancel", ChatID: "c1"})

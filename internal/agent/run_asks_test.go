@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -264,11 +265,12 @@ func TestRunAsks_AReplyKeepsTheTurnMarkerFromBeforeItsInspect(t *testing.T) {
 
 // A successful pause is not a stop: every ask stays sendable.
 func TestRunAsks_APauseLeavesEveryAskSendable(t *testing.T) {
-	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
+	h, br, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusRunning, parkedStep("review", "sess_step")))
 	readNow(t, h, "wf_1")
 	if err := h.runs.pause(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("pause = %v", err)
 	}
+	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	r := readNow(t, h, "wf_1")
 	if a := r.asks[0]; a.Blocked() != "" {
 		t.Errorf("after a pause the ask = blocked %q, want sendable", a.Blocked())
@@ -398,6 +400,8 @@ func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
 		name    string
 		method  string
 		wantErr error
+		// status is the run's, paused when empty.
+		status marotte.RunStatus
 	}{
 		{
 			name: "answer", wantErr: errAskGone,
@@ -420,7 +424,7 @@ func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
 			},
 		},
 		{
-			name: "pause", method: methodKiroWorkflowPause,
+			name: "pause", method: methodKiroWorkflowPause, status: marotte.RunStatusRunning,
 			do: func(h *Runtime) error { return h.runs.pause(context.Background(), "wf_1") },
 		},
 		{
@@ -439,7 +443,8 @@ func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-			br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
+			status := cmp.Or(tc.status, marotte.RunStatusPaused)
+			br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", status, parkedStep("review", "sess_step")))
 			br.setCallResult(methodKiroWorkflowRetry, json.RawMessage(`{"workflowId":"wf_1","status":"running","retriedNodeIds":[]}`))
 			err := tc.do(h)
 			if tc.wantErr != nil {

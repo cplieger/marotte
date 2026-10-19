@@ -20,6 +20,7 @@ import (
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
 )
@@ -62,6 +63,7 @@ func (rs *Runs) launch(
 }
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window and backstop.
+// The sign-in gate's refusal wraps schedule.ErrNoRunCanStart.
 func (rs *Runs) LaunchScheduled(
 	ctx context.Context, source, scheduleID string, defaults marotte.RunDefaults, slotAt time.Time,
 ) (id, name string, err error) {
@@ -71,12 +73,22 @@ func (rs *Runs) LaunchScheduled(
 		return "", "", errRuntimeDraining
 	}
 	defer release()
-	return rs.launchAs(ctx, source, nil, defaults, scheduledLaunch(scheduleID, slotAt))
+	id, name, err = rs.launchAs(ctx, source, nil, defaults, scheduledLaunch(scheduleID, slotAt))
+	if errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown) {
+		err = fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, err)
+	}
+	return id, name, err
 }
 
 func (rs *Runs) launchAs(
 	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults, o launchOrigin,
 ) (id, name string, err error) {
+	// One admission from before workflow/new through invoke, so no run is created that the gate then never starts.
+	a, gErr := rs.admitRunWork(refuseClosed, "", "")
+	if gErr != nil {
+		return "", "", gErr
+	}
+	defer func() { a.settle(id) }()
 	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
 	defer cancel()
 
@@ -131,7 +143,7 @@ func (rs *Runs) launchAs(
 	rs.recordParentSession(cctx, wfID, string(parent))
 	// Visible to Route before invoke is written, so the run's first frame reaches the host's lane.
 	rs.router.registerOwner(wfID, parent)
-	if _, err := rs.drive(cctx, sb, wfID, methodKiroWorkflowInvoke,
+	if _, err := rs.write(cctx, a, sb, wfID, methodKiroWorkflowInvoke,
 		map[string]any{keyWorkflowID: wfID}, mutationDrive); err != nil {
 		// Created but never started.
 		rs.releaseLease(cctx, wfID)
@@ -331,22 +343,16 @@ func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
 	slog.Info("workflow run deleted", "workflow_id", workflowID)
 }
 
-// pause asks a run to stop at its next node boundary; the reply confirms the ask.
+// pause is a person's ask that a run stop at its next node boundary; the reply confirms the ask. runTransitions
+// decides it.
 func (rs *Runs) pause(ctx context.Context, workflowID string) error {
-	params := map[string]any{keyWorkflowID: workflowID}
-	userStop("").apply(params)
-	return rs.controlSerialized(ctx, workflowID, func(cctx context.Context) error {
-		err := rs.stopVerb(cctx, workflowID, methodKiroWorkflowPause, params)
-		return err
-	})
+	_, err := rs.transition(ctx, workflowID, &runRequest{want: personPause, verb: verbPause})
+	return err
 }
 
-// resume re-drives a paused run with a fresh executing budget.
+// resume is a person's re-drive of a paused run with a fresh executing budget. runTransitions decides it.
 func (rs *Runs) resume(ctx context.Context, workflowID string) error {
-	err := rs.hostedControl(ctx, workflowID, methodKiroWorkflowResume, runStop{})
-	if err == nil {
-		rs.armDeadline(ctx, workflowID)
-	}
+	_, err := rs.transition(ctx, workflowID, &runRequest{want: personResume, verb: verbResume})
 	return err
 }
 
@@ -578,20 +584,6 @@ func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string)
 	slog.Info("answered a parked workflow step", "workflow_id", workflowID,
 		"node_path", scrubLog(at.nodePath))
 	return nil
-}
-
-// hostedControl issues a driving verb on the run's launching session, made resident first.
-func (rs *Runs) hostedControl(ctx context.Context, workflowID, method string, stop runStop) error {
-	host, err := rs.ensureResident(ctx, workflowID)
-	if err != nil {
-		return err
-	}
-	params := map[string]any{keyWorkflowID: workflowID}
-	stop.apply(params)
-	return rs.controlSerialized(ctx, workflowID, func(cctx context.Context) error {
-		_, err := host.call(cctx, rs, workflowID, method, params)
-		return err
-	})
 }
 
 // "" for parentless.
@@ -957,28 +949,55 @@ func resumablePause(reason string, detail *pauseDetail) bool {
 // and allows one beat of reader drift (kiro-cli 2.29.1). A var for tests.
 var orphanResumeDelay = 165 * time.Second
 
-// resumeInterruptedRuns resumes the restart-paused runs this chat's session chain launched, and
-// sweeps once more after orphanResumeDelay when KAS has not yet reconciled one; never resumeAll,
-// which would undo deliberate pauses.
+// resumeInterruptedRuns resumes the restart-paused runs this chat's session chain launched, and sweeps again after
+// orphanResumeDelay while KAS has not yet reconciled one; never resumeAll, which would undo deliberate pauses.
 func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID marotte.ChatID) {
-	if !rs.resumeChainRuns(ctx, chatID) {
-		return
+	if s := rs.resumeChainRuns(ctx, chatID); s.running || s.failed {
+		slog.Info("rehydrate: a run is still listed running, or the chat's runs could not be listed or resumed; sweeping again later",
+			"chat_id", chatID, "delay", orphanResumeDelay)
+		rs.retryResumeLater(func(ctx context.Context) bool { return rs.resumeChainRuns(ctx, chatID).failed },
+			func(sweeps int) {
+				slog.Error("rehydrate: the chat's runs could not be listed or resumed by any sweep; the chat's next reopen tries again",
+					"chat_id", chatID, "sweeps", sweeps)
+			})
 	}
-	slog.Info("rehydrate: a run is still listed running; re-reading it once KAS reconciles it",
-		"chat_id", chatID, "delay", orphanResumeDelay)
-	rs.lifecycle.afterUnlessDraining(orphanResumeDelay, func() {
-		hctx, cancel := rs.lifecycle.derivedContext()
-		defer cancel()
-		rs.resumeChainRuns(hctx, chatID)
-	})
 }
 
-// resumeChainRuns is one resume sweep, reporting whether a run of the chain was still listed running: after an
-// engine end KAS reads its runs running until its staleness window passes.
-func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID) (unreconciled bool) {
+// maxResweeps bounds a resume's tries, the caller's first included (retryResumeLater).
+const maxResweeps = 5
+
+// retryResumeLater follows the caller's one try: it calls try after orphanResumeDelay, again while it reports a
+// failed resume, until maxResweeps tries in all, then spent with that count. A stopping runtime tries nothing more.
+func (rs *Runs) retryResumeLater(try func(context.Context) (failed bool), spent func(tries int)) {
+	var after func(done int)
+	after = func(done int) {
+		if done >= maxResweeps {
+			spent(done)
+			return
+		}
+		rs.lifecycle.afterUnlessDraining(orphanResumeDelay, func() {
+			hctx, cancel := rs.lifecycle.derivedContext()
+			defer cancel()
+			if try(hctx) {
+				after(done + 1)
+			}
+		})
+	}
+	after(1)
+}
+
+// chainSweep is what one resume sweep left unreconciled: a run still listed running, which after an engine end KAS
+// reads until its staleness window passes, or a run list or automatic resume that failed.
+type chainSweep struct {
+	running bool
+	failed  bool
+}
+
+// resumeChainRuns is one resume sweep of chatID's session chain.
+func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID) (s chainSweep) {
 	chat, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
-		return false
+		return s
 	}
 	chain := make(map[string]bool, len(chat.PriorACPSessionIDs)+1)
 	chain[chat.ACPSessionID] = true
@@ -989,7 +1008,8 @@ func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID) (unr
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		slog.Warn("rehydrate: run list unavailable, skipping resume sweep", "chat_id", chatID, "error", err)
-		return false
+		s.failed = true
+		return s
 	}
 	for i := range runs {
 		r := &runs[i]
@@ -998,14 +1018,16 @@ func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID) (unr
 		}
 		switch marotte.RunStatus(r.Status) {
 		case marotte.RunStatusPaused:
-			rs.resumeIfInterrupted(ctx, chatID, r.WorkflowID)
+			if rs.resumeIfInterrupted(ctx, chatID, r.WorkflowID) == resumeFailed {
+				s.failed = true
+			}
 		case marotte.RunStatusRunning:
-			unreconciled = true
+			s.running = true
 		}
 	}
 	// The chat's session is resident again, so every run it hosts is read again.
 	rs.kickChat(chatID)
-	return unreconciled
+	return s
 }
 
 // maxAutoHeals bounds automatic resumes between two pieces of progress; a fourth try against a dead network says nothing.
@@ -1015,15 +1037,23 @@ const maxAutoHeals = 3
 // can land first. A var for tests.
 var healBaseDelay = 5 * time.Second
 
-// healPaused resumes a run KAS just parked for a reason nobody chose, off the `_kiro/workflow/paused`
-// frame. After `next`, so the client renders the pause first.
+// healPaused resumes a run KAS just parked for a reason nobody chose, and finds the gate's own landed pause
+// (findHolds), off the `_kiro/workflow/paused` frame. After `next`, so the client renders the pause first.
 func (rs *Runs) healPaused(
 	next func(context.Context, marotte.ChatID, *marotte.RPCResponse),
 ) func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
 	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 		next(ctx, chatID, msg)
 		f := decodePauseFrame(msg)
-		if f.WorkflowID == "" || chatID == "" {
+		if f.WorkflowID == "" {
+			return
+		}
+		if isHoldReason(f.InitiatorReason) {
+			// Every run kind's: a parentless run's frame names no chat.
+			rs.findHoldsAsync(f.WorkflowID)
+			return
+		}
+		if chatID == "" {
 			return
 		}
 		if !resumablePause(f.PauseReason, f.PauseDetail) {
@@ -1035,14 +1065,19 @@ func (rs *Runs) healPaused(
 				"pause_code", scrubLog(pauseCodeOf(f.PauseDetail)))
 			return
 		}
-		attempt, ok := rs.claimHeal(f.WorkflowID)
-		if !ok {
-			slog.Warn("a run keeps pausing for a cause nobody chose; leaving it paused",
-				"workflow_id", scrubLog(f.WorkflowID), "chat_id", chatID,
-				"pause_reason", scrubLog(f.PauseReason), "attempts", attempt)
+		// The resume claims the heal (resumeIfInterrupted); the count here spaces the attempts and stops them at the
+		// budget.
+		spent := rs.healsSpent(f.WorkflowID)
+		if spent >= maxAutoHeals {
+			// At once: past the budget there is no delay to space.
+			rs.lifecycle.goUnlessDraining(func() {
+				hctx, cancel := rs.lifecycle.derivedContext()
+				defer cancel()
+				rs.resumeIfInterrupted(hctx, chatID, f.WorkflowID)
+			})
 			return
 		}
-		delay := healBaseDelay * time.Duration(1<<(attempt-1))
+		delay := healBaseDelay * time.Duration(1<<spent)
 		slog.Info("scheduling the automatic resume of an involuntarily paused run",
 			"workflow_id", scrubLog(f.WorkflowID), "chat_id", chatID,
 			"pause_reason", scrubLog(f.PauseReason), "delay", delay)
@@ -1054,12 +1089,13 @@ func (rs *Runs) healPaused(
 	}
 }
 
-// pauseFrame is the three fields the heal reads off `_kiro/workflow/paused`, decoded separately
+// pauseFrame is the fields the heal reads off `_kiro/workflow/paused`, decoded separately
 // from lifecycleFrame. Pointer first for govet's fieldalignment.
 type pauseFrame struct {
-	PauseDetail *pauseDetail `json:"pauseDetail"`
-	WorkflowID  string       `json:"workflowId"`
-	PauseReason string       `json:"pauseReason"`
+	PauseDetail     *pauseDetail `json:"pauseDetail"`
+	WorkflowID      string       `json:"workflowId"`
+	PauseReason     string       `json:"pauseReason"`
+	InitiatorReason string       `json:"initiatorReason"`
 }
 
 // pauseClassOf names a pause's class for a log line only; predicates compare the field directly.
@@ -1130,51 +1166,39 @@ func decodeNodeFrame(msg *marotte.RPCResponse) nodeFrame {
 	return f
 }
 
-// errResumeNotNeeded is resumeIfInterrupted's own stand-down: the run was no longer involuntarily paused once its
-// verb lock was held.
-var errResumeNotNeeded = errors.New("the run is no longer involuntarily paused")
+// resumeOutcome is what one automatic resume did; only resumeFailed is worth another try.
+type resumeOutcome int
 
-func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID marotte.ChatID, workflowID string) {
-	// The wider involuntary set, because this resumes; the orphan sweep's narrower `restartPaused` cancels.
-	if !rs.involuntarilyPaused(ctx, workflowID) {
-		return
-	}
-	host, err := rs.ensureResident(ctx, workflowID)
-	if err != nil {
-		slog.Warn("rehydrate: the run's launching session could not be made resident, so it was not resumed",
-			"workflow_id", workflowID, "chat_id", chatID, "error", err)
-		return
-	}
-	cErr := rs.controlSerialized(ctx, workflowID, func(cctx context.Context) error {
-		// Read again under the run's verb lock: a rehydrate sweep and a pause heal both reach here, and the one
-		// that read the pause before the other's resume landed must not resume a running run.
-		if !rs.involuntarilyPaused(cctx, workflowID) {
-			return errResumeNotNeeded
-		}
-		_, err := host.call(cctx, rs, workflowID, methodKiroWorkflowResume, map[string]any{keyWorkflowID: workflowID})
-		return err
-	})
-	if errors.Is(cErr, errResumeNotNeeded) {
-		return
-	}
-	if cErr != nil {
-		if _, _, refused := command.StatusOf(cErr); refused {
-			slog.Info("rehydrate: marotte has a send to this run in flight, so the resume waits for the next sweep",
-				"workflow_id", workflowID, "chat_id", chatID, "error", cErr)
-			return
-		}
-		if errors.Is(cErr, workflow.ErrJustClaimed) {
-			// KAS queues a second claim on one engine and refuses only after the first overstayed its claim TTL.
-			slog.Info("rehydrate: another verb held this run's claim past its TTL, so the heal left it to that one",
-				"workflow_id", workflowID, "chat_id", chatID)
-			return
-		}
-		slog.Warn("rehydrate: resume failed", "workflow_id", workflowID, "chat_id", chatID, "error", cErr)
-		return
-	}
-	// Arm here: this path calls the verb directly, so only the `run_start` frame would otherwise cover it.
-	rs.armDeadline(ctx, workflowID)
-	slog.Info("rehydrate: resumed restart-paused run", "workflow_id", workflowID, "chat_id", chatID)
+const (
+	resumeWritten resumeOutcome = iota + 1
+	// resumeSkipped: not a pause marotte resumes unasked, or the run's heal budget is spent and the run parked for
+	// the user.
+	resumeSkipped
+	resumeHeld
+	// resumeFailed: the run could not be read, its session made resident, its resume written or, past its heal budget,
+	// its pause stamped for the user.
+	resumeFailed
+)
+
+// resumeIfInterrupted is every automatic resume: it resumes a run paused for a cause nobody chose under the run's
+// heal budget, or holds it while the sign-in gate is closed.
+func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID marotte.ChatID, workflowID string) resumeOutcome {
+	out, _ := rs.retryResume(ctx, chatID, workflowID, false)
+	return out
+}
+
+// retryResume is resumeIfInterrupted for one try of a resume its caller retries: charged says an earlier try's heal
+// still stands, so this try claims none. It reports whether a heal stands after this try. runTransitions decides it.
+func (rs *Runs) retryResume(
+	ctx context.Context, chatID marotte.ChatID, workflowID string, charged bool,
+) (resumeOutcome, bool) {
+	c, _ := rs.transition(ctx, workflowID, &runRequest{want: healResume, chatID: chatID, charged: charged})
+	return c.outcome, c.charged
+}
+
+func isStatusRefusal(err error) bool {
+	_, _, ok := command.StatusOf(err)
+	return ok
 }
 
 // listRaw lists runs with their raw parent session ids, for callers that scope by

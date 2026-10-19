@@ -171,7 +171,7 @@ func TestChatTeardown_RetiresTheBridgesAsksAsEnded(t *testing.T) {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 			askID := requestIDOf(t, h.bus.PendingPermsAdd(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
-				marotte.PermissionNeededPayload{}), br))
+				marotte.PermissionNeededPayload{}), guardSession(br)))
 			head := h.bus.fanout.Position().Head
 
 			teardown(h)

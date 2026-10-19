@@ -502,7 +502,7 @@ func (rs *Runs) clearRunPerms(workflowID string) {
 }
 
 // claimHeal takes one automatic-resume attempt, false once spent: a heal and a pause can drive each
-// other while the network is down. Returns the attempt number for the backoff.
+// other while the network is down. Returns the attempt number.
 func (rs *Runs) claimHeal(workflowID string) (attempt int, ok bool) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -514,6 +514,22 @@ func (rs *Runs) claimHeal(workflowID string) (attempt int, ok bool) {
 	}
 	rs.bounds.heals[workflowID]++
 	return rs.bounds.heals[workflowID], true
+}
+
+// healsSpent is how many automatic resumes the run has had since its last progress.
+func (rs *Runs) healsSpent(workflowID string) int {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.bounds.heals[workflowID]
+}
+
+// refundHeal returns a claimed heal whose resume was never written.
+func (rs *Runs) refundHeal(workflowID string) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.bounds.heals[workflowID] > 0 {
+		rs.bounds.heals[workflowID]--
+	}
 }
 
 func (rs *Runs) clearHeals(workflowID string) {

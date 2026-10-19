@@ -36,8 +36,10 @@ type stepSteers struct {
 	targets map[string]stepSteerTarget
 	// engine carries every steer as an engine call naming the step's session.
 	engine *engineOwner
-	gate   runLocks
-	mu     sync.Mutex
+	// retiredCh closes at the next target retirement; nil until retired asks for it.
+	retiredCh chan struct{}
+	gate      runLocks
+	mu        sync.Mutex
 }
 
 func newStepSteers(recs *steerRecords, ledger command.SteerRecorder) *stepSteers {
@@ -129,8 +131,25 @@ func (s *stepSteers) endLocked(workflowID, nodePath string, forget bool) {
 		s.recs.forgetStep(key)
 		s.mu.Lock()
 		delete(s.targets, session)
+		if s.retiredCh != nil {
+			close(s.retiredCh)
+			s.retiredCh = nil
+		}
 		s.mu.Unlock()
 	}
+}
+
+// retired closes at the next target's retirement, any step's; nil (never ready) on a nil *stepSteers.
+func (s *stepSteers) retired() <-chan struct{} {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.retiredCh == nil {
+		s.retiredCh = make(chan struct{})
+	}
+	return s.retiredCh
 }
 
 func (rs *Runs) noteStepSteer(ctx context.Context, key marotte.ChatID, steerID string, steer *marotte.EntrySteer) {
@@ -153,22 +172,27 @@ func (s *stepSteers) event(key marotte.ChatID, p *marotte.SteerQueuedPayload) (m
 }
 
 // steerTarget addresses a step's steers. Its lease is the run's admission of the whole operation, so
-// a step's session is mutated only by a caller holding one. The steer is an engine call naming the step's session.
-func (s *stepSteers) steerTarget(_ runLease, session string) command.SteerTarget {
+// a step's session is mutated only by a caller holding one; a admits its steers (admitRunWork), and a zero a sends
+// none. The steer is an engine call naming the step's session.
+func (s *stepSteers) steerTarget(_ runLease, a runAdmission, session string) command.SteerTarget {
 	t := command.SteerTarget{Queue: s.queue, Ledger: s.ledger, Key: marotte.StepSteerKey(session)}
 	if s.engine != nil {
-		t.Caller = stepCaller{via: engineCaller{o: s.engine}, steers: s, session: marotte.SessionID(session)}
+		t.Caller = stepCaller{
+			via: engineCaller{o: s.engine}, steers: s, session: marotte.SessionID(session), admission: a,
+		}
 	}
 	return t
 }
 
 var errStepSteerEnded = errors.New("the step's turn ended before the message was sent")
 
-// A `_session/steer` goes out under the run's gate, and only while the step's steering turn is bound.
+// A `_session/steer` goes out only while the step's steering turn is bound, carrying admission to the engine's
+// run-work guard (guardRunWork).
 type stepCaller struct {
-	via     engineCaller
-	steers  *stepSteers
-	session marotte.SessionID
+	via       engineCaller
+	steers    *stepSteers
+	admission runAdmission
+	session   marotte.SessionID
 }
 
 var _ command.SessionCaller = stepCaller{}
@@ -190,7 +214,7 @@ func (c stepCaller) Call(ctx context.Context, method string, params any) (*marot
 	if !c.steers.recs.stepOpen(key) {
 		return nil, errStepSteerEnded
 	}
-	return c.via.Call(ctx, method, params)
+	return c.via.Call(c.admission.bind(ctx), method, params)
 }
 
 func (c stepCaller) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {

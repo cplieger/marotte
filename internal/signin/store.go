@@ -264,11 +264,11 @@ func (v *Vault) publishChange(j *job, unsynced bool) {
 	s.mu.Lock()
 	from := s.kindLocked()
 	if j.rec == nil {
-		s.desired, s.effective = nil, nil
+		s.desired, s.effective, s.unreachable = nil, nil, false
 	} else {
 		s.endAttemptLocked(j.attempt, AttemptSignedIn, "")
 		if s.basis == nil || s.b.LiveSwitchable(s.basis.cred, j.rec.cred) {
-			s.desired, s.effective = j.rec, j.rec
+			s.desired, s.effective, s.unreachable = j.rec, j.rec, false
 		} else {
 			s.desired = j.rec
 		}
@@ -277,6 +277,7 @@ func (v *Vault) publishChange(j *job, unsynced bool) {
 	s.dirty = s.dirty || unsynced
 	c := Change{Backend: id, From: from, To: s.kindLocked(), AccountPending: s.accountPendingLocked()}
 	t := v.ticket()
+	at, a := v.noteAnswerLocked(s)
 	s.mu.Unlock()
 	if j.rec == nil {
 		slog.Info("sign-in: signed out", "backend", id)
@@ -284,6 +285,7 @@ func (v *Vault) publishChange(j *job, unsynced bool) {
 		slog.Info("sign-in: signed in", "backend", id, "account_pending", c.AccountPending)
 	}
 	v.deliver(t, c)
+	v.deliverAnswer(at, id, a)
 	j.answer(nil)
 }
 

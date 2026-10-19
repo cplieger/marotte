@@ -114,7 +114,7 @@ func TestLoadSession_AnswersOnlyOnceTheReplayMergedIntoTheLog(t *testing.T) {
 		t.Fatalf("log texts before the last replay frame was read = %q, want the replayed turn absent", got)
 	}
 
-	br, ok := h.coord.bridgeFor("c1").bridge.(*fakeBridge)
+	br, ok := unguarded(h.coord.bridgeFor("c1").bridge).(*fakeBridge)
 	if !ok {
 		t.Fatalf("the chat's bridge is %T, want the fake", h.coord.bridgeFor("c1").bridge)
 	}
@@ -257,7 +257,7 @@ func TestOpenBridge_AdmitsNoCallerBeforeTheReplayMerged(t *testing.T) {
 	if first == nil {
 		t.Fatal("the load registered no generation")
 	}
-	br, ok := first.bridge.(*fakeBridge)
+	br, ok := unguarded(first.bridge).(*fakeBridge)
 	if !ok {
 		t.Fatalf("the chat's bridge is %T, want the fake", first.bridge)
 	}

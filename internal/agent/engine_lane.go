@@ -13,10 +13,6 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// hostCallbackBudget bounds one host-callback answer: KAS has no cancel for a host request, so the engine lane
-// guarantees it an answer within this.
-const hostCallbackBudget = 30 * time.Second
-
 // attachEngineLane starts generation gen's engine-lane consumer before Start writes initialize: KAS asks for the
 // sign-in around initialize, and an unanswered ask holds the next session door. It lives as long as the engine, which
 // Shutdown stops before it joins the lanes.
@@ -32,8 +28,9 @@ func (rt *Runtime) attachEngineLane(h engineHandle, gen uint64) {
 	})
 }
 
-// engineFrame handles one engine-lane frame. Every request is answered exactly once, and none blocks the consumer:
-// a row that does I/O or waits runs on a tracked goroutine.
+// engineFrame handles one engine-lane frame. Every request is answered exactly once. A row that does I/O or waits
+// runs on a tracked goroutine, so none blocks the consumer, but for a sign-in ask once Shutdown has begun, answered
+// in place after a vault lookup drainAnswerBound bounds.
 func (rt *Runtime) engineFrame(h engineHandle, msg *marotte.RPCResponse) {
 	if msg == nil {
 		return
@@ -65,18 +62,9 @@ func (rt *Runtime) engineRequest(h engineHandle, msg *marotte.RPCResponse) {
 func (rt *Runtime) answerConnectionRequest(origin acpResponder, msg *marotte.RPCResponse) bool {
 	if answer, ok := rt.signin.hostCallback(msg.Method); ok {
 		id := *msg.ID
-		rt.answerUnlessDraining(origin, msg, func() {
-			ctx, cancel := context.WithTimeout(rt.lifecycle.shutdownCtx, hostCallbackBudget)
-			defer cancel()
-			result, rpcErr := answer(ctx)
-			var err error
-			if rpcErr != nil {
-				err = rpcErr
-			}
-			if wErr := origin.Respond(ctx, id, result, err); wErr != nil {
-				slog.Warn("engine: the sign-in answer could not be written", "error", wErr)
-			}
-		})
+		if !rt.lifecycle.goUnlessDraining(func() { rt.answerHostCallback(origin, id, answer) }) {
+			rt.answerDrainingHostCallback(origin, id, answer)
+		}
 		return true
 	}
 	switch msg.Method {
@@ -102,6 +90,49 @@ func (rt *Runtime) answerConnectionRequest(origin acpResponder, msg *marotte.RPC
 func (rt *Runtime) answerUnlessDraining(origin acpResponder, msg *marotte.RPCResponse, answer func()) {
 	if !rt.lifecycle.goUnlessDraining(answer) {
 		rt.answerUnknownSession(origin, msg)
+	}
+}
+
+// answerHostCallback answers one host callback; the vault bounds its own answer (signin.Vault.Answer). A refusal
+// waits in Runs.pauseBeforeRefusal and, when the gate is open, is asked once more: a refusal while the gate stays
+// open has no run pause to wait for.
+func (rt *Runtime) answerHostCallback(
+	origin acpResponder, id int64, answer func(context.Context) (json.RawMessage, *marotte.RPCError),
+) {
+	ctx := rt.lifecycle.shutdownCtx
+	result, rpcErr := answer(ctx)
+	for rpcErr != nil && rt.runs.pauseBeforeRefusal(ctx) {
+		if result, rpcErr = answer(ctx); rpcErr != nil && rt.runs.gateOpen() {
+			break
+		}
+	}
+	respondHostCallback(ctx, origin, id, result, rpcErr)
+}
+
+// drainAnswerBound bounds the vault lookup of a host callback answered once Shutdown has begun, on the frame pump's
+// own goroutine: a served credential is immediate, and a renewal is cut short, answered as the vault's unreachable
+// refusal, rather than holding the pump through the engine's stop. The answer's write has the engine's own bound.
+const drainAnswerBound = 2 * time.Second
+
+// answerDrainingHostCallback answers a host callback once Shutdown has begun with the vault's own answer, waiting for
+// no pause: an unknown session's refusal would fail the asking step for good (run_gate.go's var block), where a served
+// credential lets the engine's stop leave the step to the next boot's heal.
+func (rt *Runtime) answerDrainingHostCallback(
+	origin acpResponder, id int64, answer func(context.Context) (json.RawMessage, *marotte.RPCError),
+) {
+	ctx, cancel := context.WithTimeout(rt.lifecycle.shutdownCtx, drainAnswerBound)
+	result, rpcErr := answer(ctx)
+	cancel()
+	respondHostCallback(rt.lifecycle.shutdownCtx, origin, id, result, rpcErr)
+}
+
+func respondHostCallback(ctx context.Context, origin acpResponder, id int64, result json.RawMessage, rpcErr *marotte.RPCError) {
+	var err error
+	if rpcErr != nil {
+		err = rpcErr
+	}
+	if wErr := origin.Respond(ctx, id, result, err); wErr != nil {
+		slog.Warn("engine: the sign-in answer could not be written", "error", wErr)
 	}
 }
 

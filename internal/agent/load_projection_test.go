@@ -485,7 +485,7 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	br, ok := sb.bridge.(*fakeBridge)
+	br, ok := unguarded(sb.bridge).(*fakeBridge)
 	if !ok {
 		t.Fatalf("the chat's bridge is %T, want the fake", sb.bridge)
 	}
