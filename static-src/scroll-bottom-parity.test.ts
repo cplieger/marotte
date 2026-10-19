@@ -251,6 +251,30 @@ describe("icon-only at rest, the label on hover", () => {
     expect(after.right).toBeLessThan(area?.getBoundingClientRect().right ?? 0);
   });
 
+  it("declares the glyph column as the svg's width, so every engine sizes the hovered box to its label", async () => {
+    // Gecko sizes this shrink-to-fit box from each item's WIDTH and Blink from its flex-basis, so a
+    // column carried only by a basis renders fine here and clips the label in Firefox by the
+    // difference from `.ic-ui`'s own 16px. The computed width is what both engines agree on.
+    const { resume, label, map } = build(LABEL_PX);
+    const svg = resume.querySelector("svg");
+    if (svg === null) {
+      throw new Error("no glyph");
+    }
+    // `inline-size` reads back the USED width, which a basis also produces in this engine; the
+    // computed basis is what tells the two declarations apart.
+    expect(getComputedStyle(svg).flexBasis).toBe("auto");
+    const borders = 2;
+    near(
+      svg.getBoundingClientRect().width,
+      map.getBoundingClientRect().width - borders,
+      "svg width",
+    );
+
+    label.textContent = "12 new blocks";
+    await userEvent.hover(resume);
+    expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth);
+  });
+
   it("shows the label on keyboard focus too", async () => {
     // Hover alone would hide the count from a keyboard user permanently.
     const { resume, label, lastCardButton, card } = build(LABEL_PX);

@@ -1491,9 +1491,12 @@
 
     /* The glyph takes the map's own column, so it sits under the stack whether or not
      * the label is showing. `- 2px` is this button's two borders, which the column
-     * width does not include. */
+     * width does not include. A WIDTH, not a flex-basis: Gecko sizes this shrink-to-fit
+     * box from each item's width, so a basis wider than `.ic-ui`'s 16px clipped the
+     * revealed label by the difference in Firefox. */
     :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > svg {
-      flex: 0 0 calc(var(--rail-w) - 2px);
+      flex: none;
+      inline-size: calc(var(--rail-w) - 2px);
     }
 
     /* HIDDEN, not truncated, at a width the gutter cannot hold: `setResumeLabel`
