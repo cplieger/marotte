@@ -1718,5 +1718,17 @@ a.subagent-header {
   grid-column: 2;
 }
 
+/* AN OPTION'S TEXT BREAKS ANYWHERE: the server passes one unbroken token of up to 512 bytes
+   (`internal/translate/display_text.go`), and the options region hides inline overflow. */
+:is(
+  .user-input-option-title,
+  .user-input-option-desc,
+  .user-input-option-more,
+  .user-input-sub-label
+) {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
 /* The question head, the answer box and the button row are the SHARED ask card's
    (`.dock-ask-*`, 26-dock.css, built by `dock-ask.ts`). */

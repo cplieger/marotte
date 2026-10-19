@@ -119,6 +119,8 @@ interface DockHost {
   card: HTMLElement | null;
   /** Whether the bar's composer rendered at the last `focusAnswerIfAside`. */
   composerShown: boolean;
+  /** Whether the question card outgrew its floors at the last `paintFloor`. */
+  cardScrolls: boolean;
   /** The answered card, kept on screen (neutralised) for the phase's duration.
    *  At most one per host, ever. */
   outgoing: HTMLElement | null;
@@ -211,6 +213,7 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
     renderedKey: "",
     card: null,
     composerShown: true,
+    cardScrolls: false,
     outgoing: null,
     timer: null,
     gen: 0,
@@ -244,9 +247,9 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
 const TYPING_ATTR = "data-typing";
 
 /**
- * Keep the tray's bar's `data-typing` (`css/26-dock.css` reads it while a soft keyboard is up). Written only when a
- * text box takes focus, never when it loses it: a pressed button takes focus at pointerdown, and a bar that reflowed
- * then would move the button out from under the pointer before the click.
+ * Keep the tray's bar's `data-typing` (`css/26-dock.css` reads it under a soft keyboard and on a tight band). Written
+ * only when a text box takes focus, never when it loses it: a pressed button takes focus at pointerdown, and a bar that
+ * reflowed then would move the button out from under the pointer before the click.
  */
 function followTyping(tray: HTMLElement): () => void {
   const bar = tray.parentElement;
@@ -699,6 +702,7 @@ function show(h: DockHost, head: Decision, rest: readonly Decision[]): void {
     markAnswering(card, true);
   }
   h.card = card;
+  h.cardScrolls = false;
   h.el.replaceChildren(card, depthRow());
   h.el.classList.remove("hidden");
   h.renderedKey = decisionKey(head.chatID, head.kind, decisionIdentity(head));
@@ -742,18 +746,21 @@ function followViewport(): void {
  * `min-block-size` and every other region whole, plus the tray's other rows. Measured because the bar's flex column
  * sees only the tray's content size: a scroller's floor nested in it is invisible to the bar. Where the bar's ceiling
  * cannot hold every member's floor, they are lowered in the reverse of their order (`css/26-dock.css` "ONE
- * ALLOCATION"): the steer stack's, then the question's second line. The card's controls never give.
+ * ALLOCATION"): the steer stack's, then the question's second line. The card's controls never give: past that, the
+ * floor is the room and the card scrolls, opened at its controls.
  */
 function paintFloor(h: DockHost): void {
   const card = h.card;
   if (card === null || !card.classList.contains("dock-user-input") || !card.isConnected) {
     h.el.style.removeProperty(FLOOR_PROP);
+    h.cardScrolls = false;
     return;
   }
   const options = card.querySelector<HTMLElement>(":scope > .user-input-options");
   if (options !== null) {
     paintOptionsFloor(options);
   }
+  const atEnd = card.scrollTop + card.clientHeight >= card.scrollHeight - 1;
   const ask = card.querySelector<HTMLElement>(":scope > .dock-ask-body");
   const stack = h.el.parentElement?.querySelector<HTMLElement>(":scope > .steer-stack") ?? null;
   ask?.style.removeProperty(ASK_FLOOR_PROP);
@@ -765,10 +772,17 @@ function paintFloor(h: DockHost): void {
   );
   const over = lower(stack, STEER_FLOOR_PROP, px - roomFor(h), 1);
   const left = lower(ask, ASK_FLOOR_PROP, over, 1 / 2);
+  // Where the floors outgrow the room, `px - over` is that room plus the steer stack's give; the card scrolls `left`.
+  const floor = px - Math.max(0, over);
   h.el.style.setProperty(
     FLOOR_PROP,
-    `${String(Math.ceil(px - Math.max(0, over) + Math.max(0, left)))}px`,
+    `${String(left > 0 ? Math.max(0, Math.floor(floor)) : Math.ceil(floor))}px`,
   );
+  // A card that scrolls opens at its controls, which outrank its question, and stays there unless the reader scrolled.
+  if (left > 0 && (!h.cardScrolls || atEnd)) {
+    card.scrollTop = card.scrollHeight;
+  }
+  h.cardScrolls = left > 0;
 }
 
 /** Lower `box`'s floor through `prop` by `over`, at most `share` of it, if `box` renders; what is still over. */
@@ -813,6 +827,8 @@ function roomFor(h: DockHost): number {
 /**
  * Publish the options region's floor, which `css/26-dock.css` gives it as its `min-block-size`: what stands before its
  * first control and its tallest control, so each option is whole once scrolled to, however its description wraps.
+ * Never above the region's own ceiling: a minimum beats a maximum, so a taller option would push the answer controls
+ * off the band; it scrolls inside the region instead.
  */
 function paintOptionsFloor(region: HTMLElement): void {
   const controls = [...region.children].filter(
@@ -826,8 +842,10 @@ function paintOptionsFloor(region: HTMLElement): void {
   const lead =
     first.getBoundingClientRect().top - region.firstElementChild.getBoundingClientRect().top;
   const tallest = Math.max(...controls.map((c) => c.getBoundingClientRect().height));
-  const px = lead + tallest + gapsAndChrome(region, 1);
-  region.style.setProperty(OPTIONS_FLOOR_PROP, `${String(Math.ceil(px))}px`);
+  const px = Math.ceil(lead + tallest + gapsAndChrome(region, 1));
+  const ceiling = Number.parseFloat(getComputedStyle(region).maxBlockSize);
+  const floor = Number.isNaN(ceiling) ? px : Math.min(px, Math.floor(ceiling));
+  region.style.setProperty(OPTIONS_FLOOR_PROP, `${String(floor)}px`);
 }
 
 function floorOf(box: Element): number {

@@ -24,9 +24,8 @@ const SHORT_BAND_REM = 40;
  *  `css/26-dock.css`): a four-line question at 320px wide needs about 306px of band beside the composer. */
 const TIGHT_BAND_REM = 20;
 
-/** A band this far under the layout viewport is a soft keyboard (`[data-keyboard]`, `css/26-dock.css`): one shrinks
- *  only the visual viewport, by about 10rem or more even on a phone on its side, while the bar iPadOS shows over a
- *  hardware keyboard takes a few rem and a desktop window keeps the two equal. */
+/** A band this far under the layout viewport is a soft keyboard (`[data-keyboard]`, `css/26-dock.css`): it separates
+ *  the soft-keyboard bands the layout tests model from a window whose layout and visual viewports are equal. */
 const KEYBOARD_MIN_REM = 8;
 
 interface AskHead {

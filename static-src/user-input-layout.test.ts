@@ -309,6 +309,48 @@ function inOneBand(card: HTMLElement, vv: number): void {
   within(body, band.top, band.bottom, "the question inside the visible band");
 }
 
+/** Where the card's floors outgrow the band: `opensAtItsAnswer`, and every option whole inside the
+ *  card and the band once the card, and the options region, scroll to it. */
+function scrollsToEachControl(card: HTMLElement, vv: number): void {
+  opensAtItsAnswer(card, vv);
+  const band = visibleBand(vv);
+  const region = card.querySelector<HTMLElement>(".user-input-options")!;
+  for (const el of card.querySelectorAll<HTMLElement>(".user-input-option")) {
+    const label = String(el.querySelector(".user-input-option-title")!.textContent);
+    region.scrollTop += el.getBoundingClientRect().top - region.getBoundingClientRect().top;
+    card.scrollTop += el.getBoundingClientRect().top - card.getBoundingClientRect().top;
+    inside(el, region.getBoundingClientRect(), `${label} inside the options' box`);
+    inside(el, card.getBoundingClientRect(), `${label} inside the scrolled card`);
+    within(el, band.top, band.bottom, `${label} inside the visible band`);
+  }
+  region.scrollTop = 0;
+  card.scrollTop = 0;
+}
+
+/** The card whole inside the frame and the band, a region a finger scrolls, and, as it opens, the
+ *  answer box, Send and Skip whole inside it and the band. */
+function opensAtItsAnswer(card: HTMLElement, vv: number): void {
+  const band = visibleBand(vv);
+  const f = frame!.getBoundingClientRect();
+  within(card, f.top, f.bottom, "the card inside the frame");
+  within(card, band.top, band.bottom, "the card inside the visible band");
+  expect(getComputedStyle(card).overflowY, "a card a finger scrolls").toMatch(/^(auto|scroll)$/);
+  const actions = [...card.querySelectorAll<HTMLElement>(".dock-ask-actions button")];
+  expect(actions.length, "Send and Skip").toBeGreaterThanOrEqual(2);
+  for (const el of [card.querySelector<HTMLElement>(".dock-ask-text")!, ...actions]) {
+    const label = el.tagName === "TEXTAREA" ? "the answer box" : String(el.textContent);
+    inside(el, card.getBoundingClientRect(), `${label} inside the card`);
+    within(el, band.top, band.bottom, `${label} inside the visible band`);
+  }
+  for (const el of actions) {
+    expect(
+      el.getBoundingClientRect().height,
+      `${el.textContent} at the hit floor`,
+    ).toBeGreaterThanOrEqual(hitFloor() - 0.5);
+  }
+  card.scrollTop = 0;
+}
+
 /** The answer box's placeholder on its lines, uncut: rendered as the box's text, which sizes the box
  *  the way the placeholder does. */
 function placeholderWhole(card: HTMLElement): void {
@@ -679,12 +721,15 @@ describe("a waiting question and the composer", () => {
   // a question arriving mid-typing leaves the cursor in the composer, in either tab. One allocation for
   // both, floors in order: the card's controls (its options included) and two lines of its question,
   // one queued steer, the composer at one line; then the draft, then the rest of the question. Each
-  // cell asserts that order against the visual band of whichever box holds the typing.
+  // cell asserts that order against the visual band of whichever box holds the typing. On a phone on
+  // its side the controls' floors alone outgrow the band, so there the card scrolls to each of them.
   const KEYBOARD_UP: readonly (readonly [number, number, number])[] = [
     [320, 568, 261],
     [375, 667, 343],
     [390, 844, 388],
     [430, 932, 429],
+    [844, 390, 170],
+    [667, 375, 160],
   ];
   /** The composers' own ceilings: `#prompt-input` 12.5rem (15-input.css), `#run-composer-input` 8rem (18-pages.css). */
   const DRAFT_CEILING_PX: Record<Host, number> = { chat: 200, run: 128 };
@@ -706,7 +751,9 @@ describe("a waiting question and the composer", () => {
   for (const host of ["chat", "run"] as const satisfies readonly Host[]) {
     for (const [name, fixture] of Object.entries(FIXTURES)) {
       for (const [width, height, vv] of KEYBOARD_UP) {
-        for (const { lines, steers, typing, theme } of CELLS) {
+        // On a phone on its side the composer steps aside for the card, which takes the typing.
+        const cells = height <= SIDEWAYS_MAX_H ? CELLS.filter((c) => c.typing === "card") : CELLS;
+        for (const { lines, steers, typing, theme } of cells) {
           const queued = steers > 0 ? ` and ${String(steers)} queued steers` : "";
           it(`${host}: ${name} arriving beside a ${String(lines)}-line draft${queued}, ${holder[typing]} holding the typing, at ${String(width)}x${String(height)} keyboard up (${String(vv)}px), ${theme}`, async () => {
             const text =
@@ -740,9 +787,17 @@ describe("a waiting question and the composer", () => {
               typing === "card" ? answer : draft,
             );
             expect(draft.value, "the draft untouched").toBe(text);
-            unscrolled(card, "the card");
-            inOneBand(card, vv);
             const body = card.querySelector<HTMLElement>(".dock-ask-body")!;
+            if (card.scrollHeight > card.clientHeight + 1) {
+              // The controls give last: the card scrolls only where the floors below them are spent.
+              expect(
+                lowerFloorsSpent(card) && body.clientHeight < twoQuestionLines(card) - 1,
+                "the card scrolls only past every lower floor and the question's second line",
+              ).toBe(true);
+              scrollsToEachControl(card, vv);
+            } else {
+              inOneBand(card, vv);
+            }
             const atFloor = (el: HTMLElement): boolean =>
               el.clientHeight <= Number.parseFloat(getComputedStyle(el).minBlockSize) + 1;
             if (typing === "card") {
@@ -839,6 +894,77 @@ describe("a waiting question and the composer", () => {
       inOneBand(card, vv);
     });
   }
+
+  // The server caps each option's title and description at 512 bytes (`internal/translate/display_text.go`).
+  const AT_THE_CAP: UserInputOption[] = [
+    {
+      title: "Cancel",
+      description: "Stop retrying and hand the step back. ".repeat(14).slice(0, 512),
+    },
+    { title: "step_".repeat(103).slice(0, 512) },
+  ];
+  for (const host of ["chat", "run"] as const satisfies readonly Host[]) {
+    for (const typing of ["card", "composer"] as const) {
+      it(`${host}: keeps Send and Skip in reach beside options at the server's display cap, ${holder[typing]} holding the typing, at 320x568 keyboard up (261px)`, async () => {
+        const draft = await mountDocked(host, 320, 568);
+        draft.focus();
+        paintViewportHeight(261, 1);
+        await settle();
+        const card = await pushQuestion(host, {
+          request_id: 1,
+          question: LOOP_QUESTION,
+          options: [...AT_THE_CAP],
+        });
+        await expect
+          .poll(() => card.parentElement!.dataset["dockPhase"], { message: "the tray settled" })
+          .toBeUndefined();
+        if (typing === "card") {
+          card.querySelector<HTMLElement>(".dock-ask-text")!.focus();
+        }
+        paintViewportHeight(261, 1);
+        await settle();
+
+        opensAtItsAnswer(card, 261);
+        const region = card.querySelector<HTMLElement>(".user-input-options")!;
+        expect(
+          region.getBoundingClientRect().height,
+          "the options inside their ceiling",
+        ).toBeLessThanOrEqual(Number.parseFloat(getComputedStyle(region).maxBlockSize) + 0.5);
+        expect(region.scrollWidth, "no option wider than the region").toBeLessThanOrEqual(
+          region.clientWidth,
+        );
+        for (const option of region.querySelectorAll<HTMLElement>(".user-input-option")) {
+          const b = option.getBoundingClientRect();
+          for (const text of option.querySelectorAll(
+            ".user-input-option-title, .user-input-option-desc",
+          )) {
+            inside(text, b, `${text.className} inside its option`);
+          }
+        }
+        region.scrollTop = region.scrollHeight;
+        const last = region.lastElementChild!;
+        expect(
+          last.getBoundingClientRect().bottom,
+          "the options' end in reach",
+        ).toBeLessThanOrEqual(region.getBoundingClientRect().bottom + 0.5);
+      });
+    }
+  }
+
+  it("chat: on a phone on its side under a keyboard, leaves the card where the reader scrolled it", async () => {
+    await mountDocked("chat", 844, 390);
+    paintViewportHeight(170, 1);
+    const card = await pushQuestion("chat");
+    await expect
+      .poll(() => card.parentElement!.dataset["dockPhase"], { message: "the tray settled" })
+      .toBeUndefined();
+    expect(card.scrollHeight, "a card that scrolls").toBeGreaterThan(card.clientHeight + 1);
+    card.scrollTop = 0;
+    paintViewportHeight(170, 1);
+    window.dispatchEvent(new Event("resize"));
+    await settle();
+    expect(card.scrollTop, "the reader's scroll").toBe(0);
+  });
 
   it("chat: re-measures the card's floor when the keyboard rises under a free-form question", async () => {
     const text = Array.from({ length: 8 }, (_, i) => `line ${String(i + 1)}`).join("\n");
