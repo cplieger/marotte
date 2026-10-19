@@ -59,17 +59,18 @@ const (
 // returns in a later epoch than its admission's sends the sweep again (runAdmission.settle). The zero value is open.
 //
 // Every hold, by the matrix TestGateHold_EveryCell/<row>/<cell> runs in full, rendered from its reference model
-// (holdModel), which skips a combination only with the reason it cannot happen. Rows: a chat-parented, manual or
-// scheduled run's gate pause, which KAS holds as the run's stopReason, or its heal, which heldHeals holds; a gate
-// pause's heal is held there too when the gate closes again before its release admits it. Cells: where the hold lands;
-// what happens while it is held; a restart at its checkpoint, which keeps KAS's state and loses heldHeals and the heal
-// budget, or the engine's replacement there, which keeps them; the gate crossing the hold or its release; a fault in
-// the reads that form the hold or release it; a fault in the release's writes, a resume or, once the heal budget is
-// spent, the park for the user; for a chat-parented run, the orders production leaves open between a sign-in's reload
-// mark and the gate's opening, and between a reload's rehydrate and a closing sweep. Each item is the outcome of the
-// cell that differs from the plain one in one value: the hold at the checkpoint, before which nothing resumes the run,
-// what a fresh runtime finds there, and the end. holdCellText gives every cell's steps. A person's pause or resume of a
-// held run is runTransitions'.
+// (holdModel), which skips a combination only with the reason it cannot happen, or the cell it drives the same as and
+// why. Rows: a chat-parented, manual or scheduled run's gate pause, which KAS holds as the run's stopReason, or its
+// heal, which heldHeals holds; a gate pause's heal is held there too when the gate closes again before its release
+// admits it. Cells: where the hold lands; what happens while it is held; a restart at its checkpoint, which keeps KAS's
+// state and loses heldHeals and the heal budget, or the engine's replacement there, which keeps them; the gate crossing
+// the hold or its release; a fault in the reads that form the hold or release it; a fault in the release's writes, a
+// resume or, once the heal budget is spent, the park for the user; for a chat-parented run, the orders production
+// leaves open between a sign-in's reload mark and the gate's opening, and between a reload's rehydrate and a closing
+// sweep; whether the runtime boots signed in, so no reload mark is pending as a chat's gate pause forms. Each item is
+// the outcome of the cell that differs from the plain one in one value, or in the late mark and a signed-in boot: the
+// hold at the checkpoint, before which nothing resumes the run, what a fresh runtime finds there, and the end.
+// holdCellText gives every cell's steps. A person's pause or resume of a held run is runTransitions'.
 //
 //   - The plain cell (lands before the edge; held untouched; no restart; no crossing; reads answer; writes answer; the
 //     chat's reload mark and rehydrate come first). A chat-parented run's gate pause, a manual run's gate pause, a
@@ -108,32 +109,24 @@ const (
 //     run's heal: held paused for the restart and its heal held, a restart finds it paused for the restart with no heal
 //     held, ends cancelled after 0 resumes.
 //   - The engine replaced at the checkpoint. A chat-parented run's gate pause, a manual run's gate pause, a scheduled
-//     run's gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after
-//     1 resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart
-//     and its heal held, persisted paused for the restart, ends running after 1 resume.
+//     run's gate pause, a chat-parented run's heal, a manual run's heal, a scheduled run's heal: as in the plain cell.
 //   - The gate opens before the hold forms. A chat-parented run's gate pause, a manual run's gate pause, a scheduled
 //     run's gate pause: held running, persisted none, ends running after 0 resumes. A chat-parented run's heal, a
 //     manual run's heal, a scheduled run's heal: held running, persisted none, ends running after 1 resume.
 //   - The gate closes again at the release's first read of the hold. A chat-parented run's gate pause, a manual run's
-//     gate pause, a scheduled run's gate pause: held paused with the gate's reason, persisted paused with the gate's
-//     reason, ends running after 1 resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal:
-//     held paused for the restart and its heal held, persisted paused for the restart, ends running after 1 resume.
+//     gate pause, a scheduled run's gate pause, a chat-parented run's heal, a manual run's heal, a scheduled run's
+//     heal: as in the plain cell.
 //   - The gate closes again before the release's heal admits. A chat-parented run's gate pause, a manual run's gate
-//     pause, a scheduled run's gate pause: held paused with the gate's reason, persisted paused with the gate's reason,
-//     ends running after 1 resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused
-//     for the restart and its heal held, persisted paused for the restart, ends running after 1 resume.
+//     pause, a scheduled run's gate pause, a chat-parented run's heal, a manual run's heal, a scheduled run's heal: as
+//     in the plain cell.
 //   - The release's first resume write is lost, and the gate closes and opens again while it waits to retry. A
 //     chat-parented run's gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends
-//     running after 2 resumes. A manual run's gate pause, a scheduled run's gate pause: held paused with the gate's
-//     reason, persisted paused with the gate's reason, ends running after 1 resume. A chat-parented run's heal: held
-//     paused for the restart and its heal held, persisted paused for the restart, ends running after 2 resumes. A
-//     manual run's heal, a scheduled run's heal: held paused for the restart and its heal held, persisted paused for
-//     the restart, ends running after 1 resume.
+//     running after 2 resumes. A manual run's gate pause, a scheduled run's gate pause, a manual run's heal, a
+//     scheduled run's heal: as in the plain cell. A chat-parented run's heal: held paused for the restart and its heal
+//     held, persisted paused for the restart, ends running after 2 resumes.
 //   - The gate closes and opens again while the release's first resume write is in flight. A chat-parented run's gate
-//     pause, a manual run's gate pause, a scheduled run's gate pause: held paused with the gate's reason, persisted
-//     paused with the gate's reason, ends running after 1 resume. A chat-parented run's heal, a manual run's heal, a
-//     scheduled run's heal: held paused for the restart and its heal held, persisted paused for the restart, ends
-//     running after 1 resume.
+//     pause, a manual run's gate pause, a scheduled run's gate pause, a chat-parented run's heal, a manual run's heal,
+//     a scheduled run's heal: as in the plain cell.
 //   - The gate closes while the release's first resume write is in flight, and opens again once the release ended and
 //     the closing sweep paused the run again. A chat-parented run's gate pause, a manual run's gate pause, a scheduled
 //     run's gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after
@@ -145,9 +138,7 @@ const (
 //     running after 2 resumes. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for
 //     the restart and its heal held, persisted paused for the restart, ends running after 2 resumes.
 //   - The hold's first read fails once. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's
-//     gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after 1
-//     resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart and
-//     its heal held, persisted paused for the restart, ends running after 1 resume.
+//     gate pause, a chat-parented run's heal, a manual run's heal, a scheduled run's heal: as in the plain cell.
 //   - The hold's reads keep failing. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's
 //     gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after 1
 //     resume, with an ERROR. A chat-parented run's heal: held paused for the restart, persisted paused for the restart,
@@ -155,16 +146,12 @@ const (
 //     restart, persisted paused for the restart, ends paused for the restart after 0 resumes, with an ERROR.
 //   - The heal entry's own read fails once. A chat-parented run's gate pause, a manual run's gate pause, a scheduled
 //     run's gate pause: cannot happen, a gate pause has no heal entry: it forms in the closing sweep, whose read the
-//     hold's read values fail. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for
-//     the restart and its heal held, persisted paused for the restart, ends running after 1 resume.
+//     hold's read values fail. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: as in the plain
+//     cell.
 //   - The release's first read fails once. A chat-parented run's gate pause, a manual run's gate pause, a scheduled
-//     run's gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after
-//     1 resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart
-//     and its heal held, persisted paused for the restart, ends running after 1 resume.
+//     run's gate pause, a chat-parented run's heal, a manual run's heal, a scheduled run's heal: as in the plain cell.
 //   - The heal's first read fails once. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's
-//     gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after 1
-//     resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart and
-//     its heal held, persisted paused for the restart, ends running after 1 resume.
+//     gate pause, a chat-parented run's heal, a manual run's heal, a scheduled run's heal: as in the plain cell.
 //   - The finder's reads keep failing. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's
 //     gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after 1
 //     resume, with an ERROR. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for
@@ -178,9 +165,7 @@ const (
 //     with an ERROR. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the
 //     restart and its heal held, persisted paused for the restart, ends running after 1 resume, with an ERROR.
 //   - The release's write is lost once. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's
-//     gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after 1
-//     resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart and
-//     its heal held, persisted paused for the restart, ends running after 1 resume.
+//     gate pause, a chat-parented run's heal, a manual run's heal, a scheduled run's heal: as in the plain cell.
 //   - Every release write is lost. A chat-parented run's gate pause: held paused with the gate's reason, persisted
 //     paused with the gate's reason, ends paused for a person to resume after 0 resumes, with an ERROR. A manual run's
 //     gate pause, a scheduled run's gate pause: held paused with the gate's reason, persisted paused with the gate's
@@ -189,23 +174,37 @@ const (
 //     ERROR. A manual run's heal, a scheduled run's heal: held paused for the restart and its heal held, persisted
 //     paused for the restart, ends running after 1 resume, with an ERROR.
 //   - The release write's reply is lost. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's
-//     gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after 1
-//     resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart and
-//     its heal held, persisted paused for the restart, ends running after 1 resume.
+//     gate pause, a chat-parented run's heal, a manual run's heal, a scheduled run's heal: as in the plain cell.
 //   - The gate opens and the release writes before the sign-in marks the chat for its reload. A chat-parented run's
-//     gate pause: cannot happen, no sign-in opens the gate onto a release's resume write with its own reload mark the
-//     only one pending: an earlier sign-in's mark still waits for the run's first resume write, or the edge's release
-//     writes no resume in its round. A manual run's gate pause, a scheduled run's gate pause, a manual run's heal, a
-//     scheduled run's heal: cannot happen, only a chat's session is marked for its reload at a sign-in
-//     (markSessionsForReload), and a reload's rehydrate sweeps only a chat's runs; a manual or scheduled run's host
-//     session is never marked. A chat-parented run's heal: held paused for the restart and its heal held, persisted
-//     paused for the restart, ends running after 1 resume.
+//     gate pause: cannot happen, no sign-in opens the gate onto a held release's resume write with its own reload mark
+//     the only one pending: an earlier sign-in's mark still waits on the chat's session for the run's first resume
+//     write (with a signed-out boot, the sign-in before the lapse, whose mark the run's open step turn keeps from an
+//     idle open (claimReload), or an earlier opening edge whose release wrote no resume), or no held release writes a
+//     resume in the edge's round, nor in that of the pending pause's frame. A manual run's gate pause, a scheduled
+//     run's gate pause, a manual run's heal, a scheduled run's heal: cannot happen, only a chat's session is marked for
+//     its reload at a sign-in (markSessionsForReload), and a reload's rehydrate sweeps only a chat's runs; a manual or
+//     scheduled run's host session is never marked. A chat-parented run's heal: as in the plain cell.
 //   - The closing sweep pauses the resumed run before the chat's rehydrate reads it. A chat-parented run's gate pause,
 //     a chat-parented run's heal: cannot happen, no closing sweep pauses the run again while a chat's rehydrate waits
 //     to read it: only a held release's resume write that reloads the chat's session and lands at the closed gate
 //     starts both. A manual run's gate pause, a scheduled run's gate pause, a manual run's heal, a scheduled run's
 //     heal: cannot happen, only a chat's session is marked for its reload at a sign-in (markSessionsForReload), and a
 //     reload's rehydrate sweeps only a chat's runs; a manual or scheduled run's host session is never marked.
+//   - The runtime boots signed in, so no sign-in marks the chat's session for its reload before the gate closes. A
+//     chat-parented run's gate pause: as in the plain cell. A manual run's gate pause, a scheduled run's gate pause, a
+//     manual run's heal, a scheduled run's heal: as with a signed-out boot, since only a chat's session is marked for
+//     its reload at a sign-in (markSessionsForReload), and the sign-in a signed-out boot needs before a gate pause's
+//     lapse opens the gate onto a running run, which no finder reads (pausedRuns). A chat-parented run's heal: as with
+//     a signed-out boot, since a heal's hold forms at a gate closed before any sign-in, and a boot that loads a sign-in
+//     marks no session (Runtime.onSignInChange marks on an edge), so no reload mark is pending at its first opening
+//     edge either way.
+//   - The gate opens and the release writes before the sign-in marks the chat for its reload, the runtime booted signed
+//     in. A chat-parented run's gate pause: as in the plain cell. A manual run's gate pause, a scheduled run's gate
+//     pause, a manual run's heal, a scheduled run's heal: cannot happen, only a chat's session is marked for its reload
+//     at a sign-in (markSessionsForReload), and a reload's rehydrate sweeps only a chat's runs; a manual or scheduled
+//     run's host session is never marked. A chat-parented run's heal: as with a signed-out boot, since a heal's hold
+//     forms at a gate closed before any sign-in, and a boot that loads a sign-in marks no session
+//     (Runtime.onSignInChange marks on an edge), so no reload mark is pending at its first opening edge either way.
 type runGate struct {
 	// read is the vault's Answerability for the engine's backend; nil keeps the gate open, since then no vault
 	// answers the engine (none is wired, or an API key authenticates it).

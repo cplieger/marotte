@@ -39,6 +39,7 @@ type (
 	readFault  int
 	writeFault int
 	raceOrder  int
+	bootSign   int
 )
 
 const (
@@ -107,6 +108,14 @@ const (
 )
 
 const (
+	// bootSignedOut: the cell's first runtime boots with no sign-in, so a gate pause's lapse follows the sign-in that
+	// opened the gate, whose reload mark a chat's open step turn keeps on its session (claimReload).
+	bootSignedOut bootSign = iota
+	// bootSignedIn: it boots on a loaded sign-in, which marks no session (Runtime.onSignInChange marks on an edge).
+	bootSignedIn
+)
+
+const (
 	readNone readFault = iota
 	// readHoldOnce fails once the read that forms the hold, the closing sweep's of a gate pause or the heal entry's of
 	// a heal; readHoldEvery fails each one until its tries are spent. Both act before the checkpoint.
@@ -159,6 +168,10 @@ var (
 		"the gate opens and the release writes before the sign-in marks the chat for its reload",
 		"the closing sweep pauses the resumed run before the chat's rehydrate reads it",
 	}
+	// A signed-out boot is every cell's unless its name says otherwise.
+	bootNames = []string{
+		"", "the runtime boots signed in, so no sign-in marks the chat's session for its reload before the gate closes",
+	}
 	readNames = []string{
 		"reads answer", "the hold's first read fails once", "the hold's reads keep failing",
 		"the heal entry's own read fails once", "the release's first read fails once",
@@ -181,6 +194,7 @@ type holdCombo struct {
 	read    readFault
 	write   writeFault
 	order   raceOrder
+	boot    bootSign
 }
 
 func (c holdCombo) gate() bool { return c.form == formGate }
@@ -212,10 +226,14 @@ func (c holdCombo) rowName() string {
 }
 
 func (c holdCombo) name() string {
-	return strings.Join([]string{
+	parts := []string{
 		landNames[c.land], heldNames[c.held], restartNames[c.restart], crossNames[c.cross], readNames[c.read],
 		writeNames[c.write], orderNames[c.order],
-	}, "; ")
+	}
+	if c.boot != bootSignedOut {
+		parts = append(parts, bootNames[c.boot])
+	}
+	return strings.Join(parts, "; ")
 }
 
 // everyCombo is the full cross-product, row by row.
@@ -230,7 +248,9 @@ func everyCombo() []holdCombo {
 							for read := range readFault(len(readNames)) {
 								for write := range writeFault(len(writeNames)) {
 									for order := range raceOrder(len(orderNames)) {
-										out = append(out, holdCombo{kind, form, land, held, restart, cross, read, write, order})
+										for boot := range bootSign(len(bootNames)) {
+											out = append(out, holdCombo{kind, form, land, held, restart, cross, read, write, order, boot})
+										}
 									}
 								}
 							}
@@ -360,8 +380,11 @@ type holdStep struct {
 	flapPauses bool
 	// failsEntry: the step's heal entry's own read fails once (readEntryOnce), held there.
 	failsEntry bool
-	// markLate: the step's sign-in marks the chat for its reload only once its release wrote its first resume.
+	// markLate: the step's sign-in, or with the last step's holdsMark that one's, marks the chat for its reload only
+	// once its release wrote its first resume.
 	markLate bool
+	// holdsMark: the step's sign-in's reload mark is still held as the step ends, for the next step's markLate.
+	holdsMark bool
 	// inFlight: the step's held release's first resume write is held in flight under this crossing; rehydrates: that
 	// write reloads the chat's session, whose rehydrate reads the run once the write landed.
 	inFlight   crossing
@@ -422,14 +445,21 @@ type holdSim struct {
 	// step's engine end resumes the run through a sweep; finderEarly: the round's dead finder settles in its first
 	// step, finderMoved once a block ended that step.
 	reload, freshMark, live, chainNext, sweepNext, finderEarly, finderMoved bool
+	// edgeMark: the opening edge of steps[edgeStep], a pending gate pause's, made the only reload mark pending, and
+	// no restart or engine end has taken it up since.
+	edgeMark bool
+	edgeStep int
 	// fired records whether each armed fault, crossing and race order acted.
 	readFired, writeFired, crossFired, orderFired bool
 }
 
 // holdModel is the reference model of the hold matrix: the steps a cell drives, each with the state the cell must
-// reach, or the reason the combination cannot happen.
+// reach, or why the matrix skips the combination: it cannot happen, or it drives as its twin.
 func holdModel(c holdCombo) (steps []holdStep, impossible string) {
 	if why := c.ruledOut(); why != "" {
+		return nil, why
+	}
+	if _, why := c.twin(); why != "" {
 		return nil, why
 	}
 	s := &holdSim{c: c}
@@ -452,9 +482,11 @@ func holdModel(c holdCombo) (steps []holdStep, impossible string) {
 		return nil, "no closing sweep pauses the run again while a chat's rehydrate waits to read it: only a held " +
 			"release's resume write that reloads the chat's session and lands at the closed gate starts both"
 	case c.order == orderMarkLate && !s.orderFired:
-		return nil, "no sign-in opens the gate onto a release's resume write with its own reload mark the only one " +
-			"pending: an earlier sign-in's mark still waits for the run's first resume write, or the edge's release " +
-			"writes no resume in its round"
+		return nil, "no sign-in opens the gate onto a held release's resume write with its own reload mark the only " +
+			"one pending: an earlier sign-in's mark still waits on the chat's session for the run's first resume " +
+			"write (with a signed-out boot, the sign-in before the lapse, whose mark the run's open step turn keeps " +
+			"from an idle open (claimReload), or an earlier opening edge whose release wrote no resume), or no held " +
+			"release writes a resume in the edge's round, nor in that of the pending pause's frame"
 	case c.cross != crossNone && !s.crossFired:
 		return nil, "no release reads the hold at an open gate, or none of its reads answers before its tries are " +
 			"spent (resumeHeld, retryResumeLater), so the gate has no read to cross"
@@ -486,14 +518,33 @@ func (c holdCombo) ruledOut() string {
 	return ""
 }
 
+// twin is the cell with a signed-out boot that c drives the same as, and why, when c's boot changes nothing the
+// cell drives; "" when it does.
+func (c holdCombo) twin() (holdCombo, string) {
+	if c.boot == bootSignedOut || (c.chat() && c.gate()) {
+		return c, ""
+	}
+	t := c
+	t.boot = bootSignedOut
+	if !c.chat() {
+		return t, "only a chat's session is marked for its reload at a sign-in (markSessionsForReload), and the " +
+			"sign-in a signed-out boot needs before a gate pause's lapse opens the gate onto a running run, which no " +
+			"finder reads (pausedRuns)"
+	}
+	return t, "a heal's hold forms at a gate closed before any sign-in, and a boot that loads a sign-in marks no " +
+		"session (Runtime.onSignInChange marks on an edge), so no reload mark is pending at its first opening edge " +
+		"either way"
+}
+
 func (s *holdSim) state() holdState { return holdState{kas: s.kas, heal: s.entry} }
 
 // begin starts the next step.
 func (s *holdSim) begin(ev holdEvent, text string) {
 	s.cur = holdStep{ev: ev, text: text, chainTry: s.chainNext, engineSweeps: s.sweepNext}
 	s.chainNext, s.sweepNext = false, false
-	s.freshMark = signsIn(ev) && s.c.chat() && !s.reload
-	if signsIn(ev) && s.c.chat() {
+	signs := s.signsIn(ev)
+	s.freshMark = signs && s.c.chat() && !s.reload
+	if signs && s.c.chat() {
 		s.reload = true
 	}
 }
@@ -705,6 +756,8 @@ func (s *holdSim) walkAfter() {
 		s.begin(evPendAcrossEdge, "the gate's pause is asked and still pending at the opening edge, whose finder "+
 			"reads only paused runs")
 		s.cur.asks = asks
+		// With a signed-out boot the step's lapse signs in before its edge does (holdCell.lapse).
+		s.edgeMark, s.edgeStep = s.freshMark && c.boot == bootSignedIn, len(s.steps)
 		s.end()
 	} else {
 		s.kas, s.open = kasRestartPause, true
@@ -740,7 +793,7 @@ func (s *holdSim) restartAndBoot() {
 		return
 	}
 	persisted := s.kas
-	s.entry, s.claims, s.reload = false, 0, false
+	s.entry, s.claims, s.reload, s.edgeMark = false, 0, false, false
 	s.open = s.c.restart == restartOpen
 	ev, text := evRestartClosed, "a restart, the gate closed at boot"
 	if s.open {
@@ -779,7 +832,7 @@ func (s *holdSim) restartAndBoot() {
 // row's, through resumeParentless, which reads it while its lease stands.
 func (s *holdSim) engineEnd() {
 	// The next engine loads the chat's session anew, which takes up a sign-in's mark for its reload.
-	s.reload = false
+	s.reload, s.edgeMark = false, false
 	var r releasers
 	if (s.c.chat() && s.kas.holds()) || (!s.c.gate() && !s.c.chat() && s.c.held != heldDeleted) {
 		r.healer = healerSweep
@@ -929,9 +982,12 @@ func (s *holdSim) round(ev holdEvent, text string, r releasers) {
 
 // signsIn is whether ev commits a sign-in, which marks a chat's session for its reload (Runtime.onSignInChange): the
 // next resume write of the chat's run reloads it, and the reload's rehydrate sweeps the run too.
-func signsIn(ev holdEvent) bool {
+func (s *holdSim) signsIn(ev holdEvent) bool {
 	switch ev {
-	case evHold, evHoldRead, evHoldDead, evHoldOpens, evHealOpens, evSignIn, evSignInAgain, evPendAcrossEdge:
+	case evHold, evHoldRead, evHoldDead:
+		// The lapse signs in first only at a closed gate (holdCell.lapse).
+		return s.c.boot == bootSignedOut
+	case evHoldOpens, evHealOpens, evSignIn, evSignInAgain, evPendAcrossEdge:
 		return true
 	}
 	return false
@@ -981,8 +1037,17 @@ func (s *holdSim) release(r releasers, finderHeals, healerHeals bool) []string {
 	if finderHeals || (healerHeals && r.healer == healerHeld) {
 		loops = 1
 	}
-	late := s.c.order == orderMarkLate && s.freshMark && loops > 0 && (s.cur.ev == evSignIn || s.cur.ev == evSignInAgain)
-	if late {
+	// The pending pause's frame comes after its opening edge, whose mark the vault leaves unordered with it too.
+	edgeLate := s.freshMark && (s.cur.ev == evSignIn || s.cur.ev == evSignInAgain)
+	frameLate := s.edgeMark && s.cur.ev == evLandFrame
+	late := s.c.order == orderMarkLate && loops > 0 && (edgeLate || frameLate)
+	switch {
+	case late && frameLate:
+		s.orderFired, s.cur.markLate, s.steps[s.edgeStep].holdsMark = true, true, true
+		s.steps[s.edgeStep].text += "; its sign-in's reload mark is held"
+		s.cur.text += "; its release writes the run's resume before the opening edge's sign-in marks the chat for " +
+			"its reload"
+	case late:
 		s.orderFired, s.cur.markLate = true, true
 		s.cur.text += "; the gate opens and its release writes the run's resume before the sign-in marks the chat " +
 			"for its reload"
@@ -1140,12 +1205,26 @@ func holdSummary() string {
 	add(readNames, func(c *holdCombo, v int) { c.read = readFault(v) })
 	add(writeNames, func(c *holdCombo, v int) { c.write = writeFault(v) })
 	add(orderNames, func(c *holdCombo, v int) { c.order = raceOrder(v) })
-	for _, v := range variants {
+	add(bootNames, func(c *holdCombo, v int) { c.boot = bootSign(v) })
+	// A signed-in boot decides whether the late mark is the only one pending.
+	variants = append(variants, variant{
+		label: strings.ToUpper(orderNames[orderMarkLate][:1]) + orderNames[orderMarkLate][1:] +
+			", the runtime booted signed in",
+		set: func(c *holdCombo) { c.order, c.boot = orderMarkLate, bootSignedIn },
+	})
+	plain := map[string]string{}
+	for _, c := range holdRowCombos() {
+		plain[c.rowName()] = holdOutcome(c)
+	}
+	for i, v := range variants {
 		var outcomes []string
 		rows := map[string][]string{}
 		for _, c := range holdRowCombos() {
 			v.set(&c)
 			o := holdOutcome(c)
+			if i > 0 && o == plain[c.rowName()] {
+				o = "as in the plain cell"
+			}
 			if _, ok := rows[o]; !ok {
 				outcomes = append(outcomes, o)
 			}
@@ -1173,8 +1252,12 @@ func holdRowCombos() []holdCombo {
 }
 
 // holdOutcome is a cell's outcome in brief: how it is held at its checkpoint and what a restart there finds, how it
-// ends and after how many resumes, and whether a reader gives up with an ERROR; or why it cannot happen.
+// ends and after how many resumes, and whether a reader gives up with an ERROR; or why it cannot happen, or why it
+// drives as its twin.
 func holdOutcome(c holdCombo) string {
+	if _, why := c.twin(); why != "" && c.ruledOut() == "" {
+		return "as with a signed-out boot, since " + why
+	}
 	steps, why := holdModel(c)
 	if why != "" {
 		return "cannot happen, " + why
@@ -1220,8 +1303,11 @@ func holdPersisted(steps []holdStep) string {
 	return "persisted none"
 }
 
-// holdCellText is a cell's steps, or why it cannot happen.
+// holdCellText is a cell's steps, or why it cannot happen, or the twin it runs as.
 func holdCellText(c holdCombo) string {
+	if twin, why := c.twin(); why != "" && c.ruledOut() == "" {
+		return "runs as " + twin.name() + ", since " + why + "."
+	}
 	steps, why := holdModel(c)
 	if why != "" {
 		return "cannot happen: " + why + "."
@@ -1243,18 +1329,19 @@ func holdStepText(s *holdStep) string {
 
 // gateHoldLead opens runGate's doc's matrix.
 const gateHoldLead = "Every hold, by the matrix TestGateHold_EveryCell/<row>/<cell> runs in full, rendered from its " +
-	"reference model (holdModel), which skips a combination only with the reason it cannot happen. Rows: a " +
-	"chat-parented, manual or scheduled run's gate pause, which KAS holds as the run's stopReason, or its heal, " +
-	"which heldHeals holds; a gate pause's heal is held there too when the gate closes again before its release " +
-	"admits it. Cells: where the hold lands; what happens while it is held; a restart at its checkpoint, which keeps " +
-	"KAS's state and loses heldHeals and the heal budget, or the engine's replacement there, which keeps them; the gate crossing the hold or its release; a fault in the " +
-	"reads that form the hold or release it; a fault in the release's writes, a resume or, once the heal budget is " +
-	"spent, the park for the user; for a chat-parented run, the orders production leaves open between a sign-in's " +
-	"reload mark and the gate's opening, and between a reload's rehydrate and a closing sweep. Each item is the " +
-	"outcome of the cell that differs from the plain " +
-	"one in one value: the hold at the checkpoint, before which nothing resumes the run, what a fresh runtime finds " +
-	"there, and the end. holdCellText gives every cell's steps. A person's pause or resume of a held run is " +
-	"runTransitions'."
+	"reference model (holdModel), which skips a combination only with the reason it cannot happen, or the cell it " +
+	"drives the same as and why. Rows: a chat-parented, manual or scheduled run's gate pause, which KAS holds as the " +
+	"run's stopReason, or its heal, which heldHeals holds; a gate pause's heal is held there too when the gate closes " +
+	"again before its release admits it. Cells: where the hold lands; what happens while it is held; a restart at its " +
+	"checkpoint, which keeps KAS's state and loses heldHeals and the heal budget, or the engine's replacement there, " +
+	"which keeps them; the gate crossing the hold or its release; a fault in the reads that form the hold or release " +
+	"it; a fault in the release's writes, a resume or, once the heal budget is spent, the park for the user; for a " +
+	"chat-parented run, the orders production leaves open between a sign-in's reload mark and the gate's opening, " +
+	"and between a reload's rehydrate and a closing sweep; whether the runtime boots signed in, so no reload mark is " +
+	"pending as a chat's gate pause forms. Each item is the outcome of the cell that differs from the plain one in " +
+	"one value, or in the late mark and a signed-in boot: the hold at the checkpoint, before which nothing resumes the " +
+	"run, what a fresh runtime finds there, and the end. holdCellText gives every cell's steps. A person's pause or " +
+	"resume of a held run is runTransitions'."
 
 // holdTable is every cell of the matrix, one per line, as GATE_HOLD_TABLE renders it.
 func holdTable() string {
@@ -2222,6 +2309,8 @@ type holdCell struct {
 	lapsed bool
 	// liveTry holds a release live after its try, for the next step's opening edge (crossRepausedLive).
 	liveTry *holdBlock
+	// heldMark is the reload mark a step's sign-in left held for the next step (holdStep.holdsMark).
+	heldMark *lateMark
 	// onBoot arms a restart step's holds once the stopped runtime let go of the last ones.
 	onBoot func()
 	// markHold, when set, holds the vault's delivery of the next sign-in before the runtime's listener marks the
@@ -2292,7 +2381,7 @@ func (c *holdCell) watchMarks(vault *signin.Vault, pre bool) {
 // holdCellSeq numbers the cells, whose runs and chats are named apart so their logs route apart.
 var holdCellSeq atomic.Int64
 
-// newHoldCell boots a cell's first runtime over a fresh KAS run, the gate closed.
+// newHoldCell boots a cell's first runtime over a fresh KAS run, signed in as the cell's boot says.
 func newHoldCell(t *testing.T, router *holdLogs, c holdCombo) *holdCell {
 	t.Helper()
 	n := holdCellSeq.Add(1)
@@ -2330,7 +2419,7 @@ func newHoldCell(t *testing.T, router *holdLogs, c holdCombo) *holdCell {
 	}
 	cell.k = k
 	t.Cleanup(cell.f.releaseAll)
-	cell.boot(t, false)
+	cell.boot(t, c.boot == bootSignedIn)
 	return cell
 }
 
@@ -2460,6 +2549,21 @@ func (c *holdCell) awaitGate(open bool) {
 // release writes the run's resume while the mark is held; without, the gate reads the sign-in only after the mark.
 func (c *holdCell) signInStep(t *testing.T, late bool, afterOpen func()) {
 	t.Helper()
+	if m := c.openGate(t, late, afterOpen); m != nil {
+		c.landMark(t, m)
+	}
+}
+
+// lateMark is a sign-in's reload mark held until a release writes the run's resume: the hold, and the marks and
+// resume writes counted before the sign-in.
+type lateMark struct {
+	hold          *holdBlock
+	marks, writes int32
+}
+
+// openGate is signInStep up to the gate's opening, which returns the mark it holds with late.
+func (c *holdCell) openGate(t *testing.T, late bool, afterOpen func()) *lateMark {
+	t.Helper()
 	marks, writes := c.marks.Load(), c.k.resumeWrites.Load()
 	// Only a crossing under this sign-in's release cuts its waits short.
 	c.f.crossed.Store(false)
@@ -2498,16 +2602,23 @@ func (c *holdCell) signInStep(t *testing.T, late bool, afterOpen func()) {
 	if afterOpen != nil {
 		afterOpen()
 	}
-	if mark != nil {
-		waitUntil(t, "the release's resume write before the reload mark", func() bool {
-			return c.k.resumeWrites.Load() > writes
-		})
-		mark.release()
-		waitUntil(t, "the sign-in's reload mark", func() bool { return c.marks.Load() > marks })
-		c.f.mu.Lock()
-		c.f.markWait = nil
-		c.f.mu.Unlock()
+	if mark == nil {
+		return nil
 	}
+	return &lateMark{hold: mark, marks: marks, writes: writes}
+}
+
+// landMark lets m's mark land once a release wrote the run's resume after its sign-in.
+func (c *holdCell) landMark(t *testing.T, m *lateMark) {
+	t.Helper()
+	waitUntil(t, "the release's resume write before the reload mark", func() bool {
+		return c.k.resumeWrites.Load() > m.writes
+	})
+	m.hold.release()
+	waitUntil(t, "the sign-in's reload mark", func() bool { return c.marks.Load() > m.marks })
+	c.f.mu.Lock()
+	c.f.markWait = nil
+	c.f.mu.Unlock()
 }
 
 // signOut closes the gate, as the gate reads it, so the next sign-in is an opening edge.
@@ -2519,10 +2630,13 @@ func (c *holdCell) signOut(t *testing.T) {
 	waitUntil(t, "the gate to close", func() bool { return !c.h.runs.gateOpen() })
 }
 
-// lapse rejects the next renewal under the running run, so the gate closes and its sweep reads the run.
+// lapse rejects the next renewal under the running run, so the gate closes and its sweep reads the run; a closed
+// gate is opened by a sign-in first.
 func (c *holdCell) lapse(t *testing.T) {
 	t.Helper()
-	c.signInStep(t, false, nil)
+	if !c.h.runs.gateOpen() {
+		c.signInStep(t, false, nil)
+	}
 	c.b.set(false, false, func() error { return signin.ErrRejected })
 	if rerr := c.askVault(t.Context(), t); rerr == nil {
 		t.Fatal("Setup: a rejected renewal was answered")
@@ -2738,7 +2852,7 @@ func (c *holdCell) drive(t *testing.T, s *holdStep) {
 		c.f.finds = 0
 		c.f.mu.Unlock()
 		c.b.set(true, true, nil)
-		c.signInStep(t, false, nil)
+		c.heldMark = c.openGate(t, s.holdsMark, nil)
 	case evLandFrame:
 		c.f.mu.Lock()
 		finds := c.f.finds
@@ -2751,6 +2865,10 @@ func (c *holdCell) drive(t *testing.T, s *holdStep) {
 			k.landLocked()
 		})
 		c.frame()
+		if s.markLate {
+			c.landMark(t, c.heldMark)
+			c.heldMark = nil
+		}
 	case evRetry:
 		c.releaseBlock()
 	case evRehydrate:
