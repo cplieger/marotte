@@ -26,7 +26,8 @@ type kasBufferModel struct {
 	wakeTurn bool
 }
 
-func (k *kasBufferModel) text(i int) string { return fmt.Sprintf("message %d", i) }
+// messageText is the words of the model's message i.
+func messageText(i int) string { return fmt.Sprintf("message %d", i) }
 
 // rowDelivered reports whether the chat's log shows row delivered: read at its send, or settled read.
 func rowDelivered(row steerRow, stamps []marotte.EntrySteerDelivered) bool {
@@ -79,7 +80,7 @@ func TestWorkflowMessage_SettlementsFollowOnlyWhatKASDid(t *testing.T) {
 				i := len(k.severities)
 				sev := rapid.SampledFrom([]string{"info", "warning", "success"}).Draw(rt, "severity")
 				k.severities, k.delivered = append(k.severities, sev), append(k.delivered, false)
-				stepReport(t, tr, sev, k.text(i))
+				stepReport(t, tr, sev, messageText(i))
 				switch {
 				case sev == severitySuccess || k.busy || k.waker >= 0 || k.rewake != "":
 					k.buffer = append(k.buffer, i)
@@ -109,7 +110,7 @@ func TestWorkflowMessage_SettlementsFollowOnlyWhatKASDid(t *testing.T) {
 				k.buffer = k.buffer[1:]
 				k.delivered[i] = true
 				tr.HandleSessionInfoUpdate(t.Context(), testChat, steerFrame(t, "steering_injected", map[string]any{
-					"messageId": fmt.Sprintf("notify-%d", i), "content": fmt.Sprintf("[notification/%s] %s", k.severities[i], k.text(i)),
+					"messageId": fmt.Sprintf("notify-%d", i), "content": fmt.Sprintf("[notification/%s] %s", k.severities[i], messageText(i)),
 					"notificationSeverity": k.severities[i],
 				}), FrameAttribution{})
 			case "end":
