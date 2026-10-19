@@ -1,9 +1,9 @@
 // The DEFAULT is the browser: a file runs in real headless Chromium unless named `.node.test.ts`
 // (Node), `.touch.test.ts` (a touch-device page) or `.pointer.test.ts` (a page of its own for the
 // real mouse). No `environment` option on the browser side and no per-file `@vitest-environment`
-// pragma: Browser Mode is not an environment but a runner. The suffix is load-bearing: a misplaced Node-needing test throws on
-// import, but one needing the DOM ABSENT passes vacuously (`attention-no-dom.node.test.ts`
-// asserts its premise). `*.fuzz.test.ts` is ts-ci's fuzz axis. `channel: "chromium"` is the real
+// pragma: Browser Mode is not an environment but a runner. The suffix is load-bearing: a
+// misplaced Node-needing test throws on import, but one needing the DOM ABSENT passes vacuously
+// (`attention-no-dom.node.test.ts` asserts its premise). `*.fuzz.test.ts` is ts-ci's fuzz axis. `channel: "chromium"` is the real
 // browser, not headless-shell: `npx playwright install --with-deps chromium`.
 import { configDefaults, defineConfig, type TestProjectInlineConfiguration } from "vitest/config";
 import { resolve } from "node:path";
