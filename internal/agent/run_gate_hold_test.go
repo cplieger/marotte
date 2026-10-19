@@ -1880,9 +1880,10 @@ type cellFaults struct {
 	finderWait func()
 	// rehydrateRead closes at the next heal read of a chat's sweep (resumeChainRuns).
 	rehydrateRead chan struct{}
-	// heldReads counts the transition reads held in the hook now, each under its run's resume lock; healReads every
-	// heal read the hook saw.
+	// heldReads counts the transition reads held in the hook now, each under its run's resume lock, wentOn the held
+	// reads let go that went on; healReads every heal read the hook saw.
 	heldReads atomic.Int32
+	wentOn    atomic.Int32
 	healReads int
 }
 
@@ -2076,6 +2077,7 @@ func (f *cellFaults) failOnceLocked() error {
 	f.heldReads.Add(1)
 	<-b.retried
 	f.heldReads.Add(-1)
+	f.wentOn.Add(1)
 	return errHoldReadFault
 }
 
@@ -2149,6 +2151,7 @@ func (f *cellFaults) hook(rs *Runs) func(want runWant, seen runSeen) error {
 			f.heldReads.Add(1)
 			<-b.retried
 			f.heldReads.Add(-1)
+			f.wentOn.Add(1)
 			return nil
 		}
 		cross := f.cross
@@ -2541,10 +2544,20 @@ func (c *holdCell) formHold(t *testing.T, s *holdStep) {
 	}
 }
 
+// releaseBlock lets the held read go on, and waits until it has, so a later wait does not count it as still held.
 func (c *holdCell) releaseBlock() {
-	if c.block != nil {
-		c.block.release()
-		c.block = nil
+	if c.block == nil {
+		return
+	}
+	held, went := c.f.heldReads.Load(), c.f.wentOn.Load()
+	c.block.release()
+	c.block = nil
+	for deadline := time.Now().Add(5 * time.Second); held > 0 && c.f.wentOn.Load() <= went; {
+		if time.Now().After(deadline) {
+			c.t.Error("a held read never went on once let go")
+			return
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
