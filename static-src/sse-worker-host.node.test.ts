@@ -23,8 +23,8 @@ import {
   createScriptedFetch,
   json,
   type ScriptedFetch,
-  until,
 } from "./__test-helpers__/sse-fetch.js";
+import { until } from "./__test-helpers__/until.js";
 
 /** One attached tab: its port, what the host sent it, and a reply policy for runs. */
 interface Tab {
@@ -90,7 +90,10 @@ let pingSeq = 0;
 async function roundTrip(tab: Tab): Promise<void> {
   const seq = ++pingSeq;
   send(tab, { type: "ping", seq });
-  await until(() => tab.received.some((m) => m.type === "pong" && m.seq === seq));
+  await until(
+    () => tab.received.some((m) => m.type === "pong" && m.seq === seq),
+    "the host's pong",
+  );
 }
 
 function runsSeen(tab: Tab): number {
@@ -111,7 +114,7 @@ async function wake(owner: WorkerHost, first: Tab, ...others: Tab[]): Promise<vo
   await until(() => {
     const state = owner.stream().state();
     return state.kind === "open" && !state.visible;
-  });
+  }, "the host to read the profile hidden");
   send(first, { type: "visibility", ev: "visible" });
 }
 
@@ -119,18 +122,18 @@ describe("reconnectForAttach", () => {
   it("a tab attaching to an OPEN stream reconnects it in place, cursor kept", async () => {
     host = createSSEHost();
     const a = attach("a");
-    await until(() => scripted.connections.length === 1);
+    await until(() => scripted.connections.length === 1, "the first connection");
     const first = scripted.connections[0];
     expect(first?.headers.get("SSE-Client")).toBe("profile-tag-0123456789");
     first?.hello();
-    await until(() => host?.stream().state().kind === "open");
+    await until(() => host?.stream().state().kind === "open", "the host's stream to open");
     // The attach that STARTED the stream opened exactly one connection.
     await roundTrip(a);
     expect(scripted.connections).toHaveLength(1);
     expect(scripted.connections.at(-1)?.aborted()).toBe(false);
 
     attach("b");
-    await until(() => scripted.connections.length === 2);
+    await until(() => scripted.connections.length === 2, "the second connection");
     expect(first?.aborted()).toBe(true);
     // Resumed, not fresh: the newcomer earns the hook's sets, the profile loses no frame.
     expect(scripted.connections[1]?.headers.get("Last-Event-ID")).not.toBeNull();
@@ -139,7 +142,7 @@ describe("reconnectForAttach", () => {
   it("a tab attaching while the stream is connecting adds no second connect", async () => {
     host = createSSEHost();
     attach("a");
-    await until(() => scripted.connections.length === 1);
+    await until(() => scripted.connections.length === 1, "the first connection");
     const b = attach("b");
     await roundTrip(b);
     expect(scripted.connections).toHaveLength(1);
@@ -152,9 +155,9 @@ describe("profileRevalidate", () => {
     host = createSSEHost();
     const a = attach("a");
     a.answerRuns = "silent";
-    await until(() => scripted.connections.length === 1);
+    await until(() => scripted.connections.length === 1, "the first connection");
     scripted.connections[0]?.hello();
-    await until(() => runsSeen(a) === 1);
+    await until(() => runsSeen(a) === 1, "the first revalidate run");
     // Held open by the silent tab: the host's stream is still on its first connection.
     await roundTrip(a);
     expect(scripted.connections).toHaveLength(1);
@@ -173,13 +176,15 @@ describe("profileRevalidate", () => {
     host = createSSEHost();
     const a = attach("a");
     a.answerRuns = "failed";
-    await until(() => scripted.connections.length === 1);
+    await until(() => scripted.connections.length === 1, "the first connection");
     scripted.connections[0]?.hello();
-    await until(() => runsSeen(a) === 1);
+    await until(() => runsSeen(a) === 1, "the first revalidate run");
     // The tab body throws by accident only (sse-adapter.ts settles every loader), so this is the
     // safety net: the library ends the connection, then reconnects after one backoff (up to 500 ms
     // of full jitter at the base).
-    await until(() => scripted.connections.length === 2, 2000);
+    await until(() => scripted.connections.length === 2, "the reconnect after one backoff", {
+      timeout: 2000,
+    });
     expect(scripted.connections[0]?.aborted()).toBe(true);
     const failed = a.received.find(
       (m) => m.type === "lifecycle" && m.event.kind === "revalidate_failed",
@@ -190,7 +195,7 @@ describe("profileRevalidate", () => {
     // converges leaves the connection standing.
     a.answerRuns = "done";
     scripted.connections[1]?.hello({ resumed: true });
-    await until(() => runsSeen(a) === 2);
+    await until(() => runsSeen(a) === 2, "the second revalidate run");
     await roundTrip(a);
     expect(scripted.connections).toHaveLength(2);
     expect(scripted.connections.at(-1)?.aborted()).toBe(false);
@@ -200,10 +205,13 @@ describe("profileRevalidate", () => {
     host = createSSEHost();
     const a = attach("a");
     const b = attach("b");
-    await until(() => scripted.connections.length === 1);
+    await until(() => scripted.connections.length === 1, "the first connection");
     scripted.connections[0]?.hello();
     // The fresh hello's run: nothing held yet, so no digest and an empty verdict.
-    await until(() => runsSeen(a) === 1 && runsSeen(b) === 1);
+    await until(
+      () => runsSeen(a) === 1 && runsSeen(b) === 1,
+      "the first revalidate run on both tabs",
+    );
     expect(scripted.requests.filter((r) => r.url === "/api/sync")).toHaveLength(0);
     expect(runContexts(a)[0]).toMatchObject({ full: false, changed: [], removed: [] });
 
@@ -224,7 +232,10 @@ describe("profileRevalidate", () => {
       }),
     );
     await wake(host, a, b);
-    await until(() => runsSeen(a) === 2 && runsSeen(b) === 2);
+    await until(
+      () => runsSeen(a) === 2 && runsSeen(b) === 2,
+      "the second revalidate run on both tabs",
+    );
 
     const syncs = scripted.requests.filter((r) => r.url === "/api/sync");
     expect(syncs).toHaveLength(1);

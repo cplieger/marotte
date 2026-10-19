@@ -7,7 +7,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { init, markHydrated, _resetForTest } from "./sse-adapter.js";
-import { createScriptedFetch, type ScriptedFetch, until } from "./__test-helpers__/sse-fetch.js";
+import { createScriptedFetch, type ScriptedFetch } from "./__test-helpers__/sse-fetch.js";
+import { until } from "./__test-helpers__/until.js";
 
 vi.mock("./store-load.js", () => ({
   loadList: vi.fn(),
@@ -84,7 +85,7 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
       scripted.requests.filter((r) => r.url === "/api/events/alive").length;
     const before = acks();
     conn.named("heartbeat", "{}");
-    await until(() => acks() > before);
+    await until(() => acks() > before, "the heartbeat written after the frames to be acknowledged");
   }
 
   function boot(): void {
@@ -102,7 +103,7 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
   });
 
   async function opened(): Promise<NonNullable<ScriptedFetch["connections"][number]>> {
-    await until(() => scripted.connections.length === 1);
+    await until(() => scripted.connections.length === 1, "the first connection");
     const conn = scripted.connections[0];
     if (conn === undefined) {
       throw new Error("no connection");
@@ -136,7 +137,7 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
       chat_id: "chat-1",
       payload: { turn: "t1", entry_id: "e1", lane: "", delta: "x", n: 1 },
     });
-    await until(() => seen.length === 1);
+    await until(() => seen.length === 1, "the frame to be delivered");
     expect(seen).toEqual(["entry_delta"]);
   });
 

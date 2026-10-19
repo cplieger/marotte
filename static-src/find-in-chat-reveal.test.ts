@@ -299,6 +299,7 @@ function closeAfterFirstJump(): void {
     this: Element,
     arg?: boolean | ScrollIntoViewOptions,
   ) {
+    jumpedAt = Date.now();
     real.call(this, arg);
     queueMicrotask(closeChatFind);
   });
@@ -310,11 +311,10 @@ function atLiveEdge(): boolean {
   );
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
+/** scroll-controller.ts READER_CONTROL_MS: the quiet period a jump opens on `Date.now()`, inside
+ *  which no follow write is licensed. */
+const READER_CONTROL_MS = 300;
+let jumpedAt = Number.NaN;
 
 /** Frames until `scrollTop` has held for three and `also()` holds: a smooth flight never stands
  *  still mid-way, and a follow write lands in the frame after the chunk it answers. */
@@ -339,9 +339,10 @@ async function staysParkedThroughStream(chat: string): Promise<void> {
   await vi.waitFor(() => {
     expect(_isChatFindOpen()).toBe(false);
   });
-  // A moment on the controller's real clock: past the jump's quiet period, so a follow write is
-  // licensed, while a smooth flight still flies.
-  await sleep(400);
+  // Past the jump's quiet period, so the chunk's follow write is licensed and only Reading holds it.
+  await until(() => Date.now() > jumpedAt + READER_CONTROL_MS, "the jump's quiet period to close", {
+    detail: () => `${String(Date.now() - jumpedAt)}ms since the jump`,
+  });
   streamChunk(chat);
   await scrollerAtRest();
   streamChunk(chat);
@@ -362,8 +363,9 @@ function offCentre(): number {
   );
 }
 
-/** Centred, then still centred and still Reading after `holdMs`, so a correction that lands late is
- *  seen. `block: "center"` within a quarter of the scrollport: the reveal's own move is ~300px here. */
+/** Centred, then centred and Reading on every frame for `holdMs`, so a correction that lands late,
+ *  or a leave-and-return inside the hold, is seen. `block: "center"` within a quarter of the
+ *  scrollport: the reveal's own move is ~300px here. */
 async function staysCentred(holdMs: number): Promise<void> {
   await vi.waitFor(
     () => {
@@ -371,13 +373,23 @@ async function staysCentred(holdMs: number): Promise<void> {
     },
     { timeout: 5000 },
   );
-  await new Promise((resolve) => {
-    setTimeout(resolve, holdMs);
-  });
-  expect({ centred: offCentre() < VIEWPORT_PX / 4, state: readingState() }).toEqual({
-    centred: true,
-    state: "reading",
-  });
+  const start = performance.now();
+  const lapses: string[] = [];
+  await until(
+    () => {
+      const off = offCentre();
+      const state = readingState();
+      if (off >= VIEWPORT_PX / 4 || state !== "reading") {
+        lapses.push(
+          `${String(Math.round(performance.now() - start))}ms: ${String(off)}px off, ${state}`,
+        );
+      }
+      return performance.now() - start >= holdMs;
+    },
+    `the ${String(holdMs)}ms hold`,
+    { timeout: holdMs + 5000 },
+  );
+  expect(lapses).toEqual([]);
 }
 
 let style: HTMLStyleElement;

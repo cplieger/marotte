@@ -402,6 +402,23 @@ function fixtureTask(fn: () => void): void {
   }, 0);
 }
 
+/** A history with one older page: the first ask lands `page`, every later one lands nothing. A fake
+ *  scroller's history edge never leaves the lead, so a page that lands rows is re-asked for forever;
+ *  the empty page is what ends that chain before the case returns. */
+function onePage(page: () => void): () => void {
+  let asks = 0;
+  return () => {
+    asks++;
+    const first = asks === 1;
+    fixtureTask(() => {
+      if (first) {
+        page();
+      }
+      document.getElementById("load-more-skeleton")?.remove();
+    });
+  };
+}
+
 /** Every pin writes synchronously, so two frames cover the observer-driven state revalidation and
  *  the bottom pin's re-assert frame: that frame schedule is the controller's contract. */
 async function settle(): Promise<void> {
@@ -486,6 +503,14 @@ async function stillness(): Promise<void> {
  *  next test otherwise. Settling last keeps a frame queued by this cleanup out of the test that
  *  follows. */
 async function resetBetween(): Promise<void> {
+  if (fixtureTasks !== 0) {
+    const queued = fixtureTasks;
+    // Drained first, so the leak fails this case alone and not every case after it.
+    await until(() => fixtureTasks === 0, "the leaked fixture pages to drain");
+    throw new Error(
+      `${String(queued)} fixture page task(s) from the previous case were still queued: they would land in this one`,
+    );
+  }
   scroll.setAnchorProvider(null);
   messagesEl.replaceChildren();
   document.getElementById("load-more-skeleton")?.remove();
@@ -951,17 +976,24 @@ describe("pagination", () => {
   it("asks again after a page lands while the history edge is still in reach", async () => {
     // A page shorter than the lead leaves the edge inside it, where the observer reports no new crossing.
     const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
-    const load = vi.fn(() => {
-      fixtureTask(() => {
+    const load = vi.fn(
+      onePage(() => {
         messagesEl.prepend(document.createElement("div"));
-        document.getElementById("load-more-skeleton")?.remove();
         s.scrollHeight += 100;
-      });
-    });
+      }),
+    );
     scroll.setLoadMore(load, true);
     readerScroll();
-    await until(() => load.mock.calls.length >= 2, "a second ask after the page landed");
-    expect(load.mock.calls.length).toBeGreaterThanOrEqual(2);
+    await until(
+      () => load.mock.calls.length >= 2 && fixtureTasks === 0,
+      "the second page to land",
+      {
+        detail: () =>
+          `${String(load.mock.calls.length)} asks, ${String(fixtureTasks)} pages queued`,
+      },
+    );
+    await settle();
+    expect(load).toHaveBeenCalledTimes(2);
   });
 
   it("does not ask again after a page that landed nothing, until the edge is reached anew", async () => {
@@ -981,6 +1013,7 @@ describe("pagination", () => {
     scroll.noteHistoryEdge(false);
     scroll.noteHistoryEdge(true);
     expect(load).toHaveBeenCalledTimes(2);
+    await until(() => fixtureTasks === 0, "the second empty page to land");
   });
 
   it("asks for the page that was held back once a self-scroll flight ends", async () => {
@@ -999,19 +1032,20 @@ describe("pagination", () => {
   // give back exactly the height it gained.
   it("keeps the reader's position when the older page lands above them", async () => {
     const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
-    scroll.setLoadMore(() => {
-      // The real caller fetches, prepends the page, and drops the skeleton — all after
-      // maybeLoadMore has returned and its observer is watching.
-      fixtureTask(() => {
+    // The real caller fetches, prepends the page, and drops the skeleton — all after
+    // maybeLoadMore has returned and its observer is watching.
+    const load = vi.fn(
+      onePage(() => {
         messagesEl.prepend(document.createElement("div"));
-        document.getElementById("load-more-skeleton")?.remove();
         s.scrollHeight = 1400;
-      });
-    }, true);
+      }),
+    );
+    scroll.setLoadMore(load, true);
     readerScroll();
-    await until(() => s.scrollTop === 400, "the reader held 400px down the grown page", {
-      detail: () => `scrollTop ${String(s.scrollTop)}`,
+    await until(() => load.mock.calls.length >= 2 && fixtureTasks === 0, "both pages to land", {
+      detail: () => `${String(load.mock.calls.length)} asks, ${String(fixtureTasks)} pages queued`,
     });
+    await settle();
     expect(s.scrollTop).toBe(400);
   });
 
@@ -1030,6 +1064,7 @@ describe("pagination", () => {
     s.scrollTop = 0;
     readerScroll();
     expect(load).toHaveBeenCalledTimes(2);
+    await until(() => fixtureTasks === 0, "the second page to land");
   });
 
   // A pagination pass belongs to the chat that started it. Its completion signal does not: the
