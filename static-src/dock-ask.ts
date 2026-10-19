@@ -16,6 +16,18 @@ const ASK_ROWS_PROP = "--ask-rows";
  *  ceiling in `css/26-dock.css`. */
 const DOCK_VIEWPORT_PROP = "--dock-viewport-h";
 
+/** Under this visual-viewport height the run dock steps aside for an ask card (`[data-short-band]`,
+ *  `css/18-pages.css`): from here down, the dock, a card's floors and the composer outgrow the bar. */
+const SHORT_BAND_REM = 40;
+
+/** Under this one the steer stack and an idle composer step aside for a question card too (`[data-tight-band]`,
+ *  `css/26-dock.css`): a four-line question at 320px wide needs about 306px of band beside the composer. */
+const TIGHT_BAND_REM = 20;
+
+/** A band this far under the layout viewport is a soft keyboard (`[data-keyboard]`, `css/26-dock.css`): it separates
+ *  the soft-keyboard bands the layout tests model from a window whose layout and visual viewports are equal. */
+const KEYBOARD_MIN_REM = 8;
+
 interface AskHead {
   /** The region to append anything else the card says about its ask to. */
   readonly body: HTMLElement;
@@ -68,11 +80,10 @@ export function publishViewportHeight(): void {
     return;
   }
   viewportWired = true;
-  const root = document.documentElement;
   let frame = 0;
   const paint = (): void => {
     frame = 0;
-    root.style.setProperty(DOCK_VIEWPORT_PROP, `${String(Math.round(vv.height))}px`);
+    paintViewportHeight(vv.height, vv.scale);
   };
   const schedule = (): void => {
     if (frame === 0) {
@@ -81,6 +92,29 @@ export function publishViewportHeight(): void {
   };
   vv.addEventListener("resize", schedule);
   paint();
+}
+
+/** Write what the bar reads for a visual viewport `height` px tall at pinch-zoom `scale`: `--dock-viewport-h`, and
+ *  `data-short-band`, `data-tight-band` and `data-keyboard` from the unzoomed band, `height * scale` (CSSOM View
+ *  divides the visual viewport by its scale), so zooming in to read never hides the composer or the run dock. */
+export function paintViewportHeight(height: number, scale: number): void {
+  const root = document.documentElement;
+  root.style.setProperty(DOCK_VIEWPORT_PROP, `${String(Math.round(height))}px`);
+  const rem = Number.parseFloat(getComputedStyle(root).fontSize);
+  const band = height * scale;
+  root.toggleAttribute("data-short-band", band < SHORT_BAND_REM * rem);
+  root.toggleAttribute("data-tight-band", band < TIGHT_BAND_REM * rem);
+  root.toggleAttribute("data-keyboard", root.clientHeight - band >= KEYBOARD_MIN_REM * rem);
+  for (const follow of bandFollowers) {
+    follow();
+  }
+}
+
+const bandFollowers: (() => void)[] = [];
+
+/** Call `follow` after each band `paintViewportHeight` writes, once the stylesheet can read it. */
+export function followBand(follow: () => void): void {
+  bandFollowers.push(follow);
 }
 
 /** The card's ONE right-aligned button row, holding every button it has. */

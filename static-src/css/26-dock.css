@@ -180,13 +180,11 @@
 
   /* THE ANSWER CONTROLS MAY NEVER LEAVE THE VIEWPORT, whatever the agent asked.
      An unbounded card does not make the page scroll: the bar grows to expose the
-     dock, `.bottom-bar` is `flex-shrink: 0` (19-files.css) and `#chat-area` is
-     `overflow: hidden` (12-chat.css), so the transcript's flex row collapses to
-     zero first and the bar then overflows the bottom of the view and is CLIPPED
-     there, with no scrollbar anywhere in the chain. Measured on a 390x844 phone
-     against a 2,003-character question: the message box, the card's own Send and
-     its Skip were all past the fold, so the reader could neither answer nor
-     dismiss.
+     dock and `#chat-area` is `overflow: hidden` (12-chat.css), so the transcript's
+     flex row collapses to zero first. With no ceiling and no bar shrink (below),
+     measured on a 390x844 phone against a 2,003-character question, the message box,
+     the card's own Send and its Skip were all past the fold. The ceiling keeps the
+     transcript in view; the bar's shrink is the last guard.
 
      The ceiling sits on the CARD rather than on `.decision-dock` because the
      tray's `overflow: clip` is load-bearing for the height animation above —
@@ -216,6 +214,145 @@
   overflow: hidden auto;
 }
 
+/* THE BAR SHRINKS ITS CARD BEFORE IT CLIPS ITS COMPOSER. A card's ceiling is a share of
+   the visual viewport, blind to the rest of the bar, so on a short view (a phone on its
+   side) a card at its ceiling plus the composer outgrows the view, and `#chat-area` would
+   clip the composer. Shrinkable, the bar hands that excess to the tray and the tray to its card,
+   whose regions give in their own order. Inert while the bar fits: the transcript's basis
+   is 0. The tray is `overflow: clip`, not a scroller, so it needs the zero floor written. */
+.bottom-bar:is([id="prompt-form"], .run-bottom-bar) {
+  flex-shrink: 1;
+  min-block-size: 0;
+}
+
+[id="prompt-form"] > .decision-dock,
+.run-bottom-bar > .decision-dock {
+  flex-shrink: 1;
+  min-block-size: 0;
+}
+
+/* A PHONE ON ITS SIDE GIVES A WAITING QUESTION THE WHOLE BAR. Under the app's chrome a 320-390px
+   view holds 232-302px: beside the composer and the run strip an ordinary question does not fit
+   above the card's floors (a one-row answer box, the button row); with them aside it does. While
+   the card is up they step aside; the card's own box takes the typing (`decision-dock.ts`
+   `focusAnswerIfAside`) and the composer's draft waits in its hidden box. The tray drops the gap
+   it kept above them, a queued steer below it takes that gap, and the answer box opens at one row. */
+@media (height <= 30rem) {
+  [id="prompt-form"]:has(> .decision-dock > .dock-user-input)
+    > :is(.run-bar-host, [id="prompt-box"]),
+  .run-bottom-bar:has(> .decision-dock > .dock-user-input) > [id="run-composer"] {
+    display: none;
+  }
+
+  :is([id="prompt-form"], .run-bottom-bar) > .decision-dock:has(> .dock-user-input) {
+    margin-block-end: 0;
+
+    & ~ .steer-stack {
+      margin-block-start: var(--stack-gap);
+    }
+  }
+
+  .dock-user-input .dock-ask-text {
+    min-block-size: calc(1lh + 2 * var(--sp-2) + 2px);
+  }
+}
+
+/* WITH A QUESTION UP, THE BAR ENDS WHERE THE BAND DOES. Under a soft keyboard (`[data-keyboard]`)
+   the band is modelled as ending at the text box that took the typing (iOS pans the visual viewport
+   to the focused field; how far is a device check). With a composer's (`[data-typing]`), the content
+   box is the band plus what sits under that text (the chat's pill row and two borders, the run box's
+   bottom border), and `content-box` keeps the padding, the bottom one following the home-indicator
+   inset, out of it. Otherwise the band ends at the bar's bottom and the bar is the band. The run bar
+   only on a short band: above it its own three-quarter ceiling (18-pages.css) keeps the transcript. */
+[id="prompt-form"]:has(> .decision-dock > .dock-user-input),
+:where(:root[data-short-band]) .run-bottom-bar:has(> .decision-dock > .dock-user-input) {
+  box-sizing: border-box;
+  max-block-size: var(--dock-viewport-h, 100dvh);
+}
+
+[id="prompt-form"][data-typing="composer"]:has(> .decision-dock > .dock-user-input) {
+  :where(:root[data-keyboard]) & {
+    box-sizing: content-box;
+    max-block-size: calc(
+      var(--dock-viewport-h, 100dvh) + var(--composer-ctl-h) + 2 * var(--composer-pill-pad) + 2px
+    );
+  }
+}
+
+.run-bottom-bar[data-typing="composer"]:has(> .decision-dock > .dock-user-input) {
+  :where(:root[data-keyboard][data-short-band]) & {
+    box-sizing: content-box;
+    max-block-size: calc(var(--dock-viewport-h, 100dvh) + 1px);
+  }
+}
+
+/* ONE ALLOCATION OF THE BAR WHILE A QUESTION WAITS. Floors, in order: the card's controls (its tallest
+   option, the answer box, Send and Skip), two lines of its question, one queued steer, the composer at
+   one line. Above them the bar gives the steer rows past the first, then the question past its floor,
+   then the draft: flex shrink is weight times size, so the weights sit three orders apart. Where the
+   ceiling cannot hold every floor, `decision-dock.ts` `paintFloor` lowers the steer row's, then the
+   question's second line, and writes the tray's (`--dock-floor`: a flex column cannot see a floor
+   nested in a scroller). Not while the tray animates: it would hold the tray off its pinned height. */
+:is([id="prompt-form"], .run-bottom-bar)
+  > .decision-dock:has(> .dock-user-input):not([data-dock-phase]) {
+  flex-shrink: 1000;
+  min-block-size: var(--dock-floor, 0);
+}
+
+:is([id="prompt-form"], .run-bottom-bar):where(:has(> .decision-dock > .dock-user-input)) {
+  /* One steer row: its action button (`--steer-act-size`) and the row's padding and border. */
+  & > .steer-stack {
+    flex-shrink: 1000000;
+    min-block-size: var(--steer-floor, calc(max(1lh, var(--hit-floor)) + 2 * var(--sp-2) + 2px));
+    overflow: hidden auto;
+  }
+
+  /* One draft line and the pill row (each `--composer-rest-h`, 15-input.css), the box's two
+     borders and the row's divider. */
+  & > [id="prompt-box"] {
+    min-block-size: calc(2 * (var(--composer-ctl-h) + 2 * var(--composer-pill-pad)) + 3px);
+  }
+
+  & > [id="run-composer"] {
+    flex: 0 1 auto;
+    min-block-size: calc(var(--composer-ctl-h) + 2 * var(--composer-pill-pad) + 2px);
+
+    & > .run-composer-box {
+      min-block-size: 0;
+    }
+
+    & [id="run-composer-input"] {
+      align-self: stretch;
+    }
+  }
+}
+
+/* WHAT STEPS ASIDE WHEN THE FLOORS OUTGROW THE BAND, keyed on state (the band flags, `dock-ask.ts`;
+   `[data-typing]`, `decision-dock.ts`), never on `:focus`: a pressed button takes focus at pointerdown,
+   and a bar reflowing then moves it from under the pointer before the click. Under a soft keyboard on
+   a short band: the run strip, and a composer while the card's answer box holds the typing. On a
+   tight band the steer stack, the "more waiting" row and a composer not holding the typing too: there
+   the card's floors and one line of a composer fill the band. A composer holding the typing stays:
+   the question that arrived is not what it sends to, so the cursor stays. */
+:where(:root[data-keyboard][data-short-band]) {
+  & [id="prompt-form"]:where(:has(> .decision-dock > .dock-user-input)) > .run-bar-host,
+  &
+    .bottom-bar[data-typing="card"]:where(:has(> .decision-dock > .dock-user-input))
+    > :is(.prompt-box, .run-composer) {
+    display: none;
+  }
+}
+
+.bottom-bar:where(:has(> .decision-dock > .dock-user-input)) {
+  & > .steer-stack,
+  & > .decision-dock > .dock-depth,
+  &:not([data-typing="composer"]) > :is(.prompt-box, .run-composer) {
+    :where(:root[data-tight-band]) & {
+      display: none;
+    }
+  }
+}
+
 /* THE ASK'S PROSE GIVES UP HEIGHT; ITS CONTROLS NEVER DO. That split is what
    makes the ceiling above safe rather than merely tidy: the reader can always
    reach Send, and reaching the rest of a long question is a scroll instead of a
@@ -229,13 +366,10 @@
    one was written here and measured inert. Both axes are spelled for the reason
    `.dock-card` states above.
 
-   Shrink is proportional to content, so a card carrying a long question AND a long
-   option list squeezes the question's region hardest; nothing is lost by that,
-   because the region is a scroller and the question inside it is pinned (see
-   `.dock-ask-question` below). Measured with 10 options at 390px: the question's
-   region 26px scrolling over its four pinned lines, the options 212, the answer box
-   and Skip untouched. The always chooser's patterns scroll the same way, or an open
-   chooser would squeeze the ask it answers to nothing. */
+   Which region gives first is the card's own call: the question card's options give
+   before its question (`.dock-user-input > .user-input-options` below).
+   The always chooser's patterns scroll the same way, or an open chooser would
+   squeeze the ask it answers to nothing. */
 .dock-card
   > :where(
     .approval-body,
@@ -250,9 +384,9 @@
 
 /* THE ASKED TOOL'S TITLE LINE NEVER GIVES. Being a scroller, the body's automatic minimum is
    0, while the policy pointer below the buttons is a plain block that keeps every line: under
-   the phone's fifth-of-the-screen cap the body alone shrank, to 6px at 360px, and the card
-   showed how to answer but not what. One line of floor keeps the title, whose line opens the
-   body; what that costs the cap, the card's backstop scroll takes, from the pointer's end. */
+   a short ceiling the body alone shrank, and the card showed how to answer but not what. One
+   line of floor keeps the title, whose line opens the body; what that costs the cap, the
+   card's backstop scroll takes, from the pointer's end. */
 .dock-card > .approval-body {
   min-block-size: 1lh;
 }
@@ -292,6 +426,51 @@
 
 .dock-user-input .dock-ask-body strong {
   color: var(--c-yellow);
+}
+
+/* ON A SHORT BAND THE BAR'S ALLOCATION SIZES THE QUESTION CARD (above). A raised keyboard leaves a
+   phone a 261-429px band, whose 0.55 (143-236px) is under a short question, the answer box and the
+   button row; the shared fraction keeps a transcript in view, which such a band no longer holds. */
+:where(:root[data-short-band]) .dock-card.dock-user-input {
+  max-block-size: none;
+}
+
+/* The two-line floor (`.dock-ask-body` below) is two of the question's own lines. The second gives to
+   the card's controls where the bar's ceiling cannot hold both (`--ask-floor`, `decision-dock.ts`
+   `paintFloor`). */
+.dock-user-input > .dock-ask-body {
+  font-size: var(--fs-md);
+  min-block-size: var(--ask-floor, 2lh);
+}
+
+/* THE OPTIONS GIVE BEFORE THE QUESTION DOES. Flex shrink is shared in proportion to
+   shrink factor times size, so at 1 each a squeezed card cuts its question to the 2lh floor
+   while the options keep most of theirs, and a three-line question loses its last line. At
+   this weight the options take all but a fraction of a pixel of the overflow, down to
+   their floor; only then does the question region shrink and scroll. */
+.dock-user-input > .user-input-options {
+  flex-shrink: 1000;
+
+  /* AN OPTION IS A CONTROL, SO IT NEVER GIVES: the region keeps its tallest option whole up to its
+     own ceiling (`--options-floor`, `decision-dock.ts` `paintOptionsFloor`; before its first measure,
+     one plain option row) and scrolls the rest, and no option shrinks inside its own border. */
+  min-block-size: var(--options-floor, max(var(--hit-floor), calc(1lh + 2 * var(--sp-2) + 2px)));
+
+  & > * {
+    flex-shrink: 0;
+  }
+
+  /* On a short band the plain options share a row as far as their labels fit on one line each, so a
+     two-option question keeps both whole; an option that does not fit opens the next row. */
+  &:not(:empty, :has(.user-input-option-desc, .user-input-option-more, .user-input-sub-label)) {
+    :where(:root[data-short-band]) & {
+      flex-flow: row wrap;
+
+      & > .user-input-option {
+        flex: 1 1 auto;
+      }
+    }
+  }
 }
 
 .dock-depth {
@@ -391,6 +570,10 @@
 .dock-ask-question {
   flex: none;
   overflow-wrap: anywhere;
+
+  /* The agent writes its paragraphs with blank lines (kiro-cli's loop prompt ends on its own
+     "What would you like me to do?" paragraph); collapsing them runs the ask into the preamble. */
+  white-space: pre-line;
 }
 
 /* THE ANSWER BOX GETS ITS ROW TO ITSELF, and no button shares it. The user-input
@@ -432,7 +615,17 @@
      box plus the padding and border this box carries, because `box-sizing` is
      `border-box`. Absent, three rows, which is the free-form caller's own opening. */
   field-sizing: content;
-  min-block-size: calc(var(--ask-rows, 3) * 1lh + 2 * var(--sp-2) + 2px);
+
+  /* On a keyboard band under ~23rem (a 375px phone) the opening rows give way, down to one
+     row: 18rem is about the rest of the chat's bar beside them with a four-line question up,
+     so the rows give before the question's lines do. */
+  min-block-size: max(
+    calc(1lh + 2 * var(--sp-2) + 2px),
+    min(
+      calc(var(--ask-rows, 3) * 1lh + 2 * var(--sp-2) + 2px),
+      calc(var(--dock-viewport-h, 100dvh) - 18rem)
+    )
+  );
 
   /* A DRAGGED HEIGHT WOULD DEFEAT THE RESERVATION ABOVE: an explicit height beats
      content sizing, so a reader who pulled the grabber down could push Send out of
@@ -1218,13 +1411,9 @@
 }
 
 /* A phone-shaped screen: an open run list shows every run up to half the visual
-   viewport; the ask card keeps to a fifth. */
+   viewport. */
 @media (width <= 48rem), (height <= 30rem) {
   .run-bar-host {
     --run-cap: calc(0.5 * var(--dock-viewport-h, 100dvh));
-  }
-
-  .dock-card {
-    max-block-size: calc(0.2 * var(--dock-viewport-h, 100dvh));
   }
 }

@@ -1088,11 +1088,12 @@
    parent collapses, so the two cannot be separated. */
 /* ONE CEILING FOR THE WHOLE BAR, against the visual viewport (`--dock-viewport-h`,
    `dock-ask.ts`), so the run dock's open panel, an ask card and the composer together
-   never push the composer off a phone with its keyboard up. The run dock is the one
-   member that gives (31-exec-view.css); the ask card keeps its own cap and the
-   composer never shrinks. */
+   never push the composer off a phone with its keyboard up. With no card up the run dock
+   gives (31-exec-view.css); with one it is never cut through its head (below), and with a
+   question up the dock's one allocation decides between the card and the composer
+   (26-dock.css). The bar's flex, shrinkable in a short view, is the dock's
+   (26-dock.css `.bottom-bar:is(…)`). */
 .run-bottom-bar {
-  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   max-block-size: calc(0.75 * var(--dock-viewport-h, 100dvh));
@@ -1105,6 +1106,19 @@
   & > .ev-dock-host {
     flex: 0 1 auto;
     margin-block-end: var(--stack-gap);
+  }
+
+  /* WITH A CARD UP THE RUN DOCK IS NEVER A SLICE CUT THROUGH ITS HEAD: closed, it keeps its
+     height and the card gives; open, its panel gives (31-exec-view.css). On a short band
+     (`[data-short-band]`, `dock-ask.ts`) the card and the composer need the bar, so it goes. */
+  &:where(:has(> .decision-dock > .dock-card)) > .ev-dock-host {
+    &:not(:has(> .ev-dock[data-open])) {
+      flex: none;
+    }
+
+    :where(:root[data-short-band]) & {
+      display: none;
+    }
   }
 }
 
