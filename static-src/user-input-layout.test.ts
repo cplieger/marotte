@@ -13,7 +13,7 @@ import {
   pushDecision,
   type AnswerOutcome,
 } from "./decision-dock.js";
-import { paintViewportHeight } from "./dock-ask.js";
+import { paintViewportHeight, publishViewportHeight } from "./dock-ask.js";
 import { mountSteerStack } from "./pending-steers.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { setActive, setSessions } from "./store.js";
@@ -554,6 +554,8 @@ describe("a waiting question and the composer", () => {
     text = DRAFT,
   ): Promise<HTMLTextAreaElement> {
     await browser.viewport(width, height);
+    // Wired here, not by the first card built: wiring paints the real visual viewport over a band a test painted.
+    publishViewportHeight();
     document.documentElement.setAttribute("data-pointer", "coarse");
     document.documentElement.setAttribute("data-theme", theme);
     style = mountAppCSS();
@@ -964,6 +966,37 @@ describe("a waiting question and the composer", () => {
     window.dispatchEvent(new Event("resize"));
     await settle();
     expect(card.scrollTop, "the reader's scroll").toBe(0);
+  });
+
+  it("chat: on a phone on its side under a keyboard, opens the next question at its controls after the reader scrolled the first", async () => {
+    await mountDocked("chat", 844, 390);
+    paintViewportHeight(170, 1);
+    const first = await pushQuestion("chat");
+    pushDecision({
+      kind: "user_input",
+      chatID: "c1",
+      requestID: 2,
+      payload: { ...QUESTION, request_id: 2 },
+      submit: () => Promise.resolve("answered"),
+    });
+    const tray = first.parentElement!;
+    await expect
+      .poll(() => tray.dataset["dockPhase"], { message: "the tray settled" })
+      .toBeUndefined();
+    expect(first.scrollHeight, "a card that scrolls").toBeGreaterThan(first.clientHeight + 1);
+    first.scrollTop = 0;
+    await settle();
+
+    collapseSettledDecision("c1", "user_input", 1, "user");
+    await settle();
+    expect(tray.dataset["dockPhase"], "the next question advancing in").toBe("advancing");
+    await expect
+      .poll(() => tray.dataset["dockPhase"], { message: "the tray settled" })
+      .toBeUndefined();
+    const second = tray.querySelector<HTMLElement>(":scope > .dock-user-input")!;
+    expect(second, "the next question's card").not.toBe(first);
+    expect(second.scrollHeight, "a card that scrolls").toBeGreaterThan(second.clientHeight + 1);
+    opensAtItsAnswer(second, 170);
   });
 
   it("chat: re-measures the card's floor when the keyboard rises under a free-form question", async () => {

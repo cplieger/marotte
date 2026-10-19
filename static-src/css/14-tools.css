@@ -1726,7 +1726,6 @@ a.subagent-header {
   .user-input-option-more,
   .user-input-sub-label
 ) {
-  min-inline-size: 0;
   overflow-wrap: anywhere;
 }
 

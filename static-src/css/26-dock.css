@@ -451,9 +451,9 @@
 .dock-user-input > .user-input-options {
   flex-shrink: 1000;
 
-  /* AN OPTION IS A CONTROL, SO IT NEVER GIVES: the region keeps its tallest option whole
-     (`--options-floor`, `decision-dock.ts` `paintOptionsFloor`; before its first measure, one plain
-     option row) and scrolls to the rest, and no option shrinks inside its own border. */
+  /* AN OPTION IS A CONTROL, SO IT NEVER GIVES: the region keeps its tallest option whole up to its
+     own ceiling (`--options-floor`, `decision-dock.ts` `paintOptionsFloor`; before its first measure,
+     one plain option row) and scrolls the rest, and no option shrinks inside its own border. */
   min-block-size: var(--options-floor, max(var(--hit-floor), calc(1lh + 2 * var(--sp-2) + 2px)));
 
   & > * {

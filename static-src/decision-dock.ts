@@ -119,7 +119,7 @@ interface DockHost {
   card: HTMLElement | null;
   /** Whether the bar's composer rendered at the last `focusAnswerIfAside`. */
   composerShown: boolean;
-  /** Whether the question card outgrew its floors at the last `paintFloor`. */
+  /** Whether the question card's floors outgrew the bar's room at the last `paintFloor`, so it scrolls. */
   cardScrolls: boolean;
   /** The answered card, kept on screen (neutralised) for the phase's duration.
    *  At most one per host, ever. */
@@ -826,7 +826,8 @@ function roomFor(h: DockHost): number {
 
 /**
  * Publish the options region's floor, which `css/26-dock.css` gives it as its `min-block-size`: what stands before its
- * first control and its tallest control, so each option is whole once scrolled to, however its description wraps.
+ * first control and its tallest control, so each option up to the region's ceiling is whole once scrolled to, however
+ * its description wraps.
  * Never above the region's own ceiling: a minimum beats a maximum, so a taller option would push the answer controls
  * off the band; it scrolls inside the region instead.
  */
