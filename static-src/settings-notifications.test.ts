@@ -1,6 +1,7 @@
 // The master switch going ON: it enables the DEFAULT-ON kinds, not all of them. A write that
 // newer settings superseded still does this click's own part when those settings agree with it,
-// and a kind write that committed applies what it committed.
+// and a kind write that committed applies what it committed. What a kind click does to the master
+// switch is the settings state's, so settings-sync.test.ts runs those cases on the real persist.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { settingsPayload } from "./__test-helpers__/settings.js";
@@ -8,8 +9,8 @@ import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
 
 const mocks = vi.hoisted(() => ({
   patches: [] as Record<string, unknown>[],
-  /** What the settings write answers: a record on success, null on refusal. */
-  patchResult: { ok: true } as object | null | "superseded",
+  /** What the settings write answers: the committed settings on success, null on refusal. */
+  patchResult: null as object | null | "superseded",
   /** Whether the newest settings have notifications on; null when they cannot be read. */
   newestOn: null as boolean | null,
   unregisters: 0,
@@ -93,7 +94,7 @@ async function flipped(id: string, on: boolean): Promise<void> {
 
 beforeEach(() => {
   mocks.patches = [];
-  mocks.patchResult = { ok: true };
+  mocks.patchResult = settingsPayload({ notifications_enabled: true });
   mocks.newestOn = null;
   mocks.unregisters = 0;
   mocks.hold = null;
@@ -190,19 +191,6 @@ describe("a write newer settings superseded", () => {
     expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBeNull();
     expect(mocks.unregisters).toBe(0);
   });
-
-  it("spends the ask when every kind went off and the newest settings agree", async () => {
-    notify.setNotificationsEnabled(true);
-    notify.setKindEnabled("agent_finished", true);
-    input(KIND_IDS.agent_finished).checked = true;
-    input(KIND_IDS.pr_status).checked = false;
-    input(KIND_IDS.run_outcome).checked = false;
-    mocks.newestOn = false;
-    await flipped(KIND_IDS.agent_finished, false);
-    expect(mocks.patches[0]).toMatchObject({ notifications_enabled: false });
-    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBe("1");
-    expect(mocks.unregisters).toBe(1);
-  });
 });
 
 describe("a kind write that committed", () => {
@@ -225,23 +213,5 @@ describe("a kind write that committed", () => {
     release();
     await settle();
     expect(notify.isKindEnabled("agent_finished")).toBe(false);
-  });
-
-  it("keeps notifications on when the write that turned every kind off committed them on", async () => {
-    notify.setNotificationsEnabled(true);
-    input(KIND_IDS.agent_finished).checked = true;
-    input(KIND_IDS.pr_status).checked = false;
-    input(KIND_IDS.run_outcome).checked = false;
-    // The master switch turned back on inside the same debounce, so the one write carries it on.
-    mocks.patchResult = settingsPayload({
-      notifications_enabled: true,
-      notify_agent_finished: false,
-      notify_run_outcome: false,
-    });
-    await flipped(KIND_IDS.agent_finished, false);
-    expect(mocks.patches[0]).toMatchObject({ notifications_enabled: false });
-    expect(notify.areNotificationsEnabled()).toBe(true);
-    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBeNull();
-    expect(mocks.unregisters).toBe(0);
   });
 });

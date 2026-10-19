@@ -19,7 +19,7 @@ const H = vi.hoisted(() => ({
   mockInitGitPanel: vi.fn(),
   mockOpenConfigFile: vi.fn(() => Promise.resolve()),
   mockHeapDispatch: vi.fn<(args: { mib: number }) => Promise<unknown>>(),
-  /** Whether persist.adoptSettings takes a write's answer: false for one older than the page holds. */
+  /** Whether persist.adoptWriteAnswer takes a write's answer: false for one the page does not adopt. */
   adopts: true,
 }));
 
@@ -71,7 +71,7 @@ vi.mock("./persist.js", () => ({
   loadSettings: vi.fn(),
   refreshSettings: vi.fn(),
   patchSettings: vi.fn(() => Promise.resolve({})),
-  adoptSettings: () => H.adopts,
+  adoptWriteAnswer: () => H.adopts,
   newestSettings: vi.fn(),
   settingsAsShown: vi.fn(() => null),
 }));

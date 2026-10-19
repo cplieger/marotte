@@ -1,9 +1,12 @@
 // The real settings controls against a model server, for any interleaving of clicks, debounce
-// flushes, this page's writes committing one at a time, another device's writes, settings events and
-// reads: at rest the server, each control and the state the page acts on all hold the user's last
-// click on that control. The controls are a notification kind row (a real click on the shipped
-// markup) and the last-model memory (session-context.setLastModel); another device writes only keys
-// neither control owns, so the last click is the oracle. Only fetch is faked.
+// flushes, this page's writes committing one at a time and answering late, another device's writes,
+// a directory's verdict changing with no write, settings events and reads: at rest the server, each
+// control and the state the page acts on all hold the user's last click on that control. The
+// controls are a notification kind row (a real click on the shipped markup, reachable only while
+// the kind rows show), the last-model memory (session-context.setLastModel) and the additional
+// directories panel; another device writes only keys no control owns, so the last click is the
+// oracle, and the verdicts the page acts on are those of the newest payload the server resolved for
+// it. Only fetch and the debounce timers are faked.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import fc from "fast-check";
 import indexHtml from "../static/index.html?raw";
@@ -13,31 +16,57 @@ import { __testResetTracking } from "./persist.js";
 import { dispatch } from "./bus.js";
 import type { ServerEvent } from "./types.js";
 import { byId } from "./dom.js";
-import { isKindEnabled } from "./notify.js";
+import { areNotificationsEnabled, isKindEnabled } from "./notify.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 import { getLastModel, setLastModel } from "./session-context.js";
-import { _resetForTest as resetWorkspace } from "./workspace.js";
+import { initAgentDirsUI } from "./agent-dirs-ui.js";
+import { additionalDirectories, _resetForTest as resetWorkspace } from "./workspace.js";
 
 type Action =
   | { t: "kind" }
   | { t: "pick"; model: "A" | "B" }
+  | { t: "dir" }
   | { t: "flush" }
   | { t: "commit" }
+  | { t: "deliver" }
   | { t: "other" }
+  | { t: "drift" }
   | { t: "event" }
   | { t: "serveRead" };
+
+/** The page's starting settings: notifications are on unless every kind is off. */
+interface Start {
+  /** notify_agent_finished, the clicked kind. */
+  kind: boolean;
+  /** notify_run_outcome, a kind no click moves; with it off the clicked kind can be the last one on. */
+  sibling: boolean;
+}
 
 interface Held {
   body: Partial<EffectiveSettings>;
   answer: (s: EffectiveSettings | null) => void;
 }
 
+/** A payload the server resolved, with when. */
+interface Resolved {
+  seq: number;
+  payload: EffectiveSettings;
+}
+
 interface World {
   server: EffectiveSettings;
+  /** Whether /a is refused at a read, a verdict config.json does not hold. */
+  refusedA: boolean;
+  /** How many payloads the server has resolved. */
+  resolved: number;
   patches: Held[];
+  /** Committed writes' answers, resolved at commit and not delivered yet. */
+  answers: { held: Held; resolved: Resolved }[];
   gets: Held[];
   events: number[];
-  last: { kind?: boolean; model?: string };
+  /** The newest-resolved payload delivered to the page. */
+  received: Resolved | null;
+  last: { kind?: boolean; model?: string; dirA?: boolean };
 }
 
 let world: World;
@@ -95,6 +124,33 @@ function box(): HTMLInputElement {
   return byId<HTMLInputElement>("notify-finished-toggle");
 }
 
+function masterBox(): HTMLInputElement {
+  return byId<HTMLInputElement>("notify-toggle");
+}
+
+function chipRemove(dir: string): HTMLButtonElement | null {
+  return byId("agent-dirs-chips").querySelector<HTMLButtonElement>(
+    `.chip-remove[aria-label="Remove ${dir}"]`,
+  );
+}
+
+/** The server resolves a payload as a read or a write's answer does: the stored settings and each
+ *  stored directory's verdict at that moment. */
+function resolve(w: World): Resolved {
+  const refused =
+    w.refusedA && w.server.additional_directories.includes("/a")
+      ? { "/a": "/a is not a directory" }
+      : {};
+  return { seq: ++w.resolved, payload: { ...w.server, additional_directories_refused: refused } };
+}
+
+function deliver(w: World, h: Held, r: Resolved): void {
+  if (w.received === null || r.seq > w.received.seq) {
+    w.received = r;
+  }
+  h.answer(r.payload);
+}
+
 function commitOnServer(w: World, body: Partial<EffectiveSettings>): void {
   w.server = { ...w.server, ...body, settings_revision: w.server.settings_revision + 1 };
   w.events.push(w.server.settings_revision);
@@ -110,13 +166,30 @@ function announce(revision: number): void {
 async function apply(w: World, a: Action): Promise<void> {
   switch (a.t) {
     case "kind":
-      box().click();
-      w.last.kind = box().checked;
+      // A user reaches a kind row only while the rows show.
+      if (!byId("notify-sub-options").inert) {
+        box().click();
+        w.last.kind = box().checked;
+      }
       break;
     case "pick":
       setLastModel(a.model);
       w.last.model = a.model;
       break;
+    case "dir": {
+      if (byId<HTMLInputElement>("agent-dirs-input").disabled) {
+        break;
+      }
+      const remove = chipRemove("/a");
+      if (remove === null) {
+        byId<HTMLInputElement>("agent-dirs-input").value = "/a";
+        byId<HTMLButtonElement>("agent-dirs-add").click();
+      } else {
+        remove.click();
+      }
+      w.last.dirA = remove === null;
+      break;
+    }
     case "flush":
       await vi.advanceTimersByTimeAsync(300);
       break;
@@ -124,12 +197,22 @@ async function apply(w: World, a: Action): Promise<void> {
       const head = w.patches.shift();
       if (head !== undefined) {
         commitOnServer(w, head.body);
-        head.answer(w.server);
+        w.answers.push({ held: head, resolved: resolve(w) });
+      }
+      break;
+    }
+    case "deliver": {
+      const next = w.answers.shift();
+      if (next !== undefined) {
+        deliver(w, next.held, next.resolved);
       }
       break;
     }
     case "other":
       commitOnServer(w, { debug_logs: !w.server.debug_logs });
+      break;
+    case "drift":
+      w.refusedA = !w.refusedA;
       break;
     case "event": {
       const revision = w.events.shift();
@@ -138,47 +221,66 @@ async function apply(w: World, a: Action): Promise<void> {
       }
       break;
     }
-    case "serveRead":
-      w.gets.shift()?.answer(w.server);
+    case "serveRead": {
+      const head = w.gets.shift();
+      if (head !== undefined) {
+        deliver(w, head, resolve(w));
+      }
       break;
+    }
   }
   await settled();
 }
 
-async function boot(kind: boolean): Promise<World> {
+async function boot(start: Start): Promise<World> {
   __testResetTracking();
   const w: World = {
     server: settingsPayload({
       settings_epoch: 1,
       settings_revision: 1,
-      notify_agent_finished: kind,
+      notifications_enabled: start.kind || start.sibling,
+      notify_agent_finished: start.kind,
+      notify_pr_status: false,
+      notify_run_outcome: start.sibling,
       last_model: "A",
+      additional_directories: ["/data"],
     }),
+    refusedA: false,
+    resolved: 0,
     patches: [],
+    answers: [],
     gets: [],
     events: [],
+    received: null,
     last: {},
   };
   world = w;
   announce(1);
   await settled();
-  w.gets.shift()?.answer(w.server);
-  await settled();
+  await apply(w, { t: "serveRead" });
   return w;
 }
 
+function granted(s: EffectiveSettings): string[] {
+  return s.additional_directories.filter(
+    (d) => !Object.hasOwn(s.additional_directories_refused, d),
+  );
+}
+
 /** Let every write, event and read play out, then require the user's last click everywhere. */
-async function quiesce(w: World, kind: boolean): Promise<void> {
+async function quiesce(w: World, start: Start): Promise<void> {
   for (let guard = 0; guard < 100; guard++) {
     await apply(w, { t: "flush" });
     const next: Action | null =
       w.patches.length > 0
         ? { t: "commit" }
-        : w.events.length > 0
-          ? { t: "event" }
-          : w.gets.length > 0
-            ? { t: "serveRead" }
-            : null;
+        : w.answers.length > 0
+          ? { t: "deliver" }
+          : w.events.length > 0
+            ? { t: "event" }
+            : w.gets.length > 0
+              ? { t: "serveRead" }
+              : null;
     if (next === null) {
       break;
     }
@@ -186,19 +288,34 @@ async function quiesce(w: World, kind: boolean): Promise<void> {
   }
   expect(w.patches, "every write answered").toEqual([]);
   expect(w.gets, "every read answered").toEqual([]);
-  const wantKind = w.last.kind ?? kind;
+  const wantKind = w.last.kind ?? start.kind;
   expect(w.server.notify_agent_finished, "the server holds the last kind click").toBe(wantKind);
   expect(box().checked, "the kind row shows it").toBe(wantKind);
   expect(isKindEnabled("agent_finished"), "notifications follow it").toBe(wantKind);
+  // Notifications are off exactly when every kind is.
+  const wantOn = wantKind || start.sibling;
+  expect(w.server.notifications_enabled, "the server's notification switch").toBe(wantOn);
+  expect(masterBox().checked, "the notification switch shows it").toBe(wantOn);
+  expect(areNotificationsEnabled(), "the page notifies by it").toBe(wantOn);
   const wantModel = w.last.model ?? "A";
   expect(w.server.last_model, "the server holds the last pick").toBe(wantModel);
   expect(getLastModel(), "a new chat opens with it").toBe(wantModel);
+  const wantDirs = w.last.dirA === true ? ["/data", "/a"] : ["/data"];
+  expect(w.server.additional_directories, "the server holds the last directory click").toEqual(
+    wantDirs,
+  );
+  const newest = w.received?.payload;
+  expect(newest, "a payload reached the page").toBeDefined();
+  if (newest !== undefined) {
+    expect(additionalDirectories(), "links follow the newest verdicts").toEqual(granted(newest));
+  }
 }
 
 /** A failed run leaves requests held; failing them frees the settings queue for the next run. */
 async function drain(w: World): Promise<void> {
-  for (let i = 0; i < 20 && (w.patches.length > 0 || w.gets.length > 0); i++) {
-    for (const h of [...w.patches.splice(0), ...w.gets.splice(0)]) {
+  for (let i = 0; i < 20 && w.patches.length + w.answers.length + w.gets.length > 0; i++) {
+    const open = [...w.patches.splice(0), ...w.answers.splice(0).map((a) => a.held)];
+    for (const h of [...open, ...w.gets.splice(0)]) {
       h.answer(null);
     }
     await settled();
@@ -207,27 +324,32 @@ async function drain(w: World): Promise<void> {
   }
 }
 
-async function run(kind: boolean, actions: readonly Action[]): Promise<void> {
-  const w = await boot(kind);
+async function run(start: Start, actions: readonly Action[]): Promise<void> {
+  const w = await boot(start);
   try {
     for (const a of actions) {
       await apply(w, a);
     }
-    await quiesce(w, kind);
+    await quiesce(w, start);
   } finally {
     await drain(w);
   }
 }
 
+const start: fc.Arbitrary<Start> = fc.record({ kind: fc.boolean(), sibling: fc.boolean() });
+
 const action: fc.Arbitrary<Action> = fc.oneof(
   { weight: 4, arbitrary: fc.constant({ t: "kind" as const }) },
   {
-    weight: 4,
+    weight: 3,
     arbitrary: fc.constantFrom("A", "B").map((model) => ({ t: "pick" as const, model })),
   },
+  { weight: 2, arbitrary: fc.constant({ t: "dir" as const }) },
   { weight: 3, arbitrary: fc.constant({ t: "flush" as const }) },
   { weight: 3, arbitrary: fc.constant({ t: "commit" as const }) },
+  { weight: 3, arbitrary: fc.constant({ t: "deliver" as const }) },
   { weight: 2, arbitrary: fc.constant({ t: "other" as const }) },
+  { weight: 1, arbitrary: fc.constant({ t: "drift" as const }) },
   { weight: 3, arbitrary: fc.constant({ t: "event" as const }) },
   { weight: 3, arbitrary: fc.constant({ t: "serveRead" as const }) },
 );
@@ -235,12 +357,15 @@ const action: fc.Arbitrary<Action> = fc.oneof(
 const kind: Action = { t: "kind" };
 const flush: Action = { t: "flush" };
 const commit: Action = { t: "commit" };
+const siblingOn: Start = { kind: true, sibling: true };
+const lastKindOn: Start = { kind: true, sibling: false };
 
 beforeAll(async () => {
   document.body.innerHTML = new DOMParser().parseFromString(indexHtml, "text/html").body.innerHTML;
   // After the markup: the handler's module graph reads elements as it loads.
   await import("./handlers/system.js");
   initNotificationToggles();
+  initAgentDirsUI();
 });
 
 afterAll(() => {
@@ -258,7 +383,7 @@ describe("settings controls against a model server", () => {
   it("ends on the user's last click on every control, for any interleaving", async () => {
     fake();
     try {
-      await fc.assert(fc.asyncProperty(fc.boolean(), fc.array(action, { maxLength: 10 }), run), {
+      await fc.assert(fc.asyncProperty(start, fc.array(action, { maxLength: 10 }), run), {
         numRuns: 150,
         seed: 20261019,
       });
@@ -267,21 +392,21 @@ describe("settings controls against a model server", () => {
     }
   });
 
-  it.each<[string, boolean, Action[]]>([
-    ["saves the second of two kind clicks made inside one debounce", true, [kind, kind]],
+  it.each<[string, Start, Action[]]>([
+    ["saves the second of two kind clicks made inside one debounce", siblingOn, [kind, kind]],
     [
       "sends a kind click made while the opposite click's write is in flight",
-      true,
+      siblingOn,
       [kind, flush, kind],
     ],
     [
       "sends a kind click back to the server's value while the click before it is in flight",
-      false,
+      { kind: false, sibling: true },
       [kind, flush, kind, commit],
     ],
     [
       "saves a model picked back after another device's settings were read",
-      true,
+      siblingOn,
       [
         { t: "pick", model: "B" },
         { t: "other" },
@@ -289,6 +414,21 @@ describe("settings controls against a model server", () => {
         { t: "serveRead" },
         { t: "pick", model: "A" },
       ],
+    ],
+    [
+      "keeps notifications on when the last kind on is clicked off and on inside one debounce",
+      lastKindOn,
+      [kind, kind],
+    ],
+    [
+      "keeps notifications on when the last kind on is clicked on again while its off write is in flight",
+      lastKindOn,
+      [kind, flush, kind],
+    ],
+    [
+      "keeps the verdict a read gave over a late write's answer at the same version",
+      siblingOn,
+      [{ t: "dir" }, commit, { t: "drift" }, { t: "event" }, { t: "serveRead" }, { t: "deliver" }],
     ],
   ])("%s", async (_name, initial, actions) => {
     fake();

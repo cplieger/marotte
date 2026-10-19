@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -54,6 +55,29 @@ func TestSettingsRevision_IsOnEveryPayloadAClientAdopts(t *testing.T) {
 		if p, ok := last.Payload.(marotte.SettingsUpdatedPayload); last.Type != marotte.EventSettingsUpdated || !ok || p != wantEvent {
 			t.Errorf("event after PATCH %d = %s %#v, want settings_updated %#v", want, last.Type, last.Payload, wantEvent)
 		}
+	}
+}
+
+// A page adopts a write's answer as the settings at its version, so the answer is the stored
+// document resolved as a read resolves it, never the request echoed back.
+func TestSettingsWrite_AnswersTheStoredSettingsAtItsVersion(t *testing.T) {
+	dir := seedConfig(t, `{"debug_logs":true,"auto_compact_pct":"most"}`)
+	s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: dir}
+
+	rec := patchSettingsRaw(t, s, `{"theme":"dark"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	var answer marotte.EffectiveSettings
+	if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("decode the PATCH answer: %v", err)
+	}
+	if answer.Theme != "dark" || !answer.DebugLogs || answer.AutoCompactPct != settings.EffectiveDefaults().AutoCompactPct {
+		t.Errorf("answer theme %q debug_logs %t auto_compact_pct %d, want the write's theme, the stored debug_logs and the default for the stored value that does not fit",
+			answer.Theme, answer.DebugLogs, answer.AutoCompactPct)
+	}
+	if got := getEffective(t, dir); !reflect.DeepEqual(got, answer) {
+		t.Errorf("GET at the answer's version = %+v\nwant the PATCH answer %+v", got, answer)
 	}
 }
 

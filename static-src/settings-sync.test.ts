@@ -4,7 +4,7 @@
 // or a later write own, what the page acts on is the server's while its controls show a click
 // not yet committed, and a control's last click is the one saved, over the shipped markup with
 // only the network faked.
-import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
 import indexHtml from "../static/index.html?raw";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 import type { EffectiveSettings } from "./persist.js";
@@ -14,11 +14,13 @@ import { applyAgentDirs, initAgentDirsUI } from "./agent-dirs-ui.js";
 import { byId } from "./dom.js";
 import { __testResetTracking, loadSettings, patchSettings } from "./persist.js";
 import { additionalDirectories, _resetForTest as resetWorkspace } from "./workspace.js";
-import { isKindEnabled } from "./notify.js";
+import { areNotificationsEnabled, isKindEnabled } from "./notify.js";
 import { isRetentionEnabled } from "./retention.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 import { getLastModel, setLastModel } from "./session-context.js";
 import { initPermissionsUI } from "./permissions-ui.js";
+import { compactionPolicy } from "./context-ring.js";
+import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
 
 interface Held {
   answer: (s: EffectiveSettings) => void;
@@ -123,6 +125,30 @@ function commitPatch(server: EffectiveSettings, i: number): EffectiveSettings {
   return next;
 }
 
+/** Deliver the settings event of server's revision and answer the read it sends with server. */
+async function announced(server: EffectiveSettings): Promise<void> {
+  settingsEvent(server.settings_revision);
+  await settled();
+  gets.at(-1)?.answer(server);
+  await settled();
+}
+
+function masterBox(): HTMLInputElement {
+  return byId<HTMLInputElement>("notify-toggle");
+}
+
+/** Notifications on, with agent_finished the one kind on. */
+function lastKindOn(): EffectiveSettings {
+  return settingsPayload({
+    settings_epoch: 1,
+    settings_revision: 1,
+    notifications_enabled: true,
+    notify_agent_finished: true,
+    notify_pr_status: false,
+    notify_run_outcome: false,
+  });
+}
+
 function add(dir: string): void {
   byId<HTMLInputElement>("agent-dirs-input").value = dir;
   byId<HTMLButtonElement>("agent-dirs-add").click();
@@ -135,6 +161,8 @@ beforeAll(async () => {
   initAgentDirsUI();
   initNotificationToggles();
   initPermissionsUI(settingsPayload());
+  const { initGeneralPanelControls } = await import("./settings.js");
+  initGeneralPanelControls();
 });
 
 beforeEach(() => {
@@ -144,6 +172,17 @@ beforeEach(() => {
   // Per case: the config restores stubbed globals after each one.
   vi.stubGlobal("fetch", vi.fn(fakeFetch));
   applyAgentDirs(dirsAt(0, ["/data"]));
+});
+
+// A case that fails leaves requests held, and the settings queue waits on them: failing them keeps
+// the next case's requests its own.
+afterEach(async () => {
+  for (let i = 0; i < 5 && patches.length + gets.length > 0; i++) {
+    for (const h of [...patches.splice(0), ...gets.splice(0)]) {
+      h.fail();
+    }
+    await settled();
+  }
 });
 
 afterAll(() => {
@@ -753,5 +792,210 @@ describe("settings sync ordering", () => {
     expect(
       [...byId("agent-ignore-chips").querySelectorAll(".chip-label")].map((c) => c.textContent),
     ).toEqual([".gitignore", ".npmignore", ".env.dec"]);
+  });
+
+  it("keeps a read's directory verdict over a late write's answer at the same version", async () => {
+    add("/a");
+    await settled();
+    expect(patches).toHaveLength(1);
+
+    // The write committed revision 1, and /a stopped being a directory before its event's read.
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(
+      settingsPayload({
+        settings_epoch: 1,
+        settings_revision: 1,
+        additional_directories: ["/data", "/a"],
+        additional_directories_refused: { "/a": "/a is not a directory" },
+      }),
+    );
+    await settled();
+    expect(additionalDirectories()).toEqual(["/data"]);
+
+    patches[0]?.answer(dirsAt(1, ["/data", "/a"]));
+    await settled();
+    expect(additionalDirectories(), "the read, resolved after the write's answer").toEqual([
+      "/data",
+    ]);
+    expect(byId("agent-dirs-refused").textContent).toContain("/a is not a directory");
+    expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(false);
+  });
+
+  it("keeps notifications on when the last kind on is clicked off and on inside one debounce", async () => {
+    localStorage.removeItem(LS_NOTIFY_ASK_KEY);
+    let server = lastKindOn();
+    await boot(server);
+    expect(masterBox().checked).toBe(true);
+    finishedBox().click();
+    await settled();
+    expect(masterBox().checked, "every kind is off, so notifications are").toBe(false);
+    finishedBox().click();
+    await debounced();
+    expect(masterBox().checked, "a kind is on again").toBe(true);
+
+    expect(patches, "one write carries the debounced clicks").toHaveLength(1);
+    server = commitPatch(server, 0);
+    await settled();
+    await announced(server);
+    expect(server.notify_agent_finished).toBe(true);
+    expect(server.notifications_enabled, "the server keeps notifications on").toBe(true);
+    expect(masterBox().checked).toBe(true);
+    expect(areNotificationsEnabled()).toBe(true);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY), "the ask is not spent").toBeNull();
+  });
+
+  it("keeps notifications on when the last kind on is clicked on again while its off write is in flight", async () => {
+    localStorage.removeItem(LS_NOTIFY_ASK_KEY);
+    let server = lastKindOn();
+    await boot(server);
+    finishedBox().click();
+    await debounced();
+    expect(patches[0]?.body).toEqual({
+      notify_agent_finished: false,
+      notifications_enabled: false,
+    });
+    finishedBox().click();
+    await settled();
+    expect(masterBox().checked).toBe(true);
+
+    server = commitPatch(server, 0);
+    await settled();
+    await announced(server);
+    await debounced();
+    expect(patches[1]?.body).toEqual({ notify_agent_finished: true, notifications_enabled: true });
+    server = commitPatch(server, 1);
+    await settled();
+    await announced(server);
+    expect(server.notify_agent_finished).toBe(true);
+    expect(server.notifications_enabled, "the server ends with notifications on").toBe(true);
+    expect(masterBox().checked).toBe(true);
+    expect(areNotificationsEnabled()).toBe(true);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY), "the ask is not spent").toBeNull();
+  });
+
+  it("spends the ask when every kind went off and the newer settings agree", async () => {
+    localStorage.removeItem(LS_NOTIFY_ASK_KEY);
+    await boot(lastKindOn());
+    finishedBox().click();
+    await debounced();
+    expect(patches).toHaveLength(1);
+
+    // This write committed revision 2, then another device's revision 3 kept notifications off.
+    await announced({
+      ...lastKindOn(),
+      settings_revision: 3,
+      notifications_enabled: false,
+      notify_agent_finished: false,
+    });
+    patches[0]?.answer({
+      ...lastKindOn(),
+      settings_revision: 2,
+      notifications_enabled: false,
+      notify_agent_finished: false,
+    });
+    await settled();
+    expect(masterBox().checked).toBe(false);
+    expect(areNotificationsEnabled()).toBe(false);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBe("1");
+  });
+
+  it("keeps notifications on when the switch is turned back on inside the debounce that turned every kind off", async () => {
+    // Blocked, so turning the switch on neither prompts nor registers push.
+    vi.stubGlobal("Notification", { permission: "denied" });
+    const server = lastKindOn();
+    await boot(server);
+    finishedBox().click();
+    await settled();
+    masterBox().click();
+    await debounced();
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.body).toMatchObject({ notifications_enabled: true });
+    commitPatch(server, 0);
+    await settled();
+    expect(masterBox().checked).toBe(true);
+    expect(areNotificationsEnabled()).toBe(true);
+  });
+
+  it("leaves the notification switch alone when a kind click's write fails before any settings were read", async () => {
+    masterBox().checked = true;
+    finishedBox().checked = true;
+    finishedBox().click();
+    await debounced();
+    expect(patches[0]?.body).toEqual({ notify_agent_finished: false });
+    patches[0]?.fail();
+    await settled();
+    expect(finishedBox().checked, "the kind row goes back").toBe(true);
+    expect(masterBox().checked, "the switch the click never moved").toBe(true);
+  });
+
+  it("puts a select back to the server's value when its write is refused", async () => {
+    await boot(settingsPayload({ settings_epoch: 1, settings_revision: 1, memory_mode: "off" }));
+    const memory = byId<HTMLSelectElement>("memory-mode");
+    memory.value = "read_only";
+    memory.dispatchEvent(new Event("change"));
+    await debounced();
+    expect(patches[0]?.body).toEqual({ memory_mode: "read_only" });
+    patches[0]?.fail();
+    await settled();
+    expect(memory.value).toBe("off");
+  });
+
+  it("keeps a value typed since a refused write was sent", async () => {
+    await boot(
+      settingsPayload({ settings_epoch: 1, settings_revision: 1, terminal_command_timeout_ms: 0 }),
+    );
+    const timeout = byId<HTMLInputElement>("shell-command-timeout");
+    timeout.value = "30";
+    timeout.dispatchEvent(new Event("change"));
+    await debounced();
+    expect(patches[0]?.body).toEqual({ terminal_command_timeout_ms: 30000 });
+    timeout.value = "45";
+    patches[0]?.fail();
+    await settled();
+    expect(timeout.value, "the reader's newer value").toBe("45");
+  });
+
+  it("asks no browser permission when a later click in the same write turned notifications off", async () => {
+    const requestPermission = vi.fn(() => Promise.resolve("default"));
+    vi.stubGlobal("Notification", { permission: "default", requestPermission });
+    await boot({ ...lastKindOn(), notifications_enabled: false });
+    masterBox().click();
+    await settled();
+    finishedBox().click();
+    byId<HTMLInputElement>("notify-run-outcome-toggle").click();
+    await debounced();
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.body).toMatchObject({
+      notifications_enabled: false,
+      notify_agent_finished: false,
+      notify_run_outcome: false,
+    });
+    commitPatch({ ...lastKindOn(), notifications_enabled: false }, 0);
+    await settled();
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(masterBox().checked).toBe(false);
+    expect(areNotificationsEnabled()).toBe(false);
+  });
+
+  it("puts the compaction slider and its policy back when the write is refused", async () => {
+    await boot(
+      settingsPayload({
+        settings_epoch: 1,
+        settings_revision: 1,
+        auto_compaction_enabled: true,
+        auto_compact_pct: 80,
+      }),
+    );
+    const range = byId<HTMLInputElement>("auto-compact-pct");
+    range.value = "90";
+    range.dispatchEvent(new Event("input"));
+    range.dispatchEvent(new Event("change"));
+    expect(compactionPolicy.value).toEqual({ enabled: true, pct: 90 });
+    await debounced();
+    patches[0]?.fail();
+    await settled();
+    expect(range.value).toBe("80");
+    expect(compactionPolicy.value).toEqual({ enabled: true, pct: 80 });
   });
 });

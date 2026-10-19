@@ -28,8 +28,14 @@ function accept(committed: Partial<EffectiveSettings> = {}): void {
   }));
 }
 
+let commits = 0;
+
+/** A save's answer, committed at the next revision as the server commits each write. */
 function answer(committed: Partial<EffectiveSettings>): Outcome {
-  return { status: "success", value: settingsPayload(committed) };
+  return {
+    status: "success",
+    value: settingsPayload({ settings_epoch: 1, settings_revision: ++commits, ...committed }),
+  };
 }
 
 function holdSave(): (o: Outcome) => void {

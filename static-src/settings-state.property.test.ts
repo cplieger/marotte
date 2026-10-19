@@ -8,6 +8,7 @@
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import {
+  accepts,
   changes,
   initialSettingsState,
   isCurrent,
@@ -46,6 +47,8 @@ interface World {
   behaviour: { at: Stamp; values: Values };
   /** The newest version the page received, by event or payload. */
   seen: Stamp;
+  /** The version of the payload the page adopted last. */
+  adoptedAt: Stamp;
   nextId: number;
   /** This page's writes the server has not answered to the page, oldest first: the head is on the wire. */
   sent: { id: number; keys: readonly Key[] }[];
@@ -97,6 +100,7 @@ function newWorld(): World {
     display: { ...values },
     behaviour: { at, values: { ...values } },
     seen: at,
+    adoptedAt: at,
     nextId: 1,
     sent: [],
     served: null,
@@ -104,16 +108,17 @@ function newWorld(): World {
     reads: [],
     answeredReads: [],
   };
-  w.client = reduce(w.client, { type: "adopt", payload: snapshot(w) });
+  w.client = reduce(w.client, { type: "adopt", payload: snapshot(w), from: "read" });
   return w;
 }
 
 /** Hand the reducer a payload, checking its verdict against the newest version the page received
- *  and that a payload it refuses changes nothing adopted. */
+ *  (a write's answer also yields to a payload adopted at its own version) and that a payload it
+ *  refuses changes nothing adopted. */
 function take(
   w: World,
   event:
-    | { type: "adopt"; payload: Payload }
+    | { type: "adopt"; payload: Payload; from: "read" }
     | {
         type: "settle";
         id: number;
@@ -121,12 +126,16 @@ function take(
       },
 ): boolean {
   const payload = event.type === "adopt" ? event.payload : event.answer;
-  const current = isCurrent(w.client, payload);
-  expect(current, `verdict for ${tag(payload)} after ${tag(w.seen)}`).toBe(!older(payload, w.seen));
+  const from = event.type === "adopt" ? "read" : "write";
+  const current = accepts(w.client, payload, from);
+  const want = !older(payload, w.seen) && (from === "read" || older(w.adoptedAt, payload));
+  expect(current, `${from} verdict for ${tag(payload)} after ${tag(w.seen)}`).toBe(want);
   w.seen = max(w.seen, payload);
   const before = w.client.adopted;
   w.client = reduce(w.client, event);
-  if (!current) {
+  if (current) {
+    w.adoptedAt = payload;
+  } else {
     expect(w.client.adopted, `the refused ${tag(payload)} changed what is adopted`).toBe(before);
   }
   return current;
@@ -248,7 +257,7 @@ function apply(w: World, a: Action): void {
       if (r === undefined) {
         return;
       }
-      const current = take(w, { type: "adopt", payload: r.payload });
+      const current = take(w, { type: "adopt", payload: r.payload, from: "read" });
       if (r.repaint && current) {
         repaint(w, KEYS);
         // persist answers such a read with the payload it adopted.
@@ -475,14 +484,18 @@ describe("settings state", () => {
   });
 
   it("shows a write waiting behind another over settings read meanwhile, until it starts", () => {
-    let s = reduce(initialSettingsState, { type: "adopt", payload: at(1, { a: false }) });
+    let s = reduce(initialSettingsState, {
+      type: "adopt",
+      from: "read",
+      payload: at(1, { a: false }),
+    });
     s = reduce(s, { type: "click", patch: { a: true } });
     s = reduce(s, { type: "send", id: 1 });
     s = reduce(s, { type: "start", id: 1 });
     s = reduce(s, { type: "click", patch: { a: false } });
     s = reduce(s, { type: "send", id: 2 });
     s = reduce(s, { type: "announce", at: at(3, {}) });
-    s = reduce(s, { type: "adopt", payload: at(3, { a: true }) });
+    s = reduce(s, { type: "adopt", from: "read", payload: at(3, { a: true }) });
     expect(shownValue(s, "a"), "the waiting write commits after revision 3").toEqual({
       value: false,
     });
@@ -490,7 +503,7 @@ describe("settings state", () => {
     s = reduce(s, { type: "settle", id: 1, answer: at(2, { a: true }) });
     s = reduce(s, { type: "start", id: 2 });
     expect(shownValue(s, "a"), "started above revision 3").toEqual({ value: false });
-    s = reduce(s, { type: "adopt", payload: at(4, { a: true }) });
+    s = reduce(s, { type: "adopt", from: "read", payload: at(4, { a: true }) });
     expect(shownValue(s, "a"), "revision 4 may follow it").toEqual({ value: true });
   });
 
@@ -503,7 +516,11 @@ describe("settings state", () => {
   });
 
   it("adopts no answer below a version an event announced", () => {
-    let s = reduce(initialSettingsState, { type: "adopt", payload: at(1, { a: false }) });
+    let s = reduce(initialSettingsState, {
+      type: "adopt",
+      from: "read",
+      payload: at(1, { a: false }),
+    });
     s = reduce(s, { type: "click", patch: { a: true } });
     s = reduce(s, { type: "send", id: 1 });
     s = reduce(s, { type: "start", id: 1 });
@@ -511,5 +528,80 @@ describe("settings state", () => {
     s = reduce(s, { type: "settle", id: 1, answer: at(2, { a: true }) });
     expect(s.adopted?.at).toEqual(at(1, {}));
     expect(shownValue(s, "a")).toEqual({ value: false });
+  });
+
+  // One version, two payloads: b stands for a value a read resolves that config.json does not hold.
+  it("keeps a read's payload over a write's answer at its version, and takes a later read's", () => {
+    let s = reduce(initialSettingsState, { type: "adopt", from: "read", payload: at(1, {}) });
+    s = reduce(s, { type: "click", patch: { a: true } });
+    s = reduce(s, { type: "send", id: 1 });
+    s = reduce(s, { type: "start", id: 1 });
+    s = reduce(s, { type: "announce", at: at(2, {}) });
+    s = reduce(s, { type: "adopt", from: "read", payload: at(2, { a: true, b: true }) });
+    expect(accepts(s, at(2, {}), "write"), "the write's answer at the read's version").toBe(false);
+    s = reduce(s, { type: "settle", id: 1, answer: at(2, { a: true, b: false }) });
+    expect(shownValue(s, "b"), "the read's").toEqual({ value: true });
+    expect(s.pending, "the write settled all the same").toEqual([]);
+
+    s = reduce(s, { type: "adopt", from: "read", payload: at(2, { a: true, b: false }) });
+    expect(shownValue(s, "b"), "a later read at that version").toEqual({ value: false });
+  });
+
+  it("adopts a write's answer above the version adopted, an announced one included", () => {
+    let s = reduce(initialSettingsState, { type: "adopt", from: "read", payload: at(1, {}) });
+    s = reduce(s, { type: "announce", at: at(2, {}) });
+    expect(accepts(s, at(2, {}), "write")).toBe(true);
+    s = reduce(s, { type: "adopt", from: "write", payload: at(2, { a: true }) });
+    expect(shownValue(s, "a")).toEqual({ value: true });
+  });
+});
+
+describe("the notification switch a click implies", () => {
+  const KINDS = { notify_agent_finished: true, notify_pr_status: false, notify_run_outcome: false };
+
+  function adopted(on: boolean, kinds: Record<string, boolean> = KINDS): SettingsState {
+    return reduce(initialSettingsState, {
+      type: "adopt",
+      from: "read",
+      payload: at(1, { notifications_enabled: on, ...kinds }),
+    });
+  }
+
+  it("turns notifications off with the last kind a click turns off", () => {
+    expect(changes(adopted(true), { notify_agent_finished: false })).toEqual({
+      notify_agent_finished: false,
+      notifications_enabled: false,
+    });
+  });
+
+  it("leaves notifications on while a click leaves another kind on", () => {
+    const s = adopted(true, { ...KINDS, notify_run_outcome: true });
+    expect(changes(s, { notify_agent_finished: false })).toEqual({ notify_agent_finished: false });
+  });
+
+  it("turns them back on with a kind clicked on again before the click that turned them off is sent", () => {
+    let s = reduce(adopted(true), { type: "click", patch: { notify_agent_finished: false } });
+    s = reduce(s, { type: "click", patch: { notify_agent_finished: true } });
+    expect(s.edit).toEqual({ notify_agent_finished: true, notifications_enabled: true });
+  });
+
+  it("turns them back on with a kind clicked on again while that write is in flight", () => {
+    let s = reduce(adopted(true), { type: "click", patch: { notify_agent_finished: false } });
+    s = reduce(s, { type: "send", id: 1 });
+    s = reduce(s, { type: "start", id: 1 });
+    s = reduce(s, { type: "click", patch: { notify_agent_finished: true } });
+    expect(s.edit).toEqual({ notify_agent_finished: true, notifications_enabled: true });
+  });
+
+  it("leaves them off when the server holds them off", () => {
+    expect(changes(adopted(false), { notify_run_outcome: true })).toEqual({
+      notify_run_outcome: true,
+    });
+  });
+
+  it("leaves the kinds as they are when the switch alone is clicked", () => {
+    expect(changes(adopted(true), { notifications_enabled: false })).toEqual({
+      notifications_enabled: false,
+    });
   });
 });

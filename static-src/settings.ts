@@ -9,7 +9,7 @@ import { getGitTab } from "./git-tabs.js";
 import { noteDefaultBrowsePath } from "./files.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
-import { adoptSettings, patchSettings, refreshSettings, settingsAsShown } from "./persist.js";
+import { adoptWriteAnswer, patchSettings, refreshSettings, settingsAsShown } from "./persist.js";
 import type { SettingsSwitch } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import type { KiroDefault } from "./wire/types.gen.js";
@@ -285,7 +285,11 @@ function initChatRetentionControls(): void {
       return; // forever wins; the Days-kept row is hidden
     }
     const n = parseInt(daysInput.value, 10);
-    persist(!isNaN(n) && n >= 0 ? n : 0);
+    saveControl(daysInput, { chat_retention_days: !isNaN(n) && n >= 0 ? n : 0 }, (shown) => {
+      if (shown.chat_retention_days >= 0) {
+        daysInput.value = String(shown.chat_retention_days);
+      }
+    });
   });
   foreverInput.addEventListener("change", () => {
     daysRow?.classList.toggle("hidden", foreverInput.checked);
@@ -823,27 +827,60 @@ function applyAgentCapabilities(s: EffectiveSettings): void {
   for (const choice of agentFeatureChoices) {
     paintFeatureChoice(choice, s);
   }
+  paintMemory(s);
+  for (const choice of agentChoices) {
+    paintAgentChoice(choice, s);
+  }
+  paintSpecPlanning(s.spec_planning);
+  const timeout = shellTimeoutInput();
+  // Not while the reader is in the box, for retention's reason.
+  if (timeout !== null && document.activeElement !== timeout) {
+    paintShellTimeout(timeout, s);
+  }
+  applyAutoCompaction(s);
+  paintSettingLocks();
+}
+
+function paintMemory(s: EffectiveSettings): void {
   const memory = memorySelect();
   // The server validates the value; an unknown one from a newer build leaves the control as it is
   // rather than selecting nothing.
   if (memory !== null && (MEMORY_MODES as readonly string[]).includes(s.memory_mode)) {
     memory.value = s.memory_mode;
   }
-  for (const choice of agentChoices) {
-    const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
-    if (select !== null && choice.values.includes(s[choice.key])) {
-      select.value = s[choice.key];
+}
+
+function paintAgentChoice(choice: (typeof agentChoices)[number], s: EffectiveSettings): void {
+  const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
+  if (select !== null && choice.values.includes(s[choice.key])) {
+    select.value = s[choice.key];
+  }
+}
+
+function shellTimeoutInput(): HTMLInputElement | null {
+  return document.getElementById("shell-command-timeout") as HTMLInputElement | null;
+}
+
+function paintShellTimeout(timeout: HTMLInputElement, s: EffectiveSettings): void {
+  timeout.value =
+    s.terminal_command_timeout_ms > 0 ? String(s.terminal_command_timeout_ms / 1000) : "";
+}
+
+/** Send patch from control, a control persist holds no switch for. Once the write settles the
+ *  control shows the settings as shown, through paint, unless the reader changed it since: a
+ *  refused write leaves no unsaved value on screen. */
+function saveControl(
+  control: HTMLInputElement | HTMLSelectElement,
+  patch: Partial<EffectiveSettings>,
+  paint: (shown: EffectiveSettings) => void,
+): void {
+  const sent = control.value;
+  void patchSettings(patch).then(() => {
+    const shown = settingsAsShown();
+    if (shown !== null && control.value === sent) {
+      paint(shown);
     }
-  }
-  paintSpecPlanning(s.spec_planning);
-  const timeout = document.getElementById("shell-command-timeout") as HTMLInputElement | null;
-  // Not while the reader is in the box, for retention's reason.
-  if (timeout !== null && document.activeElement !== timeout) {
-    timeout.value =
-      s.terminal_command_timeout_ms > 0 ? String(s.terminal_command_timeout_ms / 1000) : "";
-  }
-  applyAutoCompaction(s);
-  paintSettingLocks();
+  });
 }
 
 function initAgentCapabilityControls(): void {
@@ -868,12 +905,14 @@ function initAgentCapabilityControls(): void {
   for (const choice of agentFeatureChoices) {
     const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
     select?.addEventListener("change", () => {
-      void patchSettings({ [choice.key]: select.value });
+      saveControl(select, { [choice.key]: select.value }, (shown) => {
+        paintFeatureChoice(choice, shown);
+      });
     });
   }
   const memory = memorySelect();
   memory?.addEventListener("change", () => {
-    void patchSettings({ memory_mode: memory.value });
+    saveControl(memory, { memory_mode: memory.value }, paintMemory);
   });
   for (const choice of agentChoices) {
     const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
@@ -881,14 +920,19 @@ function initAgentCapabilityControls(): void {
       if (choice.key === "spec_planning") {
         paintSpecPlanning(select.value);
       }
-      void patchSettings({ [choice.key]: select.value });
+      saveControl(select, { [choice.key]: select.value }, (shown) => {
+        paintAgentChoice(choice, shown);
+        paintSpecPlanning(shown.spec_planning);
+      });
     });
   }
-  const timeout = document.getElementById("shell-command-timeout") as HTMLInputElement | null;
+  const timeout = shellTimeoutInput();
   timeout?.addEventListener("change", () => {
     const ms = shellTimeoutMs(timeout.value);
     timeout.value = ms > 0 ? String(ms / 1000) : "";
-    void patchSettings({ terminal_command_timeout_ms: ms });
+    saveControl(timeout, { terminal_command_timeout_ms: ms }, (shown) => {
+      paintShellTimeout(timeout, shown);
+    });
   });
   initAutoCompactionControls();
 }
@@ -961,7 +1005,10 @@ function initAutoCompactionControls(): void {
     paintAutoCompaction(toggle.checked, Number(range.value));
   });
   range.addEventListener("change", () => {
-    void patchSettings({ auto_compact_pct: Number(range.value) });
+    saveControl(range, { auto_compact_pct: Number(range.value) }, (shown) => {
+      range.value = String(shown.auto_compact_pct);
+      paintAutoCompaction(shown.auto_compaction_enabled, shown.auto_compact_pct);
+    });
   });
 }
 
@@ -1042,8 +1089,8 @@ function initEngineHeapControl(): void {
     heapEdit = edit;
     showSaving("engine_heap_mib");
     void setEngineHeap.dispatch({ mib }).then((r) => {
-      // An answer older than settings this page holds leaves serverEngineHeap to those.
-      const current = r !== null && adoptSettings(r);
+      // An answer the page does not adopt leaves serverEngineHeap to the settings it holds.
+      const current = r !== null && adoptWriteAnswer(r);
       if (current) {
         serverEngineHeap = r.engine_heap_mib;
       }

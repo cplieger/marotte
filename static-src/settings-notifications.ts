@@ -13,7 +13,7 @@ import {
 } from "./notify.js";
 import { KEYED_PUSH_DEFAULTS, KEYED_PUSH_KINDS } from "./push-kinds.js";
 import { newestSettings, patchSettings, settingsAsShown } from "./persist.js";
-import type { EffectiveSettings, SettingsSwitch } from "./persist.js";
+import type { EffectiveSettings, PatchAnswer, SettingsSwitch } from "./persist.js";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { $, byId } from "./dom.js";
 import { isIOS, isStandalone } from "./platform.js";
@@ -134,33 +134,47 @@ export function initNotificationToggles(): void {
     }
     void patchSettings({ notifications_enabled: false }, masterSwitch(notifyToggle)).then(
       async (r) => {
-        // On null persist has repainted the toggle from the settings state.
-        if (r === null || (r === "superseded" && !(await stillOff()))) {
-          return;
+        if (await staysOff(r)) {
+          turnOff(updateSub);
         }
-        setNotificationsEnabled(false);
-        // A refusal, and the only place the client can tell one from "never opted in": both reach it
-        // as `notifications_enabled: false`. Spending the ask is what stops a later automatic grant
-        // reversing this switch — see `notify-ask.ts`.
-        spendNotifyAsk();
-        unregisterPush();
-        updateSub();
       },
     );
   });
 
   for (const row of rows) {
     row.input.addEventListener("change", () => {
-      void applyKindChange(rows, row, notifyToggle, updateSub);
+      void applyKindChange(row, notifyToggle, updateSub);
     });
   }
 }
 
-/** Whether the newest settings, which a superseded write gives way to, still have notifications
- *  off. Their read applies the state (restoreNotifications), not this click's refusal of the ask. */
-async function stillOff(): Promise<boolean> {
-  const s = await newestSettings();
-  return s !== null && !s.notifications_enabled;
+/** Whether notifications stay off once a write that turned them off settles with r: the server holds
+ *  them off (the newest settings, for a superseded write) and no later click of this page turns
+ *  them back on. */
+async function staysOff(r: PatchAnswer): Promise<boolean> {
+  if (r === null) {
+    return false; // persist has repainted the switch from the settings state
+  }
+  if (r === "superseded") {
+    const s = await newestSettings();
+    if (s === null || s.notifications_enabled) {
+      return false;
+    }
+  } else if (r.notifications_enabled) {
+    return false;
+  }
+  return settingsAsShown()?.notifications_enabled !== true;
+}
+
+/** Apply notifications switched off by this page's click. */
+function turnOff(updateSub: () => void): void {
+  setNotificationsEnabled(false);
+  // A refusal, and the only place the client can tell one from "never opted in": both reach it
+  // as `notifications_enabled: false`. Spending the ask is what stops a later automatic grant
+  // reversing this switch — see `notify-ask.ts`.
+  spendNotifyAsk();
+  unregisterPush();
+  updateSub();
 }
 
 /** Paint each kind's input from the settings as shown, else from the per-kind state applied. */
@@ -207,11 +221,14 @@ async function enableEverything(
     updateSub();
     return;
   } else {
-    setNotificationsEnabled(true);
+    setNotificationsEnabled(r.notifications_enabled);
     for (const row of rows) {
-      setKindEnabled(row.kind, KEYED_PUSH_DEFAULTS[row.kind] ?? true);
+      setKindEnabled(row.kind, r[row.settingsKey]);
     }
     updateSub();
+    if (!r.notifications_enabled) {
+      return; // a later click in the same write turned them off, and its own settle applies that
+    }
   }
   // Only prompt for browser permission after the server confirms the enable.
   const hint = requestPermission();
@@ -228,35 +245,24 @@ async function enableEverything(
 }
 
 async function applyKindChange(
-  rows: readonly KindRow[],
   changed: KindRow,
   notifyToggle: HTMLInputElement,
   updateSub: () => void,
 ): Promise<void> {
-  const allOff = rows.every((row) => !row.input.checked);
-  const mutated: SettingsSwitch[] = [kindSwitch(changed)];
-  const patch: Record<string, boolean> = { [changed.settingsKey]: changed.input.checked };
-  if (allOff) {
-    notifyToggle.checked = false;
-    mutated.push(masterSwitch(notifyToggle));
-    patch["notifications_enabled"] = false;
+  const wasOn = settingsAsShown()?.notifications_enabled;
+  // The settings state decides what the click does to the switch (settings-state.changes).
+  const answer = patchSettings(
+    { [changed.settingsKey]: changed.input.checked },
+    kindSwitch(changed),
+    masterSwitch(notifyToggle),
+  );
+  const turnedOff = wasOn === true && settingsAsShown()?.notifications_enabled === false;
+  const r = await answer;
+  if (r !== null && r !== "superseded") {
+    setKindEnabled(changed.kind, r[changed.settingsKey]);
   }
-  const r = await patchSettings(patch, ...mutated);
-  if (r === "superseded") {
-    if (allOff && (await stillOff())) {
-      spendNotifyAsk();
-      unregisterPush();
-    }
-    return;
-  }
-  if (r === null) {
-    return; // persist repaints the toggle inputs
-  }
-  setKindEnabled(changed.kind, r[changed.settingsKey]);
-  if (allOff && !r.notifications_enabled) {
-    setNotificationsEnabled(false);
-    spendNotifyAsk(); // switching every channel off is the same refusal as the master
-    unregisterPush();
-    updateSub();
+  // Switching every channel off is the same refusal as the switch.
+  if (turnedOff && (await staysOff(r))) {
+    turnOff(updateSub);
   }
 }

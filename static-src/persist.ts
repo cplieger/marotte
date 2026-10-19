@@ -7,6 +7,7 @@ import { patchAppSettings, loadSettings as loadSettingsAction } from "./actions/
 import { registerCleanup } from "./actions/index.js";
 import { paintSettingLocks, writeSwitch } from "./governance.js";
 import {
+  accepts,
   changes,
   initialSettingsState,
   isCurrent,
@@ -17,6 +18,7 @@ import {
   type Payload,
   type SettingsEvent,
   type SettingsState,
+  type Source,
   type Stamp,
 } from "./settings-state.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
@@ -142,7 +144,7 @@ function executePatch(): void {
       },
       onSettled: () => {
         const settled: EffectiveSettings | null = answer;
-        const current = settled !== null && isCurrent(state, settled);
+        const current = settled !== null && accepts(state, settled, "write");
         step({ type: "settle", id, answer: settled === null ? null : asPayload(settled) });
         const switches = writeSwitches.get(id) ?? [];
         writeSwitches.delete(id);
@@ -167,8 +169,8 @@ registerCleanup(() => {
   }
 });
 
-/** Queue the keys of patch a click changes (settings-state.changes). Each switch is repainted from
- *  the settings state when the write settles, so a failed write leaves it at what the server holds. */
+/** Queue what a click sends (settings-state.changes). Each switch is painted from the settings state
+ *  at once and again when the write settles, so a failed write leaves it at what the server holds. */
 export function patchSettings(
   patch: Partial<EffectiveSettings>,
   ...switches: SettingsSwitch[]
@@ -179,12 +181,19 @@ export function patchSettings(
     // hang.
     return Promise.resolve(null);
   }
-  for (const { el } of switches) {
+  for (const { el, key } of switches) {
     if (!unsettled(el)) {
-      bases.set(el, !el.checked);
+      // A switch whose key the caller sends was flipped by this click; one the click only implies was not.
+      bases.set(el, Object.hasOwn(patch, key) ? !el.checked : el.checked);
     }
   }
   step({ type: "click", patch: changed });
+  for (const { el, key, on } of switches) {
+    const checked = switchShown(state, key, on);
+    if (checked !== undefined) {
+      writeSwitch(el, checked);
+    }
+  }
   editSwitches.push(...switches);
   const p = new Promise<PatchAnswer>((resolve) => {
     patchResolvers.push(resolve);
@@ -202,13 +211,22 @@ export function patchSettings(
   return p;
 }
 
-/** Take a settings payload from any source. True when it is not older than settings this page
- *  holds, so the caller may apply it; false when it is. A deleted or restored config.json serves a
- *  lower version, refused here until the write after it starts a later epoch. */
-export function adoptSettings(s: EffectiveSettings): boolean {
-  const current = isCurrent(state, s);
-  step({ type: "adopt", payload: asPayload(s) });
+function adopt(s: EffectiveSettings, from: Source): boolean {
+  const current = accepts(state, s, from);
+  step({ type: "adopt", payload: asPayload(s), from });
   return current;
+}
+
+/** Take a settings read's payload. True when settings-state.accepts adopts it, so the caller may
+ *  apply it; false when it is older than settings this page holds. A deleted or restored
+ *  config.json serves a lower version, refused here until the write after it starts a later epoch. */
+export function adoptSettings(s: EffectiveSettings): boolean {
+  return adopt(s, "read");
+}
+
+/** adoptSettings for the answer of a settings write sent outside patchSettings. */
+export function adoptWriteAnswer(s: EffectiveSettings): boolean {
+  return adopt(s, "write");
 }
 
 /** The settings GET in flight: its raw answer, that answer once checked, and eventsNoted when it was sent. */

@@ -11,7 +11,7 @@ import { serverSentence } from "./actions/server-sentence.js";
 import { setAdditionalDirectories } from "./actions/settings.js";
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { setAdditionalDirectories as setLinkableDirectories } from "./workspace.js";
-import { adoptSettings, newestSettings } from "./persist.js";
+import { adoptWriteAnswer, newestSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 
 const SAVE_KEY = "additional_directories";
@@ -86,7 +86,7 @@ async function catchUp(): Promise<void> {
 /** Sends next as the whole list; a refusal keeps the list and shows the server's reason beside the
  *  field. On success the panel adopts the settings the write committed rather than painting next:
  *  the server decides which kept entries it grants, and removing one entry can change another's verdict.
- *  An answer older than settings the page holds gives way to the newest (catchUp). */
+ *  An answer the page does not adopt gives way to the newest settings (catchUp). */
 async function save(next: readonly string[]): Promise<boolean> {
   lock = "saving";
   paintLock();
@@ -105,7 +105,7 @@ async function save(next: readonly string[]): Promise<boolean> {
   }
   showSaved(SAVE_KEY);
   paintError(null);
-  if (adoptSettings(o.value)) {
+  if (adoptWriteAnswer(o.value)) {
     lock = "none";
     applyAgentDirs(o.value);
   } else {

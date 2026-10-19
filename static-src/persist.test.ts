@@ -42,9 +42,20 @@ afterEach(async () => {
 });
 
 /** The server's answer to a settings PATCH: the default settings with the write's body committed. */
+let commits = 0;
+
+/** A server that commits each write at the next revision, above any settings a test seeds. */
 function committed(_url: unknown, init?: RequestInit): Promise<Response> {
   const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : {};
-  return Promise.resolve(Response.json(settingsPayload(body as Partial<EffectiveSettings>)));
+  return Promise.resolve(
+    Response.json(
+      settingsPayload({
+        ...(body as Partial<EffectiveSettings>),
+        settings_epoch: 1,
+        settings_revision: ++commits,
+      }),
+    ),
+  );
 }
 
 describe("patchSettings debounce coalescing", () => {
