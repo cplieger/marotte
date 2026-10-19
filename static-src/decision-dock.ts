@@ -140,6 +140,14 @@ let viewportFollowed = false;
 /** The tray's floor under a question card, which `css/26-dock.css` gives the tray as its `min-block-size`. */
 const FLOOR_PROP = "--dock-floor";
 
+/** A question card's options region's floor (`paintOptionsFloor`). */
+const OPTIONS_FLOOR_PROP = "--options-floor";
+
+/** A question card's question region's floor and the bar's steer stack's, each written by `paintFloor` only while
+ *  it is lowered under its own. */
+const ASK_FLOOR_PROP = "--ask-floor";
+const STEER_FLOOR_PROP = "--steer-floor";
+
 /** Wire the composer's dock into the chat bottom bar. Idempotent per host. */
 export function mountDecisionDock(hostEl: HTMLElement): void {
   addHost(hostEl, (d) => d.chatID === activeChatID());
@@ -209,12 +217,18 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
     stop: () => undefined,
   };
   hosts.push(h);
-  // The floor follows the tray's content: a new card, a stage switch inside it, the depth row, and
-  // the clamp's review of a card's question once a hidden view shows it.
+  // The floor follows the bar's content: a new card, a stage switch inside it, the depth row, a member
+  // stepping aside or back, the box taking the typing, and the clamp's review of a card's question once
+  // a hidden view shows it.
   const content = new MutationObserver(() => {
     paintFloor(h);
   });
-  content.observe(hostEl, { childList: true, subtree: true, attributeFilter: ["class"] });
+  content.observe(hostEl.parentElement ?? hostEl, {
+    childList: true,
+    subtree: true,
+    attributeFilter: ["class", TYPING_ATTR],
+  });
+  const stopTyping = followTyping(hostEl);
   const stopRender = effect(() => {
     touch(activeSession, queueVersion);
     renderHost(h);
@@ -222,6 +236,42 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
   h.stop = () => {
     stopRender();
     content.disconnect();
+    stopTyping();
+  };
+}
+
+/** On the bar: which of its text boxes last took the typing, `card` (the tray's) or `composer`, absent for another. */
+const TYPING_ATTR = "data-typing";
+
+/**
+ * Keep the tray's bar's `data-typing` (`css/26-dock.css` reads it while a soft keyboard is up). Written only when a
+ * text box takes focus, never when it loses it: a pressed button takes focus at pointerdown, and a bar that reflowed
+ * then would move the button out from under the pointer before the click.
+ */
+function followTyping(tray: HTMLElement): () => void {
+  const bar = tray.parentElement;
+  if (bar === null) {
+    return () => undefined;
+  }
+  const take = (box: EventTarget | null): void => {
+    if (!(box instanceof HTMLTextAreaElement) || !bar.contains(box)) {
+      return;
+    }
+    if (tray.contains(box)) {
+      bar.setAttribute(TYPING_ATTR, "card");
+    } else if (box.matches('[id="prompt-input"], [id="run-composer-input"]')) {
+      bar.setAttribute(TYPING_ATTR, "composer");
+    } else {
+      bar.removeAttribute(TYPING_ATTR);
+    }
+  };
+  const onFocus = (e: FocusEvent): void => {
+    take(e.target);
+  };
+  take(document.activeElement);
+  bar.addEventListener("focusin", onFocus);
+  return () => {
+    bar.removeEventListener("focusin", onFocus);
   };
 }
 
@@ -690,7 +740,9 @@ function followViewport(): void {
 /**
  * Publish the tray's floor while it holds a question card: the height of its card with each scroller in it at its own
  * `min-block-size` and every other region whole, plus the tray's other rows. Measured because the bar's flex column
- * sees only the tray's content size: a scroller's floor nested in it is invisible to the bar.
+ * sees only the tray's content size: a scroller's floor nested in it is invisible to the bar. Where the bar's ceiling
+ * cannot hold every member's floor, they are lowered in the reverse of their order (`css/26-dock.css` "ONE
+ * ALLOCATION"): the steer stack's, then the question's second line. The card's controls never give.
  */
 function paintFloor(h: DockHost): void {
   const card = h.card;
@@ -698,12 +750,84 @@ function paintFloor(h: DockHost): void {
     h.el.style.removeProperty(FLOOR_PROP);
     return;
   }
+  const options = card.querySelector<HTMLElement>(":scope > .user-input-options");
+  if (options !== null) {
+    paintOptionsFloor(options);
+  }
+  const ask = card.querySelector<HTMLElement>(":scope > .dock-ask-body");
+  const stack = h.el.parentElement?.querySelector<HTMLElement>(":scope > .steer-stack") ?? null;
+  ask?.style.removeProperty(ASK_FLOOR_PROP);
+  stack?.style.removeProperty(STEER_FLOOR_PROP);
   const rows = flexItems(h.el).filter((row) => row !== h.outgoing);
   const px = rows.reduce(
     (sum, row) => sum + (row === card ? floorOf(card) : row.getBoundingClientRect().height),
     gapsAndChrome(h.el, rows.length),
   );
-  h.el.style.setProperty(FLOOR_PROP, `${String(Math.ceil(px))}px`);
+  const over = lower(stack, STEER_FLOOR_PROP, px - roomFor(h), 1);
+  const left = lower(ask, ASK_FLOOR_PROP, over, 1 / 2);
+  h.el.style.setProperty(
+    FLOOR_PROP,
+    `${String(Math.ceil(px - Math.max(0, over) + Math.max(0, left)))}px`,
+  );
+}
+
+/** Lower `box`'s floor through `prop` by `over`, at most `share` of it, if `box` renders; what is still over. */
+function lower(box: HTMLElement | null, prop: string, over: number, share: number): number {
+  if (box === null || over <= 0 || !box.checkVisibility()) {
+    return over;
+  }
+  const floor = Number.parseFloat(getComputedStyle(box).minBlockSize) || 0;
+  const give = Math.min(over, floor * share);
+  box.style.setProperty(prop, `${String(floor - give)}px`);
+  return over - give;
+}
+
+/**
+ * What the bar's ceiling leaves the tray with every other member at its floor (a shrinking item's `min-block-size`,
+ * else its height); `Infinity` under no ceiling.
+ */
+function roomFor(h: DockHost): number {
+  const bar = h.el.parentElement;
+  const s = bar === null ? null : getComputedStyle(bar);
+  const ceiling = s === null ? Number.NaN : Number.parseFloat(s.maxBlockSize);
+  if (bar === null || s === null || Number.isNaN(ceiling)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const px = (v: string): number => Number.parseFloat(v) || 0;
+  const items = flexItems(bar);
+  const chrome =
+    s.boxSizing === "border-box"
+      ? gapsAndChrome(bar, items.length)
+      : Math.max(0, items.length - 1) * px(s.rowGap);
+  return items.reduce((room, item) => {
+    const is = getComputedStyle(item);
+    const margins = px(is.marginBlockStart) + px(is.marginBlockEnd);
+    if (item === h.el) {
+      return room - margins;
+    }
+    const shrinks = px(is.flexShrink) > 0 && is.minBlockSize !== "auto";
+    return room - margins - (shrinks ? px(is.minBlockSize) : item.getBoundingClientRect().height);
+  }, ceiling - chrome);
+}
+
+/**
+ * Publish the options region's floor, which `css/26-dock.css` gives it as its `min-block-size`: what stands before its
+ * first control and its tallest control, so each option is whole once scrolled to, however its description wraps.
+ */
+function paintOptionsFloor(region: HTMLElement): void {
+  const controls = [...region.children].filter(
+    (c) => c.matches(".user-input-option, .user-input-sub-option") && c.checkVisibility(),
+  );
+  const [first] = controls;
+  if (first === undefined || region.firstElementChild === null) {
+    region.style.removeProperty(OPTIONS_FLOOR_PROP);
+    return;
+  }
+  const lead =
+    first.getBoundingClientRect().top - region.firstElementChild.getBoundingClientRect().top;
+  const tallest = Math.max(...controls.map((c) => c.getBoundingClientRect().height));
+  const px = lead + tallest + gapsAndChrome(region, 1);
+  region.style.setProperty(OPTIONS_FLOOR_PROP, `${String(Math.ceil(px))}px`);
 }
 
 function floorOf(box: Element): number {

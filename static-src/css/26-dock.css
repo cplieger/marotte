@@ -257,11 +257,11 @@
   }
 }
 
-/* WITH A QUESTION UP, THE BAR ENDS WHERE THE BAND DOES. The band is modelled as ending at the box
-   holding the typing (iOS pans the visual viewport to the focused field; how far is a device
-   check): with a composer's text holding it, the content box is the band plus what sits under that
-   text (the chat's pill row and two borders, the run box's bottom border), so the content's top is
-   the band's top, and `content-box` keeps the padding, the bottom one following the home-indicator
+/* WITH A QUESTION UP, THE BAR ENDS WHERE THE BAND DOES. Under a soft keyboard (`[data-keyboard]`)
+   the band is modelled as ending at the text box that took the typing (iOS pans the visual viewport
+   to the focused field; how far is a device check). With a composer's (`[data-typing]`), the content
+   box is the band plus what sits under that text (the chat's pill row and two borders, the run box's
+   bottom border), and `content-box` keeps the padding, the bottom one following the home-indicator
    inset, out of it. Otherwise the band ends at the bar's bottom and the bar is the band. The run bar
    only on a short band: above it its own three-quarter ceiling (18-pages.css) keeps the transcript. */
 [id="prompt-form"]:has(> .decision-dock > .dock-user-input),
@@ -270,29 +270,29 @@
   max-block-size: var(--dock-viewport-h, 100dvh);
 }
 
-/* stylelint-disable-next-line selector-max-pseudo-class -- two :has() conditions, the card and the focused text, under a :where() that keeps specificity flat */
-[id="prompt-form"]:where(:has(> .decision-dock > .dock-user-input)):has([id="prompt-input"]:focus) {
-  box-sizing: content-box;
-  max-block-size: calc(
-    var(--dock-viewport-h, 100dvh) + var(--composer-ctl-h) + 2 * var(--composer-pill-pad) + 2px
-  );
+[id="prompt-form"][data-typing="composer"]:has(> .decision-dock > .dock-user-input) {
+  :where(:root[data-keyboard]) & {
+    box-sizing: content-box;
+    max-block-size: calc(
+      var(--dock-viewport-h, 100dvh) + var(--composer-ctl-h) + 2 * var(--composer-pill-pad) + 2px
+    );
+  }
 }
 
-/* stylelint-disable-next-line selector-max-pseudo-class -- the same two :has() conditions as the chat bar's, on a short band */
-:where(:root[data-short-band])
-  .run-bottom-bar:where(:has(> .decision-dock > .dock-user-input)):has(
-    [id="run-composer-input"]:focus
-  ) {
-  box-sizing: content-box;
-  max-block-size: calc(var(--dock-viewport-h, 100dvh) + 1px);
+.run-bottom-bar[data-typing="composer"]:has(> .decision-dock > .dock-user-input) {
+  :where(:root[data-keyboard][data-short-band]) & {
+    box-sizing: content-box;
+    max-block-size: calc(var(--dock-viewport-h, 100dvh) + 1px);
+  }
 }
 
-/* ONE ALLOCATION OF THE BAR WHILE A QUESTION WAITS. Floors first, in this order: the card's controls
-   (its options' first row, the answer box, Send and Skip) and two lines of its question, one queued
-   steer, the composer at one line. What is left goes to the draft, then to the rest of the question;
-   so the tray gives first, down to `--dock-floor` (`decision-dock.ts` `paintFloor`: a flex column
-   cannot see a floor nested in a scroller), then the steer stack, then the composer. Not while the
-   tray animates: the floor would hold its height off the pinned one. */
+/* ONE ALLOCATION OF THE BAR WHILE A QUESTION WAITS. Floors, in order: the card's controls (its tallest
+   option, the answer box, Send and Skip), two lines of its question, one queued steer, the composer at
+   one line. Above them the bar gives the steer rows past the first, then the question past its floor,
+   then the draft: flex shrink is weight times size, so the weights sit three orders apart. Where the
+   ceiling cannot hold every floor, `decision-dock.ts` `paintFloor` lowers the steer row's, then the
+   question's second line, and writes the tray's (`--dock-floor`: a flex column cannot see a floor
+   nested in a scroller). Not while the tray animates: it would hold the tray off its pinned height. */
 :is([id="prompt-form"], .run-bottom-bar)
   > .decision-dock:has(> .dock-user-input):not([data-dock-phase]) {
   flex-shrink: 1000;
@@ -302,8 +302,8 @@
 :is([id="prompt-form"], .run-bottom-bar):where(:has(> .decision-dock > .dock-user-input)) {
   /* One steer row: its action button (`--steer-act-size`) and the row's padding and border. */
   & > .steer-stack {
-    flex-shrink: 100;
-    min-block-size: calc(max(1lh, var(--hit-floor)) + 2 * var(--sp-2) + 2px);
+    flex-shrink: 1000000;
+    min-block-size: var(--steer-floor, calc(max(1lh, var(--hit-floor)) + 2 * var(--sp-2) + 2px));
     overflow: hidden auto;
   }
 
@@ -327,33 +327,27 @@
   }
 }
 
-/* WHAT STEPS ASIDE WHEN THE FLOORS OUTGROW THE BAND (`[data-short-band]`, `[data-tight-band]`,
-   `dock-ask.ts`). On a short band with the bar holding the typing (the keyboard up), the run strip,
-   as the run tab's dock does for any card, and a composer while the card holds the typing. On a
-   tight band the steer stack, the "more waiting" row and a composer not holding the typing too:
-   there the card's floors and one line of a composer fill the band. A composer holding the typing
-   stays: a question that arrives while the reader types there is not what that composer sends to,
-   so the cursor stays and the question scrolls in its region. */
-:is([id="prompt-form"], .run-bottom-bar):where(:has(> .decision-dock > .dock-user-input)) {
-  &:focus-within > .run-bar-host {
-    :where(:root[data-short-band]) & {
-      display: none;
-    }
-  }
-
-  & > .steer-stack,
-  & > .decision-dock > .dock-depth,
-  & > :is([id="prompt-box"], [id="run-composer"]):not(:focus-within) {
-    :where(:root[data-tight-band]) & {
-      display: none;
-    }
+/* WHAT STEPS ASIDE WHEN THE FLOORS OUTGROW THE BAND, keyed on state (the band flags, `dock-ask.ts`;
+   `[data-typing]`, `decision-dock.ts`), never on `:focus`: a pressed button takes focus at pointerdown,
+   and a bar reflowing then moves it from under the pointer before the click. Under a soft keyboard on
+   a short band: the run strip, and a composer while the card's answer box holds the typing. On a
+   tight band the steer stack, the "more waiting" row and a composer not holding the typing too: there
+   the card's floors and one line of a composer fill the band. A composer holding the typing stays:
+   the question that arrived is not what it sends to, so the cursor stays. */
+:where(:root[data-keyboard][data-short-band]) {
+  & [id="prompt-form"]:where(:has(> .decision-dock > .dock-user-input)) > .run-bar-host,
+  &
+    .bottom-bar[data-typing="card"]:where(:has(> .decision-dock > .dock-user-input))
+    > :is(.prompt-box, .run-composer) {
+    display: none;
   }
 }
 
-.bottom-bar:where(:has(> .decision-dock > .dock-user-input:focus-within)) {
-  & > .prompt-box,
-  & > .run-composer {
-    :where(:root[data-short-band]) & {
+.bottom-bar:where(:has(> .decision-dock > .dock-user-input)) {
+  & > .steer-stack,
+  & > .decision-dock > .dock-depth,
+  &:not([data-typing="composer"]) > :is(.prompt-box, .run-composer) {
+    :where(:root[data-tight-band]) & {
       display: none;
     }
   }
@@ -441,22 +435,30 @@
   max-block-size: none;
 }
 
-/* The two-line floor (`.dock-ask-body` below) is two of the question's own lines. */
+/* The two-line floor (`.dock-ask-body` below) is two of the question's own lines. The second gives to
+   the card's controls where the bar's ceiling cannot hold both (`--ask-floor`, `decision-dock.ts`
+   `paintFloor`). */
 .dock-user-input > .dock-ask-body {
   font-size: var(--fs-md);
+  min-block-size: var(--ask-floor, 2lh);
 }
 
 /* THE OPTIONS GIVE BEFORE THE QUESTION DOES. Flex shrink is shared in proportion to
    shrink factor times size, so at 1 each a squeezed card cuts its question to the 2lh floor
    while the options keep most of theirs, and a three-line question loses its last line. At
    this weight the options take all but a fraction of a pixel of the overflow, down to
-   their first row; only then does the question region shrink and scroll. */
+   their floor; only then does the question region shrink and scroll. */
 .dock-user-input > .user-input-options {
   flex-shrink: 1000;
 
-  /* THE FIRST ROW IS CONTROLS, SO IT NEVER GIVES: one option button's height, the hit floor on a
-     finger. Rows after it scroll. */
-  min-block-size: max(var(--hit-floor), calc(1lh + 2 * var(--sp-2) + 2px));
+  /* AN OPTION IS A CONTROL, SO IT NEVER GIVES: the region keeps its tallest option whole
+     (`--options-floor`, `decision-dock.ts` `paintOptionsFloor`; before its first measure, one plain
+     option row) and scrolls to the rest, and no option shrinks inside its own border. */
+  min-block-size: var(--options-floor, max(var(--hit-floor), calc(1lh + 2 * var(--sp-2) + 2px)));
+
+  & > * {
+    flex-shrink: 0;
+  }
 
   /* On a short band the plain options share a row as far as their labels fit on one line each, so a
      two-option question keeps both whole; an option that does not fit opens the next row. */
