@@ -172,59 +172,76 @@ func TestSignInGate_AReleaseThatSpendsItsTriesServesTheEdgeItRefused(t *testing.
 	}
 }
 
-// A release whose try resumed the run serves an opening edge whose claim it refused while that try was in flight:
-// the gate closed and paused the run again meanwhile, and no other release claims the edge, so ending there would
-// leave the run held until a further sign-in. The new pause is healed on a heal of its own.
+// A release whose try resumed the run serves an opening edge whose claim it refused while it was still live: the gate
+// closed while the try's resume write was in flight, the sweep that closing edge owed paused the run again once the
+// write landed, and the gate opened again before the release ended, so ending there would leave the run held until a
+// further sign-in. The new pause is healed on a heal of its own.
 func TestSignInGate_AReleaseThatResumesTheRunServesALaterEdgeItRefused(t *testing.T) {
 	g := newManualGateRun(t, signedInDir(t))
-	g.br.setCallResult(methodKiroWorkflowInspect, heldInspect(t, signInHoldReason))
-	running := inspectReply(t, gateRunID, marotte.RunStatusRunning, "")
-	var writes atomic.Int32
-	at, done := make(chan struct{}), make(chan struct{})
-	proceed := sync.OnceFunc(func() { close(done) })
-	t.Cleanup(proceed)
-	g.br.mu.Lock()
-	g.br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
-		if method != methodKiroWorkflowResume {
-			return nil, nil, false
-		}
-		if writes.Add(1) == 1 {
-			// The inspect stays the gate's pause: the closing edge's sweep paused the run once this write landed.
-			close(at)
-			<-done
-			return json.RawMessage(`{}`), nil, true
-		}
-		g.br.setCallResult(methodKiroWorkflowInspect, running)
-		return json.RawMessage(`{}`), nil, true
+	k := &kasRun{
+		id: gateRunID, parent: testLaunchSession,
+		onWriteFault: func(writeFault) {}, onEntryRead: func() {}, onFlapWrite: func() {},
 	}
-	g.br.mu.Unlock()
+	k.runningState()
+	k.attach(g.br)
+	fakeSourceOf(t, g.h).setFactory(k.door)
+	write := &holdBlock{reached: make(chan struct{}), retried: make(chan struct{})}
+	write.release = sync.OnceFunc(func() { close(write.retried) })
+	t.Cleanup(write.release)
+	k.set(func(k *kasRun) { k.writeHold = write })
+	tried, proceed := make(chan struct{}), make(chan struct{})
+	letGo := sync.OnceFunc(func() { close(proceed) })
+	t.Cleanup(letGo)
+	var held atomic.Bool
+	onReleaseTry(t, g.h, func(out resumeOutcome) {
+		if out == resumeWritten && held.CompareAndSwap(false, true) {
+			close(tried)
+			<-proceed
+		}
+	})
+	var finds atomic.Int32
+	onTransitionRead(t, g.h, func(want runWant, seen runSeen) {
+		if want == gateFind && seen == seenGatePaused {
+			finds.Add(1)
+		}
+	})
 
-	open, m := g.h.runs.gate.now()
-	if !open {
-		t.Fatal("Setup: the gate reads closed on a signed-in vault")
-	}
-	g.h.runs.startRelease(gateRunID, "", m.opening)
-	awaitClosed(t, at, "the release's resume write")
-	// No finder lists the run, so the edge's one claim is the refused one below.
-	g.br.setCallResult(methodKiroWorkflowList, json.RawMessage(`{"runs":[]}`))
 	g.lapseVault(t)
+	waitUntil(t, "the closing sweep's pause of the running run", func() bool { return k.reads() == kasGateReason })
 	g.b.set(true, true, nil)
 	g.signIn(t)
+	awaitClosed(t, write.reached, "the release's resume write")
+	g.lapseVault(t)
+	write.release()
+	awaitClosed(t, tried, "the end of the release's try that resumed the run")
+	waitUntil(t, "the closing sweep's pause of the resumed run", func() bool { return k.reads() == kasGateReason })
+	g.b.set(true, true, nil)
+	g.signIn(t)
+	waitUntil(t, "the next opening edge's finder to read the pause and decide its claim", func() bool {
+		g.h.runs.resumes.mu.Lock()
+		_, locked := g.h.runs.resumes.held[gateRunID]
+		g.h.runs.resumes.mu.Unlock()
+		return finds.Load() == 2 && !locked
+	})
 	g.h.runs.gate.mu.Lock()
-	opening := g.h.runs.gate.opens
+	owner, opens := g.h.runs.gate.releases[gateRunID], g.h.runs.gate.opens
 	g.h.runs.gate.mu.Unlock()
-	if g.h.runs.gate.claimRelease(gateRunID, opening) {
-		t.Fatal("Setup: the later edge's claim started a release beside the live one")
+	if !owner.live || owner.opening >= opens {
+		t.Fatalf("Setup: after the next edge's finder, the release is %+v at opening edge %d, want the first edge's "+
+			"still live, which refused the finder's claim", owner, opens)
 	}
-	proceed()
+	letGo()
 
 	waitUntil(t, "the release to end", func() bool {
 		g.h.runs.gate.mu.Lock()
 		defer g.h.runs.gate.mu.Unlock()
 		return !g.h.runs.gate.releases[gateRunID].live
 	})
-	if n := countCalls(g.br, methodKiroWorkflowResume); n != 2 {
-		t.Errorf("resume writes = %d, want the first edge's and the refused edge's", n)
+	if got := k.reads(); got != kasHoldRunning {
+		t.Errorf("the run is %v once the release ended, want running", got)
+	}
+	if n := k.resumes.Load(); n != 2 {
+		t.Errorf("resume writes KAS took = %d, want the first edge's and the refused edge's", n)
 	}
 	if spent := g.h.runs.healsSpent(gateRunID); spent != 2 {
 		t.Errorf("heals spent = %d, want one for each pause", spent)

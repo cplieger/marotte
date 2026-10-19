@@ -65,15 +65,17 @@ const (
 // what happens while it is held; a restart at its checkpoint, which keeps KAS's state and loses heldHeals and the heal
 // budget, or the engine's replacement there, which keeps them; the gate crossing the hold or its release; a fault in
 // the reads that form the hold or release it; a fault in the release's writes, a resume or, once the heal budget is
-// spent, the park for the user. Each item is the outcome of the cell that differs from the plain one in one value: the
-// hold at the checkpoint, before which nothing resumes the run, what a fresh runtime finds there, and the end.
-// holdCellText gives every cell's steps. A person's pause or resume of a held run is runTransitions'.
+// spent, the park for the user; for a chat-parented run, the orders production leaves open between a sign-in's reload
+// mark and the gate's opening, and between a reload's rehydrate and a closing sweep. Each item is the outcome of the
+// cell that differs from the plain one in one value: the hold at the checkpoint, before which nothing resumes the run,
+// what a fresh runtime finds there, and the end. holdCellText gives every cell's steps. A person's pause or resume of a
+// held run is runTransitions'.
 //
-//   - The plain cell (lands before the edge; held untouched; no restart; no crossing; reads answer; writes answer). A
-//     chat-parented run's gate pause, a manual run's gate pause, a scheduled run's gate pause: held paused with the
-//     gate's reason, persisted paused with the gate's reason, ends running after 1 resume. A chat-parented run's heal,
-//     a manual run's heal, a scheduled run's heal: held paused for the restart and its heal held, persisted paused for
-//     the restart, ends running after 1 resume.
+//   - The plain cell (lands before the edge; held untouched; no restart; no crossing; reads answer; writes answer; the
+//     chat's reload mark and rehydrate come first). A chat-parented run's gate pause, a manual run's gate pause, a
+//     scheduled run's gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends
+//     running after 1 resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for
+//     the restart and its heal held, persisted paused for the restart, ends running after 1 resume.
 //   - Lands after the edge. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's gate pause:
 //     held running with the gate's pause pending, persisted running with the gate's pause pending, ends running after 1
 //     resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart,
@@ -127,6 +129,21 @@ const (
 //     paused for the restart and its heal held, persisted paused for the restart, ends running after 2 resumes. A
 //     manual run's heal, a scheduled run's heal: held paused for the restart and its heal held, persisted paused for
 //     the restart, ends running after 1 resume.
+//   - The gate closes and opens again while the release's first resume write is in flight. A chat-parented run's gate
+//     pause, a manual run's gate pause, a scheduled run's gate pause: held paused with the gate's reason, persisted
+//     paused with the gate's reason, ends running after 1 resume. A chat-parented run's heal, a manual run's heal, a
+//     scheduled run's heal: held paused for the restart and its heal held, persisted paused for the restart, ends
+//     running after 1 resume.
+//   - The gate closes while the release's first resume write is in flight, and opens again once the release ended and
+//     the closing sweep paused the run again. A chat-parented run's gate pause, a manual run's gate pause, a scheduled
+//     run's gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after
+//     2 resumes. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart
+//     and its heal held, persisted paused for the restart, ends running after 2 resumes.
+//   - The gate closes while the release's first resume write is in flight, and opens again once the closing sweep
+//     paused the run again, the release still live. A chat-parented run's gate pause, a manual run's gate pause, a
+//     scheduled run's gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends
+//     running after 2 resumes. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for
+//     the restart and its heal held, persisted paused for the restart, ends running after 2 resumes.
 //   - The hold's first read fails once. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's
 //     gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after 1
 //     resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart and
@@ -175,6 +192,20 @@ const (
 //     gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after 1
 //     resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart and
 //     its heal held, persisted paused for the restart, ends running after 1 resume.
+//   - The gate opens and the release writes before the sign-in marks the chat for its reload. A chat-parented run's
+//     gate pause: cannot happen, no sign-in opens the gate onto a release's resume write with its own reload mark the
+//     only one pending: an earlier sign-in's mark still waits for the run's first resume write, or the edge's release
+//     writes no resume in its round. A manual run's gate pause, a scheduled run's gate pause, a manual run's heal, a
+//     scheduled run's heal: cannot happen, only a chat's session is marked for its reload at a sign-in
+//     (markSessionsForReload), and a reload's rehydrate sweeps only a chat's runs; a manual or scheduled run's host
+//     session is never marked. A chat-parented run's heal: held paused for the restart and its heal held, persisted
+//     paused for the restart, ends running after 1 resume.
+//   - The closing sweep pauses the resumed run before the chat's rehydrate reads it. A chat-parented run's gate pause,
+//     a chat-parented run's heal: cannot happen, no closing sweep pauses the run again while a chat's rehydrate waits
+//     to read it: only a held release's resume write that reloads the chat's session and lands at the closed gate
+//     starts both. A manual run's gate pause, a scheduled run's gate pause, a manual run's heal, a scheduled run's
+//     heal: cannot happen, only a chat's session is marked for its reload at a sign-in (markSessionsForReload), and a
+//     reload's rehydrate sweeps only a chat's runs; a manual or scheduled run's host session is never marked.
 type runGate struct {
 	// read is the vault's Answerability for the engine's backend; nil keeps the gate open, since then no vault
 	// answers the engine (none is wired, or an API key authenticates it).
@@ -191,7 +222,7 @@ type runGate struct {
 	state signin.Answerability
 	// epoch counts closing edges: a driving write admitted in an earlier epoch crossed one.
 	epoch uint64
-	// opens counts opening edges; a release serves the one it started on.
+	// opens counts opening edges.
 	opens uint64
 	mu    sync.Mutex
 }
@@ -584,6 +615,9 @@ func (rs *Runs) resumeHeld(workflowID string, chatID marotte.ChatID) {
 		var out resumeOutcome
 		out, charged = rs.retryResume(hctx, chatID, workflowID, charged)
 		cancel()
+		if hook := releaseTryHook.Load(); hook != nil {
+			(*hook)(rs, workflowID, out)
+		}
 		fresh, again := rs.afterReleaseTry(workflowID, chatID, out, attempt)
 		if !again {
 			return
@@ -633,6 +667,9 @@ func (rs *Runs) awaitOpen(workflowID string) bool {
 	rs.gate.servesLater(workflowID)
 	return true
 }
+
+// releaseTryHook, when set, runs after each try of a release, before the release decides on its next; tests only.
+var releaseTryHook atomic.Pointer[func(rs *Runs, workflowID string, out resumeOutcome)]
 
 // releaseWaitHook, when set, gives the wait before a release's next try in place of its backoff gap; tests only.
 var releaseWaitHook atomic.Pointer[func(rs *Runs, workflowID string, gap time.Duration) time.Duration]

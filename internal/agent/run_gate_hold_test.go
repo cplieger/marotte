@@ -38,6 +38,7 @@ type (
 	crossing   int
 	readFault  int
 	writeFault int
+	raceOrder  int
 )
 
 const (
@@ -84,6 +85,25 @@ const (
 	// crossFlapsAtRetry loses a held release's first resume write, then closes and opens the gate while the release
 	// waits to retry it.
 	crossFlapsAtRetry
+	// The in-flight crossings hold a held release's first resume write before KAS takes it while the gate closes:
+	// crossFlapsInFlight opens the gate again before the write lands, crossRepausedEnded once the write landed, the
+	// release ended and the closing sweep paused the run again, crossRepausedLive at the same point with the release
+	// still live after its try.
+	crossFlapsInFlight
+	crossRepausedEnded
+	crossRepausedLive
+)
+
+// The orders a chat-parented cell's production leaves open. orderFirst: a sign-in marks the chat's session for its
+// reload (Runtime.onSignInChange) before the gate reads the sign-in, and the rehydrate a release's resume write
+// reloads reads the run before a closing sweep pauses it again. orderMarkLate: the gate opens and the release it
+// starts writes its first resume before the mark lands, which the vault leaves unordered (OnChange's listeners run
+// after Answerability shows the sign-in). orderSweepFirst: the closing sweep pauses the run again before that
+// rehydrate reads it.
+const (
+	orderFirst raceOrder = iota
+	orderMarkLate
+	orderSweepFirst
 )
 
 const (
@@ -128,6 +148,16 @@ var (
 		"no crossing", "the gate opens before the hold forms", "the gate closes again at the release's first read of the hold",
 		"the gate closes again before the release's heal admits",
 		"the release's first resume write is lost, and the gate closes and opens again while it waits to retry",
+		"the gate closes and opens again while the release's first resume write is in flight",
+		"the gate closes while the release's first resume write is in flight, and opens again once the release " +
+			"ended and the closing sweep paused the run again",
+		"the gate closes while the release's first resume write is in flight, and opens again once the closing " +
+			"sweep paused the run again, the release still live",
+	}
+	orderNames = []string{
+		"the chat's reload mark and rehydrate come first",
+		"the gate opens and the release writes before the sign-in marks the chat for its reload",
+		"the closing sweep pauses the resumed run before the chat's rehydrate reads it",
 	}
 	readNames = []string{
 		"reads answer", "the hold's first read fails once", "the hold's reads keep failing",
@@ -150,10 +180,19 @@ type holdCombo struct {
 	cross   crossing
 	read    readFault
 	write   writeFault
+	order   raceOrder
 }
 
 func (c holdCombo) gate() bool { return c.form == formGate }
 func (c holdCombo) chat() bool { return c.kind == kindChat }
+
+// inFlight is whether the crossing holds the release's first resume write in flight.
+func (c crossing) inFlight() bool {
+	return c == crossFlapsInFlight || c == crossRepausedEnded || c == crossRepausedLive
+}
+
+// takesWrite is whether the crossing acts on the release's first resume write, as each write fault does.
+func (c crossing) takesWrite() bool { return c == crossFlapsAtRetry || c.inFlight() }
 
 // holdRead is whether the cell's read fault acts as the hold forms; releaseRead whether it acts on the release.
 func (c holdCombo) holdRead() bool {
@@ -175,7 +214,7 @@ func (c holdCombo) rowName() string {
 func (c holdCombo) name() string {
 	return strings.Join([]string{
 		landNames[c.land], heldNames[c.held], restartNames[c.restart], crossNames[c.cross], readNames[c.read],
-		writeNames[c.write],
+		writeNames[c.write], orderNames[c.order],
 	}, "; ")
 }
 
@@ -190,7 +229,9 @@ func everyCombo() []holdCombo {
 						for cross := range crossing(len(crossNames)) {
 							for read := range readFault(len(readNames)) {
 								for write := range writeFault(len(writeNames)) {
-									out = append(out, holdCombo{kind, form, land, held, restart, cross, read, write})
+									for order := range raceOrder(len(orderNames)) {
+										out = append(out, holdCombo{kind, form, land, held, restart, cross, read, write, order})
+									}
 								}
 							}
 						}
@@ -319,6 +360,14 @@ type holdStep struct {
 	flapPauses bool
 	// failsEntry: the step's heal entry's own read fails once (readEntryOnce), held there.
 	failsEntry bool
+	// markLate: the step's sign-in marks the chat for its reload only once its release wrote its first resume.
+	markLate bool
+	// inFlight: the step's held release's first resume write is held in flight under this crossing; rehydrates: that
+	// write reloads the chat's session, whose rehydrate reads the run once the write landed.
+	inFlight   crossing
+	rehydrates bool
+	// servesLive: the release live after the last step's try serves this step's opening edge.
+	servesLive bool
 }
 
 // The ERRORs a cell's failing readers log.
@@ -359,10 +408,11 @@ type holdSim struct {
 	cross   crossing
 	entry   bool
 	open    bool
-	// reload: a chat's session is marked for its reload (signsIn).
-	reload bool
-	// fired records whether each armed fault and crossing acted.
-	readFired, writeFired, crossFired bool
+	// reload: a chat's session is marked for its reload (signsIn); freshMark: the current step's sign-in made the
+	// only mark pending; live: a release live after its try serves the next opening edge (crossRepausedLive).
+	reload, freshMark, live bool
+	// fired records whether each armed fault, crossing and race order acted.
+	readFired, writeFired, crossFired, orderFired bool
 }
 
 // holdModel is the reference model of the hold matrix: the steps a cell drives, each with the state the cell must
@@ -383,10 +433,17 @@ func holdModel(c holdCombo) (steps []holdStep, impossible string) {
 	case c.write != writeNone && !s.writeFired:
 		return nil, "no release write comes while its fault is armed: a heal writes only once its read finds a pause " +
 			"it resumes (runTransitions' healResume row)"
-	case c.cross == crossFlapsAtRetry && !s.crossFired:
+	case c.cross.takesWrite() && !s.crossFired:
 		return nil, "no held release (resumeHeld) writes the run's resume at an open gate with no sweep of its round " +
-			"healing the run too, so no release waits to retry a lost write: a chat's rehydrate or a parentless run's " +
-			"tries heal it, it parks for a person or ends first, or failing reads leave no hold for a release"
+			"healing the run too, so no release write is lost or held in flight: a chat's rehydrate or a parentless " +
+			"run's tries heal it, it parks for a person or ends first, or failing reads leave no hold for a release"
+	case c.order == orderSweepFirst && !s.orderFired:
+		return nil, "no closing sweep pauses the run again while a chat's rehydrate waits to read it: only a held " +
+			"release's resume write that reloads the chat's session and lands at the closed gate starts both"
+	case c.order == orderMarkLate && !s.orderFired:
+		return nil, "no sign-in opens the gate onto a release's resume write with its own reload mark the only one " +
+			"pending: an earlier sign-in's mark still waits for the run's first resume write, or the edge's release " +
+			"writes no resume in its round"
 	case c.cross != crossNone && !s.crossFired:
 		return nil, "no release reads the hold at an open gate, or none of its reads answers before its tries are " +
 			"spent (resumeHeld, retryResumeLater), so the gate has no read to cross"
@@ -405,8 +462,12 @@ func (c holdCombo) ruledOut() string {
 			"pause once the gate reads open (errGateOpened), and admitOrHold admits the heal"
 	case c.read == readEntryOnce && c.gate():
 		return "a gate pause has no heal entry: it forms in the closing sweep, whose read the hold's read values fail"
-	case c.cross == crossFlapsAtRetry && c.write != writeNone:
-		return "the crossing loses the release's first resume write itself, the first write each write fault acts on"
+	case c.cross.takesWrite() && c.write != writeNone:
+		return "the crossing loses or holds the release's first resume write itself, the first write each write " +
+			"fault acts on"
+	case c.order != orderFirst && !c.chat():
+		return "only a chat's session is marked for its reload at a sign-in (markSessionsForReload), and a reload's " +
+			"rehydrate sweeps only a chat's runs; a manual or scheduled run's host session is never marked"
 	case !c.gate() && c.land == landAfter && (c.read == readHoldOnce || c.read == readHoldEvery):
 		return "a heal after the opening edge forms no hold, since admitOrHold admits it at the open gate, so its " +
 			"first read is the release's"
@@ -419,6 +480,7 @@ func (s *holdSim) state() holdState { return holdState{kas: s.kas, heal: s.entry
 // begin starts the next step.
 func (s *holdSim) begin(ev holdEvent, text string) {
 	s.cur = holdStep{ev: ev, text: text}
+	s.freshMark = signsIn(ev) && s.c.chat() && !s.reload
 	if signsIn(ev) && s.c.chat() {
 		s.reload = true
 	}
@@ -725,8 +787,9 @@ func (s *holdSim) loop() {
 		if n > 8 {
 			panic(fmt.Sprintf("holdModel: %s never settles", s.c.name()))
 		}
-		edge := releasers{finder: s.c.gate() && s.kas == kasGateReason}
-		if s.entry {
+		// The finder of every paused run releases any run's gate pause, a heal row's too once the gate paused it again.
+		edge := releasers{finder: s.kas == kasGateReason}
+		if s.entry || s.live {
 			edge.healer = healerHeld
 		}
 		switch {
@@ -756,6 +819,7 @@ func findsEveryPaused(ev holdEvent) bool {
 // round is one event's release of the run by r, under the armed faults and crossing.
 func (s *holdSim) round(ev holdEvent, text string, r releasers) {
 	s.begin(ev, text)
+	s.cur.servesLive = s.live
 	hold := s.kas.holds()
 	// The finder of every paused run reads a heal's run too, and releases nothing of it.
 	healListed := !s.c.gate() && findsEveryPaused(ev) && s.kas.listedPaused()
@@ -806,6 +870,9 @@ func (s *holdSim) round(ev holdEvent, text string, r releasers) {
 		s.cur.text += "; its heal reads it " + s.kas.String() + " and drops the hold"
 	default:
 		loud = s.deadLoud(r, finderDead, healDead, true)
+	}
+	if s.open {
+		s.live = false
 	}
 	if finderDead && !slices.Contains(loud, findSpentLog) {
 		loud = append(loud, findSpentLog)
@@ -873,19 +940,30 @@ func (s *holdSim) release(r releasers, finderHeals, healerHeals bool) []string {
 	if s.claims >= maxAutoHeals {
 		return s.park(finderHeals || (healerHeals && r.healer == healerHeld), healerHeals && r.healer == healerSweep)
 	}
-	// The first resume write of a chat's run since a sign-in reloads the chat's session, whose rehydrate sweeps too.
-	sweeps := (healerHeals && r.healer == healerSweep) || (s.c.chat() && s.reload)
-	if s.c.chat() {
-		s.reload = false
-	}
 	// The edge's release of a held heal and its finder's are one release (releases).
 	loops := 0
 	if finderHeals || (healerHeals && r.healer == healerHeld) {
 		loops = 1
 	}
-	// The crossing's lost write must be the held release's: a sweep healing the run in the same round may write first.
-	if s.cross == crossFlapsAtRetry && loops > 0 && (!healerHeals || r.healer != healerSweep) {
-		s.flap(sweeps)
+	late := s.c.order == orderMarkLate && s.freshMark && loops > 0 && (s.cur.ev == evSignIn || s.cur.ev == evSignInAgain)
+	if late {
+		s.orderFired, s.cur.markLate = true, true
+		s.cur.text += "; the gate opens and its release writes the run's resume before the sign-in marks the chat " +
+			"for its reload"
+	}
+	// The first resume write of a chat's run since a sign-in reloads the chat's session, whose rehydrate sweeps too; a
+	// mark that lands after the release's first write reloads the session at the next one.
+	firstSweeps := (healerHeals && r.healer == healerSweep) || (s.c.chat() && s.reload && !late)
+	sweeps := (healerHeals && r.healer == healerSweep) || (s.c.chat() && s.reload)
+	if s.c.chat() {
+		s.reload = false
+	}
+	// The crossing's write must be the held release's: a sweep healing the run in the same round may write first.
+	if held := loops > 0 && (!healerHeals || r.healer != healerSweep); held && s.cross == crossFlapsAtRetry {
+		s.flap(firstSweeps)
+		return nil
+	} else if held && s.cross.inFlight() {
+		s.inFlightWrite(s.c.chat() && firstSweeps)
 		return nil
 	}
 	switch s.write {
@@ -941,6 +1019,38 @@ func (s *holdSim) flap(sweeps bool) {
 	s.claims++
 }
 
+// inFlightWrite is a release under an in-flight crossing: its first resume write is held before KAS takes it while
+// the gate closes, and the closing sweep, which lists the run still paused, pauses nothing. The write lands at the
+// open gate (crossFlapsInFlight), so the release's next try, which serves the later edge, reads the run running; or
+// at the closed gate, so the sweep its admission's crossed epoch starts (runAdmission.settle) pauses the run with the
+// gate's reason, the gate still closed, the release ended (crossRepausedEnded) or live, to serve the next edge itself
+// (crossRepausedLive). rehydrates: the write reloaded a chat's session, whose rehydrate reads the run once the write
+// landed, before that pause (orderFirst) or after it, holding its heal (orderSweepFirst).
+func (s *holdSim) inFlightWrite(rehydrates bool) {
+	cross := s.cross
+	s.cross, s.crossFired = crossNone, true
+	s.cur.inFlight, s.cur.rehydrates = cross, rehydrates
+	s.kas, s.entry = kasHoldRunning, false
+	s.resumes++
+	s.claims++
+	if cross == crossFlapsInFlight {
+		s.cur.text += "; its resume write is in flight while the gate closes and opens again, and lands at the open gate"
+		return
+	}
+	s.kas, s.open, s.live = kasGateReason, false, cross == crossRepausedLive
+	s.cur.text += "; its resume write is in flight as the gate closes, and lands at the closed gate, and the closing " +
+		"sweep pauses the run with the gate's reason"
+	if s.live {
+		s.cur.text += ", the release still live"
+	} else {
+		s.cur.text += ", the release ended"
+	}
+	if rehydrates && s.c.order == orderSweepFirst {
+		s.orderFired, s.entry = true, true
+		s.cur.text += "; the chat's rehydrate then reads that pause and holds its heal"
+	}
+}
+
 // park is a release that finds the heal budget spent and parks the run for the user (parkForUser): held is whether
 // resumeHeld writes the park, swept whether a sweep does.
 func (s *holdSim) park(held, swept bool) []string {
@@ -987,6 +1097,7 @@ func holdSummary() string {
 	add(crossNames, func(c *holdCombo, v int) { c.cross = crossing(v) })
 	add(readNames, func(c *holdCombo, v int) { c.read = readFault(v) })
 	add(writeNames, func(c *holdCombo, v int) { c.write = writeFault(v) })
+	add(orderNames, func(c *holdCombo, v int) { c.order = raceOrder(v) })
 	for _, v := range variants {
 		var outcomes []string
 		rows := map[string][]string{}
@@ -1096,7 +1207,9 @@ const gateHoldLead = "Every hold, by the matrix TestGateHold_EveryCell/<row>/<ce
 	"admits it. Cells: where the hold lands; what happens while it is held; a restart at its checkpoint, which keeps " +
 	"KAS's state and loses heldHeals and the heal budget, or the engine's replacement there, which keeps them; the gate crossing the hold or its release; a fault in the " +
 	"reads that form the hold or release it; a fault in the release's writes, a resume or, once the heal budget is " +
-	"spent, the park for the user. Each item is the outcome of the cell that differs from the plain " +
+	"spent, the park for the user; for a chat-parented run, the orders production leaves open between a sign-in's " +
+	"reload mark and the gate's opening, and between a reload's rehydrate and a closing sweep. Each item is the " +
+	"outcome of the cell that differs from the plain " +
 	"one in one value: the hold at the checkpoint, before which nothing resumes the run, what a fresh runtime finds " +
 	"there, and the end. holdCellText gives every cell's steps. A person's pause or resume of a held run is " +
 	"runTransitions'."
@@ -1172,10 +1285,11 @@ type kasRun struct {
 	write         writeFault
 	resumes       atomic.Int32
 	pauses        atomic.Int32
-	// finderLists and sweepLists count the lists of the finder of every paused run (pausedRuns) and of a chat's
-	// sweep (resumeChainRuns).
-	finderLists atomic.Int32
-	sweepLists  atomic.Int32
+	// finderLists, sweepLists and closingLists count the lists of the finder of every paused run (pausedRuns), of a
+	// chat's sweep (resumeChainRuns) and of the closing sweep (sweepPause).
+	finderLists  atomic.Int32
+	sweepLists   atomic.Int32
+	closingLists atomic.Int32
 	// onEntryRead holds a heal entry's failing read (failsEntryRead).
 	onEntryRead func()
 	mu          sync.Mutex
@@ -1189,8 +1303,16 @@ type kasRun struct {
 	// and onFlapWrite runs.
 	flapWrite   bool
 	onFlapWrite func()
+	// writeHold holds the next resume write of a held release before KAS takes it, until its retried closes;
+	// listHolds the next run list a lister asks, by lister, until theirs closes.
+	writeHold *holdBlock
+	listHolds map[string]*holdBlock
+	// handles are the sessions answering from this run: the engine's lane and one per door (door).
+	handles []*fakeBridge
 	// lastCall is when the runtime last called the run's KAS, in Unix nanoseconds.
 	lastCall atomic.Int64
+	// resumeWrites counts the resume writes sent, before any fault or hold acts on one.
+	resumeWrites atomic.Int32
 }
 
 func (k *kasRun) runningState() {
@@ -1201,14 +1323,51 @@ func (k *kasRun) restartPausedState() {
 	k.status, k.pauseReason, k.stopReason = marotte.RunStatusPaused, stalePauseReason, ""
 }
 
-// attach makes br's KAS answer from k, as a restart's new engine reads the KAS state the last one left.
+// attach makes br, the engine's lane, answer from k, as a restart's new engine reads the KAS state the last one left.
 func (k *kasRun) attach(br *fakeBridge) {
 	k.mu.Lock()
 	k.br = br
 	k.mu.Unlock()
+	k.answerOn(br)
+}
+
+func (k *kasRun) answerOn(br *fakeBridge) {
+	k.mu.Lock()
+	k.handles = append(k.handles, br)
+	gone := k.gone
+	k.mu.Unlock()
 	br.mu.Lock()
-	defer br.mu.Unlock()
 	br.onCallFails = k.answer
+	br.mu.Unlock()
+	if gone {
+		br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
+	}
+}
+
+// door is the session one door opens: a handle of its own over this run's KAS state, as the engine mints one per
+// door, so a closed generation's late exit finds a different handle registered.
+func (k *kasRun) door() engineSession {
+	b := newFakeBridge()
+	b.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
+	k.answerOn(b)
+	return b
+}
+
+// detach stops every handle answering from k, as a stopped runtime's engine answers no more.
+func (k *kasRun) detach() {
+	k.mu.Lock()
+	handles := k.handles
+	k.handles = nil
+	k.mu.Unlock()
+	for _, b := range handles {
+		b.mu.Lock()
+		b.onCallFails = nil
+		b.mu.Unlock()
+	}
+}
+
+func workflowNotFoundErr() *marotte.RPCError {
+	return &marotte.RPCError{Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`)}
 }
 
 // armWrite fails the release writes as w says, from the next one on; writeNone ends the fault.
@@ -1245,6 +1404,19 @@ func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, 
 	if k.failsEntryRead(method) {
 		return nil, nil, true, errHoldReadFault
 	}
+	if method == methodKiroWorkflowResume {
+		k.resumeWrites.Add(1)
+		if b := k.takeWriteHold(); b != nil {
+			close(b.reached)
+			<-b.retried
+		}
+	}
+	if method == methodKiroWorkflowList {
+		if b := k.takeListHold(lister()); b != nil {
+			close(b.reached)
+			<-b.retried
+		}
+	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	switch method {
@@ -1254,6 +1426,8 @@ func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, 
 			k.finderLists.Add(1)
 		case "resumeChainRuns":
 			k.sweepLists.Add(1)
+		case "sweepPause":
+			k.closingLists.Add(1)
 		}
 		return k.listLocked(), nil, true, nil
 	case methodKiroWorkflowInspect:
@@ -1296,6 +1470,37 @@ func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, 
 		return json.RawMessage(`{}`), nil, true, nil
 	}
 	return nil, nil, false, nil
+}
+
+// takeWriteHold is the armed write hold when this call is a held release's resume write (resumeHeld), which then
+// disarms it.
+func (k *kasRun) takeWriteHold() *holdBlock {
+	if innermostOf(".(*Runs).resumeHeld") == "" {
+		return nil
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	b := k.writeHold
+	k.writeHold = nil
+	return b
+}
+
+// holdList holds the next run list by asks, a lister's name, until b lets it go.
+func (k *kasRun) holdList(asks string, b *holdBlock) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.listHolds == nil {
+		k.listHolds = map[string]*holdBlock{}
+	}
+	k.listHolds[asks] = b
+}
+
+func (k *kasRun) takeListHold(asks string) *holdBlock {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	b := k.listHolds[asks]
+	delete(k.listHolds, asks)
+	return b
 }
 
 // releaseFaultLocked applies the armed write fault to one release write: whether KAS takes the write, and the
@@ -1371,7 +1576,8 @@ func innermostOf(suffixes ...string) string {
 
 // lister names the Runs method whose run list the calling goroutine asks, "" for any other.
 func lister() string {
-	return strings.TrimPrefix(innermostOf(".(*Runs).pausedRuns", ".(*Runs).resumeChainRuns"), ".(*Runs).")
+	return strings.TrimPrefix(innermostOf(".(*Runs).pausedRuns", ".(*Runs).resumeChainRuns", ".(*Runs).sweepPause"),
+		".(*Runs).")
 }
 
 // retryOf is the retryResumeLater chain whose later try the calling goroutine runs: retryChat a chat's re-sweep,
@@ -1437,15 +1643,15 @@ func (k *kasRun) set(fn func(*kasRun)) {
 	fn(k)
 }
 
-// vanish is KAS deleting the run: the list drops it and its inspect answers workflow not found.
+// vanish is KAS deleting the run: the list drops it and its inspect answers workflow not found, on every handle.
 func (k *kasRun) vanish() {
 	k.mu.Lock()
 	k.gone = true
-	br := k.br
+	handles := slices.Clone(k.handles)
 	k.mu.Unlock()
-	br.setCallRPCErr(methodKiroWorkflowInspect, &marotte.RPCError{
-		Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`),
-	})
+	for _, b := range handles {
+		b.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
+	}
 }
 
 func kasJSON(v any) json.RawMessage {
@@ -1611,6 +1817,62 @@ type cellFaults struct {
 	// gapReached closes as it starts.
 	flapGap    bool
 	gapReached chan struct{}
+	// tryHold, when set, holds the next release try that wrote the run's resume after it ended, the release still
+	// live (crossRepausedLive).
+	tryHold *holdBlock
+	// rehydrateRead closes at the next heal read of a chat's sweep (resumeChainRuns).
+	rehydrateRead chan struct{}
+}
+
+// newHold is a hold the cell's step lets go of, and the runtime's stop too.
+func (f *cellFaults) newHold() *holdBlock {
+	b := &holdBlock{reached: make(chan struct{}), retried: make(chan struct{})}
+	b.release = sync.OnceFunc(func() { close(b.retried) })
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.done {
+		b.release()
+	}
+	f.all = append(f.all, b)
+	return b
+}
+
+// releaseTried is a runtime's release-try hook: it holds the armed try that wrote the resume.
+func (f *cellFaults) releaseTried(out resumeOutcome) {
+	if out != resumeWritten {
+		return
+	}
+	f.mu.Lock()
+	b := f.tryHold
+	f.tryHold = nil
+	f.mu.Unlock()
+	if b != nil {
+		close(b.reached)
+		<-b.retried
+	}
+}
+
+var (
+	releaseTriesHooked sync.Once
+	releaseTries       sync.Map
+)
+
+// onReleaseTry installs fn as h's release-try hook (releaseTryHook) for the test, and returns its uninstall.
+func onReleaseTry(t *testing.T, h *Runtime, fn func(out resumeOutcome)) (unhook func()) {
+	t.Helper()
+	releaseTriesHooked.Do(func() {
+		hook := func(rs *Runs, _ string, out resumeOutcome) {
+			if fn, ok := releaseTries.Load(rs); ok {
+				fn.(func(resumeOutcome))(out)
+			}
+		}
+		releaseTryHook.Store(&hook)
+	})
+	runs := h.runs
+	releaseTries.Store(runs, fn)
+	unhook = func() { releaseTries.Delete(runs) }
+	t.Cleanup(unhook)
+	return unhook
 }
 
 // flapWait is how long a flapped release waits to retry: longer than any step waits, so only the opening edge's
@@ -1761,6 +2023,10 @@ func (f *cellFaults) hook(rs *Runs) func(want runWant, seen runSeen) error {
 			close(f.finderRead)
 			f.finderRead = nil
 		}
+		if want == healResume && f.rehydrateRead != nil && innermostOf(".(*Runs).resumeChainRuns") != "" {
+			close(f.rehydrateRead)
+			f.rehydrateRead = nil
+		}
 		switch {
 		case f.holdsAt(want) && f.read == readHoldEvery:
 			f.hitLocked()
@@ -1869,6 +2135,73 @@ type holdCell struct {
 	stepInfos int
 	// lapsed: a step closed the gate under the running run, so the next one does not.
 	lapsed bool
+	// liveTry holds a release live after its try, for the next step's opening edge (crossRepausedLive).
+	liveTry *holdBlock
+	// onBoot arms a restart step's holds once the stopped runtime let go of the last ones.
+	onBoot func()
+	// markHold, when set, holds the vault's delivery of the next sign-in before the runtime's listener marks the
+	// chat's session for its reload; marks counts the sign-ins delivered past that listener.
+	markHold atomic.Pointer[holdBlock]
+	marks    atomic.Int32
+	view     gateView
+}
+
+// gateView stands between a cell's gate and its vault: while held, the gate reads the state it held at, as when no
+// reader has read the vault since a sign-in committed.
+type gateView struct {
+	at   signin.Answerability
+	mu   sync.Mutex
+	held bool
+}
+
+func (v *gateView) read(vault func() signin.Answerability) signin.Answerability {
+	v.mu.Lock()
+	held, at := v.held, v.at
+	v.mu.Unlock()
+	if held {
+		return at
+	}
+	return vault()
+}
+
+func (v *gateView) hold(at signin.Answerability) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.held, v.at = true, at
+}
+
+func (v *gateView) let() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.held = false
+}
+
+// watchMarks puts the cell between the vault and the runtime's sign-in listener, and the gate's read behind its view:
+// before for markHold, after for marks. pre is true while the runtime's listeners are not yet registered.
+func (c *holdCell) watchMarks(vault *signin.Vault, pre bool) {
+	if pre {
+		vault.OnChange(func(ch signin.Change) {
+			if ch.To != signin.StatusSignedIn {
+				return
+			}
+			if b := c.markHold.Swap(nil); b != nil {
+				close(b.reached)
+				<-b.retried
+			}
+		})
+		return
+	}
+	vault.OnChange(func(ch signin.Change) {
+		if ch.To == signin.StatusSignedIn && ch.From != signin.StatusSignedIn {
+			c.marks.Add(1)
+		}
+	})
+	g := &c.h.runs.gate
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	read := g.read
+	c.view.let()
+	g.read = func() signin.Answerability { return c.view.read(read) }
 }
 
 // holdCellSeq numbers the cells, whose runs and chats are named apart so their logs route apart.
@@ -1927,12 +2260,13 @@ func (c *holdCell) boot(t *testing.T, signedIn bool) {
 	}
 	b := newGateBackend()
 	vault := openVault(t, dir, b)
+	c.watchMarks(vault, true)
 	var (
 		h  *Runtime
 		br *fakeBridge
 	)
 	if c.c.chat() {
-		h, br = agentRunOnChatAs(t, c.id, c.chat, c.session, WithSignIn(vault, gateBackendID))
+		h, br = agentRunOnChatAs(t, c.id, c.chat, c.session, c.k.door().(*fakeBridge), WithSignIn(vault, gateBackendID))
 		h.runs.grantLease(t.Context(), c.id, "publish",
 			launchOrigin{origin: runlease.OriginAgent, chatID: string(c.chat)}, hostSec())
 		h.runs.recordParentSession(t.Context(), c.id, c.session)
@@ -1963,20 +2297,31 @@ func (c *holdCell) boot(t *testing.T, signedIn bool) {
 	c.gateRun = &gateRun{h: h, br: br, vault: vault, b: b}
 	c.f.cell.Store(c)
 	c.k.attach(br)
+	fakeSourceOf(t, h).setFactory(c.k.door)
+	c.watchMarks(vault, false)
 	unhookReads, unhookWaits := onTransitionReadErr(t, h, c.f.hook(h.runs)), onReleaseWait(t, h, c.f.releaseWait)
+	unhookTries := onReleaseTry(t, h, c.f.releaseTried)
 	c.unhook = func() {
 		unhookReads()
 		unhookWaits()
+		unhookTries()
 	}
 }
 
-// agentRunOnChatAs is agentRunOnChat for the run id hosted by chat's session.
-func agentRunOnChatAs(t *testing.T, id string, chat marotte.ChatID, session string, opts ...Option) (*Runtime, *fakeBridge) {
+// agentRunOnChatAs is agentRunOnChat for the run id hosted by chat's session, resident as first on the engine's first
+// generation, which ends it with the generation.
+func agentRunOnChatAs(
+	t *testing.T, id string, chat marotte.ChatID, session string, first *fakeBridge, opts ...Option,
+) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, cs, br := newTestHub(opts...)
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	br.sessionID = session
-	h.bridge.mgr.insert(chat, &sharedBridge{bridge: br, state: bridgeIdle})
+	first.sessionID = session
+	e := fakeSourceOf(t, h).current()
+	e.mu.Lock()
+	e.sessions = append(e.sessions, first)
+	e.mu.Unlock()
+	h.bridge.mgr.insert(chat, &sharedBridge{bridge: first, state: bridgeIdle})
 	h.runs.useLog(newRunLog(t.TempDir()))
 	h.coord.runs = h.runs.log
 	if _, err := cs.Mutate(t.Context(), chat, func(c *marotte.Chat, _ bool) bool {
@@ -2025,16 +2370,49 @@ func (c *holdCell) awaitGate(open bool) {
 	}
 }
 
-// signInStep signs in, as gateRun.signIn does, unless the gate closes again under the release the sign-in starts.
-func (c *holdCell) signInStep(t *testing.T) {
+// signInStep signs in, as gateRun.signIn does, unless the gate closes again under the release the sign-in starts. A
+// chat-parented cell orders the sign-in's reload mark against the gate's opening: with late, the gate opens and the
+// release writes the run's resume while the mark is held; without, the gate reads the sign-in only after the mark.
+func (c *holdCell) signInStep(t *testing.T, late bool, afterOpen func()) {
 	t.Helper()
+	marks, writes := c.marks.Load(), c.k.resumeWrites.Load()
+	// Only a crossing under this sign-in's release cuts its waits short.
+	c.f.crossed.Store(false)
+	var mark *holdBlock
+	switch {
+	case !c.c.chat():
+	case late:
+		mark = c.f.newHold()
+		c.markHold.Store(mark)
+	default:
+		c.h.runs.gate.mu.Lock()
+		at := c.h.runs.gate.state
+		c.h.runs.gate.mu.Unlock()
+		c.view.hold(at)
+	}
 	if _, err := c.vault.StartSignIn(t.Context(), gateBackendID, signin.FlowParams{Flow: signin.FlowDevice}); err != nil {
 		t.Fatalf("StartSignIn: %v", err)
 	}
 	waitUntil(t, "the sign-in to commit", func() bool {
 		return c.f.crossed.Load() || c.vault.Answerability(gateBackendID) == signin.Answerable
 	})
+	if c.c.chat() && !late {
+		waitUntil(t, "the sign-in's reload mark", func() bool { return c.marks.Load() > marks })
+		c.view.let()
+	}
+	// The gate's own listener may have read the held view, or wait behind the held mark, so this read applies the edge.
+	c.h.runs.gateOpen()
 	waitUntil(t, "the gate to open", func() bool { return c.f.crossed.Load() || c.h.runs.gateOpen() })
+	if afterOpen != nil {
+		afterOpen()
+	}
+	if mark != nil {
+		waitUntil(t, "the release's resume write before the reload mark", func() bool {
+			return c.k.resumeWrites.Load() > writes
+		})
+		mark.release()
+		waitUntil(t, "the sign-in's reload mark", func() bool { return c.marks.Load() > marks })
+	}
 }
 
 // signOut closes the gate, as the gate reads it, so the next sign-in is an opening edge.
@@ -2049,7 +2427,7 @@ func (c *holdCell) signOut(t *testing.T) {
 // lapse rejects the next renewal under the running run, so the gate closes and its sweep reads the run.
 func (c *holdCell) lapse(t *testing.T) {
 	t.Helper()
-	c.signIn(t)
+	c.signInStep(t, false, nil)
 	c.b.set(false, false, func() error { return signin.ErrRejected })
 	if rerr := c.askVault(t.Context(), t); rerr == nil {
 		t.Fatal("Setup: a rejected renewal was answered")
@@ -2126,13 +2504,15 @@ func (c *holdCell) restart(t *testing.T, s *holdStep) {
 	t.Helper()
 	signedIn, persisted := s.ev == evRestartOpen, s.persisted
 	c.unhook()
-	c.br.mu.Lock()
-	c.br.onCallFails = nil
-	c.br.mu.Unlock()
+	c.k.detach()
 	c.stop()
 	c.f.mu.Lock()
 	c.f.done = false
 	c.f.mu.Unlock()
+	if c.onBoot != nil {
+		c.onBoot()
+		c.onBoot = nil
+	}
 	c.boot(t, signedIn)
 	if got := c.k.reads(); got != persisted {
 		t.Errorf("a restart's new runtime finds the run %v, want %v", got, persisted)
@@ -2229,10 +2609,10 @@ func (c *holdCell) drive(t *testing.T, s *holdStep) {
 			waitUntil(t, "the rehydrate's two sweeps", func() bool { return c.k.sweepLists.Load() >= swept+2 })
 		}
 	case evSignIn:
-		c.signInStep(t)
+		c.signInStep(t, s.markLate, c.liveServes(s))
 	case evSignInAgain:
 		c.signOut(t)
-		c.signInStep(t)
+		c.signInStep(t, s.markLate, c.liveServes(s))
 	case evPendAcrossEdge:
 		c.formHold(t, s)
 		// The sweep's pause write has returned, so a finder's read from here on is the opening edge's or later.
@@ -2241,7 +2621,7 @@ func (c *holdCell) drive(t *testing.T, s *holdStep) {
 		c.f.finds = 0
 		c.f.mu.Unlock()
 		c.b.set(true, true, nil)
-		c.signIn(t)
+		c.signInStep(t, false, nil)
 	case evLandFrame:
 		c.f.mu.Lock()
 		finds := c.f.finds
@@ -2285,14 +2665,126 @@ func (c *holdCell) flap(t *testing.T, s *holdStep) {
 	if s.flapPauses {
 		awaitResumes(t, &c.k.resumes, s.resumes-1)
 	}
-	waitUntil(t, "the release's round to settle", func() bool {
-		return time.Since(time.Unix(0, c.k.lastCall.Load())) > stepQuiet
-	})
 	c.signOut(t)
 	if s.flapPauses {
 		waitUntil(t, "the closing edge's pause of the resumed run", func() bool { return c.k.reads() == kasGateReason })
 	}
-	c.signInStep(t)
+	c.signInStep(t, false, nil)
+}
+
+// inFlightHolds are an in-flight step's holds: the release's resume write, the try that wrote it (crossRepausedLive),
+// and with orderSweepFirst the rehydrate's run list; and the chat's sweep lists before the step.
+type inFlightHolds struct {
+	write, try, rehydrate *holdBlock
+	sweeps                int32
+}
+
+// armInFlight holds the step's held release's next resume write in flight, with crossRepausedLive the try that wrote
+// it once it ended, and with orderSweepFirst the run list of the rehydrate that write's reload starts.
+func (c *holdCell) armInFlight(s *holdStep) *inFlightHolds {
+	h := &inFlightHolds{write: c.f.newHold(), sweeps: c.k.sweepLists.Load()}
+	c.k.set(func(k *kasRun) { k.writeHold = h.write })
+	if s.inFlight == crossRepausedLive {
+		h.try = c.f.newHold()
+		c.f.mu.Lock()
+		c.f.tryHold = h.try
+		c.f.mu.Unlock()
+	}
+	if s.rehydrates && c.c.order == orderSweepFirst {
+		h.rehydrate = c.f.newHold()
+		c.k.holdList("resumeChainRuns", h.rehydrate)
+	}
+	return h
+}
+
+// inFlight closes the gate while the held release's resume write is in flight, then opens it again before the write
+// lands (crossFlapsInFlight), or lets the write land at the closed gate and waits for the closing sweep's pause of the
+// run, the release ended or held live for the next step's edge. A chat's rehydrate reads the run as the cell's order
+// says: before that pause, its list taken while the write was in flight and the sweep's list held until its read, or
+// after it, its list held until the pause.
+func (c *holdCell) inFlight(t *testing.T, s *holdStep, h *inFlightHolds) {
+	t.Helper()
+	select {
+	case <-h.write.reached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the held release never wrote the run's resume")
+	}
+	closing := c.k.closingLists.Load()
+	c.signOut(t)
+	if s.inFlight == crossFlapsInFlight {
+		c.signInStep(t, false, nil)
+		h.write.release()
+		return
+	}
+	var sweep *holdBlock
+	if s.rehydrates && h.rehydrate == nil {
+		waitUntil(t, "the rehydrate's list while the write is in flight", func() bool {
+			return c.k.sweepLists.Load() > h.sweeps
+		})
+		waitUntil(t, "the closing edge's sweep's list", func() bool { return c.k.closingLists.Load() > closing })
+		read := make(chan struct{})
+		c.f.mu.Lock()
+		c.f.rehydrateRead = read
+		c.f.mu.Unlock()
+		sweep = c.f.newHold()
+		c.k.holdList("sweepPause", sweep)
+		defer func() {
+			select {
+			case <-read:
+			case <-time.After(5 * time.Second):
+				t.Error("the chat's rehydrate never read the run once the write landed")
+			}
+			sweep.release()
+			c.awaitPaused(t)
+		}()
+	}
+	h.write.release()
+	if h.try != nil {
+		select {
+		case <-h.try.reached:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the release's try never ended after its resume write")
+		}
+		c.liveTry = h.try
+	} else {
+		waitUntil(t, "the release to end", func() bool {
+			c.h.runs.gate.mu.Lock()
+			defer c.h.runs.gate.mu.Unlock()
+			return !c.h.runs.gate.releases[c.id].live
+		})
+	}
+	if sweep != nil {
+		return
+	}
+	c.awaitPaused(t)
+	if h.rehydrate != nil {
+		h.rehydrate.release()
+		waitUntil(t, "the rehydrate to hold the paused run's heal", func() bool { return heldByTheGate(c.h.runs, c.id) })
+	}
+}
+
+func (c *holdCell) awaitPaused(t *testing.T) {
+	t.Helper()
+	waitUntil(t, "the closing sweep's pause of the resumed run", func() bool { return c.k.reads() == kasGateReason })
+}
+
+// liveServes is the step's wait after its opening edge when s.servesLive: letLive's.
+func (c *holdCell) liveServes(s *holdStep) func() {
+	if !s.servesLive {
+		return nil
+	}
+	return c.letLive(c.f.awaitFinder(true))
+}
+
+// letLive lets the release held live after its try serve this step's opening edge, once the edge's finder read the
+// run, whose claim the live release refuses.
+func (c *holdCell) letLive(found func()) func() {
+	try := c.liveTry
+	c.liveTry = nil
+	return func() {
+		found()
+		try.release()
+	}
 }
 
 // arm starts the cell's release faults and its release's crossing.
@@ -2405,6 +2897,16 @@ func (c *holdCell) run(t *testing.T, steps []holdStep) {
 		if s.flaps {
 			c.armFlap()
 		}
+		var inFlight *inFlightHolds
+		if s.inFlight != crossNone {
+			// A restart's stop lets go of every hold, so a restart step's are armed for its new runtime.
+			arm := func() { inFlight = c.armInFlight(s) }
+			if s.ev == evRestartClosed || s.ev == evRestartOpen {
+				c.onBoot = arm
+			} else {
+				arm()
+			}
+		}
 		c.drive(t, s)
 		c.prevEv = s.ev
 		if s.blocked {
@@ -2417,6 +2919,9 @@ func (c *holdCell) run(t *testing.T, steps []holdStep) {
 		}
 		if s.flaps {
 			c.flap(t, s)
+		}
+		if inFlight != nil {
+			c.inFlight(t, s, inFlight)
 		}
 		if s.crosses {
 			waitUntil(t, "the gate to close again under the release", c.f.crossed.Load)
@@ -2441,6 +2946,40 @@ func (c *holdCell) run(t *testing.T, steps []holdStep) {
 		if s.arm {
 			c.arm()
 		}
+	}
+}
+
+// Each door of a cell's chat opens a session handle of its own over the cell's one KAS run, as the engine mints one
+// per door: the closed generation's late exit then finds its replacement registered and leaves it, where one handle
+// shared by every door would remove the replacement (removeIfBridge) and open a further generation.
+func TestGateHold_EachDoorOpensItsOwnHandleOverTheCellsRun(t *testing.T) {
+	c := newHoldCell(t, &holdLogs{sinks: &sync.Map{}}, holdCombo{kind: kindChat, form: formGate})
+	reopen := func() *sharedBridge {
+		t.Helper()
+		c.h.markSessionsForReload("a test's reload")
+		sb, err := c.h.coord.openBridge(t.Context(), c.chat, "")
+		if err != nil {
+			t.Fatalf("Setup: reopen the chat: %v", err)
+		}
+		return sb
+	}
+	// Both generations open through the cell's doors, so each holds its session as forwardAt is handed it.
+	first := reopen().current()
+	sb := reopen()
+	second := sb.current()
+	if second == first {
+		t.Error("the reload's door handed out the closed generation's session handle")
+	}
+
+	if c.h.bridge.mgr.removeIfBridge(c.chat, first) {
+		t.Error("the closed generation's late exit removed its replacement")
+	}
+	if got := c.h.bridge.mgr.get(c.chat); got != sb {
+		t.Errorf("the chat's registered session is %p after the late exit, want the replacement %p", got, sb)
+	}
+	resp, err := second.Call(t.Context(), methodKiroWorkflowInspect, map[string]any{keyWorkflowID: c.id})
+	if err != nil || resp.Error != nil || !strings.Contains(string(resp.Result), c.id) {
+		t.Errorf("the replacement's inspect = %v, %v; want the cell's run %s from its one KAS state", resp, err, c.id)
 	}
 }
 
