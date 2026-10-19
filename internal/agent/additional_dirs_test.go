@@ -73,6 +73,8 @@ func TestSessionDoors_CarryTheGrantedAdditionalDirectories(t *testing.T) {
 		h, _, br := newTestHubIn(f.work, WithConfigDir(f.config))
 		t.Cleanup(func() { shutdownHub(t, h) })
 		leaseParentless(t, h, "wf_1")
+		// A person's resume writes only once its read finds the run paused (runTransitions).
+		br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", ""))
 		if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
 			t.Fatalf("resume: %v", err)
 		}
