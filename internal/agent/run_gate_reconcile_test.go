@@ -30,6 +30,18 @@ func TestSignInGate_AGateFlapDuringAReleasesRetryWakesItsOneRelease(t *testing.T
 		g := newManualGateRun(t, signedInDir(t))
 		g.br.setCallResult(methodKiroWorkflowInspect, heldInspect(t, signInHoldReason))
 		g.br.setCallErr(methodKiroWorkflowResume, errors.New("engine busy"))
+		// The boot's release starts its wait only once the edge's finder claimed the run, so the claim meets the live
+		// release before it adopts the edge; once adopted, the edge count alone would refuse the claim.
+		finderClaimed := make(chan struct{})
+		letWait := sync.OnceFunc(func() { close(finderClaimed) })
+		t.Cleanup(letWait)
+		var waits atomic.Int32
+		onReleaseWait(t, g.h, func(gap time.Duration) time.Duration {
+			if waits.Add(1) == 1 {
+				<-finderClaimed
+			}
+			return gap
+		})
 		g.h.runs.BootSweep(t.Context())
 		synctest.Wait()
 		if n, spent := countCalls(g.br, methodKiroWorkflowResume), g.h.runs.healsSpent(gateRunID); n != 1 || spent != 1 {
@@ -39,6 +51,8 @@ func TestSignInGate_AGateFlapDuringAReleasesRetryWakesItsOneRelease(t *testing.T
 		g.lapseVault(t)
 		g.b.set(true, true, nil)
 		g.signIn(t)
+		synctest.Wait()
+		letWait()
 		synctest.Wait()
 
 		if n := countCalls(g.br, methodKiroWorkflowResume); n != 2 {
