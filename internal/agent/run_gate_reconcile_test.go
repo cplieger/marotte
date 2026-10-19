@@ -4,16 +4,148 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
 )
+
+// A held run has one release however the gate moves during its retries: a closing and an opening edge while it waits
+// to retry a lost resume write start no second release, so the run's heal budget is charged once.
+func TestSignInGate_AGateFlapDuringAReleasesRetryStartsNoSecondRelease(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		base := releaseRetryBase
+		releaseRetryBase = time.Hour
+		t.Cleanup(func() { releaseRetryBase = base })
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "signin.json"), []byte(signedInAtBoot), 0o600); err != nil {
+			t.Fatalf("Setup: write signin.json: %v", err)
+		}
+		g := newGateRun(t, dir)
+		g.br.setCallResult(methodKiroWorkflowInspect, heldInspect(t, signInHoldReason))
+		g.br.setCallErr(methodKiroWorkflowResume, errors.New("engine busy"))
+		g.h.runs.BootSweep(t.Context())
+		synctest.Wait()
+		if n, spent := countCalls(g.br, methodKiroWorkflowResume), g.h.runs.healsSpent(gateRunID); n != 1 || spent != 1 {
+			t.Fatalf("Setup: the boot's release wrote %d resumes and spent %d heals, want 1 and 1", n, spent)
+		}
+
+		g.b.set(false, false, func() error { return signin.ErrRejected })
+		if rerr := g.askVault(t.Context(), t); rerr == nil {
+			t.Fatal("Setup: the rejected ask was answered with a credential")
+		}
+		waitUntil(t, "the gate to close", func() bool { return !g.h.runs.gateOpen() })
+		g.b.set(true, true, nil)
+		g.signIn(t)
+		synctest.Wait()
+
+		if n := countCalls(g.br, methodKiroWorkflowResume); n != 1 {
+			t.Errorf("resume writes = %d before the release's next try, want 1: a second release started", n)
+		}
+		if spent := g.h.runs.healsSpent(gateRunID); spent != 1 {
+			t.Errorf("heals spent = %d, want the one release's 1", spent)
+		}
+	})
+}
+
+// A run's release serves one opening edge of the gate, and while it runs it serves every claim: one that stopped on
+// the closed gate serves the later edge it finds open, whose claim it refused while live.
+func TestRunGate_OneReleasePerRunAndOpeningEdge(t *testing.T) {
+	// at moves g to its read after opening edges, open or closed.
+	at := func(g *runGate, opening uint64, open bool) {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		g.read = func() signin.Answerability { return signin.ProviderUnreachable }
+		g.state, g.opens = signin.ProviderUnreachable, opening
+		if open {
+			g.state = signin.Answerable
+		}
+	}
+	t.Run("a second claim of one edge", func(t *testing.T) {
+		var g runGate
+		at(&g, 1, true)
+		if !g.claimRelease("wf", 1) {
+			t.Fatal("the edge's first claim was refused")
+		}
+		if g.claimRelease("wf", 1) {
+			t.Error("a second claim of the edge started while the first release runs")
+		}
+		if g.endRelease("wf", false) {
+			t.Error("a release that ended on its own edge serves it again")
+		}
+		if g.claimRelease("wf", 1) {
+			t.Error("a claim of an edge an ended release served started another")
+		}
+		if !g.claimRelease("wf", 2) {
+			t.Error("a later edge's claim was refused once the release ended")
+		}
+	})
+	t.Run("a later edge while the release runs", func(t *testing.T) {
+		var g runGate
+		at(&g, 1, true)
+		g.claimRelease("wf", 1)
+		at(&g, 2, true)
+		if g.claimRelease("wf", 2) {
+			t.Fatal("a later edge's claim started a second release while one runs")
+		}
+		if !g.endRelease("wf", true) {
+			t.Fatal("a release that stopped on the closed gate does not serve the later edge it refused")
+		}
+		if g.claimRelease("wf", 2) {
+			t.Error("the later edge's claim started a release beside the one serving it")
+		}
+		if g.endRelease("wf", true) {
+			t.Error("a release serves its own edge twice")
+		}
+	})
+	t.Run("the gate closed again at the end", func(t *testing.T) {
+		var g runGate
+		at(&g, 1, true)
+		g.claimRelease("wf", 1)
+		at(&g, 2, false)
+		if g.endRelease("wf", true) {
+			t.Error("a release that stopped on the closed gate serves an edge the gate closed after")
+		}
+		if !g.claimRelease("wf", 3) {
+			t.Error("the next edge's claim was refused")
+		}
+	})
+	t.Run("a release that did not stop on the closed gate", func(t *testing.T) {
+		var g runGate
+		at(&g, 1, true)
+		g.claimRelease("wf", 1)
+		at(&g, 2, true)
+		if g.endRelease("wf", false) {
+			t.Error("a release that resumed the run or spent its tries serves a later edge")
+		}
+	})
+	t.Run("an opening edge forgets the ended releases", func(t *testing.T) {
+		var g runGate
+		answer := signin.ProviderUnreachable
+		g.wire(func() signin.Answerability { return answer })
+		g.claimRelease("wf_ended", 0)
+		g.endRelease("wf_ended", false)
+		g.claimRelease("wf_live", 0)
+		answer = signin.Answerable
+		if m := g.refresh(); !m.opened() {
+			t.Fatal("Setup: the gate did not open")
+		}
+		if !g.claimRelease("wf_ended", 0) {
+			t.Error("an ended release still refuses a claim after an opening edge")
+		}
+		if g.claimRelease("wf_live", 1) {
+			t.Error("an opening edge forgot a live release")
+		}
+	})
+}
 
 // eventLog records what the fake engine and the responder saw, in order.
 type eventLog struct {

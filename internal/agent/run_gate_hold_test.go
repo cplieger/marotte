@@ -864,12 +864,10 @@ func (s *holdSim) release(r releasers, finderHeals, healerHeals bool) []string {
 	if s.c.chat() {
 		s.reload = false
 	}
+	// The edge's release of a held heal and its finder's are one release (releases).
 	loops := 0
-	if finderHeals {
-		loops++
-	}
-	if healerHeals && r.healer == healerHeld {
-		loops++
+	if finderHeals || (healerHeals && r.healer == healerHeld) {
+		loops = 1
 	}
 	switch s.write {
 	case writeLostOnce:
