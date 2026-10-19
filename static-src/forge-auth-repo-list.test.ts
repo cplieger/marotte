@@ -58,6 +58,11 @@ import { renderForgesPanel } from "./forge-auth.js";
 import { apiGetTyped } from "./api-client.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { _resetForTest as resetForgeStore } from "./forge-store.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 
@@ -170,6 +175,7 @@ describe("forge-auth: the repository list", () => {
   }
 
   it("offers Load more while the forge has more, busy from the press, sending the cursor as after", async () => {
+    useSteppableClock();
     const details = await showList({ repos: [repo("one")], next: "cursor-2" });
     expect(details.querySelector(".forge-account-repos-label")?.textContent).toBe(
       "1 repo so far, 0 cloned locally",
@@ -190,7 +196,7 @@ describe("forge-auth: the repository list", () => {
       }),
     );
     await vi.waitFor(() => expect(names(details)).toEqual(["alice/one", "alice/two"]));
-    await vi.waitFor(() => expect(loadMore(details)?.disabled).toBe(false), { timeout: 3000 });
+    await waitForOnClock(() => expect(loadMore(details)?.disabled).toBe(false), 3000);
 
     loadMore(details)!.click();
     await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
@@ -249,6 +255,7 @@ describe("forge-auth: the repository list", () => {
   });
 
   it("keeps the rows and says why when the next page is refused", async () => {
+    useSteppableClock();
     const details = await showList({ repos: [repo("one")], next: "cursor-2" });
     const { answer } = heldFetch();
     const btn = loadMore(details)!;
@@ -267,7 +274,7 @@ describe("forge-auth: the repository list", () => {
     );
     expect(btn.dataset["asyncStatus"]).toBe("error");
     expect(names(details)).toEqual(["alice/one"]);
-    await vi.waitFor(() => expect(loadMore(details)?.disabled).toBe(false), { timeout: 3000 });
+    await waitForOnClock(() => expect(loadMore(details)?.disabled).toBe(false), 3000);
 
     loadMore(details)!.click();
     expect(details.querySelector(".forge-account-repos-more [role='status']")?.textContent).toBe(

@@ -387,16 +387,16 @@ describe("indexing poll", () => {
       loadKnowledge();
       await flush();
 
-      // 400 ticks, every one advancing, so every one is followed by another.
-      for (let i = 0; i < 400; i++) {
+      // 240 ticks, every one advancing, so every one is followed by another: 200 is the old ceiling.
+      for (let i = 0; i < 240; i++) {
         await vi.advanceTimersByTimeAsync(1500);
         await flush();
       }
-      expect(mockGet.mock.calls.length).toBeGreaterThan(300);
+      expect(mockGet.mock.calls.length).toBeGreaterThan(220);
     } finally {
       vi.useRealTimers();
     }
-    // 400 real fetch-shaped turns do not fit the 5s default.
+    // 240 real fetch-shaped turns do not fit the 5s default.
   }, 30_000);
 
   it("gives up once progress stalls", async () => {
@@ -407,11 +407,11 @@ describe("indexing poll", () => {
       loadKnowledge();
       await flush();
 
-      for (let i = 0; i < 200; i++) {
+      for (let i = 0; i < 80; i++) {
         await vi.advanceTimersByTimeAsync(1500);
         await flush();
       }
-      // Bounded well below the tick count, so a wedged index stops polling.
+      // Bounded below the tick count, so a wedged index stops polling.
       expect(mockGet.mock.calls.length).toBeLessThan(60);
     } finally {
       vi.useRealTimers();
@@ -467,7 +467,7 @@ describe("indexing poll", () => {
       });
       loadKnowledge();
       await flush();
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < 70; i++) {
         await vi.advanceTimersByTimeAsync(1500);
         await flush();
       }

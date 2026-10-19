@@ -70,6 +70,11 @@ import {
   expectIdle,
 } from "./__test-helpers__/press-feedback.js";
 import { _resetForTest as resetForgeStore } from "./forge-store.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   resetForgeStore();
@@ -187,6 +192,7 @@ describe("the Sources tab", () => {
   });
 
   it("Clone says a refusal in its row until the row's next press, with the control usable again", async () => {
+    useSteppableClock();
     await show(["one"], []);
     const calls = heldFetch();
 
@@ -197,7 +203,7 @@ describe("the Sources tab", () => {
     await vi.waitFor(() =>
       expect(note("one")).toBe("Could not clone. fatal: repository not found"),
     );
-    await vi.waitFor(() => expectIdle(control("one", "Clone into workspace")), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(control("one", "Clone into workspace")), 3000);
     await renderForgesPanel();
     expect(note("one")).toBe("Could not clone. fatal: repository not found");
     expect(toast.error).not.toHaveBeenCalled();
@@ -242,6 +248,7 @@ describe("the Sources tab", () => {
   });
 
   it("Remove local copy says a refusal in its row, which keeps its copy", async () => {
+    useSteppableClock();
     await show(["two"], ["two"]);
     const calls = heldFetch();
 
@@ -252,7 +259,7 @@ describe("the Sources tab", () => {
     await vi.waitFor(() =>
       expect(note("two")).toBe("Could not remove the local copy. remove failed"),
     );
-    await vi.waitFor(() => expectIdle(control("two", "Remove local copy")), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(control("two", "Remove local copy")), 3000);
     expect(row("two").querySelector(".git-sources-cloned-dot")).not.toBeNull();
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -354,6 +361,7 @@ describe("the Sources tab", () => {
   });
 
   it("Check is busy from a press that clears its row's last refusal, and says the next one", async () => {
+    useSteppableClock();
     await show([], []);
     const calls = heldFetch();
     const check = (): HTMLButtonElement | undefined =>
@@ -369,7 +377,7 @@ describe("the Sources tab", () => {
     await vi.waitFor(() =>
       expect(rowError()).toBe("Could not check the connection. the forge is unreachable"),
     );
-    await vi.waitFor(() => expectIdle(check()), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(check()), 3000);
 
     check()!.click();
 

@@ -68,6 +68,7 @@ export function tabsMock(): Record<string, unknown> {
     // Hands back an unsubscribe so a caller's cleanup does not throw on undefined.
     subscribeTabCues: vi.fn(() => () => {}),
     setOnEmpty: vi.fn(),
+    EMPTY_RESPAWN_MS: 0,
     registerTabNotice: vi.fn(),
     // Unregistered is the never-suppress answer, so no test has a cue silently blanked.
     setChatSettledProbe: vi.fn(),

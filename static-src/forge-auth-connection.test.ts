@@ -51,6 +51,11 @@ import { apiGetTyped } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { outcomesOf } from "./__test-helpers__/press-feedback.js";
 import { _resetForTest as resetForgeStore, readForges } from "./forge-store.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 
@@ -345,6 +350,7 @@ describe("forge-auth: the connection row", () => {
   });
 
   it("shows Check busy from the press until the answer lands, then repaints the row from the store", async () => {
+    useSteppableClock();
     const row = await showRow(account({ status: "refused", error: { message: "no access" } }));
     const { spy, answer } = queuedFetch();
     const check = button(row, "Check")!;
@@ -362,7 +368,7 @@ describe("forge-auth: the connection row", () => {
       expect(row.querySelector(".forge-account-identity .forge-account-error")).toBeNull(),
     );
     expect(reads("/api/forges")).toBe(before + 1);
-    await vi.waitFor(() => expect(check.disabled).toBe(false), { timeout: 3000 });
+    await waitForOnClock(() => expect(check.disabled).toBe(false), 3000);
   });
 
   it("says a check already running is running, without marking the press failed", async () => {
@@ -497,6 +503,7 @@ describe("forge-auth: the connection row", () => {
   });
 
   it("retries a sign-out whose cleanup is pending, then reads the rows after its last answer", async () => {
+    useSteppableClock();
     const row = await showRow(account());
     const { spy, answer } = queuedFetch();
     const before = reads("/api/forges");
@@ -511,9 +518,9 @@ describe("forge-auth: the connection row", () => {
     button(row, "Sign out")!.click();
     await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
     answer(0, pending.clone());
-    await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(2), { timeout: 3000 });
+    await waitForOnClock(() => expect(spy).toHaveBeenCalledTimes(2), 3000);
     answer(1, pending.clone());
-    await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(3), { timeout: 3000 });
+    await waitForOnClock(() => expect(spy).toHaveBeenCalledTimes(3), 3000);
     expect(reads("/api/forges")).toBe(before);
     rowsNow = [];
     answer(2, pending);

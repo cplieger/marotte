@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import type * as ScrollModule from "./scroll.js";
+import { framesDrained } from "./__test-helpers__/frame-queue.js";
 
 /** Cache-buster for the re-imports below. */
 let bootSeq = 0;
@@ -164,8 +165,22 @@ function readerAtHistoryEdge(h: Harness): void {
   h.scroll.noteHistoryEdge(h.scrollEl.scrollTop < 100);
 }
 
+/** Two frames, for the controller's frame-queued pin and re-assert, then a task to resume past
+ *  the last one. That schedule is what a positive pins; an absence reads after `drained()`. */
 async function settle(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 25));
+  for (let i = 0; i < 2; i++) {
+    await new Promise<void>((r) => {
+      requestAnimationFrame(() => {
+        r();
+      });
+    });
+  }
+  await new Promise((r) => setTimeout(r, 0));
+}
+
+/** Until no frame callback is left queued, so a write the controller still owes is seen. */
+async function drained(): Promise<void> {
+  await framesDrained("the controller's queued frames");
 }
 
 /** Drain the same queues without depending on `setTimeout`, which a fake-timer test has
@@ -276,7 +291,7 @@ describe("the gutter observer", () => {
       clientWidth: 985,
     });
     h.ro.fire();
-    await settle();
+    await drained();
     expect([
       h.ro.targets.has(h.scrollEl),
       document.documentElement.style.getPropertyValue("--scrollbar-w"),
@@ -337,6 +352,8 @@ describe("the gutter observer", () => {
     h.gutter.fire();
     await settle();
     expect(setProperty.mock.calls.filter((c) => c[0] === "--scrollbar-w")).toHaveLength(1);
+    await drained();
+    expect(setProperty.mock.calls.filter((c) => c[0] === "--scrollbar-w")).toHaveLength(1);
   });
 
   it("leaves no scheduled write behind when the controller is reset", async () => {
@@ -352,7 +369,7 @@ describe("the gutter observer", () => {
     });
     h.gutter.fire();
     h.scroll.resetScrollState();
-    await settle();
+    await drained();
     expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("0px");
   });
 });
@@ -627,6 +644,8 @@ describe("what the mutation callback may read", () => {
     const counter = countMetricReads(h.scrollEl);
     // The streaming shape: a chunk extends a text node inside a resident row.
     row.appendChild(document.createTextNode("a chunk"));
+    // Not drained: on the frozen clock an open pin window never closes, and its pin frame
+    // re-queues every frame.
     await settle();
     const reads = counter.reads();
     counter.stop();
@@ -783,7 +802,7 @@ describe("the near-view observer", () => {
     const { row, box } = rowWithBox(h.messagesEl);
     await settle();
     row.remove();
-    await settle();
+    await drained();
     const gone = h.near.targets.has(box);
     h.messagesEl.appendChild(row);
     await settle();
@@ -837,7 +856,7 @@ describe("the per-child resize observers", () => {
     h.messagesEl.appendChild(document.createElement("div"));
     await settle();
     h.messagesEl.appendChild(document.createElement("div"));
-    await settle();
+    await drained();
     expect(h.ro.observedCount(a)).toBe(1);
   });
 
@@ -867,6 +886,8 @@ describe("the auto-scroll frame guard", () => {
     h.messagesEl.appendChild(document.createElement("div"));
     h.ro.fire();
     await settle();
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    await drained();
     expect(scrollTo).toHaveBeenCalledTimes(1);
   });
 
@@ -908,7 +929,7 @@ describe("the reader's control window", () => {
     now.mockReturnValue(1299);
     g.scrollHeight = 3000;
     h.messagesEl.appendChild(document.createElement("div"));
-    await settle();
+    await drained();
     expect(g.scrollTop).toBe(1500);
   });
 });

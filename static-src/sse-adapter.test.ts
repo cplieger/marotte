@@ -40,8 +40,8 @@ import {
   createScriptedFetch,
   json,
   type ScriptedFetch,
-  until,
 } from "./__test-helpers__/sse-fetch.js";
+import { until } from "./__test-helpers__/until.js";
 
 const {
   mockLoadList,
@@ -170,6 +170,28 @@ function digestAnswer(
   };
 }
 
+/** `answer`, counting the digest bodies read so far. What a run does after that read is promise
+ *  continuations, so a check on a later task sees the run's verdict fully applied. */
+function readCounted(answer: (req: { body: string | null }) => Response): {
+  responder: (req: { body: string | null }) => Response;
+  reads: () => number;
+} {
+  let reads = 0;
+  return {
+    responder: (req) => {
+      const response = answer(req);
+      const read = response.json.bind(response);
+      response.json = async (): Promise<unknown> => {
+        const parsed: unknown = await read();
+        reads++;
+        return parsed;
+      };
+      return response;
+    },
+    reads: () => reads,
+  };
+}
+
 // The wire's own decoders, so a frame in this file is refused exactly where production refuses it.
 // Without them `decodeEnvelope` passes every payload through untyped and an invalid fixture
 // would be IGNORED rather than refused.
@@ -217,7 +239,7 @@ async function connect(): Promise<ReturnType<ScriptedFetch["connections"]["at"]>
     },
     () => undefined,
   );
-  await until(() => scripted.connections.length === 1);
+  await until(() => scripted.connections.length === 1, "the first connection");
   const conn = scripted.connections[0];
   conn?.hello();
   return conn;
@@ -231,13 +253,43 @@ function acks(): ScriptedFetch["requests"] {
   return scripted.requests.filter((r) => r.url === "/api/events/alive");
 }
 
+/** Every chat GET stays in flight until `release()`; `atSettle()` is the connection count as one
+ *  settles. `started()` resolves on a task after the first GET is entered, so every continuation
+ *  the run can take without the GET's answer has run. */
+function heldGet(): {
+  started: () => Promise<void>;
+  release: () => void;
+  atSettle: () => number;
+} {
+  let entered = false;
+  let atSettle = Number.NaN;
+  let release = (): void => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  mockLoadMessages.mockImplementation(async () => {
+    entered = true;
+    await gate;
+    atSettle = scripted.connections.length;
+    return true;
+  });
+  return {
+    started: async () => {
+      await until(() => entered, "the chat's GET to start");
+      await new Promise((r) => setTimeout(r, 0));
+    },
+    release,
+    atSettle: () => atSettle,
+  };
+}
+
 /** Connect and let the fresh hello's own digest settle on an empty answer, so a case driving
  *  `revalidate` by hand is the only revalidation in flight. */
 async function connectSettled(): Promise<ReturnType<ScriptedFetch["connections"]["at"]>> {
   scripted.respond("/api/sync", digestAnswer([]));
   const conn = await connect();
   markHydrated();
-  await until(() => syncs() === 1);
+  await until(() => syncs() === 1, "the /api/sync request");
   return conn;
 }
 
@@ -266,14 +318,15 @@ describe("the connect", () => {
     const endpoint =
       "https://fcm.googleapis.com/fcm/send/dQw4w9WgXcQ:APA91bGolden-Fixture-Endpoint-0001";
     await adoptPushSubscription({ endpoint });
-    await until(() => scripted.connections.length === 2);
+    await until(() => scripted.connections.length === 2, "the second connection");
     expect(scripted.connections[1]?.headers.get("SSE-Client")).toBe("amxAEqwvwjG23476CxNmK6");
     expect(localStorage.getItem(PROFILE_TAG_KEY)).toBe("amxAEqwvwjG23476CxNmK6");
 
     // The worker reports the same subscription again (a resubscribe that kept the endpoint):
-    // nothing moves.
+    // nothing moves. The adopt resolves after its reconnect decision, and a reconnect aborts the
+    // live connection on the spot.
     await adoptPushSubscription({ endpoint });
-    await new Promise((r) => setTimeout(r, 20));
+    expect(scripted.connections[1]?.aborted()).toBe(false);
     expect(scripted.connections).toHaveLength(2);
     expect(presentedTag()).toBe("amxAEqwvwjG23476CxNmK6");
   });
@@ -283,24 +336,23 @@ describe("the connect", () => {
     scripted.respond("/api/events/alive", () => new Response(null, { status: 204 }));
     const conn = await connect();
     conn?.named("heartbeat", "{}");
-    await until(() => acks().length === 1);
+    await until(() => acks().length === 1, "the first heartbeat ack");
     const ack = acks()[0];
     expect(ack?.method).toBe("POST");
     expect(ack?.headers.get("SSE-Client")).toBe("held-tag_0123456789AB");
     conn?.named("heartbeat", "{}");
-    await until(() => acks().length === 2);
+    await until(() => acks().length === 2, "the second heartbeat ack");
 
+    // The reset ends the connection on the spot, so no later keepalive can reach the parser.
     _resetForTest();
-    conn?.named("heartbeat", "{}");
-    await new Promise((r) => setTimeout(r, 20));
-    expect(acks()).toHaveLength(2);
+    expect(conn?.aborted()).toBe(true);
   });
 
   it("binds the version map to the hello's epoch, dropping what a previous epoch held", async () => {
     versionMap().bind(EPOCH_B);
     observeStamp({ kind: "chats", ref: "", version: "9" });
     await connect();
-    await until(() => versionMap().epoch() === EPOCH_A);
+    await until(() => versionMap().epoch() === EPOCH_A, "the version map to adopt epoch A");
     expect(versionMap().snapshot().held).toEqual([]);
   });
 });
@@ -316,7 +368,7 @@ describe("frames", () => {
       },
       () => undefined,
     );
-    await until(() => scripted.connections.length === 1);
+    await until(() => scripted.connections.length === 1, "the first connection");
     const conn = scripted.connections[0];
     conn?.hello();
     markHydrated();
@@ -331,7 +383,7 @@ describe("frames", () => {
       },
       `${EPOCH_A}:1`,
     );
-    await until(() => seen.length === 1);
+    await until(() => seen.length === 1, "the frame to be delivered");
     expect(seen[0]?.type).toBe("entry_appended");
     // Not yet held while the handlers ran: the version certifies APPLIED state.
     expect(heldAtDispatch).toBe(false);
@@ -362,7 +414,7 @@ describe("frames", () => {
       },
       subject: { kind: "chats", ref: "", version: "12" },
     });
-    await until(() => seen.length === 1);
+    await until(() => seen.length === 1, "the frame to be delivered");
     expect(hasSubject("chats", "")).toBe(true);
   });
 
@@ -380,7 +432,7 @@ describe("frames", () => {
       },
       subject: { kind: "chat", ref: "c1", version: "4" },
     });
-    await until(() => seen.length === 1);
+    await until(() => seen.length === 1, "the frame to be delivered");
     expect(hasSubject("chat", "c1")).toBe(false);
   });
 
@@ -406,12 +458,12 @@ describe("frames", () => {
     const conn = await connect();
     markHydrated();
     conn?.frame(inventoryFrame("3"));
-    await until(() => seen.length === 1);
+    await until(() => seen.length === 1, "the frame to be delivered");
     expect(hasSubject("forge_inventory", "github:github.com")).toBe(false);
 
     mockInventoryHeld.mockReturnValue(true);
     conn?.frame(inventoryFrame("4"));
-    await until(() => seen.length === 2);
+    await until(() => seen.length === 2, "the second frame to be delivered");
     expect(hasSubject("forge_inventory", "github:github.com")).toBe(true);
   });
 
@@ -426,14 +478,20 @@ describe("frames", () => {
     const conn = await connect();
     markHydrated();
     // The connect's own fresh-hello digest lands first; the rejection earns a second.
-    await until(() => scripted.requests.filter((r) => r.url === "/api/sync").length === 1);
+    await until(
+      () => scripted.requests.filter((r) => r.url === "/api/sync").length === 1,
+      "the first /api/sync request",
+    );
     conn?.frame({
       type: "working_label",
       chat_id: "c1",
       payload: { label: 1 },
       subject: { kind: "chats", ref: "", version: "2" },
     });
-    await until(() => scripted.requests.filter((r) => r.url === "/api/sync").length === 2);
+    await until(
+      () => scripted.requests.filter((r) => r.url === "/api/sync").length === 2,
+      "the second /api/sync request",
+    );
     expect(seen).toEqual([]);
     expect(versionMap().snapshot().held).toEqual([{ kind: "chats", ref: "", version: "1" }]);
     expect(errors).toHaveBeenCalled();
@@ -455,16 +513,9 @@ describe("frames", () => {
         payload: { id: "m1", role: "assistant", ts: 1, content: "hi" },
       }),
     );
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
-    });
-    expect(seen).toEqual([]);
-    expect(errors).toHaveBeenCalled();
-    // It names no turn, so there is nothing to salvage by a range read.
-    expect(mockRequestTurnRange).not.toHaveBeenCalled();
-    expect(warns).toHaveBeenCalled();
     // The in-fence control: the live entry shape goes through the SAME decoder and lands, so the
-    // refusal above cannot be a frame the adapter dropped for another reason.
+    // refusal cannot be a frame the adapter dropped for another reason. Written second, it
+    // reaches the bus only after the refused frame was decided.
     conn?.frame({
       type: "entry_appended",
       chat_id: "c1",
@@ -472,11 +523,18 @@ describe("frames", () => {
         entry: { id: "e1", turn: "t1", kind: "text", seq: 1, ts: 1, payload: { text: "hi" } },
       },
     });
-    await until(() => seen.length === 1);
+    await until(() => seen.length > 0, "a frame to be delivered");
+    expect(seen).toHaveLength(1);
     expect(seen[0]?.type).toBe("entry_appended");
+    expect(seen[0]?.payload).toHaveProperty("entry.id", "e1");
+    expect(errors).toHaveBeenCalled();
+    // It names no turn, so there is nothing to salvage by a range read.
+    expect(mockRequestTurnRange).not.toHaveBeenCalled();
+    expect(warns).toHaveBeenCalled();
   });
 
   it("holds frames until markHydrated and releases them in arrival order", async () => {
+    scripted.respond("/api/events/alive", () => new Response(null, { status: 204 }));
     const conn = await connect();
     conn?.frame({ type: "connected", payload: { busy_stated: false, live_runs_stated: false } });
     // `options` is required by the wire's own decoder, which runs here.
@@ -485,10 +543,10 @@ describe("frames", () => {
       chat_id: "c1",
       payload: { request_id: 1, options: [] },
     });
-    // Let the bytes cross the stream: nothing may reach the bus yet.
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
-    });
+    // A keepalive written after them is acknowledged only once the parser has handed both frames
+    // on: nothing may reach the bus yet.
+    conn?.named("heartbeat", "{}");
+    await until(() => acks().length === 1, "the first heartbeat ack");
     expect(seen).toEqual([]);
     markHydrated();
     expect(seen.map((e) => e.type)).toEqual(["connected", "permission_needed"]);
@@ -502,7 +560,7 @@ describe("frames", () => {
       chat_id: "c1",
       subject: { kind: "chat", ref: "c1", version: "6" },
     });
-    await until(() => mockLoadMessages.mock.calls.length === 1);
+    await until(() => mockLoadMessages.mock.calls.length === 1, "the transcript reload");
     expect(mockLoadMessages).toHaveBeenCalledWith("c1", undefined, undefined);
     expect(seen).toEqual([]);
     expect(hasSubject("chat", "c1")).toBe(false);
@@ -521,7 +579,7 @@ describe("frames", () => {
       chat_id: "c1",
       subject: { kind: "chat", ref: "c1", version: "6" },
     });
-    await until(() => mockLoadMessages.mock.calls.length === 1);
+    await until(() => mockLoadMessages.mock.calls.length === 1, "the transcript reload");
     expect(mockLoadMessages).toHaveBeenCalledWith("c1", undefined, undefined);
     // The refetch's own commit is what moves the version; the frame's stamp is not it.
     expect(versionMap().snapshot().held).toEqual([{ kind: "chat", ref: "c1", version: "5" }]);
@@ -548,7 +606,7 @@ describe("a run's step turn is a subject of its own", () => {
     const conn = await connect();
     markHydrated();
     conn?.frame(runFrame("t-1", "5"));
-    await until(() => seen.length === 1);
+    await until(() => seen.length === 1, "the frame to be delivered");
     expect(hasSubject("run_turn", "wf-1/t-1")).toBe(true);
     // The WORKFLOW half is what the residency question is asked about, not the whole ref.
     expect(mockPeekRunState).toHaveBeenCalledWith("wf-1");
@@ -560,7 +618,7 @@ describe("a run's step turn is a subject of its own", () => {
     const conn = await connect();
     markHydrated();
     conn?.frame(runFrame("t-1", "5"));
-    await until(() => seen.length === 1);
+    await until(() => seen.length === 1, "the frame to be delivered");
     expect(hasSubject("run_turn", "wf-1/t-1")).toBe(false);
   });
 
@@ -797,23 +855,23 @@ describe("revalidate", () => {
         { kind: "pending", ref: "", version: "2" },
       ]),
     );
-    let getSettled = false;
-    let connectionsAtGet = 0;
-    mockLoadMessages.mockImplementation(async () => {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 5);
-      });
-      connectionsAtGet = scripted.connections.length;
-      getSettled = true;
-      return true;
+    const held = heldGet();
+    let ran = false;
+    const run = _revalidateForTest(ctx({ cause: "visible" })).then(() => {
+      ran = true;
     });
+    await held.started();
+    // The run and its reconnect wait for the GET: one live connection while it runs and as it settles.
+    expect({ ran, connections: scripted.connections.length, aborted: first?.aborted() }).toEqual({
+      ran: false,
+      connections: 1,
+      aborted: false,
+    });
+    held.release();
+    await run;
+    expect(held.atSettle()).toBe(1);
 
-    await _revalidateForTest(ctx({ cause: "visible" }));
-
-    expect(getSettled).toBe(true);
-    // The reconnect came AFTER the GET settled: one connection existed while it ran.
-    expect(connectionsAtGet).toBe(1);
-    await until(() => scripted.connections.length === 2);
+    await until(() => scripted.connections.length === 2, "the second connection");
     expect(first?.aborted()).toBe(true);
     expect(scripted.connections[1]?.headers.has("Last-Event-ID")).toBe(false);
   });
@@ -824,17 +882,17 @@ describe("revalidate", () => {
     // The realistic answer, left in place: the map still holds status@1 while the hello's own
     // status_snapshot@2 sits held behind the run, so the server keeps naming it until that frame
     // drains.
-    scripted.respond("/api/sync", digestAnswer([{ kind: "status", ref: "", version: "2" }]));
+    const answer = readCounted(digestAnswer([{ kind: "status", ref: "", version: "2" }]));
+    scripted.respond("/api/sync", answer.responder);
 
     await _revalidateForTest(ctx({ cause: "visible" }));
-    await until(() => scripted.connections.length === 2);
+    await until(() => scripted.connections.length === 2, "the second connection");
     const syncsBefore = syncs();
+    const readsBefore = answer.reads();
     scripted.connections[1]?.hello();
-    await until(() => syncs() > syncsBefore);
-    // Settle: nothing else is queued behind it, and no third connection was opened.
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 50);
-    });
+    // The hello's run has applied its verdict: nothing else is queued behind it, and no third
+    // connection was opened.
+    await until(() => answer.reads() > readsBefore, "the hello's digest body to be read");
     expect(syncs()).toBe(syncsBefore + 1);
     expect(scripted.connections).toHaveLength(2);
   });
@@ -903,33 +961,32 @@ describe("the body the host routes to this tab", () => {
     observeStamp({ kind: "chat", ref: "X", version: "3" });
     observeStamp({ kind: "pending", ref: "", version: "1" });
     await connectSettled();
-    let getSettled = false;
-    mockLoadMessages.mockImplementation(async () => {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 5);
-      });
-      getSettled = true;
-      return true;
+    const held = heldGet();
+    let ran = false;
+    const run = _tabRevalidateForTest(
+      tabCtx({
+        cause: "visible",
+        changed: [
+          { kind: "chat", ref: "X", version: "4" },
+          { kind: "pending", ref: "", version: "2" },
+        ],
+        removed: [],
+      }),
+    ).then(() => {
+      ran = true;
     });
-
-    await expect(
-      _tabRevalidateForTest(
-        tabCtx({
-          cause: "visible",
-          changed: [
-            { kind: "chat", ref: "X", version: "4" },
-            { kind: "pending", ref: "", version: "2" },
-          ],
-          removed: [],
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(getSettled).toBe(true);
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
+    await held.started();
+    expect({ ran, aborted: scripted.connections[0]?.aborted() }).toEqual({
+      ran: false,
+      aborted: false,
     });
-    // The host reconnects the profile's stream once; N tabs asking would open N.
+    held.release();
+    await run;
+    expect(held.atSettle()).toBe(1);
+
+    // The host reconnects the profile's stream once; N tabs asking would open N. A tab's reconnect
+    // would abort the live connection inside the run just awaited.
+    expect(scripted.connections[0]?.aborted()).toBe(false);
     expect(scripted.connections).toHaveLength(1);
   });
 
@@ -1030,12 +1087,16 @@ describe("the body the host routes to this tab", () => {
 // is what a profile's tabs and worker exchange.
 describe("attached to a worker host", () => {
   /** Boot the adapter onto a host this test holds and answer the host's first hello. */
+  let tabPort: MessagePort | null = null;
+  let pingSeq = 0;
+
   async function connectHosted(): Promise<ReturnType<ScriptedFetch["connections"]["at"]>> {
     const host = createSSEHost();
     hosted = host;
     _spawnWorkerForTest(() => {
       const channel = new MessageChannel();
       host.attach(channel.port2);
+      tabPort = channel.port1;
       return { port: channel.port1, addEventListener: () => undefined };
     });
     init(
@@ -1044,20 +1105,46 @@ describe("attached to a worker host", () => {
       },
       () => undefined,
     );
-    await until(() => scripted.connections.length === 1);
+    await until(() => scripted.connections.length === 1, "the first connection");
     const conn = scripted.connections[0];
     conn?.hello();
-    await until(() => host.stream().state().kind === "open");
+    await until(() => host.stream().state().kind === "open", "the host's stream to open");
     return conn;
   }
 
-  /** Hide and show the page, which the tab reports and the host's stream wakes on. */
+  /** Resolves on the host's answer to a ping sent now on this tab's port: the host handles one
+   *  port's messages in order, so everything the tab posted before it has been handled. */
+  async function hostRoundTrip(): Promise<void> {
+    const port = tabPort;
+    if (port === null) {
+      throw new Error("no hosted tab to ping through");
+    }
+    const seq = 1_000_000 + ++pingSeq;
+    let answered = false;
+    const onPong = (event: MessageEvent): void => {
+      const m = event.data as { type?: unknown; seq?: unknown };
+      if (m.type === "pong" && m.seq === seq) {
+        answered = true;
+      }
+    };
+    port.addEventListener("message", onPong);
+    try {
+      port.postMessage({ type: "ping", seq });
+      await until(() => answered, "the host's pong");
+    } finally {
+      port.removeEventListener("message", onPong);
+    }
+  }
+
+  /** Hide and show the page, which the tab reports and the host's stream wakes on. Shows only
+   *  once the host reads the profile hidden: a show that overtakes the hide is no wake. */
   async function wakeProfile(): Promise<void> {
     const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     document.dispatchEvent(new Event("visibilitychange"));
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 10);
-    });
+    await until(() => {
+      const state = hosted?.stream().state();
+      return state?.kind === "open" && !state.visible;
+    }, "the host to read the profile hidden");
     hidden.mockRestore();
     document.dispatchEvent(new Event("visibilitychange"));
   }
@@ -1078,10 +1165,10 @@ describe("attached to a worker host", () => {
       },
       `${EPOCH_A}:1`,
     );
-    await until(() => seen.length === 1);
+    await until(() => seen.length === 1, "the frame to be delivered");
 
     await wakeProfile();
-    await until(() => mockLoadMessages.mock.calls.length === 1);
+    await until(() => mockLoadMessages.mock.calls.length === 1, "the transcript reload");
 
     expect(syncs()).toBe(1);
     const body = JSON.parse(scripted.requests[0]?.body ?? "{}") as Record<string, unknown>;
@@ -1097,7 +1184,7 @@ describe("attached to a worker host", () => {
     const endpoint =
       "https://fcm.googleapis.com/fcm/send/dQw4w9WgXcQ:APA91bGolden-Fixture-Endpoint-0001";
     await adoptPushSubscription({ endpoint });
-    await until(() => scripted.connections.length === 2);
+    await until(() => scripted.connections.length === 2, "the second connection");
     expect(first?.aborted()).toBe(true);
     expect(scripted.connections[1]?.headers.get("SSE-Client")).toBe("amxAEqwvwjG23476CxNmK6");
     // The cursor is kept: the tag moved, the profile lost no frame.
@@ -1105,9 +1192,8 @@ describe("attached to a worker host", () => {
     expect(presentedTag()).toBe("amxAEqwvwjG23476CxNmK6");
 
     await adoptPushSubscription({ endpoint });
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
-    });
+    await hostRoundTrip();
+    expect(scripted.connections[1]?.aborted()).toBe(false);
     expect(scripted.connections).toHaveLength(2);
   });
 });

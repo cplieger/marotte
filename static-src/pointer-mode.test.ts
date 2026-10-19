@@ -1,6 +1,16 @@
 // The touch/mouse toggle: its three visibility conditions, the click, and the a11y triple.
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterEach,
+  afterAll,
+  onTestFinished,
+  vi,
+} from "vitest";
 // The viewport control, for the one gate that can only be measured by resizing. `vitest/browser` is
 // the Vitest 5 spelling; `@vitest/browser/context` is a stub that throws.
 import { page } from "vitest/browser";
@@ -10,6 +20,7 @@ import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.j
 import { initPointerTier, currentTier } from "./pointer-tier.js";
 import { markCoarseSeen, pointerModeChoice, setPointerModeChoice } from "./device-view.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
+import { useSteppableClock } from "./__test-helpers__/fake-clock.js";
 
 function markupFor(anchor: string): string {
   const at = indexHtml.indexOf(anchor);
@@ -157,6 +168,10 @@ describe("the toggle's click", () => {
   it("converges on the second click when two land inside one slide", async () => {
     // The first click's settle is deferred behind the outgoing glyph's slide, so it is still
     // pending when the second click paints.
+    useSteppableClock();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     markCoarseSeen();
     const btn = mountButton();
     initPointerTier();
@@ -168,8 +183,8 @@ describe("the toggle's click", () => {
     expect(hiddenGlyphs(btn)).toEqual(["coarse"]);
     expect([...btn.querySelectorAll("svg.icon-setting")], "a glyph left mid-slide").toEqual([]);
 
-    // The first click's 350ms safety timeout still has to arrive and do nothing.
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    // The first click's safety timeout still has to arrive and do nothing.
+    await vi.runAllTimersAsync();
     expect(hiddenGlyphs(btn)).toEqual(["coarse"]);
     expect(btn.getAttribute("aria-pressed")).toBe("false");
   });

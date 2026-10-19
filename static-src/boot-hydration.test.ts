@@ -7,7 +7,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { init, markHydrated, _resetForTest } from "./sse-adapter.js";
-import { createScriptedFetch, type ScriptedFetch, until } from "./__test-helpers__/sse-fetch.js";
+import { createScriptedFetch, type ScriptedFetch } from "./__test-helpers__/sse-fetch.js";
+import { until } from "./__test-helpers__/until.js";
 
 vi.mock("./store-load.js", () => ({
   loadList: vi.fn(),
@@ -66,23 +67,26 @@ vi.mock("./forge-store.js", () => ({
   readMoreListing: vi.fn(),
 }));
 
-/** Let the written bytes cross the stream reader: a frame that is still in flight
- *  cannot prove it was held. */
-function settle(): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, 20);
-  });
-}
-
 describe("the adapter holds frames until the chat store is hydrated", () => {
   let scripted: ScriptedFetch;
   let seen: string[];
 
   beforeEach(() => {
     scripted = createScriptedFetch();
+    scripted.respond("/api/events/alive", () => new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", scripted.fetch);
     seen = [];
   });
+
+  /** Let the written bytes cross the stream reader, since a frame still in flight cannot prove it
+   *  was held: a keepalive written after them is acknowledged once the parser has passed them on. */
+  async function settle(conn: NonNullable<ScriptedFetch["connections"][number]>): Promise<void> {
+    const acks = (): number =>
+      scripted.requests.filter((r) => r.url === "/api/events/alive").length;
+    const before = acks();
+    conn.named("heartbeat", "{}");
+    await until(() => acks() > before, "the heartbeat written after the frames to be acknowledged");
+  }
 
   function boot(): void {
     init(
@@ -99,7 +103,7 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
   });
 
   async function opened(): Promise<NonNullable<ScriptedFetch["connections"][number]>> {
-    await until(() => scripted.connections.length === 1);
+    await until(() => scripted.connections.length === 1, "the first connection");
     const conn = scripted.connections[0];
     if (conn === undefined) {
       throw new Error("no connection");
@@ -114,7 +118,7 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
     conn.frame({ type: "connected", payload: { busy_stated: false, live_runs_stated: false } });
     conn.frame({ type: "pending_snapshot", payload: { items: [] } });
     conn.frame({ type: "permission_needed", chat_id: "chat-1", payload: { request_id: 1 } });
-    await settle();
+    await settle(conn);
     // Nothing has reached the store yet: this is the whole point.
     expect(seen).toEqual([]);
 
@@ -133,7 +137,7 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
       chat_id: "chat-1",
       payload: { turn: "t1", entry_id: "e1", lane: "", delta: "x", n: 1 },
     });
-    await until(() => seen.length === 1);
+    await until(() => seen.length === 1, "the frame to be delivered");
     expect(seen).toEqual(["entry_delta"]);
   });
 
@@ -141,7 +145,7 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
     boot();
     const conn = await opened();
     conn.frame({ type: "pending_snapshot", payload: { items: [] } });
-    await settle();
+    await settle(conn);
     markHydrated();
     markHydrated();
     markHydrated();
@@ -155,7 +159,7 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
     boot();
     const conn = await opened();
     conn.frame({ type: "pending_snapshot", payload: { items: [] } });
-    await settle();
+    await settle(conn);
     expect(seen).toEqual([]);
 
     // The gate is an ordering aid: a hydration that never lands must not wedge the stream.

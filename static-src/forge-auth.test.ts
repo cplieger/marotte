@@ -51,6 +51,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_CLOSE_UI, ICON_PLUS_UI } from "./icons.js";
 import { _resetForTest as resetForgeStore } from "./forge-store.js";
+import { until } from "./__test-helpers__/until.js";
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 const mockedApiPost = vi.mocked(apiPost);
@@ -440,14 +441,28 @@ describe("forge-auth: 4-section layout", () => {
     resetActionFramework();
     const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
     vi.stubGlobal("fetch", fetchSpy);
-    await renderForgesPanel();
-    await new Promise((r) => setTimeout(r, 50));
+    const probes = (): string[] =>
+      [
+        ...mockedApiPost.mock.calls.map(([path]) => String(path)),
+        ...fetchSpy.mock.calls.map((c: unknown[]) => String(c[0])),
+      ].filter((path) => path.includes("/probe"));
+    // Every timer, frame and idle callback the open schedules has run before the absence is read.
+    vi.useFakeTimers();
+    try {
+      await renderForgesPanel();
+      await vi.runAllTimersAsync();
+      expect(probes()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
 
-    const sent = [
-      ...mockedApiPost.mock.calls.map(([path]) => String(path)),
-      ...fetchSpy.mock.calls.map((c: unknown[]) => String(c[0])),
-    ];
-    expect(sent.filter((path) => path.includes("/probe"))).toEqual([]);
+    const checks = document.querySelectorAll<HTMLButtonElement>(
+      'button[aria-label="Check the connection"]',
+    );
+    expect(checks).toHaveLength(2);
+    checks[0]!.click();
+    await until(() => probes().length > 0, "the pressed check to be sent");
+    expect(probes()).toEqual(["/api/forges/github%3Agithub.com/probe"]);
     vi.unstubAllGlobals();
   });
 

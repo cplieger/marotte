@@ -132,11 +132,49 @@ async function until(pred: () => boolean, what: string): Promise<void> {
 
 const maxTop = (): number => wrap.scrollHeight - wrap.clientHeight;
 
-/** The reader's own wheel to `top`, so the controller sees a reader stating a position. */
+// The controller's reader window reads `Date.now()`. A Date that runs with real time and can also
+// jump lets `wheelTo` step past the window without sleeping it out, while every window the scene
+// opens still closes no later than it would on the wall clock.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true });
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
+
+const twoFrames = (): Promise<unknown> =>
+  new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+/** Resolve on the scroller's `scrollend`: the shipped stylesheet scrolls it smoothly, so a
+ *  `scrollTop` write lands over several frames. */
+function scrollEnds(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const bound = setTimeout(() => {
+      reject(
+        new Error(`no scrollend within ${String(BUDGET)}ms (scrollTop ${String(wrap.scrollTop)})`),
+      );
+    }, BUDGET);
+    wrap.addEventListener(
+      "scrollend",
+      () => {
+        clearTimeout(bound);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+/** The reader's own wheel to `top`, so the controller sees a reader stating a position, then the
+ *  reader's window passing: the scroll lands inside it, and the clock moves past it. */
 async function wheelTo(top: number): Promise<void> {
+  const moves = Math.abs(wrap.scrollTop - Math.max(0, Math.min(top, maxTop()))) >= 1;
+  const landed = moves ? scrollEnds() : Promise.resolve();
   wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: top < wrap.scrollTop ? -100 : 100 }));
   wrap.scrollTop = top;
-  await new Promise((r) => setTimeout(r, 400));
+  await landed;
+  vi.advanceTimersByTime(400);
+  await twoFrames();
 }
 
 type Press = "click" | "tap" | "wobble" | "space";

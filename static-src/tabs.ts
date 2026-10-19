@@ -1483,6 +1483,10 @@ export function subscribeTabCues(fn: () => void): () => void {
 
 // --- Empty-state timer ---
 
+/** Longer than the closed row's exit animation (10-shell-app.css), so the respawned row is built
+ *  into an EMPTY strip instead of animating in beside the departing one. */
+export const EMPTY_RESPAWN_MS = 500;
+
 export function setOnEmpty(fn: () => void): void {
   callbacks.onEmpty = fn;
 }
@@ -1498,12 +1502,10 @@ function scheduleEmpty(): void {
     return;
   }
   internal.emptyDeferred = false;
-  // Longer than the closed row's exit animation (10-shell-app.css), so the respawned row is built
-  // into an EMPTY strip instead of animating in beside the departing one.
   internal.emptyTimer = setTimeout(() => {
     internal.emptyTimer = null;
     callbacks.onEmpty?.();
-  }, 500);
+  }, EMPTY_RESPAWN_MS);
 }
 
 /** Re-arm (or drop) a deferred empty-state respawn once the last pending remove

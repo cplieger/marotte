@@ -220,9 +220,9 @@ afterEach(async () => {
   // 80ms window a RELEASE-shaped end holds it for, so no case inherits another's
   // click suppression. Browser Mode isolates per FILE, not per test.
   window.dispatchEvent(new Event("blur"));
-  if (isDragHandled()) {
-    await new Promise((r) => setTimeout(r, 100));
-  }
+  await vi.waitFor(() => {
+    expect(isDragHandled(), "a drag's click suppression outlived its window").toBe(false);
+  });
   const holder = list.parentElement;
   list.remove();
   if (holder !== document.body) {

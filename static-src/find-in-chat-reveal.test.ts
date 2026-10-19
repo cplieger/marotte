@@ -1,6 +1,8 @@
 import { describe, it, expect, afterAll, beforeAll, beforeEach, vi } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
 import { emulateA11yMedia, resetA11yMedia } from "./__test-helpers__/a11y-media.js";
+import { until } from "./__test-helpers__/until.js";
+import { framesDrained } from "./__test-helpers__/frame-queue.js";
 import type { TurnState } from "./types.js";
 import type { Entry, Hit } from "./wire/types.gen.js";
 import type * as ApiClient from "./api-client.js";
@@ -39,7 +41,8 @@ const { setSessions, setActive, bumpMessages, appendEntry, getActive, applyToolP
   await import("./store.js");
 const { mountChatView, teardownAll } = await import("./messages.js");
 const { scrollToBottom, readingState } = await import("./scroll.js");
-const { setPinSettleMs } = await import("./scroll-controller.js");
+const { setPinSettleMs, READER_CONTROL_MS } = await import("./scroll-controller.js");
+const { pinAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
 const { resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 const { forgetHeights } = await import("./block-heights.js");
@@ -273,14 +276,13 @@ async function loadAtLiveEdge(chat: string, live: boolean, matchAbove = false): 
   await vi.waitFor(() => {
     expect(messagesEl.querySelectorAll("[data-entry-seq]").length).toBeGreaterThan(ENTRIES / 4);
   });
-  const real = setPinSettleMs(20);
-  try {
-    scrollToBottom();
-  } finally {
-    setPinSettleMs(real);
-  }
-  await new Promise((resolve) => {
-    setTimeout(resolve, 150);
+  await pinAtLiveEdge(scrollerEl, 20, () => {
+    const real = setPinSettleMs(20);
+    try {
+      scrollToBottom();
+    } finally {
+      setPinSettleMs(real);
+    }
   });
   stageServerHits(matchAbove ? [aboveHit(), hit()] : [hit()]);
 }
@@ -298,6 +300,7 @@ function closeAfterFirstJump(): void {
     this: Element,
     arg?: boolean | ScrollIntoViewOptions,
   ) {
+    jumpedAt = Date.now();
     real.call(this, arg);
     queueMicrotask(closeChatFind);
   });
@@ -309,10 +312,25 @@ function atLiveEdge(): boolean {
   );
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+let jumpedAt = Number.NaN;
+
+/** Frames until `scrollTop` has held for three and `also()` holds, then until no frame callback is
+ *  queued: a smooth flight never stands still mid-way, and a follow write lands in a frame the
+ *  chunk it answers queued. */
+async function scrollerAtRest(also: () => boolean = () => true): Promise<void> {
+  let last = Number.NaN;
+  let still = 0;
+  await until(
+    () => {
+      const top = scrollerEl.scrollTop;
+      still = top === last ? still + 1 : 0;
+      last = top;
+      return still >= 3 && also();
+    },
+    "the scroller to come to rest",
+    { detail: () => `scrollTop ${String(scrollerEl.scrollTop)}` },
+  );
+  await framesDrained("the controller's queued frames");
 }
 
 /** Find closed mid-step leaves the reader where the jump took them: parked, and not pinned back
@@ -321,13 +339,14 @@ async function staysParkedThroughStream(chat: string): Promise<void> {
   await vi.waitFor(() => {
     expect(_isChatFindOpen()).toBe(false);
   });
-  // Past the jump's quiet period, so a follow write is licensed, and while a smooth flight still flies.
-  await sleep(400);
+  // Past the jump's quiet period, so the chunk's follow write is licensed and only Reading holds it.
+  await until(() => Date.now() > jumpedAt + READER_CONTROL_MS, "the jump's quiet period to close", {
+    detail: () => `${String(Date.now() - jumpedAt)}ms since the jump`,
+  });
   streamChunk(chat);
-  // After any flight has landed.
-  await sleep(1200);
+  await scrollerAtRest();
   streamChunk(chat);
-  await sleep(300);
+  await scrollerAtRest();
   expect({ state: readingState(), atLiveEdge: atLiveEdge() }).toEqual({
     state: "reading",
     atLiveEdge: false,
@@ -344,8 +363,9 @@ function offCentre(): number {
   );
 }
 
-/** Centred, then still centred and still Reading after `holdMs`, so a correction that lands late is
- *  seen. `block: "center"` within a quarter of the scrollport: the reveal's own move is ~300px here. */
+/** Centred, then centred and Reading on every frame for `holdMs`, so a correction that lands late,
+ *  or a leave-and-return inside the hold, is seen. `block: "center"` within a quarter of the
+ *  scrollport: the reveal's own move is ~300px here. */
 async function staysCentred(holdMs: number): Promise<void> {
   await vi.waitFor(
     () => {
@@ -353,13 +373,23 @@ async function staysCentred(holdMs: number): Promise<void> {
     },
     { timeout: 5000 },
   );
-  await new Promise((resolve) => {
-    setTimeout(resolve, holdMs);
-  });
-  expect({ centred: offCentre() < VIEWPORT_PX / 4, state: readingState() }).toEqual({
-    centred: true,
-    state: "reading",
-  });
+  const start = performance.now();
+  const lapses: string[] = [];
+  await until(
+    () => {
+      const off = offCentre();
+      const state = readingState();
+      if (off >= VIEWPORT_PX / 4 || state !== "reading") {
+        lapses.push(
+          `${String(Math.round(performance.now() - start))}ms: ${String(off)}px off, ${state}`,
+        );
+      }
+      return performance.now() - start >= holdMs;
+    },
+    `the ${String(holdMs)}ms hold`,
+    { timeout: holdMs + 5000 },
+  );
+  expect(lapses).toEqual([]);
 }
 
 let style: HTMLStyleElement;
@@ -607,13 +637,24 @@ describe("find-in-chat's reveal with motion", () => {
   });
 
   it("keeps the current-hit highlight when the reader moves during the reveal's flight while the transcript streams", async () => {
+    let landed = false;
+    let wheeledMidFlight: boolean | null = null;
+    const onLanded = (): void => {
+      landed = true;
+    };
+    // A task after the flight's first scroll, so the controller has seen it move.
+    const wheelOnFirstScroll = (): void => {
+      setTimeout(() => {
+        wheeledMidFlight = !landed;
+        scrollerEl.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true }));
+      }, 0);
+    };
     const streamOnHighlight = new MutationObserver(() => {
       if (messagesEl.querySelector("mark.find-hit-current") !== null) {
         streamOnHighlight.disconnect();
         streamChunk("c-input-motion");
-        setTimeout(() => {
-          scrollerEl.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true }));
-        }, 250);
+        scrollerEl.addEventListener("scrollend", onLanded);
+        scrollerEl.addEventListener("scroll", wheelOnFirstScroll, { once: true });
       }
     });
     try {
@@ -621,12 +662,15 @@ describe("find-in-chat's reveal with motion", () => {
       streamOnHighlight.observe(messagesEl, { subtree: true, attributes: true, childList: true });
       await findAndStep(NEEDLE);
       // Past the flight, wherever the input left it.
-      await sleep(1200);
+      await scrollerAtRest(() => wheeledMidFlight !== null);
+      expect(wheeledMidFlight).toBe(true);
       readerScrollsTo(hitParagraph(), -1);
       await twoFrames();
       expect(currentHitEntry()).toBe(`big-e${String(HIT_AT)}`);
     } finally {
       streamOnHighlight.disconnect();
+      scrollerEl.removeEventListener("scrollend", onLanded);
+      scrollerEl.removeEventListener("scroll", wheelOnFirstScroll);
       toggleChatFind();
     }
   });

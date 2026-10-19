@@ -173,6 +173,7 @@ import {
   tabSetVersion,
   activeChatRef,
   setOnEmpty,
+  EMPTY_RESPAWN_MS,
   setTabPinned,
   openFilesView,
   toggleFilesView,
@@ -211,6 +212,7 @@ import {
 } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
+import { until } from "./__test-helpers__/until.js";
 import type { TabKind } from "./types.js";
 
 // The harness takes the sync layer's two entry points by hand: its own module
@@ -343,6 +345,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   _resetTabsSyncForTest();
 });
 
@@ -550,9 +553,17 @@ describe("closeTab", () => {
   });
 });
 
+/** The empty-state respawn is a timer: a faked clock steps to its due time rather than sleeping it
+ *  out, and runs with real time so the harness's zero-delay deliveries still land on their own. */
+function fakeRespawnClock(): void {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+}
+
 // The last-tab close looks like pre-boot state, so the DOM subscriber must not skip it, or the row
 // lingers until the empty-state respawn and both animate at once.
 describe("closing the last tab", () => {
+  beforeEach(fakeRespawnClock);
+
   it("starts the closed row's exit on close, not on the respawn", async () => {
     expect.assertions(2);
     await openChat("only");
@@ -589,14 +600,14 @@ describe("closing the last tab", () => {
     setOnEmpty(onEmpty);
     await openChat("only");
     tabServer.closeRemotely(chatID("only"));
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
 
     // The local close still respawns: an empty strip is a dead end the reader did
     // not ask for when they closed the tab themselves.
     await openChat("mine");
     await closeTab(chatID("mine"));
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).toHaveBeenCalledTimes(1);
   });
 
@@ -625,14 +636,14 @@ describe("closing the last tab", () => {
     // The reader closes the last tab. The strip is empty, the respawn is due —
     // and deferred, because "held"'s remove is still pending.
     await closeTab(chatID("mine"));
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
 
     // The response finally arrives: closed [] — the other device's close won.
     // Semantic confirmation settles the op and re-arms the respawn.
     removeCommitted("op-held", [], tabServer.version());
     expect(onConfirm).toHaveBeenCalledTimes(1);
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).toHaveBeenCalledTimes(1);
   });
 
@@ -654,13 +665,13 @@ describe("closing the last tab", () => {
 
     // The dispatch times out: no restore, no retire — verifying.
     opTimedOut("op-held");
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
 
     // An authoritative snapshot (a gap re-list, a verify tick — one mechanism)
     // no longer holds the row: silent confirmation, and the respawn re-arms.
     await listTabs();
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).toHaveBeenCalledTimes(1);
   });
 
@@ -690,7 +701,7 @@ describe("closing the last tab", () => {
     await settleTabs();
     await closeTab(chatID("mine"));
     opTimedOut("op-held");
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
 
     // The authoritative list still holds "held": restore, not confirm. The strip
@@ -698,7 +709,7 @@ describe("closing the last tab", () => {
     await listTabs();
     expect(rollback).toHaveBeenCalledTimes(1);
     expect(hasTab("chat", "held")).toBe(true);
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
   });
 });
@@ -1041,6 +1052,7 @@ describe("a resync that drops the active tab", () => {
     // `local: false`: a strip emptied by another device must not mint a chat here,
     // which is the shape of the loop that minted one every 1.5s on the live instance.
     expect.assertions(2);
+    fakeRespawnClock();
     const onEmpty = vi.fn();
     setOnEmpty(onEmpty);
     const ids = await openChats("a", "b");
@@ -1048,7 +1060,7 @@ describe("a resync that drops the active tab", () => {
     await resyncWithout(ids["a"] ?? "", ids["b"] ?? "");
 
     expect(getActiveTabId()).toBe("");
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
   });
 });
@@ -3057,12 +3069,13 @@ describe("Move up / Move down in the chat menu", () => {
     return found;
   }
 
-  function announced(): Promise<string> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve(document.querySelector('[role="status"][aria-live="polite"]')?.textContent ?? "");
-      }, 150);
+  async function expectAnnounced(expected: string): Promise<void> {
+    const live = (): string =>
+      document.querySelector('[role="status"][aria-live="polite"]')?.textContent ?? "";
+    await until(() => live() === expected, `the live region to read "${expected}"`, {
+      detail: () => `it reads "${live()}"`,
     });
+    expect(live()).toBe(expected);
   }
 
   it("offers both after Pin and before the exports, on every chat row", async () => {
@@ -3144,7 +3157,7 @@ describe("Move up / Move down in the chat menu", () => {
     await openChats("a", "b");
     renameTab(chatID("b"), "Bee");
     item(await menuFor("b"), "Move up").action();
-    expect(await announced()).toBe("Moved Bee to position 1");
+    await expectAnnounced("Moved Bee to position 1");
   });
 
   it("sends nothing from a disabled item", async () => {

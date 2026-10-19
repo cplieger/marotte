@@ -7,7 +7,7 @@
 // a run of `text` entries into ONE element.
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, onTestFinished } from "vitest";
 import { userEvent } from "vitest/browser";
 import { makeSession } from "./__test-helpers__/model.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -1143,6 +1143,21 @@ describe("the cold build", () => {
 
   it("takes an evicted turn's owed slices with it instead of rebuilding the body", async () => {
     const id = chatID();
+    // The owed build waits on `scheduler.yield`; held here, so the case releases it after the fold
+    // and knows when its continuation has run.
+    const held: (() => void)[] = [];
+    const sched = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+    expect(sched?.yield, "the owed build yields through scheduler.yield").toBeTypeOf("function");
+    const yieldSpy = vi
+      .spyOn(sched as { yield: () => Promise<void> }, "yield")
+      .mockImplementation(() => {
+        return new Promise<void>((release) => {
+          held.push(release);
+        });
+      });
+    onTestFinished(() => {
+      yieldSpy.mockRestore();
+    });
     // The newest turn, over budget, so the window covers its tail and the paint
     // owes the rest of that window as a cold build.
     activate(id, [heavyTurn("u-heavy", RESIDENT_ENTRIES + 64)]);
@@ -1154,8 +1169,20 @@ describe("the cold build", () => {
     // body under a folded card.
     activate(id, [heavyTurn("u-heavy", RESIDENT_ENTRIES + 64), toolTurn("u1", 2)]);
     expect(hasBody("u-heavy")).toBe(false);
+    expect(held.length, "the cold build is owed").toBeGreaterThan(0);
 
-    await new Promise((r) => setTimeout(r, 60));
+    // Release every yield, including any the released work asks for, until none is left. A task
+    // after a release runs once every promise continuation queued by then has.
+    let released = 0;
+    for (let round = 0; released < held.length; round++) {
+      expect(round, "the owed build kept yielding").toBeLessThan(100);
+      while (released < held.length) {
+        held[released++]!();
+      }
+      await new Promise<void>((r) => {
+        setTimeout(r, 0);
+      });
+    }
     expect(hasBody("u-heavy")).toBe(false);
   });
 });

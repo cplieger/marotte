@@ -29,6 +29,7 @@ const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { mountChatView, activeTranscriptView } = await import("./messages.js");
 const { scrollToBottom } = await import("./scroll.js");
 const { setPinSettleMs } = await import("./scroll-controller.js");
+const { pinAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 const { RESIDENT_ENTRIES } = await import("./block-window.js");
@@ -266,14 +267,13 @@ describe("the residency anchor under a reader's own scroll", () => {
     // Back to the live edge, then out past the bottom pin's own settle window: a gesture inside it
     // is undone before any pass sees it. Armed short, with the real window back in force before the
     // case acts.
-    const real = setPinSettleMs(20);
-    try {
-      scrollToBottom();
-    } finally {
-      setPinSettleMs(real);
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 100);
+    await pinAtLiveEdge(scroller(), 20, () => {
+      const real = setPinSettleMs(20);
+      try {
+        scrollToBottom();
+      } finally {
+        setPinSettleMs(real);
+      }
     });
   }
 

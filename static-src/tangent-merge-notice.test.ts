@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as Chat from "./chat.js";
 import type * as Tabs from "./tabs.js";
 import type * as Toast from "./toast.js";
@@ -44,6 +44,8 @@ const { configureApi } = await import("@cplieger/actions");
 const { mergeTangentChat, noteTangentMerged, noteTangentMergeFailed } =
   await import("./tangent-merge.js");
 const { reportFailure, _resetForTest: resetFailureNotices } = await import("./failure-notice.js");
+const { awaitOnClock, useSteppableClock } = await import("./__test-helpers__/fake-clock.js");
+const { FRAME_BUDGET_MS } = await import("./__test-helpers__/frame-budget.js");
 
 /** A tangent_merge_failed frame as both of its SSE handlers take it: the error route's report
  *  (handlers/turn.ts) and the merge's settlement (handlers/chat.ts). */
@@ -71,6 +73,8 @@ function statusAnswer(state: string): Promise<Response> {
 }
 
 beforeEach(() => {
+  // The merge retries on the action framework's backoff; the faked clock steps past it.
+  useSteppableClock();
   resetActionFramework();
   resetFailureNotices();
   vi.clearAllMocks();
@@ -96,11 +100,15 @@ beforeEach(() => {
   ]);
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("tangent merge notices", () => {
   it("says it could not confirm the merge started when every reply and status read was lost", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 0, error: "Failed to fetch", code: "network" });
 
-    await mergeTangentChat("c-tangent");
+    await awaitOnClock(mergeTangentChat("c-tangent"), FRAME_BUDGET_MS);
 
     expect(mockSend).toHaveBeenCalledTimes(3);
     expect(mockFetch).toHaveBeenCalledTimes(3);
@@ -112,7 +120,7 @@ describe("tangent merge notices", () => {
     mockSend.mockResolvedValue({ ok: false, status: 0, error: "Failed to fetch", code: "network" });
     mockFetch.mockImplementation(() => statusAnswer("absent"));
 
-    await mergeTangentChat("c-tangent");
+    await awaitOnClock(mergeTangentChat("c-tangent"), FRAME_BUDGET_MS);
 
     expect(toastTexts()).toEqual(["side quest: The merge did not start"]);
   });
@@ -126,7 +134,7 @@ describe("tangent merge notices", () => {
     });
     mockFetch.mockImplementation(() => statusAnswer("running"));
 
-    await mergeTangentChat("c-tangent");
+    await awaitOnClock(mergeTangentChat("c-tangent"), FRAME_BUDGET_MS);
 
     expect(mockSend).toHaveBeenCalledTimes(3);
     expect(toastTexts()).toEqual([]);
@@ -140,7 +148,7 @@ describe("tangent merge notices", () => {
       reason: "busy",
     });
 
-    await mergeTangentChat("c-tangent");
+    await awaitOnClock(mergeTangentChat("c-tangent"), FRAME_BUDGET_MS);
 
     expect(toastTexts()).toEqual(["side quest: Merge failed: this tangent is still working"]);
   });
@@ -148,7 +156,7 @@ describe("tangent merge notices", () => {
   it("says nothing when the merge is accepted, leaving completion to its frame", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, state: "running" } });
 
-    await mergeTangentChat("c-tangent");
+    await awaitOnClock(mergeTangentChat("c-tangent"), FRAME_BUDGET_MS);
 
     expect(toastTexts()).toEqual([]);
   });
@@ -170,10 +178,15 @@ describe("tangent merge notices", () => {
     });
     noteTangentMerged("op-test", "c-parent");
     reply(lost);
-    await merging;
+    await awaitOnClock(merging, FRAME_BUDGET_MS);
 
     expect(toastTexts()).toEqual([]);
     expect(mockFetch).not.toHaveBeenCalled();
+    // The landing loads chat.js lazily; a file ending with that import in flight fails the run.
+    const { switchSession } = await import("./chat.js");
+    await vi.waitFor(() => {
+      expect(switchSession).toHaveBeenCalledWith("c-parent");
+    });
   });
 
   it("reports a failed merge once when its status answer arrives before its frame", async () => {
@@ -187,7 +200,7 @@ describe("tangent merge notices", () => {
       ),
     );
 
-    await mergeTangentChat("c-tangent");
+    await awaitOnClock(mergeTangentChat("c-tangent"), FRAME_BUDGET_MS);
     frameFailed("op-test", "nothing was merged");
 
     expect(toastTexts()).toEqual(["side quest: nothing was merged"]);
@@ -212,7 +225,7 @@ describe("tangent merge notices", () => {
       status: 200,
       body: { ok: true, state: "failed", message: "nothing was merged" },
     });
-    await merging;
+    await awaitOnClock(merging, FRAME_BUDGET_MS);
 
     expect(toastTexts()).toEqual(["side quest: nothing was merged"]);
   });
@@ -234,7 +247,7 @@ describe("tangent merge notices", () => {
     });
     frameFailed("op-test", "nothing was merged");
     reply(lost);
-    await merging;
+    await awaitOnClock(merging, FRAME_BUDGET_MS);
 
     expect(toastTexts()).toEqual(["side quest: nothing was merged"]);
     expect(mockFetch).not.toHaveBeenCalled();

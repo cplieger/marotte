@@ -51,12 +51,9 @@ function browserProject(
       // Merged with the root list (`extends: true` merges arrays). Browser-only: both read `window`,
       // and a `ResizeObserver` loop is a real engine's verdict.
       setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
-      // One test file at a time: the mocker's routes live on the shared Playwright CONTEXT and are
-      // unrouted at each file end, so a still-resolving mock gets auto-continued (`route.fulfill: Route
-      // is already handled!`, https://github.com/vitest-dev/vitest/issues/8339). vitest 5.0.4's
-      // interception probe (https://github.com/vitest-dev/vitest/pull/11083) closes the zero-crossing;
-      // drop this only after a parallel run measures clean.
-      fileParallelism: false,
+      // Files run in parallel because each worker session opens its own Playwright context, and the
+      // mocker's routes live on the context: two concurrent files never share one
+      // (https://github.com/vitest-dev/vitest/issues/8339).
       browser: {
         enabled: true,
         headless: true,
@@ -182,6 +179,11 @@ export default defineConfig({
       ),
       browserProject("browser-touch", ["**/*.touch.test.ts"], sharedExclude, true),
     ],
+
+    // Two workers, so two Chromium pages at once: CI's runner has 4 vCPUs, and each page's renderer
+    // shares them with the Vite server and the runner process. Root-only: a per-project value needs a
+    // distinct `sequence.groupOrder` per project. Stryker's runner forces its own value of 1.
+    maxWorkers: 2,
 
     // Fail loudly if the include pattern matches nothing.
     passWithNoTests: false,

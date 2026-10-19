@@ -2,11 +2,12 @@
 // fit measures is the ACTIONS — how many, and how wide the tier makes them — so a hand-written
 // fixture would keep passing after the page stopped agreeing with it.
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, onTestFinished } from "vitest";
 import indexHtml from "../static/index.html?raw";
 
 import { setPageTitle, setPageSubtitle, clearPageTitle, initPageTitleFit } from "./page-title.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { until } from "./__test-helpers__/until.js";
 
 /** The whole `<div class="chat-toolbar">…</div>` out of the page, matched by counting nested div
  *  tags. Nothing formats `static/index.html` (prettier runs from `static-src/` and the page is
@@ -107,24 +108,23 @@ describe("the title bar's measured fit", () => {
     const heading = mountBar("240px");
     setPageTitle("Git", "chat");
     expect(heading.classList.contains("sr-only"), "clipped while narrow").toBe(true);
+    // A fit over a clipped heading always rewrites its class (remove, then re-add), so each record
+    // past init's own is a delivery's fit.
+    let fits = 0;
+    const fitWrites = new MutationObserver(() => {
+      fits++;
+    });
+    fitWrites.observe(heading, { attributes: true, attributeFilter: ["class"] });
+    onTestFinished(() => {
+      fitWrites.disconnect();
+    });
     initPageTitleFit();
-
-    /** Two frames plus a tick: the observer delivers after layout and this module defers its own
-     *  write by one more frame. */
-    const settle = async (): Promise<void> => {
-      await new Promise<void>((r) => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            setTimeout(r, 50);
-          });
-        });
-      });
-    };
+    fitWrites.takeRecords();
 
     // The observation's OWN first delivery is drained here, before the width moves. Without this
     // the case cannot tell the two observers apart: that first callback lands after a synchronous
     // resize and unclips for a reason that has nothing to do with which element is watched.
-    await settle();
+    await until(() => fits > 0, "the observer's first delivery to re-fit the title");
     expect(heading.classList.contains("sr-only"), "still clipped after the first delivery").toBe(
       true,
     );
@@ -132,8 +132,10 @@ describe("the title bar's measured fit", () => {
     const area = document.getElementById("chat-area");
     expect(area).not.toBeNull();
     area?.style.setProperty("inline-size", "900px");
-    await settle();
-    expect(heading.classList.contains("sr-only"), "shown once the bar has room").toBe(false);
+    await until(
+      () => !heading.classList.contains("sr-only"),
+      "the title shown once the bar has room",
+    );
   });
 
   it("keeps the h1 and its text in the accessibility tree while clipped", () => {

@@ -1,12 +1,13 @@
 // Every surface that draws a workflow update names its run, and the name opens the run's tab.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, onTestFinished } from "vitest";
 import type { Entry, Session, TurnState } from "./types.js";
 import type { Turn } from "./turns.js";
 import type * as ApiClientModule from "./api-client.js";
 import type * as RunLabelModule from "./workflow-run-label.js";
 import type * as RunViewModule from "./run-view.js";
 import { makeSession } from "./__test-helpers__/model.js";
+import { useSteppableClock } from "./__test-helpers__/fake-clock.js";
 import { toolResultID } from "./entry-ids.js";
 
 for (const id of [
@@ -427,6 +428,10 @@ describe("the run state a step card holds", () => {
   });
 
   it("drops a read that lands after the last note is gone, whether it answers or fails", async () => {
+    useSteppableClock();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     for (const answers of [true, false]) {
       const run = runID(answers ? "late-ok" : "late-bad");
       if (answers) {
@@ -442,7 +447,7 @@ describe("the run state a step card holds", () => {
       messages.teardownAll();
       gate.holding = false;
       gate.releases[0]?.();
-      await new Promise((r) => setTimeout(r, 1300));
+      await vi.runAllTimersAsync();
 
       expect(runStore.peekRunState(run)).toBeUndefined();
       // A failed read the store kept retrying would be a second read for a run nobody shows.
@@ -451,6 +456,10 @@ describe("the run state a step card holds", () => {
   });
 
   it("does not re-read a run nobody holds when a lifecycle event lands during its late read", async () => {
+    useSteppableClock();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const run = runID("late-event");
     names.set(run, "forge-f2-build");
     gate.holding = true;
@@ -464,7 +473,7 @@ describe("the run state a step card holds", () => {
     runStore.invalidateRun(run);
     gate.holding = false;
     gate.releases[0]?.();
-    await new Promise((r) => setTimeout(r, 100));
+    await vi.runAllTimersAsync();
 
     expect(runStore.peekRunState(run)).toBeUndefined();
     expect(reads.filter((id) => id === run)).toHaveLength(1);
@@ -598,6 +607,10 @@ describe("the run state a step card holds", () => {
   });
 
   it("reads a run its card already reads once, not twice", async () => {
+    useSteppableClock();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const run = runID("once");
     names.set(run, "forge-f2-build");
     const view = await paint("c-hold-once", [
@@ -608,7 +621,7 @@ describe("the run state a step card holds", () => {
       expect(runButtons(view).map((b) => b.textContent)).toEqual(["forge-f2-build"]);
     });
     // A trailing read an invalidation queued would land after the first settles.
-    await new Promise((r) => setTimeout(r, 50));
+    await vi.runAllTimersAsync();
 
     expect(reads.filter((id) => id === run)).toHaveLength(1);
   });

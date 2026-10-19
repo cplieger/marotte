@@ -11,7 +11,7 @@ const BOTTOM_TOLERANCE_PX = 100;
  *  delivering scroll events after the finger leaves, and one of those is what carries the reader
  *  out of the bottom tolerance band. 300ms covers a fling above ~330px/s and a key's smooth
  *  scroll animation (measured at ~8 events per press in Chromium). */
-const READER_CONTROL_MS = 300;
+export const READER_CONTROL_MS = 300;
 /** How long a bottom pin keeps re-asserting the live edge. Sized to the fold choreography it
  *  releases: `--fold-slide` runs 0.3s and a close flips `content-visibility` at 0.42s
  *  (css/29-turns.css). */

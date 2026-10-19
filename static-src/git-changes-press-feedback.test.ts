@@ -1,7 +1,7 @@
 // A control that starts a request is busy at once, stays busy through a repaint while it runs, and shows its
 // outcome in place. Only the network is held.
 
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from "vitest";
 
 const H = vi.hoisted(() => ({
   apiGet: vi.fn(),
@@ -65,6 +65,11 @@ import {
   expectBusy,
   expectIdle,
 } from "./__test-helpers__/press-feedback.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   H.confirm.mockImplementation(async () => true);
@@ -259,6 +264,7 @@ describe("the Changes tab", () => {
     });
 
     it("says a refusal in its section in git's words until the repository's next press", async () => {
+      useSteppableClock();
       const mine = repoStatus();
       await show(mine);
       const calls = heldFetch();
@@ -271,7 +277,7 @@ describe("the Changes tab", () => {
       await vi.waitFor(() =>
         expect(note(mine.repo)).toBe(`Could not ${p.could}. fatal: index.lock exists`),
       );
-      await vi.waitFor(() => expectIdle(p.find(mine.repo)), { timeout: 3000 });
+      await waitForOnClock(() => expectIdle(p.find(mine.repo)), 3000);
       expect(toast.error).not.toHaveBeenCalled();
       await refreshChanges();
       expect(note(mine.repo)).toBe(`Could not ${p.could}. fatal: index.lock exists`);
@@ -281,7 +287,7 @@ describe("the Changes tab", () => {
       await vi.waitFor(() => expect(note(mine.repo)).toBe(""));
       await vi.waitFor(() => expect(calls).toHaveLength(2));
       calls[1]!.answer(json({ output: "" }));
-      await vi.waitFor(() => expectIdle(p.find(mine.repo)), { timeout: 3000 });
+      await waitForOnClock(() => expectIdle(p.find(mine.repo)), 3000);
       expect(note(mine.repo)).toBe("");
     });
   });
@@ -450,6 +456,7 @@ describe("the Changes tab", () => {
   });
 
   it("Pull all is busy until its pass lands, never spinning while usable, and says a refusal beside it", async () => {
+    useSteppableClock();
     await show(repoStatus());
     const calls = heldFetch();
     const pullAll = document.getElementById("git-pull-all-btn") as HTMLButtonElement;
@@ -474,7 +481,7 @@ describe("the Changes tab", () => {
     const spinning = pullAll.querySelector(".btn-async-spinner") !== null;
     expect(spinning).toBe(pullAll.disabled && pullAll.getAttribute("aria-busy") === "true");
     release();
-    await vi.waitFor(() => expectIdle(pullAll), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(pullAll), 3000);
 
     H.apiGet.mockImplementation((url: string) =>
       Promise.resolve(url.startsWith("/api/git/status-all") ? { repos } : null),
@@ -487,14 +494,14 @@ describe("the Changes tab", () => {
         "Could not pull every repository. another pass is running",
       ),
     );
-    await vi.waitFor(() => expectIdle(pullAll), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(pullAll), 3000);
     expect(toast.error).not.toHaveBeenCalled();
 
     pullAll.click();
     expect(host.querySelector(".page-toolbar-error")?.textContent).toBe("");
     await vi.waitFor(() => expect(calls).toHaveLength(3));
     calls[2]!.answer(json({ repos: [] }));
-    await vi.waitFor(() => expectIdle(pullAll), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(pullAll), 3000);
   });
 
   it("Refresh reports a read it could not make as a failure, beside the error the list shows", async () => {

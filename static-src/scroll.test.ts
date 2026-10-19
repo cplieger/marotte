@@ -1,10 +1,13 @@
 // The follow model: reading state, the live-edge pins and the reader's own gestures.
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
 
 // Read for the premise test below: the regression cases only reproduce production while `.msg-row`
 // really is a containment box, so the declaration is asserted out of the shipped stylesheet rather
 // than copied into a fixture.
 import messagesCss from "./css/13-messages.css?raw";
+import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
+import { until } from "./__test-helpers__/until.js";
+import { framesDrained } from "./__test-helpers__/frame-queue.js";
 
 // The module builds its singleton against $.messages / $.messagesWrap at import, and reads
 // $.scrollBottom in init.
@@ -71,6 +74,16 @@ function fakeScroller(init: { scrollHeight: number; clientHeight: number; scroll
   }) as typeof el.scrollTo;
   return state;
 }
+
+// The controller's windows (READER_CONTROL_MS, PIN_SETTLE_MS) read `Date.now()`, so a faked Date
+// lets `land` step past one without sleeping it out. Only Date: the scenes' frames, observers,
+// timers and smooth flights stay real.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   scroll.resetScrollState();
@@ -379,10 +392,117 @@ function touchEvent(
   return ev;
 }
 
-/** Every pin writes synchronously now, so this covers the observer-driven state revalidation and the
- *  bottom pin's re-assert frames, not a deferred scroll write. */
+/** Scripted work standing in for a fetch that resolves on a later task, counted while pending:
+ *  timers and frames run in no fixed order, so a frame count cannot stand for its landing. */
+let fixtureTasks = 0;
+function fixtureTask(fn: () => void): void {
+  fixtureTasks++;
+  setTimeout(() => {
+    fixtureTasks--;
+    fn();
+  }, 0);
+}
+
+/** A history with one older page: the first ask lands `page`, every later one lands nothing. A fake
+ *  scroller's history edge never leaves the lead, so a page that lands rows is re-asked for forever;
+ *  the empty page is what ends that chain before the case returns. */
+function onePage(page: () => void): () => void {
+  let asks = 0;
+  return () => {
+    asks++;
+    const first = asks === 1;
+    fixtureTask(() => {
+      if (first) {
+        page();
+      }
+      document.getElementById("load-more-skeleton")?.remove();
+    });
+  };
+}
+
+/** Every pin writes synchronously, so two frames cover the observer-driven state revalidation and
+ *  the bottom pin's re-assert frame: that frame schedule is the controller's contract, and what a
+ *  positive pins. An absence reads after `drained()`. */
 async function settle(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 25));
+  await frames(2);
+}
+
+/** Until no frame callback is left queued, so a write the controller still owes is seen. */
+async function drained(): Promise<void> {
+  await framesDrained("the controller's queued frames");
+}
+
+/** Captured at load: a case spies on `requestAnimationFrame` to count the controller's own frames,
+ *  and the waits below must not show up in that count. */
+const nextFrame = window.requestAnimationFrame.bind(window);
+
+/** A message task, because a faked `setTimeout` never fires on its own. */
+async function taskHop(): Promise<void> {
+  await new Promise<void>((r) => {
+    const hop = new MessageChannel();
+    hop.port1.onmessage = (): void => {
+      hop.port1.close();
+      r();
+    };
+    hop.port2.postMessage(null);
+  });
+}
+
+/** Each frame resumes on a fresh task rather than inside the frame callback: code resumed there
+ *  runs before that frame's ResizeObserver delivery, where no reader input ever lands, and the
+ *  controller reads a scroll it has no event for yet as drift. */
+async function frames(n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await new Promise((r) => nextFrame(r));
+    await taskHop();
+  }
+}
+
+/** Every DOM change anywhere in the page, so a wait can tell an observer's late delivery (a
+ *  `data-near` mark, a `--scrollbar-w` write) from a scene at rest. */
+let domChanges = 0;
+const domWatch = new MutationObserver((records) => {
+  domChanges += records.length;
+});
+domWatch.observe(document.documentElement, {
+  subtree: true,
+  childList: true,
+  attributes: true,
+  characterData: true,
+});
+
+/** Consecutive frames with nothing moving before a scene counts as settled: an observer's
+ *  delivery lands one frame after the layout it answers, so one still frame can sit between a
+ *  write and its consequence. */
+const STILL_FRAMES = 2;
+
+function sceneNow(): string {
+  domChanges += domWatch.takeRecords().length;
+  const wrap = scroll.getScrollEl();
+  return [
+    wrap.scrollTop,
+    wrap.scrollHeight,
+    wrap.clientHeight,
+    scroll.readingState(),
+    scrollBtn.classList.contains("hidden"),
+    domChanges,
+  ].join("|");
+}
+
+/** Frames until the scroller, the reading state and the DOM have held still for STILL_FRAMES. */
+async function stillness(): Promise<void> {
+  const start = performance.now();
+  let seen = sceneNow();
+  let still = 0;
+  while (still < STILL_FRAMES) {
+    if (performance.now() - start > FRAME_BUDGET_MS) {
+      throw new Error(`the scene was still moving after ${String(FRAME_BUDGET_MS)}ms: ${seen}`);
+    }
+    await frames(1);
+    const now = sceneNow();
+    still = now === seen ? still + 1 : 0;
+    seen = now;
+  }
 }
 
 /** The singleton outlives every test and only some of its state is in resetScrollState's remit:
@@ -390,11 +510,21 @@ async function settle(): Promise<void> {
  *  next test otherwise. Settling last keeps a frame queued by this cleanup out of the test that
  *  follows. */
 async function resetBetween(): Promise<void> {
+  if (fixtureTasks !== 0) {
+    const queued = fixtureTasks;
+    // Stop the loader before draining; otherwise an always-in-lead fixture immediately queues
+    // another page and the drain never completes.
+    scroll.setLoadMore(null, false);
+    await until(() => fixtureTasks === 0, "the leaked fixture pages to drain");
+    throw new Error(
+      `${String(queued)} fixture page task(s) from the previous case were still queued: they would land in this one`,
+    );
+  }
   scroll.setAnchorProvider(null);
   messagesEl.replaceChildren();
   document.getElementById("load-more-skeleton")?.remove();
   scrollBtn.classList.remove("hidden");
-  await settle();
+  await drained();
 }
 
 describe("the scroll listener's reading model", () => {
@@ -447,7 +577,7 @@ describe("the scroll listener's reading model", () => {
     // not fail: at the live edge the suppressed write and the one that lands are the same number.
     s.scrollHeight = 3000;
     messagesEl.appendChild(document.createElement("div"));
-    await settle();
+    await drained();
     expect(s.scrollTop).toBe(1500);
   });
 });
@@ -470,7 +600,10 @@ describe("the reader's input surfaces", () => {
     s.scrollHeight = 3000;
     messagesEl.appendChild(document.createElement("div"));
     await settle();
-    return s.scrollTop;
+    const at = s.scrollTop;
+    await drained();
+    expect(s.scrollTop, "a write after the pin's frames").toBe(at);
+    return at;
   }
 
   it("hands the scroller to a scrolling key", async () => {
@@ -649,7 +782,7 @@ describe("the End key", () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
     scroll.setUserScrolledUp(false);
     pressEnd(document.body);
-    await settle();
+    await drained();
     expect(s.scrollTop).toBe(1500);
   });
 
@@ -787,7 +920,7 @@ describe("the streaming auto-scroll", () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 100 });
     scroll.setUserScrolledUp(true);
     messagesEl.appendChild(document.createElement("div"));
-    await settle();
+    await drained();
     expect(s.scrollTop).toBe(100);
   });
 
@@ -855,36 +988,44 @@ describe("pagination", () => {
   it("asks again after a page lands while the history edge is still in reach", async () => {
     // A page shorter than the lead leaves the edge inside it, where the observer reports no new crossing.
     const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
-    const load = vi.fn(() => {
-      setTimeout(() => {
+    const load = vi.fn(
+      onePage(() => {
         messagesEl.prepend(document.createElement("div"));
-        document.getElementById("load-more-skeleton")?.remove();
         s.scrollHeight += 100;
-      }, 0);
-    });
+      }),
+    );
     scroll.setLoadMore(load, true);
     readerScroll();
-    await settle();
-
-    expect(load.mock.calls.length).toBeGreaterThanOrEqual(2);
+    await until(
+      () => load.mock.calls.length >= 2 && fixtureTasks === 0,
+      "the second page to land",
+      {
+        detail: () =>
+          `${String(load.mock.calls.length)} asks, ${String(fixtureTasks)} pages queued`,
+      },
+    );
+    await drained();
+    expect(load).toHaveBeenCalledTimes(2);
   });
 
   it("does not ask again after a page that landed nothing, until the edge is reached anew", async () => {
     // The same failing request would otherwise loop for as long as the edge stays in reach.
     fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     const load = vi.fn(() => {
-      setTimeout(() => {
+      fixtureTask(() => {
         document.getElementById("load-more-skeleton")?.remove();
-      }, 0);
+      });
     });
     scroll.setLoadMore(load, true);
     readerScroll();
-    await settle();
+    await until(() => fixtureTasks === 0, "the empty page to land");
+    await drained();
     expect(load).toHaveBeenCalledTimes(1);
 
     scroll.noteHistoryEdge(false);
     scroll.noteHistoryEdge(true);
     expect(load).toHaveBeenCalledTimes(2);
+    await until(() => fixtureTasks === 0, "the second empty page to land");
   });
 
   it("asks for the page that was held back once a self-scroll flight ends", async () => {
@@ -903,34 +1044,39 @@ describe("pagination", () => {
   // give back exactly the height it gained.
   it("keeps the reader's position when the older page lands above them", async () => {
     const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
-    scroll.setLoadMore(() => {
-      // The real caller fetches, prepends the page, and drops the skeleton — all after
-      // maybeLoadMore has returned and its observer is watching.
-      setTimeout(() => {
+    // The real caller fetches, prepends the page, and drops the skeleton — all after
+    // maybeLoadMore has returned and its observer is watching.
+    const load = vi.fn(
+      onePage(() => {
         messagesEl.prepend(document.createElement("div"));
-        document.getElementById("load-more-skeleton")?.remove();
         s.scrollHeight = 1400;
-      }, 0);
-    }, true);
+      }),
+    );
+    scroll.setLoadMore(load, true);
     readerScroll();
-    await settle();
+    await until(() => load.mock.calls.length >= 2 && fixtureTasks === 0, "both pages to land", {
+      detail: () => `${String(load.mock.calls.length)} asks, ${String(fixtureTasks)} pages queued`,
+    });
+    await drained();
     expect(s.scrollTop).toBe(400);
   });
 
   it("clears the in-flight flag once the page has landed", async () => {
     const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     const load = vi.fn(() => {
-      setTimeout(() => {
+      fixtureTask(() => {
         document.getElementById("load-more-skeleton")?.remove();
         s.scrollHeight = 1400;
-      }, 0);
+      });
     });
     scroll.setLoadMore(load, true);
     readerScroll();
+    await until(() => fixtureTasks === 0, "the page to land");
     await settle();
     s.scrollTop = 0;
     readerScroll();
     expect(load).toHaveBeenCalledTimes(2);
+    await until(() => fixtureTasks === 0, "the second page to land");
   });
 
   // A pagination pass belongs to the chat that started it. Its completion signal does not: the
@@ -966,7 +1112,7 @@ describe("pagination", () => {
     // screen. Read as this pass completing, it would charge the reader 300 + (1000 - 5000) and throw
     // them to the top of a conversation they had deliberately parked in.
     document.getElementById("load-more-skeleton")?.remove();
-    await settle();
+    await drained();
     expect(s.scrollTop).toBe(300);
   });
 });
@@ -1092,11 +1238,59 @@ function zeroWrites(writes: readonly number[]): number {
   return writes.filter((top) => top === 0).length;
 }
 
-/** Longer than `settle()`: a real scroll event is delivered on its own turn, after the frame the
- *  write happened in. The argument is for a wait that has to outlast a named piece of
- *  choreography (a transition, a settle window). */
+/** Let `ms` of the controller's clock pass, and every frame the scene needs with it: whatever is
+ *  queued settles at the current time (a scroll event judged inside the reader's window stays
+ *  inside it), the clock jumps, and whatever reads the new time settles too. A smooth flight
+ *  moves the scroller until it lands, so a scene acting mid-flight waits on `flightMoves`. */
 async function land(ms = 120): Promise<void> {
-  await new Promise((r) => setTimeout(r, ms));
+  await stillness();
+  vi.advanceTimersByTime(ms);
+  await stillness();
+}
+
+/** Arm before starting a smooth flight; resolves a task after its first `scroll` event, the
+ *  earliest point the flight is under way. The caller asserts how far it has got. */
+async function flightMoves(wrap: HTMLElement): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const bound = setTimeout(() => {
+      reject(
+        new Error(
+          `the flight did not move within ${String(FRAME_BUDGET_MS)}ms (scrollTop ${String(wrap.scrollTop)})`,
+        ),
+      );
+    }, FRAME_BUDGET_MS);
+    wrap.addEventListener(
+      "scroll",
+      () => {
+        clearTimeout(bound);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+  await taskHop();
+}
+
+/** Resolve on the scroller's `scrollend`: a smooth flight runs on the engine's own clock, which
+ *  the controller's faked one does not move. */
+async function flightEnds(wrap: HTMLElement): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const bound = setTimeout(() => {
+      reject(
+        new Error(
+          `no scrollend within ${String(FRAME_BUDGET_MS)}ms (scrollTop ${String(wrap.scrollTop)})`,
+        ),
+      );
+    }, FRAME_BUDGET_MS);
+    wrap.addEventListener(
+      "scrollend",
+      () => {
+        clearTimeout(bound);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }
 
 /** Move the scroller AS THE READER: the input event that says whose scroll it is, then the
@@ -1886,7 +2080,9 @@ describe("the bottom pin's settle window", () => {
     scrollBtn.click();
     await land(60);
 
+    const landed = flightEnds(wrap);
     scroll.jumpTo(target, { block: "start" });
+    await landed;
     await land(500);
 
     expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
@@ -1998,15 +2194,23 @@ describe("a smooth jump's own flight", () => {
     expect(scroll.readingState()).toBe("following");
 
     // A growing tail, as a streaming turn delivers it: every resize licenses a follow write.
+    let growths = 0;
     const grow = setInterval(() => {
       tail.style.height = `${String(tail.offsetHeight + 10)}px`;
+      growths++;
     }, 20);
     try {
+      const landed = flightEnds(wrap);
       scroll.jumpTo(target, { block: "start" });
-      await land(1500);
+      await landed;
+      // Growth keeps arriving after the landing, where a follow write would no longer be a flight's.
+      const atLanding = growths;
+      await until(() => growths >= atLanding + 3, "three growths after the landing");
     } finally {
       clearInterval(grow);
     }
+    // The last growth's observer delivery, and the follow write it would license.
+    await framesDrained("the last growth's follow frames");
 
     expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
       scrollTop: 0,
@@ -2406,8 +2610,10 @@ describe("the self-scroll epoch", () => {
     const seen = vi.fn();
     const off = scroll.onReaderGesture(seen);
 
+    const landed = flightEnds(wrap);
     scroll.beginSelfScroll();
     scroll.scrollToOffset(400, "smooth");
+    await landed;
     await land(1000);
     off();
 
@@ -2420,11 +2626,13 @@ describe("the self-scroll epoch", () => {
     block(3000);
     await land();
 
+    const moving = flightMoves(wrap);
     scroll.beginSelfScroll();
     scroll.scrollToOffset(400, "smooth");
     const seen = vi.fn();
     const off = scroll.onReaderGesture(seen);
-    await land(60);
+    await moving;
+    expect(wrap.scrollTop).toBeGreaterThan(400);
     readerScrollTo(wrap, 1800);
     await land();
     off();
@@ -2449,13 +2657,23 @@ describe("the self-scroll epoch", () => {
     // Back to the live edge, so the state stays Following and the epoch is the only thing left that
     // can stop a follow write. SMOOTH, because the flight is what keeps the epoch open: Chromium
     // answers an instant `scrollTo` with `scrollend`.
+    const moving = flightMoves(wrap);
+    let ended = false;
+    wrap.addEventListener(
+      "scrollend",
+      () => {
+        ended = true;
+      },
+      { once: true },
+    );
     scroll.beginSelfScroll();
     scroll.scrollToOffset(wrap.scrollHeight, "smooth");
     expect(scroll.readingState()).toBe("following");
     const writes = recordWrites(wrap);
     streaming.appendChild(document.createTextNode("a streamed chunk"));
-    await land(60);
-    expect(writes).toEqual([]);
+    await moving;
+    await framesDrained("the chunk's follow frames");
+    expect({ writes, ended }).toEqual({ writes: [], ended: false });
 
     scroll.endSelfScroll();
     streaming.appendChild(document.createTextNode("the chunk after it closed"));
@@ -2511,12 +2729,14 @@ describe("the self-scroll epoch", () => {
     await land();
     expect(scroll.readingState()).toBe("following");
 
+    const landed = flightEnds(wrap);
     scroll.beginSelfScroll();
     scroll.scrollToOffset(500, "smooth");
     expect(scroll.readingState()).toBe("reading");
 
-    // Past `scrollend` AND past SELF_SCROLL_MAX_MS, so the chunk below is delivered with the epoch
-    // provably closed and the park is the only thing still holding the reader.
+    // Past `scrollend`, which closes the epoch, and past every controller window on the clock, so
+    // the chunk below is delivered with the park the only thing still holding the reader.
+    await landed;
     await land(1700);
     streaming.appendChild(document.createTextNode("a streamed chunk"));
     await land();
@@ -2623,12 +2843,15 @@ describe("the self-scroll epoch", () => {
     block(3000);
     await land();
 
+    const landed = flightEnds(wrap);
+    const moving = flightMoves(wrap);
     scroll.beginSelfScroll();
     scroll.scrollToOffset(500, "smooth");
-    await land(60);
+    await moving;
     expect(wrap.scrollTop).toBeGreaterThan(900);
     const writes = recordWrites(wrap);
     foldIn(200);
+    await landed;
     await land(1000);
 
     expect(writes).toEqual([]);
@@ -2654,8 +2877,10 @@ describe("the self-scroll epoch", () => {
     const wrap = realScroller();
     block(3000);
     await land();
+    const landed = flightEnds(wrap);
     scroll.beginSelfScroll();
     scroll.scrollToOffset(500, "smooth");
+    await landed;
     await land(1000);
     expect(wrap.scrollTop).toBe(500);
 
@@ -2719,13 +2944,14 @@ describe("holding what the reader reads", () => {
       if (!grown) {
         grown = true;
         // A task after this delivery: past the correction's write, before its scroll event.
-        setTimeout(() => {
+        fixtureTask(() => {
           rows[5]!.style.height = "500px";
-        }, 0);
+        });
       }
     });
     rows[5]!.style.height = "300px";
     late.observe(rows[5]!);
+    await until(() => grown && fixtureTasks === 0, "the late growth to land");
     await land();
     late.disconnect();
 
@@ -4145,6 +4371,13 @@ describe("pagination furniture belongs to its own view", () => {
 // THREE SEAMS WHERE NOTHING ELSE CAN ANSWER.
 describe("the epoch's timed backstop", () => {
   beforeEach(realLayoutReset);
+  // The backstop is a `setTimeout`, so this block fakes it too and `land` steps the clock past it.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
 
   it("closes an epoch nothing scrolled, so the reader's next gesture is theirs", async () => {
     const wrap = realScroller();
