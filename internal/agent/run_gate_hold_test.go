@@ -1066,7 +1066,7 @@ const gateHoldLead = "Every hold, by the matrix TestGateHold_EveryCell/<row>/<ce
 	"there, and the end. holdCellText gives every cell's steps. A person's pause or resume of a held run is " +
 	"runTransitions'."
 
-// holdTable is every cell of the matrix, one per line, for verification.md.
+// holdTable is every cell of the matrix, one per line, as GATE_HOLD_TABLE renders it.
 func holdTable() string {
 	var b strings.Builder
 	for _, c := range everyCombo() {
@@ -1150,6 +1150,8 @@ type kasRun struct {
 	staleOwner bool
 	// failEntryList: the next first sweep of a chat's rehydrate fails its list.
 	failEntryList bool
+	// lastCall is when the runtime last called the run's KAS, in Unix nanoseconds.
+	lastCall atomic.Int64
 }
 
 func (k *kasRun) runningState() {
@@ -1200,6 +1202,7 @@ func (k *kasRun) reads() kasHold {
 }
 
 func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error) {
+	k.lastCall.Store(time.Now().UnixNano())
 	if k.failsEntryRead(method) {
 		return nil, nil, true, errHoldReadFault
 	}
@@ -2168,6 +2171,11 @@ func (c *holdCell) arm() {
 	c.k.armWrite(c.c.write)
 }
 
+// stepQuiet is how long the run's KAS must go uncalled before the next step: a step's checks pass once its end state
+// is reached, while a reader the step started (an opening edge's finder, a release) may still be on its way, and one
+// landing in the next step would act on that step's gate.
+const stepQuiet = 50 * time.Millisecond
+
 // faultQuiet is how long a fault must go unhit, once the step's end is reached, for its readers or writers to have
 // settled: longer than any of their retries' gaps under fastGateRetries and the test's orphanResumeDelay.
 const faultQuiet = 150 * time.Millisecond
@@ -2243,6 +2251,9 @@ func (c *holdCell) run(t *testing.T, steps []holdStep) {
 	t.Helper()
 	for i := range steps {
 		s := &steps[i]
+		waitUntil(t, "the previous step's calls to settle", func() bool {
+			return time.Since(time.Unix(0, c.k.lastCall.Load())) > stepQuiet
+		})
 		c.f.mu.Lock()
 		hits, later := c.f.hits, c.f.laterTries
 		c.f.mu.Unlock()

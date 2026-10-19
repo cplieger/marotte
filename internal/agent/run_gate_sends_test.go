@@ -168,8 +168,8 @@ func TestRunWork_EveryEngineMethodIsGuardedOrClassified(t *testing.T) {
 	for guard, iface := range map[string]reflect.Type{
 		"guardedEngine": reflect.TypeFor[engineHandle](), "guardedSession": reflect.TypeFor[engineSession](),
 	} {
-		for i := range iface.NumMethod() {
-			name := iface.Method(i).Name
+		for m := range iface.Methods() {
+			name := m.Name
 			if !declared[guard][name] && !slices.Contains(knownUnguarded[guard], name) {
 				t.Errorf("%s.%s is neither declared on %s nor listed in knownUnguarded: guard it, or list it if it "+
 					"sends no run work", iface.Name(), name, guard)

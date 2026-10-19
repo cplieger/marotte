@@ -59,11 +59,14 @@ describe("stopSentence on marotte's own pause, shared with Go", () => {
     ).toBe(`Paused: ${reason}`);
   });
 
-  it.each(marotteReasons)("keeps the user's attribution on a run no longer paused: %s", (reason) => {
-    expect(
-      stopSentence(state({ status: "aborted", stopInitiator: "user", stopReason: reason })),
-    ).toBe(`Stopped by user: ${reason}`);
-  });
+  it.each(marotteReasons)(
+    "keeps the user's attribution on a run no longer paused: %s",
+    (reason) => {
+      expect(
+        stopSentence(state({ status: "aborted", stopInitiator: "user", stopReason: reason })),
+      ).toBe(`Stopped by user: ${reason}`);
+    },
+  );
 });
 
 describe("pausePendingSentence", () => {
