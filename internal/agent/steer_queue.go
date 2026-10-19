@@ -267,10 +267,8 @@ func (rec *steerRecord) removePlanLocked(key string) (w *dockRow, rule rowRule, 
 		return nil, rUnhandled, command.SteerRefuseSettling
 	}
 	rule = rowRuleFor(w.state, deleteEvent(w.state))
-	if rule == rResubmit {
-		if len(rec.others) > 0 {
-			return nil, rUnhandled, command.SteerRefuseAgentRows
-		}
+	if rule == rResubmit && len(rec.others) > 0 {
+		return nil, rUnhandled, command.SteerRefuseAgentRows
 	}
 	return w, rule, ""
 }

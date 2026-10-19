@@ -383,7 +383,7 @@ func TestRetryResumeLater_AStoppedRuntimeTriesNothing(t *testing.T) {
 }
 
 // After a restart the chat's return (the rehydrate sweep) and the restart pause's own heal both reach the run; the
-// re-read under the run's verb lock (controlSerialized) lets only the first write a resume.
+// transition's read under the run's resume lock (Runs.transition) lets only the first write a resume.
 func TestEngineRestart_ChatParentedRunGetsExactlyOneResume(t *testing.T) {
 	prev := healBaseDelay
 	healBaseDelay = time.Millisecond
