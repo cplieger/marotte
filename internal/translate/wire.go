@@ -81,6 +81,8 @@ type acpKiroBlock struct {
 	// Source marks the whole steering CHANNEL (progress rows, step notices, boundaries). The
 	// replay builder stamps it here, not on the update object.
 	Source string `json:"source"`
+	// AgentInitiatedReason names what started an engine turn, on AgentInitiated's frames.
+	AgentInitiatedReason agentInitiatedReason `json:"agentInitiatedReason"`
 	// Notification tags a row KAS wrote onto a chat on something else's behalf;
 	// "workflow-progress" is a step's progress, a user_message_chunk carrying JSON.
 	Notification struct {
@@ -99,6 +101,15 @@ type acpKiroBlock struct {
 	// bracket, and a zero-content auto-wake sends none.
 	AgentInitiated bool `json:"agentInitiated"`
 }
+
+// agentInitiatedReason is KAS's closed set of engine-turn causes (kiro-cli 2.32.0:
+// send-message-wake, workflow-complete-wake, notification-rewake). An unknown value is kept as
+// sent and matches no constant.
+type agentInitiatedReason string
+
+// reasonSendMessageWake is a turn KAS started to deliver a send_message or runtime note to an idle
+// session, or to re-deliver an info note after a reader's cancel (rewakeWithInfo).
+const reasonSendMessageWake agentInitiatedReason = "send-message-wake"
 
 // acpKiroBlockShadow strips the UnmarshalJSON method so the real decode does not recurse.
 type acpKiroBlockShadow acpKiroBlock

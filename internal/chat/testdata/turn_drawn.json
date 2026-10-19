@@ -139,6 +139,16 @@
       ]
     },
     {
+      "name": "a steering clear renders at no position of its own",
+      "owner": "both",
+      "drawn": false,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "steer_cleared", "lane": "" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
       "name": "a turn_revert draws the turn carrying it, because it IS the boundary row",
       "owner": "both",
       "drawn": true,

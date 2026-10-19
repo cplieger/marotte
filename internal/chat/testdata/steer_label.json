@@ -40,8 +40,8 @@
       "reason": "boundary",
       "label": "Workflow result not delivered · the turn ended first",
       "sites": [
-        "internal/translate/steering.go:155",
-        "internal/translate/steering.go:164"
+        "internal/translate/steering.go:197",
+        "internal/translate/steering.go:205"
       ]
     },
     {
@@ -64,9 +64,8 @@
         "internal/agent/run_appender.go:119",
         "internal/agent/run_bounds.go:412",
         "internal/agent/run_plan.go:116",
-        "internal/translate/steering.go:120",
-        "internal/translate/steering.go:237",
-        "internal/translate/workflow_message.go:39"
+        "internal/translate/steering.go:130",
+        "internal/translate/steering.go:283"
       ]
     },
     {
@@ -76,7 +75,7 @@
       "label": "Workflow result",
       "sites": [
         "internal/translate/projection_entries.go:218",
-        "internal/translate/workflow_message.go:34"
+        "internal/translate/workflow_message.go:40"
       ]
     },
     {
@@ -85,7 +84,7 @@
       "reason": "boundary",
       "label": "Message from the main agent not delivered · the turn ended first",
       "sites": [
-        "internal/translate/steering.go:155"
+        "internal/translate/steering.go:197"
       ]
     },
     {
@@ -103,9 +102,8 @@
       "reason": "",
       "label": "Message from the main agent",
       "sites": [
-        "internal/translate/steering.go:120",
-        "internal/translate/steering.go:237",
-        "internal/translate/workflow_message.go:39"
+        "internal/translate/steering.go:130",
+        "internal/translate/steering.go:283"
       ]
     },
     {
@@ -115,7 +113,7 @@
       "label": "Message from the main agent",
       "sites": [
         "internal/translate/projection_entries.go:218",
-        "internal/translate/workflow_message.go:34"
+        "internal/translate/workflow_message.go:40"
       ]
     },
     {
@@ -124,7 +122,7 @@
       "reason": "boundary",
       "label": "Message to the main agent not delivered · the turn ended first",
       "sites": [
-        "internal/translate/steering.go:155"
+        "internal/translate/steering.go:197"
       ]
     },
     {
@@ -142,9 +140,8 @@
       "reason": "",
       "label": "Message to the main agent",
       "sites": [
-        "internal/translate/steering.go:120",
-        "internal/translate/steering.go:237",
-        "internal/translate/workflow_message.go:39"
+        "internal/translate/steering.go:130",
+        "internal/translate/steering.go:283"
       ]
     },
     {
@@ -154,7 +151,7 @@
       "label": "Message to the main agent",
       "sites": [
         "internal/translate/projection_entries.go:218",
-        "internal/translate/workflow_message.go:34"
+        "internal/translate/workflow_message.go:40"
       ]
     },
     {
@@ -165,7 +162,7 @@
       "sites": [
         "internal/agent/command_chat_ops.go:58",
         "internal/agent/steer_buffer.go:361",
-        "internal/translate/steering.go:155"
+        "internal/translate/steering.go:197"
       ]
     },
     {
@@ -186,9 +183,8 @@
       "sites": [
         "internal/agent/run_appender.go:236",
         "internal/agent/run_message.go:498",
-        "internal/translate/steering.go:120",
-        "internal/translate/steering.go:237",
-        "internal/translate/workflow_message.go:39"
+        "internal/translate/steering.go:130",
+        "internal/translate/steering.go:283"
       ]
     },
     {
@@ -198,7 +194,7 @@
       "label": "Mid-turn message",
       "sites": [
         "internal/translate/projection_entries.go:218",
-        "internal/translate/workflow_message.go:34"
+        "internal/translate/workflow_message.go:40"
       ]
     }
   ],
@@ -288,45 +284,38 @@
       "reason": ""
     },
     {
-      "site": "internal/translate/steering.go:120",
+      "site": "internal/translate/steering.go:130",
       "form": "literal",
       "origin": "",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/translate/steering.go:155",
+      "site": "internal/translate/steering.go:197",
       "form": "literal",
       "origin": "",
       "state": "dropped",
       "reason": "boundary"
     },
     {
-      "site": "internal/translate/steering.go:164",
+      "site": "internal/translate/steering.go:205",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
       "reason": "boundary"
     },
     {
-      "site": "internal/translate/steering.go:237",
+      "site": "internal/translate/steering.go:283",
       "form": "literal",
       "origin": "",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/translate/workflow_message.go:34",
+      "site": "internal/translate/workflow_message.go:40",
       "form": "literal",
       "origin": "",
       "state": "",
-      "reason": ""
-    },
-    {
-      "site": "internal/translate/workflow_message.go:39",
-      "form": "mutation",
-      "origin": "",
-      "state": "read",
       "reason": ""
     }
   ]

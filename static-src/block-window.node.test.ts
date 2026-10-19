@@ -175,13 +175,17 @@ describe("the entry space", () => {
 // --- The ONE render predicate ----------------------------------------------
 
 describe("entryRenders", () => {
-  it.each(["turn_open", "turn_close", "turn_bind", "tool_result", "reconciled"] as const)(
-    "refuses a %s, which renders elsewhere",
-    (kind) => {
-      // Header, footer, nothing, and its call's own card: exported so budget and spacer agree.
-      expect(entryRenders(entry(1, kind), "", NO_FOLDS)).toBe(false);
-    },
-  );
+  it.each([
+    "turn_open",
+    "turn_close",
+    "turn_bind",
+    "tool_result",
+    "reconciled",
+    "steer_cleared",
+  ] as const)("refuses a %s, which renders elsewhere", (kind) => {
+    // Header, footer, nothing, and its call's own card: exported so budget and spacer agree.
+    expect(entryRenders(entry(1, kind), "", NO_FOLDS)).toBe(false);
+  });
 
   it.each([
     "text",

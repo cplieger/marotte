@@ -1,6 +1,6 @@
 package agent
 
-// The reader's stop acts on the turns that ran when it was asked for, captured in one section, never on whatever
+// A chat stop acts on the turns that ran when it was asked for, captured in one section, never on whatever
 // holds the chat once its session/cancel has gone out.
 
 import (
@@ -14,12 +14,15 @@ import (
 
 func refOf(t *activeTurn) command.TurnRef { return command.TurnRef{Chat: t.Chat, Turn: t.ID} }
 
-// requestStop records the stop on the open sequence and on stopCount, which refuses the write of a send the gate
-// already let go and any later attempt of it (sendStops), holds the chat's sends until releaseStop, and captures its
-// targets. An unsent prompt, or an admitted one whose turn has not opened, is the target only when nothing else runs:
-// own is none, closing or the prompt itself, and KAS reports no run, so the send gate would send it next. Behind a
-// running turn it waits, and goes once that turn ends. No lifecycle, no stop.
-func (r *turnRegistry) requestStop(chatID marotte.ChatID) *command.TurnStop {
+// requestStop records the stop and its cause on the open sequence and on stopCount, which refuses the write of a send
+// the gate already let go and any later attempt of it (sendStops), holds the chat's sends until releaseStop, and
+// captures its targets. An unsent prompt, or an admitted one whose turn has not opened, is the target only when nothing
+// else runs: own is none, closing or the prompt itself, and KAS reports no run, so the send gate would send it next.
+// Behind a running turn it waits, and goes once that turn ends. No lifecycle, no stop.
+//
+// The newest stop's cause wins, except that a teardown's outlives a later stop of the same turns: that stop can land
+// before the clear the teardown's session/cancel produced is folded, and the clear's fate is the teardown's.
+func (r *turnRegistry) requestStop(chatID marotte.ChatID, cause marotte.TurnStopCause) *command.TurnStop {
 	stop := &command.TurnStop{Chat: chatID}
 	lc, ok := r.lookup(chatID)
 	if !ok {
@@ -27,6 +30,9 @@ func (r *turnRegistry) requestStop(chatID marotte.ChatID) *command.TurnStop {
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
+	if lc.stopSeq != lc.nextSeq || lc.stopCause != marotte.TurnStopTeardown {
+		lc.stopCause = cause
+	}
 	lc.stopSeq = lc.nextSeq
 	lc.stopCount.Add(1)
 	stop.Token = r.stopTokens.Add(1)
@@ -74,9 +80,9 @@ func (r *turnRegistry) releaseStop(stop *command.TurnStop) {
 	}
 }
 
-// RequestStop records the reader's stop and captures what it targets (requestStop).
-func (bc *bridgeCoordinator) RequestStop(chatID marotte.ChatID) *command.TurnStop {
-	return bc.turns.requestStop(chatID)
+// RequestStop records a stop for cause and captures what it targets (requestStop).
+func (bc *bridgeCoordinator) RequestStop(chatID marotte.ChatID, cause marotte.TurnStopCause) *command.TurnStop {
+	return bc.turns.requestStop(chatID, cause)
 }
 
 // ReleaseStop lifts the stop's hold on the chat's sends.

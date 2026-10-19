@@ -6,7 +6,7 @@ import { apiGetOrError, apiGetTyped } from "./api-client.js";
 import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import { forgetSubject, observeStamp } from "./subject-versions.js";
 import { turnOpenOf } from "./turns.js";
-import { settleWorkflowMessages } from "./workflow-delivery.js";
+import { settleWorkflowMessages, turnsInOrder } from "./workflow-delivery.js";
 import type { Entry, OpenEntry, TurnState } from "./types.js";
 import {
   decodeLiveRunsResponse,
@@ -1326,8 +1326,12 @@ export function appendRunEntry(workflowID: string, entry: Entry): void {
   if (entry.kind === "steer") {
     logObserver?.steer(workflowID, turnOpenOf(state)?.node_path ?? "", entry);
   }
-  if (entry.kind === "steer" || entry.kind === "steer_delivered") {
-    settleWorkflowMessages(l.turns.values());
+  if (
+    entry.kind === "steer" ||
+    entry.kind === "steer_delivered" ||
+    entry.kind === "steer_cleared"
+  ) {
+    settleWorkflowMessages(turnsInOrder(l.order, l.turns));
   }
   if (entry.kind === "turn_close") {
     state.closeAt = entry.seq;

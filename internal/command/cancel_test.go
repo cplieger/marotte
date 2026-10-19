@@ -198,6 +198,38 @@ func TestDeleteTeardown_AnswersChatAndStepAsksBeforeSessionCancel(t *testing.T) 
 	assertAnswersBeforeCancel(t, d, b, notifiedAtAnswers)
 }
 
+// Each stop records who issued it before its session/cancel goes out: the reader's Stop, or a tab close or chat
+// delete, whose teardown follows the cancel. The steering clear inside that cancel reads the cause.
+func TestStop_RecordsItsIssuersCause(t *testing.T) {
+	for _, tc := range []struct {
+		run  func(t *testing.T, d *cancelDeps)
+		name string
+		want marotte.TurnStopCause
+	}{
+		{name: "the reader's stop", want: marotte.TurnStopReader, run: func(t *testing.T, d *cancelDeps) {
+			if err := runCancel(t, t.Context(), d); err != nil {
+				t.Fatalf("cmdCancel: %v", err)
+			}
+		}},
+		{name: "a tab close", want: marotte.TurnStopTeardown, run: func(t *testing.T, d *cancelDeps) {
+			closeChatTeardown(t.Context(), d, d, d, d, "c1")
+		}},
+		{name: "a chat delete", want: marotte.TurnStopTeardown, run: func(t *testing.T, d *cancelDeps) {
+			deleteChatTeardown(t.Context(), d, d, d, d, "c1", []string{"sess-1"})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newCancelDeps(&cancelBridge{})
+
+			tc.run(t, d)
+
+			if len(d.stopCauses) != 1 || d.stopCauses[0] != tc.want {
+				t.Errorf("stop causes = %v, want [%v]", d.stopCauses, tc.want)
+			}
+		})
+	}
+}
+
 // A stop acts on the turns it captured at its admission, never re-read: the own turn's terminals, a superseded
 // prompt's terminals too, then the grace on those targets, and its send hold lifts last. An undelivered cancel
 // arms nothing and still lifts the hold.

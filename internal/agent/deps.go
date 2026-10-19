@@ -76,7 +76,7 @@ type chatRecords interface {
 	PromptAttachmentPaths(ctx context.Context, chatID marotte.ChatID, watermark string) ([]string, error)
 	PromptTexts(ctx context.Context, id marotte.ChatID) ([]string, error)
 	EmptyCompactions(ctx context.Context, id marotte.ChatID) (int, error)
-	WaitingWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
+	UnsettledWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
 	DepartedName(id marotte.ChatID) (string, bool)
 	TurnCount(ctx context.Context, chatID marotte.ChatID) (uint64, bool)
 	ReadBound(ctx context.Context, chatID marotte.ChatID) (uint64, error)

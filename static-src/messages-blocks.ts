@@ -986,6 +986,14 @@ function groupRange(st: TurnRender, from: number, to: number): Placement[] {
       }
       continue;
     }
+    if (e?.kind === "steer_cleared") {
+      // Draws nothing here: the rows sent to its session, which may sit in other turns, redraw settled.
+      const c = payloadOf(e, "steer_cleared");
+      if (c !== undefined) {
+        redrawSettledRows((_id, steer) => steer.to_session === c.session);
+      }
+      continue;
+    }
     if (e?.kind === "turn_revert") {
       // The store returned the rows whose take-up the rewind took to waiting (`releaseWorkflowTakeUps`).
       redrawSettledRows((_id, steer) => steer.origin === "parent" || steer.origin === "step");
@@ -1879,6 +1887,7 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
     case "tool_result":
     case "reconciled":
     case "steer_delivered":
+    case "steer_cleared":
       // Rendered elsewhere or nowhere (`reconciled` says a merge added nothing); `entryRenders` refuses these, so this
       // arm is totality.
       return;
@@ -2361,6 +2370,9 @@ function steerNoteData(st: TurnRender, e: Entry, steer: EntrySteer): SteerNoteDa
     data.tracked = e.id.startsWith(WORKFLOW_MESSAGE_ID_PREFIX);
     if (steer.read_ts !== undefined) {
       data.deliveredAt = steer.read_ts;
+    }
+    if (steer.cleared === true) {
+      data.cleared = true;
     }
   }
   return data;

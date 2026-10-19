@@ -12,6 +12,21 @@ var ErrNoSuchTurn = errors.New("no such turn")
 // and scoped to the turn.
 type InterruptCause string
 
+// TurnStopCause is who asked to stop a chat's turn, recorded where the stop is issued, so marotte
+// can classify the steering clear that stop's session/cancel produces.
+type TurnStopCause uint8
+
+const (
+	// TurnStopNone is no stop since the turn opened.
+	TurnStopNone TurnStopCause = iota
+	// TurnStopReader is the reader's Stop: KAS re-prompts every unread notification the cancel
+	// cleared (cancelLocalTurn's rewakeClearedNotifications).
+	TurnStopReader
+	// TurnStopTeardown is a tab close or a chat delete: KAS's cancel starts re-delivering the
+	// notifications it cleared, and the session/close or session/delete that follows aborts that turn.
+	TurnStopTeardown
+)
+
 // TurnResult is what a finalized turn reports. Immutable once the turn's
 // completion handle fires.
 type TurnResult struct {

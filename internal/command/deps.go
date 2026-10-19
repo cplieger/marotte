@@ -271,14 +271,14 @@ type terminalAccess interface {
 	KillForTurn(turn TurnRef)
 }
 
-// turnStopper is the reader's stop, scoped to what ran when it was asked for.
+// turnStopper is a chat's stop, scoped to what ran when it was asked for.
 type turnStopper interface {
-	// RequestStop records a stop on the chat's turn sequence and captures, in one section, the turns it targets.
-	// It is called BEFORE any signal, so a turn opened to replace one the reader stopped (the empty-turn retry)
+	// RequestStop records a stop for cause on the chat's turn sequence and captures, in one section, the turns it
+	// targets. It is called BEFORE any signal, so a turn opened to replace one the reader stopped (the empty-turn retry)
 	// sees it whichever bridge the signal reached. session/cancel names no turn, so a prompt written before it would
 	// be the one KAS cancels: until ReleaseStop the send gate lets no prompt go, and one it let go before the stop is
 	// written ahead of the stop's session/cancel or not at all (AwaitPromptSend's commit).
-	RequestStop(chatID marotte.ChatID) *TurnStop
+	RequestStop(chatID marotte.ChatID, cause marotte.TurnStopCause) *TurnStop
 	// ReleaseStop lifts the stop's send hold; called once per RequestStop.
 	ReleaseStop(stop *TurnStop)
 	// ArmStopGrace acts on the captured targets once the cancel was sent, each revalidated: Next is kept unsent,
@@ -534,8 +534,8 @@ type turnOutcomeAccess interface {
 	// TurnOpenedAfter reports whether any own turn on the chat opened after
 	// turnID — the structural half of the empty-turn gate.
 	TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool
-	// StopRequestedAfter reports whether the reader asked to stop after turnID
-	// opened — the empty-turn retry's consent clause.
+	// StopRequestedAfter reports whether any stop (marotte.TurnStopCause) was
+	// requested after turnID opened — the empty-turn retry's consent clause.
 	StopRequestedAfter(chatID marotte.ChatID, turnID string) bool
 	// AbandonInFlightTurn finalizes a turn the prompt call could not finish, and
 	// the prompt's exits before any call. stop is what the failure CONCLUDES —

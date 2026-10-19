@@ -7,69 +7,129 @@ import { ICON_TAB_RUN } from "./icons.js";
 import { payloadOf } from "./turns.js";
 import type { EntrySteer, EntrySteerDelivered, TurnState } from "./types.js";
 
-/** The id prefix of a workflow message marotte logs at its send, which waits for a take-up (twin of
- *  `marotte.WorkflowMessageIDPrefix`). Any other step notice is logged when KAS reads it. */
+/** The id prefix of a workflow message marotte logs at its send, which waits for its settlement (twin
+ *  of `marotte.WorkflowMessageIDPrefix`). Any other step notice is logged when KAS reads it. */
 export const WORKFLOW_MESSAGE_ID_PREFIX = "wfmsg-";
 
-/** The row as its take-up settles it: the server's own rule (`WorkflowMessageFold.Settle`). */
+/** The row as its settlement leaves it: the server's own rule (`WorkflowMessageFold.Settle`). */
 function settledSteer(steer: EntrySteer, d: EntrySteerDelivered): EntrySteer {
-  return d.dropped === true
-    ? { ...steer, state: "dropped", reason: "boundary" }
-    : { ...steer, state: "read", read_ts: d.read_ts };
+  const waiting = waitingSteer(steer);
+  return d.cleared === true
+    ? { ...waiting, cleared: true }
+    : { ...waiting, state: "read", read_ts: d.read_ts };
 }
 
-/** A row as it stood before any take-up: the server settles only a row still waiting, which
- *  carries no state. */
+/** A row as it stood before any settlement: waiting, with no state. */
 function waitingSteer(steer: EntrySteer): EntrySteer {
   const next: EntrySteer = { ...steer };
   delete next.state;
-  delete next.read_ts;
   delete next.reason;
+  delete next.read_ts;
+  delete next.cleared;
   return next;
 }
 
-/** Return every held row a released turn's take-up settled to waiting: a rewind takes the take-up
- *  out of the history the row is read against, as the server's read does. */
+/** `turns` in `order`, then any held turn `order` does not name: the file order the folds read. */
+export function turnsInOrder(
+  order: readonly string[],
+  turns: ReadonlyMap<string, TurnState>,
+): TurnState[] {
+  const out: TurnState[] = [];
+  const seen = new Set<string>();
+  for (const id of order) {
+    const t = turns.get(id);
+    if (t !== undefined && !seen.has(id)) {
+      seen.add(id);
+      out.push(t);
+    }
+  }
+  for (const [id, t] of turns) {
+    if (!seen.has(id)) {
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+/** Return every held row a released turn's settlement or clear settled to waiting, then fold the
+ *  held turns (in file order) again: a rewind takes the released entries out of the history the
+ *  rows are read against, as the server's read does, and an earlier clear still settles its rows. */
 export function releaseWorkflowTakeUps(
   released: Iterable<TurnState>,
   held: Iterable<TurnState>,
 ): void {
   const named = new Set<string>();
+  const sessions = new Set<string>();
   for (const t of released) {
     for (const e of t.entries) {
       const d = payloadOf(e, "steer_delivered");
       if (d !== undefined) {
         named.add(d.steer_id);
       }
+      const c = payloadOf(e, "steer_cleared");
+      if (c !== undefined) {
+        sessions.add(c.session);
+      }
     }
   }
-  if (named.size === 0) {
+  if (named.size === 0 && sessions.size === 0) {
     return;
   }
-  for (const t of held) {
+  const kept = [...held];
+  for (const t of kept) {
     for (const e of t.entries) {
       const steer = payloadOf(e, "steer");
-      if (steer !== undefined && named.has(e.id)) {
+      if (
+        steer !== undefined &&
+        (named.has(e.id) || (steer.cleared === true && sessions.has(steer.to_session ?? "")))
+      ) {
         e.payload = waitingSteer(steer);
       }
     }
   }
+  settleWorkflowMessages(kept);
 }
 
-/** Fold every take-up the turns hold onto the row it names, both resident, so a remount reads the
- *  settled row. Idempotent, so any arrival may run it: an appended row, an appended take-up, an
- *  installed page. */
-export function settleWorkflowMessages(turns: Iterable<TurnState>): void {
-  const held = [...turns];
-  const takeUps = new Map<string, EntrySteerDelivered>();
-  for (const t of held) {
+/** Every settlement `turns` hold, by the row it names, folded in file order by the server's rule
+ *  (`marotte.FoldWorkflowMessages`): a clear settles cleared each row sent to its session before it
+ *  that nothing settled, and a later take-up replaces that. A row the server already settled is
+ *  left as it reads. */
+function settlementsOf(turns: Iterable<TurnState>): Map<string, EntrySteerDelivered> {
+  const out = new Map<string, EntrySteerDelivered>();
+  const rows: { id: string; steer: EntrySteer }[] = [];
+  for (const t of turns) {
     for (const e of t.entries) {
+      const steer = payloadOf(e, "steer");
+      if (steer !== undefined && e.id.startsWith(WORKFLOW_MESSAGE_ID_PREFIX)) {
+        rows.push({ id: e.id, steer });
+      }
       const d = payloadOf(e, "steer_delivered");
       if (d !== undefined) {
-        takeUps.set(d.steer_id, d);
+        out.set(d.steer_id, d);
+      }
+      const c = payloadOf(e, "steer_cleared");
+      if (c === undefined) {
+        continue;
+      }
+      for (const r of rows) {
+        const to = r.steer.to_session ?? "";
+        const settled = out.has(r.id) || r.steer.state !== undefined || r.steer.cleared === true;
+        if (to !== "" && to === c.session && !settled) {
+          out.set(r.id, { steer_id: r.id, read_ts: e.ts, cleared: true });
+        }
       }
     }
   }
+  return out;
+}
+
+/** Fold every settlement and clear the turns hold onto the row it names, both resident, so a
+ *  remount reads the settled row. `turns` come in file order (`turnsInOrder`), since a clear settles
+ *  only the rows before it. Idempotent, so any arrival may run it: an appended row, take-up or
+ *  clear, an installed page. */
+export function settleWorkflowMessages(turns: Iterable<TurnState>): void {
+  const held = [...turns];
+  const takeUps = settlementsOf(held);
   if (takeUps.size === 0) {
     return;
   }
@@ -81,7 +141,11 @@ export function settleWorkflowMessages(turns: Iterable<TurnState>): void {
         continue;
       }
       const next = settledSteer(steer, d);
-      if (next.state !== steer.state || next.read_ts !== steer.read_ts) {
+      if (
+        next.state !== steer.state ||
+        next.read_ts !== steer.read_ts ||
+        next.cleared !== steer.cleared
+      ) {
         e.payload = next;
       }
     }

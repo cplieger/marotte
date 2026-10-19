@@ -255,12 +255,12 @@ describe("turnIsDrawn", () => {
     expect(turnIsDrawn(state([turnOpen("t1", 1), textEntry("t1", 1)]))).toBe(true);
   });
 
-  it.each(["turn_bind", "tool_result", "turn_close"] as const)(
+  it.each(["turn_bind", "tool_result", "turn_close", "steer_cleared"] as const)(
     "does not draw an agent-initiated turn whose only body entry is a %s",
     (kind) => {
-      // These three render ELSEWHERE — a bind renders nothing, a result renders as its
-      // call's outcome, a close feeds the footer — so none of them is content at a
-      // position of its own.
+      // These render ELSEWHERE or nowhere — a bind and a clear render nothing, a result
+      // renders as its call's outcome, a close feeds the footer — so none of them is
+      // content at a position of its own.
       expect(turnIsDrawn(state([turnOpen("t1", 1), sealed("t1", 1, kind)]))).toBe(false);
     },
   );

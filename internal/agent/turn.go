@@ -152,7 +152,9 @@ type chatLifecycle struct {
 	inFrame bool
 	// reserved is whether the admission slot is held.
 	reserved bool
-	state    turnState
+	// stopCause is the cause of the stops stopSeq records (requestStop decides it).
+	stopCause marotte.TurnStopCause
+	state     turnState
 	// stopCount counts requestStop calls; atomic so a send's write commit reads it under the engine's write lock
 	// without mu (sendCommitLocked).
 	stopCount atomic.Uint64
@@ -608,13 +610,21 @@ func (r *turnRegistry) restoring(chatID marotte.ChatID, session string) bool {
 // stoppedAfter reports whether a stop was requested after the named turn opened,
 // open or retained. A stop from an earlier turn is inert by construction.
 func (r *turnRegistry) stoppedAfter(chatID marotte.ChatID, turnID string) bool {
+	return r.stopCauseAfter(chatID, turnID) != marotte.TurnStopNone
+}
+
+// stopCauseAfter is the recorded stop cause (requestStop) when a stop was requested after the named turn opened.
+func (r *turnRegistry) stopCauseAfter(chatID marotte.ChatID, turnID string) marotte.TurnStopCause {
 	lc, ok := r.lookup(chatID)
 	if !ok {
-		return false
+		return marotte.TurnStopNone
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	return lc.stoppedAfterLocked(turnID)
+	if !lc.stoppedAfterLocked(turnID) {
+		return marotte.TurnStopNone
+	}
+	return lc.stopCause
 }
 
 // stoppedAfterLocked is stoppedAfter's predicate. Caller holds mu.

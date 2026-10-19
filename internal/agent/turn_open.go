@@ -195,6 +195,11 @@ func (bc *bridgeCoordinator) StopRequestedAfter(chatID marotte.ChatID, turnID st
 	return bc.turns.stoppedAfter(chatID, turnID)
 }
 
+// StopCauseAfter is the recorded stop cause (requestStop) when a stop was requested after the named turn opened.
+func (bc *bridgeCoordinator) StopCauseAfter(chatID marotte.ChatID, turnID string) marotte.TurnStopCause {
+	return bc.turns.stopCauseAfter(chatID, turnID)
+}
+
 // turnOpenModel reads the model a turn records at open. From the chat record: a resumed session's accessors answer
 // the zero value for fields session/load omitted, often the model.
 func (bc *bridgeCoordinator) turnOpenModel(ctx context.Context, chatID marotte.ChatID) string {

@@ -12,7 +12,7 @@ export type DecisionKind = "permission" | "elicitation" | "user_input";
 
 export type EngineState = "starting" | "ready" | "restarting" | "down";
 
-export type EntryKind = "turn_open" | "turn_bind" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
+export type EntryKind = "turn_open" | "turn_bind" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
 
@@ -1091,7 +1091,7 @@ export interface EntrySealedPayload {
  * (KAS's vocabulary) is set on a note KAS's buffer carried; State is absent where nothing stamped it
  * (a replay-projected steer, a workflow message). OriginRun is the run a note came from. ProducedTs
  * is when the words were sent and ReadTs when the receiver took a workflow message up; both label,
- * never order, and a log read fills ReadTs (or the dropped state) from steer_delivered. Step names
+ * never order, and a log read fills ReadTs, or Cleared, from steer_delivered. Step names
  * the step on a workflow message's far end, in the launching chat's log only; StepPath is its node
  * path on both sides' rows, and Chat the launching chat on the step's row. Resends names the steer
  * rows (dock keys) this one re-sends, taken from the steer record at the read.
@@ -1102,6 +1102,10 @@ export interface EntrySteer {
   state?: SteerState;
   reason?: SteerReason;
   severity?: string;
+  /** KASID is the id the notify frame gave a workflow message (`notifyId`), empty while it carries none. */
+  kas_id?: string;
+  /** ToSession is the KAS session a workflow message was sent to, on the receiver's row only. */
+  to_session?: string;
   origin_run?: string;
   step?: string;
   step_path?: string;
@@ -1109,6 +1113,11 @@ export interface EntrySteer {
   resends?: string[];
   produced_ts?: number;
   read_ts?: number;
+  /**
+ * Cleared marks a workflow message its receiver's buffer was emptied of before any take-up or
+ * wake proved it read; State stays absent, since whether it was read is not known.
+ */
+  cleared?: boolean;
 }
 
 /**
@@ -1121,16 +1130,27 @@ export interface EntrySteerAck {
 }
 
 /**
+ * EntrySteerCleared is the steer_cleared payload: KAS emptied Session's steering buffer, naming
+ * IDs, for Cause. It ends the epoch of every workflow message filed before it whose ToSession is
+ * Session, settling each one still unsettled cleared. It renders nothing.
+ */
+export interface EntrySteerCleared {
+  cause: string;
+  session: string;
+  ids: string[];
+}
+
+/**
  * EntrySteerDelivered is the steer_delivered payload: the receiver took up the workflow message
- * SteerID names, recorded at send, at ReadTs; Dropped instead says KAS cleared it unread at a turn
- * boundary. It renders on that message's row, not where it sits. KASID is the id KAS persisted the
- * message under, which its replay row carries.
+ * SteerID names, recorded at send, at ReadTs; Cleared instead says a steering clear emptied the
+ * receiver's buffer at ReadTs with no proof it was read. It renders on that message's row, not
+ * where it sits. KASID is the id KAS persisted the message under, which its replay row carries.
  */
 export interface EntrySteerDelivered {
   steer_id: string;
   kas_id?: string;
   read_ts: number;
-  dropped?: boolean;
+  cleared?: boolean;
 }
 
 /** EntryText is the text payload. */

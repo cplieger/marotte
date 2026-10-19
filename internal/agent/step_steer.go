@@ -249,10 +249,11 @@ func (rs *Runs) RunSteer(ctx context.Context, runID, nodePath, steerID string, s
 	}
 }
 
-// RunSteerDelivered files a workflow message's take-up in the path's open run turn, else after its newest closed turn.
-func (rs *Runs) RunSteerDelivered(ctx context.Context, runID, nodePath string, d *marotte.EntrySteerDelivered) {
+// RunSteerDelivered files a workflow message's take-up in the path's open run turn, else after its newest closed
+// turn, and reports whether it landed.
+func (rs *Runs) RunSteerDelivered(ctx context.Context, runID, nodePath string, d *marotte.EntrySteerDelivered) bool {
 	if rs.log == nil {
-		return
+		return false
 	}
 	ctx = durable.Context(ctx)
 	if t := rs.log.turn(runID, nodePath); t != nil {
@@ -262,22 +263,53 @@ func (rs *Runs) RunSteerDelivered(ctx context.Context, runID, nodePath string, d
 			slog.Error("run log: a workflow message's take-up was not recorded in its turn",
 				"run", runID, "node_path", nodePath, "steer", d.SteerID, "error", err)
 		}
-		return
+		return err == nil
 	}
 	raw, err := json.Marshal(d)
 	if err != nil {
-		return
+		return false
 	}
 	e := &marotte.Entry{Kind: marotte.EntryKindSteerDelivered, ID: marotte.SteerDeliveredID(d.SteerID), Payload: raw}
 	if err := rs.RunAppendAfterClosed(ctx, runID, nodePath, e); err != nil {
 		slog.Error("run log: a workflow message's take-up has no turn to land in",
 			"run", runID, "node_path", nodePath, "steer", d.SteerID, "error", err)
+		return false
 	}
+	return true
 }
 
-// RunWaitingWorkflowMessages answers the run log's workflow messages no take-up has settled, oldest
+// RunSteerCleared files a step's steering clear under clearID in the path's open run turn, else
+// after its newest closed turn, and reports whether it landed.
+func (rs *Runs) RunSteerCleared(ctx context.Context, runID, nodePath, clearID string, c *marotte.EntrySteerCleared) bool {
+	if rs.log == nil {
+		return false
+	}
+	ctx = durable.Context(ctx)
+	if t := rs.log.turn(runID, nodePath); t != nil {
+		sealed, err := t.SteerCleared(ctx, clearID, c)
+		translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
+		if err != nil {
+			slog.Error("run log: a step's steering clear was not recorded in its turn",
+				"run", runID, "node_path", nodePath, "clear", clearID, "error", err)
+		}
+		return err == nil
+	}
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return false
+	}
+	e := &marotte.Entry{Kind: marotte.EntryKindSteerCleared, ID: clearID, Payload: raw}
+	if err := rs.RunAppendAfterClosed(ctx, runID, nodePath, e); err != nil {
+		slog.Error("run log: a step's steering clear has no turn to land in",
+			"run", runID, "node_path", nodePath, "clear", clearID, "error", err)
+		return false
+	}
+	return true
+}
+
+// RunUnsettledWorkflowMessages answers the run log's workflow messages nothing has settled, oldest
 // first; none for a run with no log.
-func (rs *Runs) RunWaitingWorkflowMessages(ctx context.Context, runID string) ([]marotte.WorkflowMessage, error) {
+func (rs *Runs) RunUnsettledWorkflowMessages(ctx context.Context, runID string) ([]marotte.WorkflowMessage, error) {
 	if rs.log == nil {
 		return nil, nil
 	}
@@ -285,12 +317,7 @@ func (rs *Runs) RunWaitingWorkflowMessages(ctx context.Context, runID string) ([
 	if err != nil || l == nil {
 		return nil, err
 	}
-	return l.WaitingWorkflowMessages(), nil
-}
-
-// RunStepReading reports whether the step session key names is bound to a live execution.
-func (rs *Runs) RunStepReading(key marotte.ChatID) bool {
-	return rs.steers != nil && rs.steers.recs.stepOpen(key)
+	return l.UnsettledWorkflowMessages(), nil
 }
 
 // RunNodePaused ends the paused step's steering turn: the execution that read its buffer has stopped.

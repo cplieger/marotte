@@ -89,6 +89,7 @@ export function entryRenders(e: Entry, lane: string, folds: TurnFolds): boolean 
     case "tool_result":
     case "reconciled":
     case "steer_delivered":
+    case "steer_cleared":
       return false;
     case "plan":
       return folds.plan === e.seq;
@@ -184,7 +185,7 @@ function readDrops(entries: readonly Entry[]): ReadonlySet<string> {
       }
     }
     const d = payloadOf(e, "steer_delivered");
-    if (d !== undefined && d.dropped !== true && d.kas_id !== undefined && d.kas_id !== "") {
+    if (d?.kas_id !== undefined && d.kas_id !== "") {
       read.add(d.kas_id);
     }
   }

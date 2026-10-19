@@ -43,6 +43,8 @@ type fakeBridge struct {
 	onCall func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)
 	// onCallFails is onCall that may also fail the Call: the transport losing the write or its reply.
 	onCallFails func(method string, params map[string]any) (res json.RawMessage, frames []*marotte.RPCResponse, ok bool, err error)
+	// onNotify runs once a Notify is written, outside every lock: KAS's answer to a notification it read.
+	onNotify func(method string)
 	// refuseAfterCall is KAS refusing in band after onCall ran, so frames can fold before the refusal.
 	refuseAfterCall map[string]*marotte.RPCError
 	// failAfterCall is the transport failing after onCall ran: the words were written, then the reply was lost.
@@ -438,18 +440,29 @@ func (b *fakeBridge) Notify(ctx context.Context, method string, params any) erro
 			return ctx.Err()
 		}
 	}
+	hook, err := b.writeNotify(method, raw)
+	if err != nil {
+		return err
+	}
+	if hook != nil {
+		hook(method)
+	}
+	return nil
+}
+
+// writeNotify puts a notification on the wire under writeMu, as the engine writes one.
+func (b *fakeBridge) writeNotify(method string, raw []byte) (func(string), error) {
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	if err := b.notifyErrs[method]; err != nil {
-		b.mu.Unlock()
-		return err
+		return nil, err
 	}
 	b.notifies = append(b.notifies, method)
 	b.notifyParams = append(b.notifyParams, string(raw))
 	b.wire = append(b.wire, method)
-	b.mu.Unlock()
-	return nil
+	return b.onNotify, nil
 }
 
 // writeRequest is a request's frame going out as the engine writes one: parked on blockWriteOn before the write,

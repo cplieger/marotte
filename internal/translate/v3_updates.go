@@ -151,9 +151,9 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	}
 	// Before the parent-only gate: a chat's steer belongs to the chat but is consumed by whichever
 	// execution is running. A step session's buffer is the step's own, so its frames go to its run.
-	sc := chatSteerScope(chatID)
-	if stepSteering(attr) {
-		sc = stepSteerScope(attr)
+	sc := frameSteerScope(chatID, attr)
+	if u.Meta.Kiro.TurnStart != nil {
+		t.wakes.turnStarted(t.bufferSession(sc))
 	}
 	if t.handleSteeringUpdate(ctx, sc, &u) {
 		return

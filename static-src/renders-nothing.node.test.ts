@@ -18,6 +18,7 @@ const KIND_SET: Record<EntryKind, true> = {
   steer: true,
   steer_ack: true,
   steer_delivered: true,
+  steer_cleared: true,
   plan: true,
   compaction: true,
   compaction_failed: true,
