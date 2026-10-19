@@ -2,7 +2,7 @@
 // fit measures is the ACTIONS — how many, and how wide the tier makes them — so a hand-written
 // fixture would keep passing after the page stopped agreeing with it.
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, onTestFinished } from "vitest";
 import indexHtml from "../static/index.html?raw";
 
 import { setPageTitle, setPageSubtitle, clearPageTitle, initPageTitleFit } from "./page-title.js";
@@ -108,28 +108,22 @@ describe("the title bar's measured fit", () => {
     const heading = mountBar("240px");
     setPageTitle("Git", "chat");
     expect(heading.classList.contains("sr-only"), "clipped while narrow").toBe(true);
+    // A fit rewrites the class whatever it decides, so each record past init's own is a delivery's fit.
+    let fits = 0;
+    const fitWrites = new MutationObserver(() => {
+      fits++;
+    });
+    fitWrites.observe(heading, { attributes: true, attributeFilter: ["class"] });
+    onTestFinished(() => {
+      fitWrites.disconnect();
+    });
     initPageTitleFit();
-
-    /** Three frames plus a task, the module's own schedule for a delivery, so a negative reads
-     *  after it: the observer delivers after layout, this module defers its write to the next
-     *  frame's callbacks, and a frame callback queued before that write runs ahead of it. */
-    const settle = async (): Promise<void> => {
-      for (let i = 0; i < 3; i++) {
-        await new Promise<void>((r) => {
-          requestAnimationFrame(() => {
-            r();
-          });
-        });
-      }
-      await new Promise<void>((r) => {
-        setTimeout(r, 0);
-      });
-    };
+    fitWrites.takeRecords();
 
     // The observation's OWN first delivery is drained here, before the width moves. Without this
     // the case cannot tell the two observers apart: that first callback lands after a synchronous
     // resize and unclips for a reason that has nothing to do with which element is watched.
-    await settle();
+    await until(() => fits > 0, "the observer's first delivery to re-fit the title");
     expect(heading.classList.contains("sr-only"), "still clipped after the first delivery").toBe(
       true,
     );

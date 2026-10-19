@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll, beforeAll, beforeEach, vi } from "vites
 import { makeSession } from "./__test-helpers__/model.js";
 import { emulateA11yMedia, resetA11yMedia } from "./__test-helpers__/a11y-media.js";
 import { until } from "./__test-helpers__/until.js";
+import { framesDrained } from "./__test-helpers__/frame-queue.js";
 import type { TurnState } from "./types.js";
 import type { Entry, Hit } from "./wire/types.gen.js";
 import type * as ApiClient from "./api-client.js";
@@ -40,7 +41,7 @@ const { setSessions, setActive, bumpMessages, appendEntry, getActive, applyToolP
   await import("./store.js");
 const { mountChatView, teardownAll } = await import("./messages.js");
 const { scrollToBottom, readingState } = await import("./scroll.js");
-const { setPinSettleMs } = await import("./scroll-controller.js");
+const { setPinSettleMs, READER_CONTROL_MS } = await import("./scroll-controller.js");
 const { pinAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
 const { resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
@@ -311,13 +312,11 @@ function atLiveEdge(): boolean {
   );
 }
 
-/** scroll-controller.ts READER_CONTROL_MS: the quiet period a jump opens on `Date.now()`, inside
- *  which no follow write is licensed. */
-const READER_CONTROL_MS = 300;
 let jumpedAt = Number.NaN;
 
-/** Frames until `scrollTop` has held for three and `also()` holds: a smooth flight never stands
- *  still mid-way, and a follow write lands in the frame after the chunk it answers. */
+/** Frames until `scrollTop` has held for three and `also()` holds, then until no frame callback is
+ *  queued: a smooth flight never stands still mid-way, and a follow write lands in a frame the
+ *  chunk it answers queued. */
 async function scrollerAtRest(also: () => boolean = () => true): Promise<void> {
   let last = Number.NaN;
   let still = 0;
@@ -331,6 +330,7 @@ async function scrollerAtRest(also: () => boolean = () => true): Promise<void> {
     "the scroller to come to rest",
     { detail: () => `scrollTop ${String(scrollerEl.scrollTop)}` },
   );
+  await framesDrained("the controller's queued frames");
 }
 
 /** Find closed mid-step leaves the reader where the jump took them: parked, and not pinned back
@@ -637,15 +637,24 @@ describe("find-in-chat's reveal with motion", () => {
   });
 
   it("keeps the current-hit highlight when the reader moves during the reveal's flight while the transcript streams", async () => {
-    let wheeled = false;
+    let landed = false;
+    let wheeledMidFlight: boolean | null = null;
+    const onLanded = (): void => {
+      landed = true;
+    };
+    // A task after the flight's first scroll, so the controller has seen it move.
+    const wheelOnFirstScroll = (): void => {
+      setTimeout(() => {
+        wheeledMidFlight = !landed;
+        scrollerEl.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true }));
+      }, 0);
+    };
     const streamOnHighlight = new MutationObserver(() => {
       if (messagesEl.querySelector("mark.find-hit-current") !== null) {
         streamOnHighlight.disconnect();
         streamChunk("c-input-motion");
-        setTimeout(() => {
-          scrollerEl.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true }));
-          wheeled = true;
-        }, 250);
+        scrollerEl.addEventListener("scrollend", onLanded);
+        scrollerEl.addEventListener("scroll", wheelOnFirstScroll, { once: true });
       }
     });
     try {
@@ -653,12 +662,15 @@ describe("find-in-chat's reveal with motion", () => {
       streamOnHighlight.observe(messagesEl, { subtree: true, attributes: true, childList: true });
       await findAndStep(NEEDLE);
       // Past the flight, wherever the input left it.
-      await scrollerAtRest(() => wheeled);
+      await scrollerAtRest(() => wheeledMidFlight !== null);
+      expect(wheeledMidFlight).toBe(true);
       readerScrollsTo(hitParagraph(), -1);
       await twoFrames();
       expect(currentHitEntry()).toBe(`big-e${String(HIT_AT)}`);
     } finally {
       streamOnHighlight.disconnect();
+      scrollerEl.removeEventListener("scrollend", onLanded);
+      scrollerEl.removeEventListener("scroll", wheelOnFirstScroll);
       toggleChatFind();
     }
   });

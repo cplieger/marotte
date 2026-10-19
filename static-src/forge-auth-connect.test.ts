@@ -344,7 +344,7 @@ describe("forge-auth: the connect dialog", () => {
     connectButton(slot).click();
 
     await vi.waitFor(() => expect(statusLine(slot)).toBe(sentence));
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.runAllTimersAsync();
     expect(spy).toHaveBeenCalledOnce();
   });
 
@@ -360,6 +360,7 @@ describe("forge-auth: the connect dialog", () => {
     connectButton(slot).click();
 
     await waitForOnClock(() => expect(statusLine(slot)).toBe("the forge did not answer"), 3000);
+    await vi.runAllTimersAsync();
     expect(spy).toHaveBeenCalledTimes(3);
   });
 
@@ -647,6 +648,7 @@ describe("forge-auth: the connect dialog", () => {
       );
       expect(connect.dataset["asyncStatus"]).toBe("error");
       await waitForOnClock(() => expect(connect.disabled).toBe(false), 3000);
+      await vi.runAllTimersAsync();
       expect(spy).toHaveBeenCalledOnce();
       expect(slot.querySelector<HTMLInputElement>("[data-forge-host]")!.value).toBe(
         "git.example.com",

@@ -183,8 +183,8 @@ describe("the toggle's click", () => {
     expect(hiddenGlyphs(btn)).toEqual(["coarse"]);
     expect([...btn.querySelectorAll("svg.icon-setting")], "a glyph left mid-slide").toEqual([]);
 
-    // The first click's 350ms safety timeout still has to arrive and do nothing.
-    await vi.advanceTimersByTimeAsync(400);
+    // The first click's safety timeout still has to arrive and do nothing.
+    await vi.runAllTimersAsync();
     expect(hiddenGlyphs(btn)).toEqual(["coarse"]);
     expect(btn.getAttribute("aria-pressed")).toBe("false");
   });

@@ -7,6 +7,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } 
 import messagesCss from "./css/13-messages.css?raw";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { until } from "./__test-helpers__/until.js";
+import { framesDrained } from "./__test-helpers__/frame-queue.js";
 
 // The module builds its singleton against $.messages / $.messagesWrap at import, and reads
 // $.scrollBottom in init.
@@ -420,9 +421,15 @@ function onePage(page: () => void): () => void {
 }
 
 /** Every pin writes synchronously, so two frames cover the observer-driven state revalidation and
- *  the bottom pin's re-assert frame: that frame schedule is the controller's contract. */
+ *  the bottom pin's re-assert frame: that frame schedule is the controller's contract, and what a
+ *  positive pins. An absence reads after `drained()`. */
 async function settle(): Promise<void> {
   await frames(2);
+}
+
+/** Until no frame callback is left queued, so a write the controller still owes is seen. */
+async function drained(): Promise<void> {
+  await framesDrained("the controller's queued frames");
 }
 
 /** Captured at load: a case spies on `requestAnimationFrame` to count the controller's own frames,
@@ -505,7 +512,8 @@ async function stillness(): Promise<void> {
 async function resetBetween(): Promise<void> {
   if (fixtureTasks !== 0) {
     const queued = fixtureTasks;
-    // Drained first, so the leak fails this case alone and not every case after it.
+    // Ended and drained first, so a leak fails the case it lands in and not every case after it.
+    scroll.setLoadMore(null, false);
     await until(() => fixtureTasks === 0, "the leaked fixture pages to drain");
     throw new Error(
       `${String(queued)} fixture page task(s) from the previous case were still queued: they would land in this one`,
@@ -515,7 +523,7 @@ async function resetBetween(): Promise<void> {
   messagesEl.replaceChildren();
   document.getElementById("load-more-skeleton")?.remove();
   scrollBtn.classList.remove("hidden");
-  await settle();
+  await drained();
 }
 
 describe("the scroll listener's reading model", () => {
@@ -568,7 +576,7 @@ describe("the scroll listener's reading model", () => {
     // not fail: at the live edge the suppressed write and the one that lands are the same number.
     s.scrollHeight = 3000;
     messagesEl.appendChild(document.createElement("div"));
-    await settle();
+    await drained();
     expect(s.scrollTop).toBe(1500);
   });
 });
@@ -591,7 +599,10 @@ describe("the reader's input surfaces", () => {
     s.scrollHeight = 3000;
     messagesEl.appendChild(document.createElement("div"));
     await settle();
-    return s.scrollTop;
+    const at = s.scrollTop;
+    await drained();
+    expect(s.scrollTop, "a write after the pin's frames").toBe(at);
+    return at;
   }
 
   it("hands the scroller to a scrolling key", async () => {
@@ -770,7 +781,7 @@ describe("the End key", () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
     scroll.setUserScrolledUp(false);
     pressEnd(document.body);
-    await settle();
+    await drained();
     expect(s.scrollTop).toBe(1500);
   });
 
@@ -908,7 +919,7 @@ describe("the streaming auto-scroll", () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 100 });
     scroll.setUserScrolledUp(true);
     messagesEl.appendChild(document.createElement("div"));
-    await settle();
+    await drained();
     expect(s.scrollTop).toBe(100);
   });
 
@@ -992,7 +1003,7 @@ describe("pagination", () => {
           `${String(load.mock.calls.length)} asks, ${String(fixtureTasks)} pages queued`,
       },
     );
-    await settle();
+    await drained();
     expect(load).toHaveBeenCalledTimes(2);
   });
 
@@ -1007,7 +1018,7 @@ describe("pagination", () => {
     scroll.setLoadMore(load, true);
     readerScroll();
     await until(() => fixtureTasks === 0, "the empty page to land");
-    await settle();
+    await drained();
     expect(load).toHaveBeenCalledTimes(1);
 
     scroll.noteHistoryEdge(false);
@@ -1045,7 +1056,7 @@ describe("pagination", () => {
     await until(() => load.mock.calls.length >= 2 && fixtureTasks === 0, "both pages to land", {
       detail: () => `${String(load.mock.calls.length)} asks, ${String(fixtureTasks)} pages queued`,
     });
-    await settle();
+    await drained();
     expect(s.scrollTop).toBe(400);
   });
 
@@ -1100,7 +1111,7 @@ describe("pagination", () => {
     // screen. Read as this pass completing, it would charge the reader 300 + (1000 - 5000) and throw
     // them to the top of a conversation they had deliberately parked in.
     document.getElementById("load-more-skeleton")?.remove();
-    await settle();
+    await drained();
     expect(s.scrollTop).toBe(300);
   });
 });
@@ -2194,11 +2205,11 @@ describe("a smooth jump's own flight", () => {
       // Growth keeps arriving after the landing, where a follow write would no longer be a flight's.
       const atLanding = growths;
       await until(() => growths >= atLanding + 3, "three growths after the landing");
-      // The last one's observer delivery, and the follow write it would license, a frame each.
-      await frames(2);
     } finally {
       clearInterval(grow);
     }
+    // The last growth's observer delivery, and the follow write it would license.
+    await framesDrained("the last growth's follow frames");
 
     expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
       scrollTop: 0,
@@ -2660,8 +2671,7 @@ describe("the self-scroll epoch", () => {
     const writes = recordWrites(wrap);
     streaming.appendChild(document.createTextNode("a streamed chunk"));
     await moving;
-    // The chunk's follow write would land in the frame after its mutation, re-asserted one later.
-    await frames(2);
+    await framesDrained("the chunk's follow frames");
     expect({ writes, ended }).toEqual({ writes: [], ended: false });
 
     scroll.endSelfScroll();

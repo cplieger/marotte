@@ -447,7 +447,7 @@ describe("the run state a step card holds", () => {
       messages.teardownAll();
       gate.holding = false;
       gate.releases[0]?.();
-      await vi.advanceTimersByTimeAsync(1300);
+      await vi.runAllTimersAsync();
 
       expect(runStore.peekRunState(run)).toBeUndefined();
       // A failed read the store kept retrying would be a second read for a run nobody shows.
@@ -473,7 +473,7 @@ describe("the run state a step card holds", () => {
     runStore.invalidateRun(run);
     gate.holding = false;
     gate.releases[0]?.();
-    await vi.advanceTimersByTimeAsync(100);
+    await vi.runAllTimersAsync();
 
     expect(runStore.peekRunState(run)).toBeUndefined();
     expect(reads.filter((id) => id === run)).toHaveLength(1);
@@ -621,7 +621,7 @@ describe("the run state a step card holds", () => {
       expect(runButtons(view).map((b) => b.textContent)).toEqual(["forge-f2-build"]);
     });
     // A trailing read an invalidation queued would land after the first settles.
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.runAllTimersAsync();
 
     expect(reads.filter((id) => id === run)).toHaveLength(1);
   });

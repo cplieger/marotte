@@ -441,20 +441,25 @@ describe("forge-auth: 4-section layout", () => {
     resetActionFramework();
     const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
     vi.stubGlobal("fetch", fetchSpy);
-    await renderForgesPanel();
     const probes = (): string[] =>
       [
         ...mockedApiPost.mock.calls.map(([path]) => String(path)),
         ...fetchSpy.mock.calls.map((c: unknown[]) => String(c[0])),
       ].filter((path) => path.includes("/probe"));
+    // Every timer, frame and idle callback the open schedules has run before the absence is read.
+    vi.useFakeTimers();
+    try {
+      await renderForgesPanel();
+      await vi.runAllTimersAsync();
+      expect(probes()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
 
     const checks = document.querySelectorAll<HTMLButtonElement>(
       'button[aria-label="Check the connection"]',
     );
     expect(checks).toHaveLength(2);
-    // A row's running check absorbs a press on that row, so its own idle state covers the pressed
-    // row; a press on an idle row rides the dispatch path an on-open check would have taken first.
-    expect([...checks].map((b) => b.getAttribute("aria-busy"))).toEqual([null, null]);
     checks[0]!.click();
     await until(() => probes().length > 0, "the pressed check to be sent");
     expect(probes()).toEqual(["/api/forges/github%3Agithub.com/probe"]);

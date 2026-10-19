@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { framesDrained } from "./__test-helpers__/frame-queue.js";
 
 const scroll = await import("./scroll-controller.js");
 
+/** The follower's frame schedule, which a positive pins; an absence reads after `drained()`. */
 async function frames(n = 3): Promise<void> {
   for (let i = 0; i < n; i++) {
     await new Promise<void>((resolve) => {
@@ -12,6 +14,11 @@ async function frames(n = 3): Promise<void> {
   }
   // Resumed on a task, after the last frame's ResizeObserver delivery and the write it made.
   await new Promise((r) => setTimeout(r, 0));
+}
+
+/** Until no frame callback is left queued, so a write the follower still owes is seen. */
+async function drained(): Promise<void> {
+  await framesDrained("the follower's queued frames");
 }
 
 function block(height: number): HTMLElement {
@@ -64,7 +71,7 @@ describe("createFollowScroller", () => {
     expect(resume.classList.contains("hidden")).toBe(false);
     // A reading view holds its place while it grows.
     view.appendChild(block(400));
-    await frames();
+    await drained();
     const { scrollTop, readingState } = f.detach();
     expect({ scrollTop, readingState }).toEqual({ scrollTop: 100, readingState: "reading" });
   });
@@ -87,7 +94,7 @@ describe("createFollowScroller", () => {
     box.style.display = "none";
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
     box.style.removeProperty("display");
-    await frames();
+    await drained();
     const { scrollTop, readingState } = f.detach();
     expect({ scrollTop, readingState }).toEqual({ scrollTop: 300, readingState: "reading" });
   });
@@ -99,7 +106,7 @@ describe("createFollowScroller", () => {
     f.attach({ el: view, scrollTop: 0, readingState: "following" });
     view.appendChild(block(1000));
     box.style.width = "320px";
-    await frames();
+    await drained();
     expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("sentinel");
     document.documentElement.style.removeProperty("--scrollbar-w");
   });

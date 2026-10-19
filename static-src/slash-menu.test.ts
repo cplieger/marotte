@@ -635,7 +635,7 @@ describe("the # context menu", () => {
     });
     type("#file:a");
     input.dispatchEvent(new Event("blur"));
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.runAllTimersAsync();
     expect(searchCalls()).toBe(0);
     expect(menu.hidden).toBe(true);
   });

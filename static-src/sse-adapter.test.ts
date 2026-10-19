@@ -253,6 +253,36 @@ function acks(): ScriptedFetch["requests"] {
   return scripted.requests.filter((r) => r.url === "/api/events/alive");
 }
 
+/** Every chat GET stays in flight until `release()`; `atSettle()` is the connection count as one
+ *  settles. `started()` resolves on a task after the first GET is entered, so every continuation
+ *  the run can take without the GET's answer has run. */
+function heldGet(): {
+  started: () => Promise<void>;
+  release: () => void;
+  atSettle: () => number;
+} {
+  let entered = false;
+  let atSettle = Number.NaN;
+  let release = (): void => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  mockLoadMessages.mockImplementation(async () => {
+    entered = true;
+    await gate;
+    atSettle = scripted.connections.length;
+    return true;
+  });
+  return {
+    started: async () => {
+      await until(() => entered, "the chat's GET to start");
+      await new Promise((r) => setTimeout(r, 0));
+    },
+    release,
+    atSettle: () => atSettle,
+  };
+}
+
 /** Connect and let the fresh hello's own digest settle on an empty answer, so a case driving
  *  `revalidate` by hand is the only revalidation in flight. */
 async function connectSettled(): Promise<ReturnType<ScriptedFetch["connections"]["at"]>> {
@@ -825,22 +855,22 @@ describe("revalidate", () => {
         { kind: "pending", ref: "", version: "2" },
       ]),
     );
-    let getSettled = false;
-    let connectionsAtGet = 0;
-    mockLoadMessages.mockImplementation(async () => {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 5);
-      });
-      connectionsAtGet = scripted.connections.length;
-      getSettled = true;
-      return true;
+    const held = heldGet();
+    let ran = false;
+    const run = _revalidateForTest(ctx({ cause: "visible" })).then(() => {
+      ran = true;
     });
+    await held.started();
+    // The run and its reconnect wait for the GET: one live connection while it runs and as it settles.
+    expect({ ran, connections: scripted.connections.length, aborted: first?.aborted() }).toEqual({
+      ran: false,
+      connections: 1,
+      aborted: false,
+    });
+    held.release();
+    await run;
+    expect(held.atSettle()).toBe(1);
 
-    await _revalidateForTest(ctx({ cause: "visible" }));
-
-    expect(getSettled).toBe(true);
-    // The reconnect came AFTER the GET settled: one connection existed while it ran.
-    expect(connectionsAtGet).toBe(1);
     await until(() => scripted.connections.length === 2, "the second connection");
     expect(first?.aborted()).toBe(true);
     expect(scripted.connections[1]?.headers.has("Last-Event-ID")).toBe(false);
@@ -931,29 +961,29 @@ describe("the body the host routes to this tab", () => {
     observeStamp({ kind: "chat", ref: "X", version: "3" });
     observeStamp({ kind: "pending", ref: "", version: "1" });
     await connectSettled();
-    let getSettled = false;
-    mockLoadMessages.mockImplementation(async () => {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 5);
-      });
-      getSettled = true;
-      return true;
+    const held = heldGet();
+    let ran = false;
+    const run = _tabRevalidateForTest(
+      tabCtx({
+        cause: "visible",
+        changed: [
+          { kind: "chat", ref: "X", version: "4" },
+          { kind: "pending", ref: "", version: "2" },
+        ],
+        removed: [],
+      }),
+    ).then(() => {
+      ran = true;
     });
+    await held.started();
+    expect({ ran, aborted: scripted.connections[0]?.aborted() }).toEqual({
+      ran: false,
+      aborted: false,
+    });
+    held.release();
+    await run;
+    expect(held.atSettle()).toBe(1);
 
-    await expect(
-      _tabRevalidateForTest(
-        tabCtx({
-          cause: "visible",
-          changed: [
-            { kind: "chat", ref: "X", version: "4" },
-            { kind: "pending", ref: "", version: "2" },
-          ],
-          removed: [],
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(getSettled).toBe(true);
     // The host reconnects the profile's stream once; N tabs asking would open N. A tab's reconnect
     // would abort the live connection inside the run just awaited.
     expect(scripted.connections[0]?.aborted()).toBe(false);

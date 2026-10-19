@@ -829,7 +829,7 @@ describe("add modal", () => {
 
     // The debounce is still armed for the plain typing path; neither gesture
     // left a trailing timer behind that would fire a third query.
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.runAllTimersAsync();
     expect(mocks.searchDispatch.mock.calls.length).toBe(opening + 2);
   });
 });

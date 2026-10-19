@@ -3,6 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
+import { framesDrained } from "./__test-helpers__/frame-queue.js";
 import type { Session } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 
@@ -113,6 +114,11 @@ async function land(): Promise<void> {
   }
 }
 
+/** Until no frame callback is left queued, so a write the controller still owes is seen. */
+async function drained(): Promise<void> {
+  await framesDrained("the controller's queued frames");
+}
+
 function readerScrollTo(top: number): void {
   wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: top < wrap.scrollTop ? -1 : 1 }));
   wrap.scrollTop = top;
@@ -153,6 +159,8 @@ describe("an older page landing through the paint", () => {
     readerScrollTo(60);
     await land();
     expect(load).toHaveBeenCalledTimes(1);
+    await drained();
+    expect(load).toHaveBeenCalledTimes(1);
     readerScrollTo(30);
     await land();
     const was = cardFor("t4").getBoundingClientRect().top;
@@ -163,6 +171,7 @@ describe("an older page landing through the paint", () => {
     scroll.rebaseLoadMore();
     document.getElementById("load-more-skeleton")?.remove();
     await land();
+    await drained();
 
     expect(cardFor("t4").getBoundingClientRect().top).toBe(was);
   });

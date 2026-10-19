@@ -1204,6 +1204,7 @@ describe("history: cross-chat search", () => {
         throw new Error("list not restored");
       }
     }, FRAME_BUDGET_MS);
+    await vi.runAllTimersAsync();
     expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
 
@@ -1231,6 +1232,8 @@ describe("history: cross-chat search", () => {
         throw new Error("list not restored");
       }
     }, FRAME_BUDGET_MS);
+    // The box's debounce, and anything it queues, has run.
+    await vi.runAllTimersAsync();
     expect(searchDispatch).not.toHaveBeenCalled();
     expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
@@ -1252,6 +1255,7 @@ describe("history: cross-chat search", () => {
         throw new Error("list not restored");
       }
     }, FRAME_BUDGET_MS);
+    await vi.runAllTimersAsync();
     expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
 
