@@ -10,7 +10,7 @@ async function frames(n = 3): Promise<void> {
       });
     });
   }
-  // Resumed on a task, after the last frame's ResizeObserver delivery and the scroll it caused.
+  // Resumed on a task, after the last frame's ResizeObserver delivery and the write it made.
   await new Promise((r) => setTimeout(r, 0));
 }
 

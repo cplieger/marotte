@@ -66,23 +66,26 @@ vi.mock("./forge-store.js", () => ({
   readMoreListing: vi.fn(),
 }));
 
-/** Let the written bytes cross the stream reader: a frame that is still in flight
- *  cannot prove it was held. */
-function settle(): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, 20);
-  });
-}
-
 describe("the adapter holds frames until the chat store is hydrated", () => {
   let scripted: ScriptedFetch;
   let seen: string[];
 
   beforeEach(() => {
     scripted = createScriptedFetch();
+    scripted.respond("/api/events/alive", () => new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", scripted.fetch);
     seen = [];
   });
+
+  /** Let the written bytes cross the stream reader, since a frame still in flight cannot prove it
+   *  was held: a keepalive written after them is acknowledged once the parser has passed them on. */
+  async function settle(conn: NonNullable<ScriptedFetch["connections"][number]>): Promise<void> {
+    const acks = (): number =>
+      scripted.requests.filter((r) => r.url === "/api/events/alive").length;
+    const before = acks();
+    conn.named("heartbeat", "{}");
+    await until(() => acks() > before);
+  }
 
   function boot(): void {
     init(
@@ -114,7 +117,7 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
     conn.frame({ type: "connected", payload: { busy_stated: false, live_runs_stated: false } });
     conn.frame({ type: "pending_snapshot", payload: { items: [] } });
     conn.frame({ type: "permission_needed", chat_id: "chat-1", payload: { request_id: 1 } });
-    await settle();
+    await settle(conn);
     // Nothing has reached the store yet: this is the whole point.
     expect(seen).toEqual([]);
 
@@ -141,7 +144,7 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
     boot();
     const conn = await opened();
     conn.frame({ type: "pending_snapshot", payload: { items: [] } });
-    await settle();
+    await settle(conn);
     markHydrated();
     markHydrated();
     markHydrated();
@@ -155,7 +158,7 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
     boot();
     const conn = await opened();
     conn.frame({ type: "pending_snapshot", payload: { items: [] } });
-    await settle();
+    await settle(conn);
     expect(seen).toEqual([]);
 
     // The gate is an ordering aid: a hydration that never lands must not wedge the stream.

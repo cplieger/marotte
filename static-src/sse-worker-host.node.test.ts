@@ -86,7 +86,7 @@ function send(tab: Tab, message: TabToWorker): void {
 let pingSeq = 0;
 
 /** Resolves on the host's answer to a ping sent now: the host handles one port's messages in
- *  order, so every message `tab` sent before it, and the work each one started, has run. */
+ *  order, so every message `tab` sent before it, and the microtask work each one started, has run. */
 async function roundTrip(tab: Tab): Promise<void> {
   const seq = ++pingSeq;
   send(tab, { type: "ping", seq });
@@ -127,6 +127,7 @@ describe("reconnectForAttach", () => {
     // The attach that STARTED the stream opened exactly one connection.
     await roundTrip(a);
     expect(scripted.connections).toHaveLength(1);
+    expect(scripted.connections.at(-1)?.aborted()).toBe(false);
 
     attach("b");
     await until(() => scripted.connections.length === 2);
@@ -142,6 +143,7 @@ describe("reconnectForAttach", () => {
     const b = attach("b");
     await roundTrip(b);
     expect(scripted.connections).toHaveLength(1);
+    expect(scripted.connections.at(-1)?.aborted()).toBe(false);
   });
 });
 
@@ -156,6 +158,7 @@ describe("profileRevalidate", () => {
     // Held open by the silent tab: the host's stream is still on its first connection.
     await roundTrip(a);
     expect(scripted.connections).toHaveLength(1);
+    expect(scripted.connections.at(-1)?.aborted()).toBe(false);
     const run = a.received.find((m) => m.type === "revalidate_run");
     if (run?.type !== "revalidate_run") {
       throw new Error("no revalidate_run reached the tab");
@@ -163,6 +166,7 @@ describe("profileRevalidate", () => {
     send(a, { type: "revalidate_done", runId: run.runId });
     await roundTrip(a);
     expect(scripted.connections).toHaveLength(1);
+    expect(scripted.connections.at(-1)?.aborted()).toBe(false);
   });
 
   it("a tab's rejected run ends the connection, and the hello that follows runs again", async () => {
@@ -189,6 +193,7 @@ describe("profileRevalidate", () => {
     await until(() => runsSeen(a) === 2);
     await roundTrip(a);
     expect(scripted.connections).toHaveLength(2);
+    expect(scripted.connections.at(-1)?.aborted()).toBe(false);
   });
 
   it("routes the host's one digest to every tab: an observed stamp is in the snapshot and the verdict rides both runs", async () => {

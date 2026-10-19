@@ -7,6 +7,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { page as browser } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { until } from "./__test-helpers__/until.js";
 import { buildExecSummary } from "./exec-view/summary.js";
 import { chevronEl } from "./chevron.js";
 import type { ExecNode, ExecRun } from "./exec-view/model.js";
@@ -110,20 +111,27 @@ function mount(count: number, open: boolean, width: number): Mounted {
   return { box, toggle, rows };
 }
 
-const twoFrames = (): Promise<unknown> =>
-  new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-
 /** The entry rise must be over before pixels are read, so each finite animation is jumped to its
- *  end. The working mark's infinite beat only fills the glyph's hole, inside its box, so its phase
+ *  end, until a frame passes that starts no new one; the screenshot then captures a fresh frame.
+ *  The working mark's infinite beat only fills the glyph's hole, inside its box, so its phase
  *  moves no ink row. */
 async function settle(): Promise<void> {
-  await twoFrames();
-  for (const a of document.getAnimations()) {
-    if (Number.isFinite(a.effect?.getComputedTiming().endTime ?? Infinity)) {
+  await until(() => {
+    // A layout read flushes pending style, which is where a CSS animation starts.
+    void document.body.offsetHeight;
+    const running = document
+      .getAnimations()
+      .filter(
+        (a) =>
+          Number.isFinite(a.effect?.getComputedTiming().endTime ?? Infinity) &&
+          a.playState !== "finished" &&
+          a.playState !== "idle",
+      );
+    for (const a of running) {
       a.finish();
     }
-  }
-  await twoFrames();
+    return running.length === 0;
+  }, "the finite animations to end");
 }
 
 interface Ink {

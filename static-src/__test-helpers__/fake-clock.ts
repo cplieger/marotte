@@ -5,7 +5,7 @@ import { vi } from "vitest";
 
 const STEP_MS = 50;
 
-/** Fake `setTimeout`/`clearTimeout`; the caller restores real timers in its `afterEach`. */
+/** Fake `setTimeout`/`clearTimeout`; the caller restores real timers during test cleanup. */
 export function useSteppableClock(): void {
   vi.useFakeTimers({
     toFake: ["setTimeout", "clearTimeout"],

@@ -178,7 +178,6 @@ import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.j
 import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, tabServer } from "./__test-helpers__/tabs-server.js";
-import { taskTurns } from "./__test-helpers__/task-turns.js";
 import type { Route } from "./route-path.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
@@ -219,6 +218,8 @@ async function settled(check: () => boolean, what: string): Promise<void> {
 
 const page = "/workspace/demo/index.html";
 const webRoute: Route = { kind: "web", path: page };
+const otherPage = "/workspace/demo/other.html";
+const otherWebRoute: Route = { kind: "web", path: otherPage };
 
 describe("applyRoute for a web preview", () => {
   it("opens the preview tab a deep link names", async () => {
@@ -238,13 +239,15 @@ describe("applyRoute for a web preview", () => {
   });
 
   it("refuses to reopen a closed preview tab from a history entry", async () => {
-    expect.assertions(4);
+    expect.assertions(5);
     await applyRoute(webRoute, "deeplink");
     await settled(() => tabIdFor("web", page) !== "", "the web tab opened");
     await closeTab(tabIdFor("web", page));
     await settled(() => tabIdFor("web", page) === "", "the web tab closed");
     await applyRoute(webRoute, "history");
-    await taskTurns();
+    // A second page opened after it rides the same open path, so a reopen would have landed first.
+    await applyRoute(otherWebRoute, "deeplink");
+    await settled(() => tabIdFor("web", otherPage) !== "", "the other web tab opened");
     expect(tabIdFor("web", page)).toBe("");
     expect(replaceRoute).toHaveBeenCalledTimes(1);
   });
@@ -267,8 +270,11 @@ describe("applyRoute for a turn permalink", () => {
     vi.mocked(switchSession).mockResolvedValue("activated");
     jumpToTurn.mockClear();
     await applyRoute({ kind: "chat", id: "c1" }, "deeplink");
-    await taskTurns();
-    expect(jumpToTurn).not.toHaveBeenCalled();
+    // A permalink applied after it lands through the same switch and import, so a jump the plain
+    // route made would be recorded ahead of it.
+    await applyRoute({ kind: "chat", id: "c1", turn: 7 }, "deeplink");
+    await settled(() => jumpToTurn.mock.calls.length > 0, "the permalink's jump ran");
+    expect(jumpToTurn.mock.calls).toEqual([["c1", 7]]);
   });
 });
 

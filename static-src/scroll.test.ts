@@ -6,6 +6,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } 
 // than copied into a fixture.
 import messagesCss from "./css/13-messages.css?raw";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
+import { until } from "./__test-helpers__/until.js";
 
 // The module builds its singleton against $.messages / $.messagesWrap at import, and reads
 // $.scrollBottom in init.
@@ -390,8 +391,19 @@ function touchEvent(
   return ev;
 }
 
+/** Scripted work standing in for a fetch that resolves on a later task, counted while pending:
+ *  timers and frames run in no fixed order, so a frame count cannot stand for its landing. */
+let fixtureTasks = 0;
+function fixtureTask(fn: () => void): void {
+  fixtureTasks++;
+  setTimeout(() => {
+    fixtureTasks--;
+    fn();
+  }, 0);
+}
+
 /** Every pin writes synchronously, so two frames cover the observer-driven state revalidation and
- *  the bottom pin's re-assert frame. */
+ *  the bottom pin's re-assert frame: that frame schedule is the controller's contract. */
 async function settle(): Promise<void> {
   await frames(2);
 }
@@ -940,16 +952,15 @@ describe("pagination", () => {
     // A page shorter than the lead leaves the edge inside it, where the observer reports no new crossing.
     const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     const load = vi.fn(() => {
-      setTimeout(() => {
+      fixtureTask(() => {
         messagesEl.prepend(document.createElement("div"));
         document.getElementById("load-more-skeleton")?.remove();
         s.scrollHeight += 100;
-      }, 0);
+      });
     });
     scroll.setLoadMore(load, true);
     readerScroll();
-    await settle();
-
+    await until(() => load.mock.calls.length >= 2, "a second ask after the page landed");
     expect(load.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -957,12 +968,13 @@ describe("pagination", () => {
     // The same failing request would otherwise loop for as long as the edge stays in reach.
     fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     const load = vi.fn(() => {
-      setTimeout(() => {
+      fixtureTask(() => {
         document.getElementById("load-more-skeleton")?.remove();
-      }, 0);
+      });
     });
     scroll.setLoadMore(load, true);
     readerScroll();
+    await until(() => fixtureTasks === 0, "the empty page to land");
     await settle();
     expect(load).toHaveBeenCalledTimes(1);
 
@@ -990,27 +1002,30 @@ describe("pagination", () => {
     scroll.setLoadMore(() => {
       // The real caller fetches, prepends the page, and drops the skeleton — all after
       // maybeLoadMore has returned and its observer is watching.
-      setTimeout(() => {
+      fixtureTask(() => {
         messagesEl.prepend(document.createElement("div"));
         document.getElementById("load-more-skeleton")?.remove();
         s.scrollHeight = 1400;
-      }, 0);
+      });
     }, true);
     readerScroll();
-    await settle();
+    await until(() => s.scrollTop === 400, "the reader held 400px down the grown page", {
+      detail: () => `scrollTop ${String(s.scrollTop)}`,
+    });
     expect(s.scrollTop).toBe(400);
   });
 
   it("clears the in-flight flag once the page has landed", async () => {
     const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     const load = vi.fn(() => {
-      setTimeout(() => {
+      fixtureTask(() => {
         document.getElementById("load-more-skeleton")?.remove();
         s.scrollHeight = 1400;
-      }, 0);
+      });
     });
     scroll.setLoadMore(load, true);
     readerScroll();
+    await until(() => fixtureTasks === 0, "the page to land");
     await settle();
     s.scrollTop = 0;
     readerScroll();
@@ -2132,15 +2147,20 @@ describe("a smooth jump's own flight", () => {
     expect(scroll.readingState()).toBe("following");
 
     // A growing tail, as a streaming turn delivers it: every resize licenses a follow write.
+    let growths = 0;
     const grow = setInterval(() => {
       tail.style.height = `${String(tail.offsetHeight + 10)}px`;
+      growths++;
     }, 20);
     try {
       const landed = flightEnds(wrap);
       scroll.jumpTo(target, { block: "start" });
       await landed;
       // Growth keeps arriving after the landing, where a follow write would no longer be a flight's.
-      await frames(10);
+      const atLanding = growths;
+      await until(() => growths >= atLanding + 3, "three growths after the landing");
+      // The last one's observer delivery, and the follow write it would license, a frame each.
+      await frames(2);
     } finally {
       clearInterval(grow);
     }
@@ -2605,6 +2625,7 @@ describe("the self-scroll epoch", () => {
     const writes = recordWrites(wrap);
     streaming.appendChild(document.createTextNode("a streamed chunk"));
     await moving;
+    // The chunk's follow write would land in the frame after its mutation, re-asserted one later.
     await frames(2);
     expect({ writes, ended }).toEqual({ writes: [], ended: false });
 
@@ -2877,13 +2898,14 @@ describe("holding what the reader reads", () => {
       if (!grown) {
         grown = true;
         // A task after this delivery: past the correction's write, before its scroll event.
-        setTimeout(() => {
+        fixtureTask(() => {
           rows[5]!.style.height = "500px";
-        }, 0);
+        });
       }
     });
     rows[5]!.style.height = "300px";
     late.observe(rows[5]!);
+    await until(() => grown && fixtureTasks === 0, "the late growth to land");
     await land();
     late.disconnect();
 

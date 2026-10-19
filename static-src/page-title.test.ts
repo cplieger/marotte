@@ -7,6 +7,7 @@ import indexHtml from "../static/index.html?raw";
 
 import { setPageTitle, setPageSubtitle, clearPageTitle, initPageTitleFit } from "./page-title.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { until } from "./__test-helpers__/until.js";
 
 /** The whole `<div class="chat-toolbar">…</div>` out of the page, matched by counting nested div
  *  tags. Nothing formats `static/index.html` (prettier runs from `static-src/` and the page is
@@ -109,9 +110,9 @@ describe("the title bar's measured fit", () => {
     expect(heading.classList.contains("sr-only"), "clipped while narrow").toBe(true);
     initPageTitleFit();
 
-    /** Three frames plus a task: the observer delivers after layout, this module defers its own
-     *  write to the next frame's callbacks, and a frame callback queued before that write runs
-     *  ahead of it. */
+    /** Three frames plus a task, the module's own schedule for a delivery, so a negative reads
+     *  after it: the observer delivers after layout, this module defers its write to the next
+     *  frame's callbacks, and a frame callback queued before that write runs ahead of it. */
     const settle = async (): Promise<void> => {
       for (let i = 0; i < 3; i++) {
         await new Promise<void>((r) => {
@@ -136,8 +137,10 @@ describe("the title bar's measured fit", () => {
     const area = document.getElementById("chat-area");
     expect(area).not.toBeNull();
     area?.style.setProperty("inline-size", "900px");
-    await settle();
-    expect(heading.classList.contains("sr-only"), "shown once the bar has room").toBe(false);
+    await until(
+      () => !heading.classList.contains("sr-only"),
+      "the title shown once the bar has room",
+    );
   });
 
   it("keeps the h1 and its text in the accessibility tree while clipped", () => {

@@ -51,7 +51,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_CLOSE_UI, ICON_PLUS_UI } from "./icons.js";
 import { _resetForTest as resetForgeStore } from "./forge-store.js";
-import { taskTurns } from "./__test-helpers__/task-turns.js";
+import { until } from "./__test-helpers__/until.js";
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 const mockedApiPost = vi.mocked(apiPost);
@@ -442,13 +442,21 @@ describe("forge-auth: 4-section layout", () => {
     const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
     vi.stubGlobal("fetch", fetchSpy);
     await renderForgesPanel();
-    await taskTurns();
+    const probes = (): string[] =>
+      [
+        ...mockedApiPost.mock.calls.map(([path]) => String(path)),
+        ...fetchSpy.mock.calls.map((c: unknown[]) => String(c[0])),
+      ].filter((path) => path.includes("/probe"));
 
-    const sent = [
-      ...mockedApiPost.mock.calls.map(([path]) => String(path)),
-      ...fetchSpy.mock.calls.map((c: unknown[]) => String(c[0])),
-    ];
-    expect(sent.filter((path) => path.includes("/probe"))).toEqual([]);
+    // A press rides the dispatch path any check sent on open would have taken first, so its
+    // arrival is the point by which such a check would show.
+    const checks = document.querySelectorAll<HTMLButtonElement>(
+      'button[aria-label="Check the connection"]',
+    );
+    expect(checks).toHaveLength(2);
+    checks[0]!.click();
+    await until(() => probes().length > 0, "the pressed check to be sent");
+    expect(probes()).toEqual(["/api/forges/github%3Agithub.com/probe"]);
     vi.unstubAllGlobals();
   });
 

@@ -33,7 +33,6 @@ import {
 } from "./subject-versions.js";
 import type { ServerEvent, Session } from "./types.js";
 import { makeServerEvent } from "./__test-helpers__/model.js";
-import { taskTurns } from "./__test-helpers__/task-turns.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 import {
   EPOCH_A,
@@ -171,6 +170,28 @@ function digestAnswer(
   };
 }
 
+/** `answer`, counting the digest bodies read so far. What a run does after that read is promise
+ *  continuations, so a check on a later task sees the run's verdict fully applied. */
+function readCounted(answer: (req: { body: string | null }) => Response): {
+  responder: (req: { body: string | null }) => Response;
+  reads: () => number;
+} {
+  let reads = 0;
+  return {
+    responder: (req) => {
+      const response = answer(req);
+      const read = response.json.bind(response);
+      response.json = async (): Promise<unknown> => {
+        const parsed: unknown = await read();
+        reads++;
+        return parsed;
+      };
+      return response;
+    },
+    reads: () => reads,
+  };
+}
+
 // The wire's own decoders, so a frame in this file is refused exactly where production refuses it.
 // Without them `decodeEnvelope` passes every payload through untyped and an invalid fixture
 // would be IGNORED rather than refused.
@@ -272,9 +293,10 @@ describe("the connect", () => {
     expect(localStorage.getItem(PROFILE_TAG_KEY)).toBe("amxAEqwvwjG23476CxNmK6");
 
     // The worker reports the same subscription again (a resubscribe that kept the endpoint):
-    // nothing moves.
+    // nothing moves. The adopt resolves after its reconnect decision, and a reconnect aborts the
+    // live connection on the spot.
     await adoptPushSubscription({ endpoint });
-    await taskTurns();
+    expect(scripted.connections[1]?.aborted()).toBe(false);
     expect(scripted.connections).toHaveLength(2);
     expect(presentedTag()).toBe("amxAEqwvwjG23476CxNmK6");
   });
@@ -291,10 +313,9 @@ describe("the connect", () => {
     conn?.named("heartbeat", "{}");
     await until(() => acks().length === 2);
 
+    // The reset ends the connection on the spot, so no later keepalive can reach the parser.
     _resetForTest();
-    conn?.named("heartbeat", "{}");
-    await taskTurns();
-    expect(acks()).toHaveLength(2);
+    expect(conn?.aborted()).toBe(true);
   });
 
   it("binds the version map to the hello's epoch, dropping what a previous epoch held", async () => {
@@ -456,16 +477,9 @@ describe("frames", () => {
         payload: { id: "m1", role: "assistant", ts: 1, content: "hi" },
       }),
     );
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
-    });
-    expect(seen).toEqual([]);
-    expect(errors).toHaveBeenCalled();
-    // It names no turn, so there is nothing to salvage by a range read.
-    expect(mockRequestTurnRange).not.toHaveBeenCalled();
-    expect(warns).toHaveBeenCalled();
     // The in-fence control: the live entry shape goes through the SAME decoder and lands, so the
-    // refusal above cannot be a frame the adapter dropped for another reason.
+    // refusal cannot be a frame the adapter dropped for another reason. Written second, it
+    // reaches the bus only after the refused frame was decided.
     conn?.frame({
       type: "entry_appended",
       chat_id: "c1",
@@ -473,11 +487,18 @@ describe("frames", () => {
         entry: { id: "e1", turn: "t1", kind: "text", seq: 1, ts: 1, payload: { text: "hi" } },
       },
     });
-    await until(() => seen.length === 1);
+    await until(() => seen.length > 0);
+    expect(seen).toHaveLength(1);
     expect(seen[0]?.type).toBe("entry_appended");
+    expect(seen[0]?.payload).toHaveProperty("entry.id", "e1");
+    expect(errors).toHaveBeenCalled();
+    // It names no turn, so there is nothing to salvage by a range read.
+    expect(mockRequestTurnRange).not.toHaveBeenCalled();
+    expect(warns).toHaveBeenCalled();
   });
 
   it("holds frames until markHydrated and releases them in arrival order", async () => {
+    scripted.respond("/api/events/alive", () => new Response(null, { status: 204 }));
     const conn = await connect();
     conn?.frame({ type: "connected", payload: { busy_stated: false, live_runs_stated: false } });
     // `options` is required by the wire's own decoder, which runs here.
@@ -486,10 +507,10 @@ describe("frames", () => {
       chat_id: "c1",
       payload: { request_id: 1, options: [] },
     });
-    // Let the bytes cross the stream: nothing may reach the bus yet.
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
-    });
+    // A keepalive written after them is acknowledged only once the parser has handed both frames
+    // on: nothing may reach the bus yet.
+    conn?.named("heartbeat", "{}");
+    await until(() => acks().length === 1);
     expect(seen).toEqual([]);
     markHydrated();
     expect(seen.map((e) => e.type)).toEqual(["connected", "permission_needed"]);
@@ -825,17 +846,17 @@ describe("revalidate", () => {
     // The realistic answer, left in place: the map still holds status@1 while the hello's own
     // status_snapshot@2 sits held behind the run, so the server keeps naming it until that frame
     // drains.
-    scripted.respond("/api/sync", digestAnswer([{ kind: "status", ref: "", version: "2" }]));
+    const answer = readCounted(digestAnswer([{ kind: "status", ref: "", version: "2" }]));
+    scripted.respond("/api/sync", answer.responder);
 
     await _revalidateForTest(ctx({ cause: "visible" }));
     await until(() => scripted.connections.length === 2);
     const syncsBefore = syncs();
+    const readsBefore = answer.reads();
     scripted.connections[1]?.hello();
-    await until(() => syncs() > syncsBefore);
-    // Settle: nothing else is queued behind it, and no third connection was opened.
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 50);
-    });
+    // The hello's run has applied its verdict: nothing else is queued behind it, and no third
+    // connection was opened.
+    await until(() => answer.reads() > readsBefore);
     expect(syncs()).toBe(syncsBefore + 1);
     expect(scripted.connections).toHaveLength(2);
   });
@@ -927,10 +948,9 @@ describe("the body the host routes to this tab", () => {
     ).resolves.toBeUndefined();
 
     expect(getSettled).toBe(true);
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
-    });
-    // The host reconnects the profile's stream once; N tabs asking would open N.
+    // The host reconnects the profile's stream once; N tabs asking would open N. A tab's reconnect
+    // would abort the live connection inside the run just awaited.
+    expect(scripted.connections[0]?.aborted()).toBe(false);
     expect(scripted.connections).toHaveLength(1);
   });
 
@@ -1031,12 +1051,16 @@ describe("the body the host routes to this tab", () => {
 // is what a profile's tabs and worker exchange.
 describe("attached to a worker host", () => {
   /** Boot the adapter onto a host this test holds and answer the host's first hello. */
+  let tabPort: MessagePort | null = null;
+  let pingSeq = 0;
+
   async function connectHosted(): Promise<ReturnType<ScriptedFetch["connections"]["at"]>> {
     const host = createSSEHost();
     hosted = host;
     _spawnWorkerForTest(() => {
       const channel = new MessageChannel();
       host.attach(channel.port2);
+      tabPort = channel.port1;
       return { port: channel.port1, addEventListener: () => undefined };
     });
     init(
@@ -1052,12 +1076,38 @@ describe("attached to a worker host", () => {
     return conn;
   }
 
-  /** Hide and show the page, which the tab reports and the host's stream wakes on. */
+  /** Resolves on the host's answer to a ping sent now on this tab's port: the host handles one
+   *  port's messages in order, so everything the tab posted before it has been handled. */
+  async function hostRoundTrip(): Promise<void> {
+    const port = tabPort;
+    if (port === null) {
+      throw new Error("no hosted tab to ping through");
+    }
+    const seq = 1_000_000 + ++pingSeq;
+    let answered = false;
+    const onPong = (event: MessageEvent): void => {
+      const m = event.data as { type?: unknown; seq?: unknown };
+      if (m.type === "pong" && m.seq === seq) {
+        answered = true;
+      }
+    };
+    port.addEventListener("message", onPong);
+    try {
+      port.postMessage({ type: "ping", seq });
+      await until(() => answered);
+    } finally {
+      port.removeEventListener("message", onPong);
+    }
+  }
+
+  /** Hide and show the page, which the tab reports and the host's stream wakes on. Shows only
+   *  once the host reads the profile hidden: a show that overtakes the hide is no wake. */
   async function wakeProfile(): Promise<void> {
     const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     document.dispatchEvent(new Event("visibilitychange"));
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 10);
+    await until(() => {
+      const state = hosted?.stream().state();
+      return state?.kind === "open" && !state.visible;
     });
     hidden.mockRestore();
     document.dispatchEvent(new Event("visibilitychange"));
@@ -1106,9 +1156,8 @@ describe("attached to a worker host", () => {
     expect(presentedTag()).toBe("amxAEqwvwjG23476CxNmK6");
 
     await adoptPushSubscription({ endpoint });
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
-    });
+    await hostRoundTrip();
+    expect(scripted.connections[1]?.aborted()).toBe(false);
     expect(scripted.connections).toHaveLength(2);
   });
 });

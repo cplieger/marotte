@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { loadCSS } from "./__test-helpers__/css-rules.js";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
+import { until } from "./__test-helpers__/until.js";
 import { initBeatPhase, resetBeatPhaseForTest } from "./beat-phase.js";
 
 /**
@@ -40,20 +41,51 @@ async function beatingDot(): Promise<HTMLElement> {
 const phaseOf = (el: HTMLElement): string => el.style.getPropertyValue("--beat-phase");
 const opacity = (el: HTMLElement): number => Number(getComputedStyle(el).opacity);
 
-/** Frames until the document timeline, the clock every beat runs on, has moved `ms` past now. */
-async function timelinePasses(ms: number): Promise<void> {
-  const now = (): number => Number(document.timeline.currentTime);
-  const until = now() + ms;
-  const start = performance.now();
-  while (now() < until) {
-    if (performance.now() - start > FRAME_BUDGET_MS) {
-      throw new Error(`the timeline stood at ${String(now())}, short of ${String(until)}`);
+function beat(el: HTMLElement): CSSAnimation {
+  const a = el.getAnimations()[0];
+  if (a === undefined) {
+    throw new Error("the probe has no running beat");
+  }
+  return a as CSSAnimation;
+}
+
+/** Where `el`'s beat stands in its period, from the animation's own clock; NaN while pending. */
+function beatAt(el: HTMLElement): number {
+  const t = beat(el).currentTime;
+  return t === null ? Number.NaN : Number(t) % PERIOD;
+}
+
+/** How far apart two beats must stand, read while the newer one is still FRESH: there the older
+ *  one's opacity sits at least 0.2 below the newer's, so an unstamped pair cannot read alike. */
+const OFF_PHASE = { from: PERIOD / 4, to: (5 * PERIOD) / 8 };
+const FRESH = PERIOD / 16;
+
+/** A second beating dot that began a visibly different phase after `first`, re-made until one
+ *  does: each starts on whatever frame comes next, and a pair started in step proves nothing.
+ *  `before` runs ahead of each attempt. */
+async function offPhaseDot(first: HTMLElement, before?: () => void): Promise<HTMLElement> {
+  const deadline = performance.now() + FRAME_BUDGET_MS;
+  const left = (): number => Math.max(0, deadline - performance.now());
+  let tried = "";
+  for (;;) {
+    before?.();
+    const second = await beatingDot();
+    await until(
+      () => !Number.isNaN(beatAt(first)) && !Number.isNaN(beatAt(second)),
+      "both beats to run",
+      {
+        timeout: left(),
+      },
+    );
+    const apart = (beatAt(first) - beatAt(second) + PERIOD) % PERIOD;
+    if (apart >= OFF_PHASE.from && apart <= OFF_PHASE.to && beatAt(second) < FRESH) {
+      return second;
     }
-    await new Promise<void>((r) => {
-      requestAnimationFrame(() => {
-        r();
-      });
-    });
+    tried += ` ${String(Math.round(apart))}`;
+    second.remove();
+    if (left() === 0) {
+      throw new Error(`no second dot started off the first's phase; apart:${tried}`);
+    }
   }
 }
 
@@ -86,11 +118,10 @@ describe("beat phase", () => {
   });
 
   it("puts dots that start at different times on one grid", async () => {
-    // The whole mechanism. Two dots ~600ms apart is a quarter of the period, which
-    // is well outside the tolerance below — an unstamped pair diverges visibly.
+    // The whole mechanism. Two dots a quarter period or more apart are well outside the
+    // tolerance below — an unstamped pair diverges visibly.
     const first = await beatingDot();
-    await timelinePasses(600);
-    const second = await beatingDot();
+    const second = await offPhaseDot(first);
 
     // The user-visible property, read in one instant rather than compared as delays.
     expect(opacity(second)).toBeCloseTo(opacity(first), 2);
@@ -100,25 +131,24 @@ describe("beat phase", () => {
     // A busy main thread delivers one dot's `animationstart` after its beat began. A window
     // capture listener runs before the module's document one, so this delays the second dot's.
     const first = await beatingDot();
-    await timelinePasses(600);
     const stall = (): void => {
       const until = performance.now() + 40;
       while (performance.now() < until) {
         // Hold the dispatch, as a loaded main thread does.
       }
     };
-    window.addEventListener("animationstart", stall, { capture: true, once: true });
-    const second = await beatingDot();
+    const second = await offPhaseDot(first, () => {
+      window.addEventListener("animationstart", stall, { capture: true, once: true });
+    });
     expect(opacity(second)).toBeCloseTo(opacity(first), 2);
   });
 
   it("is what puts them there, not the shared duration", async () => {
     // The negative control turns the MODULE off: `stamp` overwrites an inline `0ms`. With the
-    // listener detached, two dots 600ms apart are deterministically a quarter period apart.
+    // listener detached, two dots started off phase stay off phase.
     resetBeatPhaseForTest();
     const first = await beatingDot();
-    await timelinePasses(600);
-    const second = await beatingDot();
+    const second = await offPhaseDot(first);
     expect(phaseOf(first), "the control must be unstamped").toBe("");
 
     expect(Math.abs(opacity(second) - opacity(first))).toBeGreaterThan(0.05);
@@ -128,8 +158,7 @@ describe("beat phase", () => {
     // The production trigger: `tabs-drag.ts` re-inserts the dragged row on every drop, which
     // recreates every animation in it.
     const first = await beatingDot();
-    await timelinePasses(600);
-    const moved = await beatingDot();
+    const moved = await offPhaseDot(first);
     const before = phaseOf(moved);
     expect(before).not.toBe("");
 
@@ -152,7 +181,9 @@ describe("beat phase", () => {
     // animation INSTANCE: an engine that re-fired would otherwise walk the dot off the grid.
     const el = await beatingDot();
     const first = phaseOf(el);
-    await timelinePasses(200);
+    await until(() => beatAt(el) > 0, "the beat to start running", {
+      detail: () => String(beat(el).currentTime),
+    });
 
     el.dispatchEvent(
       new AnimationEvent("animationstart", { animationName: "vk-dot-beat", bubbles: true }),

@@ -1,6 +1,7 @@
 import { describe, it, expect, afterAll, beforeAll, beforeEach, vi } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
 import { emulateA11yMedia, resetA11yMedia } from "./__test-helpers__/a11y-media.js";
+import { until } from "./__test-helpers__/until.js";
 import type { TurnState } from "./types.js";
 import type { Entry, Hit } from "./wire/types.gen.js";
 import type * as ApiClient from "./api-client.js";
@@ -315,19 +316,36 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+/** Frames until `scrollTop` has held for three and `also()` holds: a smooth flight never stands
+ *  still mid-way, and a follow write lands in the frame after the chunk it answers. */
+async function scrollerAtRest(also: () => boolean = () => true): Promise<void> {
+  let last = Number.NaN;
+  let still = 0;
+  await until(
+    () => {
+      const top = scrollerEl.scrollTop;
+      still = top === last ? still + 1 : 0;
+      last = top;
+      return still >= 3 && also();
+    },
+    "the scroller to come to rest",
+    { detail: () => `scrollTop ${String(scrollerEl.scrollTop)}` },
+  );
+}
+
 /** Find closed mid-step leaves the reader where the jump took them: parked, and not pinned back
  *  to the live edge by the next streamed chunk, before or after the flight would have landed. */
 async function staysParkedThroughStream(chat: string): Promise<void> {
   await vi.waitFor(() => {
     expect(_isChatFindOpen()).toBe(false);
   });
-  // Past the jump's quiet period, so a follow write is licensed, and while a smooth flight still flies.
+  // A moment on the controller's real clock: past the jump's quiet period, so a follow write is
+  // licensed, while a smooth flight still flies.
   await sleep(400);
   streamChunk(chat);
-  // After any flight has landed.
-  await sleep(1200);
+  await scrollerAtRest();
   streamChunk(chat);
-  await sleep(300);
+  await scrollerAtRest();
   expect({ state: readingState(), atLiveEdge: atLiveEdge() }).toEqual({
     state: "reading",
     atLiveEdge: false,
@@ -607,12 +625,14 @@ describe("find-in-chat's reveal with motion", () => {
   });
 
   it("keeps the current-hit highlight when the reader moves during the reveal's flight while the transcript streams", async () => {
+    let wheeled = false;
     const streamOnHighlight = new MutationObserver(() => {
       if (messagesEl.querySelector("mark.find-hit-current") !== null) {
         streamOnHighlight.disconnect();
         streamChunk("c-input-motion");
         setTimeout(() => {
           scrollerEl.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true }));
+          wheeled = true;
         }, 250);
       }
     });
@@ -621,7 +641,7 @@ describe("find-in-chat's reveal with motion", () => {
       streamOnHighlight.observe(messagesEl, { subtree: true, attributes: true, childList: true });
       await findAndStep(NEEDLE);
       // Past the flight, wherever the input left it.
-      await sleep(1200);
+      await scrollerAtRest(() => wheeled);
       readerScrollsTo(hitParagraph(), -1);
       await twoFrames();
       expect(currentHitEntry()).toBe(`big-e${String(HIT_AT)}`);
