@@ -89,7 +89,6 @@ func TestWorkflowMessage_MidStreamLeavesAStepsSayWhole(t *testing.T) {
 		}
 		t.Run(string(kind), func(t *testing.T) {
 			deps, tr := messageDeps(t)
-			deps.stepReading[marotte.StepSteerKey(testStep)] = true
 			path := workflow.PathKey([]string{testWfRun, "review"})
 			attr := FrameAttribution{Step: true, SessionID: testStep, RunID: testWfRun, NodePath: path}
 			const say = "b2c1-say"

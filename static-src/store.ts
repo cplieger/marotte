@@ -55,7 +55,11 @@ import {
   writeEntryText,
 } from "./store-signals.js";
 import { noteToolActivity } from "./tool-silence.js";
-import { releaseWorkflowTakeUps, settleWorkflowMessages } from "./workflow-delivery.js";
+import {
+  releaseWorkflowTakeUps,
+  settleWorkflowMessages,
+  turnsInOrder,
+} from "./workflow-delivery.js";
 
 // One version signal per chat, so a background chat's stream cannot repaint the visible transcript.
 // Every bump carries a RenderCause, declared at the branch that knows what changed; causes merge
@@ -1060,7 +1064,7 @@ function applyRevert(chatID: string, s: Session, entry: Entry): void {
     for (const id of dropped.keys()) {
       s.turns.delete(id);
     }
-    releaseWorkflowTakeUps(dropped.values(), s.turns.values());
+    releaseWorkflowTakeUps(dropped.values(), turnsInOrder(s.turn_order, s.turns));
     s.turn_order = s.turn_order.filter((id) => !dropped.has(id));
     // The window's own record of what the revert took, read by the range read's seat as the abort's
     // belt. Extended rather than replaced: a second rewind's window does not un-revert the first
@@ -1110,8 +1114,12 @@ export function appendEntry(chatID: string, entry: Entry): void {
     // exists in which the steer is in neither place.
     retireSteerRows(chatID, entry);
   }
-  if (entry.kind === "steer" || entry.kind === "steer_delivered") {
-    settleWorkflowMessages(s.turns.values());
+  if (
+    entry.kind === "steer" ||
+    entry.kind === "steer_delivered" ||
+    entry.kind === "steer_cleared"
+  ) {
+    settleWorkflowMessages(turnsInOrder(s.turn_order, s.turns));
   }
   if (entry.kind === "tool_result") {
     publishSettledCall(chatID, state, entry);

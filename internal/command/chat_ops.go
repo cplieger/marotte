@@ -112,7 +112,7 @@ func cmdCancel(
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	// First, before any signal; every later step acts on the turns captured here.
-	stop := stops.RequestStop(cmd.ChatID)
+	stop := stops.RequestStop(cmd.ChatID, marotte.TurnStopReader)
 	defer stops.ReleaseStop(stop)
 
 	// The lead is steer-queue state: a stop in the session-door window (no bridge
@@ -154,7 +154,7 @@ func cmdCancel(
 // end to retire as ended: a clear here would drop the cards without saying why.
 func closeChatTeardown(ctx context.Context, bridges bridgeAccess, perms permissionCanceller, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID) {
 	slog.Info("chat tab closed; tearing down its session", "chat_id", chatID)
-	defer stops.ReleaseStop(stops.RequestStop(chatID))
+	defer stops.ReleaseStop(stops.RequestStop(chatID, marotte.TurnStopTeardown))
 	teardown.BeginChatTeardown(chatID, true)
 	teardownCancel(ctx, bridges, perms, chatID)
 	teardown.CloseChatState(ctx, chatID)
@@ -166,7 +166,7 @@ func closeChatTeardown(ctx context.Context, bridges bridgeAccess, perms permissi
 // record's delete answered (a record-reading teardown would no-op on a
 // deleted chat). Mirrors closeChatTeardown so the two grades cannot drift.
 func deleteChatTeardown(ctx context.Context, bridges bridgeAccess, perms permissionCanceller, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID, sessionChain []string) {
-	defer stops.ReleaseStop(stops.RequestStop(chatID))
+	defer stops.ReleaseStop(stops.RequestStop(chatID, marotte.TurnStopTeardown))
 	teardown.BeginChatTeardown(chatID, false)
 	teardownCancel(ctx, bridges, perms, chatID)
 	teardown.DeleteChatStateByChain(ctx, chatID, sessionChain, RunStopTabClosed)

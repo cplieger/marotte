@@ -26,7 +26,7 @@ import {
 import { clearTurnState } from "./turn-teardown.js";
 import { framedSince, headerFrameMark } from "./header-frames.js";
 import { observeStamp } from "./subject-versions.js";
-import { settleWorkflowMessages } from "./workflow-delivery.js";
+import { settleWorkflowMessages, turnsInOrder } from "./workflow-delivery.js";
 import type { Entry, OpenEntry, SubjectStamp } from "./wire/types.gen.js";
 
 const decodeChatListResponseLocal: Decoder<{ chats?: ChatHeader[]; subject?: SubjectStamp }> = (
@@ -246,7 +246,7 @@ function applyPage(
       }
     }
     session.turn_order = [...fresh, ...session.turn_order];
-    settleWorkflowMessages(session.turns.values());
+    settleWorkflowMessages(turnsInOrder(session.turn_order, session.turns));
     return true;
   }
   const held = session.turns;
@@ -284,7 +284,7 @@ function applyPage(
   }
   session.turns = turns;
   session.turn_order = [...kept, ...page.order, ...arrived].filter((id) => turns.has(id));
-  settleWorkflowMessages(turns.values());
+  settleWorkflowMessages(turnsInOrder(session.turn_order, turns));
   return kept.length === 0;
 }
 
@@ -883,7 +883,7 @@ function applyTurnRange(
   if (held === undefined) {
     insertTurnByOrdinal(session, turnID, state);
   }
-  settleWorkflowMessages(session.turns.values());
+  settleWorkflowMessages(turnsInOrder(session.turn_order, session.turns));
   if (applied < entries.length) {
     // A second gap, re-asked only when this seat made PROGRESS: an answer that fitted nothing is
     // asked the same question forever, which a permanently undecodable entry serves, so that case

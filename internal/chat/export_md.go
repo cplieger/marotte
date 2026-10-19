@@ -136,7 +136,7 @@ func agentNoteRead(e *marotte.Entry) (id string, ok, dropped bool) {
 		}
 	case marotte.EntryKindSteerDelivered:
 		var d marotte.EntrySteerDelivered
-		if decodePayload(e, &d) && !d.Dropped && d.KASID != "" {
+		if decodePayload(e, &d) && d.KASID != "" {
 			return d.KASID, true, false
 		}
 	}
@@ -181,8 +181,10 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 		writeEventMarkdown(b, e)
 	case marotte.EntryKindTurnClose:
 		writeTurnCloseEntry(b, e)
-	case marotte.EntryKindTurnBind, marotte.EntryKindReconciled, marotte.EntryKindSteerDelivered:
-		// None renders: turn_bind is bookkeeping, reconciled a fact about the record, and steer_delivered a time on its message's row.
+	case marotte.EntryKindTurnBind, marotte.EntryKindReconciled, marotte.EntryKindSteerDelivered,
+		marotte.EntryKindSteerCleared:
+		// None renders: turn_bind is bookkeeping, reconciled a fact about the record, steer_delivered a time on its
+		// message's row, and steer_cleared an epoch's end.
 	}
 }
 

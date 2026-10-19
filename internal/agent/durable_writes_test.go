@@ -104,6 +104,11 @@ var durableWriteSites = []durableSite{{
 	calls:   []string{"appendLaneless"},
 	because: "when a workflow message was taken up, which no replay carries",
 }, {
+	file:    "internal/translate/workflow_message.go",
+	fn:      "appendCleared",
+	calls:   []string{"appendLaneless"},
+	because: "where a receiver's steering epoch ended, which no replay carries and the next clear's settling reads",
+}, {
 	file:    "internal/agent/queue_drain.go",
 	fn:      "holdUnread",
 	calls:   []string{"Mutate"},

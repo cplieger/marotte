@@ -418,7 +418,8 @@ func entrySegments(e *marotte.Entry, t *searchTurn) []segment {
 	case marotte.EntryKindTurnOpen:
 		return turnOpenSegments(e.Payload)
 	case marotte.EntryKindTurnBind, marotte.EntryKindSteerAck, marotte.EntryKindCompaction,
-		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindSteerDelivered:
+		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindSteerDelivered,
+		marotte.EntryKindSteerCleared:
 		// A compaction summary restates history searchable at its source; bind and switch render no text. An ack's words
 		// are the one rendered prose left out of the index.
 		return nil

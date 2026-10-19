@@ -322,7 +322,7 @@ func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
 	h, _, _ := newTestHub()
 	a, _ := h.stagePromptTurn(t, "c1")
 
-	h.coord.ReleaseStop(h.coord.RequestStop("c1"))
+	h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
 	endTurn(t, h, "c1", a)
 
 	if !h.coord.StopRequestedAfter("c1", a) {
@@ -336,8 +336,41 @@ func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
 		t.Error("StopRequestedAfter(a) = false once a later turn opened, want true")
 	}
 
-	h.coord.ReleaseStop(h.coord.RequestStop("c-never-opened"))
+	h.coord.ReleaseStop(h.coord.RequestStop("c-never-opened", marotte.TurnStopReader))
 	if _, ok := h.coord.turns.lookup("c-never-opened"); ok {
 		t.Error("a stop on a chat with no turns minted a lifecycle for it")
+	}
+}
+
+// A stop's cause is the one its issuer recorded, and none for a turn opened after it. A teardown's cause holds against
+// a later stop of the same turns, whose clear may still be the teardown's; a stop after a newer turn opened records
+// its own.
+func TestTurnRegistry_AStopCauseIsTheIssuersAndATeardownsHoldsForItsTurns(t *testing.T) {
+	h, _, _ := newTestHub()
+	a, _ := h.stagePromptTurn(t, "c1")
+	if got := h.coord.StopCauseAfter("c1", a); got != marotte.TurnStopNone {
+		t.Fatalf("StopCauseAfter(a) before any stop = %v, want none", got)
+	}
+
+	h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
+	if got := h.coord.StopCauseAfter("c1", a); got != marotte.TurnStopReader {
+		t.Errorf("StopCauseAfter(a) after the reader's stop = %v, want the reader", got)
+	}
+	h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopTeardown))
+	if got := h.coord.StopCauseAfter("c1", a); got != marotte.TurnStopTeardown {
+		t.Errorf("StopCauseAfter(a) after a teardown's stop = %v, want the teardown", got)
+	}
+	h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
+	if got := h.coord.StopCauseAfter("c1", a); got != marotte.TurnStopTeardown {
+		t.Errorf("StopCauseAfter(a) after the reader's stop of the same turn = %v, want the teardown still", got)
+	}
+	endTurn(t, h, "c1", a)
+	b, _ := h.stagePromptTurn(t, "c1")
+	if got := h.coord.StopCauseAfter("c1", b); got != marotte.TurnStopNone {
+		t.Errorf("StopCauseAfter(b) for a turn opened after the stops = %v, want none", got)
+	}
+	h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
+	if got := h.coord.StopCauseAfter("c1", b); got != marotte.TurnStopReader {
+		t.Errorf("StopCauseAfter(b) after the reader's stop of the newer turn = %v, want the reader", got)
 	}
 }

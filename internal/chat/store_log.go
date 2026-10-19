@@ -236,11 +236,11 @@ func (s *Store) All(ctx context.Context, chatID marotte.ChatID) ([]marotte.Entry
 	return out, err
 }
 
-// WaitingWorkflowMessages answers the chat's workflow messages no take-up has settled, oldest first.
-func (s *Store) WaitingWorkflowMessages(ctx context.Context, chatID marotte.ChatID) ([]marotte.WorkflowMessage, error) {
+// UnsettledWorkflowMessages answers the chat's workflow messages nothing has settled, oldest first.
+func (s *Store) UnsettledWorkflowMessages(ctx context.Context, chatID marotte.ChatID) ([]marotte.WorkflowMessage, error) {
 	var out []marotte.WorkflowMessage
 	err := s.readLog(ctx, chatID, func(l *EntryLog) error {
-		out = l.WaitingWorkflowMessages()
+		out = l.UnsettledWorkflowMessages()
 		return nil
 	})
 	return out, err

@@ -43,7 +43,7 @@ func interjections() []interjection {
 		})},
 		{"the receiver's take-up", delivered(&marotte.EntrySteerDelivered{SteerID: "wfmsg-1", KASID: "notify-1", ReadTs: 2})},
 		{"the peer's take-up", delivered(&marotte.EntrySteerDelivered{SteerID: "wfmsg-1", ReadTs: 2})},
-		{"a dropped take-up", delivered(&marotte.EntrySteerDelivered{SteerID: "wfmsg-1", ReadTs: 2, Dropped: true})},
+		{"a clear's settlement", delivered(&marotte.EntrySteerDelivered{SteerID: "wfmsg-1", ReadTs: 2, Cleared: true})},
 	}
 }
 

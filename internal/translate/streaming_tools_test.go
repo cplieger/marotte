@@ -1173,26 +1173,27 @@ func TestHandleToolCallUpdate_FailedKeepsExistingOutput(t *testing.T) {
 }
 
 // TestHandleToolCallUpdate_AFailureAfterTheReadersStopSettlesAborted pins the stop grade: KAS
-// settles a call its cancel stopped as `failed`, the reader's stop makes it `aborted`, and a
-// completion or a failure with no stop keeps KAS's status.
+// settles a call its cancel stopped as `failed`, a stop (the reader's or a teardown's) makes it
+// `aborted`, and a completion or a failure with no stop keeps KAS's status.
 func TestHandleToolCallUpdate_AFailureAfterTheReadersStopSettlesAborted(t *testing.T) {
 	t.Parallel()
 	const l6 = "This tool was interrupted before it reported a result, so it may or may not have taken effect."
 	cases := []struct {
-		name    string
-		status  string
-		want    marotte.ToolStatus
-		stopped bool
+		name   string
+		status string
+		want   marotte.ToolStatus
+		stop   marotte.TurnStopCause
 	}{
-		{name: "failed after the stop", status: "failed", stopped: true, want: marotte.ToolAborted},
+		{name: "failed after the stop", status: "failed", stop: marotte.TurnStopReader, want: marotte.ToolAborted},
+		{name: "failed after a teardown", status: "failed", stop: marotte.TurnStopTeardown, want: marotte.ToolAborted},
 		{name: "failed with no stop", status: "failed", want: marotte.ToolFailed},
-		{name: "completed after the stop", status: "completed", stopped: true, want: marotte.ToolCompleted},
+		{name: "completed after the stop", status: "completed", stop: marotte.TurnStopReader, want: marotte.ToolCompleted},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			tr, _, deps, events, chatID := primeToolCall(t)
-			deps.stopped = map[string]bool{deps.turns.chats[chatID].ID(): c.stopped}
+			deps.stopped = map[string]marotte.TurnStopCause{deps.turns.chats[chatID].ID(): c.stop}
 			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 				"toolCallId": "tc-1",
 				"status":     c.status,
@@ -1207,7 +1208,7 @@ func TestHandleToolCallUpdate_AFailureAfterTheReadersStopSettlesAborted(t *testi
 				t.Fatal("no tool_progress or tool_result frame emitted")
 			}
 			if got.Status != c.want {
-				t.Errorf("ToolCall.Status for a %q frame (stopped=%v) = %q, want %q", c.status, c.stopped, got.Status, c.want)
+				t.Errorf("ToolCall.Status for a %q frame (stop=%v) = %q, want %q", c.status, c.stop, got.Status, c.want)
 			}
 			if got.Output != l6+"\n" {
 				t.Errorf("ToolCall.Output = %q, want KAS's sentence kept on the card", got.Output)

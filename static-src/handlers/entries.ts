@@ -122,6 +122,7 @@ function afterAppend(chatID: string, entry: Entry): void {
     case "steer":
     case "steer_ack":
     case "steer_delivered":
+    case "steer_cleared":
     case "plan":
     case "compaction_failed":
     case "safety_blocked":

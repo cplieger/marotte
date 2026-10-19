@@ -5,8 +5,9 @@
 // It never touches disk or assigns a position: a seal hands the entry to the injected
 // Sink, which fills Seq and Ts. An append seals what it ends: a laned entry its own lane, a
 // boundary lane-less entry every lane, so within one lane plus those, seq order is arrival
-// order. A message entry (Steer, SteerDelivered) arrives on its own clock and seals nothing:
-// it takes the next seq, so it sits before the segment that was streaming when it arrived.
+// order. A message entry (Steer, SteerDelivered, SteerCleared) arrives on its own clock and
+// seals nothing: it takes the next seq, so it sits before the segment that was streaming when it
+// arrived.
 package turnlog
 
 import (
@@ -474,6 +475,13 @@ func (t *Turn) SteerDelivered(ctx context.Context, d *marotte.EntrySteerDelivere
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.interject(ctx, marotte.EntryKindSteerDelivered, marotte.SteerDeliveredID(d.SteerID), *d)
+}
+
+// SteerCleared appends a steering clear under id, an interjection like a take-up.
+func (t *Turn) SteerCleared(ctx context.Context, id string, c *marotte.EntrySteerCleared) ([]Sealed, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.interject(ctx, marotte.EntryKindSteerCleared, id, *c)
 }
 
 // TurnBind appends the id KAS holds the prompt under. Lane-less with no

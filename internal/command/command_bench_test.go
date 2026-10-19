@@ -28,8 +28,9 @@ type benchDeps struct {
 	thinkingDefaultOff map[string]bool
 	// tiers is the catalog's tier list per listed model; an absent model is unknown.
 	tiers map[string][]string
-	// stops is every chat RequestStop recorded, in order.
-	stops []marotte.ChatID
+	// stops is every chat RequestStop recorded, in order, and stopCauses each one's cause.
+	stops      []marotte.ChatID
+	stopCauses []marotte.TurnStopCause
 	// stopTargets is what RequestStop captures; stopSteps records each stop step and kill in order.
 	stopTargets TurnStop
 	stopSteps   []string
@@ -186,8 +187,9 @@ func (*benchDeps) TurnOpenedAfter(marotte.ChatID, string) bool { return false }
 
 func (*benchDeps) StopRequestedAfter(marotte.ChatID, string) bool { return false }
 
-func (d *benchDeps) RequestStop(chatID marotte.ChatID) *TurnStop {
+func (d *benchDeps) RequestStop(chatID marotte.ChatID, cause marotte.TurnStopCause) *TurnStop {
 	d.stops = append(d.stops, chatID)
+	d.stopCauses = append(d.stopCauses, cause)
 	d.stopSteps = append(d.stopSteps, "request")
 	stop := d.stopTargets
 	stop.Chat = chatID
@@ -329,7 +331,7 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 }
 
 // hostDouble is every role a handler declares, for this package's all-in-one test doubles only;
-// production has no aggregate over the roles (shape_test.go reads production files only).
+// production has no aggregate over the roles.
 type hostDouble interface {
 	bridgeAccess
 	chatStore

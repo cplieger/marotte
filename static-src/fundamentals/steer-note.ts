@@ -39,7 +39,12 @@ export interface SteerNoteData {
   tracked?: boolean;
   /** When the receiver took it up, epoch ms; absent while it waits. */
   deliveredAt?: number;
+  /** The receiver's buffer was emptied of it before anything proved it read. */
+  cleared?: boolean;
 }
+
+/** A cleared row's accessible wording: it says no more than marotte knows. */
+const CLEARED_NAME = "Cleared: the agent's queue was emptied before this was confirmed read";
 
 /** The labels, TOTAL over the origin so a new one needs wording. A dropped label states only what
  *  is known. */
@@ -92,12 +97,12 @@ function ariaNameFor(base: string, runLabel: string | undefined): string {
 
 export function buildSteerNote(d: SteerNoteData): HTMLElement {
   const label = labelFor(d);
-  const base = `${label}: ${oneLine(d.text)}`;
+  const base = `${cleared(d) ? `${label} \u00b7 ${CLEARED_NAME}` : label}: ${oneLine(d.text)}`;
   const named = d.run !== undefined && d.run !== "" ? d.runLabel : undefined;
 
   const root = el("div", {
     className: "steer-note",
-    "data-state": d.dropped ? "dropped" : "read",
+    "data-state": d.dropped ? "dropped" : cleared(d) ? "cleared" : "read",
     "data-origin": d.origin,
     // The full text: an accessible name has no width, and neither the glyph nor
     // the clamp carries the state on its own.
@@ -188,8 +193,9 @@ export function setSteerNoteRunLabel(note: HTMLElement, runLabel: string): void 
   }
 }
 
-/** A workflow message's two times: when it was sent, and when the receiver took it up or that it
- *  has not yet. A dropped message's label already says it was not delivered. Each clause is a
+/** A workflow message's two times: when it was sent, and when the receiver took it up, that its
+ *  buffer was cleared first, or that it waits. A dropped message's label already says it was not
+ *  delivered. Each clause is a
  *  `.steer-note-clause` the stylesheet keeps unbroken, so a wrap falls only after the dot. */
 function timesFor(d: SteerNoteData, sentAt: number): (string | HTMLElement)[] {
   const clause = (...parts: (string | HTMLElement)[]): HTMLElement =>
@@ -197,15 +203,30 @@ function timesFor(d: SteerNoteData, sentAt: number): (string | HTMLElement)[] {
   if (d.dropped || d.tracked !== true) {
     return [clause("Sent ", stamp(sentAt))];
   }
-  return [
-    clause("Sent ", stamp(sentAt), " \u00b7"),
-    " ",
-    delivered(d) ? clause("delivered ", stamp(d.deliveredAt ?? 0)) : clause("not delivered yet"),
-  ];
+  return [clause("Sent ", stamp(sentAt), " \u00b7"), " ", deliveryClause(d, clause)];
+}
+
+function deliveryClause(
+  d: SteerNoteData,
+  clause: (...parts: (string | HTMLElement)[]) => HTMLElement,
+): HTMLElement {
+  if (delivered(d)) {
+    return clause("delivered ", stamp(d.deliveredAt ?? 0));
+  }
+  if (cleared(d)) {
+    const c = clause("Cleared");
+    c.dataset["tooltip"] = CLEARED_NAME;
+    return c;
+  }
+  return clause("not delivered yet");
 }
 
 function delivered(d: SteerNoteData): boolean {
   return !d.dropped && d.deliveredAt !== undefined && d.deliveredAt > 0;
+}
+
+function cleared(d: SteerNoteData): boolean {
+  return d.cleared === true && d.tracked === true;
 }
 
 /** Seconds shown, because a take-up usually lands within the minute it was sent. */

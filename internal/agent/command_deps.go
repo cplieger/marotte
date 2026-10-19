@@ -152,9 +152,9 @@ func (rt *Runtime) StopRequestedAfter(chatID marotte.ChatID, turnID string) bool
 	return rt.coord.StopRequestedAfter(chatID, turnID)
 }
 
-// RequestStop records the reader's stop and captures the turns it targets.
-func (rt *Runtime) RequestStop(chatID marotte.ChatID) *command.TurnStop {
-	return rt.coord.RequestStop(chatID)
+// RequestStop records a stop for cause and captures the turns it targets.
+func (rt *Runtime) RequestStop(chatID marotte.ChatID, cause marotte.TurnStopCause) *command.TurnStop {
+	return rt.coord.RequestStop(chatID, cause)
 }
 
 // ReleaseStop lifts the stop's hold on the chat's sends.

@@ -53,7 +53,6 @@ func messageDeps(t *testing.T) (*baseDeps, *Translator) {
 	t.Helper()
 	deps, _, _ := depsWithStore(t, testChat)
 	deps.parent = testParent
-	deps.stepReading = map[marotte.ChatID]bool{}
 	tr := New(rolesOf(deps))
 	announceStep(t, tr)
 	return deps, tr
@@ -105,7 +104,9 @@ func TestWorkflowMessage_BufferedStepMessagesAreOneRowEach(t *testing.T) {
 	}
 }
 
-func TestWorkflowMessage_ParentToAnIdleStepIsDeliveredAtTheSend(t *testing.T) {
+// A parent's message to an idle step waits at its send, KAS wakes the step with it, and the wake turn's first frame on
+// the step's session settles it delivered in both logs.
+func TestWorkflowMessage_ParentToAnIdleStepIsDeliveredByItsWake(t *testing.T) {
 	deps, tr := messageDeps(t)
 	tr.HandleWorkflowMessage(t.Context(), testChat,
 		workflowNotify("parent", testParent, testStep, "info", "also check the tests"))
@@ -119,18 +120,27 @@ func TestWorkflowMessage_ParentToAnIdleStepIsDeliveredAtTheSend(t *testing.T) {
 		t.Errorf("row ids differ: chat %q, step %q", chat[0].ID, step[0].ID)
 	}
 	c := chat[0].EntrySteer
-	if c.Origin != marotte.SteerOriginParent || c.Step != "review" || c.State != marotte.SteerStateRead ||
-		c.ReadTs != c.ProducedTs || c.ProducedTs == 0 {
-		t.Errorf("chat row = %+v, want a read parent message to review, read at its send", c)
+	if c.Origin != marotte.SteerOriginParent || c.Step != "review" || c.State != "" || c.ReadTs != 0 || c.ProducedTs == 0 {
+		t.Errorf("chat row = %+v, want a waiting parent message to review with its send time", c)
 	}
-	if s := step[0].EntrySteer; s.Step != "" || s.Origin != marotte.SteerOriginParent {
-		t.Errorf("step row = %+v, want a parent message naming no step", s)
+	if s := step[0].EntrySteer; s.Step != "" || s.Origin != marotte.SteerOriginParent || s.ToSession != testStep {
+		t.Errorf("step row = %+v, want a parent message naming no step, sent to the step's session", s)
+	}
+
+	attr := testStepAttr()
+	turnStartOn(t, tr, attr)
+	wakeChunk(t, tr, "send-message-wake", attr)
+
+	if d := deliveredOf(t, deps.runEntries(testWfRun, attr.NodePath)); len(d) != 1 || d[0].SteerID != step[0].ID || d[0].Cleared {
+		t.Errorf("step stamps = %+v, want the message delivered at the wake", d)
+	}
+	if d := deliveredOf(t, allChatEntries(deps, testChat)); len(d) != 1 || d[0].SteerID != chat[0].ID || d[0].Cleared {
+		t.Errorf("chat stamps = %+v, want the chat's copy delivered too", d)
 	}
 }
 
 func TestWorkflowMessage_ParentToABusyStepIsDeliveredAtItsTakeUp(t *testing.T) {
 	deps, tr := messageDeps(t)
-	deps.stepReading[marotte.StepSteerKey(testStep)] = true
 	tr.HandleWorkflowMessage(t.Context(), testChat,
 		workflowNotify("parent", testParent, testStep, "info", "also check the tests"))
 	if r := stepRows(t, deps); len(r) != 1 || r[0].ReadTs != 0 {
@@ -159,7 +169,7 @@ func TestWorkflowMessage_IgnoresFramesThatAreNotThisChatsMessages(t *testing.T) 
 		chat marotte.ChatID
 		msg  *marotte.RPCResponse
 	}{
-		{"an unknown step", testChat, workflowNotify("step", "sess_other", testParent, "info", "hi")},
+		{"a parent message to an unknown step", testChat, workflowNotify("parent", testParent, "sess_other", "info", "hi")},
 		{"another chat's target", testChat, workflowNotify("step", testStep, "sess_elsewhere", "info", "hi")},
 		{"a parent message from elsewhere", testChat, workflowNotify("parent", "sess_elsewhere", testStep, "info", "hi")},
 		{"no sender", testChat, workflowNotify("", testStep, testParent, "info", "hi")},
@@ -179,7 +189,9 @@ func TestWorkflowMessage_IgnoresFramesThatAreNotThisChatsMessages(t *testing.T) 
 	}
 }
 
-func TestWorkflowMessage_StepInfoIsDeliveredAtTheSendOnlyToAnIdleParent(t *testing.T) {
+// A message waits at its send whatever the receiver is doing: marotte sees nothing then that says KAS woke or buffered
+// it.
+func TestWorkflowMessage_AMessageWaitsAtItsSendWhateverTheReceiverIsDoing(t *testing.T) {
 	deps, tr := messageDeps(t)
 	tr.HandleWorkflowMessage(t.Context(), testChat, workflowNotify("step", testStep, testParent, "info", "idle"))
 	deps.turns.chatTurn(testChat)
@@ -190,9 +202,8 @@ func TestWorkflowMessage_StepInfoIsDeliveredAtTheSendOnlyToAnIdleParent(t *testi
 		t.Fatalf("chat rows = %d, want 2", len(rows))
 	}
 	for _, r := range rows {
-		read := r.ReadTs != 0
-		if want := r.Text == "idle"; read != want {
-			t.Errorf("row %q delivered at send = %v, want %v", r.Text, read, want)
+		if r.ReadTs != 0 || r.State != "" {
+			t.Errorf("row %q at send = %+v, want waiting", r.Text, r.EntrySteer)
 		}
 	}
 }
@@ -231,7 +242,7 @@ func TestWorkflowMessage_IdenticalMessagesAreTakenUpOldestFirst(t *testing.T) {
 
 // TestWorkflowMessage_ATakenUpMessageTheTurnsClearNamesStaysDelivered pins the frames of a chat's turn whose step
 // report was taken up and whose boundary clear then named the take-up's id: the row stays delivered, the clear writes
-// no "Workflow result not delivered" row, and it settles no other waiting message dropped.
+// no "Workflow result not delivered" row, and the other waiting message reads cleared, never dropped.
 func TestWorkflowMessage_ATakenUpMessageTheTurnsClearNamesStaysDelivered(t *testing.T) {
 	deps, tr := messageDeps(t)
 	tr.HandleWorkflowMessage(t.Context(), testChat,
@@ -254,14 +265,17 @@ func TestWorkflowMessage_ATakenUpMessageTheTurnsClearNamesStaysDelivered(t *test
 		t.Fatalf("chat rows = %+v, want the two reports' rows and nothing the clear wrote", rows)
 	}
 	d := deliveredOf(t, deps.chatEntries(testChat))
-	if len(d) != 1 || d[0].SteerID != rows[0].ID || d[0].Dropped || d[0].KASID != "notify-feedda60" {
-		t.Errorf("chat stamps = %+v, want only the first report's take-up, delivered", d)
+	if len(d) != 2 || d[0].SteerID != rows[0].ID || d[0].Cleared || d[0].KASID != "notify-feedda60" {
+		t.Fatalf("chat stamps = %+v, want the first report's take-up, delivered, then the second's clear", d)
+	}
+	if d[1].SteerID != rows[1].ID || !d[1].Cleared {
+		t.Errorf("second report's stamp = %+v, want it cleared", d[1])
 	}
 }
 
-// A clear's ids join no message row (the notify frame carries no KAS id), so the row stays waiting for a later
-// take-up, and only the run notice, which no row holds, is recorded dropped.
-func TestWorkflowMessage_AClearedMessageStaysWaitingWithNoNewRow(t *testing.T) {
+// A boundary clear empties KAS's buffer, so the message it held reads cleared, and the run notice, which no row holds,
+// is recorded dropped beside it.
+func TestWorkflowMessage_ABoundaryClearClearsTheWaitingMessageAndRecordsTheRunNotice(t *testing.T) {
 	deps, tr := messageDeps(t)
 	tr.HandleWorkflowMessage(t.Context(), testChat,
 		workflowNotify("step", testStep, testParent, "success", "tests pass"))
@@ -277,16 +291,38 @@ func TestWorkflowMessage_AClearedMessageStaysWaitingWithNoNewRow(t *testing.T) {
 	if rows[0].Origin != marotte.SteerOriginStep || rows[1].ID != "notify-wf-2" || rows[1].State != marotte.SteerStateDropped {
 		t.Errorf("chat rows = %+v, want the step's row then the cleared run notice, dropped", rows)
 	}
-	if d := deliveredOf(t, deps.between[testChat]); len(d) != 0 {
-		t.Errorf("chat stamps = %+v, want none: no id names the message's row", d)
+	if d := deliveredOf(t, deps.between[testChat]); !clearedOnce(d) || d[0].SteerID != rows[0].ID {
+		t.Errorf("chat stamps = %+v, want the message's row cleared", d)
+	}
+}
+
+// A take-up pairs only with a message KAS still holds: a row with the same words left waiting before the receiver's
+// previous clear is out of KAS's buffer, so the newer row takes the stamp.
+func TestWorkflowMessage_ATakeUpSkipsAnIdenticalRowFromAnEndedEpoch(t *testing.T) {
+	deps, tr := messageDeps(t)
+	deps.turns.chatTurn(testChat)
+	tr.HandleWorkflowMessage(t.Context(), testChat,
+		workflowNotify("step", testStep, testParent, "success", "tests pass"))
+	tr.HandleSessionInfoUpdate(t.Context(), testChat, steerFrame(t, "steering_cleared", map[string]any{
+		"messageIds": []string{"steer-m-earlier"},
+	}), FrameAttribution{})
+	tr.HandleWorkflowMessage(t.Context(), testChat,
+		workflowNotify("step", testStep, testParent, "success", "tests pass"))
+	rows := steerRows(t, deps, testChat)
+	if len(rows) != 2 {
+		t.Fatalf("chat rows = %+v, want two", rows)
 	}
 
-	deps.turns.chatTurn(testChat)
 	tr.HandleSessionInfoUpdate(t.Context(), testChat, steerFrame(t, "steering_injected", map[string]any{
-		"messageId": "notify-3", "content": "[notification/success] tests pass", "notificationSeverity": "success",
+		"messageId": "notify-1", "content": "[notification/success] tests pass", "notificationSeverity": "success",
 	}), FrameAttribution{})
-	if d := deliveredOf(t, deps.chatEntries(testChat)); len(d) != 1 || d[0].SteerID != rows[0].ID || d[0].Dropped {
-		t.Errorf("take-up stamps = %+v, want the waiting row delivered", d)
+
+	stamps := stampsByRow(t, deps)
+	if d := stamps[rows[1].ID]; !deliveredOnce(d) || d[0].KASID != "notify-1" {
+		t.Errorf("current row stamps = %+v, want its take-up under KAS's id", d)
+	}
+	if d := stamps[rows[0].ID]; !clearedOnce(d) {
+		t.Errorf("ended epoch's row stamps = %+v, want only its own clear's", d)
 	}
 }
 
@@ -333,7 +369,6 @@ func TestWorkflowMessage_ATakeUpAfterARestartStampsTheRecordedRow(t *testing.T) 
 
 func TestWorkflowMessage_AChatsTakeUpSkipsTheMessageItSent(t *testing.T) {
 	deps, tr := messageDeps(t)
-	deps.stepReading[marotte.StepSteerKey(testStep)] = true
 	tr.HandleWorkflowMessage(t.Context(), testChat,
 		workflowNotify("parent", testParent, testStep, "info", "tests pass"))
 	tr.HandleWorkflowMessage(t.Context(), testChat,
@@ -360,8 +395,6 @@ func TestWorkflowMessage_AStepsTakeUpSettlesOnlyItsOwnMessage(t *testing.T) {
 		notif("_kiro/workflow/node_start", map[string]any{
 			"workflowId": testWfRun, "nodeId": "verify", "nodePath": []string{testWfRun, "verify"}, "sessionId": other,
 		}))
-	deps.stepReading[marotte.StepSteerKey(testStep)] = true
-	deps.stepReading[marotte.StepSteerKey(other)] = true
 	tr.HandleWorkflowMessage(t.Context(), testChat, workflowNotify("parent", testParent, testStep, "info", "go"))
 	tr.HandleWorkflowMessage(t.Context(), testChat, workflowNotify("parent", testParent, other, "info", "go"))
 
@@ -402,5 +435,40 @@ func TestWorkflowMessage_ALargeBarrageStampsEveryRowInOrder(t *testing.T) {
 		if delivered[i].SteerID != rows[i].ID || delivered[i].KASID != fmt.Sprintf("notify-%d", i) {
 			t.Errorf("stamp %d = %+v, want row %q under notify-%d", i, delivered[i], rows[i].ID, i)
 		}
+	}
+}
+
+// kasNotify is workflowNotify carrying the id KAS buffers the message under.
+func kasNotify(sender, caller, target, severity, message, notifyID string) *marotte.RPCResponse {
+	return notif("_kiro/session/notify", map[string]any{
+		"sessionId": target, "callerSessionId": caller, "message": message, "severity": severity,
+		"sender": sender, "workflowId": testWfRun, "nodeId": "review", "notifyId": notifyID,
+	})
+}
+
+// Every row of a message, the receiver's and the sender's, carries the notify frame's notifyId as kas_id, and none
+// when the frame carries none.
+func TestWorkflowMessage_EveryRowCarriesTheNotifyFramesID(t *testing.T) {
+	cases := []struct {
+		name   string
+		msg    *marotte.RPCResponse
+		wantID string
+	}{
+		{"step to chat", kasNotify("step", testStep, testParent, "success", "done", "notify-step-1"), "notify-step-1"},
+		{"chat to step", kasNotify("parent", testParent, testStep, "info", "go on", "notify-parent-1"), "notify-parent-1"},
+		{"no notifyId", workflowNotify("step", testStep, testParent, "success", "done"), ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			deps, tr := messageDeps(t)
+			tr.HandleWorkflowMessage(t.Context(), testChat, c.msg)
+			chat, step := steerRows(t, deps, testChat), stepRows(t, deps)
+			if len(chat) != 1 || len(step) != 1 {
+				t.Fatalf("rows: chat %+v, step %+v, want one each", chat, step)
+			}
+			if chat[0].KASID != c.wantID || step[0].KASID != c.wantID {
+				t.Errorf("kas_id: chat %q, step %q, want %q on both", chat[0].KASID, step[0].KASID, c.wantID)
+			}
+		})
 	}
 }

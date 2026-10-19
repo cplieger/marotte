@@ -35,7 +35,7 @@ func stagedCall(t *testing.T) (h *Runtime, turn command.TurnRef, callCtx context
 
 // stopNow is a stop whose cancel went out: its targets captured and its send hold lifted.
 func stopNow(h *Runtime) *command.TurnStop {
-	stop := h.coord.RequestStop("c1")
+	stop := h.coord.RequestStop("c1", marotte.TurnStopReader)
 	h.coord.ReleaseStop(stop)
 	return stop
 }
@@ -416,7 +416,7 @@ func TestArmStopGrace_KeepsAnAdmittedPromptUnsentWhereverItsOpenLands(t *testing
 	}{
 		{name: "opened after the cancel went out", want: command.ErrPromptStopped, act: func(t *testing.T, h *Runtime) error {
 			reservePrompt(t, h)
-			stop := h.coord.RequestStop("c1")
+			stop := h.coord.RequestStop("c1", marotte.TurnStopReader)
 			if !h.coord.ArmStopGrace(stop, stopGrace) {
 				t.Error("ArmStopGrace = false with an admitted prompt")
 			}
@@ -425,7 +425,7 @@ func TestArmStopGrace_KeepsAnAdmittedPromptUnsentWhereverItsOpenLands(t *testing
 		}},
 		{name: "opened while the cancel was going out", want: command.ErrPromptStopped, act: func(t *testing.T, h *Runtime) error {
 			reservePrompt(t, h)
-			stop := h.coord.RequestStop("c1")
+			stop := h.coord.RequestStop("c1", marotte.TurnStopReader)
 			id := startAdmitted(t, h)
 			if !h.coord.ArmStopGrace(stop, stopGrace) {
 				t.Error("ArmStopGrace = false with the admitted prompt's turn open")
@@ -435,7 +435,7 @@ func TestArmStopGrace_KeepsAnAdmittedPromptUnsentWhereverItsOpenLands(t *testing
 		}},
 		{name: "a later admission is not the stop's", act: func(t *testing.T, h *Runtime) error {
 			reservePrompt(t, h)
-			stop := h.coord.RequestStop("c1")
+			stop := h.coord.RequestStop("c1", marotte.TurnStopReader)
 			h.coord.ReleaseTurnReservation("c1")
 			reservePrompt(t, h)
 			if h.coord.ArmStopGrace(stop, stopGrace) {
@@ -446,7 +446,7 @@ func TestArmStopGrace_KeepsAnAdmittedPromptUnsentWhereverItsOpenLands(t *testing
 		}},
 		{name: "a cancel that never went out", act: func(t *testing.T, h *Runtime) error {
 			reservePrompt(t, h)
-			h.coord.ReleaseStop(h.coord.RequestStop("c1"))
+			h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
 			return openAdmitted(t, h)
 		}},
 	}
@@ -492,7 +492,7 @@ func TestRequestStop_AnAdmissionIsItsTargetOnlyWhenNothingElseRuns(t *testing.T)
 			defer shutdownHub(t, h)
 			seedChat(t, cs, "c1")
 			tc.admit(t, h)
-			stop := h.coord.RequestStop("c1")
+			stop := h.coord.RequestStop("c1", marotte.TurnStopReader)
 			defer h.coord.ReleaseStop(stop)
 			if got := stop.Admitted != 0; got != tc.want {
 				t.Errorf("the stop targets the admission = %v (Admitted %d), want %v", got, stop.Admitted, tc.want)
@@ -707,7 +707,7 @@ func TestAwaitPromptSend_ALaterAttemptAnswersTheStopsSinceTheFirst(t *testing.T)
 					t.Fatalf("Setup: the first attempt's gate = %v", err)
 				}
 				if tc.stop {
-					stop := h.coord.RequestStop("c1")
+					stop := h.coord.RequestStop("c1", marotte.TurnStopReader)
 					h.coord.ArmStopGrace(stop, stopGrace)
 					h.coord.ReleaseStop(stop)
 				}

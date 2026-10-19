@@ -213,19 +213,19 @@ func TestSteeringCleared_ANoteNeverHeldIsDroppedTextless(t *testing.T) {
 	}
 }
 
-// TestSteeringCleared_ANoteInjectedThisTurnStaysRead pins that a boundary clear naming agent notes KAS already
+// TestSteeringCleared_ANoteInjectedThisTurnStaysRead pins that a boundary clear naming run notices KAS already
 // injected writes no dropped row beside the read one, and that the next turn's clear judges the id afresh.
 func TestSteeringCleared_ANoteInjectedThisTurnStaysRead(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
-	for _, id := range []string{"notify-a", "notify-b"} {
+	for _, id := range []string{"notify-wf-a", "notify-wf-b"} {
 		tr.HandleSessionInfoUpdate(t.Context(), "c1",
 			steerFrame(t, "steering_injected", map[string]any{"messageId": id, "content": "subflux is done"}),
 			FrameAttribution{})
 	}
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1",
-		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{"notify-a", "notify-b"}}),
+		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{"notify-wf-a", "notify-wf-b"}}),
 		FrameAttribution{})
 
 	rows := steerRows(t, deps, "c1")
@@ -239,21 +239,28 @@ func TestSteeringCleared_ANoteInjectedThisTurnStaysRead(t *testing.T) {
 	}
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1",
-		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{"notify-a"}}),
+		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{"notify-wf-a"}}),
 		FrameAttribution{})
 	if rows := steerRows(t, deps, "c1"); len(rows) != 3 || rows[2].State != marotte.SteerStateDropped {
 		t.Errorf("after a later turn's clear, steer entries = %+v, want a third, dropped row", rows)
 	}
 }
 
-// TestSteeringCleared_EmptyListIsNotBroadcast pins silence on the normal empty clear.
-func TestSteeringCleared_EmptyListIsNotBroadcast(t *testing.T) {
+// An empty clear still empties the buffer, so it files its steer_cleared fact and nothing else.
+func TestSteeringCleared_AnEmptyClearFilesOnlyItsFact(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{}}), FrameAttribution{})
 
-	if len(*events) != 0 {
-		t.Errorf("broadcast %d events for an empty clear, want 0", len(*events))
+	if len(*events) != 1 {
+		t.Fatalf("broadcast %+v for an empty clear, want only its fact's entry", *events)
+	}
+	p, ok := (*events)[0].Payload.(marotte.EntryAppendedPayload)
+	if !ok || p.Entry.Kind != marotte.EntryKindSteerCleared {
+		t.Fatalf("event = %+v, want the steer_cleared entry", (*events)[0])
+	}
+	if c := decodePayload[marotte.EntrySteerCleared](t, &p.Entry); c.IDs == nil || len(c.IDs) != 0 {
+		t.Errorf("fact = %+v, want an empty, non-null id list", c)
 	}
 }
 

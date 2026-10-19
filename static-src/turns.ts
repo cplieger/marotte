@@ -149,7 +149,8 @@ export function turnIsDrawn(t: TurnState): boolean {
       e.kind === "turn_bind" ||
       e.kind === "tool_result" ||
       e.kind === "turn_close" ||
-      e.kind === "reconciled"
+      e.kind === "reconciled" ||
+      e.kind === "steer_cleared"
     ) {
       continue;
     }

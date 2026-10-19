@@ -509,8 +509,8 @@ func TestStepSteer_ARetryRestartKeepsTheQueuedSteer(t *testing.T) {
 	if replay := h.bus.steers.list(""); len(replay) != 1 {
 		t.Errorf("connect replay after the restart = %d frames, want the queued row", len(replay))
 	}
-	if !h.runs.RunStepReading(marotte.StepSteerKey("sess_step")) {
-		t.Error("RunStepReading after the restart = false, want the step still reading its buffer")
+	if !h.runs.steers.recs.stepOpen(marotte.StepSteerKey("sess_step")) {
+		t.Error("step open after the restart = false, want the step still reading its buffer")
 	}
 }
 

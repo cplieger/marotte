@@ -29,13 +29,13 @@ func (*InMemoryChatStore) EmptyCompactions(context.Context, marotte.ChatID) (int
 	return 0, nil
 }
 
-// WaitingWorkflowMessages answers none.
-func (*RecordingChatStore) WaitingWorkflowMessages(context.Context, marotte.ChatID) ([]marotte.WorkflowMessage, error) {
+// UnsettledWorkflowMessages answers none.
+func (*RecordingChatStore) UnsettledWorkflowMessages(context.Context, marotte.ChatID) ([]marotte.WorkflowMessage, error) {
 	return nil, nil
 }
 
-// WaitingWorkflowMessages answers none.
-func (*InMemoryChatStore) WaitingWorkflowMessages(context.Context, marotte.ChatID) ([]marotte.WorkflowMessage, error) {
+// UnsettledWorkflowMessages answers none.
+func (*InMemoryChatStore) UnsettledWorkflowMessages(context.Context, marotte.ChatID) ([]marotte.WorkflowMessage, error) {
 	return nil, nil
 }
 

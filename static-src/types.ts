@@ -149,6 +149,7 @@ import type {
   EntrySafetyBlocked,
   EntrySteer,
   EntrySteerAck,
+  EntrySteerCleared,
   EntrySteerDelivered,
   EntryText,
   EntryThinking,
@@ -183,6 +184,7 @@ export interface EntryPayload {
   steer: EntrySteer;
   steer_ack: EntrySteerAck;
   steer_delivered: EntrySteerDelivered;
+  steer_cleared: EntrySteerCleared;
   plan: EntryPlan;
   compaction: EntryCompaction;
   compaction_failed: EntryCompactionFailed;

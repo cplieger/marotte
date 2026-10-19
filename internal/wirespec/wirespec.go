@@ -59,6 +59,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.EntrySteer](),
 	wiregen.TypeRef[marotte.EntrySteerAck](),
 	wiregen.TypeRef[marotte.EntrySteerDelivered](),
+	wiregen.TypeRef[marotte.EntrySteerCleared](),
 	wiregen.TypeRef[marotte.EntryPlan](),
 	wiregen.TypeRef[marotte.EntryCompaction](),
 	wiregen.TypeRef[marotte.EntryCompactionFailed](),

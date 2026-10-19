@@ -38,6 +38,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, 
 	if !ok {
 		return
 	}
+	t.workflowMessageWoke(ctx, chatID, attr, tc.Meta.Kiro.AgentInitiatedReason)
 	// The create frame does NOT adopt content.output: the following update repeats it.
 	content := t.parseToolUpdateContent(tc.ToolCallID, tc.Content)
 	call := toolCallFromWire(&tc, tc.Meta.Kiro.AgentSubtaskID, content, time.Now().UnixMilli())
@@ -381,10 +382,10 @@ func toolCallContentOutput(tu *acpToolCallUpdateWire, content toolUpdateContent)
 	return content.output
 }
 
-// gradeStoppedCall settles a `failed` that lands after the reader's stop on this turn as `aborted`:
-// KAS maps Canceled and Error both to `failed`, and the stop is marotte's own fact. Never clears.
+// gradeStoppedCall settles a `failed` that lands after a stop on this turn as `aborted`: KAS maps
+// Canceled and Error both to `failed`, and the stop is marotte's own fact. Never clears.
 func (t *Translator) gradeStoppedCall(chatID marotte.ChatID, turn *turnlog.Turn, tc *marotte.ToolCall) {
-	if tc.Status == marotte.ToolFailed && t.turns.StopRequestedAfter(chatID, turn.ID()) {
+	if tc.Status == marotte.ToolFailed && t.turns.StopCauseAfter(chatID, turn.ID()) != marotte.TurnStopNone {
 		tc.Status = marotte.ToolAborted
 	}
 }

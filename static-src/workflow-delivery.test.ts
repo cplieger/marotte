@@ -1,10 +1,11 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { buildSteerNote, type SteerNoteData } from "./fundamentals/steer-note.js";
-import type { Entry, TurnState } from "./types.js";
+import type { Entry, EntrySteer, TurnState } from "./types.js";
 import {
   groupWorkflowUpdates,
   releaseWorkflowTakeUps,
   settleWorkflowMessages,
+  turnsInOrder,
 } from "./workflow-delivery.js";
 
 const SENT = Date.UTC(2026, 9, 9, 12, 0, 5);
@@ -72,6 +73,17 @@ describe("a workflow message's row", () => {
     expect(row.dataset["delivered"]).toBe("false");
   });
 
+  it("says Cleared, neutrally, for a message its buffer was emptied of before anything proved it read", () => {
+    const row = note({ step: "review", sentAt: SENT, tracked: true, cleared: true });
+    expect(times(row)).toBe(`Sent ${clock(SENT)} \u00b7 Cleared`);
+    expect(label(row)).toBe("review");
+    expect(row.dataset["state"]).toBe("cleared");
+    expect(row.dataset["delivered"]).toBe("false");
+    expect(row.getAttribute("aria-label")).toBe(
+      "review \u00b7 Cleared: the agent's queue was emptied before this was confirmed read: part 1 done",
+    );
+  });
+
   it("states only when a KAS notice was sent, since it was logged when read and has no take-up to wait for", () => {
     const row = note({ sentAt: SENT });
     expect(times(row)).toBe(`Sent ${clock(SENT)}`);
@@ -110,7 +122,7 @@ describe("settling a resident row", () => {
     });
   });
 
-  it("writes a clear as the dropped state with no read time", () => {
+  it("writes a clear as cleared, with no state and no read time", () => {
     const r = row();
     settleWorkflowMessages([
       turn(
@@ -118,16 +130,15 @@ describe("settling a resident row", () => {
         entry("wfmsg-a:delivered", "steer_delivered", {
           steer_id: "wfmsg-a",
           read_ts: LATER,
-          dropped: true,
+          cleared: true,
         }),
       ),
     ]);
     expect(r.payload).toEqual({
       text: "done",
       origin: "step",
-      state: "dropped",
-      reason: "boundary",
       produced_ts: SENT,
+      cleared: true,
     });
   });
 
@@ -144,6 +155,111 @@ describe("settling a resident row", () => {
     );
     releaseWorkflowTakeUps([takeUp], [turn(r)]);
     expect(r.payload).toEqual({ text: "done", origin: "step", produced_ts: SENT });
+  });
+
+  it("returns a cleared row to waiting when the turn holding its clear is released", () => {
+    const r = row();
+    const clear = turn(
+      entry("wfmsg-a:delivered", "steer_delivered", {
+        steer_id: "wfmsg-a",
+        read_ts: LATER,
+        cleared: true,
+      }),
+    );
+    settleWorkflowMessages([turn(r), clear]);
+    expect(r.payload).toMatchObject({ cleared: true });
+
+    releaseWorkflowTakeUps([clear], [turn(r)]);
+
+    expect(r.payload).toEqual({ text: "done", origin: "step", produced_ts: SENT });
+  });
+
+  const sentTo = (id: string, session?: string): Entry =>
+    entry(id, "steer", {
+      text: id,
+      origin: "step",
+      produced_ts: SENT,
+      ...(session === undefined ? {} : { to_session: session }),
+    });
+  const clearOf = (id: string, session: string): Entry => ({
+    ...entry(id, "steer_cleared", { cause: "boundary", session, ids: [] }),
+    ts: LATER,
+  });
+  const cleared = (id: string): EntrySteer => ({
+    text: id,
+    origin: "step",
+    produced_ts: SENT,
+    to_session: "sess-a",
+    cleared: true,
+  });
+
+  it("settles from a clear's fact alone each row sent to its session before it", () => {
+    const before = sentTo("wfmsg-before", "sess-a");
+    const other = sentTo("wfmsg-other", "sess-b");
+    const sessionless = sentTo("wfmsg-sessionless");
+    const after = sentTo("wfmsg-after", "sess-a");
+    const untouched = [other, sessionless, after].map((e) => e.payload);
+
+    settleWorkflowMessages([
+      turn(before, other, sessionless),
+      turn(clearOf("cleared-1", "sess-a"), after),
+    ]);
+
+    expect(before.payload).toEqual(cleared("wfmsg-before"));
+    expect([other, sessionless, after].map((e) => e.payload)).toEqual(untouched);
+  });
+
+  it("keeps a take-up that came before the clear, and lets a later one replace the clear", () => {
+    const early = sentTo("wfmsg-early", "sess-a");
+    const late = sentTo("wfmsg-late", "sess-a");
+    const takeUp = (id: string): Entry =>
+      entry(`${id}:delivered`, "steer_delivered", { steer_id: id, read_ts: SENT + 1 });
+
+    settleWorkflowMessages([
+      turn(
+        early,
+        late,
+        takeUp("wfmsg-early"),
+        clearOf("cleared-1", "sess-a"),
+        takeUp("wfmsg-late"),
+      ),
+    ]);
+
+    for (const r of [early, late]) {
+      expect(r.payload).toMatchObject({ state: "read", read_ts: SENT + 1 });
+      expect(r.payload).not.toHaveProperty("cleared");
+    }
+  });
+
+  it("returns the rows a released clear settled to waiting and keeps an earlier held clear's", () => {
+    const first = sentTo("wfmsg-first", "sess-a");
+    const second = sentTo("wfmsg-second", "sess-a");
+    const held = turn(first, clearOf("cleared-1", "sess-a"), second);
+    const released = turn(clearOf("cleared-2", "sess-a"));
+    settleWorkflowMessages([held, released]);
+    expect(second.payload).toEqual(cleared("wfmsg-second"));
+
+    releaseWorkflowTakeUps([released], [held]);
+
+    expect(first.payload).toEqual(cleared("wfmsg-first"));
+    expect(second.payload).toEqual({
+      text: "wfmsg-second",
+      origin: "step",
+      produced_ts: SENT,
+      to_session: "sess-a",
+    });
+  });
+
+  it("reads turns in the order their ids name, then any held turn the order leaves out", () => {
+    const a = turn();
+    const b = turn();
+    const c = turn();
+    const held = new Map([
+      ["b", b],
+      ["c", c],
+      ["a", a],
+    ]);
+    expect(turnsInOrder(["a", "b", "missing"], held)).toEqual([a, b, c]);
   });
 
   it("leaves a row no take-up names", () => {

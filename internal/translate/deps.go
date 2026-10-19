@@ -22,9 +22,10 @@ type turnAccess interface {
 	// PromptTurn returns the chat's prompt-class turn awaiting or holding its
 	// bracket, the one a turn_bind joins; false when none is open.
 	PromptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool)
-	// StopRequestedAfter reports whether the reader asked to stop after the named turn
-	// opened; false for a turn the chat does not hold (a run's step turn).
-	StopRequestedAfter(chatID marotte.ChatID, turnID string) bool
+	// StopCauseAfter is the stop cause recorded for the chat's turns at or after the named turn's
+	// open (the newest stop's, a teardown's holding against a later stop of the same turns); none
+	// for no such stop or a turn the chat does not hold (a run's step turn).
+	StopCauseAfter(chatID marotte.ChatID, turnID string) marotte.TurnStopCause
 	// AppendBetweenTurns files a chat's lane-less entry after its newest turn's
 	// turn_close, minting a closed event carrier on an empty log. The carrier's
 	// turn_open and turn_close, when it minted one, come back for the announcement.
@@ -68,18 +69,20 @@ type RunAppender interface {
 	// RunNodePaused ends the step's steering turn at its node_paused: the execution reading the
 	// buffer has stopped. The log's turn stays open.
 	RunNodePaused(ctx context.Context, runID string, path []string)
+	// RunPlanUpdate records a run's queued plan revision, or settles it with KAS's outcome.
+	RunPlanUpdate(ctx context.Context, chatID marotte.ChatID, runID string, u marotte.RunPlanUpdate)
 	// RunSteer files a step steer's durable entry in the path's open turn, else after its newest
 	// closed one.
 	RunSteer(ctx context.Context, runID, nodePath, steerID string, steer *marotte.EntrySteer)
-	// RunSteerDelivered files a workflow message's take-up where RunSteer would file a steer.
-	RunSteerDelivered(ctx context.Context, runID, nodePath string, d *marotte.EntrySteerDelivered)
-	// RunWaitingWorkflowMessages is the run log's workflow messages no take-up has settled, oldest
-	// first, every step's.
-	RunWaitingWorkflowMessages(ctx context.Context, runID string) ([]marotte.WorkflowMessage, error)
-	// RunPlanUpdate records a run's queued plan revision, or settles it with KAS's outcome.
-	RunPlanUpdate(ctx context.Context, chatID marotte.ChatID, runID string, u marotte.RunPlanUpdate)
-	// RunStepReading reports whether the step a StepSteerKey names is mid-turn, reading its buffer.
-	RunStepReading(key marotte.ChatID) bool
+	// RunSteerDelivered files a workflow message's take-up where RunSteer would file a steer, and
+	// reports whether it landed.
+	RunSteerDelivered(ctx context.Context, runID, nodePath string, d *marotte.EntrySteerDelivered) bool
+	// RunSteerCleared files a step's steering clear under clearID where RunSteer would file a steer,
+	// and reports whether it landed.
+	RunSteerCleared(ctx context.Context, runID, nodePath, clearID string, c *marotte.EntrySteerCleared) bool
+	// RunUnsettledWorkflowMessages is the run log's workflow messages nothing has settled
+	// (marotte.WorkflowMessageFold.Unsettled), oldest first, every step's.
+	RunUnsettledWorkflowMessages(ctx context.Context, runID string) ([]marotte.WorkflowMessage, error)
 }
 
 // turnBoundary is the wire's own turn bracket, which KAS emits for every
@@ -145,8 +148,9 @@ type chatRecords interface {
 	// EmptyCompactions is how many empty-summary compaction entries the chat's log
 	// holds, which numbers the next one's id.
 	EmptyCompactions(ctx context.Context, id marotte.ChatID) (int, error)
-	// WaitingWorkflowMessages is the chat log's workflow messages no take-up has settled, oldest first.
-	WaitingWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
+	// UnsettledWorkflowMessages is the chat log's workflow messages nothing has settled
+	// (marotte.WorkflowMessageFold.Unsettled), oldest first.
+	UnsettledWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
 	// DepartedName is the name a chat had when its record was deleted, for a notice
 	// its bridge raises before teardown; false for a chat that was not deleted.
 	DepartedName(id marotte.ChatID) (string, bool)
@@ -307,6 +311,7 @@ type Translator struct {
 	// wire (node_start) and from an inspect read.
 	steps     *stepRegistry
 	read      *readSteers
+	wakes     *wakeLedger
 	slotWaits *slotWaits
 	workDir   string // last for fieldalignment, as in Roles
 }
@@ -339,6 +344,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		metering:       r.Metering,
 		steps:          newStepRegistry(),
 		read:           newReadSteers(),
+		wakes:          newWakeLedger(),
 		slotWaits:      &slotWaits{},
 	}
 	for _, o := range opts {

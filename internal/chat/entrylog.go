@@ -614,7 +614,7 @@ func (l *EntryLog) observeLocked(e *marotte.Entry, start, end int64) error {
 			return err
 		}
 		return st.observeMessage(e, start)
-	case marotte.EntryKindSteerDelivered:
+	case marotte.EntryKindSteerDelivered, marotte.EntryKindSteerCleared:
 		return st.observeMessage(e, start)
 	case marotte.EntryKindTurnBind:
 		return l.foldTurnBindLocked(e)
@@ -806,7 +806,7 @@ func drawnBy(e *marotte.Entry, plans int) bool {
 	switch e.Kind {
 	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnBind,
 		marotte.EntryKindToolResult, marotte.EntryKindTurnClose,
-		marotte.EntryKindReconciled:
+		marotte.EntryKindReconciled, marotte.EntryKindSteerCleared:
 		return false
 	case marotte.EntryKindPlan:
 		return plans == 0
@@ -1269,12 +1269,12 @@ func (l *EntryLog) TurnHighWater() uint64 {
 	return uint64(len(l.order))
 }
 
-// WaitingWorkflowMessages answers the surviving workflow messages no surviving take-up has settled, oldest first.
-func (l *EntryLog) WaitingWorkflowMessages() []marotte.WorkflowMessage {
+// UnsettledWorkflowMessages answers the surviving workflow messages no surviving fact has settled, oldest first.
+func (l *EntryLog) UnsettledWorkflowMessages() []marotte.WorkflowMessage {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	fold := l.messagesLocked()
-	return fold.Waiting()
+	return fold.Unsettled()
 }
 
 // messagesLocked folds the surviving turns' workflow-message lines in file order, so a rewind is the one owner of
