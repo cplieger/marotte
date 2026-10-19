@@ -368,6 +368,14 @@ type holdStep struct {
 	rehydrates bool
 	// servesLive: the release live after the last step's try serves this step's opening edge.
 	servesLive bool
+	// chainTry: the last step's failed sweep try is tried again in this one by its chain (retryResumeLater), which
+	// the step waits for, since a try that only holds the run again changes nothing it could see.
+	chainTry bool
+	// engineSweeps: the next engine's resume of the runs the last one interrupted sweeps the run, which the step waits
+	// for, as it may only hold the run again.
+	engineSweeps bool
+	// finderSettles: a restart's chat rehydrate starts once the boot's finder spent its failing reads.
+	finderSettles bool
 }
 
 // The ERRORs a cell's failing readers log.
@@ -409,8 +417,11 @@ type holdSim struct {
 	entry   bool
 	open    bool
 	// reload: a chat's session is marked for its reload (signsIn); freshMark: the current step's sign-in made the
-	// only mark pending; live: a release live after its try serves the next opening edge (crossRepausedLive).
-	reload, freshMark, live bool
+	// only mark pending; live: a release live after its try serves the next opening edge (crossRepausedLive);
+	// chainNext: the next step is a sweep chain's later try after the last step's failed one; sweepNext: the next
+	// step's engine end resumes the run through a sweep; finderEarly: the round's dead finder settles in its first
+	// step, finderMoved once a block ended that step.
+	reload, freshMark, live, chainNext, sweepNext, finderEarly, finderMoved bool
 	// fired records whether each armed fault, crossing and race order acted.
 	readFired, writeFired, crossFired, orderFired bool
 }
@@ -479,7 +490,8 @@ func (s *holdSim) state() holdState { return holdState{kas: s.kas, heal: s.entry
 
 // begin starts the next step.
 func (s *holdSim) begin(ev holdEvent, text string) {
-	s.cur = holdStep{ev: ev, text: text}
+	s.cur = holdStep{ev: ev, text: text, chainTry: s.chainNext, engineSweeps: s.sweepNext}
+	s.chainNext, s.sweepNext = false, false
 	s.freshMark = signsIn(ev) && s.c.chat() && !s.reload
 	if signsIn(ev) && s.c.chat() {
 		s.reload = true
@@ -494,6 +506,13 @@ func (s *holdSim) end() {
 
 // block closes the current step held at a read, at the simulated state, and starts the retry's step.
 func (s *holdSim) block(note string) {
+	if s.finderEarly {
+		// The boot's finder spent its failing reads before the rehydrate this step holds started.
+		s.finderEarly, s.finderMoved = false, true
+		s.cur.loud = append(s.cur.loud, findSpentLog)
+		s.cur.settleRead = true
+		s.cur.text += "; the finder's failing reads settle first"
+	}
 	s.cur.text += "; " + note
 	s.cur.blocked = true
 	s.end()
@@ -536,6 +555,7 @@ func (s *holdSim) holdReads(ev holdEvent) (next holdEvent, asks, forms bool) {
 		if s.c.gate() {
 			return ev, false, true
 		}
+		s.chainNext = true
 		return evRetry, false, true
 	case readEntryOnce:
 		s.entryRead(entry, "")
@@ -569,6 +589,7 @@ func (s *holdSim) entryRead(ev holdEvent, lead string) {
 	s.begin(ev, text)
 	s.cur.blocked, s.cur.failsEntry = true, true
 	s.end()
+	s.chainNext = true
 }
 
 // chatEntryRead is whether a chat's rehydrate at a restart or an engine's end lists the runs while the readEntryOnce
@@ -763,6 +784,7 @@ func (s *holdSim) engineEnd() {
 	if (s.c.chat() && s.kas.holds()) || (!s.c.gate() && !s.c.chat() && s.c.held != heldDeleted) {
 		r.healer = healerSweep
 	}
+	s.sweepNext = r.healer == healerSweep && !s.chatEntryRead(true)
 	s.roundAfterEntry(evEngineEnd, "the engine ends, and the next one resumes the runs it interrupted", r,
 		s.chatEntryRead(true))
 }
@@ -824,6 +846,12 @@ func (s *holdSim) round(ev holdEvent, text string, r releasers) {
 	// The finder of every paused run reads a heal's run too, and releases nothing of it.
 	healListed := !s.c.gate() && findsEveryPaused(ev) && s.kas.listedPaused()
 	finderDead := (r.finder || healListed) && failsFinder(s.read)
+	if finderDead && (r.healer == healerHeld ||
+		(r.healer == healerSweep && s.c.chat() && (ev == evRestartOpen || ev == evRestartClosed))) {
+		// The cell lets a held release try again, or starts a restart's chat rehydrate, once the dead finder spent its
+		// failing reads.
+		s.cur.finderSettles, s.finderEarly = true, true
+	}
 	if finderDead && (healListed || r.healer != healerNone) {
 		// Else a heal resuming it first leaves the finder's list reading it running, with nothing to read.
 		s.cur.finderFirst = true
@@ -836,6 +864,8 @@ func (s *holdSim) round(ev holdEvent, text string, r releasers) {
 	healReadComes := r.healer != healerNone || finderHealRead
 	if (r.finder || r.healer != healerNone) && (s.read == readFirstOnce || (s.read == readHealOnce && healReadComes)) {
 		s.read, s.readFired = readNone, true
+		// A sweep's failed first try is tried again by its chain (retryResumeLater), in the next step.
+		s.chainNext = r.healer == healerSweep && !r.finder
 		s.block("its first read fails, held there")
 	}
 	finderReads := r.finder && !finderDead
@@ -874,7 +904,13 @@ func (s *holdSim) round(ev holdEvent, text string, r releasers) {
 	if s.open {
 		s.live = false
 	}
-	if finderDead && !slices.Contains(loud, findSpentLog) {
+	// A block moved the dead finder's ERROR to the round's first step (block); else it is this one.
+	moved := s.finderMoved
+	s.finderEarly, s.finderMoved = false, false
+	if moved {
+		deadRead = healDead && healReadComes
+	}
+	if finderDead && !moved && !slices.Contains(loud, findSpentLog) {
 		loud = append(loud, findSpentLog)
 	}
 	if deadRead {
@@ -955,6 +991,8 @@ func (s *holdSim) release(r releasers, finderHeals, healerHeals bool) []string {
 	// mark that lands after the release's first write reloads the session at the next one.
 	firstSweeps := (healerHeals && r.healer == healerSweep) || (s.c.chat() && s.reload && !late)
 	sweeps := (healerHeals && r.healer == healerSweep) || (s.c.chat() && s.reload)
+	// A chat sweep's own first write reloads the session, so the reload's rehydrate is a second sweep and chain.
+	twoSweeps := healerHeals && r.healer == healerSweep && s.c.chat() && s.reload
 	if s.c.chat() {
 		s.reload = false
 	}
@@ -989,7 +1027,11 @@ func (s *holdSim) release(r releasers, finderHeals, healerHeals bool) []string {
 			// A sweep's tries outnumber the heals left, so they spend the budget, and their parks are lost too.
 			s.claims = maxAutoHeals
 			s.cur.text += "; every release write is lost, and the sweep's tries spend the heal budget and lose their parks"
-			return s.spentLoud(loops > 0, true)
+			loud := s.spentLoud(loops > 0, true)
+			if twoSweeps {
+				loud = append(loud, resweepSpentLog)
+			}
+			return loud
 		}
 		s.claims += loops
 		s.cur.text += "; every resume write is lost until its tries are spent"
@@ -1313,6 +1355,12 @@ type kasRun struct {
 	lastCall atomic.Int64
 	// resumeWrites counts the resume writes sent, before any fault or hold acts on one.
 	resumeWrites atomic.Int32
+	// chainLists counts a chat's sweep chain's later lists (retryResumeLater), chainListedPaused whether the last
+	// one listed the run paused, so that try reads it.
+	chainLists        atomic.Int32
+	chainListedPaused bool
+	// sweepListedPaused: the last list of a chat's sweep listed the run paused.
+	sweepListedPaused bool
 }
 
 func (k *kasRun) runningState() {
@@ -1426,6 +1474,11 @@ func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, 
 			k.finderLists.Add(1)
 		case "resumeChainRuns":
 			k.sweepLists.Add(1)
+			k.sweepListedPaused = !k.gone && k.status == marotte.RunStatusPaused
+			if retryOf() == retryChat {
+				k.chainListedPaused = !k.gone && k.status == marotte.RunStatusPaused
+				k.chainLists.Add(1)
+			}
 		case "sweepPause":
 			k.closingLists.Add(1)
 		}
@@ -1820,8 +1873,23 @@ type cellFaults struct {
 	// tryHold, when set, holds the next release try that wrote the run's resume after it ended, the release still
 	// live (crossRepausedLive).
 	tryHold *holdBlock
+	// markWait, when set, holds a release's next wait to retry until a late sign-in's reload mark landed, so its next
+	// write reloads the chat's session (orderMarkLate); finderWait, for the step, each wait until the dead finder
+	// spent its failing reads.
+	markWait   func()
+	finderWait func()
 	// rehydrateRead closes at the next heal read of a chat's sweep (resumeChainRuns).
 	rehydrateRead chan struct{}
+	// heldReads counts the transition reads held in the hook now, each under its run's resume lock; healReads every
+	// heal read the hook saw.
+	heldReads atomic.Int32
+	healReads int
+}
+
+func (f *cellFaults) healReadCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.healReads
 }
 
 // newHold is a hold the cell's step lets go of, and the runtime's stop too.
@@ -1880,16 +1948,23 @@ func onReleaseTry(t *testing.T, h *Runtime, fn func(out resumeOutcome)) (unhook 
 const flapWait = time.Hour
 
 // releaseWait is a runtime's release-wait hook: the wait after the crossing's lost write is flapWait, every other
-// release's wait its backoff gap.
+// release's wait its backoff gap; an armed markWait and finderWait run first.
 func (f *cellFaults) releaseWait(gap time.Duration) time.Duration {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if !f.flapGap {
-		return gap
+	mark, finder := f.markWait, f.finderWait
+	f.markWait = nil
+	if f.flapGap {
+		f.flapGap, gap = false, flapWait
+		close(f.gapReached)
 	}
-	f.flapGap = false
-	close(f.gapReached)
-	return flapWait
+	f.mu.Unlock()
+	if mark != nil {
+		mark()
+	}
+	if finder != nil {
+		finder()
+	}
+	return gap
 }
 
 // onFlapWrite records the crossing's lost write.
@@ -1998,7 +2073,9 @@ func (f *cellFaults) failOnceLocked() error {
 	b := f.blockLocked()
 	f.mu.Unlock()
 	close(b.reached)
+	f.heldReads.Add(1)
 	<-b.retried
+	f.heldReads.Add(-1)
 	return errHoldReadFault
 }
 
@@ -2018,6 +2095,9 @@ func (f *cellFaults) hook(rs *Runs) func(want runWant, seen runSeen) error {
 		}
 		if want == gateFind {
 			f.finds++
+		}
+		if want == healResume {
+			f.healReads++
 		}
 		if want == gateFind && f.finderRead != nil {
 			close(f.finderRead)
@@ -2066,7 +2146,9 @@ func (f *cellFaults) hook(rs *Runs) func(want runWant, seen runSeen) error {
 			b := f.blockLocked()
 			f.mu.Unlock()
 			close(b.reached)
+			f.heldReads.Add(1)
 			<-b.retried
+			f.heldReads.Add(-1)
 			return nil
 		}
 		cross := f.cross
@@ -2384,6 +2466,13 @@ func (c *holdCell) signInStep(t *testing.T, late bool, afterOpen func()) {
 	case late:
 		mark = c.f.newHold()
 		c.markHold.Store(mark)
+		c.f.mu.Lock()
+		c.f.markWait = func() {
+			for deadline := time.Now().Add(5 * time.Second); c.marks.Load() <= marks && time.Now().Before(deadline); {
+				time.Sleep(time.Millisecond)
+			}
+		}
+		c.f.mu.Unlock()
 	default:
 		c.h.runs.gate.mu.Lock()
 		at := c.h.runs.gate.state
@@ -2412,6 +2501,9 @@ func (c *holdCell) signInStep(t *testing.T, late bool, afterOpen func()) {
 		})
 		mark.release()
 		waitUntil(t, "the sign-in's reload mark", func() bool { return c.marks.Load() > marks })
+		c.f.mu.Lock()
+		c.f.markWait = nil
+		c.f.mu.Unlock()
 	}
 }
 
@@ -2526,12 +2618,20 @@ func (c *holdCell) restart(t *testing.T, s *holdStep) {
 	if c.c.chat() {
 		c.armEntryList(s)
 	}
+	spent := c.logs.errorCount(findSpentLog)
 	c.goAsync(func(ctx context.Context) {
 		runs.BootSweep(ctx)
 		if c.c.chat() {
 			// Only after the boot's finder read the run: a rehydrate writing first would leave the finder's list
 			// reading it running, with no read for a lost reply's fault to hold.
 			found()
+			for deadline := time.Now().Add(5 * time.Second); s.finderSettles && c.logs.errorCount(findSpentLog) <= spent; {
+				if time.Now().After(deadline) {
+					c.t.Error("the boot's finder never spent its failing reads")
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
 			runs.resumeInterruptedRuns(ctx, chat)
 		}
 	})
@@ -2597,9 +2697,10 @@ func (c *holdCell) drive(t *testing.T, s *holdStep) {
 		c.restart(t, s)
 	case evEngineEnd:
 		pending, swept := c.c.chat() && c.k.reads() == kasPausePending, c.k.sweepLists.Load()
+		reads := c.f.healReadCount()
 		if c.c.chat() {
-			// The next engine loads every session anew; the fake's chat session outlives the crash, so it is marked
-			// for that reload, whose rehydrate sweeps its runs.
+			// The next engine loads every session anew; the cell's first chat session has no forward to see the crash
+			// end it, so it is marked for that reload, whose rehydrate sweeps its runs.
 			c.h.markSessionsForReload("engine end")
 			c.armEntryList(s)
 		}
@@ -2607,6 +2708,9 @@ func (c *holdCell) drive(t *testing.T, s *holdStep) {
 		if pending {
 			// As at a restart: both sweeps list the run before its pause lands.
 			waitUntil(t, "the rehydrate's two sweeps", func() bool { return c.k.sweepLists.Load() >= swept+2 })
+		}
+		if s.engineSweeps {
+			c.awaitEngineSweep(t, swept, reads)
 		}
 	case evSignIn:
 		c.signInStep(t, s.markLate, c.liveServes(s))
@@ -2639,6 +2743,60 @@ func (c *holdCell) drive(t *testing.T, s *holdStep) {
 	case evRehydrate:
 		c.rehydrate()
 	}
+}
+
+// awaitEngineSweep waits for the next engine's sweep of the run: a chat's rehydrate's list from lists' count, and the
+// sweep's read of the run from reads' count when it reads one, or a read the hook holds ahead of it, then for its
+// transition to end.
+func (c *holdCell) awaitEngineSweep(t *testing.T, lists int32, reads int) {
+	t.Helper()
+	if c.c.chat() {
+		waitUntil(t, "the chat's rehydrate's list", func() bool { return c.k.sweepLists.Load() > lists })
+		var paused bool
+		c.k.set(func(k *kasRun) { paused = k.sweepListedPaused })
+		if !paused {
+			return
+		}
+	}
+	waitUntil(t, "the next engine's read of the run", func() bool {
+		return c.f.healReadCount() > reads || c.f.heldReads.Load() > 0
+	})
+	c.awaitTransitionEnd(t)
+}
+
+// awaitTransitionEnd waits for the run's resume lock to be free; a read the hook holds keeps that lock past the
+// transition the step waits for, which then ended or waits behind it.
+func (c *holdCell) awaitTransitionEnd(t *testing.T) {
+	t.Helper()
+	waitUntil(t, "the run's transition to end", func() bool {
+		c.h.runs.resumes.mu.Lock()
+		defer c.h.runs.resumes.mu.Unlock()
+		_, locked := c.h.runs.resumes.held[c.id]
+		return !locked || c.f.heldReads.Load() > 0
+	})
+}
+
+// awaitChainTry waits for the cell's sweep chain's later try: a chat's list from lists' count, and the try's read of
+// the run from later's count when it reads one, or a read the hook holds ahead of it, then for the try's transition
+// to end.
+func (c *holdCell) awaitChainTry(t *testing.T, later [2]int, lists int32) {
+	t.Helper()
+	chain := retryParentless
+	if c.c.chat() {
+		chain = retryChat
+		waitUntil(t, "the chat's sweep chain's later list", func() bool { return c.k.chainLists.Load() > lists })
+		var paused bool
+		c.k.set(func(k *kasRun) { paused = k.chainListedPaused })
+		if !paused {
+			return
+		}
+	}
+	waitUntil(t, "the sweep chain's later try", func() bool {
+		c.f.mu.Lock()
+		defer c.f.mu.Unlock()
+		return c.f.laterTries[chain] > later[chain] || c.f.heldReads.Load() > 0
+	})
+	c.awaitTransitionEnd(t)
 }
 
 // armFlap loses the step's held release's next resume write (crossFlapsAtRetry).
@@ -2816,7 +2974,9 @@ const faultQuiet = 150 * time.Millisecond
 func (c *holdCell) settle(t *testing.T, s *holdStep, hits int, errs map[string]int, later [2]int) {
 	t.Helper()
 	for _, msg := range s.loud {
-		waitUntil(t, "the ERROR "+msg, func() bool { return c.logs.errorCount(msg) > errs[msg] })
+		// Each listing is one reader's ERROR: two chat sweep chains log it twice.
+		n := errs[msg] + countOf(s.loud, msg)
+		waitUntil(t, "the ERROR "+msg, func() bool { return c.logs.errorCount(msg) >= n })
 		if lacking := c.logs.errorsLacking(msg, spentCounts[msg]); len(lacking) > 0 {
 			t.Errorf("the ERROR %q reports %v, want %s", msg, lacking, spentCounts[msg])
 		}
@@ -2853,6 +3013,16 @@ func (c *holdCell) settle(t *testing.T, s *holdStep, hits int, errs map[string]i
 	}
 }
 
+func countOf(list []string, v string) int {
+	n := 0
+	for _, x := range list {
+		if x == v {
+			n++
+		}
+	}
+	return n
+}
+
 func (c *holdCell) holdNow() holdState {
 	return holdState{kas: c.k.reads(), heal: heldByTheGate(c.h.runs, c.id)}
 }
@@ -2878,19 +3048,50 @@ func (c *holdCell) orderFinder(first bool) {
 // run drives the cell's steps, checking the state after each.
 func (c *holdCell) run(t *testing.T, steps []holdStep) {
 	t.Helper()
+	var at string
+	defer func() {
+		if t.Failed() {
+			t.Logf("%s failed; the cell's log:\n%s", at, c.logs)
+		}
+	}()
 	for i := range steps {
 		s := &steps[i]
+		at = fmt.Sprintf("step %d (%s)", i+1, s.text)
 		waitUntil(t, "the previous step's calls to settle", func() bool {
 			return time.Since(time.Unix(0, c.k.lastCall.Load())) > stepQuiet
 		})
 		c.f.mu.Lock()
 		hits, later := c.f.hits, c.f.laterTries
 		c.f.mu.Unlock()
+		lists := c.k.chainLists.Load()
 		errs := map[string]int{}
 		for _, msg := range s.loud {
 			errs[msg] = c.logs.errorCount(msg)
 		}
 		c.stepInfos = c.logs.infoCount()
+		var rehydrateList *holdBlock
+		if s.finderSettles {
+			spent := c.logs.errorCount(findSpentLog)
+			settled := func() {
+				for deadline := time.Now().Add(5 * time.Second); c.logs.errorCount(findSpentLog) <= spent &&
+					time.Now().Before(deadline); {
+					time.Sleep(time.Millisecond)
+				}
+			}
+			c.f.mu.Lock()
+			c.f.finderWait = settled
+			c.f.mu.Unlock()
+			if c.c.chat() && s.inFlight == crossNone {
+				// A chat's reload rehydrate, which a release's write may start, lists only then too; an in-flight
+				// step orders that rehydrate itself (inFlight).
+				rehydrateList = c.f.newHold()
+				c.k.holdList("resumeChainRuns", rehydrateList)
+				go func() {
+					settled()
+					rehydrateList.release()
+				}()
+			}
+		}
 		if s.finderFirst {
 			c.orderFinder(true)
 		}
@@ -2917,6 +3118,9 @@ func (c *holdCell) run(t *testing.T, steps []holdStep) {
 				t.Fatalf("step %d (%s): no read was held", i+1, s.text)
 			}
 		}
+		if s.chainTry {
+			c.awaitChainTry(t, later, lists)
+		}
 		if s.flaps {
 			c.flap(t, s)
 		}
@@ -2932,10 +3136,16 @@ func (c *holdCell) run(t *testing.T, steps []holdStep) {
 		c.wantHold(t, fmt.Sprintf("step %d (%s)", i+1, s.text), s.want)
 		awaitResumes(t, &c.k.resumes, s.resumes)
 		if t.Failed() {
-			t.Fatalf("step %d (%s) failed; the cell's log:\n%s", i+1, s.text, c.logs)
+			t.FailNow()
 		}
 		if s.finderFirst {
 			c.orderFinder(false)
+		}
+		c.f.mu.Lock()
+		c.f.finderWait = nil
+		c.f.mu.Unlock()
+		if rehydrateList != nil && c.k.takeListHold("resumeChainRuns") != nil {
+			rehydrateList.release()
 		}
 		if !s.blocked {
 			// A try the model holds no read of may still read later, which a fault left armed would hold.
