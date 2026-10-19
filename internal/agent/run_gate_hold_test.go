@@ -146,12 +146,13 @@ const (
 )
 
 var (
-	kindNames    = []string{"chat-parented", "manual", "scheduled"}
-	formNames    = []string{"gate pause", "heal"}
-	landNames    = []string{"lands before the edge", "lands after the edge"}
+	kindNames    = []string{kindChat: "chat-parented", kindManual: "manual", kindScheduled: "scheduled"}
+	formNames    = []string{formGate: "gate pause", formHeal: "heal"}
+	landNames    = []string{landBefore: "lands before the edge", landAfter: "lands after the edge"}
 	heldNames    = []string{"held untouched", "budget spent while held", "cancelled while held", "gone while held", "deleted while held"}
 	restartNames = []string{
-		"no restart", "a restart, the gate closed", "a restart, the gate open", "the engine replaced at the checkpoint",
+		restartNone: "no restart", restartClosed: "a restart, the gate closed", restartOpen: "a restart, the gate open",
+		restartEngine: "the engine replaced at the checkpoint",
 	}
 	crossNames = []string{
 		"no crossing", "the gate opens before the hold forms", "the gate closes again at the release's first read of the hold",

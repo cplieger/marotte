@@ -78,11 +78,11 @@ const (
 	seenEnded
 )
 
-// runAction is a cell of runTransitions; actNone changes nothing.
+// runAction is a cell of runTransitions; the zero value, every cell the table leaves out, changes nothing.
 type runAction int
 
 const (
-	actNone runAction = iota
+	_ runAction = iota
 	// actPause is a person's pause, which replaces any pause the run holds.
 	actPause
 	// actResume is a person's resume or repeat extension.
@@ -147,10 +147,9 @@ type runRequest struct {
 	charged bool
 }
 
-// runChange is what one transition read and the cell it carried out.
+// runChange is the cell one transition carried out.
 type runChange struct {
-	seen runSeen
-	act  runAction
+	act runAction
 	// outcome is a heal's; charged whether its heal stands.
 	outcome resumeOutcome
 	charged bool
@@ -177,7 +176,6 @@ func (rs *Runs) transition(ctx context.Context, workflowID string, req *runReque
 			r = pauseRead{err: hErr, seen: seenUnreadable}
 		}
 	}
-	c.seen = r.seen
 	c.act = runTransitions[req.want][r.seen]
 	cErr := rs.carryOut(ctx, workflowID, req, &r, &c)
 	if req.want == healResume && (c.outcome == resumeWritten || c.outcome == resumeSkipped) {
