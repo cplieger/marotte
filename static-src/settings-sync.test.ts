@@ -1,8 +1,9 @@
 // The page adopts only settings at or above the version it holds, whichever of the settings_updated
 // handler (handlers/system.ts), the shared read (persist.loadSettings) or the additional
 // directories panel's own write delivers them, a failed write rolls back nothing newer settings
-// or a later write own, and what the page acts on is the server's while its controls show a click
-// not yet committed, over the shipped markup with only the network faked.
+// or a later write own, what the page acts on is the server's while its controls show a click
+// not yet committed, and a control's last click is the one saved, over the shipped markup with
+// only the network faked.
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import indexHtml from "../static/index.html?raw";
 import { settingsPayload } from "./__test-helpers__/settings.js";
@@ -16,6 +17,8 @@ import { additionalDirectories, _resetForTest as resetWorkspace } from "./worksp
 import { isKindEnabled } from "./notify.js";
 import { isRetentionEnabled } from "./retention.js";
 import { initNotificationToggles } from "./settings-notifications.js";
+import { getLastModel, setLastModel } from "./session-context.js";
+import { initPermissionsUI } from "./permissions-ui.js";
 
 interface Held {
   answer: (s: EffectiveSettings) => void;
@@ -97,6 +100,29 @@ function debugAt(revision: number, on: boolean): EffectiveSettings {
   return settingsPayload({ settings_epoch: 1, settings_revision: revision, debug_logs: on });
 }
 
+function finishedBox(): HTMLInputElement {
+  return byId<HTMLInputElement>("notify-finished-toggle");
+}
+
+/** Boot the page on revision 1 of server, through the read a settings event sends. */
+async function boot(server: EffectiveSettings): Promise<void> {
+  settingsEvent(1);
+  await settled();
+  gets[0]?.answer(server);
+  await settled();
+}
+
+/** Commit patch i's body over server at the next revision and answer it with the result. */
+function commitPatch(server: EffectiveSettings, i: number): EffectiveSettings {
+  const next = {
+    ...server,
+    ...(patches[i]?.body as Partial<EffectiveSettings>),
+    settings_revision: server.settings_revision + 1,
+  };
+  patches[i]?.answer(next);
+  return next;
+}
+
 function add(dir: string): void {
   byId<HTMLInputElement>("agent-dirs-input").value = dir;
   byId<HTMLButtonElement>("agent-dirs-add").click();
@@ -108,6 +134,7 @@ beforeAll(async () => {
   await import("./handlers/system.js");
   initAgentDirsUI();
   initNotificationToggles();
+  initPermissionsUI(settingsPayload());
 });
 
 beforeEach(() => {
@@ -603,5 +630,128 @@ describe("settings sync ordering", () => {
     patches[1]?.answer(debugAt(3, true));
     await settled();
     expect(debugLogs().checked).toBe(true);
+  });
+
+  it("saves the second of two kind clicks made inside one debounce", async () => {
+    let server = settingsPayload({ settings_epoch: 1, settings_revision: 1 });
+    await boot(server);
+    expect(finishedBox().checked).toBe(true);
+    finishedBox().click();
+    await settled();
+    finishedBox().click();
+    await debounced();
+
+    expect(patches, "one write carries the debounced clicks").toHaveLength(1);
+    server = commitPatch(server, 0);
+    await settled();
+    expect(server.notify_agent_finished, "the server holds the last click").toBe(true);
+    expect(finishedBox().checked).toBe(true);
+    expect(isKindEnabled("agent_finished")).toBe(true);
+  });
+
+  it("sends a kind click made while the opposite click's write is in flight", async () => {
+    let server = settingsPayload({ settings_epoch: 1, settings_revision: 1 });
+    await boot(server);
+    finishedBox().click();
+    await debounced();
+    expect(patches).toHaveLength(1);
+    finishedBox().click();
+    await debounced();
+
+    server = commitPatch(server, 0);
+    await debounced();
+    expect(isKindEnabled("agent_finished"), "the server's until the click's write commits").toBe(
+      false,
+    );
+    expect(patches, "the second click follows the write that made it a change").toHaveLength(2);
+    expect(patches[1]?.body).toEqual({ notify_agent_finished: true });
+    server = commitPatch(server, 1);
+    await settled();
+    expect(server.notify_agent_finished).toBe(true);
+    expect(finishedBox().checked).toBe(true);
+    expect(isKindEnabled("agent_finished")).toBe(true);
+  });
+
+  it("sends a kind click back to the server's value while the click before it is in flight", async () => {
+    let server = settingsPayload({
+      settings_epoch: 1,
+      settings_revision: 1,
+      notify_agent_finished: false,
+    });
+    await boot(server);
+    expect(finishedBox().checked).toBe(false);
+    finishedBox().click();
+    await debounced();
+    expect(patches).toHaveLength(1);
+    finishedBox().click();
+    await settled();
+
+    server = commitPatch(server, 0);
+    await debounced();
+    expect(isKindEnabled("agent_finished"), "the server's until the click's write commits").toBe(
+      true,
+    );
+    expect(patches).toHaveLength(2);
+    expect(patches[1]?.body).toEqual({ notify_agent_finished: false });
+    server = commitPatch(server, 1);
+    await settled();
+    expect(server.notify_agent_finished).toBe(false);
+    expect(finishedBox().checked).toBe(false);
+    expect(isKindEnabled("agent_finished")).toBe(false);
+  });
+
+  it("saves a model picked back after another device's settings were read", async () => {
+    let server = settingsPayload({ settings_epoch: 1, settings_revision: 1, last_model: "A" });
+    await boot(server);
+    expect(getLastModel()).toBe("A");
+    setLastModel("B");
+
+    // Another device's write lands while the pick of B is still waiting to be sent.
+    server = { ...server, settings_revision: 2, debug_logs: true };
+    settingsEvent(2);
+    await settled();
+    gets[1]?.answer(server);
+    await settled();
+    setLastModel("A");
+    await debounced();
+
+    expect(patches, "one write carries the debounced picks").toHaveLength(1);
+    server = commitPatch(server, 0);
+    await settled();
+    expect(server.last_model, "the server holds the last pick").toBe("A");
+    expect(getLastModel()).toBe("A");
+  });
+
+  it("adds an ignore file to the list another device saved", async () => {
+    let server = settingsPayload({
+      settings_epoch: 1,
+      settings_revision: 1,
+      agent_ignore_files: [".gitignore"],
+      supervised_default: false,
+    });
+    await boot(server);
+    server = {
+      ...server,
+      settings_revision: 2,
+      agent_ignore_files: [".gitignore", ".npmignore"],
+      supervised_default: true,
+    };
+    settingsEvent(2);
+    await settled();
+    gets[1]?.answer(server);
+    await settled();
+    expect(byId<HTMLInputElement>("supervised-default-checkbox").checked).toBe(true);
+
+    byId<HTMLInputElement>("agent-ignore-input").value = ".env.dec";
+    byId<HTMLButtonElement>("agent-ignore-add").click();
+    await debounced();
+    expect(patches[0]?.body).toEqual({
+      agent_ignore_files: [".gitignore", ".npmignore", ".env.dec"],
+    });
+    commitPatch(server, 0);
+    await settled();
+    expect(
+      [...byId("agent-ignore-chips").querySelectorAll(".chip-label")].map((c) => c.textContent),
+    ).toEqual([".gitignore", ".npmignore", ".env.dec"]);
   });
 });

@@ -85,6 +85,7 @@ vi.mock("../settings.js", () => ({
   // retention, the agent capabilities and the debug level.
   applyGeneralPanel: vi.fn(),
 }));
+vi.mock("../permissions-ui.js", () => ({ applyPermissionsPanel: vi.fn() }));
 vi.mock("../session-context.js", () => ({
   // Undefined: present only so real-ESM linking succeeds.
   setLastModel: undefined,
@@ -1057,6 +1058,7 @@ describe("settings_updated re-seeds the General panel", () => {
   it("hands the refetched payload to applyGeneralPanel and the retention state", async () => {
     const { syncSettings, applyGeneralPanel } = await import("../settings.js");
     const { adoptRetention } = await import("../retention.js");
+    const { applyPermissionsPanel } = await import("../permissions-ui.js");
     const payload = settingsPayload({ chat_retention_days: -1 });
     vi.mocked(syncSettings).mockResolvedValueOnce(payload);
 
@@ -1065,6 +1067,7 @@ describe("settings_updated re-seeds the General panel", () => {
       expect(applyGeneralPanel).toHaveBeenCalledWith(payload, payload);
     });
     expect(adoptRetention).toHaveBeenCalledWith(payload);
+    expect(applyPermissionsPanel).toHaveBeenCalledWith(payload);
   });
 
   it("adopts the refetched additional directories as linkable roots", async () => {

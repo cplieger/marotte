@@ -234,9 +234,6 @@ async function applyKindChange(
   notifyToggle: HTMLInputElement,
   updateSub: () => void,
 ): Promise<void> {
-  if (changed.input.checked === isKindEnabled(changed.kind)) {
-    return; // nothing actually changed — skip the server round trip
-  }
   const allOff = rows.every((row) => !row.input.checked);
   const mutated: SettingsSwitch[] = [kindSwitch(changed)];
   const patch: Record<string, boolean> = { [changed.settingsKey]: changed.input.checked };
@@ -256,8 +253,8 @@ async function applyKindChange(
   if (r === null) {
     return; // persist repaints the toggle inputs
   }
-  setKindEnabled(changed.kind, changed.input.checked);
-  if (allOff) {
+  setKindEnabled(changed.kind, r[changed.settingsKey]);
+  if (allOff && !r.notifications_enabled) {
     setNotificationsEnabled(false);
     spendNotifyAsk(); // switching every channel off is the same refusal as the master
     unregisterPush();

@@ -57,8 +57,9 @@ interface World {
 }
 
 const tag = (s: Stamp): string => `${String(s.settings_epoch)}/${String(s.settings_revision)}`;
-// The model's own order, apart from the reducer's: epoch first, then revision.
-const order = (s: Stamp): bigint => (BigInt(s.settings_epoch) << 32n) + BigInt(s.settings_revision);
+// The model's own order, apart from the reducer's: epoch first, then revision, each field up to
+// Number.MAX_SAFE_INTEGER (53 bits).
+const order = (s: Stamp): bigint => (BigInt(s.settings_epoch) << 53n) + BigInt(s.settings_revision);
 const older = (a: Stamp, b: Stamp): boolean => order(a) < order(b);
 const max = (a: Stamp, b: Stamp): Stamp => (older(a, b) ? b : a);
 
@@ -491,6 +492,14 @@ describe("settings state", () => {
     expect(shownValue(s, "a"), "started above revision 3").toEqual({ value: false });
     s = reduce(s, { type: "adopt", payload: at(4, { a: true }) });
     expect(shownValue(s, "a"), "revision 4 may follow it").toEqual({ value: true });
+  });
+
+  it("orders a later epoch above any revision of an earlier one", () => {
+    const high = { settings_epoch: 1, settings_revision: 2 ** 32 + 1 };
+    const next = { settings_epoch: 2, settings_revision: 1 };
+    expect(older(high, next), "the model's order").toBe(true);
+    const s = reduce(initialSettingsState, { type: "announce", at: next });
+    expect(isCurrent(s, high), "the reducer's order").toBe(false);
   });
 
   it("adopts no answer below a version an event announced", () => {

@@ -1,7 +1,7 @@
-// The page's settings as one pure reducer over what the server answered, the writes in flight and
-// the edit not yet sent; persist.ts runs it against the network and the controls. Invariants:
-// 1. Every control shows `shownValue`: the edit, else the newest write still waiting to start or
-//    started at or above the adopted version, else the adopted settings.
+// The page's settings as one pure reducer over the server's answers, the writes in flight and the
+// edit not yet sent; persist.ts runs it for the patchSettings controls. Invariants:
+// 1. Every patchSettings control shows `shownValue`: the edit, else the newest write still waiting
+//    to start or started at or above the adopted version, else the adopted settings.
 // 2. `held` and `adopted.at` never go back, and only a payload at or above `held` is adopted.
 // 3. A shown value is the server's at `adopted.at` unless it is this page's own edit or write in flight.
 // 4. A click is dropped only when it equals the shown value and the newest write in flight of its key.

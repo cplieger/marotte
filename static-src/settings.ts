@@ -96,8 +96,7 @@ function repaintTheme(choice: ThemeChoice): void {
   }
 }
 
-/** Fold a settings payload's theme in, and carry the cache across ONCE when the server has none.
- *  The theme is a paint, so the settings_updated arm passes the settings as shown. */
+/** Fold a settings payload's theme in, and carry the cache across ONCE when the server has none. */
 export function adoptThemeFromSettings(s: EffectiveSettings): void {
   const fromServer = asThemeChoice(s.theme);
   const first = !themeLoaded;
@@ -205,9 +204,9 @@ export function restoreAll(s: EffectiveSettings): void {
   applyGeneralPanel(s);
 }
 
-/** Seed the General panel's controls from the settings the server holds, s, painting them as shown
- *  (persist.settingsAsShown). Called at boot AND from the `settings_updated` arm, so a value chosen
- *  on another device reaches this screen's controls rather than only its behaviour. */
+/** Paint the General panel's controls from shown (default s), and take the fallback numbers from s,
+ *  the server's settings. Called at boot AND from the `settings_updated` arm, so a value chosen on
+ *  another device reaches this screen's controls rather than only its behaviour. */
 export function applyGeneralPanel(s: EffectiveSettings, shown: EffectiveSettings = s): void {
   serverRetentionDays = s.chat_retention_days;
   serverEngineHeap = s.engine_heap_mib;

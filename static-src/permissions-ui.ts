@@ -1,6 +1,6 @@
 // "Permissions" section in the Settings panel.
 
-import { patchSettings } from "./persist.js";
+import { patchSettings, settingsAsShown } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import { maybeEl } from "./dom.js";
 import { apiGet } from "./api-client.js";
@@ -87,7 +87,10 @@ class PermissionsUIController {
     if (supCheckbox !== null) {
       supCheckbox.checked = initial.supervised_default;
       supCheckbox.addEventListener("change", () => {
-        void patchSettings({ supervised_default: supCheckbox.checked });
+        void patchSettings(
+          { supervised_default: supCheckbox.checked },
+          { el: supCheckbox, key: "supervised_default", on: true },
+        );
       });
     }
     // Whether a SCHEDULED run's tool request is approved or refused when nobody answers it. Its own
@@ -97,10 +100,40 @@ class PermissionsUIController {
     if (schedCheckbox !== null) {
       schedCheckbox.checked = initial.scheduled_auto_approve;
       schedCheckbox.addEventListener("change", () => {
-        void patchSettings({ scheduled_auto_approve: schedCheckbox.checked });
+        void patchSettings(
+          { scheduled_auto_approve: schedCheckbox.checked },
+          { el: schedCheckbox, key: "scheduled_auto_approve", on: true },
+        );
       });
     }
     this.initAgentIgnoreUI(initial);
+  }
+
+  applyPermissions(shown: EffectiveSettings): void {
+    const supCheckbox = maybeEl<HTMLInputElement>("supervised-default-checkbox");
+    if (supCheckbox !== null) {
+      supCheckbox.checked = shown.supervised_default;
+    }
+    const schedCheckbox = maybeEl<HTMLInputElement>("scheduled-auto-approve-checkbox");
+    if (schedCheckbox !== null) {
+      schedCheckbox.checked = shown.scheduled_auto_approve;
+    }
+    this.ignoreFiles = [...shown.agent_ignore_files];
+    this.renderIgnoreChips();
+  }
+
+  /** Sends next as the whole list, then shows the list as the settings state holds it, so a failed
+   *  write leaves what the server holds. */
+  private saveIgnoreFiles(next: string[]): void {
+    this.ignoreFiles = next;
+    this.renderIgnoreChips();
+    void patchSettings({ agent_ignore_files: next }).then(() => {
+      const shown = settingsAsShown();
+      if (shown !== null) {
+        this.ignoreFiles = [...shown.agent_ignore_files];
+        this.renderIgnoreChips();
+      }
+    });
   }
 
   private initAgentIgnoreUI(initial: EffectiveSettings): void {
@@ -138,12 +171,10 @@ class PermissionsUIController {
         syncAddState();
         return;
       }
-      this.ignoreFiles.push(val);
-      void patchSettings({ agent_ignore_files: this.ignoreFiles });
+      this.saveIgnoreFiles([...this.ignoreFiles, val]);
       input.value = "";
       // Refocus for repeat entry (adding several files in a row).
       input.focus();
-      this.renderIgnoreChips();
       syncAddState();
     };
     input.addEventListener("input", syncAddState);
@@ -193,9 +224,7 @@ class PermissionsUIController {
           code: true,
           chipClass: "chip mono",
           onRemove: () => {
-            this.ignoreFiles = this.ignoreFiles.filter((f) => f !== entry);
-            void patchSettings({ agent_ignore_files: this.ignoreFiles });
-            this.renderIgnoreChips();
+            this.saveIgnoreFiles(this.ignoreFiles.filter((f) => f !== entry));
           },
         }),
     });
@@ -838,6 +867,11 @@ const nativePolicy = new NativePolicyController();
 // Public delegate functions preserving the existing module API.
 export function initPermissionsUI(initial: EffectiveSettings): void {
   controller.initPermissions(initial);
+}
+
+/** Paint the permissions controls from the settings as shown (persist.settingsAsShown). */
+export function applyPermissionsPanel(shown: EffectiveSettings): void {
+  controller.applyPermissions(shown);
 }
 
 /** Initialise the native Cedar policy view + editor: wires the add-rule / explain controls and

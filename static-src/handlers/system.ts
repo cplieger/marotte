@@ -6,6 +6,7 @@
 import { onSSE, onBus, BUS_RECONCILE, BUS_PAGE_RESUMED, decodeEnvelope, dispatch } from "../bus.js";
 import { adoptThemeFromSettings, applyGeneralPanel, syncSettings } from "../settings.js";
 import { applyAgentDirs } from "../agent-dirs-ui.js";
+import { applyPermissionsPanel } from "../permissions-ui.js";
 import { noteSettingsEvent, settingsAsShown } from "../persist.js";
 import { restoreLastModel, restoreLastEffort } from "../session-context.js";
 import { adoptLinkGuard } from "../link-guard.js";
@@ -93,8 +94,6 @@ function reconcileThinking(p: ConnectedPayload): void {
 
 onSSE("settings_updated", (_chatID, p) => {
   noteSettingsEvent(p);
-  // Use restoreLastModel (cache-only), not setLastModel — that calls
-  // patchSettings, which re-broadcasts settings_updated, looping forever.
   void syncSettings().then((s) => {
     // Null means the refetch failed or answered older settings; the local cache is a better
     // answer than inventing one, and the next frame or reload re-syncs.
@@ -114,6 +113,7 @@ onSSE("settings_updated", (_chatID, p) => {
     // Re-seeds the controls on a second device; `adoptRetention` and the session-door reads carry the
     // effect.
     applyGeneralPanel(s, shown);
+    applyPermissionsPanel(shown);
     applyAgentDirs(s);
   });
 });

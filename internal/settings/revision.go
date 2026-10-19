@@ -94,8 +94,8 @@ func (s stamp) event() marotte.ServerEvent {
 
 // Announce publishes a settings_updated event stamped with the stored document's version, for a
 // change to the effective settings that writes nothing, such as a kiro-cli default. It holds
-// Update's lock, so the event leaves in order with every write's own. With no readable document
-// the stamp is 0, as a settings read answers then.
+// Update's lock, so no write's event leaves between its read and its publish. With no readable
+// document the stamp is 0, as a settings read answers then.
 func Announce(ctx context.Context, configDir string, publish func(context.Context, marotte.ServerEvent)) {
 	if configDir == "" {
 		publish(ctx, stamp{}.event())

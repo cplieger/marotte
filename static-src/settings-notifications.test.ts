@@ -1,5 +1,6 @@
-// The master switch going ON: it enables the DEFAULT-ON kinds, not all of them. And a write that
-// newer settings superseded still does this click's own part when those settings agree with it.
+// The master switch going ON: it enables the DEFAULT-ON kinds, not all of them. A write that
+// newer settings superseded still does this click's own part when those settings agree with it,
+// and a kind write that committed applies what it committed.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { settingsPayload } from "./__test-helpers__/settings.js";
@@ -8,17 +9,18 @@ import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
 const mocks = vi.hoisted(() => ({
   patches: [] as Record<string, unknown>[],
   /** What the settings write answers: a record on success, null on refusal. */
-  patchResult: { ok: true } as Record<string, unknown> | null | "superseded",
+  patchResult: { ok: true } as object | null | "superseded",
   /** Whether the newest settings have notifications on; null when they cannot be read. */
   newestOn: null as boolean | null,
   unregisters: 0,
+  /** While set, every settings write waits for it before answering. */
+  hold: null as Promise<void> | null,
 }));
 
 vi.mock("./persist.js", () => ({
-  patchSettings: async (
-    patch: Record<string, unknown>,
-  ): Promise<Record<string, unknown> | null | "superseded"> => {
+  patchSettings: async (patch: Record<string, unknown>): Promise<object | null | "superseded"> => {
     mocks.patches.push(patch);
+    await mocks.hold;
     return mocks.patchResult;
   },
   newestSettings: async () =>
@@ -94,6 +96,7 @@ beforeEach(() => {
   mocks.patchResult = { ok: true };
   mocks.newestOn = null;
   mocks.unregisters = 0;
+  mocks.hold = null;
   localStorage.removeItem(LS_NOTIFY_ASK_KEY);
   // Granted, so requestPermission neither prompts nor returns a hint — the prompt is
   // notify-permission.test.ts's subject, not this file's.
@@ -199,5 +202,46 @@ describe("a write newer settings superseded", () => {
     expect(mocks.patches[0]).toMatchObject({ notifications_enabled: false });
     expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBe("1");
     expect(mocks.unregisters).toBe(1);
+  });
+});
+
+describe("a kind write that committed", () => {
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 12; i++) {
+      await Promise.resolve();
+    }
+  }
+
+  it("notifies by the kind the write committed, not by the box painted since", async () => {
+    let release = (): void => undefined;
+    mocks.hold = new Promise((resolve) => {
+      release = resolve;
+    });
+    mocks.patchResult = settingsPayload({ notify_agent_finished: false });
+    notify.setKindEnabled("agent_finished", true);
+    await flipped(KIND_IDS.agent_finished, false);
+    // A later click's write, still on its way, painted the box back on.
+    input(KIND_IDS.agent_finished).checked = true;
+    release();
+    await settle();
+    expect(notify.isKindEnabled("agent_finished")).toBe(false);
+  });
+
+  it("keeps notifications on when the write that turned every kind off committed them on", async () => {
+    notify.setNotificationsEnabled(true);
+    input(KIND_IDS.agent_finished).checked = true;
+    input(KIND_IDS.pr_status).checked = false;
+    input(KIND_IDS.run_outcome).checked = false;
+    // The master switch turned back on inside the same debounce, so the one write carries it on.
+    mocks.patchResult = settingsPayload({
+      notifications_enabled: true,
+      notify_agent_finished: false,
+      notify_run_outcome: false,
+    });
+    await flipped(KIND_IDS.agent_finished, false);
+    expect(mocks.patches[0]).toMatchObject({ notifications_enabled: false });
+    expect(notify.areNotificationsEnabled()).toBe(true);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBeNull();
+    expect(mocks.unregisters).toBe(0);
   });
 });
