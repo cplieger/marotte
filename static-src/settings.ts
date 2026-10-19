@@ -143,7 +143,7 @@ function setTheme(choice: ThemeChoice): void {
   }
   void patchSettings({ theme: choice }).then((r) => {
     // A failed write leaves the theme to what the page shows without it.
-    const shown = r === null ? settingsAsShown() : null;
+    const shown = r.outcome === "failed" ? settingsAsShown() : null;
     if (shown !== null) {
       adoptThemeFromSettings(shown);
     }

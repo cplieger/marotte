@@ -6,7 +6,10 @@ import { settingsPayload } from "./__test-helpers__/settings.js";
 
 const mocks = vi.hoisted(() => ({
   apiGet: vi.fn<(path: string, signal?: AbortSignal) => Promise<unknown>>(),
-  patchSettings: vi.fn<(patch: Partial<EffectiveSettings>, ...rest: unknown[]) => Promise<null>>(),
+  patchSettings:
+    vi.fn<
+      (patch: Partial<EffectiveSettings>, ...rest: unknown[]) => Promise<{ outcome: string }>
+    >(),
   /** What persist.settingsAsShown answers. */
   shown: null as EffectiveSettings | null,
 }));
@@ -102,7 +105,7 @@ beforeEach(() => {
   document.body.appendChild(input("agent-ignore-input"));
   document.body.appendChild(button("agent-ignore-add"));
 
-  mocks.patchSettings.mockResolvedValue(null);
+  mocks.patchSettings.mockResolvedValue({ outcome: "failed" });
   mocks.shown = null;
 });
 

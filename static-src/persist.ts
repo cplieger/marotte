@@ -27,10 +27,12 @@ import type { EffectiveSettings } from "./wire/types.gen.js";
 // internal/wirespec), so it is not maintained here and cannot drift from what the server sends.
 export type { EffectiveSettings } from "./wire/types.gen.js";
 
-/** A write's answer: the committed settings, null when it failed or no write was needed (the
- *  settings as shown already hold the patch), or "superseded" when it landed but the page already
- *  holds newer settings, which the caller must not overwrite with its own. */
-export type PatchAnswer = EffectiveSettings | null | "superseded";
+/** A write's answer: "committed" with the settings it committed; "unchanged" when
+ *  settings-state.changes found nothing to send; "superseded" when it landed but the page already
+ *  holds newer settings, which the caller must not overwrite with its own; "failed" otherwise. */
+export type PatchAnswer =
+  | { readonly outcome: "committed"; readonly settings: EffectiveSettings }
+  | { readonly outcome: "unchanged" | "superseded" | "failed" };
 
 /** A switch a write moves: checked exactly when key holds on. Each settle repaints it from the
  *  settings state. */
@@ -150,7 +152,12 @@ function executePatch(): void {
         const switches = writeSwitches.get(id) ?? [];
         writeSwitches.delete(id);
         repaint(switches);
-        const result: PatchAnswer = settled === null ? null : current ? settled : "superseded";
+        const result: PatchAnswer =
+          settled === null
+            ? { outcome: "failed" }
+            : current
+              ? { outcome: "committed", settings: settled }
+              : { outcome: "superseded" };
         for (const resolve of resolvers) {
           resolve(result);
         }
@@ -179,9 +186,7 @@ export function patchSettings(
 ): Promise<PatchAnswer> {
   const changed = changes(state, patch);
   if (Object.keys(changed).length === 0) {
-    // No-op: nothing to send. Resolve immediately with null so callers that await the promise don't
-    // hang.
-    return Promise.resolve(null);
+    return Promise.resolve({ outcome: "unchanged" });
   }
   for (const { el } of switches) {
     if (!unsettled(el)) {

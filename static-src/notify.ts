@@ -191,7 +191,7 @@ export function installNotifyAskGesture(): () => void {
 async function adoptGrant(): Promise<void> {
   if (!enabled) {
     const saved = await patchSettings({ notifications_enabled: true });
-    if (saved === null || saved === "superseded") {
+    if (saved.outcome !== "committed") {
       return;
     }
     enabled = true;

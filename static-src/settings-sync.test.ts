@@ -1087,6 +1087,37 @@ describe("settings sync ordering", () => {
     expect(requestPermission, "a second registration attempt").toHaveBeenCalledTimes(2);
   });
 
+  it("leaves notifications off and asks no permission when the switch's on write is refused", async () => {
+    const requestPermission = vi.fn(() => Promise.resolve("default"));
+    vi.stubGlobal("Notification", { permission: "default", requestPermission });
+    await boot({ ...lastKindOn(), notifications_enabled: false });
+    masterBox().click();
+    await debounced();
+    expect(patches.map((p) => p.body)).toEqual([{ notifications_enabled: true }]);
+    patches[0]?.fail();
+    await settled();
+    expect(masterBox().checked).toBe(false);
+    expect(areNotificationsEnabled()).toBe(false);
+    expect(requestPermission).not.toHaveBeenCalled();
+  });
+
+  it("asks browser permission once when the switch is clicked on, off and on inside one debounce", async () => {
+    const requestPermission = vi.fn(() => Promise.resolve("default"));
+    vi.stubGlobal("Notification", { permission: "default", requestPermission });
+    const off = { ...lastKindOn(), notifications_enabled: false };
+    await boot(off);
+    masterBox().click();
+    masterBox().click();
+    masterBox().click();
+    await debounced();
+    expect(patches.map((p) => p.body)).toEqual([{ notifications_enabled: true }]);
+    commitPatch(off, 0);
+    await settled();
+    expect(masterBox().checked).toBe(true);
+    expect(areNotificationsEnabled()).toBe(true);
+    expect(requestPermission).toHaveBeenCalledOnce();
+  });
+
   it("puts the compaction slider and its policy back when the write is refused", async () => {
     await boot(
       settingsPayload({

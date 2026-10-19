@@ -70,7 +70,7 @@ vi.mock("./save-indicator.js", () => ({
 vi.mock("./persist.js", () => ({
   loadSettings: vi.fn(),
   refreshSettings: vi.fn(),
-  patchSettings: vi.fn(() => Promise.resolve({})),
+  patchSettings: vi.fn(() => Promise.resolve({ outcome: "unchanged" })),
   adoptWriteAnswer: () => H.adopts,
   newestSettings: vi.fn(),
   settingsAsShown: vi.fn(() => null),
@@ -182,12 +182,15 @@ beforeEach(() => {
   seedDom();
 });
 
-/** persist.patchSettings for a write the server refuses: it puts each switch back, then answers null. */
-function failAndRollBack(_patch: unknown, ...switches: SettingsSwitch[]): Promise<null> {
+/** persist.patchSettings for a write the server refuses: it puts each switch back, then answers failed. */
+function failAndRollBack(
+  _patch: unknown,
+  ...switches: SettingsSwitch[]
+): Promise<{ outcome: "failed" }> {
   for (const { el } of switches) {
     el.checked = !el.checked;
   }
-  return Promise.resolve(null);
+  return Promise.resolve({ outcome: "failed" });
 }
 describe("extractDiagnosticVersion", () => {
   it("reads q-details.version (the Amazon-Q-derived schema)", () => {
@@ -600,7 +603,7 @@ describe("the theme, between config.json and its paint cache", () => {
     const { cachedTheme } = await import("./device-view.js");
     const { patchSettings, settingsAsShown } = await import("./persist.js");
     adoptThemeFromSettings(settingsPayload({ theme: "dark" }));
-    vi.mocked(patchSettings).mockResolvedValueOnce(null);
+    vi.mocked(patchSettings).mockResolvedValueOnce({ outcome: "failed" });
     vi.mocked(settingsAsShown).mockReturnValueOnce(settingsPayload({ theme: "dark" }));
 
     themeStorage.set("light");

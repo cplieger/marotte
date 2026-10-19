@@ -5,12 +5,12 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { settingsPayload } from "./__test-helpers__/settings.js";
+import type { EffectiveSettings, PatchAnswer } from "./persist.js";
 import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
 
 const mocks = vi.hoisted(() => ({
   patches: [] as Record<string, unknown>[],
-  /** What the settings write answers: the committed settings on success, null on refusal. */
-  patchResult: null as object | null | "superseded",
+  patchResult: { outcome: "failed" } as PatchAnswer,
   /** Whether the newest settings have notifications on; null when they cannot be read. */
   newestOn: null as boolean | null,
   unregisters: 0,
@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./persist.js", () => ({
-  patchSettings: async (patch: Record<string, unknown>): Promise<object | null | "superseded"> => {
+  patchSettings: async (patch: Record<string, unknown>): Promise<PatchAnswer> => {
     mocks.patches.push(patch);
     await mocks.hold;
     return mocks.patchResult;
@@ -68,6 +68,10 @@ function mountPanel(): void {
   document.body.replaceChildren(host);
 }
 
+function committed(settings: EffectiveSettings): PatchAnswer {
+  return { outcome: "committed", settings };
+}
+
 function input(id: string): HTMLInputElement {
   const el = document.getElementById(id);
   expect(el, `${id} is not mounted`).not.toBeNull();
@@ -94,7 +98,7 @@ async function flipped(id: string, on: boolean): Promise<void> {
 
 beforeEach(() => {
   mocks.patches = [];
-  mocks.patchResult = settingsPayload({ notifications_enabled: true });
+  mocks.patchResult = committed(settingsPayload({ notifications_enabled: true }));
   mocks.newestOn = null;
   mocks.unregisters = 0;
   mocks.hold = null;
@@ -127,12 +131,14 @@ describe("the master switch going on", () => {
   });
 
   it("leaves the in-memory state agreeing with the committed settings", async () => {
-    mocks.patchResult = settingsPayload({
-      notifications_enabled: true,
-      notify_agent_finished: false,
-      notify_pr_status: true,
-      notify_run_outcome: true,
-    });
+    mocks.patchResult = committed(
+      settingsPayload({
+        notifications_enabled: true,
+        notify_agent_finished: false,
+        notify_pr_status: true,
+        notify_run_outcome: true,
+      }),
+    );
     await turnMasterOn();
     expect(notify.areNotificationsEnabled()).toBe(true);
     expect(notify.isKindEnabled("agent_finished")).toBe(false);
@@ -143,7 +149,7 @@ describe("the master switch going on", () => {
 
 describe("a refused write tears the feature down", () => {
   it("turns notifications off and leaves the kinds as they were", async () => {
-    mocks.patchResult = null;
+    mocks.patchResult = { outcome: "failed" };
     notify.setKindEnabled("agent_finished", true);
     await turnMasterOn();
     expect(notify.areNotificationsEnabled()).toBe(false);
@@ -161,7 +167,7 @@ describe("a write newer settings superseded", () => {
   }
 
   beforeEach(() => {
-    mocks.patchResult = "superseded";
+    mocks.patchResult = { outcome: "superseded" };
   });
 
   it("still asks for browser permission when the newest settings have notifications on", async () => {
@@ -208,7 +214,7 @@ describe("a kind write that committed", () => {
     mocks.hold = new Promise((resolve) => {
       release = resolve;
     });
-    mocks.patchResult = settingsPayload({ notify_agent_finished: false });
+    mocks.patchResult = committed(settingsPayload({ notify_agent_finished: false }));
     notify.setKindEnabled("agent_finished", true);
     await flipped(KIND_IDS.agent_finished, false);
     // A later click's write, still on its way, painted the box back on.

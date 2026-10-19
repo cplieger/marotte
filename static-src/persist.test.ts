@@ -736,15 +736,21 @@ describe("patchSettings answer", () => {
 
   it("resolves with the committed settings, and holds their version", async () => {
     answer = settingsPayload({ ...v(4), theme: "dark" });
-    await expect(patched()).resolves.toEqual(answer);
+    await expect(patched()).resolves.toEqual({ outcome: "committed", settings: answer });
     expect(adoptSettings(vs(3))).toBe(false);
+  });
+
+  it("resolves unchanged, sending nothing, when the settings already hold the patch", async () => {
+    adoptSettings(settingsPayload({ ...v(4), theme: "dark" }));
+    await expect(patched()).resolves.toEqual({ outcome: "unchanged" });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("resolves superseded, still reporting Saved, when the page holds newer settings", async () => {
     const { showSaved } = await import("./save-indicator.js");
     noteSettingsEvent(v(5));
     answer = settingsPayload({ ...v(4), theme: "dark" });
-    await expect(patched()).resolves.toBe("superseded");
+    await expect(patched()).resolves.toEqual({ outcome: "superseded" });
     expect(showSaved).toHaveBeenCalledWith(["theme"]);
     expect(adoptSettings(vs(5)), "the held version is unchanged").toBe(true);
   });
@@ -755,7 +761,7 @@ describe("patchSettings answer", () => {
       "fetch",
       vi.fn(() => Promise.resolve(Response.json({ theme: "dark" }))),
     );
-    await expect(patched()).resolves.toBeNull();
+    await expect(patched()).resolves.toEqual({ outcome: "failed" });
     expect(showError).toHaveBeenCalledWith(["theme"]);
   });
 });

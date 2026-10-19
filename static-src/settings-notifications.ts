@@ -126,15 +126,19 @@ export function initNotificationToggles(): void {
   // Set initial sub-option visibility based on current toggle state.
   updateSub();
 
+  // Clicks inside one debounce share one write's answer: only the newest click acts on it.
+  let clicks = 0;
   notifyToggle.addEventListener("change", () => {
+    const click = ++clicks;
+    const isNewest = (): boolean => click === clicks;
     notifyHint.classList.add("hidden");
     if (notifyToggle.checked) {
-      void enableNotifications(rows, notifyToggle, notifyHint, updateSub);
+      void enableNotifications(rows, notifyToggle, notifyHint, updateSub, isNewest);
       return;
     }
     void patchSettings({ notifications_enabled: false }, masterSwitch(notifyToggle)).then(
       async (r) => {
-        if (await staysOff(r)) {
+        if ((await staysOff(r)) && isNewest()) {
           turnOff(updateSub);
         }
       },
@@ -152,16 +156,23 @@ export function initNotificationToggles(): void {
  *  them off (the newest settings, for a superseded write) and no later click of this page turns
  *  them back on. */
 async function staysOff(r: PatchAnswer): Promise<boolean> {
-  if (r === null) {
-    return false; // persist has repainted the switch from the settings state
-  }
-  if (r === "superseded") {
-    const s = await newestSettings();
-    if (s === null || s.notifications_enabled) {
-      return false;
+  switch (r.outcome) {
+    case "failed":
+      return false; // persist has repainted the switch from the settings state
+    case "unchanged":
+      return false; // no write: the switch already showed off
+    case "superseded": {
+      const s = await newestSettings();
+      if (s === null || s.notifications_enabled) {
+        return false;
+      }
+      break;
     }
-  } else if (r.notifications_enabled) {
-    return false;
+    case "committed":
+      if (r.settings.notifications_enabled) {
+        return false;
+      }
+      break;
   }
   return settingsAsShown()?.notifications_enabled !== true;
 }
@@ -190,37 +201,41 @@ async function enableNotifications(
   notifyToggle: HTMLInputElement,
   notifyHint: HTMLElement,
   updateSub: () => void,
+  isNewest: () => boolean,
 ): Promise<void> {
   updateSub(); // show the sub-options optimistically
   const r = await patchSettings({ notifications_enabled: true }, masterSwitch(notifyToggle));
-  if (r === "superseded") {
-    // The newer settings decide whether notifications are on; the prompt is this click's alone.
-    const s = await newestSettings();
-    updateSub();
-    if (!s?.notifications_enabled) {
-      return;
-    }
-  } else if (r === null) {
-    if (settingsAsShown()?.notifications_enabled === true) {
-      // No write was needed: the switch is stored on, and this click retries a failed registration.
+  // The newer settings decide whether notifications are on; the prompt is this click's alone.
+  const newest = r.outcome === "superseded" ? await newestSettings() : null;
+  updateSub();
+  if (!isNewest()) {
+    return;
+  }
+  switch (r.outcome) {
+    case "superseded":
+      if (!newest?.notifications_enabled) {
+        return;
+      }
+      break;
+    case "unchanged":
+      // The switch is stored on, and this click retries a failed registration.
       setNotificationsEnabled(true);
-    } else {
+      break;
+    case "failed":
       // persist repaints the switch; tear down any push subscription requestPermission
       // may have started.
       setNotificationsEnabled(false);
       unregisterPush();
-      updateSub();
       return;
-    }
-  } else {
-    setNotificationsEnabled(r.notifications_enabled);
-    for (const row of rows) {
-      setKindEnabled(row.kind, r[row.settingsKey]);
-    }
-    updateSub();
-    if (!r.notifications_enabled) {
-      return; // a later click in the same write turned them off, and its own settle applies that
-    }
+    case "committed":
+      setNotificationsEnabled(r.settings.notifications_enabled);
+      for (const row of rows) {
+        setKindEnabled(row.kind, r.settings[row.settingsKey]);
+      }
+      if (!r.settings.notifications_enabled) {
+        return; // a later click in the same write turned them off, and its own settle applies that
+      }
+      break;
   }
   // Only prompt for browser permission after the server confirms the enable.
   const hint = requestPermission();
@@ -242,7 +257,7 @@ async function applyKindChange(changed: KindRow): Promise<void> {
     { [changed.settingsKey]: changed.input.checked },
     kindSwitch(changed),
   );
-  if (r !== null && r !== "superseded") {
-    setKindEnabled(changed.kind, r[changed.settingsKey]);
+  if (r.outcome === "committed") {
+    setKindEnabled(changed.kind, r.settings[changed.settingsKey]);
   }
 }
