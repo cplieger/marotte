@@ -1120,14 +1120,6 @@
       display: none;
     }
   }
-
-  /* WITH A QUESTION UP, A SHORT BAND IS THE BAR'S, its allocation the dock's (26-dock.css). Three
-     quarters of a keyboard band (196-322px) would put the card under its own floors. */
-  &:has(> .decision-dock > .dock-user-input) {
-    :where(:root[data-short-band]) & {
-      max-block-size: var(--dock-viewport-h, 100dvh);
-    }
-  }
 }
 
 .run-composer-box {

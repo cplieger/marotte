@@ -209,7 +209,8 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
     stop: () => undefined,
   };
   hosts.push(h);
-  // The floor follows the tray's content: a new card, a stage switch inside it, the depth row.
+  // The floor follows the tray's content: a new card, a stage switch inside it, the depth row, and
+  // the clamp's review of a card's question once a hidden view shows it.
   const content = new MutationObserver(() => {
     paintFloor(h);
   });
