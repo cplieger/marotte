@@ -2,10 +2,14 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -78,6 +82,70 @@ func TestSettingsWrite_AnswersTheStoredSettingsAtItsVersion(t *testing.T) {
 	}
 	if got := getEffective(t, dir); !reflect.DeepEqual(got, answer) {
 		t.Errorf("GET at the answer's version = %+v\nwant the PATCH answer %+v", got, answer)
+	}
+}
+
+// announceHook runs onEvent as each event leaves, before the fake records it.
+type announceHook struct {
+	*fakeEngine
+	onEvent func()
+}
+
+func (h announceHook) Broadcast(ctx context.Context, evt marotte.ServerEvent) {
+	h.onEvent()
+	h.fakeEngine.Broadcast(ctx, evt)
+}
+
+// A page adopts a read its settings event prompts over the write's answer at the same version, so
+// the answer must be resolved before the event leaves, never after.
+func TestSettingsWrite_AnswersSettingsResolvedBeforeTheEvent(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, config, extra := filepath.Join(base, "workspace"), filepath.Join(base, "config"), filepath.Join(base, "data")
+	for _, d := range []string{work, config, extra} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eng := &fakeEngine{}
+	// The directory goes once the event is out, as it could before the read the event prompts.
+	hook := announceHook{fakeEngine: eng, onEvent: func() {
+		if err := os.Remove(extra); err != nil {
+			t.Errorf("remove %s: %v", extra, err)
+		}
+	}}
+	s := &Server{agent: hook, push: &testPush{}, configDir: config, workDir: work}
+	body, err := json.Marshal(map[string][]string{settings.KeyAdditionalDirectories: {extra}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := patchSettingsRaw(t, s, string(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	var answer marotte.EffectiveSettings
+	if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("decode the PATCH answer: %v", err)
+	}
+	if len(eng.events) != 1 {
+		t.Fatalf("%d events, want the write's one", len(eng.events))
+	}
+	if !slices.Equal(answer.AdditionalDirectories, []string{extra}) || len(answer.AdditionalDirectoriesRefused) != 0 {
+		t.Errorf("answer additional_directories %v, refused %v; want [%s] granted, as it stood when the event left",
+			answer.AdditionalDirectories, answer.AdditionalDirectoriesRefused, extra)
+	}
+	read := httptest.NewRecorder()
+	handleSettingsGet(read, settings.AgentDirs{Workspace: work, Config: config}, nil)
+	var got marotte.EffectiveSettings
+	if err := json.Unmarshal(read.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode the GET answer %s: %v", read.Body, err)
+	}
+	if !strings.Contains(got.AdditionalDirectoriesRefused[extra], "no such directory") || got.SettingsRevision != answer.SettingsRevision {
+		t.Errorf("GET after the event: revision %d refused %v, want revision %d with %s missing",
+			got.SettingsRevision, got.AdditionalDirectoriesRefused, answer.SettingsRevision, extra)
 	}
 }
 

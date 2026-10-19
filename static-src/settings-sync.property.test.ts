@@ -2,10 +2,10 @@
 // flushes, this page's writes committing one at a time and answering late, another device's writes
 // to keys no control owns, a directory's verdict changing with no write, settings events and reads:
 // at rest the server, each control and the state the page acts on hold what the user's clicks leave
-// (Notify for notifications) and the verdicts of the newest payload the server resolved. The
-// controls are the notification switch and a kind row (real clicks on the shipped markup, each only
-// while a user could click it), the last-model memory and the additional directories panel.
-// Only fetch, the debounce timers and the notification permission are faked.
+// and the verdicts of the newest payload the server resolved, and no write carries a key more often
+// than the user clicked it. The controls are the notification switch and a kind row (real clicks on
+// the shipped markup, each only while a user could click it), the last-model memory and the
+// directories panel. Only fetch, the debounce timers and the notification permission are faked.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import fc from "fast-check";
 import indexHtml from "../static/index.html?raw";
@@ -34,8 +34,10 @@ type Action =
   | { t: "event" }
   | { t: "serveRead" };
 
-/** The page's starting settings: notifications are on unless every kind is off. */
+/** The page's starting settings. */
 interface Start {
+  /** notifications_enabled. */
+  on: boolean;
   /** notify_agent_finished, the clicked kind. */
   kind: boolean;
   /** notify_run_outcome, a kind no click moves; with it off the clicked kind can be the last one on. */
@@ -66,36 +68,25 @@ interface World {
   events: number[];
   /** The newest-resolved payload delivered to the page. */
   received: Resolved | null;
-  /** What the notification clicks leave, by the rules the panel states. */
+  /** What the notification clicks leave: the switch and each kind are separate choices. */
   notify: Notify;
   last: { model?: string; dirA?: boolean };
+  /** How many clicks named each settings key, and how many writes of this page carried it. */
+  clicked: Map<string, number>;
+  carried: Map<string, number>;
 }
 
+// on, kind, pr and sibling: notifications_enabled, notify_agent_finished, notify_pr_status and
+// notify_run_outcome.
 interface Notify {
   on: boolean;
-  /** notify_agent_finished, notify_pr_status and notify_run_outcome. */
   kind: boolean;
   pr: boolean;
   sibling: boolean;
-  /** Whether the off shown was clicked on the switch, which no kind click withdraws. */
-  offBySwitch: boolean;
 }
 
-/** A switch click turns notifications on with the default kinds, or off with the kinds left. */
-function masterClicked(n: Notify, on: boolean): Notify {
-  return on
-    ? { on, kind: true, pr: false, sibling: true, offBySwitch: false }
-    : { ...n, on, offBySwitch: true };
-}
-
-/** A kind click turns notifications off with the last kind, and back on with a kind while the off
- *  shown came from the last kind going off. */
-function kindClicked(n: Notify, kind: boolean): Notify {
-  const next = { ...n, kind };
-  if (!next.kind && !next.pr && !next.sibling) {
-    return { ...next, on: false };
-  }
-  return n.on || n.offBySwitch ? next : { ...next, on: true };
+function count(m: Map<string, number>, key: string): void {
+  m.set(key, (m.get(key) ?? 0) + 1);
 }
 
 let world: World;
@@ -128,6 +119,9 @@ function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
     return held(world.gets, {});
   }
   const body = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : {};
+  for (const key of Object.keys(body as object)) {
+    count(world.carried, key);
+  }
   return held(world.patches, body as Partial<EffectiveSettings>);
 }
 
@@ -198,19 +192,22 @@ async function apply(w: World, a: Action): Promise<void> {
       // A user reaches a kind row only while the rows show.
       if (!byId("notify-sub-options").inert) {
         box().click();
-        w.notify = kindClicked(w.notify, box().checked);
+        w.notify = { ...w.notify, kind: box().checked };
+        count(w.clicked, "notify_agent_finished");
       }
       break;
     case "master":
       // The switch is disabled while a settings write is in flight.
       if (!masterBox().disabled) {
         masterBox().click();
-        w.notify = masterClicked(w.notify, masterBox().checked);
+        w.notify = { ...w.notify, on: masterBox().checked };
+        count(w.clicked, "notifications_enabled");
       }
       break;
     case "pick":
       setLastModel(a.model);
       w.last.model = a.model;
+      count(w.clicked, "last_model");
       break;
     case "dir": {
       if (byId<HTMLInputElement>("agent-dirs-input").disabled) {
@@ -224,6 +221,7 @@ async function apply(w: World, a: Action): Promise<void> {
         remove.click();
       }
       w.last.dirA = remove === null;
+      count(w.clicked, "additional_directories");
       break;
     }
     case "flush":
@@ -274,7 +272,7 @@ async function boot(start: Start): Promise<World> {
     server: settingsPayload({
       settings_epoch: 1,
       settings_revision: 1,
-      notifications_enabled: start.kind || start.sibling,
+      notifications_enabled: start.on,
       notify_agent_finished: start.kind,
       notify_pr_status: false,
       notify_run_outcome: start.sibling,
@@ -288,14 +286,10 @@ async function boot(start: Start): Promise<World> {
     gets: [],
     events: [],
     received: null,
-    notify: {
-      on: start.kind || start.sibling,
-      kind: start.kind,
-      pr: false,
-      sibling: start.sibling,
-      offBySwitch: false,
-    },
+    notify: { on: start.on, kind: start.kind, pr: false, sibling: start.sibling },
     last: {},
+    clicked: new Map(),
+    carried: new Map(),
   };
   world = w;
   announce(1);
@@ -331,6 +325,11 @@ async function quiesce(w: World): Promise<void> {
   }
   expect(w.patches, "every write answered").toEqual([]);
   expect(w.gets, "every read answered").toEqual([]);
+  for (const [key, n] of w.carried) {
+    expect(n, `writes carrying ${key}, at most one per click of it`).toBeLessThanOrEqual(
+      w.clicked.get(key) ?? 0,
+    );
+  }
   const want = w.notify;
   expect(w.server.notify_agent_finished, "the server holds the clicked kind").toBe(want.kind);
   expect(box().checked, "the kind row shows it").toBe(want.kind);
@@ -379,7 +378,11 @@ async function run(start: Start, actions: readonly Action[]): Promise<void> {
   }
 }
 
-const start: fc.Arbitrary<Start> = fc.record({ kind: fc.boolean(), sibling: fc.boolean() });
+const start: fc.Arbitrary<Start> = fc.record({
+  on: fc.boolean(),
+  kind: fc.boolean(),
+  sibling: fc.boolean(),
+});
 
 const action: fc.Arbitrary<Action> = fc.oneof(
   { weight: 4, arbitrary: fc.constant({ t: "kind" as const }) },
@@ -402,8 +405,8 @@ const kind: Action = { t: "kind" };
 const master: Action = { t: "master" };
 const flush: Action = { t: "flush" };
 const commit: Action = { t: "commit" };
-const siblingOn: Start = { kind: true, sibling: true };
-const lastKindOn: Start = { kind: true, sibling: false };
+const siblingOn: Start = { on: true, kind: true, sibling: true };
+const lastKindOn: Start = { on: true, kind: true, sibling: false };
 
 beforeAll(async () => {
   document.body.innerHTML = new DOMParser().parseFromString(indexHtml, "text/html").body.innerHTML;
@@ -448,7 +451,7 @@ describe("settings controls against a model server", () => {
     ],
     [
       "sends a kind click back to the server's value while the click before it is in flight",
-      { kind: false, sibling: true },
+      { on: true, kind: false, sibling: true },
       [kind, flush, kind, commit],
     ],
     [
@@ -462,20 +465,26 @@ describe("settings controls against a model server", () => {
         { t: "pick", model: "A" },
       ],
     ],
+    ["leaves the switch on when the last kind on is clicked off", lastKindOn, [kind]],
     [
-      "keeps notifications on when the last kind on is clicked off and on inside one debounce",
+      "leaves the switch on when the last kind on is clicked off and on inside one debounce",
       lastKindOn,
       [kind, kind],
     ],
     [
-      "keeps notifications on when the last kind on is clicked on again while its off write is in flight",
+      "leaves the switch on when the last kind on is clicked on again while its off write is in flight",
       lastKindOn,
       [kind, flush, kind],
     ],
     [
-      "keeps notifications on when the last kind on is clicked off and on around a model pick",
+      "leaves the switch on when the last kind on is clicked off and on around a model pick",
       lastKindOn,
       [kind, { t: "pick", model: "B" }, kind],
+    ],
+    [
+      "leaves the switch on when another device's write is read between two kind clicks",
+      lastKindOn,
+      [kind, flush, { t: "other" }, { t: "event" }, { t: "serveRead" }, kind],
     ],
     [
       "keeps notifications off when a kind is clicked off after the switch was turned off",
@@ -491,6 +500,21 @@ describe("settings controls against a model server", () => {
       "keeps notifications off when the last kind is clicked off and on after the switch was turned off",
       lastKindOn,
       [master, kind, kind],
+    ],
+    [
+      "keeps notifications off when a kind is clicked on after the switch was turned off",
+      { on: true, kind: false, sibling: true },
+      [master, kind],
+    ],
+    [
+      "turns the switch on alone, leaving every kind off as stored",
+      { on: false, kind: false, sibling: false },
+      [master],
+    ],
+    [
+      "turns the switch on alone, leaving the kinds as stored",
+      { on: false, kind: true, sibling: false },
+      [master, flush, commit],
     ],
     [
       "keeps the verdict a read gave over a late write's answer at the same version",

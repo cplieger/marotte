@@ -169,8 +169,9 @@ registerCleanup(() => {
   }
 });
 
-/** Queue what a click sends (settings-state.changes). Each switch is painted from the settings state
- *  at once and again when the write settles, so a failed write leaves it at what the server holds. */
+/** Queue what a click sends (settings-state.changes). Each switch is one this click flipped, painted
+ *  from the settings state at once and again when the write settles, so a failed write leaves it at
+ *  what the server holds. */
 export function patchSettings(
   patch: Partial<EffectiveSettings>,
   ...switches: SettingsSwitch[]
@@ -181,10 +182,9 @@ export function patchSettings(
     // hang.
     return Promise.resolve(null);
   }
-  for (const { el, key } of switches) {
+  for (const { el } of switches) {
     if (!unsettled(el)) {
-      // A switch whose key the caller sends was flipped by this click; one the click only implies was not.
-      bases.set(el, Object.hasOwn(patch, key) ? !el.checked : el.checked);
+      bases.set(el, !el.checked);
     }
   }
   step({ type: "click", patch });

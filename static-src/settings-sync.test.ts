@@ -831,19 +831,38 @@ describe("settings sync ordering", () => {
     expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(false);
   });
 
-  it("keeps notifications on when the last kind on is clicked off and on inside one debounce", async () => {
+  it("leaves the switch on when the last kind on is clicked off", async () => {
     localStorage.removeItem(LS_NOTIFY_ASK_KEY);
     let server = lastKindOn();
     await boot(server);
-    expect(masterBox().checked).toBe(true);
-    finishedBox().click();
-    await settled();
-    expect(masterBox().checked, "every kind is off, so notifications are").toBe(false);
     finishedBox().click();
     await debounced();
-    expect(masterBox().checked, "a kind is on again").toBe(true);
+    expect(masterBox().checked, "the switch the click never moved").toBe(true);
+    expect(byId("notify-sub-options").inert, "the kind rows stay open").toBe(false);
+    expect(patches.map((p) => p.body)).toEqual([{ notify_agent_finished: false }]);
 
-    expect(patches, "one write carries the debounced clicks").toHaveLength(1);
+    server = commitPatch(server, 0);
+    await settled();
+    await announced(server);
+    expect(server.notifications_enabled, "the server keeps notifications on").toBe(true);
+    expect(server.notify_agent_finished).toBe(false);
+    expect(masterBox().checked).toBe(true);
+    expect(areNotificationsEnabled()).toBe(true);
+    expect(isKindEnabled("agent_finished")).toBe(false);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY), "the ask is not spent").toBeNull();
+  });
+
+  it("leaves the switch on when the last kind on is clicked off and on inside one debounce", async () => {
+    localStorage.removeItem(LS_NOTIFY_ASK_KEY);
+    let server = lastKindOn();
+    await boot(server);
+    finishedBox().click();
+    await settled();
+    expect(masterBox().checked, "the switch the click never moved").toBe(true);
+    finishedBox().click();
+    await debounced();
+
+    expect(patches.map((p) => p.body)).toEqual([{ notify_agent_finished: true }]);
     server = commitPatch(server, 0);
     await settled();
     await announced(server);
@@ -854,16 +873,13 @@ describe("settings sync ordering", () => {
     expect(localStorage.getItem(LS_NOTIFY_ASK_KEY), "the ask is not spent").toBeNull();
   });
 
-  it("keeps notifications on when the last kind on is clicked on again while its off write is in flight", async () => {
+  it("leaves the switch on when the last kind on is clicked on again while its off write is in flight", async () => {
     localStorage.removeItem(LS_NOTIFY_ASK_KEY);
     let server = lastKindOn();
     await boot(server);
     finishedBox().click();
     await debounced();
-    expect(patches[0]?.body).toEqual({
-      notify_agent_finished: false,
-      notifications_enabled: false,
-    });
+    expect(patches[0]?.body).toEqual({ notify_agent_finished: false });
     finishedBox().click();
     await settled();
     expect(masterBox().checked).toBe(true);
@@ -872,12 +888,12 @@ describe("settings sync ordering", () => {
     await settled();
     await announced(server);
     await debounced();
-    expect(patches[1]?.body).toEqual({ notify_agent_finished: true, notifications_enabled: true });
+    expect(patches[1]?.body).toEqual({ notify_agent_finished: true });
     server = commitPatch(server, 1);
     await settled();
     await announced(server);
     expect(server.notify_agent_finished).toBe(true);
-    expect(server.notifications_enabled, "the server ends with notifications on").toBe(true);
+    expect(server.notifications_enabled, "the server keeps notifications on").toBe(true);
     expect(masterBox().checked).toBe(true);
     expect(areNotificationsEnabled()).toBe(true);
     expect(localStorage.getItem(LS_NOTIFY_ASK_KEY), "the ask is not spent").toBeNull();
@@ -953,47 +969,42 @@ describe("settings sync ordering", () => {
     expect(areNotificationsEnabled()).toBe(false);
   });
 
-  it("spends the ask when every kind went off and the newer settings agree", async () => {
+  it("spends the ask when the switch's off write is superseded by newer settings that keep it off", async () => {
     localStorage.removeItem(LS_NOTIFY_ASK_KEY);
     await boot(lastKindOn());
-    finishedBox().click();
+    masterBox().click();
     await debounced();
     expect(patches).toHaveLength(1);
 
     // This write committed revision 2, then another device's revision 3 kept notifications off.
-    await announced({
-      ...lastKindOn(),
-      settings_revision: 3,
-      notifications_enabled: false,
-      notify_agent_finished: false,
-    });
-    patches[0]?.answer({
-      ...lastKindOn(),
-      settings_revision: 2,
-      notifications_enabled: false,
-      notify_agent_finished: false,
-    });
+    await announced({ ...lastKindOn(), settings_revision: 3, notifications_enabled: false });
+    patches[0]?.answer({ ...lastKindOn(), settings_revision: 2, notifications_enabled: false });
     await settled();
     expect(masterBox().checked).toBe(false);
     expect(areNotificationsEnabled()).toBe(false);
     expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBe("1");
   });
 
-  it("keeps notifications on when the switch is turned back on inside the debounce that turned every kind off", async () => {
+  it("turns the switch on alone, leaving every kind off as stored", async () => {
     // Blocked, so turning the switch on neither prompts nor registers push.
     vi.stubGlobal("Notification", { permission: "denied" });
-    const server = lastKindOn();
+    let server = {
+      ...lastKindOn(),
+      notifications_enabled: false,
+      notify_agent_finished: false,
+    };
     await boot(server);
-    finishedBox().click();
-    await settled();
     masterBox().click();
     await debounced();
-    expect(patches).toHaveLength(1);
-    expect(patches[0]?.body).toMatchObject({ notifications_enabled: true });
-    commitPatch(server, 0);
+    expect(patches.map((p) => p.body)).toEqual([{ notifications_enabled: true }]);
+    server = commitPatch(server, 0);
     await settled();
+    await announced(server);
     expect(masterBox().checked).toBe(true);
     expect(areNotificationsEnabled()).toBe(true);
+    expect(finishedBox().checked, "the kind no click moved").toBe(false);
+    expect(isKindEnabled("agent_finished")).toBe(false);
+    expect(runOutcomeBox().checked).toBe(false);
   });
 
   it("leaves the notification switch alone when a kind click's write fails before any settings were read", async () => {
@@ -1035,20 +1046,19 @@ describe("settings sync ordering", () => {
     expect(timeout.value, "the reader's newer value").toBe("45");
   });
 
-  it("asks no browser permission when a later click in the same write turned notifications off", async () => {
+  it("asks no browser permission when the switch is turned off again inside the same write", async () => {
     const requestPermission = vi.fn(() => Promise.resolve("default"));
     vi.stubGlobal("Notification", { permission: "default", requestPermission });
     await boot({ ...lastKindOn(), notifications_enabled: false });
     masterBox().click();
     await settled();
     finishedBox().click();
-    byId<HTMLInputElement>("notify-run-outcome-toggle").click();
+    masterBox().click();
     await debounced();
     expect(patches).toHaveLength(1);
-    expect(patches[0]?.body).toMatchObject({
+    expect(patches[0]?.body).toEqual({
       notifications_enabled: false,
       notify_agent_finished: false,
-      notify_run_outcome: false,
     });
     commitPatch({ ...lastKindOn(), notifications_enabled: false }, 0);
     await settled();

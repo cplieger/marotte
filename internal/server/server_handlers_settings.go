@@ -352,7 +352,19 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dirs := settings.AgentDirs{Workspace: s.workDir, Config: s.configDir}
-	committed, err := settings.Update(r.Context(), s.configDir, mergeSettingsPatch(dirs, patch), s.agent.Broadcast)
+	path := filepath.Join(s.configDir, settings.Filename)
+	merge := mergeSettingsPatch(dirs, patch)
+	var committed map[string]json.RawMessage
+	var answer marotte.EffectiveSettings
+	_, err := settings.Update(r.Context(), s.configDir, func(doc map[string]json.RawMessage) error {
+		committed = doc
+		return merge(doc)
+	}, func(ctx context.Context, evt marotte.ServerEvent) {
+		// Resolved before the event leaves: a page adopts a read the event prompts over this answer
+		// at the same version (settings-state.accepts), so the read must be no older.
+		answer = effectiveOf(committed, path, dirs, s.kiroDefaults)
+		s.agent.Broadcast(ctx, evt)
+	})
 	if err != nil {
 		if rp := (patchRefusedError{}); errors.As(err, &rp) {
 			httpreply.BadRequest(w, rp.Error())
@@ -366,7 +378,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		httpreply.ServerError(w, "config.json could not be saved", err)
 		return
 	}
-	webhttp.WriteJSON(w, effectiveOf(committed, filepath.Join(s.configDir, settings.Filename), dirs, s.kiroDefaults))
+	webhttp.WriteJSON(w, answer)
 	// Durable: the write landed, so a closed tab must not leave bridges on the old values.
 	s.agent.ReconcileSessionSettings(durable.Context(r.Context()))
 }

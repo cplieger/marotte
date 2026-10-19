@@ -78,7 +78,7 @@ describe("keyed push kinds", () => {
   });
 
   // Two tables key on the same kind set and neither is the server's, so a kind added there with no
-  // entry in one of them degrades silently: a missing DEFAULT makes `enableEverything` fall through
+  // entry in one of them degrades silently: a missing DEFAULT makes `isKindEnabled` fall through
   // to `?? true`, ignoring whatever polarity the server declared, and a missing INPUT ID makes
   // `kindRows` skip the row altogether, so the kind ships with no switch and no failing test.
   it("declares a default for every keyed kind, and no other", () => {

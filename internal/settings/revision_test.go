@@ -119,6 +119,35 @@ func TestUpdate_PublishesItsEventUnderTheWriteLock(t *testing.T) {
 	}
 }
 
+// The PATCH handler resolves its answer from the map its merge edited, inside publish.
+func TestUpdate_PublishSeesTheEditedMapAsWritten(t *testing.T) {
+	dir := t.TempDir()
+	var edited map[string]json.RawMessage
+	var seen stamp
+	var seenTheme string
+	merge := setKey(KeyTheme, "dark")
+	fn := func(doc map[string]json.RawMessage) error {
+		edited = doc
+		return merge(doc)
+	}
+	published := func(context.Context, marotte.ServerEvent) {
+		seen = stampOf(edited)
+		if err := json.Unmarshal(edited[KeyTheme], &seenTheme); err != nil {
+			t.Errorf("theme in the edited map: %v", err)
+		}
+	}
+	returned, err := Update(t.Context(), dir, fn, published)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if stored := storedStamp(t, dir); seen != stored || seen.revision != 1 || seenTheme != "dark" {
+		t.Errorf("publish saw stamp %+v theme %q, want the stored %+v (revision 1) and dark", seen, seenTheme, stored)
+	}
+	if stampOf(returned) != seen {
+		t.Errorf("returned stamp %+v, want the one publish saw %+v", stampOf(returned), seen)
+	}
+}
+
 func TestUpdate_ARefusedWriteKeepsTheStampAndPublishesNothing(t *testing.T) {
 	t.Run("the merge refuses", func(t *testing.T) {
 		dir := t.TempDir()

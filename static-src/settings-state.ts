@@ -5,9 +5,7 @@
 // 2. `held` and `adopted.at` never go back, and only a payload `accepts` passes is adopted.
 // 3. A shown value is the server's at `adopted.at` unless it is this page's own edit or write in flight.
 // 4. A click is dropped only when it equals the shown value and the newest write in flight of its key.
-// 5. A kind click implies the notification switch, never over an off clicked on it (notifyRule).
-
-import { KEYED_PUSH_KINDS } from "./push-kinds.js";
+// 5. A click sends only keys it names.
 
 /** A settings version, ordered epoch first: config.json counts its writes within an epoch, and
  *  only a later epoch counts again from 1. */
@@ -38,9 +36,6 @@ export interface SettingsState {
   readonly pending: readonly Write[];
   /** Changes clicked and not sent yet. */
   readonly edit: Values;
-  /** Whether the click that last moved the notification switch was a kind click turning the last
-   *  kind off, rather than a click of the switch. */
-  readonly offByKinds: boolean;
 }
 
 /** Where a payload comes from: a settings read, or a write's answer. */
@@ -49,8 +44,6 @@ export type Source = "read" | "write";
 export type SettingsEvent =
   | { readonly type: "adopt"; readonly payload: Payload; readonly from: Source }
   | { readonly type: "announce"; readonly at: Stamp }
-  /** patch is the click as made, never changes() of it: whether it names the notification switch
-   *  decides offByKinds. */
   | { readonly type: "click"; readonly patch: Values }
   | { readonly type: "send"; readonly id: number }
   | { readonly type: "start"; readonly id: number }
@@ -63,7 +56,6 @@ export const initialSettingsState: SettingsState = {
   adopted: null,
   pending: [],
   edit: {},
-  offByKinds: false,
 };
 
 function below(s: Stamp, than: Stamp): boolean {
@@ -93,8 +85,8 @@ export function isCurrent(state: SettingsState, at: Stamp): boolean {
 
 /** Whether a payload at `at` from `from` is adopted: one not older than held, except a write's answer
  *  at the version already adopted. One version can answer two payloads, because each also resolves
- *  what config.json does not hold (kiro-cli's defaults, each directory's verdict), and a write's
- *  answer is resolved as its write commits, so a read at that version was in practice resolved later. */
+ *  what config.json does not hold (kiro-cli's defaults, each directory's verdict), and the server
+ *  resolves a write's answer before it announces the write, so a read at that version is no older. */
 export function accepts(state: SettingsState, at: Stamp, from: Source): boolean {
   if (below(at, state.held)) {
     return false;
@@ -153,41 +145,10 @@ function newestUnsettled(state: SettingsState, key: string): { value: unknown } 
   return w === undefined ? undefined : { value: w.body[key] };
 }
 
-const NOTIFY_MASTER = "notifications_enabled";
-const NOTIFY_KINDS: readonly string[] = Object.values(KEYED_PUSH_KINDS);
-
-/** What a click sends: the keys of patch it changes, and the notification switch they imply. */
+/** What a click sends: the keys of patch it changes (invariants 4 and 5). A write in flight may
+ *  commit before or after settings read since it was sent, so a click must match both to change
+ *  nothing. */
 export function changes(state: SettingsState, patch: Values): Values {
-  return notifyRule(state, changedKeys(state, patch));
-}
-
-/** Invariant 5: a click turning the last notification kind off turns notifications off with it, and
- *  one leaving a kind on withdraws that off (offByKinds) while the server still holds them on. An
- *  off clicked on the switch stays. A click of the switch alone leaves the kinds. */
-function notifyRule(state: SettingsState, changed: Values): Values {
-  if (!NOTIFY_KINDS.some((k) => Object.hasOwn(changed, k))) {
-    return changed;
-  }
-  const after = (k: string): unknown =>
-    Object.hasOwn(changed, k) ? changed[k] : shownValue(state, k)?.value;
-  let master: boolean;
-  if (NOTIFY_KINDS.every((k) => after(k) === false)) {
-    master = false;
-  } else if (
-    state.offByKinds &&
-    after(NOTIFY_MASTER) === false &&
-    state.adopted?.value[NOTIFY_MASTER] === true
-  ) {
-    master = true;
-  } else {
-    return changed;
-  }
-  return { ...changed, ...changedKeys(state, { [NOTIFY_MASTER]: master }) };
-}
-
-/** The keys of patch a click changes (invariant 4). A write in flight may commit before or after
- *  settings read since it was sent, so a click must match both to change nothing. */
-function changedKeys(state: SettingsState, patch: Values): Values {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(patch)) {
     const shown = shownValue(state, key);
@@ -234,10 +195,7 @@ export function reduce(state: SettingsState, event: SettingsEvent): SettingsStat
       if (Object.keys(changed).length === 0) {
         return state;
       }
-      const offByKinds = Object.hasOwn(changed, NOTIFY_MASTER)
-        ? !Object.hasOwn(event.patch, NOTIFY_MASTER) && changed[NOTIFY_MASTER] === false
-        : state.offByKinds;
-      return { ...state, edit: { ...state.edit, ...changed }, offByKinds };
+      return { ...state, edit: { ...state.edit, ...changed } };
     }
     case "send":
       if (Object.keys(state.edit).length === 0) {

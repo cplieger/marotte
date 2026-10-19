@@ -1,7 +1,7 @@
-// The master switch going ON: it enables the DEFAULT-ON kinds, not all of them. A write that
+// The master switch going ON writes the switch alone and leaves every kind as it is. A write that
 // newer settings superseded still does this click's own part when those settings agree with it,
-// and a kind write that committed applies what it committed. What a kind click does to the master
-// switch is the settings state's, so settings-sync.test.ts runs those cases on the real persist.
+// and a kind write that committed applies what it committed. settings-sync.test.ts runs the
+// switch and the kinds together on the real persist.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { settingsPayload } from "./__test-helpers__/settings.js";
@@ -110,42 +110,45 @@ beforeEach(() => {
   initNotificationToggles();
 });
 
-describe("the master switch enables the default-ON kinds", () => {
-  it("patches each kind's settings key with that kind's own default", async () => {
+describe("the master switch going on", () => {
+  it("writes the switch alone", async () => {
     await turnMasterOn();
-    expect(mocks.patches).toHaveLength(1);
-    expect(mocks.patches[0]).toEqual({
-      notifications_enabled: true,
-      notify_agent_finished: true,
-      notify_pr_status: false,
-      notify_run_outcome: true,
-    });
+    expect(mocks.patches).toEqual([{ notifications_enabled: true }]);
   });
 
-  it("leaves the pull-request checkbox unchecked and checks its two siblings", async () => {
+  it("leaves every kind's checkbox as it was", async () => {
+    notify.setKindEnabled("run_outcome", true);
+    mountPanel();
+    initNotificationToggles();
     await turnMasterOn();
-    expect(input(KIND_IDS.agent_finished).checked).toBe(true);
+    expect(input(KIND_IDS.agent_finished).checked).toBe(false);
     expect(input(KIND_IDS.pr_status).checked).toBe(false);
     expect(input(KIND_IDS.run_outcome).checked).toBe(true);
   });
 
-  it("leaves the in-memory state agreeing with the wire value", async () => {
+  it("leaves the in-memory state agreeing with the committed settings", async () => {
+    mocks.patchResult = settingsPayload({
+      notifications_enabled: true,
+      notify_agent_finished: false,
+      notify_pr_status: true,
+      notify_run_outcome: true,
+    });
     await turnMasterOn();
     expect(notify.areNotificationsEnabled()).toBe(true);
-    expect(notify.isKindEnabled("agent_finished")).toBe(true);
-    expect(notify.isKindEnabled("pr_status")).toBe(false);
+    expect(notify.isKindEnabled("agent_finished")).toBe(false);
+    expect(notify.isKindEnabled("pr_status")).toBe(true);
     expect(notify.isKindEnabled("run_outcome")).toBe(true);
   });
 });
 
 describe("a refused write tears the feature down", () => {
-  it("switches every kind off, including the default-ON ones", async () => {
+  it("turns notifications off and leaves the kinds as they were", async () => {
     mocks.patchResult = null;
+    notify.setKindEnabled("agent_finished", true);
     await turnMasterOn();
     expect(notify.areNotificationsEnabled()).toBe(false);
-    for (const kind of Object.keys(KIND_IDS)) {
-      expect(notify.isKindEnabled(kind), `${kind} survived the teardown`).toBe(false);
-    }
+    expect(notify.isKindEnabled("agent_finished"), "the kind no click moved").toBe(true);
+    expect(notify.isKindEnabled("run_outcome")).toBe(false);
     expect(mocks.unregisters).toBe(1);
   });
 });

@@ -11,7 +11,7 @@ import {
   setNotifyUICallback,
   spendNotifyAsk,
 } from "./notify.js";
-import { KEYED_PUSH_DEFAULTS, KEYED_PUSH_KINDS } from "./push-kinds.js";
+import { KEYED_PUSH_KINDS } from "./push-kinds.js";
 import { newestSettings, patchSettings, settingsAsShown } from "./persist.js";
 import type { EffectiveSettings, PatchAnswer, SettingsSwitch } from "./persist.js";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
@@ -129,7 +129,7 @@ export function initNotificationToggles(): void {
   notifyToggle.addEventListener("change", () => {
     notifyHint.classList.add("hidden");
     if (notifyToggle.checked) {
-      void enableEverything(rows, notifyToggle, notifyHint, updateSub);
+      void enableNotifications(rows, notifyToggle, notifyHint, updateSub);
       return;
     }
     void patchSettings({ notifications_enabled: false }, masterSwitch(notifyToggle)).then(
@@ -143,7 +143,7 @@ export function initNotificationToggles(): void {
 
   for (const row of rows) {
     row.input.addEventListener("change", () => {
-      void applyKindChange(row, notifyToggle, updateSub);
+      void applyKindChange(row);
     });
   }
 }
@@ -184,25 +184,15 @@ function syncRowInputs(rows: readonly KindRow[], shown: EffectiveSettings | null
   }
 }
 
-/** Master ON: enable the DEFAULT-ON kinds, not just one and not all of them. */
-async function enableEverything(
+/** Switch ON writes the switch alone: the kinds are their own choice, and a push needs both. */
+async function enableNotifications(
   rows: readonly KindRow[],
   notifyToggle: HTMLInputElement,
   notifyHint: HTMLElement,
   updateSub: () => void,
 ): Promise<void> {
-  const mutated: SettingsSwitch[] = [masterSwitch(notifyToggle)];
-  const patch: Record<string, boolean> = { notifications_enabled: true };
-  for (const row of rows) {
-    const want = KEYED_PUSH_DEFAULTS[row.kind] ?? true;
-    patch[row.settingsKey] = want;
-    if (row.input.checked !== want) {
-      row.input.checked = want;
-      mutated.push(kindSwitch(row));
-    }
-  }
   updateSub(); // show the sub-options optimistically
-  const r = await patchSettings(patch, ...mutated);
+  const r = await patchSettings({ notifications_enabled: true }, masterSwitch(notifyToggle));
   if (r === "superseded") {
     // The newer settings decide whether notifications are on; the prompt is this click's alone.
     const s = await newestSettings();
@@ -211,12 +201,9 @@ async function enableEverything(
       return;
     }
   } else if (r === null) {
-    // persist repaints the inputs; tear down any push subscription requestPermission
+    // persist repaints the switch; tear down any push subscription requestPermission
     // may have started.
     setNotificationsEnabled(false);
-    for (const row of rows) {
-      setKindEnabled(row.kind, false);
-    }
     unregisterPush();
     updateSub();
     return;
@@ -244,25 +231,13 @@ async function enableEverything(
   }
 }
 
-async function applyKindChange(
-  changed: KindRow,
-  notifyToggle: HTMLInputElement,
-  updateSub: () => void,
-): Promise<void> {
-  const wasOn = settingsAsShown()?.notifications_enabled;
-  // The settings state decides what the click does to the switch (settings-state.changes).
-  const answer = patchSettings(
+/** A kind click writes its own key alone and leaves the switch as it is. */
+async function applyKindChange(changed: KindRow): Promise<void> {
+  const r = await patchSettings(
     { [changed.settingsKey]: changed.input.checked },
     kindSwitch(changed),
-    masterSwitch(notifyToggle),
   );
-  const turnedOff = wasOn === true && settingsAsShown()?.notifications_enabled === false;
-  const r = await answer;
   if (r !== null && r !== "superseded") {
     setKindEnabled(changed.kind, r[changed.settingsKey]);
-  }
-  // Switching every channel off is the same refusal as the switch.
-  if (turnedOff && (await staysOff(r))) {
-    turnOff(updateSub);
   }
 }

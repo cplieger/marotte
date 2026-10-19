@@ -556,98 +556,157 @@ describe("settings state", () => {
   });
 });
 
-describe("the notification switch a click implies", () => {
-  const KINDS = { notify_agent_finished: true, notify_pr_status: false, notify_run_outcome: false };
+describe("a click sends only the keys it names", () => {
+  const NOTIFY = {
+    notifications_enabled: true,
+    notify_agent_finished: true,
+    notify_pr_status: false,
+    notify_run_outcome: false,
+  };
+  type NotifyKey = keyof typeof NOTIFY;
+  const NOTIFY_KEYS = Object.keys(NOTIFY) as NotifyKey[];
 
-  function adopted(on: boolean, kinds: Record<string, boolean> = KINDS): SettingsState {
+  function adopted(values: Partial<typeof NOTIFY> = {}): SettingsState {
     return reduce(initialSettingsState, {
       type: "adopt",
       from: "read",
-      payload: at(1, { notifications_enabled: on, ...kinds }),
+      payload: at(1, { ...NOTIFY, ...values }),
     });
   }
 
-  it("turns notifications off with the last kind a click turns off", () => {
-    expect(changes(adopted(true), { notify_agent_finished: false })).toEqual({
+  function clicks(s: SettingsState, ...patches: Record<string, unknown>[]): SettingsState {
+    return patches.reduce((acc, patch) => reduce(acc, { type: "click", patch }), s);
+  }
+
+  function inFlight(s: SettingsState, id: number): SettingsState {
+    return reduce(reduce(s, { type: "send", id }), { type: "start", id });
+  }
+
+  it("a kind click never carries notifications_enabled", () => {
+    expect(changes(adopted(), { notify_agent_finished: false }), "the last kind off").toEqual({
       notify_agent_finished: false,
-      notifications_enabled: false,
     });
-  });
-
-  it("leaves notifications on while a click leaves another kind on", () => {
-    const s = adopted(true, { ...KINDS, notify_run_outcome: true });
-    expect(changes(s, { notify_agent_finished: false })).toEqual({ notify_agent_finished: false });
-  });
-
-  it("turns them back on with a kind clicked on again before the click that turned them off is sent", () => {
-    let s = reduce(adopted(true), { type: "click", patch: { notify_agent_finished: false } });
-    s = reduce(s, { type: "click", patch: { notify_agent_finished: true } });
-    expect(s.edit).toEqual({ notify_agent_finished: true, notifications_enabled: true });
-  });
-
-  it("turns them back on with a kind clicked on again while that write is in flight", () => {
-    let s = reduce(adopted(true), { type: "click", patch: { notify_agent_finished: false } });
-    s = reduce(s, { type: "send", id: 1 });
-    s = reduce(s, { type: "start", id: 1 });
-    s = reduce(s, { type: "click", patch: { notify_agent_finished: true } });
-    expect(s.edit).toEqual({ notify_agent_finished: true, notifications_enabled: true });
-  });
-
-  it("turns them back on with a kind clicked on again after a click of another setting", () => {
-    let s = reduce(adopted(true), { type: "click", patch: { notify_agent_finished: false } });
-    s = reduce(s, { type: "click", patch: { last_model: "B" } });
-    s = reduce(s, { type: "click", patch: { notify_agent_finished: true } });
-    expect(s.edit).toEqual({
-      notify_agent_finished: true,
-      notifications_enabled: true,
-      last_model: "B",
-    });
-  });
-
-  it("leaves them off when the server holds them off", () => {
-    expect(changes(adopted(false), { notify_run_outcome: true })).toEqual({
-      notify_run_outcome: true,
-    });
-  });
-
-  it("keeps notifications off when a kind is clicked off after the switch was clicked off", () => {
-    let s = adopted(true, { ...KINDS, notify_run_outcome: true });
-    s = reduce(s, { type: "click", patch: { notifications_enabled: false } });
-    s = reduce(s, { type: "click", patch: { notify_run_outcome: false } });
-    expect(s.edit).toEqual({ notifications_enabled: false, notify_run_outcome: false });
-  });
-
-  it("keeps notifications off when a kind is clicked off while the switch's off write is in flight", () => {
-    let s = adopted(true, { ...KINDS, notify_run_outcome: true });
-    s = reduce(s, { type: "click", patch: { notifications_enabled: false } });
-    s = reduce(s, { type: "send", id: 1 });
-    s = reduce(s, { type: "start", id: 1 });
-    s = reduce(s, { type: "click", patch: { notify_run_outcome: false } });
-    expect(s.edit).toEqual({ notify_run_outcome: false });
-  });
-
-  it("keeps notifications off when the last kind is clicked off and on after the switch was clicked off", () => {
-    let s = reduce(adopted(true), { type: "click", patch: { notifications_enabled: false } });
-    s = reduce(s, { type: "click", patch: { notify_agent_finished: false } });
-    s = reduce(s, { type: "click", patch: { notify_agent_finished: true } });
-    expect(s.edit).toEqual({ notifications_enabled: false, notify_agent_finished: true });
-  });
-
-  it("leaves notifications off once the off the last kind implied is the server's", () => {
-    let s = reduce(adopted(true), { type: "click", patch: { notify_agent_finished: false } });
-    s = reduce(s, { type: "send", id: 1 });
-    s = reduce(s, { type: "start", id: 1 });
-    s = reduce(s, {
-      type: "settle",
-      id: 1,
-      answer: at(2, { ...KINDS, notifications_enabled: false, notify_agent_finished: false }),
-    });
-    expect(changes(s, { notify_agent_finished: true })).toEqual({ notify_agent_finished: true });
+    expect(
+      changes(adopted({ notifications_enabled: false }), { notify_run_outcome: true }),
+      "a kind on with the switch off",
+    ).toEqual({ notify_run_outcome: true });
   });
 
   it("leaves the kinds as they are when the switch alone is clicked", () => {
-    expect(changes(adopted(true), { notifications_enabled: false })).toEqual({
+    expect(changes(adopted(), { notifications_enabled: false })).toEqual({
       notifications_enabled: false,
     });
+    expect(
+      changes(adopted({ notifications_enabled: false, notify_agent_finished: false }), {
+        notifications_enabled: true,
+      }),
+      "on, with every kind off",
+    ).toEqual({ notifications_enabled: true });
+  });
+
+  it("leaves the switch on when the last kind is clicked off and on", () => {
+    const s = clicks(adopted(), { notify_agent_finished: false }, { notify_agent_finished: true });
+    expect(s.edit).toEqual({ notify_agent_finished: true });
+    expect(shownValue(s, "notifications_enabled")).toEqual({ value: true });
+  });
+
+  it("leaves the switch on when the last kind is clicked on again while its off write is in flight", () => {
+    let s = inFlight(clicks(adopted(), { notify_agent_finished: false }), 1);
+    s = clicks(s, { notify_agent_finished: true });
+    expect(s.pending.map((w) => w.body)).toEqual([{ notify_agent_finished: false }]);
+    expect(s.edit).toEqual({ notify_agent_finished: true });
+    expect(shownValue(s, "notifications_enabled")).toEqual({ value: true });
+  });
+
+  it("keeps the switch's off when a kind is clicked after it", () => {
+    const s = clicks(
+      adopted({ notify_run_outcome: true }),
+      { notifications_enabled: false },
+      { notify_run_outcome: false },
+    );
+    expect(s.edit).toEqual({ notifications_enabled: false, notify_run_outcome: false });
+  });
+
+  it("keeps the switch's off when a kind is clicked while its write is in flight", () => {
+    let s = inFlight(clicks(adopted(), { notifications_enabled: false }), 1);
+    s = clicks(s, { notify_agent_finished: false });
+    expect(s.edit).toEqual({ notify_agent_finished: false });
+    expect(shownValue(s, "notifications_enabled")).toEqual({ value: false });
+  });
+
+  it("keeps the switch's off when the last kind is clicked off and on after it", () => {
+    const s = clicks(
+      adopted(),
+      { notifications_enabled: false },
+      { notify_agent_finished: false },
+      { notify_agent_finished: true },
+    );
+    expect(s.edit).toEqual({ notifications_enabled: false, notify_agent_finished: true });
+  });
+
+  it("keeps the switch's off when a kind is clicked on after it with every kind off", () => {
+    const s = clicks(
+      adopted({ notify_agent_finished: false, notify_run_outcome: true }),
+      { notifications_enabled: false },
+      { notify_agent_finished: true },
+    );
+    expect(s.edit).toEqual({ notifications_enabled: false, notify_agent_finished: true });
+  });
+
+  type Step =
+    { t: "click"; key: NotifyKey; value: boolean } | { t: "send" } | { t: "start" } | { t: "fail" };
+
+  const step: fc.Arbitrary<Step> = fc.oneof(
+    fc.record({
+      t: fc.constant("click" as const),
+      key: fc.constantFrom(...NOTIFY_KEYS),
+      value: fc.boolean(),
+    }),
+    fc.constant({ t: "send" as const }),
+    fc.constant({ t: "start" as const }),
+    fc.constant({ t: "fail" as const }),
+  );
+
+  it("never moves a key the click does not name, for any clicks, sends and failures", () => {
+    fc.assert(
+      fc.property(
+        fc.record({
+          notifications_enabled: fc.boolean(),
+          notify_agent_finished: fc.boolean(),
+          notify_pr_status: fc.boolean(),
+          notify_run_outcome: fc.boolean(),
+        }),
+        fc.array(step, { maxLength: 12 }),
+        (start, steps) => {
+          let s = adopted(start);
+          let id = 0;
+          for (const st of steps) {
+            switch (st.t) {
+              case "send":
+                s = reduce(s, { type: "send", id: ++id });
+                continue;
+              case "start": {
+                const waiting = s.pending.find((w) => w.after === null);
+                s = waiting === undefined ? s : reduce(s, { type: "start", id: waiting.id });
+                continue;
+              }
+              case "fail":
+                s = reduce(s, { type: "settle", id: s.pending[0]?.id ?? -1, answer: null });
+                continue;
+              case "click":
+                break;
+            }
+            const before = s;
+            s = reduce(s, { type: "click", patch: { [st.key]: st.value } });
+            expect(s.pending).toBe(before.pending);
+            for (const other of NOTIFY_KEYS.filter((k) => k !== st.key)) {
+              expect(Object.hasOwn(s.edit, other), other).toBe(Object.hasOwn(before.edit, other));
+              expect(s.edit[other], other).toBe(before.edit[other]);
+              expect(shownValue(s, other), other).toEqual(shownValue(before, other));
+            }
+          }
+        },
+      ),
+    );
   });
 });
