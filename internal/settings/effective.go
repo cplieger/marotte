@@ -55,7 +55,7 @@ const (
 func EffectiveDefaults() marotte.EffectiveSettings {
 	return marotte.EffectiveSettings{
 		AgentIgnoreFiles:      DefaultAgentIgnoreFiles(),
-		AdditionalDirectories: DefaultAdditionalDirectories(),
+		AdditionalDirectories: defaultAdditionalDirectories(),
 		AutoCompactionEnabled: DefaultAutoCompactionEnabled,
 		AutoCompactPct:        DefaultAutoCompactPct,
 		ChatRetentionDays:     DefaultChatRetentionDays,

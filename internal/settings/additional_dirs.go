@@ -12,7 +12,7 @@ import (
 	"github.com/cplieger/pathinside/v2"
 )
 
-// errAdditionalDirectory is the class of every refusal AgentDirs.Check returns; each wraps it
+// errAdditionalDirectory is the class of every refusal AgentDirs.checkEntry returns; each wraps it
 // with the reason the user reads beside the field.
 var errAdditionalDirectory = errors.New("invalid additional directory")
 
@@ -24,11 +24,11 @@ type AgentDirs struct {
 	Config    string
 }
 
-// Check refuses an entry that is not an absolute, clean path to an existing directory reached
+// checkEntry refuses an entry that is not an absolute, clean path to an existing directory reached
 // through no symbolic link, or that equals, sits inside or contains the workspace or the config
 // directory. Requiring the canonical path is what keeps a symlink from redirecting a granted
 // root onto a protected tree, and lets confinement compare names lexically.
-func (d AgentDirs) Check(entry string) error {
+func (d AgentDirs) checkEntry(entry string) error {
 	switch {
 	case entry == "":
 		return fmt.Errorf("%w: an entry cannot be empty", errAdditionalDirectory)
@@ -96,7 +96,7 @@ func spellings(dir string) []string {
 }
 
 // Assess splits entries into the ones granted today, in order and deduplicated, and the reason
-// for each other one, keyed by the entry. An entry is granted when Check accepts it and it
+// for each other one, keyed by the entry. An entry is granted when checkEntry accepts it and it
 // neither lies inside nor contains an entry granted before it, so granted entries never
 // overlap. refused is never nil. A stored entry is assessed again on every read: config.json is
 // hand-editable, and a directory can change after it was added.
@@ -106,7 +106,7 @@ func (d AgentDirs) Assess(entries []string) (granted []string, refused map[strin
 		if slices.Contains(granted, entry) {
 			continue
 		}
-		if err := d.Check(entry); err != nil {
+		if err := d.checkEntry(entry); err != nil {
 			refused[entry] = err.Error()
 			continue
 		}

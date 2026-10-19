@@ -662,7 +662,7 @@ export interface EffectiveSettings {
   kiro_defaults: Record<string, KiroDefault>;
   /**
  * AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
- * settings.AgentDirs.Check refuses at this GET to its reason; it is never stored, and an
+ * settings.AgentDirs.Assess refuses at this GET to its reason; it is never stored, and an
  * entry absent from it is granted.
  */
   additional_directories_refused: Record<string, string>;
@@ -715,9 +715,8 @@ export interface EffectiveSettings {
   agent_ignore_files: string[];
   /**
  * AdditionalDirectories is the stored list of directories beyond the workspace that agents
- * may read and write, default EMPTY (settings.DefaultAdditionalDirectories). An entry that
- * no longer passes settings.AgentDirs.Check stays listed, grants nothing, and is a key of
- * AdditionalDirectoriesRefused.
+ * may read and write, default EMPTY. An entry that settings.AgentDirs.Assess refuses stays
+ * listed, grants nothing, and is a key of AdditionalDirectoriesRefused.
  */
   additional_directories: string[];
   /**

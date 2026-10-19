@@ -35,7 +35,7 @@ func newAgentDirsFixture(t *testing.T) agentDirsFixture {
 	return f
 }
 
-func TestAgentDirsCheck(t *testing.T) {
+func TestAgentDirsCheckEntry(t *testing.T) {
 	f := newAgentDirsFixture(t)
 	base := filepath.Dir(f.extra)
 	file := filepath.Join(f.extra, "file.txt")
@@ -79,32 +79,32 @@ func TestAgentDirsCheck(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := f.dirs.Check(tt.entry)
+			err := f.dirs.checkEntry(tt.entry)
 			if tt.reason == "" {
 				if err != nil {
-					t.Errorf("Check(%q) = %v, want nil", tt.entry, err)
+					t.Errorf("checkEntry(%q) = %v, want nil", tt.entry, err)
 				}
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), tt.reason) {
-				t.Errorf("Check(%q) = %v, want a refusal naming %q", tt.entry, err, tt.reason)
+				t.Errorf("checkEntry(%q) = %v, want a refusal naming %q", tt.entry, err, tt.reason)
 			}
 			if !errors.Is(err, errAdditionalDirectory) {
-				t.Errorf("Check(%q) = %v, want it to wrap errAdditionalDirectory", tt.entry, err)
+				t.Errorf("checkEntry(%q) = %v, want it to wrap errAdditionalDirectory", tt.entry, err)
 			}
 		})
 	}
 }
 
-func TestAgentDirsCheck_ConfigDirectoryCanNeverBeAdded(t *testing.T) {
+func TestAgentDirsCheckEntry_ConfigDirectoryCanNeverBeAdded(t *testing.T) {
 	f := newAgentDirsFixture(t)
 	link := filepath.Join(f.extra, "config-link")
 	if err := os.Symlink(f.dirs.Config, link); err != nil {
 		t.Fatal(err)
 	}
 	for _, entry := range []string{"/", filepath.Dir(f.dirs.Config), f.dirs.Config, filepath.Join(f.dirs.Config, "home", ".kiro"), link} {
-		if err := f.dirs.Check(entry); err == nil {
-			t.Errorf("Check(%q) = nil, want a refusal: it reaches the config directory", entry)
+		if err := f.dirs.checkEntry(entry); err == nil {
+			t.Errorf("checkEntry(%q) = nil, want a refusal: it reaches the config directory", entry)
 		}
 	}
 }

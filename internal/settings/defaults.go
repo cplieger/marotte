@@ -124,9 +124,9 @@ func DefaultAgentIgnoreFiles() []string {
 	return []string{}
 }
 
-// DefaultAdditionalDirectories is the default for additional_directories: EMPTY, so agents
+// defaultAdditionalDirectories is the default for additional_directories: EMPTY, so agents
 // reach only the workspace until the user grants more. Non-nil, so it marshals [].
-func DefaultAdditionalDirectories() []string {
+func defaultAdditionalDirectories() []string {
 	return []string{}
 }
 
