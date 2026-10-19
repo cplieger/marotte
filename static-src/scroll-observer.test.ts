@@ -243,9 +243,8 @@ function report(): string {
     .join("; ");
 }
 
-// The subject IS frames, and a browser running the whole suite delivers them at 1Hz partway through
-// (`__test-helpers__/frame-budget.ts`), so the per-test timeout has to be sized in seconds per
-// frame waited for.
+// The subject IS frames, and a full-suite browser can deliver them at 1Hz
+// (`__test-helpers__/frame-budget.ts`), so the timeout covers a whole drain budget.
 describe(
   "the transcript's resize observers over real layout",
   { timeout: testTimeoutFor(FRAME_BUDGET_MS) },

@@ -512,7 +512,8 @@ async function stillness(): Promise<void> {
 async function resetBetween(): Promise<void> {
   if (fixtureTasks !== 0) {
     const queued = fixtureTasks;
-    // Ended and drained first, so a leak fails the case it lands in and not every case after it.
+    // Stop the loader before draining; otherwise an always-in-lead fixture immediately queues
+    // another page and the drain never completes.
     scroll.setLoadMore(null, false);
     await until(() => fixtureTasks === 0, "the leaked fixture pages to drain");
     throw new Error(

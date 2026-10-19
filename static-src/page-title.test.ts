@@ -108,7 +108,8 @@ describe("the title bar's measured fit", () => {
     const heading = mountBar("240px");
     setPageTitle("Git", "chat");
     expect(heading.classList.contains("sr-only"), "clipped while narrow").toBe(true);
-    // A fit rewrites the class whatever it decides, so each record past init's own is a delivery's fit.
+    // A fit over a clipped heading always rewrites its class (remove, then re-add), so each record
+    // past init's own is a delivery's fit.
     let fits = 0;
     const fitWrites = new MutationObserver(() => {
       fits++;
