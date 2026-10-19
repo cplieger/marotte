@@ -58,7 +58,7 @@ func TestSettingsRevision_IsOnEveryPayloadAClientAdopts(t *testing.T) {
 	}
 }
 
-// A page adopts a write's answer as the settings at its version, so the answer is the stored
+// A page may adopt a write's answer as the settings at its version, so the answer is the stored
 // document resolved as a read resolves it, never the request echoed back.
 func TestSettingsWrite_AnswersTheStoredSettingsAtItsVersion(t *testing.T) {
 	dir := seedConfig(t, `{"debug_logs":true,"auto_compact_pct":"most"}`)

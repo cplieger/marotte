@@ -187,7 +187,7 @@ export function patchSettings(
       bases.set(el, Object.hasOwn(patch, key) ? !el.checked : el.checked);
     }
   }
-  step({ type: "click", patch: changed });
+  step({ type: "click", patch });
   for (const { el, key, on } of switches) {
     const checked = switchShown(state, key, on);
     if (checked !== undefined) {

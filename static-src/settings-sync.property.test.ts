@@ -1,12 +1,11 @@
 // The real settings controls against a model server, for any interleaving of clicks, debounce
-// flushes, this page's writes committing one at a time and answering late, another device's writes,
-// a directory's verdict changing with no write, settings events and reads: at rest the server, each
-// control and the state the page acts on all hold the user's last click on that control. The
-// controls are a notification kind row (a real click on the shipped markup, reachable only while
-// the kind rows show), the last-model memory (session-context.setLastModel) and the additional
-// directories panel; another device writes only keys no control owns, so the last click is the
-// oracle, and the verdicts the page acts on are those of the newest payload the server resolved for
-// it. Only fetch and the debounce timers are faked.
+// flushes, this page's writes committing one at a time and answering late, another device's writes
+// to keys no control owns, a directory's verdict changing with no write, settings events and reads:
+// at rest the server, each control and the state the page acts on hold what the user's clicks leave
+// (Notify for notifications) and the verdicts of the newest payload the server resolved. The
+// controls are the notification switch and a kind row (real clicks on the shipped markup, each only
+// while a user could click it), the last-model memory and the additional directories panel.
+// Only fetch, the debounce timers and the notification permission are faked.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import fc from "fast-check";
 import indexHtml from "../static/index.html?raw";
@@ -24,6 +23,7 @@ import { additionalDirectories, _resetForTest as resetWorkspace } from "./worksp
 
 type Action =
   | { t: "kind" }
+  | { t: "master" }
   | { t: "pick"; model: "A" | "B" }
   | { t: "dir" }
   | { t: "flush" }
@@ -66,7 +66,36 @@ interface World {
   events: number[];
   /** The newest-resolved payload delivered to the page. */
   received: Resolved | null;
-  last: { kind?: boolean; model?: string; dirA?: boolean };
+  /** What the notification clicks leave, by the rules the panel states. */
+  notify: Notify;
+  last: { model?: string; dirA?: boolean };
+}
+
+interface Notify {
+  on: boolean;
+  /** notify_agent_finished, notify_pr_status and notify_run_outcome. */
+  kind: boolean;
+  pr: boolean;
+  sibling: boolean;
+  /** Whether the off shown was clicked on the switch, which no kind click withdraws. */
+  offBySwitch: boolean;
+}
+
+/** A switch click turns notifications on with the default kinds, or off with the kinds left. */
+function masterClicked(n: Notify, on: boolean): Notify {
+  return on
+    ? { on, kind: true, pr: false, sibling: true, offBySwitch: false }
+    : { ...n, on, offBySwitch: true };
+}
+
+/** A kind click turns notifications off with the last kind, and back on with a kind while the off
+ *  shown came from the last kind going off. */
+function kindClicked(n: Notify, kind: boolean): Notify {
+  const next = { ...n, kind };
+  if (!next.kind && !next.pr && !next.sibling) {
+    return { ...next, on: false };
+  }
+  return n.on || n.offBySwitch ? next : { ...next, on: true };
 }
 
 let world: World;
@@ -169,7 +198,14 @@ async function apply(w: World, a: Action): Promise<void> {
       // A user reaches a kind row only while the rows show.
       if (!byId("notify-sub-options").inert) {
         box().click();
-        w.last.kind = box().checked;
+        w.notify = kindClicked(w.notify, box().checked);
+      }
+      break;
+    case "master":
+      // The switch is disabled while a settings write is in flight.
+      if (!masterBox().disabled) {
+        masterBox().click();
+        w.notify = masterClicked(w.notify, masterBox().checked);
       }
       break;
     case "pick":
@@ -252,6 +288,13 @@ async function boot(start: Start): Promise<World> {
     gets: [],
     events: [],
     received: null,
+    notify: {
+      on: start.kind || start.sibling,
+      kind: start.kind,
+      pr: false,
+      sibling: start.sibling,
+      offBySwitch: false,
+    },
     last: {},
   };
   world = w;
@@ -268,7 +311,7 @@ function granted(s: EffectiveSettings): string[] {
 }
 
 /** Let every write, event and read play out, then require the user's last click everywhere. */
-async function quiesce(w: World, start: Start): Promise<void> {
+async function quiesce(w: World): Promise<void> {
   for (let guard = 0; guard < 100; guard++) {
     await apply(w, { t: "flush" });
     const next: Action | null =
@@ -288,15 +331,15 @@ async function quiesce(w: World, start: Start): Promise<void> {
   }
   expect(w.patches, "every write answered").toEqual([]);
   expect(w.gets, "every read answered").toEqual([]);
-  const wantKind = w.last.kind ?? start.kind;
-  expect(w.server.notify_agent_finished, "the server holds the last kind click").toBe(wantKind);
-  expect(box().checked, "the kind row shows it").toBe(wantKind);
-  expect(isKindEnabled("agent_finished"), "notifications follow it").toBe(wantKind);
-  // Notifications are off exactly when every kind is.
-  const wantOn = wantKind || start.sibling;
-  expect(w.server.notifications_enabled, "the server's notification switch").toBe(wantOn);
-  expect(masterBox().checked, "the notification switch shows it").toBe(wantOn);
-  expect(areNotificationsEnabled(), "the page notifies by it").toBe(wantOn);
+  const want = w.notify;
+  expect(w.server.notify_agent_finished, "the server holds the clicked kind").toBe(want.kind);
+  expect(box().checked, "the kind row shows it").toBe(want.kind);
+  expect(isKindEnabled("agent_finished"), "notifications follow it").toBe(want.kind);
+  expect(w.server.notify_pr_status, "the server's pull request kind").toBe(want.pr);
+  expect(w.server.notify_run_outcome, "the server's workflow run kind").toBe(want.sibling);
+  expect(w.server.notifications_enabled, "the server's notification switch").toBe(want.on);
+  expect(masterBox().checked, "the notification switch shows it").toBe(want.on);
+  expect(areNotificationsEnabled(), "the page notifies by it").toBe(want.on);
   const wantModel = w.last.model ?? "A";
   expect(w.server.last_model, "the server holds the last pick").toBe(wantModel);
   expect(getLastModel(), "a new chat opens with it").toBe(wantModel);
@@ -330,7 +373,7 @@ async function run(start: Start, actions: readonly Action[]): Promise<void> {
     for (const a of actions) {
       await apply(w, a);
     }
-    await quiesce(w, start);
+    await quiesce(w);
   } finally {
     await drain(w);
   }
@@ -340,6 +383,7 @@ const start: fc.Arbitrary<Start> = fc.record({ kind: fc.boolean(), sibling: fc.b
 
 const action: fc.Arbitrary<Action> = fc.oneof(
   { weight: 4, arbitrary: fc.constant({ t: "kind" as const }) },
+  { weight: 2, arbitrary: fc.constant({ t: "master" as const }) },
   {
     weight: 3,
     arbitrary: fc.constantFrom("A", "B").map((model) => ({ t: "pick" as const, model })),
@@ -355,6 +399,7 @@ const action: fc.Arbitrary<Action> = fc.oneof(
 );
 
 const kind: Action = { t: "kind" };
+const master: Action = { t: "master" };
 const flush: Action = { t: "flush" };
 const commit: Action = { t: "commit" };
 const siblingOn: Start = { kind: true, sibling: true };
@@ -378,6 +423,8 @@ describe("settings controls against a model server", () => {
   function fake(): void {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     vi.stubGlobal("fetch", vi.fn(fakeFetch));
+    // Blocked, so turning the switch on neither prompts nor registers push.
+    vi.stubGlobal("Notification", { permission: "denied" });
   }
 
   it("ends on the user's last click on every control, for any interleaving", async () => {
@@ -424,6 +471,26 @@ describe("settings controls against a model server", () => {
       "keeps notifications on when the last kind on is clicked on again while its off write is in flight",
       lastKindOn,
       [kind, flush, kind],
+    ],
+    [
+      "keeps notifications on when the last kind on is clicked off and on around a model pick",
+      lastKindOn,
+      [kind, { t: "pick", model: "B" }, kind],
+    ],
+    [
+      "keeps notifications off when a kind is clicked off after the switch was turned off",
+      siblingOn,
+      [master, kind],
+    ],
+    [
+      "keeps notifications off when a kind is clicked off while the switch's off write is in flight",
+      siblingOn,
+      [master, flush, kind],
+    ],
+    [
+      "keeps notifications off when the last kind is clicked off and on after the switch was turned off",
+      lastKindOn,
+      [master, kind, kind],
     ],
     [
       "keeps the verdict a read gave over a late write's answer at the same version",

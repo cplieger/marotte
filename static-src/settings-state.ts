@@ -5,7 +5,7 @@
 // 2. `held` and `adopted.at` never go back, and only a payload `accepts` passes is adopted.
 // 3. A shown value is the server's at `adopted.at` unless it is this page's own edit or write in flight.
 // 4. A click is dropped only when it equals the shown value and the newest write in flight of its key.
-// 5. A click carries the notification switch the kinds it leaves imply (notifyRule).
+// 5. A kind click implies the notification switch, never over an off clicked on it (notifyRule).
 
 import { KEYED_PUSH_KINDS } from "./push-kinds.js";
 
@@ -38,6 +38,9 @@ export interface SettingsState {
   readonly pending: readonly Write[];
   /** Changes clicked and not sent yet. */
   readonly edit: Values;
+  /** Whether the click that last moved the notification switch was a kind click turning the last
+   *  kind off, rather than a click of the switch. */
+  readonly offByKinds: boolean;
 }
 
 /** Where a payload comes from: a settings read, or a write's answer. */
@@ -46,6 +49,8 @@ export type Source = "read" | "write";
 export type SettingsEvent =
   | { readonly type: "adopt"; readonly payload: Payload; readonly from: Source }
   | { readonly type: "announce"; readonly at: Stamp }
+  /** patch is the click as made, never changes() of it: whether it names the notification switch
+   *  decides offByKinds. */
   | { readonly type: "click"; readonly patch: Values }
   | { readonly type: "send"; readonly id: number }
   | { readonly type: "start"; readonly id: number }
@@ -58,6 +63,7 @@ export const initialSettingsState: SettingsState = {
   adopted: null,
   pending: [],
   edit: {},
+  offByKinds: false,
 };
 
 function below(s: Stamp, than: Stamp): boolean {
@@ -156,8 +162,8 @@ export function changes(state: SettingsState, patch: Values): Values {
 }
 
 /** Invariant 5: a click turning the last notification kind off turns notifications off with it, and
- *  one leaving a kind on turns them back on while they show off only by this page's own click, the
- *  server still holding them on. A click of the switch alone leaves the kinds. */
+ *  one leaving a kind on withdraws that off (offByKinds) while the server still holds them on. An
+ *  off clicked on the switch stays. A click of the switch alone leaves the kinds. */
 function notifyRule(state: SettingsState, changed: Values): Values {
   if (!NOTIFY_KINDS.some((k) => Object.hasOwn(changed, k))) {
     return changed;
@@ -167,7 +173,11 @@ function notifyRule(state: SettingsState, changed: Values): Values {
   let master: boolean;
   if (NOTIFY_KINDS.every((k) => after(k) === false)) {
     master = false;
-  } else if (after(NOTIFY_MASTER) === false && state.adopted?.value[NOTIFY_MASTER] === true) {
+  } else if (
+    state.offByKinds &&
+    after(NOTIFY_MASTER) === false &&
+    state.adopted?.value[NOTIFY_MASTER] === true
+  ) {
     master = true;
   } else {
     return changed;
@@ -221,9 +231,13 @@ export function reduce(state: SettingsState, event: SettingsEvent): SettingsStat
       return { ...state, held: later(state.held, event.at) };
     case "click": {
       const changed = changes(state, event.patch);
-      return Object.keys(changed).length === 0
-        ? state
-        : { ...state, edit: { ...state.edit, ...changed } };
+      if (Object.keys(changed).length === 0) {
+        return state;
+      }
+      const offByKinds = Object.hasOwn(changed, NOTIFY_MASTER)
+        ? !Object.hasOwn(event.patch, NOTIFY_MASTER) && changed[NOTIFY_MASTER] === false
+        : state.offByKinds;
+      return { ...state, edit: { ...state.edit, ...changed }, offByKinds };
     }
     case "send":
       if (Object.keys(state.edit).length === 0) {

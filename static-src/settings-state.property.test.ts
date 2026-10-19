@@ -593,10 +593,56 @@ describe("the notification switch a click implies", () => {
     expect(s.edit).toEqual({ notify_agent_finished: true, notifications_enabled: true });
   });
 
+  it("turns them back on with a kind clicked on again after a click of another setting", () => {
+    let s = reduce(adopted(true), { type: "click", patch: { notify_agent_finished: false } });
+    s = reduce(s, { type: "click", patch: { last_model: "B" } });
+    s = reduce(s, { type: "click", patch: { notify_agent_finished: true } });
+    expect(s.edit).toEqual({
+      notify_agent_finished: true,
+      notifications_enabled: true,
+      last_model: "B",
+    });
+  });
+
   it("leaves them off when the server holds them off", () => {
     expect(changes(adopted(false), { notify_run_outcome: true })).toEqual({
       notify_run_outcome: true,
     });
+  });
+
+  it("keeps notifications off when a kind is clicked off after the switch was clicked off", () => {
+    let s = adopted(true, { ...KINDS, notify_run_outcome: true });
+    s = reduce(s, { type: "click", patch: { notifications_enabled: false } });
+    s = reduce(s, { type: "click", patch: { notify_run_outcome: false } });
+    expect(s.edit).toEqual({ notifications_enabled: false, notify_run_outcome: false });
+  });
+
+  it("keeps notifications off when a kind is clicked off while the switch's off write is in flight", () => {
+    let s = adopted(true, { ...KINDS, notify_run_outcome: true });
+    s = reduce(s, { type: "click", patch: { notifications_enabled: false } });
+    s = reduce(s, { type: "send", id: 1 });
+    s = reduce(s, { type: "start", id: 1 });
+    s = reduce(s, { type: "click", patch: { notify_run_outcome: false } });
+    expect(s.edit).toEqual({ notify_run_outcome: false });
+  });
+
+  it("keeps notifications off when the last kind is clicked off and on after the switch was clicked off", () => {
+    let s = reduce(adopted(true), { type: "click", patch: { notifications_enabled: false } });
+    s = reduce(s, { type: "click", patch: { notify_agent_finished: false } });
+    s = reduce(s, { type: "click", patch: { notify_agent_finished: true } });
+    expect(s.edit).toEqual({ notifications_enabled: false, notify_agent_finished: true });
+  });
+
+  it("leaves notifications off once the off the last kind implied is the server's", () => {
+    let s = reduce(adopted(true), { type: "click", patch: { notify_agent_finished: false } });
+    s = reduce(s, { type: "send", id: 1 });
+    s = reduce(s, { type: "start", id: 1 });
+    s = reduce(s, {
+      type: "settle",
+      id: 1,
+      answer: at(2, { ...KINDS, notifications_enabled: false, notify_agent_finished: false }),
+    });
+    expect(changes(s, { notify_agent_finished: true })).toEqual({ notify_agent_finished: true });
   });
 
   it("leaves the kinds as they are when the switch alone is clicked", () => {
