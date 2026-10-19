@@ -548,8 +548,8 @@ func (g *runGate) serveLaterLocked(workflowID string) bool {
 }
 
 // endRelease ends workflowID's live release, unless retry is set and an opening edge came after the one it serves:
-// it then serves the latest edge and reports true. claimRelease takes g.mu too, so a claim of that edge refused
-// before this is served here, and one after it starts its own release.
+// it then serves the latest edge and reports true. claimRelease refuses that edge's claim while the release is live,
+// before this adopts the edge and after, because this release serves it.
 func (g *runGate) endRelease(workflowID string, retry bool) (again bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -575,8 +575,8 @@ func (rs *Runs) startRelease(workflowID string, chatID marotte.ChatID, opening u
 // resumeHeld is a held run's release, its automatic resume (healResume): tried again from releaseRetryBase while it
 // fails at the open gate, maxReleaseAttempts times in all, then logged as an ERROR, and after a try that met the
 // closed gate once the gate opens. An opening edge later than the one it serves cuts a wait short and starts the
-// tries afresh, and so does one that came during tries it then spends (runGate.endRelease). Every try shares one heal
-// of the run's budget.
+// tries afresh, and so does one that came before its last try ended (runGate.endRelease). Every try for one pause
+// shares one heal of the run's budget.
 func (rs *Runs) resumeHeld(workflowID string, chatID marotte.ChatID) {
 	charged := false
 	for attempt := 1; ; attempt++ {
@@ -591,6 +591,10 @@ func (rs *Runs) resumeHeld(workflowID string, chatID marotte.ChatID) {
 		if fresh {
 			attempt = 0
 		}
+		if out == resumeWritten || out == resumeSkipped {
+			// The try ended the pause its heal was charged for, so the later edge's pause claims its own.
+			charged = false
+		}
 	}
 }
 
@@ -600,16 +604,18 @@ func (rs *Runs) afterReleaseTry(workflowID string, chatID marotte.ChatID, out re
 	switch {
 	case out == resumeHeld, out == resumeFailed && !rs.gateOpen():
 		fresh, again = true, rs.awaitOpen(workflowID)
-	case out != resumeFailed:
-	case attempt >= maxReleaseAttempts:
-		slog.Error("sign-in gate: a held run could not be resumed; it stays held for the next sign-in",
-			"workflow_id", workflowID, "chat_id", chatID, "attempts", attempt)
+	case out == resumeFailed && attempt < maxReleaseAttempts:
+		fresh, again = rs.awaitRetry(workflowID, releaseRetryBase<<(attempt-1))
+	default:
+		if out == resumeFailed {
+			slog.Error("sign-in gate: a held run could not be resumed; it stays held for the next sign-in",
+				"workflow_id", workflowID, "chat_id", chatID, "attempts", attempt)
+		}
 		again = rs.gate.endRelease(workflowID, true)
 		return again, again
-	default:
-		fresh, again = rs.awaitRetry(workflowID, releaseRetryBase<<(attempt-1))
 	}
 	if !again {
+		// Only shutdown ends a wait, and leaves no edge to serve.
 		rs.gate.endRelease(workflowID, false)
 	}
 	return fresh, again

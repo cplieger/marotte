@@ -172,6 +172,65 @@ func TestSignInGate_AReleaseThatSpendsItsTriesServesTheEdgeItRefused(t *testing.
 	}
 }
 
+// A release whose try resumed the run serves an opening edge whose claim it refused while that try was in flight:
+// the gate closed and paused the run again meanwhile, and no other release claims the edge, so ending there would
+// leave the run held until a further sign-in. The new pause is healed on a heal of its own.
+func TestSignInGate_AReleaseThatResumesTheRunServesALaterEdgeItRefused(t *testing.T) {
+	g := newManualGateRun(t, signedInDir(t))
+	g.br.setCallResult(methodKiroWorkflowInspect, heldInspect(t, signInHoldReason))
+	running := inspectReply(t, gateRunID, marotte.RunStatusRunning, "")
+	var writes atomic.Int32
+	at, done := make(chan struct{}), make(chan struct{})
+	proceed := sync.OnceFunc(func() { close(done) })
+	t.Cleanup(proceed)
+	g.br.mu.Lock()
+	g.br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method != methodKiroWorkflowResume {
+			return nil, nil, false
+		}
+		if writes.Add(1) == 1 {
+			// The inspect stays the gate's pause: the closing edge's sweep paused the run once this write landed.
+			close(at)
+			<-done
+			return json.RawMessage(`{}`), nil, true
+		}
+		g.br.setCallResult(methodKiroWorkflowInspect, running)
+		return json.RawMessage(`{}`), nil, true
+	}
+	g.br.mu.Unlock()
+
+	open, m := g.h.runs.gate.now()
+	if !open {
+		t.Fatal("Setup: the gate reads closed on a signed-in vault")
+	}
+	g.h.runs.startRelease(gateRunID, "", m.opening)
+	awaitClosed(t, at, "the release's resume write")
+	// No finder lists the run, so the edge's one claim is the refused one below.
+	g.br.setCallResult(methodKiroWorkflowList, json.RawMessage(`{"runs":[]}`))
+	g.lapseVault(t)
+	g.b.set(true, true, nil)
+	g.signIn(t)
+	g.h.runs.gate.mu.Lock()
+	opening := g.h.runs.gate.opens
+	g.h.runs.gate.mu.Unlock()
+	if g.h.runs.gate.claimRelease(gateRunID, opening) {
+		t.Fatal("Setup: the later edge's claim started a release beside the live one")
+	}
+	proceed()
+
+	waitUntil(t, "the release to end", func() bool {
+		g.h.runs.gate.mu.Lock()
+		defer g.h.runs.gate.mu.Unlock()
+		return !g.h.runs.gate.releases[gateRunID].live
+	})
+	if n := countCalls(g.br, methodKiroWorkflowResume); n != 2 {
+		t.Errorf("resume writes = %d, want the first edge's and the refused edge's", n)
+	}
+	if spent := g.h.runs.healsSpent(gateRunID); spent != 2 {
+		t.Errorf("heals spent = %d, want one for each pause", spent)
+	}
+}
+
 // A run's release serves one opening edge of the gate at a time: a claim of a later edge while it runs starts no
 // other release, and a release that spends its tries before it served that edge serves it then.
 func TestRunGate_OneReleasePerRunAndOpeningEdge(t *testing.T) {
@@ -240,13 +299,13 @@ func TestRunGate_OneReleasePerRunAndOpeningEdge(t *testing.T) {
 			t.Error("a woken release that spent its tries serves the edge it already serves")
 		}
 	})
-	t.Run("a release that resumed the run", func(t *testing.T) {
+	t.Run("a release that shutdown ends", func(t *testing.T) {
 		var g runGate
 		at(&g, 1)
 		g.claimRelease("wf", 1)
 		at(&g, 2)
 		if g.endRelease("wf", false) {
-			t.Error("a release that resumed the run or met its end serves a later edge")
+			t.Error("a release that shutdown ended serves a later edge")
 		}
 		if !g.claimRelease("wf", 2) {
 			t.Error("a later edge's claim was refused once the release ended")

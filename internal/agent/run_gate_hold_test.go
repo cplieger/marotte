@@ -924,7 +924,7 @@ func (s *holdSim) release(r releasers, finderHeals, healerHeals bool) []string {
 }
 
 // flap is a release under crossFlapsAtRetry: its first resume write is lost, the gate closes and opens again while it
-// waits to retry, and the opening edge's claim wakes it to resume the run. When sweeps, the chat's rehydrate its lost
+// waits to retry, and the opening edge wakes it to resume the run. When sweeps, the chat's rehydrate its lost
 // write reloaded resumes the run in that wait, and the closing edge's sweep pauses it with the gate's reason first.
 func (s *holdSim) flap(sweeps bool) {
 	s.cross, s.crossFired = crossNone, true
