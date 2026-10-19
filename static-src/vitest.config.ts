@@ -1,7 +1,7 @@
 // The DEFAULT is the browser: a file runs in real headless Chromium unless named `.node.test.ts`
-// (Node) or `.touch.test.ts` (a touch-device page). No `environment` option on the browser side
-// and no per-file `@vitest-environment` pragma: Browser Mode is not an environment but a
-// runner. The suffix is load-bearing: a misplaced Node-needing test throws on
+// (Node), `.touch.test.ts` (a touch-device page) or `.pointer.test.ts` (a page of its own for the
+// real mouse). No `environment` option on the browser side and no per-file `@vitest-environment`
+// pragma: Browser Mode is not an environment but a runner. The suffix is load-bearing: a misplaced Node-needing test throws on
 // import, but one needing the DOM ABSENT passes vacuously (`attention-no-dom.node.test.ts`
 // asserts its premise). `*.fuzz.test.ts` is ts-ci's fuzz axis. `channel: "chromium"` is the real
 // browser, not headless-shell: `npx playwright install --with-deps chromium`.
@@ -178,8 +178,12 @@ export default defineConfig({
       browserProject(
         "browser",
         ["**/*.test.ts"],
-        [...sharedExclude, "**/*.node.test.ts", "**/*.touch.test.ts"],
+        [...sharedExclude, "**/*.node.test.ts", "**/*.touch.test.ts", "**/*.pointer.test.ts"],
       ),
+      // `*.pointer.test.ts` runs in a page of its own, so the real mouse it moves reaches no later file: after one real
+      // mouse event Chromium keeps the page's hover tracking on, and its hit tests force layouts a later file never
+      // sees otherwise. Moving the pointer out of the viewport does not turn it off.
+      browserProject("browser-pointer", ["**/*.pointer.test.ts"], sharedExclude),
       browserProject("browser-touch", ["**/*.touch.test.ts"], sharedExclude, true),
     ],
 
