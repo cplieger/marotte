@@ -8,6 +8,7 @@ import pushServiceGo from "../internal/push/service.go?raw";
 import settingsDefaultsGo from "../internal/settings/defaults.go?raw";
 import settingsEffectiveGo from "../internal/settings/effective.go?raw";
 import pushSubjectSrc from "./push-subject.ts?raw";
+import { KEYED_PUSH_DEFAULTS, KEYED_PUSH_KINDS } from "./push-kinds.js";
 
 /** The ONE TypeScript copy of the Go literal, by the path a failure should name. */
 const tsCopies: Record<string, string> = {
@@ -40,8 +41,7 @@ describe("subject prefixes", () => {
 // The keyed-kind table drives both the settings rows and the per-kind state, so it has to agree
 // with the server's registry.
 describe("keyed push kinds", () => {
-  it("names every kind the server registry gives a settings key, and no other", async () => {
-    const { KEYED_PUSH_KINDS } = await import("./notify.js");
+  it("names every kind the server registry gives a settings key, and no other", () => {
     // Each keyed entry reads {marotte.PushKind<Name>, settings.Key<Name>, <default>}; the floor is
     // the one entry whose key is the empty string.
     const entries = [
@@ -60,8 +60,7 @@ describe("keyed push kinds", () => {
 
   // The declared table, read as values: the three polarities are NOT uniform, and a client default
   // that disagrees with the server's is the drift class this repo has already paid for once.
-  it("declares pr_status OFF while its two siblings are ON", async () => {
-    const { KEYED_PUSH_DEFAULTS } = await import("./notify.js");
+  it("declares pr_status OFF while its two siblings are ON", () => {
     expect(KEYED_PUSH_DEFAULTS).toEqual({
       agent_finished: true,
       pr_status: false,
@@ -72,7 +71,7 @@ describe("keyed push kinds", () => {
   // The seed, which is the half a table alone does not state: a client that has not loaded
   // /api/settings yet answers the table rather than "on" for everything.
   it("seeds the in-memory state from that table on a fresh client", async () => {
-    const { KEYED_PUSH_DEFAULTS, isKindEnabled } = await import("./notify.js");
+    const { isKindEnabled } = await import("./notify.js");
     for (const [kind, want] of Object.entries(KEYED_PUSH_DEFAULTS)) {
       expect(isKindEnabled(kind), `${kind} is seeded ${String(!want)}`).toBe(want);
     }
@@ -82,19 +81,17 @@ describe("keyed push kinds", () => {
   // entry in one of them degrades silently: a missing DEFAULT makes `enableEverything` fall through
   // to `?? true`, ignoring whatever polarity the server declared, and a missing INPUT ID makes
   // `kindRows` skip the row altogether, so the kind ships with no switch and no failing test.
-  it("declares a default for every keyed kind, and no other", async () => {
-    const { KEYED_PUSH_KINDS, KEYED_PUSH_DEFAULTS } = await import("./notify.js");
+  it("declares a default for every keyed kind, and no other", () => {
     expect(Object.keys(KEYED_PUSH_DEFAULTS).sort()).toEqual(Object.keys(KEYED_PUSH_KINDS).sort());
   });
 
   it("names an input for every keyed kind, and no other", async () => {
-    const { KEYED_PUSH_KINDS } = await import("./notify.js");
     const { KIND_INPUT_IDS } = await import("./settings-notifications.js");
     expect(Object.keys(KIND_INPUT_IDS).sort()).toEqual(Object.keys(KEYED_PUSH_KINDS).sort());
   });
 
   it("does not give the permission floor an off switch", async () => {
-    const { KEYED_PUSH_KINDS, setKindEnabled, isKindEnabled } = await import("./notify.js");
+    const { setKindEnabled, isKindEnabled } = await import("./notify.js");
     expect(Object.keys(KEYED_PUSH_KINDS)).not.toContain("permission");
     // Nothing can create one by passing the name: an ask blocks the turn and has no per-tab marker,
     // so a channel that could go dark on its own would stall every later turn with nothing on
@@ -114,7 +111,7 @@ const polarities = [
 
 // The client half of the polarity contract.
 describe("KEYED_PUSH_DEFAULTS against the Go constants", () => {
-  it.each(polarities)("$kind carries settings.$goConst's value", async ({ kind, goConst }) => {
+  it.each(polarities)("$kind carries settings.$goConst's value", ({ kind, goConst }) => {
     // Anchored to a whole declaration line, and required to match exactly once: an unanchored
     // first-match would let a REFERENCE to the constant answer for its declaration, and a second
     // declaration would be read as agreement with the first.
@@ -125,7 +122,6 @@ describe("KEYED_PUSH_DEFAULTS against the Go constants", () => {
       `settings.${goConst} is not declared exactly once in internal/settings/effective.go`,
     ).toHaveLength(1);
     const want = hits[0]?.[1] === "true";
-    const { KEYED_PUSH_DEFAULTS } = await import("./notify.js");
     expect(KEYED_PUSH_DEFAULTS[kind]).toBe(want);
   });
 });

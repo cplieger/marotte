@@ -10,9 +10,8 @@ import {
   setKindEnabled,
   setNotifyUICallback,
   spendNotifyAsk,
-  KEYED_PUSH_KINDS,
-  KEYED_PUSH_DEFAULTS,
 } from "./notify.js";
+import { KEYED_PUSH_DEFAULTS, KEYED_PUSH_KINDS } from "./push-kinds.js";
 import { newestSettings, patchSettings, settingsAsShown } from "./persist.js";
 import type { EffectiveSettings, SettingsSwitch } from "./persist.js";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
