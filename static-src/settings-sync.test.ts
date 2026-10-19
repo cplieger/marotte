@@ -1067,6 +1067,26 @@ describe("settings sync ordering", () => {
     expect(areNotificationsEnabled()).toBe(false);
   });
 
+  it("retries push registration, with no write, when the switch is clicked on again after registration failed", async () => {
+    const requestPermission = vi.fn(() => Promise.resolve("default"));
+    vi.stubGlobal("Notification", { permission: "default", requestPermission });
+    const off = { ...lastKindOn(), notifications_enabled: false };
+    await boot(off);
+    masterBox().click();
+    await debounced();
+    commitPatch(off, 0);
+    await settled();
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    document.dispatchEvent(new CustomEvent("notify:registration-failed"));
+    expect(masterBox().checked, "the rollback unchecks the switch alone").toBe(false);
+    masterBox().click();
+    await debounced();
+    expect(patches, "the server already holds the switch on").toHaveLength(1);
+    expect(masterBox().checked).toBe(true);
+    expect(areNotificationsEnabled()).toBe(true);
+    expect(requestPermission, "a second registration attempt").toHaveBeenCalledTimes(2);
+  });
+
   it("puts the compaction slider and its policy back when the write is refused", async () => {
     await boot(
       settingsPayload({

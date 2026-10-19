@@ -27,8 +27,9 @@ import type { EffectiveSettings } from "./wire/types.gen.js";
 // internal/wirespec), so it is not maintained here and cannot drift from what the server sends.
 export type { EffectiveSettings } from "./wire/types.gen.js";
 
-/** A write's answer: the committed settings, null when it failed, or "superseded" when it landed
- *  but the page already holds newer settings, which the caller must not overwrite with its own. */
+/** A write's answer: the committed settings, null when it failed or no write was needed (the
+ *  settings as shown already hold the patch), or "superseded" when it landed but the page already
+ *  holds newer settings, which the caller must not overwrite with its own. */
 export type PatchAnswer = EffectiveSettings | null | "superseded";
 
 /** A switch a write moves: checked exactly when key holds on. Each settle repaints it from the

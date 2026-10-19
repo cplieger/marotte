@@ -184,7 +184,7 @@ function syncRowInputs(rows: readonly KindRow[], shown: EffectiveSettings | null
   }
 }
 
-/** Switch ON writes the switch alone: the kinds are their own choice, and a push needs both. */
+/** Switch ON writes the switch alone: the kinds are their own choice, and a keyed kind's push needs both. */
 async function enableNotifications(
   rows: readonly KindRow[],
   notifyToggle: HTMLInputElement,
@@ -201,12 +201,17 @@ async function enableNotifications(
       return;
     }
   } else if (r === null) {
-    // persist repaints the switch; tear down any push subscription requestPermission
-    // may have started.
-    setNotificationsEnabled(false);
-    unregisterPush();
-    updateSub();
-    return;
+    if (settingsAsShown()?.notifications_enabled === true) {
+      // No write was needed: the switch is stored on, and this click retries a failed registration.
+      setNotificationsEnabled(true);
+    } else {
+      // persist repaints the switch; tear down any push subscription requestPermission
+      // may have started.
+      setNotificationsEnabled(false);
+      unregisterPush();
+      updateSub();
+      return;
+    }
   } else {
     setNotificationsEnabled(r.notifications_enabled);
     for (const row of rows) {
