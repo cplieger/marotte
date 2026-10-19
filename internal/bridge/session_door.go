@@ -183,9 +183,9 @@ func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach 
 	dctx, cancel := context.WithTimeout(ctx, handshakeBudget)
 	defer cancel()
 	start := time.Now()
-	params := withClientSteering(withSessionChoices(s.withSessionMeta(map[string]any{
+	params := withClientSteering(withSessionChoices(s.withSessionMeta(withAdditionalDirectories(map[string]any{
 		"cwd": e.workDir, "mcpServers": []any{},
-	}), o), o)
+	}, o)), o), o)
 	resp, _, err := e.callAt(dctx, s.lane, minted, methodSessionNew, params, e.lateSessionNew(minted, params))
 	if err != nil {
 		err = handshakeTimeout(fmt.Errorf("session/new: %w", err), "session start", handshakeBudget)
@@ -301,9 +301,9 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 	defer cancel()
 	start := time.Now()
 	// CallAt: KAS replays the session as notifications before the result, so the caller needs its position.
-	resp, seq, err := e.callAt(dctx, s.lane, id, methodSessionLoad, withClientSteering(s.withSessionMeta(map[string]any{
+	resp, seq, err := e.callAt(dctx, s.lane, id, methodSessionLoad, withClientSteering(s.withSessionMeta(withAdditionalDirectories(map[string]any{
 		marotte.KeySessionID: id, "cwd": e.workDir, "mcpServers": []any{},
-	}), o), e.lateSessionLoad(s))
+	}, o)), o), e.lateSessionLoad(s))
 	if err != nil {
 		err = handshakeTimeout(fmt.Errorf("session/load: %w", err), "session resume", replayBudget)
 		s.failDoor("load", err)
@@ -416,6 +416,14 @@ func withSessionChoices(params map[string]any, o *marotte.SessionOpts) map[strin
 		return params
 	}
 	maps.Copy(sessionKiroMeta(params), choices)
+	return params
+}
+
+// withAdditionalDirectories adds the session's additional directories on both verbs; none sends no key.
+func withAdditionalDirectories(params map[string]any, o *marotte.SessionOpts) map[string]any {
+	if len(o.AdditionalDirectories) > 0 {
+		params["additionalDirectories"] = slices.Clone(o.AdditionalDirectories)
+	}
 	return params
 }
 

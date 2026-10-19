@@ -8,7 +8,7 @@ import { reconcile } from "./reconcile.js";
 import { showToast } from "./toast.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { apiGetTyped, CancellableSlot, type Decoder } from "./api-client.js";
-import { decodeEffectiveSettings } from "./wire/decoders.gen.js";
+import { loadSettings } from "./persist.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { paintIfChanged, sigChanged } from "./paint-sig.js";
 import {
@@ -149,7 +149,7 @@ export function loadKnowledge(fromPoll = false): void {
   });
   // The setting cannot change under a poll tick.
   if (!fromPoll) {
-    void refreshHint(signal);
+    void refreshHint();
   }
 }
 
@@ -157,10 +157,10 @@ export function loadKnowledge(fromPoll = false): void {
  * The hint reads marotte's knowledge_enabled, which gates the agent's knowledge tool (kiro-cli's own flag drives its
  * TUI). Management works either way.
  */
-async function refreshHint(signal: AbortSignal): Promise<void> {
-  const s = await apiGetTyped("/api/settings", decodeEffectiveSettings, signal);
+async function refreshHint(): Promise<void> {
+  const s = await loadSettings();
   if (s === null) {
-    // None of these failures means "knowledge is off", so the hint stands.
+    // Neither a failed nor a superseded read means "knowledge is off", so the hint stands.
     return;
   }
   byId<HTMLParagraphElement>("knowledge-hint").hidden = s.knowledge_enabled;

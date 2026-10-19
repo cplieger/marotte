@@ -98,7 +98,7 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
 
     const forms = Array.from(doc.querySelectorAll<HTMLElement>(".rule-form"));
     const kinds = forms.map((f) => f.getAttribute("data-rule-form"));
-    expect(kinds.sort()).toEqual(["explain", "ignore", "policy"]);
+    expect(kinds.sort()).toEqual(["directory", "explain", "ignore", "policy"]);
 
     for (const form of forms) {
       // Grouped + named for assistive tech.
@@ -130,6 +130,8 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
       "native-explain-run",
       "agent-ignore-input",
       "agent-ignore-add",
+      "agent-dirs-input",
+      "agent-dirs-add",
     ]) {
       expect(doc.querySelector(`[id="${id}"]`), `#${id} must exist`).not.toBeNull();
     }

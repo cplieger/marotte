@@ -15,51 +15,34 @@ import {
 } from "./session-context.js";
 import { patchSettings } from "./persist.js";
 
-describe("setLastModel — redundant-write guard", () => {
+describe("the last model a new chat opens with", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset module-level cache by restoring to a known sentinel.
     restoreLastModel("__reset__");
   });
 
-  it("patches once when the value changes from the cache", () => {
+  it("remembers a pick and hands it to the settings writer", () => {
     setLastModel("claude-opus-4.6");
     expect(patchSettings).toHaveBeenCalledTimes(1);
     expect(patchSettings).toHaveBeenCalledWith({ last_model: "claude-opus-4.6" });
     expect(getLastModel()).toBe("claude-opus-4.6");
   });
 
-  it("does NOT patch when called again with the cached value", () => {
-    // The guard below makes any setLastModel call with the already-cached value a no-op.
+  it("hands every pick to the settings writer, which alone decides one changes nothing", () => {
     setLastModel("claude-opus-4.6");
-    vi.clearAllMocks();
+    restoreLastModel("gpt-5");
+    setLastModel("gpt-5");
 
-    setLastModel("claude-opus-4.6");
-    setLastModel("claude-opus-4.6");
-    setLastModel("claude-opus-4.6");
-
-    expect(patchSettings).not.toHaveBeenCalled();
-  });
-
-  it("patches again only when the value actually changes", () => {
-    setLastModel("claude-opus-4.6");
-    setLastModel("claude-opus-4.6"); // no-op
-    setLastModel("gpt-5"); // change
-    setLastModel("gpt-5"); // no-op
-
-    expect(patchSettings).toHaveBeenCalledTimes(2);
     expect(patchSettings).toHaveBeenNthCalledWith(1, { last_model: "claude-opus-4.6" });
     expect(patchSettings).toHaveBeenNthCalledWith(2, { last_model: "gpt-5" });
+    expect(getLastModel()).toBe("gpt-5");
   });
 
   it("restoreLastModel updates the cache without patching", () => {
     restoreLastModel("kiro-default");
     expect(patchSettings).not.toHaveBeenCalled();
     expect(getLastModel()).toBe("kiro-default");
-
-    // After a restore, setLastModel with the same value is a no-op too.
-    setLastModel("kiro-default");
-    expect(patchSettings).not.toHaveBeenCalled();
   });
 });
 

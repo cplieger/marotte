@@ -30,7 +30,12 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 }));
 vi.mock("./persist.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Persist>()),
-  loadSettings: vi.fn(() => Promise.resolve({ memory_mode: "off" })),
+  loadSettings: vi.fn(() =>
+    Promise.resolve({ memory_mode: "off", settings_epoch: 0, settings_revision: 0 }),
+  ),
+  refreshSettings: vi.fn(() =>
+    Promise.resolve({ memory_mode: "off", settings_epoch: 0, settings_revision: 0 }),
+  ),
 }));
 vi.mock("./recipes.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Recipes>()),

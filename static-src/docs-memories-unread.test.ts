@@ -33,6 +33,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 vi.mock("./persist.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Persist>()),
   loadSettings: vi.fn(() => Promise.resolve(null)),
+  refreshSettings: vi.fn(() => Promise.resolve(null)),
 }));
 vi.mock("./router.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Router>()),

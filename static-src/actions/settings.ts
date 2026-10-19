@@ -69,8 +69,8 @@ export const restartEngine = apiAction<void, true>({
 });
 
 /** Write the engine heap limit on its own, so the server's refusal, which names the bounds this container allows,
- *  reaches the reader. */
-export const setEngineHeap = apiAction<{ mib: number }>({
+ *  reaches the reader; answers the settings the write committed. */
+export const setEngineHeap = apiAction<{ mib: number }, EffectiveSettings>({
   name: "settings.set_engine_heap",
   scope: "settings",
   request: ({ mib }) => ({
@@ -78,7 +78,22 @@ export const setEngineHeap = apiAction<{ mib: number }>({
     path: "/api/settings",
     body: { engine_heap_mib: mib },
   }),
+  decode: (data) => decodeEffectiveSettings(data),
   error: (_args, err) => serverSentence(err) ?? "Could not save the memory limit",
+  success: false,
+});
+
+/** Write the additional-directory list on its own; answers the settings the write committed, or the server's refusal naming the entry and the reason. */
+export const setAdditionalDirectories = apiAction<{ dirs: readonly string[] }, EffectiveSettings>({
+  name: "settings.set_additional_directories",
+  scope: "settings",
+  request: ({ dirs }) => ({
+    method: "PATCH",
+    path: "/api/settings",
+    body: { additional_directories: dirs },
+  }),
+  decode: (data) => decodeEffectiveSettings(data),
+  error: false,
   success: false,
 });
 
@@ -116,11 +131,11 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
 });
 
 // The generated decoder gives EffectiveSettings' required fields runtime force; a decode failure
-// (including an empty-body 2xx) resolves null and each caller leaves its UI as it was.
+// (including an empty-body 2xx) resolves null and each caller leaves its UI as it was. No `dedupe`:
+// persist.ts decides when a read in flight is shared, and a refresh must not join one sent before its change.
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
 export const loadSettings = apiAction<void, EffectiveSettings>({
   name: "settings.load",
-  dedupe: true,
   retryable: retryNetwork,
   request: () => ({ method: "GET", path: "/api/settings" }),
   decode: (data) => decodeEffectiveSettings(data),
@@ -128,46 +143,25 @@ export const loadSettings = apiAction<void, EffectiveSettings>({
   success: false,
 });
 
-interface PatchAppArgs {
-  body: Record<string, unknown>;
-  /** Input(s) whose checked state flips back on failure. */
-  inputs?: readonly HTMLInputElement[];
-}
-
-interface PatchAppOp {
-  inputs: { el: HTMLInputElement; prevChecked: boolean; prevValue: string }[];
-}
-
-export const patchAppSettings = apiAction<PatchAppArgs, unknown, PatchAppOp>({
+/** Write some settings; answers the settings the write committed. The caller repaints what the
+ *  write moved (persist.patchSettings). onStart runs when the write leaves the "settings" queue,
+ *  just before its request is sent. */
+export const patchAppSettings = apiAction<
+  { body: Record<string, unknown>; onStart?: () => void },
+  EffectiveSettings
+>({
   name: "settings.patch",
   scope: "settings",
+  // The library's one hook that runs after the scope's wait and before the request.
+  optimistic: ({ onStart }) => {
+    onStart?.();
+    return undefined;
+  },
   request: ({ body }) => ({
     method: "PATCH",
     path: "/api/settings",
     body,
   }),
-  optimistic: ({ inputs }) => {
-    const list = inputs ?? [];
-    return {
-      inputs: list.map((el) => ({
-        el,
-        prevChecked: !el.checked, // user just changed, so prev is opposite of current
-        prevValue: el.value,
-      })),
-    };
-  },
-  rollback: (_args, op) => {
-    if (op === undefined) {
-      return;
-    }
-    for (const { el, prevChecked, prevValue } of op.inputs) {
-      if (el.type === "checkbox") {
-        writeSwitch(el, prevChecked);
-      } else {
-        el.value = prevValue;
-      }
-    }
-    paintSettingLocks();
-  },
+  decode: (data) => decodeEffectiveSettings(data),
   error: "Could not save setting",
 });

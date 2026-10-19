@@ -661,6 +661,12 @@ export interface EffectiveSettings {
  */
   kiro_defaults: Record<string, KiroDefault>;
   /**
+ * AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
+ * settings.AgentDirs.Assess refuses at this GET to its reason; it is never stored, and an
+ * entry absent from it is granted.
+ */
+  additional_directories_refused: Record<string, string>;
+  /**
  * Theme is "", "dark", "light" or "system". The empty string is a REAL value
  * meaning nothing has been chosen, which the client resolves to the OS
  * preference; it is deliberately not normalised to "system" here, because the
@@ -708,6 +714,12 @@ export interface EffectiveSettings {
  */
   agent_ignore_files: string[];
   /**
+ * AdditionalDirectories is the stored list of directories beyond the workspace that agents
+ * may read and write, default EMPTY. An entry that settings.AgentDirs.Assess refuses stays
+ * listed, grants nothing, and is a key of AdditionalDirectoriesRefused.
+ */
+  additional_directories: string[];
+  /**
  * ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
  * Zero is the most destructive value in the document, so absent must never
  * resolve to it.
@@ -725,6 +737,14 @@ export interface EffectiveSettings {
   terminal_command_timeout_ms: number;
   /** EngineHeapMiB is the agent engine's JavaScript heap limit in MiB; 0 is kiro-cli's default. */
   engine_heap_mib: number;
+  /**
+ * SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
+ * KeySettingsRevision), both 0 before the first write and compared epoch first. A deleted or
+ * restored config.json serves a lower version, which a page holding a higher one refuses until
+ * the next write starts a later epoch.
+ */
+  settings_epoch: number;
+  settings_revision: number;
   /**
  * AutoCompactionEnabled defaults TRUE: off means nothing compacts a chat
  * until the reader presses Compact.
@@ -3253,6 +3273,17 @@ export interface SessionModel {
  */
   thinking_toggleable?: boolean;
   thinking_default_off?: boolean;
+}
+
+/**
+ * SettingsUpdatedPayload is the payload for type="settings_updated": config.json's version
+ * (EffectiveSettings.SettingsEpoch and SettingsRevision) once the change it announces is stored.
+ * settings.Update's events leave in version order; settings.Announce reports the version stored
+ * now, which a config.json restored from outside can lower, so a client refuses a lower one.
+ */
+export interface SettingsUpdatedPayload {
+  settings_epoch: number;
+  settings_revision: number;
 }
 
 /** ShowRefusal is a refused GET /api/git/show's body; it carries no content. */

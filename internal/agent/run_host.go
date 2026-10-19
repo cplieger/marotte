@@ -97,7 +97,10 @@ func (rs *Runs) launchAs(
 	presets := securityPresets(cctx, rs.lifecycle.configDir)
 	sb := &sharedBridge{state: bridgeStarting, settled: newSessionSettle()}
 	var relay *hostRelay
-	if _, oErr := rs.engine.openSession(cctx, &marotte.SessionOpts{Role: marotte.SessionRoleHost, Presets: presets},
+	door := &marotte.SessionOpts{
+		Role: marotte.SessionRoleHost, Presets: presets, AdditionalDirectories: rs.lifecycle.sessionDirs(cctx),
+	}
+	if _, oErr := rs.engine.openSession(cctx, door,
 		func(s engineSession) {
 			relay = newHostRelay(s, func(msg *marotte.RPCResponse) { rs.answerEarly(s, msg) })
 			sb.attach(relay)

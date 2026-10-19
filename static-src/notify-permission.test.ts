@@ -5,16 +5,13 @@ import { noticeFor } from "./__test-helpers__/notice.js";
 
 const mocks = vi.hoisted(() => ({
   patches: [] as Record<string, unknown>[],
-  /** What the settings write answers: a record on success, null on refusal. */
-  patchResult: { ok: true } as Record<string, unknown> | null,
+  patchResult: { outcome: "committed" } as { outcome: string },
   pushes: 0,
   cancels: 0,
 }));
 
 vi.mock("./persist.js", () => ({
-  patchSettings: async (
-    patch: Record<string, unknown>,
-  ): Promise<Record<string, unknown> | null> => {
+  patchSettings: async (patch: Record<string, unknown>): Promise<{ outcome: string }> => {
     mocks.patches.push(patch);
     return mocks.patchResult;
   },
@@ -77,7 +74,7 @@ let teardown: (() => void) | undefined;
 
 beforeEach(() => {
   mocks.patches = [];
-  mocks.patchResult = { ok: true };
+  mocks.patchResult = { outcome: "committed" };
   mocks.pushes = 0;
   mocks.cancels = 0;
   localStorage.removeItem(LS_NOTIFY_ASK_KEY);
@@ -158,7 +155,7 @@ describe("a grant turns the settings switch on", () => {
 
   it("leaves the switch off when the server refuses the write", async () => {
     expect.assertions(3);
-    mocks.patchResult = null;
+    mocks.patchResult = { outcome: "failed" };
     shadowNotification("default", "granted");
     notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"));
     click();

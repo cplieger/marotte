@@ -23,10 +23,40 @@ vi.mock("./toast.js", () => ({
 
 import {
   patchSettings,
-  initSettingsTracking,
   loadSettings,
+  noteSettingsEvent,
+  newestSettings,
+  refreshSettings,
+  adoptSettings,
   __testResetTracking,
 } from "./persist.js";
+import type { EffectiveSettings } from "./persist.js";
+import { decodeEffectiveSettings } from "./wire/decoders.gen.js";
+import { isPending } from "./actions/index.js";
+
+// A write settling after the next case's reset would record its answer in that case's tracker.
+afterEach(async () => {
+  await vi.waitFor(() => {
+    expect(isPending("settings.patch"), "every write settled").toBe(false);
+  });
+});
+
+/** The server's answer to a settings PATCH: the default settings with the write's body committed. */
+let commits = 0;
+
+/** A server that commits each write at the next revision, above any settings a test seeds. */
+function committed(_url: unknown, init?: RequestInit): Promise<Response> {
+  const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+  return Promise.resolve(
+    Response.json(
+      settingsPayload({
+        ...(body as Partial<EffectiveSettings>),
+        settings_epoch: 1,
+        settings_revision: ++commits,
+      }),
+    ),
+  );
+}
 
 describe("patchSettings debounce coalescing", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
@@ -34,9 +64,9 @@ describe("patchSettings debounce coalescing", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy = vi.fn(committed);
     vi.stubGlobal("fetch", fetchSpy);
-    // Reset the dedup tracker so tests don't bleed state between each other. Without this,
+    // Reset the settings state so tests don't bleed state between each other. Without this,
     // patchSettings({last_model: "claude"}) in test N+1 would be filtered out as a duplicate of
     // test N's value.
     __testResetTracking();
@@ -86,7 +116,7 @@ describe("patchSettings debounce coalescing", () => {
     const iterations = 50;
     for (let iter = 0; iter < iterations; iter++) {
       fetchSpy.mockClear();
-      // Each iteration is an independent batch; reset the dedup tracker so values from prior
+      // Each iteration is an independent batch; reset the settings state so values from prior
       // iterations don't filter out patches in this one.
       __testResetTracking();
       const keys = ["notifications_enabled", "debug_logs", "last_model"] as const;
@@ -134,7 +164,7 @@ describe("patchSettings no-op dedup", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy = vi.fn(committed);
     vi.stubGlobal("fetch", fetchSpy);
     __testResetTracking();
   });
@@ -145,7 +175,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("skips PATCH when the value matches the seeded server state (page-reload bootstrap case)", async () => {
-    initSettingsTracking(settingsPayload({ supervised_default: false, last_model: "claude" }));
+    adoptSettings(settingsPayload({ supervised_default: false, last_model: "claude" }));
     // Simulate the bootstrap fire from onSelectionChange: same supervised_default value the server
     // already has.
     patchSettings({ supervised_default: false });
@@ -154,7 +184,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("PATCHes only the changed key when bootstrap and a real change overlap", async () => {
-    initSettingsTracking(settingsPayload({ supervised_default: false, last_model: "claude" }));
+    adoptSettings(settingsPayload({ supervised_default: false, last_model: "claude" }));
     // supervised_default unchanged, last_model changed.
     patchSettings({ supervised_default: false });
     patchSettings({ last_model: "gemini" });
@@ -176,7 +206,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("PATCHes again when the value changes back after a different value", async () => {
-    initSettingsTracking(settingsPayload({ last_model: "claude" }));
+    adoptSettings(settingsPayload({ last_model: "claude" }));
     patchSettings({ last_model: "gemini" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -190,7 +220,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("array-valued settings dedup correctly", async () => {
-    initSettingsTracking(settingsPayload({ agent_ignore_files: ["a", "b", "c"] }));
+    adoptSettings(settingsPayload({ agent_ignore_files: ["a", "b", "c"] }));
     patchSettings({ agent_ignore_files: ["a", "b", "c"] });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -203,7 +233,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("does not fire showSaving when every key in the patch is filtered", async () => {
-    initSettingsTracking(settingsPayload({ supervised_default: true }));
+    adoptSettings(settingsPayload({ supervised_default: true }));
     const { showSaving } = await import("./save-indicator.js");
     patchSettings({ supervised_default: true });
     await vi.advanceTimersByTimeAsync(350);
@@ -233,7 +263,7 @@ describe("patchSettings unload flush", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy = vi.fn(committed);
     vi.stubGlobal("fetch", fetchSpy);
     __testResetTracking();
   });
@@ -286,7 +316,7 @@ describe("patchSettings failure handling", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy = vi.fn(committed);
     vi.stubGlobal("fetch", fetchSpy);
     __testResetTracking();
   });
@@ -309,17 +339,17 @@ describe("patchSettings failure handling", () => {
   });
 
   it("re-sends a value the server rejected instead of filtering it as sent", async () => {
-    initSettingsTracking(settingsPayload({ last_model: "claude" }));
+    adoptSettings(settingsPayload({ last_model: "claude" }));
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
     patchSettings({ last_model: "opus" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
-    // The failed value was rolled back out of the dedup tracker, so asking for it again is a
-    // change, not a repeat. Without the rollback the retry is dropped on the floor and the setting
+    // The failed write left the settings state at what the server holds, so asking for it again is
+    // a change, not a repeat. Otherwise the retry is dropped on the floor and the setting
     // never reaches the server.
     fetchSpy.mockClear();
-    fetchSpy.mockImplementation(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy.mockImplementation(committed);
     patchSettings({ last_model: "opus" });
     await vi.advanceTimersByTimeAsync(350);
 
@@ -330,21 +360,21 @@ describe("patchSettings failure handling", () => {
   });
 
   it("keeps the first pre-patch value when a key is written twice before flushing", async () => {
-    initSettingsTracking(settingsPayload({ last_model: "claude" }));
+    adoptSettings(settingsPayload({ last_model: "claude" }));
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
-    // Two writes coalesce into one PATCH; the rollback has to restore the value the server still
-    // holds ("claude"), not the intermediate one.
+    // Two writes coalesce into one PATCH; after its failure the state shows the value the server
+    // still holds ("claude"), not the intermediate one.
     patchSettings({ last_model: "opus" });
     patchSettings({ last_model: "sonnet" });
     await vi.advanceTimersByTimeAsync(350);
 
     fetchSpy.mockClear();
-    fetchSpy.mockImplementation(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy.mockImplementation(committed);
     patchSettings({ last_model: "claude" });
     await vi.advanceTimersByTimeAsync(350);
 
-    // "claude" is what the server has, so after a correct rollback this is a no-op. If the rollback
-    // stored "opus" instead, this would PATCH.
+    // "claude" is what the server has, so this is a no-op. Had the failure left "opus" shown, this
+    // would PATCH.
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -354,12 +384,31 @@ describe("patchSettings failure handling", () => {
     box.checked = true;
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
 
-    patchSettings({ notifications_enabled: true }, box);
+    patchSettings(
+      { notifications_enabled: true },
+      { el: box, key: "notifications_enabled", on: true },
+    );
     await vi.advanceTimersByTimeAsync(350);
 
-    // The optimistic record is taken at dispatch time (the user just clicked, so the previous state
-    // is the opposite), and the rollback restores it.
+    // Nothing was adopted, so the switch goes back to what it showed before the click.
     expect(box.checked).toBe(false);
+  });
+
+  it("puts a switch back to whether its key holds its on value", async () => {
+    adoptSettings(settingsPayload({ chat_retention_days: 60 }));
+    const forever = document.createElement("input");
+    forever.type = "checkbox";
+    forever.checked = false;
+    fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
+
+    patchSettings({ chat_retention_days: 30 }, { el: forever, key: "chat_retention_days", on: -1 });
+    forever.checked = true;
+    patchSettings({ chat_retention_days: -1 }, { el: forever, key: "chat_retention_days", on: -1 });
+    await vi.advanceTimersByTimeAsync(350);
+
+    await vi.waitFor(() => {
+      expect(forever.checked, "60 days kept is not forever").toBe(false);
+    });
   });
 
   it("leaves the checkbox alone when the write succeeds", async () => {
@@ -367,7 +416,10 @@ describe("patchSettings failure handling", () => {
     box.type = "checkbox";
     box.checked = true;
 
-    patchSettings({ notifications_enabled: true }, box);
+    patchSettings(
+      { notifications_enabled: true },
+      { el: box, key: "notifications_enabled", on: true },
+    );
     await vi.advanceTimersByTimeAsync(350);
 
     expect(box.checked).toBe(true);
@@ -380,7 +432,7 @@ describe("patchSettings saving indicator", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    fetchSpy = vi.fn(committed);
     vi.stubGlobal("fetch", fetchSpy);
     __testResetTracking();
   });
@@ -403,7 +455,7 @@ describe("patchSettings saving indicator", () => {
   });
 
   it("announces only the keys that survived the no-op filter", async () => {
-    initSettingsTracking(settingsPayload({ debug_logs: true }));
+    adoptSettings(settingsPayload({ debug_logs: true }));
     const { showSaving } = await import("./save-indicator.js");
     patchSettings({ debug_logs: true, last_model: "opus" });
     await vi.advanceTimersByTimeAsync(350);
@@ -455,6 +507,265 @@ describe("loadSettings", () => {
   });
 });
 
+/** A settings version, epoch first. */
+const v = (revision: number, epoch = 1): { settings_epoch: number; settings_revision: number } => ({
+  settings_epoch: epoch,
+  settings_revision: revision,
+});
+
+/** A complete settings payload at a version. */
+const vs = (revision: number, epoch = 1): EffectiveSettings => settingsPayload(v(revision, epoch));
+
+describe("settings reads in flight", () => {
+  let answers: ((s: ReturnType<typeof settingsPayload>) => void)[];
+
+  beforeEach(() => {
+    answers = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            answers.push((s) => {
+              resolve(
+                new Response(JSON.stringify(s), {
+                  status: 200,
+                  headers: { "content-type": "application/json" },
+                }),
+              );
+            });
+          }),
+      ),
+    );
+    __testResetTracking();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function settle(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  const at = (revision: number, epoch = 1): ReturnType<typeof settingsPayload> =>
+    settingsPayload(v(revision, epoch));
+
+  it("shares a read in flight with a plain load", async () => {
+    const first = loadSettings();
+    const second = loadSettings();
+    await settle();
+    expect(answers).toHaveLength(1);
+    answers[0]?.(at(3));
+    expect((await first)?.settings_revision).toBe(3);
+    expect((await second)?.settings_revision).toBe(3);
+  });
+
+  it("answers a refresh from a read sent after the newest event, one for every refresh made meanwhile", async () => {
+    const first = loadSettings();
+    noteSettingsEvent(v(3));
+    const refreshes = [refreshSettings(), refreshSettings()];
+    await settle();
+    expect(answers, "no read starts while one is in flight").toHaveLength(1);
+
+    answers[0]?.(at(3));
+    await vi.waitFor(() => {
+      expect(answers, "one more read once the first settled").toHaveLength(2);
+    });
+    await settle();
+    expect(answers, "the refreshes share that one read").toHaveLength(2);
+    answers[1]?.(at(4));
+    expect((await first)?.settings_revision).toBe(3);
+    for (const r of refreshes) {
+      expect((await r)?.settings_revision).toBe(4);
+    }
+  });
+
+  it("shares one read among the refreshes after one event", async () => {
+    noteSettingsEvent(v(1));
+    const refreshes = [refreshSettings(), refreshSettings()];
+    await settle();
+    expect(answers).toHaveLength(1);
+    answers[0]?.(at(1));
+    expect((await refreshes[0])?.settings_revision).toBe(1);
+    await settle();
+    expect(answers, "no second read for the same event").toHaveLength(1);
+    expect((await refreshes[1])?.settings_revision).toBe(1);
+  });
+
+  it("answers a load a newer event made stale from the read sent after that event", async () => {
+    const load = loadSettings();
+    noteSettingsEvent(v(2));
+    const refresh = refreshSettings();
+    await settle();
+    answers[0]?.(at(1));
+    await vi.waitFor(() => {
+      expect(answers).toHaveLength(2);
+    });
+    answers[1]?.(at(2));
+    expect((await load)?.settings_revision).toBe(2);
+    expect((await refresh)?.settings_revision).toBe(2);
+  });
+
+  it("answers null for a read below the held version when no event came since it was sent", async () => {
+    expect(adoptSettings(vs(5))).toBe(true);
+    const load = loadSettings();
+    await settle();
+    answers[0]?.(at(4));
+    await expect(load).resolves.toBeNull();
+    await settle();
+    expect(answers, "no read follows a refusal no event explains").toHaveLength(1);
+  });
+
+  it("takes a reset config.json's later epoch, and then refuses the old epoch's settings", async () => {
+    noteSettingsEvent(v(5));
+    const before = refreshSettings();
+    await settle();
+    answers[0]?.(at(5));
+    expect((await before)?.settings_revision).toBe(5);
+
+    const load = loadSettings();
+    // config.json was replaced, so its next write started a later epoch at 1.
+    noteSettingsEvent(v(1, 2));
+    const refresh = refreshSettings();
+    await settle();
+    answers[1]?.(at(5));
+    await vi.waitFor(() => {
+      expect(answers).toHaveLength(3);
+    });
+    answers[2]?.(at(1, 2));
+    expect(await load).toEqual(at(1, 2));
+    expect(await refresh).toEqual(at(1, 2));
+    expect(adoptSettings(vs(9)), "the old epoch, at any count").toBe(false);
+  });
+
+  it("answers newestSettings from the newest read until an event announces a later version", async () => {
+    noteSettingsEvent(v(2));
+    const read = refreshSettings();
+    await settle();
+    answers[0]?.(at(2));
+    await read;
+    await expect(newestSettings()).resolves.toEqual(at(2));
+    expect(answers, "no read for settings already held").toHaveLength(1);
+
+    noteSettingsEvent(v(3));
+    const newest = newestSettings();
+    await settle();
+    expect(answers).toHaveLength(2);
+    answers[1]?.(at(3));
+    await expect(newest).resolves.toEqual(at(3));
+  });
+});
+
+describe("adoptSettings", () => {
+  beforeEach(() => {
+    __testResetTracking();
+  });
+
+  it("accepts a version at or above the one held, and refuses one below it", () => {
+    expect(adoptSettings(vs(2))).toBe(true);
+    expect(adoptSettings(vs(2))).toBe(true);
+    expect(adoptSettings(vs(1))).toBe(false);
+    expect(adoptSettings(vs(3))).toBe(true);
+    expect(adoptSettings(vs(2))).toBe(false);
+  });
+
+  it("raises the held version on an event and never lowers it on an older one", () => {
+    expect(adoptSettings(vs(5))).toBe(true);
+    noteSettingsEvent(v(7));
+    expect(adoptSettings(vs(6))).toBe(false);
+    expect(adoptSettings(vs(7))).toBe(true);
+    noteSettingsEvent(v(1));
+    expect(adoptSettings(vs(1)), "after an older event").toBe(false);
+    expect(adoptSettings(vs(7))).toBe(true);
+  });
+
+  it("orders every count of a later epoch above every count of an earlier one", () => {
+    expect(adoptSettings(vs(9, 1))).toBe(true);
+    expect(adoptSettings(vs(1, 2))).toBe(true);
+    expect(adoptSettings(vs(10, 1))).toBe(false);
+  });
+
+  it("accepts a payload above the newest event, whenever it was requested", () => {
+    noteSettingsEvent(v(2));
+    expect(adoptSettings(vs(3))).toBe(true);
+  });
+
+  it("orders the server's largest epoch, decoded from the wire, above the one before it", () => {
+    // internal/settings maxStamp: the server never stores or serves a larger field.
+    const max = 9007199254740991;
+    const wire = (epoch: number): EffectiveSettings =>
+      decodeEffectiveSettings(
+        JSON.parse(
+          JSON.stringify(settingsPayload()).replace(
+            '"settings_epoch":0',
+            `"settings_epoch":${String(epoch)}`,
+          ),
+        ),
+      );
+    expect(adoptSettings({ ...wire(max - 1), settings_revision: 9 })).toBe(true);
+    expect(adoptSettings({ ...wire(max), settings_revision: 1 })).toBe(true);
+    expect(adoptSettings({ ...wire(max - 1), settings_revision: 9 })).toBe(false);
+  });
+});
+
+describe("patchSettings answer", () => {
+  let answer: EffectiveSettings;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    answer = settingsPayload();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(Response.json(answer))),
+    );
+    __testResetTracking();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function patched(): Promise<unknown> {
+    const p = patchSettings({ theme: "dark" });
+    await vi.advanceTimersByTimeAsync(350);
+    return p;
+  }
+
+  it("resolves with the committed settings, and holds their version", async () => {
+    answer = settingsPayload({ ...v(4), theme: "dark" });
+    await expect(patched()).resolves.toEqual({ outcome: "committed", settings: answer });
+    expect(adoptSettings(vs(3))).toBe(false);
+  });
+
+  it("resolves unchanged, sending nothing, when the settings already hold the patch", async () => {
+    adoptSettings(settingsPayload({ ...v(4), theme: "dark" }));
+    await expect(patched()).resolves.toEqual({ outcome: "unchanged" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("resolves superseded, still reporting Saved, when the page holds newer settings", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    noteSettingsEvent(v(5));
+    answer = settingsPayload({ ...v(4), theme: "dark" });
+    await expect(patched()).resolves.toEqual({ outcome: "superseded" });
+    expect(showSaved).toHaveBeenCalledWith(["theme"]);
+    expect(adoptSettings(vs(5)), "the held version is unchanged").toBe(true);
+  });
+
+  it("fails a write whose answer is not the committed settings", async () => {
+    const { showError } = await import("./save-indicator.js");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(Response.json({ theme: "dark" }))),
+    );
+    await expect(patched()).resolves.toEqual({ outcome: "failed" });
+    expect(showError).toHaveBeenCalledWith(["theme"]);
+  });
+});
+
 // The indicator belongs to the NEWEST write of each key.
 
 describe("patchSettings generation guard", () => {
@@ -480,7 +791,7 @@ describe("patchSettings generation guard", () => {
     // that would stall the next test in this file. A queued dispatch reaches the network as its
     // predecessor answers, so this walks the list as it grows.
     for (const resolve of pending) {
-      resolve(new Response("{}", { status: 200 }));
+      resolve(Response.json(settingsPayload()));
       await vi.advanceTimersByTimeAsync(0);
     }
     vi.useRealTimers();
@@ -504,14 +815,14 @@ describe("patchSettings generation guard", () => {
     // The queued write reaches the network only as its predecessor answers, and a real browser
     // settles a response body over a stream rather than in a microtask, so both halves wait for the
     // observable event instead of a fixed tick count.
-    pending[0]?.(new Response("{}", { status: 200 }));
+    pending[0]?.(Response.json(settingsPayload()));
     await vi.waitFor(() => {
       expect(pending).toHaveLength(2);
     });
     expect(showSaved).not.toHaveBeenCalled();
 
     // The newest write owns the indicator, and it still gets to say so.
-    pending[1]?.(new Response("{}", { status: 200 }));
+    pending[1]?.(Response.json(settingsPayload()));
     await vi.waitFor(() => {
       expect(showSaved).toHaveBeenCalledTimes(1);
     });
@@ -534,6 +845,53 @@ describe("patchSettings generation guard", () => {
     });
   });
 
+  it("puts a switch toggled twice behind a write that landed back to what that write set", async () => {
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true;
+    patchSettings({ debug_logs: true }, { el: box, key: "debug_logs", on: true });
+    await vi.advanceTimersByTimeAsync(350);
+    box.checked = false;
+    patchSettings({ debug_logs: false }, { el: box, key: "debug_logs", on: true });
+    box.checked = true;
+    patchSettings({ debug_logs: true }, { el: box, key: "debug_logs", on: true });
+    await vi.advanceTimersByTimeAsync(350);
+
+    pending[0]?.(Response.json(settingsPayload({ debug_logs: true })));
+    await vi.waitFor(() => {
+      expect(pending).toHaveLength(2);
+    });
+    const { showError } = await import("./save-indicator.js");
+    pending[1]?.(new Response("nope", { status: 500 }));
+    await vi.waitFor(() => {
+      expect(showError).toHaveBeenCalled();
+    });
+    expect(box.checked, "the first write's value is what the server holds").toBe(true);
+  });
+
+  it("puts a switch back to the server's value when it and an older write both fail", async () => {
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true;
+    patchSettings({ debug_logs: true }, { el: box, key: "debug_logs", on: true });
+    await vi.advanceTimersByTimeAsync(350);
+    box.checked = false;
+    patchSettings({ debug_logs: false }, { el: box, key: "debug_logs", on: true });
+    box.checked = true;
+    patchSettings({ debug_logs: true }, { el: box, key: "debug_logs", on: true });
+    await vi.advanceTimersByTimeAsync(350);
+
+    pending[0]?.(new Response("nope", { status: 500 }));
+    await vi.waitFor(() => {
+      expect(pending).toHaveLength(2);
+    });
+    expect(box.checked, "the later write still owns the switch").toBe(true);
+    pending[1]?.(new Response("nope", { status: 500 }));
+    await vi.waitFor(() => {
+      expect(box.checked).toBe(false);
+    });
+  });
+
   it("still reports the keys the newer write did not carry", async () => {
     const { showSaved } = await import("./save-indicator.js");
     // The first write carries two settings; the second re-writes only one of them, so the other has
@@ -543,7 +901,7 @@ describe("patchSettings generation guard", () => {
     patchSettings({ last_model: "second" });
     await vi.advanceTimersByTimeAsync(350);
 
-    pending[0]?.(new Response("{}", { status: 200 }));
+    pending[0]?.(Response.json(settingsPayload()));
     await vi.waitFor(() => {
       expect(showSaved).toHaveBeenCalled();
     });

@@ -592,11 +592,12 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 		cmd.Env = env
 	}
 	if params.Cwd != "" {
-		abs, err := at.lifecycle.resolveInsideWorkDir(params.Cwd)
+		abs, err := at.lifecycle.resolveCwd(ctx, params.Cwd)
 		if err != nil {
 			stop()
 			cmdCancel()
-			at.failCreate(ctx, chatID, origin, msg, params.Command, "cwd escapes workspace: "+err.Error())
+			at.failCreate(ctx, chatID, origin, msg, params.Command,
+				"cwd is outside the workspace and every additional directory: "+err.Error())
 			return
 		}
 		cmd.Dir = abs

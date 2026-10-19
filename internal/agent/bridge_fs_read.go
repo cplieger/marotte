@@ -61,15 +61,15 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, ori
 		in.respondFSError(ctx, chatID, origin, msg, errors.New("path is required"))
 		return
 	}
-	root, rel, release, err := in.lifetime.confineReadable(p.Path)
+	target, err := in.lifetime.confine(ctx, p.Path, fsRead)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	defer release()
+	defer target.release()
 	// No ignore filter here: KAS enforces the list. The bound comes from the open descriptor,
 	// a FIFO is refused, and every component resolves inside the root.
-	data, err := atomicfile.ReadBoundedInRoot(ctx, root, rel, fsReadCap)
+	data, err := atomicfile.ReadBoundedInRoot(ctx, target.root, target.rel, fsReadCap)
 	if err != nil {
 		if errors.Is(err, atomicfile.ErrFileTooLarge) {
 			err = fmt.Errorf("%w: %d", errCapExceeded, fsReadCap)

@@ -58,11 +58,13 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, or
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	root, rel, err := in.lifetime.confineInWorkDir(p.Path)
+	target, err := in.lifetime.confine(ctx, p.Path, fsWrite)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
+	defer target.release()
+	root, rel := target.root, target.rel
 	hook := in.writeHookFor(root, rel)
 	if in.refusedByWriteHook(ctx, chatID, origin, msg, hook, &p, rel) {
 		return
@@ -98,7 +100,7 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, or
 		hook.Saved()
 	}
 	// A dirty bit keyed on the path, not attribution.
-	if dir, ok := spec.DirOf(rel); ok {
+	if dir, ok := spec.DirOf(rel); ok && target.inWorkspace {
 		in.specs.Mark(dir)
 	}
 	in.respondBridge(ctx, chatID, origin, msg, map[string]any{}, nil)

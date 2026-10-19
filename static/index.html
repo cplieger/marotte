@@ -1086,6 +1086,27 @@
                 </p>
               </div>
             </div>
+
+            <div class="page-section">
+              <div id="agent-dirs-section">
+                <div class="section-title-status-row">
+                  <h2 class="section-title">Additional directories</h2>
+                  <span class="settings-save-status hidden" data-save-status="additional_directories" aria-live="polite"></span>
+                </div>
+                <p class="section-hint">Directories outside the workspace that the agent can read, write and start shell commands in; the workspace and marotte's config directory cannot be added. A change reaches the file tools, the folder a shell command may start in and the file browser at once, and kiro-cli whenever a chat's session opens or reloads: at its next message, or when you fork or rewind it. A running workflow keeps the list it started with.</p>
+                <div id="agent-dirs-chips" class="chip-list"></div>
+                <ul id="agent-dirs-refused" class="section-hint agent-dirs-error agent-dirs-refused hidden"></ul>
+                <div class="rule-form" data-rule-form="directory" role="group" aria-label="Add an additional directory">
+                  <label class="rf-field rf-grow">
+                    <span class="rf-label">Directory</span>
+                    <input id="agent-dirs-input" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="/data" aria-describedby="agent-dirs-error">
+                  </label>
+                  <button id="agent-dirs-add" class="btn rf-submit" type="button">Add</button>
+                </div>
+                <p id="agent-dirs-error" class="section-hint agent-dirs-error hidden" role="alert"></p>
+                <p id="agent-dirs-empty-hint" class="section-hint hidden">Nothing added. Agents reach only the workspace.</p>
+              </div>
+            </div>
           </div>
 
           <!-- Instructions: global textarea + steering docs + skills + agents -->

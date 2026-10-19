@@ -30,8 +30,9 @@ func TestEffectiveSettings_EveryFieldIsSettable(t *testing.T) {
 	for _, k := range effectiveKeys() {
 		settable[k] = struct{}{}
 	}
-	// Resolved per GET from kiro-cli's own view, never stored (the server's fillKiroDefaults).
-	resolved := map[string]struct{}{"kiro_defaults": {}}
+	// Resolved per GET, never stored: from kiro-cli's own view (the server's fillKiroDefaults)
+	// and from the filesystem (AgentDirs.Assess).
+	resolved := map[string]struct{}{"kiro_defaults": {}, "additional_directories_refused": {}}
 	rt := reflect.TypeFor[marotte.EffectiveSettings]()
 	for f := range rt.Fields() {
 		tag, _, _ := strings.Cut(f.Tag.Get("json"), ",")

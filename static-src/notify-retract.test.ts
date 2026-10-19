@@ -5,7 +5,7 @@ import { chatTarget, pushTargetTag, runAskTarget, runTarget } from "./push-subje
 import { noticeFor } from "./__test-helpers__/notice.js";
 
 vi.mock("./persist.js", () => ({
-  patchSettings: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
+  patchSettings: (): Promise<{ outcome: string }> => Promise.resolve({ outcome: "committed" }),
 }));
 vi.mock("./actions/notify.js", () => ({
   registerPush: { dispatch: (): Promise<null> => Promise.resolve(null) },

@@ -1,93 +1,163 @@
 // Settings persistence. Debounces PATCHes to coalesce rapid writes (e.g. theme toggle +
-// notification toggle changes into one round-trip).
+// notification toggle changes into one round-trip), and owns the settings reads. The settings
+// state and every rule over it are settings-state.ts's; this module runs it.
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { patchAppSettings, loadSettings as loadSettingsAction } from "./actions/settings.js";
 import { registerCleanup } from "./actions/index.js";
+import { paintSettingLocks, writeSwitch } from "./governance.js";
+import {
+  accepts,
+  changes,
+  initialSettingsState,
+  isCurrent,
+  ownKeys,
+  reduce,
+  shownSettings,
+  switchShown,
+  type Payload,
+  type SettingsEvent,
+  type SettingsState,
+  type Source,
+  type Stamp,
+} from "./settings-state.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
 
 // The GET /api/settings payload. GENERATED from the Go struct marotte.EffectiveSettings (see
 // internal/wirespec), so it is not maintained here and cannot drift from what the server sends.
 export type { EffectiveSettings } from "./wire/types.gen.js";
 
-let patchTimer: ReturnType<typeof setTimeout> | undefined;
-let patchQueue: Partial<EffectiveSettings> = {};
-let patchSnapshot: Partial<EffectiveSettings> = {};
-let patchInputs: HTMLInputElement[] = [];
-let patchResolvers: ((r: Record<string, unknown> | null) => void)[] = [];
+/** A write's answer: "committed" with the settings it committed; "unchanged" when
+ *  settings-state.changes found nothing to send; "superseded" when it landed but the page already
+ *  holds newer settings, which the caller must not overwrite with its own; "failed" otherwise. */
+export type PatchAnswer =
+  | { readonly outcome: "committed"; readonly settings: EffectiveSettings }
+  | { readonly outcome: "unchanged" | "superseded" | "failed" };
 
-// The indicator belongs to the NEWEST write of each key.
+/** A switch a write moves: checked exactly when key holds on. Each settle repaints it from the
+ *  settings state. */
+export interface SettingsSwitch {
+  readonly el: HTMLInputElement;
+  readonly key: string;
+  readonly on: unknown;
+}
+
+let state: SettingsState = initialSettingsState;
 let writeSeq = 0;
-const keyGen = new Map<string, number>();
+let patchTimer: ReturnType<typeof setTimeout> | undefined;
+let patchResolvers: ((r: PatchAnswer) => void)[] = [];
+/** The switches of the edit, and of each write in flight by id. */
+let editSwitches: SettingsSwitch[] = [];
+const writeSwitches = new Map<number, readonly SettingsSwitch[]>();
+/** What each switch showed before its first unsettled write: a settle puts it back when nothing
+ *  was adopted yet to say what the server holds. */
+const bases = new Map<HTMLInputElement, boolean>();
+/** The settings events this page took. */
+let eventsNoted = 0;
 
-/** Last-known value per settings key. Seeded by initSettingsTracking() on app boot from
- *  /api/settings; updated by patchSettings() as we send writes. */
-let lastSentPatch: Partial<EffectiveSettings> = {};
+function step(event: SettingsEvent): void {
+  state = reduce(state, event);
+}
 
-/** Seed the dedup tracker from the loaded settings. Called once at app boot before any
- *  patchSettings() can fire. Without this, the first patch for any key after page load is
- *  treated as a change even when the value matches the server. */
-export function initSettingsTracking(s: EffectiveSettings): void {
-  lastSentPatch = { ...s };
+function asPayload(s: EffectiveSettings): Payload {
+  return s as unknown as Payload;
+}
+
+/** The adopted settings with this page's edit and writes in flight laid over them
+ *  (settings-state.shownSettings), or null before any. For painting controls only: a consumer
+ *  that acts on a setting takes a read's answer, which is what the server holds. */
+export function settingsAsShown(): EffectiveSettings | null {
+  return shownSettings(state) as unknown as EffectiveSettings | null;
+}
+
+function unsettled(el: HTMLInputElement): boolean {
+  return (
+    editSwitches.some((s) => s.el === el) ||
+    [...writeSwitches.values()].some((list) => list.some((s) => s.el === el))
+  );
+}
+
+function repaint(switches: readonly SettingsSwitch[]): void {
+  for (const { el, key, on } of switches) {
+    const checked = switchShown(state, key, on) ?? bases.get(el);
+    if (checked !== undefined) {
+      writeSwitch(el, checked);
+    }
+  }
+  for (const { el } of switches) {
+    if (!unsettled(el)) {
+      bases.delete(el);
+    }
+  }
+  if (switches.length > 0) {
+    paintSettingLocks();
+  }
 }
 
 /** @internal Reset module state for tests. */
-// deadset:ignore DS1004 -- test seam: resets the patch dedup tracker, queue, resolvers, key generations and debounce timer
+// deadset:ignore DS1004 -- test seam: resets the settings state, the queue, its resolvers and switches, the debounce timer and the event count
 export function __testResetTracking(): void {
-  lastSentPatch = {};
-  patchQueue = {};
-  patchSnapshot = {};
-  patchInputs = [];
+  state = initialSettingsState;
+  writeSeq = 0;
   patchResolvers = [];
-  keyGen.clear();
+  editSwitches = [];
+  writeSwitches.clear();
+  bases.clear();
+  reading = null;
+  rereading = null;
+  eventsNoted = 0;
   if (patchTimer !== undefined) {
     clearTimeout(patchTimer);
     patchTimer = undefined;
   }
 }
 
-/** Shared dispatch body: drains the queue, dispatches the PATCH, and resolves all pending
- *  promises. Called by the debounce timer and, for a still-debounced write, by the unload
- *  cleanup below. */
+/** Shared dispatch body: sends the edit as one PATCH and resolves its callers. Called by the
+ *  debounce timer and, for a still-debounced write, by the unload cleanup below. */
 function executePatch(): void {
-  const body = patchQueue;
-  const allInputs = patchInputs;
+  const id = ++writeSeq;
   const resolvers = patchResolvers;
-  const rollback = patchSnapshot;
-  patchQueue = {};
-  patchSnapshot = {};
-  patchInputs = [];
   patchResolvers = [];
-  const keys = Object.keys(body);
-  const gen = ++writeSeq;
-  for (const k of keys) {
-    keyGen.set(k, gen);
-  }
-  /** The keys of this write that no later write has claimed since. */
-  const stillOurs = (): string[] => keys.filter((k) => keyGen.get(k) === gen);
-  let result: Record<string, unknown> | null = null;
+  writeSwitches.set(id, editSwitches);
+  editSwitches = [];
+  step({ type: "send", id });
+  const body = state.pending.find((w) => w.id === id)?.body ?? {};
+  let answer: EffectiveSettings | null = null;
   void patchAppSettings.dispatch(
     {
-      body: body,
-      ...(allInputs.length > 0 ? { inputs: allInputs } : {}),
+      body: { ...body },
+      onStart: () => {
+        step({ type: "start", id });
+      },
     },
     {
       silent: true,
-      onSuccess: (r) => {
-        result = r as Record<string, unknown>;
-        const mine = stillOurs();
+      onSuccess: (a) => {
+        answer = a;
+        const mine = ownKeys(state, id);
         if (mine.length > 0) {
           showSaved(mine);
         }
       },
       onError: () => {
-        Object.assign(lastSentPatch, rollback);
-        const mine = stillOurs();
+        const mine = ownKeys(state, id);
         if (mine.length > 0) {
           showError(mine);
         }
       },
       onSettled: () => {
+        const settled: EffectiveSettings | null = answer;
+        const current = settled !== null && accepts(state, settled, "write");
+        step({ type: "settle", id, answer: settled === null ? null : asPayload(settled) });
+        const switches = writeSwitches.get(id) ?? [];
+        writeSwitches.delete(id);
+        repaint(switches);
+        const result: PatchAnswer =
+          settled === null
+            ? { outcome: "failed" }
+            : current
+              ? { outcome: "committed", settings: settled }
+              : { outcome: "superseded" };
         for (const resolve of resolvers) {
           resolve(result);
         }
@@ -97,9 +167,9 @@ function executePatch(): void {
 }
 
 registerCleanup(() => {
-  // An armed timer means a NON-EMPTY queue, so this needs no emptiness test of its own:
-  // `patchSettings` fills the queue before it arms the timer, and the only two paths that empty the
-  // queue — `executePatch` itself and `__testResetTracking` — clear the timer with it.
+  // An armed timer means a NON-EMPTY edit, so this needs no emptiness test of its own:
+  // `patchSettings` fills the edit before it arms the timer, and the only two paths that empty it
+  // — `executePatch` itself and `__testResetTracking` — clear the timer with it.
   if (patchTimer !== undefined) {
     clearTimeout(patchTimer);
     patchTimer = undefined;
@@ -107,33 +177,31 @@ registerCleanup(() => {
   }
 });
 
+/** Queue what a click sends (settings-state.changes). Each switch is one this click flipped, painted
+ *  from the settings state at once and again when the write settles, so a failed write leaves it at
+ *  what the server holds. */
 export function patchSettings(
   patch: Partial<EffectiveSettings>,
-  ...inputs: HTMLInputElement[]
-): Promise<Record<string, unknown> | null> {
-  // Filter out keys whose value matches the last-sent value.
-  const changed: Partial<EffectiveSettings> = {};
-  for (const k of Object.keys(patch) as (keyof EffectiveSettings)[]) {
-    if (JSON.stringify(patch[k]) !== JSON.stringify(lastSentPatch[k])) {
-      if (!(k in patchSnapshot)) {
-        Object.assign(patchSnapshot, { [k]: lastSentPatch[k] });
-      }
-      Object.assign(changed, { [k]: patch[k] });
-      Object.assign(lastSentPatch, { [k]: patch[k] });
-    }
-  }
+  ...switches: SettingsSwitch[]
+): Promise<PatchAnswer> {
+  const changed = changes(state, patch);
   if (Object.keys(changed).length === 0) {
-    // No-op: nothing to send. Resolve immediately with null so callers that await the promise don't
-    // hang.
-    return Promise.resolve(null);
+    return Promise.resolve({ outcome: "unchanged" });
   }
-  Object.assign(patchQueue, changed);
-  for (const input of inputs) {
-    if (!patchInputs.includes(input)) {
-      patchInputs.push(input);
+  for (const { el } of switches) {
+    if (!unsettled(el)) {
+      bases.set(el, !el.checked);
     }
   }
-  const p = new Promise<Record<string, unknown> | null>((resolve) => {
+  step({ type: "click", patch });
+  for (const { el, key, on } of switches) {
+    const checked = switchShown(state, key, on);
+    if (checked !== undefined) {
+      writeSwitch(el, checked);
+    }
+  }
+  editSwitches.push(...switches);
+  const p = new Promise<PatchAnswer>((resolve) => {
     patchResolvers.push(resolve);
   });
   // Announced per call rather than per batch: each changed key has its own slot, so a setting
@@ -149,10 +217,91 @@ export function patchSettings(
   return p;
 }
 
-/** Load the effective settings, or null when the fetch itself failed. That fallback handed every
- *  caller an empty object indistinguishable from a real payload, so a network failure rendered
- *  as a full set of client-invented defaults — and it needed an eslint suppression to write,
- *  because the declared type promised what the wire did not. */
-export async function loadSettings(): Promise<EffectiveSettings | null> {
-  return await loadSettingsAction.dispatch(undefined);
+function adopt(s: EffectiveSettings, from: Source): boolean {
+  const current = accepts(state, s, from);
+  step({ type: "adopt", payload: asPayload(s), from });
+  return current;
+}
+
+/** Take a settings read's payload. True when settings-state.accepts adopts it, so the caller may
+ *  apply it; false when it is older than settings this page holds. A deleted or restored
+ *  config.json serves a lower version, refused here until the write after it starts a later epoch. */
+export function adoptSettings(s: EffectiveSettings): boolean {
+  return adopt(s, "read");
+}
+
+/** adoptSettings for the answer of a settings write sent outside patchSettings. */
+export function adoptWriteAnswer(s: EffectiveSettings): boolean {
+  return adopt(s, "write");
+}
+
+/** The settings GET in flight: its raw answer, that answer once checked, and eventsNoted when it was sent. */
+let reading: {
+  sent: Promise<EffectiveSettings | null>;
+  answer: Promise<EffectiveSettings | null>;
+  afterEvents: number;
+} | null = null;
+/** The GET every refresh made while `reading` predates the newest event shares, sent once it settles. */
+let rereading: Promise<EffectiveSettings | null> | null = null;
+
+function startRead(): Promise<EffectiveSettings | null> {
+  const afterEvents = eventsNoted;
+  const sent = loadSettingsAction.dispatch(undefined);
+  const answer = sent.then((s) => {
+    if (s === null) {
+      return null;
+    }
+    if (adoptSettings(s)) {
+      return s;
+    }
+    // Older than an event taken since this read was sent: the read sent after that event answers.
+    return afterEvents < eventsNoted ? refreshSettings() : null;
+  });
+  const read = { sent, answer, afterEvents };
+  reading = read;
+  void sent.then(() => {
+    if (reading === read) {
+      reading = null;
+    }
+  });
+  return answer;
+}
+
+/** Load the settings the server holds, or null when the fetch failed or answered settings older
+ *  than ones this page holds. A read in flight is shared; one a
+ *  newer settings event made stale is answered by a read sent after that event. */
+export function loadSettings(): Promise<EffectiveSettings | null> {
+  return reading?.answer ?? rereading ?? startRead();
+}
+
+/** loadSettings from a GET sent after the newest event noteSettingsEvent took. Calls made while an
+ *  older read is in flight share one more, sent once it settles, so answers arrive in send order. */
+export function refreshSettings(): Promise<EffectiveSettings | null> {
+  if (reading === null) {
+    return rereading ?? startRead();
+  }
+  if (reading.afterEvents === eventsNoted) {
+    return reading.answer;
+  }
+  // On the raw answer: the checked one can wait for this very read.
+  rereading ??= reading.sent.then(() => {
+    rereading = null;
+    return startRead();
+  });
+  return rereading;
+}
+
+/** The adopted settings when nothing newer was announced since, else refreshSettings. */
+export function newestSettings(): Promise<EffectiveSettings | null> {
+  const adopted = state.adopted;
+  return adopted !== null && isCurrent(state, adopted.at)
+    ? Promise.resolve(adopted.value as unknown as EffectiveSettings)
+    : refreshSettings();
+}
+
+/** Take a settings_updated event's version. An older one changes nothing held, but still counts as
+ *  an event, so a read sent before it is followed by one sent after. */
+export function noteSettingsEvent(version: Stamp): void {
+  eventsNoted++;
+  step({ type: "announce", at: version });
 }

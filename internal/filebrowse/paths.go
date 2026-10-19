@@ -195,12 +195,16 @@ func openMounts(rootDirs []string) ([]mount, []error) {
 			name: strings.TrimPrefix(clean, "/"),
 		})
 	}
-	// Longest dir first so nested grants win prefix matching.
+	sortMounts(mounts)
+	return mounts, errs
+}
+
+// sortMounts puts the longest dir first so nested grants win prefix matching.
+func sortMounts(mounts []mount) {
 	slices.SortFunc(mounts, func(a, b mount) int {
 		if d := len(b.dir) - len(a.dir); d != 0 {
 			return d
 		}
 		return strings.Compare(a.dir, b.dir)
 	})
-	return mounts, errs
 }

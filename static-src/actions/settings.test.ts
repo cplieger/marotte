@@ -18,6 +18,7 @@ vi.mock("../api-client.js", () => ({
 }));
 import * as toast from "../toast.js";
 import { signedIn } from "../__test-helpers__/identity.js";
+import { settingsPayload } from "../__test-helpers__/settings.js";
 
 const mockFetch = vi.fn();
 
@@ -188,16 +189,15 @@ describe("setKiroSetting", () => {
 });
 
 describe("patchAppSettings", () => {
-  it("PATCHes to /api/settings and rolls back inputs on failure", async () => {
+  it("PATCHes the body to /api/settings and answers null when the server refuses it", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.checked = true; // user just toggled ON
-
     const { patchAppSettings } = await import("./settings.js");
-    await patchAppSettings.dispatch({ body: { debug_logs: true }, inputs: [input] });
-
-    expect(input.checked).toBe(false);
+    const r = await patchAppSettings.dispatch({ body: { debug_logs: true } });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/settings");
+    expect(opts.method).toBe("PATCH");
+    expect(JSON.parse(opts.body as string)).toEqual({ debug_logs: true });
+    expect(r).toBeNull();
   });
 });
 
@@ -208,8 +208,11 @@ describe("a lockable switch crossing a lock", () => {
   const save = {
     kiro: (a: Actions, key: string, input: HTMLInputElement) =>
       a.setKiroSetting.dispatch({ key, value: String(input.checked), input }),
-    marotte: (a: Actions, key: string, input: HTMLInputElement) =>
-      a.patchAppSettings.dispatch({ body: { [key]: input.checked }, inputs: [input] }),
+    // The production path of a marotte switch: persist repaints it when the write settles.
+    marotte: async (_a: Actions, key: string, input: HTMLInputElement) => {
+      const persist = await import("../persist.js");
+      return persist.patchSettings({ [key]: input.checked }, { el: input, key, on: true });
+    },
   };
   const lockable = [
     ["flag-telemetry", "telemetry.enabled", save.kiro],
@@ -254,6 +257,7 @@ describe("a lockable switch crossing a lock", () => {
       bus.dispatch({ type: "governance_state", chat_id: "", payload: govState(lockKey) });
     };
     const input = document.getElementById(inputID) as HTMLInputElement;
+    (await import("../persist.js")).__testResetTracking();
     return { input, frame, actions: await import("./settings.js") };
   }
 
@@ -297,7 +301,12 @@ describe("a lockable switch crossing a lock", () => {
       frame(key);
       frame();
       expect(input.checked).toBe(false);
-      mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      // Both endpoints answer 200; the settings PATCH's body is the committed settings.
+      mockFetch.mockResolvedValueOnce(
+        Response.json(
+          settingsPayload({ content_collection_enabled: true, workflows_enabled: true }),
+        ),
+      );
       input.checked = true;
       await saveSwitch(actions, key, input);
       expect(input.checked).toBe(true);

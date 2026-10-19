@@ -17,7 +17,8 @@ import { getCachedModels } from "./picker.js";
 import type { ScheduleSpec, ScheduleView } from "./schedule-types.js";
 import { createPopup } from "@cplieger/ui-primitives/popup";
 import { openRunView } from "./run-view.js";
-import { loadSettings } from "./persist.js";
+import { loadSettings, refreshSettings } from "./persist.js";
+import type { EffectiveSettings } from "./persist.js";
 import { openSettingsView } from "./tabs.js";
 import { forceReflow } from "./dom.js";
 import type { Recipe, WorkflowRun } from "./types.js";
@@ -96,7 +97,7 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
     // changed on another page. Without this the note would be correct as of whenever this tab last
     // rendered, which is the boilerplate a live read-out exists to avoid.
     onSSE("settings_updated", () => {
-      void refreshAutoApprove();
+      void refreshAutoApprove(refreshSettings);
     });
     // KAS reports a recipe added, edited or removed; the catalog is not cached anywhere, so the
     // list is simply read again while it is on screen.
@@ -133,7 +134,7 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
     // Decoration, deliberately off the critical path: the workflow list must still render when the
     // schedule endpoint is unavailable.
     void refreshSchedules();
-    void refreshAutoApprove();
+    void refreshAutoApprove(loadSettings);
   })();
 }
 
@@ -161,8 +162,8 @@ export function setRecipeCountsListener(fn: (c: RecipeCounts) => void): void {
  *  so a failed read cannot make the note claim more permission than the run will get. */
 let autoApprove = false;
 
-async function refreshAutoApprove(): Promise<void> {
-  const s = await loadSettings();
+async function refreshAutoApprove(read: () => Promise<EffectiveSettings | null>): Promise<void> {
+  const s = await read();
   // A failed read leaves the last known value rather than resetting to false: false is the SERVER's
   // default for an absent key, which the payload now states outright, so re-deriving it here on a
   // network failure would be this module guessing at a value it can just be told.

@@ -103,6 +103,7 @@ func (rt *Runtime) resolveEngine(ctx context.Context, path string) engineSpec {
 // Live settings (ignore files, the shell timeout, content collection) are pushed instead.
 type sessionSettings struct {
 	Presets               []string                 `json:"presets"`
+	AdditionalDirectories []string                 `json:"additional_directories"`
 	Memory                marotte.MemoryPreference `json:"memory"`
 	Features              marotte.SessionFeatures  `json:"features"`
 	DisableAutoCompaction bool                     `json:"disable_auto_compaction"`
@@ -113,6 +114,7 @@ func (rt *Runtime) readSessionSettings(ctx context.Context) sessionSettings {
 	dir := rt.lifecycle.configDir
 	return sessionSettings{
 		Presets:               securityPresets(ctx, dir),
+		AdditionalDirectories: rt.lifecycle.sessionDirs(ctx),
 		Memory:                memoryPreference(ctx, dir),
 		Features:              sessionFeatures(ctx, dir, currentLocks(rt.config.GovernanceLocks)),
 		DisableAutoCompaction: sessionDisablesAutoCompaction(autoCompactionPolicy(ctx, dir)),
@@ -139,6 +141,7 @@ func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *
 		Mode:                  rec.CurrentModeID,
 		Thinking:              ask.thinking,
 		Presets:               s.Presets,
+		AdditionalDirectories: s.AdditionalDirectories,
 		Steering:              steering,
 		Memory:                s.Memory,
 		Features:              s.Features,

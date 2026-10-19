@@ -5,7 +5,11 @@ import fc from "fast-check";
 
 import { linkifyPaths, initLinkifyCallbacks } from "./linkify.js";
 import { FILE_EXTS } from "./file-extensions.js";
-import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
+import {
+  setAdditionalDirectories,
+  setWorkspaceRoot,
+  _resetForTest as resetWorkspace,
+} from "./workspace.js";
 
 // The opener is injected, so the wiring is asserted against the app's handler. A plain closure re-injected per test:
 // `mockReset: true` resets implementations between tests.
@@ -178,6 +182,30 @@ describe("linkifyPaths: the live workspace root", () => {
     setWorkspaceRoot("/workspace");
     expect(links(root).map((b) => b.title)).toEqual(["/workspace/src/b.ts:4"]);
     expect(root.textContent).toBe("see /srv/proj/src/a.ts and b.ts:4 too");
+  });
+});
+
+// An additional directory is a file-browser mount like the workspace, so its paths link too.
+describe("linkifyPaths: additional directories", () => {
+  afterEach(() => {
+    resetWorkspace();
+  });
+
+  it("links a path under an additional directory, and nothing under a sibling", () => {
+    setAdditionalDirectories(["/data"]);
+    expect(links(linkify("see /data/notes/plan.md"))[0]?.title).toBe("/data/notes/plan.md");
+    expect(links(linkify("see /database/plan.md"))).toHaveLength(0);
+  });
+
+  it("unlinks a linked path once its directory is removed, and links it again once re-added", () => {
+    setAdditionalDirectories(["/data"]);
+    const root = linkify("see /data/plan.md");
+    expect(links(root).map((b) => b.title)).toEqual(["/data/plan.md"]);
+    setAdditionalDirectories([]);
+    expect(links(root)).toHaveLength(0);
+    expect(root.textContent).toBe("see /data/plan.md");
+    setAdditionalDirectories(["/data"]);
+    expect(links(root).map((b) => b.title)).toEqual(["/data/plan.md"]);
   });
 });
 

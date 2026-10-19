@@ -1,7 +1,7 @@
 // KAS's own filesystem verbs `_kiro/fs/{stat,read_directory,delete}`, gated on
 // `clientCapabilities.fs._meta.kiro.<name>`. Undeclared, KAS serves them itself, so
-// declaring one confines an existing capability: stat and read_directory to
-// confineReadable, delete to confineInWorkDir. No second gate:
+// declaring one confines an existing capability through lifetime.confine: stat and
+// read_directory as reads, delete as a write. No second gate:
 // KAS restores a rejected delete through `fs/write_text_file`. Read and write stay
 // undeclared so `fs/{read,write}_text_file` keeps every write guardrail.
 
@@ -27,7 +27,7 @@ const (
 	fsTypeSymlink   = "symlink"
 )
 
-var errRefusedWorkDirRoot = errors.New("refusing to delete the workspace root")
+var errRefusedRootDelete = errors.New("refusing to delete the workspace or an additional directory itself")
 
 // kiroFSParams is the `path` of `{sessionId, path}`, shared by all three verbs. KAS sends the
 // path already absolute, so the confinement re-checks a claim.
@@ -92,24 +92,23 @@ func kiroFSPath(msg *marotte.RPCResponse) (string, error) {
 	return p.Path, nil
 }
 
-// kiroFSReadablePath confines a stat or read_directory path (lifetime.confineReadable).
-func (in *inbound) kiroFSReadablePath(msg *marotte.RPCResponse) (root *os.Root, rel string, release func(), err error) {
+func (in *inbound) kiroFSReadablePath(ctx context.Context, msg *marotte.RPCResponse) (fsTarget, error) {
 	p, err := kiroFSPath(msg)
 	if err != nil {
-		return nil, "", nil, err
+		return fsTarget{}, err
 	}
-	return in.lifetime.confineReadable(p)
+	return in.lifetime.confine(ctx, p, fsRead)
 }
 
 func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
-	root, rel, release, err := in.kiroFSReadablePath(msg)
+	target, err := in.kiroFSReadablePath(ctx, msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	defer release()
+	defer target.release()
 	// Root.Stat follows symlinks, like KAS's fs.stat; the symlink type is still reachable via read_directory.
-	info, err := root.Stat(rel)
+	info, err := target.root.Stat(target.rel)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
@@ -123,13 +122,13 @@ func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID,
 
 // A missing directory answers an empty list, matching KAS's NodeFileSystem.
 func (in *inbound) respondKiroFSReadDirectory(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
-	root, rel, release, err := in.kiroFSReadablePath(msg)
+	target, err := in.kiroFSReadablePath(ctx, msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	defer release()
-	dirEntries, err := readDirInRoot(root, rel)
+	defer target.release()
+	dirEntries, err := readDirInRoot(target.root, target.rel)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			in.respondBridge(ctx, chatID, origin, msg, kiroReadDirBody{Entries: []kiroDirEntry{}}, nil)
@@ -172,21 +171,23 @@ func dirEntriesToWire(dirEntries []os.DirEntry) []kiroDirEntry {
 }
 
 // respondKiroFSDelete answers `_kiro/fs/delete` with `{}`, recursive for a directory like
-// KAS's NodeFileSystem; it refuses only the workspace root. Not gated: KAS checkpoints and reviews.
+// KAS's NodeFileSystem; it refuses only a root itself. Not gated: KAS checkpoints and reviews.
 func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	p, err := kiroFSPath(msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	root, rel, err := in.lifetime.confineInWorkDir(p)
+	target, err := in.lifetime.confine(ctx, p, fsWrite)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	// The workspace root, which has exactly one root-relative spelling.
+	defer target.release()
+	root, rel := target.root, target.rel
+	// The root itself, which has exactly one root-relative spelling.
 	if rel == "." {
-		in.respondFSError(ctx, chatID, origin, msg, errRefusedWorkDirRoot)
+		in.respondFSError(ctx, chatID, origin, msg, errRefusedRootDelete)
 		return
 	}
 	// A lost delete race is unrecoverable, so the parent is pinned with
@@ -216,7 +217,7 @@ func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatI
 		return
 	}
 	slog.Info("agent deleted a path", "chat_id", chatID, "dir", info.IsDir())
-	if specDir, ok := spec.DirOf(rel); ok {
+	if specDir, ok := spec.DirOf(rel); ok && target.inWorkspace {
 		in.specs.Mark(specDir)
 	}
 	// KAS's isFSDeleteCapabilityResponse throws on a non-empty `message`, so success is an empty object.

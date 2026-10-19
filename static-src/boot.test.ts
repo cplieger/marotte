@@ -55,7 +55,7 @@ const m = vi.hoisted(() => {
     notifyStreamConnected: vi.fn(),
     loadSettings: vi.fn(),
     resolveIdentity: vi.fn(),
-    refreshRetention: vi.fn(),
+    adoptRetention: vi.fn(),
     listTabs: vi.fn(),
     renderIdentity: vi.fn(),
     restoreAll: vi.fn(),
@@ -206,7 +206,7 @@ vi.mock("./status.js", () => ({
   setStatus: m.setStatus,
 }));
 vi.mock("./versions.js", () => ({ loadVersions: m.loadVersions }));
-vi.mock("./retention.js", () => ({ refreshRetention: m.refreshRetention }));
+vi.mock("./retention.js", () => ({ adoptRetention: m.adoptRetention }));
 // Present so re-adding a boot call to it fails the assertion, not the LINK.
 vi.mock("./run-store.js", () => ({
   rebuildLiveRuns: m.rebuildLiveRuns,
@@ -269,7 +269,6 @@ function arrangeHappy(settings: EffectiveSettings = settingsPayload()): void {
   m.loadSettings.mockResolvedValue(settings);
   m.resolveIdentity.mockResolvedValue(SIGNED_IN);
   m.loadList.mockResolvedValue(true);
-  m.refreshRetention.mockResolvedValue(undefined);
   m.listTabs.mockResolvedValue(true);
   m.createSession.mockResolvedValue(undefined);
   m.getSessions.mockReturnValue([{ id: "c1" }]);
@@ -297,17 +296,15 @@ beforeEach(() => {
 });
 
 describe("the boot issues its reads together", () => {
-  it("has all five in flight before any of them answers", async () => {
+  it("has all four in flight before any of them answers", async () => {
     // Held open, all of them, so the only way a call can be recorded below is if
     // the boot issued it WITHOUT waiting for the others.
     const settings = deferred<EffectiveSettings>();
     const identity = deferred<IdentityVerdict>();
     const chats = deferred<boolean>();
-    const retention = deferred<undefined>();
     m.loadSettings.mockReturnValue(settings.promise);
     m.resolveIdentity.mockReturnValue(identity.promise);
     m.loadList.mockReturnValue(chats.promise);
-    m.refreshRetention.mockReturnValue(retention.promise);
 
     const { startBoot } = await freshBoot();
     const booted = startBoot({ applyRoute: m.applyRoute });
@@ -315,17 +312,19 @@ describe("the boot issues its reads together", () => {
     expect(m.loadSettings).toHaveBeenCalledTimes(1);
     expect(m.resolveIdentity).toHaveBeenCalledTimes(1);
     expect(m.loadList).toHaveBeenCalledTimes(1);
-    expect(m.refreshRetention).toHaveBeenCalledTimes(1);
     expect(m.readBootSnapshot).toHaveBeenCalledTimes(1);
     // And nothing has been adopted, because nothing has answered.
     expect(m.renderIdentity).not.toHaveBeenCalled();
     expect(m.restoreAll).not.toHaveBeenCalled();
+    expect(m.adoptRetention).not.toHaveBeenCalled();
 
-    settings.resolve(settingsPayload());
+    const payload = settingsPayload({ chat_retention_days: 0 });
+    settings.resolve(payload);
     identity.resolve(SIGNED_IN);
     chats.resolve(true);
-    retention.resolve(undefined);
     await booted;
+    // Retention comes from the settings answer, not a read of its own.
+    expect(m.adoptRetention).toHaveBeenCalledWith(payload);
   });
 
   it("renders the identity row without waiting for the chat list", async () => {

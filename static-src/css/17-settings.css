@@ -1782,6 +1782,15 @@ select.native-rule-effect:focus-visible {
   color: var(--c-red);
 }
 
+.section-hint.agent-dirs-error {
+  color: var(--c-red);
+}
+
+.agent-dirs-refused {
+  list-style: none;
+  padding: 0;
+}
+
 .native-explain-summary {
   cursor: pointer;
 }

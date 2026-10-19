@@ -15,31 +15,11 @@ import { registerCleanup } from "./actions/index.js";
 import { createNotifyAsk, type NotifyAsk } from "./notify-ask.js";
 import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
 import { patchSettings } from "./persist.js";
+import { KEYED_PUSH_DEFAULTS, KEYED_PUSH_KINDS } from "./push-kinds.js";
 import type { EffectiveSettings, NotificationPayload } from "./wire/types.gen.js";
 
 type PushState =
   { kind: "idle" } | { kind: "registering" } | { kind: "registered" } | { kind: "failed" };
-
-/** The push kinds the user can switch off, keyed by wire value (`marotte.PushKind`)
- *  and paired with each settings key. `permission` has none on purpose: an ask
- *  blocks the turn, so a channel that could go dark would stall every later turn
- *  with nothing on screen to say why. */
-export const KEYED_PUSH_KINDS: Readonly<
-  Record<string, "notify_agent_finished" | "notify_pr_status" | "notify_run_outcome">
-> = {
-  agent_finished: "notify_agent_finished",
-  pr_status: "notify_pr_status",
-  run_outcome: "notify_run_outcome",
-};
-
-/** Each keyed kind's default (`pr_status` is OFF). A mirror the payload cannot
- *  replace: `EffectiveSettings` carries values in force, so a switched-off kind
- *  looks like one defaulting off. push-kinds.test.ts keeps the two in step. */
-export const KEYED_PUSH_DEFAULTS: Readonly<Record<keyof typeof KEYED_PUSH_KINDS, boolean>> = {
-  agent_finished: true,
-  pr_status: false,
-  run_outcome: true,
-};
 
 let swRegistration: ServiceWorkerRegistration | null = null;
 let enabled = false;
@@ -211,7 +191,7 @@ export function installNotifyAskGesture(): () => void {
 async function adoptGrant(): Promise<void> {
   if (!enabled) {
     const saved = await patchSettings({ notifications_enabled: true });
-    if (saved === null) {
+    if (saved.outcome !== "committed") {
       return;
     }
     enabled = true;

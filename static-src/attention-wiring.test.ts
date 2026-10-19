@@ -117,7 +117,9 @@ vi.mock("./run-store.js", async () => {
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 // notify.ts's subscription half, which no case reaches: the retraction under test is the rest.
-vi.mock("./persist.js", () => ({ patchSettings: vi.fn(() => Promise.resolve(null)) }));
+vi.mock("./persist.js", () => ({
+  patchSettings: vi.fn(() => Promise.resolve({ outcome: "failed" })),
+}));
 vi.mock("./actions/notify.js", () => ({
   registerPush: { dispatch: vi.fn(() => Promise.resolve(null)), cancel: vi.fn() },
   unsubscribePush: { dispatch: vi.fn(() => Promise.resolve(null)) },

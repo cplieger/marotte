@@ -64,7 +64,7 @@ func writeSetting(t *testing.T, configDir, key string, value any) {
 	if _, err := settings.Update(t.Context(), configDir, func(doc map[string]json.RawMessage) error {
 		doc[key] = raw
 		return nil
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("Setup: write %s: %v", key, err)
 	}
 }
@@ -244,8 +244,16 @@ var configWrites = []struct {
 	{key: settings.KeyTheme, value: "light", reach: reachNoChat},
 	{key: settings.KeyFBPath, value: "/workspace", reach: reachNoChat},
 	{key: settings.KeyLastMergeMethod, value: "squash", reach: reachNoChat},
+	// Update writes both on every write, so a session door reading them would reopen every chat on any change.
+	{key: settings.KeySettingsEpoch, value: "e", reach: reachNoChat},
+	{key: settings.KeySettingsRevision, value: 42, reach: reachNoChat},
 	{key: settings.KeyEngineHeapMiB, value: 1024, reach: reachEngine},
+	{key: settings.KeyAdditionalDirectories, value: grantableDirList, reach: reachReopen},
 }
+
+// grantableDirList is an additional_directories value that Granted keeps: a stored entry it refuses
+// never reaches the session door, so it could not prove the reopen.
+func grantableDirList(t *testing.T) any { return []string{canonDir(t, t.TempDir())} }
 
 var kiroCLIWrites = []struct {
 	key   string
@@ -314,9 +322,14 @@ func TestConfigWrites_ReachChatsByTheirRoute(t *testing.T) {
 				writeSetting(t, configDir, tc.key, tc.from)
 			}
 
-			reopened := reloadsAfter(t, h, func() { writeSetting(t, configDir, tc.key, tc.value) })
+			value := tc.value
+			if f, ok := value.(func(*testing.T) any); ok {
+				value = f(t)
+			}
 
-			assertReach(t, h, tc.reach, reopened, fmt.Sprintf("writing %s = %v (from %v)", tc.key, tc.value, tc.from))
+			reopened := reloadsAfter(t, h, func() { writeSetting(t, configDir, tc.key, value) })
+
+			assertReach(t, h, tc.reach, reopened, fmt.Sprintf("writing %s = %v (from %v)", tc.key, value, tc.from))
 		})
 	}
 }

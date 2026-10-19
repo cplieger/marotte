@@ -5,6 +5,9 @@
 
 import { onSSE, onBus, BUS_RECONCILE, BUS_PAGE_RESUMED, decodeEnvelope, dispatch } from "../bus.js";
 import { adoptThemeFromSettings, applyGeneralPanel, syncSettings } from "../settings.js";
+import { applyAgentDirs } from "../agent-dirs-ui.js";
+import { applyPermissionsPanel } from "../permissions-ui.js";
+import { noteSettingsEvent, settingsAsShown } from "../persist.js";
 import { restoreLastModel, restoreLastEffort } from "../session-context.js";
 import { adoptLinkGuard } from "../link-guard.js";
 import { setWorkspaceRoot } from "../workspace.js";
@@ -22,7 +25,7 @@ import { askTarget, chatTarget, pushTargetTag, runAskTarget } from "../push-subj
 import { dropAllRunAsks, runAskPosition } from "../run-asks.js";
 import { loadList, scheduleListRetry } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
-import { refreshRetention } from "../retention.js";
+import { adoptRetention } from "../retention.js";
 import { adoptConnectRuns, invalidateCachedRuns, rebuildLiveRuns } from "../run-store.js";
 import { forgetAllStepSteers } from "../run-step-steers.js";
 import { fetchCatalog } from "../session-catalog.js";
@@ -89,26 +92,30 @@ function reconcileThinking(p: ConnectedPayload): void {
   }
 }
 
-onSSE("settings_updated", () => {
-  // Use restoreLastModel (cache-only), not setLastModel — that calls
-  // patchSettings, which re-broadcasts settings_updated, looping forever.
+onSSE("settings_updated", (_chatID, p) => {
+  noteSettingsEvent(p);
   void syncSettings().then((s) => {
-    // Null means the refetch failed; the local cache is a better answer
-    // than inventing one, and the next frame or reload re-syncs.
+    // Null means the refetch failed or answered older settings; the local cache is a better
+    // answer than inventing one, and the next frame or reload re-syncs.
     if (s === null) {
       return;
     }
+    adoptRetention(s);
     restoreLastModel(s.last_model);
     restoreLastEffort(s.last_effort_by_model);
     adoptLinkGuard(s);
-    // A theme chosen on another device lands here. Safe against a loop:
-    // syncSettings already seeded the write tracker from this payload.
-    adoptThemeFromSettings(s);
-    // Re-seeds the controls on a second device; `refreshRetention` and the session-door reads carry the
+    // The paints below take the settings as shown, so a click not yet committed stays painted; the
+    // behaviour above takes the server's, so a write that then fails leaves nothing applied.
+    const shown = settingsAsShown() ?? s;
+    // A theme chosen on another device lands here. Safe against a loop: it is what the page shows,
+    // so writing it back is no change (settings-state.changes).
+    adoptThemeFromSettings(shown);
+    // Re-seeds the controls on a second device; `adoptRetention` and the session-door reads carry the
     // effect.
-    applyGeneralPanel(s);
+    applyGeneralPanel(s, shown);
+    applyPermissionsPanel(shown);
+    applyAgentDirs(s);
   });
-  void refreshRetention();
 });
 
 onSSE("engine_status", (_chatID, p) => {

@@ -46,6 +46,8 @@ type cache struct {
 	// from mu, which guards the cached bytes for the length of one field access
 	// and is taken inside the window this one holds.
 	writeMu sync.Mutex
+	// committed is the stamp Update last wrote, under writeMu.
+	committed stamp
 }
 
 var (
