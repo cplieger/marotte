@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/logsafe"
@@ -27,8 +28,9 @@ func (rt *Runtime) attachEngineLane(h engineHandle, gen uint64) {
 	})
 }
 
-// engineFrame handles one engine-lane frame. Every request is answered exactly once, and none blocks the consumer:
-// a row that does I/O or waits runs on a tracked goroutine.
+// engineFrame handles one engine-lane frame. Every request is answered exactly once. A row that does I/O or waits
+// runs on a tracked goroutine, so none blocks the consumer, but for a sign-in ask once Shutdown has begun, answered
+// in place within drainAnswerBound.
 func (rt *Runtime) engineFrame(h engineHandle, msg *marotte.RPCResponse) {
 	if msg == nil {
 		return
@@ -60,7 +62,9 @@ func (rt *Runtime) engineRequest(h engineHandle, msg *marotte.RPCResponse) {
 func (rt *Runtime) answerConnectionRequest(origin acpResponder, msg *marotte.RPCResponse) bool {
 	if answer, ok := rt.signin.hostCallback(msg.Method); ok {
 		id := *msg.ID
-		rt.answerUnlessDraining(origin, msg, func() { rt.answerHostCallback(origin, id, answer) })
+		if !rt.lifecycle.goUnlessDraining(func() { rt.answerHostCallback(origin, id, answer) }) {
+			rt.answerDrainingHostCallback(origin, id, answer)
+		}
 		return true
 	}
 	switch msg.Method {
@@ -102,6 +106,26 @@ func (rt *Runtime) answerHostCallback(
 			break
 		}
 	}
+	respondHostCallback(ctx, origin, id, result, rpcErr)
+}
+
+// drainAnswerBound bounds a host callback answered once Shutdown has begun, on the frame pump's own goroutine: a
+// served credential is immediate, and a renewal is cut short rather than holding the pump through the engine's stop.
+const drainAnswerBound = 2 * time.Second
+
+// answerDrainingHostCallback answers a host callback once Shutdown has begun with the vault's own answer, waiting for
+// no pause: an unknown session's refusal would fail the asking step for good (run_gate.go's var block), where a served
+// credential lets the engine's stop leave the step to the next boot's heal.
+func (rt *Runtime) answerDrainingHostCallback(
+	origin acpResponder, id int64, answer func(context.Context) (json.RawMessage, *marotte.RPCError),
+) {
+	ctx, cancel := context.WithTimeout(rt.lifecycle.shutdownCtx, drainAnswerBound)
+	result, rpcErr := answer(ctx)
+	cancel()
+	respondHostCallback(rt.lifecycle.shutdownCtx, origin, id, result, rpcErr)
+}
+
+func respondHostCallback(ctx context.Context, origin acpResponder, id int64, result json.RawMessage, rpcErr *marotte.RPCError) {
 	var err error
 	if rpcErr != nil {
 		err = rpcErr

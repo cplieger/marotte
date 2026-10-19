@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -153,9 +154,7 @@ func TestTurnClose_OnceShutdownBeganLeavesAParkedModelPickParked(t *testing.T) {
 // A frame pump Shutdown does not join (an observer pass's, a host relay's) answers through it, so once Shutdown began
 // a request it would answer on inflight is answered at once.
 func TestAnswerConnectionRequest_OnceShutdownBeganAnswersAtOnceWithoutJoiningInflight(t *testing.T) {
-	held := make(chan struct{})
-	defer close(held)
-	h, src := declRuntime(t, &declBackend{callback: "_test/auth/token", held: held})
+	h, src := declRuntime(t, &declBackend{callback: "_test/auth/token"})
 	e := src.current()
 	before := len(src.lane.answeredIDs())
 	beginDraining(h)
@@ -177,6 +176,30 @@ func TestAnswerConnectionRequest_OnceShutdownBeganAnswersAtOnceWithoutJoiningInf
 		if n != 1 {
 			t.Errorf("request %d answered %d times by the time it returned, want once (answers %v)", id, n, got)
 		}
+	}
+}
+
+// Once Shutdown began a sign-in ask still gets the vault's credential: KAS fails the asking step for good on any
+// refusal, while the engine's stop leaves it to the next boot.
+func TestAnswerConnectionRequest_OnceShutdownBeganAnswersASignInAskWithTheCredential(t *testing.T) {
+	g := newGateRun(t, t.TempDir())
+	g.signIn(t)
+	asker := newFakeBridge()
+	beginDraining(g.h)
+
+	if !g.h.answerConnectionRequest(asker, laneRequest(9, gateCallback, "")) {
+		t.Fatal("the sign-in ask was not taken as a connection request")
+	}
+
+	got, ok := asker.responseTo(9)
+	if !ok {
+		t.Fatal("the sign-in ask was not answered by the time it returned")
+	}
+	if got.err != nil {
+		t.Errorf("the sign-in ask was answered with %v, want the vault's credential", got.err)
+	}
+	if raw, _ := got.result.(json.RawMessage); string(raw) != `{"accessToken":"t"}` {
+		t.Errorf("the sign-in ask's answer = %v, want the vault's credential", got.result)
 	}
 }
 
