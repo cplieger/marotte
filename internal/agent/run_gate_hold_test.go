@@ -81,6 +81,9 @@ const (
 	// heal's first read, before the heal's admission.
 	crossClosesAtFind
 	crossClosesAtHeal
+	// crossFlapsAtRetry loses a held release's first resume write, then closes and opens the gate while the release
+	// waits to retry it.
+	crossFlapsAtRetry
 )
 
 const (
@@ -124,6 +127,7 @@ var (
 	crossNames = []string{
 		"no crossing", "the gate opens before the hold forms", "the gate closes again at the release's first read of the hold",
 		"the gate closes again before the release's heal admits",
+		"the release's first resume write is lost, and the gate closes and opens again while it waits to retry",
 	}
 	readNames = []string{
 		"reads answer", "the hold's first read fails once", "the hold's reads keep failing",
@@ -309,6 +313,10 @@ type holdStep struct {
 	finderFirst bool
 	// crosses: the gate closes again under the step's release, which the step waits for.
 	crosses bool
+	// flaps: the step's held release loses its first resume write, and the step closes and opens the gate while it
+	// waits to retry; flapPauses: the closing edge's sweep pauses the run a rehydrate resumed in that wait.
+	flaps      bool
+	flapPauses bool
 	// failsEntry: the step's heal entry's own read fails once (readEntryOnce), held there.
 	failsEntry bool
 }
@@ -375,6 +383,10 @@ func holdModel(c holdCombo) (steps []holdStep, impossible string) {
 	case c.write != writeNone && !s.writeFired:
 		return nil, "no release write comes while its fault is armed: a heal writes only once its read finds a pause " +
 			"it resumes (runTransitions' healResume row)"
+	case c.cross == crossFlapsAtRetry && !s.crossFired:
+		return nil, "no held release (resumeHeld) writes the run's resume at an open gate with no sweep of its round " +
+			"healing the run too, so no release waits to retry a lost write: a chat's rehydrate or a parentless run's " +
+			"tries heal it, it parks for a person or ends first, or failing reads leave no hold for a release"
 	case c.cross != crossNone && !s.crossFired:
 		return nil, "no release reads the hold at an open gate, or none of its reads answers before its tries are " +
 			"spent (resumeHeld, retryResumeLater), so the gate has no read to cross"
@@ -393,6 +405,8 @@ func (c holdCombo) ruledOut() string {
 			"pause once the gate reads open (errGateOpened), and admitOrHold admits the heal"
 	case c.read == readEntryOnce && c.gate():
 		return "a gate pause has no heal entry: it forms in the closing sweep, whose read the hold's read values fail"
+	case c.cross == crossFlapsAtRetry && c.write != writeNone:
+		return "the crossing loses the release's first resume write itself, the first write each write fault acts on"
 	case !c.gate() && c.land == landAfter && (c.read == readHoldOnce || c.read == readHoldEvery):
 		return "a heal after the opening edge forms no hold, since admitOrHold admits it at the open gate, so its " +
 			"first read is the release's"
@@ -869,6 +883,11 @@ func (s *holdSim) release(r releasers, finderHeals, healerHeals bool) []string {
 	if finderHeals || (healerHeals && r.healer == healerHeld) {
 		loops = 1
 	}
+	// The crossing's lost write must be the held release's: a sweep healing the run in the same round may write first.
+	if s.cross == crossFlapsAtRetry && loops > 0 && (!healerHeals || r.healer != healerSweep) {
+		s.flap(sweeps)
+		return nil
+	}
 	switch s.write {
 	case writeLostOnce:
 		s.write, s.writeFired = writeNone, true
@@ -902,6 +921,24 @@ func (s *holdSim) release(r releasers, finderHeals, healerHeals bool) []string {
 	s.resumes++
 	s.claims++
 	return nil
+}
+
+// flap is a release under crossFlapsAtRetry: its first resume write is lost, the gate closes and opens again while it
+// waits to retry, and the opening edge's claim wakes it to resume the run. When sweeps, the chat's rehydrate its lost
+// write reloaded resumes the run in that wait, and the closing edge's sweep pauses it with the gate's reason first.
+func (s *holdSim) flap(sweeps bool) {
+	s.cross, s.crossFired = crossNone, true
+	s.cur.flaps, s.cur.flapPauses = true, sweeps
+	s.cur.text += "; its resume write is lost, and the gate closes and opens again while it waits to retry"
+	if sweeps {
+		s.resumes++
+		s.cur.text += "; the chat's rehydrate resumes it in that wait, and the closing edge's sweep pauses it with the " +
+			"gate's reason"
+	}
+	s.cur.text += "; the opening edge wakes the release, which resumes it"
+	s.kas, s.entry = kasHoldRunning, false
+	s.resumes++
+	s.claims++
 }
 
 // park is a release that finds the heal budget spent and parks the run for the user (parkForUser): held is whether
@@ -1148,6 +1185,10 @@ type kasRun struct {
 	staleOwner bool
 	// failEntryList: the next first sweep of a chat's rehydrate fails its list.
 	failEntryList bool
+	// flapWrite: the next resume write of a held release (resumeHeld) is lost before KAS takes it (crossFlapsAtRetry),
+	// and onFlapWrite runs.
+	flapWrite   bool
+	onFlapWrite func()
 	// lastCall is when the runtime last called the run's KAS, in Unix nanoseconds.
 	lastCall atomic.Int64
 }
@@ -1236,6 +1277,11 @@ func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, 
 		}
 		return json.RawMessage(`{"paused":true}`), nil, true, nil
 	case methodKiroWorkflowResume:
+		if k.flapWrite && innermostOf(".(*Runs).resumeHeld") != "" {
+			k.flapWrite = false
+			k.onFlapWrite()
+			return nil, nil, true, errHoldFault
+		}
 		takes, err := k.releaseFaultLocked()
 		if takes {
 			k.resumes.Add(1)
@@ -1561,6 +1607,58 @@ type cellFaults struct {
 	crossed atomic.Bool
 	// laterTries counts the heal reads of each retryResumeLater chain's later tries, by retryChain.
 	laterTries [2]int
+	// flapGap: the held release lost the crossing's write, so its next wait to retry is the flap's (releaseWait);
+	// gapReached closes as it starts.
+	flapGap    bool
+	gapReached chan struct{}
+}
+
+// flapWait is how long a flapped release waits to retry: longer than any step waits, so only the opening edge's
+// wake ends it in time.
+const flapWait = time.Hour
+
+// releaseWait is a runtime's release-wait hook: the wait after the crossing's lost write is flapWait, every other
+// release's wait its backoff gap.
+func (f *cellFaults) releaseWait(gap time.Duration) time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.flapGap {
+		return gap
+	}
+	f.flapGap = false
+	close(f.gapReached)
+	return flapWait
+}
+
+// onFlapWrite records the crossing's lost write.
+func (f *cellFaults) onFlapWrite() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.flapGap = true
+}
+
+var (
+	releaseWaitsHooked sync.Once
+	releaseWaits       sync.Map
+)
+
+// onReleaseWait installs fn as h's release-wait hook (releaseWaitHook) for the test, and returns its uninstall.
+func onReleaseWait(t *testing.T, h *Runtime, fn func(gap time.Duration) time.Duration) (unhook func()) {
+	t.Helper()
+	releaseWaitsHooked.Do(func() {
+		hook := func(rs *Runs, _ string, gap time.Duration) time.Duration {
+			if fn, ok := releaseWaits.Load(rs); ok {
+				return fn.(func(time.Duration) time.Duration)(gap)
+			}
+			return gap
+		}
+		releaseWaitHook.Store(&hook)
+	})
+	runs := h.runs
+	releaseWaits.Store(runs, fn)
+	unhook = func() { releaseWaits.Delete(runs) }
+	t.Cleanup(unhook)
+	return unhook
 }
 
 func (f *cellFaults) hitLocked() {
@@ -1799,7 +1897,10 @@ func newHoldCell(t *testing.T, router *holdLogs, c holdCombo) *holdCell {
 			router.sinks.Delete(key)
 		}
 	})
-	k := &kasRun{id: cell.id, parent: testLaunchSession, onWriteFault: cell.f.onWriteFault, onEntryRead: cell.f.failEntryRead}
+	k := &kasRun{
+		id: cell.id, parent: testLaunchSession, onWriteFault: cell.f.onWriteFault, onEntryRead: cell.f.failEntryRead,
+		onFlapWrite: cell.f.onFlapWrite,
+	}
 	if c.chat() {
 		k.parent = cell.session
 	}
@@ -1862,7 +1963,11 @@ func (c *holdCell) boot(t *testing.T, signedIn bool) {
 	c.gateRun = &gateRun{h: h, br: br, vault: vault, b: b}
 	c.f.cell.Store(c)
 	c.k.attach(br)
-	c.unhook = onTransitionReadErr(t, h, c.f.hook(h.runs))
+	unhookReads, unhookWaits := onTransitionReadErr(t, h, c.f.hook(h.runs)), onReleaseWait(t, h, c.f.releaseWait)
+	c.unhook = func() {
+		unhookReads()
+		unhookWaits()
+	}
 }
 
 // agentRunOnChatAs is agentRunOnChat for the run id hosted by chat's session.
@@ -2156,6 +2261,40 @@ func (c *holdCell) drive(t *testing.T, s *holdStep) {
 	}
 }
 
+// armFlap loses the step's held release's next resume write (crossFlapsAtRetry).
+func (c *holdCell) armFlap() {
+	c.f.mu.Lock()
+	c.f.gapReached = make(chan struct{})
+	c.f.mu.Unlock()
+	c.k.set(func(k *kasRun) { k.flapWrite = true })
+}
+
+// flap closes and opens the gate while the held release waits to retry its lost write, once the step's other calls
+// settled. With s.flapPauses a rehydrate resumes the run in that wait first, and the gate opens again only once the
+// closing edge's sweep paused it.
+func (c *holdCell) flap(t *testing.T, s *holdStep) {
+	t.Helper()
+	c.f.mu.Lock()
+	reached := c.f.gapReached
+	c.f.mu.Unlock()
+	select {
+	case <-reached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the held release never waited to retry its lost resume write")
+	}
+	if s.flapPauses {
+		awaitResumes(t, &c.k.resumes, s.resumes-1)
+	}
+	waitUntil(t, "the release's round to settle", func() bool {
+		return time.Since(time.Unix(0, c.k.lastCall.Load())) > stepQuiet
+	})
+	c.signOut(t)
+	if s.flapPauses {
+		waitUntil(t, "the closing edge's pause of the resumed run", func() bool { return c.k.reads() == kasGateReason })
+	}
+	c.signInStep(t)
+}
+
 // arm starts the cell's release faults and its release's crossing.
 func (c *holdCell) arm() {
 	c.f.mu.Lock()
@@ -2263,6 +2402,9 @@ func (c *holdCell) run(t *testing.T, steps []holdStep) {
 		if s.finderFirst {
 			c.orderFinder(true)
 		}
+		if s.flaps {
+			c.armFlap()
+		}
 		c.drive(t, s)
 		c.prevEv = s.ev
 		if s.blocked {
@@ -2272,6 +2414,9 @@ func (c *holdCell) run(t *testing.T, steps []holdStep) {
 			case <-time.After(5 * time.Second):
 				t.Fatalf("step %d (%s): no read was held", i+1, s.text)
 			}
+		}
+		if s.flaps {
+			c.flap(t, s)
 		}
 		if s.crosses {
 			waitUntil(t, "the gate to close again under the release", c.f.crossed.Load)

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -119,6 +120,13 @@ const (
 //     pause, a scheduled run's gate pause: held paused with the gate's reason, persisted paused with the gate's reason,
 //     ends running after 1 resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused
 //     for the restart and its heal held, persisted paused for the restart, ends running after 1 resume.
+//   - The release's first resume write is lost, and the gate closes and opens again while it waits to retry. A
+//     chat-parented run's gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends
+//     running after 2 resumes. A manual run's gate pause, a scheduled run's gate pause: held paused with the gate's
+//     reason, persisted paused with the gate's reason, ends running after 1 resume. A chat-parented run's heal: held
+//     paused for the restart and its heal held, persisted paused for the restart, ends running after 2 resumes. A
+//     manual run's heal, a scheduled run's heal: held paused for the restart and its heal held, persisted paused for
+//     the restart, ends running after 1 resume.
 //   - The hold's first read fails once. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's
 //     gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends running after 1
 //     resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart and
@@ -171,9 +179,8 @@ type runGate struct {
 	// read is the vault's Answerability for the engine's backend; nil keeps the gate open, since then no vault
 	// answers the engine (none is wired, or an API key authenticates it).
 	read func() signin.Answerability
-	// releases is each held run's latest release (resumeHeld): at most one live per run, and one per opening edge, so
-	// an edge's release and its finder's, or a later edge's during a release's retries, share one heal of the run's
-	// budget.
+	// releases is each held run's latest release (resumeHeld): at most one live per run, which serves every opening
+	// edge that comes while it runs, and one per edge, so every try for the run's hold shares one heal of its budget.
 	releases map[string]releaseOwner
 	// heldHeals are the automatic resumes the closed gate held, of any run kind, by launching chat ("" when unknown,
 	// as for a gate pause whose resume the gate closed again before). Only admitOrHold adds a hold and only
@@ -507,8 +514,8 @@ type releaseOwner struct {
 	live    bool
 }
 
-// claimRelease takes workflowID's release for opening: false while one is live, or once one served opening or a
-// later edge.
+// claimRelease takes workflowID's release for opening: false while one is live, which serves every later edge
+// itself (resumeHeld), or once one served opening or a later edge.
 func (g *runGate) claimRelease(workflowID string, opening uint64) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -522,18 +529,34 @@ func (g *runGate) claimRelease(workflowID string, opening uint64) bool {
 	return true
 }
 
-// endRelease ends workflowID's live release, unless it stopped on the closed gate and the gate is open again on a
-// later edge than the release's own: the release then serves that edge, whose claims it refused while live, and
-// endRelease reports true. Every claim of that edge reads the gate open under the same lock, so each was refused
-// before and is served here, or comes after and starts its own release.
-func (g *runGate) endRelease(workflowID string, stoppedClosed bool) (again bool) {
+// servesLater reports whether an opening edge came after the one workflowID's release serves, and if so makes it
+// serve the latest.
+func (g *runGate) servesLater(workflowID string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.serveLaterLocked(workflowID)
+}
+
+func (g *runGate) serveLaterLocked(workflowID string) bool {
 	o := g.releases[workflowID]
-	if stoppedClosed && g.openLocked() && g.opens > o.opening {
-		g.releases[workflowID] = releaseOwner{opening: g.opens, live: true}
+	if g.opens <= o.opening {
+		return false
+	}
+	o.opening = g.opens
+	g.releases[workflowID] = o
+	return true
+}
+
+// endRelease ends workflowID's live release, unless retry is set and an opening edge came after the one it serves:
+// it then serves the latest edge and reports true. claimRelease takes g.mu too, so a claim of that edge refused
+// before this is served here, and one after it starts its own release.
+func (g *runGate) endRelease(workflowID string, retry bool) (again bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if retry && g.serveLaterLocked(workflowID) {
 		return true
 	}
+	o := g.releases[workflowID]
 	o.live = false
 	g.releases[workflowID] = o
 	return false
@@ -549,42 +572,84 @@ func (rs *Runs) startRelease(workflowID string, chatID marotte.ChatID, opening u
 	})
 }
 
-// resumeHeld is a held run's release (releaseTries), served again for a later opening edge when its tries stopped on
-// the closed gate (runGate.endRelease); every try shares one heal of the run's budget.
+// resumeHeld is a held run's release, its automatic resume (healResume): tried again from releaseRetryBase while it
+// fails at the open gate, maxReleaseAttempts times in all, then logged as an ERROR, and after a try that met the
+// closed gate once the gate opens. An opening edge later than the one it serves cuts a wait short and starts the
+// tries afresh, and so does one that came during tries it then spends (runGate.endRelease). Every try shares one heal
+// of the run's budget.
 func (rs *Runs) resumeHeld(workflowID string, chatID marotte.ChatID) {
 	charged := false
-	for {
-		var stoppedClosed bool
-		stoppedClosed, charged = rs.releaseTries(workflowID, chatID, charged)
-		if !rs.gate.endRelease(workflowID, stoppedClosed) {
-			return
-		}
-	}
-}
-
-// releaseTries is the automatic resume of a held run (healResume), retried from releaseRetryBase while it fails and
-// the gate stays open, maxReleaseAttempts times in all, then logged as an ERROR. It reports whether it stopped on the
-// closed gate and whether a heal stands after it.
-func (rs *Runs) releaseTries(workflowID string, chatID marotte.ChatID, charged bool) (stoppedClosed, chargedAfter bool) {
 	for attempt := 1; ; attempt++ {
 		hctx, cancel := rs.lifecycle.derivedContext()
 		var out resumeOutcome
 		out, charged = rs.retryResume(hctx, chatID, workflowID, charged)
 		cancel()
-		switch {
-		case out == resumeHeld:
-			return true, charged
-		case out != resumeFailed:
-			return false, charged
-		case !rs.gateOpen():
-			return true, charged
-		case attempt >= maxReleaseAttempts:
-			slog.Error("sign-in gate: a held run could not be resumed; it stays held for the next sign-in",
-				"workflow_id", workflowID, "chat_id", chatID, "attempts", attempt)
-			return false, charged
+		fresh, again := rs.afterReleaseTry(workflowID, chatID, out, attempt)
+		if !again {
+			return
 		}
-		if !sleepCtx(rs.lifecycle.shutdownCtx, releaseRetryBase<<(attempt-1)) {
-			return false, charged
+		if fresh {
+			attempt = 0
+		}
+	}
+}
+
+// afterReleaseTry waits for a release's next try after attempt ended in out: again false once the release ended,
+// fresh when the next try starts the tries afresh.
+func (rs *Runs) afterReleaseTry(workflowID string, chatID marotte.ChatID, out resumeOutcome, attempt int) (fresh, again bool) {
+	switch {
+	case out == resumeHeld, out == resumeFailed && !rs.gateOpen():
+		fresh, again = true, rs.awaitOpen(workflowID)
+	case out != resumeFailed:
+	case attempt >= maxReleaseAttempts:
+		slog.Error("sign-in gate: a held run could not be resumed; it stays held for the next sign-in",
+			"workflow_id", workflowID, "chat_id", chatID, "attempts", attempt)
+		again = rs.gate.endRelease(workflowID, true)
+		return again, again
+	default:
+		fresh, again = rs.awaitRetry(workflowID, releaseRetryBase<<(attempt-1))
+	}
+	if !again {
+		rs.gate.endRelease(workflowID, false)
+	}
+	return fresh, again
+}
+
+// awaitOpen waits until the gate opens, then serves the latest edge; false at shutdown.
+func (rs *Runs) awaitOpen(workflowID string) bool {
+	for moved := rs.gate.moves(); !rs.gateOpen(); moved = rs.gate.moves() {
+		select {
+		case <-moved:
+		case <-rs.lifecycle.shutdownCtx.Done():
+			return false
+		}
+	}
+	rs.gate.servesLater(workflowID)
+	return true
+}
+
+// releaseWaitHook, when set, gives the wait before a release's next try in place of its backoff gap; tests only.
+var releaseWaitHook atomic.Pointer[func(rs *Runs, workflowID string, gap time.Duration) time.Duration]
+
+// awaitRetry waits gap before a release's next try: woken when an opening edge later than the one it serves cuts
+// the wait short, which it then serves; again false at shutdown.
+func (rs *Runs) awaitRetry(workflowID string, gap time.Duration) (woken, again bool) {
+	if hook := releaseWaitHook.Load(); hook != nil {
+		gap = (*hook)(rs, workflowID, gap)
+	}
+	t := time.NewTimer(gap)
+	defer t.Stop()
+	for {
+		moved := rs.gate.moves()
+		if rs.gate.servesLater(workflowID) {
+			return true, true
+		}
+		select {
+		case <-t.C:
+			return false, true
+		case <-moved:
+		case <-rs.lifecycle.shutdownCtx.Done():
+			return false, false
 		}
 	}
 }

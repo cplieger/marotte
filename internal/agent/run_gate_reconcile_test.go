@@ -15,21 +15,19 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/signin"
 )
 
-// A held run has one release however the gate moves during its retries: a closing and an opening edge while it waits
-// to retry a lost resume write start no second release, so the run's heal budget is charged once.
-func TestSignInGate_AGateFlapDuringAReleasesRetryStartsNoSecondRelease(t *testing.T) {
+// A held run has one release however the gate moves during its retries: an opening edge while it waits to retry a
+// lost resume write wakes it to try at once, rather than after its backoff, and starts no second release, so the
+// run's heal budget is charged once.
+func TestSignInGate_AGateFlapDuringAReleasesRetryWakesItsOneRelease(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		base := releaseRetryBase
 		releaseRetryBase = time.Hour
 		t.Cleanup(func() { releaseRetryBase = base })
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "signin.json"), []byte(signedInAtBoot), 0o600); err != nil {
-			t.Fatalf("Setup: write signin.json: %v", err)
-		}
-		g := newGateRun(t, dir)
+		g := newManualGateRun(t, signedInDir(t))
 		g.br.setCallResult(methodKiroWorkflowInspect, heldInspect(t, signInHoldReason))
 		g.br.setCallErr(methodKiroWorkflowResume, errors.New("engine busy"))
 		g.h.runs.BootSweep(t.Context())
@@ -38,17 +36,13 @@ func TestSignInGate_AGateFlapDuringAReleasesRetryStartsNoSecondRelease(t *testin
 			t.Fatalf("Setup: the boot's release wrote %d resumes and spent %d heals, want 1 and 1", n, spent)
 		}
 
-		g.b.set(false, false, func() error { return signin.ErrRejected })
-		if rerr := g.askVault(t.Context(), t); rerr == nil {
-			t.Fatal("Setup: the rejected ask was answered with a credential")
-		}
-		waitUntil(t, "the gate to close", func() bool { return !g.h.runs.gateOpen() })
+		g.lapseVault(t)
 		g.b.set(true, true, nil)
 		g.signIn(t)
 		synctest.Wait()
 
-		if n := countCalls(g.br, methodKiroWorkflowResume); n != 1 {
-			t.Errorf("resume writes = %d before the release's next try, want 1: a second release started", n)
+		if n := countCalls(g.br, methodKiroWorkflowResume); n != 2 {
+			t.Errorf("resume writes = %d after the opening edge, want 2: the release's lost write and its woken try", n)
 		}
 		if spent := g.h.runs.healsSpent(gateRunID); spent != 1 {
 			t.Errorf("heals spent = %d, want the one release's 1", spent)
@@ -56,30 +50,152 @@ func TestSignInGate_AGateFlapDuringAReleasesRetryStartsNoSecondRelease(t *testin
 	})
 }
 
-// A run's release serves one opening edge of the gate, and while it runs it serves every claim: one that stopped on
-// the closed gate serves the later edge it finds open, whose claim it refused while live.
+// holdHealResume holds the n'th transition read of a heal (healResume) on h, under the run's resume lock, until the
+// returned proceed is called: reached closes as it is held.
+func holdHealResume(t *testing.T, h *Runtime, n int32) (reached <-chan struct{}, proceed func()) {
+	t.Helper()
+	var reads atomic.Int32
+	at, done := make(chan struct{}), make(chan struct{})
+	proceed = sync.OnceFunc(func() { close(done) })
+	t.Cleanup(proceed)
+	onTransitionReadErr(t, h, func(want runWant, _ runSeen) error {
+		if want == healResume && reads.Add(1) == n {
+			close(at)
+			<-done
+		}
+		return nil
+	})
+	return at, proceed
+}
+
+// lapseVault rejects the next renewal, so the gate closes.
+func (g *gateRun) lapseVault(t *testing.T) {
+	t.Helper()
+	g.b.set(false, false, func() error { return signin.ErrRejected })
+	if rerr := g.askVault(t.Context(), t); rerr == nil {
+		t.Fatal("Setup: the rejected ask was answered with a credential")
+	}
+	waitUntil(t, "the gate to close", func() bool { return !g.h.runs.gateOpen() })
+}
+
+// A release whose next try meets the closed gate after a lost resume write waits for the gate to open and resumes the
+// run then, still charged the one heal its lost write took: a release that ended there would leave the next edge a
+// new release, which claims a second.
+func TestSignInGate_AReleaseThatMeetsTheClosedGateResumesOnTheNextEdgeOnItsOneHeal(t *testing.T) {
+	fastGateRetries(t)
+	g := newManualGateRun(t, signedInDir(t))
+	g.br.setCallResult(methodKiroWorkflowInspect, heldInspect(t, signInHoldReason))
+	verbs := g.watchVerbs(t)
+	failFirst(g.br, methodKiroWorkflowResume, 1)
+	reached, proceed := holdHealResume(t, g.h, 2)
+
+	g.h.runs.BootSweep(t.Context())
+	awaitClosed(t, reached, "the release's try after its lost resume write")
+	g.lapseVault(t)
+	proceed()
+	waitUntil(t, "the closed gate to hold the release's try", func() bool { return heldByTheGate(g.h.runs, gateRunID) })
+	if n := countCalls(g.br, methodKiroWorkflowResume); n != 1 {
+		t.Fatalf("resume writes = %d while the gate is closed, want the lost one", n)
+	}
+
+	g.b.set(true, true, nil)
+	g.signIn(t)
+	awaitResumes(t, &verbs.resumes, 1)
+	if n := countCalls(g.br, methodKiroWorkflowResume); n != 2 {
+		t.Errorf("resume writes = %d, want the lost one and the next edge's", n)
+	}
+	if spent := g.h.runs.healsSpent(gateRunID); spent != 1 {
+		t.Errorf("heals spent = %d, want the one release's 1", spent)
+	}
+}
+
+// signedInDir is a state dir whose signin.json the vault reads signed in at boot.
+func signedInDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "signin.json"), []byte(signedInAtBoot), 0o600); err != nil {
+		t.Fatalf("Setup: write signin.json: %v", err)
+	}
+	return dir
+}
+
+// newManualGateRun is newGateRun for a manual run, which no chat's rehydrate sweeps.
+func newManualGateRun(t *testing.T, dir string) *gateRun {
+	t.Helper()
+	b := newGateBackend()
+	vault := openVault(t, dir, b)
+	h, _, br := newTestHub(WithSignIn(vault, gateBackendID))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	leaseRun(t, h, runlease.Lease{
+		WorkflowID: gateRunID, Recipe: "publish", Origin: runlease.OriginManual, ParentSessionID: testLaunchSession,
+		Host: &runlease.HostSecurity{Presets: []string{}},
+	})
+	g := &gateRun{h: h, br: br, vault: vault, b: b}
+	g.listed(marotte.RunStatusPaused)
+	br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, gateRunID, stalePauseReason))
+	return g
+}
+
+// A release that spends its tries after it refused a later opening edge's claim serves that edge with fresh tries:
+// the refused claim started no release of its own, so ending there would leave the run held until a further sign-in.
+// The edge's tries lose two writes more, which only fresh tries outlast.
+func TestSignInGate_AReleaseThatSpendsItsTriesServesTheEdgeItRefused(t *testing.T) {
+	fastGateRetries(t)
+	g := newManualGateRun(t, t.TempDir())
+	verbs := g.watchVerbs(t)
+	failFirst(g.br, methodKiroWorkflowResume, maxReleaseAttempts+2)
+	// The heal's own read holds it; the release's last try is the read after its others.
+	reached, proceed := holdHealResume(t, g.h, 1+maxReleaseAttempts)
+	if out := g.h.runs.resumeIfInterrupted(t.Context(), "", gateRunID); out != resumeHeld {
+		t.Fatalf("Setup: the heal at the closed gate = %v, want it held", out)
+	}
+	g.signIn(t)
+	awaitClosed(t, reached, "the release's last try")
+
+	g.lapseVault(t)
+	g.b.set(true, true, nil)
+	g.signIn(t)
+	waitUntil(t, "an opening edge after the one the live release serves", func() bool {
+		g.h.runs.gate.mu.Lock()
+		defer g.h.runs.gate.mu.Unlock()
+		o := g.h.runs.gate.releases[gateRunID]
+		return o.live && g.h.runs.gate.opens > o.opening
+	})
+	proceed()
+
+	awaitResumes(t, &verbs.resumes, 1)
+	if n := countCalls(g.br, methodKiroWorkflowResume); n != maxReleaseAttempts+3 {
+		t.Errorf("resume writes = %d, want the %d lost ones and the later edge's 3", n, maxReleaseAttempts)
+	}
+	if spent := g.h.runs.healsSpent(gateRunID); spent != 1 {
+		t.Errorf("heals spent = %d, want the one release's 1", spent)
+	}
+}
+
+// A run's release serves one opening edge of the gate at a time: a claim of a later edge while it runs starts no
+// other release, and a release that spends its tries before it served that edge serves it then.
 func TestRunGate_OneReleasePerRunAndOpeningEdge(t *testing.T) {
-	// at moves g to its read after opening edges, open or closed.
-	at := func(g *runGate, opening uint64, open bool) {
+	// at moves g to its read after opening edges.
+	at := func(g *runGate, opening uint64) {
 		g.mu.Lock()
 		defer g.mu.Unlock()
-		g.read = func() signin.Answerability { return signin.ProviderUnreachable }
-		g.state, g.opens = signin.ProviderUnreachable, opening
-		if open {
-			g.state = signin.Answerable
-		}
+		g.read = func() signin.Answerability { return signin.Answerable }
+		g.state, g.opens = signin.Answerable, opening
 	}
 	t.Run("a second claim of one edge", func(t *testing.T) {
 		var g runGate
-		at(&g, 1, true)
+		at(&g, 1)
 		if !g.claimRelease("wf", 1) {
 			t.Fatal("the edge's first claim was refused")
 		}
 		if g.claimRelease("wf", 1) {
 			t.Error("a second claim of the edge started while the first release runs")
 		}
-		if g.endRelease("wf", false) {
-			t.Error("a release that ended on its own edge serves it again")
+		if g.servesLater("wf") {
+			t.Error("a release reads its own edge as a later one")
+		}
+		if g.endRelease("wf", true) {
+			t.Error("a release that spent its tries on its own edge serves it again")
 		}
 		if g.claimRelease("wf", 1) {
 			t.Error("a claim of an edge an ended release served started another")
@@ -90,14 +206,14 @@ func TestRunGate_OneReleasePerRunAndOpeningEdge(t *testing.T) {
 	})
 	t.Run("a later edge while the release runs", func(t *testing.T) {
 		var g runGate
-		at(&g, 1, true)
+		at(&g, 1)
 		g.claimRelease("wf", 1)
-		at(&g, 2, true)
+		at(&g, 2)
 		if g.claimRelease("wf", 2) {
 			t.Fatal("a later edge's claim started a second release while one runs")
 		}
 		if !g.endRelease("wf", true) {
-			t.Fatal("a release that stopped on the closed gate does not serve the later edge it refused")
+			t.Fatal("a release that spent its tries does not serve the later edge it refused")
 		}
 		if g.claimRelease("wf", 2) {
 			t.Error("the later edge's claim started a release beside the one serving it")
@@ -106,25 +222,34 @@ func TestRunGate_OneReleasePerRunAndOpeningEdge(t *testing.T) {
 			t.Error("a release serves its own edge twice")
 		}
 	})
-	t.Run("the gate closed again at the end", func(t *testing.T) {
+	t.Run("a release woken by a later edge", func(t *testing.T) {
 		var g runGate
-		at(&g, 1, true)
+		at(&g, 1)
 		g.claimRelease("wf", 1)
-		at(&g, 2, false)
-		if g.endRelease("wf", true) {
-			t.Error("a release that stopped on the closed gate serves an edge the gate closed after")
+		at(&g, 3)
+		if !g.servesLater("wf") {
+			t.Fatal("a release does not read the later edge")
 		}
-		if !g.claimRelease("wf", 3) {
-			t.Error("the next edge's claim was refused")
+		if g.servesLater("wf") {
+			t.Error("a release reads the edge it now serves as a later one")
+		}
+		if g.claimRelease("wf", 3) {
+			t.Error("a claim of the edge the woken release serves started a release")
+		}
+		if g.endRelease("wf", true) {
+			t.Error("a woken release that spent its tries serves the edge it already serves")
 		}
 	})
-	t.Run("a release that did not stop on the closed gate", func(t *testing.T) {
+	t.Run("a release that resumed the run", func(t *testing.T) {
 		var g runGate
-		at(&g, 1, true)
+		at(&g, 1)
 		g.claimRelease("wf", 1)
-		at(&g, 2, true)
+		at(&g, 2)
 		if g.endRelease("wf", false) {
-			t.Error("a release that resumed the run or spent its tries serves a later edge")
+			t.Error("a release that resumed the run or met its end serves a later edge")
+		}
+		if !g.claimRelease("wf", 2) {
+			t.Error("a later edge's claim was refused once the release ended")
 		}
 	})
 	t.Run("an opening edge forgets the ended releases", func(t *testing.T) {
