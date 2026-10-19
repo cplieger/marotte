@@ -36,12 +36,20 @@ type gateBackend struct {
 	servable  bool
 	// short makes a renewal return a lease too short to use.
 	short bool
+	// hang makes a renewal block until its context ends.
+	hang bool
 }
 
 func (b *gateBackend) setShort(short bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.short = short
+}
+
+func (b *gateBackend) setHang(hang bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.hang = hang
 }
 
 var _ signin.Backend = (*gateBackend)(nil)
@@ -73,11 +81,15 @@ func (*gateBackend) Poll(context.Context, signin.DeviceStart) (signin.Credential
 	return signin.Credential{Data: json.RawMessage(`{}`)}, nil
 }
 
-func (b *gateBackend) Refresh(context.Context, signin.Credential) (signin.Credential, error) {
+func (b *gateBackend) Refresh(ctx context.Context, _ signin.Credential) (signin.Credential, error) {
 	b.mu.Lock()
 	b.refreshes++
-	renew, short := b.renew, b.short
+	renew, short, hang := b.renew, b.short, b.hang
 	b.mu.Unlock()
+	if hang {
+		<-ctx.Done()
+		return signin.Credential{}, ctx.Err()
+	}
 	if renew != nil {
 		if err := renew(); err != nil {
 			return signin.Credential{}, err

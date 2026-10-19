@@ -12,9 +12,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/signin"
 )
 
 func awaitClosed(t *testing.T, ch <-chan struct{}, what string) {
@@ -201,6 +203,43 @@ func TestAnswerConnectionRequest_OnceShutdownBeganAnswersASignInAskWithTheCreden
 	if raw, _ := got.result.(json.RawMessage); string(raw) != `{"accessToken":"t"}` {
 		t.Errorf("the sign-in ask's answer = %v, want the vault's credential", got.result)
 	}
+}
+
+// Once Shutdown began, a sign-in ask whose renewal hangs is answered by return when drainAnswerBound cuts the vault's
+// wait short, with the vault's unreachable refusal, and the provider is not marked unreachable: the ask gave up, the
+// provider did not. In a bubble, whose clock passes the bound at once.
+func TestAnswerConnectionRequest_OnceShutdownBeganCutsAHangingRenewalShortAtTheBound(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		g := newGateRun(t, t.TempDir())
+		g.signIn(t)
+		g.b.set(false, false, nil)
+		g.b.setHang(true)
+		asker := newFakeBridge()
+		beginDraining(g.h)
+
+		start := time.Now()
+		if !g.h.answerConnectionRequest(asker, laneRequest(9, gateCallback, "")) {
+			t.Fatal("the sign-in ask was not taken as a connection request")
+		}
+		took := time.Since(start)
+
+		got, ok := asker.responseTo(9)
+		if !ok {
+			t.Fatal("the sign-in ask was not answered by the time it returned")
+		}
+		if took != drainAnswerBound {
+			t.Errorf("the sign-in ask was answered after %v, want drainAnswerBound (%v)", took, drainAnswerBound)
+		}
+		if rerr, isRPC := errors.AsType[*marotte.RPCError](got.err); !isRPC || rerr.Message != signin.RefusedUnreachable.String() {
+			t.Errorf("the sign-in ask was answered with %v, want the vault's unreachable refusal", got.err)
+		}
+		if g.b.refreshCount() == 0 {
+			t.Error("the ask was answered without asking the identity provider for a renewal")
+		}
+		if a := g.vault.Answerability(gateBackendID); a == signin.ProviderUnreachable {
+			t.Error("the vault marked the provider unreachable for an ask Shutdown cut short")
+		}
+	})
 }
 
 func TestRunMutations_TheRuntimesCeilingInspectsNothingOnceShutdownBegan(t *testing.T) {

@@ -30,7 +30,7 @@ func (rt *Runtime) attachEngineLane(h engineHandle, gen uint64) {
 
 // engineFrame handles one engine-lane frame. Every request is answered exactly once. A row that does I/O or waits
 // runs on a tracked goroutine, so none blocks the consumer, but for a sign-in ask once Shutdown has begun, answered
-// in place within drainAnswerBound.
+// in place after a vault lookup drainAnswerBound bounds.
 func (rt *Runtime) engineFrame(h engineHandle, msg *marotte.RPCResponse) {
 	if msg == nil {
 		return
@@ -109,8 +109,9 @@ func (rt *Runtime) answerHostCallback(
 	respondHostCallback(ctx, origin, id, result, rpcErr)
 }
 
-// drainAnswerBound bounds a host callback answered once Shutdown has begun, on the frame pump's own goroutine: a
-// served credential is immediate, and a renewal is cut short rather than holding the pump through the engine's stop.
+// drainAnswerBound bounds the vault lookup of a host callback answered once Shutdown has begun, on the frame pump's
+// own goroutine: a served credential is immediate, and a renewal is cut short, answered as the vault's unreachable
+// refusal, rather than holding the pump through the engine's stop. The answer's write has the engine's own bound.
 const drainAnswerBound = 2 * time.Second
 
 // answerDrainingHostCallback answers a host callback once Shutdown has begun with the vault's own answer, waiting for
