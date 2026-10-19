@@ -92,7 +92,7 @@ Reported as [kirodotdev/Kiro#11857](https://github.com/kirodotdev/Kiro/issues/11
 
 kiro-cli can drop messages a workflow step sent to the chat before the agent reads them, for example when a reply ends. It names the dropped messages by an id it never gave marotte, so marotte cannot always tell which of the messages it shows were dropped.
 
-Reported as [kirodotdev/Kiro#12012](https://github.com/kirodotdev/Kiro/issues/12012), open. Until kiro-cli sends that id, marotte marks a message "delivered" only when it sees the agent read it or sees the turn the message woke. When kiro-cli empties its buffer, at the end of a reply or when you stop one, marotte marks every message it could not confirm as "Cleared": kiro-cli may have sent it to the agent again or dropped it, and marotte cannot tell which. A message sent to a kiro-cli session the chat no longer uses keeps saying "not delivered yet".
+Reported as [kirodotdev/Kiro#12012](https://github.com/kirodotdev/Kiro/issues/12012), open. Until kiro-cli sends that id, marotte marks a message "delivered" only when it sees the agent read it or sees the turn the message woke. When kiro-cli empties its buffer, at the end of a reply or when you stop one, marotte marks every message it could not confirm as "Cleared", which reads "the agent's queue was emptied before this was confirmed read": kiro-cli may have sent it to the agent again or dropped it, and marotte cannot tell which. A message sent to a kiro-cli session the chat no longer uses keeps saying "not delivered yet".
 
 ### A workflow step fails while marotte is signed out
 

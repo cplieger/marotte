@@ -80,7 +80,7 @@ describe("a workflow message's row", () => {
     expect(row.dataset["state"]).toBe("cleared");
     expect(row.dataset["delivered"]).toBe("false");
     expect(row.getAttribute("aria-label")).toBe(
-      "review \u00b7 Cleared: the turn was stopped before this was confirmed read: part 1 done",
+      "review \u00b7 Cleared: the agent's queue was emptied before this was confirmed read: part 1 done",
     );
   });
 

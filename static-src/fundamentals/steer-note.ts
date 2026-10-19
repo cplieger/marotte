@@ -44,7 +44,7 @@ export interface SteerNoteData {
 }
 
 /** A cleared row's accessible wording: it says no more than marotte knows. */
-const CLEARED_NAME = "Cleared: the turn was stopped before this was confirmed read";
+const CLEARED_NAME = "Cleared: the agent's queue was emptied before this was confirmed read";
 
 /** The labels, TOTAL over the origin so a new one needs wording. A dropped label states only what
  *  is known. */
