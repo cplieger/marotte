@@ -10,7 +10,8 @@ async function frames(n = 3): Promise<void> {
       });
     });
   }
-  await new Promise((r) => setTimeout(r, 25));
+  // Resumed on a task, after the last frame's ResizeObserver delivery and the scroll it caused.
+  await new Promise((r) => setTimeout(r, 0));
 }
 
 function block(height: number): HTMLElement {

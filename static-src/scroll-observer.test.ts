@@ -215,8 +215,8 @@ async function frame(): Promise<void> {
   });
 }
 
-/** Let the engine finish delivering: several frames plus a macrotask, which is where a deferred
- *  observation lands and where the loop error would arrive. */
+/** Let the engine finish delivering: several frames plus a task, which runs after the last
+ *  frame's deferred observation and the loop error it reports. */
 async function settle(): Promise<void> {
   for (let f = 0; f < SETTLE_FRAMES; f++) {
     await new Promise<void>((r) => {
@@ -226,7 +226,7 @@ async function settle(): Promise<void> {
     });
   }
   await new Promise<void>((r) => {
-    setTimeout(r, 100);
+    setTimeout(r, 0);
   });
 }
 

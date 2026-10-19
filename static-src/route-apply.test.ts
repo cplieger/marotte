@@ -178,6 +178,7 @@ import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.j
 import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, tabServer } from "./__test-helpers__/tabs-server.js";
+import { taskTurns } from "./__test-helpers__/task-turns.js";
 import type { Route } from "./route-path.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
@@ -243,9 +244,7 @@ describe("applyRoute for a web preview", () => {
     await closeTab(tabIdFor("web", page));
     await settled(() => tabIdFor("web", page) === "", "the web tab closed");
     await applyRoute(webRoute, "history");
-    await new Promise((r) => {
-      setTimeout(r, 20);
-    });
+    await taskTurns();
     expect(tabIdFor("web", page)).toBe("");
     expect(replaceRoute).toHaveBeenCalledTimes(1);
   });
@@ -268,7 +267,7 @@ describe("applyRoute for a turn permalink", () => {
     vi.mocked(switchSession).mockResolvedValue("activated");
     jumpToTurn.mockClear();
     await applyRoute({ kind: "chat", id: "c1" }, "deeplink");
-    await new Promise((r) => setTimeout(r, 20));
+    await taskTurns();
     expect(jumpToTurn).not.toHaveBeenCalled();
   });
 });

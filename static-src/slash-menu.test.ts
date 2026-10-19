@@ -2,6 +2,7 @@
 // is greyed mid-turn, and that a pick fills the composer, for the `/` commands and the `#` context
 // references alike.
 import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from "vitest";
+import { useSteppableClock } from "./__test-helpers__/fake-clock.js";
 import type * as ApiClient from "./api-client.js";
 import type * as Store from "./store.js";
 import type * as NoticeSubject from "./notice-subject.js";
@@ -628,9 +629,13 @@ describe("the # context menu", () => {
   }
 
   it("cancels a file search still waiting out its debounce when the menu closes", async () => {
+    useSteppableClock();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     type("#file:a");
     input.dispatchEvent(new Event("blur"));
-    await new Promise((r) => setTimeout(r, 300));
+    await vi.advanceTimersByTimeAsync(300);
     expect(searchCalls()).toBe(0);
     expect(menu.hidden).toBe(true);
   });

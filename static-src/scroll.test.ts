@@ -396,28 +396,29 @@ async function settle(): Promise<void> {
   await frames(2);
 }
 
-/** One 60Hz frame, for converting a scene's duration to the frames it spans. */
-const FRAME_MS = 1000 / 60;
-
 /** Captured at load: a case spies on `requestAnimationFrame` to count the controller's own frames,
  *  and the waits below must not show up in that count. */
 const nextFrame = window.requestAnimationFrame.bind(window);
 
+/** A message task, because a faked `setTimeout` never fires on its own. */
+async function taskHop(): Promise<void> {
+  await new Promise<void>((r) => {
+    const hop = new MessageChannel();
+    hop.port1.onmessage = (): void => {
+      hop.port1.close();
+      r();
+    };
+    hop.port2.postMessage(null);
+  });
+}
+
 /** Each frame resumes on a fresh task rather than inside the frame callback: code resumed there
  *  runs before that frame's ResizeObserver delivery, where no reader input ever lands, and the
- *  controller reads a scroll it has no event for yet as drift. A message task, because a faked
- *  `setTimeout` never fires on its own. */
+ *  controller reads a scroll it has no event for yet as drift. */
 async function frames(n: number): Promise<void> {
   for (let i = 0; i < n; i++) {
     await new Promise((r) => nextFrame(r));
-    await new Promise<void>((r) => {
-      const hop = new MessageChannel();
-      hop.port1.onmessage = (): void => {
-        hop.port1.close();
-        r();
-      };
-      hop.port2.postMessage(null);
-    });
+    await taskHop();
   }
 }
 
@@ -1177,17 +1178,35 @@ function zeroWrites(writes: readonly number[]): number {
 
 /** Let `ms` of the controller's clock pass, and every frame the scene needs with it: whatever is
  *  queued settles at the current time (a scroll event judged inside the reader's window stays
- *  inside it), the clock jumps, and whatever reads the new time settles too. Under 120ms it is a
- *  fixed frame count instead, for a scene that acts mid-flight. */
+ *  inside it), the clock jumps, and whatever reads the new time settles too. A smooth flight
+ *  moves the scroller until it lands, so a scene acting mid-flight waits on `flightMoves`. */
 async function land(ms = 120): Promise<void> {
-  if (ms < 120) {
-    await frames(Math.ceil(ms / FRAME_MS));
-    vi.advanceTimersByTime(ms);
-    return;
-  }
   await stillness();
   vi.advanceTimersByTime(ms);
   await stillness();
+}
+
+/** Arm before starting a smooth flight; resolves a task after its first `scroll` event, the
+ *  earliest point the flight is under way. The caller asserts how far it has got. */
+async function flightMoves(wrap: HTMLElement): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const bound = setTimeout(() => {
+      reject(
+        new Error(
+          `the flight did not move within ${String(FRAME_BUDGET_MS)}ms (scrollTop ${String(wrap.scrollTop)})`,
+        ),
+      );
+    }, FRAME_BUDGET_MS);
+    wrap.addEventListener(
+      "scroll",
+      () => {
+        clearTimeout(bound);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+  await taskHop();
 }
 
 /** Resolve on the scroller's `scrollend`: a smooth flight runs on the engine's own clock, which
@@ -2540,11 +2559,13 @@ describe("the self-scroll epoch", () => {
     block(3000);
     await land();
 
+    const moving = flightMoves(wrap);
     scroll.beginSelfScroll();
     scroll.scrollToOffset(400, "smooth");
     const seen = vi.fn();
     const off = scroll.onReaderGesture(seen);
-    await land(60);
+    await moving;
+    expect(wrap.scrollTop).toBeGreaterThan(400);
     readerScrollTo(wrap, 1800);
     await land();
     off();
@@ -2569,13 +2590,23 @@ describe("the self-scroll epoch", () => {
     // Back to the live edge, so the state stays Following and the epoch is the only thing left that
     // can stop a follow write. SMOOTH, because the flight is what keeps the epoch open: Chromium
     // answers an instant `scrollTo` with `scrollend`.
+    const moving = flightMoves(wrap);
+    let ended = false;
+    wrap.addEventListener(
+      "scrollend",
+      () => {
+        ended = true;
+      },
+      { once: true },
+    );
     scroll.beginSelfScroll();
     scroll.scrollToOffset(wrap.scrollHeight, "smooth");
     expect(scroll.readingState()).toBe("following");
     const writes = recordWrites(wrap);
     streaming.appendChild(document.createTextNode("a streamed chunk"));
-    await land(60);
-    expect(writes).toEqual([]);
+    await moving;
+    await frames(2);
+    expect({ writes, ended }).toEqual({ writes: [], ended: false });
 
     scroll.endSelfScroll();
     streaming.appendChild(document.createTextNode("the chunk after it closed"));
@@ -2636,8 +2667,8 @@ describe("the self-scroll epoch", () => {
     scroll.scrollToOffset(500, "smooth");
     expect(scroll.readingState()).toBe("reading");
 
-    // Past `scrollend` AND past SELF_SCROLL_MAX_MS, so the chunk below is delivered with the epoch
-    // provably closed and the park is the only thing still holding the reader.
+    // Past `scrollend`, which closes the epoch, and past every controller window on the clock, so
+    // the chunk below is delivered with the park the only thing still holding the reader.
     await landed;
     await land(1700);
     streaming.appendChild(document.createTextNode("a streamed chunk"));
@@ -2746,9 +2777,10 @@ describe("the self-scroll epoch", () => {
     await land();
 
     const landed = flightEnds(wrap);
+    const moving = flightMoves(wrap);
     scroll.beginSelfScroll();
     scroll.scrollToOffset(500, "smooth");
-    await land(60);
+    await moving;
     expect(wrap.scrollTop).toBeGreaterThan(900);
     const writes = recordWrites(wrap);
     foldIn(200);

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { loadCSS } from "./__test-helpers__/css-rules.js";
+import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { initBeatPhase, resetBeatPhaseForTest } from "./beat-phase.js";
 
 /**
@@ -39,6 +40,23 @@ async function beatingDot(): Promise<HTMLElement> {
 const phaseOf = (el: HTMLElement): string => el.style.getPropertyValue("--beat-phase");
 const opacity = (el: HTMLElement): number => Number(getComputedStyle(el).opacity);
 
+/** Frames until the document timeline, the clock every beat runs on, has moved `ms` past now. */
+async function timelinePasses(ms: number): Promise<void> {
+  const now = (): number => Number(document.timeline.currentTime);
+  const until = now() + ms;
+  const start = performance.now();
+  while (now() < until) {
+    if (performance.now() - start > FRAME_BUDGET_MS) {
+      throw new Error(`the timeline stood at ${String(now())}, short of ${String(until)}`);
+    }
+    await new Promise<void>((r) => {
+      requestAnimationFrame(() => {
+        r();
+      });
+    });
+  }
+}
+
 beforeEach(() => {
   style = document.createElement("style");
   style.textContent = CSS;
@@ -71,7 +89,7 @@ describe("beat phase", () => {
     // The whole mechanism. Two dots ~600ms apart is a quarter of the period, which
     // is well outside the tolerance below — an unstamped pair diverges visibly.
     const first = await beatingDot();
-    await new Promise((r) => setTimeout(r, 600));
+    await timelinePasses(600);
     const second = await beatingDot();
 
     // The user-visible property, read in one instant rather than compared as delays.
@@ -82,7 +100,7 @@ describe("beat phase", () => {
     // A busy main thread delivers one dot's `animationstart` after its beat began. A window
     // capture listener runs before the module's document one, so this delays the second dot's.
     const first = await beatingDot();
-    await new Promise((r) => setTimeout(r, 600));
+    await timelinePasses(600);
     const stall = (): void => {
       const until = performance.now() + 40;
       while (performance.now() < until) {
@@ -99,7 +117,7 @@ describe("beat phase", () => {
     // listener detached, two dots 600ms apart are deterministically a quarter period apart.
     resetBeatPhaseForTest();
     const first = await beatingDot();
-    await new Promise((r) => setTimeout(r, 600));
+    await timelinePasses(600);
     const second = await beatingDot();
     expect(phaseOf(first), "the control must be unstamped").toBe("");
 
@@ -110,7 +128,7 @@ describe("beat phase", () => {
     // The production trigger: `tabs-drag.ts` re-inserts the dragged row on every drop, which
     // recreates every animation in it.
     const first = await beatingDot();
-    await new Promise((r) => setTimeout(r, 600));
+    await timelinePasses(600);
     const moved = await beatingDot();
     const before = phaseOf(moved);
     expect(before).not.toBe("");
@@ -134,7 +152,7 @@ describe("beat phase", () => {
     // animation INSTANCE: an engine that re-fired would otherwise walk the dot off the grid.
     const el = await beatingDot();
     const first = phaseOf(el);
-    await new Promise((r) => setTimeout(r, 200));
+    await timelinePasses(200);
 
     el.dispatchEvent(
       new AnimationEvent("animationstart", { animationName: "vk-dot-beat", bubbles: true }),

@@ -33,6 +33,7 @@ import {
 } from "./subject-versions.js";
 import type { ServerEvent, Session } from "./types.js";
 import { makeServerEvent } from "./__test-helpers__/model.js";
+import { taskTurns } from "./__test-helpers__/task-turns.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 import {
   EPOCH_A,
@@ -273,7 +274,7 @@ describe("the connect", () => {
     // The worker reports the same subscription again (a resubscribe that kept the endpoint):
     // nothing moves.
     await adoptPushSubscription({ endpoint });
-    await new Promise((r) => setTimeout(r, 20));
+    await taskTurns();
     expect(scripted.connections).toHaveLength(2);
     expect(presentedTag()).toBe("amxAEqwvwjG23476CxNmK6");
   });
@@ -292,7 +293,7 @@ describe("the connect", () => {
 
     _resetForTest();
     conn?.named("heartbeat", "{}");
-    await new Promise((r) => setTimeout(r, 20));
+    await taskTurns();
     expect(acks()).toHaveLength(2);
   });
 

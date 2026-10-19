@@ -109,15 +109,19 @@ describe("the title bar's measured fit", () => {
     expect(heading.classList.contains("sr-only"), "clipped while narrow").toBe(true);
     initPageTitleFit();
 
-    /** Two frames plus a tick: the observer delivers after layout and this module defers its own
-     *  write by one more frame. */
+    /** Three frames plus a task: the observer delivers after layout, this module defers its own
+     *  write to the next frame's callbacks, and a frame callback queued before that write runs
+     *  ahead of it. */
     const settle = async (): Promise<void> => {
-      await new Promise<void>((r) => {
-        requestAnimationFrame(() => {
+      for (let i = 0; i < 3; i++) {
+        await new Promise<void>((r) => {
           requestAnimationFrame(() => {
-            setTimeout(r, 50);
+            r();
           });
         });
+      }
+      await new Promise<void>((r) => {
+        setTimeout(r, 0);
       });
     };
 

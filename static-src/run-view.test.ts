@@ -1,6 +1,16 @@
 // Tests for the run tab: its control row, its structure, its outputs and its empty-step notes.
 
-import { vi, describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
+import {
+  vi,
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  beforeAll,
+  afterAll,
+  onTestFinished,
+} from "vitest";
 import { page } from "vitest/browser";
 import type * as RunStore from "./run-store.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
@@ -2849,6 +2859,10 @@ describe("the page's scroll position", () => {
   // A shrink that brings the end to the reader returns them to Following with no scroll event, so
   // the state a run parks with has to come from the follower, not from the last scroll.
   it("keeps a run that shrank back to Following across a run switch", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     await activate("wf_shrink_a");
     await frames();
     const body = document.getElementById("run-body");
@@ -2858,7 +2872,9 @@ describe("the page's scroll position", () => {
     const spacer = document.createElement("div");
     spacer.style.height = "250px";
     body.appendChild(spacer);
-    await new Promise((r) => setTimeout(r, 800));
+    await frames();
+    // Past the open's pin window on the follower's `Date.now()` clock.
+    vi.advanceTimersByTime(800);
     await frames();
     // Inside the live-edge band once the spacer goes, outside it while the spacer stands.
     const parkedAt = bottom() - 300;
@@ -2867,7 +2883,7 @@ describe("the page's scroll position", () => {
     const resume = document.getElementById("run-scroll-bottom");
     expect(resume?.classList.contains("hidden")).toBe(false);
     // Past the reader's own control window, so the layout may release them.
-    await new Promise((r) => setTimeout(r, 350));
+    vi.advanceTimersByTime(350);
     let scrolls = 0;
     const count = (): void => {
       scrolls++;

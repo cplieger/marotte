@@ -271,7 +271,8 @@ describe("a re-bin under a held finger", () => {
       expect(tooltipText(), "the replaced row's info goes with it").toBeNull();
       expect(scrubbedTurn(), "the row now under the finger is scrubbed").not.toBeNull();
       await end(pointerId, at);
-      // CDP's answer can come back before the page has run the pointer event it dispatched.
+      // Read the ending a frame after the input, as every other case does: its handlers can run
+      // after `end` resolves.
       await frames();
       vi.advanceTimersByTime(1000);
       expect(scrubbedTurn()).toBeNull();

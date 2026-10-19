@@ -83,6 +83,16 @@ function send(tab: Tab, message: TabToWorker): void {
   tab.port.postMessage(message);
 }
 
+let pingSeq = 0;
+
+/** Resolves on the host's answer to a ping sent now: the host handles one port's messages in
+ *  order, so every message `tab` sent before it, and the work each one started, has run. */
+async function roundTrip(tab: Tab): Promise<void> {
+  const seq = ++pingSeq;
+  send(tab, { type: "ping", seq });
+  await until(() => tab.received.some((m) => m.type === "pong" && m.seq === seq));
+}
+
 function runsSeen(tab: Tab): number {
   return tab.received.filter((m) => m.type === "revalidate_run").length;
 }
@@ -108,14 +118,14 @@ async function wake(owner: WorkerHost, first: Tab, ...others: Tab[]): Promise<vo
 describe("reconnectForAttach", () => {
   it("a tab attaching to an OPEN stream reconnects it in place, cursor kept", async () => {
     host = createSSEHost();
-    attach("a");
+    const a = attach("a");
     await until(() => scripted.connections.length === 1);
     const first = scripted.connections[0];
     expect(first?.headers.get("SSE-Client")).toBe("profile-tag-0123456789");
     first?.hello();
     await until(() => host?.stream().state().kind === "open");
     // The attach that STARTED the stream opened exactly one connection.
-    await new Promise((r) => setTimeout(r, 20));
+    await roundTrip(a);
     expect(scripted.connections).toHaveLength(1);
 
     attach("b");
@@ -129,8 +139,8 @@ describe("reconnectForAttach", () => {
     host = createSSEHost();
     attach("a");
     await until(() => scripted.connections.length === 1);
-    attach("b");
-    await new Promise((r) => setTimeout(r, 30));
+    const b = attach("b");
+    await roundTrip(b);
     expect(scripted.connections).toHaveLength(1);
   });
 });
@@ -144,14 +154,14 @@ describe("profileRevalidate", () => {
     scripted.connections[0]?.hello();
     await until(() => runsSeen(a) === 1);
     // Held open by the silent tab: the host's stream is still on its first connection.
-    await new Promise((r) => setTimeout(r, 20));
+    await roundTrip(a);
     expect(scripted.connections).toHaveLength(1);
     const run = a.received.find((m) => m.type === "revalidate_run");
     if (run?.type !== "revalidate_run") {
       throw new Error("no revalidate_run reached the tab");
     }
     send(a, { type: "revalidate_done", runId: run.runId });
-    await new Promise((r) => setTimeout(r, 20));
+    await roundTrip(a);
     expect(scripted.connections).toHaveLength(1);
   });
 
@@ -177,7 +187,7 @@ describe("profileRevalidate", () => {
     a.answerRuns = "done";
     scripted.connections[1]?.hello({ resumed: true });
     await until(() => runsSeen(a) === 2);
-    await new Promise((r) => setTimeout(r, 30));
+    await roundTrip(a);
     expect(scripted.connections).toHaveLength(2);
   });
 

@@ -164,8 +164,17 @@ function readerAtHistoryEdge(h: Harness): void {
   h.scroll.noteHistoryEdge(h.scrollEl.scrollTop < 100);
 }
 
+/** Two frames, for the controller's frame-queued pin and re-assert, then a task to resume past
+ *  the last one. */
 async function settle(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 25));
+  for (let i = 0; i < 2; i++) {
+    await new Promise<void>((r) => {
+      requestAnimationFrame(() => {
+        r();
+      });
+    });
+  }
+  await new Promise((r) => setTimeout(r, 0));
 }
 
 /** Drain the same queues without depending on `setTimeout`, which a fake-timer test has

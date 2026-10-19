@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vites
 import { userEvent } from "vitest/browser";
 import { makeSession } from "./__test-helpers__/model.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { taskTurns } from "./__test-helpers__/task-turns.js";
 import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 
@@ -1155,7 +1156,7 @@ describe("the cold build", () => {
     activate(id, [heavyTurn("u-heavy", RESIDENT_ENTRIES + 64), toolTurn("u1", 2)]);
     expect(hasBody("u-heavy")).toBe(false);
 
-    await new Promise((r) => setTimeout(r, 60));
+    await taskTurns();
     expect(hasBody("u-heavy")).toBe(false);
   });
 });

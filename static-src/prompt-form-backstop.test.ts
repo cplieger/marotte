@@ -1,6 +1,7 @@
 // The prompt form's NATIVE-submission backstop.
 import { describe, it, expect } from "vitest";
 import indexHtml from "../static/index.html?raw";
+import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 
 describe("the prompt form's native-submission backstop", () => {
   it("is declared in the served markup, with no action to navigate to", () => {
@@ -46,10 +47,33 @@ describe("the prompt form's native-submission backstop", () => {
       // failed to.
       cancelled = e.defaultPrevented;
     });
+    // The control: the `get` spelling of the same form, submitted second, does navigate. Once its
+    // navigation has landed, one the dialog form had started would have landed too.
+    const control = document.createElement("iframe");
+    control.srcdoc =
+      '<!doctype html><form id="f" method="get"><button type="submit">go</button></form>';
+    const controlLoad = new Promise<void>((r) => {
+      control.addEventListener("load", () => r(), { once: true });
+    });
+    document.body.append(control);
+    await controlLoad;
+    const controlNavigated = new Promise<void>((resolve, reject) => {
+      const bound = setTimeout(() => {
+        reject(new Error(`the get form did not navigate within ${String(FRAME_BUDGET_MS)}ms`));
+      }, FRAME_BUDGET_MS);
+      control.addEventListener(
+        "load",
+        () => {
+          clearTimeout(bound);
+          resolve();
+        },
+        { once: true },
+      );
+    });
+
     form.requestSubmit();
-    // Long enough for a real navigation of an in-memory srcdoc frame to land: the `get` spelling of
-    // this same form reaches the load handler here.
-    await new Promise((r) => setTimeout(r, 250));
+    (control.contentDocument?.getElementById("f") as HTMLFormElement).requestSubmit();
+    await controlNavigated;
 
     expect(fired).toBe(1);
     expect(cancelled).toBe(false);
@@ -59,5 +83,6 @@ describe("the prompt form's native-submission backstop", () => {
     expect(frame.contentDocument?.getElementById("f")).toBe(form);
 
     frame.remove();
+    control.remove();
   });
 });

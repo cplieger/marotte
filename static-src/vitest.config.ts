@@ -52,9 +52,8 @@ function browserProject(
       // and a `ResizeObserver` loop is a real engine's verdict.
       setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
       // Files run in parallel because each worker session opens its own Playwright context, and the
-      // mocker's routes live on the context: two concurrent files never share one. A provider
-      // `persistentContext` would share a single context and bring back the auto-continued route
-      // race (https://github.com/vitest-dev/vitest/issues/8339).
+      // mocker's routes live on the context: two concurrent files never share one
+      // (https://github.com/vitest-dev/vitest/issues/8339).
       browser: {
         enabled: true,
         headless: true,

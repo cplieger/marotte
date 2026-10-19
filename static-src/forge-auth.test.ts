@@ -51,6 +51,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_CLOSE_UI, ICON_PLUS_UI } from "./icons.js";
 import { _resetForTest as resetForgeStore } from "./forge-store.js";
+import { taskTurns } from "./__test-helpers__/task-turns.js";
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 const mockedApiPost = vi.mocked(apiPost);
@@ -441,7 +442,7 @@ describe("forge-auth: 4-section layout", () => {
     const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
     vi.stubGlobal("fetch", fetchSpy);
     await renderForgesPanel();
-    await new Promise((r) => setTimeout(r, 50));
+    await taskTurns();
 
     const sent = [
       ...mockedApiPost.mock.calls.map(([path]) => String(path)),

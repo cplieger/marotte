@@ -88,8 +88,29 @@ async function until(pred: () => boolean, what: string): Promise<void> {
   }
 }
 
+/** Frames until the scroller's position and size have held for two frames: an observer's answer
+ *  lands a frame after the layout it reads, so one still frame can sit between a write and its
+ *  consequence. Resumes on a task, past the last frame's observer delivery. */
 async function land(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 120));
+  const scene = (): string =>
+    [wrap.scrollTop, wrap.scrollHeight, wrap.clientHeight, messagesEl.childElementCount].join("|");
+  const start = performance.now();
+  let seen = scene();
+  let still = 0;
+  while (still < 2) {
+    if (performance.now() - start > FRAME_BUDGET_MS) {
+      throw new Error(`the scroller was still moving after ${String(FRAME_BUDGET_MS)}ms: ${seen}`);
+    }
+    await new Promise<void>((r) => {
+      requestAnimationFrame(() => {
+        r();
+      });
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    const now = scene();
+    still = now === seen ? still + 1 : 0;
+    seen = now;
+  }
 }
 
 function readerScrollTo(top: number): void {
