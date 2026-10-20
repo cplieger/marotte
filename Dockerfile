@@ -64,7 +64,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
       | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
 
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.4.0-dev.9
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.4.0-dev.11
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
