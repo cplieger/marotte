@@ -27,8 +27,8 @@ require (
 	github.com/cplieger/runesafe/v3 v3.2.0-dev.1
 	github.com/cplieger/slogx v1.7.0
 	github.com/cplieger/sse v1.3.0-dev.3
-	github.com/cplieger/ssrf/v4 v4.5.0-dev.4
-	github.com/cplieger/toolbelt/v3 v3.11.0-dev.13
+	github.com/cplieger/ssrf/v4 v4.5.0-dev.5
+	github.com/cplieger/toolbelt/v3 v3.11.0-dev.14
 	github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.10
 	github.com/cplieger/webhttp/v3 v3.0.2
 	github.com/cplieger/wiregen/v3 v3.3.0
