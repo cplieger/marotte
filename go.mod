@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
-	github.com/cplieger/httpx/v5 v5.2.0-dev.1 // indirect
+	github.com/cplieger/httpx/v5 v5.2.0 // indirect
 	github.com/cplieger/scheduler/v4 v4.3.0 // indirect
 	github.com/cplieger/urlform v1.5.0-dev.1 // indirect
 	github.com/creack/pty v1.1.24 // indirect
@@ -28,7 +28,7 @@ require (
 	github.com/cplieger/slogx v1.8.0-dev.1
 	github.com/cplieger/sse v1.3.0-dev.4
 	github.com/cplieger/ssrf/v4 v4.5.0-dev.6
-	github.com/cplieger/toolbelt/v3 v3.11.0-dev.17
+	github.com/cplieger/toolbelt/v3 v3.11.0-dev.18
 	github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.12
 	github.com/cplieger/webhttp/v3 v3.0.2
 	github.com/cplieger/wiregen/v3 v3.3.0
