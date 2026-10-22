@@ -10,8 +10,8 @@ github.com/cplieger/envx/yamlenv/v2 v2.2.0-dev.1 h1:o8boM166rAGBc1U6saPeaU/gdhJq
 github.com/cplieger/envx/yamlenv/v2 v2.2.0-dev.1/go.mod h1:idpaUHFHf3XxK7soZZP93XbrjgJzZ0AZvkBR9K/iVdo=
 github.com/cplieger/forgeapi v1.4.0-dev.16 h1:qUhDob9kl+2hS0YRAjg695gCFxkj3zvJNMDGBTFxtck=
 github.com/cplieger/forgeapi v1.4.0-dev.16/go.mod h1:hO0IxiCMuyCZQYtIJ98fAW9xhZlx3DHLq0POw66c3lM=
-github.com/cplieger/httpx/v5 v5.2.0-dev.1 h1:wRLE1Tk0BfHS36q4CAmFOFae2zKE1FVdxq+yrMNpdA0=
-github.com/cplieger/httpx/v5 v5.2.0-dev.1/go.mod h1:4kd9Xjlnka4MBwm5pJLsdUMT69aOUlJODO1O+tdb5N0=
+github.com/cplieger/httpx/v5 v5.2.0 h1:vVW4HBZvjsn8I7wQyCAK9zHOWFcE/spVhrQFVkKbS2s=
+github.com/cplieger/httpx/v5 v5.2.0/go.mod h1:4kd9Xjlnka4MBwm5pJLsdUMT69aOUlJODO1O+tdb5N0=
 github.com/cplieger/jsoncap/v2 v2.1.0-dev.1 h1:sU0njpdWlADSt5KJy4eU4LKjN89igwzc8xNXQfY/tmI=
 github.com/cplieger/jsoncap/v2 v2.1.0-dev.1/go.mod h1:pE5I9GzWjOiqW7ngbJfQcEG2KdMb6yLFKCj+uxuO3Ug=
 github.com/cplieger/keyenc v1.1.0 h1:rlBEmqEBUS378lkJJfrRWlWKBqpgX2ahquivHfdMgxw=
@@ -30,8 +30,8 @@ github.com/cplieger/sse v1.3.0-dev.4 h1:uIJC1STuYYl+FghEu1jJ319k0CBVermw7Rd6waXw
 github.com/cplieger/sse v1.3.0-dev.4/go.mod h1:9YvX5fPE/3cksmcTa+m99NDJkCDEPeCx8yAHkL2H11s=
 github.com/cplieger/ssrf/v4 v4.5.0-dev.6 h1:eR64BT7l0eXPATYgFJe0sMJwg/QsxUvL656QeEDR56M=
 github.com/cplieger/ssrf/v4 v4.5.0-dev.6/go.mod h1:JbdhAU/ANQBghfS7DJb35Lxzqf9CP9XmzLJUcymV7NI=
-github.com/cplieger/toolbelt/v3 v3.11.0-dev.17 h1:hhlbsx/Iw+8iU3RsKBwl098vLCxGYRhHuEqZ9pcU7NM=
-github.com/cplieger/toolbelt/v3 v3.11.0-dev.17/go.mod h1:+t9hZXccji6gsA6PvDQTuoWFxT4hk1DZa0I8itJswXU=
+github.com/cplieger/toolbelt/v3 v3.11.0-dev.18 h1:kmE9Pj7Y2Y/qGQf0ZXoEnn4FyrDzKFWXoLYfJvOt9Sc=
+github.com/cplieger/toolbelt/v3 v3.11.0-dev.18/go.mod h1:CI16pc2KglBuZHpX0S4Nr6grOPTYuKk8toW4uSNaPOk=
 github.com/cplieger/urlform v1.5.0-dev.1 h1:PmfMKa6PI+EUiUS7lpnSbXYiYZXOPA8tF3+xcGDz/0A=
 github.com/cplieger/urlform v1.5.0-dev.1/go.mod h1:9JkyyQDD+zGqgttwOJDSyprnm8gqb0K9wS7o+8s/Z2M=
 github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.12 h1:BAhvZS1VCHYLrpTvBASJYlha1nn4fzg6BlZMdMuP8HQ=
