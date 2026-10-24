@@ -26,7 +26,7 @@ require (
 	github.com/cplieger/pinstall/v3 v3.1.0-dev.4
 	github.com/cplieger/runesafe/v3 v3.2.0
 	github.com/cplieger/slogx v1.8.0
-	github.com/cplieger/sse v1.3.0-dev.4
+	github.com/cplieger/sse v1.3.0-dev.5
 	github.com/cplieger/ssrf/v4 v4.5.0-dev.6
 	github.com/cplieger/toolbelt/v3 v3.11.0-dev.19
 	github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.13
