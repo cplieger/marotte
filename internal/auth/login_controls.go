@@ -10,7 +10,7 @@ import (
 	"os"
 	"slices"
 
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // managedSettingsPath is the administrator's file kiro-cli's login reads its sign-in controls from on Linux.

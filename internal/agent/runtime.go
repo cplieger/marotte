@@ -31,7 +31,7 @@ import (
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/sse"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // The client watchdog is three of them and liveness.AliveWindow two. A var only for tests.

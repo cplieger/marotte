@@ -14,7 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 func TestConfigFromEnv_Defaults(t *testing.T) {

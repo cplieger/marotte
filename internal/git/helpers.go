@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // requirePOST writes a 405 if the method isn't POST and returns false.

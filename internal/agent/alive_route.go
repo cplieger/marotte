@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/sse"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // presenceTable is the push presence table: hub connect/disconnect events plus keepalive acks. *push.Presence satisfies it.

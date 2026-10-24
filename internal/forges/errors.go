@@ -11,7 +11,7 @@ import (
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 var kindStatus = map[forgeapi.ErrorKind]int{
