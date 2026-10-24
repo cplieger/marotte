@@ -7,7 +7,7 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // Read-only: every tab mutation rides POST /api/command (invariant 1).

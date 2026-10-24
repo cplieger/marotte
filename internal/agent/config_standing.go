@@ -15,7 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // standingFetchTimeout bounds one workspace getState read.

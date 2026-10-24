@@ -20,7 +20,7 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // hookCallTimeout bounds a list or setEnabled round-trip, the wait for the engine included.

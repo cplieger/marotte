@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // registerEngineRoutes mounts the engine's status, its confirmed restart and the configuration standing.
