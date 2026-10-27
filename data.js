@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
   "lastUpdate": 1793142204631,
-  "repoUrl": "https://github.com/cplieger/ci",
+  "repoUrl": "https://github.com/cplieger/marotte",
   "entries": {
     "Benchmark": [
       {
@@ -10104,10 +10104,10 @@ window.BENCHMARK_DATA = {
             "username": "web-flow",
             "email": "noreply@github.com"
           },
-          "id": "a4adc2450f849e94a70171386398350c33f7b66f",
-          "message": "chore(deps): update cplieger/ci digest to a00f6a5 (#890)\n\nCo-authored-by: tribble-trouble[bot] <338123824+tribble-trouble[bot]@users.noreply.github.com>",
-          "timestamp": "2026-10-27T02:08:25Z",
-          "url": "https://github.com/cplieger/ci/commit/a4adc2450f849e94a70171386398350c33f7b66f"
+          "id": "96e3f0d23406ca5bfd5f59d85501c72df8d6d511",
+          "message": "fix(deps): update module golang.org/x/net to v0.62.0 (#1794)\n\nfix(deps): update module golang.org/x/net to v0.62.0\n\nCo-authored-by: tribble-trouble[bot] <338123824+tribble-trouble[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-27T20:17:53Z",
+          "url": "https://github.com/cplieger/marotte/commit/96e3f0d23406ca5bfd5f59d85501c72df8d6d511"
         },
         "date": 1793142204436,
         "tool": "customSmallerIsBetter",
