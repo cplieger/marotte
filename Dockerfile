@@ -1,6 +1,6 @@
 # check=error=true
 
-FROM debian:trixie-slim@sha256:89c1ea91e897f0fe0a3731595330bc45b8bdef4047464a07116f891a94054b31 AS builder
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -205,7 +205,7 @@ RUN sh scripts/collect-licenses.sh --name marotte . && \
     mkdir -p /out/usr/share/licenses/pele && \
     cp static-src/node_modules/pele/LICENSE /out/usr/share/licenses/pele/LICENSE
 
-FROM debian:trixie-slim@sha256:89c1ea91e897f0fe0a3731595330bc45b8bdef4047464a07116f891a94054b31
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
