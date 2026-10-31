@@ -8,7 +8,7 @@ import (
 	"testing/fstest"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // The fixture mirrors ListenAndServe's mount shape: the real spaHandler at "/", a plain API

@@ -12,7 +12,7 @@ import (
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/families"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // detectBudget bounds one detection, which asks up to three families in turn.

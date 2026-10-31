@@ -15,7 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // sessionListTimeout bounds the round-trip, which may wait for the engine to be ready (configTemplateTimeout's value).

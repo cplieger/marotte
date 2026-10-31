@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 	"golang.org/x/sync/singleflight"
 )
 

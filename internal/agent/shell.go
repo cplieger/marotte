@@ -12,7 +12,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // shutdownBudget bounds one PTY teardown, above the engine's 5s reap ceiling so expiry means a real hang.

@@ -6,7 +6,7 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/signin"
 	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // WhoamiState discriminates /api/whoami's three answers; "could not ask" is its own state so the UI offers a retry,
