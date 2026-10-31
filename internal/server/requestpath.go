@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // apiPathPrefix is the subtree this guard covers: every route but the "/" SPA/static mount,

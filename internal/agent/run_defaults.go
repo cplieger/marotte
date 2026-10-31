@@ -8,7 +8,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // errDefaultsRefused is a pick the served catalog does not offer: KAS accepts any id at launch

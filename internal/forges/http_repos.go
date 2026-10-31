@@ -10,7 +10,7 @@ import (
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // The action segment and query parameter the repository routes read.

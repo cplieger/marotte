@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/forgeapi/creds"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // DeviceFlowResponse is a started device grant as a client renders it. The

@@ -5,7 +5,7 @@ import (
 	"os/exec"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // Each key is a name kiro-cli or a marotte feature panel expects on PATH (the MCP add modal gates
