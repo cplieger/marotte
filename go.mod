@@ -34,7 +34,7 @@ require (
 	github.com/cplieger/wiregen/v3 v3.3.1
 	github.com/evanw/esbuild v0.28.2
 	github.com/klauspost/compress v1.20.3
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/image v0.47.0
 	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.24.0
