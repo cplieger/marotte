@@ -322,24 +322,25 @@ describe("a folded turn whose prompt is cut", () => {
 
 // The words per kind are wake_line.json's (turn-wake.node.test.ts); this pins where they land.
 describe("a woken turn's header", () => {
-  const RUN = "wf_1729f9b5688ec7bf";
+  const RUN = "wf_5e1f0c2a9b7d4e36";
+  const OTHER = "wf_7c3a9e1f0b2d4a58";
   const ERROR =
-    "Handoff blocked: update_workflow is not in my toolset (not loadable by tool_load and not " +
-    "callable with tool_call), so I cannot replace the remaining steps with the build tail.";
+    "The site build failed before any edit: the install guide has no front matter, so the " +
+    "link check cannot run on the built pages.";
   const stepWake = (severity: string, text = ERROR): EntryTurnWake => ({
     reason: "step_message",
-    steers: [
-      { id: "wfmsg-1", run: RUN, run_label: "release-impact-leg2", step: "ratify", severity, text },
-    ],
+    steers: [{ id: "wfmsg-1", run: RUN, step: "check-links", severity, text }],
   });
+  const names = (id: string, recorded: string): string =>
+    id === RUN ? "publish-docs" : id === OTHER ? "nightly-report" : recorded;
   const wakeData = (w: EntryTurnWake, open?: (id: string) => void): TurnHeaderData =>
-    data({ request: undefined, wake: wakeLine(w), onOpenRun: open });
+    data({ request: undefined, wake: wakeLine(w, names), onOpenRun: open });
   const label = (h: HTMLElement): HTMLElement | null => h.querySelector(".turn-req > .turn-wake");
 
   it("puts the label on its own line above the message, the message where a prompt goes", () => {
     const h = buildTurnHeader(wakeData(stepWake("error")));
     expect(h.dataset["trigger"]).toBe("wake");
-    expect(label(h)?.textContent).toBe("release-impact-leg2 \u00b7 ratify reports an error");
+    expect(label(h)?.textContent).toBe("publish-docs \u00b7 check-links reports an error");
     expect(h.querySelector(".turn-req")?.firstElementChild).toBe(label(h));
     expect(text(h).textContent).toBe(ERROR);
     expect(text(h).hidden).toBe(false);
@@ -350,7 +351,8 @@ describe("a woken turn's header", () => {
     const opened: string[] = [];
     const h = buildTurnHeader(wakeData(stepWake("warning"), (id) => opened.push(id)));
     const btn = h.querySelector<HTMLButtonElement>(".turn-wake > button.turn-wake-run");
-    expect(btn?.textContent).toBe("release-impact-leg2");
+    expect(btn?.textContent).toBe("publish-docs");
+    expect(btn?.dataset["runId"]).toBe(RUN);
     btn?.click();
     expect(opened).toEqual([RUN]);
 
@@ -362,27 +364,57 @@ describe("a woken turn's header", () => {
     const h = buildTurnHeader(
       wakeData({
         reason: "run_finished",
-        run: RUN,
-        run_label: "release-impact-leg2",
+        run: "wf_unknown01234",
+        run_label: "publish-docs-held",
         run_status: "completed",
       }),
     );
-    expect(label(h)?.textContent).toBe("release-impact-leg2 completed");
+    expect(label(h)?.textContent).toBe("publish-docs-held completed");
+    expect(label(h)?.querySelector<HTMLElement>(".turn-wake-run")?.dataset["runRecorded"]).toBe(
+      "publish-docs-held",
+    );
     expect(text(h).hidden).toBe(true);
   });
 
-  it("lists a re-delivery's messages as its message, with no run button", () => {
+  it("lists a re-delivery's messages as its message, each opening its own run from its name", () => {
+    const opened: string[] = [];
+    const h = buildTurnHeader(
+      wakeData(
+        {
+          reason: "rewake",
+          steers: [
+            { id: "q", run: RUN, step: "draft", text: "Which branch?" },
+            { id: "r", run: OTHER, step: "collect", text: "Leg 1 is done." },
+          ],
+        },
+        (id) => opened.push(id),
+      ),
+    );
+    expect(label(h)?.textContent).toBe(
+      "Resumed with 2 workflow messages you stopped before they were read",
+    );
+    expect(label(h)?.querySelector(".turn-wake-run")).toBeNull();
+    expect(text(h).textContent).toBe(
+      "publish-docs \u00b7 draft: Which branch?\nnightly-report \u00b7 collect: Leg 1 is done.",
+    );
+    const buttons = [...text(h).querySelectorAll<HTMLButtonElement>("button.turn-wake-row-run")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["publish-docs", "nightly-report"]);
+    for (const b of buttons) {
+      b.click();
+    }
+    expect(opened).toEqual([RUN, OTHER]);
+  });
+
+  it("gives a re-delivery's text back to a step message on a repaint", () => {
     const h = buildTurnHeader(
       wakeData({
         reason: "rewake",
-        steers: [{ id: "q", run: RUN, run_label: "leg2", step: "ask", text: "Which branch?" }],
+        steers: [{ id: "q", run: RUN, step: "draft", text: "Which branch?" }],
       }),
     );
-    expect(label(h)?.textContent).toBe(
-      "Resumed with 1 workflow message you stopped before it was read",
-    );
-    expect(label(h)?.querySelector(".turn-wake-run")).toBeNull();
-    expect(text(h).textContent).toBe("leg2 \u00b7 ask: Which branch?");
+    updateTurnHeader(h, wakeData(stepWake("error")));
+    expect(text(h).textContent).toBe(ERROR);
+    expect(text(h).querySelector(".turn-wake-row-run")).toBeNull();
   });
 
   it("keeps the typed system line for a wake that names nothing", () => {

@@ -37,8 +37,6 @@ type baseDeps struct {
 	// scheduledRuns are the workflow ids IsScheduled answers true for, so a
 	// test can stage a scheduled run without a runtime or a scheduler.
 	scheduledRuns map[string]bool
-	// runNames are the names RunName answers, keyed by workflow id.
-	runNames map[string]string
 	// runLabels are the labels RunLabel answers, keyed by workflow id.
 	runLabels   map[string]string
 	planUpdates []marotte.RunPlanUpdate
@@ -638,7 +636,6 @@ func (d *baseDeps) IsScheduled(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
 }
 func (d *baseDeps) RunLabel(workflowID string) string { return d.runLabels[workflowID] }
-func (d *baseDeps) RunName(workflowID string) string  { return d.runNames[workflowID] }
 
 type stagedRunNotice struct {
 	workflowID string

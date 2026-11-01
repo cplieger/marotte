@@ -96,7 +96,7 @@ import {
   forgetRun,
   registerRunStateDemand,
 } from "./run-store.js";
-import { isWakingRow } from "./turn-wake.js";
+import { isWakingRow } from "./waking-rows.js";
 import { runLabelText, unwatchStepRunLabel, watchStepRunLabel } from "./workflow-run-label.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { buildPath } from "./route-path.js";

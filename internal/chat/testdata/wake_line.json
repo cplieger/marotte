@@ -1,12 +1,16 @@
 {
   "doc": [
     "The wake header's words: the one-line label and the message under it for each turn_wake shape.",
-    "internal/marotte WakeLine is the server reader (the rail's first line and the Markdown export) and",
-    "static-src/turn-wake.ts wakeText the client's (the header, the rail and Copy as text); both read",
-    "these cases, so a wording change lands in both or fails one.",
+    "internal/marotte WakeLine and WakeSearchTexts are the server readers (the rail's first line, the",
+    "Markdown export and find-in-chat) and static-src/turn-wake.ts wakeLine the client's (the header, the",
+    "rail and Copy as text); both read these cases, so a wording change lands in both or fails one.",
     "",
-    "Expected values follow the approved wording, not either implementation. A run's name is its",
-    "run_label, else the id's first 11 characters (`wf_` plus eight)."
+    "Expected values follow the approved wording, not either implementation. A finished run's name is its",
+    "run_label, else the id's first 11 characters (`wf_` plus eight); a message's run has no recorded name,",
+    "so it reads as the short form here and the client draws the run store's name over it.",
+    "run and rest are where the client splits the label for its run button; rows are a re-delivery's",
+    "messages, each a run button then rest then the text. search is what the server indexes (omitted",
+    "where a case adds nothing to the other cases)."
   ],
   "cases": [
     {
@@ -15,17 +19,22 @@
         "reason": "step_message",
         "steers": [
           {
-            "id": "wfmsg-01a15053",
-            "run": "wf_1a6d245a6e99e18e",
-            "run_label": "turn-wake",
-            "step": "prep/wait-apps",
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
             "severity": "info",
-            "text": "wait-apps 9.7 h (cap now 24 h): apps are still draining, nothing needed from you."
+            "text": "Link check done: 412 links, none broken. Nothing needed from you."
           }
         ]
       },
-      "label": "turn-wake · prep/wait-apps to you",
-      "body": "wait-apps 9.7 h (cap now 24 h): apps are still draining, nothing needed from you."
+      "label": "wf_5e1f0c2a · build/check-links to you",
+      "body": "Link check done: 412 links, none broken. Nothing needed from you.",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " · build/check-links to you",
+      "search": [
+        "· build/check-links to you",
+        "Link check done: 412 links, none broken. Nothing needed from you."
+      ]
     },
     {
       "name": "a step's warning asks you",
@@ -33,17 +42,22 @@
         "reason": "step_message",
         "steers": [
           {
-            "id": "wfmsg-01a15053",
-            "run": "wf_1a6d245a6e99e18e",
-            "run_label": "turn-wake",
-            "step": "prep/wait-apps",
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
             "severity": "warning",
-            "text": "Should I apply D22 (one bullet in crew.md), or leave it as a follow-up?"
+            "text": "Two pages still link to the old domain. Should I rewrite those links now, or leave them for the next release?"
           }
         ]
       },
-      "label": "turn-wake · prep/wait-apps asks you",
-      "body": "Should I apply D22 (one bullet in crew.md), or leave it as a follow-up?"
+      "label": "wf_5e1f0c2a · build/check-links asks you",
+      "body": "Two pages still link to the old domain. Should I rewrite those links now, or leave them for the next release?",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " · build/check-links asks you",
+      "search": [
+        "· build/check-links asks you",
+        "Two pages still link to the old domain. Should I rewrite those links now, or leave them for the next release?"
+      ]
     },
     {
       "name": "a step's error reports an error",
@@ -51,17 +65,22 @@
         "reason": "step_message",
         "steers": [
           {
-            "id": "wfmsg-01a15053",
-            "run": "wf_1a6d245a6e99e18e",
-            "run_label": "turn-wake",
-            "step": "prep/wait-apps",
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
             "severity": "error",
-            "text": "go test failed in internal/chat: TestRailRows"
+            "text": "The site build failed: docs/guide/install.md has no front matter."
           }
         ]
       },
-      "label": "turn-wake · prep/wait-apps reports an error",
-      "body": "go test failed in internal/chat: TestRailRows"
+      "label": "wf_5e1f0c2a · build/check-links reports an error",
+      "body": "The site build failed: docs/guide/install.md has no front matter.",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " · build/check-links reports an error",
+      "search": [
+        "· build/check-links reports an error",
+        "The site build failed: docs/guide/install.md has no front matter."
+      ]
     },
     {
       "name": "a network note says the step waits for the network",
@@ -69,18 +88,43 @@
         "reason": "step_message",
         "steers": [
           {
-            "id": "wfmsg-01a15053",
-            "run": "wf_1a6d245a6e99e18e",
-            "run_label": "turn-wake",
-            "step": "prep/wait-apps",
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
             "severity": "info",
-            "text": "Step \"build\" has had connection errors (ECONNRESET) since 14:02:11. The workflow keeps retrying it about every 120s until 14:02:11 tomorrow and pauses the run if the last retry fails too. Nothing is needed from you."
+            "text": "Step \"check-links\" has had connection errors (ECONNRESET) since 10:02:11. The workflow keeps retrying it about every 120s until 10:32:11 and pauses the run if the last retry fails too. Nothing is needed from you."
           }
         ],
         "note": "network"
       },
-      "label": "turn-wake · prep/wait-apps is waiting for the network",
-      "body": "Step \"build\" has had connection errors (ECONNRESET) since 14:02:11. The workflow keeps retrying it about every 120s until 14:02:11 tomorrow and pauses the run if the last retry fails too. Nothing is needed from you."
+      "label": "wf_5e1f0c2a · build/check-links is waiting for the network",
+      "body": "Step \"check-links\" has had connection errors (ECONNRESET) since 10:02:11. The workflow keeps retrying it about every 120s until 10:32:11 and pauses the run if the last retry fails too. Nothing is needed from you.",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " · build/check-links is waiting for the network"
+    },
+    {
+      "name": "a network give-up says the step lost the network",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
+            "severity": "warning",
+            "text": "Step \"check-links\" had connection errors (ECONNRESET) from 10:02:11 to 10:32:11, so the workflow stopped retrying it and paused the run. When the connection is back, resume the run with update_workflow (action update_status, status \"running\"), or tell the user."
+          }
+        ],
+        "note": "network_lost"
+      },
+      "label": "wf_5e1f0c2a · build/check-links lost the network",
+      "body": "Step \"check-links\" had connection errors (ECONNRESET) from 10:02:11 to 10:32:11, so the workflow stopped retrying it and paused the run. When the connection is back, resume the run with update_workflow (action update_status, status \"running\"), or tell the user.",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " · build/check-links lost the network",
+      "search": [
+        "· build/check-links lost the network",
+        "Step \"check-links\" had connection errors (ECONNRESET) from 10:02:11 to 10:32:11, so the workflow stopped retrying it and paused the run. When the connection is back, resume the run with update_workflow (action update_status, status \"running\"), or tell the user."
+      ]
     },
     {
       "name": "a repeat cap is worded from the typed pause, with no body",
@@ -88,107 +132,146 @@
         "reason": "step_message",
         "steers": [
           {
-            "id": "wfmsg-01a15053",
-            "run": "wf_1a6d245a6e99e18e",
-            "run_label": "turn-wake",
-            "step": "prep/wait-apps",
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "fix-loop",
             "severity": "info",
-            "text": "A workflow you launched (\"turn-wake\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition."
+            "text": "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition."
           }
         ],
         "note": "repeat_cap",
         "loop": "fix-loop",
         "max_iterations": 6
       },
-      "label": "turn-wake paused: fix-loop reached its round limit (6)",
-      "body": ""
+      "label": "wf_5e1f0c2a paused: fix-loop reached its round limit (6)",
+      "body": "",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " paused: fix-loop reached its round limit (6)",
+      "search": [
+        "paused: fix-loop reached its round limit (6)",
+        "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition."
+      ]
     },
     {
-      "name": "a run with no label is named by its id's short form",
+      "name": "a repeat cap with no typed pause is worded as the note it is",
       "wake": {
         "reason": "step_message",
         "steers": [
           {
-            "id": "wfmsg-x",
-            "run": "wf_1a6d245a6e99e18e",
-            "step": "build",
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "fix-loop",
             "severity": "info",
-            "text": "done"
+            "text": "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition."
           }
-        ]
+        ],
+        "note": "repeat_cap"
       },
-      "label": "wf_1a6d245a · build to you",
-      "body": "done"
+      "label": "wf_5e1f0c2a · fix-loop to you",
+      "body": "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition.",
+      "run": "wf_5e1f0c2a9b7d4e36"
     },
     {
       "name": "a completed run",
       "wake": {
         "reason": "run_finished",
-        "run": "wf_28486344b9bdedb0",
-        "run_label": "release-impact",
+        "run": "wf_5e1f0c2a9b7d4e36",
+        "run_label": "publish-docs",
         "run_status": "completed"
       },
-      "label": "release-impact completed",
-      "body": ""
+      "label": "publish-docs completed",
+      "body": "",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " completed",
+      "search": [
+        "completed"
+      ]
     },
     {
       "name": "a failed run gives its reason",
       "wake": {
         "reason": "run_finished",
-        "run": "wf_28486344b9bdedb0",
-        "run_label": "release-impact",
+        "run": "wf_5e1f0c2a9b7d4e36",
+        "run_label": "publish-docs",
         "run_status": "failed",
         "stop_reason": "step build failed"
       },
-      "label": "release-impact failed: step build failed",
-      "body": ""
+      "label": "publish-docs failed: step build failed",
+      "body": "",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " failed: step build failed"
     },
     {
       "name": "a run the reader stopped gives the reason given",
       "wake": {
         "reason": "run_finished",
-        "run": "wf_9c1d",
-        "run_label": "release-impact-leg2-held-build",
+        "run": "wf_7c3a9e1f0b2d4a58",
+        "run_label": "nightly-report",
         "run_status": "aborted",
         "initiator": "user",
         "stop_reason": "tab closed"
       },
-      "label": "release-impact-leg2-held-build stopped by you: tab closed",
-      "body": ""
+      "label": "nightly-report stopped by you: tab closed",
+      "body": "",
+      "run": "wf_7c3a9e1f0b2d4a58",
+      "rest": " stopped by you: tab closed",
+      "search": [
+        "stopped by you: tab closed"
+      ]
     },
     {
       "name": "a run the reader marked complete",
       "wake": {
         "reason": "run_finished",
-        "run": "wf_9c1d",
-        "run_label": "fix-loop",
+        "run": "wf_7c3a9e1f0b2d4a58",
+        "run_label": "nightly-report",
         "run_status": "completed",
         "initiator": "user",
         "stop_reason": "good enough"
       },
-      "label": "fix-loop marked complete by you",
-      "body": ""
+      "label": "nightly-report marked complete by you",
+      "body": "",
+      "run": "wf_7c3a9e1f0b2d4a58",
+      "rest": " marked complete by you"
     },
     {
       "name": "a run aborted by nobody named",
       "wake": {
         "reason": "run_finished",
-        "run": "wf_9c1d",
-        "run_label": "fix-loop",
+        "run": "wf_7c3a9e1f0b2d4a58",
+        "run_label": "nightly-report",
         "run_status": "aborted"
       },
-      "label": "fix-loop stopped",
-      "body": ""
+      "label": "nightly-report stopped",
+      "body": "",
+      "run": "wf_7c3a9e1f0b2d4a58",
+      "rest": " stopped"
+    },
+    {
+      "name": "a cancelled run reads as stopped",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_7c3a9e1f0b2d4a58",
+        "run_label": "nightly-report",
+        "run_status": "cancelled",
+        "initiator": "user"
+      },
+      "label": "nightly-report stopped by you",
+      "body": "",
+      "run": "wf_7c3a9e1f0b2d4a58",
+      "rest": " stopped by you"
     },
     {
       "name": "an unlabelled finished run is named by its id's short form",
       "wake": {
         "reason": "run_finished",
-        "run": "wf_28486344b9bdedb0",
+        "run": "wf_5e1f0c2a9b7d4e36",
         "run_status": "completed"
       },
-      "label": "wf_28486344 completed",
-      "body": ""
+      "label": "wf_5e1f0c2a completed",
+      "body": "",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " completed"
     },
     {
       "name": "a re-delivery lists every message it resumes",
@@ -197,24 +280,40 @@
         "steers": [
           {
             "id": "wfmsg-q",
-            "run": "wf_1a6d245a6e99e18e",
-            "run_label": "turn-wake",
-            "step": "build",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "draft",
             "severity": "warning",
-            "text": "Which branch should I base on?"
+            "text": "Which branch should I base the release notes on?"
           },
           {
             "id": "wfmsg-r",
-            "run": "wf_28486344b9bdedb0",
-            "run_label": "release-impact",
-            "step": "measure",
+            "run": "wf_7c3a9e1f0b2d4a58",
+            "step": "collect",
             "severity": "success",
             "text": "Leg 1 is done."
           }
         ]
       },
       "label": "Resumed with 2 workflow messages you stopped before they were read",
-      "body": "turn-wake · build: Which branch should I base on?\nrelease-impact · measure: Leg 1 is done."
+      "body": "wf_5e1f0c2a · draft: Which branch should I base the release notes on?\nwf_7c3a9e1f · collect: Leg 1 is done.",
+      "rest": "Resumed with 2 workflow messages you stopped before they were read",
+      "search": [
+        "Resumed with 2 workflow messages you stopped before they were read",
+        "Which branch should I base the release notes on?",
+        "Leg 1 is done."
+      ],
+      "rows": [
+        {
+          "run": "wf_5e1f0c2a9b7d4e36",
+          "rest": " · draft: ",
+          "text": "Which branch should I base the release notes on?"
+        },
+        {
+          "run": "wf_7c3a9e1f0b2d4a58",
+          "rest": " · collect: ",
+          "text": "Leg 1 is done."
+        }
+      ]
     },
     {
       "name": "a re-delivery of one message",
@@ -223,16 +322,23 @@
         "steers": [
           {
             "id": "wfmsg-q",
-            "run": "wf_1a6d245a6e99e18e",
-            "run_label": "turn-wake",
-            "step": "build",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "draft",
             "severity": "warning",
-            "text": "Which branch?"
+            "text": "Which branch should I base the release notes on?"
           }
         ]
       },
       "label": "Resumed with 1 workflow message you stopped before it was read",
-      "body": "turn-wake · build: Which branch?"
+      "body": "wf_5e1f0c2a · draft: Which branch should I base the release notes on?",
+      "rest": "Resumed with 1 workflow message you stopped before it was read",
+      "rows": [
+        {
+          "run": "wf_5e1f0c2a9b7d4e36",
+          "rest": " · draft: ",
+          "text": "Which branch should I base the release notes on?"
+        }
+      ]
     },
     {
       "name": "an unknown reason keeps today's line",
@@ -240,7 +346,8 @@
         "reason": "unknown"
       },
       "label": "Agent-initiated turn",
-      "body": ""
+      "body": "",
+      "search": []
     },
     {
       "name": "a step-message wake that names no message keeps today's line",
@@ -248,7 +355,8 @@
         "reason": "step_message"
       },
       "label": "Agent-initiated turn",
-      "body": ""
+      "body": "",
+      "search": []
     },
     {
       "name": "a run-finished wake that names no run keeps today's line",
@@ -256,7 +364,8 @@
         "reason": "run_finished"
       },
       "label": "Agent-initiated turn",
-      "body": ""
+      "body": "",
+      "search": []
     },
     {
       "name": "a re-delivery that names no message keeps today's line",
@@ -264,7 +373,20 @@
         "reason": "rewake"
       },
       "label": "Agent-initiated turn",
-      "body": ""
+      "body": "",
+      "search": []
+    },
+    {
+      "name": "a run still running is no finished run",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_5e1f0c2a9b7d4e36",
+        "run_label": "publish-docs",
+        "run_status": "running"
+      },
+      "label": "Agent-initiated turn",
+      "body": "",
+      "search": []
     }
   ]
 }

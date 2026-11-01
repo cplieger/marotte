@@ -369,9 +369,6 @@ type runOriginAccess interface {
 	IsScheduled(workflowID string) bool
 	// RunLabel is the label marotte gave a run at launch, "" when it gave none.
 	RunLabel(workflowID string) string
-	// RunName is what a run's tab is called (its launch label, else its recipe), "" for a run
-	// marotte holds no lease for.
-	RunName(workflowID string) string
 	// RunNotice CONSUMES the finished run whose completion notice KAS queued into
 	// chatID's steering buffer and whose label the notice's text quotes, answering its
 	// id and the instant it finished (Unix ms). False when no recorded run matches, in

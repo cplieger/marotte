@@ -13,7 +13,7 @@ import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
 // Colour is never the sole channel (WCAG 1.4.1), and these are that channel.
 import { OUTCOME_LABEL, OUTCOME_TOOLTIP, severityOf } from "../turn-severity.js";
 import type { TurnOutcome } from "../turns.js";
-import { WAKE_FALLBACK_LINE, type WakeLine } from "../turn-wake.js";
+import { WAKE_FALLBACK_LINE, type WakeLine, type WakeRow, type WakeRun } from "../turn-wake.js";
 
 export interface TurnHeaderData {
   /** 1-based turn ordinal as rendered. */
@@ -32,7 +32,7 @@ export interface TurnHeaderData {
   /** What woke a turn with no request: a one-line label over its message, which takes the
    *  request's place and clamp. Ignored when `request` is set or the wake is a fallback. */
   wake?: WakeLine | undefined;
-  /** Opens the run the wake's label names; without it the name is plain text. */
+  /** Opens a run the wake names; without it each name is plain text. */
   onOpenRun?: ((workflowID: string) => void) | undefined;
 }
 
@@ -134,7 +134,11 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   if (d.request === undefined && d.wake !== undefined && !d.wake.fallback) {
     header.dataset["trigger"] = "wake";
     syncWakeLabel(header, d.wake, d.onOpenRun);
-    setRequestText(text, d.wake.body);
+    if (d.wake.rows === undefined) {
+      setRequestText(text, d.wake.body);
+    } else {
+      setWakeRows(text, d.wake.rows, d.onOpenRun);
+    }
     text.hidden = d.wake.body === "";
     syncFullText(header, undefined);
     return;
@@ -145,7 +149,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   if (d.request === undefined) {
     // No user message: naming the trigger is honest, fabricating one is not.
     header.dataset["trigger"] = "system";
-    text.textContent = WAKE_FALLBACK_LINE;
+    setRequestText(text, WAKE_FALLBACK_LINE);
     syncFullText(header, undefined);
     return;
   }
@@ -158,10 +162,35 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
 }
 
 function setRequestText(text: HTMLElement, shown: string): void {
-  if (text.textContent !== shown) {
+  if (text.textContent !== shown || text.dataset["rows"] !== undefined) {
+    delete text.dataset["rows"];
     text.textContent = shown;
     linkifyPaths(text);
   }
+}
+
+/** A re-delivery's messages in the request text, one per line as `body` joins them, each opening on its
+ *  run's name; rebuilt only when the words or runs change, as the label is. */
+function setWakeRows(
+  text: HTMLElement,
+  rows: readonly WakeRow[],
+  open: ((workflowID: string) => void) | undefined,
+): void {
+  const key = rows.map((r) => r.run.id + r.run.name + r.rest + r.text).join("\n");
+  if (text.dataset["rows"] === key) {
+    return;
+  }
+  text.dataset["rows"] = key;
+  const parts: (Node | string)[] = [];
+  rows.forEach((r, i) => {
+    if (i > 0) {
+      parts.push("\n");
+    }
+    const message = el("span", { className: "turn-wake-row-text" }, r.text);
+    linkifyPaths(message);
+    parts.push(wakeRunEl(r.run, "turn-wake-row-run", open), r.rest, message);
+  });
+  text.replaceChildren(...parts);
 }
 
 /** The wake's label, one line above the request text and outside its clamp, rebuilt only when its
@@ -195,28 +224,33 @@ function syncWakeLabel(
     line.replaceChildren(rest);
     return;
   }
-  line.replaceChildren(wakeRunEl(wake.run.id, wake.run.name, open), rest);
+  line.replaceChildren(wakeRunEl(wake.run, "turn-wake-run", open), rest);
 }
 
-/** The run's name, a button when the caller can open the run. */
+/** The run's name, a button when the caller can open the run. `data-run-id` and `data-run-recorded` let the
+ *  view keep the name current (`WAKE_RUN_SELECTOR`). */
 function wakeRunEl(
-  workflowID: string,
-  name: string,
+  run: WakeRun,
+  className: string,
   open: ((workflowID: string) => void) | undefined,
 ): HTMLElement {
+  const attrs = { className, "data-run-id": run.id, "data-run-recorded": run.recorded };
   if (open === undefined) {
-    return el("span", { className: "turn-wake-run" }, name);
+    return el("span", attrs, run.name);
   }
   const btn = el(
     "button",
-    { type: "button", className: "turn-wake-run", "data-tooltip": "Open the workflow run" },
-    name,
+    { ...attrs, type: "button", "data-tooltip": "Open the workflow run" },
+    run.name,
   );
   btn.addEventListener("click", () => {
-    open(workflowID);
+    open(run.id);
   });
   return btn;
 }
+
+/** Every run name a wake header draws. */
+export const WAKE_RUN_SELECTOR = ".turn-wake-run[data-run-id], .turn-wake-row-run[data-run-id]";
 
 /** A labelled request's full text, a sibling of the text so the folded clamp cannot hide it, shown
  *  while the turn is open (29-turns.css); `body` undefined removes it. */

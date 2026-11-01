@@ -35,8 +35,8 @@ func renderChatMarkdown(c *marotte.Chat, entries []marotte.Entry) string {
 	return b.String()
 }
 
-// wakingSteers is the workflow messages a turn_wake names as its turn's waker: the wake's header renders each, so
-// the row where it was filed renders nothing (static-src's twin skips the same card).
+// wakingSteers is the workflow messages a turn_wake draws in its header (marotte.WakeDrawnSteers), so the row
+// where each was filed renders nothing (static-src's twin skips the same card).
 func wakingSteers(entries []marotte.Entry) map[string]struct{} {
 	out := map[string]struct{}{}
 	for i := range entries {
@@ -44,9 +44,9 @@ func wakingSteers(entries []marotte.Entry) map[string]struct{} {
 			continue
 		}
 		var w marotte.EntryTurnWake
-		if decodePayload(&entries[i], &w) && w.Reason == marotte.WakeReasonStepMessage {
-			for _, s := range w.Steers {
-				out[s.ID] = struct{}{}
+		if decodePayload(&entries[i], &w) {
+			for _, id := range marotte.WakeDrawnSteers(&w) {
+				out[id] = struct{}{}
 			}
 		}
 	}

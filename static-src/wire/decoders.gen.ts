@@ -35,7 +35,7 @@ const RUN_STATUSS = ["running", "paused", "completed", "failed", "aborted", "can
 const RUN_STEP_MESSAGE_VERBS = ["steer", "answer", "prompt"] as const;
 const RUN_STEP_TRANSCRIPT_STATES = ["ready", "gone", "unavailable"] as const;
 const SAFETY_STATUSS = ["idle", "formalizing", "evaluating", "blocked", "error"] as const;
-const SEGMENT_KINDS = ["content", "reasoning", "tool_title", "tool_disclosed", "tool_diff", "tool_denial", "tool_input", "tool_output", "steer", "prompt", "plan", "attachment", "turn_failure", "entry"] as const;
+const SEGMENT_KINDS = ["content", "reasoning", "tool_title", "tool_disclosed", "tool_diff", "tool_denial", "tool_input", "tool_output", "steer", "prompt", "plan", "attachment", "turn_failure", "wake", "entry"] as const;
 const SETTLED_BYS = ["user", "unattended", "moot", "ended"] as const;
 const SHOW_REFUSAL_CODES = ["too_large", "binary", "not_utf8"] as const;
 const SLASH_COMMAND_KINDS = ["steering", "prompt", "goal"] as const;
@@ -50,7 +50,7 @@ const TOOL_STATUSS = ["pending", "in_progress", "completed", "failed", "aborted"
 const TURN_OPEN_SOURCE_NAMES = ["prompt", "wire_turn_start", "empty_retry", "event", "revert", "workflow_step"] as const;
 const TURN_OUTCOMES = ["running", "completed", "cancelled", "interrupted", "failed", "refused", "unknown", "empty"] as const;
 const TURN_REVERT_CAUSES = ["rewind"] as const;
-const WAKE_NOTES = ["network", "repeat_cap"] as const;
+const WAKE_NOTES = ["network", "network_lost", "repeat_cap"] as const;
 const WAKE_REASONS = ["step_message", "run_finished", "rewake", "unknown"] as const;
 const WHOAMI_STATES = ["signed_in", "signed_out", "unavailable"] as const;
 
@@ -3414,8 +3414,6 @@ export const decodeWakeSteer: Decoder<WakeSteer> = (v) => {
   };
   const run = o["run"] === null ? undefined : optStr(o, "run", "$.wake_steer");
   if (run !== undefined) out.run = run;
-  const runLabel = o["run_label"] === null ? undefined : optStr(o, "run_label", "$.wake_steer");
-  if (runLabel !== undefined) out.run_label = runLabel;
   const step = o["step"] === null ? undefined : optStr(o, "step", "$.wake_steer");
   if (step !== undefined) out.step = step;
   const severity = o["severity"] === null ? undefined : optStr(o, "severity", "$.wake_steer");

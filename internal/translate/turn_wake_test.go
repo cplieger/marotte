@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	wakeChatSession = "sess_66362e75-badd-490c-ad48-593859625c29"
-	wakeRun         = "wf_1a6d245a6e99e18e"
-	wakeStepNode    = "prep/wait-apps"
+	wakeChatSession = "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+	wakeRun         = "wf_5e1f0c2a9b7d4e36"
+	wakeStepNode    = "build/check-links"
 )
 
 // wakeFrames is testdata/turn_wake_frames.json by name.
@@ -42,7 +42,6 @@ func newWakeHarness(t *testing.T) *wakeHarness {
 	t.Helper()
 	deps, _, _ := depsWithStore(t, testChat)
 	deps.parent = wakeChatSession
-	deps.runNames = map[string]string{wakeRun: "turn-wake"}
 	h := &wakeHarness{t: t, deps: deps, tr: New(rolesOf(deps)), frames: wakeFrames(t)}
 	h.send("node_start")
 	return h
@@ -167,7 +166,7 @@ func TestTurnWake_AStepMessageWakeNamesTheMessageThatWokeIt(t *testing.T) {
 			w := h.onlyWake()
 			text := h.notifyText(c.frame)
 			want := marotte.WakeSteer{
-				ID: h.rowID(text), Run: wakeRun, RunLabel: "turn-wake", Step: wakeStepNode, Severity: c.severity, Text: text,
+				ID: h.rowID(text), Run: wakeRun, Step: wakeStepNode, Severity: c.severity, Text: text,
 			}
 			if w.Reason != marotte.WakeReasonStepMessage || w.Note != "" || len(w.Steers) != 1 || w.Steers[0] != want {
 				t.Errorf("turn_wake = %+v, want a step message naming %+v", w, want)
@@ -245,7 +244,7 @@ func TestTurnWake_ARepeatCapIsWordedFromTheRunsTypedPause(t *testing.T) {
 	if w.Note != marotte.WakeNoteRepeatCap || w.Loop != "fix-loop" || w.MaxIterations != 6 {
 		t.Errorf("turn_wake = %+v, want the repeat-cap note for fix-loop at 6 rounds", w)
 	}
-	if len(w.Steers) != 1 || w.Steers[0].Run != "wf_e5a4052e1ec9060d" || w.Steers[0].Step != "fix-loop" {
+	if len(w.Steers) != 1 || w.Steers[0].Run != "wf_3b8d2f6a1c9e4b07" || w.Steers[0].Step != "fix-loop" {
 		t.Errorf("turn_wake steers = %+v, want KAS's note row for the run's repeat", w.Steers)
 	}
 }
@@ -256,11 +255,11 @@ func TestTurnWake_ARunFinishedWakeNamesTheRunAndHowItEnded(t *testing.T) {
 		want  marotte.EntryTurnWake
 	}{
 		{"run_complete_completed", marotte.EntryTurnWake{
-			Reason: marotte.WakeReasonRunFinished, Run: "wf_28486344b9bdedb0", RunLabel: "release-impact",
+			Reason: marotte.WakeReasonRunFinished, Run: "wf_7c3a9e1f0b2d4a58", RunLabel: "nightly-report",
 			RunStatus: marotte.RunStatusCompleted,
 		}},
 		{"run_complete_stopped_by_user", marotte.EntryTurnWake{
-			Reason: marotte.WakeReasonRunFinished, Run: "wf_9c1d0e7b3a5f2e48", RunLabel: "release-impact-leg2-held-build",
+			Reason: marotte.WakeReasonRunFinished, Run: "wf_2e4f6a8c0b1d3f57", RunLabel: "nightly-report-held",
 			RunStatus: marotte.RunStatusAborted, Initiator: "user", StopReason: "tab closed",
 		}},
 	}
@@ -300,7 +299,7 @@ func TestTurnWake_OnlyARunThatEndedWhileTheChatWasIdleCanWakeIt(t *testing.T) {
 		h.wake("chunk_workflow_complete_wake")
 
 		w := h.wakes()
-		if len(w) != 2 || w[0].Run != "wf_28486344b9bdedb0" || w[1].Run != "" {
+		if len(w) != 2 || w[0].Run != "wf_7c3a9e1f0b2d4a58" || w[1].Run != "" {
 			t.Errorf("turn_wake entries = %+v, want the first run on the first wake and no run on the second", w)
 		}
 	})
@@ -313,7 +312,7 @@ func TestTurnWake_TheTurnAfterAReadersCancelResumesWhatTheCancelCleared(t *testi
 			h.deps.turns.chatTurn(testChat)
 			h.send("notify_warning")
 			stopTurn(h.deps, testChat)
-			clearSteering(t, h.tr, "notify-347a6dd1-5d4b-4f0e-8a51-6b0f4c7e2d90")
+			clearSteering(t, h.tr, "notify-5b7c1d2e-3f40-4a51-8b62-7c83d94ea0b1")
 			resumeAfterStop(h.deps)
 			closeChatTurn(t, h.deps, testChat)
 			h.wake(reason)
@@ -366,22 +365,118 @@ func TestTurnWake_TheOldestMessageWaitingWhenTheTurnOpenedIsTheWaker(t *testing.
 	}
 }
 
-// rewakeWithInfo re-delivers what the cancel cleared under a send-message-wake; a message filed after the cancel was
-// buffered behind that re-delivery and is not what the turn is about.
-func TestTurnWake_AReDeliveryIsNotTheMessageFiledAfterTheCancel(t *testing.T) {
+// rewakeWithInfo gives way to a wake already started: a step-message wake after a cancel, with a message filed after
+// that cancel, can be either one, so it names neither.
+func TestTurnWake_AStepMessageWakeRacingAReDeliveryNamesNothing(t *testing.T) {
+	cases := []struct {
+		name, reason string
+		want         marotte.WakeReason
+	}{
+		{"send-message-wake", "chunk_send_message_wake", marotte.WakeReasonStepMessage},
+		{"notification-rewake", "chunk_notification_rewake", marotte.WakeReasonRewake},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newWakeHarness(t)
+			h.deps.turns.chatTurn(testChat)
+			h.send("notify_info")
+			stopTurn(h.deps, testChat)
+			clearSteering(t, h.tr, "notify-8c9d0e1f-2a3b-4c4d-9e5f-6a7b8c9d0e1f")
+			resumeAfterStop(h.deps)
+			h.send("notify_warning")
+			closeChatTurn(t, h.deps, testChat)
+			h.wake(c.reason)
+
+			w := h.onlyWake()
+			if c.want == marotte.WakeReasonStepMessage {
+				if w.Reason != marotte.WakeReasonStepMessage || len(w.Steers) != 0 {
+					t.Errorf("turn_wake = %+v, want a step-message wake naming no message", w)
+				}
+				return
+			}
+			if w.Reason != marotte.WakeReasonRewake || len(w.Steers) != 1 || w.Steers[0].ID != h.rowID(h.notifyText("notify_info")) {
+				t.Errorf("turn_wake = %+v, want KAS's re-delivery of the cleared info message", w)
+			}
+		})
+	}
+}
+
+func TestTurnWake_KASsGiveUpNoteIsMarkedAsTheNetworkLost(t *testing.T) {
+	cases := []struct {
+		name   string
+		frames []string
+	}{
+		{"after the step's own pause and the run's", []string{"node_paused_retry_wait", "node_paused_gave_up", "run_complete_paused_transient"}},
+		{"after the run's pause alone", []string{"node_paused_retry_wait", "run_complete_paused_transient"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newWakeHarness(t)
+			for _, f := range c.frames {
+				h.send(f)
+			}
+			h.send("notify_network_lost")
+			h.wake("chunk_send_message_wake")
+
+			w := h.onlyWake()
+			if w.Note != marotte.WakeNoteNetworkLost || len(w.Steers) != 1 || w.Steers[0].Text != h.notifyText("notify_network_lost") {
+				t.Errorf("turn_wake = %+v, want the give-up note with KAS's sentence", w)
+			}
+		})
+	}
+	t.Run("only the one note after the give-up", func(t *testing.T) {
+		h := newWakeHarness(t)
+		h.send("node_paused_retry_wait")
+		h.send("node_paused_gave_up")
+		h.send("notify_network_lost")
+		h.wake("chunk_send_message_wake")
+		closeChatTurn(t, h.deps, testChat)
+		h.send("notify_warning")
+		h.wake("chunk_send_message_wake")
+
+		if w := h.wakes(); len(w) != 2 || w[1].Note != "" {
+			t.Errorf("turn_wake entries = %+v, want the step's later question unmarked", w)
+		}
+	})
+	t.Run("a step that started again did not give up", func(t *testing.T) {
+		h := newWakeHarness(t)
+		h.send("node_paused_retry_wait")
+		h.send("node_paused_gave_up")
+		h.send("node_start")
+		h.send("notify_info")
+		h.wake("chunk_send_message_wake")
+
+		if w := h.onlyWake(); w.Note != "" {
+			t.Errorf("turn_wake note = %q, want none: the step was running again", w.Note)
+		}
+	})
+}
+
+// A run can end between a note and the wake it starts.
+func TestTurnWake_ANoteKeepsItsMarkWhenItsRunEndsBeforeTheWake(t *testing.T) {
 	h := newWakeHarness(t)
-	h.deps.turns.chatTurn(testChat)
-	h.send("notify_info")
-	stopTurn(h.deps, testChat)
-	clearSteering(t, h.tr, "notify-70b49ad5-0c2e-4f61-9d7a-3e5b8f1a2c64")
-	resumeAfterStop(h.deps)
+	h.send("node_paused_retry_wait")
+	h.send("notify_network_waiting")
+	h.tr.ForgetRunSteps(wakeRun)
+	h.wake("chunk_send_message_wake")
+
+	if w := h.onlyWake(); w.Note != marotte.WakeNoteNetwork {
+		t.Errorf("turn_wake note = %q, want network", w.Note)
+	}
+}
+
+// A message no wake picked up before a later turn opened (KAS failed to start its wake) is not the next wake's waker.
+func TestTurnWake_AMessageOlderThanThePreviousTurnIsNotTheWaker(t *testing.T) {
+	h := newWakeHarness(t)
 	h.send("notify_warning")
+	h.deps.turns.chatTurn(testChat)
 	closeChatTurn(t, h.deps, testChat)
+	h.send("notify_info")
 	h.wake("chunk_send_message_wake")
 
 	w := h.onlyWake()
-	if w.Reason != marotte.WakeReasonRewake || len(w.Steers) != 1 || w.Steers[0].ID != h.rowID(h.notifyText("notify_info")) {
-		t.Errorf("turn_wake = %+v, want the re-delivery of the cleared info message", w)
+	if len(w.Steers) != 1 || w.Steers[0].ID != h.rowID(h.notifyText("notify_info")) {
+		t.Errorf("turn_wake steers = %+v, want the info message filed since the previous turn opened", w.Steers)
 	}
 }
 

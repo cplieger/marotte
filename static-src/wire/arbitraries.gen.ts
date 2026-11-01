@@ -45,7 +45,7 @@ export const arbRunStepMessageRefusal: fc.Arbitrary<RunStepMessageRefusal> = fc.
 export const arbRunStepMessageVerb: fc.Arbitrary<RunStepMessageVerb> = fc.constantFrom("steer", "answer", "prompt");
 export const arbRunStepTranscriptState: fc.Arbitrary<RunStepTranscriptState> = fc.constantFrom("ready", "gone", "unavailable");
 export const arbSafetyStatus: fc.Arbitrary<SafetyStatus> = fc.constantFrom("idle", "formalizing", "evaluating", "blocked", "error");
-export const arbSegmentKind: fc.Arbitrary<SegmentKind> = fc.constantFrom("content", "reasoning", "tool_title", "tool_disclosed", "tool_diff", "tool_denial", "tool_input", "tool_output", "steer", "prompt", "plan", "attachment", "turn_failure", "entry");
+export const arbSegmentKind: fc.Arbitrary<SegmentKind> = fc.constantFrom("content", "reasoning", "tool_title", "tool_disclosed", "tool_diff", "tool_denial", "tool_input", "tool_output", "steer", "prompt", "plan", "attachment", "turn_failure", "wake", "entry");
 export const arbSettledBy: fc.Arbitrary<SettledBy> = fc.constantFrom("user", "unattended", "moot", "ended");
 export const arbShowRefusalCode: fc.Arbitrary<ShowRefusalCode> = fc.constantFrom("too_large", "binary", "not_utf8");
 export const arbSlashCommandKind: fc.Arbitrary<SlashCommandKind> = fc.constantFrom("steering", "prompt", "goal");
@@ -63,7 +63,7 @@ export const arbTurnOpenSourceName: fc.Arbitrary<TurnOpenSourceName> = fc.consta
 export const arbTurnOutcome: fc.Arbitrary<TurnOutcome> = fc.constantFrom("running", "completed", "cancelled", "interrupted", "failed", "refused", "unknown", "empty");
 export const arbTurnRevertCause: fc.Arbitrary<TurnRevertCause> = fc.constantFrom("rewind");
 export const arbTurnSeverity: fc.Arbitrary<TurnSeverity> = fc.constantFrom("running", "clean", "stopped", "broken");
-export const arbWakeNote: fc.Arbitrary<WakeNote> = fc.constantFrom("network", "repeat_cap");
+export const arbWakeNote: fc.Arbitrary<WakeNote> = fc.constantFrom("network", "network_lost", "repeat_cap");
 export const arbWakeReason: fc.Arbitrary<WakeReason> = fc.constantFrom("step_message", "run_finished", "rewake", "unknown");
 export const arbWhoamiState: fc.Arbitrary<WhoamiState> = fc.constantFrom("signed_in", "signed_out", "unavailable");
 
@@ -2815,7 +2815,6 @@ const arbModel = fc.letrec<{
     {
       id: fc.string(),
       run: fc.string(),
-      run_label: fc.string(),
       step: fc.string(),
       severity: fc.string(),
       text: fc.string(),

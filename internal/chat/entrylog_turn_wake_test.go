@@ -8,12 +8,15 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-const wakeSession = "sess_66362e75-badd-490c-ad48-593859625c29"
+const (
+	wakeSession = "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+	wakeRunID   = "wf_5e1f0c2a9b7d4e36"
+)
 
 func wakeRow(text, severity string) marotte.EntrySteer {
 	return marotte.EntrySteer{
 		Text: text, Origin: marotte.SteerOriginStep, Severity: severity, ToSession: wakeSession,
-		OriginRun: "wf_1a6d245a6e99e18e", Step: "prep/wait-apps", ProducedTs: 1792349041432,
+		OriginRun: wakeRunID, Step: "build/check-links", ProducedTs: 1792349041432,
 	}
 }
 
@@ -22,15 +25,35 @@ func (f *logFixture) wakeTurn() string {
 	return f.openTurn(&TurnSpec{Source: marotte.TurnOpenNameWireTurnStart})
 }
 
+// phases reads the log live, then reopened, then rewritten, calling check after each.
+func (f *logFixture) phases(check func(phase string)) {
+	f.t.Helper()
+	for _, phase := range []string{"live", "reopened", "rewritten"} {
+		switch phase {
+		case "reopened":
+			f.reopen()
+		case "rewritten":
+			all, _, err := f.log.AllWithReverted()
+			if err != nil {
+				f.t.Fatalf("Setup: read for the rewrite: %v", err)
+			}
+			if err := f.log.Rewrite(f.t.Context(), all); err != nil {
+				f.t.Fatalf("Setup: rewrite: %v", err)
+			}
+		}
+		check(phase)
+	}
+}
+
 func TestEntryLog_WakeCausesAreTheRowsWaitingWhenTheWakeTurnOpened(t *testing.T) {
 	f := newLogFixture(t)
-	prev := f.prompt("deploy it")
+	prev := f.prompt("publish the docs")
 	f.append(prev, "", "wfmsg-a", marotte.EntryKindSteer, wakeRow("filed before marotte closed the turn", "warning"))
 	f.append(prev, "", "wfmsg-read", marotte.EntryKindSteer, wakeRow("taken up", "info"))
 	f.append(prev, "", marotte.SteerDeliveredID("wfmsg-read"), marotte.EntryKindSteerDelivered,
 		marotte.EntrySteerDelivered{SteerID: "wfmsg-read", ReadTs: 2})
 	f.closeTurn(prev, marotte.TurnOutcomeCompleted)
-	f.append(prev, "", "wfmsg-b", marotte.EntryKindSteer, wakeRow("wait-apps 9.7 h (cap now 24 h)", "info"))
+	f.append(prev, "", "wfmsg-b", marotte.EntryKindSteer, wakeRow("Link check done: 412 links, none broken.", "info"))
 	if got := f.log.WakeCauses(wakeSession); len(got.Waiting)+len(got.Cleared) != 0 {
 		t.Errorf("with no turn open WakeCauses = %+v, want nothing: no wake to pair", got)
 	}
@@ -53,7 +76,7 @@ func TestEntryLog_WakeCausesNameWhatTheStoppedTurnsCancelCleared(t *testing.T) {
 	stopped := f.prompt("keep going")
 	f.append(stopped, "", "wfmsg-q", marotte.EntryKindSteer, wakeRow("Which branch should I base on?", "warning"))
 	f.append(stopped, "", "cleared-1", marotte.EntryKindSteerCleared, marotte.EntrySteerCleared{
-		Cause: marotte.SteerClearCauseCancel, Session: wakeSession, IDs: []string{"notify-347a6dd1"},
+		Cause: marotte.SteerClearCauseCancel, Session: wakeSession, IDs: []string{"notify-5b7c1d2e"},
 	})
 	f.closeTurn(stopped, marotte.TurnOutcomeCancelled)
 	f.wakeTurn()
@@ -70,27 +93,15 @@ func TestEntryLog_ATurnWakeGivesItsTurnTheWakesRailLine(t *testing.T) {
 	f.append(wake, "", "wake-1", marotte.EntryKindTurnWake, marotte.EntryTurnWake{
 		Reason: marotte.WakeReasonStepMessage,
 		Steers: []marotte.WakeSteer{{
-			ID: "wfmsg-q", Run: "wf_1a6d245a6e99e18e", RunLabel: "turn-wake", Step: "build", Severity: "warning",
+			ID: "wfmsg-q", Run: wakeRunID, Step: "draft", Severity: "warning",
 			Text: "Which branch should I base on?\nmain or dev?",
 		}},
 	})
 	f.append(wake, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "Basing on dev."})
 	f.closeTurn(wake, marotte.TurnOutcomeCompleted)
 
-	const want = "turn-wake \u00b7 build asks you: Which branch should I base on?"
-	for _, phase := range []string{"live", "reopened", "rewritten"} {
-		switch phase {
-		case "reopened":
-			f.reopen()
-		case "rewritten":
-			all, _, err := f.log.AllWithReverted()
-			if err != nil {
-				t.Fatalf("Setup: read for the rewrite: %v", err)
-			}
-			if err := f.log.Rewrite(t.Context(), all); err != nil {
-				t.Fatalf("Setup: rewrite: %v", err)
-			}
-		}
+	const want = "wf_5e1f0c2a \u00b7 draft asks you: Which branch should I base on?"
+	f.phases(func(phase string) {
 		rows := f.log.RailRows()
 		if len(rows) != 1 {
 			t.Fatalf("%s: RailRows() = %+v, want the wake turn's row", phase, rows)
@@ -98,7 +109,7 @@ func TestEntryLog_ATurnWakeGivesItsTurnTheWakesRailLine(t *testing.T) {
 		if rows[0].FirstLine != want || !rows[0].AgentInitiated {
 			t.Errorf("%s: row = %+v, want first_line %q on an agent-initiated row", phase, rows[0], want)
 		}
-	}
+	})
 }
 
 func TestEntryLog_AWakeThatNamesNothingLeavesTheRailLineEmpty(t *testing.T) {
@@ -117,19 +128,65 @@ func TestEntryLog_AWakeThatNamesNothingLeavesTheRailLineEmpty(t *testing.T) {
 	}
 }
 
-func TestRenderChatMarkdown_AWakeIsTheTurnsTriggerAndItsMessageRendersOnce(t *testing.T) {
-	const question = "Should I apply D22 (one bullet in crew.md), or leave it as a follow-up?"
+// A wake turn that drew nothing, then a message filed after its close: the message is all that turn draws, and the
+// next wake draws it as its trigger, so the first turn has nothing left to show.
+func TestEntryLog_ATurnWhoseOnlyRowAWakeDrawsHoldsNoRailSlot(t *testing.T) {
+	for _, reason := range []marotte.WakeReason{marotte.WakeReasonStepMessage, marotte.WakeReasonRewake} {
+		t.Run(string(reason), func(t *testing.T) {
+			f := newLogFixture(t)
+			empty := f.wakeTurn()
+			f.closeTurn(empty, marotte.TurnOutcomeCompleted)
+			f.append(empty, "", "wfmsg-q", marotte.EntryKindSteer, wakeRow("Should I rewrite the links?", "warning"))
+			if got := railIDs(f.log); !slices.Equal(got, []string{empty}) {
+				t.Fatalf("Setup: RailRows() = %v, want the row's turn drawn by the row", got)
+			}
+			wake := f.wakeTurn()
+			f.append(wake, "", "wake-1", marotte.EntryKindTurnWake, marotte.EntryTurnWake{
+				Reason: reason,
+				Steers: []marotte.WakeSteer{{ID: "wfmsg-q", Run: wakeRunID, Step: "draft", Severity: "warning", Text: "Should I rewrite the links?"}},
+			})
+			f.append(wake, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "Rewriting them."})
+			f.closeTurn(wake, marotte.TurnOutcomeCompleted)
+
+			f.phases(func(phase string) {
+				if got := railIDs(f.log); !slices.Equal(got, []string{wake}) {
+					t.Errorf("%s: RailRows() = %v, want only the wake turn: the first turn no longer draws anything", phase, got)
+				}
+			})
+		})
+	}
+}
+
+func TestEntryLog_ATurnKeepsItsRailSlotWhenAWakeTakesOneOfItsRows(t *testing.T) {
 	f := newLogFixture(t)
-	prev := f.prompt("run the release-impact leg")
+	prev := f.wakeTurn()
+	f.append(prev, "", "say-0", marotte.EntryKindText, marotte.EntryText{Text: "Launched publish-docs."})
+	f.closeTurn(prev, marotte.TurnOutcomeCompleted)
+	f.append(prev, "", "wfmsg-q", marotte.EntryKindSteer, wakeRow("Should I rewrite the links?", "warning"))
+	wake := f.wakeTurn()
+	f.append(wake, "", "wake-1", marotte.EntryKindTurnWake, marotte.EntryTurnWake{
+		Reason: marotte.WakeReasonStepMessage,
+		Steers: []marotte.WakeSteer{{ID: "wfmsg-q", Run: wakeRunID, Step: "draft", Severity: "warning", Text: "Should I rewrite the links?"}},
+	})
+
+	if got := railIDs(f.log); !slices.Equal(got, []string{prev}) {
+		t.Errorf("RailRows() = %v, want the first turn, still drawn by its reply (the open wake turn draws nothing yet)", got)
+	}
+}
+
+func TestRenderChatMarkdown_AWakeIsTheTurnsTriggerAndItsMessageRendersOnce(t *testing.T) {
+	const question = "Two pages still link to the old domain. Should I rewrite those links now?"
+	f := newLogFixture(t)
+	prev := f.prompt("publish the docs")
 	f.append(prev, "", "say-0", marotte.EntryKindText, marotte.EntryText{Text: "Launched."})
 	f.closeTurn(prev, marotte.TurnOutcomeCompleted)
 	f.append(prev, "", "wfmsg-q", marotte.EntryKindSteer, wakeRow(question, "warning"))
 	wake := f.wakeTurn()
 	f.append(wake, "", "wake-1", marotte.EntryKindTurnWake, marotte.EntryTurnWake{
 		Reason: marotte.WakeReasonStepMessage,
-		Steers: []marotte.WakeSteer{{ID: "wfmsg-q", Run: "wf_1a6d245a6e99e18e", RunLabel: "release-impact", Step: "apply", Severity: "warning", Text: question}},
+		Steers: []marotte.WakeSteer{{ID: "wfmsg-q", Run: wakeRunID, Step: "draft", Severity: "warning", Text: question}},
 	})
-	f.append(wake, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "Leave it as a follow-up."})
+	f.append(wake, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "Rewrite them now."})
 	f.closeTurn(wake, marotte.TurnOutcomeCompleted)
 	entries, err := f.log.All()
 	if err != nil {
@@ -140,7 +197,34 @@ func TestRenderChatMarkdown_AWakeIsTheTurnsTriggerAndItsMessageRendersOnce(t *te
 	if n := strings.Count(md, question); n != 1 {
 		t.Errorf("the question renders %d times, want once, under the wake:\n%s", n, md)
 	}
-	if !strings.Contains(md, "**release-impact \u00b7 apply asks you**\n\n"+question) {
+	if !strings.Contains(md, "**wf_5e1f0c2a \u00b7 draft asks you**\n\n"+question) {
 		t.Errorf("the wake turn does not open with its label and the question:\n%s", md)
+	}
+}
+
+func TestRenderChatMarkdown_AReDeliveryRendersEachMessageOnceUnderTheWake(t *testing.T) {
+	const question = "Which branch should I base the release notes on?"
+	f := newLogFixture(t)
+	stopped := f.prompt("keep going")
+	f.append(stopped, "", "wfmsg-q", marotte.EntryKindSteer, wakeRow(question, "warning"))
+	f.append(stopped, "", "cleared-1", marotte.EntryKindSteerCleared, marotte.EntrySteerCleared{
+		Cause: marotte.SteerClearCauseCancel, Session: wakeSession, IDs: []string{"notify-5b7c1d2e"},
+	})
+	f.closeTurn(stopped, marotte.TurnOutcomeCancelled)
+	wake := f.wakeTurn()
+	f.append(wake, "", "wake-1", marotte.EntryKindTurnWake, marotte.EntryTurnWake{
+		Reason: marotte.WakeReasonRewake,
+		Steers: []marotte.WakeSteer{{ID: "wfmsg-q", Run: wakeRunID, Step: "draft", Severity: "warning", Text: question}},
+	})
+	f.append(wake, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "Basing on dev."})
+	f.closeTurn(wake, marotte.TurnOutcomeCompleted)
+	entries, err := f.log.All()
+	if err != nil {
+		t.Fatalf("Setup: read the log: %v", err)
+	}
+
+	md := renderChatMarkdown(&marotte.Chat{ID: "c-abcdef01", Name: "wake"}, entries)
+	if n := strings.Count(md, question); n != 1 {
+		t.Errorf("the question renders %d times, want once, under the re-delivery:\n%s", n, md)
 	}
 }

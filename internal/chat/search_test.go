@@ -21,7 +21,7 @@ var segmentKinds = []SegmentKind{
 	SegmentContent, SegmentReasoning, SegmentToolTitle, SegmentToolDisclosed,
 	SegmentToolDiff, SegmentToolDenial, SegmentToolInput, SegmentToolOutput,
 	SegmentSteer, SegmentPrompt, SegmentPlan, SegmentAttachment, SegmentTurnFailure,
-	SegmentEntry,
+	SegmentWake, SegmentEntry,
 }
 
 func openTurn(id string, n uint64, prompt *marotte.EntryPrompt) *turnFixture {

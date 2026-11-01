@@ -72,7 +72,7 @@ export type RunStepTranscriptState = "ready" | "gone" | "unavailable";
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
-export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_disclosed" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "entry";
+export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_disclosed" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "wake" | "entry";
 
 export type SettledBy = "user" | "unattended" | "moot" | "ended";
 
@@ -108,7 +108,7 @@ export type TurnRevertCause = "rewind";
 
 export type TurnSeverity = "running" | "clean" | "stopped" | "broken";
 
-export type WakeNote = "network" | "repeat_cap";
+export type WakeNote = "network" | "network_lost" | "repeat_cap";
 
 export type WakeReason = "step_message" | "run_finished" | "rewake" | "unknown";
 
@@ -1321,8 +1321,8 @@ export interface EntryTurnRevert {
  * EntryTurnWake is the turn_wake payload: what started an agent-initiated turn, filed once at
  * its first agentInitiated frame. It renders nothing at its position; the turn header folds it.
  * Steers is the waking message for a step message and the re-delivered rows for a rewake; Run,
- * RunLabel, RunStatus, Initiator and StopReason describe a finished run; Note, Loop and
- * MaxIterations qualify a step message.
+ * RunLabel (KAS's runLabel, else workflowName), RunStatus, Initiator and StopReason describe a
+ * finished run; Note, Loop and MaxIterations qualify a step message.
  */
 export interface EntryTurnWake {
   reason: WakeReason;
@@ -4215,12 +4215,12 @@ export interface UserInputSubOption {
 
 /**
  * WakeSteer is a workflow message a wake names, copied from its row (ID) when the wake was
- * recorded, so the header and the rail read the wake alone. RunLabel is the run's name then.
+ * recorded, so the header and the rail read the wake alone. It carries no run name: the server
+ * knows none for an agent-launched run, and the client names the run from its run store.
  */
 export interface WakeSteer {
   id: string;
   run?: string;
-  run_label?: string;
   step?: string;
   severity?: string;
   text: string;

@@ -11,18 +11,18 @@ import (
 // keeps the record's, in its place at the head of the wake turn.
 func TestMergeEntries_AWakeTurnKeepsItsTurnWake(t *testing.T) {
 	wake := marotte.EntryTurnWake{
-		Reason: marotte.WakeReasonRunFinished, Run: "wf_28486344b9bdedb0", RunLabel: "release-impact",
+		Reason: marotte.WakeReasonRunFinished, Run: "wf_7c3a9e1f0b2d4a58", RunLabel: "nightly-report",
 		RunStatus: marotte.RunStatusCompleted,
 	}
 	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		entryRow{kind: marotte.EntryKindTurnWake, id: "T1:e1", payload: wake},
-		textRow("S", "", "The release-impact run finished; reading its results."),
+		textRow("S", "", "The nightly report run finished; reading its results."),
 		placeholderClose("T1:e3"),
 	)}
 	projected := []translate.ProjectedTurn{projTurn(t, "P1",
 		openRow("P1", 0, nil),
-		textRow("S", "", "The release-impact run finished; reading its results. All green."),
+		textRow("S", "", "The nightly report run finished; reading its results. All green."),
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 

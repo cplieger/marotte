@@ -139,7 +139,7 @@ func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(conte
 		node := cmp.Or(p.NodeID, p.LoopID)
 		switch kind {
 		case marotte.RunProgressNodeStart:
-			t.wakeMem.retrying(p.WorkflowID, node, false)
+			t.wakeMem.nodeRunning(p.WorkflowID, node)
 			path := nodeKey(p.NodePath, node)
 			// The ONE frame announcing a step's session id; recorded before the broadcast so a racing
 			// permission ask still classifies.
@@ -149,11 +149,13 @@ func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(conte
 			// The run turn's opening bracket; a path already open is a no-op on the log.
 			t.runs.RunNodeStart(ctx, &RunStep{RunID: p.WorkflowID, NodePath: path, SessionID: p.SessionID, Path: nodePathOf(p.NodePath, node)}, chatID)
 		case marotte.RunProgressNodeComplete:
-			t.wakeMem.retrying(p.WorkflowID, node, false)
+			t.wakeMem.nodeRunning(p.WorkflowID, node)
 			t.runs.RunNodeComplete(ctx, p.WorkflowID, nodePathOf(p.NodePath, node), p.Status, p.Reason)
 		case marotte.RunProgressNodePaused:
-			t.wakeMem.retrying(p.WorkflowID, node, p.retryWait())
-			if !p.retryWait() {
+			if p.retryWait() {
+				t.wakeMem.retryWaited(p.WorkflowID, node)
+			} else {
+				t.wakeMem.nodePaused(p.WorkflowID, node)
 				t.runs.RunNodePaused(ctx, p.WorkflowID, nodePathOf(p.NodePath, node))
 			}
 		case marotte.RunProgressStepsQueued:

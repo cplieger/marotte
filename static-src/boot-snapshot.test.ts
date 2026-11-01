@@ -37,7 +37,7 @@ import {
   tabStatusFor,
   transcriptStale,
 } from "./store.js";
-import { isWakingRow } from "./turn-wake.js";
+import { isWakingRow } from "./waking-rows.js";
 
 const DB_NAME = "marotte-boot";
 const STORE_NAME = "snapshot";

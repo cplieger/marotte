@@ -107,9 +107,8 @@ describe("resident wins for anything it can answer", () => {
             steers: [
               {
                 id: "wfmsg-q",
-                run: "wf_1a6d245a6e99e18e",
-                run_label: "turn-wake",
-                step: "build",
+                run: "wf_5e1f0c2a9b7d4e36",
+                step: "draft",
                 severity: "warning",
                 text: "Which branch should I base on?\nmain or dev?",
               },
@@ -118,13 +117,25 @@ describe("resident wins for anything it can answer", () => {
         }),
       ],
     });
-    const [row] = mergeTurnSets([woken], []);
-    const line = "turn-wake \u00b7 build asks you: Which branch should I base on?";
+    const [row] = mergeTurnSets([woken], [], new Set(), (id) =>
+      id === "wf_5e1f0c2a9b7d4e36" ? "publish-docs" : id,
+    );
+    const line = "publish-docs \u00b7 draft asks you: Which branch should I base on?";
     expect(row?.first_line).toBe(line);
     expect(row?.agent_initiated).toBe(true);
     const label = markerLabel(row!, { pending: false, hit: false });
     expect(label.preview).toBe(`#4 \u00b7 Completed\n${line}`);
     expect(label.ariaLabel).toBe(`Turn 4, agent-initiated: ${line}`);
+  });
+
+  it("drops the index's row for a held turn that no longer draws, and keeps one the window does not hold", () => {
+    const index = [
+      indexRow(3, { id: "t-3" }),
+      indexRow(4, { id: "t-4" }),
+      indexRow(5, { id: "t-5" }),
+    ];
+    const turns = mergeTurnSets([residentTurn(5)], index, new Set(["t-4", "t-5"]));
+    expect(turns.map((t) => t.n)).toEqual([3, 5]);
   });
 
   it("takes the resident id, ts and label over the index's row for the same n", () => {

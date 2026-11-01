@@ -6,6 +6,7 @@
 import type { Turn } from "./turns.js";
 import { payloadOf } from "./turns.js";
 import { wakeText } from "./turn-wake.js";
+import { wakeRunName } from "./workflow-run-label.js";
 import { entryRenders, turnFolds } from "./block-window.js";
 import { MessageRun } from "./entry-ids.js";
 import { ICON_COPY, ICON_COPY_MD, ICON_LINK } from "./icons.js";
@@ -217,14 +218,14 @@ export function turnLink(chatID: string, n: number): string {
  *  turn names neither). */
 function turnCopyText(card: HTMLElement, t: Turn): string {
   const reply = turnPlainText(card, t);
-  const prompt = (t.trigger?.text ?? wakeText(t)).trim();
+  const prompt = (t.trigger?.text ?? wakeText(t, wakeRunName)).trim();
   return prompt === "" ? reply : `${prompt}\n\n${reply}`;
 }
 
-/** "Copy as markdown": the prompt as a blockquote, then the reply's markdown. */
+/** "Copy as markdown": the prompt or what woke the turn as a blockquote, then the reply's markdown. */
 function turnCopyMarkdown(t: Turn): string {
   const reply = turnMarkdown(t);
-  const prompt = t.trigger?.text.trim() ?? "";
+  const prompt = (t.trigger?.text ?? wakeText(t, wakeRunName)).trim();
   if (prompt === "") {
     return reply;
   }

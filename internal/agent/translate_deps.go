@@ -23,11 +23,6 @@ func (rs *Runs) RunLabel(workflowID string) string {
 	return launchOrigin{origin: l.Origin}.runLabel(l.Recipe)
 }
 
-// RunName is the name the run's tab shows (tabLabel).
-func (rs *Runs) RunName(workflowID string) string {
-	return rs.tabLabel(workflowID)
-}
-
 // translateRoles is the translate wiring, named so it can be asserted. Every field is read at construction,
 // so requireWired names a missing owner instead of a first-frame panic.
 func (rt *Runtime) translateRoles() *translate.Roles {

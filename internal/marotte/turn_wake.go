@@ -29,19 +29,21 @@ const (
 type WakeNote string
 
 const (
-	// WakeNoteNetwork is KAS's note that a step is retrying through connection errors, or gave up.
+	// WakeNoteNetwork is KAS's note that a step is still retrying through connection errors.
 	WakeNoteNetwork WakeNote = "network"
+	// WakeNoteNetworkLost is KAS's note that a step stopped retrying them and the run paused.
+	WakeNoteNetworkLost WakeNote = "network_lost"
 	// WakeNoteRepeatCap is KAS's note that a repeat paused at its iteration limit; Loop and
 	// MaxIterations come from the run's typed pause, not the note's sentence.
 	WakeNoteRepeatCap WakeNote = "repeat_cap"
 )
 
 // WakeSteer is a workflow message a wake names, copied from its row (ID) when the wake was
-// recorded, so the header and the rail read the wake alone. RunLabel is the run's name then.
+// recorded, so the header and the rail read the wake alone. It carries no run name: the server
+// knows none for an agent-launched run, and the client names the run from its run store.
 type WakeSteer struct {
 	ID       string `json:"id"`
 	Run      string `json:"run,omitempty"`
-	RunLabel string `json:"run_label,omitempty"`
 	Step     string `json:"step,omitempty"`
 	Severity string `json:"severity,omitempty"`
 	Text     string `json:"text"`
@@ -50,8 +52,8 @@ type WakeSteer struct {
 // EntryTurnWake is the turn_wake payload: what started an agent-initiated turn, filed once at
 // its first agentInitiated frame. It renders nothing at its position; the turn header folds it.
 // Steers is the waking message for a step message and the re-delivered rows for a rewake; Run,
-// RunLabel, RunStatus, Initiator and StopReason describe a finished run; Note, Loop and
-// MaxIterations qualify a step message.
+// RunLabel (KAS's runLabel, else workflowName), RunStatus, Initiator and StopReason describe a
+// finished run; Note, Loop and MaxIterations qualify a step message.
 type EntryTurnWake struct {
 	Reason        WakeReason  `json:"reason"`
 	Note          WakeNote    `json:"note,omitempty"`
@@ -69,12 +71,15 @@ type EntryTurnWake struct {
 const WakeInitiatorUser = "user"
 
 // WakeCauses is what a chat's log holds that can have started its open turn, for a session:
-// Waiting is the unsettled workflow messages sent to it before the turn opened, oldest first;
-// Cleared is the rows the newest reader's cancel since the previous turn opened cleared unread,
-// when that cancel named a workflow message (KAS re-delivers those in the next turn).
+// Waiting is the unsettled workflow messages sent to it since the previous turn opened and before
+// this one did, oldest first; Cleared is the rows the newest reader's cancel since the previous
+// turn opened cleared unread, when that cancel named a workflow message (KAS re-delivers those in
+// the next turn); Racing is the Waiting rows filed after that cancel, which can have woken the
+// chat before the re-delivery did.
 type WakeCauses struct {
 	Waiting []WorkflowMessage
 	Cleared []WorkflowMessage
+	Racing  []WorkflowMessage
 }
 
 // PositionedFact is a workflow-message fact and its position in its log, file order.
@@ -86,35 +91,38 @@ type PositionedFact struct {
 // WakeCausesOf reads WakeCauses for session from facts in file order, given where the open turn
 // opened and where the turn before it opened (-1 for none). A row filed inside that previous turn
 // still counts as waiting: KAS can end its turn and wake the chat before that turn's close lands.
+// A row filed earlier is not: it had a turn to wake or be read in, and one left unsettled (a wake
+// KAS failed to start) must not name every later wake.
 func WakeCausesOf(facts []PositionedFact, session string, opened, prevOpened int64) WakeCauses {
 	var out WakeCauses
 	if session == "" {
 		return out
 	}
-	before := map[string]struct{}{}
+	filedAt := map[string]int{}
 	cancel := -1
 	ordered := make([]WorkflowMessageFact, 0, len(facts))
 	for i := range facts {
 		f := &facts[i]
 		ordered = append(ordered, f.Fact)
-		if f.At >= opened {
+		if f.At >= opened || f.At < prevOpened {
 			continue
 		}
 		if m, ok := f.Fact.Row(); ok && m.Steer.ToSession == session {
-			before[m.ID] = struct{}{}
+			filedAt[m.ID] = i
 		}
-		if f.At > prevOpened && rewakingCancel(&f.Fact, session) {
+		if rewakingCancel(&f.Fact, session) {
 			cancel = i
 		}
 	}
 	all := FoldWorkflowMessages(ordered)
 	out.Waiting = unsettledWhere(&all, func(m *WorkflowMessage) bool {
-		_, ok := before[m.ID]
+		_, ok := filedAt[m.ID]
 		return ok
 	})
 	if cancel >= 0 {
 		upTo := FoldWorkflowMessages(ordered[:cancel])
 		out.Cleared = unsettledWhere(&upTo, func(m *WorkflowMessage) bool { return m.Steer.ToSession == session })
+		out.Racing = slices.DeleteFunc(slices.Clone(out.Waiting), func(m WorkflowMessage) bool { return filedAt[m.ID] < cancel })
 	}
 	return out
 }
@@ -140,7 +148,7 @@ func unsettledWhere(w *WorkflowMessageFold, keep func(*WorkflowMessage) bool) []
 // shortRunIDLength is `wf_` plus eight characters, the client's runLabelText fallback.
 const shortRunIDLength = 11
 
-// WakeRunName is what a wake calls a run: its recorded label, else the id's short form.
+// WakeRunName is what a wake calls a run: label when known, else the id's short form.
 func WakeRunName(run, label string) string {
 	if label != "" {
 		return label
@@ -154,10 +162,53 @@ func WakeRunName(run, label string) string {
 // WakeFallbackLine is the line of a wake that names nothing marotte can show.
 const WakeFallbackLine = "Agent-initiated turn"
 
+// wakeLabel is a wake's label split where the client draws the run's name as a button: name
+// (empty when the label opens with no run) then rest.
+type wakeLabel struct {
+	name string
+	rest string
+}
+
 // WakeLine is the wake's one-line label and the message under it ("" when it has none). The
-// client's static-src/turn-wake.ts wakeText is its twin; internal/chat/testdata/wake_line.json
+// client's static-src/turn-wake.ts wakeLine is its twin; internal/chat/testdata/wake_line.json
 // pins both.
 func WakeLine(w *EntryTurnWake) (label, body string) {
+	l, body := wakeLineOf(w)
+	return l.name + l.rest, body
+}
+
+// WakeDrawnSteers is the workflow-message rows a wake draws in its header, which draw nothing where they
+// were filed: a step message's waker and a re-delivery's rows.
+func WakeDrawnSteers(w *EntryTurnWake) []string {
+	if w.Reason != WakeReasonStepMessage && w.Reason != WakeReasonRewake {
+		return nil
+	}
+	out := make([]string, len(w.Steers))
+	for i := range w.Steers {
+		out[i] = w.Steers[i].ID
+	}
+	return out
+}
+
+// WakeSearchTexts is what find-in-chat matches in a wake's header: the label after the run's name,
+// which the client draws from its run store, then each message; nil for the fallback line.
+func WakeSearchTexts(w *EntryTurnWake) []string {
+	l, _ := wakeLineOf(w)
+	if l.name == "" && l.rest == WakeFallbackLine {
+		return nil
+	}
+	out := []string{strings.TrimPrefix(strings.TrimPrefix(l.rest, ":"), " ")}
+	if w.Reason == WakeReasonStepMessage || w.Reason == WakeReasonRewake {
+		for i := range w.Steers {
+			out = append(out, w.Steers[i].Text)
+		}
+	}
+	return out
+}
+
+var fallbackLabel = wakeLabel{rest: WakeFallbackLine}
+
+func wakeLineOf(w *EntryTurnWake) (label wakeLabel, body string) {
 	switch w.Reason {
 	case WakeReasonStepMessage:
 		return stepWakeLine(w)
@@ -167,73 +218,75 @@ func WakeLine(w *EntryTurnWake) (label, body string) {
 		return rewakeLine(w.Steers)
 	case WakeReasonUnknown:
 	}
-	return WakeFallbackLine, ""
+	return fallbackLabel, ""
 }
 
-func stepWakeLine(w *EntryTurnWake) (label, body string) {
+func stepWakeLine(w *EntryTurnWake) (label wakeLabel, body string) {
 	if len(w.Steers) == 0 {
-		return WakeFallbackLine, ""
+		return fallbackLabel, ""
 	}
 	s := &w.Steers[0]
-	run := WakeRunName(s.Run, s.RunLabel)
+	run := WakeRunName(s.Run, "")
 	if w.Note == WakeNoteRepeatCap && w.Loop != "" && w.MaxIterations > 0 {
-		return run + " paused: " + w.Loop + " reached its round limit (" + strconv.Itoa(w.MaxIterations) + ")", ""
+		return wakeLabel{run, " paused: " + w.Loop + " reached its round limit (" + strconv.Itoa(w.MaxIterations) + ")"}, ""
 	}
-	from := run + " \u00b7 " + s.Step
+	from := " \u00b7 " + s.Step
 	switch {
 	case w.Note == WakeNoteNetwork:
-		return from + " is waiting for the network", s.Text
+		return wakeLabel{run, from + " is waiting for the network"}, s.Text
+	case w.Note == WakeNoteNetworkLost:
+		return wakeLabel{run, from + " lost the network"}, s.Text
 	case s.Severity == "warning":
-		return from + " asks you", s.Text
+		return wakeLabel{run, from + " asks you"}, s.Text
 	case s.Severity == "error":
-		return from + " reports an error", s.Text
+		return wakeLabel{run, from + " reports an error"}, s.Text
 	}
-	return from + " to you", s.Text
+	return wakeLabel{run, from + " to you"}, s.Text
 }
 
-func runFinishedLine(w *EntryTurnWake) string {
+func runFinishedLine(w *EntryTurnWake) wakeLabel {
 	if w.Run == "" {
-		return WakeFallbackLine
+		return fallbackLabel
 	}
 	run := WakeRunName(w.Run, w.RunLabel)
 	byUser := w.Initiator == WakeInitiatorUser
-	var line string
+	var rest string
 	switch w.RunStatus {
 	case RunStatusCompleted:
 		if byUser {
-			return run + " marked complete by you"
+			return wakeLabel{run, " marked complete by you"}
 		}
-		line = run + " completed"
+		rest = " completed"
 	case RunStatusFailed:
-		line = run + " failed"
+		rest = " failed"
 	case RunStatusAborted, RunStatusCancelled:
-		line = run + " stopped"
+		rest = " stopped"
 		if byUser {
-			line += " by you"
+			rest += " by you"
 		}
 	case RunStatusRunning, RunStatusPaused:
-		return WakeFallbackLine
+		return fallbackLabel
 	default:
-		return WakeFallbackLine
+		return fallbackLabel
 	}
 	if w.StopReason != "" {
-		line += ": " + w.StopReason
+		rest += ": " + w.StopReason
 	}
-	return line
+	return wakeLabel{run, rest}
 }
 
-func rewakeLine(steers []WakeSteer) (label, body string) {
+func rewakeLine(steers []WakeSteer) (label wakeLabel, body string) {
 	if len(steers) == 0 {
-		return WakeFallbackLine, ""
+		return fallbackLabel, ""
 	}
-	label = "Resumed with 1 workflow message you stopped before it was read"
+	rest := "Resumed with 1 workflow message you stopped before it was read"
 	if len(steers) > 1 {
-		label = "Resumed with " + strconv.Itoa(len(steers)) + " workflow messages you stopped before they were read"
+		rest = "Resumed with " + strconv.Itoa(len(steers)) + " workflow messages you stopped before they were read"
 	}
 	lines := make([]string, 0, len(steers))
 	for i := range steers {
 		s := &steers[i]
-		lines = append(lines, WakeRunName(s.Run, s.RunLabel)+" \u00b7 "+s.Step+": "+s.Text)
+		lines = append(lines, WakeRunName(s.Run, "")+" \u00b7 "+s.Step+": "+s.Text)
 	}
-	return label, strings.Join(lines, "\n")
+	return wakeLabel{rest: rest}, strings.Join(lines, "\n")
 }

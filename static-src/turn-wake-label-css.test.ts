@@ -1,6 +1,6 @@
 // A woken turn's label stays one line of text under a finger: the run's name is a target inside that
 // sentence, so the coarse hit floor does not make the line 44px tall, and the name ellipsizes before
-// the step and the verb do.
+// the step and the verb do. A re-delivery's run names, inline in its text, keep their lines too.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -39,7 +39,7 @@ function mountLabel(width: number, w: EntryTurnWake): HTMLElement {
     ts: 0,
     request: undefined,
     attachments: [],
-    wake: wakeLine(w),
+    wake: wakeLine(w, () => "publish-docs-release-notes-and-changelog"),
     onOpenRun: () => undefined,
   });
   host.appendChild(header);
@@ -54,12 +54,11 @@ const STEP: EntryTurnWake = {
   reason: "step_message",
   steers: [
     {
-      id: "wfmsg-01a12d6b",
-      run: "wf_d73e51b5c94bdb82",
-      run_label: "leftovers-resume-review-census",
-      step: "job1-aggregate",
+      id: "wfmsg-3f2a",
+      run: "wf_5e1f0c2a9b7d4e36",
+      step: "check-links",
       severity: "info",
-      text: "CHANGES_REQUESTED (gate: skills-dispatch-gate.json).",
+      text: "Link check done: 412 links, none broken.",
     },
   ],
 };
@@ -88,13 +87,30 @@ describe("a woken turn's label under a finger", () => {
     const line = mountLabel(300, {
       reason: "rewake",
       steers: [
-        { id: "a", run: "wf_d73e51b5c94bdb82", step: "job1-aggregate", text: "Gate APPROVED." },
-        { id: "b", run: "wf_1729f9b5688ec7bf", step: "ratify", text: "Please confirm." },
+        { id: "a", run: "wf_5e1f0c2a9b7d4e36", step: "check-links", text: "Link check done." },
+        { id: "b", run: "wf_7c3a9e1f0b2d4a58", step: "collect", text: "Please confirm." },
       ],
     });
     const rest = line.querySelector<HTMLElement>(".turn-wake-rest")!;
 
     expect(rest.scrollWidth).toBeGreaterThan(rest.clientWidth);
     expect(rest.getBoundingClientRect().right).toBe(line.getBoundingClientRect().right);
+  });
+});
+
+describe("a re-delivery's run names under a finger", () => {
+  it("keep each message to its own text lines, the coarse floor not raising them", () => {
+    const line = mountLabel(600, {
+      reason: "rewake",
+      steers: [
+        { id: "a", run: "wf_5e1f0c2a9b7d4e36", step: "draft", text: "Which branch?" },
+        { id: "b", run: "wf_7c3a9e1f0b2d4a58", step: "collect", text: "Done." },
+      ],
+    });
+    const text = line.parentElement!.querySelector<HTMLElement>(".turn-req-text")!;
+    const lh = parseFloat(getComputedStyle(text).lineHeight);
+
+    expect(text.querySelectorAll("button.turn-wake-row-run")).toHaveLength(2);
+    expect(text.getBoundingClientRect().height).toBe(2 * lh);
   });
 });

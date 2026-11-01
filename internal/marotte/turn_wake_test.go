@@ -146,3 +146,55 @@ func TestWakeCausesOf_OnlyACancelNamingAWorkflowMessageIsARewake(t *testing.T) {
 		})
 	}
 }
+
+func TestWakeCausesOf_ARowLeftUnreadBeforeThePreviousTurnIsNotWaiting(t *testing.T) {
+	l := &wakeLog{t: t}
+	l.row("wfmsg-stale", wakeChat, "warning", "its wake never started")
+	prev := l.here()
+	l.row("wfmsg-a", wakeChat, "info", "the waker")
+
+	got := WakeCausesOf(l.facts, wakeChat, l.here(), prev)
+	if !sameIDs(got.Waiting, "wfmsg-a") {
+		t.Errorf("Waiting = %v, want only the row filed since the previous turn opened", ids(got.Waiting))
+	}
+}
+
+func TestWakeCausesOf_RacingIsWhatWaitsFiledAfterTheRewakingCancel(t *testing.T) {
+	l := &wakeLog{t: t}
+	prev := l.here()
+	l.row("wfmsg-before", wakeChat, "success", "a result the cancel cleared")
+	l.clear(SteerClearCauseCancel, "notify-before")
+	l.row("wfmsg-after", wakeChat, "warning", "a question filed after the cancel")
+
+	got := WakeCausesOf(l.facts, wakeChat, l.here(), prev)
+	if !sameIDs(got.Cleared, "wfmsg-before") {
+		t.Errorf("Cleared = %v, want the row the cancel cleared", ids(got.Cleared))
+	}
+	if !sameIDs(got.Racing, "wfmsg-after") {
+		t.Errorf("Racing = %v, want the question filed after the cancel", ids(got.Racing))
+	}
+	if none := WakeCausesOf(l.facts[:2], wakeChat, 2, prev); len(none.Racing) != 0 {
+		t.Errorf("with nothing filed after the cancel Racing = %v, want none", ids(none.Racing))
+	}
+}
+
+func TestWakeDrawnSteers_AreAStepMessagesWakerAndAReDeliverysRows(t *testing.T) {
+	steers := []WakeSteer{{ID: "wfmsg-a"}, {ID: "wfmsg-b"}}
+	cases := []struct {
+		reason WakeReason
+		want   []string
+	}{
+		{WakeReasonStepMessage, []string{"wfmsg-a", "wfmsg-b"}},
+		{WakeReasonRewake, []string{"wfmsg-a", "wfmsg-b"}},
+		{WakeReasonRunFinished, nil},
+		{WakeReasonUnknown, nil},
+	}
+	for _, c := range cases {
+		t.Run(string(c.reason), func(t *testing.T) {
+			got := WakeDrawnSteers(&EntryTurnWake{Reason: c.reason, Steers: steers})
+			if len(got) != len(c.want) || (len(got) > 0 && (got[0] != c.want[0] || got[1] != c.want[1])) {
+				t.Errorf("WakeDrawnSteers = %v, want %v", got, c.want)
+			}
+		})
+	}
+}

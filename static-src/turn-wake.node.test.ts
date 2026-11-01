@@ -4,8 +4,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { makeEntry, makeTurn } from "./__test-helpers__/model.js";
-import { isWakingRow, markWakingRows, turnWakeOf, wakeLine, wakeText } from "./turn-wake.js";
+import { markWakingRows, turnWakeOf, wakeLine, wakeText } from "./turn-wake.js";
 import type { TurnState } from "./types.js";
+import { isWakingRow } from "./waking-rows.js";
 import type { Entry, EntryTurnWake } from "./wire/types.gen.js";
 
 const FIXTURE_PATH = "../internal/chat/testdata/wake_line.json";
@@ -15,6 +16,9 @@ interface WakeCase {
   wake: EntryTurnWake;
   label: string;
   body: string;
+  run?: string;
+  rest?: string;
+  rows?: { run: string; rest: string; text: string }[];
 }
 
 function loadCases(): WakeCase[] {
@@ -37,35 +41,79 @@ describe("the wake wording shared with the Go implementation", () => {
       expect(line.label).toBe(c.label);
       expect(line.body).toBe(c.body);
       expect(line.fallback).toBe(c.label === "Agent-initiated turn");
+      if (c.run !== undefined) {
+        expect(line.run?.id).toBe(c.run);
+      }
+      if (c.rest !== undefined) {
+        expect(line.rest).toBe(c.rest);
+      }
+      if (c.rows !== undefined) {
+        expect(line.rows?.map((r) => ({ run: r.run.id, rest: r.rest, text: r.text }))).toEqual(
+          c.rows,
+        );
+      }
     });
   }
 });
+
+const RUN = "wf_5e1f0c2a9b7d4e36";
 
 const ASK: EntryTurnWake = {
   reason: "step_message",
   steers: [
     {
-      id: "wfmsg-01a14782-572f-722a-b51c-a6ce3e86aaba",
-      run: "wf_1729f9b5688ec7bf",
-      run_label: "release-impact-leg2",
-      step: "ratify",
+      id: "wfmsg-3f2a",
+      run: RUN,
+      step: "build/check-links",
       severity: "error",
-      text: "Handoff blocked: update_workflow is not in my toolset.\nPlease give this step the tool.",
+      text: "The site build failed.\ndocs/guide/install.md has no front matter.",
     },
   ],
 };
 
-describe("wakeLine's run", () => {
-  it("names the run the label opens with, the rest following its name", () => {
-    const line = wakeLine(ASK);
-    expect(line.run).toEqual({ id: "wf_1729f9b5688ec7bf", name: "release-impact-leg2" });
-    expect(line.rest).toBe(" \u00b7 ratify reports an error");
+describe("wakeLine's run names", () => {
+  const live = (id: string, recorded: string): string =>
+    id === RUN ? "publish-docs" : recorded === "" ? "unnamed" : recorded;
+
+  it("name the label's run as the caller's namer does", () => {
+    const line = wakeLine(ASK, live);
+    expect(line.run).toEqual({ id: RUN, name: "publish-docs", recorded: "" });
+    expect(line.label).toBe("publish-docs \u00b7 build/check-links reports an error");
   });
 
-  it("names no run on a re-delivery, whose rows may come from several", () => {
-    const line = wakeLine({ reason: "rewake", steers: ASK.steers ?? [] });
+  it("hand a finished run's recorded name to the namer", () => {
+    const line = wakeLine(
+      {
+        reason: "run_finished",
+        run: "wf_other",
+        run_label: "nightly-report",
+        run_status: "failed",
+      },
+      live,
+    );
+    expect(line.run).toEqual({
+      id: "wf_other",
+      name: "nightly-report",
+      recorded: "nightly-report",
+    });
+  });
+
+  it("name every re-delivered row's run, and no run on the label", () => {
+    const line = wakeLine(
+      {
+        reason: "rewake",
+        steers: [
+          { id: "a", run: RUN, step: "draft", text: "Which branch?" },
+          { id: "b", run: "wf_other", step: "collect", text: "Leg 1 is done." },
+        ],
+      },
+      live,
+    );
     expect(line.run).toBeUndefined();
-    expect(line.rest).toBe(line.label);
+    expect(line.rows?.map((r) => r.run.name)).toEqual(["publish-docs", "unnamed"]);
+    expect(line.body).toBe(
+      "publish-docs \u00b7 draft: Which branch?\nunnamed \u00b7 collect: Leg 1 is done.",
+    );
   });
 });
 
@@ -78,9 +126,10 @@ describe("turnWakeOf and wakeText", () => {
     const t = makeTurn({ body: [wakeEntry(ASK), { kind: "text", payload: { text: "On it." } }] });
     expect(turnWakeOf(t)).toEqual(ASK);
     expect(wakeText(t)).toBe(
-      "release-impact-leg2 \u00b7 ratify reports an error\n" +
-        "Handoff blocked: update_workflow is not in my toolset.\nPlease give this step the tool.",
+      "wf_5e1f0c2a \u00b7 build/check-links reports an error\n" +
+        "The site build failed.\ndocs/guide/install.md has no front matter.",
     );
+    expect(wakeText(t, () => "publish-docs")).toMatch(/^publish-docs \u00b7 /);
   });
 
   it("ignore a delegate lane's entry and a prompt turn", () => {
@@ -125,11 +174,25 @@ describe("markWakingRows", () => {
     expect(isWakingRow(other)).toBe(false);
   });
 
-  it("leaves a re-delivery's rows their own cards", () => {
+  it("marks a re-delivery's rows, which the wake draws once in its header", () => {
     const row = steerRow("wfmsg-q");
     markWakingRows([
       state([row]),
       wakeTurn({ reason: "rewake", steers: [{ id: "wfmsg-q", text: "Which branch?" }] }),
+    ]);
+    expect(isWakingRow(row)).toBe(true);
+  });
+
+  it("leaves a finished run's wake no row to mark", () => {
+    const row = steerRow("wfmsg-q");
+    markWakingRows([
+      state([row]),
+      wakeTurn({
+        reason: "run_finished",
+        run: RUN,
+        run_status: "completed",
+        steers: [{ id: "wfmsg-q", text: "x" }],
+      }),
     ]);
     expect(isWakingRow(row)).toBe(false);
   });

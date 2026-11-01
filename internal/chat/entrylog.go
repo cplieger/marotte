@@ -91,16 +91,21 @@ type turnState struct {
 	// between-turns entries behind later turns, so a turn is not one span.
 	ranges []byteRange
 	// messages are the turn's workflow-message rows and take-ups, so a rewind of the turn takes them out of the fold.
-	messages  []messageFact
+	messages []messageFact
+	// steers are the lane-"" steer ids among drawing, each counted once per entry, and claims the workflow messages
+	// this turn's turn_wake draws as its trigger: a claimed steer draws nothing where it was filed.
+	steers    []string
+	claims    []string
 	elapsedMs float64
 	openTs    int64
 	lastTs    int64
 	n         uint64
 	nextSeq   uint64
 	plans     int
-	drawn     bool
-	closed    bool
-	carrier   bool
+	// drawing counts what draws the turn: its source and every entry drawnBy accepts.
+	drawing int
+	closed  bool
+	carrier bool
 	// reverted means a turn_revert took this turn, so every read surface skips it. The lines stay on disk.
 	reverted bool
 	// hasRevert is whether the turn holds its own turn_revert record, which tells a complete carrier from the crash state
@@ -640,9 +645,23 @@ func (st *turnState) extend(e *marotte.Entry, start, end int64) {
 	if e.Seq >= st.nextSeq {
 		st.nextSeq = e.Seq + 1
 	}
-	if !st.drawn && drawnBy(e, st.plans) {
-		st.drawn = true
+	if drawnBy(e, st.plans) {
+		st.drawing++
+		if e.Kind == marotte.EntryKindSteer {
+			st.steers = append(st.steers, e.ID)
+		}
 	}
+}
+
+// drawn reports whether anything still draws the turn once the steers a wake claimed are taken out.
+func (st *turnState) drawn(claimed map[string]struct{}) bool {
+	n := st.drawing
+	for _, id := range st.steers {
+		if _, ok := claimed[id]; ok {
+			n--
+		}
+	}
+	return n > 0
 }
 
 func decodeEntry[T any](e *marotte.Entry) (T, error) {
@@ -674,13 +693,14 @@ func (st *turnState) observeMessage(e *marotte.Entry, at int64) error {
 	return err
 }
 
-// foldTurnWake gives a wake turn's rail row the wake's line where a prompt turn has its prompt's; a wake
-// that names nothing leaves it empty, as a turn with no wake has.
+// foldTurnWake gives a wake turn's rail row the wake's line where a prompt turn has its prompt's, and records
+// the rows it draws; a wake that names nothing leaves the line empty, as a turn with no wake has.
 func foldTurnWake(st *turnState, e *marotte.Entry) error {
 	payload, err := decodeEntry[marotte.EntryTurnWake](e)
 	if err != nil {
 		return err
 	}
+	st.claims = marotte.WakeDrawnSteers(&payload)
 	label, body := marotte.WakeLine(&payload)
 	if label == marotte.WakeFallbackLine {
 		return nil
@@ -797,7 +817,9 @@ func newTurnState(e *marotte.Entry, start, end int64) (*turnState, error) {
 		lastTs:  e.Ts,
 		n:       payload.N,
 		nextSeq: e.Seq + 1,
-		drawn:   drawnSource(payload.Source),
+	}
+	if drawnSource(payload.Source) {
+		st.drawing = 1
 	}
 	if payload.Prompt != nil {
 		st.firstLine = firstLineOf(payload.Prompt.Text)
@@ -826,7 +848,7 @@ func drawnBy(e *marotte.Entry, plans int) bool {
 	switch e.Kind {
 	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnBind, marotte.EntryKindTurnWake,
 		marotte.EntryKindToolResult, marotte.EntryKindTurnClose,
-		marotte.EntryKindReconciled, marotte.EntryKindSteerCleared:
+		marotte.EntryKindReconciled, marotte.EntryKindSteerCleared, marotte.EntryKindSteerDelivered:
 		return false
 	case marotte.EntryKindPlan:
 		return plans == 0
@@ -1170,15 +1192,21 @@ func (l *EntryLog) newestSeq(turn string) (uint64, bool) {
 }
 
 // RailRows is the rail index: one marotte.TurnSummary per drawn turn, oldest first. A turn's row appears at the first
-// drawing append and never moves.
+// drawing append and never moves, except that a turn whose only drawing rows a later wake draws loses it.
 func (l *EntryLog) RailRows() []marotte.TurnSummary {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	order := l.survivingOrderLocked()
+	claimed := map[string]struct{}{}
+	for _, id := range order {
+		for _, c := range l.turns[id].claims {
+			claimed[c] = struct{}{}
+		}
+	}
 	rows := make([]marotte.TurnSummary, 0, len(order))
 	for _, id := range order {
 		st := l.turns[id]
-		if !st.drawn {
+		if !st.drawn(claimed) {
 			continue
 		}
 		outcome := marotte.TurnOutcomeRunning

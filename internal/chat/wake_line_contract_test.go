@@ -4,19 +4,21 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// static-src/turn-wake.test.ts reads the same fixture, so the two wordings cannot drift apart.
+// static-src/turn-wake.node.test.ts reads the same fixture, so the two wordings cannot drift apart.
 const wakeLineFixture = "testdata/wake_line.json"
 
 type wakeLineCase struct {
-	Name  string                `json:"name"`
-	Label string                `json:"label"`
-	Body  string                `json:"body"`
-	Wake  marotte.EntryTurnWake `json:"wake"`
+	Name   string                `json:"name"`
+	Label  string                `json:"label"`
+	Body   string                `json:"body"`
+	Search *[]string             `json:"search"`
+	Wake   marotte.EntryTurnWake `json:"wake"`
 }
 
 func wakeLineCases(t *testing.T) []wakeLineCase {
@@ -46,6 +48,11 @@ func TestWakeLineContract_ServerHalf(t *testing.T) {
 			}
 			if body != c.Body {
 				t.Errorf("body = %q, want %q", body, c.Body)
+			}
+			if c.Search != nil {
+				if got := marotte.WakeSearchTexts(&c.Wake); !slices.Equal(got, *c.Search) {
+					t.Errorf("WakeSearchTexts = %q, want %q", got, *c.Search)
+				}
 			}
 		})
 	}

@@ -5,6 +5,7 @@
 import { callIDOfToolResult } from "./entry-ids.js";
 import { askBucket, type AskBucket } from "./interaction.js";
 import { defaultFailureReason, severityOf } from "./turn-severity.js";
+import { isWakingRow } from "./waking-rows.js";
 import type {
   AnyEntry,
   Entry,
@@ -122,9 +123,9 @@ export interface Turn {
 }
 
 /** Whether a turn is DRAWN: the one predicate, twinned by the server's rail index. A reader-opened
- *  turn, a body entry rendering AT ITS OWN POSITION (`entryRenders`, block-window.ts; not an ACK),
- *  or the CLIENT-ONLY clause: an open lane-`""` entry, so a headerless turn's streaming first text
- *  has a card to mount into. */
+ *  turn, a body entry rendering AT ITS OWN POSITION (`entryRenders`, block-window.ts; not an ACK; a
+ *  row a later wake draws in its header does not), or the CLIENT-ONLY clause: an open lane-`""`
+ *  entry, so a headerless turn's streaming first text has a card to mount into. */
 export function turnIsDrawn(t: TurnState): boolean {
   const open = turnOpenOf(t);
   if (open === undefined) {
@@ -151,7 +152,9 @@ export function turnIsDrawn(t: TurnState): boolean {
       e.kind === "tool_result" ||
       e.kind === "turn_close" ||
       e.kind === "reconciled" ||
-      e.kind === "steer_cleared"
+      e.kind === "steer_delivered" ||
+      e.kind === "steer_cleared" ||
+      (e.kind === "steer" && isWakingRow(e))
     ) {
       continue;
     }

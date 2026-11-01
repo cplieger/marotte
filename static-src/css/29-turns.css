@@ -287,9 +287,15 @@
   max-width: calc(100% - 4ch);
 }
 
+/* A re-delivered message opens on its run's name, inline in the request text. */
+.turn-wake-row-run {
+  font-weight: var(--fw-medium);
+}
+
 /* A target inside the label's sentence: WCAG 2.5.8's inline exception, as for a prose link
  * (61-mcp-tools.css), or the coarse floor makes the one-line label 44px tall. */
-button.turn-wake-run {
+button.turn-wake-run,
+button.turn-wake-row-run {
   min-height: 0;
   background: none;
   border: 0;
@@ -301,13 +307,15 @@ button.turn-wake-run {
   text-underline-offset: 2px;
 }
 
-button.turn-wake-run:focus-visible {
+button.turn-wake-run:focus-visible,
+button.turn-wake-row-run:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
 }
 
 @media (any-hover: hover) {
-  button.turn-wake-run:hover {
+  button.turn-wake-run:hover,
+  button.turn-wake-row-run:hover {
     color: var(--c-accent);
     text-decoration: underline;
   }

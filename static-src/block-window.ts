@@ -3,7 +3,7 @@
 
 import { MessageRun, toolResultID } from "./entry-ids.js";
 import { isInternalToolTitle } from "./tool-schema.js";
-import { isWakingRow } from "./turn-wake.js";
+import { isWakingRow } from "./waking-rows.js";
 import type { Entry } from "./types.js";
 import { isSubagentFallback, payloadOf, type Turn } from "./turns.js";
 
