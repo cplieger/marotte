@@ -193,22 +193,26 @@ describe("PRs tab merge outcome", () => {
     expect(await statusReads()).toBe(3);
   });
 
+  // The read answers only once the dispatch's `signal` aborts; the handle's own abort() does nothing.
   it("ends the follow-up at its bound even when a state read never answers", async () => {
     await shownMergeable();
     const { readMergeStatus } = await actions();
-    const aborts: ReturnType<typeof vi.fn>[] = [];
-    vi.mocked(readMergeStatus.dispatch).mockImplementation(() => {
-      let settle: (o: Record<string, unknown>) => void = () => undefined;
+    const signals: (AbortSignal | undefined)[] = [];
+    vi.mocked(readMergeStatus.dispatch).mockImplementation((_args, opts) => {
+      const signal = opts?.signal;
+      signals.push(signal);
       const outcome = new Promise<Record<string, unknown>>((resolve) => {
-        settle = resolve;
+        signal?.addEventListener(
+          "abort",
+          () => {
+            resolve({ status: "cancelled" });
+          },
+          { once: true },
+        );
       });
-      const abort = vi.fn(() => {
-        settle({ status: "cancelled" });
-      });
-      aborts.push(abort);
       return Object.assign(
         outcome.then(() => null),
-        { outcome, abort },
+        { outcome, abort: () => undefined },
       ) as never;
     });
 
@@ -219,7 +223,7 @@ describe("PRs tab merge outcome", () => {
       "The forge has not finished the merge yet. The list shows it once it does.",
     );
     expect(await statusReads()).toBe(1);
-    expect(aborts[0]).toHaveBeenCalledTimes(1);
+    expect(signals[0]?.aborted).toBe(true);
   });
 
   it("says a queued merge waits in the merge queue while it follows it", async () => {

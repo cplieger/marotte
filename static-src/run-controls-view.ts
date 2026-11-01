@@ -2,7 +2,7 @@
 // answer (`run-store.ts` `runControls`) and rebuilt only when that answer moves. The run dock is
 // its one surface.
 
-import { el } from "@cplieger/reactive";
+import { createRoot, el } from "@cplieger/reactive";
 import { bindLoadingState } from "./actions/index.js";
 import {
   cancelRun,
@@ -74,14 +74,13 @@ export function buildRunControlsView(workflowID: string): RunControlsView {
   let sig = "";
   let row: HTMLElement | null = null;
   // `bindLoadingState` self-disposes only for an element attached when its effect last ran, and a
-  // row is built before the dock seats it, so a row replaced first would leak its bindings.
-  let bindings: (() => void)[] = [];
+  // row is built before the dock seats it, so a row replaced first would leak its bindings. Each
+  // row's bindings are made under its own root, which `drop` releases.
+  let release: (() => void) | null = null;
 
   const drop = (): void => {
-    for (const dispose of bindings) {
-      dispose();
-    }
-    bindings = [];
+    release?.();
+    release = null;
     row = null;
   };
 
@@ -92,7 +91,13 @@ export function buildRunControlsView(workflowID: string): RunControlsView {
       if (next !== sig) {
         drop();
         sig = next;
-        row = answer === undefined ? null : render(workflowID, answer, bindings);
+        row =
+          answer === undefined
+            ? null
+            : createRoot((dispose) => {
+                release = dispose;
+                return render(workflowID, answer);
+              });
       }
       return row;
     },
@@ -120,11 +125,7 @@ function signature(answer: RunControlsResponse): string {
   return `${answer.verbs.join("\u0001")}\u0000${refused}\u0000${answer.pause_node_id ?? ""}`;
 }
 
-function render(
-  workflowID: string,
-  answer: RunControlsResponse,
-  bindings: (() => void)[],
-): HTMLElement | null {
+function render(workflowID: string, answer: RunControlsResponse): HTMLElement | null {
   const nodeID = answer.pause_node_id ?? "";
   const out = el("span", { className: "run-controls" });
   for (const verb of offeredVerbs(answer.verbs)) {
@@ -135,7 +136,7 @@ function render(
       }
       if (verb === "finish_loop") {
         const btn = button(verb, () => void finishRunRepeat.dispatch({ workflowID, nodeID }));
-        bindings.push(bindLoadingState(finishRunRepeat.name, btn));
+        bindLoadingState(finishRunRepeat.name, btn);
         out.append(btn);
         continue;
       }
@@ -154,7 +155,7 @@ function render(
         }
         void extendRunRepeat.dispatch({ workflowID, nodeID, iterations: count.valueAsNumber });
       });
-      bindings.push(bindLoadingState(extendRunRepeat.name, btn));
+      bindLoadingState(extendRunRepeat.name, btn);
       out.append(el("span", { className: "run-extend" }, count, btn));
       continue;
     }
@@ -164,7 +165,7 @@ function render(
     const btn = button(verb, () => void action.dispatch(workflowID));
     // A retry loads the run's session and can take tens of seconds; unbound, the button looks dead
     // and can be clicked again meanwhile.
-    bindings.push(bindLoadingState(action.name, btn));
+    bindLoadingState(action.name, btn);
     out.append(btn);
   }
   return out.childElementCount === 0 ? null : out;

@@ -15,7 +15,7 @@ vi.mock("./run-store.js", async (importOriginal) => ({
 
 vi.mock("./actions/runs.js", async (importOriginal) => {
   const stub = (verb: string) => ({
-    name: `runs.${verb}`,
+    name: `test.${verb}`,
     dispatch: vi.fn((arg: unknown) => {
       m.dispatched.push(`${verb}:${typeof arg === "string" ? arg : JSON.stringify(arg)}`);
       return Promise.resolve();
@@ -124,6 +124,39 @@ describe("the run's controls row", () => {
     expect(view.current()).toBe(first);
     m.answer = { verbs: ["resume", "cancel"], parent_chat_id: "" };
     expect(view.current()).not.toBe(first);
+  });
+
+  it("shows a verb in flight on its button until its row is replaced or disposed", async () => {
+    const { defineAction } = await import("@cplieger/actions");
+    const inFlight = defineAction<undefined, undefined>({
+      name: "test.pause",
+      run: (_args, signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            reject(signal.reason as Error);
+          });
+        }),
+    });
+    const pauseButton = (row: HTMLElement | null): HTMLButtonElement | null =>
+      row?.querySelector<HTMLButtonElement>('button[aria-label="Pause"]') ?? null;
+    const view = buildRunControlsView("wf");
+    m.answer = { verbs: ["pause", "cancel"], parent_chat_id: "" };
+    const replaced = pauseButton(view.current());
+    void inFlight.dispatch(undefined);
+    await Promise.resolve();
+    expect(replaced?.getAttribute("aria-busy")).toBe("true");
+    expect(replaced?.disabled).toBe(true);
+
+    m.answer = { verbs: ["pause"], parent_chat_id: "" };
+    const disposed = pauseButton(view.current());
+    expect(replaced?.getAttribute("aria-busy")).toBeNull();
+    expect(replaced?.disabled).toBe(false);
+    expect(disposed?.getAttribute("aria-busy")).toBe("true");
+
+    view.dispose();
+    expect(disposed?.getAttribute("aria-busy")).toBeNull();
+    expect(disposed?.disabled).toBe(false);
+    inFlight.cancel();
   });
 
   it("draws nothing before the answer, and refusals only with no verb", () => {
