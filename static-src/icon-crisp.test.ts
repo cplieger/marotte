@@ -82,14 +82,20 @@ function offTarget(svg: SVGSVGElement): number {
   return boxOff(svg, 0.5);
 }
 
-/** Read through the screen CTM, so a glyph centred in a wider slot is measured where it paints. */
-function drawingOff(svg: SVGSVGElement, target: number): number {
+/**
+ * Read through the screen CTM, so a glyph centred in a wider slot is measured where it paints: the coordinate 3 units
+ * in, in device pixels at `dpr`.
+ */
+function drawingOff(svg: SVGSVGElement, target: number, dpr = 1): number {
   const m = svg.getScreenCTM();
   expect(m).not.toBeNull();
   if (m === null) {
     return 1;
   }
-  return Math.max(phaseOff(frac(m.e + 3 * m.a), target), phaseOff(frac(m.f + 3 * m.d), target));
+  return Math.max(
+    phaseOff(frac(dpr * (m.e + 3 * m.a)), target),
+    phaseOff(frac(dpr * (m.f + 3 * m.d)), target),
+  );
 }
 
 const hosts: HTMLElement[] = [];
@@ -137,19 +143,19 @@ describe("snapIcons", () => {
     expect(svg.style.translate).toBe("");
   });
 
-  it("declines an icon an ancestor is mid-SCALE on, rather than snapping a doomed reading", () => {
-    // `.pill-expand-content` opens on `scale(0.4) -> scale(1)`; a pass mid-flight measures the scaled box, and the settle
-    // pass then moves every icon at once. Layout size disagreeing with painted size is the signal.
+  it("declines an icon under an ancestor scale, then snaps it once the scale lifts", () => {
+    // A translate written under a scale is scaled with it and misses, so passes chase their own offset. Layout size
+    // disagreeing with painted size is the signal.
     const svg = place(null);
     const host = svg.closest("div");
     expect(host).not.toBeNull();
     if (host instanceof HTMLElement) {
       host.style.transform = "scale(0.4)";
     }
-    expect(snapIcons(), "nothing is written while the ancestor scales").toBe(0);
+    expect(snapIcons(), "nothing is written under the scale").toBe(0);
     expect(svg.style.translate).toBe("");
 
-    // The declined reading is taken as soon as that transform lands.
+    // The declined reading is taken as soon as the scale lifts.
     if (host instanceof HTMLElement) {
       host.style.transform = "";
     }
@@ -171,6 +177,146 @@ describe("snapIcons", () => {
     expect(offTarget(svg)).toBeLessThan(0.02);
     // A second pass over a converged icon moves nothing.
     expect(snapIcons()).toBe(0);
+  });
+
+  it("holds a box still across passes when both directions are equally crisp", () => {
+    // At DPR 3 a 20px icon on an integer origin puts its 2px stroke exactly half a device pixel off: +0.5 and -0.5 are
+    // both crisp, and the rect read back is float32, so a pass that re-picks the side chases rounding noise.
+    vi.stubGlobal("devicePixelRatio", 3);
+    const cases = [
+      { size: 20, strokeWidth: 2 },
+      { size: 16, strokeWidth: 1 },
+    ];
+    for (const c of cases) {
+      for (let k = 0; k < 12; k++) {
+        const svg = place(null, c);
+        const host = svg.closest("div");
+        expect(host).not.toBeNull();
+        if (host instanceof HTMLElement) {
+          host.style.left = `${String(37 + k / 12)}px`;
+          host.style.top = "174px";
+        }
+        snapIcons();
+        const first = svg.getBoundingClientRect();
+        const label = `${String(c.size)}px stroke ${String(c.strokeWidth)} at +${String(k)}/12`;
+        for (let pass = 0; pass < 3; pass++) {
+          expect(snapIcons(), `${label}, pass ${String(pass + 2)}`).toBe(0);
+        }
+        const last = svg.getBoundingClientRect();
+        expect([last.x, last.y], label).toEqual([first.x, first.y]);
+        // Crisp is the stroke centre on frac(deviceWidth / 2).
+        expect(drawingOff(svg, frac(c.strokeWidth * 1.5), 3), label).toBeLessThan(0.02);
+      }
+    }
+  });
+
+  it("declines an icon an ancestor is sliding on, then snaps it once the slide lands", () => {
+    // The phone drawer opens on a `transform: translateX()` transition: no scale, so layout and painted size agree, and
+    // a mid-slide pass measures a moving origin the settle pass then has to undo.
+    const svg = place(null);
+    const host = svg.closest("div");
+    expect(host).not.toBeNull();
+    if (!(host instanceof HTMLElement)) {
+      return;
+    }
+    host.style.transform = "translateX(-100.4px)";
+    host.getBoundingClientRect();
+    host.style.transition = "transform 10s linear";
+    host.style.transform = "translateX(0)";
+    expect(host.getAnimations()).toHaveLength(1);
+    expect(snapIcons(), "nothing is written mid-slide").toBe(0);
+    expect(svg.style.translate).toBe("");
+
+    for (const a of host.getAnimations()) {
+      a.finish();
+    }
+    snapIcons();
+    expect(offTarget(svg)).toBeLessThan(0.02);
+  });
+
+  it("declines an icon inside an animation that moves it for ever", () => {
+    // A dragged tab floats on an infinite transform loop; no reading inside it holds.
+    const svg = place(null);
+    const host = svg.closest("div");
+    expect(host).not.toBeNull();
+    host?.animate([{ transform: "translateY(0)" }, { transform: "translateY(-2.3px)" }], {
+      duration: 2200,
+      iterations: Infinity,
+    });
+    expect(snapIcons()).toBe(0);
+    expect(svg.style.translate).toBe("");
+  });
+
+  it("still snaps an icon whose surroundings only repaint or loop for ever", () => {
+    // A running run's status dot beats on opacity for ever beside the sub-tab arrow, a hovered row fades its
+    // background, and a spinner ring loops a custom property for ever.
+    const svg = place(null);
+    const host = svg.closest("div");
+    expect(host).not.toBeNull();
+    host?.animate([{ opacity: 1 }, { opacity: 0.4 }], { duration: 1200, iterations: Infinity });
+    host?.animate([{ "--arc": "-45deg" }, { "--arc": "315deg" }], {
+      duration: 900,
+      iterations: Infinity,
+    });
+    host?.animate([{ backgroundColor: "transparent" }, { backgroundColor: "rgb(40, 40, 40)" }], {
+      duration: 10_000,
+    });
+    snapIcons();
+    expect(offTarget(svg)).toBeLessThan(0.02);
+  });
+
+  it("holds every icon while a row above it collapses, then snaps once the row is gone", () => {
+    // A closing tab collapses its max-height and padding (`slide-out`), which slides every row below it through
+    // layout; none of their icons sits inside the animated row.
+    const list = document.createElement("div");
+    list.style.position = "absolute";
+    list.style.left = "10.3px";
+    list.style.top = "20.7px";
+    const exiting = document.createElement("div");
+    exiting.style.blockSize = "48px";
+    exiting.style.overflow = "hidden";
+    const svg = icon();
+    list.append(exiting, svg);
+    document.body.append(list);
+    hosts.push(list);
+
+    const collapse = exiting.animate(
+      [
+        { maxHeight: "48px", paddingBlock: "8px" },
+        { maxHeight: "0px", paddingBlock: "0px" },
+      ],
+      { duration: 10_000, fill: "forwards" },
+    );
+    collapse.currentTime = 3700;
+    expect(snapIcons(), "nothing is written mid-collapse").toBe(0);
+    expect(svg.style.translate).toBe("");
+
+    collapse.finish();
+    exiting.remove();
+    snapIcons();
+    expect(offTarget(svg)).toBeLessThan(0.02);
+  });
+
+  it("returns to the smallest correction when the device pixel ratio changes", () => {
+    // 20px stroke 2 on an integer origin: at DPR 1 the snap is half a CSS px, a whole device px at DPR 2, where the
+    // unmoved box is already crisp.
+    const svg = place(null, { size: 20, strokeWidth: 2 });
+    const host = svg.closest("div");
+    expect(host).not.toBeNull();
+    if (host instanceof HTMLElement) {
+      host.style.left = "37px";
+      host.style.top = "174px";
+    }
+    const origin = svg.getBoundingClientRect();
+    vi.stubGlobal("devicePixelRatio", 1);
+    snapIcons();
+    expect(svg.getBoundingClientRect().x, "the DPR 1 snap moves the box").not.toBe(origin.x);
+
+    vi.stubGlobal("devicePixelRatio", 2);
+    snapIcons();
+    const after = svg.getBoundingClientRect();
+    expect([after.x, after.y]).toEqual([origin.x, origin.y]);
+    expect(drawingOff(svg, 0, 2)).toBeLessThan(0.02);
   });
 
   it("puts a stroke-2 tier on phase 0, where an even device stroke is crisp", () => {
