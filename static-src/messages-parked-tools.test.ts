@@ -35,6 +35,7 @@ vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m
 // The run store's fetch uses the OrError variant; a live run's running node arms the card's clock.
 const apiGetOrErrorMock = vi.hoisted(() => vi.fn());
 vi.mock("./api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   apiPost: vi.fn(),
   apiGetTyped: vi.fn(),
   // Present-but-inert so real-ESM linking succeeds.

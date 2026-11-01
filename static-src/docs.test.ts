@@ -7,6 +7,7 @@ type GitStatusStoreModule = typeof GitStatusStore;
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 // Browser Mode links a mock as real ESM, so every name this graph imports must exist on the factory.
 vi.mock("./api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
   apiGetTypedOrError: vi.fn(),

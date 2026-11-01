@@ -211,6 +211,17 @@ export async function apiGetOrError<T>(path: string, signal?: AbortSignal): Prom
   return toApiResult(await fx.apiGetRaw<T>(path, reqOpts({}, signal)));
 }
 
+/** A binary read: the 2xx body whole as a `Blob`, or fetch's failure envelope. Unlogged: the caller reports the failure. */
+export async function apiBlobOrError(
+  method: "GET" | "POST",
+  path: string,
+  body: unknown,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<FetchResult<Blob>> {
+  return fx.requestRaw(method, path, { as: "blob", body, signal, timeoutMs });
+}
+
 /** One AbortController slot: `start()` aborts the previous in-flight request
  *  and returns a fresh signal. */
 export class CancellableSlot {

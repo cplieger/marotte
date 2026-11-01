@@ -7,6 +7,7 @@ vi.mock("../toast.js", () =>
 );
 
 vi.mock("../api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   apiGetOrError: vi.fn(),
   // Inert: present only so real-ESM linking succeeds.
   apiGet: undefined,

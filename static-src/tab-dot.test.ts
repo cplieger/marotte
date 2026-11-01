@@ -294,6 +294,7 @@ vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => {
     const listTabs = m.tabListRead();
     return {
+      apiBlobOrError: vi.fn(),
       apiGetTyped: vi.fn((path: string, decode: unknown) =>
         path === "/api/tabs" ? listTabs(path) : mockApiGetTyped(path, decode),
       ),

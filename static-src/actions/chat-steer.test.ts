@@ -24,6 +24,7 @@ vi.mock("../store.js", async () => ({
 }));
 
 vi.mock("../api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   apiGetOrError: vi.fn(),
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,

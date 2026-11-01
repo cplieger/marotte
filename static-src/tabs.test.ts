@@ -151,6 +151,7 @@ vi.mock("./transport.js", () =>
 );
 vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => ({
+    apiBlobOrError: vi.fn(),
     apiGetTyped: m.tabListRead(),
     // Present-but-inert so real-ESM linking succeeds: tabs.ts imports
     // `normalizeDirPath` from files-shared.js, which imports this name. No case

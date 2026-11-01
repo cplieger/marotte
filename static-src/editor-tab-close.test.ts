@@ -71,6 +71,7 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
 // large", so the open completes without a second read.
 vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => ({
+    apiBlobOrError: vi.fn(),
     apiGet: vi.fn(() => Promise.resolve(null)),
     apiGetTyped: m.tabListRead(),
     apiGetTypedOrError: vi.fn(() =>

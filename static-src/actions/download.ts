@@ -1,7 +1,5 @@
-import { createFetch } from "@cplieger/fetch";
+import { apiBlobOrError } from "../api-client.js";
 import { ActionError } from "./index.js";
-
-const fx = createFetch();
 
 /** A download: a GET, or a POST whose `body` is sent as JSON. */
 export interface DownloadRequest {
@@ -20,12 +18,7 @@ export async function readDownload(
   signal: AbortSignal,
   timeoutMs: number,
 ): Promise<Blob> {
-  const r = await fx.requestRaw(req.method, req.path, {
-    as: "blob",
-    body: req.body,
-    signal,
-    timeoutMs,
-  });
+  const r = await apiBlobOrError(req.method, req.path, req.body, signal, timeoutMs);
   if (r.ok) {
     return r.data;
   }
