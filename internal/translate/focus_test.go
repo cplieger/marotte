@@ -118,7 +118,7 @@ func TestFocusUpdate_EngineActivityMarksTurnScoped(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			resetCensus(t)
 			var logbuf bytes.Buffer
-			defer captureSlog(&logbuf)()
+			captureSlog(t, &logbuf)
 			deps, events, _ := depsWithStore(t, "c1")
 			tr := New(rolesOf(deps))
 			kiro := map[string]any{"kind": "focus_update", "focus": map[string]any{"status": "waiting_on_user"}, "status": "waiting_on_user"}
@@ -422,7 +422,7 @@ func TestHandleSessionInfoUpdate_FocusRefusalLevel(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			t.Cleanup(captureSlog(&buf))
+			captureSlog(t, &buf)
 			deps, _, _ := depsWithStore(t, "c1")
 			tr := New(rolesOf(deps))
 

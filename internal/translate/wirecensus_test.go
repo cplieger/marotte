@@ -33,7 +33,7 @@ func resetCensus(t *testing.T) {
 func TestCensusMeta_ReportsAnUnknownFieldOnce(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	raw := json.RawMessage(`{"kind":"agent-subtask","cacheReadTokens":41}`)
 	for range 3 {
@@ -59,7 +59,7 @@ func TestCensusMeta_ReportsAnUnknownFieldOnce(t *testing.T) {
 func TestCensusMeta_NeverLogsAValue(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	const secret = "ya29.A0ARrdaM-NOT-A-REAL-TOKEN"
 	censusMeta("_meta.kiro", json.RawMessage(`{"someNewAuthField":"`+secret+`"}`),
@@ -82,7 +82,7 @@ func TestCensusMeta_NeverLogsAValue(t *testing.T) {
 func TestCensusMeta_FoldsCase(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	censusMeta("_meta.kiro", json.RawMessage(`{"MessageId":"m-1","AGENTSUBTASKID":"s-1"}`),
 		reflect.TypeFor[acpKiroBlockShadow]())
@@ -97,7 +97,7 @@ func TestCensusMeta_FoldsCase(t *testing.T) {
 func TestCensusMeta_DeclinedFieldsAreQuiet(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	censusMeta("_meta.kiro", json.RawMessage(`{"preview":{"originalContent":"..."}}`),
 		reflect.TypeFor[acpKiroBlockShadow](), "preview")
@@ -112,7 +112,7 @@ func TestCensusMeta_IsBounded(t *testing.T) {
 	t.Run("an oversized object is skipped", func(t *testing.T) {
 		resetCensus(t)
 		var logbuf bytes.Buffer
-		defer captureSlog(&logbuf)()
+		captureSlog(t, &logbuf)
 
 		big := `{"novelField":"` + strings.Repeat("x", maxCensusObjectBytes) + `"}`
 		censusMeta("_meta.kiro", json.RawMessage(big), reflect.TypeFor[acpKiroBlockShadow]())
@@ -125,7 +125,7 @@ func TestCensusMeta_IsBounded(t *testing.T) {
 	t.Run("the key budget latches the probe off", func(t *testing.T) {
 		resetCensus(t)
 		var logbuf bytes.Buffer
-		defer captureSlog(&logbuf)()
+		captureSlog(t, &logbuf)
 
 		// One novel field per frame, well past the cap.
 		for i := range maxCensusKeys * 2 {
@@ -153,7 +153,7 @@ func TestCensusMeta_IsBounded(t *testing.T) {
 func TestCensusMeta_SanitizesTheFieldName(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	// A name carrying a newline, a forged record after it, and far more bytes
 	// than the cap allows.
@@ -210,7 +210,7 @@ func TestCensusMeta_NeverBreaksADecode(t *testing.T) {
 func TestCensusMeteringUnit_ReportsAnUnsummedUnit(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	censusMeteringUnit("cacheRead")
 	censusMeteringUnit("cacheRead")
@@ -306,7 +306,7 @@ func TestJSONKindOf(t *testing.T) {
 func TestSessionInfoUpdate_CensusRunsOnTheRealFrame(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -365,7 +365,7 @@ func TestPlanApproval_CensusIsQuiet(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			resetCensus(t)
 			var logbuf bytes.Buffer
-			defer captureSlog(&logbuf)()
+			captureSlog(t, &logbuf)
 			deps, _ := newEventCaptureDeps()
 			deliver(t, New(rolesOf(deps)))
 			if out := logbuf.String(); strings.Contains(out, "UNKNOWN") {
@@ -394,7 +394,7 @@ func TestKnownKeys_IsCachedPerType(t *testing.T) {
 func TestCensusMeta_DoesNotMutateTheCachedSet(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	typ := reflect.TypeFor[acpKiroBlockShadow]()
 	before := len(knownKeys(typ))

@@ -199,7 +199,7 @@ func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			const termID = "term-1"
 			var logs bytes.Buffer
-			t.Cleanup(captureSlog(&logs))
+			captureSlog(t, &logs)
 
 			tr, _, deps, _, chatID := primeToolCall(t)
 			if tt.terminal != nil {

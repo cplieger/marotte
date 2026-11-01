@@ -167,7 +167,7 @@ func TestModelFallbackPayload_ReadsAPromotionAsTheSessionsFallback(t *testing.T)
 func TestHandleSessionInfoUpdate_ModelFallbackNoUnknownKindWarn(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 
@@ -303,7 +303,7 @@ func TestEntryProjection_ModelFallbackPromotionAndSubagentReplay(t *testing.T) {
 func TestHandleSessionInfoUpdate_ModelFallbackPromotedReadsAsTheSessionsFallback(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 	tr.HandleAssistantChunk(t.Context(), "c1", mustJSON(t, map[string]any{

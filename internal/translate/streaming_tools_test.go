@@ -1506,7 +1506,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 
 	t.Run("an unknown type renders nothing and logs both lines", func(t *testing.T) {
 		var logs bytes.Buffer
-		t.Cleanup(captureSlog(&logs))
+		captureSlog(t, &logs)
 
 		got := tr.parseToolUpdateContent("tc-1", []acpToolCallContentBlock{
 			{Type: "structuredContent"},
@@ -1530,7 +1530,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 	t.Run("a claim-only tool logs nothing", func(t *testing.T) {
 		// No content blocks is the common case; logging here would bury the real line.
 		var logs bytes.Buffer
-		t.Cleanup(captureSlog(&logs))
+		captureSlog(t, &logs)
 		tr.parseToolUpdateContent("tc-2", nil)
 		if logs.Len() != 0 {
 			t.Errorf("a claim-only tool logged %q", logs.String())
@@ -1541,7 +1541,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 		// An empty-text block and a path-less diff are NORMAL frames, so the guard is on the TYPE
 		// rather than on whether an arm matched.
 		var logs bytes.Buffer
-		t.Cleanup(captureSlog(&logs))
+		captureSlog(t, &logs)
 		tr.parseToolUpdateContent("tc-3", []acpToolCallContentBlock{
 			{Type: contentTypeContent},
 			{Type: contentTypeDiff},
@@ -1559,7 +1559,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 
 	t.Run("a block that renders logs nothing", func(t *testing.T) {
 		var logs bytes.Buffer
-		t.Cleanup(captureSlog(&logs))
+		captureSlog(t, &logs)
 		// acpToolCallContentBlock.Content is an anonymous struct, so a literal would restate it.
 		blk := acpToolCallContentBlock{Type: contentTypeContent}
 		blk.Content.Text = "hello"

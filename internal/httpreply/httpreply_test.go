@@ -3,7 +3,6 @@ package httpreply
 import (
 	"bytes"
 	"io"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,19 +10,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/webhttp/v4"
 )
 
 func captureSlog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
 }
 

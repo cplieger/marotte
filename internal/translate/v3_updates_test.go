@@ -213,8 +213,7 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			restore := captureSlog(&buf)
-			defer restore()
+			captureSlog(t, &buf)
 
 			deps, _, _ := depsWithStore(t, "c1")
 			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1", infoKindFrame(t, tt.kind), FrameAttribution{})
@@ -236,8 +235,7 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 // covers every frame the cascade already consumed.
 func TestSessionInfoUpdate_NoKindIsSilent(t *testing.T) {
 	var buf bytes.Buffer
-	restore := captureSlog(&buf)
-	defer restore()
+	captureSlog(t, &buf)
 
 	deps, _, _ := depsWithStore(t, "c1")
 	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",

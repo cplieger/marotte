@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +19,7 @@ import (
 	"time"
 
 	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/webhttp/v4"
 	"golang.org/x/sync/singleflight"
 )
@@ -1534,13 +1534,7 @@ func writeCommit(t *testing.T, dir, file, content, msg string) {
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
 }
 

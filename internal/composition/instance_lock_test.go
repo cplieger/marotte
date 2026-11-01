@@ -13,16 +13,16 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/cplieger/slogx/capture"
 )
 
 const holdRootEnv = "MAROTTE_TEST_HOLD_ROOT"
 
 func captureClaimLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
-	prev := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(prev) })
 	buf := new(bytes.Buffer)
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, nil)))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, nil)))
 	return buf
 }
 

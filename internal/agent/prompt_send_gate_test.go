@@ -13,6 +13,7 @@ import (
 	"testing/synctest"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 // admitPromptBehindSteerLock opens c1's bridge and posts a prompt that is admitted and acknowledged while the steer
@@ -466,7 +467,7 @@ func TestCmdPrompt_ARewakeTurnStartAfterTheGateClaimedIsWaitedOut(t *testing.T) 
 	synctest.Test(t, func(t *testing.T) {
 		// The gate logs this line after its claim of the re-wake turn.
 		block := newLogLineBlock(t, "closing the agent's unbracketed turn so an admitted prompt can be sent")
-		swapDefaultLogger(t, block)
+		capture.SwapDefault(t, slog.New(block))
 		h, cs, br, rewake := gateRewakeHub(t, nil)
 		prompted := promptCalls(br)
 		prompt, ok := h.coord.PromptTurn("c1")

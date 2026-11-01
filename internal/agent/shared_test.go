@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +18,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/sse"
 )
 
@@ -265,30 +265,17 @@ func (b *logCapture) String() string {
 	return b.buf.String()
 }
 
-// swapDefaultLogger installs h as the slog default for tb; callers must not be parallel. The log package's
-// writer and flags are restored too, since slog.SetDefault redirects log and skips undoing it for the stock handler.
-func swapDefaultLogger(tb testing.TB, h slog.Handler) {
-	tb.Helper()
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	tb.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(h))
-}
-
 // captureLogs swaps the global slog default, so its test must not call t.Parallel.
 func captureLogs(t *testing.T) *logCapture {
 	t.Helper()
 	out := &logCapture{}
-	swapDefaultLogger(t, slog.NewJSONHandler(out, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	capture.SwapDefault(t, slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return out
 }
 
 func quietLogs(b *testing.B) {
 	b.Helper()
-	swapDefaultLogger(b, slog.DiscardHandler)
+	capture.SwapDefault(b, slog.New(slog.DiscardHandler))
 }
 
 func (rt *Runtime) stageWireTurn(tb testing.TB, chatID marotte.ChatID) *turnlog.Turn {

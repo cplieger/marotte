@@ -90,7 +90,7 @@ func TestLateWrites_TombstonedRefusalIsNotAnError(t *testing.T) {
 	for name, drive := range writes {
 		t.Run(name, func(t *testing.T) {
 			var logs bytes.Buffer
-			defer captureSlog(&logs)()
+			captureSlog(t, &logs)
 			deps, _, _ := refusingDeps(chat.ErrTombstoned, chat.ErrTombstoned)
 			tr := New(rolesOf(deps))
 
@@ -109,7 +109,7 @@ func TestLateWrites_ARefusedHeaderWriteLogsAnError(t *testing.T) {
 	for name, drive := range headerWrites() {
 		t.Run(name, func(t *testing.T) {
 			var logs bytes.Buffer
-			defer captureSlog(&logs)()
+			captureSlog(t, &logs)
 			deps, _, _ := refusingDeps(errBoom, nil)
 			tr := New(rolesOf(deps))
 
@@ -129,7 +129,7 @@ func TestLateWrites_ARefusedAppendIsReportedAtWarn(t *testing.T) {
 	for name, drive := range entryWrites() {
 		t.Run(name, func(t *testing.T) {
 			var logs bytes.Buffer
-			defer captureSlog(&logs)()
+			captureSlog(t, &logs)
 			deps, _, _ := refusingDeps(nil, errBoom)
 			tr := New(rolesOf(deps))
 
@@ -182,7 +182,7 @@ func TestHandleCompactionCompleted_TombstonedChatStopsAfterOneWrite(t *testing.T
 // of a deleted chat answering ErrChatNotFound is not a fault.
 func TestHandleCompactionCompleted_ADeletedChatsCountReadIsNotAnError(t *testing.T) {
 	var logs bytes.Buffer
-	defer captureSlog(&logs)()
+	captureSlog(t, &logs)
 	deps, _, store := refusingDeps(chat.ErrChatNotFound, nil)
 	tr := New(rolesOf(deps))
 
@@ -204,7 +204,7 @@ func TestHandleCompactionCompleted_ADeletedChatsCountReadIsNotAnError(t *testing
 // path's prompt read; any other read failure drops the title at ERROR.
 func TestHandleFocusUpdate_ADeletedChatsPromptReadIsNotAnError(t *testing.T) {
 	var logs bytes.Buffer
-	defer captureSlog(&logs)()
+	captureSlog(t, &logs)
 	deps, _, store := refusingDeps(chat.ErrChatNotFound, nil)
 	tr := New(rolesOf(deps))
 

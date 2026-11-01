@@ -3,7 +3,6 @@ package steering
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 func TestWriteTools(t *testing.T) {
@@ -488,14 +488,7 @@ func TestGenerate_LogsWroteOnSuccess(t *testing.T) {
 	configDir := t.TempDir()
 
 	var buf bytes.Buffer
-	// Restore log's writer and flags too: slog.SetDefault redirects them.
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
 	g := New(workDir, configDir)
 	g.Generate(t.Context())

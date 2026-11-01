@@ -114,7 +114,7 @@ func TestSessionInfo_AQueuedVibeChatIsLogged(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			t.Cleanup(captureSlog(&buf))
+			captureSlog(t, &buf)
 			deps, _, store := depsWithStore(t, "c1")
 			if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 				c.CurrentModeID = tc.mode

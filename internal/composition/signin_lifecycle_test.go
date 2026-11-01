@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/slogx/capture"
 )
 
 // lockedBuffer is a log sink safe for the runtime's goroutines and the test reading it at once.
@@ -37,9 +38,7 @@ func (b *lockedBuffer) String() string {
 // Shutdown returns only once it does.
 func TestApp_ShutdownWaitsForTheSignInVaultLast(t *testing.T) {
 	logs := &lockedBuffer{}
-	prev := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(logs, nil)))
 
 	chats, err := chat.NewStore(filepath.Join(t.TempDir(), "chats"))
 	if err != nil {

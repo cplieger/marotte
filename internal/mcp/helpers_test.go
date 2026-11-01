@@ -2,9 +2,10 @@ package mcp
 
 import (
 	"bytes"
-	"log"
 	"log/slog"
 	"testing"
+
+	"github.com/cplieger/slogx/capture"
 )
 
 // captureSlog redirects slog.Default to an in-memory Debug buffer for the test and restores it on
@@ -12,12 +13,6 @@ import (
 func captureSlog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
 }
