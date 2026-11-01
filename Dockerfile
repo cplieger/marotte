@@ -52,7 +52,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/actions && \
       | tar -xz -C static-src/node_modules/@cplieger/actions --strip-components=1
 
 # renovate: datasource=npm depName=@cplieger/fetch
-ARG CPLIEGER_FETCH_VERSION=2.3.0-dev.1
+ARG CPLIEGER_FETCH_VERSION=2.3.0
 RUN mkdir -p static-src/node_modules/@cplieger/fetch && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/fetch/-/fetch-${CPLIEGER_FETCH_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/fetch --strip-components=1
