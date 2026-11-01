@@ -20,7 +20,7 @@ require (
 	github.com/cplieger/atomicfile/v4 v4.2.0
 	github.com/cplieger/envx/v2 v2.1.0
 	github.com/cplieger/envx/yamlenv/v2 v2.3.0
-	github.com/cplieger/forgeapi v1.4.0-dev.20
+	github.com/cplieger/forgeapi v1.4.0
 	github.com/cplieger/jsoncap/v2 v2.1.0
 	github.com/cplieger/keyenc v1.1.0
 	github.com/cplieger/keylock v1.1.0-dev.1
