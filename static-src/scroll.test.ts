@@ -3400,7 +3400,7 @@ describe("a cold row laid out above the reader", () => {
   // shipped `[id="messages-wrap"] [data-near]` rule does (css/13-messages.css).
   sheet.textContent =
     ".msg-row.cold{content-visibility:hidden;contain-intrinsic-size:auto 3rem;}" +
-    '[id="messagesWrap"] [data-near]{content-visibility:visible;contain:layout style paint;}';
+    '[id="messagesWrap"] [data-near]{content-visibility:visible;contain:content;}';
 
   beforeEach(async () => {
     document.head.appendChild(sheet);

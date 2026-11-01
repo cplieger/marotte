@@ -4,7 +4,13 @@
 // 353 tool cards, and the composer's `field-sizing: content` textarea shares a layout pass with the
 // transcript unless contained.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { loadCSS, mountAppCSS, ruleBody, ruleContaining } from "./__test-helpers__/css-rules.js";
+import {
+  allRules,
+  loadCSS,
+  mountAppCSS,
+  ruleBody,
+  ruleContaining,
+} from "./__test-helpers__/css-rules.js";
 import scrollSource from "./scroll-controller.ts?raw";
 
 const BULK: readonly { selector: string; file: string }[] = [
@@ -28,7 +34,43 @@ describe("transcript containment", () => {
         /contain-intrinsic-size:\s*auto\s+(?:[\d.]+rem|var\(--[\w-]+\))\s*;/u,
       );
     });
+
+    it(`${selector} leaves the near rule's containment change intact`, () => {
+      // The `[data-near]` rule in 13-messages.css owns why: Firefox's blank band comes back.
+      const subject = new RegExp(`\\${selector}(?![\\w-])`, "u");
+      const own = allRules(loadCSS(file)).flatMap(({ selector: list, body }) =>
+        list
+          .split(",")
+          .map(
+            (member) =>
+              member
+                .trim()
+                .split(/[\s>+~]+/u)
+                .at(-1) ?? "",
+          )
+          .filter((compound) => subject.test(compound))
+          .map((compound) => ({ compound, body })),
+      );
+      const base = own.filter((r) => r.compound === selector);
+      const state = own.filter((r) => r.compound !== selector);
+      expect(base.length, "the base rule is scanned").toBeGreaterThan(0);
+      expect(
+        base.filter((r) => /\bcontain\s*:\s*content\s*;/u.test(r.body)).map((r) => r.compound),
+        "no base rule is already contain: content",
+      ).toEqual([]);
+      expect(
+        state.filter((r) => /\bcontain\s*:/u.test(r.body)).map((r) => r.compound),
+        "no state rule declares a contain",
+      ).toEqual([]);
+    });
   }
+
+  it("spells the near rule's containment as the `content` keyword", () => {
+    // Firefox only, so Chromium's computed `contain` (`content` for both spellings) cannot see it:
+    // `transcript-reshow-layout.test.ts` is the rendered case.
+    const body = ruleBody(loadCSS("13-messages.css"), '[id="messages-wrap"] [data-near]');
+    expect(/^\s*contain:\s*([^;]+);/mu.exec(body)?.[1]).toBe("content");
+  });
 
   it("is the set scroll-controller.ts lays out ahead of the scrollport", () => {
     // A box missing there first takes its real size on screen in WebKit, where anchoring cannot hide it.
