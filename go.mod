@@ -23,6 +23,7 @@ require (
 	github.com/cplieger/forgeapi v1.4.0-dev.19
 	github.com/cplieger/jsoncap/v2 v2.1.0
 	github.com/cplieger/keyenc v1.1.0
+	github.com/cplieger/keylock v1.0.1
 	github.com/cplieger/pathinside/v2 v2.1.0
 	github.com/cplieger/pinstall/v3 v3.1.0-dev.4
 	github.com/cplieger/runesafe/v3 v3.2.0

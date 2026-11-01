@@ -101,7 +101,7 @@ func TestCheck_ACallerCancelWritesNoVerdict(t *testing.T) {
 	t.Run("the id lock is held past the budget", func(t *testing.T) {
 		core := &whoCore{}
 		m, _ := checkManager(t, core)
-		unlock, err := m.locks.lock(t.Context(), ghID)
+		unlock, err := m.locks.Lock(t.Context(), ghID)
 		if err != nil {
 			t.Fatal(err)
 		}

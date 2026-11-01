@@ -38,7 +38,7 @@ type drivenHost struct {
 // lease recorded at launch. A load runs to completion whatever ctx does, since a cancelled door would detach the
 // session; ctx bounds only this caller's waits, for the run's lock and for the load.
 func (rs *Runs) ensureResident(ctx context.Context, workflowID string) (*drivenHost, error) {
-	unlock, err := rs.hosts.acquire(ctx, workflowID)
+	unlock, err := rs.hosts.Lock(ctx, workflowID)
 	if err != nil {
 		return nil, err
 	}

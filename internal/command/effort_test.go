@@ -1,6 +1,7 @@
 package command
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +12,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/chatlock"
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/testsupport"
@@ -34,7 +35,7 @@ func effortReq(t *testing.T, chatID marotte.ChatID, level string) *marotte.Clien
 // and nothing touches a settings file.
 func setEffort(t *testing.T, host hostDouble, configDir string, chatID marotte.ChatID, level string) error {
 	t.Helper()
-	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: configDir}, host, chatlock.New(),
+	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: configDir}, host, keylock.New(cmp.Compare[marotte.ChatID]),
 		effortReq(t, chatID, level))
 	return err
 }
@@ -116,7 +117,7 @@ func TestCmdSetEffort_ARefusedSwitchWritesNoSeed(t *testing.T) {
 	host := newBridgeHost(store, b)
 	bus := &recordingBus{}
 
-	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, chatlock.New(),
+	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, keylock.New(cmp.Compare[marotte.ChatID]),
 		effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusBadGateway {
@@ -141,7 +142,7 @@ func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 	host := newBridgeHost(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 	bus := &recordingBus{}
 
-	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, chatlock.New(),
+	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, keylock.New(cmp.Compare[marotte.ChatID]),
 		effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusOK {
@@ -172,7 +173,7 @@ func TestCmdSetEffort_ATierTheListedModelLacksRecordsNoSeed(t *testing.T) {
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: deps, store: store}}
 	bus := &recordingBus{}
 
-	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, chatlock.New(),
+	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, keylock.New(cmp.Compare[marotte.ChatID]),
 		effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusOK {
@@ -206,7 +207,7 @@ func TestCmdSetEffort_AChatWithNoModelIsNotSeeded(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
 
-	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: dir}, host, chatlock.New(),
+	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: dir}, host, keylock.New(cmp.Compare[marotte.ChatID]),
 		effortReq(t, "c-brand-new", "high"))
 
 	if statusOf(err) != http.StatusOK {
@@ -381,7 +382,7 @@ func TestCmdSetEffort_AnAcceptedTierRecordsOneRow(t *testing.T) {
 	seedChatOnModel(t, store, "c1", "opus-5")
 	host := effortHost(t, store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
-	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, chatlock.New(), effortReq(t, "c1", "max"))
+	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, keylock.New(cmp.Compare[marotte.ChatID]), effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -399,7 +400,7 @@ func TestCmdSetEffort_ARefusedSwitchRecordsNoRow(t *testing.T) {
 	seedChatOnModel(t, store, "c1", "opus-5")
 	host := effortHost(t, store, &recordingBridge{callErr: errors.New("no such config option"), sessionID: "s"})
 
-	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, chatlock.New(), effortReq(t, "c1", "max"))
+	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, keylock.New(cmp.Compare[marotte.ChatID]), effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", statusOf(err))
@@ -419,7 +420,7 @@ func TestCmdSetEffort_ARepeatOfTheHeldTierRecordsNoSecondRow(t *testing.T) {
 	host := effortHost(t, store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
 	for range 2 {
-		if _, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, chatlock.New(),
+		if _, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, keylock.New(cmp.Compare[marotte.ChatID]),
 			effortReq(t, "c1", "high")); statusOf(err) != http.StatusOK {
 			t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 		}

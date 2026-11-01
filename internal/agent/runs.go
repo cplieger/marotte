@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -56,10 +57,11 @@ type Runs struct {
 	life runLifecycle
 	// sweep pauses the running runs while the gate is closed (run_gate.go).
 	sweep gateSweep
-	// hosts serializes, per run, making its launching session resident (ensureResident).
-	hosts runLocks
+	// hosts serializes, per run, making its launching session resident (ensureResident). hosts, resumes and
+	// sweep.turns are built in New; a nil set panics on its first lock.
+	hosts *keylock.Set[string]
 	// resumes serializes, per run, every resume marotte writes, so an automatic one reads the run after any other.
-	resumes runLocks
+	resumes *keylock.Set[string]
 	bounds  runBoundsState
 	// gate holds run work while the engine's sign-in cannot be answered (run_gate.go).
 	gate runGate

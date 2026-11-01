@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -38,19 +40,21 @@ type stepSteers struct {
 	engine *engineOwner
 	// retiredCh closes at the next target retirement; nil until retired asks for it.
 	retiredCh chan struct{}
-	gate      runLocks
+	gate      *keylock.Set[string]
 	mu        sync.Mutex
 }
 
 func newStepSteers(recs *steerRecords, ledger command.SteerRecorder) *stepSteers {
-	return &stepSteers{recs: recs, ledger: ledger, targets: make(map[string]stepSteerTarget)}
+	return &stepSteers{
+		recs: recs, ledger: ledger, targets: make(map[string]stepSteerTarget), gate: keylock.New(cmp.Compare[string]),
+	}
 }
 
 func (s *stepSteers) lock(ctx context.Context, workflowID string) (unlock func(), err error) {
 	if s == nil {
 		return func() {}, nil
 	}
-	return s.gate.acquire(ctx, workflowID)
+	return s.gate.Lock(ctx, workflowID)
 }
 
 func (s *stepSteers) target(key marotte.ChatID) (stepSteerTarget, bool) {

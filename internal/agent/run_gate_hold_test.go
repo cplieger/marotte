@@ -2901,10 +2901,7 @@ func (c *holdCell) awaitEngineSweep(t *testing.T, lists int32, reads int) {
 func (c *holdCell) awaitTransitionEnd(t *testing.T) {
 	t.Helper()
 	waitUntil(t, "the run's transition to end", func() bool {
-		c.h.runs.resumes.mu.Lock()
-		defer c.h.runs.resumes.mu.Unlock()
-		_, locked := c.h.runs.resumes.held[c.id]
-		return !locked || c.f.heldReads.Load() > 0
+		return c.f.heldReads.Load() > 0 || resumeLockFree(c.h.runs, c.id)
 	})
 }
 

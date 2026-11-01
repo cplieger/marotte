@@ -13,7 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/marotte/internal/chatlock"
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
@@ -211,7 +211,7 @@ func cmdSetEffort(
 	bus broadcaster,
 	ws Workspace,
 	recorder effortRecorder,
-	configLocks *chatlock.Set,
+	configLocks *keylock.Set[marotte.ChatID],
 	cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {

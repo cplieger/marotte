@@ -4,6 +4,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/buffer"
-	"github.com/cplieger/marotte/internal/chatlock"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -462,6 +463,9 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 
 		cancelRetryBase: defaultCancelRetryBase,
 		mutations:       newRunMutations(),
+		hosts:           keylock.New(cmp.Compare[string]),
+		resumes:         keylock.New(cmp.Compare[string]),
+		sweep:           gateSweep{turns: keylock.New(cmp.Compare[string])},
 	}
 
 	h := &Runtime{
@@ -575,7 +579,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.steerLedger = command.NewSteerLedger()
 	runs.steers = newStepSteers(sseP.steers, h.steerLedger)
 	runs.steers.engine = h.engine
-	h.steerQueue = steerQueue{recs: sseP.steers, coord: h.coord, locks: chatlock.New(), steps: runs.steers}
+	h.steerQueue = steerQueue{recs: sseP.steers, coord: h.coord, locks: keylock.New(cmp.Compare[marotte.ChatID]), steps: runs.steers}
 	// After the literal: steerQueue is a value, so the copy the step side holds must carry steps.
 	runs.steers.queue = h.steerQueue
 	h.wireSteerRecords()

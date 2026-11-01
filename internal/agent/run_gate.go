@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
@@ -370,7 +371,7 @@ func holdReasonFor(a signin.Answerability) string {
 // before the next lists it and a refused ask's sweep never waits past its sweepBudget.
 type gateSweep struct {
 	kick  chan struct{}
-	turns runLocks
+	turns *keylock.Set[string]
 	once  sync.Once
 }
 
@@ -750,7 +751,7 @@ var errGateOpened = errors.New("the sign-in gate opened")
 // sweepPause pauses every listed running run with no pause pending (KAS parks a step on a refused ask once any pause
 // was requested), holding each: nil once each was paused, errGateOpened when the gate opened first.
 func (rs *Runs) sweepPause(ctx context.Context) error {
-	release, err := rs.sweep.turns.acquire(ctx, "")
+	release, err := rs.sweep.turns.Lock(ctx, "")
 	if err != nil {
 		return err
 	}

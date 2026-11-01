@@ -1,13 +1,14 @@
 package command
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/chatlock"
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -117,7 +118,7 @@ func TestSessionConfig_ColdOpenPersistsAndASessionRefusalDoesNot(t *testing.T) {
 				}
 				cmd := &marotte.ClientCommand{Type: marotte.CmdSetEffort, ChatID: "c1", Payload: payload}
 
-				_, err = cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, chatlock.New(), cmd)
+				_, err = cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, keylock.New(cmp.Compare[marotte.ChatID]), cmd)
 
 				assertConfigOutcome(t, err, test.wantStatus)
 				c, ok := store.Get(t.Context(), "c1")

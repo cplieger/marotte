@@ -232,10 +232,7 @@ func TestSignInGate_AReleaseThatResumesTheRunServesALaterEdgeItRefused(t *testin
 	g.b.set(true, true, nil)
 	g.signIn(t)
 	waitUntil(t, "the next opening edge's finder to read the pause and decide its claim", func() bool {
-		g.h.runs.resumes.mu.Lock()
-		_, locked := g.h.runs.resumes.held[gateRunID]
-		g.h.runs.resumes.mu.Unlock()
-		return finds.Load() == 2 && !locked
+		return finds.Load() == 2 && resumeLockFree(g.h.runs, gateRunID)
 	})
 	g.h.runs.gate.mu.Lock()
 	owner, opens := g.h.runs.gate.releases[gateRunID], g.h.runs.gate.opens

@@ -803,29 +803,31 @@ func TestEnsureResident_AVerbThatGivesUpWaitingDoesNothing(t *testing.T) {
 	})
 }
 
-func TestRunLocks_AnEndedContextNeverAcquires(t *testing.T) {
-	t.Run("a free lock", func(t *testing.T) {
-		var locks runLocks
+func TestStepGate_AnEndedWaitHoldsNothing(t *testing.T) {
+	t.Run("a free lock and an ended context", func(t *testing.T) {
+		gate := newStepSteers(nil, nil)
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		if release, err := locks.acquire(ctx, "wf_1"); err == nil {
-			release()
-			t.Fatal("acquire on a free lock = nil for a context that had already ended")
+		if release, err := gate.lock(ctx, "wf_1"); !errors.Is(err, context.Canceled) {
+			if err == nil {
+				release()
+			}
+			t.Fatalf("lock on a free gate with an ended context = %v, want context.Canceled", err)
 		}
 	})
 	t.Run("a waiter cancelled before its predecessor releases", func(t *testing.T) {
 		// The waiter sees cancellation and release together, so a lock letting either win would acquire sometime.
 		for range 64 {
 			synctest.Test(t, func(t *testing.T) {
-				var locks runLocks
-				release, err := locks.acquire(t.Context(), "wf_1")
+				gate := newStepSteers(nil, nil)
+				release, err := gate.lock(t.Context(), "wf_1")
 				if err != nil {
-					t.Fatalf("Setup: the first acquire = %v", err)
+					t.Fatalf("Setup: the first lock = %v", err)
 				}
 				ctx, cancel := context.WithCancel(t.Context())
 				got := make(chan error, 1)
 				go func() {
-					r, err := locks.acquire(ctx, "wf_1")
+					r, err := gate.lock(ctx, "wf_1")
 					if err == nil {
 						r()
 					}
@@ -834,9 +836,16 @@ func TestRunLocks_AnEndedContextNeverAcquires(t *testing.T) {
 				synctest.Wait()
 				cancel()
 				release()
-				if err := <-got; err == nil {
-					t.Fatal("acquire = nil for a waiter whose context ended before the lock freed")
+				if err := <-got; !errors.Is(err, context.Canceled) {
+					t.Fatalf("lock = %v for a waiter whose context ended before the gate freed, want context.Canceled", err)
 				}
+				next, cancelNext := context.WithTimeout(t.Context(), time.Second)
+				defer cancelNext()
+				again, err := gate.lock(next, "wf_1")
+				if err != nil {
+					t.Fatalf("lock after the cancelled waiter left = %v, want the gate free", err)
+				}
+				again()
 			})
 		}
 	})
