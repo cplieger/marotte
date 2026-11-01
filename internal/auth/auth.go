@@ -3,8 +3,8 @@
 package auth
 
 import (
-	"net"
 	"net/http"
+	"net/netip"
 	"regexp"
 
 	"github.com/cplieger/marotte/internal/signin"
@@ -28,7 +28,7 @@ type Handler struct {
 	// managedSettingsPath is the administrator's file the sign-in controls come from.
 	managedSettingsPath string
 	// trusted is the reverse-proxy set for webhttp.ClientIP in the login/logout audit logs. Nil logs the socket peer.
-	trusted []*net.IPNet
+	trusted []netip.Prefix
 	// apiKey: the engine is signed in by KIRO_API_KEY, which kiro-cli prefers to marotte's answer, so sign-in and
 	// sign-out here would change nothing the engine uses.
 	apiKey bool
@@ -39,7 +39,7 @@ type Option func(*Handler)
 
 // WithTrustedProxies sets the reverse-proxy networks trusted when resolving the audit-log client IP. Empty trusts
 // nothing, so the socket peer is logged.
-func WithTrustedProxies(trusted []*net.IPNet) Option {
+func WithTrustedProxies(trusted []netip.Prefix) Option {
 	return func(h *Handler) { h.trusted = trusted }
 }
 

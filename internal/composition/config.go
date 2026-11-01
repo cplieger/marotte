@@ -3,7 +3,7 @@ package composition
 import (
 	"cmp"
 	"log/slog"
-	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // Config holds all environment/flag values needed to build the app.
@@ -51,9 +51,9 @@ type Config struct {
 	// resolve before it replaces the current one — the embedded
 	// required-tools.txt, injected by main.
 	ToolCatalogRequire []string
-	// TrustedProxies are the reverse-proxy networks whose X-Forwarded-For webhttp.ClientIP may
-	// trust, from TRUSTED_PROXIES. Empty trusts nothing and logs the unspoofable socket peer.
-	TrustedProxies []*net.IPNet
+	// TrustedProxies are the reverse-proxy prefixes whose X-Forwarded-For webhttp may trust, from
+	// TRUSTED_PROXIES. Empty trusts nothing and logs the unspoofable socket peer.
+	TrustedProxies []netip.Prefix
 	// TrustedInstallUIDs names identities whose write access to the kiro-cli install tree does not
 	// invalidate pinstall's custody, from TRUSTED_INSTALL_UIDS. Empty (the default) refuses any
 	// tree another identity can write. Never compiled in: only the deployment knows which account
@@ -191,13 +191,13 @@ func browseRoots(workDir, configDir, raw string) []string {
 
 // Unset yields nil. LENIENT and fail-SAFE: a malformed entry is logged and skipped, falling back to
 // the socket peer, never trusting a forwarded header.
-func parseTrustedProxies(raw string) []*net.IPNet {
-	nets, invalid := webhttp.ParseCIDRs(strings.Split(raw, ","))
+func parseTrustedProxies(raw string) []netip.Prefix {
+	prefixes, invalid := webhttp.ParseCIDRs(strings.Split(raw, ","))
 	if len(invalid) > 0 {
 		slog.Warn("config: ignoring malformed TRUSTED_PROXIES entries (want CIDR or IP)",
 			"entries", invalid)
 	}
-	return nets
+	return prefixes
 }
 
 // Unset yields nil, fully enforcing. Each entry ASSERTS the uid is already as privileged as this

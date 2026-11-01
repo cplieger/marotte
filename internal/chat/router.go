@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // router owns the chat package's HTTP handlers and delegates persistence to its *Store. Store.RegisterRoutes

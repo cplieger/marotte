@@ -22,7 +22,7 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/workflow"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // handleRun serves GET /api/runs/{workflowId}: the run's full state. It grades a failed read three ways,
