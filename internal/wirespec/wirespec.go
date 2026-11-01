@@ -20,7 +20,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/server"
-	"github.com/cplieger/wiregen/v3"
+	"github.com/cplieger/wiregen/v4"
 )
 
 // wireTypes is every Go type the generator emits a TypeScript declaration for.
