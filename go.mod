@@ -20,10 +20,10 @@ require (
 	github.com/cplieger/atomicfile/v4 v4.2.0
 	github.com/cplieger/envx/v2 v2.1.0
 	github.com/cplieger/envx/yamlenv/v2 v2.3.0
-	github.com/cplieger/forgeapi v1.4.0-dev.19
+	github.com/cplieger/forgeapi v1.4.0-dev.20
 	github.com/cplieger/jsoncap/v2 v2.1.0
 	github.com/cplieger/keyenc v1.1.0
-	github.com/cplieger/keylock v1.0.1
+	github.com/cplieger/keylock v1.1.0-dev.1
 	github.com/cplieger/pathinside/v2 v2.1.0
 	github.com/cplieger/pinstall/v3 v3.1.0
 	github.com/cplieger/runesafe/v3 v3.2.0
@@ -32,7 +32,7 @@ require (
 	github.com/cplieger/ssrf/v4 v4.5.0
 	github.com/cplieger/toolbelt/v3 v3.11.0-dev.20
 	github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.15
-	github.com/cplieger/webhttp/v4 v4.0.0-dev.3
+	github.com/cplieger/webhttp/v4 v4.0.0
 	github.com/cplieger/wiregen/v3 v3.3.1
 	github.com/evanw/esbuild v0.28.2
 	github.com/klauspost/compress v1.20.3
