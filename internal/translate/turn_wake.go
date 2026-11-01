@@ -19,6 +19,7 @@ func (t *Translator) recordWake(ctx context.Context, chatID marotte.ChatID, turn
 		return
 	}
 	w := t.wakeOf(ctx, chatID, reason.wakeReason())
+	t.nameWake(chatID, &w)
 	sealed, err := turn.TurnWake(ctx, &w)
 	t.publishSealed(ctx, chatScope(chatID), sealed)
 	if err != nil {
@@ -39,7 +40,7 @@ func (t *Translator) wakeOf(ctx context.Context, chatID marotte.ChatID, reason m
 	switch reason {
 	case marotte.WakeReasonRunFinished:
 		if f, ok := t.wakeMem.takeFinished(chatID); ok {
-			w.Run, w.RunLabel, w.RunStatus, w.Initiator, w.StopReason = f.run, f.label, f.status, f.initiator, f.stopReason
+			w.Run, w.RunName, w.RunStatus, w.Initiator, w.StopReason = f.run, f.label, f.status, f.initiator, f.stopReason
 		}
 		return w
 	case marotte.WakeReasonStepMessage, marotte.WakeReasonRewake:
@@ -72,7 +73,6 @@ func (t *Translator) wakeOf(ctx context.Context, chatID marotte.ChatID, reason m
 	return w
 }
 
-// firstWaker is the first of rows KAS wakes an idle chat for rather than buffers, nil for none.
 func firstWaker(rows []marotte.WorkflowMessage) *marotte.WorkflowMessage {
 	for i := range rows {
 		if !alwaysBuffered(rows[i].Steer.Origin, rows[i].Steer.Severity) {
@@ -100,12 +100,8 @@ func (t *Translator) observeRunEnd(chatID marotte.ChatID, p *kasRunComplete) {
 		if t.chatBusy(chatID) {
 			return
 		}
-		label := fs.RunLabel
-		if label == "" {
-			label = fs.WorkflowName
-		}
 		t.wakeMem.runFinished(chatID, &runFinish{
-			run: p.WorkflowID, label: label, status: status, initiator: fs.StopInitiator, stopReason: fs.StopReason,
+			run: p.WorkflowID, label: marotte.RunDisplayName(fs.RunLabel, fs.WorkflowName), status: status, initiator: fs.StopInitiator, stopReason: fs.StopReason,
 		})
 	case status == marotte.RunStatusPaused:
 		t.wakeMem.runPaused(p.WorkflowID)
@@ -248,7 +244,6 @@ func (w *wakeMemory) capPaused(run, loop string, maxIterations int) {
 	w.caps[run] = repeatCap{loop: loop, maxIterations: maxIterations}
 }
 
-// retryWaited marks node as waiting out connection errors (a retry-wait node_paused).
 func (w *wakeMemory) retryWaited(run, node string) {
 	if run == "" || node == "" {
 		return

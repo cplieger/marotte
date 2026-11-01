@@ -564,7 +564,7 @@ async function navigateToHit(hit: Hit): Promise<void> {
       return;
     }
     const region = card.querySelector<HTMLElement>(TURN_REGION[hit.segment_kind]);
-    // Both regions sit in the card's resting state, so no disclosure chain.
+    // Each region sits in the card's resting state, so no disclosure chain.
     await landOrNotice(region ?? card, hit, region !== null);
     return;
   }

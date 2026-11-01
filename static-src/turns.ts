@@ -23,7 +23,7 @@ import type {
   TurnState,
   TurnThroughput,
 } from "./types.js";
-import type { ContextBreakdown, TurnOutcome } from "./wire/types.gen.js";
+import type { ContextBreakdown, EntryTurnWake, TurnOutcome, WakeSteer } from "./wire/types.gen.js";
 
 /** A turn's result, as scannable colour down the transcript. Re-exported from the generated wire
  *  types (the rule exists in both languages). `running` is the member no `turn_close` carries: a
@@ -120,6 +120,55 @@ export interface Turn {
    *  message and everything after, so keeping turn N means addressing N+1's prompt. Undefined on the
    *  last turn and when the next turn has no prompt. */
   rewindTo: EntryPrompt | undefined;
+  /** What started an agent-initiated turn: its first lane-`""` `turn_wake`, with every run the chat's
+   *  `run_named` entries name filled in (`namedWake`). Undefined for a prompt turn. */
+  wake?: EntryTurnWake | undefined;
+}
+
+/** Each run's name from the held turns' `run_named` entries, newest last. */
+function runNamesOf(src: TurnSource): ReadonlyMap<string, string> {
+  const names = new Map<string, string>();
+  for (const id of src.turn_order) {
+    for (const e of src.turns.get(id)?.entries ?? []) {
+      const n = payloadOf(e, "run_named");
+      if (n !== undefined && n.run !== "" && n.name !== "") {
+        names.set(n.run, n.name);
+      }
+    }
+  }
+  return names;
+}
+
+/** `w` with every run it left unnamed named from `names` (`marotte.NamedWake`); `w` is not changed. */
+export function namedWake(w: EntryTurnWake, names: ReadonlyMap<string, string>): EntryTurnWake {
+  const name = (run: string | undefined, recorded: string | undefined): string | undefined =>
+    recorded !== undefined && recorded !== "" ? recorded : names.get(run ?? "");
+  const runName = name(w.run, w.run_name);
+  return {
+    ...w,
+    ...(runName === undefined ? {} : { run_name: runName }),
+    ...(w.steers === undefined
+      ? {}
+      : {
+          steers: w.steers.map((s): WakeSteer => {
+            const n = name(s.run, s.run_name);
+            return n === undefined ? s : { ...s, run_name: n };
+          }),
+        }),
+  };
+}
+
+/** The turn's raw wake, the first lane-`""` `turn_wake` of a turn with no prompt. */
+function rawWakeOf(state: TurnState, open: EntryTurnOpen): EntryTurnWake | undefined {
+  if (open.prompt !== undefined) {
+    return undefined;
+  }
+  for (const e of state.entries) {
+    if (e.kind === "turn_wake" && (e.lane ?? "") === "") {
+      return payloadOf(e, "turn_wake");
+    }
+  }
+  return undefined;
 }
 
 /** Whether a turn is DRAWN: the one predicate, twinned by the server's rail index. A reader-opened
@@ -149,6 +198,7 @@ export function turnIsDrawn(t: TurnState): boolean {
     if (
       e.kind === "turn_bind" ||
       e.kind === "turn_wake" ||
+      e.kind === "run_named" ||
       e.kind === "tool_result" ||
       e.kind === "turn_close" ||
       e.kind === "reconciled" ||
@@ -177,9 +227,12 @@ function turnOf(
   state: TurnState,
   open: EntryTurnOpen,
   rewindTo: EntryPrompt | undefined,
+  names: () => ReadonlyMap<string, string>,
 ): Turn {
   const body = state.entries.slice(1);
+  const wake = rawWakeOf(state, open);
   return {
+    wake: wake === undefined ? undefined : namedWake(wake, names()),
     id,
     n: open.n,
     trigger: open.prompt,
@@ -195,6 +248,7 @@ function turnOf(
  *  dropping the turns `turnIsDrawn` refuses. */
 export function projectTurns(src: TurnSource): Turn[] {
   const turns: Turn[] = [];
+  const names = lazyRunNames(src);
   for (const id of src.turn_order) {
     const state = src.turns.get(id);
     if (state === undefined) {
@@ -204,7 +258,7 @@ export function projectTurns(src: TurnSource): Turn[] {
     if (open === undefined || !turnIsDrawn(state)) {
       continue;
     }
-    turns.push(turnOf(id, state, open, undefined));
+    turns.push(turnOf(id, state, open, undefined, names));
   }
   for (let i = 0; i < turns.length; i++) {
     const t = turns[i];
@@ -230,7 +284,13 @@ export function projectTurn(src: TurnSource, turnID: string): Turn | undefined {
   if (open === undefined || !turnIsDrawn(state)) {
     return undefined;
   }
-  return turnOf(turnID, state, open, nextTrigger(src, at));
+  return turnOf(turnID, state, open, nextTrigger(src, at), lazyRunNames(src));
+}
+
+/** `runNamesOf(src)`, read once on first call: only a wake turn reads it. */
+function lazyRunNames(src: TurnSource): () => ReadonlyMap<string, string> {
+  let names: ReadonlyMap<string, string> | undefined;
+  return () => (names ??= runNamesOf(src));
 }
 
 /** The trigger of the first DRAWN turn after `at` in file order — a rewind from turn N's

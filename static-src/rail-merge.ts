@@ -3,7 +3,7 @@
 // window cannot see the turns paged out. Pure and DOM-free, like `turns.ts` beside it.
 
 import { OUTCOME_LABEL } from "./turn-severity.js";
-import { recordedRunName, wakeText, type RunNamer } from "./turn-wake.js";
+import { wakeText } from "./turn-wake.js";
 import { turnLedger } from "./turns.js";
 import type { Turn, TurnOutcome } from "./turns.js";
 
@@ -126,12 +126,11 @@ function fillBadTimestamps(rows: TurnSummary[], bad: readonly number[]): void {
  *  a turn by the same number and no turn can take two slots. Resident wins per field with no
  *  exemption, because it sees the turn running now and a window never holds part of a turn
  *  (section 6.3); a `held` turn that is not drawn holds no slot, whatever the index fetched before
- *  a later wake took its last drawn row. `nameOf` names a wake's runs. */
+ *  a later wake took its last drawn row. */
 export function mergeTurnSets(
   resident: readonly Turn[],
   indexed: readonly TurnSummary[],
   held: ReadonlySet<string> = new Set(),
-  nameOf: RunNamer = recordedRunName,
 ): TurnSummary[] {
   const drawn = new Set(resident.map((t) => t.id));
   const byN = new Map<number, TurnSummary>();
@@ -141,12 +140,12 @@ export function mergeTurnSets(
     }
   }
   for (const t of resident) {
-    byN.set(t.n, residentRow(t, nameOf));
+    byN.set(t.n, residentRow(t));
   }
   return [...byN.values()].sort((a, b) => a.n - b.n);
 }
 
-function residentRow(t: Turn, nameOf: RunNamer): TurnSummary {
+function residentRow(t: Turn): TurnSummary {
   const out: TurnSummary = {
     id: t.id,
     n: t.n,
@@ -154,8 +153,8 @@ function residentRow(t: Turn, nameOf: RunNamer): TurnSummary {
     outcome: t.outcome,
     agent_initiated: t.trigger === undefined,
   };
-  // A wake's line as `internal/chat/entrylog.go` foldTurnWake joins it: label, then message.
-  const line = firstLine(t.trigger?.text ?? wakeText(t, nameOf).replace("\n", ": "));
+  // A wake's line as `internal/chat/entrylog.go` railLineLocked joins it: label, then message.
+  const line = firstLine(t.trigger?.text ?? wakeText(t).replace("\n", ": "));
   if (line !== "") {
     out.first_line = line;
   }

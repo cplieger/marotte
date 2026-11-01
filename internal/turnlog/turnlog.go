@@ -524,6 +524,14 @@ func (t *Turn) TurnWake(ctx context.Context, w *marotte.EntryTurnWake) ([]Sealed
 	return sealed, err
 }
 
+// RunNamed appends a run's display name for the wakes that named it before it was known, an
+// interjection like the wake.
+func (t *Turn) RunNamed(ctx context.Context, n *marotte.EntryRunNamed) ([]Sealed, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.interject(ctx, marotte.EntryKindRunNamed, t.mintID(), *n)
+}
+
 // Steer appends a steer in any state as an interjection: it seals no lane, whatever is streaming.
 func (t *Turn) Steer(ctx context.Context, steerID string, steer *marotte.EntrySteer) ([]Sealed, error) {
 	t.mu.Lock()

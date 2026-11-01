@@ -46,7 +46,7 @@ import type { ViewScrollState } from "./scroll-controller.js";
 import {
   buildTurnHeader,
   updateTurnHeader,
-  WAKE_RUN_SELECTOR,
+  WAKE_ROW_RUN_SELECTOR,
   type TurnHeaderData,
 } from "./fundamentals/turn-header.js";
 import {
@@ -119,8 +119,7 @@ import {
   setRunCardOwners,
   openNoteRun,
 } from "./messages-blocks.js";
-import { turnWakeOf, wakeLine } from "./turn-wake.js";
-import { unwatchStepRunLabel, wakeRunName, watchWakeRunName } from "./workflow-run-label.js";
+import { wakeLine } from "./turn-wake.js";
 import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
@@ -1316,7 +1315,6 @@ function spacerPx(t: Turn, range: EntryRange, side: SpacerSide): number {
  * and height recording happen at the window drop, so this reads no layout.
  */
 function disposeTurnBody(turnID: string): void {
-  releaseWakeRunWatches(turnID);
   // Flush any live markdown stream, then drop the render state.
   finalizeAssistantBody(turnID);
   disposeAssistantBody(turnID);
@@ -1564,6 +1562,18 @@ function setHitCount(card: HTMLElement, n: number): void {
   badge.textContent = n > 0 ? String(n) : "";
 }
 
+/** A folded card's clamp can hide a re-delivery's later rows, so its row run buttons take no focus until the card
+ *  opens; the label's run button sits outside the clamp and stays. */
+function syncWakeRowRuns(card: HTMLElement): void {
+  const folded = card.hasAttribute("data-folded");
+  for (const btn of card
+    .querySelector(":scope > .turn-header")
+    ?.querySelectorAll<HTMLButtonElement>(WAKE_ROW_RUN_SELECTOR) ?? []) {
+    // `inert`, not `disabled`: a disabled button dims (40-a11y.css), and the first row stays readable.
+    btn.inert = folded;
+  }
+}
+
 function setCardFolded(card: HTMLElement, folded: boolean): void {
   setCardsFolded([{ card, folded }]);
 }
@@ -1573,6 +1583,7 @@ function setCardsFolded(items: readonly { card: HTMLElement; folded: boolean }[]
   for (const { card, folded } of items) {
     const flip = (): void => {
       card.toggleAttribute("data-folded", folded);
+      syncWakeRowRuns(card);
       const header = card.querySelector<HTMLElement>(":scope > .turn-header");
       // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
       header
@@ -1770,9 +1781,9 @@ function buildTurn(t: Turn): HTMLElement {
   card.id = turnAnchorID(t.n);
 
   const header = buildTurnHeader(headerData(t));
-  syncWakeRunWatches(t.id, header);
   mountFoldToggle(header, card, t);
   card.appendChild(header);
+  syncWakeRowRuns(card);
   card.toggleAttribute("data-running", t.outcome === "running");
 
   const plan = foldPlan.get(t.id);
@@ -1809,7 +1820,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   const header = card.querySelector<HTMLElement>(":scope > .turn-header");
   if (header !== null) {
     updateTurnHeader(header, headerData(t));
-    syncWakeRunWatches(t.id, header);
+    syncWakeRowRuns(card);
   }
   card.toggleAttribute("data-running", t.outcome === "running");
   // Hands off three bodies: a stub has none, a body still owed a build is the builder's, and a dropped range is the
@@ -2102,40 +2113,8 @@ function syncTurnBodyless(card: HTMLElement): void {
   );
 }
 
-/** Each mounted header's run names held current from the run store, by turn. */
-const wakeRunWatches = new Map<string, Set<HTMLElement>>();
-
-/** Watch the run names `header` draws now and release the ones a repaint replaced. */
-function syncWakeRunWatches(turnID: string, header: HTMLElement): void {
-  const now = new Set(header.querySelectorAll<HTMLElement>(WAKE_RUN_SELECTOR));
-  const before = wakeRunWatches.get(turnID);
-  for (const name of before ?? []) {
-    if (!now.has(name)) {
-      unwatchStepRunLabel(name);
-    }
-  }
-  for (const name of now) {
-    if (before?.has(name) !== true) {
-      watchWakeRunName(name, name.dataset["runId"] ?? "", name.dataset["runRecorded"] ?? "");
-    }
-  }
-  if (now.size === 0) {
-    wakeRunWatches.delete(turnID);
-  } else {
-    wakeRunWatches.set(turnID, now);
-  }
-}
-
-function releaseWakeRunWatches(turnID: string): void {
-  for (const name of wakeRunWatches.get(turnID) ?? []) {
-    unwatchStepRunLabel(name);
-  }
-  wakeRunWatches.delete(turnID);
-}
-
 function headerData(t: Turn): TurnHeaderData {
   const request = t.trigger?.text;
-  const wake = turnWakeOf(t);
   return {
     n: t.n,
     outcome: t.outcome,
@@ -2145,9 +2124,9 @@ function headerData(t: Turn): TurnHeaderData {
     label: t.trigger?.label,
     // From the trigger entry: attachments never appear in the prompt text.
     attachments: t.trigger?.attachments ?? [],
-    wake: wake === undefined ? undefined : wakeLine(wake, wakeRunName),
-    onOpenRun: (workflowID) => {
-      openNoteRun(getActiveId(), workflowID);
+    wake: t.wake === undefined ? undefined : wakeLine(t.wake),
+    onOpenRun: (run) => {
+      openNoteRun(getActiveId(), run.id, run.named ? run.name : undefined);
     },
   };
 }

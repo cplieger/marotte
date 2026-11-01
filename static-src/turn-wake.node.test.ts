@@ -1,10 +1,8 @@
-// The client half of the wake wording oracle (internal/chat/testdata/wake_line.json; the server half
-// is TestWakeLineContract_ServerHalf), plus the projection reads and the waking-row marks.
-
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { makeEntry, makeTurn } from "./__test-helpers__/model.js";
-import { markWakingRows, turnWakeOf, wakeLine, wakeText } from "./turn-wake.js";
+import { markWakingRows, wakeLine, wakeText } from "./turn-wake.js";
+import { projectTurn, projectTurns, type TurnSource } from "./turns.js";
 import type { TurnState } from "./types.js";
 import { isWakingRow } from "./waking-rows.js";
 import type { Entry, EntryTurnWake } from "./wire/types.gen.js";
@@ -71,75 +69,105 @@ const ASK: EntryTurnWake = {
   ],
 };
 
-describe("wakeLine's run names", () => {
-  const live = (id: string, recorded: string): string =>
-    id === RUN ? "publish-docs" : recorded === "" ? "unnamed" : recorded;
-
-  it("name the label's run as the caller's namer does", () => {
-    const line = wakeLine(ASK, live);
-    expect(line.run).toEqual({ id: RUN, name: "publish-docs", recorded: "" });
-    expect(line.label).toBe("publish-docs \u00b7 build/check-links reports an error");
-  });
-
-  it("hand a finished run's recorded name to the namer", () => {
-    const line = wakeLine(
-      {
-        reason: "run_finished",
-        run: "wf_other",
-        run_label: "nightly-report",
-        run_status: "failed",
-      },
-      live,
-    );
-    expect(line.run).toEqual({
-      id: "wf_other",
-      name: "nightly-report",
-      recorded: "nightly-report",
-    });
-  });
-
-  it("name every re-delivered row's run, and no run on the label", () => {
-    const line = wakeLine(
-      {
-        reason: "rewake",
-        steers: [
-          { id: "a", run: RUN, step: "draft", text: "Which branch?" },
-          { id: "b", run: "wf_other", step: "collect", text: "Leg 1 is done." },
-        ],
-      },
-      live,
-    );
-    expect(line.run).toBeUndefined();
-    expect(line.rows?.map((r) => r.run.name)).toEqual(["publish-docs", "unnamed"]);
-    expect(line.body).toBe(
-      "publish-docs \u00b7 draft: Which branch?\nunnamed \u00b7 collect: Leg 1 is done.",
-    );
-  });
-});
-
 function wakeEntry(w: EntryTurnWake, lane?: string): Partial<Entry> {
   return { kind: "turn_wake", payload: w, id: "wake-1", ...(lane === undefined ? {} : { lane }) };
 }
 
-describe("turnWakeOf and wakeText", () => {
-  it("read the turn's own wake: label, then the message on the next line", () => {
-    const t = makeTurn({ body: [wakeEntry(ASK), { kind: "text", payload: { text: "On it." } }] });
-    expect(turnWakeOf(t)).toEqual(ASK);
-    expect(wakeText(t)).toBe(
-      "wf_5e1f0c2a \u00b7 build/check-links reports an error\n" +
-        "The site build failed.\ndocs/guide/install.md has no front matter.",
+describe("wakeLine's run names", () => {
+  it("name the label's run from the wake's run_name", () => {
+    const named: EntryTurnWake = {
+      ...ASK,
+      steers: (ASK.steers ?? []).map((s) => ({ ...s, run_name: "publish-docs" })),
+    };
+    expect(wakeLine(named).run).toEqual({ id: RUN, name: "publish-docs", named: true });
+    expect(wakeLine(named).label).toBe("publish-docs \u00b7 build/check-links reports an error");
+  });
+
+  it("call a run with no name yet a workflow, never its id", () => {
+    expect(wakeLine(ASK).run).toEqual({ id: RUN, name: "A workflow", named: false });
+  });
+
+  it("name every re-delivered row's run, and no run on the label", () => {
+    const line = wakeLine({
+      reason: "rewake",
+      steers: [
+        { id: "a", run: RUN, run_name: "publish-docs", step: "draft", text: "Which branch?" },
+        { id: "b", run: "wf_other", step: "collect", text: "Leg 1 is done." },
+      ],
+    });
+    expect(line.run).toBeUndefined();
+    expect(line.rows?.map((r) => r.run.name)).toEqual(["publish-docs", "A workflow"]);
+    expect(line.body).toBe(
+      "publish-docs \u00b7 draft: Which branch?\nA workflow \u00b7 collect: Leg 1 is done.",
     );
-    expect(wakeText(t, () => "publish-docs")).toMatch(/^publish-docs \u00b7 /);
+  });
+});
+
+function heldTurn(id: string, open: Record<string, unknown>, ...rest: Partial<Entry>[]): TurnState {
+  return state([
+    makeEntry({ id: `${id}-open`, turn: id, kind: "turn_open", payload: open, seq: 0 }),
+    ...rest.map((e, i) => makeEntry({ id: `${id}-e${String(i)}`, turn: id, seq: i + 1, ...e })),
+  ]);
+}
+
+function source(...turns: [string, TurnState][]): TurnSource {
+  return { turn_order: turns.map(([id]) => id), turns: new Map(turns) };
+}
+
+describe("a projected turn's wake", () => {
+  const say: Partial<Entry> = { kind: "text", payload: { text: "On it." } };
+
+  it("is its turn_wake, named by a run_named a later turn holds", () => {
+    const src = source(
+      ["t-1", heldTurn("t-1", { n: 1, source: "wire_turn_start" }, wakeEntry(ASK), say)],
+      [
+        "t-2",
+        heldTurn(
+          "t-2",
+          { n: 2, source: "prompt", prompt: { id: "p", text: "thanks" } },
+          { kind: "run_named", payload: { run: RUN, name: "publish-docs" } },
+        ),
+      ],
+    );
+    const [woken, prompted] = projectTurns(src);
+    expect(woken?.wake?.steers?.[0]?.run_name).toBe("publish-docs");
+    expect(prompted?.wake).toBeUndefined();
+    expect(projectTurn(src, "t-1")?.wake?.steers?.[0]?.run_name).toBe("publish-docs");
+    if (woken !== undefined) {
+      expect(wakeText(woken)).toBe(
+        "publish-docs \u00b7 build/check-links reports an error\n" +
+          "The site build failed.\ndocs/guide/install.md has no front matter.",
+      );
+    }
   });
 
-  it("ignore a delegate lane's entry and a prompt turn", () => {
-    expect(turnWakeOf(makeTurn({ body: [wakeEntry(ASK, "sub-a")] }))).toBeUndefined();
-    const prompted = makeTurn({ trigger: { id: "p", text: "go" }, body: [wakeEntry(ASK)] });
-    expect(turnWakeOf(prompted)).toBeUndefined();
+  it("keeps the name the wake recorded", () => {
+    const recorded: EntryTurnWake = {
+      reason: "run_finished",
+      run: RUN,
+      run_name: "nightly-report",
+      run_status: "completed",
+    };
+    const src = source([
+      "t-1",
+      heldTurn("t-1", { n: 1, source: "wire_turn_start" }, wakeEntry(recorded), say, {
+        kind: "run_named",
+        payload: { run: RUN, name: "other" },
+      }),
+    ]);
+    expect(projectTurns(src)[0]?.wake?.run_name).toBe("nightly-report");
   });
 
-  it("say nothing for a wake that names nothing", () => {
-    expect(wakeText(makeTurn({ body: [wakeEntry({ reason: "unknown" })] }))).toBe("");
+  it("is not a delegate lane's turn_wake", () => {
+    const src = source([
+      "t-1",
+      heldTurn("t-1", { n: 1, source: "wire_turn_start" }, wakeEntry(ASK, "sub-a"), say),
+    ]);
+    expect(projectTurns(src)[0]?.wake).toBeUndefined();
+  });
+
+  it("says nothing for a wake that names nothing", () => {
+    expect(wakeText(makeTurn({ wake: { reason: "unknown" } }))).toBe("");
     expect(wakeText(makeTurn())).toBe("");
   });
 });

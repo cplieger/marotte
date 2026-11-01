@@ -255,11 +255,11 @@ func TestTurnWake_ARunFinishedWakeNamesTheRunAndHowItEnded(t *testing.T) {
 		want  marotte.EntryTurnWake
 	}{
 		{"run_complete_completed", marotte.EntryTurnWake{
-			Reason: marotte.WakeReasonRunFinished, Run: "wf_7c3a9e1f0b2d4a58", RunLabel: "nightly-report",
+			Reason: marotte.WakeReasonRunFinished, Run: "wf_7c3a9e1f0b2d4a58", RunName: "nightly-report",
 			RunStatus: marotte.RunStatusCompleted,
 		}},
 		{"run_complete_stopped_by_user", marotte.EntryTurnWake{
-			Reason: marotte.WakeReasonRunFinished, Run: "wf_2e4f6a8c0b1d3f57", RunLabel: "nightly-report-held",
+			Reason: marotte.WakeReasonRunFinished, Run: "wf_2e4f6a8c0b1d3f57", RunName: "nightly-report-held",
 			RunStatus: marotte.RunStatusAborted, Initiator: "user", StopReason: "tab closed",
 		}},
 	}
@@ -269,7 +269,7 @@ func TestTurnWake_ARunFinishedWakeNamesTheRunAndHowItEnded(t *testing.T) {
 			h.send(c.frame)
 			h.wake("chunk_workflow_complete_wake")
 
-			if w := h.onlyWake(); w.Reason != c.want.Reason || w.Run != c.want.Run || w.RunLabel != c.want.RunLabel ||
+			if w := h.onlyWake(); w.Reason != c.want.Reason || w.Run != c.want.Run || w.RunName != c.want.RunName ||
 				w.RunStatus != c.want.RunStatus || w.Initiator != c.want.Initiator || w.StopReason != c.want.StopReason ||
 				len(w.Steers) != 0 {
 				t.Errorf("turn_wake = %+v, want %+v", w, c.want)
@@ -452,7 +452,6 @@ func TestTurnWake_KASsGiveUpNoteIsMarkedAsTheNetworkLost(t *testing.T) {
 	})
 }
 
-// A run can end between a note and the wake it starts.
 func TestTurnWake_ANoteKeepsItsMarkWhenItsRunEndsBeforeTheWake(t *testing.T) {
 	h := newWakeHarness(t)
 	h.send("node_paused_retry_wait")
@@ -465,7 +464,6 @@ func TestTurnWake_ANoteKeepsItsMarkWhenItsRunEndsBeforeTheWake(t *testing.T) {
 	}
 }
 
-// A message no wake picked up before a later turn opened (KAS failed to start its wake) is not the next wake's waker.
 func TestTurnWake_AMessageOlderThanThePreviousTurnIsNotTheWaker(t *testing.T) {
 	h := newWakeHarness(t)
 	h.send("notify_warning")

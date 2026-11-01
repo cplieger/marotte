@@ -5,12 +5,11 @@
     "Markdown export and find-in-chat) and static-src/turn-wake.ts wakeLine the client's (the header, the",
     "rail and Copy as text); both read these cases, so a wording change lands in both or fails one.",
     "",
-    "Expected values follow the approved wording, not either implementation. A finished run's name is its",
-    "run_label, else the id's first 11 characters (`wf_` plus eight); a message's run has no recorded name,",
-    "so it reads as the short form here and the client draws the run store's name over it.",
+    "Expected values follow the approved wording, not either implementation. A run is named by the wake's",
+    "run_name, else \"A workflow\" until a run_named entry names it.",
     "run and rest are where the client splits the label for its run button; rows are a re-delivery's",
-    "messages, each a run button then rest then the text. search is what the server indexes (omitted",
-    "where a case adds nothing to the other cases)."
+    "messages, each a run button then rest then the text. search is what the server indexes, which is",
+    "what the header draws (omitted where a case adds nothing to the other cases)."
   ],
   "cases": [
     {
@@ -23,17 +22,41 @@
             "run": "wf_5e1f0c2a9b7d4e36",
             "step": "build/check-links",
             "severity": "info",
-            "text": "Link check done: 412 links, none broken. Nothing needed from you."
+            "text": "Link check done: 412 links, none broken. Nothing needed from you.",
+            "run_name": "publish-docs"
           }
         ]
       },
-      "label": "wf_5e1f0c2a · build/check-links to you",
+      "label": "publish-docs · build/check-links to you",
       "body": "Link check done: 412 links, none broken. Nothing needed from you.",
       "run": "wf_5e1f0c2a9b7d4e36",
       "rest": " · build/check-links to you",
       "search": [
-        "· build/check-links to you",
+        "publish-docs · build/check-links to you",
         "Link check done: 412 links, none broken. Nothing needed from you."
+      ]
+    },
+    {
+      "name": "a step message whose run has no name yet reads as a workflow",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
+            "severity": "warning",
+            "text": "Which branch?"
+          }
+        ]
+      },
+      "label": "A workflow · build/check-links asks you",
+      "body": "Which branch?",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " · build/check-links asks you",
+      "search": [
+        "A workflow · build/check-links asks you",
+        "Which branch?"
       ]
     },
     {
@@ -46,16 +69,17 @@
             "run": "wf_5e1f0c2a9b7d4e36",
             "step": "build/check-links",
             "severity": "warning",
-            "text": "Two pages still link to the old domain. Should I rewrite those links now, or leave them for the next release?"
+            "text": "Two pages still link to the old domain. Should I rewrite those links now, or leave them for the next release?",
+            "run_name": "publish-docs"
           }
         ]
       },
-      "label": "wf_5e1f0c2a · build/check-links asks you",
+      "label": "publish-docs · build/check-links asks you",
       "body": "Two pages still link to the old domain. Should I rewrite those links now, or leave them for the next release?",
       "run": "wf_5e1f0c2a9b7d4e36",
       "rest": " · build/check-links asks you",
       "search": [
-        "· build/check-links asks you",
+        "publish-docs · build/check-links asks you",
         "Two pages still link to the old domain. Should I rewrite those links now, or leave them for the next release?"
       ]
     },
@@ -69,16 +93,17 @@
             "run": "wf_5e1f0c2a9b7d4e36",
             "step": "build/check-links",
             "severity": "error",
-            "text": "The site build failed: docs/guide/install.md has no front matter."
+            "text": "The site build failed: docs/guide/install.md has no front matter.",
+            "run_name": "publish-docs"
           }
         ]
       },
-      "label": "wf_5e1f0c2a · build/check-links reports an error",
+      "label": "publish-docs · build/check-links reports an error",
       "body": "The site build failed: docs/guide/install.md has no front matter.",
       "run": "wf_5e1f0c2a9b7d4e36",
       "rest": " · build/check-links reports an error",
       "search": [
-        "· build/check-links reports an error",
+        "publish-docs · build/check-links reports an error",
         "The site build failed: docs/guide/install.md has no front matter."
       ]
     },
@@ -92,12 +117,13 @@
             "run": "wf_5e1f0c2a9b7d4e36",
             "step": "build/check-links",
             "severity": "info",
-            "text": "Step \"check-links\" has had connection errors (ECONNRESET) since 10:02:11. The workflow keeps retrying it about every 120s until 10:32:11 and pauses the run if the last retry fails too. Nothing is needed from you."
+            "text": "Step \"check-links\" has had connection errors (ECONNRESET) since 10:02:11. The workflow keeps retrying it about every 120s until 10:32:11 and pauses the run if the last retry fails too. Nothing is needed from you.",
+            "run_name": "publish-docs"
           }
         ],
         "note": "network"
       },
-      "label": "wf_5e1f0c2a · build/check-links is waiting for the network",
+      "label": "publish-docs · build/check-links is waiting for the network",
       "body": "Step \"check-links\" has had connection errors (ECONNRESET) since 10:02:11. The workflow keeps retrying it about every 120s until 10:32:11 and pauses the run if the last retry fails too. Nothing is needed from you.",
       "run": "wf_5e1f0c2a9b7d4e36",
       "rest": " · build/check-links is waiting for the network"
@@ -112,17 +138,18 @@
             "run": "wf_5e1f0c2a9b7d4e36",
             "step": "build/check-links",
             "severity": "warning",
-            "text": "Step \"check-links\" had connection errors (ECONNRESET) from 10:02:11 to 10:32:11, so the workflow stopped retrying it and paused the run. When the connection is back, resume the run with update_workflow (action update_status, status \"running\"), or tell the user."
+            "text": "Step \"check-links\" had connection errors (ECONNRESET) from 10:02:11 to 10:32:11, so the workflow stopped retrying it and paused the run. When the connection is back, resume the run with update_workflow (action update_status, status \"running\"), or tell the user.",
+            "run_name": "publish-docs"
           }
         ],
         "note": "network_lost"
       },
-      "label": "wf_5e1f0c2a · build/check-links lost the network",
+      "label": "publish-docs · build/check-links lost the network",
       "body": "Step \"check-links\" had connection errors (ECONNRESET) from 10:02:11 to 10:32:11, so the workflow stopped retrying it and paused the run. When the connection is back, resume the run with update_workflow (action update_status, status \"running\"), or tell the user.",
       "run": "wf_5e1f0c2a9b7d4e36",
       "rest": " · build/check-links lost the network",
       "search": [
-        "· build/check-links lost the network",
+        "publish-docs · build/check-links lost the network",
         "Step \"check-links\" had connection errors (ECONNRESET) from 10:02:11 to 10:32:11, so the workflow stopped retrying it and paused the run. When the connection is back, resume the run with update_workflow (action update_status, status \"running\"), or tell the user."
       ]
     },
@@ -136,20 +163,20 @@
             "run": "wf_5e1f0c2a9b7d4e36",
             "step": "fix-loop",
             "severity": "info",
-            "text": "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition."
+            "text": "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition.",
+            "run_name": "publish-docs"
           }
         ],
         "note": "repeat_cap",
         "loop": "fix-loop",
         "max_iterations": 6
       },
-      "label": "wf_5e1f0c2a paused: fix-loop reached its round limit (6)",
+      "label": "publish-docs paused: fix-loop reached its round limit (6)",
       "body": "",
       "run": "wf_5e1f0c2a9b7d4e36",
       "rest": " paused: fix-loop reached its round limit (6)",
       "search": [
-        "paused: fix-loop reached its round limit (6)",
-        "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition."
+        "publish-docs paused: fix-loop reached its round limit (6)"
       ]
     },
     {
@@ -162,12 +189,13 @@
             "run": "wf_5e1f0c2a9b7d4e36",
             "step": "fix-loop",
             "severity": "info",
-            "text": "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition."
+            "text": "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition.",
+            "run_name": "publish-docs"
           }
         ],
         "note": "repeat_cap"
       },
-      "label": "wf_5e1f0c2a · fix-loop to you",
+      "label": "publish-docs · fix-loop to you",
       "body": "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition.",
       "run": "wf_5e1f0c2a9b7d4e36"
     },
@@ -176,15 +204,15 @@
       "wake": {
         "reason": "run_finished",
         "run": "wf_5e1f0c2a9b7d4e36",
-        "run_label": "publish-docs",
-        "run_status": "completed"
+        "run_status": "completed",
+        "run_name": "publish-docs"
       },
       "label": "publish-docs completed",
       "body": "",
       "run": "wf_5e1f0c2a9b7d4e36",
       "rest": " completed",
       "search": [
-        "completed"
+        "publish-docs completed"
       ]
     },
     {
@@ -192,9 +220,9 @@
       "wake": {
         "reason": "run_finished",
         "run": "wf_5e1f0c2a9b7d4e36",
-        "run_label": "publish-docs",
         "run_status": "failed",
-        "stop_reason": "step build failed"
+        "stop_reason": "step build failed",
+        "run_name": "publish-docs"
       },
       "label": "publish-docs failed: step build failed",
       "body": "",
@@ -206,17 +234,17 @@
       "wake": {
         "reason": "run_finished",
         "run": "wf_7c3a9e1f0b2d4a58",
-        "run_label": "nightly-report",
         "run_status": "aborted",
         "initiator": "user",
-        "stop_reason": "tab closed"
+        "stop_reason": "tab closed",
+        "run_name": "nightly-report"
       },
       "label": "nightly-report stopped by you: tab closed",
       "body": "",
       "run": "wf_7c3a9e1f0b2d4a58",
       "rest": " stopped by you: tab closed",
       "search": [
-        "stopped by you: tab closed"
+        "nightly-report stopped by you: tab closed"
       ]
     },
     {
@@ -224,10 +252,10 @@
       "wake": {
         "reason": "run_finished",
         "run": "wf_7c3a9e1f0b2d4a58",
-        "run_label": "nightly-report",
         "run_status": "completed",
         "initiator": "user",
-        "stop_reason": "good enough"
+        "stop_reason": "good enough",
+        "run_name": "nightly-report"
       },
       "label": "nightly-report marked complete by you",
       "body": "",
@@ -239,8 +267,8 @@
       "wake": {
         "reason": "run_finished",
         "run": "wf_7c3a9e1f0b2d4a58",
-        "run_label": "nightly-report",
-        "run_status": "aborted"
+        "run_status": "aborted",
+        "run_name": "nightly-report"
       },
       "label": "nightly-report stopped",
       "body": "",
@@ -252,9 +280,9 @@
       "wake": {
         "reason": "run_finished",
         "run": "wf_7c3a9e1f0b2d4a58",
-        "run_label": "nightly-report",
         "run_status": "cancelled",
-        "initiator": "user"
+        "initiator": "user",
+        "run_name": "nightly-report"
       },
       "label": "nightly-report stopped by you",
       "body": "",
@@ -262,13 +290,13 @@
       "rest": " stopped by you"
     },
     {
-      "name": "an unlabelled finished run is named by its id's short form",
+      "name": "a finished run with no name yet reads as a workflow",
       "wake": {
         "reason": "run_finished",
         "run": "wf_5e1f0c2a9b7d4e36",
         "run_status": "completed"
       },
-      "label": "wf_5e1f0c2a completed",
+      "label": "A workflow completed",
       "body": "",
       "run": "wf_5e1f0c2a9b7d4e36",
       "rest": " completed"
@@ -283,19 +311,21 @@
             "run": "wf_5e1f0c2a9b7d4e36",
             "step": "draft",
             "severity": "warning",
-            "text": "Which branch should I base the release notes on?"
+            "text": "Which branch should I base the release notes on?",
+            "run_name": "publish-docs"
           },
           {
             "id": "wfmsg-r",
             "run": "wf_7c3a9e1f0b2d4a58",
             "step": "collect",
             "severity": "success",
-            "text": "Leg 1 is done."
+            "text": "Leg 1 is done.",
+            "run_name": "nightly-report"
           }
         ]
       },
       "label": "Resumed with 2 workflow messages you stopped before they were read",
-      "body": "wf_5e1f0c2a · draft: Which branch should I base the release notes on?\nwf_7c3a9e1f · collect: Leg 1 is done.",
+      "body": "publish-docs · draft: Which branch should I base the release notes on?\nnightly-report · collect: Leg 1 is done.",
       "rest": "Resumed with 2 workflow messages you stopped before they were read",
       "search": [
         "Resumed with 2 workflow messages you stopped before they were read",
@@ -325,12 +355,13 @@
             "run": "wf_5e1f0c2a9b7d4e36",
             "step": "draft",
             "severity": "warning",
-            "text": "Which branch should I base the release notes on?"
+            "text": "Which branch should I base the release notes on?",
+            "run_name": "publish-docs"
           }
         ]
       },
       "label": "Resumed with 1 workflow message you stopped before it was read",
-      "body": "wf_5e1f0c2a · draft: Which branch should I base the release notes on?",
+      "body": "publish-docs · draft: Which branch should I base the release notes on?",
       "rest": "Resumed with 1 workflow message you stopped before it was read",
       "rows": [
         {
@@ -381,12 +412,37 @@
       "wake": {
         "reason": "run_finished",
         "run": "wf_5e1f0c2a9b7d4e36",
-        "run_label": "publish-docs",
-        "run_status": "running"
+        "run_status": "running",
+        "run_name": "publish-docs"
       },
       "label": "Agent-initiated turn",
       "body": "",
       "search": []
+    },
+    {
+      "name": "a re-delivered message whose run has no name yet reads as a workflow",
+      "wake": {
+        "reason": "rewake",
+        "steers": [
+          {
+            "id": "wfmsg-q",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "draft",
+            "severity": "warning",
+            "text": "Which branch?"
+          }
+        ]
+      },
+      "label": "Resumed with 1 workflow message you stopped before it was read",
+      "body": "A workflow · draft: Which branch?",
+      "rest": "Resumed with 1 workflow message you stopped before it was read",
+      "rows": [
+        {
+          "run": "wf_5e1f0c2a9b7d4e36",
+          "rest": " · draft: ",
+          "text": "Which branch?"
+        }
+      ]
     }
   ]
 }

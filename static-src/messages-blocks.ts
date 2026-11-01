@@ -1891,6 +1891,7 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
     case "turn_close":
     case "turn_bind":
     case "turn_wake":
+    case "run_named":
     case "tool_result":
     case "reconciled":
     case "steer_delivered":
@@ -2340,10 +2341,10 @@ function watchNoteRun(st: TurnRender, seq: number, note: HTMLElement, steer: Ent
 }
 
 /** Open a workflow update's run, as the run bar's row does. */
-export function openNoteRun(chatID: string, workflowID: string): void {
+export function openNoteRun(chatID: string, workflowID: string, name?: string): void {
   void import("./run-view.js")
     .then(({ openRunView }) => {
-      void openRunView(workflowID, runLabelText(workflowID), chatID);
+      void openRunView(workflowID, name ?? runLabelText(workflowID), chatID);
     })
     .catch(() => {
       /* noop: the label stays a button for the next click */

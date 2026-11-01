@@ -12,7 +12,7 @@ export type DecisionKind = "permission" | "elicitation" | "user_input";
 
 export type EngineState = "starting" | "ready" | "restarting" | "down";
 
-export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
+export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
 
@@ -1068,6 +1068,15 @@ export interface EntryReconciled {
 }
 
 /**
+ * EntryRunNamed is the run_named payload: a run's display name, learned after a wake naming the run
+ * was recorded without one. It renders nothing; every wake of the chat naming Run reads Name.
+ */
+export interface EntryRunNamed {
+  run: string;
+  name: string;
+}
+
+/**
  * EntrySafetyBlocked is the safety_blocked payload: the safety properties an
  * enforce-mode block violated.
  */
@@ -1321,14 +1330,14 @@ export interface EntryTurnRevert {
  * EntryTurnWake is the turn_wake payload: what started an agent-initiated turn, filed once at
  * its first agentInitiated frame. It renders nothing at its position; the turn header folds it.
  * Steers is the waking message for a step message and the re-delivered rows for a rewake; Run,
- * RunLabel (KAS's runLabel, else workflowName), RunStatus, Initiator and StopReason describe a
- * finished run; Note, Loop and MaxIterations qualify a step message.
+ * RunName (as WakeSteer's), RunStatus, Initiator and StopReason describe a finished run; Note,
+ * Loop and MaxIterations qualify a step message.
  */
 export interface EntryTurnWake {
   reason: WakeReason;
   note?: WakeNote;
   run?: string;
-  run_label?: string;
+  run_name?: string;
   run_status?: RunStatus;
   initiator?: string;
   stop_reason?: string;
@@ -4215,12 +4224,13 @@ export interface UserInputSubOption {
 
 /**
  * WakeSteer is a workflow message a wake names, copied from its row (ID) when the wake was
- * recorded, so the header and the rail read the wake alone. It carries no run name: the server
- * knows none for an agent-launched run, and the client names the run from its run store.
+ * recorded, so the header and the rail read the wake alone. RunName is the run's display name
+ * (RunDisplayName) as known then, "" when not yet; a later run_named entry names it.
  */
 export interface WakeSteer {
   id: string;
   run?: string;
+  run_name?: string;
   step?: string;
   severity?: string;
   text: string;

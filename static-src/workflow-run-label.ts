@@ -23,16 +23,6 @@ export function runLabelText(workflowID: string): string {
   return label !== "" ? label : workflowID.slice(0, SHORT_ID_LENGTH);
 }
 
-/** What a wake header, its rail row and its copied text call a run: the run store's name, else the name
- *  the wake recorded, else the id's short form (a `RunNamer`, turn-wake.ts). Untracked. */
-export function wakeRunName(workflowID: string, recorded: string): string {
-  const label = runLabelOf(workflowID);
-  if (label !== "") {
-    return label;
-  }
-  return recorded !== "" ? recorded : workflowID.slice(0, SHORT_ID_LENGTH);
-}
-
 /** Mounted notes watching each run; a run with a count keeps its cell. */
 const holds = new Map<string, number>();
 const watches = new WeakMap<HTMLElement, () => void>();
@@ -45,62 +35,28 @@ registerRunStateDemand((workflowID) => holds.has(workflowID));
  * demand (a transcript run card, a run tab) still reads it.
  */
 export function watchStepRunLabel(note: HTMLElement, workflowID: string): void {
-  watchRunName(
-    note,
-    workflowID,
-    note.dataset["runLabel"] ?? "",
-    (label) => {
-      setSteerNoteRunLabel(note, label);
-      // The box header names the run, so it follows the label.
-      const host = workflowUpdateHost(note);
-      if (host !== null) {
-        groupWorkflowUpdates(host);
-      }
-    },
-    runLabelText,
-  );
-}
-
-/**
- * Keep a wake header's run name (`target`, which shows `shown`) equal to `wakeRunName(workflowID, recorded)`
- * until `unwatchStepRunLabel(target)`, with the same demand as a note's.
- */
-export function watchWakeRunName(target: HTMLElement, workflowID: string, recorded: string): void {
-  watchRunName(
-    target,
-    workflowID,
-    target.textContent,
-    (name) => {
-      target.textContent = name;
-    },
-    (id) => wakeRunName(id, recorded),
-  );
-}
-
-function watchRunName(
-  target: HTMLElement,
-  workflowID: string,
-  initial: string,
-  apply: (name: string) => void,
-  nameOf: (workflowID: string) => string,
-): void {
-  unwatchStepRunLabel(target);
+  unwatchStepRunLabel(note);
   const count = holds.get(workflowID) ?? 0;
   if (count === 0 && peekRunState(workflowID) === undefined && !runStateDemanded(workflowID)) {
     invalidateRun(workflowID);
   }
   holds.set(workflowID, count + 1);
-  let shown = initial;
+  let shown = note.dataset["runLabel"] ?? "";
   const stopEffect = effect(() => {
     runState(workflowID);
-    const name = nameOf(workflowID);
-    if (name === shown) {
+    const label = runLabelText(workflowID);
+    if (label === shown) {
       return;
     }
-    shown = name;
-    apply(name);
+    shown = label;
+    setSteerNoteRunLabel(note, label);
+    // The box header names the run, so it follows the label.
+    const host = workflowUpdateHost(note);
+    if (host !== null) {
+      groupWorkflowUpdates(host);
+    }
   });
-  watches.set(target, () => {
+  watches.set(note, () => {
     stopEffect();
     const left = (holds.get(workflowID) ?? 1) - 1;
     if (left > 0) {
@@ -112,7 +68,7 @@ function watchRunName(
   });
 }
 
-/** Release a note's or a run name's watch; idempotent, so a redraw and a window drop may both call it. */
+/** Release a note's watch; idempotent, so a redraw and a window drop may both call it. */
 export function unwatchStepRunLabel(note: HTMLElement): void {
   const stop = watches.get(note);
   if (stop === undefined) {

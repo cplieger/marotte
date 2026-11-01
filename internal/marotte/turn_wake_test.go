@@ -2,6 +2,7 @@ package marotte
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
@@ -196,5 +197,43 @@ func TestWakeDrawnSteers_AreAStepMessagesWakerAndAReDeliverysRows(t *testing.T) 
 				t.Errorf("WakeDrawnSteers = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+func TestRunDisplayName(t *testing.T) {
+	cases := []struct{ name, runLabel, workflowName, want string }{
+		{"the run's label first", "publish-docs", "release-recipe", "publish-docs"},
+		{"else its recipe's name", "", "release-recipe", "release-recipe"},
+		{"never KAS's recipe for a prompt-built run", "", "workflow-from-prompt", ""},
+		{"nothing names nothing", "", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := RunDisplayName(c.runLabel, c.workflowName); got != c.want {
+				t.Errorf("RunDisplayName(%q, %q) = %q, want %q", c.runLabel, c.workflowName, got, c.want)
+			}
+		})
+	}
+}
+
+func TestNamedWake_FillsOnlyTheRunsTheWakeLeftUnnamed(t *testing.T) {
+	w := EntryTurnWake{
+		Reason: WakeReasonRewake,
+		Steers: []WakeSteer{
+			{ID: "a", Run: "wf_1", Text: "x"},
+			{ID: "b", Run: "wf_2", RunName: "recorded", Text: "y"},
+			{ID: "c", Run: "wf_1", Text: "z"},
+		},
+	}
+	if got := WakeRunsUnnamed(&w); !slices.Equal(got, []string{"wf_1"}) {
+		t.Errorf("WakeRunsUnnamed = %v, want wf_1 once", got)
+	}
+	got := NamedWake(&w, map[string]string{"wf_1": "publish-docs", "wf_2": "later"})
+	names := []string{got.Steers[0].RunName, got.Steers[1].RunName, got.Steers[2].RunName}
+	if !slices.Equal(names, []string{"publish-docs", "recorded", "publish-docs"}) {
+		t.Errorf("named runs = %v, want publish-docs, the recorded name, publish-docs", names)
+	}
+	if w.Steers[0].RunName != "" {
+		t.Errorf("NamedWake changed its input: %+v", w.Steers[0])
 	}
 }

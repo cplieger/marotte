@@ -11,25 +11,22 @@ import type { EntryTurnWake, WakeSteer } from "./wire/types.gen.js";
 /** The line of a wake that names nothing marotte can show (`marotte.WakeFallbackLine`). */
 export const WAKE_FALLBACK_LINE = "Agent-initiated turn";
 
-/** `wf_` plus eight characters (`marotte.shortRunIDLength`, `workflow-run-label.ts`). */
-const SHORT_RUN_ID_LENGTH = 11;
+/** What a wake calls a run whose name is not known yet (`marotte.WakeRunPlaceholder`). */
+const WAKE_RUN_PLACEHOLDER = "A workflow";
 
 const SEP = " \u00b7 ";
 
-/** What a wake calls run `id`, given the name the wake recorded ("" for none). */
-export type RunNamer = (id: string, recorded: string) => string;
-
-/** The wake's own names: the recorded one, else the id's short form (`marotte.WakeRunName`). The header
- *  and the rail pass the run store's (`workflow-run-label.ts` `wakeRunName`). */
-export const recordedRunName: RunNamer = (id, recorded) =>
-  recorded !== "" ? recorded : id.slice(0, SHORT_RUN_ID_LENGTH);
-
-/** A named run in a wake: the label's or a re-delivered row's, with the name the wake recorded ("" for
- *  none), which a later name falls back to. */
+/** A run a wake names: the label's or a re-delivered row's. `name` is what the wake shows, the
+ *  placeholder (`marotte.WakeRunName`) while `named` is false. */
 export interface WakeRun {
   id: string;
   name: string;
-  recorded: string;
+  named: boolean;
+}
+
+function wakeRun(id: string | undefined, name: string | undefined): WakeRun {
+  const named = name !== undefined && name !== "";
+  return { id: id ?? "", name: named ? name : WAKE_RUN_PLACEHOLDER, named };
 }
 
 /** One re-delivered message: its run's name, then `rest`, then its text. */
@@ -55,14 +52,14 @@ export interface WakeLine {
 
 /** The wake's label and message. The twin of `marotte.WakeLine`; `internal/chat/testdata/wake_line.json`
  *  pins both. */
-export function wakeLine(w: EntryTurnWake, nameOf: RunNamer = recordedRunName): WakeLine {
+export function wakeLine(w: EntryTurnWake): WakeLine {
   switch (w.reason) {
     case "step_message":
-      return stepWakeLine(w, nameOf);
+      return stepWakeLine(w);
     case "run_finished":
-      return runFinishedLine(w, nameOf);
+      return runFinishedLine(w);
     case "rewake":
-      return rewakeLine(w.steers ?? [], nameOf);
+      return rewakeLine(w.steers ?? []);
     case "unknown":
       return FALLBACK;
     default:
@@ -82,13 +79,12 @@ function named(run: WakeRun, rest: string, body: string): WakeLine {
   return { run, rest, label: run.name + rest, body, fallback: false };
 }
 
-function stepWakeLine(w: EntryTurnWake, nameOf: RunNamer): WakeLine {
+function stepWakeLine(w: EntryTurnWake): WakeLine {
   const s = w.steers?.[0];
   if (s === undefined) {
     return FALLBACK;
   }
-  const id = s.run ?? "";
-  const run = { id, name: nameOf(id, ""), recorded: "" };
+  const run = wakeRun(s.run, s.run_name);
   const loop = w.loop ?? "";
   const max = w.max_iterations ?? 0;
   if (w.note === "repeat_cap" && loop !== "" && max > 0) {
@@ -110,13 +106,12 @@ function stepWakeLine(w: EntryTurnWake, nameOf: RunNamer): WakeLine {
   return named(run, `${from} to you`, s.text);
 }
 
-function runFinishedLine(w: EntryTurnWake, nameOf: RunNamer): WakeLine {
+function runFinishedLine(w: EntryTurnWake): WakeLine {
   const id = w.run ?? "";
   if (id === "") {
     return FALLBACK;
   }
-  const recorded = w.run_label ?? "";
-  const run = { id, name: nameOf(id, recorded), recorded };
+  const run = wakeRun(id, w.run_name);
   const byUser = w.initiator === "user";
   let rest: string;
   switch (w.run_status) {
@@ -140,7 +135,7 @@ function runFinishedLine(w: EntryTurnWake, nameOf: RunNamer): WakeLine {
   return named(run, reason === "" ? rest : `${rest}: ${reason}`, "");
 }
 
-function rewakeLine(steers: readonly WakeSteer[], nameOf: RunNamer): WakeLine {
+function rewakeLine(steers: readonly WakeSteer[]): WakeLine {
   if (steers.length === 0) {
     return FALLBACK;
   }
@@ -149,9 +144,8 @@ function rewakeLine(steers: readonly WakeSteer[], nameOf: RunNamer): WakeLine {
       ? "Resumed with 1 workflow message you stopped before it was read"
       : `Resumed with ${String(steers.length)} workflow messages you stopped before they were read`;
   const rows = steers.map((s): WakeRow => {
-    const id = s.run ?? "";
     return {
-      run: { id, name: nameOf(id, ""), recorded: "" },
+      run: wakeRun(s.run, s.run_name),
       rest: `${SEP}${s.step ?? ""}: `,
       text: s.text,
     };
@@ -160,28 +154,13 @@ function rewakeLine(steers: readonly WakeSteer[], nameOf: RunNamer): WakeLine {
   return { rest: label, label, body, rows, fallback: false };
 }
 
-/** The turn's wake, the first lane-`""` `turn_wake` of its body; undefined for a prompt turn, which
- *  never records one. */
-export function turnWakeOf(t: Turn): EntryTurnWake | undefined {
-  if (t.trigger !== undefined) {
-    return undefined;
-  }
-  for (const e of t.body) {
-    if (e.kind === "turn_wake" && (e.lane ?? "") === "") {
-      return payloadOf(e, "turn_wake");
-    }
-  }
-  return undefined;
-}
-
 /** What the wake says as one string, label then message, for the rail and Copy as text; "" for a
  *  turn whose wake names nothing. */
-export function wakeText(t: Turn, nameOf: RunNamer = recordedRunName): string {
-  const w = turnWakeOf(t);
-  if (w === undefined) {
+export function wakeText(t: Turn): string {
+  if (t.wake === undefined) {
     return "";
   }
-  const line = wakeLine(w, nameOf);
+  const line = wakeLine(t.wake);
   if (line.fallback) {
     return "";
   }

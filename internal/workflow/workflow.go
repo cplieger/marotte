@@ -40,6 +40,8 @@ type State struct {
 	WorkflowID      string `json:"workflowId"`
 	Status          string `json:"status"`
 	ParentSessionID string `json:"parentSessionId"`
+	RunLabel        string `json:"runLabel"`
+	WorkflowName    string `json:"workflowName"`
 	// PauseReason is KAS's sentence for the run's latest park, whichever step parked.
 	PauseReason string `json:"pauseReason"`
 }

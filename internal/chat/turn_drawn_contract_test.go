@@ -111,6 +111,8 @@ func drawnPayload(t *testing.T, turn string, kind marotte.EntryKind, subtask str
 		return marotte.EntryTurnBind{KASMessageID: "k"}
 	case marotte.EntryKindTurnWake:
 		return marotte.EntryTurnWake{Reason: marotte.WakeReasonRunFinished, Run: "wf_0123456789abcdef", RunStatus: marotte.RunStatusCompleted}
+	case marotte.EntryKindRunNamed:
+		return marotte.EntryRunNamed{Run: "wf_0123456789abcdef", Name: "publish-docs"}
 	case marotte.EntryKindText:
 		return marotte.EntryText{Text: "delegate"}
 	case marotte.EntryKindToolCall:

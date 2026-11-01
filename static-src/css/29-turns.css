@@ -287,7 +287,6 @@
   max-width: calc(100% - 4ch);
 }
 
-/* A re-delivered message opens on its run's name, inline in the request text. */
 .turn-wake-row-run {
   font-weight: var(--fw-medium);
 }

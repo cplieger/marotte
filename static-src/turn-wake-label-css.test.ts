@@ -6,6 +6,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { buildTurnHeader } from "./fundamentals/turn-header.js";
 import { wakeLine } from "./turn-wake.js";
+import { namedWake } from "./turns.js";
 import type { EntryTurnWake } from "./wire/types.gen.js";
 
 let style: HTMLStyleElement;
@@ -27,6 +28,8 @@ afterAll(() => {
   delete document.documentElement.dataset["pointer"];
 });
 
+const LONG_NAME = "publish-docs-release-notes-and-changelog";
+
 /** The label of a header `width` px wide, the width of a phone's transcript column. */
 function mountLabel(width: number, w: EntryTurnWake): HTMLElement {
   const host = document.createElement("div");
@@ -39,7 +42,12 @@ function mountLabel(width: number, w: EntryTurnWake): HTMLElement {
     ts: 0,
     request: undefined,
     attachments: [],
-    wake: wakeLine(w, () => "publish-docs-release-notes-and-changelog"),
+    wake: wakeLine(
+      namedWake(
+        w,
+        new Map(["wf_5e1f0c2a9b7d4e36", "wf_7c3a9e1f0b2d4a58"].map((id) => [id, LONG_NAME])),
+      ),
+    ),
     onOpenRun: () => undefined,
   });
   host.appendChild(header);

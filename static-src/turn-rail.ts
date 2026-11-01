@@ -22,7 +22,6 @@ import { projectTurns } from "./turns.js";
 import { searchHitTurns } from "./chat-search.js";
 import { get } from "./store.js";
 import { mergeTurnSets, validateTurnIndex } from "./rail-merge.js";
-import { wakeRunName } from "./workflow-run-label.js";
 import type { TurnSummary } from "./rail-merge.js";
 import { binTurns } from "./rail-select.js";
 import type { TurnBin, TurnMapLayout } from "./rail-select.js";
@@ -164,7 +163,7 @@ let shownSlots = 0;
 function setTurns(): void {
   const session = get(chatID);
   const resident = session === undefined ? [] : projectTurns(session);
-  summaries = mergeTurnSets(resident, indexed, new Set(session?.turn_order), wakeRunName);
+  summaries = mergeTurnSets(resident, indexed, new Set(session?.turn_order));
   summaryByID = new Map(summaries.map((s) => [s.id, s]));
   residentN = new Map(resident.map((t) => [t.id, t.n]));
   if (selectedID !== undefined && !summaryByID.has(selectedID)) {

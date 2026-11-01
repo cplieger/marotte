@@ -82,7 +82,9 @@ type revertWindow struct {
 // turnState is the offset index's row for one turn: its byte ranges and the facts window reads, rail rows, the
 // reconcile predicate and a synthesized closer need without reopening a payload.
 type turnState struct {
-	results   map[string]struct{}
+	results map[string]struct{}
+	// wake is the turn's turn_wake, whose rail line RailRows names from the log's run_named entries.
+	wake      *marotte.EntryTurnWake
 	firstLine string
 	source    marotte.TurnOpenSourceName
 	outcome   marotte.TurnOutcome
@@ -172,6 +174,8 @@ type EntryLog struct {
 	reconciledSessions map[string]struct{}
 	// boundSessions are the sessions this log's turn_bind entries name, telling a self-minted session from a resumed one.
 	boundSessions map[string]struct{}
+	// runNames are this log's run_named entries, run id to name, which name the wakes filed before them.
+	runNames map[string]string
 	// newestRevert is the id of the last turn_revert met in file order: the provenance the merge's discard gate reads.
 	newestRevert string
 	// unappliedReverts are windows met but not resolved, drained once their order is complete: after the scan, and after
@@ -605,6 +609,11 @@ func (l *EntryLog) observeLocked(e *marotte.Entry, start, end int64) error {
 		return fmt.Errorf("entry log: %s names turn %q, which this log does not hold", e.Kind, e.Turn)
 	}
 	st.extend(e, start, end)
+	return l.foldKindLocked(st, e, start)
+}
+
+// foldKindLocked folds the facts one entry's kind adds to its turn's row and the log's indexes.
+func (l *EntryLog) foldKindLocked(st *turnState, e *marotte.Entry, start int64) error {
 	switch e.Kind {
 	case marotte.EntryKindToolCall:
 		st.calls = append(st.calls, entryCall{id: e.ID, lane: e.Lane})
@@ -625,6 +634,8 @@ func (l *EntryLog) observeLocked(e *marotte.Entry, start, end int64) error {
 		return l.foldTurnBindLocked(e)
 	case marotte.EntryKindTurnWake:
 		return foldTurnWake(st, e)
+	case marotte.EntryKindRunNamed:
+		return l.foldRunNamedLocked(e)
 	case marotte.EntryKindReconciled:
 		return l.foldReconciledLocked(e)
 	case marotte.EntryKindTurnRevert:
@@ -693,23 +704,43 @@ func (st *turnState) observeMessage(e *marotte.Entry, at int64) error {
 	return err
 }
 
-// foldTurnWake gives a wake turn's rail row the wake's line where a prompt turn has its prompt's, and records
-// the rows it draws; a wake that names nothing leaves the line empty, as a turn with no wake has.
+// foldTurnWake keeps a wake turn's wake for its rail line and records the rows it draws.
 func foldTurnWake(st *turnState, e *marotte.Entry) error {
 	payload, err := decodeEntry[marotte.EntryTurnWake](e)
 	if err != nil {
 		return err
 	}
 	st.claims = marotte.WakeDrawnSteers(&payload)
-	label, body := marotte.WakeLine(&payload)
+	st.wake = &payload
+	return nil
+}
+
+func (l *EntryLog) foldRunNamedLocked(e *marotte.Entry) error {
+	payload, err := decodeEntry[marotte.EntryRunNamed](e)
+	if err != nil {
+		return err
+	}
+	if payload.Run != "" && payload.Name != "" {
+		l.runNames[payload.Run] = payload.Name
+	}
+	return nil
+}
+
+// railLine is a turn's rail line: its prompt's first line, or its wake's line where a prompt turn has its
+// prompt's; a wake that names nothing leaves the line empty, as a turn with no wake has.
+func (l *EntryLog) railLineLocked(st *turnState) string {
+	if st.wake == nil {
+		return st.firstLine
+	}
+	w := marotte.NamedWake(st.wake, l.runNames)
+	label, body := marotte.WakeLine(&w)
 	if label == marotte.WakeFallbackLine {
-		return nil
+		return ""
 	}
 	if body != "" {
 		label += ": " + body
 	}
-	st.firstLine = firstLineOf(label)
-	return nil
+	return firstLineOf(label)
 }
 
 func foldSteer(st *turnState, e *marotte.Entry) error {
@@ -846,7 +877,7 @@ func drawnBy(e *marotte.Entry, plans int) bool {
 		return false
 	}
 	switch e.Kind {
-	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnBind, marotte.EntryKindTurnWake,
+	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnBind, marotte.EntryKindTurnWake, marotte.EntryKindRunNamed,
 		marotte.EntryKindToolResult, marotte.EntryKindTurnClose,
 		marotte.EntryKindReconciled, marotte.EntryKindSteerCleared, marotte.EntryKindSteerDelivered:
 		return false
@@ -877,6 +908,7 @@ func (l *EntryLog) rescanLocked() error {
 	l.reconciledTurns = make(map[string]struct{})
 	l.reconciledSessions = make(map[string]struct{})
 	l.boundSessions = make(map[string]struct{})
+	l.runNames = make(map[string]string)
 	l.order = nil
 	l.newestRevert = ""
 	l.unappliedReverts = nil
@@ -1215,7 +1247,7 @@ func (l *EntryLog) RailRows() []marotte.TurnSummary {
 		}
 		rows = append(rows, marotte.TurnSummary{
 			ID:             id,
-			FirstLine:      st.firstLine,
+			FirstLine:      l.railLineLocked(st),
 			Outcome:        outcome,
 			N:              ordinalAsInt(st.n),
 			Ts:             st.openTs,

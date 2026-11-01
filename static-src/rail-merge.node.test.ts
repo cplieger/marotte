@@ -10,7 +10,6 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 import { mergeTurnSets, validateTurnIndex, type TurnSummary } from "./rail-merge.js";
 import { markerLabel } from "./rail-labels.js";
-import { makeEntry } from "./__test-helpers__/model.js";
 import type { Turn, TurnOutcome } from "./turns.js";
 import type { EntryPrompt } from "./wire/types.gen.js";
 
@@ -96,30 +95,21 @@ describe("resident wins for anything it can answer", () => {
   it("labels a woken turn with its wake's line, in the preview and the accessible name", () => {
     const woken = residentTurn(4, {
       trigger: undefined,
-      body: [
-        makeEntry({
-          id: "wake-1",
-          turn: "t-4",
-          seq: 1,
-          kind: "turn_wake",
-          payload: {
-            reason: "step_message",
-            steers: [
-              {
-                id: "wfmsg-q",
-                run: "wf_5e1f0c2a9b7d4e36",
-                step: "draft",
-                severity: "warning",
-                text: "Which branch should I base on?\nmain or dev?",
-              },
-            ],
+      wake: {
+        reason: "step_message",
+        steers: [
+          {
+            id: "wfmsg-q",
+            run: "wf_5e1f0c2a9b7d4e36",
+            run_name: "publish-docs",
+            step: "draft",
+            severity: "warning",
+            text: "Which branch should I base on?\nmain or dev?",
           },
-        }),
-      ],
+        ],
+      },
     });
-    const [row] = mergeTurnSets([woken], [], new Set(), (id) =>
-      id === "wf_5e1f0c2a9b7d4e36" ? "publish-docs" : id,
-    );
+    const [row] = mergeTurnSets([woken], [], new Set());
     const line = "publish-docs \u00b7 draft asks you: Which branch should I base on?";
     expect(row?.first_line).toBe(line);
     expect(row?.agent_initiated).toBe(true);

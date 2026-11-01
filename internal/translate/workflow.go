@@ -121,6 +121,7 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID marotte.ChatI
 	logAgentRun("agent-launched workflow run finished", chatID, p.WorkflowID,
 		p.FinalState.WorkflowName, "status", p.Status)
 	t.observeRunEnd(chatID, &p)
+	t.learnRunName(ctx, p.WorkflowID, marotte.RunDisplayName(p.FinalState.RunLabel, p.FinalState.WorkflowName))
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunFinished, chatID, marotte.RunFinishedPayload{
 		WorkflowID: p.WorkflowID,
 		Status:     p.Status,

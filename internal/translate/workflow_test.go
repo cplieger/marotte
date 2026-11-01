@@ -600,9 +600,9 @@ func TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped(t *testing.T) {
 	}
 }
 
-// TestRecordRunSteps_SeedsFromAnInspectRead pins the recovery path: after a restart an
+// TestRecordInspect_SeedsFromAnInspectRead pins the recovery path: after a restart an
 // `inspect` read places each step session in its run and node.
-func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
+func TestRecordInspect_SeedsFromAnInspectRead(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
@@ -610,7 +610,7 @@ func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
 	if _, ok := tr.steps.lookup("sess_build"); ok {
 		t.Fatal("Setup: sess_build is placed before the read")
 	}
-	tr.RecordRunSteps(json.RawMessage(`{
+	tr.RecordInspect(t.Context(), json.RawMessage(`{
 	  "workflowId": "wf_1",
 	  "state": {"workflowId": "wf_1", "root": {"nodeId": "wf_1", "type": "sequence", "children": [
 	    {"nodeId": "build", "type": "step", "sessionId": "sess_build"},
@@ -634,12 +634,12 @@ func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
 	}
 }
 
-func TestRecordRunSteps_SlashBearingNodeIDsStayDistinct(t *testing.T) {
+func TestRecordInspect_SlashBearingNodeIDsStayDistinct(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
 
-	tr.RecordRunSteps(json.RawMessage(`{"state": {"workflowId": "wf_1", "root": {"nodeId": "wf_1", "type": "sequence", "children": [
+	tr.RecordInspect(t.Context(), json.RawMessage(`{"state": {"workflowId": "wf_1", "root": {"nodeId": "wf_1", "type": "sequence", "children": [
 	  {"nodeId": "a/b", "type": "sequence", "children": [{"nodeId": "c", "type": "step", "sessionId": "sess_ab_c"}]},
 	  {"nodeId": "a", "type": "sequence", "children": [{"nodeId": "b/c", "type": "step", "sessionId": "sess_a_bc"}]}
 	]}}}`))
@@ -652,13 +652,13 @@ func TestRecordRunSteps_SlashBearingNodeIDsStayDistinct(t *testing.T) {
 	}
 }
 
-// TestRecordRunSteps_ToleratesJunk pins that seeding cannot fail a read.
-func TestRecordRunSteps_ToleratesJunk(t *testing.T) {
+// TestRecordInspect_ToleratesJunk pins that seeding cannot fail a read.
+func TestRecordInspect_ToleratesJunk(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
 	for _, raw := range []string{`{`, `null`, `[]`, `{"state":null}`, `{"state":{"root":null}}`, `"a string"`, ``} {
-		tr.RecordRunSteps(json.RawMessage(raw))
+		tr.RecordInspect(t.Context(), json.RawMessage(raw))
 	}
 }
 

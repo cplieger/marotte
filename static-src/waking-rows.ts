@@ -12,7 +12,6 @@ export function isWakingRow(e: Entry): boolean {
   return wakingRows.has(e);
 }
 
-/** Mark or unmark one row. */
 export function setWakingRow(e: Entry, waking: boolean): void {
   if (waking) {
     wakingRows.add(e);

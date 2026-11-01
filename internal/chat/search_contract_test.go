@@ -25,7 +25,7 @@ type searchQueryCase struct {
 }
 
 var searchFixtureComment = []string{
-	"GET /api/chats/{id}/search replies, produced by a real scan over one two-turn entry log.",
+	"GET /api/chats/{id}/search replies, produced by a real scan over one three-turn entry log.",
 	"",
 	"chat.SearchResult and chat.Hit are wiregen-registered, so the TypeScript types and",
 	"decoders are generated from them; this file is what keeps the ENCODER honest against",

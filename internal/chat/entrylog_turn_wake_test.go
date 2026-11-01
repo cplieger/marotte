@@ -25,7 +25,6 @@ func (f *logFixture) wakeTurn() string {
 	return f.openTurn(&TurnSpec{Source: marotte.TurnOpenNameWireTurnStart})
 }
 
-// phases reads the log live, then reopened, then rewritten, calling check after each.
 func (f *logFixture) phases(check func(phase string)) {
 	f.t.Helper()
 	for _, phase := range []string{"live", "reopened", "rewritten"} {
@@ -98,9 +97,13 @@ func TestEntryLog_ATurnWakeGivesItsTurnTheWakesRailLine(t *testing.T) {
 		}},
 	})
 	f.append(wake, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "Basing on dev."})
+	if rows := f.log.RailRows(); len(rows) != 1 || rows[0].FirstLine != "A workflow \u00b7 draft asks you: Which branch should I base on?" {
+		t.Errorf("before the run is named: RailRows() = %+v, want the placeholder's line", rows)
+	}
+	f.append(wake, "", "named-1", marotte.EntryKindRunNamed, marotte.EntryRunNamed{Run: wakeRunID, Name: "publish-docs"})
 	f.closeTurn(wake, marotte.TurnOutcomeCompleted)
 
-	const want = "wf_5e1f0c2a \u00b7 draft asks you: Which branch should I base on?"
+	const want = "publish-docs \u00b7 draft asks you: Which branch should I base on?"
 	f.phases(func(phase string) {
 		rows := f.log.RailRows()
 		if len(rows) != 1 {
@@ -108,6 +111,28 @@ func TestEntryLog_ATurnWakeGivesItsTurnTheWakesRailLine(t *testing.T) {
 		}
 		if rows[0].FirstLine != want || !rows[0].AgentInitiated {
 			t.Errorf("%s: row = %+v, want first_line %q on an agent-initiated row", phase, rows[0], want)
+		}
+	})
+}
+
+func TestEntryLog_ARunNamedInALaterTurnNamesTheEarlierWake(t *testing.T) {
+	f := newLogFixture(t)
+	wake := f.wakeTurn()
+	f.append(wake, "", "wake-1", marotte.EntryKindTurnWake, marotte.EntryTurnWake{
+		Reason: marotte.WakeReasonRunFinished, Run: wakeRunID, RunStatus: marotte.RunStatusCompleted,
+	})
+	f.append(wake, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "Reading the results."})
+	f.closeTurn(wake, marotte.TurnOutcomeCompleted)
+	next := f.prompt("thanks")
+	f.append(next, "", "named-1", marotte.EntryKindRunNamed, marotte.EntryRunNamed{Run: wakeRunID, Name: "publish-docs"})
+
+	f.phases(func(phase string) {
+		rows := f.log.RailRows()
+		if len(rows) != 2 || rows[0].FirstLine != "publish-docs completed" {
+			t.Errorf("%s: RailRows() = %+v, want the wake's row named by the later run_named", phase, rows)
+		}
+		if len(rows) == 2 && rows[1].FirstLine != "thanks" {
+			t.Errorf("%s: the prompt turn's row = %+v, want its prompt: run_named draws nothing", phase, rows[1])
 		}
 	})
 }
@@ -128,8 +153,6 @@ func TestEntryLog_AWakeThatNamesNothingLeavesTheRailLineEmpty(t *testing.T) {
 	}
 }
 
-// A wake turn that drew nothing, then a message filed after its close: the message is all that turn draws, and the
-// next wake draws it as its trigger, so the first turn has nothing left to show.
 func TestEntryLog_ATurnWhoseOnlyRowAWakeDrawsHoldsNoRailSlot(t *testing.T) {
 	for _, reason := range []marotte.WakeReason{marotte.WakeReasonStepMessage, marotte.WakeReasonRewake} {
 		t.Run(string(reason), func(t *testing.T) {
@@ -186,6 +209,7 @@ func TestRenderChatMarkdown_AWakeIsTheTurnsTriggerAndItsMessageRendersOnce(t *te
 		Reason: marotte.WakeReasonStepMessage,
 		Steers: []marotte.WakeSteer{{ID: "wfmsg-q", Run: wakeRunID, Step: "draft", Severity: "warning", Text: question}},
 	})
+	f.append(wake, "", "named-1", marotte.EntryKindRunNamed, marotte.EntryRunNamed{Run: wakeRunID, Name: "publish-docs"})
 	f.append(wake, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "Rewrite them now."})
 	f.closeTurn(wake, marotte.TurnOutcomeCompleted)
 	entries, err := f.log.All()
@@ -197,7 +221,7 @@ func TestRenderChatMarkdown_AWakeIsTheTurnsTriggerAndItsMessageRendersOnce(t *te
 	if n := strings.Count(md, question); n != 1 {
 		t.Errorf("the question renders %d times, want once, under the wake:\n%s", n, md)
 	}
-	if !strings.Contains(md, "**wf_5e1f0c2a \u00b7 draft asks you**\n\n"+question) {
+	if !strings.Contains(md, "**publish-docs \u00b7 draft asks you**\n\n"+question) {
 		t.Errorf("the wake turn does not open with its label and the question:\n%s", md)
 	}
 }

@@ -180,7 +180,7 @@ func searchEntries(entries []marotte.Entry, drawn map[string]struct{}, raw strin
 		return SearchResult{Matches: []Hit{}}, 0
 	}
 	turns := indexSearchTurns(entries, drawn)
-	claimed := wakingSteers(entries)
+	woken := wakeFactsOf(entries)
 	sc := hitScan{hits: make([]Hit, 0, 16)}
 	scanned := 0
 	for i := range entries {
@@ -190,10 +190,10 @@ func searchEntries(entries []marotte.Entry, drawn map[string]struct{}, raw strin
 			continue
 		}
 		scanned++
-		if _, ok := claimed[e.ID]; ok && e.Kind == marotte.EntryKindSteer {
+		if _, ok := woken.drawn[e.ID]; ok && e.Kind == marotte.EntryKindSteer {
 			continue
 		}
-		segs := entrySegments(e, t)
+		segs := entrySegments(e, t, woken.names)
 		if !entryMatchesFilters(e, t, &q) {
 			continue
 		}
@@ -387,8 +387,8 @@ type segment struct {
 // entrySegments lists an entry's searchable spans in rendered order: text; tool_call title and input; tool_result
 // claim, diff, denial and output; steer text; plan entries; compaction_failed or safety_blocked text; model_routed's
 // message; model_fallback's models and codes; turn_close failure reason; turn_open prompt and attachment names;
-// turn_wake label and messages. Empty spans add nothing.
-func entrySegments(e *marotte.Entry, t *searchTurn) []segment {
+// turn_wake label and messages, its runs named from names. Empty spans add nothing.
+func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []segment {
 	switch e.Kind {
 	case marotte.EntryKindText:
 		var p marotte.EntryText
@@ -425,10 +425,10 @@ func entrySegments(e *marotte.Entry, t *searchTurn) []segment {
 	case marotte.EntryKindTurnOpen:
 		return turnOpenSegments(e.Payload)
 	case marotte.EntryKindTurnWake:
-		return turnWakeSegments(e.Payload)
+		return turnWakeSegments(e.Payload, names)
 	case marotte.EntryKindTurnBind, marotte.EntryKindSteerAck, marotte.EntryKindCompaction,
 		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindSteerDelivered,
-		marotte.EntryKindSteerCleared:
+		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed:
 		// A compaction summary restates history searchable at its source; bind and switch render no text. An ack's words
 		// are the one rendered prose left out of the index.
 		return nil
@@ -472,13 +472,14 @@ func oneSegment(kind SegmentKind, text string) []segment {
 	return []segment{{kind: kind, text: text}}
 }
 
-func turnWakeSegments(payload json.RawMessage) []segment {
+func turnWakeSegments(payload json.RawMessage, names map[string]string) []segment {
 	var w marotte.EntryTurnWake
 	if json.Unmarshal(payload, &w) != nil {
 		return nil
 	}
+	named := marotte.NamedWake(&w, names)
 	var segs []segment
-	for _, text := range marotte.WakeSearchTexts(&w) {
+	for _, text := range marotte.WakeSearchTexts(&named) {
 		segs = append(segs, oneSegment(SegmentWake, text)...)
 	}
 	return segs

@@ -316,6 +316,7 @@ type Translator struct {
 	read      *readSteers
 	wakes     *wakeLedger
 	wakeMem   *wakeMemory
+	runNames  *runNames
 	slotWaits *slotWaits
 	workDir   string // last for fieldalignment, as in Roles
 }
@@ -350,6 +351,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		read:           newReadSteers(),
 		wakes:          newWakeLedger(),
 		wakeMem:        newWakeMemory(),
+		runNames:       newRunNames(),
 		slotWaits:      &slotWaits{},
 	}
 	for _, o := range opts {
@@ -369,6 +371,8 @@ type runOriginAccess interface {
 	IsScheduled(workflowID string) bool
 	// RunLabel is the label marotte gave a run at launch, "" when it gave none.
 	RunLabel(workflowID string) string
+	// ReadRun asks for one read of a run's state in the background; its reply reaches RecordInspect.
+	ReadRun(workflowID string)
 	// RunNotice CONSUMES the finished run whose completion notice KAS queued into
 	// chatID's steering buffer and whose label the notice's text quotes, answering its
 	// id and the instant it finished (Unix ms). False when no recorded run matches, in

@@ -54,6 +54,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.EntryTurnBind](),
 	wiregen.TypeRef[marotte.WakeSteer](),
 	wiregen.TypeRef[marotte.EntryTurnWake](),
+	wiregen.TypeRef[marotte.EntryRunNamed](),
 	wiregen.TypeRef[marotte.EntryText](),
 	wiregen.TypeRef[marotte.EntryThinking](),
 	wiregen.TypeRef[marotte.EntryToolCall](),

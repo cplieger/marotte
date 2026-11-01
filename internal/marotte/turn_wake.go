@@ -39,11 +39,12 @@ const (
 )
 
 // WakeSteer is a workflow message a wake names, copied from its row (ID) when the wake was
-// recorded, so the header and the rail read the wake alone. It carries no run name: the server
-// knows none for an agent-launched run, and the client names the run from its run store.
+// recorded, so the header and the rail read the wake alone. RunName is the run's display name
+// (RunDisplayName) as known then, "" when not yet; a later run_named entry names it.
 type WakeSteer struct {
 	ID       string `json:"id"`
 	Run      string `json:"run,omitempty"`
+	RunName  string `json:"run_name,omitempty"`
 	Step     string `json:"step,omitempty"`
 	Severity string `json:"severity,omitempty"`
 	Text     string `json:"text"`
@@ -52,19 +53,73 @@ type WakeSteer struct {
 // EntryTurnWake is the turn_wake payload: what started an agent-initiated turn, filed once at
 // its first agentInitiated frame. It renders nothing at its position; the turn header folds it.
 // Steers is the waking message for a step message and the re-delivered rows for a rewake; Run,
-// RunLabel (KAS's runLabel, else workflowName), RunStatus, Initiator and StopReason describe a
-// finished run; Note, Loop and MaxIterations qualify a step message.
+// RunName (as WakeSteer's), RunStatus, Initiator and StopReason describe a finished run; Note,
+// Loop and MaxIterations qualify a step message.
 type EntryTurnWake struct {
 	Reason        WakeReason  `json:"reason"`
 	Note          WakeNote    `json:"note,omitempty"`
 	Run           string      `json:"run,omitempty"`
-	RunLabel      string      `json:"run_label,omitempty"`
+	RunName       string      `json:"run_name,omitempty"`
 	RunStatus     RunStatus   `json:"run_status,omitempty"`
 	Initiator     string      `json:"initiator,omitempty"`
 	StopReason    string      `json:"stop_reason,omitempty"`
 	Loop          string      `json:"loop,omitempty"`
 	Steers        []WakeSteer `json:"steers,omitempty"`
 	MaxIterations int         `json:"max_iterations,omitempty"`
+}
+
+// EntryRunNamed is the run_named payload: a run's display name, learned after a wake naming the run
+// was recorded without one. It renders nothing; every wake of the chat naming Run reads Name.
+type EntryRunNamed struct {
+	Run  string `json:"run"`
+	Name string `json:"name"`
+}
+
+// genericWorkflowName is the workflowName KAS gives every run built from a prompt rather than a
+// recipe (kiro-cli 2.37.0 acp-server.js, `Zer="workflow-from-prompt"`), which names no run.
+const genericWorkflowName = "workflow-from-prompt"
+
+// RunDisplayName is the name a wake shows for a run: KAS's runLabel, else its recipe's name, ""
+// when neither names it.
+func RunDisplayName(runLabel, workflowName string) string {
+	if runLabel != "" {
+		return runLabel
+	}
+	if workflowName == genericWorkflowName {
+		return ""
+	}
+	return workflowName
+}
+
+// WakeRunsUnnamed is the runs w names with no name yet, each once.
+func WakeRunsUnnamed(w *EntryTurnWake) []string {
+	var out []string
+	add := func(run, name string) {
+		if run != "" && name == "" && !slices.Contains(out, run) {
+			out = append(out, run)
+		}
+	}
+	add(w.Run, w.RunName)
+	for i := range w.Steers {
+		add(w.Steers[i].Run, w.Steers[i].RunName)
+	}
+	return out
+}
+
+// NamedWake is w with every unnamed run named from names (run id to name, the chat's run_named
+// entries); w is not changed.
+func NamedWake(w *EntryTurnWake, names map[string]string) EntryTurnWake {
+	out := *w
+	if out.RunName == "" {
+		out.RunName = names[out.Run]
+	}
+	out.Steers = slices.Clone(w.Steers)
+	for i := range out.Steers {
+		if out.Steers[i].RunName == "" {
+			out.Steers[i].RunName = names[out.Steers[i].Run]
+		}
+	}
+	return out
 }
 
 // WakeInitiatorUser is KAS's stopInitiator for a run the reader stopped or marked complete.
@@ -145,18 +200,15 @@ func unsettledWhere(w *WorkflowMessageFold, keep func(*WorkflowMessage) bool) []
 	return out
 }
 
-// shortRunIDLength is `wf_` plus eight characters, the client's runLabelText fallback.
-const shortRunIDLength = 11
+// WakeRunPlaceholder is what a wake calls a run whose name is not known (yet).
+const WakeRunPlaceholder = "A workflow"
 
-// WakeRunName is what a wake calls a run: label when known, else the id's short form.
-func WakeRunName(run, label string) string {
-	if label != "" {
-		return label
+// WakeRunName is what a wake calls a run: its name, else WakeRunPlaceholder.
+func WakeRunName(name string) string {
+	if name != "" {
+		return name
 	}
-	if len(run) > shortRunIDLength {
-		return run[:shortRunIDLength]
-	}
-	return run
+	return WakeRunPlaceholder
 }
 
 // WakeFallbackLine is the line of a wake that names nothing marotte can show.
@@ -190,18 +242,21 @@ func WakeDrawnSteers(w *EntryTurnWake) []string {
 	return out
 }
 
-// WakeSearchTexts is what find-in-chat matches in a wake's header: the label after the run's name,
-// which the client draws from its run store, then each message; nil for the fallback line.
+// WakeSearchTexts is what find-in-chat matches in a wake's header, as the header draws it: the label,
+// then each message drawn under it; nil for the fallback line.
 func WakeSearchTexts(w *EntryTurnWake) []string {
-	l, _ := wakeLineOf(w)
+	l, body := wakeLineOf(w)
 	if l.name == "" && l.rest == WakeFallbackLine {
 		return nil
 	}
-	out := []string{strings.TrimPrefix(strings.TrimPrefix(l.rest, ":"), " ")}
-	if w.Reason == WakeReasonStepMessage || w.Reason == WakeReasonRewake {
+	out := []string{l.name + l.rest}
+	switch {
+	case w.Reason == WakeReasonRewake:
 		for i := range w.Steers {
 			out = append(out, w.Steers[i].Text)
 		}
+	case body != "":
+		out = append(out, body)
 	}
 	return out
 }
@@ -226,7 +281,7 @@ func stepWakeLine(w *EntryTurnWake) (label wakeLabel, body string) {
 		return fallbackLabel, ""
 	}
 	s := &w.Steers[0]
-	run := WakeRunName(s.Run, "")
+	run := WakeRunName(s.RunName)
 	if w.Note == WakeNoteRepeatCap && w.Loop != "" && w.MaxIterations > 0 {
 		return wakeLabel{run, " paused: " + w.Loop + " reached its round limit (" + strconv.Itoa(w.MaxIterations) + ")"}, ""
 	}
@@ -248,7 +303,7 @@ func runFinishedLine(w *EntryTurnWake) wakeLabel {
 	if w.Run == "" {
 		return fallbackLabel
 	}
-	run := WakeRunName(w.Run, w.RunLabel)
+	run := WakeRunName(w.RunName)
 	byUser := w.Initiator == WakeInitiatorUser
 	var rest string
 	switch w.RunStatus {
@@ -286,7 +341,7 @@ func rewakeLine(steers []WakeSteer) (label wakeLabel, body string) {
 	lines := make([]string, 0, len(steers))
 	for i := range steers {
 		s := &steers[i]
-		lines = append(lines, WakeRunName(s.Run, "")+" \u00b7 "+s.Step+": "+s.Text)
+		lines = append(lines, WakeRunName(s.RunName)+" \u00b7 "+s.Step+": "+s.Text)
 	}
 	return wakeLabel{rest: rest}, strings.Join(lines, "\n")
 }

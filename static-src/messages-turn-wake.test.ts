@@ -1,8 +1,4 @@
-// A woken turn through the real store and renderer: its header names what woke it, with the run named
-// by the run store, the message that woke it is drawn there once and leaves the previous turn, on
-// reload and live, and the copy actions start with it.
-
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, onTestFinished } from "vitest";
 import type { Session } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -48,7 +44,7 @@ vi.mock("./run-view.js", async (importOriginal) => ({
   openRunView,
 }));
 
-/** The run names `GET /api/runs/{id}` answers; a run absent here answers a failed read. */
+/** The run names `GET /api/runs/{id}` answers, which the run tab reads; a run absent here answers a failed read. */
 const runNames = vi.hoisted(() => new Map<string, string>());
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClientModule>()),
@@ -69,6 +65,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 }));
 
 const store = await import("./store.js");
+const { noteRunLabel } = await import("./run-store.js");
 const messages = await import("./messages.js");
 const { resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
@@ -128,9 +125,23 @@ function wake(w: EntryTurnWake, turn: string, seq: number): Entry {
   return sealed(turn, seq, "turn_wake", w, `${turn}-wake`);
 }
 
-const STEP_WAKE: EntryTurnWake = {
+const UNNAMED_WAKE: EntryTurnWake = {
   reason: "step_message",
   steers: [{ id: WAKER, run: RUN, step: "check-links", severity: "error", text: MESSAGE }],
+};
+
+const STEP_WAKE: EntryTurnWake = {
+  reason: "step_message",
+  steers: [
+    {
+      id: WAKER,
+      run: RUN,
+      run_name: "publish-docs",
+      step: "check-links",
+      severity: "error",
+      text: MESSAGE,
+    },
+  ],
 };
 
 /** The turn before the wake, closed, with the waking row filed after its close. */
@@ -257,7 +268,7 @@ describe("a step's message that woke the chat", () => {
     expect(notes()).toEqual([]);
   });
 
-  it("names its run as the run store does, and the name opens the run", async () => {
+  it("names its run as its wake does, and the name opens the run", async () => {
     load("wake-name", [before(), woken()]);
     const btn = (): HTMLButtonElement | null =>
       card("t2").querySelector<HTMLButtonElement>(".turn-wake button.turn-wake-run");
@@ -268,14 +279,6 @@ describe("a step's message that woke the chat", () => {
     btn()?.click();
     await vi.waitFor(() => {
       expect(openRunView).toHaveBeenCalledWith(RUN, "publish-docs", "wake-name");
-    });
-  });
-
-  it("names its run by the id's short form while the run store knows no name", async () => {
-    runNames.clear();
-    load("wake-unnamed", [before(), woken()]);
-    await vi.waitFor(() => {
-      expect(header("t2").label).toBe("wf_5e1f0c2a \u00b7 check-links reports an error");
     });
   });
 
@@ -340,8 +343,22 @@ describe("a re-delivery after a stop", () => {
   const rewake: EntryTurnWake = {
     reason: "rewake",
     steers: [
-      { id: WAKER, run: RUN, step: "check-links", severity: "error", text: MESSAGE },
-      { id: SECOND, run: OTHER, step: "collect", severity: "success", text: RESULT },
+      {
+        id: WAKER,
+        run: RUN,
+        run_name: "publish-docs",
+        step: "check-links",
+        severity: "error",
+        text: MESSAGE,
+      },
+      {
+        id: SECOND,
+        run: OTHER,
+        run_name: "nightly-report",
+        step: "collect",
+        severity: "success",
+        text: RESULT,
+      },
     ],
   };
   const stopped = (): Entry[] => [
@@ -384,6 +401,95 @@ describe("a re-delivery after a stop", () => {
     await vi.waitFor(() => {
       expect(openRunView).toHaveBeenCalledWith(OTHER, "nightly-report", "wake-rewake");
     });
+  });
+
+  it("takes no focus on a run name its folded clamp hides, and gives it back when the turn opens", async () => {
+    const later = [
+      promptOpen("t3", 3, "next"),
+      sealed("t3", 1, "text", { text: "ok" }, "t3-say"),
+      sealed("t3", 2, "turn_close", { outcome: "completed" }),
+    ];
+    load("wake-rewake-fold", [stopped(), withThought(woken(rewake)), later]);
+    const second = (): HTMLButtonElement | undefined =>
+      [
+        ...card("t2").querySelectorAll<HTMLButtonElement>(
+          ".turn-req-text button.turn-wake-row-run",
+        ),
+      ][1];
+    await vi.waitFor(() => {
+      expect(card("t2").hasAttribute("data-folded")).toBe(true);
+      expect(second()).toBeDefined();
+    });
+    const clamp = card("t2").querySelector<HTMLElement>(".turn-req-text")!.getBoundingClientRect();
+    expect(second()!.getBoundingClientRect().top).toBeGreaterThanOrEqual(clamp.bottom);
+    second()!.focus();
+    expect(document.activeElement).not.toBe(second());
+    const label = card("t2").querySelector<HTMLButtonElement>(".turn-wake button.turn-wake-run");
+    expect(label).toBeNull();
+
+    const toggle = (): void => {
+      card("t2").querySelector<HTMLButtonElement>(".turn-fold-toggle")!.click();
+    };
+    toggle();
+    await vi.waitFor(() => {
+      expect(card("t2").hasAttribute("data-folded")).toBe(false);
+    });
+    second()!.focus();
+    expect(document.activeElement).toBe(second());
+
+    toggle();
+    expect(card("t2").hasAttribute("data-folded")).toBe(true);
+    expect(second()!.inert).toBe(true);
+    toggle();
+    expect(second()!.inert).toBe(false);
+  });
+});
+
+describe("a woken turn whose run's name arrives after it is drawn", () => {
+  const PLACEHOLDER = "A workflow \u00b7 check-links reports an error";
+  const railLink = (): HTMLAnchorElement | undefined =>
+    [...document.querySelectorAll<HTMLAnchorElement>(".turn-map .turn-pill-link")].find((a) =>
+      a.getAttribute("href")?.endsWith("#turn-2"),
+    );
+
+  it("shows a workflow everywhere, never a generic recipe, then the name everywhere", async () => {
+    const chat = "wake-arrival";
+    // The rail draws only beside a transcript that scrolls.
+    const outer = document.getElementById("messages-wrap-outer")!;
+    const wrap = document.getElementById("messages-wrap")!;
+    outer.style.cssText = "position:relative;block-size:400px";
+    wrap.style.cssText = "block-size:200px;overflow-y:auto";
+    onTestFinished(() => {
+      outer.style.cssText = "";
+      wrap.style.cssText = "";
+    });
+    runNames.clear();
+    noteRunLabel(RUN, "workflow-from-prompt");
+    load(chat, [before(), woken(UNNAMED_WAKE)]);
+    messages.pointTurnRail(chat);
+
+    await vi.waitFor(() => {
+      expect(header("t2").label).toBe(PLACEHOLDER);
+      expect(railLink()?.getAttribute("aria-label")).toContain(PLACEHOLDER);
+    });
+    expect(card("t2").querySelector(".turn-wake button.turn-wake-run")?.textContent).toBe(
+      "A workflow",
+    );
+    expect(railLink()?.dataset["tooltip"]).toContain(PLACEHOLDER);
+    expect(copyText("t2")).toBe(`${PLACEHOLDER}\n${MESSAGE}\n\n${REPLY}`);
+    expect(document.body.textContent).not.toContain("workflow-from-prompt");
+
+    store.appendEntry(chat, sealed("t2", 4, "run_named", { run: RUN, name: "publish-docs" }));
+
+    await vi.waitFor(() => {
+      expect(header("t2").label).toBe(LABEL);
+      expect(railLink()?.getAttribute("aria-label")).toContain(LABEL);
+    });
+    expect(railLink()?.dataset["tooltip"]).toContain(LABEL);
+    expect(copyText("t2")).toBe(`${LABEL}\n${MESSAGE}\n\n${REPLY}`);
+    expect(card("t2").querySelector(".turn-wake button.turn-wake-run")?.textContent).toBe(
+      "publish-docs",
+    );
   });
 });
 

@@ -12,6 +12,7 @@ const KIND_SET: Record<EntryKind, true> = {
   turn_open: true,
   turn_bind: true,
   turn_wake: true,
+  run_named: true,
   text: true,
   thinking: true,
   tool_call: true,

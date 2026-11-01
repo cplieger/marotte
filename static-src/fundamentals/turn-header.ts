@@ -4,6 +4,7 @@
 // turn's request text clamps to four lines in CSS, since folded rows are the session's navigation,
 // and a labelled request's full text shows only while open; attachment chips stay outside the clamp.
 
+import { join } from "@cplieger/keyenc";
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { watchCut } from "../clamp-text.js";
@@ -33,7 +34,7 @@ export interface TurnHeaderData {
    *  request's place and clamp. Ignored when `request` is set or the wake is a fallback. */
   wake?: WakeLine | undefined;
   /** Opens a run the wake names; without it each name is plain text. */
-  onOpenRun?: ((workflowID: string) => void) | undefined;
+  onOpenRun?: ((run: WakeRun) => void) | undefined;
 }
 
 export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
@@ -174,9 +175,9 @@ function setRequestText(text: HTMLElement, shown: string): void {
 function setWakeRows(
   text: HTMLElement,
   rows: readonly WakeRow[],
-  open: ((workflowID: string) => void) | undefined,
+  open: ((run: WakeRun) => void) | undefined,
 ): void {
-  const key = rows.map((r) => r.run.id + r.run.name + r.rest + r.text).join("\n");
+  const key = join(...rows.map((r) => join(r.run.id, r.run.name, r.rest, r.text)));
   if (text.dataset["rows"] === key) {
     return;
   }
@@ -198,7 +199,7 @@ function setWakeRows(
 function syncWakeLabel(
   header: HTMLElement,
   wake: WakeLine | undefined,
-  open: ((workflowID: string) => void) | undefined,
+  open: ((run: WakeRun) => void) | undefined,
 ): void {
   const req = header.querySelector<HTMLElement>(":scope > .turn-req");
   if (req === null) {
@@ -227,14 +228,13 @@ function syncWakeLabel(
   line.replaceChildren(wakeRunEl(wake.run, "turn-wake-run", open), rest);
 }
 
-/** The run's name, a button when the caller can open the run. `data-run-id` and `data-run-recorded` let the
- *  view keep the name current (`WAKE_RUN_SELECTOR`). */
+/** The run's name, a button when the caller can open the run. */
 function wakeRunEl(
   run: WakeRun,
   className: string,
-  open: ((workflowID: string) => void) | undefined,
+  open: ((run: WakeRun) => void) | undefined,
 ): HTMLElement {
-  const attrs = { className, "data-run-id": run.id, "data-run-recorded": run.recorded };
+  const attrs = { className, "data-run-id": run.id };
   if (open === undefined) {
     return el("span", attrs, run.name);
   }
@@ -244,13 +244,13 @@ function wakeRunEl(
     run.name,
   );
   btn.addEventListener("click", () => {
-    open(run.id);
+    open(run);
   });
   return btn;
 }
 
-/** Every run name a wake header draws. */
-export const WAKE_RUN_SELECTOR = ".turn-wake-run[data-run-id], .turn-wake-row-run[data-run-id]";
+/** The run buttons inside a re-delivery's request text, which a folded card's clamp can hide. */
+export const WAKE_ROW_RUN_SELECTOR = ":scope > .turn-req > .turn-req-text button.turn-wake-row-run";
 
 /** A labelled request's full text, a sibling of the text so the folded clamp cannot hide it, shown
  *  while the turn is open (29-turns.css); `body` undefined removes it. */

@@ -23,6 +23,18 @@ func (rs *Runs) RunLabel(workflowID string) string {
 	return launchOrigin{origin: l.Origin}.runLabel(l.Recipe)
 }
 
+// ReadRun reads workflowID's state once in the background; rawInspect hands the reply to the translator.
+func (rs *Runs) ReadRun(workflowID string) {
+	if rs.lifecycle == nil {
+		return
+	}
+	rs.lifecycle.goUnlessDraining(func() {
+		ctx, cancel := rs.lifecycle.derivedContext()
+		defer cancel()
+		_, _ = rs.rawInspect(ctx, workflowID)
+	})
+}
+
 // translateRoles is the translate wiring, named so it can be asserted. Every field is read at construction,
 // so requireWired names a missing owner instead of a first-frame panic.
 func (rt *Runtime) translateRoles() *translate.Roles {

@@ -5,6 +5,7 @@ import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 import { buildTurnHeader, updateTurnHeader, type TurnHeaderData } from "./turn-header.js";
 import { initAttachmentPillCallbacks } from "../attachment-pill.js";
 import { wakeLine } from "../turn-wake.js";
+import { namedWake } from "../turns.js";
 import type { EntryTurnWake } from "../wire/types.gen.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
@@ -331,10 +332,16 @@ describe("a woken turn's header", () => {
     reason: "step_message",
     steers: [{ id: "wfmsg-1", run: RUN, step: "check-links", severity, text }],
   });
-  const names = (id: string, recorded: string): string =>
-    id === RUN ? "publish-docs" : id === OTHER ? "nightly-report" : recorded;
+  const names = new Map([
+    [RUN, "publish-docs"],
+    [OTHER, "nightly-report"],
+  ]);
   const wakeData = (w: EntryTurnWake, open?: (id: string) => void): TurnHeaderData =>
-    data({ request: undefined, wake: wakeLine(w, names), onOpenRun: open });
+    data({
+      request: undefined,
+      wake: wakeLine(namedWake(w, names)),
+      onOpenRun: open === undefined ? undefined : (run) => open(run.id),
+    });
   const label = (h: HTMLElement): HTMLElement | null => h.querySelector(".turn-req > .turn-wake");
 
   it("puts the label on its own line above the message, the message where a prompt goes", () => {
@@ -365,15 +372,49 @@ describe("a woken turn's header", () => {
       wakeData({
         reason: "run_finished",
         run: "wf_unknown01234",
-        run_label: "publish-docs-held",
+        run_name: "publish-docs-held",
         run_status: "completed",
       }),
     );
     expect(label(h)?.textContent).toBe("publish-docs-held completed");
-    expect(label(h)?.querySelector<HTMLElement>(".turn-wake-run")?.dataset["runRecorded"]).toBe(
-      "publish-docs-held",
-    );
     expect(text(h).hidden).toBe(true);
+  });
+
+  it("renames the run on a repaint once its name arrives", () => {
+    const unnamed = (): TurnHeaderData =>
+      data({ request: undefined, wake: wakeLine(stepWake("warning")), onOpenRun: () => undefined });
+    const h = buildTurnHeader(unnamed());
+    expect(label(h)?.querySelector(".turn-wake-run")?.textContent).toBe("A workflow");
+    updateTurnHeader(
+      h,
+      wakeData(stepWake("warning"), () => undefined),
+    );
+    expect(label(h)?.querySelector(".turn-wake-run")?.textContent).toBe("publish-docs");
+    expect(label(h)?.textContent).toBe("publish-docs \u00b7 check-links asks you");
+  });
+
+  it("repaints rows whose joined words read alike but split differently", () => {
+    const twoRows: EntryTurnWake = {
+      reason: "rewake",
+      steers: [
+        { id: "q", run: RUN, step: "draft", text: "a" },
+        { id: "r", run: OTHER, step: "collect", text: "b" },
+      ],
+    };
+    const oneRow: EntryTurnWake = {
+      reason: "rewake",
+      steers: [
+        {
+          id: "q",
+          run: RUN,
+          step: "draft",
+          text: `a\n${OTHER}nightly-report \u00b7 collect: b`,
+        },
+      ],
+    };
+    const h = buildTurnHeader(wakeData(oneRow));
+    updateTurnHeader(h, wakeData(twoRows));
+    expect(text(h).querySelectorAll(".turn-wake-row-run").length).toBe(2);
   });
 
   it("lists a re-delivery's messages as its message, each opening its own run from its name", () => {

@@ -38,7 +38,9 @@ type baseDeps struct {
 	// test can stage a scheduled run without a runtime or a scheduler.
 	scheduledRuns map[string]bool
 	// runLabels are the labels RunLabel answers, keyed by workflow id.
-	runLabels   map[string]string
+	runLabels map[string]string
+	// runReads are the runs ReadRun was asked to read, in call order.
+	runReads    []string
 	planUpdates []marotte.RunPlanUpdate
 	// runNotices is the per-chat queue RunNotice consumes, oldest first, so a test
 	// can stage a finished run behind a notify-wf- notice without a run registry.
@@ -636,6 +638,7 @@ func (d *baseDeps) IsScheduled(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
 }
 func (d *baseDeps) RunLabel(workflowID string) string { return d.runLabels[workflowID] }
+func (d *baseDeps) ReadRun(workflowID string)         { d.runReads = append(d.runReads, workflowID) }
 
 type stagedRunNotice struct {
 	workflowID string
