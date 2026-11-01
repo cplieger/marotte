@@ -1203,7 +1203,7 @@ func TestCancel_ReleasesTheLeaseOfAPausedRunThatSendsNoTerminalFrame(t *testing.
 	}
 	leased(t, h.runs, "wf_1")
 
-	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 
@@ -1232,7 +1232,7 @@ func TestCancel_LeavesTheLeaseOfARunThatIsStillRunning(t *testing.T) {
 	}
 	leased(t, h.runs, "wf_1")
 
-	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 
@@ -1250,7 +1250,7 @@ func TestCancel_ReconcilesNothingWhenTheCancelFAILED(t *testing.T) {
 	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusCancelled))
 	leased(t, h.runs, "wf_1")
 
-	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
 		t.Fatal("Cancel reported success for a cancel that failed")
 	}
 	joinInflight(t, h)

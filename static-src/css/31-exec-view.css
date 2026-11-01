@@ -1159,9 +1159,11 @@
 
 /* The mini bar: one segment per step of the plan as it stands (`model.ts` `miniBar`).
    A sibling parallel branch starts after twice the gap, so a grey stretch reads as one
-   track's remaining steps. `--ev-state-fill` is the timeline's. */
+   track's remaining steps. `--ev-state-fill` is the timeline's. All the gaps, a branch's second
+   one included, stay under 40% of the bar's width: `summary.ts` writes `--mini-n` as the segments
+   plus the branch starts. A segment has no floor, so a long plan never paints into the clock. */
 .ev-mini {
-  --mini-gap: 0.125rem;
+  --mini-gap: min(0.125rem, calc(40% / var(--mini-n, 1)));
 
   flex: 1 1 0;
   min-inline-size: 3rem;
@@ -1176,7 +1178,7 @@
 
 .ev-mini-seg {
   flex: 1 1 0;
-  min-inline-size: 0.125rem;
+  min-inline-size: 0;
   border-radius: var(--r-sm);
   background: var(--ev-state-fill, color-mix(in srgb, var(--c-text-primary) 12%, transparent));
 
@@ -1185,9 +1187,9 @@
   }
 }
 
-/* What wants the reader on a run-bar row: an open question in the progress's place, any other
-   alert on a line of its own under the columns (see 26-dock.css). Where the mark shows (every
-   alert but an open question), it sits on the sentence's first line. */
+/* What wants the reader on a run summary: a question or a pause in the progress's place, a
+   failure on a run-bar row's line of its own under the columns (see 26-dock.css). Where the mark
+   shows (a failure), it sits on the sentence's first line. */
 .ev-alert-line {
   display: flex;
   align-items: flex-start;
@@ -1217,6 +1219,25 @@
 
 .ev-dock[data-open] .ev-dock-note-text {
   -webkit-line-clamp: unset;
+}
+
+/* A pause in the dock head has the progress phrase's and the bar's place, up to the clock, on one
+   line cut by an ellipsis: a line-clamp wraps at word breaks first and would cut it short. */
+.ev-dock-head[data-alert-in-place] {
+  & :is(.ev-sum-progress, .ev-mini, .ev-alert-icon) {
+    display: none;
+  }
+
+  & .ev-alert-line {
+    flex: 1 1 0;
+    color: var(--c-text-secondary);
+  }
+
+  & .ev-alert-text {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
 }
 
 /* --- The question a step asks ------------------------------------------------ */
@@ -1620,6 +1641,38 @@
 
   .ev-dock-head .ev-mini-seg {
     border-radius: 1px;
+  }
+
+  /* A pause takes the head's second line, where the band it replaces sits, with the clock: beside
+     the verbs the one line leaves neither room. `::after` is the line break; the pause starts
+     under the state word. */
+  .ev-dock-head[data-alert-in-place] {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding-block-end: var(--sp-1);
+
+    & > .ev-sum {
+      display: contents;
+    }
+
+    & > .ev-dock-act {
+      margin-inline-start: auto;
+    }
+
+    &::after {
+      content: "";
+      order: 1;
+      flex-basis: 100%;
+    }
+
+    & .ev-alert-line {
+      order: 2;
+      padding-inline-start: calc(1.5rem + var(--sp-1));
+    }
+
+    & .ev-sum-clock {
+      order: 2;
+    }
   }
 
   /* The one row left is the lead (`dock.ts`); the rest leave the tab order with the

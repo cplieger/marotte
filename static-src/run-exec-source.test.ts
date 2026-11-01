@@ -720,14 +720,15 @@ describe("runToExec alert precedence", () => {
       NO_ASKS,
     );
     expect(stopped.alert?.kind).toBe("stopped");
-    expect(stopped.alert?.text).toBe("Stopped by user: changed my mind");
+    expect(stopped.alert?.text).toBe("Stopped by you: changed my mind");
 
     const paused = runToExec(
       stateWith(step("a", "paused"), { status: "paused", stopInitiator: "user" }),
       undefined,
       NO_ASKS,
     );
-    expect(paused.alert?.text).toBe("Paused by user");
+    // A pause asked for is still a pause: the run waits for a resume.
+    expect(paused.alert).toEqual({ kind: "paused", text: "Paused by you" });
 
     const pending = runToExec(
       stateWith(step("a", "running"), { status: "running", pausePending: { initiator: "user" } }),
@@ -1332,13 +1333,33 @@ describe("the alert of a run paused at a loop's cap", () => {
     ).alert?.text;
   const spent = [pass(0, "completed"), pass(1, "completed"), pass(2, "completed")];
 
-  it("keeps the pass count beside KAS's sentence", () => {
+  it("names the loop and its passes in place of KAS's sentence", () => {
     expect(
       alertFor([loop("paused", spent), step("land", "pending")], {
         pauseReason: "Repeat 'loop' reached maxIterations.",
         pause: capPause("loop", 3),
       }),
-    ).toBe("Waiting: Repeat 'loop' reached maxIterations. \u00b7 3 of 3 passes");
+    ).toBe("loop reached its pass limit (3/3)");
+  });
+
+  it("names a capped branch's loop, not the parallel KAS's sentence names", () => {
+    expect(
+      alertFor([loop("paused", spent, "lane-bolttable")], {
+        pauseReason: "Parallel 'lanes' is waiting on branch 'lane-bolttable'.",
+        pause: capPause("lane-bolttable", 4),
+      }),
+    ).toBe("lane-bolttable reached its pass limit (4/4)");
+  });
+
+  it("names the loop, then who paused the rest of the run", () => {
+    expect(
+      alertFor([loop("paused", spent, "lane-bolttable")], {
+        pauseReason: "Parallel 'lanes' is waiting on branch 'lane-bolttable'.",
+        pause: capPause("lane-bolttable", 4),
+        stopInitiator: "user",
+        stopReason: "Pause requested by owning parent/orchestrator; human intent not verified.",
+      }),
+    ).toBe("lane-bolttable reached its pass limit (4/4) \u00b7 Paused by its chat");
   });
 
   it("counts an extended budget as KAS ran it", () => {
@@ -1348,7 +1369,7 @@ describe("the alert of a run paused at a loop's cap", () => {
         pauseReason: "Repeat 'loop' reached maxIterations.",
         pause: capPause("loop", 8),
       }),
-    ).toBe("Waiting: Repeat 'loop' reached maxIterations. \u00b7 8 of 8 passes");
+    ).toBe("loop reached its pass limit (8/8)");
   });
 
   it("counts nothing for a pause inside a pass", () => {
@@ -1418,6 +1439,6 @@ describe("the alert of a run paused at a loop's cap", () => {
         { pauseReason: "Repeat 'outer' reached maxIterations.", pause: capPause("outer", 2) },
         plan,
       ),
-    ).toBe("Waiting: Repeat 'outer' reached maxIterations. \u00b7 2 of 2 passes");
+    ).toBe("outer reached its pass limit (2/2)");
   });
 });

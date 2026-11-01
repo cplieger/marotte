@@ -3,5 +3,6 @@
     "sign in to Kiro to continue; marotte resumes the run when you do",
     "the Kiro sign-in service is unreachable; marotte resumes the run when it answers",
     "resume it to continue"
-  ]
+  ],
+  "apiCaller": "asked through marotte's run API by a caller outside its page"
 }

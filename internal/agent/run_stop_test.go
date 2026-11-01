@@ -38,7 +38,7 @@ func TestCancel_TellsKASTheUserAskedForIt(t *testing.T) {
 	}
 	leased(t, h.runs, "wf_1")
 
-	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 
@@ -77,7 +77,7 @@ func TestRetryTermination_KeepsTheUsersAttribution(t *testing.T) {
 	leased(t, h.runs, "wf_1")
 	h.runs.armDeadline(t.Context(), "wf_1")
 
-	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 	awaitCalls(t, br, methodKiroWorkflowCancel, 2, "the refused cancel was never re-attempted")
@@ -93,7 +93,7 @@ func TestPause_TellsKASTheUserAskedForIt(t *testing.T) {
 	}
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.runs.pause(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.pause(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Pause: %v", err)
 	}
 
@@ -108,7 +108,7 @@ func TestResume_IsNotAttributed(t *testing.T) {
 	}
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.resume(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 

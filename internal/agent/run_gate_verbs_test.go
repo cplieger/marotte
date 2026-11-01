@@ -122,7 +122,9 @@ var closedGateVerbs = []closedGateVerb{
 	},
 	{
 		name: "a user resume", route: "POST /api/runs/{id}/resume", want: gateRefuses, hub: pausedStepHub,
-		call: func(ctx context.Context, _ *testing.T, h *Runtime) error { return h.runs.resume(ctx, "wf_1") },
+		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
+			return h.runs.resume(ctx, "wf_1", callerPage)
+		},
 	},
 	{
 		name: "a retry", route: "POST /api/runs/{id}/retry", want: gateRefuses,
@@ -134,7 +136,7 @@ var closedGateVerbs = []closedGateVerb{
 	{
 		name: "a repeat's extension", route: "POST /api/runs/{id}/extend", want: gateRefuses, hub: pausedStepHub,
 		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
-			return h.runs.extendRepeat(ctx, "wf_1", "loop", 2)
+			return h.runs.extendRepeat(ctx, "wf_1", "loop", 2, callerPage)
 		},
 	},
 	{
@@ -197,11 +199,15 @@ var closedGateVerbs = []closedGateVerb{
 	},
 	{
 		name: "a pause", route: "POST /api/runs/{id}/pause", want: gateLetsThrough, wrote: methodKiroWorkflowPause,
-		call: func(ctx context.Context, _ *testing.T, h *Runtime) error { return h.runs.pause(ctx, "wf_1") },
+		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
+			return h.runs.pause(ctx, "wf_1", callerPage)
+		},
 	},
 	{
 		name: "a cancel", route: "POST /api/runs/{id}/cancel", want: gateLetsThrough, wrote: methodKiroWorkflowCancel,
-		call: func(ctx context.Context, _ *testing.T, h *Runtime) error { return h.runs.cancel(ctx, "wf_1") },
+		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
+			return h.runs.cancel(ctx, "wf_1", callerPage)
+		},
 	},
 	{
 		name: "a delete", route: "DELETE /api/runs/{id}", want: gateLetsThrough, wrote: methodKiroWorkflowDelete,

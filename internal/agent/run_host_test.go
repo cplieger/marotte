@@ -646,7 +646,7 @@ func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
 	}
 	h.runs.recordEnd(id, runEndOverran)
 
-	if err := h.runs.cancel(t.Context(), id); err != nil {
+	if err := h.runs.cancel(t.Context(), id, callerPage); err != nil {
 		t.Errorf("Cancel on an already-terminating run = %v, want nil", err)
 	}
 	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
@@ -666,7 +666,7 @@ func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
 	h.runs.grantLease(t.Context(), id, "publish", manualLaunch(), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 
-	if err := h.runs.cancel(t.Context(), id); err != nil {
+	if err := h.runs.cancel(t.Context(), id, callerPage); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
@@ -691,7 +691,7 @@ func TestCancelRun_FailedRPCHandsTheClaimBack(t *testing.T) {
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("kas refused")}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.runs.cancel(t.Context(), id); err == nil {
+	if err := h.runs.cancel(t.Context(), id, callerPage); err == nil {
 		t.Fatal("a refused cancel reported success")
 	}
 	if !h.runs.claimTermination(id) {

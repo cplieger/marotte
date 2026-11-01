@@ -520,83 +520,98 @@ describe("the run bar's box", () => {
     });
 
     const QUESTION = `Waiting for answer: ${"which branch should the release be cut from? ".repeat(8)}`;
-    // A start time, so the row has an elapsed clock for the question to stop short of.
+    const PAUSE = `Waiting: ${"the parallel lanes wait on branch lane-bolttable to finish. ".repeat(6)}`;
+    // A start time, so the row has an elapsed clock for the text to stop short of.
     const started = (r: ExecRun): ExecRun => ({
       ...r,
       nodes: r.nodes.map((n, i) =>
         i === 0 ? { ...n, start: new Date(Date.now() - 46 * 3_600_000).toISOString() } : n,
       ),
     });
-    const asking = started({ ...waiting, alert: { kind: "input", text: QUESTION } });
     const answered = started(runOf("needs-an-answer", 1, 3));
     const plain = started(RUNS[0]!);
+    // A question and a pause take the progress's place alike (`summary.ts` `inPlace`).
+    const IN_PLACE = [
+      ["question", started({ ...waiting, alert: { kind: "input", text: QUESTION } })],
+      ["pause", started({ ...waiting, state: "waiting", alert: { kind: "paused", text: PAUSE } })],
+    ] as const;
+    const asking = IN_PLACE[0][1];
 
     const rect = (btn: HTMLElement, sel: string): DOMRect =>
       btn.querySelector<HTMLElement>(sel)!.getBoundingClientRect();
     const shown = (btn: HTMLElement, sel: string): boolean =>
       getComputedStyle(btn.querySelector<HTMLElement>(sel)!).display !== "none";
 
-    it("puts the question in the progress and bar's place on the title's one line", () => {
-      const bar = mountRows([asking, plain], false);
-      const [btn, other] = [...bar.querySelectorAll<HTMLElement>(".run-bar-open")] as [
-        HTMLElement,
-        HTMLElement,
-      ];
-      expect(shown(btn, ".ev-sum-progress")).toBe(false);
-      expect(shown(btn, ".ev-mini")).toBe(false);
-      expect(shown(other, ".ev-sum-progress")).toBe(true);
-      expect(shown(other, ".ev-mini")).toBe(true);
+    for (const [what, row] of IN_PLACE) {
+      it(`puts the ${what} in the progress and bar's place on the title's one line`, () => {
+        const bar = mountRows([row, plain], false);
+        const [btn, other] = [...bar.querySelectorAll<HTMLElement>(".run-bar-open")] as [
+          HTMLElement,
+          HTMLElement,
+        ];
+        expect(shown(btn, ".ev-sum-progress")).toBe(false);
+        expect(shown(btn, ".ev-mini")).toBe(false);
+        expect(shown(btn, ".ev-alert-icon")).toBe(false);
+        expect(shown(other, ".ev-sum-progress")).toBe(true);
+        expect(shown(other, ".ev-mini")).toBe(true);
 
-      const line = rect(btn, ".ev-alert-line");
-      const title = rect(btn, ".ev-sum-label");
-      const state = rect(btn, ".ev-sum-state");
-      const clock = rect(btn, ".ev-sum-clock");
-      // One line: the sentence sits level with the title, between the state word and the clock,
-      // starting where the other row's phrase starts.
-      expect(line.top + line.height / 2).toBeCloseTo(title.top + title.height / 2, 0);
-      expect(line.height).toBeLessThan(title.height * 1.5);
-      expect(line.left).toBeGreaterThanOrEqual(state.right);
-      expect(line.right).toBeLessThanOrEqual(clock.left);
-      expect(line.left).toBeCloseTo(rect(other, ".ev-sum-progress").left, 0);
-      expect(btn.getBoundingClientRect().height).toBeCloseTo(
-        other.getBoundingClientRect().height,
-        0,
-      );
-      // A long question is clipped to that line rather than wrapped or widening a column.
-      const text = btn.querySelector<HTMLElement>(".ev-alert-text")!;
-      expect(text.scrollWidth).toBeGreaterThan(text.clientWidth);
-      expect(text.scrollHeight).toBeLessThanOrEqual(text.clientHeight);
-      expect(btn.scrollWidth).toBeLessThanOrEqual(btn.clientWidth);
-      host.remove();
-    });
+        const line = rect(btn, ".ev-alert-line");
+        const title = rect(btn, ".ev-sum-label");
+        const state = rect(btn, ".ev-sum-state");
+        const clock = rect(btn, ".ev-sum-clock");
+        // One line: the sentence sits level with the title, between the state word and the clock,
+        // starting where the other row's phrase starts.
+        expect(line.top + line.height / 2).toBeCloseTo(title.top + title.height / 2, 0);
+        expect(line.height).toBeLessThan(title.height * 1.5);
+        expect(line.left).toBeGreaterThanOrEqual(state.right);
+        expect(line.right).toBeLessThanOrEqual(clock.left);
+        expect(line.left).toBeCloseTo(rect(other, ".ev-sum-progress").left, 0);
+        expect(btn.getBoundingClientRect().height).toBeCloseTo(
+          other.getBoundingClientRect().height,
+          0,
+        );
+        // A long sentence is clipped to that line rather than wrapped or widening a column, and
+        // carried whole by the tooltip and the row's name.
+        const text = btn.querySelector<HTMLElement>(".ev-alert-text")!;
+        expect(text.scrollWidth).toBeGreaterThan(text.clientWidth);
+        expect(text.scrollHeight).toBeLessThanOrEqual(text.clientHeight);
+        expect(btn.scrollWidth).toBeLessThanOrEqual(btn.clientWidth);
+        expect(btn.querySelector(".ev-alert-line")!.getAttribute("data-tooltip")).toBe(
+          row.alert?.text,
+        );
+        expect(summaries[0]!.describe()).toBe(`${row.label}: ${row.alert?.text ?? ""}`);
+        host.remove();
+      });
 
-    it("brings the phrase and bar back once answered, with no reflow of the title or clock", () => {
-      const bar = mountRows([asking], false);
-      const btn = bar.querySelector<HTMLElement>(".run-bar-open")!;
-      const cols = (): number[] =>
-        [".ev-sum-label", ".ev-sum-state", ".ev-sum-clock"].flatMap((sel) => {
-          const r = rect(btn, sel);
-          return [Math.round(r.left), Math.round(r.right), Math.round(r.top)];
-        });
-      const before = cols();
-      summaries[0]!.paint(answered);
-      expect(btn.dataset["alert"]).toBeUndefined();
-      expect(shown(btn, ".ev-sum-progress")).toBe(true);
-      expect(shown(btn, ".ev-mini")).toBe(true);
-      expect(btn.querySelector(".ev-alert-line")).toBeNull();
-      // The state word changes with the answer, so only the title and the clock hold still.
-      const after = cols();
-      expect([before[0], before[1], before[2]]).toEqual([after[0], after[1], after[2]]);
-      expect([before[6], before[7], before[8]]).toEqual([after[6], after[7], after[8]]);
-      host.remove();
-    });
+      it(`brings the phrase and bar back once the ${what} goes, with no reflow of the title or clock`, () => {
+        const bar = mountRows([row], false);
+        const btn = bar.querySelector<HTMLElement>(".run-bar-open")!;
+        const cols = (): number[] =>
+          [".ev-sum-label", ".ev-sum-state", ".ev-sum-clock"].flatMap((sel) => {
+            const r = rect(btn, sel);
+            return [Math.round(r.left), Math.round(r.right), Math.round(r.top)];
+          });
+        const before = cols();
+        summaries[0]!.paint(answered);
+        expect(btn.dataset["alert"]).toBeUndefined();
+        expect(shown(btn, ".ev-sum-progress")).toBe(true);
+        expect(shown(btn, ".ev-mini")).toBe(true);
+        expect(btn.querySelector(".ev-alert-line")).toBeNull();
+        // The state word changes with the answer, so only the title and the clock hold still.
+        const after = cols();
+        expect([before[0], before[1], before[2]]).toEqual([after[0], after[1], after[2]]);
+        expect([before[6], before[7], before[8]]).toEqual([after[6], after[7], after[8]]);
+        host.remove();
+      });
+    }
 
-    it("leaves a failed or paused alert as a second line under the columns", () => {
+    it("leaves a failure as a second line under the columns", () => {
       const failed: ExecRun = { ...asking, alert: { kind: "failed", text: "Step two failed" } };
       const bar = mountRows([failed], false);
       const btn = bar.querySelector<HTMLElement>(".run-bar-open")!;
       expect(shown(btn, ".ev-sum-progress")).toBe(true);
       expect(shown(btn, ".ev-mini")).toBe(true);
+      expect(shown(btn, ".ev-alert-icon")).toBe(true);
       expect(rect(btn, ".ev-alert-line").top).toBeGreaterThanOrEqual(
         rect(btn, ".ev-sum-label").bottom - 1,
       );
@@ -608,15 +623,16 @@ describe("the run bar's box", () => {
         await browser.viewport(1280, 720);
       });
 
-      for (const [w, h] of [
-        [390, 844],
-        [360, 740],
+      for (const [w, h, what, row] of [
+        [390, 844, ...IN_PLACE[0]],
+        [360, 740, ...IN_PLACE[0]],
+        [390, 844, ...IN_PLACE[1]],
       ] as const) {
-        it(`${String(w)}px: the question takes the phrase's place and the row stays two lines`, async () => {
+        it(`${String(w)}px: the ${what} takes the phrase's place and the row stays two lines`, async () => {
           await browser.viewport(w, h);
           document.documentElement.setAttribute("data-pointer", "coarse");
           try {
-            const bar = mountRows([asking, plain], false, w - 16);
+            const bar = mountRows([row, plain], false, w - 16);
             const [btn, other] = [...bar.querySelectorAll<HTMLElement>(".run-bar-open")] as [
               HTMLElement,
               HTMLElement,

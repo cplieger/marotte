@@ -782,6 +782,17 @@ describe("the run dock", () => {
     document.querySelector("#run-exec-dock .ev-dock-note .ev-dock-note-text")?.textContent ?? "";
   const alertRole = (): string | null | undefined =>
     document.querySelector("#run-exec-dock .ev-dock-note")?.closest("ul")?.getAttribute("role");
+  // A pause is the head's, in the progress's place, and a hidden status region says it.
+  const pauseText = (): string =>
+    document.querySelector("#run-exec-dock .ev-dock-head .ev-alert-text")?.textContent ?? "";
+  const pauseSaid = (): Element | null =>
+    document.querySelector("#run-exec-dock .ev-dock-pause-said");
+  const expectPause = (text: string): void => {
+    expect(pauseText()).toBe(text);
+    expect(pauseSaid()?.textContent).toBe(text);
+    expect(pauseSaid()?.getAttribute("role")).toBe("status");
+    expect(document.querySelector("#run-exec-dock .ev-dock-note")).toBeNull();
+  };
 
   it("holds the run's name, state, progress and clock, and the page none of them", async () => {
     const { body } = await paint(openRunView, "running", {
@@ -889,8 +900,7 @@ describe("the run dock", () => {
           parent_chat_id: "",
         },
       });
-      expect(alertText()).toBe("Waiting: Repeat 'loop-1' reached maxIterations.");
-      expect(alertRole()).toBe("status");
+      expectPause("Waiting: Repeat 'loop-1' reached maxIterations.");
       expect(names("#run-exec-dock")).toEqual(["Add passes", "End this loop", "Cancel"]);
       const count = document.querySelector<HTMLInputElement>("#run-exec-dock .run-extend-count")!;
       count.value = "4";
@@ -930,9 +940,7 @@ describe("the run dock", () => {
         root: live("paused"),
         state: { pauseReason: "Interrupted by agent restart; the previously running step re-runs" },
       });
-      expect(alertText()).toBe(
-        "Waiting: Interrupted by agent restart; the previously running step re-runs",
-      );
+      expectPause("Waiting: Interrupted by agent restart; the previously running step re-runs");
       expect(names("#run-exec-dock")).toEqual(["Resume", "Cancel"]);
     });
 
@@ -944,9 +952,7 @@ describe("the run dock", () => {
           pauseDetail: { class: "transient-error", code: "ECONNREFUSED" },
         },
       });
-      expect(alertText()).toContain("Waiting: host unreachable");
-      expect(alertText()).toContain("ECONNREFUSED");
-      expect(alertRole()).toBe("status");
+      expectPause("Waiting: host unreachable \u00b7 after a transient error (ECONNREFUSED)");
       expect(names("#run-exec-dock")).toEqual(["Resume", "Cancel"]);
     });
 

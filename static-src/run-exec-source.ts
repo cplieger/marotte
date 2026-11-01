@@ -20,7 +20,7 @@ import {
   flatten,
   isWork,
   passBudgetText,
-  passCountText,
+  passLimitText,
   passText,
   type ExecFact,
   type ExecKind,
@@ -545,6 +545,9 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
     };
   }
   const stopped = stopSentence(state);
+  if (state.status === "paused") {
+    return { kind: "paused", text: pausedText(state, stopped) };
+  }
   if (stopped !== undefined) {
     return { kind: "stopped", text: stopped };
   }
@@ -555,26 +558,6 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
   const resumed = resumeSentence(state);
   if (resumed !== undefined) {
     return { kind: "stopped", text: resumed };
-  }
-  if (state.status === "paused") {
-    const bits = [
-      state.pauseReason === undefined || state.pauseReason === ""
-        ? "Waiting"
-        : `Waiting: ${state.pauseReason}`,
-    ];
-    const detail = pauseDetailPhrase(state.pauseDetail);
-    if (detail !== undefined) {
-      bits.push(detail);
-    }
-    const cap = state.pause;
-    if (
-      cap?.kind === "maxIterations" &&
-      typeof cap.iterationsRun === "number" &&
-      typeof cap.maxIterations === "number"
-    ) {
-      bits.push(passCountText(cap.iterationsRun, cap.maxIterations));
-    }
-    return { kind: "paused", text: bits.join(" \u00b7 ") };
   }
   if (state.status === "failed") {
     const failed = failureOwner(nodes);
@@ -587,6 +570,30 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
     };
   }
   return undefined;
+}
+
+/** A paused run's one line: the loop a cap stopped (in place of KAS's cap sentence), then who
+ *  paused it (`stopSentence`), else on an uncapped pause KAS's reason, then `pauseDetailPhrase`. */
+function pausedText(state: RunState, attributed: string | undefined): string {
+  const cap = state.pause;
+  const limit =
+    cap?.kind === "maxIterations" &&
+    typeof cap.iterationsRun === "number" &&
+    typeof cap.maxIterations === "number"
+      ? passLimitText(cap.nodeId ?? "A loop", cap.iterationsRun, cap.maxIterations)
+      : undefined;
+  const bits = limit === undefined ? [] : [limit];
+  const reason = state.pauseReason ?? "";
+  if (attributed !== undefined) {
+    bits.push(attributed);
+  } else if (limit === undefined) {
+    bits.push(reason === "" ? "Waiting" : `Waiting: ${reason}`);
+  }
+  const detail = pauseDetailPhrase(state.pauseDetail);
+  if (detail !== undefined) {
+    bits.push(detail);
+  }
+  return bits.join(" \u00b7 ");
 }
 
 /** The run's step questions whole (`decision-dock.ts` `runPendingAsks` owns the text), each placed

@@ -514,3 +514,158 @@ describe("the permission card on a phone", () => {
     });
   }
 });
+
+/** A lanes run as the chat's parallel build had it, `steps` long, ten done and the eleventh running
+ *  or paused, started 97 hours ago. */
+function lanes(paused: boolean, steps = 45): ExecNode[] {
+  const t0 = Date.now() - 97 * 3_600_000;
+  return Array.from({ length: steps }, (_, i): ExecNode => {
+    const state: ExecState =
+      i < 10 ? "ok" : i === 10 ? (paused ? "waiting" : "running") : "pending";
+    const node: ExecNode = {
+      path: `root/lanes/s${String(i)}`,
+      label: `s${String(i)}`,
+      kind: "step",
+      state,
+      children: [],
+    };
+    if (i <= 10) {
+      node.start = new Date(t0 + i * 60_000).toISOString();
+    }
+    if (i < 10) {
+      node.end = new Date(t0 + (i + 1) * 60_000).toISOString();
+    }
+    return node;
+  });
+}
+
+const LANES_PAUSE = "lane-bolttable reached its pass limit (4/4) \u00b7 Paused by its chat";
+
+describe("the run dock head beside its verbs", () => {
+  const box = (el: Element | null | undefined): DOMRect => {
+    expect(el, "a rendered part").not.toBeNull();
+    return el!.getBoundingClientRect();
+  };
+  const shows = (el: Element | null): boolean =>
+    el !== null && getComputedStyle(el).display !== "none";
+
+  for (const [w, h] of [
+    [1280, 800],
+    [820, 1180],
+    [390, 844],
+  ] as const) {
+    // A fan-out of 120 steps: more segments than the bar has room for at their old 2px floor.
+    it(`never draws the bar, the clock and the verbs over each other at ${String(w)}px`, async () => {
+      await browser.viewport(w, h);
+      style = mountAppCSS();
+      const { byId } = mountRunView(h);
+      const row = verbs(false, ["Pause", "Cancel"]);
+      mountPage(byId, row).render({
+        label: "subflux-build-lanes-relaunch",
+        state: "running",
+        nodes: lanes(false, 120),
+        live: true,
+      });
+      const head = byId("run-exec-dock").querySelector<HTMLElement>(".ev-dock-head")!;
+      const mini = head.querySelector<HTMLElement>(".ev-mini")!;
+      const clock = box(head.querySelector(".ev-sum-clock"));
+      const verbsBox = box(row);
+      const bar = box(mini);
+      for (const seg of mini.querySelectorAll(".ev-mini-seg")) {
+        const s = seg.getBoundingClientRect();
+        expect(s.right, `a segment inside the bar at ${String(w)}`).toBeLessThanOrEqual(
+          bar.right + 0.5,
+        );
+      }
+      if (getComputedStyle(mini).position !== "absolute") {
+        expect(bar.right, `the bar before the clock at ${String(w)}`).toBeLessThanOrEqual(
+          clock.left + 0.5,
+        );
+      }
+      expect(clock.right, `the clock before the verbs at ${String(w)}`).toBeLessThanOrEqual(
+        verbsBox.left + 0.5,
+      );
+      expect(verbsBox.right, `the verbs inside the head at ${String(w)}`).toBeLessThanOrEqual(
+        head.getBoundingClientRect().right + 0.5,
+      );
+    });
+
+    it(`puts a pause in the progress and bar's place, on one line, at ${String(w)}px`, async () => {
+      await browser.viewport(w, h);
+      style = mountAppCSS();
+      const { byId } = mountRunView(h);
+      const row = verbs(true);
+      const page = mountPage(byId, row);
+      page.render({
+        label: "subflux-build-lanes-relaunch",
+        state: "waiting",
+        nodes: lanes(true),
+        live: true,
+        alert: { kind: "paused", text: LANES_PAUSE },
+      });
+      const dock = byId("run-exec-dock");
+      const head = dock.querySelector<HTMLElement>(".ev-dock-head")!;
+      expect(shows(head.querySelector(".ev-sum-progress"))).toBe(false);
+      expect(shows(head.querySelector(".ev-mini"))).toBe(false);
+      expect(dock.querySelector(".ev-dock-note"), "no second row").toBeNull();
+      const line = box(head.querySelector(".ev-alert-line"));
+      const state = box(head.querySelector(".ev-sum-state"));
+      const clock = box(head.querySelector(".ev-sum-clock"));
+      const text = head.querySelector<HTMLElement>(".ev-alert-text")!;
+      if (w > 480) {
+        // Between the state word and the clock, level with them, the verbs after the clock.
+        expect(line.left).toBeGreaterThanOrEqual(state.right);
+        expect(line.right).toBeLessThanOrEqual(clock.left + 0.5);
+        expect(line.top + line.height / 2).toBeCloseTo(state.top + state.height / 2, 0);
+        expect(clock.right).toBeLessThanOrEqual(box(row).left + 0.5);
+      } else {
+        // On a phone the verbs leave no room beside them: the head's second line with the clock,
+        // under the state word, most of the head's width.
+        const edge = head.getBoundingClientRect();
+        expect(line.top).toBeGreaterThanOrEqual(box(row).bottom - 0.5);
+        expect(clock.top).toBeGreaterThanOrEqual(box(row).bottom - 0.5);
+        expect(
+          line.left +
+            parseFloat(getComputedStyle(head.querySelector(".ev-alert-line")!).paddingInlineStart),
+        ).toBeCloseTo(state.left, 0);
+        expect(line.right).toBeLessThanOrEqual(clock.left + 0.5);
+        expect(clock.right).toBeLessThanOrEqual(edge.right + 0.5);
+        expect(line.width).toBeGreaterThan(0.6 * edge.width);
+      }
+      expect(text.scrollHeight, "one line").toBeLessThanOrEqual(text.clientHeight);
+      expect(head.querySelector(".ev-alert-line")?.getAttribute("data-tooltip")).toBe(LANES_PAUSE);
+      expect(head.querySelector(".ev-sum")?.textContent).toContain(LANES_PAUSE);
+
+      page.render({
+        label: "subflux-build-lanes-relaunch",
+        state: "running",
+        nodes: lanes(false),
+        live: true,
+      });
+      expect(shows(head.querySelector(".ev-sum-progress"))).toBe(true);
+      expect(shows(head.querySelector(".ev-mini"))).toBe(true);
+      expect(head.querySelector(".ev-alert-line")).toBeNull();
+    });
+  }
+
+  it("keeps a failure as a note under the head, the progress and bar in place", async () => {
+    await browser.viewport(1280, 800);
+    style = mountAppCSS();
+    const { byId } = mountRunView(800);
+    mountPage(byId, verbs(false, ["Retry"])).render({
+      label: "subflux-build-lanes-relaunch",
+      state: "fail",
+      nodes: lanes(false).map((n, i) => (i === 10 ? { ...n, state: "fail" } : n)),
+      live: false,
+      alert: { kind: "failed", text: "s10 failed: exit status 2" },
+    });
+    const dock = byId("run-exec-dock");
+    const head = dock.querySelector<HTMLElement>(".ev-dock-head")!;
+    expect(shows(head.querySelector(".ev-sum-progress"))).toBe(true);
+    expect(shows(head.querySelector(".ev-mini"))).toBe(true);
+    expect(head.querySelector(".ev-alert-line")).toBeNull();
+    const note = dock.querySelector('.ev-dock-notes[role="alert"] .ev-dock-note');
+    expect(note?.textContent).toBe("s10 failed: exit status 2");
+    expect(box(note).top).toBeGreaterThanOrEqual(head.getBoundingClientRect().bottom - 0.5);
+  });
+});

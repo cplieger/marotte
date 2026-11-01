@@ -149,7 +149,7 @@ func TestEnsureResident_AHostRequestDuringTheLoadIsAnswered(t *testing.T) {
 	host := &hostRequestingBridge{fakeBridge: newFakeBridge(), answered: make(chan struct{})}
 	fakeSourceOf(t, h).setFactory(func() engineSession { return host })
 
-	if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.resume(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Resume on a non-resident parentless run = %v, want nil", err)
 	}
 	if !slices.Contains(host.callLog(), methodKiroWorkflowResume) {
@@ -343,7 +343,7 @@ func TestCancel_MakesNoSessionResident(t *testing.T) {
 	h.runs.grantLease(t.Context(), "wf_1", "nightly", manualLaunch(), hostSec())
 
 	before := br.startCount()
-	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Cancel on a non-resident run = %v, want nil", err)
 	}
 	if got := br.startCount() - before; got != 0 {
@@ -413,7 +413,7 @@ func TestEnsureResident_LoadsAParentlessRunsLaunchingSession(t *testing.T) {
 	leaseParentless(t, h, "wf_1", "preset-at-launch")
 	br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", ""))
 
-	if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.resume(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Resume on a non-resident parentless run = %v, want nil", err)
 	}
 	opts := br.lastSessionOpts()
@@ -450,7 +450,7 @@ func TestEnsureResident_AChatParentedRunIsMadeResidentThroughItsChat(t *testing.
 		t.Fatalf("Setup: seeding the chat: %s", err)
 	}
 
-	if err := h.runs.resume(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.resume(t.Context(), "wf_1", callerPage); err == nil {
 		t.Fatal("Setup: the scripted resume refusal did not happen")
 	}
 	if opts := br.lastSessionOpts(); opts == nil || opts.SessionID != "sess_owned" || opts.Role != marotte.SessionRoleChat {
@@ -601,7 +601,7 @@ func TestEnsureResident_AFailedLoadIsAFaultOnThisServer(t *testing.T) {
 			}
 			starts := br.startCount()
 
-			err := h.runs.resume(t.Context(), "wf_1")
+			err := h.runs.resume(t.Context(), "wf_1", callerPage)
 			if !errors.Is(err, errRunHostStart) {
 				t.Fatalf("Resume = %v, want errRunHostStart", err)
 			}
@@ -717,7 +717,7 @@ func TestEnsureResident_AnIncompleteChatScanRefusesToLoadAsAHost(t *testing.T) {
 	}
 	starts := br.startCount()
 
-	if err := h.runs.resume(t.Context(), "wf_1"); !errors.Is(err, errRunHostStart) {
+	if err := h.runs.resume(t.Context(), "wf_1", callerPage); !errors.Is(err, errRunHostStart) {
 		t.Fatalf("Resume = %v, want errRunHostStart", err)
 	}
 	if got := br.startCount() - starts; got != 0 {
@@ -749,8 +749,8 @@ func TestEnsureResident_ConcurrentVerbsLoadOnce(t *testing.T) {
 		h, host, gate := nonResidentRunInBubble(t)
 
 		errs := make(chan error, 2)
-		go func() { errs <- h.runs.resume(t.Context(), "wf_1") }()
-		go func() { errs <- h.runs.resume(t.Context(), "wf_1") }()
+		go func() { errs <- h.runs.resume(t.Context(), "wf_1", callerPage) }()
+		go func() { errs <- h.runs.resume(t.Context(), "wf_1", callerPage) }()
 		// Both verbs are parked: one in the load, one on the run's lock.
 		synctest.Wait()
 		if got := host.startCount(); got != 0 {
@@ -777,11 +777,11 @@ func TestEnsureResident_AVerbThatGivesUpWaitingDoesNothing(t *testing.T) {
 		h, host, gate := nonResidentRunInBubble(t)
 
 		first := make(chan error, 1)
-		go func() { first <- h.runs.resume(t.Context(), "wf_1") }()
+		go func() { first <- h.runs.resume(t.Context(), "wf_1", callerPage) }()
 		synctest.Wait()
 		waiterCtx, giveUp := context.WithCancel(t.Context())
 		waiter := make(chan error, 1)
-		go func() { waiter <- h.runs.resume(waiterCtx, "wf_1") }()
+		go func() { waiter <- h.runs.resume(waiterCtx, "wf_1", callerPage) }()
 		synctest.Wait()
 		giveUp()
 		if err := <-waiter; !errors.Is(err, context.Canceled) {

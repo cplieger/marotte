@@ -272,13 +272,13 @@ describe("an unanswered ask", () => {
 
   it("says the user paused it, and that a requested pause has not landed yet", () => {
     const paused: RunState = { ...runOf("paused", step("a", "paused")), stopInitiator: "user" };
-    expect(alertText(buildAndRender(paused, NO_ASKS))).toBe("Paused by user");
+    expect(alertText(buildAndRender(paused, NO_ASKS))).toBe("Paused by you");
     const closed: RunState = {
       ...runOf("aborted", step("a", "aborted")),
       stopInitiator: "user",
       stopReason: "tab closed",
     };
-    expect(alertText(buildAndRender(closed, NO_ASKS))).toBe("Stopped by user: tab closed");
+    expect(alertText(buildAndRender(closed, NO_ASKS))).toBe("Stopped by you: tab closed");
     const pending: RunState = {
       ...runOf("running", step("a", "running")),
       pausePending: { initiator: "user" },

@@ -106,28 +106,68 @@ const MAROTTE_PAUSE_REASONS: ReadonlySet<string> = new Set([
   "resume it to continue",
 ]);
 
-/** The alert an attributed stop or pause reads, or undefined when KAS names no initiator. KAS's
- *  initiator and reason are shown as given, except marotte's own pause, which names no
- *  initiator: an orchestrator's pause reaches here as `user` with KAS's own sentence saying so. */
-export function stopSentence(state: RunState): string | undefined {
-  const who = state.stopInitiator ?? "";
-  if (who === "") {
+/** The reason marotte stamps beside `user` on a run control its REST API took from outside its
+ *  page, such as an agent's curl (internal/agent/run_host.go apiCallerReason, same fixture). */
+const API_CALLER_REASON = "asked through marotte's run API by a caller outside its page";
+
+/** KAS's reasons on the pause and the resume a run's owning parent session asks for, which KAS
+ *  attributes to `user` and its own classifier names the orchestrator's. Pinned to the bundle by
+ *  internal/kascap/parent_control_reason_census_test.go through testdata/parent_control_reasons.json. */
+const PARENT_PAUSE_REASON =
+  "Pause requested by owning parent/orchestrator; human intent not verified.";
+const PARENT_RESUME_REASON =
+  "Resume requested by owning parent/orchestrator; human intent not verified.";
+
+/** What an attributed control did to the run. */
+type ControlVerb = "paused" | "stopped" | "completed" | "resumed";
+
+const CONTROL_LEAD: Record<ControlVerb, string> = {
+  paused: "Paused",
+  stopped: "Stopped",
+  completed: "Marked complete",
+  resumed: "Resumed",
+};
+
+/** The one sentence every surface words a KAS attribution with, or undefined when it names no
+ *  actor. The parent chat's controls and marotte's REST controls all arrive as `user`, so under
+ *  `user` the reason says who asked, and a reason that names an actor is never shown. The
+ *  parent's reason is the run's chat whatever the verb (its stop carries no attribution, so it
+ *  keeps the pause's). The API reason names an agent,
+ *  marotte's own pause reasons name nobody, and no reason is the reader's gesture on its page. */
+function attributedSentence(
+  verb: ControlVerb,
+  initiator: string,
+  reason: string,
+): string | undefined {
+  if (initiator === "") {
     return undefined;
   }
-  if (state.status === "paused" && MAROTTE_PAUSE_REASONS.has(state.stopReason ?? "")) {
-    return `Paused: ${state.stopReason ?? ""}`;
+  const lead = CONTROL_LEAD[verb];
+  const parent = reason === PARENT_PAUSE_REASON || reason === PARENT_RESUME_REASON;
+  if (initiator !== "user") {
+    const shown = parent || reason === API_CALLER_REASON ? "" : reason;
+    return shown === "" ? `${lead} by ${initiator}` : `${lead} by ${initiator}: ${shown}`;
   }
-  const lead =
-    state.status === "completed"
-      ? `Marked complete by ${who}`
-      : state.status === "paused"
-        ? `Paused by ${who}`
-        : `Stopped by ${who}`;
-  const why = state.stopReason ?? "";
-  return why === "" ? lead : `${lead}: ${why}`;
+  if (parent) {
+    return `${lead} by its chat`;
+  }
+  if (reason === API_CALLER_REASON) {
+    return `${lead} by an agent`;
+  }
+  if (MAROTTE_PAUSE_REASONS.has(reason)) {
+    return verb === "paused" ? `Paused: ${reason}` : undefined;
+  }
+  return reason === "" ? `${lead} by you` : `${lead} by you: ${reason}`;
 }
 
-/** KAS's attribution on each run's newest resume, verbatim: `run_start` carries it and no read does. */
+/** The alert an attributed stop or pause reads, or undefined when KAS names no initiator. */
+export function stopSentence(state: RunState): string | undefined {
+  const verb: ControlVerb =
+    state.status === "completed" ? "completed" : state.status === "paused" ? "paused" : "stopped";
+  return attributedSentence(verb, state.stopInitiator ?? "", state.stopReason ?? "");
+}
+
+/** KAS's attribution on each run's newest resume: `run_start` carries it and no read does. */
 const resumedBy = new Map<string, { initiator: string; reason: string }>();
 
 /** Record a `run_start`'s attribution; a start naming no initiator (a launch) clears it. */
@@ -139,13 +179,13 @@ export function noteRunResumed(workflowID: string, initiator: string, reason: st
   resumedBy.set(workflowID, { initiator, reason });
 }
 
-/** The alert a running run's attributed resume reads, as given. */
+/** The alert a running run's attributed resume reads. */
 export function resumeSentence(state: RunState): string | undefined {
   const r = resumedBy.get(state.workflowId);
   if (r === undefined || state.status !== "running") {
     return undefined;
   }
-  return r.reason === "" ? `Resumed by ${r.initiator}` : `Resumed by ${r.initiator}: ${r.reason}`;
+  return attributedSentence("resumed", r.initiator, r.reason);
 }
 
 /** The alert for a pause that has been asked for and not landed yet. */

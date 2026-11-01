@@ -267,7 +267,7 @@ func TestRunAsks_AReplyKeepsTheTurnMarkerFromBeforeItsInspect(t *testing.T) {
 func TestRunAsks_APauseLeavesEveryAskSendable(t *testing.T) {
 	h, br, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusRunning, parkedStep("review", "sess_step")))
 	readNow(t, h, "wf_1")
-	if err := h.runs.pause(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.pause(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("pause = %v", err)
 	}
 	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
@@ -282,7 +282,7 @@ func TestRunAsks_StoppingClears(t *testing.T) {
 		h, br, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 		readNow(t, h, "wf_1")
 		br.setCallRPCErr(methodKiroWorkflowCancel, &marotte.RPCError{Code: -32603, Message: "Internal error"})
-		if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
+		if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
 			t.Fatal("Setup: the refused cancel reported success")
 		}
 		if p := lastAsksOf(t, h, "wf_1"); p.Asks[0].Blocked == marotte.RunAskStopping {
@@ -383,7 +383,7 @@ func TestRunAsks_AStopWaitsForAPendingAnswerWithinItsCeiling(t *testing.T) {
 func TestRunAsks_AResumeIsRefusedWhileAnAnswerIsPending(t *testing.T) {
 	h, br, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	h.runs.registerPending(t.Context(), h.runs.cellFor("wf_1"))
-	if err := h.runs.resume(t.Context(), "wf_1"); !errors.Is(err, errRunAnswerPending) {
+	if err := h.runs.resume(t.Context(), "wf_1", callerPage); !errors.Is(err, errRunAnswerPending) {
 		t.Errorf("resume with an answer pending = %v, want errRunAnswerPending", err)
 	}
 	if slices.Contains(br.callLog(), methodKiroWorkflowResume) {
@@ -409,7 +409,7 @@ func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
 		},
 		{
 			name: "cancel", method: methodKiroWorkflowCancel,
-			do: func(h *Runtime) error { return h.runs.cancel(context.Background(), "wf_1") },
+			do: func(h *Runtime) error { return h.runs.cancel(context.Background(), "wf_1", callerPage) },
 		},
 		{
 			name: "delete", method: methodKiroWorkflowDelete,
@@ -425,11 +425,11 @@ func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
 		},
 		{
 			name: "pause", method: methodKiroWorkflowPause, status: marotte.RunStatusRunning,
-			do: func(h *Runtime) error { return h.runs.pause(context.Background(), "wf_1") },
+			do: func(h *Runtime) error { return h.runs.pause(context.Background(), "wf_1", callerPage) },
 		},
 		{
 			name: "resume", method: methodKiroWorkflowResume,
-			do: func(h *Runtime) error { return h.runs.resume(context.Background(), "wf_1") },
+			do: func(h *Runtime) error { return h.runs.resume(context.Background(), "wf_1", callerPage) },
 		},
 		{
 			name: "retry", method: methodKiroWorkflowRetry,

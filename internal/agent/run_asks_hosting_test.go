@@ -138,7 +138,7 @@ func TestRunAsks_AWedgedRunBlocksNoOtherRun(t *testing.T) {
 	if p := lastAsksOf(t, h, "wf_2"); !p.Reachable || len(p.Asks) != 1 {
 		t.Errorf("the other run's snapshot = %+v, want its question published", p)
 	}
-	if err := h.runs.pause(ctx, "wf_2"); err != nil {
+	if err := h.runs.pause(ctx, "wf_2", callerPage); err != nil {
 		t.Errorf("a pause of the other run = %v, want it sent", err)
 	}
 	if !slices.Contains(append(other.callLog(), wedged.callLog()...), methodKiroWorkflowPause) {

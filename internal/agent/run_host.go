@@ -183,10 +183,32 @@ func (s runStop) apply(params map[string]any) {
 	}
 }
 
-// cancel stops a run on the user's behalf. A lost termination claim returns nil; a refused RPC is
+// controlCaller is who sent a person's run control over REST, as callerOf reads the request.
+type controlCaller int
+
+const (
+	// callerPage is marotte's own page: the reader's gesture.
+	callerPage controlCaller = iota
+	// callerAPI is any other caller, such as an agent's curl, which KAS would otherwise record as the user.
+	callerAPI
+)
+
+// apiCallerReason rides beside initiator "user" on a callerAPI control, so KAS and userParked still read it as a
+// person's while the client words it as an agent's (static-src/run-store.ts, testdata/pause_reasons.json).
+const apiCallerReason = "asked through marotte's run API by a caller outside its page"
+
+// stop is the attribution c's pause or stop carries.
+func (c controlCaller) stop() runStop {
+	if c == callerAPI {
+		return userStop(apiCallerReason)
+	}
+	return userStop("")
+}
+
+// cancel stops a run on caller's behalf. A lost termination claim returns nil; a refused RPC is
 // returned, and retryTermination retries it.
-func (rs *Runs) cancel(ctx context.Context, workflowID string) error {
-	return rs.cancelAs(ctx, workflowID, userStop(""))
+func (rs *Runs) cancel(ctx context.Context, workflowID string, caller controlCaller) error {
+	return rs.cancelAs(ctx, workflowID, caller.stop())
 }
 
 // cancelAs is Cancel attributed to stop.
@@ -343,16 +365,16 @@ func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
 	slog.Info("workflow run deleted", "workflow_id", workflowID)
 }
 
-// pause is a person's ask that a run stop at its next node boundary; the reply confirms the ask. runTransitions
-// decides it.
-func (rs *Runs) pause(ctx context.Context, workflowID string) error {
-	_, err := rs.transition(ctx, workflowID, &runRequest{want: personPause, verb: verbPause})
+// pause is caller's ask that a run stop at its next node boundary; the reply confirms the ask. runTransitions
+// decides it as a person's.
+func (rs *Runs) pause(ctx context.Context, workflowID string, caller controlCaller) error {
+	_, err := rs.transition(ctx, workflowID, &runRequest{want: personPause, verb: verbPause, caller: caller})
 	return err
 }
 
-// resume is a person's re-drive of a paused run with a fresh executing budget. runTransitions decides it.
-func (rs *Runs) resume(ctx context.Context, workflowID string) error {
-	_, err := rs.transition(ctx, workflowID, &runRequest{want: personResume, verb: verbResume})
+// resume is caller's re-drive of a paused run with a fresh executing budget. runTransitions decides it as a person's.
+func (rs *Runs) resume(ctx context.Context, workflowID string, caller controlCaller) error {
+	_, err := rs.transition(ctx, workflowID, &runRequest{want: personResume, verb: verbResume, caller: caller})
 	return err
 }
 

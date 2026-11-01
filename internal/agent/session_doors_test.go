@@ -23,7 +23,7 @@ func TestEnsureResident_DrivingVerbsLoadTheHostSessionFirst(t *testing.T) {
 		verb   func(t *testing.T, h *Runtime) error
 	}{
 		{name: "resume", method: methodKiroWorkflowResume, verb: func(t *testing.T, h *Runtime) error {
-			return h.runs.resume(t.Context(), "wf_1")
+			return h.runs.resume(t.Context(), "wf_1", callerPage)
 		}},
 		{name: "step status, Continue, answer and message", method: methodKiroWorkflowUpdate, verb: func(t *testing.T, h *Runtime) error {
 			return driveOnHost(t, h, methodKiroWorkflowUpdate)

@@ -517,7 +517,7 @@ func (rr *runRoutes) handleExtend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rr.writeRepeatResult(w, verbExtend, id,
-		rr.runs.extendRepeat(r.Context(), id, body.NodeID, body.Iterations))
+		rr.runs.extendRepeat(r.Context(), id, body.NodeID, body.Iterations, callerOf(r)))
 }
 
 func (rr *runRoutes) handleFinishLoop(w http.ResponseWriter, r *http.Request) {
@@ -721,7 +721,7 @@ func (rr *runRoutes) writeStepErr(w http.ResponseWriter, verb, id, nodePath stri
 // KAS refuses with -32603 throws; it is one trip stale.
 type runVerb struct {
 	name  string
-	issue func(*Runs, context.Context, string) error
+	issue func(*Runs, context.Context, string, controlCaller) error
 	// method is explicit on every verb.
 	method string
 	// from lists legal statuses; empty is unrestricted.
@@ -749,8 +749,10 @@ var (
 	}
 	// Unrestricted, and the only way a row leaves History.
 	runVerbDelete = runVerb{
-		name:   verbDelete,
-		issue:  (*Runs).delete,
+		name: verbDelete,
+		issue: func(rs *Runs, ctx context.Context, id string, _ controlCaller) error {
+			return rs.delete(ctx, id)
+		},
 		method: http.MethodDelete,
 	}
 )
@@ -853,6 +855,17 @@ func isRPCRefusal(err error) bool {
 	return ok
 }
 
+// callerOf is who sent r. A browser sends Sec-Fetch-Site only to a potentially trustworthy URL
+// (https://www.w3.org/TR/fetch-metadata/), so a plain-HTTP LAN origin gets none, but it sends Origin on every non-GET
+// fetch (https://fetch.spec.whatwg.org/#origin-header), and curl sends neither. This is attribution, not access
+// control: a caller that forges either header changes only how the run words its control.
+func callerOf(r *http.Request) controlCaller {
+	if r.Header.Get("Sec-Fetch-Site") == "" && r.Header.Get("Origin") == "" {
+		return callerAPI
+	}
+	return callerPage
+}
+
 func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb runVerb) {
 	if r.Method != verb.method {
 		httpreply.MethodNotAllowed(w, verb.method)
@@ -880,7 +893,7 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 			return
 		}
 	}
-	if err := verb.issue(rr.runs, r.Context(), id); err != nil {
+	if err := verb.issue(rr.runs, r.Context(), id, callerOf(r)); err != nil {
 		rr.writeControlErr(w, verb.name, id, err)
 		return
 	}

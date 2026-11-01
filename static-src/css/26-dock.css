@@ -1223,8 +1223,8 @@
     justify-self: end;
   }
 
-  /* A failed or paused alert is a line of its own under the columns, so the columns stay. An open
-     question is the exception, placed in the progress's place below. */
+  /* A failure is a line of its own under the columns, so the columns stay. A question or a pause
+     takes the progress's place instead (below). */
   & .ev-alert-line {
     grid-column: title / end;
     grid-row: 2;
@@ -1235,10 +1235,10 @@
     -webkit-line-clamp: 1;
   }
 
-  /* An open question has the progress phrase's and the bar's place, from the phrase column to the
-     clock, on the row's one line. `contain: inline-size` keeps the sentence from sizing the
-     auto progress column, which the other rows' phrases own. */
-  &[data-alert="input"] {
+  /* A question or a pause (`summary.ts` `inPlace`) has the progress phrase's and the bar's place,
+     from the phrase column to the clock, on the row's one line. `contain: inline-size` keeps the
+     sentence from sizing the auto progress column, which the other rows' phrases own. */
+  &[data-alert-in-place] {
     & :is(.ev-sum-progress, .ev-mini, .ev-alert-icon) {
       display: none;
     }
@@ -1269,8 +1269,8 @@
   }
 }
 
-/* An alert that wants the reader: a failed or paused alert's mark is the cue (an open question
-   hides its mark, the "needs input" state word and the square mark it), the row stays on the
+/* An alert that wants the reader: a failure's mark is the cue (a question or a pause in the
+   progress's place hides its mark, the state word and the square mark it), the row stays on the
    box's surface. */
 .run-bar-open[data-alert] {
   --ev-alert-mark: var(--c-yellow);
@@ -1334,8 +1334,8 @@
   }
 
   .run-bar-open {
-    /* Line two is as tall as an open question's line (`.ev-alert-text`, 31-exec-view.css), so a
-       question row is as tall as a progress row. */
+    /* Line two is as tall as an in-place alert's line (`.ev-alert-text`, 31-exec-view.css), so a
+       question or pause row is as tall as a progress row. */
     grid-template-rows: auto calc(var(--fs-sm) * 1.35);
     padding-block: var(--row-top, var(--sp-1)) calc(var(--run-air) + 3px);
 
@@ -1379,8 +1379,9 @@
       grid-row: 3;
     }
 
-    /* The question takes the second line's progress column, the row stays two lines tall. */
-    &[data-alert="input"] .ev-alert-line {
+    /* A question or a pause takes the second line's progress column, the row stays two lines
+       tall. */
+    &[data-alert-in-place] .ev-alert-line {
       grid-column: progress / end;
       grid-row: 2;
     }
