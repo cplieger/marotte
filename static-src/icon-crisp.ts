@@ -36,6 +36,72 @@ function toDevicePhase(origin: number, scale: number, phase: number, dpr: number
 
 const q = (v: number): number => Math.round(v * 1000) / 1000;
 
+/** Device px; above `q`'s rounding (0.0015 at DPR 3) and the float32 noise in a rect, below anything visible. */
+const CRISP_DEVICE_PX = 0.01;
+
+/** One axis's smallest screen offset that paints the box crisp. */
+function axisOffset(
+  painted: number,
+  inForce: number,
+  scale: number,
+  phase: number,
+  dpr: number,
+): number {
+  // `painted` includes the offset in force, so subtract it in screen space to measure the original box.
+  const fresh = q(toDevicePhase(painted - inForce, scale, phase, dpr));
+  // At a residual of exactly half a device pixel both directions are crisp, and re-deriving the side from a float32
+  // rect flips it every pass, so a crisp box keeps its side. Only when no longer than `fresh`: after a DPR change the
+  // old offset can be crisp a whole device pixel off the box.
+  const crisp = Math.abs(toDevicePhase(painted, scale, phase, dpr)) * dpr < CRISP_DEVICE_PX;
+  const minimal = Math.abs(Math.abs(inForce) - Math.abs(fresh)) * dpr < CRISP_DEVICE_PX;
+  return crisp && minimal ? inForce : fresh;
+}
+
+/** Properties that move a box without a layout. */
+const MOVES = ["transform", "translate", "rotate", "scale"];
+
+/**
+ * Keyframe properties that leave layout alone, so they move nothing outside the animated element; MOVES catches the
+ * transform family moving its own subtree. Anything else counts as layout: a needless hold costs one re-ask, a missed
+ * one a wobble.
+ */
+const PAINT_ONLY =
+  /^(?:opacity|color|fill|filter|backdropFilter|visibility|zIndex|clipPath|boxShadow|textShadow|caretColor|accentColor|transformOrigin|background.*|outline.*|stroke.*|mask.*|border.*Color|textDecoration.*|transform|translate|rotate|scale)$/;
+
+/** `getKeyframes()` keys that describe the keyframe, not a property. */
+const KEYFRAME_META = new Set(["offset", "computedOffset", "easing", "composite"]);
+
+interface Motion {
+  /** Elements a running animation or transition is moving; `forever` marks an infinite one, under which no reading holds. */
+  readonly movers: readonly { readonly el: Element; readonly forever: boolean }[];
+  /** A finite animation is changing layout, which moves boxes outside its own subtree (a row collapsing above them). */
+  readonly reflowing: boolean;
+}
+
+function currentMotion(): Motion {
+  const movers: { el: Element; forever: boolean }[] = [];
+  let reflowing = false;
+  for (const a of document.getAnimations()) {
+    const fx = a.effect;
+    if (a.playState !== "running" || !(fx instanceof KeyframeEffect) || fx.target === null) {
+      continue;
+    }
+    const forever = fx.getTiming().iterations === Infinity;
+    const props = fx
+      .getKeyframes()
+      .flatMap((k) => Object.keys(k).filter((p) => !KEYFRAME_META.has(p)));
+    // Finite only: an infinite one (a spinner's custom-property loop) would hold every pass for ever.
+    if (!forever && props.some((p) => !PAINT_ONLY.test(p))) {
+      reflowing = true;
+    }
+    // A pseudo-element's transform moves the pseudo-element, not the icons beside it.
+    if (fx.pseudoElement === null && props.some((p) => MOVES.includes(p))) {
+      movers.push({ el: fx.target, forever });
+    }
+  }
+  return { movers, reflowing };
+}
+
 /**
  * Maps a screen delta into the element's own space: `translate` composes inside an ancestor rotation. For
  * axis-aligned rotations the inverse is the transpose; anything else answers null, since it cannot be crisp.
@@ -56,18 +122,35 @@ function toLocal(m: DOMMatrix, scale: number, dx: number, dy: number): [number, 
 }
 
 /**
- * Set when an ancestor was mid-transform, so the caller re-asks. A non-axis-aligned rotation is a permanent decline
- * and does not set it, or the page would poll forever.
+ * Set when an icon was declined on a reading that can change (a finite animation, an ancestor scale or tilt), so the
+ * caller re-asks. An infinite animation is a permanent decline and does not set it, or the page would poll forever.
  */
 let deferred = false;
 
 /** Returns how many boxes moved. Resets and republishes `deferred` for this pass. */
 export function snapIcons(root: ParentNode = document): number {
+  return snapWith(root, currentMotion());
+}
+
+function snapWith(root: ParentNode, motion: Motion): number {
   deferred = false;
+  // A reading against a moving origin (the phone drawer's slide, a row collapsing above) is undone by the settle pass
+  // once the motion lands, which reads as a wobble.
+  if (motion.reflowing) {
+    deferred = true;
+    return 0;
+  }
   // Every rect read before any style write: interleaving forces a layout per icon.
   const work: { el: SVGSVGElement; sx: number; sy: number; tx: number; ty: number }[] = [];
   const dpr = window.devicePixelRatio;
   for (const el of root.querySelectorAll<SVGSVGElement>(TIERS)) {
+    const movers = motion.movers.filter((m) => m.el.contains(el));
+    if (movers.length > 0) {
+      if (movers.every((m) => !m.forever)) {
+        deferred = true;
+      }
+      continue;
+    }
     const rect = el.getBoundingClientRect();
     const m = el.getScreenCTM();
     if (!rect.width || !rect.height || m === null) {
@@ -78,19 +161,18 @@ export function snapIcons(root: ParentNode = document): number {
     if (scale === 0) {
       continue;
     }
-    // An ancestor mid-scale is a wrong reading, so it is declined and re-asked. `.pill-expand-content` opens on
-    // `scale(0.4) -> scale(1)`; layout size ignores transforms, so disagreeing with painted size means "something is
-    // scaling me".
+    // Layout size ignores transforms, so disagreeing with painted size means an ancestor scale or tilt. A translate
+    // written under it is scaled with it, so passes can chase their own offset; declined and re-asked, since a static
+    // one can lift.
     const layout = parseFloat(getComputedStyle(el).inlineSize);
     if (Math.abs(rect.width - layout) > 0.02) {
       deferred = true;
       continue;
     }
     const phase = wantedDevicePhase(el, dpr);
-    // `rect` includes the offset already applied, so subtract it in screen space to measure the original box.
     const prev = applied.get(el) ?? { sx: 0, sy: 0, tx: 0, ty: 0 };
-    const sx = q(toDevicePhase(rect.x - prev.sx, scale, phase, dpr));
-    const sy = q(toDevicePhase(rect.y - prev.sy, scale, phase, dpr));
+    const sx = axisOffset(rect.x, prev.sx, scale, phase, dpr);
+    const sy = axisOffset(rect.y, prev.sy, scale, phase, dpr);
     const local = toLocal(m, scale, sx, sy);
     if (local === null) {
       continue;
@@ -167,10 +249,11 @@ function scheduleAdded(nodes: SVGSVGElement[]): void {
     }
     const batch = [...pending];
     pending.clear();
-    // Per arrival, so cost tracks arrivals.
+    // Per arrival, so cost tracks arrivals; the animation scan is per batch.
+    const motion = currentMotion();
     for (const el of batch) {
       if (el.isConnected) {
-        snapIcons(scopeOf(el));
+        snapWith(scopeOf(el), motion);
       }
     }
   });
