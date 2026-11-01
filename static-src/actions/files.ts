@@ -2,7 +2,6 @@ import {
   apiAction,
   defineAction,
   ActionError,
-  classifyFetchError,
   hasErrorString,
   retryNetwork,
   RETRY_STANDARD,
@@ -10,6 +9,7 @@ import {
   API_TIMEOUT_MS,
 } from "./index.js";
 
+import { readDownload } from "./download.js";
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
 // `joinKey` (not `joinPath`) builds every idempotency/dedupe key here, so no field's content can
@@ -179,21 +179,11 @@ export const downloadFiles = defineAction<{ paths: string[] }, void>({
   name: "files.download",
   retryable: retryNetwork,
   run: async (args, signal) => {
-    let r: Response;
-    try {
-      r = await fetch(API_FILES_DOWNLOAD, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paths: args.paths }),
-        signal: withTimeout(signal, DOWNLOAD_TIMEOUT_MS),
-      });
-    } catch (e) {
-      throw classifyFetchError(e, signal);
-    }
-    if (!r.ok) {
-      throw new ActionError("Download failed", { status: r.status });
-    }
-    const blob = await r.blob();
+    const blob = await readDownload(
+      { method: "POST", path: API_FILES_DOWNLOAD, body: { paths: args.paths } },
+      signal,
+      DOWNLOAD_TIMEOUT_MS,
+    );
     if (signal.aborted) {
       return;
     }
