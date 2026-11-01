@@ -607,12 +607,32 @@ func (h *harness) settled(id BackendID) Status {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if st := h.v.Status(id); st.SignIn.State != AttemptPending {
+			h.delivered()
 			return st
 		}
 		time.Sleep(time.Millisecond)
 	}
 	h.t.Fatalf("the sign-in of %s never settled", id)
 	return Status{}
+}
+
+// delivered waits until every edge committed so far reached its listeners. A settle's OnChange and
+// OnAnswerability calls run on the persistence worker after Status shows it, so a watcher registered
+// next would otherwise receive them as if they were its own test's edges.
+func (h *harness) delivered() {
+	h.t.Helper()
+	want := h.v.tickets.Load()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		h.v.notifyMu.Lock()
+		got := h.v.delivered
+		h.v.notifyMu.Unlock()
+		if got >= want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	h.t.Fatalf("the vault's edges up to ticket %d were never delivered", want)
 }
 
 func (h *harness) account(name string) fakeCred {
