@@ -8,8 +8,8 @@ github.com/cplieger/envx/v2 v2.1.0 h1:B/QkjKg7LEJSNLWh9Caur750ryK+WpbXBmTZWHjsI9
 github.com/cplieger/envx/v2 v2.1.0/go.mod h1:EHs8RdZhtvTQXDgG1W+DSfuciEL26f/WW6VQQapL/Y8=
 github.com/cplieger/envx/yamlenv/v2 v2.3.0 h1:tQGLB8XOoFaD0/J8oUG93zlu+v06E/piS3kKeFE+l5k=
 github.com/cplieger/envx/yamlenv/v2 v2.3.0/go.mod h1:1vDYAReMA98JUrHG8GwspoTTOXvyIZMophegTUPRpM8=
-github.com/cplieger/forgeapi v1.4.0-dev.20 h1:LhL+gzBqKVV8k76HLNAInxIvy+AsgZJGSHkY70IwkHQ=
-github.com/cplieger/forgeapi v1.4.0-dev.20/go.mod h1:FXBbe7fhUXT6yu5w47kUlBiufqi1vlgZQ7+k+G2cNsY=
+github.com/cplieger/forgeapi v1.4.0 h1:+z+bCeq6COODTg5vMlB6NOBqL4IuI+JM+DHtBoZbTkw=
+github.com/cplieger/forgeapi v1.4.0/go.mod h1:FXBbe7fhUXT6yu5w47kUlBiufqi1vlgZQ7+k+G2cNsY=
 github.com/cplieger/httpx/v5 v5.2.0 h1:vVW4HBZvjsn8I7wQyCAK9zHOWFcE/spVhrQFVkKbS2s=
 github.com/cplieger/httpx/v5 v5.2.0/go.mod h1:4kd9Xjlnka4MBwm5pJLsdUMT69aOUlJODO1O+tdb5N0=
 github.com/cplieger/jsoncap/v2 v2.1.0 h1:/NRuaqFNKdjhLegBrgDBunX73Lo5r2iYh8Gyy6oM0DI=
