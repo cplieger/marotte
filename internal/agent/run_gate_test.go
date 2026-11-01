@@ -440,7 +440,7 @@ func TestSignInGate_AUserResumeIsRefusedUnwritten(t *testing.T) {
 	g := newGateRun(t, t.TempDir())
 	resumes := countResumes(t, g.br, gateRunID)
 
-	err := g.h.runs.resume(t.Context(), gateRunID)
+	err := g.h.runs.resume(t.Context(), gateRunID, callerPage)
 	if !errors.Is(err, errRunsNeedSignIn) {
 		t.Fatalf("resume signed out = %v, want the sign-in refusal", err)
 	}
@@ -529,7 +529,7 @@ func TestHealBudget_ASpentRunIsNotResumedByItsChatsSweep(t *testing.T) {
 		t.Errorf("the spent run was resumed %d times by its chat's sweep, want 0", n)
 	}
 
-	if err := h.runs.resume(t.Context(), "wf_spent"); err != nil {
+	if err := h.runs.resume(t.Context(), "wf_spent", callerPage); err != nil {
 		t.Fatalf("the user's resume = %v, want it written", err)
 	}
 	if n := chain.count("wf_spent"); n != 1 {

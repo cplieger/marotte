@@ -406,14 +406,36 @@ describe("what wants the reader", () => {
     expect(q(".ev-dock-head").hasAttribute("data-alert")).toBe(false);
   });
 
-  it("states a pause reason as a plain note", () => {
+  it("states a pause in the head, in the progress's place, and adds no note", () => {
     page.render({
       ...run([step("loop", "waiting", 0)]),
-      alert: { kind: "paused", text: "Waiting: host unreachable" },
+      alert: { kind: "paused", text: "Paused by its chat" },
     });
-    const note = q('.ev-dock-notes[role="status"] .ev-dock-note');
-    expect(note.textContent).toBe("Waiting: host unreachable");
-    expect(note.hasAttribute("data-failed")).toBe(false);
+    const head = q(".ev-dock-head");
+    expect(head.dataset["alert"]).toBe("paused");
+    expect(head.hasAttribute("data-alert-in-place")).toBe(true);
+    expect(head.querySelector(".ev-alert-line")?.textContent).toBe("Paused by its chat");
+    expect(head.querySelector(".ev-alert-line")?.getAttribute("data-tooltip")).toBe(
+      "Paused by its chat",
+    );
+    expect(host.querySelector(".ev-dock-note")).toBeNull();
+    // The head is no live region, so a hidden one says the pause.
+    const said = q(".ev-dock-pause-said");
+    expect(said.getAttribute("role")).toBe("status");
+    expect(said.textContent).toBe("Paused by its chat");
+  });
+
+  it("brings the progress back to the head once the run resumes", () => {
+    page.render({
+      ...run([step("loop", "waiting", 0)]),
+      alert: { kind: "paused", text: "Paused by its chat" },
+    });
+    page.render(run([step("loop", "running", 0)]));
+    const head = q(".ev-dock-head");
+    expect(head.hasAttribute("data-alert")).toBe(false);
+    expect(head.hasAttribute("data-alert-in-place")).toBe(false);
+    expect(head.querySelector(".ev-alert-line")).toBeNull();
+    expect(q(".ev-dock-pause-said").textContent).toBe("");
   });
 
   it("keeps every live region mounted, so the first line is announced", () => {
@@ -421,7 +443,7 @@ describe("what wants the reader", () => {
     const roles = [...host.querySelectorAll("[role=status], [role=alert]")].map((r) =>
       r.getAttribute("role"),
     );
-    expect(roles.sort()).toEqual(["alert", "status", "status"]);
+    expect(roles.sort()).toEqual(["alert", "status", "status", "status"]);
   });
 
   it("keeps the empty regions rendered at no height", () => {

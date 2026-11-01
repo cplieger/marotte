@@ -91,7 +91,8 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   publishViewportHeight();
   const id = `ev-dock-${String(++dockIds)}`;
   const head = el("div", { className: "ev-dock-head" });
-  const summary = buildExecSummary();
+  // The head shows a pause; the question has its own region, and other alerts are notes.
+  const summary = buildExecSummary({ alertHost: head, shows: (a) => a.kind === "paused" });
   summary.root.id = `${id}-sum`;
   const toggle = el(
     "button",
@@ -122,6 +123,8 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   const ask = el("div", { className: "ev-dock-ask" }, askCount, askText, askMore);
   attachClamp(askText, askMore, ASK_CLAMP);
   const notes = el("ul", { className: "ev-dock-notes", role: "status" });
+  // The head's pause is no live region, so this one says it as it changes.
+  const pauseSaid = el("p", { className: "sr-only ev-dock-pause-said", role: "status" });
   // A failure interrupts; anything else waits its turn.
   const urgent = el("ul", { className: "ev-dock-notes", role: "alert" });
 
@@ -161,7 +164,17 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     body.append(panel);
   }
   const region = el("div", { className: "ev-dock-panel" }, inputs, bar, body);
-  const root = el("div", { className: "ev-dock" }, head, askLive, notes, urgent, live, region);
+  const root = el(
+    "div",
+    { className: "ev-dock" },
+    head,
+    askLive,
+    pauseSaid,
+    notes,
+    urgent,
+    live,
+    region,
+  );
 
   let active: Segment = "steps";
   const paintBar = initSegmentedBar(bar, {
@@ -336,7 +349,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     const calm: DockNote[] = [];
     const loud: DockNote[] = [];
     const alert = run.alert;
-    if (alert !== undefined && alert.kind !== "input") {
+    if (alert !== undefined && alert.kind !== "input" && alert.kind !== "paused") {
       (alert.kind === "failed" ? loud : calm).push({
         text: alert.text,
         failed: alert.kind === "failed",
@@ -373,6 +386,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       root.dataset["state"] = run.state;
       summary.paint(run);
       paintAsk(run, selected);
+      setText(pauseSaid, run.alert?.kind === "paused" ? run.alert.text : "");
       paintNotes(run, extra);
       const steps = liveSteps(run, selected);
       const lead = (steps.find((n) => n.path === selected) ?? steps[0])?.path;

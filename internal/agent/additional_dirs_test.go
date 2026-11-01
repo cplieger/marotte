@@ -75,7 +75,7 @@ func TestSessionDoors_CarryTheGrantedAdditionalDirectories(t *testing.T) {
 		leaseParentless(t, h, "wf_1")
 		// A person's resume writes only once its read finds the run paused (runTransitions).
 		br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", ""))
-		if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
+		if err := h.runs.resume(t.Context(), "wf_1", callerPage); err != nil {
 			t.Fatalf("resume: %v", err)
 		}
 		opts := br.lastSessionOpts()

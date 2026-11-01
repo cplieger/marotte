@@ -146,7 +146,7 @@ func TestFinishTermination_ARefusedCancelKEEPSTheDeadline(t *testing.T) {
 		t.Fatal("the fixture is not bounded, so it cannot show a deadline surviving")
 	}
 
-	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 
@@ -167,7 +167,7 @@ func TestFinishTermination_ALandedCancelRELEASESTheDeadline(t *testing.T) {
 	leased(t, h.runs, "wf_1")
 	h.runs.armDeadline(t.Context(), "wf_1")
 
-	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 
@@ -224,7 +224,7 @@ func TestRetryTermination_IsBoundedAndDoesNotReFireForever(t *testing.T) {
 	h.runs.armDeadline(t.Context(), "wf_1")
 
 	// The first attempt is the caller's.
-	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 
@@ -276,7 +276,7 @@ func TestHealProgress_RefillsTheCancelRetryBudget(t *testing.T) {
 	h.runs.armDeadline(t.Context(), "wf_1")
 
 	// Spend the whole ladder on the user's button.
-	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 	spent := 1 + maxCancelRetries
@@ -299,7 +299,7 @@ func TestHealProgress_RefillsTheCancelRetryBudget(t *testing.T) {
 	}))
 
 	// A later refused cancel gets a fresh ladder.
-	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 	awaitCalls(t, br, methodKiroWorkflowCancel, spent+1+maxCancelRetries,
@@ -328,7 +328,7 @@ func TestRetryTermination_ARunNoLongerBoundedIsLeftAlone(t *testing.T) {
 	leased(t, h.runs, "wf_1")
 	h.runs.armDeadline(t.Context(), "wf_1")
 
-	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 	before := callsOf(br, methodKiroWorkflowCancel)

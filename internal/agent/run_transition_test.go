@@ -140,7 +140,7 @@ var transitionAsks = []transitionAsk{
 	{
 		name: "a person's pause",
 		do: func(t *testing.T, h *Runtime) string {
-			return personAnswer(h.runs.pause(t.Context(), gateRunID))
+			return personAnswer(h.runs.pause(t.Context(), gateRunID, callerPage))
 		},
 		want: withRows(personRefusals, map[runSeen]transitionWant{
 			seenRunning: pauseWrote, seenPausing: pauseWrote, seenGatePaused: pauseWrote,
@@ -151,14 +151,14 @@ var transitionAsks = []transitionAsk{
 	{
 		name: "a person's resume",
 		do: func(t *testing.T, h *Runtime) string {
-			return personAnswer(h.runs.resume(t.Context(), gateRunID))
+			return personAnswer(h.runs.resume(t.Context(), gateRunID, callerPage))
 		},
 		want: personResumes,
 	},
 	{
 		name: "a person's repeat extension",
 		do: func(t *testing.T, h *Runtime) string {
-			return personAnswer(h.runs.extendRepeat(t.Context(), gateRunID, "loop", 2))
+			return personAnswer(h.runs.extendRepeat(t.Context(), gateRunID, "loop", 2, callerPage))
 		},
 		want: personResumes,
 	},
@@ -342,7 +342,7 @@ func heldTransition(t *testing.T, h *Runtime, first runWant) (release func(), re
 // Two resumes of one pause, either first, write one resume: the second reads the run after the first's write, a
 // person's answering that it is already running and an automatic one leaving it.
 func TestRunTransitions_TwoResumesOfOnePauseWriteOne(t *testing.T) {
-	person := func(ctx context.Context, rs *Runs) string { return personAnswer(rs.resume(ctx, gateRunID)) }
+	person := func(ctx context.Context, rs *Runs) string { return personAnswer(rs.resume(ctx, gateRunID, callerPage)) }
 	heal := func(ctx context.Context, rs *Runs) string {
 		return healAnswer(rs.resumeIfInterrupted(ctx, parkChat, gateRunID))
 	}
@@ -402,7 +402,7 @@ func TestRunTransitions_TwoResumesOfOnePauseWriteOne(t *testing.T) {
 // A person's pause and the gate's, either first, leave the run paused by the person, so the gate's release resumes
 // nothing: the gate pauses only a running run, and a person's pause replaces the gate's.
 func TestRunTransitions_APersonsPauseAndTheGatesLeaveThePersonsPause(t *testing.T) {
-	person := func(ctx context.Context, rs *Runs) error { return rs.pause(ctx, gateRunID) }
+	person := func(ctx context.Context, rs *Runs) error { return rs.pause(ctx, gateRunID, callerPage) }
 	gate := func(ctx context.Context, rs *Runs) error { return rs.pauseHeld(ctx, gateRunID) }
 	for _, tc := range []struct {
 		first, second func(context.Context, *Runs) error

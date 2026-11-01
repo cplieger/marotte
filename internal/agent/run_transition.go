@@ -145,6 +145,20 @@ type runRequest struct {
 	want   runWant
 	// charged says an earlier try's heal still stands, so a heal claims none.
 	charged bool
+	// caller is who sent a person's request.
+	caller controlCaller
+}
+
+// resumeParams is a person's resume's params beside the run's id. Only an API caller's is attributed: the page's
+// resume names no initiator, so KAS's `run_start` carries none and the client words no resume.
+func (req *runRequest) resumeParams() map[string]any {
+	if req.caller != callerAPI {
+		return req.resume
+	}
+	params := map[string]any{}
+	req.caller.stop().apply(params)
+	maps.Copy(params, req.resume)
+	return params
 }
 
 // runChange is the cell one transition carried out.
@@ -190,10 +204,10 @@ func (rs *Runs) carryOut(ctx context.Context, workflowID string, req *runRequest
 	switch c.act {
 	case actPause:
 		params := map[string]any{keyWorkflowID: workflowID}
-		userStop("").apply(params)
+		req.caller.stop().apply(params)
 		return rs.writePause(ctx, workflowID, params)
 	case actResume:
-		return rs.resumeAsked(ctx, workflowID, req.resume)
+		return rs.resumeAsked(ctx, workflowID, req.resumeParams())
 	case actHoldPause:
 		return rs.holdPause(ctx, workflowID)
 	case actHeal:

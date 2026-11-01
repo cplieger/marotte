@@ -84,7 +84,7 @@ func TestExtendRepeat_SendsNodeAndCountOnResume(t *testing.T) {
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 	br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", ""))
 
-	if err := h.runs.extendRepeat(t.Context(), "wf_1", "loop", 5); err != nil {
+	if err := h.runs.extendRepeat(t.Context(), "wf_1", "loop", 5, callerPage); err != nil {
 		t.Fatalf("ExtendRepeat = %v, want nil", err)
 	}
 	params := br.paramsFor(methodKiroWorkflowResume)
@@ -107,7 +107,7 @@ func TestExtendRepeat_RefusesACountOutsideTheCap(t *testing.T) {
 	for _, n := range []int{0, -1, maxExtendIterations + 1} {
 		h, _, br := newTestHub()
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-		if err := h.runs.extendRepeat(t.Context(), "wf_1", "loop", n); err == nil {
+		if err := h.runs.extendRepeat(t.Context(), "wf_1", "loop", n, callerPage); err == nil {
 			t.Errorf("ExtendRepeat(n=%d) = nil, want an error", n)
 		}
 		if br.paramsFor(methodKiroWorkflowResume) != nil {

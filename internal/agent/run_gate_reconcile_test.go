@@ -747,7 +747,7 @@ func TestSignInGate_AVerbCrossingTheClosingEdgeLeavesNoRunRunning(t *testing.T) 
 	}{
 		{
 			name: "a user resume", verb: methodKiroWorkflowResume, wf: gateRunID,
-			send: func(g *gateRun) error { return g.h.runs.resume(context.Background(), gateRunID) },
+			send: func(g *gateRun) error { return g.h.runs.resume(context.Background(), gateRunID, callerPage) },
 		},
 		{
 			name: "an automatic resume", verb: methodKiroWorkflowResume, wf: gateRunID,
@@ -846,7 +846,7 @@ func TestSignInGate_TheClosingPauseLandsAfterAnInFlightResume(t *testing.T) {
 	g.br.mu.Unlock()
 
 	done := make(chan error, 1)
-	go func() { done <- g.h.runs.resume(context.Background(), gateRunID) }()
+	go func() { done <- g.h.runs.resume(context.Background(), gateRunID, callerPage) }()
 	waitUntil(t, "the resume to be claimed", func() bool { return slices.Contains(log.snap(), "resume claimed") })
 	lists := countCalls(g.br, methodKiroWorkflowList)
 	g.b.set(false, false, func() error { return signin.ErrRejected })
@@ -992,7 +992,7 @@ func TestSignInGate_APersonsPauseOutlivesTheGatesSweep(t *testing.T) {
 		g.signIn(t)
 		g.runningNow(t)
 		verbs := g.kasPauses(t, 0)
-		if err := g.h.runs.pause(t.Context(), gateRunID); err != nil {
+		if err := g.h.runs.pause(t.Context(), gateRunID, callerPage); err != nil {
 			t.Fatalf("Setup: the person's pause = %v", err)
 		}
 
@@ -1010,7 +1010,7 @@ func TestSignInGate_APersonsPauseOutlivesTheGatesSweep(t *testing.T) {
 		g.runningNow(t)
 		verbs := g.kasPauses(t, 100*time.Millisecond)
 		personDone := make(chan error, 1)
-		go func() { personDone <- g.h.runs.pause(t.Context(), gateRunID) }()
+		go func() { personDone <- g.h.runs.pause(t.Context(), gateRunID, callerPage) }()
 		waitUntil(t, "the person's pause to be sent", func() bool { return len(verbs.pauseParams()) == 1 })
 
 		g.lapseAndAsk(t)
@@ -1029,7 +1029,7 @@ func TestSignInGate_APersonsPauseOutlivesTheGatesSweep(t *testing.T) {
 		g.signIn(t)
 		g.runningNow(t)
 		verbs := g.kasPauses(t, 0)
-		if err := g.h.runs.pause(t.Context(), gateRunID); err != nil {
+		if err := g.h.runs.pause(t.Context(), gateRunID, callerPage); err != nil {
 			t.Fatalf("Setup: the person's pause = %v", err)
 		}
 		g.br.setCallResult(methodKiroWorkflowInspect, pendingInspect(t))
@@ -1048,7 +1048,7 @@ func TestSignInGate_APersonsPauseOutlivesTheGatesSweep(t *testing.T) {
 		if n := gatePauses(verbs); n != 1 {
 			t.Fatalf("Setup: gate pauses sent = %d, want 1", n)
 		}
-		if err := g.h.runs.pause(t.Context(), gateRunID); err != nil {
+		if err := g.h.runs.pause(t.Context(), gateRunID, callerPage); err != nil {
 			t.Fatalf("the person's pause = %v", err)
 		}
 

@@ -7,15 +7,16 @@ import (
 	"testing"
 )
 
-// The client renders a pause with one of marotte's reasons as marotte's own (static-src/run-store.ts stopSentence),
-// reading the same fixture.
+// The client renders a pause with one of marotte's reasons as marotte's own, and a control with apiCallerReason as an
+// agent's (static-src/run-store.ts attributedSentence), reading the same fixture.
 func TestPauseReasons_MatchTheClientFixture(t *testing.T) {
 	raw, err := os.ReadFile("testdata/pause_reasons.json")
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
 	var f struct {
-		Reasons []string `json:"reasons"`
+		APICaller string   `json:"apiCaller"`
+		Reasons   []string `json:"reasons"`
 	}
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatalf("decode fixture: %v", err)
@@ -23,6 +24,10 @@ func TestPauseReasons_MatchTheClientFixture(t *testing.T) {
 	if want := []string{signInHoldReason, providerHoldReason, manualResumeReason}; !slices.Equal(f.Reasons, want) {
 		t.Errorf("fixture reasons = %q, want %q (update testdata/pause_reasons.json and run-store.ts together)",
 			f.Reasons, want)
+	}
+	if f.APICaller != apiCallerReason {
+		t.Errorf("fixture apiCaller = %q, want %q (update testdata/pause_reasons.json and run-store.ts together)",
+			f.APICaller, apiCallerReason)
 	}
 	for _, r := range []string{signInHoldReason, providerHoldReason} {
 		if !isHoldReason(r) {

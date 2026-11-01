@@ -6,7 +6,7 @@ import { iconEl } from "../icon-el.js";
 import { ICON_ALERT, ICON_WARN } from "../icons.js";
 import type { ExecRun } from "./model.js";
 
-type ExecAlert = NonNullable<ExecRun["alert"]>;
+export type ExecAlert = NonNullable<ExecRun["alert"]>;
 
 function alertGlyph(kind: ExecAlert["kind"]): string {
   return kind === "failed" ? ICON_ALERT : ICON_WARN;
@@ -16,6 +16,12 @@ function alertGlyph(kind: ExecAlert["kind"]): string {
  *  so it never stands in for the run's summary. */
 export function wantsReader(alert: ExecRun["alert"]): alert is ExecAlert {
   return alert !== undefined && alert.kind !== "stopped";
+}
+
+/** A kind that takes the progress phrase's and the bar's place on the summary's one line: a
+ *  question or a pause. A failure keeps the progress, which says where it broke. */
+export function inPlace(alert: ExecAlert): boolean {
+  return alert.kind === "input" || alert.kind === "paused";
 }
 
 interface AlertLine {

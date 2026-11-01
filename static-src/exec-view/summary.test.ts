@@ -23,7 +23,7 @@ afterEach(() => {
   host.remove();
 });
 
-/** A dock head's summary (no alert host), or a run-bar row's (the host takes the alert). */
+/** A summary with no alert host, or a run-bar row's (the host takes the alert). */
 function build(row: boolean): ExecSummaryView {
   const view = buildExecSummary(row ? { alertHost: host } : {});
   host.append(view.root);
@@ -154,35 +154,36 @@ describe("the run summary", () => {
     expect(part(view, "ev-sum-state")).toBe("needs input");
   });
 
-  it("never draws an alert in the dock head, which shows it in its own region", () => {
+  it("never draws an alert without a host, whose consumer shows it in its own region", () => {
     const view = build(false);
     view.paint(run([step("a", "fail")], { alert: { kind: "failed", text: "a failed" } }));
     expect(view.root.querySelector(".ev-alert-line")).toBeNull();
     expect(view.describe()).toBe("nightly, running");
   });
 
-  for (const kind of ["paused", "failed"] as const) {
-    it(`gives a run-bar row's ${kind} alert a second line and its kind to the row`, () => {
+  it("gives a run-bar row's failure a line of its own and its kind to the row", () => {
+    const view = build(true);
+    view.paint(run([step("a", "fail")], { alert: { kind: "failed", text: "about failed" } }));
+    expect(host.dataset["alert"]).toBe("failed");
+    expect(host.hasAttribute("data-alert-in-place")).toBe(false);
+    expect(view.root.querySelector(".ev-alert-line")?.textContent).toBe("about failed");
+    expect(part(view, "ev-sum-label")).toBe("nightly");
+    expect(view.describe()).toBe("nightly: about failed");
+  });
+
+  for (const kind of ["input", "paused"] as const) {
+    it(`puts a run-bar row's ${kind} alert in the progress's place, its kind to the row`, () => {
       const view = build(true);
       view.paint(run([step("a", "waiting")], { alert: { kind, text: `about ${kind}` } }));
       expect(host.dataset["alert"]).toBe(kind);
+      expect(host.hasAttribute("data-alert-in-place")).toBe(true);
       expect(view.root.querySelector(".ev-alert-line")?.textContent).toBe(`about ${kind}`);
-      // The columns stay: the alert is beside them, never in their place.
       expect(part(view, "ev-sum-label")).toBe("nightly");
       expect(view.describe()).toBe(`nightly: about ${kind}`);
     });
   }
 
-  it("gives a run-bar row's open question its line and kind, the CSS placing it in the progress's place", () => {
-    const view = build(true);
-    view.paint(run([step("a", "waiting")], { alert: { kind: "input", text: "about input" } }));
-    expect(host.dataset["alert"]).toBe("input");
-    expect(view.root.querySelector(".ev-alert-line")?.textContent).toBe("about input");
-    expect(part(view, "ev-sum-label")).toBe("nightly");
-    expect(view.describe()).toBe("nightly: about input");
-  });
-
-  it("puts an open question whole in the tooltip of its line, and no other alert", () => {
+  it("puts an in-place alert whole in the tooltip of its line, and no failure", () => {
     const view = build(true);
     const tip = (): string | null =>
       view.root.querySelector(".ev-alert-line")?.getAttribute("data-tooltip") ?? null;
@@ -194,7 +195,11 @@ describe("the run summary", () => {
       run([step("a", "waiting")], { alert: { kind: "input", text: "Waiting for answer: B?" } }),
     );
     expect(tip()).toBe("Waiting for answer: B?");
-    view.paint(run([step("a", "waiting")], { alert: { kind: "paused", text: "Waiting: host" } }));
+    view.paint(
+      run([step("a", "waiting")], { alert: { kind: "paused", text: "Paused by its chat" } }),
+    );
+    expect(tip()).toBe("Paused by its chat");
+    view.paint(run([step("a", "fail")], { alert: { kind: "failed", text: "a failed" } }));
     expect(tip()).toBeNull();
   });
 
@@ -216,6 +221,7 @@ describe("the run summary", () => {
     view.paint(run([step("a", "waiting")], { alert: { kind: "paused", text: "Waiting" } }));
     view.paint(run([step("a", "running")]));
     expect(host.dataset["alert"]).toBeUndefined();
+    expect(host.hasAttribute("data-alert-in-place")).toBe(false);
     expect(view.root.querySelector(".ev-alert-line")).toBeNull();
   });
 
@@ -231,6 +237,31 @@ describe("the run summary", () => {
     view.paint(run([fan]));
     const segs = [...view.root.querySelectorAll<HTMLElement>(".ev-mini-seg")];
     expect(segs.map((s) => s.hasAttribute("data-branch"))).toEqual([false, true]);
+  });
+
+  it("keeps every gap, a branch's second one included, under 40% of a narrow bar", () => {
+    const view = build(false);
+    const fan: ExecNode = {
+      path: "r/fan",
+      label: "fan",
+      kind: "parallel",
+      state: "running",
+      children: Array.from({ length: 60 }, (_, i) => step(`b${String(i)}`, "running")),
+    };
+    const style = mountAppCSS();
+    try {
+      host.className = "ev-dock";
+      host.style.inlineSize = "16rem";
+      view.paint(run([fan]));
+      const mini = view.root.querySelector<HTMLElement>(".ev-mini")!;
+      const width = mini.getBoundingClientRect().width;
+      const segs = [...mini.querySelectorAll<HTMLElement>(".ev-mini-seg")];
+      expect(segs).toHaveLength(60);
+      const painted = segs.reduce((sum, s) => sum + s.getBoundingClientRect().width, 0);
+      expect(width - painted).toBeLessThanOrEqual(0.4 * width + 0.5);
+    } finally {
+      style.remove();
+    }
   });
 
   it("draws a long loop's bar as the current pass's steps, gapped like any run's", () => {

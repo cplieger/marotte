@@ -1,7 +1,7 @@
 // The run's one-line summary: name, state word, progress, mini bar and clock. One painter for the
-// run dock's head and the chat's run bar rows, so the two never word a run differently. A run bar
-// row also shows what wants the reader: an open question in the progress's place, any other alert
-// on a line of its own; the dock gives that a region of its own.
+// run dock's head and the chat's run bar rows, so the two never word a run differently. A question
+// or a pause takes the progress's place (`inPlace`); a run bar row puts a failure on a line of its
+// own, and the dock gives every alert it does not show here a region of its own.
 
 import { el } from "@cplieger/reactive";
 import { reconcile } from "../reconcile.js";
@@ -15,7 +15,7 @@ import {
   type ProgressPhrase,
 } from "./model.js";
 import { STATE_WORD } from "./status.js";
-import { buildAlertLine, wantsReader } from "./alert.js";
+import { buildAlertLine, inPlace, wantsReader, type ExecAlert } from "./alert.js";
 import { kindGlyph } from "./tree.js";
 
 export interface ExecSummaryView {
@@ -30,9 +30,13 @@ export interface ExecSummaryView {
 }
 
 interface SummaryOpts {
-  /** Where the alert that wants the reader shows, taking `data-alert="<kind>"` for its mark's colour
-   *  and the layout (`26-dock.css`); absent where the consumer shows the alert itself (the dock). */
+  /** Where the alert shows, taking `data-alert="<kind>"` for its mark's colour and
+   *  `data-alert-in-place` when it takes the progress's place (`inPlace`); absent where the
+   *  consumer shows every alert itself. */
   readonly alertHost?: HTMLElement;
+  /** Which alerts the summary shows, every one that wants the reader by default; the consumer
+   *  shows the rest. */
+  readonly shows?: (alert: ExecAlert) => boolean;
 }
 
 export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
@@ -45,28 +49,34 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
   const line = buildAlertLine("span", "ev-alert-line");
   const root = el("span", { className: "ev-sum" }, label, state, progress.root, mini, clock);
   let described = "";
+  const shows = opts.shows ?? (() => true);
+  const shown = (alert: ExecRun["alert"]): alert is ExecAlert => wantsReader(alert) && shows(alert);
 
   const paintAlert = (run: ExecRun | undefined): void => {
     const host = opts.alertHost;
     if (host === undefined) {
       return;
     }
-    const alert = run !== undefined && wantsReader(run.alert) ? run.alert : undefined;
+    const alert = run !== undefined && shown(run.alert) ? run.alert : undefined;
     if (alert === undefined) {
       delete host.dataset["alert"];
+      host.removeAttribute("data-alert-in-place");
       line.root.remove();
       return;
     }
     host.dataset["alert"] = alert.kind;
+    const placed = inPlace(alert);
+    host.toggleAttribute("data-alert-in-place", placed);
     line.paint(alert);
-    // An open question takes the progress's place in one clipped line, so the tooltip carries it whole.
-    if (alert.kind !== "input") {
+    // In the progress's place the line is clipped, so the tooltip carries it whole.
+    if (!placed) {
       line.root.removeAttribute("data-tooltip");
     } else if (line.root.getAttribute("data-tooltip") !== alert.text) {
       line.root.setAttribute("data-tooltip", alert.text);
     }
-    if (line.root.parentElement !== root) {
-      root.append(line.root);
+    // Before the clock: the dock head lays the summary out in source order.
+    if (line.root.nextSibling !== clock) {
+      root.insertBefore(line.root, clock);
     }
   };
 
@@ -83,7 +93,7 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
       setText(clock, win === undefined ? "" : formatElapsed(win.span));
       paintAlert(run);
       described =
-        opts.alertHost !== undefined && wantsReader(run.alert)
+        opts.alertHost !== undefined && shown(run.alert)
           ? `${run.label}: ${run.alert.text}`
           : [run.label, word, phrase.words].filter((s) => s !== "").join(", ");
     },
@@ -151,6 +161,10 @@ export function buildProgress(): ProgressView {
 }
 
 function paintMini(mini: HTMLElement, segs: readonly MiniSeg[]): void {
+  const n = String(Math.max(1, segs.length + segs.filter((s) => s.branch).length));
+  if (mini.style.getPropertyValue("--mini-n") !== n) {
+    mini.style.setProperty("--mini-n", n);
+  }
   const paintSeg = (seg: HTMLElement, s: MiniSeg): void => {
     if (seg.dataset["state"] !== s.state) {
       seg.dataset["state"] = s.state;

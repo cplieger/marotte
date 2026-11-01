@@ -219,9 +219,9 @@ export function passText(pass: number, max?: number): string {
   return max === undefined ? `pass ${String(pass)}` : `pass ${String(pass)} of ${String(max)}`;
 }
 
-/** The passes a loop ran against its budget, "3 of 3 passes". */
-export function passCountText(ran: number, max: number): string {
-  return `${String(ran)} of ${String(max)} passes`;
+/** A loop paused at its cap, "review reached its pass limit (3/3)". */
+export function passLimitText(loop: string, ran: number, max: number): string {
+  return `${loop} reached its pass limit (${String(ran)}/${String(max)})`;
 }
 
 /** A loop's budget, "up to 8 passes", with "(5 added)" when an extension grew it. */
