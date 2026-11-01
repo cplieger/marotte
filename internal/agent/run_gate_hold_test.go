@@ -25,6 +25,7 @@ import (
 	"github.com/cplieger/marotte/internal/signin"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
+	"github.com/cplieger/slogx/capture"
 )
 
 // The dimensions of the hold matrix. TestGateHold_EveryCell runs their full cross-product, and holdModel says what
@@ -3334,7 +3335,7 @@ func TestGateHold_EveryCell(t *testing.T) {
 	orphanResumeDelay = 20 * time.Millisecond
 	t.Cleanup(func() { orphanResumeDelay = prevDelay })
 	router := &holdLogs{sinks: &sync.Map{}}
-	swapDefaultLogger(t, router)
+	capture.SwapDefault(t, slog.New(router))
 	byRow := map[string][]holdCombo{}
 	var rows []string
 	for _, c := range everyCombo() {
