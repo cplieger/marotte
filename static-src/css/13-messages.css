@@ -312,10 +312,15 @@
 
 /* A skippable transcript box near the scrollport (`scroll-controller.ts` `NEAR_LEAD`): laid out
  * ahead, with the containment `auto` applies, so `[id="messages-wrap"]` outranks each
- * box's own `content-visibility`. */
+ * box's own `content-visibility`. `content`, never `layout style paint`: Gecko reflows a
+ * `content-visibility` flip only when the effective containment changes (`CalcDifference` in
+ * https://searchfox.org/mozilla-central/source/layout/style/nsStyleStruct.cpp), `auto` already
+ * implies those three, and a box skipped at the flip stays a blank band at its intrinsic size.
+ * `content` carries a bit of its own, so no skippable box may already be `contain: content`, and
+ * no state rule on one may declare a `contain`: it ties this rule's specificity and can win. */
 [id="messages-wrap"] [data-near] {
   content-visibility: visible;
-  contain: layout style paint;
+  contain: content;
 }
 
 /* A RESERVED BLOCK SLOT TAKES NO ROW UNTIL IT HAS SOMETHING TO SHOW, and the node
