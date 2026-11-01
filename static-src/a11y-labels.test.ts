@@ -16,6 +16,8 @@ describe("a11y: missing labels", () => {
 
   it("toast is announced via the shared live region and is self-describing", async () => {
     const { showToast, _resetForTest } = await import("./toast.js");
+    const { mountLiveRegions } = await import("@cplieger/ui-primitives/announce");
+    const release = mountLiveRegions(document.body);
     const dismiss = showToast("File saved", "success", 5000);
     const toast = document.querySelector(".uip-toast--success")!;
     expect(toast).not.toBeNull();
@@ -24,9 +26,12 @@ describe("a11y: missing labels", () => {
     expect(toast.getAttribute("tabindex")).toBe("0");
     expect(toast.querySelector(".uip-visually-hidden")?.textContent).toBe("Click to dismiss.");
     expect(toast.querySelector(".uip-toast-msg")?.textContent).toBe("File saved");
-    expect(document.querySelector('[aria-live="polite"]')).not.toBeNull();
+    await vi.waitFor(() => {
+      expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe("File saved");
+    });
     dismiss();
     _resetForTest();
+    release();
   });
 
   it("banner stack container has aria-label and aria-live", async () => {

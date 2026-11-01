@@ -6,6 +6,7 @@
 import type { ServerEvent } from "./types.js";
 import { getActiveId, getSessions, isBusy } from "./store.js";
 import { effect } from "@cplieger/reactive";
+import { mountLiveRegions } from "@cplieger/ui-primitives/announce";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -135,6 +136,9 @@ function init(): void {
     },
   });
   initPointerModeToggle();
+
+  // Before anything can announce: `announce()` drops a message when no region is mounted.
+  mountLiveRegions(document.body);
 
   // AFTER the tier, which sizes the bar's action buttons this fit measures against.
   initPageTitleFit();
