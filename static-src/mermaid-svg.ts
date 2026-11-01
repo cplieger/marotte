@@ -3,11 +3,20 @@
 // the export.
 
 import type * as PeleModule from "pele/lazy";
-import type { MountOptions } from "pele/lazy";
+import type { MountOptions, Mounted, RenderResult } from "pele/lazy";
 import { el } from "@cplieger/reactive";
 import { formDiagramLink } from "./link-guard.js";
 
 export type Pele = typeof PeleModule;
+
+/** A mount that drew its text. pele's `result` is undefined only "if nothing could be drawn yet"
+ *  (https://pele.run/api), so once set it stays set: a failed redraw keeps the last drawing. */
+export type DrawnMount = Mounted & { readonly result: RenderResult };
+
+/** pele's `mount` reports a text it cannot draw on the handle (`error`), never by throwing. */
+export function isDrawn(mounted: Mounted): mounted is DrawnMount {
+  return mounted.result !== undefined;
+}
 
 let pele: Pele | null = null;
 

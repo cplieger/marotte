@@ -285,7 +285,7 @@ describe("while the fence streams in", () => {
     expect(skeleton(host)).toBeNull();
     expect(pre.checkVisibility()).toBe(true);
     const notice = wrap.querySelector(".mermaid-notice");
-    expect(notice?.textContent).toBe("Diagram could not be rendered: Parse error on line 3");
+    expect(notice?.textContent).toBe("Diagram could not be rendered: Parse error on line 2");
     expect(notice?.nextElementSibling).toBe(pre);
   });
 });
@@ -331,10 +331,11 @@ describe("a diagram that cannot be drawn", () => {
   it("keeps the source as a code block under a one-line notice naming the fault", () => {
     const { wrap, pre, canvas } = parts(render(fence("flowchart TD\n  A -->\n")));
     expect(canvas).toBeNull();
+    expect(wrap.querySelector(".pele-error"), "pele's own error box").toBeNull();
     expect(pre.hidden).toBe(false);
     expect(wrap.getAttribute("data-mermaid")).toBe("failed");
     const notice = wrap.querySelector(".mermaid-notice");
-    expect(notice?.textContent).toBe("Diagram could not be rendered: Parse error on line 3");
+    expect(notice?.textContent).toBe("Diagram could not be rendered: Parse error on line 2");
     expect(notice?.nextElementSibling).toBe(pre);
   });
 

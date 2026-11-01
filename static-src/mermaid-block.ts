@@ -5,7 +5,6 @@
 // RENDER_OPTIONS and `adoptSvg` carry, and the CSP's `script-src 'self'` refuses any handler anyway.
 
 import { el } from "@cplieger/reactive";
-import type { Mounted } from "pele/lazy";
 import { extractLang } from "./code-blocks.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_CODE_UI, ICON_DOWNLOAD, ICON_EXPAND_UI, ICON_EYE_UI } from "./icons.js";
@@ -14,10 +13,12 @@ import {
   adoptSvg,
   diagramTitle,
   downloadSvg,
+  isDrawn,
   loadedPele,
   loadPele,
   nextIdPrefix,
   RENDER_OPTIONS,
+  type DrawnMount,
   type Pele,
 } from "./mermaid-svg.js";
 
@@ -100,7 +101,7 @@ function addControls(
   wrap: HTMLElement,
   pre: HTMLElement,
   canvas: HTMLElement,
-  mounted: Mounted,
+  mounted: DrawnMount,
   source: string,
 ): void {
   const actions = wrap.querySelector(":scope > .code-head > .code-actions");
@@ -137,23 +138,23 @@ function draw(pele: Pele, wrap: HTMLElement, pre: HTMLElement, source: string): 
   const prefix = nextIdPrefix();
   const canvas = el("div", { className: "mermaid-canvas" });
   wrap.insertBefore(canvas, pre);
-  let mounted: Mounted;
-  try {
-    mounted = pele.mount(canvas, source, {
-      ...RENDER_OPTIONS,
-      // Inline the drawing is static, so a pinch or wheel over it is left to the page.
-      zoom: false,
-      onRender: (result) => {
-        const svg = adoptSvg(canvas, prefix);
-        svg?.style.setProperty(
-          "min-width",
-          `${String(Math.round(result.width * MIN_INLINE_SCALE))}px`,
-        );
-      },
-    });
-  } catch (err) {
+  const mounted = pele.mount(canvas, source, {
+    ...RENDER_OPTIONS,
+    // Inline the drawing is static, so a pinch or wheel over it is left to the page.
+    zoom: false,
+    onRender: (result) => {
+      const svg = adoptSvg(canvas, prefix);
+      svg?.style.setProperty(
+        "min-width",
+        `${String(Math.round(result.width * MIN_INLINE_SCALE))}px`,
+      );
+    },
+  });
+  if (!isDrawn(mounted)) {
+    // pele drew its own error box into the canvas; the block's notice over the source replaces it.
+    mounted.destroy();
     canvas.remove();
-    showFailure(wrap, pre, failureText(pele, err));
+    showFailure(wrap, pre, failureText(pele, mounted.error));
     return;
   }
   wrap.querySelector(`:scope > .${SKELETON_CLASS}`)?.remove();
