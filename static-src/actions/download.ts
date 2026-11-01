@@ -2,7 +2,7 @@ import { apiBlobOrError } from "../api-client.js";
 import { ActionError } from "./index.js";
 
 /** A download: a GET, or a POST whose `body` is sent as JSON. */
-export interface DownloadRequest {
+interface DownloadRequest {
   readonly method: "GET" | "POST";
   readonly path: string;
   readonly body?: unknown;
