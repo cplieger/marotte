@@ -7,13 +7,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as ActionsIndex from "./actions/index.js";
 import type * as McpActions from "./actions/mcp.js";
 
-interface Inst {
+interface InstFields {
   name: string;
   status: "pending" | "success" | "error" | "cancelled";
-  args: unknown;
-  result?: unknown;
-  error?: unknown;
 }
+
+// The same union as actions' ActionInstance: a sensitive record carries no args, result or error.
+type Inst =
+  | (InstFields & { sensitive?: never; args: unknown; result?: unknown; error?: unknown })
+  | (InstFields & { sensitive: true });
 
 let captured: ((inst: Inst) => void) | null = null;
 const scheduled: { q: string }[] = [];
@@ -84,11 +86,8 @@ function answered(q: string, result: unknown): void {
 }
 
 function failed(q: string, error?: unknown): void {
-  const inst: Inst = { name: "mcp.search_registry", status: "error", args: { q } };
-  if (error !== undefined) {
-    inst.error = error;
-  }
-  captured?.(inst);
+  const base = { name: "mcp.search_registry", status: "error", args: { q } } as const;
+  captured?.(error === undefined ? base : { ...base, error });
 }
 
 function mountPanel(): { input: HTMLInputElement; results: HTMLDivElement } {
@@ -179,6 +178,18 @@ describe("what the panel renders", () => {
     });
     expect(results.textContent).not.toContain("Searching the registry");
     expect(results.textContent).toContain("io.example/thing");
+  });
+
+  it("ignores a sensitive record of the same action, which carries no query", () => {
+    const { input, results } = mountPanel();
+    type(input, "linear");
+    answered("linear", HIT);
+    const before = results.innerHTML;
+
+    expect(() => {
+      captured?.({ name: "mcp.search_registry", status: "pending", sensitive: true });
+    }).not.toThrow();
+    expect(results.innerHTML).toBe(before);
   });
 
   it("reads an absent result as a failure, with a retry", () => {
