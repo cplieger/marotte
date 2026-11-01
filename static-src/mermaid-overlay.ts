@@ -13,7 +13,14 @@ import {
   ICON_PLUS_UI,
   ICON_REFRESH,
 } from "./icons.js";
-import { adoptSvg, downloadSvg, nextIdPrefix, RENDER_OPTIONS, type Pele } from "./mermaid-svg.js";
+import {
+  adoptSvg,
+  downloadSvg,
+  isDrawn,
+  nextIdPrefix,
+  RENDER_OPTIONS,
+  type Pele,
+} from "./mermaid-svg.js";
 
 /** pele's own zoom-control step, so a press here moves as far as one there would. */
 const ZOOM_STEP = 1.5625;
@@ -93,13 +100,14 @@ function plainWheelZooms(stage: HTMLElement, e: WheelEvent): void {
   );
 }
 
-/** Open `source` full screen. The caller has already drawn it once, so a throw here is a pele defect, not the
- *  diagram's: it propagates rather than showing a second failure notice. */
+/** Open `source` full screen. The caller has already drawn it once, so failing to draw it here is a pele defect, not
+ *  the diagram's: pele's error is thrown rather than shown as a second failure notice. */
 export function openMermaidOverlay(pele: Pele, source: string, opts: OverlayOptions): void {
   const prefix = nextIdPrefix();
   const titleId = `${prefix}overlay-title`;
   const stage = el("div", { className: "mermaid-stage" });
-  let mounted: Mounted | undefined;
+  // Not a const: pele calls `onRender` synchronously inside `mount`, before the handle is assigned.
+  let mounted: Mounted | undefined = undefined;
 
   const zoomBy = (factor: number): void => {
     mounted?.zoom?.zoomBy(factor);
@@ -121,8 +129,9 @@ export function openMermaidOverlay(pele: Pele, source: string, opts: OverlayOpti
     }),
     makeCopyButton(() => source, "icon-btn"),
     headButton("Download SVG", ICON_DOWNLOAD, () => {
-      if (mounted !== undefined) {
-        downloadSvg(mounted.result.svg, stage);
+      const drawn = mounted?.result;
+      if (drawn !== undefined) {
+        downloadSvg(drawn.svg, stage);
       }
     }),
     close,
@@ -176,18 +185,18 @@ export function openMermaidOverlay(pele: Pele, source: string, opts: OverlayOpti
     { capture: true, passive: false },
   );
   ctrl.open();
-  try {
-    mounted = pele.mount(stage, source, {
-      ...RENDER_OPTIONS,
-      zoom: { always: true, controls: false },
-      onRender: () => {
-        adoptSvg(stage, prefix);
-        fitToStage(stage, mounted);
-      },
-    });
-  } catch (err) {
+  mounted = pele.mount(stage, source, {
+    ...RENDER_OPTIONS,
+    zoom: { always: true, controls: false },
+    onRender: () => {
+      adoptSvg(stage, prefix);
+      fitToStage(stage, mounted);
+    },
+  });
+  if (!isDrawn(mounted)) {
+    mounted.destroy();
     ctrl.dispose();
-    throw err;
+    throw mounted.error;
   }
   resize.observe(stage);
 }

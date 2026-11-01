@@ -1574,13 +1574,7 @@ async function followMerge(
       if (!stillListed(g, pr)) {
         return { ok: true, text: "" };
       }
-      const read = readMergeStatus.dispatch(prRef);
-      const stop = (): void => {
-        read.abort();
-      };
-      deadline.signal.addEventListener("abort", stop, { once: true });
-      const o = await read.outcome;
-      deadline.signal.removeEventListener("abort", stop);
+      const o = await readMergeStatus.dispatch(prRef, { signal: deadline.signal }).outcome;
       if (o.status === "success" && o.value.merged === "yes") {
         removePRFromGroups(g.forge_id, g.repo_id, pr.number);
         return { ok: true, text: "" };

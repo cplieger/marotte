@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -654,42 +653,6 @@ func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
 			errRunHostStart)
 	}
 	return o
-}
-
-// runLocks is one ctx-abandonable lock per run (sync.Mutex cannot be). A ctx already ended when the lock frees loses.
-type runLocks struct {
-	held map[string]chan struct{}
-	mu   sync.Mutex
-}
-
-func (p *runLocks) acquire(ctx context.Context, workflowID string) (release func(), err error) {
-	for {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		p.mu.Lock()
-		busy, taken := p.held[workflowID]
-		if !taken {
-			if p.held == nil {
-				p.held = make(map[string]chan struct{})
-			}
-			done := make(chan struct{})
-			p.held[workflowID] = done
-			p.mu.Unlock()
-			return func() {
-				p.mu.Lock()
-				delete(p.held, workflowID)
-				p.mu.Unlock()
-				close(done)
-			}, nil
-		}
-		p.mu.Unlock()
-		select {
-		case <-busy:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
 }
 
 // isCtxErr reports a cancellation or deadline at any depth: KAS may have taken a verb whose context ended.

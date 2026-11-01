@@ -44,7 +44,7 @@ func (m *Manager) check(ctx context.Context, id string, budget time.Duration) (c
 	defer wcancel()
 	tctx, cancel := context.WithDeadline(wctx, deadline.Add(-budget/checkSaveShare))
 	defer cancel()
-	unlock, err := m.locks.lock(tctx, id)
+	unlock, err := m.locks.Lock(tctx, id)
 	if err != nil {
 		if ctx.Err() != nil {
 			return false, ctx.Err()

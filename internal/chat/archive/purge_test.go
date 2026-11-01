@@ -3,7 +3,6 @@ package archive
 import (
 	"bytes"
 	"context"
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 // TestPurge_RetentionCutoff asserts that files older than (now - maxAge) are purged, newer ones survive.
@@ -571,18 +571,11 @@ func TestPurge_ChatWithoutAnActivityTimestampAgesFromMtime(t *testing.T) {
 }
 
 // capturePurgeLogs redirects the slog default into a buffer for one test; tests using it must not
-// run in parallel. The log package's writer and flags are restored too, because slog.SetDefault
-// repoints log and does not point it back for the stock handler.
+// run in parallel.
 func capturePurgeLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
 }
 

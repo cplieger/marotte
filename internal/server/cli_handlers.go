@@ -15,7 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/sanitize"
 	"github.com/cplieger/marotte/internal/version"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {

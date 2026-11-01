@@ -10,7 +10,7 @@ import (
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // handleToolCall serves GET /api/chats/{id}/tools/{toolCallID}: one tool call's whole persisted input, output and

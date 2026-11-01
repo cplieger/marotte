@@ -78,6 +78,7 @@ vi.mock("./transport.js", () =>
 );
 vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => ({
+    apiBlobOrError: vi.fn(),
     apiGetTyped: m.tabListRead(),
     // tabs.ts reaches api-client.ts through the files-shared.js edge the
     // multi-instance browser added, so the real link needs this name present.

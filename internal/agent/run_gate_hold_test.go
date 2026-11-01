@@ -25,6 +25,7 @@ import (
 	"github.com/cplieger/marotte/internal/signin"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
+	"github.com/cplieger/slogx/capture"
 )
 
 // The dimensions of the hold matrix. TestGateHold_EveryCell runs their full cross-product, and holdModel says what
@@ -2901,10 +2902,7 @@ func (c *holdCell) awaitEngineSweep(t *testing.T, lists int32, reads int) {
 func (c *holdCell) awaitTransitionEnd(t *testing.T) {
 	t.Helper()
 	waitUntil(t, "the run's transition to end", func() bool {
-		c.h.runs.resumes.mu.Lock()
-		defer c.h.runs.resumes.mu.Unlock()
-		_, locked := c.h.runs.resumes.held[c.id]
-		return !locked || c.f.heldReads.Load() > 0
+		return c.f.heldReads.Load() > 0 || resumeLockFree(c.h.runs, c.id)
 	})
 }
 
@@ -3337,7 +3335,7 @@ func TestGateHold_EveryCell(t *testing.T) {
 	orphanResumeDelay = 20 * time.Millisecond
 	t.Cleanup(func() { orphanResumeDelay = prevDelay })
 	router := &holdLogs{sinks: &sync.Map{}}
-	swapDefaultLogger(t, router)
+	capture.SwapDefault(t, slog.New(router))
 	byRow := map[string][]holdCombo{}
 	var rows []string
 	for _, c := range everyCombo() {

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -12,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 // Respond is the only method these handlers use; the rest satisfies the interface.
@@ -330,18 +330,11 @@ func TestCmdUserInputResponse_AnswerTravelsOnlyWhenAnswered(t *testing.T) {
 }
 
 // captureLogs swaps the slog default to a buffer-backed debug handler for the test; tests using it
-// must not run in parallel. The log package's writer and flags are restored too, because
-// slog.SetDefault repoints log and does not point it back for the stock handler.
+// must not run in parallel.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
 }
 

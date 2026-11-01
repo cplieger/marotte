@@ -88,7 +88,7 @@ func TestSignIn_OneDeadlineCoversVerifyLockAndSave(t *testing.T) {
 	})
 	t.Run("a lock held past the window", func(t *testing.T) {
 		h, e := shortDeadlines(t, nil)
-		unlock, err := h.m.locks.lock(t.Context(), e.id())
+		unlock, err := h.m.locks.Lock(t.Context(), e.id())
 		if err != nil {
 			t.Fatal(err)
 		}

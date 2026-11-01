@@ -4,7 +4,7 @@ import (
 	"context"
 	"slices"
 
-	"github.com/cplieger/marotte/internal/chatlock"
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -14,7 +14,7 @@ import (
 type steerQueue struct {
 	recs  *steerRecords
 	coord *bridgeCoordinator
-	locks *chatlock.Set
+	locks *keylock.Set[marotte.ChatID]
 	// steps names the host session whose read loop folds a step key's frames.
 	steps *stepSteers
 }

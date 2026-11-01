@@ -21,7 +21,7 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 	"golang.org/x/sync/errgroup"
 )
 

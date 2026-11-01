@@ -329,7 +329,7 @@ func TestHandleV3Summarization_ALandedCompactionIsSilent(t *testing.T) {
 	for _, status := range []string{"success", "error"} {
 		t.Run(status, func(t *testing.T) {
 			var logs bytes.Buffer
-			t.Cleanup(captureSlog(&logs))
+			captureSlog(t, &logs)
 			deps, _, _ := depsWithStore(t, "c1")
 			tr := New(rolesOf(deps))
 

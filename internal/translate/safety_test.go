@@ -316,7 +316,7 @@ func TestHandleSafetyStatusChanged_BlockPersistSpeaksOnlyOnFailure(t *testing.T)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var logs bytes.Buffer
-			t.Cleanup(captureSlog(&logs))
+			captureSlog(t, &logs)
 			deps, _ := newEventCaptureDeps()
 			deps.turns.appendErr = tc.appendErr
 			tr := New(rolesOf(deps))

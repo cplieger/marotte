@@ -16,6 +16,8 @@ github.com/cplieger/jsoncap/v2 v2.1.0 h1:/NRuaqFNKdjhLegBrgDBunX73Lo5r2iYh8Gyy6o
 github.com/cplieger/jsoncap/v2 v2.1.0/go.mod h1:pE5I9GzWjOiqW7ngbJfQcEG2KdMb6yLFKCj+uxuO3Ug=
 github.com/cplieger/keyenc v1.1.0 h1:rlBEmqEBUS378lkJJfrRWlWKBqpgX2ahquivHfdMgxw=
 github.com/cplieger/keyenc v1.1.0/go.mod h1:41HJ59GzUd2gNdRpmdgiOP3VW4CdETY+ecQ8/lzOySQ=
+github.com/cplieger/keylock v1.0.1 h1:W2qhgq22a8dVhAz++PJIquOxDXznWbEC6wTV/NPJxXg=
+github.com/cplieger/keylock v1.0.1/go.mod h1:e39neSBvUIELQRFr/DXlPZvDyZNqMvkvGL5QufU6Dxk=
 github.com/cplieger/pathinside/v2 v2.1.0 h1:yBnm859aLMKALi8bTIaYBy7t1osIqCSMIJo8PFqQohM=
 github.com/cplieger/pathinside/v2 v2.1.0/go.mod h1:sMHw6mQSFsGWsirWPQyQZ1+kqrAsXf9VcMUTUJsqm0w=
 github.com/cplieger/pinstall/v3 v3.1.0 h1:p8K/vR50i4Ty4B8ufzt991VdDOp0385BSYI01WfABQI=
@@ -38,6 +40,8 @@ github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.15 h1:WuDg9QDMoFmTEpISE47H
 github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.15/go.mod h1:1hBHO0Lk9kiU3WTF4F0Jb0j5ZugMxTwiBvvGnhZqunM=
 github.com/cplieger/webhttp/v3 v3.0.3 h1:2N07M8hpw6VuYRKDqtqs63OcwXu99vV09XKELcEU67I=
 github.com/cplieger/webhttp/v3 v3.0.3/go.mod h1:ETPjIF1JDXhcOx3RnfiDS1Fn4//9unvo2TnYtYbr3M0=
+github.com/cplieger/webhttp/v4 v4.0.0-dev.3 h1:w+OfYssBC4zzFuPpP6f7cfcbGwk1mYe8m0MPV2glRPw=
+github.com/cplieger/webhttp/v4 v4.0.0-dev.3/go.mod h1:FsqOl/g8TdMUQ66N8aav21JrQSZSdWMYo0GULI/QIkA=
 github.com/cplieger/wiregen/v3 v3.3.1 h1:5V0GdAWpnoyRmv41KnU/MHAO2vT1pDEmj2tBLgi3SkI=
 github.com/cplieger/wiregen/v3 v3.3.1/go.mod h1:UrmPrmQGBbdrB0oaNRS4GYRgfRi/VljsJ9wlQhENuTU=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=

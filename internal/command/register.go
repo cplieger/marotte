@@ -1,9 +1,10 @@
 package command
 
 import (
+	"cmp"
 	"context"
 
-	"github.com/cplieger/marotte/internal/chatlock"
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 )
@@ -59,7 +60,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.Register(marotte.CmdElicitationResponse, bind1(r.Perms, cmdElicitationResponse))
 	d.Register(marotte.CmdUserInputResponse, bind1(r.Perms, cmdUserInputResponse))
 	d.Register(marotte.CmdRewindChat, bind5(r.Bridges, r.Chats, r.Admission, r.RunCutter, r.Bus, cmdRewindChat))
-	configLocks := chatlock.New()
+	configLocks := keylock.New(cmp.Compare[marotte.ChatID])
 	d.Register(marotte.CmdSetEffort, bind6(r.Bridges, r.Chats, r.Bus, r.Workspace, r.Effort, configLocks, cmdSetEffort))
 	d.Register(marotte.CmdSetThinking, bind3(r.Bridges, r.Chats, configLocks, cmdSetThinking))
 	d.Register(marotte.CmdSetMode, bind4(r.Bridges, r.Chats, r.Bus, r.Modes, cmdSetMode))

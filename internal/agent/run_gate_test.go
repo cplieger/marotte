@@ -268,6 +268,19 @@ func (g *gateRun) askVault(ctx context.Context, t *testing.T) *marotte.RPCError 
 	return rerr
 }
 
+// resumeLockFree reports whether the run's resume lock is free by taking and dropping it; a held lock answers false
+// after a short wait.
+func resumeLockFree(rs *Runs, workflowID string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	unlock, err := rs.resumes.Lock(ctx, workflowID)
+	if err != nil {
+		return false
+	}
+	unlock()
+	return true
+}
+
 func waitUntil(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	for deadline := time.Now().Add(5 * time.Second); !cond(); {

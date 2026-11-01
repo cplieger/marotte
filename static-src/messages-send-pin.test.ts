@@ -57,6 +57,7 @@ const { served, apiGetMock } = vi.hoisted(() => ({
   apiGetMock: vi.fn(),
 }));
 vi.mock("./api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   apiGet: apiGetMock,
   // Present-but-inert so real-ESM linking succeeds.
   apiPost: vi.fn(),

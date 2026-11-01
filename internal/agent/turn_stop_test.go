@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 // A short grace for the call-grace rows; each runs in a bubble, so it is exact.
@@ -204,7 +206,7 @@ func TestCmdCancel_ASupersededPromptsUnansweredCallIsReleased(t *testing.T) {
 func TestCmdCancel_DuringTheHandoffCloseKeepsTheWaitingPromptUnsent(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		block := newLogLineBlock(t, "closing the agent's unbracketed turn so an admitted prompt can be sent")
-		swapDefaultLogger(t, block)
+		capture.SwapDefault(t, slog.New(block))
 		h, cs, br, rewake := gateRewakeHub(t, nil)
 		prompted := promptCalls(br)
 		prompt, ok := h.coord.PromptTurn("c1")

@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // errStaleWrite is the sentence on a refused stale save.

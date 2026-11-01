@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Mock } from "vitest";
 import { effect } from "@cplieger/reactive";
+import { mountLiveRegions } from "@cplieger/ui-primitives/announce";
 
 // Mock dependencies that tabs.ts imports at module level.
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
@@ -150,6 +151,7 @@ vi.mock("./transport.js", () =>
 );
 vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => ({
+    apiBlobOrError: vi.fn(),
     apiGetTyped: m.tabListRead(),
     // Present-but-inert so real-ESM linking succeeds: tabs.ts imports
     // `normalizeDirPath` from files-shared.js, which imports this name. No case
@@ -3049,6 +3051,15 @@ describe("a drop is shown before the server confirms it", () => {
 // Move up/down moves a GROUP within its pin partition, committed like a drop.
 
 describe("Move up / Move down in the chat menu", () => {
+  // The root pair app boot mounts; the outer beforeEach has just reset the body.
+  let releaseRegions: () => void = () => undefined;
+  beforeEach(() => {
+    releaseRegions = mountLiveRegions(document.body);
+  });
+  afterEach(() => {
+    releaseRegions();
+  });
+
   /** Open the context menu on `ref`'s row and answer with the items it offered. */
   async function menuFor(ref: string): Promise<ContextMenuItem[]> {
     await paint();

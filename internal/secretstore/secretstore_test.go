@@ -5,12 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/slogx/capture"
 )
 
 // realKey has the exact shape KAS derives (sha256("http://127.0.0.1:46877/mcp" + "|")).
@@ -279,13 +280,7 @@ func TestCorruptStoreReportsTheQuarantineNotAFailure(t *testing.T) {
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
 }
 

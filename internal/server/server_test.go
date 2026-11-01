@@ -15,6 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/slogx/capture"
 )
 
 type testPush struct{}
@@ -468,13 +469,7 @@ func TestNotifyPermissionKeyIsUnreachable(t *testing.T) {
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
 }
 

@@ -2,9 +2,9 @@ package composition
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,7 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 func TestConfigFromEnv_Defaults(t *testing.T) {
@@ -91,10 +91,10 @@ func TestConfigFromEnv_RemovedOverridesAreIgnored(t *testing.T) {
 	}
 }
 
-func containsIP(nets []*net.IPNet, ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	for _, n := range nets {
-		if n.Contains(ip) {
+func containsIP(prefixes []netip.Prefix, ipStr string) bool {
+	ip := netip.MustParseAddr(ipStr)
+	for _, p := range prefixes {
+		if p.Contains(ip) {
 			return true
 		}
 	}
@@ -233,6 +233,18 @@ func TestParseTrustedProxies(t *testing.T) {
 			raw:      "10.0.0.0/8,,,",
 			wantLen:  1,
 			contains: []string{"10.0.0.1"},
+		},
+		{
+			name:        "an IPv4-mapped CIDR becomes its IPv4 prefix",
+			raw:         "::ffff:10.0.0.0/104",
+			wantLen:     1,
+			contains:    []string{"10.1.2.3"},
+			notContains: []string{"11.0.0.1"},
+		},
+		{
+			name:    "a zoned address is malformed",
+			raw:     "fe80::1%eth0",
+			wantLen: 0,
 		},
 		{
 			name:    "all-malformed yields empty",

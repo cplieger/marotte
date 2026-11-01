@@ -18,6 +18,7 @@ import (
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/creds"
 	"github.com/cplieger/keyenc"
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/logsafe"
 )
 
@@ -52,12 +53,14 @@ type Manager struct {
 	health     string
 	lastHealth string
 	configDir  string
-	locks      idLocks
-	extraOpts  []forgeapi.Option
-	deadlines  mutationDeadlines
-	persist    sync.Mutex
-	gitMu      sync.Mutex
-	mu         sync.RWMutex
+	// locks is the per-connection lock every change takes, held across that
+	// change's own I/O. Built in NewManager; a nil set panics on its first lock.
+	locks     *keylock.Set[string]
+	extraOpts []forgeapi.Option
+	deadlines mutationDeadlines
+	persist   sync.Mutex
+	gitMu     sync.Mutex
+	mu        sync.RWMutex
 }
 
 // connection is one live connection. It is never modified once installed:
@@ -125,6 +128,7 @@ func NewManager(configDir string, notify func(context.Context, Change)) *Manager
 		configDir:  configDir,
 		records:    newRecordsFile(configDir),
 		deadlines:  mutationDeadlines{total: mutationDeadline, reserve: durableReserve},
+		locks:      keylock.New(cmp.Compare[string]),
 	}
 	m.lists.repos.stored = func(ctx context.Context, key cacheKey) {
 		m.notify(ctx, Change{ID: key.conn, ReposListed: true})

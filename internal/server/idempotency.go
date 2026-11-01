@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // idempotencyHeader is the request header carrying the client's

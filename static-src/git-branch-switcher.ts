@@ -6,7 +6,7 @@ import { apiGet } from "./api-client.js";
 import { checkoutBranch } from "./actions/git-branch.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
-import { el } from "@cplieger/reactive";
+import { createRoot, el, runWithOwner, type Owner } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { ICON_GIT_BRANCH, ICON_SEND, findGlyph } from "./icons.js";
 import { createPopover, type PopoverController } from "@cplieger/ui-primitives/popover";
@@ -24,11 +24,9 @@ let openPopover: HTMLDivElement | null = null;
 let popoverCtl: PopoverController | null = null;
 let popoverNav: RovingFocusController | null = null;
 let activeAnchor: HTMLElement | null = null;
-let branchController: AbortController | null = null;
-let popoverBindingCleanups: (() => void)[] = [];
-/** Per-row checkout loading-state unbinds by branch, cleared by reconcile.onRemove and en masse by closePopover(). */
-const rowUnbinds = new Map<string, () => void>();
-registerCleanup(() => branchController?.abort());
+/** The open popover's owner: disposing it ends its loading-state bindings and aborts its branches load. */
+let switcherRoot: { readonly owner: Owner; readonly dispose: () => void } | null = null;
+registerCleanup(() => switcherRoot?.dispose());
 
 /**
  * The icon is a sibling node rather than a background image, so it inherits `currentColor` and the CSP allows it;
@@ -49,6 +47,10 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   }
   closePopover();
   activeAnchor = anchorEl;
+  const root = createRoot((dispose, owner) => ({ owner, dispose }));
+  switcherRoot = root;
+  // Per-row checkout loading-state unbinds by branch, for reconcile.onRemove; the root ends the rest.
+  const rowUnbinds = new Map<string, () => void>();
 
   // No role here: role="menu" on a panel holding an input and a form is an axe aria-required-children violation. The
   // menu role sits on the branch list, whose children are menuitems.
@@ -114,11 +116,9 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   popoverNav = rovingFocus(pop, ".git-branch-popover-row");
   ctl.show();
 
-  branchController?.abort();
-  branchController = new AbortController();
   void apiGet<BranchesResponse>(
     `/api/git/branches?repo=${encodeURIComponent(repo)}`,
-    branchController.signal,
+    root.owner.signal,
   ).then((data) => {
     if (data === null) {
       status.textContent = "Failed to load branches.";
@@ -153,7 +153,13 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
           row.addEventListener("click", () => {
             void doCheckout(repo, b.name, false);
           });
-          rowUnbinds.set(b.name, bindLoadingState("git.checkout_branch", row));
+          // Undefined once the popover closed: a load answering after that binds nothing.
+          const unbind = runWithOwner(root.owner, () =>
+            bindLoadingState("git.checkout_branch", row),
+          );
+          if (unbind !== undefined) {
+            rowUnbinds.set(b.name, unbind);
+          }
           return row;
         },
         update: (row, b: BranchEntry) => {
@@ -193,8 +199,10 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     }
     void doCheckout(repo, name, true);
   });
-  popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", createInput));
-  popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", createBtn));
+  runWithOwner(root.owner, () => {
+    bindLoadingState("git.checkout_branch", createInput);
+    bindLoadingState("git.checkout_branch", createBtn);
+  });
 }
 
 /** Outside-click and Escape arrive here too, via the controller's dismissal wiring. */
@@ -210,16 +218,8 @@ function cleanupSwitcher(): void {
   if (openPopover === null) {
     return;
   }
-  for (const fn of popoverBindingCleanups) {
-    fn();
-  }
-  popoverBindingCleanups = [];
-  for (const unbind of rowUnbinds.values()) {
-    unbind();
-  }
-  rowUnbinds.clear();
-  branchController?.abort();
-  branchController = null;
+  switcherRoot?.dispose();
+  switcherRoot = null;
   popoverNav?.dispose();
   popoverNav = null;
   openPopover.remove();

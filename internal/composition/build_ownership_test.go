@@ -11,13 +11,14 @@ import (
 	"syscall"
 	"testing"
 	"testing/fstest"
+
+	"github.com/cplieger/slogx/capture"
 )
 
 // A second marotte booted on a live instance's KIRO_HOME must refuse before it renders its own
 // (empty) MCP store over the live kiro-cli config.
 func TestBuild_RefusesAKiroHomeAnotherInstanceHolds(t *testing.T) {
-	prev := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	capture.SwapDefault(t, slog.Default())
 
 	root := t.TempDir()
 	home := filepath.Join(root, "home")

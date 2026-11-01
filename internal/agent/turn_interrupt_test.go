@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 const (
@@ -130,7 +132,7 @@ func assertClosesClean(t *testing.T, br *fakeBridge, cs *testChatStore, turn str
 func TestCompactionReap_AnExpiryOutlivingItsTurnLeavesTheNextPromptAlone(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		block := newLogLineBlock(t, "the turn stayed silent after a failed compaction; interrupting it")
-		swapDefaultLogger(t, block)
+		capture.SwapDefault(t, slog.New(block))
 		h, cs, br, first, answerFirst, prompted := interruptHub(t)
 
 		h.coord.CompactionFailed("c1", first, "compaction failed")
@@ -151,7 +153,7 @@ func TestCompactionReap_AnExpiryOutlivingItsTurnLeavesTheNextPromptAlone(t *test
 func TestCompactionReap_AnExpiryOutlivingAnEmptyTurnLeavesItsRetryAlone(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		block := newLogLineBlock(t, "the turn stayed silent after a failed compaction; interrupting it")
-		swapDefaultLogger(t, block)
+		capture.SwapDefault(t, slog.New(block))
 		answerFirst, answerRetry := make(chan struct{}), make(chan struct{})
 		t.Cleanup(func() { close(answerRetry) })
 		var (

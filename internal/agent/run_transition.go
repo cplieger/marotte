@@ -179,7 +179,7 @@ var transitionHook atomic.Pointer[func(rs *Runs, workflowID string, want runWant
 // read.
 func (rs *Runs) transition(ctx context.Context, workflowID string, req *runRequest) (runChange, error) {
 	c := runChange{outcome: resumeFailed, charged: req.charged}
-	release, err := rs.resumes.acquire(ctx, workflowID)
+	release, err := rs.resumes.Lock(ctx, workflowID)
 	if err != nil {
 		return c, err
 	}

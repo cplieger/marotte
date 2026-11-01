@@ -7,10 +7,9 @@ import {
   transportAction,
   IDEMPOTENCY_COMMAND_FIELD,
   API_TIMEOUT_MS,
-  classifyFetchError,
-  withTimeout,
 } from "./index.js";
 import type { ActionErrorLike } from "./index.js";
+import { readDownload } from "./download.js";
 import { exportFilename } from "../export-filename.js";
 import { THINKING_OFF, thinkingIsOff } from "../effort.js";
 import { getCachedModels } from "../picker.js";
@@ -255,18 +254,11 @@ export const downloadKiroSession = defineAction<{ chatID: string; name: string }
   name: "chat.download_kiro_session",
   dedupe: ({ chatID }) => chatID,
   run: async ({ chatID, name }, signal) => {
-    let r: Response;
-    try {
-      r = await fetch(`/api/chats/${encodeURIComponent(chatID)}/kiro-session`, {
-        signal: withTimeout(signal, SESSION_DOWNLOAD_TIMEOUT_MS),
-      });
-    } catch (e) {
-      throw classifyFetchError(e, signal);
-    }
-    if (!r.ok) {
-      throw new ActionError("Download failed", { status: r.status });
-    }
-    const blob = await r.blob();
+    const blob = await readDownload(
+      { method: "GET", path: `/api/chats/${encodeURIComponent(chatID)}/kiro-session` },
+      signal,
+      SESSION_DOWNLOAD_TIMEOUT_MS,
+    );
     if (signal.aborted) {
       return;
     }

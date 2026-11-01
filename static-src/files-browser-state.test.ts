@@ -62,6 +62,7 @@ vi.mock("./files-search.js", () => ({
 }));
 vi.mock("./files-picker.js", () => ({ setOnUploadComplete: vi.fn() }));
 vi.mock("./api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   apiPost: vi.fn(),
   apiGet: vi.fn(),
   // Linked through the settings actions, never called.

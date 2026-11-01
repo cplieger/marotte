@@ -98,6 +98,7 @@ const m = vi.hoisted(() => ({
 // `mockReset: true` wipes every implementation between tests, so these are ARMED in beforeEach
 // rather than only here. Each test now genuinely fetches.
 vi.mock("./api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   // Present-but-inert so real-ESM linking succeeds: other modules in this graph read it.
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),

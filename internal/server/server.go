@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"os/signal"
 	"strings"
 	"sync/atomic"
@@ -18,7 +18,7 @@ import (
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 const port = "9847"
@@ -77,12 +77,14 @@ type Server struct {
 	sensitive filebrowse.Sensitive
 	// heldKiroPrefs keeps the user's value of each kiro-cli setting a lock pins.
 	heldKiroPrefs heldKiroPrefs
-	// trustedProxies feeds webhttp.WithClientIP; nil logs the unspoofable socket peer.
-	trustedProxies []*net.IPNet
+	// trustedProxies feeds clientIP; nil logs the unspoofable socket peer.
+	trustedProxies []netip.Prefix
 	acctUsage      acctUsageCache
 	cliTimeouts    cliTimeouts
 	// ready is true between listener bind and the shutdown signal.
 	ready atomic.Bool
+	// ignoredPublicWarned latches clientIP's one warning per process.
+	ignoredPublicWarned atomic.Bool
 }
 
 // Option configures a Server at construction time.
@@ -226,7 +228,7 @@ func WithWorkDir(d string) Option { return func(s *Server) { s.workDir = d } }
 
 // WithTrustedProxies sets the reverse-proxy networks trusted when resolving the
 // access-log client_ip. Empty trusts nothing, so the socket peer is logged.
-func WithTrustedProxies(trusted []*net.IPNet) Option {
+func WithTrustedProxies(trusted []netip.Prefix) Option {
 	return func(s *Server) { s.trustedProxies = trusted }
 }
 
@@ -368,6 +370,19 @@ func (s *Server) ListenAndServe() error {
 	return runErr
 }
 
+// clientIP is the access log's client_ip. The first request whose ignored forwarding header names a
+// public address warns once, because a reverse proxy missing from TRUSTED_PROXIES otherwise makes
+// every line log the proxy's address silently.
+func (s *Server) clientIP(r *http.Request) string {
+	res := webhttp.ResolveClient(r, s.trustedProxies...)
+	if res.IgnoredPublic && s.ignoredPublicWarned.CompareAndSwap(false, true) {
+		slog.Warn("a peer outside TRUSTED_PROXIES forwarded a public client address; client_ip logs the peer instead",
+			"peer", res.Peer.String(),
+			"hint", "if a reverse proxy sits in front of marotte, add its address to TRUSTED_PROXIES; a client sending its own X-Forwarded-For also triggers this")
+	}
+	return res.IP.String()
+}
+
 const msgUnknownAPIEndpoint = "unknown endpoint"
 
 // registerAPIFallback puts a 404 under the /api/ subtree, so an unmatched API path is not
@@ -393,7 +408,7 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 			// /api/health is probed every 30s, so a healthy probe logs at Debug and only
 			// a failing one is surfaced.
 			webhttp.ProbeLogLevel("/api/health"),
-			webhttp.WithClientIP(s.trustedProxies...),
+			webhttp.WithClientIPFunc(s.clientIP),
 			// A preview path carries a 12h bearer token, so it logs as the route template.
 			webhttp.WithTemplatePathsUnder(preview.PathPrefix),
 		),

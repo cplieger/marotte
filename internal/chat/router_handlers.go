@@ -16,7 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id} (one chat with a paged window of turns).

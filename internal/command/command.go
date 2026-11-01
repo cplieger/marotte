@@ -20,7 +20,7 @@ import (
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope: the largest

@@ -15,7 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // The client's CATALOG_REQUEST_TIMEOUT_MS (static-src/model-catalog.ts) must stay longer: move them

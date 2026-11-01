@@ -14,6 +14,7 @@ const m = vi.hoisted(() => ({
 // A Browser-Mode mock is linked as real ESM, so EVERY name any module in this graph reaches has to
 // exist on it — a partial factory fails collection rather than one case.
 vi.mock("./api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
   // Reached through `run-step-transcript.js`, which run-view imports to read a settled step's

@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/sse"
 	"github.com/cplieger/sse/ssetest"
 )
@@ -82,9 +83,7 @@ func TestEmit_TopicCarriesChatID(t *testing.T) {
 // subject_changed carrying its stamp, with a Warn; a frame under the cap publishes intact.
 func TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged(t *testing.T) {
 	var logs bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	h, _, _ := newTestHub()
 	base := len(h.bus.fanout.Snapshot())
 
@@ -134,9 +133,7 @@ func textEntry(t *testing.T, turn string, seq uint64, text string) marotte.Entry
 // TestEmit_AnUnstampedFrameOverTheCapIsDroppedWithAnError pins that no subject, no fetch to substitute.
 func TestEmit_AnUnstampedFrameOverTheCapIsDroppedWithAnError(t *testing.T) {
 	var logs bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&logs, nil)))
 	h, _, _ := newTestHub()
 	base := len(h.bus.fanout.Snapshot())
 

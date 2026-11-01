@@ -1,6 +1,7 @@
 package command
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +12,7 @@ import (
 	"testing"
 	"testing/synctest"
 
-	"github.com/cplieger/marotte/internal/chatlock"
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -67,7 +68,7 @@ func TestCmdSetThinking_SendsTheStringValueAndPersistsTheChoice(t *testing.T) {
 	b := &configLog{recordingBridge: &recordingBridge{result: map[string]any{}, sessionID: "s"}}
 	host := newBridgeHost(store, b)
 
-	_, err := cmdSetThinking(t.Context(), host, host, chatlock.New(), thinkingReq(t, "c1", false))
+	_, err := cmdSetThinking(t.Context(), host, host, keylock.New(cmp.Compare[marotte.ChatID]), thinkingReq(t, "c1", false))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -85,7 +86,7 @@ func TestCmdSetThinking_ARefusedLiveSwitchIsNotPersisted(t *testing.T) {
 	seedThinking(t, store, "c1", "", "")
 	host := newBridgeHost(store, &recordingBridge{callErr: errors.New("no such config option"), sessionID: "s"})
 
-	_, err := cmdSetThinking(t.Context(), host, host, chatlock.New(), thinkingReq(t, "c1", false))
+	_, err := cmdSetThinking(t.Context(), host, host, keylock.New(cmp.Compare[marotte.ChatID]), thinkingReq(t, "c1", false))
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", statusOf(err))
@@ -100,7 +101,7 @@ func TestCmdSetThinking_RejectsAMalformedPayload(t *testing.T) {
 	host := newBridgeHost(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 	cmd := &marotte.ClientCommand{Type: marotte.CmdSetThinking, ChatID: "c1", Payload: json.RawMessage(`{"enabled":"no"}`)}
 
-	_, err := cmdSetThinking(t.Context(), host, host, chatlock.New(), cmd)
+	_, err := cmdSetThinking(t.Context(), host, host, keylock.New(cmp.Compare[marotte.ChatID]), cmd)
 
 	if statusOf(err) != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", statusOf(err))
@@ -226,7 +227,7 @@ func (b *gatedEffort) CallAt(ctx context.Context, method string, params any) (*m
 // starts second on the same chat while it is parked, then lets the refusal through. It returns the
 // config calls in wire order and the chat record both commands left.
 func refusedEffortRacing(
-	t *testing.T, second func(ctx context.Context, host hostDouble, locks *chatlock.Set) (any, error),
+	t *testing.T, second func(ctx context.Context, host hostDouble, locks *keylock.Set[marotte.ChatID]) (any, error),
 ) (sent []string, rec *marotte.Chat) {
 	t.Helper()
 	synctest.Test(t, func(t *testing.T) {
@@ -237,7 +238,7 @@ func refusedEffortRacing(
 			release:         make(chan struct{}),
 		}
 		host := newBridgeHost(store, b)
-		locks := chatlock.New()
+		locks := keylock.New(cmp.Compare[marotte.ChatID])
 
 		refused := effortReq(t, "c1", "max")
 		var wg sync.WaitGroup
@@ -265,7 +266,7 @@ func refusedEffortRacing(
 
 func TestCmdSetEffort_ARefusedTierNeverUndoesAConcurrentAcceptedTier(t *testing.T) {
 	accepted := effortReq(t, "c1", "high")
-	sent, rec := refusedEffortRacing(t, func(ctx context.Context, host hostDouble, locks *chatlock.Set) (any, error) {
+	sent, rec := refusedEffortRacing(t, func(ctx context.Context, host hostDouble, locks *keylock.Set[marotte.ChatID]) (any, error) {
 		return cmdSetEffort(ctx, host, host, host, Workspace{}, host, locks, accepted)
 	})
 
@@ -286,7 +287,7 @@ func TestCmdSetEffort_ARefusedTierNeverUndoesAConcurrentAcceptedTier(t *testing.
 
 func TestCmdSetEffort_ARefusedTierNeverUndoesAConcurrentThinkingOn(t *testing.T) {
 	on := thinkingReq(t, "c1", true)
-	sent, rec := refusedEffortRacing(t, func(ctx context.Context, host hostDouble, locks *chatlock.Set) (any, error) {
+	sent, rec := refusedEffortRacing(t, func(ctx context.Context, host hostDouble, locks *keylock.Set[marotte.ChatID]) (any, error) {
 		return cmdSetThinking(ctx, host, host, locks, on)
 	})
 

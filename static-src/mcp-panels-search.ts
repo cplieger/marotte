@@ -130,7 +130,7 @@ export function initSearchPanel(): void {
   });
 
   searchUnsub = subscribeToActions((inst) => {
-    if (inst.name !== "mcp.search_registry") {
+    if (inst.name !== "mcp.search_registry" || inst.sensitive === true) {
       return;
     }
     const q = (inst.args as { q: string }).q;

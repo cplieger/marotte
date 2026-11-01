@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/push"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // The browser-mode suite starts one beside whatever already holds the default port.

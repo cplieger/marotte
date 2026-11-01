@@ -56,7 +56,7 @@ func (m *Manager) windows(base context.Context, deadline time.Time) (fctx, dctx 
 // deadline is errConnectionBusy, a base that ended its own error, and unusable
 // persistence errConnectionUnusable with the lock released.
 func (m *Manager) begin(base, fctx context.Context, id string) (cur *connection, store creds.Store, unlock func(), err error) {
-	unlock, err = m.locks.lock(fctx, id)
+	unlock, err = m.locks.Lock(fctx, id)
 	if err != nil {
 		if base.Err() != nil {
 			return nil, nil, nil, base.Err()

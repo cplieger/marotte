@@ -1,7 +1,6 @@
 package logctl
 
 import (
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -9,22 +8,17 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/slogx/capture"
 )
 
 // Package-internal access is intentional: it is the only observable signal of Install/SetDebug, so
 // the test lives in-package.
 func snapshotLevel() slog.Level { return levelVar.Level() }
 
-// restoreDefaultLogger snapshots slog.Default and restores it at cleanup, so Install's
-// slog.SetDefault does not leak across tests.
+// restoreDefaultLogger restores slog's default at cleanup, so Install's swap does not leak across tests.
 func restoreDefaultLogger(t *testing.T) {
 	t.Helper()
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
+	capture.SwapDefault(t, slog.Default())
 }
 
 func writeSettings(t *testing.T, dir, content string) {
