@@ -30,7 +30,7 @@ require (
 	github.com/cplieger/slogx v1.8.0
 	github.com/cplieger/sse v1.3.0-dev.5
 	github.com/cplieger/ssrf/v4 v4.5.0
-	github.com/cplieger/toolbelt/v3 v3.11.0-dev.20
+	github.com/cplieger/toolbelt/v3 v3.11.0-dev.21
 	github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.15
 	github.com/cplieger/webhttp/v4 v4.0.0
 	github.com/cplieger/wiregen/v3 v3.3.1
