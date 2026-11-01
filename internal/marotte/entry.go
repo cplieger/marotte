@@ -16,6 +16,7 @@ type EntryKind string
 const (
 	EntryKindTurnOpen         EntryKind = "turn_open"
 	EntryKindTurnBind         EntryKind = "turn_bind"
+	EntryKindTurnWake         EntryKind = "turn_wake"
 	EntryKindText             EntryKind = "text"
 	EntryKindThinking         EntryKind = "thinking"
 	EntryKindToolCall         EntryKind = "tool_call"

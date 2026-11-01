@@ -37,6 +37,8 @@ type baseDeps struct {
 	// scheduledRuns are the workflow ids IsScheduled answers true for, so a
 	// test can stage a scheduled run without a runtime or a scheduler.
 	scheduledRuns map[string]bool
+	// runNames are the names RunName answers, keyed by workflow id.
+	runNames map[string]string
 	// runLabels are the labels RunLabel answers, keyed by workflow id.
 	runLabels   map[string]string
 	planUpdates []marotte.RunPlanUpdate
@@ -208,6 +210,29 @@ func (d *baseDeps) DepartedName(id marotte.ChatID) (string, bool) {
 // those filed after a close, as the store's log would.
 func (d *baseDeps) UnsettledWorkflowMessages(_ context.Context, chatID marotte.ChatID) ([]marotte.WorkflowMessage, error) {
 	return waitingIn(d.turns.chatLog[chatID])
+}
+
+// WakeCauses reads the double's chat log as the store reads its own, an entry's index standing for its offset.
+func (d *baseDeps) WakeCauses(_ context.Context, chatID marotte.ChatID, session string) (marotte.WakeCauses, error) {
+	turn, opens := d.turns.chats[chatID], d.turns.opens[chatID]
+	if turn == nil || d.turns.closed(turn) || len(opens) == 0 {
+		return marotte.WakeCauses{}, nil
+	}
+	prev := int64(-1)
+	if len(opens) > 1 {
+		prev = int64(opens[len(opens)-2])
+	}
+	var facts []marotte.PositionedFact
+	for i, e := range d.turns.chatLog[chatID] {
+		fact, ok, err := marotte.WorkflowMessageFactOf(&e)
+		if err != nil {
+			return marotte.WakeCauses{}, err
+		}
+		if ok {
+			facts = append(facts, marotte.PositionedFact{Fact: fact, At: int64(i)})
+		}
+	}
+	return marotte.WakeCausesOf(facts, session, int64(opens[len(opens)-1]), prev), nil
 }
 
 func waitingIn(logs ...[]marotte.Entry) ([]marotte.WorkflowMessage, error) {
@@ -498,6 +523,8 @@ type turnLogs struct {
 	// chatLog is each chat's log in file order across its turns, and chatOf the chat a turn id is the chat's.
 	chatLog map[marotte.ChatID][]marotte.Entry
 	chatOf  map[string]marotte.ChatID
+	// opens is where each chat turn opened in chatLog, oldest first: the store's turn_open offsets.
+	opens map[marotte.ChatID][]int
 	// appendErr, when set, is what every sink append and every between-turns
 	// append answers, recording nothing: the store refusing a write.
 	appendErr error
@@ -526,6 +553,7 @@ func newTurnLogs() *turnLogs {
 		sealed:  map[string][]marotte.Entry{},
 		chatLog: map[marotte.ChatID][]marotte.Entry{},
 		chatOf:  map[string]marotte.ChatID{},
+		opens:   map[marotte.ChatID][]int{},
 	}
 }
 
@@ -538,6 +566,7 @@ func (tl *turnLogs) chatTurn(chatID marotte.ChatID) *turnlog.Turn {
 	t := tl.open()
 	tl.chats[chatID] = t
 	tl.chatOf[t.ID()] = chatID
+	tl.opens[chatID] = append(tl.opens[chatID], len(tl.chatLog[chatID]))
 	return t
 }
 
@@ -609,6 +638,7 @@ func (d *baseDeps) IsScheduled(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
 }
 func (d *baseDeps) RunLabel(workflowID string) string { return d.runLabels[workflowID] }
+func (d *baseDeps) RunName(workflowID string) string  { return d.runNames[workflowID] }
 
 type stagedRunNotice struct {
 	workflowID string

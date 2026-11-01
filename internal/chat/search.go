@@ -417,11 +417,11 @@ func entrySegments(e *marotte.Entry, t *searchTurn) []segment {
 		return oneSegment(SegmentTurnFailure, decodeText(e.Payload, &p, func() string { return p.FailureReason }))
 	case marotte.EntryKindTurnOpen:
 		return turnOpenSegments(e.Payload)
-	case marotte.EntryKindTurnBind, marotte.EntryKindSteerAck, marotte.EntryKindCompaction,
+	case marotte.EntryKindTurnBind, marotte.EntryKindTurnWake, marotte.EntryKindSteerAck, marotte.EntryKindCompaction,
 		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindSteerDelivered,
 		marotte.EntryKindSteerCleared:
-		// A compaction summary restates history searchable at its source; bind and switch render no text. An ack's words
-		// are the one rendered prose left out of the index.
+		// A compaction summary restates history searchable at its source, as a wake's message does at its row; bind and
+		// switch render no text. An ack's words are the one rendered prose left out of the index.
 		return nil
 	}
 	return nil

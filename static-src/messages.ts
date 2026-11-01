@@ -116,7 +116,9 @@ import {
   dropTail,
   geometrySkipped,
   setRunCardOwners,
+  openNoteRun,
 } from "./messages-blocks.js";
+import { turnWakeOf, wakeLine } from "./turn-wake.js";
 import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
@@ -2097,6 +2099,7 @@ function syncTurnBodyless(card: HTMLElement): void {
 
 function headerData(t: Turn): TurnHeaderData {
   const request = t.trigger?.text;
+  const wake = turnWakeOf(t);
   return {
     n: t.n,
     outcome: t.outcome,
@@ -2106,6 +2109,10 @@ function headerData(t: Turn): TurnHeaderData {
     label: t.trigger?.label,
     // From the trigger entry: attachments never appear in the prompt text.
     attachments: t.trigger?.attachments ?? [],
+    wake: wake === undefined ? undefined : wakeLine(wake),
+    onOpenRun: (workflowID) => {
+      openNoteRun(getActiveId(), workflowID);
+    },
   };
 }
 

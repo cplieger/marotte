@@ -29,6 +29,10 @@ func (nopChatRecords) UnsettledWorkflowMessages(context.Context, marotte.ChatID)
 	return nil, nil
 }
 
+func (nopChatRecords) WakeCauses(context.Context, marotte.ChatID, string) (marotte.WakeCauses, error) {
+	return marotte.WakeCauses{}, nil
+}
+
 var _ chatRecords = nopChatRecords{}
 
 // recStore is a chatRecords whose every call answers err, counting header writes, so a

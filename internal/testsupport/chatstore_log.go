@@ -39,6 +39,16 @@ func (*InMemoryChatStore) UnsettledWorkflowMessages(context.Context, marotte.Cha
 	return nil, nil
 }
 
+// WakeCauses answers none.
+func (*RecordingChatStore) WakeCauses(context.Context, marotte.ChatID, string) (marotte.WakeCauses, error) {
+	return marotte.WakeCauses{}, nil
+}
+
+// WakeCauses answers none.
+func (*InMemoryChatStore) WakeCauses(context.Context, marotte.ChatID, string) (marotte.WakeCauses, error) {
+	return marotte.WakeCauses{}, nil
+}
+
 // DepartedName answers false: neither fake keeps a tombstone.
 func (*InMemoryChatStore) DepartedName(marotte.ChatID) (string, bool) { return "", false }
 

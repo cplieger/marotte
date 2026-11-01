@@ -151,6 +151,9 @@ type chatRecords interface {
 	// UnsettledWorkflowMessages is the chat log's workflow messages nothing has settled
 	// (marotte.WorkflowMessageFold.Unsettled), oldest first.
 	UnsettledWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
+	// WakeCauses is what the chat's log holds that can have started its open turn on session
+	// (chat.EntryLog.WakeCauses).
+	WakeCauses(ctx context.Context, id marotte.ChatID, session string) (marotte.WakeCauses, error)
 	// DepartedName is the name a chat had when its record was deleted, for a notice
 	// its bridge raises before teardown; false for a chat that was not deleted.
 	DepartedName(id marotte.ChatID) (string, bool)
@@ -312,6 +315,7 @@ type Translator struct {
 	steps     *stepRegistry
 	read      *readSteers
 	wakes     *wakeLedger
+	wakeMem   *wakeMemory
 	slotWaits *slotWaits
 	workDir   string // last for fieldalignment, as in Roles
 }
@@ -345,6 +349,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		steps:          newStepRegistry(),
 		read:           newReadSteers(),
 		wakes:          newWakeLedger(),
+		wakeMem:        newWakeMemory(),
 		slotWaits:      &slotWaits{},
 	}
 	for _, o := range opts {
@@ -364,6 +369,9 @@ type runOriginAccess interface {
 	IsScheduled(workflowID string) bool
 	// RunLabel is the label marotte gave a run at launch, "" when it gave none.
 	RunLabel(workflowID string) string
+	// RunName is what a run's tab is called (its launch label, else its recipe), "" for a run
+	// marotte holds no lease for.
+	RunName(workflowID string) string
 	// RunNotice CONSUMES the finished run whose completion notice KAS queued into
 	// chatID's steering buffer and whose label the notice's text quotes, answering its
 	// id and the instant it finished (Unix ms). False when no recorded run matches, in

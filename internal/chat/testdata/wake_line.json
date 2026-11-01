@@ -1,0 +1,270 @@
+{
+  "doc": [
+    "The wake header's words: the one-line label and the message under it for each turn_wake shape.",
+    "internal/marotte WakeLine is the server reader (the rail's first line and the Markdown export) and",
+    "static-src/turn-wake.ts wakeText the client's (the header, the rail and Copy as text); both read",
+    "these cases, so a wording change lands in both or fails one.",
+    "",
+    "Expected values follow the approved wording, not either implementation. A run's name is its",
+    "run_label, else the id's first 11 characters (`wf_` plus eight)."
+  ],
+  "cases": [
+    {
+      "name": "a step's info message is addressed to you",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-01a15053",
+            "run": "wf_1a6d245a6e99e18e",
+            "run_label": "turn-wake",
+            "step": "prep/wait-apps",
+            "severity": "info",
+            "text": "wait-apps 9.7 h (cap now 24 h): apps are still draining, nothing needed from you."
+          }
+        ]
+      },
+      "label": "turn-wake · prep/wait-apps to you",
+      "body": "wait-apps 9.7 h (cap now 24 h): apps are still draining, nothing needed from you."
+    },
+    {
+      "name": "a step's warning asks you",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-01a15053",
+            "run": "wf_1a6d245a6e99e18e",
+            "run_label": "turn-wake",
+            "step": "prep/wait-apps",
+            "severity": "warning",
+            "text": "Should I apply D22 (one bullet in crew.md), or leave it as a follow-up?"
+          }
+        ]
+      },
+      "label": "turn-wake · prep/wait-apps asks you",
+      "body": "Should I apply D22 (one bullet in crew.md), or leave it as a follow-up?"
+    },
+    {
+      "name": "a step's error reports an error",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-01a15053",
+            "run": "wf_1a6d245a6e99e18e",
+            "run_label": "turn-wake",
+            "step": "prep/wait-apps",
+            "severity": "error",
+            "text": "go test failed in internal/chat: TestRailRows"
+          }
+        ]
+      },
+      "label": "turn-wake · prep/wait-apps reports an error",
+      "body": "go test failed in internal/chat: TestRailRows"
+    },
+    {
+      "name": "a network note says the step waits for the network",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-01a15053",
+            "run": "wf_1a6d245a6e99e18e",
+            "run_label": "turn-wake",
+            "step": "prep/wait-apps",
+            "severity": "info",
+            "text": "Step \"build\" has had connection errors (ECONNRESET) since 14:02:11. The workflow keeps retrying it about every 120s until 14:02:11 tomorrow and pauses the run if the last retry fails too. Nothing is needed from you."
+          }
+        ],
+        "note": "network"
+      },
+      "label": "turn-wake · prep/wait-apps is waiting for the network",
+      "body": "Step \"build\" has had connection errors (ECONNRESET) since 14:02:11. The workflow keeps retrying it about every 120s until 14:02:11 tomorrow and pauses the run if the last retry fails too. Nothing is needed from you."
+    },
+    {
+      "name": "a repeat cap is worded from the typed pause, with no body",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-01a15053",
+            "run": "wf_1a6d245a6e99e18e",
+            "run_label": "turn-wake",
+            "step": "prep/wait-apps",
+            "severity": "info",
+            "text": "A workflow you launched (\"turn-wake\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition."
+          }
+        ],
+        "note": "repeat_cap",
+        "loop": "fix-loop",
+        "max_iterations": 6
+      },
+      "label": "turn-wake paused: fix-loop reached its round limit (6)",
+      "body": ""
+    },
+    {
+      "name": "a run with no label is named by its id's short form",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-x",
+            "run": "wf_1a6d245a6e99e18e",
+            "step": "build",
+            "severity": "info",
+            "text": "done"
+          }
+        ]
+      },
+      "label": "wf_1a6d245a · build to you",
+      "body": "done"
+    },
+    {
+      "name": "a completed run",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_28486344b9bdedb0",
+        "run_label": "release-impact",
+        "run_status": "completed"
+      },
+      "label": "release-impact completed",
+      "body": ""
+    },
+    {
+      "name": "a failed run gives its reason",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_28486344b9bdedb0",
+        "run_label": "release-impact",
+        "run_status": "failed",
+        "stop_reason": "step build failed"
+      },
+      "label": "release-impact failed: step build failed",
+      "body": ""
+    },
+    {
+      "name": "a run the reader stopped gives the reason given",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_9c1d",
+        "run_label": "release-impact-leg2-held-build",
+        "run_status": "aborted",
+        "initiator": "user",
+        "stop_reason": "tab closed"
+      },
+      "label": "release-impact-leg2-held-build stopped by you: tab closed",
+      "body": ""
+    },
+    {
+      "name": "a run the reader marked complete",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_9c1d",
+        "run_label": "fix-loop",
+        "run_status": "completed",
+        "initiator": "user",
+        "stop_reason": "good enough"
+      },
+      "label": "fix-loop marked complete by you",
+      "body": ""
+    },
+    {
+      "name": "a run aborted by nobody named",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_9c1d",
+        "run_label": "fix-loop",
+        "run_status": "aborted"
+      },
+      "label": "fix-loop stopped",
+      "body": ""
+    },
+    {
+      "name": "an unlabelled finished run is named by its id's short form",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_28486344b9bdedb0",
+        "run_status": "completed"
+      },
+      "label": "wf_28486344 completed",
+      "body": ""
+    },
+    {
+      "name": "a re-delivery lists every message it resumes",
+      "wake": {
+        "reason": "rewake",
+        "steers": [
+          {
+            "id": "wfmsg-q",
+            "run": "wf_1a6d245a6e99e18e",
+            "run_label": "turn-wake",
+            "step": "build",
+            "severity": "warning",
+            "text": "Which branch should I base on?"
+          },
+          {
+            "id": "wfmsg-r",
+            "run": "wf_28486344b9bdedb0",
+            "run_label": "release-impact",
+            "step": "measure",
+            "severity": "success",
+            "text": "Leg 1 is done."
+          }
+        ]
+      },
+      "label": "Resumed with 2 workflow messages you stopped before they were read",
+      "body": "turn-wake · build: Which branch should I base on?\nrelease-impact · measure: Leg 1 is done."
+    },
+    {
+      "name": "a re-delivery of one message",
+      "wake": {
+        "reason": "rewake",
+        "steers": [
+          {
+            "id": "wfmsg-q",
+            "run": "wf_1a6d245a6e99e18e",
+            "run_label": "turn-wake",
+            "step": "build",
+            "severity": "warning",
+            "text": "Which branch?"
+          }
+        ]
+      },
+      "label": "Resumed with 1 workflow message you stopped before it was read",
+      "body": "turn-wake · build: Which branch?"
+    },
+    {
+      "name": "an unknown reason keeps today's line",
+      "wake": {
+        "reason": "unknown"
+      },
+      "label": "Agent-initiated turn",
+      "body": ""
+    },
+    {
+      "name": "a step-message wake that names no message keeps today's line",
+      "wake": {
+        "reason": "step_message"
+      },
+      "label": "Agent-initiated turn",
+      "body": ""
+    },
+    {
+      "name": "a run-finished wake that names no run keeps today's line",
+      "wake": {
+        "reason": "run_finished"
+      },
+      "label": "Agent-initiated turn",
+      "body": ""
+    },
+    {
+      "name": "a re-delivery that names no message keeps today's line",
+      "wake": {
+        "reason": "rewake"
+      },
+      "label": "Agent-initiated turn",
+      "body": ""
+    }
+  ]
+}

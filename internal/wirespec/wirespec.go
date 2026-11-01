@@ -52,6 +52,8 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.EntryPrompt](),
 	wiregen.TypeRef[marotte.EntryTurnOpen](),
 	wiregen.TypeRef[marotte.EntryTurnBind](),
+	wiregen.TypeRef[marotte.WakeSteer](),
+	wiregen.TypeRef[marotte.EntryTurnWake](),
 	wiregen.TypeRef[marotte.EntryText](),
 	wiregen.TypeRef[marotte.EntryThinking](),
 	wiregen.TypeRef[marotte.EntryToolCall](),
@@ -333,6 +335,9 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"EntryKind": {},
 	// The revert's cause, keying the client's wording record.
 	"TurnRevertCause": {},
+	// The turn header words each wake reason and note, so both tables must be total.
+	"WakeReason": {},
+	"WakeNote":   {},
 	// The banner says who switched the mode.
 	"ModeSwitchSource": {},
 	// The client words a KAS repin's reason, so its wording table must be total.

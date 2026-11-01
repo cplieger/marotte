@@ -177,6 +177,7 @@ func (s *stepRegistry) forgetRun(workflowID string) {
 // `record` doors refuse an empty id, so no guard is needed.
 func (t *Translator) ForgetRunSteps(workflowID string) {
 	t.steps.forgetRun(workflowID)
+	t.wakeMem.forgetRun(workflowID)
 }
 
 // RecordStepSession notes a step session learned from an `inspect` read: the recovery path

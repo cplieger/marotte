@@ -618,6 +618,8 @@ func (l *EntryLog) observeLocked(e *marotte.Entry, start, end int64) error {
 		return st.observeMessage(e, start)
 	case marotte.EntryKindTurnBind:
 		return l.foldTurnBindLocked(e)
+	case marotte.EntryKindTurnWake:
+		return foldTurnWake(st, e)
 	case marotte.EntryKindReconciled:
 		return l.foldReconciledLocked(e)
 	case marotte.EntryKindTurnRevert:
@@ -670,6 +672,24 @@ func (st *turnState) observeMessage(e *marotte.Entry, at int64) error {
 		st.messages = append(st.messages, messageFact{fact: fact, at: at})
 	}
 	return err
+}
+
+// foldTurnWake gives a wake turn's rail row the wake's line where a prompt turn has its prompt's; a wake
+// that names nothing leaves it empty, as a turn with no wake has.
+func foldTurnWake(st *turnState, e *marotte.Entry) error {
+	payload, err := decodeEntry[marotte.EntryTurnWake](e)
+	if err != nil {
+		return err
+	}
+	label, body := marotte.WakeLine(&payload)
+	if label == marotte.WakeFallbackLine {
+		return nil
+	}
+	if body != "" {
+		label += ": " + body
+	}
+	st.firstLine = firstLineOf(label)
+	return nil
 }
 
 func foldSteer(st *turnState, e *marotte.Entry) error {
@@ -804,7 +824,7 @@ func drawnBy(e *marotte.Entry, plans int) bool {
 		return false
 	}
 	switch e.Kind {
-	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnBind,
+	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnBind, marotte.EntryKindTurnWake,
 		marotte.EntryKindToolResult, marotte.EntryKindTurnClose,
 		marotte.EntryKindReconciled, marotte.EntryKindSteerCleared:
 		return false
@@ -1280,16 +1300,50 @@ func (l *EntryLog) UnsettledWorkflowMessages() []marotte.WorkflowMessage {
 // messagesLocked folds the surviving turns' workflow-message lines in file order, so a rewind is the one owner of
 // which rows wait and which take-ups settle.
 func (l *EntryLog) messagesLocked() marotte.WorkflowMessageFold {
+	return marotte.FoldWorkflowMessages(factsOf(l.messageFactsLocked()))
+}
+
+// messageFactsLocked is the surviving turns' workflow-message lines in file order, with their offsets.
+func (l *EntryLog) messageFactsLocked() []messageFact {
 	var facts []messageFact
 	for _, id := range l.survivingOrderLocked() {
 		facts = append(facts, l.turns[id].messages...)
 	}
 	slices.SortFunc(facts, func(a, b messageFact) int { return cmp.Compare(a.at, b.at) })
-	ordered := make([]marotte.WorkflowMessageFact, len(facts))
+	return facts
+}
+
+func factsOf(facts []messageFact) []marotte.WorkflowMessageFact {
+	out := make([]marotte.WorkflowMessageFact, len(facts))
 	for i := range facts {
-		ordered[i] = facts[i].fact
+		out[i] = facts[i].fact
 	}
-	return marotte.FoldWorkflowMessages(ordered)
+	return out
+}
+
+// WakeCauses answers marotte.WakeCausesOf for session over the surviving history: nothing when the newest surviving
+// turn is closed.
+func (l *EntryLog) WakeCauses(session string) marotte.WakeCauses {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	order := l.survivingOrderLocked()
+	if len(order) == 0 {
+		return marotte.WakeCauses{}
+	}
+	cur := l.turns[order[len(order)-1]]
+	if cur.closed {
+		return marotte.WakeCauses{}
+	}
+	var prevOpened int64 = -1
+	if len(order) > 1 {
+		prevOpened = l.turns[order[len(order)-2]].ranges[0].from
+	}
+	facts := l.messageFactsLocked()
+	positioned := make([]marotte.PositionedFact, len(facts))
+	for i := range facts {
+		positioned[i] = marotte.PositionedFact{Fact: facts[i].fact, At: facts[i].at}
+	}
+	return marotte.WakeCausesOf(positioned, session, cur.ranges[0].from, prevOpened)
 }
 
 // NeedsReconcile reports whether this record shows the session's own log has something it lacks, which is what runs

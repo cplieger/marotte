@@ -156,6 +156,7 @@ import type {
   EntryToolCall,
   EntryToolResult,
   EntryTurnBind,
+  EntryTurnWake,
   EntryTurnClose,
   EntryTurnOpen,
   EntryTurnRevert,
@@ -177,6 +178,7 @@ import type {
 export interface EntryPayload {
   turn_open: EntryTurnOpen;
   turn_bind: EntryTurnBind;
+  turn_wake: EntryTurnWake;
   text: EntryText;
   thinking: EntryThinking;
   tool_call: EntryToolCall;

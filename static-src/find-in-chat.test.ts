@@ -1547,6 +1547,68 @@ describe("server-hit navigation", () => {
     expect(document.querySelector("mark.find-hit-current")?.textContent).toBe("retry");
   });
 
+  it("lands a hit on a workflow message in the header of the turn it woke, where it is drawn", async () => {
+    const session = stageChat(["u1", "u2"]);
+    const message = "Which branch should I base the retry fix on?";
+    session.turns.set("u2", {
+      entries: [
+        {
+          id: "u2-open",
+          turn: "u2",
+          kind: "turn_open",
+          seq: 0,
+          ts: 1,
+          payload: { source: "wire_turn_start", n: 2 },
+        },
+        {
+          id: "u2-wake",
+          turn: "u2",
+          kind: "turn_wake",
+          seq: 1,
+          ts: 2,
+          payload: {
+            reason: "step_message",
+            steers: [{ id: "wfmsg-q", step: "ask", severity: "warning", text: message }],
+          },
+        },
+      ],
+      openEntries: new Map(),
+    });
+    stageHits([
+      serverHit({
+        turn_id: "u1",
+        entry_id: "wfmsg-q",
+        excerpt: message,
+        segment_kind: "steer",
+        offset: message.indexOf("retry"),
+        segment_len: message.length,
+      }),
+    ]);
+
+    // Mounted once the hit's turn is revealed, so the hit is the server's alone, as for a paged-out turn.
+    vi.mocked(chatSearch.revealHitTurn).mockImplementation(() => {
+      if (document.querySelector('[data-reconcile-key="u2"]') === null) {
+        mountTurnCard("u1", `<div data-reconcile-key="a1" class="msg-row"></div>`);
+        mountTurnCard("u2", null)
+          .querySelector<HTMLElement>(".turn-header")
+          ?.insertAdjacentHTML(
+            "beforeend",
+            `<div class="turn-req"><div class="turn-wake">turn-wake · ask asks you</div><div class="turn-req-text">${message}</div></div>`,
+          );
+      }
+      return Promise.resolve();
+    });
+
+    await openAndSearch("retry");
+    typeAndEnter("retry");
+
+    await vi.waitFor(() => {
+      expect(document.querySelector(".turn-req-text mark.find-hit-current")?.textContent).toBe(
+        "retry",
+      );
+    });
+  });
+
   it("lands an attachment hit on a pill in the turn header", async () => {
     stageTurnLevelChat();
     const name = "retry-notes.md";

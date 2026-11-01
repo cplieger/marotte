@@ -28,10 +28,29 @@ func renderChatMarkdown(c *marotte.Chat, entries []marotte.Entry) string {
 		b.WriteString("_No turns._\n")
 		return b.String()
 	}
+	woken := wakingSteers(entries)
 	for _, t := range turns {
-		writeTurnMarkdown(&b, t)
+		writeTurnMarkdown(&b, t, woken)
 	}
 	return b.String()
+}
+
+// wakingSteers is the workflow messages a turn_wake names as its turn's waker: the wake's header renders each, so
+// the row where it was filed renders nothing (static-src's twin skips the same card).
+func wakingSteers(entries []marotte.Entry) map[string]struct{} {
+	out := map[string]struct{}{}
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindTurnWake {
+			continue
+		}
+		var w marotte.EntryTurnWake
+		if decodePayload(&entries[i], &w) && w.Reason == marotte.WakeReasonStepMessage {
+			for _, s := range w.Steers {
+				out[s.ID] = struct{}{}
+			}
+		}
+	}
+	return out
 }
 
 func groupTurns(entries []marotte.Entry) [][]marotte.Entry {
@@ -76,20 +95,28 @@ type turnRender struct {
 	results  map[string]*marotte.EntryToolResult
 	calls    map[string]struct{}
 	readDrop map[string]struct{}
+	woken    map[string]struct{}
 	revert   string
 	plan     []marotte.PlanEntry
 	planDone bool
 }
 
-func newTurnRender(turn []marotte.Entry) turnRender {
+func newTurnRender(turn []marotte.Entry, woken map[string]struct{}) turnRender {
 	results, calls := indexResults(turn)
-	r := turnRender{results: results, calls: calls, plan: newestPlan(turn), readDrop: readDrops(turn)}
+	r := turnRender{results: results, calls: calls, plan: newestPlan(turn), readDrop: readDrops(turn), woken: woken}
 	for i := range turn {
 		if turn[i].Kind == marotte.EntryKindTurnRevert {
 			r.revert = turn[i].ID
 		}
 	}
 	return r
+}
+
+// writeSteer renders a steer unless another entry speaks for it: a wake that names it, or its read twin.
+func (r *turnRender) writeSteer(b *strings.Builder, e *marotte.Entry) {
+	if _, waker := r.woken[e.ID]; !waker && !r.readDropped(e) {
+		writeSteerMarkdown(b, e)
+	}
 }
 
 // readDropped reports a dropped agent note the turn also read; its read twin shares the id and still renders.
@@ -144,8 +171,8 @@ func agentNoteRead(e *marotte.Entry) (id string, ok, dropped bool) {
 }
 
 // writeTurnMarkdown renders one turn: heading and prompt, every rendering entry in file order, the footer and a rule.
-func writeTurnMarkdown(b *strings.Builder, turn []marotte.Entry) {
-	r := newTurnRender(turn)
+func writeTurnMarkdown(b *strings.Builder, turn []marotte.Entry, woken map[string]struct{}) {
+	r := newTurnRender(turn, woken)
 	for i := range turn {
 		r.writeEntry(b, &turn[i])
 	}
@@ -166,9 +193,9 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 	case marotte.EntryKindToolResult:
 		r.writeUnpairedResult(b, e)
 	case marotte.EntryKindSteer:
-		if !r.readDropped(e) {
-			writeSteerMarkdown(b, e)
-		}
+		r.writeSteer(b, e)
+	case marotte.EntryKindTurnWake:
+		writeTurnWakeMarkdown(b, e)
 	case marotte.EntryKindPlan:
 		r.writePlanOnce(b)
 	case marotte.EntryKindTurnRevert:
@@ -263,6 +290,17 @@ func writeThinkingMarkdown(b *strings.Builder, e *marotte.Entry) {
 	b.WriteString("<details>\n<summary>Reasoning</summary>\n\n")
 	b.WriteString(text)
 	b.WriteString("\n\n</details>\n\n")
+}
+
+// writeTurnWakeMarkdown renders a wake as a prompt renders: its label in bold, then its message.
+func writeTurnWakeMarkdown(b *strings.Builder, e *marotte.Entry) {
+	var w marotte.EntryTurnWake
+	if !decodePayload(e, &w) {
+		return
+	}
+	label, body := marotte.WakeLine(&w)
+	fmt.Fprintf(b, "**%s**\n\n", oneLine(label))
+	writeParagraph(b, body)
 }
 
 func writeSteerMarkdown(b *strings.Builder, e *marotte.Entry) {

@@ -3,6 +3,7 @@
 // window cannot see the turns paged out. Pure and DOM-free, like `turns.ts` beside it.
 
 import { OUTCOME_LABEL } from "./turn-severity.js";
+import { wakeText } from "./turn-wake.js";
 import { turnLedger } from "./turns.js";
 import type { Turn, TurnOutcome } from "./turns.js";
 
@@ -147,7 +148,8 @@ function residentRow(t: Turn): TurnSummary {
     outcome: t.outcome,
     agent_initiated: t.trigger === undefined,
   };
-  const line = firstLine(t.trigger?.text ?? "");
+  // A wake's line as `internal/chat/entrylog.go` foldTurnWake joins it: label, then message.
+  const line = firstLine(t.trigger?.text ?? wakeText(t).replace("\n", ": "));
   if (line !== "") {
     out.first_line = line;
   }

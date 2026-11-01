@@ -116,6 +116,7 @@ function afterAppend(chatID: string, entry: Entry): void {
     }
     case "turn_open":
     case "turn_bind":
+    case "turn_wake":
     case "text":
     case "thinking":
     case "tool_call":

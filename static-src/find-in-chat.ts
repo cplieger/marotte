@@ -9,6 +9,7 @@ import { $, byId } from "./dom.js";
 import { jumpTo, onTranscriptMutate } from "./scroll.js";
 import { runServerSearch, resetServerSearch, revealHitTurn } from "./chat-search.js";
 import { getActive, getActiveId } from "./store.js";
+import { wakeTurnFor } from "./turn-wake.js";
 import { runOffsetOf } from "./messages-blocks.js";
 import { loadOlderTurns } from "./store-load.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
@@ -569,6 +570,11 @@ async function navigateToHit(hit: Hit): Promise<void> {
   }
   const target = entryElement(hit.turn_id, hit.entry_id);
   if (target === null) {
+    const woken = wokenHeaderText(hit.entry_id);
+    if (woken !== null) {
+      await landOrNotice(woken, hit, true);
+      return;
+    }
     showHitNotice("could not be shown");
     return;
   }
@@ -674,6 +680,19 @@ async function ensureHitResident(chatID: string, hit: Hit): Promise<boolean> {
 /** The rendered TURN CARD for a turn id, which every hit carries and which is the
  *  outer reconcile's own key. Null when that turn is not mounted in the active
  *  view. */
+/** Where a workflow message a wake drew as its turn's trigger renders: that turn's request text, which
+ *  holds the row's words, so the hit's offset reads the same there. */
+function wokenHeaderText(entryID: string): HTMLElement | null {
+  const turns = getActive()?.turns;
+  const turnID = turns === undefined ? undefined : wakeTurnFor(turns, entryID);
+  if (turnID === undefined) {
+    return null;
+  }
+  return (
+    turnCardEl(turnID)?.querySelector<HTMLElement>(":scope > .turn-header .turn-req-text") ?? null
+  );
+}
+
 function turnCardEl(turnID: string): HTMLElement | null {
   return findRoot().querySelector<HTMLElement>(`.turn[data-reconcile-key="${CSS.escape(turnID)}"]`);
 }

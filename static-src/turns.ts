@@ -147,6 +147,7 @@ export function turnIsDrawn(t: TurnState): boolean {
     }
     if (
       e.kind === "turn_bind" ||
+      e.kind === "turn_wake" ||
       e.kind === "tool_result" ||
       e.kind === "turn_close" ||
       e.kind === "reconciled" ||

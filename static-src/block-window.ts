@@ -3,6 +3,7 @@
 
 import { MessageRun, toolResultID } from "./entry-ids.js";
 import { isInternalToolTitle } from "./tool-schema.js";
+import { isWakingRow } from "./turn-wake.js";
 import type { Entry } from "./types.js";
 import { isSubagentFallback, payloadOf, type Turn } from "./turns.js";
 
@@ -70,14 +71,19 @@ export function turnSpan(t: Turn): number {
 /**
  * Whether this view renders anything AT THIS ENTRY'S OWN POSITION; the budget and the price
  * must answer identically. `lane` is the VIEW's root; `folds` is that lane's `turnFolds`.
- * `turn_open`, `turn_close`, `tool_result`, `turn_bind` and `reconciled` render elsewhere or
- * nowhere.
+ * `turn_open`, `turn_close`, `tool_result`, `turn_bind`, `turn_wake` and `reconciled` render
+ * elsewhere or nowhere.
  */
 export function entryRenders(e: Entry, lane: string, folds: TurnFolds): boolean {
   if (e.kind === "steer") {
     // A steer is the READER's words, so it renders in the parent's flow whichever lane consumed
-    // it; the lane reaches the note as a marker (`buildSteerNote`).
-    return lane === "" && !(folds.readDrop.has(e.id) && payloadOf(e, "steer")?.state === "dropped");
+    // it; the lane reaches the note as a marker (`buildSteerNote`). A row a wake draws as its
+    // turn's trigger renders there instead.
+    return (
+      lane === "" &&
+      !isWakingRow(e) &&
+      !(folds.readDrop.has(e.id) && payloadOf(e, "steer")?.state === "dropped")
+    );
   }
   if ((e.lane ?? "") !== lane) {
     return false;
@@ -86,6 +92,7 @@ export function entryRenders(e: Entry, lane: string, folds: TurnFolds): boolean 
     case "turn_open":
     case "turn_close":
     case "turn_bind":
+    case "turn_wake":
     case "tool_result":
     case "reconciled":
     case "steer_delivered":

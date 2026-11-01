@@ -37,6 +37,7 @@ import {
   tabStatusFor,
   transcriptStale,
 } from "./store.js";
+import { isWakingRow } from "./turn-wake.js";
 
 const DB_NAME = "marotte-boot";
 const STORE_NAME = "snapshot";
@@ -704,6 +705,31 @@ describe("paintBootSnapshot", () => {
         .turns.get("turn-1")
         ?.entries.map((e) => e.seq),
     ).toEqual([0]);
+  });
+
+  it("marks the row a carried wake draws, so the first frame draws its message once", () => {
+    const waker: Entry = {
+      ...sealed("turn-1", 2, "steer", { text: "Which branch?", origin: "step", step: "ask" }),
+      id: "wfmsg-q",
+    };
+    paintBootSnapshot({
+      tabs: [chatTab("t1", "c1")],
+      chats: [snapChat("c1", { turn_count: 2 })],
+      window: snapWindow("c1", [
+        turnOpen("turn-1", 1),
+        closeEntry("turn-1", 1),
+        waker,
+        { ...turnOpen("turn-2", 2), payload: { source: "wire_turn_start", n: 2 } },
+        sealed("turn-2", 1, "turn_wake", {
+          reason: "step_message",
+          steers: [{ id: "wfmsg-q", step: "ask", severity: "warning", text: "Which branch?" }],
+        }),
+      ]),
+    });
+
+    const held = row("c1").turns.get("turn-1")?.entries[2];
+    expect(held?.id).toBe("wfmsg-q");
+    expect(held !== undefined && isWakingRow(held)).toBe(true);
   });
 
   it("claims no more turns for a chat carried WHOLE", () => {

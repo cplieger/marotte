@@ -9,6 +9,8 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 import { mergeTurnSets, validateTurnIndex, type TurnSummary } from "./rail-merge.js";
+import { markerLabel } from "./rail-labels.js";
+import { makeEntry } from "./__test-helpers__/model.js";
 import type { Turn, TurnOutcome } from "./turns.js";
 import type { EntryPrompt } from "./wire/types.gen.js";
 
@@ -87,6 +89,42 @@ describe("resident wins for anything it can answer", () => {
     // ABSENT rather than "": the field is `omitempty` on the wire, so an agent-initiated turn
     // carries no label there either and every reader defaults.
     expect(turns[0]?.first_line).toBeUndefined();
+  });
+
+  // The index's row for the same turn (TestEntryLog_ATurnWakeGivesItsTurnTheWakesRailLine): the label,
+  // then the message's first line, as a prompt turn's row reads its prompt.
+  it("labels a woken turn with its wake's line, in the preview and the accessible name", () => {
+    const woken = residentTurn(4, {
+      trigger: undefined,
+      body: [
+        makeEntry({
+          id: "wake-1",
+          turn: "t-4",
+          seq: 1,
+          kind: "turn_wake",
+          payload: {
+            reason: "step_message",
+            steers: [
+              {
+                id: "wfmsg-q",
+                run: "wf_1a6d245a6e99e18e",
+                run_label: "turn-wake",
+                step: "build",
+                severity: "warning",
+                text: "Which branch should I base on?\nmain or dev?",
+              },
+            ],
+          },
+        }),
+      ],
+    });
+    const [row] = mergeTurnSets([woken], []);
+    const line = "turn-wake \u00b7 build asks you: Which branch should I base on?";
+    expect(row?.first_line).toBe(line);
+    expect(row?.agent_initiated).toBe(true);
+    const label = markerLabel(row!, { pending: false, hit: false });
+    expect(label.preview).toBe(`#4 \u00b7 Completed\n${line}`);
+    expect(label.ariaLabel).toBe(`Turn 4, agent-initiated: ${line}`);
   });
 
   it("takes the resident id, ts and label over the index's row for the same n", () => {

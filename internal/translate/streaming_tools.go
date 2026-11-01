@@ -38,6 +38,9 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, 
 	if !ok {
 		return
 	}
+	if tc.Meta.Kiro.AgentInitiated && !attr.Step {
+		t.recordWake(ctx, chatID, turn, tc.Meta.Kiro.AgentInitiatedReason)
+	}
 	t.workflowMessageWoke(ctx, chatID, attr, tc.Meta.Kiro.AgentInitiatedReason)
 	// The create frame does NOT adopt content.output: the following update repeats it.
 	content := t.parseToolUpdateContent(tc.ToolCallID, tc.Content)

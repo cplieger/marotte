@@ -187,7 +187,7 @@ func (t *Translator) classifyCleared(
 		if _, ok := read[id]; ok {
 			continue
 		}
-		if strings.HasPrefix(id, runNoticeIDPrefix) {
+		if strings.HasPrefix(id, marotte.RunNoticeIDPrefix) {
 			c.notices++
 		}
 		p, isHeld := held[id]
@@ -199,7 +199,7 @@ func (t *Translator) classifyCleared(
 				}})
 			}
 		case t.steerOrigin(sc.key, id) == marotte.SteerOriginUser:
-		case workflowMessageNotifyID(id):
+		case marotte.IsWorkflowMessageNotifyID(id):
 			c.messages++
 		case boundary:
 			c.drops = append(c.drops, clearedDrop{id: id, steer: &marotte.EntrySteer{
@@ -209,14 +209,6 @@ func (t *Translator) classifyCleared(
 	}
 	return c
 }
-
-// workflowMessageNotifyID reports whether a steering id has the shape KAS mints for a
-// `_kiro/session/notify` message (`notify-<uuid>`); a run notice's `notify-wf-` is not one.
-func workflowMessageNotifyID(id string) bool {
-	return strings.HasPrefix(id, notifyIDPrefix) && !strings.HasPrefix(id, runNoticeIDPrefix)
-}
-
-const notifyIDPrefix = "notify-"
 
 // clearIsCancels reports whether a chat's clear ends a turn the reader stopped: KAS clears the buffer inside
 // session/cancel, before the turn's end. A teardown's cancel is a boundary (marotte.TurnStopTeardown).
@@ -231,16 +223,11 @@ func (t *Translator) clearIsCancels(sc steerScope) bool {
 	return ok && t.turns.StopCauseAfter(sc.key, turn.ID()) == marotte.TurnStopReader
 }
 
-// runNoticeIDPrefix is the id shape KAS mints for a finished run's completion notice
-// (`notify-wf-<uuid>`; autoWakeParentOnComplete, parent_busy_queued). The uuid is
-// random, so the run it reports is not in the id: RunNotice finds it by the notice's words.
-const runNoticeIDPrefix = "notify-wf-"
-
 // stampRunNotice writes the provenance of a finished run's notice read with these words: its run id and
 // when the run finished, so a notice read long after its run can say so. Any other steer, a step's
 // mid-run send_message included, leaves both absent, as does a notice no recorded run's label matches.
 func (t *Translator) stampRunNotice(sc steerScope, steerID, text string, steer *marotte.EntrySteer) {
-	if t.runOrigin == nil || sc.run != "" || !strings.HasPrefix(steerID, runNoticeIDPrefix) {
+	if t.runOrigin == nil || sc.run != "" || !strings.HasPrefix(steerID, marotte.RunNoticeIDPrefix) {
 		return
 	}
 	if wf, ts, ok := t.runOrigin.RunNotice(sc.key, text); ok {

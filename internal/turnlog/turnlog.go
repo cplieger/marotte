@@ -128,6 +128,8 @@ type Turn struct {
 	// by the closing seal counts.
 	emitted bool
 	closed  bool
+	// woken is whether the turn's turn_wake reached the sink.
+	woken bool
 }
 
 // Open starts the accumulator for a turn. The turn_open entry (source, n) is the store's,
@@ -496,6 +498,28 @@ func (t *Turn) TurnBind(ctx context.Context, bind marotte.EntryTurnBind) ([]Seal
 		default:
 			close(t.bound)
 		}
+	}
+	return sealed, err
+}
+
+// Woken reports whether the turn's turn_wake is on disk; a caller skips building a second one.
+func (t *Turn) Woken() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.woken
+}
+
+// TurnWake appends what started this agent-initiated turn, once: a later call writes nothing. An
+// interjection, so a wake recorded beside streaming prose never splits it.
+func (t *Turn) TurnWake(ctx context.Context, w *marotte.EntryTurnWake) ([]Sealed, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.woken {
+		return nil, nil
+	}
+	sealed, err := t.interject(ctx, marotte.EntryKindTurnWake, t.mintID(), *w)
+	if err == nil {
+		t.woken = true
 	}
 	return sealed, err
 }
