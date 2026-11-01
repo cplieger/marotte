@@ -10,12 +10,6 @@ Only chats in Default mode run their replies side by side. A reply in Default v2
 
 Reported as [kirodotdev/Kiro#11995](https://github.com/kirodotdev/Kiro/issues/11995), open. marotte has no workaround. Try Default mode for chats you want to run side by side.
 
-### Every reply stops at once while the engine is busy
-
-When the agent engine takes more than 2 seconds to read one large message from marotte, kiro-cli stops the engine. Every running reply stops and is marked interrupted, and a banner says the agent engine is restarting.
-
-Reported as [kirodotdev/Kiro#11956](https://github.com/kirodotdev/Kiro/issues/11956), open. marotte starts the engine again and resumes the running workflows, as [How marotte works](how-it-works.md#the-agent-engine) describes for any engine stop. The slow file search in the next entry can make it more likely. Linux also makes it more likely once an account has used up its pipe budget, because new pipes then get 8 KiB. Running `sysctl -w fs.pipe-user-pages-soft=0` on the host lifts that budget for every account on the host.
-
 ### The agent stalls during a file search
 
 kiro-cli lists the workspace with ripgrep when the agent searches for files. When ripgrep fails, kiro-cli falls back to a slow listing with no time limit. Every chat and workflow waits while it runs, sometimes for minutes. ripgrep fails on a dangling symbolic link or a link loop anywhere in the workspace. It also fails on a tree too large to list in 30 seconds.
@@ -70,12 +64,6 @@ Reported as [kirodotdev/Kiro#11101](https://github.com/kirodotdev/Kiro/issues/11
 
 ## Workflows
 
-### An answered step inside a parallel group keeps showing as waiting
-
-A step that runs beside other steps can ask a question. After it gets its answer, it keeps showing as paused until every other step in its group stops, even after it has finished its work.
-
-Reported as [kirodotdev/Kiro#11733](https://github.com/kirodotdev/Kiro/issues/11733), open. kiro-cli refuses an answer while another step of the run is running, so marotte turns off **Send** on the run's tab until then.
-
 ### An answer to a waiting step can become an ordinary message
 
 kiro-cli can take an answer to a step's question as an ordinary message to the step. The step reads the words, but the run keeps showing the question as open.
@@ -113,3 +101,11 @@ Reported as [kirodotdev/Kiro#11985](https://github.com/kirodotdev/Kiro/issues/11
 When you stop a reply while the agent runs a command, kiro-cli ends the reply. The command carries on until its timeout, which can be up to 30 minutes.
 
 Reported as [kirodotdev/Kiro#11819](https://github.com/kirodotdev/Kiro/issues/11819), open. When you stop a reply, marotte also stops the commands that reply started.
+
+## Fixed upstream, workaround still in marotte
+
+### An answered step inside a parallel group keeps showing as waiting
+
+kiro-cli 2.37.0 finishes a step that runs beside other steps as soon as the step reports that it is done, while the other steps keep running. Earlier releases kept such a step showing as paused until every other step in its group stopped.
+
+Reported as [kirodotdev/Kiro#11733](https://github.com/kirodotdev/Kiro/issues/11733), closed. marotte still turns off **Send** on the run's tab while another step of the run is running.
