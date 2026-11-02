@@ -16,8 +16,8 @@ github.com/cplieger/jsoncap/v2 v2.1.0 h1:/NRuaqFNKdjhLegBrgDBunX73Lo5r2iYh8Gyy6o
 github.com/cplieger/jsoncap/v2 v2.1.0/go.mod h1:pE5I9GzWjOiqW7ngbJfQcEG2KdMb6yLFKCj+uxuO3Ug=
 github.com/cplieger/keyenc v1.1.0 h1:rlBEmqEBUS378lkJJfrRWlWKBqpgX2ahquivHfdMgxw=
 github.com/cplieger/keyenc v1.1.0/go.mod h1:41HJ59GzUd2gNdRpmdgiOP3VW4CdETY+ecQ8/lzOySQ=
-github.com/cplieger/keylock v1.0.1 h1:W2qhgq22a8dVhAz++PJIquOxDXznWbEC6wTV/NPJxXg=
-github.com/cplieger/keylock v1.0.1/go.mod h1:e39neSBvUIELQRFr/DXlPZvDyZNqMvkvGL5QufU6Dxk=
+github.com/cplieger/keylock v1.1.0-dev.1 h1:nDqacXo9OzmmZbn7V080ZTVkEtfnPAUa8LD986B/IsA=
+github.com/cplieger/keylock v1.1.0-dev.1/go.mod h1:e39neSBvUIELQRFr/DXlPZvDyZNqMvkvGL5QufU6Dxk=
 github.com/cplieger/pathinside/v2 v2.1.0 h1:yBnm859aLMKALi8bTIaYBy7t1osIqCSMIJo8PFqQohM=
 github.com/cplieger/pathinside/v2 v2.1.0/go.mod h1:sMHw6mQSFsGWsirWPQyQZ1+kqrAsXf9VcMUTUJsqm0w=
 github.com/cplieger/pinstall/v3 v3.1.0 h1:p8K/vR50i4Ty4B8ufzt991VdDOp0385BSYI01WfABQI=
