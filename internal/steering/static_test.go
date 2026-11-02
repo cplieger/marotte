@@ -20,7 +20,7 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 	fakeEnv(t, map[string]string{
 		"HOME":      "/h",
 		"KIRO_HOME": "/h/.kiro",
-		"PATH":      "/a:/b",
+		"PATH":      "/t/bin:/t/go/bin:/a",
 		"GOPATH":    "/g",
 		"GOBIN":     "/g/bin",
 		"LANG":      "C.UTF-8",
@@ -33,7 +33,7 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 		"## Container runtime",
 		"`HOME=/h`",
 		"`KIRO_HOME=/h/.kiro`",
-		"`PATH=/a:/b`",
+		"`PATH=/t/bin:/t/go/bin:/a`: `/t/bin` is the tools engine's single bin dir",
 		"`GOPATH=/g`, `GOBIN=/g/bin`, `LANG=C.UTF-8`",
 		"`/cfg` is the persistent volume",
 		"`/t` is the tools engine's tree",
@@ -54,6 +54,43 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 	}
 	if strings.Contains(out, "(= HOME)") {
 		t.Errorf("writeRuntime lists HOME on the config volume, but HOME=/h lies outside /cfg:\n%s", out)
+	}
+}
+
+func TestWriteRuntime_GoBinIsGopathBinOnlyWhenGopathIsTheToolsGo(t *testing.T) {
+	for _, tc := range []struct {
+		name, gopath string
+		want         bool
+	}{{"the tools go", "/t/go", true}, {"elsewhere", "/g", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeEnv(t, map[string]string{"PATH": "/t/bin:/t/go/bin:/a", "GOPATH": tc.gopath})
+			var b strings.Builder
+			writeRuntime(&b, "/cfg", "/t")
+			if got := strings.Contains(b.String(), "`/t/go/bin` is `$GOPATH/bin`"); got != tc.want {
+				t.Errorf("GOPATH=%s: claims /t/go/bin is $GOPATH/bin = %v, want %v:\n%s", tc.gopath, got, tc.want, b.String())
+			}
+		})
+	}
+}
+
+// The entrypoint leaves a tools dir holding ':' off PATH, so the doc must not promise bare names.
+func TestWriteRuntime_ToolsBinOffPathSendsUsersToTheAbsolutePath(t *testing.T) {
+	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/usr/bin:/bin"})
+	var b strings.Builder
+	writeRuntime(&b, "/cfg", "/srv/a:b")
+	out := b.String()
+	for _, want := range []string{
+		"the tools engine's single bin dir `/srv/a:b/bin` is not on it",
+		"runs an installed tool by its absolute path (`/srv/a:b/bin/<tool>`). Pin `HOME=/h`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"resolves by bare name", "is the tools engine's single bin dir", "as the image exports it"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("writeRuntime says %q with the tools bin off PATH:\n%s", bad, out)
+		}
 	}
 }
 
@@ -254,7 +291,7 @@ func TestStaticGuide_NamesMarottesHelperNotACLILogin(t *testing.T) {
 // the exact on-screen text.
 func TestWriteUIGuide_NotificationsPath(t *testing.T) {
 	var b strings.Builder
-	writeUIGuide(&b)
+	writeUIGuide(&b, "/w", "/cfg")
 	out := b.String()
 	for _, want := range []string{
 		"Settings → General",
@@ -274,7 +311,7 @@ func TestWriteUIGuide_NotificationsPath(t *testing.T) {
 
 func TestWriteUIGuide_NamesTheMemorySetting(t *testing.T) {
 	var b strings.Builder
-	writeUIGuide(&b)
+	writeUIGuide(&b, "/w", "/cfg")
 	out := b.String()
 	if !strings.Contains(out, `"Knowledge base search", "Model fallback", "Memory", "Spec planning", "Steering reminders", "Work validation", "AWS CloudFormation safety check", "Workflows", "Output style", "Shell command timeout")`) {
 		t.Errorf("writeUIGuide output does not list the Memory setting under Agent capabilities:\n%s", out)
@@ -286,7 +323,7 @@ func TestWriteUIGuide_NamesTheMemorySetting(t *testing.T) {
 
 func TestWriteUIGuide_NamesEveryTab(t *testing.T) {
 	var b strings.Builder
-	writeUIGuide(&b)
+	writeUIGuide(&b, "/w", "/cfg")
 	out := b.String()
 	for _, want := range []string{
 		`"General", "Tools", "Permissions", "Custom instructions"`,
@@ -317,7 +354,7 @@ func TestWriteUIGuide_NamesEveryTab(t *testing.T) {
 
 func TestWriteAttachments_UsesTheUploadDirConstant(t *testing.T) {
 	var b strings.Builder
-	writeAttachments(&b, "/u", "/w")
+	writeAttachments(&b, "/u", "/w", "/cfg")
 	out := b.String()
 	for _, want := range []string{
 		"`/u/pasted-YYYY-MM-DDTHH-MM-SS.png`",
@@ -339,7 +376,7 @@ func TestWriteAttachments_UsesTheUploadDirConstant(t *testing.T) {
 
 func TestWriteAttachments_TellsHowToLinkAFile(t *testing.T) {
 	var b strings.Builder
-	writeAttachments(&b, "/u", "/w")
+	writeAttachments(&b, "/u", "/w", "/cfg")
 	out := b.String()
 	for _, want := range []string{
 		"`[label](/w/path/file.ext#L<line>)`",
@@ -354,7 +391,7 @@ func TestWriteAttachments_TellsHowToLinkAFile(t *testing.T) {
 
 func TestWriteAttachments_StatesTheCaps(t *testing.T) {
 	var b strings.Builder
-	writeAttachments(&b, "/u", "/w")
+	writeAttachments(&b, "/u", "/w", "/cfg")
 	out := b.String()
 	for _, want := range []string{
 		"10 MiB",
@@ -446,7 +483,7 @@ func TestWriteChatCapabilities(t *testing.T) {
 
 func TestWriteAttachments_TeachesMermaidDiagrams(t *testing.T) {
 	var b strings.Builder
-	writeAttachments(&b, "/u", "/w")
+	writeAttachments(&b, "/u", "/w", "/cfg")
 	out := b.String()
 	for _, want := range []string{
 		"a fenced block whose language is `mermaid`",
@@ -467,7 +504,7 @@ func TestWriteAttachments_TeachesMermaidDiagrams(t *testing.T) {
 
 func TestWriteAttachments_TeachesTheHTMLPreview(t *testing.T) {
 	var b strings.Builder
-	writeAttachments(&b, "/workspace/.uploads", "/workspace")
+	writeAttachments(&b, "/workspace/.uploads", "/workspace", "/config")
 	out := b.String()
 	for _, want := range []string{
 		"`[Demo](/workspace/demo/index.html)`",

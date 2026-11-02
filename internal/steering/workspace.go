@@ -21,15 +21,16 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
 	repos, dirs := classifyEntries(ctx, entries, workDir)
 	foundFiles := findNotableFiles(workDir)
 	isRoot := git.IsRepo(ctx, workDir)
+	wd := defuse(workDir)
 	b.WriteString("## Workspace\n\n")
 	if isRoot {
-		b.WriteString("The workspace root (`/workspace`) is itself a git repository.\n\n")
+		b.WriteString("The workspace root (`" + wd + "`) is itself a git repository.\n\n")
 	}
 	if len(repos) > 0 {
 		b.WriteString("### Git repositories\n\n")
-		b.WriteString("Multiple repos coexist under `/workspace`. ")
+		b.WriteString("Multiple repos coexist under `" + wd + "`. ")
 		b.WriteString("Use the `cwd` parameter in shell commands to target a specific repo ")
-		b.WriteString("(e.g. `cwd: \"myrepo\"` runs in `/workspace/myrepo/`). ")
+		b.WriteString("(e.g. `cwd: \"myrepo\"` runs in `" + wd + "/myrepo/`). ")
 		b.WriteString("File paths like `myrepo/src/main.go` work with the file tools ")
 		b.WriteString("(read_file, read_code, grep_search).\n\n")
 		for _, r := range repos {
@@ -68,7 +69,7 @@ func writeScratchGuidance(b *strings.Builder, workDir string) {
 	b.WriteString("commit: plans, investigation notes, probe output, draft commit messages, ")
 	b.WriteString("review verdicts, run state. ")
 	fmt.Fprintf(b, "`%s/_scratch/<task>/` is a good default; any path outside a repo working "+
-		"tree works.\n\n", workDir)
+		"tree works.\n\n", defuse(workDir))
 	b.WriteString("This applies to a path a workflow or skill suggests, not just to one you ")
 	b.WriteString("pick. Where the guidance you were given names an in-repo artifact path ")
 	b.WriteString("(`<repo>/.agents/tasks/...` is the common one), a `_scratch` path can be ")

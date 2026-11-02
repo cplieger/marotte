@@ -22,7 +22,7 @@ kiro-cli is not built into the image. On first start the server downloads the ve
 
 On every start, marotte runs the installed kiro-cli to confirm it is the expected version, and switches off kiro-cli's own self-update. A replaced or half-restored install is refused rather than run. The previous version stays on the volume as the fallback for a broken new one, and older versions are removed.
 
-`docker exec marotte kiro-cli --version` keeps working, because `kiro-cli` and `kiro-cli-chat` in the tools folder's `bin/` point at the active version. kiro-cli finds its chat helper through the same directory.
+`kiro-cli` and `kiro-cli-chat` in the tools folder's `bin/` point at the active version, and kiro-cli finds its chat helper through the same directory. The server and every login shell search that `bin/`, so `docker exec marotte bash -lc 'kiro-cli --version'` works for a moved tools folder too. A plain `docker exec marotte kiro-cli --version` searches the image's PATH instead, so it finds kiro-cli only while the tools folder is the default `/config/tools`.
 
 ## Health and repair
 

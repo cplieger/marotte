@@ -593,3 +593,40 @@ func TestClassifyEntries(t *testing.T) {
 func isValidUTF8(s string) bool {
 	return strings.ToValidUTF8(s, "\uFFFD") == s
 }
+
+// KIRO_WORK_DIR and KIRO_CONFIG_DIR move the folders, so both docs name the configured ones.
+func TestRender_NamesTheConfiguredFoldersNotTheDefaults(t *testing.T) {
+	workDir, configDir := t.TempDir(), t.TempDir()
+	repo := seedRepo(t, workDir, "repo", "main")
+	mustWriteFile(t, filepath.Join(repo, ".kiro", "steering", "s.md"), "# S\n")
+	mustWriteFile(t, filepath.Join(configDir, "config.json"), `{"memory_mode":"read_only"}`)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+	env := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false))
+	chat := g.renderChat(ForgeSnapshot{})
+
+	for _, want := range []string{
+		"Multiple repos coexist under `" + workDir + "`. ",
+		"runs in `" + workDir + "/myrepo/`",
+		"which is `" + workDir + "`). Treat the inventory",
+		"every chat starts in `" + workDir + "`. ",
+		"No repository under `" + workDir + "` has an `origin`",
+		"`" + workDir + "/_scratch/<task>/` is a good default",
+	} {
+		if !strings.Contains(env, want) {
+			t.Errorf("environment.md is missing %q:\n%s", want, env)
+		}
+	}
+	for _, want := range []string{
+		"mounts `" + workDir + "`, `" + configDir + "` and the uploads folder",
+		"(never `" + configDir + "/`)",
+	} {
+		if !strings.Contains(chat, want) {
+			t.Errorf("the chat doc is missing %q:\n%s", want, chat)
+		}
+	}
+	for name, out := range map[string]string{"environment.md": env, "chat doc": chat} {
+		if strings.Contains(out, "`/workspace") || strings.Contains(out, "`/config") {
+			t.Errorf("%s names a default folder instead of the configured one:\n%s", name, out)
+		}
+	}
+}

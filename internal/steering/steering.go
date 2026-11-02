@@ -67,8 +67,7 @@ type Generator struct {
 	mu            sync.Mutex
 }
 
-// New returns a Generator that writes steering files for the given workDir, configDir and the
-// tools engine's toolsDir.
+// New returns a Generator; toolsDir is the tools engine's root, which need not sit under configDir.
 func New(workDir, configDir, toolsDir string) *Generator {
 	return &Generator{workDir: workDir, configDir: configDir, toolsDir: toolsDir}
 }
@@ -185,8 +184,8 @@ func (g *Generator) renderChat(forges ForgeSnapshot) string {
 	b.WriteString("These sections describe what the user sees; the environment steering doc ")
 	b.WriteString("covers the container.\n\n")
 	writeGitPanel(&b, g.workDir, len(forges.Providers) > 0)
-	writeUIGuide(&b)
-	writeAttachments(&b, marotte.DefaultUploadDir, g.workDir)
+	writeUIGuide(&b, g.workDir, g.configDir)
+	writeAttachments(&b, marotte.DefaultUploadDir, g.workDir, g.configDir)
 	writeChatCapabilities(&b)
 	return b.String()
 }
