@@ -704,8 +704,9 @@ setting; the session-door memory row's explicit mode replaces that, and mode
 "disabled" holds whatever the arm says.`,
 	"env.KIRO_FEATURE_MEMORY_QUALITY_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
-The memory_quality_enabled experiment (default off), which ranks the session's memory index
-by stored quality scores instead of by date.`,
+The memory_quality_enabled experiment (default off): on, KAS scores memories by access and use,
+ranks the session's memory index by that score instead of by date, and applies retention when a
+memory is saved.`,
 	"env.KIRO_FEATURE_MEMORY_SYNC_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 The experiment value of the memorySync setting (memory_sync_enabled, default off), which
