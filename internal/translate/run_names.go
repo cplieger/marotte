@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -38,17 +39,15 @@ func newRunNames() *runNames {
 	}
 }
 
-func (r *runNames) of(run string) string {
+// await answers run's name when known; else it records that chatID's wake names run with no name,
+// and read is true when no read of run is in flight, so the caller asks for one and reports its end
+// through readDone. One lock: a learn between a lookup and the record would skip this chat.
+func (r *runNames) await(run string, chatID marotte.ChatID) (name string, read bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.names[run]
-}
-
-// await records that chatID's wake names run with no name; true when no read of run is in flight, so
-// the caller asks for one and reports its end through readDone.
-func (r *runNames) await(run string, chatID marotte.ChatID) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	if name := r.names[run]; name != "" {
+		return name, false
+	}
 	chats, held := r.awaiting[run]
 	if !held {
 		r.waitOrder = append(r.waitOrder, run)
@@ -61,10 +60,10 @@ func (r *runNames) await(run string, chatID marotte.ChatID) bool {
 		r.awaiting[run] = append(chats, chatID)
 	}
 	if _, busy := r.reading[run]; busy {
-		return false
+		return "", false
 	}
 	r.reading[run] = struct{}{}
-	return true
+	return "", true
 }
 
 // readDone ends run's read, named or not, so a later wake of a run still unnamed asks again.
@@ -102,32 +101,38 @@ func (r *runNames) learn(run, name string) (chats []marotte.ChatID, first bool) 
 // nameWake fills w's runs from the names known now, and for each run still unnamed records chatID as
 // awaiting it and asks for the run's state, whose reply names it (RecordInspect).
 func (t *Translator) nameWake(chatID marotte.ChatID, w *marotte.EntryTurnWake) {
-	if w.Run != "" && w.RunName == "" {
-		w.RunName = t.runNames.of(w.Run)
-	}
-	for i := range w.Steers {
-		if s := &w.Steers[i]; s.RunName == "" {
-			s.RunName = t.runNames.of(s.Run)
-		}
-	}
+	known := map[string]string{}
 	for _, run := range marotte.WakeRunsUnnamed(w) {
-		if t.runNames.await(run, chatID) {
-			if t.runOrigin == nil {
-				t.runNames.readDone(run)
-				continue
-			}
+		name, read := t.runNames.await(run, chatID)
+		switch {
+		case name != "":
+			known[run] = name
+		case read && t.runOrigin == nil:
+			t.runNames.readDone(run)
+		case read:
 			t.runOrigin.ReadRun(run, func() { t.runNames.readDone(run) })
 		}
+	}
+	if len(known) > 0 {
+		*w = marotte.NamedWake(w, known)
 	}
 }
 
 // learnRunName files a run_named entry to each chat awaiting run's name. A name this process learns
-// first with no chat awaiting it, as after a restart, goes to the run's lease chat when that chat's
-// log still holds a wake leaving the run unnamed.
-func (t *Translator) learnRunName(ctx context.Context, run, name string) {
+// first with no chat awaiting it, as after a restart, goes to the run's lease chat, else to frameChat
+// (the chat a run_complete arrived for: its lease is already released), when that chat's log still
+// holds a wake leaving the run unnamed.
+func (t *Translator) learnRunName(ctx context.Context, run, name string, frameChat marotte.ChatID) {
 	chats, first := t.runNames.learn(run, name)
-	if first && len(chats) == 0 && t.runOrigin != nil {
-		if chatID, ok := t.runOrigin.LeaseChat(run); ok {
+	if first && len(chats) == 0 {
+		if strings.HasPrefix(string(frameChat), marotte.RunSubjectPrefix) {
+			frameChat = ""
+		}
+		var lease marotte.ChatID
+		if t.runOrigin != nil {
+			lease, _ = t.runOrigin.LeaseChat(run)
+		}
+		if chatID := cmp.Or(lease, frameChat); chatID != "" {
 			awaits, err := t.chats.AwaitsRunName(ctx, chatID, run)
 			if err != nil {
 				slog.Warn("run name: the chat's log is unreadable, so its wakes keep the placeholder",
@@ -171,5 +176,5 @@ func (t *Translator) RecordInspect(ctx context.Context, raw json.RawMessage) {
 	for _, st := range workflow.StepSessions(res.State) {
 		t.RecordStepSession(st.SessionID, res.State.WorkflowID, st.NodeID, workflow.PathKey(st.Path))
 	}
-	t.learnRunName(ctx, cmp.Or(res.State.WorkflowID, res.WorkflowID), marotte.RunDisplayName(res.State.RunLabel, res.State.WorkflowName))
+	t.learnRunName(ctx, cmp.Or(res.State.WorkflowID, res.WorkflowID), marotte.RunDisplayName(res.State.RunLabel, res.State.WorkflowName), "")
 }

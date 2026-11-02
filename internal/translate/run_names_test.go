@@ -188,3 +188,19 @@ func TestRunName_AfterARestartTheLeaseChatsUnnamedWakeIsNamed(t *testing.T) {
 		})
 	}
 }
+
+func TestRunName_AfterARestartARunsTerminalFrameNamesItsChatsUnnamedWake(t *testing.T) {
+	h := newWakeHarness(t)
+	h.send("notify_warning")
+	h.wake("chunk_send_message_wake")
+	closeChatTurn(t, h.deps, testChat)
+	h.tr.runNames = newRunNames()
+
+	h.tr.HandleRunComplete(t.Context(), testChat, notif("_kiro/workflow/run_complete", map[string]any{
+		"workflowId": wakeRun, "status": "completed", "finalState": map[string]any{"runLabel": "publish-docs"},
+	}))
+
+	if names, _ := h.runNamed(); len(names) != 1 {
+		t.Errorf("run_named entries = %+v, want one: the lease is released before run_complete, so the frame's chat is asked", names)
+	}
+}

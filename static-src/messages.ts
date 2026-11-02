@@ -1562,13 +1562,6 @@ function setHitCount(card: HTMLElement, n: number): void {
   badge.textContent = n > 0 ? String(n) : "";
 }
 
-function syncWakeRows(card: HTMLElement): void {
-  const header = card.querySelector<HTMLElement>(":scope > .turn-header");
-  if (header !== null) {
-    syncWakeRowRuns(header);
-  }
-}
-
 function setCardFolded(card: HTMLElement, folded: boolean): void {
   setCardsFolded([{ card, folded }]);
 }
@@ -1578,12 +1571,14 @@ function setCardsFolded(items: readonly { card: HTMLElement; folded: boolean }[]
   for (const { card, folded } of items) {
     const flip = (): void => {
       card.toggleAttribute("data-folded", folded);
-      syncWakeRows(card);
       const header = card.querySelector<HTMLElement>(":scope > .turn-header");
-      // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
-      header
-        ?.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
-        ?.setAttribute("aria-expanded", folded ? "false" : "true");
+      if (header !== null) {
+        syncWakeRowRuns(header);
+        // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
+        header
+          .querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
+          ?.setAttribute("aria-expanded", folded ? "false" : "true");
+      }
     };
     const body = card.querySelector<HTMLElement>(":scope > .turn-body");
     if (body === null || card.hasAttribute("data-folded") === folded) {
@@ -1778,7 +1773,6 @@ function buildTurn(t: Turn): HTMLElement {
   const header = buildTurnHeader(headerData(t));
   mountFoldToggle(header, card, t);
   card.appendChild(header);
-  syncWakeRowRuns(header);
   card.toggleAttribute("data-running", t.outcome === "running");
 
   const plan = foldPlan.get(t.id);
@@ -1815,7 +1809,6 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   const header = card.querySelector<HTMLElement>(":scope > .turn-header");
   if (header !== null) {
     updateTurnHeader(header, headerData(t));
-    syncWakeRowRuns(header);
   }
   card.toggleAttribute("data-running", t.outcome === "running");
   // Hands off three bodies: a stub has none, a body still owed a build is the builder's, and a dropped range is the

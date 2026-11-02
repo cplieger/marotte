@@ -131,7 +131,7 @@ function runFinishedLine(w: EntryTurnWake): WakeLine {
     default:
       return FALLBACK;
   }
-  const reason = (w.stop_reason ?? "").replace(LABEL_SPACE, " ").trim();
+  const reason = (w.stop_reason ?? "").replace(LABEL_SPACE, " ").replace(/^ | $/gu, "");
   return named(run, reason === "" ? rest : `${rest}: ${reason}`, "");
 }
 

@@ -818,7 +818,8 @@ func (rs *Runs) parentChat(chatID marotte.ChatID, workflowID string) marotte.Cha
 
 // frameLabel names the run a lifecycle frame is about, as its tab does.
 func (rs *Runs) frameLabel(f *lifecycleFrame) string {
-	return cmp.Or(f.FinalState.RunLabel, f.FinalState.WorkflowName, f.WorkflowName, rs.tabLabel(f.WorkflowID))
+	return cmp.Or(marotte.RunDisplayName(f.FinalState.RunLabel, f.FinalState.WorkflowName),
+		marotte.RunDisplayName("", f.WorkflowName), marotte.RunDisplayName("", rs.tabLabel(f.WorkflowID)))
 }
 
 // tabLabel is the name a run's tab shows: the label the launch sent KAS, else its recipe.

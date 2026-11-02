@@ -148,6 +148,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     }
     text.hidden = d.wake.body === "";
     syncFullText(header, undefined);
+    syncWakeRowRuns(header);
     return;
   }
   syncWakeLabel(header, undefined, undefined);
@@ -256,8 +257,8 @@ function wakeRunEl(
 
 /**
  * Make each re-delivery row's run button inert while the request text's clamp hides any of it, so it takes no focus,
- * and live while all of it shows. The caller runs it after a fold change or a row rebuild; the clamp's own
- * measurement runs it after a resize. With no layout to measure, a folded card keeps only the first row's live.
+ * and live while all of it shows. Runs after each header update and each clamp measurement; a fold change calls
+ * it. With no layout to measure, a folded card keeps only the first row's live.
  */
 export function syncWakeRowRuns(header: HTMLElement): void {
   const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
