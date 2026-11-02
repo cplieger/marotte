@@ -37,8 +37,8 @@ type bootPaths struct {
 
 // toolsRoot is the one verdict on the tools dir. Every consumer reads it through use, so a rejected
 // dir is off everywhere: no engine, no kiro-cli install, no instance lock or mode change, no PATH,
-// GOPATH or GOBIN entry, and no mention in steering. The zero value is no tools dir, as outside the
-// container.
+// GOPATH or GOBIN entry, and no mention in steering. The zero value is no tools dir, which every
+// consumer treats as off.
 type toolsRoot struct {
 	// err is why dir is rejected, wrapping errToolsDirUnusable and worded for the Tools tab.
 	err error
@@ -107,10 +107,10 @@ type envValue struct {
 
 // toolsEnv returns the PATH, GOPATH and GOBIN for root. For a usable dir the image's imageToolsDir
 // entries become the dir's, a PATH lacking the dir's bin and go/bin gets them in the image's order,
-// and a GOPATH or GOBIN the operator set to another value is kept. For a rejected or absent dir the
-// image's entries and the rejected dir's own, in its configured and its absolute spelling, are
-// removed from PATH, from every root of a GOPATH list and from GOBIN, and every other entry and
-// value stays.
+// and a GOPATH or GOBIN the operator set to another value is kept. For a rejected dir or the zero
+// toolsRoot the image's entries and the rejected dir's own, in its configured and its absolute
+// spelling, are removed from PATH, from every root of a GOPATH list and from GOBIN, and every other
+// entry and value stays.
 func toolsEnv(root toolsRoot, lookup func(string) (string, bool)) (path string, gopath, gobin envValue) {
 	toolsDir, err := root.use()
 	pathValue, _ := lookup("PATH")
