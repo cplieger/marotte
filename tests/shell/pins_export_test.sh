@@ -116,26 +116,22 @@ grep -q '^prune_superseded_kas_runtimes()' "$ENTRYPOINT" \
   && ok "prune_superseded_kas_runtimes() stayed: it prunes the data dir, not the install" \
   || no "kas pruner" "the agent-runtime pruner is gone; nothing reclaims the ~240 MB tree each superseded version leaves on the volume"
 
-# --- the taint flag: absent on BOTH sides, deliberately ----------------------
-# KIRO_CLI_TOOLS_TAINTED: web-terminal-kiro exports it when hardening finds the tools tree
-# writable by others. marotte has no hardening pass, so it neither exports nor reads it; either half
-# alone is worse (a no-op guard, or every boot reported clean). Grow hardening, wire both ends.
+# --- pinstall.Config.Untrusted stays unset -------------------------------------
+# kirocli.go's Config literal says why. Untrusted is pinstall v2's name for v1's Tainted, so
+# grepping Tainted would pass vacuously.
+grep -q 'Untrusted:' "$KIROCLI_GO" \
+  && no "Untrusted set" "internal/composition/kirocli.go now sets pinstall.Config.Untrusted, which reinstalls kiro-cli (about 530 MB) at every start; change the reason beside the Config literal first" \
+  || ok "the Go side leaves pinstall.Config.Untrusted unset"
+
+# KIRO_CLI_TOOLS_TAINTED is web-terminal-kiro's shell-to-Go hand-off for that field. A half-wired
+# copy is silent: an export nothing reads looks like a guard, and a read nothing exports is always
+# clean.
 if grep -q 'KIRO_CLI_TOOLS_TAINTED' "$ENTRYPOINT" || grep -q 'KIRO_CLI_TOOLS_TAINTED' "$CONFIG_GO"; then
   grep -q 'KIRO_CLI_TOOLS_TAINTED' "$ENTRYPOINT" && grep -q 'KIRO_CLI_TOOLS_TAINTED' "$CONFIG_GO" \
     && ok "the taint flag is exported by the entrypoint AND read by config.go" \
     || no "taint flag half-wired" "only one side mentions KIRO_CLI_TOOLS_TAINTED: an export nothing reads is a no-op that looks like a guard, and a read with no producer reports every boot as clean"
 else
-  ok "neither side claims a taint observation marotte cannot make (no hardening pass here)"
-fi
-
-# --- the LIBRARY half of the same non-claim: pinstall.Untrusted --------------
-# The pinstall.Config field the env var would feed (Untrusted since pinstall v2; grepping the v1
-# spelling Tainted would pass vacuously). Setting it without a hardening pass is a guard with no producer.
-# kirocli.go CITES this assertion.
-if grep -q 'Untrusted:' "$KIROCLI_GO"; then
-  no "Untrusted claimed" "internal/composition/kirocli.go now sets pinstall.Untrusted, but marotte has no hardening pass to make that observation: the field then reports every boot as clean while looking like a check"
-else
-  ok "the Go side sets no pinstall.Untrusted (the observation has no producer here)"
+  ok "neither side carries a taint flag"
 fi
 
 report

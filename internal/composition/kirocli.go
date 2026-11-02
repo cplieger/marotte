@@ -177,8 +177,10 @@ func kiroInstallConfig(cfg *Config) *pinstall.Config {
 		Optional: []string{kirocli.Name + "-term"},
 		Assert:   kiroSettings(),
 		Purge:    kiroLegacyPurge(),
-		// Untrusted stays unset: marotte makes no observation of the install root being writable by
-		// others. TrustedUIDs is a fact about the volume's ACL, empty by default.
+		// Untrusted stays unset: healBootModes has removed group and other write from this root before
+		// this runs, and pinstall's custody check judges the writers left, so Untrusted would only add
+		// a digest-verified reinstall at every start. TrustedUIDs is a fact about the volume's ACL,
+		// empty by default.
 		TrustedUIDs: cfg.TrustedInstallUIDs,
 	}
 }

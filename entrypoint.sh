@@ -22,7 +22,7 @@ load_boot_paths() {
   eval "$out"
 }
 
-# An unusable config folder is the one setting the server refuses to start on; paths named it.
+# `paths` refuses only a config folder the server would refuse too, and has printed why.
 if ! load_boot_paths /app/marotte; then
   sleep 10
   exit 1
@@ -123,12 +123,16 @@ install_path_dropin() {
 }
 
 # $1 is the effective uid. Only root may write /etc/profile.d, and Debian's /etc/profile resets
-# PATH for every other uid too, so elsewhere a login shell searches no tools folder. Warn only:
-# the mkdir above is the one place this script fails the boot.
+# PATH for every other uid too, so elsewhere a login shell searches no tools folder. Warn only: a
+# login shell without the tools PATH is no reason to stop the boot. MAROTTE_PATH_DROPIN=1 tells the
+# server (internal/steering's dropInEnv) the drop-in was written at this start.
 offer_login_path() {
+  unset MAROTTE_PATH_DROPIN
   if [ "$1" -ne 0 ]; then
     printf "WARNING: running as uid %s, not root, so /etc/profile.d/10-marotte-path.sh is not written; a login shell (the browser shell runs bash --login) does not search %s, so run an engine-installed tool there by its full path (%s/<tool>)\n" "$1" "$(logfmt_value "$TOOLS/bin" 4096)" "$(logfmt_value "$TOOLS/bin" 4096)" >&2
-  elif ! install_path_dropin; then
+  elif install_path_dropin; then
+    export MAROTTE_PATH_DROPIN=1
+  else
     printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not see %s, so an engine-installed tool will not resolve by name there\n" "$(logfmt_value "$TOOLS/bin" 4096)" >&2
   fi
 }

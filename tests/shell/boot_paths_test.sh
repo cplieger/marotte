@@ -16,7 +16,8 @@ new_workdir >/dev/null
 DOCKERFILE="${MAROTTE_DOCKERFILE:-$REPO_ROOT/Dockerfile}"
 PATHS_GO="${MAROTTE_PATHS_GO:-$REPO_ROOT/internal/composition/paths.go}"
 MAIN_GO="${MAROTTE_MAIN_GO:-$REPO_ROOT/main.go}"
-for f in "$DOCKERFILE" "$PATHS_GO" "$MAIN_GO"; do
+STATIC_GO="${MAROTTE_STATIC_GO:-$REPO_ROOT/internal/steering/static.go}"
+for f in "$DOCKERFILE" "$PATHS_GO" "$MAIN_GO" "$STATIC_GO"; do
   [ -r "$f" ] || {
     printf 'harness error: %s is not readable\n' "$f" >&2
     exit 1
@@ -35,7 +36,6 @@ stub() {
   chmod +x "$STUB"
 }
 
-# quote <value>: <value> single-quoted, as the server prints it.
 quote() {
   local q=${1//\'/\'\\\'\'}
   printf "'%s'" "$q"
@@ -133,7 +133,8 @@ done
 load_function logfmt_value
 load_function offer_login_path
 TOOLS="$WORK/t"
-# offer <install rc> <uid>: "<install calls>|<stderr>" from one offer_login_path run.
+# offer <install rc> <uid>: "<install calls>|<MAROTTE_PATH_DROPIN as a child sees it>|<stderr>" from
+# one offer_login_path run that starts with a stale MAROTTE_PATH_DROPIN=1 exported.
 offer() {
   (
     calls=0
@@ -142,26 +143,32 @@ offer() {
       calls=$((calls + 1))
       return "$rc"
     }
+    export MAROTTE_PATH_DROPIN=1
     offer_login_path "$2" 2>"$WORK/offer.err"
-    printf '%s|%s' "$calls" "$(cat "$WORK/offer.err")"
+    printf '%s|%s|%s' "$calls" "$(/bin/sh -c 'printf %s "${MAROTTE_PATH_DROPIN-unset}"')" "$(cat "$WORK/offer.err")"
   )
 }
 got=$(offer 0 1000)
 case "$got" in
-  "0|WARNING: running as uid 1000, not root, "*"does not search $TOOLS/bin, so run an engine-installed tool there by its full path ($TOOLS/bin/<tool>)")
-    ok "a non-root boot writes no drop-in and names the full-path fallback"
+  "0|unset|WARNING: running as uid 1000, not root, "*"does not search $TOOLS/bin, so run an engine-installed tool there by its full path ($TOOLS/bin/<tool>)")
+    ok "a non-root boot writes no drop-in, tells the server so, and names the full-path fallback"
     ;;
   *) no "non-root boot" "got '$got'" ;;
 esac
 got=$(offer 0 0)
-[ "$got" = "1|" ] \
-  && ok "a root boot writes the drop-in and warns about nothing" \
-  || no "root boot" "got '$got', want '1|'"
+[ "$got" = "1|1|" ] \
+  && ok "a root boot writes the drop-in, tells the server so, and warns about nothing" \
+  || no "root boot" "got '$got', want '1|1|'"
 got=$(offer 1 0)
 case "$got" in
-  "1|WARNING: could not write /etc/profile.d/10-marotte-path.sh; "*"will not see $TOOLS/bin, "*) ok "a root boot whose drop-in fails says so" ;;
+  "1|unset|WARNING: could not write /etc/profile.d/10-marotte-path.sh; "*"will not see $TOOLS/bin, "*)
+    ok "a root boot whose drop-in fails says so and does not tell the server it was written"
+    ;;
   *) no "failed drop-in" "got '$got'" ;;
 esac
+grep -qx 'const dropInEnv = "MAROTTE_PATH_DROPIN"' "$STATIC_GO" \
+  && ok "the variable offer_login_path exports is the one the server's steering reads" \
+  || no "drop-in hand-off" "internal/steering/static.go no longer reads MAROTTE_PATH_DROPIN"
 # The server refuses a tools folder holding a line break, but TOOLS still names it.
 TOOLS="$WORK/t"$'\n'"level=error msg=forged"
 safe="$WORK/t?level=error msg=forged/bin"

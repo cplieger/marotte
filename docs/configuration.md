@@ -132,7 +132,7 @@ Files you attach to a message, by drag and drop, paste or the composer's **Chat 
 | `/config/signin.json` | marotte's Kiro sign-in, readable only by the container's user |
 | `/config/home/` | The container's home folder: SSH keys, git settings, build caches, and the separate sign-in of a `kiro-cli` you run in the terminal |
 | `/config/home/.kiro/` | kiro-cli's sessions, settings, steering, agents and logs |
-| `/config/tools/` | Installed tools. `bin/` and `go/bin/` are on the `PATH` of the server and the agent, so link any other binary into `bin/`. A login shell searches them only when the container runs as root ([How kiro-cli is installed](how-it-works.md#how-kiro-cli-is-installed)) |
+| `/config/tools/` | Installed tools. `bin/` and `go/bin/` are on the `PATH` of the server and the agent, so link any other binary into `bin/`. A login shell searches them only when the container runs as root and marotte could write its `/etc/profile.d` file ([How kiro-cli is installed](how-it-works.md#how-kiro-cli-is-installed)) |
 | `/config/*.json` | marotte's settings, the tools list and its state, and the MCP server list |
 | `marotte.lock` in `/config`, `/config/home/.kiro` and `/config/tools` | Holds the process ID of the marotte using the folder. marotte locks the folder itself as well as this file, so deleting the file does not let a second marotte start on the same host, but deleting or replacing the whole folder does. A marotte that crashed leaves no lock behind. Between two hosts sharing a network folder only the lock on this file counts, so leave it in place, and the share must support file locks |
 

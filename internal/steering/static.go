@@ -109,22 +109,30 @@ func writePath(b *strings.Builder, toolsDir string) bool {
 	return onPath
 }
 
-// entrypoint.sh's offer_login_path writes the drop-in only when the server runs as root.
+// dropInEnv is set to "1" by entrypoint.sh's offer_login_path only after it wrote the drop-in at
+// this start, which it tries only as root; any other value or none means no login shell has it.
+const dropInEnv = "MAROTTE_PATH_DROPIN"
+
 func writeShellHint(b *strings.Builder, toolsDir string, onPath bool) {
+	const fromProfile = "- A login shell, the browser Shell panel's `bash --login` included, takes its PATH from " +
+		"`/etc/profile`, which leaves out `"
+	dropIn, _ := lookupEnv(dropInEnv)
 	switch uid := geteuid(); {
 	case !onPath:
 		b.WriteString("- `" + toolsDir + "/bin` is on no shell's PATH, a login shell's included, so a user ")
 		b.WriteString("runs an installed tool by its absolute ")
 	case uid != 0:
-		b.WriteString("- A login shell, the browser Shell panel's `bash --login` included, takes its PATH from ")
-		b.WriteString("`/etc/profile`, which leaves out `" + toolsDir + "/bin`: marotte runs as uid " + strconv.Itoa(uid))
+		b.WriteString(fromProfile + toolsDir + "/bin`: marotte runs as uid " + strconv.Itoa(uid))
 		b.WriteString(", not root, so the entrypoint writes no drop-in restoring it. There a user runs an ")
 		b.WriteString("installed tool by its absolute ")
+	case dropIn != "1":
+		b.WriteString(fromProfile + toolsDir + "/bin`: the entrypoint did not write `/etc/profile.d/10-marotte-path.sh` ")
+		b.WriteString("at this start (the boot log's WARNING says why, or the server started without the entrypoint). ")
+		b.WriteString("There a user runs an installed tool by its absolute ")
 	default:
 		b.WriteString("- Every login shell, the browser Shell panel's `bash --login` included, sources ")
-		b.WriteString("`/etc/profile.d/10-marotte-path.sh` (rewritten by the entrypoint each boot), so an ")
-		b.WriteString("installed tool resolves by bare name there too. If a user still gets `command not found`, ")
-		b.WriteString("the boot log carries a WARNING that the drop-in was not written: hand them the absolute ")
+		b.WriteString("`/etc/profile.d/10-marotte-path.sh`, which the entrypoint wrote at this start, so an ")
+		b.WriteString("installed tool resolves by bare name there too; any shell also finds it by its absolute ")
 	}
 	b.WriteString("path (`" + toolsDir + "/bin/<tool>`)")
 }

@@ -31,6 +31,8 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 		"GOPATH":    "/g",
 		"GOBIN":     "/g/bin",
 		"LANG":      "C.UTF-8",
+
+		"MAROTTE_PATH_DROPIN": "1",
 	})
 	fakeUID(t, 0)
 	var b strings.Builder
@@ -48,7 +50,7 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 		"`/t/bin` is the tools engine's single bin dir",
 		"`/t/bin/<tool>`",
 		"Pin `HOME=/h` on any command",
-		"/etc/profile.d/10-marotte-path.sh",
+		"sources `/etc/profile.d/10-marotte-path.sh`, which the entrypoint wrote at this start, so an installed tool resolves by bare name there too",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
@@ -107,7 +109,7 @@ func TestWriteRuntime_ToolsBinOffPathSendsUsersToTheAbsolutePath(t *testing.T) {
 // Only root may write /etc/profile.d, so under another uid a login shell's PATH comes from
 // /etc/profile alone and the doc must not promise bare names there.
 func TestWriteRuntime_NonRootLoginShellsGetTheAbsolutePath(t *testing.T) {
-	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/t/bin:/usr/bin:/bin"})
+	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/t/bin:/usr/bin:/bin", "MAROTTE_PATH_DROPIN": "1"})
 	fakeUID(t, 1000)
 	var b strings.Builder
 	writeRuntime(&b, "/cfg", "/t")
@@ -125,6 +127,33 @@ func TestWriteRuntime_NonRootLoginShellsGetTheAbsolutePath(t *testing.T) {
 		if strings.Contains(out, bad) {
 			t.Errorf("writeRuntime says %q for a non-root server:\n%s", bad, out)
 		}
+	}
+}
+
+// A root server whose entrypoint did not report a written drop-in (the write failed, or the binary
+// started without the entrypoint) must not promise bare names in a login shell.
+func TestWriteRuntime_RootWithoutAWrittenDropInGetsTheAbsolutePath(t *testing.T) {
+	for name, dropin := range map[string]*string{"unset": nil, "empty": new(""), "not 1": new("yes")} {
+		t.Run(name, func(t *testing.T) {
+			env := map[string]string{"HOME": "/h", "PATH": "/t/bin:/usr/bin:/bin"}
+			if dropin != nil {
+				env["MAROTTE_PATH_DROPIN"] = *dropin
+			}
+			fakeEnv(t, env)
+			fakeUID(t, 0)
+			var b strings.Builder
+			writeRuntime(&b, "/cfg", "/t")
+			out := b.String()
+			want := "takes its PATH from `/etc/profile`, which leaves out `/t/bin`: the entrypoint did not write " +
+				"`/etc/profile.d/10-marotte-path.sh` at this start (the boot log's WARNING says why, or the server " +
+				"started without the entrypoint). There a user runs an installed tool by its absolute path (`/t/bin/<tool>`). Pin `HOME=/h`"
+			if !strings.Contains(out, want) {
+				t.Errorf("writeRuntime output missing %q:\n%s", want, out)
+			}
+			if strings.Contains(out, "resolves by bare name") {
+				t.Errorf("writeRuntime promises bare names with no written drop-in:\n%s", out)
+			}
+		})
 	}
 }
 
