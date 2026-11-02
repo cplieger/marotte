@@ -442,9 +442,11 @@ func cancelUnless(built *bool, cancel context.CancelFunc) {
 func chatRetention(ctx context.Context, configDir string) time.Duration {
 	days, ok, err := settings.FieldStrict[int](ctx, configDir, settings.KeyChatRetentionDays)
 	if err != nil {
-		slog.Error("chat retention: config.json is present but unreadable; purged nothing this pass rather than applying the default window",
-			"key", settings.KeyChatRetentionDays,
-			"default_days", settings.DefaultChatRetentionDays, "error", err)
+		if !isCtxErr(err) {
+			slog.Error("chat retention: config.json is present but unreadable; purged nothing this pass rather than applying the default window",
+				"key", settings.KeyChatRetentionDays,
+				"default_days", settings.DefaultChatRetentionDays, "error", err)
+		}
 		return 0
 	}
 	if !ok {
@@ -692,10 +694,15 @@ func newSteering(cfg *Config) *steering.Generator {
 // is a quiet stop. It judges the error alone, so a write failing while a cancel is pending logs.
 func regenerateSteering(ctx context.Context, generate func(context.Context) error) {
 	err := generate(ctx)
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if err == nil || isCtxErr(err) {
 		return
 	}
 	slog.Error("steering: environment.md not written", "error", err)
+}
+
+// isCtxErr reports a cancellation or deadline at any depth.
+func isCtxErr(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // wireToolsSteering lists the engine's installed tools in environment.md and regenerates it off the

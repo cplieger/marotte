@@ -1,12 +1,14 @@
 package composition
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/slogx/capture"
 )
 
 // TestChatRetention_ThreeLegs walks one config.json through the three states the retention read
@@ -89,4 +91,35 @@ func TestRunRetention_ReadsTheSharedSetting(t *testing.T) {
 			t.Errorf("runRetention(no config.json) = (%v, %v), want (%v, true)", window, purge, want)
 		}
 	})
+}
+
+// TestChatRetention_ACtxStopLogsNothing pins that a purge pass whose ctx ended logs no "unreadable"
+// ERROR: the document was never read. The live case proves the ERROR still fires over a broken file.
+// Serial: slog's default is process-global.
+func TestChatRetention_ACtxStopLogsNothing(t *testing.T) {
+	const msg = "chat retention: config.json is present but unreadable; purged nothing this pass rather than applying the default window"
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, tc := range []struct {
+		name    string
+		ctx     context.Context
+		wantLog int
+	}{
+		{"a cancelled ctx", cancelled, 0},
+		{"a live ctx", t.Context(), 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConfig(t, filepath.Join(dir, settings.Filename), `{`)
+
+			rec := capture.Default(t)
+			if got := chatRetention(tc.ctx, dir); got != 0 {
+				t.Errorf("chatRetention over an unparseable config.json with %s = %v, want 0", tc.name, got)
+			}
+			if n := rec.CountExact(msg); n != tc.wantLog {
+				t.Errorf("chatRetention with %s logged the unreadable ERROR %d times, want %d; messages: %v",
+					tc.name, n, tc.wantLog, rec.Messages())
+			}
+		})
+	}
 }

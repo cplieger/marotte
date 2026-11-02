@@ -208,28 +208,36 @@ func Generation(ctx context.Context, configDir string) (gen uint64, readable boo
 	return g.gen, err == nil
 }
 
+// readStopped reports a read that ended with its caller's ctx, which says nothing about the document.
+func readStopped(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 // Field reads config.json and decodes the named key into T, returning the zero value and
-// false when the file is missing, the key is absent, or parsing fails (logged at Warn
-// naming the key). It wraps FieldStrict for callers whose fallback is a display default.
+// false when the file is missing, the key is absent, parsing fails (logged at Warn
+// naming the key) or ctx has ended (not logged). It wraps FieldStrict for callers whose
+// fallback is a display default.
 func Field[T any](ctx context.Context, configDir, key string) (T, bool) {
 	out, ok, err := FieldStrict[T](ctx, configDir, key)
 	switch {
 	case errors.Is(err, errKeyParse):
 		slog.Warn("settings: parse "+key, "error", err)
-	case err != nil:
+	case err != nil && !readStopped(err):
 		slog.Warn("settings: read config.json for "+key, "error", err)
 	}
 	return out, ok
 }
 
 // FieldOr is Field for a reader with a default: an absent key, or one that does not decode into T,
-// reads as def. readable is false only when config.json exists and could not be read or parsed, so a
-// live push can tell "the document says def" from "there is no answer".
+// reads as def. readable is false only when config.json exists and could not be read or parsed, or
+// ctx ended first, so a live push can tell "the document says def" from "there is no answer".
 func FieldOr[T any](ctx context.Context, configDir, key string, def T) (value T, readable bool) {
 	out, ok, err := FieldStrict[T](ctx, configDir, key)
 	switch {
 	case errors.Is(err, errKeyParse):
 		slog.Warn("settings: parse "+key, "error", err)
+	case readStopped(err):
+		return def, false
 	case err != nil:
 		slog.Warn("settings: read config.json for "+key, "error", err)
 		return def, false
@@ -241,11 +249,13 @@ func FieldOr[T any](ctx context.Context, configDir, key string, def T) (value T,
 }
 
 // FieldInto is the pointer-target variant of Field: it decodes the named key into out and
-// reports success.
+// reports success; like Field, it logs no failure that is ctx's.
 func FieldInto(ctx context.Context, configDir, key string, out any) bool {
 	raw, err := parsedMap(ctx, configDir)
 	if err != nil {
-		slog.Warn("settings: read config.json for "+key, "error", err)
+		if !readStopped(err) {
+			slog.Warn("settings: read config.json for "+key, "error", err)
+		}
 		return false
 	}
 	if raw == nil {

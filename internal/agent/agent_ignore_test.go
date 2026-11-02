@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/slogx/capture"
 )
 
 // ignoreFrames is every ignore list the engine lane was sent, oldest first.
@@ -167,5 +168,56 @@ func TestResolveEngine_CarriesTheIgnoreListResolver(t *testing.T) {
 	writeIgnoreFiles(t, dir, []string{".dockerignore"})
 	if got, want := opts.IgnoreFiles(t.Context()), []string{settings.AgentIgnoreFloor, ".dockerignore"}; !slices.Equal(got, want) {
 		t.Errorf("IgnoreFiles() after a save = %v, want %v read at send time", got, want)
+	}
+}
+
+// TestSettingsReaders_LogNoUnreadableDocumentWhenTheirCtxEnded pins that a spawn or session door
+// whose ctx ended does not report config.json unreadable: the read never ran. The live case proves
+// each warning still fires over a broken file. Serial: slog's default is process-global.
+func TestSettingsReaders_LogNoUnreadableDocumentWhenTheirCtxEnded(t *testing.T) {
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	readers := []struct {
+		name string
+		msg  string
+		read func(ctx context.Context, dir string)
+	}{
+		{
+			name: "spawnIgnoreFiles",
+			msg:  "agent ignore files: settings unreadable; this spawn enforces only the floor",
+			read: func(ctx context.Context, dir string) { spawnIgnoreFiles(ctx, dir) },
+		},
+		{
+			name: "sessionDirs",
+			msg:  "additional directories not granted to agents: config unreadable",
+			read: func(ctx context.Context, dir string) {
+				(&lifetime{workDir: t.TempDir(), configDir: dir}).sessionDirs(ctx)
+			},
+		},
+	}
+	for _, r := range readers {
+		for _, tc := range []struct {
+			name    string
+			ctx     context.Context
+			wantLog int
+		}{
+			{"a cancelled ctx", cancelled, 0},
+			{"a live ctx", t.Context(), 1},
+		} {
+			t.Run(r.name+" with "+tc.name, func(t *testing.T) {
+				dir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, settings.Filename), []byte("{not json"), 0o600); err != nil {
+					t.Fatalf("write settings: %v", err)
+				}
+
+				rec := capture.Default(t)
+				r.read(tc.ctx, dir)
+
+				if n := rec.CountExact(r.msg); n != tc.wantLog {
+					t.Errorf("%s with %s logged %q %d times, want %d; messages: %v",
+						r.name, tc.name, r.msg, n, tc.wantLog, rec.Messages())
+				}
+			})
+		}
 	}
 }

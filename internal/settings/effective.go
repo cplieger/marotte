@@ -95,8 +95,10 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 func RetentionEnabled(ctx context.Context, configDir string) bool {
 	days, ok, err := FieldStrict[int](ctx, configDir, KeyChatRetentionDays)
 	if err != nil {
-		slog.Error("chat retention: config.json is present but unreadable; treating retention as ON so this close deletes nothing",
-			"key", KeyChatRetentionDays, "error", err)
+		if !readStopped(err) {
+			slog.Error("chat retention: config.json is present but unreadable; treating retention as ON so this close deletes nothing",
+				"key", KeyChatRetentionDays, "error", err)
+		}
 		return true
 	}
 	if !ok {
