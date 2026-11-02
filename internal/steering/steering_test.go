@@ -16,7 +16,12 @@ import (
 )
 
 func TestWriteTools(t *testing.T) {
-	data := []byte(`{
+	installed := []InstalledTool{
+		{Name: "goimports", Kind: "go", Version: "v0.30.0"},
+		{Name: "go", Kind: "aqua", Version: "1.26.2"},
+		{Name: "pyright", Kind: "npm", Version: "1.1.411"},
+	}
+	state := []byte(`{
 		"tools": {
 			"goimports": {"installed_version": "v0.30.0", "bins": ["goimports"]},
 			"go": {"installed_version": "1.26.2", "bins": ["go", "gofmt"]},
@@ -24,101 +29,135 @@ func TestWriteTools(t *testing.T) {
 		}
 	}`)
 	var b strings.Builder
-	writeTools(&b, data)
-	out := b.String()
+	writeTools(&b, installed, state)
 
-	if !strings.Contains(out, "## Installed tools") {
-		t.Error("missing header")
-	}
-	if !strings.Contains(out, "- goimports v0.30.0") {
-		t.Error("missing goimports")
-	}
-	// Bins expand to individual entries sharing the tool's version.
-	if !strings.Contains(out, "- go 1.26.2") {
-		t.Error("missing go binary")
-	}
-	if !strings.Contains(out, "- gofmt 1.26.2") {
-		t.Error("missing gofmt binary")
-	}
-	// pm_bins expand the same way.
-	if !strings.Contains(out, "- pyright-langserver 1.1.411") {
-		t.Error("missing pyright-langserver pm bin")
+	want := "## Installed tools\n\n" +
+		"- go 1.26.2\n" +
+		"- gofmt 1.26.2\n" +
+		"- goimports v0.30.0\n" +
+		"- pyright 1.1.411\n" +
+		"- pyright-langserver 1.1.411\n\n"
+	if got := b.String(); got != want {
+		t.Errorf("writeTools =\n%s\nwant\n%s", got, want)
 	}
 }
 
-func TestWriteTools_EmptyEmitsNothing(t *testing.T) {
-	// No installed tools means no section at all.
+func TestWriteTools_NothingInstalledEmitsNothing(t *testing.T) {
 	var b strings.Builder
-	writeTools(&b, []byte(`{}`))
+	writeTools(&b, nil, []byte(`{"tools":{"go":{"installed_version":"1.26.2","bins":["go"]}}}`))
 	if b.Len() != 0 {
-		t.Errorf("expected no output for empty state, got:\n%s", b.String())
+		t.Errorf("writeTools with nothing installed wrote:\n%s", b.String())
 	}
 }
 
-func TestWriteTools_InvalidJSON(t *testing.T) {
-	var b strings.Builder
-	writeTools(&b, []byte(`not json`))
-	if b.Len() != 0 {
-		t.Error("expected no output for invalid JSON")
-	}
-}
-
-func TestWriteTools_Sorted(t *testing.T) {
-	data := []byte(`{"tools": {
-		"zebra": {"installed_version": "1"},
-		"alpha": {"installed_version": "2"}
+// A row tools-state.json still records, but whose probe failed (a pip tool whose interpreter is
+// gone), is not offered as a command.
+func TestWriteTools_ListsOnlyWhatTheProbeReportsInstalled(t *testing.T) {
+	state := []byte(`{"tools": {
+		"ruff": {"installed_version": "0.9.0", "pm_bins": ["ruff"]},
+		"black": {"installed_version": "24.1.0", "pm_bins": ["black", "blackd"]}
 	}}`)
 	var b strings.Builder
-	writeTools(&b, data)
+	writeTools(&b, []InstalledTool{{Name: "ruff", Kind: "pip", Version: "0.9.0"}}, state)
 	out := b.String()
-	alphaIdx := strings.Index(out, "alpha")
-	zebraIdx := strings.Index(out, "zebra")
-	if alphaIdx < 0 || zebraIdx < 0 {
-		t.Fatal("missing entries")
+	if !strings.Contains(out, "- ruff 0.9.0\n") {
+		t.Errorf("installed ruff missing:\n%s", out)
 	}
-	if alphaIdx > zebraIdx {
-		t.Error("tools should be sorted alphabetically")
+	if strings.Contains(out, "black") {
+		t.Errorf("a tool the probe does not report installed is listed:\n%s", out)
 	}
 }
 
-func TestWriteTools_NotInstalledSkipped(t *testing.T) {
-	// A failed install (no installed_version) is not listed.
-	data := []byte(`{"tools": {
-		"ok": {"installed_version": "1.0.0"},
-		"broken": {"last_error": "download failed"}
+// A tool with no recorded bins has no known command: an npm package that ships no bin, or an apt
+// package, whose commands need not share its name.
+func TestWriteTools_AToolWithNoRecordedCommandIsListedAsAPackage(t *testing.T) {
+	installed := []InstalledTool{
+		{Name: "jq", Kind: "aqua", Version: "1.8.1"},
+		{Name: "ripgrep", Kind: "apt", Version: "14.1.1-1"},
+		{Name: "lodash", Kind: "npm", Version: "4.17.21"},
+	}
+	state := []byte(`{"tools": {
+		"jq": {"installed_version": "1.8.1", "bins": ["jq"]},
+		"ripgrep": {"installed_version": "14.1.1-1"},
+		"lodash": {"installed_version": "4.17.21"}
 	}}`)
 	var b strings.Builder
-	writeTools(&b, data)
-	out := b.String()
-	if !strings.Contains(out, "- ok 1.0.0") {
-		t.Error("missing installed tool")
-	}
-	if strings.Contains(out, "broken") {
-		t.Errorf("uninstalled tool listed; output:\n%s", out)
+	writeTools(&b, installed, state)
+
+	want := "## Installed tools\n\n" +
+		"- jq 1.8.1\n\n" +
+		"Installed packages with no recorded command (`dpkg -L <package>` lists an apt package's files):\n\n" +
+		"- lodash 4.17.21 (npm)\n" +
+		"- ripgrep 14.1.1-1 (apt)\n\n"
+	if got := b.String(); got != want {
+		t.Errorf("writeTools =\n%s\nwant\n%s", got, want)
 	}
 }
 
-func TestWriteTools_NoBinsUsesToolName(t *testing.T) {
-	// No bins falls back to the tool name.
-	data := []byte(`{"tools": {"jq": {"installed_version": "1.8.1"}}}`)
+// Without the state file's bins every installed tool is still listed, none as a command.
+func TestWriteTools_UnreadableStateListsEveryToolAsAPackage(t *testing.T) {
+	for state, logged := range map[string]bool{"": false, "not json": true} {
+		t.Run(fmt.Sprintf("state %q", state), func(t *testing.T) {
+			var logs bytes.Buffer
+			capture.SwapDefault(t, slog.New(slog.NewTextHandler(&logs, nil)))
+			var b strings.Builder
+			writeTools(&b, []InstalledTool{{Name: "go", Kind: "aqua", Version: "1.26.2"}}, []byte(state))
+			want := "## Installed tools\n\n" +
+				"Installed packages with no recorded command (`dpkg -L <package>` lists an apt package's files):\n\n" +
+				"- go 1.26.2 (aqua)\n\n"
+			if got := b.String(); got != want {
+				t.Errorf("writeTools =\n%s\nwant\n%s", got, want)
+			}
+			if got := strings.Contains(logs.String(), "parse tools-state.json"); got != logged {
+				t.Errorf("parse error logged = %t, want %t; logs:\n%s", got, logged, logs.String())
+			}
+		})
+	}
+}
+
+func TestWriteTools_AnUnrecordedVersionOrKindIsLeftOut(t *testing.T) {
+	installed := []InstalledTool{{Name: "fd"}, {Name: "rg", Kind: "aqua"}}
+	state := []byte(`{"tools": {"rg": {"bins": ["rg"]}}}`)
 	var b strings.Builder
-	writeTools(&b, data)
-	if !strings.Contains(b.String(), "- jq 1.8.1") {
-		t.Errorf("missing name fallback; output:\n%s", b.String())
+	writeTools(&b, installed, state)
+	out := b.String()
+	if !strings.Contains(out, "\n- rg\n") || !strings.Contains(out, "\n- fd\n") {
+		t.Errorf("writeTools wrote a placeholder for an empty version or kind:\n%q", out)
 	}
 }
 
 func TestWriteTools_DuplicateBinsDeduped(t *testing.T) {
 	// A bin two tools ship is listed once: PATH, not ownership.
-	data := []byte(`{"tools": {
+	installed := []InstalledTool{
+		{Name: "typescript", Kind: "npm", Version: "5.9.0"},
+		{Name: "tsc-wrapper", Kind: "aqua", Version: "1.0.0"},
+	}
+	state := []byte(`{"tools": {
 		"typescript": {"installed_version": "5.9.0", "pm_bins": ["tsc", "tsserver"]},
 		"tsc-wrapper": {"installed_version": "1.0.0", "bins": ["tsc"]}
 	}}`)
 	var b strings.Builder
-	writeTools(&b, data)
+	writeTools(&b, installed, state)
 	out := b.String()
 	if strings.Count(out, "- tsc ") != 1 {
 		t.Errorf("duplicate bin not deduped; output:\n%s", out)
+	}
+}
+
+// The section comes from the live inventory, so a down engine (no snapshot) lists nothing,
+// whatever tools-state.json still records.
+func TestRender_ListsNoToolsWithoutAnInventory(t *testing.T) {
+	workDir, configDir := t.TempDir(), t.TempDir()
+	mustWriteFile(t, filepath.Join(configDir, "tools-state.json"),
+		`{"tools":{"goimports":{"installed_version":"v0.30.0","bins":["goimports"]}}}`)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+
+	installed := []InstalledTool{{Name: "goimports", Kind: "go", Version: "v0.30.0"}}
+	if out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, installed, false)); strings.Contains(out, "## Installed tools") {
+		t.Errorf("render without an inventory listed tools:\n%s", out)
+	}
+	if out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, installed, true)); !strings.Contains(out, "## Installed tools\n\n- goimports v0.30.0\n") {
+		t.Errorf("render with an inventory lacks the tool:\n%s", out)
 	}
 }
 
@@ -245,6 +284,9 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.SetMCPSnapshot(func() MCPSnapshot {
 		return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
+	})
+	g.SetToolsSnapshot(func() ([]InstalledTool, bool) {
+		return []InstalledTool{{Name: "goimports", Kind: "go", Version: "v0.30.0"}}, true
 	})
 
 	g.Generate(t.Context())
@@ -513,6 +555,9 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.SetMCPSnapshot(func() MCPSnapshot {
 		return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
+	})
+	g.SetToolsSnapshot(func() ([]InstalledTool, bool) {
+		return []InstalledTool{{Name: "goimports", Kind: "go", Version: "v0.30.0"}}, true
 	})
 
 	const n = 16

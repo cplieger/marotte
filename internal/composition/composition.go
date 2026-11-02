@@ -226,6 +226,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	wireToolsSteering(appCtx, tools, steer)
 
 	gitHandler := git.NewHandler(cfg.WorkDir, git.WithShowMax(filebrowse.WholeFileMax))
 	ensureUploadDir()
@@ -671,6 +672,14 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	// The app's lifetime, not Background — see the OnJobChanged spawn above.
 	go h.EnsureCodeIntelligence(appCtx)
 	return toolsEngine, nil
+}
+
+// wireToolsSteering lists the engine's installed tools in environment.md and regenerates it off the
+// boot path, since a first inventory runs every tool's probe; without that regeneration the file
+// lists no tools until the next session opens.
+func wireToolsSteering(appCtx context.Context, tools *toolsSlot, steer *steering.Generator) {
+	steer.SetToolsSnapshot(tools.installedTools)
+	go steer.Generate(appCtx)
 }
 
 // githubTokenFor is the tools engine's GitHub credential: the github.com connection's

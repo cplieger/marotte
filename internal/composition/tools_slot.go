@@ -6,9 +6,11 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/toolbelt/v3"
 )
 
@@ -84,6 +86,35 @@ func (s *toolsSlot) Engine() (*toolbelt.Engine, error) {
 	default:
 		return nil, errToolsNotStarted
 	}
+}
+
+// installedTools is the steering generator's tools snapshot: ok false while the engine is down or
+// its inventory fails.
+func (s *toolsSlot) installedTools() ([]steering.InstalledTool, bool) {
+	engine, err := s.Engine()
+	if err != nil {
+		return nil, false
+	}
+	inv, err := engine.Inventory()
+	if err != nil {
+		return nil, false
+	}
+	return installedRows(inv), true
+}
+
+// installedRows keeps the rows the live probe reports installed. A disabled row is left out: its
+// Installed means only that the engine still owns files the next reconcile removes.
+func installedRows(inv *toolbelt.Inventory) []steering.InstalledTool {
+	var out []steering.InstalledTool
+	for i := range inv.Tools {
+		t := &inv.Tools[i]
+		if !t.Installed || t.Disabled {
+			continue
+		}
+		kind, _, _ := strings.Cut(t.Source, ":")
+		out = append(out, steering.InstalledTool{Name: t.Name, Kind: kind, Version: t.InstalledVersion})
+	}
+	return out
 }
 
 // manifestChanged converges on the tools.json now on disk: a file toolbelt would refuse takes the

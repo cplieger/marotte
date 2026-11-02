@@ -2,14 +2,19 @@ package composition
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/steering"
+	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/toolbelt/v3"
 )
 
@@ -186,4 +191,102 @@ func TestWireToolsEngine_StaysDownOverAnUnusableToolsFolder(t *testing.T) {
 	if _, err := os.Stat(toolsDir + ":x"); err == nil {
 		t.Errorf("the engine created %s, a folder it cannot use", toolsDir+":x")
 	}
+}
+
+func TestInstalledRows_KeepsWhatTheProbeReportsInstalledAndEnabled(t *testing.T) {
+	inv := &toolbelt.Inventory{Tools: []toolbelt.ToolInfo{
+		{Name: "go", Source: "aqua:golang/go", InstalledVersion: "1.26.2", Installed: true},
+		{Name: "black", Source: "pip:black", InstalledVersion: "24.1.0"},
+		{Name: "ripgrep", Source: "apt:ripgrep", InstalledVersion: "14.1.1-1", Installed: true, Disabled: true},
+		{Name: "lodash", Source: "npm:lodash", InstalledVersion: "4.17.21", Installed: true},
+		{Name: "fd", Installed: true},
+	}}
+
+	got := installedRows(inv)
+
+	want := []steering.InstalledTool{
+		{Name: "go", Kind: "aqua", Version: "1.26.2"},
+		{Name: "lodash", Kind: "npm", Version: "4.17.21"},
+		{Name: "fd"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("installedRows = %+v, want %+v", got, want)
+	}
+}
+
+func TestToolsSlot_InstalledToolsAnswersOnlyWhileTheEngineIsUp(t *testing.T) {
+	configDir, toolsDir := fitTree(t)
+	manifest := filepath.Join(configDir, "tools.json")
+	doc := fmt.Sprintf(`{"version":%d,"tools":{}}`, toolbelt.ManifestVersion)
+	if err := os.WriteFile(manifest, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	captureDefaultLogger(t)
+
+	down := newToolsSlot(manifest, func() (*toolbelt.Engine, error) {
+		return nil, toolsDirProblem("MAROTTE_TOOLS_DIR", "/tools:x")
+	})
+	t.Cleanup(down.Close)
+	if err := down.start(); err != nil {
+		t.Fatal(err)
+	}
+	if tools, ok := down.installedTools(); ok || tools != nil {
+		t.Errorf("installedTools() with the engine down = (%v, %t), want (nil, false)", tools, ok)
+	}
+
+	up := newToolsSlot(manifest, func() (*toolbelt.Engine, error) {
+		return toolbelt.New(&toolbelt.Config{ConfigDir: configDir, ToolsDir: toolsDir})
+	})
+	t.Cleanup(up.Close)
+	if err := up.start(); err != nil {
+		t.Fatal(err)
+	}
+	if tools, ok := up.installedTools(); !ok || len(tools) != 0 {
+		t.Errorf("installedTools() with the engine up over an empty tools.json = (%v, %t), want (none, true)", tools, ok)
+	}
+}
+
+// The boot regenerates environment.md once the engine is up, listing what its probe reports
+// installed under the bins tools-state.json records.
+func TestWireToolsSteering_ListsTheEnginesInstalledTools(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	configDir, toolsDir := fitTree(t)
+	manifest := filepath.Join(configDir, toolsManifestName)
+	doc := fmt.Sprintf(`{"version":%d,"tools":{"hello":{"source":"manual","install":"true","version":"1.0","pin":true}}}`,
+		toolbelt.ManifestVersion)
+	if err := os.WriteFile(manifest, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := `{"tools":{"hello":{"installed_version":"1.0","bins":["hello","hello-cli"]}}}`
+	if err := os.WriteFile(filepath.Join(configDir, "tools-state.json"), []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(toolsDir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	syscall.ForkLock.RLock()
+	for _, bin := range []string{"hello", "hello-cli"} {
+		if err := os.WriteFile(filepath.Join(toolsDir, "bin", bin), []byte("#!/bin/sh\necho 1.0\n"), 0o755); err != nil {
+			syscall.ForkLock.RUnlock()
+			t.Fatal(err)
+		}
+	}
+	syscall.ForkLock.RUnlock()
+	captureDefaultLogger(t)
+	tools := newToolsSlot(manifest, func() (*toolbelt.Engine, error) {
+		return toolbelt.New(&toolbelt.Config{ConfigDir: configDir, ToolsDir: toolsDir})
+	})
+	t.Cleanup(tools.Close)
+	if err := tools.start(); err != nil {
+		t.Fatal(err)
+	}
+
+	wireToolsSteering(context.WithoutCancel(t.Context()), tools, steering.New(t.TempDir(), configDir, toolsDir))
+
+	path := workspace.KiroSteeringPath("environment.md")
+	want := "## Installed tools\n\n- hello 1.0\n- hello-cli 1.0\n\n"
+	waitFor(t, "environment.md to list the installed tool", func() bool {
+		data, err := os.ReadFile(path)
+		return err == nil && strings.Contains(string(data), want)
+	})
 }

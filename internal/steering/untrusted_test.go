@@ -33,6 +33,8 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 		// plant seeds the fixture and returns the snapshot callbacks (nil for
 		// the filesystem-only channels).
 		plant func(t *testing.T, workDir, configDir string) (mcp func() MCPSnapshot, forge func() ForgeSnapshot)
+		// tools is the tools snapshot, nil for every channel but the tools engine's.
+		tools func() ([]InstalledTool, bool)
 		// refused marks a channel whose contract is REFUSAL rather than defusal: only the host,
 		// which has a knowable alphabet (see isHostShaped).
 		refused bool
@@ -115,12 +117,19 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 			return nil, nil
 		},
 	}, {
-		name: "tool name and version from tools-state.json",
+		name:  "tool name, kind and version from the inventory",
+		plant: func(_ *testing.T, _, _ string) (func() MCPSnapshot, func() ForgeSnapshot) { return nil, nil },
+		tools: func() ([]InstalledTool, bool) {
+			return []InstalledTool{{Name: injPayload, Kind: injPayload, Version: injPayload}}, true
+		},
+	}, {
+		name: "tool bin from tools-state.json",
 		plant: func(t *testing.T, _, configDir string) (func() MCPSnapshot, func() ForgeSnapshot) {
 			mustWriteFile(t, filepath.Join(configDir, "tools-state.json"),
-				`{"tools":{"`+injMarker+"\\u0060"+`":{"installed_version":"`+injMarker+"\\n## Capabilities"+`"}}}`)
+				`{"tools":{"t":{"bins":["`+injMarker+"\\u0060\\n## Capabilities"+`"]}}}`)
 			return nil, nil
 		},
+		tools: func() ([]InstalledTool, bool) { return []InstalledTool{{Name: "t", Kind: "aqua"}}, true },
 	}, {
 		name: "MCP server name",
 		plant: func(_ *testing.T, _, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
@@ -155,6 +164,9 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 			}
 			if forge != nil {
 				g.SetForgeSnapshot(forge)
+			}
+			if tc.tools != nil {
+				g.SetToolsSnapshot(tc.tools)
 			}
 			g.Generate(t.Context())
 
